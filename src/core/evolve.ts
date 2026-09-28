@@ -2,7 +2,7 @@
 // already accepted, so it holds no rules of its own. Replaying a task's
 // events through it, starting from null, rebuilds the task exactly.
 
-import type { Evolve, Evolved, Phase, Task, TaskEvent } from "./types";
+import type { Evolve, Evolved, Failure, Phase, Task, TaskEvent } from "./types";
 
 const noUsage = { tokens: 0, ms: 0 };
 
@@ -127,8 +127,8 @@ export const evolve: Evolve = (task, event) => {
     // task.checks_passed in the same batch, and that moves the task on.
     case "task.gate_passed": {
       if (task.phase !== "checks") return wrongPhase(event, task);
-      const mismatch = notRunning(task, event.gate);
-      if (mismatch) return refuse(event, mismatch);
+      const why = whyGateNotRunning(task, event.gate);
+      if (why) return refuse(event, why);
       return event.next === null
         ? { ok: true, task }
         : { ok: true, task: { ...task, step: event.next } };
@@ -137,20 +137,54 @@ export const evolve: Evolve = (task, event) => {
     // Back to the same agent, which is still open and knows the code.
     case "task.gate_failed": {
       if (task.phase !== "checks") return wrongPhase(event, task);
-      const mismatch = notRunning(task, event.failure.step);
-      if (mismatch) return refuse(event, mismatch);
-      const { session, branch: _branch, step: _step, ...rest } = task;
-      return {
-        ok: true,
-        task: {
-          ...rest,
-          phase: "in_progress",
-          step: { kind: "running", session },
-          attempts: task.attempts + 1,
-          lastFailure: event.failure,
-        },
-      };
+      const why = whyGateNotRunning(task, event.failure.step);
+      if (why) return refuse(event, why);
+      return { ok: true, task: backToAgent(task, task.attempts + 1, event.failure) };
     }
+
+    // Only a fact for the record: every merge must follow a pass. The next
+    // event in the same batch starts the merge or waits for approval.
+    case "task.checks_passed":
+      if (task.phase !== "checks") return wrongPhase(event, task);
+      return { ok: true, task };
+
+    case "task.escalated":
+      if (task.phase !== "checks") return wrongPhase(event, task);
+      return { ok: true, task: { ...task, step: "merge_approval" } };
+
+    case "task.merge_started":
+      if (task.phase !== "checks") return wrongPhase(event, task);
+      if (task.step === "merging") return refuse(event, `#${task.id} is already merging`);
+      return { ok: true, task: { ...task, step: "merging" } };
+
+    case "task.merged": {
+      if (task.phase !== "checks") return wrongPhase(event, task);
+      if (task.step !== "merging") return refuse(event, `#${task.id} isn't merging`);
+      const {
+        worktree: _worktree,
+        session: _session,
+        attempts: _attempts,
+        branch: _branch,
+        step: _step,
+        ...rest
+      } = task;
+      return { ok: true, task: { ...rest, phase: "done", mergeCommit: event.commit } };
+    }
+
+    // A failed merge counts as an attempt, like a failed gate.
+    case "task.merge_failed":
+      if (task.phase !== "checks") return wrongPhase(event, task);
+      if (task.step !== "merging") return refuse(event, `#${task.id} isn't merging`);
+      return { ok: true, task: backToAgent(task, task.attempts + 1, event.failure) };
+
+    // Not a failure, so no attempt is used. The note reaches the agent as
+    // a message.
+    case "task.merge_sent_back":
+      if (task.phase !== "checks") return wrongPhase(event, task);
+      if (task.step !== "merge_approval") {
+        return refuse(event, `#${task.id} isn't waiting for merge approval`);
+      }
+      return { ok: true, task: backToAgent(task, task.attempts, null) };
 
     default:
       return refuse(event, "not handled yet");
@@ -161,8 +195,25 @@ function refuse(event: TaskEvent, why: string): Evolved {
   return { ok: false, reason: `${event.type} can't apply: ${why}.` };
 }
 
+// From Checks back to In progress, with the same agent. Its session stayed
+// open, so it still knows the code it wrote.
+function backToAgent(
+  task: Task & { phase: "checks" },
+  attempts: number,
+  lastFailure: Failure | null,
+): Task {
+  const { session, branch: _branch, step: _step, ...rest } = task;
+  return {
+    ...rest,
+    phase: "in_progress",
+    step: { kind: "running", session },
+    attempts,
+    lastFailure,
+  };
+}
+
 // Says why a gate result doesn't fit, or null when that gate is running.
-function notRunning(task: Task & { phase: "checks" }, gate: string): string | null {
+function whyGateNotRunning(task: Task & { phase: "checks" }, gate: string): string | null {
   if (task.step === gate) return null;
   if (task.step === "merge_approval" || task.step === "merging") {
     return `#${task.id} isn't running a gate`;
