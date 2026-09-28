@@ -449,6 +449,7 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
 
 function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision {
   const { accept, reject, config } = ctx;
+  const { step } = task;
   const merge: Command = {
     type: "merge",
     taskId: task.id,
@@ -460,13 +461,11 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
     case "gate_result": {
       // A late result, from an earlier run of the checks, checked code that
       // has since changed.
-      if (input.request !== task.request) return reject(notWaitingFor(task, input.request));
-      if (task.step !== input.gate) {
-        const running =
-          task.step === "merge_approval" || task.step === "merging"
-            ? "isn't running a gate"
-            : `is running the ${task.step} gate, not ${input.gate}`;
-        return reject(`#${task.id} ${running}.`);
+      if (step.kind !== "gate" || step.request !== input.request) {
+        return reject(notWaitingFor(task, input.request));
+      }
+      if (step.gate !== input.gate) {
+        return reject(`#${task.id} is running the ${step.gate} gate, not ${input.gate}.`);
       }
 
       if (!input.ok) {
@@ -494,7 +493,7 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
       // The last gate passed, so the agent is stopped: it would sit idle
       // while the merge waits or runs. A merge that touches a critical path
       // waits for your approval. Anything else merges now.
-      const stop = task.session === null ? [] : [stopSession(task.session)];
+      const stop = stopSession(step.session);
       const critical = criticalFiles(task.branch, config.criticalPaths);
       if (critical.length > 0) {
         return accept(
@@ -503,17 +502,17 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
             { type: "task.checks_passed" },
             { type: "task.merge_approval_requested", criticalFiles: critical },
           ],
-          stop,
+          [stop],
         );
       }
       return accept(
         [passed, { type: "task.checks_passed" }, { type: "task.merge_started" }],
-        [...stop, merge],
+        [stop, merge],
       );
     }
 
     case "approve_merge":
-      if (task.step !== "merge_approval") {
+      if (step.kind !== "awaiting_merge_approval") {
         return reject(`#${task.id}'s merge isn't waiting for approval.`);
       }
       return accept([{ type: "task.merge_started" }], [merge]);
@@ -521,7 +520,7 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
     // The task waits for a new agent, which gets your note. It isn't a
     // failure, so no attempt is used.
     case "send_back_merge":
-      if (task.step !== "merge_approval") {
+      if (step.kind !== "awaiting_merge_approval") {
         return reject(`#${task.id}'s merge isn't waiting for approval.`);
       }
       if (isBlank(input.note)) return reject("A send-back needs a note.");
@@ -530,7 +529,7 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
     // The branch is now squashed into main, so removing the worktree loses
     // nothing.
     case "merged":
-      if (task.step !== "merging" || task.request !== input.request) {
+      if (step.kind !== "merging" || step.request !== input.request) {
         return reject(notWaitingFor(task, input.request));
       }
       return accept(
@@ -540,7 +539,7 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
 
     // A failed merge counts as an attempt, like a failed gate.
     case "merge_failed": {
-      if (task.step !== "merging" || task.request !== input.request) {
+      if (step.kind !== "merging" || step.request !== input.request) {
         return reject(notWaitingFor(task, input.request));
       }
       const failure: Failure = { step: "merge", summary: input.summary };
@@ -557,9 +556,10 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
 // reason as its note. If the revert fails, the task stays Done and says why.
 function inDone(task: TaskIn<"done">, input: Input, ctx: Context): Decision {
   const { accept, reject } = ctx;
+  const { step } = task;
   switch (input.type) {
     case "revert":
-      if (task.reverting !== null) return reject(`#${task.id} is already being reverted.`);
+      if (step.kind === "reverting") return reject(`#${task.id} is already being reverted.`);
       if (isBlank(input.reason)) return reject("A revert needs a reason.");
       return accept(
         [{ type: "task.revert_started", reason: input.reason }],
@@ -574,15 +574,13 @@ function inDone(task: TaskIn<"done">, input: Input, ctx: Context): Decision {
       );
 
     case "reverted":
-      if (task.reverting?.request !== input.request) {
+      if (step.kind !== "reverting" || step.request !== input.request) {
         return reject(notWaitingFor(task, input.request));
       }
-      return accept([
-        { type: "task.reverted", commit: task.mergeCommit, reason: task.reverting.reason },
-      ]);
+      return accept([{ type: "task.reverted", commit: task.mergeCommit, reason: step.reason }]);
 
     case "revert_failed":
-      if (task.reverting?.request !== input.request) {
+      if (step.kind !== "reverting" || step.request !== input.request) {
         return reject(notWaitingFor(task, input.request));
       }
       return accept([{ type: "task.revert_failed", summary: input.summary }]);
@@ -662,7 +660,7 @@ function failedRound(
   failure: Failure,
   ctx: Context,
 ): Decision {
-  const { session } = task;
+  const session = task.step.kind === "gate" ? task.step.session : null;
   if (attemptsLeft(task.attempts + 1, ctx.config.maxAttempts).ok) {
     if (session === null) return ctx.accept([failed]);
     const text = `The ${failure.step} gate failed: ${failure.summary}`;
@@ -692,7 +690,7 @@ function leavePhase(task: Task): Command[] {
 
 // Why a task can't leave while merging, or null if it isn't merging.
 function stillMerging(task: Task): string | null {
-  if (task.phase === "checks" && task.step === "merging") {
+  if (task.phase === "checks" && task.step.kind === "merging") {
     return `#${task.id} is merging. Wait until the merge finishes.`;
   }
   return null;
@@ -710,7 +708,7 @@ function runningSession(task: Task): SessionId | null {
     case "in_progress":
       return task.step.kind === "running" ? task.step.session : null;
     case "checks":
-      return task.session;
+      return task.step.kind === "gate" ? task.step.session : null;
     default:
       return null;
   }
@@ -752,11 +750,9 @@ function awaitedRequest(task: Task): number | null {
     case "spec":
     case "ready":
     case "in_progress":
-      return "request" in task.step ? task.step.request : null;
     case "checks":
-      return task.request;
     case "done":
-      return task.reverting?.request ?? null;
+      return "request" in task.step ? task.step.request : null;
     default:
       return null;
   }
@@ -778,8 +774,6 @@ function heldWorktree(task: Task): string | null {
   return null;
 }
 
-// Waiting for the worktree of this build. A reply for an earlier build is
-// late, even while the current build waits for its own.
 // Waiting for the worktree of this request. A reply to an earlier request
 // is late, even while the task waits for a newer one.
 function waitingForWorktree(task: Task, request: number): boolean {

@@ -139,31 +139,13 @@ export type PhaseState =
       phase: "checks";
       spec: Spec;
       worktree: Worktree;
-      // The develop session stays open while the gates run, so a failure can
-      // go straight back to the agent that wrote the code. Once they pass,
-      // the agent is stopped and this is null: an idle agent waiting for a
-      // merge would otherwise wake up later without a free slot.
-      session: SessionId | null;
       attempts: number;
       branch: BranchFacts;
-      step: GateName | "merge_approval" | "merging";
-      // The request the task waits on: the running gate's, or the merge's.
-      // Null while the merge waits for the developer's approval.
-      request: number | null;
+      step: ChecksStep;
     }
   // mergeCommit is what `skelcrew revert` undoes. Each task lands as one
   // squashed commit, so one commit is enough.
-  | {
-      phase: "done";
-      spec: Spec;
-      mergeCommit: CommitSha;
-      // A revert is two steps, like a merge: version control is asked, then
-      // answers. The task stays Done until the revert has happened, so the
-      // record never says it did when it didn't. `reverting` holds the reason
-      // while it runs; `revertFailure` says why the last attempt failed.
-      reverting: { reason: string; request: number } | null;
-      revertFailure: string | null;
-    }
+  | { phase: "done"; spec: Spec; mergeCommit: CommitSha; step: DoneStep }
   | { phase: "dropped" };
 
 // Spec, Ready and In progress all wait for a free slot before an agent
@@ -189,6 +171,24 @@ export type DevelopStep =
   | { kind: "queued" }
   | { kind: "starting"; request: number }
   | { kind: "running"; session: SessionId };
+
+// The develop agent stays open while the gates run, so a failure can go
+// straight back to the agent that wrote the code. Once they pass, it is
+// stopped: an idle agent waiting for a merge would otherwise wake up later
+// without a free slot. So only a running gate has a session.
+export type ChecksStep =
+  | { kind: "gate"; gate: GateName; request: number; session: SessionId }
+  | { kind: "awaiting_merge_approval" }
+  | { kind: "merging"; request: number };
+
+// A revert is two steps, like a merge: version control is asked, then
+// answers. The task stays Done until the revert has happened, so the record
+// never says it did when it didn't. A failed revert stays Done, and the
+// inbox says why.
+export type DoneStep =
+  | { kind: "merged" }
+  | { kind: "reverting"; reason: string; request: number }
+  | { kind: "revert_failed"; summary: string };
 
 export type Task = PhaseState & {
   id: TaskId;

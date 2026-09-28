@@ -129,7 +129,7 @@ function runningSession(task: Task): Session | null {
     case "in_progress":
       return task.step.kind === "running" ? task.step.session : null;
     case "checks":
-      return task.session;
+      return task.step.kind === "gate" ? task.step.session : null;
     default:
       return null;
   }
@@ -155,11 +155,9 @@ function awaited(task: Task | null): number | null {
     case "spec":
     case "ready":
     case "in_progress":
-      return "request" in task.step ? task.step.request : null;
     case "checks":
-      return task.request;
     case "done":
-      return task.reverting?.request ?? null;
+      return "request" in task.step ? task.step.request : null;
     default:
       return null;
   }
@@ -187,8 +185,8 @@ const phaseFields: Record<Task["phase"], string[]> = {
   spec: ["note", "spec", "step"],
   ready: ["spec", "step"],
   in_progress: ["attempts", "lastBlock", "lastFailure", "note", "spec", "step", "worktree"],
-  checks: ["attempts", "branch", "request", "session", "spec", "step", "worktree"],
-  done: ["mergeCommit", "revertFailure", "reverting", "spec"],
+  checks: ["attempts", "branch", "spec", "step", "worktree"],
+  done: ["mergeCommit", "spec", "step"],
   dropped: [],
 };
 

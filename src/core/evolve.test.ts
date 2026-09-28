@@ -289,14 +289,19 @@ const localFailed = { step: "local" as const, summary: "2 tests failed in export
 
 describe("task.done_reported", () => {
   test("moves the task to Checks, running the first gate, with the agent kept open", () => {
-    expect(replay(...inChecks)).toMatchObject({
+    const task = replay(...inChecks);
+    expect(task).toMatchObject({
       phase: "checks",
       spec,
       worktree,
-      session,
       attempts: 0,
       branch: branchFacts,
-      step: "local",
+    });
+    expect(task.phase === "checks" && task.step).toEqual({
+      kind: "gate",
+      gate: "local",
+      request: task.requests,
+      session,
     });
   });
 
@@ -313,13 +318,13 @@ describe("task.gate_passed", () => {
   test("moves on to the next gate", () => {
     expect(
       replay(...inChecks, { type: "task.gate_passed", gate: "local", next: "review" }),
-    ).toMatchObject({ phase: "checks", step: "review" });
+    ).toMatchObject({ phase: "checks", step: { kind: "gate", gate: "review", session } });
   });
 
   test("stays on the last gate until the checks are marked passed", () => {
     expect(
       replay(...inChecks, { type: "task.gate_passed", gate: "local", next: null }),
-    ).toMatchObject({ phase: "checks", step: "local" });
+    ).toMatchObject({ phase: "checks", step: { kind: "gate", gate: "local" } });
   });
 
   test("is refused for a gate that isn't running", () => {
@@ -376,7 +381,10 @@ const mergeFailed = { step: "merge" as const, summary: "Conflicts with main in e
 
 describe("task.checks_passed", () => {
   test("leaves the task in Checks until the merge starts or waits for approval", () => {
-    expect(replay(...checksPassed)).toMatchObject({ phase: "checks", step: "local" });
+    expect(replay(...checksPassed)).toMatchObject({
+      phase: "checks",
+      step: { kind: "gate", gate: "local" },
+    });
   });
 
   test("is refused outside Checks", () => {
@@ -389,11 +397,9 @@ describe("task.checks_passed", () => {
 
 describe("task.merge_approval_requested", () => {
   test("waits for the developer to approve the merge, with the agent stopped", () => {
-    expect(replay(...awaitingMergeApproval)).toMatchObject({
-      phase: "checks",
-      step: "merge_approval",
-      session: null,
-    });
+    // The step holds no session: the agent is stopped.
+    const task = replay(...awaitingMergeApproval);
+    expect(task.phase === "checks" && task.step).toEqual({ kind: "awaiting_merge_approval" });
   });
 });
 
@@ -417,13 +423,18 @@ describe("the agent stopping when the gates pass", () => {
 
 describe("task.merge_started", () => {
   test("starts merging straight after the checks pass, with the agent stopped", () => {
-    expect(replay(...merging)).toMatchObject({ phase: "checks", step: "merging", session: null });
+    // The step holds no session: the agent is stopped.
+    const task = replay(...merging);
+    expect(task.phase === "checks" && task.step).toEqual({
+      kind: "merging",
+      request: task.requests,
+    });
   });
 
   test("starts merging once the developer approves", () => {
     expect(replay(...awaitingMergeApproval, { type: "task.merge_started" })).toMatchObject({
       phase: "checks",
-      step: "merging",
+      step: { kind: "merging" },
     });
   });
 
@@ -729,9 +740,9 @@ describe("a dropped task", () => {
 describe("reverting", () => {
   test("task.revert_started keeps the task Done, waiting on the revert's request", () => {
     const task = replay(...done, { type: "task.revert_started", reason: "Broken." });
-    expect(task).toMatchObject({ phase: "done", revertFailure: null });
     // The revert takes the next request number after the merge's.
-    expect(task.phase === "done" && task.reverting).toEqual({
+    expect(task.phase === "done" && task.step).toEqual({
+      kind: "reverting",
       reason: "Broken.",
       request: task.requests,
     });
@@ -745,8 +756,7 @@ describe("reverting", () => {
     );
     expect(task).toMatchObject({
       phase: "done",
-      reverting: null,
-      revertFailure: "Conflicts in export.ts",
+      step: { kind: "revert_failed", summary: "Conflicts in export.ts" },
     });
   });
 

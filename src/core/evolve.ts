@@ -219,10 +219,8 @@ function inProgress(task: TaskIn<"in_progress">, event: TaskEvent): EvolvedTask 
         spec: task.spec,
         worktree: task.worktree,
         attempts: task.attempts,
-        session: step.session,
         branch: event.branch,
-        step: event.gate,
-        request: task.requests + 1,
+        step: { kind: "gate", gate: event.gate, request: task.requests + 1, session: step.session },
         requests: task.requests + 1,
       });
     }
@@ -236,17 +234,17 @@ function inProgress(task: TaskIn<"in_progress">, event: TaskEvent): EvolvedTask 
 }
 
 function inChecks(task: TaskIn<"checks">, event: TaskEvent): EvolvedTask {
+  const { step } = task;
   switch (event.type) {
     // After the last gate, the step stays put. decide writes
     // task.checks_passed in the same batch, and that moves the task on.
     case "task.gate_passed": {
       const mismatch = gateMismatch(task, event.gate);
       if (mismatch) return refuse(event, mismatch);
-      if (event.next === null) return ok(task);
+      if (event.next === null || step.kind !== "gate") return ok(task);
       return ok({
         ...task,
-        step: event.next,
-        request: task.requests + 1,
+        step: { kind: "gate", gate: event.next, request: task.requests + 1, session: step.session },
         requests: task.requests + 1,
       });
     }
@@ -266,41 +264,37 @@ function inChecks(task: TaskIn<"checks">, event: TaskEvent): EvolvedTask {
     // A send-back or a failed merge queues the task for a new agent, so it
     // waits for a free slot.
     case "task.merge_approval_requested":
-      return ok({ ...task, step: "merge_approval", request: null, session: null, question: null });
+      return ok({ ...task, step: { kind: "awaiting_merge_approval" }, question: null });
 
     // Not a failure, so no attempt is used. The note waits for the next agent.
     case "task.merge_sent_back":
-      if (task.step !== "merge_approval") {
+      if (step.kind !== "awaiting_merge_approval") {
         return refuse(event, `#${task.id} isn't waiting for merge approval`);
       }
       return ok(backToAgent(task, task.attempts, null, event.note));
 
     case "task.merge_started":
-      if (task.step === "merging") return refuse(event, `#${task.id} is already merging`);
+      if (step.kind === "merging") return refuse(event, `#${task.id} is already merging`);
       return ok({
         ...task,
-        step: "merging",
-        request: task.requests + 1,
+        step: { kind: "merging", request: task.requests + 1 },
         requests: task.requests + 1,
-        session: null,
         question: null,
       });
 
-    case "task.merged": {
-      if (task.step !== "merging") return refuse(event, `#${task.id} isn't merging`);
+    case "task.merged":
+      if (step.kind !== "merging") return refuse(event, `#${task.id} isn't merging`);
       return ok({
         ...base(task),
         phase: "done",
         spec: task.spec,
         mergeCommit: event.commit,
-        reverting: null,
-        revertFailure: null,
+        step: { kind: "merged" },
       });
-    }
 
     // A failed merge counts as an attempt, like a failed gate.
     case "task.merge_failed":
-      if (task.step !== "merging") return refuse(event, `#${task.id} isn't merging`);
+      if (step.kind !== "merging") return refuse(event, `#${task.id} isn't merging`);
       return ok(backToAgent(task, task.attempts + 1, event.failure, null));
 
     case "task.spec_sent_back":
@@ -316,18 +310,17 @@ function inDone(task: TaskIn<"done">, event: TaskEvent): EvolvedTask {
     case "task.revert_started":
       return ok({
         ...task,
-        reverting: { reason: event.reason, request: task.requests + 1 },
+        step: { kind: "reverting", reason: event.reason, request: task.requests + 1 },
         requests: task.requests + 1,
-        revertFailure: null,
       });
 
     case "task.revert_failed":
-      return ok({ ...task, reverting: null, revertFailure: event.summary });
+      return ok({ ...task, step: { kind: "revert_failed", summary: event.summary } });
 
     // The revert has happened. The reason becomes the note, so the redone
     // spec addresses it.
     case "task.reverted":
-      if (task.reverting === null) return refuse(event, `#${task.id} isn't being reverted`);
+      if (task.step.kind !== "reverting") return refuse(event, `#${task.id} isn't being reverted`);
       return ok(backToSpec(task, task.spec, event.reason));
     default:
       return wrongPhase(event, task);
@@ -425,9 +418,10 @@ function backToAgent(
   lastFailure: Failure | null,
   note: string | null,
 ): Task {
-  const { session } = task;
   const step =
-    session === null ? { kind: "queued" as const } : { kind: "running" as const, session };
+    task.step.kind === "gate"
+      ? { kind: "running" as const, session: task.step.session }
+      : { kind: "queued" as const };
   return {
     ...base(task),
     phase: "in_progress",
@@ -444,9 +438,8 @@ function backToAgent(
 // Returns what doesn't match between a gate result and the running gate,
 // or null when they match.
 function gateMismatch(task: TaskIn<"checks">, gate: string): string | null {
-  if (task.step === gate) return null;
-  if (task.step === "merge_approval" || task.step === "merging") {
-    return `#${task.id} isn't running a gate`;
-  }
-  return `#${task.id} is running the ${task.step} gate, not ${gate}`;
+  const { step } = task;
+  if (step.kind !== "gate") return `#${task.id} isn't running a gate`;
+  if (step.gate !== gate) return `#${task.id} is running the ${step.gate} gate, not ${gate}`;
+  return null;
 }

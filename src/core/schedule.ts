@@ -33,7 +33,7 @@ function runsAgent(task: Task): boolean {
     case "in_progress":
       return task.step.kind === "running";
     case "checks":
-      return task.session !== null;
+      return task.step.kind === "gate";
     default:
       return false;
   }

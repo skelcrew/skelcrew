@@ -347,6 +347,8 @@ function waitingFor(task: Task): Waiting["for"] | null {
   if (task.blocked !== null) return "retry";
   if (task.question !== null) return "answer";
   if (task.phase === "spec" && task.step.kind === "awaiting_approval") return "spec_approval";
-  if (task.phase === "checks" && task.step === "merge_approval") return "merge_approval";
+  if (task.phase === "checks" && task.step.kind === "awaiting_merge_approval") {
+    return "merge_approval";
+  }
   return null;
 }

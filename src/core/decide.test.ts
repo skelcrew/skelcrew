@@ -54,7 +54,7 @@ function agentOf(task: Task | null): SessionId {
     if ((task.phase === "spec" || task.phase === "in_progress") && task.step.kind === "running") {
       return task.step.session;
     }
-    if (task.phase === "checks" && task.session !== null) return task.session;
+    if (task.phase === "checks" && task.step.kind === "gate") return task.step.session;
   }
   return SessionId.parse("nobody");
 }
@@ -66,11 +66,9 @@ function awaited(task: Task | null): number {
     case "spec":
     case "ready":
     case "in_progress":
-      return "request" in task.step ? task.step.request : 0;
     case "checks":
-      return task.request ?? 0;
     case "done":
-      return task.reverting?.request ?? 0;
+      return "request" in task.step ? task.step.request : 0;
     default:
       return 0;
   }
