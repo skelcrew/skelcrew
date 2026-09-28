@@ -329,7 +329,7 @@ describe("submit_spec", () => {
     });
   });
 
-  test("never makes the task Ready by itself when approval is required (invariant 1)", () => {
+  test("never makes the task Ready by itself when approval is required", () => {
     expect(run(...awaitingApproval).phase).toBe("spec");
   });
 
@@ -1335,7 +1335,7 @@ describe("revert", () => {
   test("is rejected for a task that isn't done", () => {
     expect(send(run(...inProgress), revert("Broken."))).toEqual({
       ok: false,
-      rejection: { input: "revert", reason: "revert doesn't apply to #12 in In progress." },
+      rejection: { input: "revert", reason: "#12 is in In progress, so it can't take a revert." },
     });
   });
 });
@@ -1363,19 +1363,19 @@ describe("change_project", () => {
     });
   });
 
-  test("is rejected for a Done task, which only takes a revert (invariant 17)", () => {
+  test("is rejected for a Done task, which only takes a revert", () => {
     expect(send(run(...done), changeProject(reports))).toEqual({
       ok: false,
       rejection: {
         input: "change_project",
-        reason: "change_project doesn't apply to #12 in Done.",
+        reason: "#12 is in Done, so it can't take a project change.",
       },
     });
   });
 });
 
 describe("external_move", () => {
-  test("is always rejected: a move in another tool is only a request (invariant 3)", () => {
+  test("is always rejected: a move in another tool is only a request", () => {
     const moved: Input = { by: "plugin", type: "external_move", to: "Done" };
     expect(send(run(...inProgress), moved)).toEqual({
       ok: false,
@@ -1391,7 +1391,10 @@ describe("an input in the wrong phase", () => {
   test("is rejected with the phase it doesn't fit", () => {
     expect(send(run(...specRunning), approveMerge)).toEqual({
       ok: false,
-      rejection: { input: "approve_merge", reason: "approve_merge doesn't apply to #12 in Spec." },
+      rejection: {
+        input: "approve_merge",
+        reason: "#12 is in Spec, so it can't take a merge approval.",
+      },
     });
   });
 });

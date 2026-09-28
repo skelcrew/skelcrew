@@ -11,6 +11,7 @@ import {
   agentUnderWay,
   awaitedRequest,
   heldWorktree,
+  inputNames,
   phaseNames,
   runningSession,
   type TaskIn,
@@ -125,7 +126,8 @@ function create(
 // A worktree or agent the task isn't waiting for: its request number isn't
 // the one the task's step records. For example, a worktree that finished
 // after the task was dropped. It is cleaned up and nothing is recorded, so
-// no worktree or agent is left behind (invariant 13). Null if the task is
+// no worktree or agent is left behind ("Nothing gets lost" in
+// docs/invariants.md). Null if the task is
 // waiting for it.
 //
 // A reply repeated for the agent or worktree the task already holds is
@@ -179,13 +181,15 @@ function inAnyPhase(task: Task, input: AnyPhaseInput, ctx: Context): Decision {
       if (task.blocked === null) return reject(`#${task.id} isn't blocked.`);
       return accept([{ type: "task.unblocked" }]);
 
-    // Moves in other tools are requests, never obeyed (invariant 3).
+    // Moves in other tools are requests, never obeyed ("Outside moves are
+    // requests" in docs/invariants.md).
     case "external_move":
       return reject(
         `Tasks only move through Skelcrew. The move to ${input.to} in the other tool was ignored.`,
       );
 
-    // A Done task only takes a revert (invariant 17).
+    // A Done task only takes a revert ("Dropped is final" in
+    // docs/invariants.md).
     case "change_project": {
       if (task.phase === "done") return wrongPhase(task, input, ctx);
       const missing = unknownProject(input.project, ctx);
@@ -755,5 +759,7 @@ function isBlank(text: string): boolean {
 }
 
 function wrongPhase(task: Task, input: Input, ctx: Context): Decision {
-  return ctx.reject(`${input.type} doesn't apply to #${task.id} in ${phaseNames[task.phase]}.`);
+  return ctx.reject(
+    `#${task.id} is in ${phaseNames[task.phase]}, so it can't take ${inputNames[input.type]}.`,
+  );
 }

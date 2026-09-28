@@ -2,7 +2,7 @@
 // decide, the scheduler, the simulator and the tests all read tasks through
 // these, so a question about a task has one answer.
 
-import type { Phase, SessionId, Task } from "./types";
+import type { Input, Phase, SessionId, Task } from "./types";
 
 // A task in one phase, for example TaskIn<"checks">.
 export type TaskIn<P extends Phase> = Extract<Task, { phase: P }>;
@@ -16,6 +16,42 @@ export const phaseNames: Record<Phase, string> = {
   checks: "Checks",
   done: "Done",
   dropped: "Dropped",
+};
+
+// Inputs as the developer would say them, for rejection text: "#12 is in
+// Spec, so it can't take a merge approval."
+export const inputNames: Record<Input["type"], string> = {
+  add: "a new task",
+  change_project: "a project change",
+  request_spec: "a spec request",
+  provide_spec: "a written spec",
+  approve_spec: "a spec approval",
+  revise_spec: "a spec revision",
+  answer: "an answer",
+  approve_merge: "a merge approval",
+  revise_merge: "a merge revision",
+  retry: "a retry",
+  back_to_spec: "a move back to Spec",
+  drop: "a drop",
+  revert: "a revert",
+  submit_spec: "a submitted spec",
+  ask: "a question",
+  report_done: "a done report",
+  give_up: "an agent giving up",
+  issue_delegated: "a delegated issue",
+  external_move: "a move in another tool",
+  worktree_created: "a new worktree",
+  worktree_failed: "a failed worktree",
+  session_started: "a started agent",
+  session_failed: "an agent that didn't start",
+  gate_result: "a gate result",
+  merged: "a finished merge",
+  merge_failed: "a failed merge",
+  reverted: "a finished revert",
+  revert_failed: "a failed revert",
+  session_crashed: "an agent crash",
+  start: "a start",
+  usage: "a usage report",
 };
 
 // The session of the task's running agent, or null if none is running. In

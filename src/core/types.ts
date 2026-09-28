@@ -1,4 +1,4 @@
-// Core types for Skelcrew. Draft 4.
+// Core types for Skelcrew.
 //
 // Everything here is plain data. The core never reads the clock, the disk or
 // the network: time and IDs arrive inside inputs, and all side effects leave
@@ -94,9 +94,10 @@ export type SourceRef = {
 };
 
 // Facts about the task's branch, gathered by the shell from version control.
-// The core never runs version control itself; the shell attaches these when
-// the agent reports done. `commits` enforces "branch has commits"; `changedFiles` feeds the
-// critical path check.
+// What the branch holds when the agent reports done. The core never runs
+// version control itself, so the shell reads these and attaches them.
+// `commits` must be above zero. `changedFiles` is checked against the
+// critical paths.
 export type BranchFacts = {
   commits: number;
   changedFiles: string[];
