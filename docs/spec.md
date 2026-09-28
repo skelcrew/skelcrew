@@ -122,6 +122,8 @@ Inputs are everything that can happen to a task: an agent proposing done, a chec
 
 **No hidden inputs.** Time and IDs are passed in, never read inside the core, so every run is deterministic.
 
+**Every reply answers one request.** Each command that expects a reply (start an agent, create a worktree, run a gate, merge, revert) carries a request number from a counter on the task, and the reply must bring it back. A reply with another number is late or repeated: a late agent or worktree is stopped or removed, and any other late reply is refused. So a reply that arrives after the task has moved on can never finish, fail or take over the work the task is doing now. A crash report names the agent that crashed, for the same reason.
+
 **Testing:**
 
 - one test per transition, allowed and rejected
