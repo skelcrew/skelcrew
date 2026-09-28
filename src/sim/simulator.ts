@@ -193,10 +193,10 @@ export class Simulator implements Tools {
         const agent = this.agents.get(command.session);
         if (agent === undefined) return;
         if (agent.kind === "spec") {
-          this.submitSpec(agent.taskId);
+          this.submitSpec(agent.taskId, command.session);
           return;
         }
-        this.reportDone(agent.taskId);
+        this.reportDone(agent.taskId, command.session);
         return;
       }
 
@@ -283,35 +283,41 @@ export class Simulator implements Tools {
         this.reply(taskId, {
           by: "agent",
           type: "ask",
+          session,
           text: behaviour.specQuestion,
           options: ["Yes", "No"],
         });
         return;
       }
-      this.submitSpec(taskId);
+      this.submitSpec(taskId, session);
       return;
     }
 
     if (behaviour.giveUp) {
-      this.reply(taskId, { by: "agent", type: "give_up", message: "I'm stuck." });
+      this.reply(taskId, { by: "agent", type: "give_up", session, message: "I'm stuck." });
       return;
     }
-    this.reportDone(taskId);
+    this.reportDone(taskId, session);
     return;
   }
 
-  private submitSpec(taskId: TaskId): void {
+  private submitSpec(taskId: TaskId, session: SessionId): void {
     const spec: Spec = {
       scope: `Build: ${this.task(taskId).title}.`,
       acceptance: ["It works as described."],
       openQuestions: [],
     };
-    this.reply(taskId, { by: "agent", type: "submit_spec", spec });
+    this.reply(taskId, { by: "agent", type: "submit_spec", session, spec });
   }
 
-  private reportDone(taskId: TaskId): void {
+  private reportDone(taskId: TaskId, session: SessionId): void {
     const changedFiles = this.behaviour(taskId).changedFiles ?? [`src/task-${taskId}.ts`];
-    this.reply(taskId, { by: "agent", type: "report_done", branch: { commits: 1, changedFiles } });
+    this.reply(taskId, {
+      by: "agent",
+      type: "report_done",
+      session,
+      branch: { commits: 1, changedFiles },
+    });
   }
 
   // ---------------------------------------------------------------------------

@@ -292,11 +292,17 @@ export type HumanInput =
 
 // Agents can only report and ask. Each of these is a proposal: decide still
 // checks it against the task's phase and the contracts.
-export type AgentInput =
+//
+// `session` says which agent sent it. The daemon sets it from the agent's
+// identity, never the agent itself. Only the task's current agent is heard,
+// so a report from one it replaced can't stop the new one or resubmit old
+// work.
+export type AgentInput = { session: SessionId } & (
   | { type: "submit_spec"; spec: Spec }
   | { type: "ask"; text: string; options: string[] }
   | { type: "report_done"; branch: BranchFacts } // shell attaches branch facts
-  | { type: "give_up"; message: string };
+  | { type: "give_up"; message: string }
+);
 
 // Plugin inputs are either results of commands the core sent, or signals
 // from outside. Signals are requests: an issue dragged to Done becomes
