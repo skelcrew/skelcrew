@@ -37,7 +37,7 @@ the state machine, the gates, the merge policy and revert. They live in `src/cor
   commands. The same inputs must always give the same result.
 - **Strict TypeScript.** No `any`, no `!` to silence a possible null, no `as` casts. The
   tsconfig has `strict`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` on.
-- **Check every outside input** with Zod: plugin input, MCP messages, config and replies
+- **Check every outside input** with Zod: plugin input, CLI requests, config and replies
   from outside services.
 - **Errors are values in the core.** Functions return a result that says what failed. They
   do not throw.

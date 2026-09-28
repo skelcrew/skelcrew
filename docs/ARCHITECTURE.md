@@ -12,16 +12,17 @@ Parts marked _planned_ are designed in the spec but not built yet.
 Skelcrew moves a task from an idea to merged code. A small, pure **core** decides every
 change to a task. Around it, a **daemon** carries out what the core decides: it starts
 agents, creates git worktrees and runs checks. Then it reports the results back to the
-core as new inputs. **Clients** like the CLI talk to the daemon. **Plugins** connect it to
-other tools, like Claude Code, git and GitHub.
+core as new inputs. Everything talks to the daemon through the `skelcrew` **CLI**: you from
+the TUI or from your own harness, and the agents. **Plugins** connect it to other tools,
+like Claude Code, git and GitHub.
 
 ```
-            you                    agents
-             │                       │
-        CLI, TUI (planned)     MCP server (planned)
-             │                       │
-             └────────►  daemon  ◄───┘          plugins (planned):
-                     (planned)   ◄────────────  git, sessions, GitHub…
+     you, in the TUI    you, in your harness       agents
+            │                   │                    │
+            └──────────►  skelcrew CLI (planned)  ◄──┘
+                                │
+                             daemon  ◄────────────  plugins (planned):
+                           (planned)                git, sessions, GitHub…
                         │  ▲
                  input  │  │  events + commands
                         ▼  │
@@ -34,8 +35,8 @@ other tools, like Claude Code, git and GitHub.
 
 An example: the agent working on task #12 says it's done.
 
-1. **The agent reports.** It calls `report_done` through the MCP server. The daemon adds
-   facts from git: 3 commits, and one changed file, `src/reports/export.ts`.
+1. **The agent reports.** It runs `skelcrew done` through the CLI. The daemon adds facts
+   from git: 3 commits, and one changed file, `src/reports/export.ts`.
 2. **The daemon wraps it.** It puts the input in an _envelope_ with the task number and
    the current time: `{ taskId: 12, at: 1727…, input: { by: "agent", type: "report_done", … } }`.
    The core never reads the clock, so the time has to come in with the input.
@@ -76,8 +77,9 @@ task. That's how "prompts propose, the core decides" is enforced.
 - **Two functions per thing.** `decideTask` judges and `evolveTask` applies. Replaying the
   log only runs `evolveTask`, so old events are never judged again by rules that have
   changed since. This is the decider pattern from event sourcing.
-- **Inputs are grouped by who sends them:** human, agent, plugin, system. The MCP server
-  can only build agent inputs. So an agent has no way to even express "approve this spec".
+- **Inputs are grouped by who sends them:** human, agent, plugin, system. The daemon marks
+  each CLI call with who made it, and a call from an agent can only become an agent
+  input. So an agent has no way to even express "approve this spec".
 - **Commands are how the core touches the world without doing it.** `create_worktree`,
   `start_develop_session`, `merge` and so on. The daemon carries them out, and the results
   come back as inputs. In tests, a scripted reply stands in for each one.
@@ -142,10 +144,12 @@ build step 2 onwards.
 - **The daemon** (`skelcrew serve`) holds all state. It owns the SQLite database, calls the
   core, carries out commands, and runs the local checks. The checks are part of the
   daemon, not a plugin, because running them is enforcing the gates.
-- **The MCP server** is how agents report progress and ask questions. Everything an agent
-  sends is checked with Zod before it reaches the core.
-- **Clients** (the CLI first, a TUI later) talk to the daemon over a local socket. They
-  hold no state.
+- **The CLI** is the one way in, for you and for agents. Typing `skelcrew` opens the TUI,
+  and any command starts the daemon if it isn't running. Everything sent through it is
+  checked with Zod before it reaches the core. Clients hold no state.
+- **Two ways to work:** the TUI, and your own harness through skills that call the CLI.
+  Agents run in the background, started by the daemon, or attended, started by you in
+  your harness. The spec's "Who does the work" section describes both.
 - **Plugins** connect to other tools: the session runner, git, work sources like GitHub
   Issues, inbox surfaces like notifications. They bring information in and carry work
   out, but never change the rules.
