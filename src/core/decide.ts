@@ -293,14 +293,12 @@ function inSpec(task: TaskIn<"spec">, input: Input, ctx: Context): Decision {
 
   switch (input.type) {
     case "start": {
-      const refused = cantStart(task, ctx);
-      if (refused) return reject(refused);
-      const capped = safetyCapBlock(task, task.usage, ctx);
-      if (capped) return accept([capped]);
-      return accept(
-        [{ type: "task.dispatch_started", request: next(task) }],
-        [{ type: "start_spec_session", taskId: task.id, request: next(task), note: task.note }],
-      );
+      return startAgent(task, ctx, {
+        type: "start_spec_session",
+        taskId: task.id,
+        request: next(task),
+        note: task.note,
+      });
     }
 
     case "session_started":
@@ -352,14 +350,12 @@ function inReady(task: TaskIn<"ready">, input: Input, ctx: Context): Decision {
   switch (input.type) {
     // Each start is a new build, and the build number names its branch.
     case "start": {
-      const refused = cantStart(task, ctx);
-      if (refused) return reject(refused);
-      const capped = safetyCapBlock(task, task.usage, ctx);
-      if (capped) return accept([capped]);
-      return accept(
-        [{ type: "task.dispatch_started", request: next(task) }],
-        [{ type: "create_worktree", taskId: task.id, request: next(task), build: task.builds + 1 }],
-      );
+      return startAgent(task, ctx, {
+        type: "create_worktree",
+        taskId: task.id,
+        request: next(task),
+        build: task.builds + 1,
+      });
     }
 
     case "worktree_created":
@@ -399,14 +395,7 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
     // worktree, told what failed last, what you asked for, and why the last
     // agent was stopped.
     case "start": {
-      const refused = cantStart(task, ctx);
-      if (refused) return reject(refused);
-      const capped = safetyCapBlock(task, task.usage, ctx);
-      if (capped) return accept([capped]);
-      return accept(
-        [{ type: "task.dispatch_started", request: next(task) }],
-        [startDevelop(task, worktree, task.brief)],
-      );
+      return startAgent(task, ctx, startDevelop(task, worktree, task.brief));
     }
 
     case "session_started":
@@ -597,6 +586,21 @@ function acceptSpec(
   );
 }
 
+// The scheduler's start. It is refused if the task can't take a slot, and
+// blocks the task if it is over its safety cap. Otherwise the task records
+// the request and sends the command that starts its agent or worktree.
+function startAgent(
+  task: TaskIn<"spec" | "ready" | "in_progress">,
+  ctx: Context,
+  command: Command,
+): Decision {
+  const refused = cantStart(task, ctx);
+  if (refused) return ctx.reject(refused);
+  const capped = safetyCapBlock(task, task.usage, ctx);
+  if (capped) return ctx.accept([capped]);
+  return ctx.accept([{ type: "task.dispatch_started", request: next(task) }], [command]);
+}
+
 // Why the scheduler's start is refused, or null if the task may start. The
 // scheduler should never ask for these, but decide keeps the final say.
 function cantStart(task: TaskIn<"spec" | "ready" | "in_progress">, ctx: Context): string | null {
@@ -656,15 +660,11 @@ function failedRound(
 }
 
 // The commands that stop the task's agent and remove its worktree, for a
-// task leaving its phase for good. A worktree or agent still being created
+// task leaving its phase for good. That is what a block stops, plus the
+// worktree a blocked task keeps for its retry. A worktree or agent still being created
 // is cleaned up when its late reply arrives.
 function leavePhase(task: Task): Command[] {
-  const commands: Command[] = [];
-  const session = runningSession(task);
-  if (session !== null) commands.push(stopSession(session));
-  if (task.phase === "ready" && task.step.kind === "starting_session") {
-    commands.push(removeWorktree(task.step.worktree));
-  }
+  const commands = stopForBlock(task);
   if (task.phase === "in_progress" || task.phase === "checks") {
     commands.push(removeWorktree(task.worktree));
   }
