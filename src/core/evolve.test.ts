@@ -829,3 +829,29 @@ describe("a retry in In progress", () => {
     });
   });
 });
+
+describe("the reason for the last block", () => {
+  const gaveUp = { kind: "agent_gave_up" as const, message: "Need database credentials" };
+
+  test("is kept after a retry, for the next agent", () => {
+    const task = replay(
+      ...inProgress,
+      { type: "task.blocked", reason: gaveUp },
+      { type: "task.unblocked" },
+    );
+    expect(task).toMatchObject({ phase: "in_progress", blocked: null, lastBlock: gaveUp });
+  });
+
+  test("is cleared once the agent reports done", () => {
+    const task = replay(
+      ...inProgress,
+      { type: "task.blocked", reason: gaveUp },
+      { type: "task.unblocked" },
+      { type: "task.dispatch_started" },
+      { type: "task.dispatched", session },
+      { type: "task.done_reported", branch: branchFacts, gate: "local" },
+      { type: "task.gate_failed", failure: localFailed },
+    );
+    expect(task).toMatchObject({ phase: "in_progress", lastBlock: null });
+  });
+});

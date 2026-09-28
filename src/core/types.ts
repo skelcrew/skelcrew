@@ -131,6 +131,9 @@ export type PhaseState =
       // Your note from sending a merge back, for the next agent. Kept until
       // the agent reports done again.
       note: string | null;
+      // Why the task was last blocked, kept after a retry so the next agent
+      // knows why the last one stopped. Kept until the agent reports done.
+      lastBlock: BlockReason | null;
     }
   | {
       phase: "checks";
@@ -416,6 +419,9 @@ export type Command =
       lastFailure: Failure | null;
       // Set after you send a merge back: what you asked for.
       note: string | null;
+      // Set after a retry: why the last agent was stopped, such as giving up
+      // with "Need database credentials".
+      lastBlock: BlockReason | null;
     }
   | { type: "send_to_session"; session: SessionId; text: string }
   | { type: "stop_session"; session: SessionId }
