@@ -15,15 +15,15 @@
 {"type":"task.dispatch_started","request":2,"v":1,"taskId":1,"at":14000}
 {"type":"task.worktree_created","worktree":{"path":"/sim/worktrees/1-1","branch":"task/1-build-1"},"request":3,"v":1,"taskId":1,"at":15000}
 {"type":"task.dispatched","session":"session-3","v":1,"taskId":1,"at":16000}
-{"type":"task.done_reported","branch":{"commits":1,"changedFiles":["src/task-1.ts"]},"gate":"local","request":4,"v":1,"taskId":1,"at":17000}
+{"type":"task.done_reported","branch":{"head":"1eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","commits":1,"changedFiles":["src/task-1.ts"]},"gate":"local","request":4,"v":1,"taskId":1,"at":17000}
 {"type":"task.gate_failed","failure":{"step":"local","summary":"The local gate failed."},"v":1,"taskId":1,"at":18000}
-{"type":"task.done_reported","branch":{"commits":1,"changedFiles":["src/task-1.ts"]},"gate":"local","request":5,"v":1,"taskId":1,"at":19000}
+{"type":"task.done_reported","branch":{"head":"2eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","commits":1,"changedFiles":["src/task-1.ts"]},"gate":"local","request":5,"v":1,"taskId":1,"at":19000}
 {"type":"task.gate_failed","failure":{"step":"local","summary":"The local gate failed."},"v":1,"taskId":1,"at":20000}
 {"type":"task.blocked","reason":{"kind":"out_of_attempts","failure":{"step":"local","summary":"The local gate failed."}},"v":1,"taskId":1,"at":20000}
 {"type":"task.unblocked","v":1,"taskId":1,"at":22000}
 {"type":"task.dispatch_started","request":6,"v":1,"taskId":1,"at":23000}
 {"type":"task.dispatched","session":"session-4","v":1,"taskId":1,"at":24000}
-{"type":"task.done_reported","branch":{"commits":1,"changedFiles":["src/task-1.ts"]},"gate":"local","request":7,"v":1,"taskId":1,"at":25000}
+{"type":"task.done_reported","branch":{"head":"3eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","commits":1,"changedFiles":["src/task-1.ts"]},"gate":"local","request":7,"v":1,"taskId":1,"at":25000}
 {"type":"task.gate_passed","gate":"local","next":{"gate":"review","request":8},"v":1,"taskId":1,"at":26000}
 {"type":"task.gate_passed","gate":"review","next":null,"v":1,"taskId":1,"at":27000}
 {"type":"task.checks_passed","v":1,"taskId":1,"at":27000}
@@ -33,7 +33,7 @@
 {"type":"task.dispatch_started","request":2,"v":1,"taskId":2,"at":31000}
 {"type":"task.worktree_created","worktree":{"path":"/sim/worktrees/2-1","branch":"task/2-build-1"},"request":3,"v":1,"taskId":2,"at":32000}
 {"type":"task.dispatched","session":"session-6","v":1,"taskId":2,"at":33000}
-{"type":"task.done_reported","branch":{"commits":1,"changedFiles":["src/auth/login.ts"]},"gate":"local","request":4,"v":1,"taskId":2,"at":34000}
+{"type":"task.done_reported","branch":{"head":"4eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","commits":1,"changedFiles":["src/auth/login.ts"]},"gate":"local","request":4,"v":1,"taskId":2,"at":34000}
 {"type":"task.gate_passed","gate":"local","next":{"gate":"review","request":5},"v":1,"taskId":2,"at":35000}
 {"type":"task.gate_passed","gate":"review","next":null,"v":1,"taskId":2,"at":36000}
 {"type":"task.checks_passed","v":1,"taskId":2,"at":36000}
@@ -42,7 +42,7 @@
 {"type":"task.merge_failed","failure":{"step":"merge","summary":"Conflicts with main."},"v":1,"taskId":2,"at":39000}
 {"type":"task.dispatch_started","request":7,"v":1,"taskId":2,"at":40000}
 {"type":"task.dispatched","session":"session-7","v":1,"taskId":2,"at":41000}
-{"type":"task.done_reported","branch":{"commits":1,"changedFiles":["src/auth/login.ts"]},"gate":"local","request":8,"v":1,"taskId":2,"at":42000}
+{"type":"task.done_reported","branch":{"head":"5eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","commits":1,"changedFiles":["src/auth/login.ts"]},"gate":"local","request":8,"v":1,"taskId":2,"at":42000}
 {"type":"task.gate_passed","gate":"local","next":{"gate":"review","request":9},"v":1,"taskId":2,"at":43000}
 {"type":"task.gate_passed","gate":"review","next":null,"v":1,"taskId":2,"at":44000}
 {"type":"task.checks_passed","v":1,"taskId":2,"at":44000}

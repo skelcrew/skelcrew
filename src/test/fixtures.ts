@@ -26,6 +26,8 @@ export const spec: Spec = {
 export const session = SessionId.parse("session-1");
 export const worktree = { path: "/repo/.worktrees/12", branch: "task/12-csv-export" };
 export const commit = CommitSha.parse("a".repeat(40));
+// The commit at a branch's tip when its agent reports done.
+export const head = CommitSha.parse("d".repeat(40));
 
 // The session of the task's running agent, the way the daemon names the
 // sender of an agent's report. "nobody" when no agent is running.

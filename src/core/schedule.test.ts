@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { config as base } from "../test/fixtures";
+import { config as base, head } from "../test/fixtures";
 import { evolveTask } from "./evolve";
 import { ProjectId, SessionId, TaskId } from "./ids";
 import { schedule } from "./schedule";
@@ -63,7 +63,7 @@ const awaitingMerge: EventBody[] = [
   ...developRunning,
   {
     type: "task.done_reported",
-    branch: { commits: 1, changedFiles: ["a.ts"] },
+    branch: { head, commits: 1, changedFiles: ["a.ts"] },
     gate: "local",
     request: 4,
   },
@@ -123,7 +123,7 @@ describe("schedule", () => {
       ...developRunning,
       {
         type: "task.done_reported",
-        branch: { commits: 1, changedFiles: ["a.ts"] },
+        branch: { head, commits: 1, changedFiles: ["a.ts"] },
         gate: "local",
         request: 4,
       },

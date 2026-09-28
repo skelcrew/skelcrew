@@ -66,6 +66,7 @@ const worktree: z.ZodType<Worktree> = z.strictObject({ path: z.string(), branch:
 const sourceRef: z.ZodType<SourceRef> = z.strictObject({ label: z.string(), url: z.string() });
 
 const branchFacts: z.ZodType<BranchFacts> = z.strictObject({
+  head: CommitSha,
   commits: z.number().int().min(0),
   changedFiles: z.array(z.string()),
 });
@@ -215,8 +216,8 @@ const commands = {
   start_develop_session: { taskId: TaskId, request, worktree, spec, brief },
   send_to_session: { session: SessionId, text: z.string() },
   stop_session: { session: SessionId },
-  run_gate: { taskId: TaskId, request, gate: gateName, worktree },
-  merge: { taskId: TaskId, request, worktree },
+  run_gate: { taskId: TaskId, request, gate: gateName, worktree, head: CommitSha },
+  merge: { taskId: TaskId, request, worktree, head: CommitSha },
   remove_worktree: { worktree },
   revert: { taskId: TaskId, request, commit: CommitSha },
 } satisfies Record<Command["type"], z.ZodRawShape>;

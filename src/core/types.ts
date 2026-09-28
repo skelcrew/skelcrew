@@ -95,12 +95,17 @@ export type SourceRef = {
 
 // Facts about the task's branch, gathered by the shell from version control.
 // What the branch holds when the agent reports done. The core never runs
-// version control itself, so the shell reads these and attaches them.
-// `commits` must be above zero. `changedFiles` is checked against the
-// critical paths.
+// version control itself, so the daemon reads these from git when the
+// report arrives. The agent never supplies them.
+//
+// `head` is the commit at the branch's tip. The gates test exactly that
+// commit, the critical paths are checked against its files, and the merge
+// lands exactly that commit. So anything the agent commits after its
+// report never merges under checks that didn't see it.
 export type BranchFacts = {
-  commits: number;
-  changedFiles: string[];
+  head: CommitSha;
+  commits: number; // must be above zero
+  changedFiles: string[]; // checked against the critical paths
 };
 
 // Data that only exists in some phases. Each phase carries exactly what it
@@ -459,15 +464,22 @@ export type Command =
     }
   | { type: "send_to_session"; session: SessionId; text: string }
   | { type: "stop_session"; session: SessionId }
-  | { type: "run_gate"; taskId: TaskId; request: number; gate: GateName; worktree: Worktree }
-  // The shell merges one task at a time. It brings the branch up to date
-  // with main, runs the local checks again, then squash-merges. It answers
-  // with "merged" or "merge_failed".
+  | {
+      type: "run_gate";
+      taskId: TaskId;
+      request: number;
+      gate: GateName;
+      worktree: Worktree;
+      head: CommitSha; // the gate tests this commit, not whatever the branch holds now
+    }
+  // The shell merges one task at a time. It brings `head` up to date with
+  // main, runs the local checks again, then squash-merges. Commits after
+  // `head` stay out. It answers with "merged" or "merge_failed".
   //
   // Why in the shell: decide sees one task at a time, so it cannot stop two
   // tasks merging at once. Only the shell sees all merges. Without this
   // step, two tasks that each pass alone could break main together.
-  | { type: "merge"; taskId: TaskId; request: number; worktree: Worktree }
+  | { type: "merge"; taskId: TaskId; request: number; worktree: Worktree; head: CommitSha }
   // The shell first commits any uncommitted changes to the worktree's
   // branch, so removing a worktree never loses work.
   | { type: "remove_worktree"; worktree: Worktree }

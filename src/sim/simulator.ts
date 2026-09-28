@@ -66,6 +66,7 @@ export class Simulator implements Tools {
   private readonly asked = new Set<TaskId>();
   private now = 0;
   private counter = 0;
+  private heads = 0;
 
   constructor(
     readonly config: Config,
@@ -319,7 +320,7 @@ export class Simulator implements Tools {
       by: "agent",
       type: "report_done",
       session,
-      branch: { commits: 1, changedFiles },
+      branch: { head: this.head(), commits: 1, changedFiles },
     });
   }
 
@@ -339,6 +340,13 @@ export class Simulator implements Tools {
   private next(): number {
     this.counter += 1;
     return this.counter;
+  }
+
+  // Branch tips have their own counter, so adding them left every other ID
+  // as it was. "1eee…", "2eee…": never the same as a zero-padded commit.
+  private head(): CommitSha {
+    this.heads += 1;
+    return CommitSha.parse(this.heads.toString(16).padEnd(40, "e"));
   }
 
   private commit(): CommitSha {

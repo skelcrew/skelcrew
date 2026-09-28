@@ -180,6 +180,8 @@ class Checker {
   gatesPassed = new Set<string>();
   checksPassed = false;
   mergeStarted = false;
+  // The commit named by the last report of done.
+  reportedHead: CommitSha | null = null;
 
   constructor(
     readonly id: TaskId,
@@ -200,15 +202,28 @@ class Checker {
         by: "agent",
         type: "report_done",
         session,
-        branch: { commits: 2, changedFiles: ["src/export.ts"] },
+        branch: {
+          head: CommitSha.parse("e".repeat(40)),
+          commits: 2,
+          changedFiles: ["src/export.ts"],
+        },
       },
       {
         by: "agent",
         type: "report_done",
         session,
-        branch: { commits: 1, changedFiles: ["src/auth/login.ts"] },
+        branch: {
+          head: CommitSha.parse("f".repeat(40)),
+          commits: 1,
+          changedFiles: ["src/auth/login.ts"],
+        },
       },
-      { by: "agent", type: "report_done", session, branch: { commits: 0, changedFiles: [] } },
+      {
+        by: "agent",
+        type: "report_done",
+        session,
+        branch: { head: CommitSha.parse("0".repeat(40)), commits: 0, changedFiles: [] },
+      },
       { by: "agent", type: "give_up", session, message: "Stuck." },
     ]);
     for (const sent of this.sent) {
@@ -337,6 +352,14 @@ class Checker {
       }
     }
 
+    // 6. The checks and the merge cover the exact commit the last report of
+    // done named, never a later one.
+    for (const command of commands) {
+      if (command.type === "run_gate" || command.type === "merge") {
+        expect<CommitSha | null>(command.head).toBe(this.reportedHead);
+      }
+    }
+
     this.track(input, commands);
     this.checkTask();
   }
@@ -363,6 +386,7 @@ class Checker {
         this.gatesPassed.clear();
         this.checksPassed = false;
         this.mergeStarted = false;
+        this.reportedHead = event.branch.head;
         break;
 
       case "task.gate_passed":
