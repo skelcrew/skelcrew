@@ -11,8 +11,8 @@ import * as fc from "fast-check";
 import { decideTask } from "../core/decide";
 import { CommitSha, SessionId, TaskId } from "../core/ids";
 import type { Command, Config, Input, Spec, Task, TaskEvent } from "../core/types";
-import { EventStore, type Starts } from "../store/store";
-import { type EventLog, Loop, type ReadableLog, type Tools } from "./loop";
+import { EventStore } from "../store/store";
+import { type EventLog, Loop, type ReadableLog, type Starts, type Tools } from "./loop";
 
 const config: Config = {
   gates: ["local"],
