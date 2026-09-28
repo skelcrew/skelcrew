@@ -432,10 +432,11 @@ describe("worktree_created", () => {
     });
   });
 
-  test("is rejected when no worktree was asked for", () => {
+  test("removes a worktree the task isn't waiting for, recording nothing", () => {
     expect(send(run(...inReady), worktreeCreated)).toEqual({
-      ok: false,
-      rejection: { input: "worktree_created", reason: "#12 isn't creating a worktree." },
+      ok: true,
+      events: [],
+      commands: [{ type: "remove_worktree", worktree }],
     });
   });
 });
@@ -465,10 +466,11 @@ describe("session_started in Ready", () => {
     });
   });
 
-  test("is rejected before the worktree exists", () => {
+  test("stops an agent the task isn't waiting for, recording nothing", () => {
     expect(send(run(...creatingWorktree), developStarted)).toEqual({
-      ok: false,
-      rejection: { input: "session_started", reason: "#12 isn't starting a develop agent." },
+      ok: true,
+      events: [],
+      commands: [{ type: "stop_session", session: developSession }],
     });
   });
 });
@@ -969,5 +971,147 @@ describe("usage", () => {
       const decision = send(run(...inputs), usage(300_000));
       expect(decision.ok && decision.events.map((e) => e.type)).toEqual(["task.usage_recorded"]);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Leaving a phase
+// ---------------------------------------------------------------------------
+
+const drop: Input = { by: "human", type: "drop" };
+const sendBackToSpec = (note: string): Input => ({ by: "human", type: "send_back_to_spec", note });
+const sessionFailed: Input = { by: "plugin", type: "session_failed", message: "herdr crashed" };
+
+describe("drop", () => {
+  test("stops a running spec agent", () => {
+    expect(send(run(...specRunning), drop)).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.dropped" })],
+      commands: [{ type: "stop_session", session }],
+    });
+  });
+
+  test("removes the worktree of a develop agent that is still starting", () => {
+    const decision = send(run(...startingDevelop), drop);
+    expect(decision.ok && decision.commands).toEqual([{ type: "remove_worktree", worktree }]);
+  });
+
+  test("stops the develop agent and removes the worktree in In progress", () => {
+    const decision = send(run(...inProgress), drop);
+    expect(decision.ok && decision.commands).toEqual([
+      { type: "stop_session", session: developSession },
+      { type: "remove_worktree", worktree },
+    ]);
+  });
+
+  test("only removes the worktree of a blocked task, whose agent is already stopped", () => {
+    const decision = send(run(...inProgress, giveUp), drop);
+    expect(decision.ok && decision.commands).toEqual([{ type: "remove_worktree", worktree }]);
+  });
+
+  test("stops the agent and removes the worktree in Checks", () => {
+    const decision = send(run(...awaitingMerge), drop);
+    expect(decision.ok && decision.commands).toEqual([
+      { type: "stop_session", session: developSession },
+      { type: "remove_worktree", worktree },
+    ]);
+  });
+
+  test("is rejected while merging", () => {
+    expect(send(run(...merging), drop)).toEqual({
+      ok: false,
+      rejection: { input: "drop", reason: "#12 is merging. Wait until the merge finishes." },
+    });
+  });
+
+  test("is rejected for a Done task", () => {
+    expect(send(run(...merging, merged), drop)).toEqual({
+      ok: false,
+      rejection: { input: "drop", reason: "#12 is done. Use revert to undo it." },
+    });
+  });
+});
+
+describe("late replies for a dropped task", () => {
+  test("remove a worktree that finished after the drop", () => {
+    expect(send(run(...creatingWorktree, drop), worktreeCreated)).toEqual({
+      ok: true,
+      events: [],
+      commands: [{ type: "remove_worktree", worktree }],
+    });
+  });
+
+  test("stop an agent that started after the drop", () => {
+    expect(send(run(...inSpec, start, drop), sessionStarted)).toEqual({
+      ok: true,
+      events: [],
+      commands: [{ type: "stop_session", session }],
+    });
+  });
+});
+
+describe("send_back_to_spec", () => {
+  const note = "Split this into export and totals.";
+
+  test("takes a blocked task back to Spec and removes its worktree", () => {
+    expect(send(run(...inProgress, giveUp), sendBackToSpec(note))).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.spec_sent_back", note })],
+      commands: [{ type: "remove_worktree", worktree }],
+    });
+  });
+
+  test("stops the agent too when one is running", () => {
+    const decision = send(run(...awaitingMerge), sendBackToSpec(note));
+    expect(decision.ok && decision.commands).toEqual([
+      { type: "stop_session", session: developSession },
+      { type: "remove_worktree", worktree },
+    ]);
+  });
+
+  test("is rejected without a note", () => {
+    expect(send(run(...inProgress, giveUp), sendBackToSpec(""))).toEqual({
+      ok: false,
+      rejection: { input: "send_back_to_spec", reason: "A send-back needs a note." },
+    });
+  });
+
+  test("is rejected for a task that hasn't left Spec", () => {
+    expect(send(run(add), sendBackToSpec(note))).toEqual({
+      ok: false,
+      rejection: {
+        input: "send_back_to_spec",
+        reason: "#12 is in Idea. Only a task past Spec can be sent back to it.",
+      },
+    });
+  });
+});
+
+describe("a running agent crashing", () => {
+  test("blocks the task in In progress, keeping the worktree", () => {
+    expect(send(run(...inProgress), sessionFailed)).toEqual({
+      ok: true,
+      events: [
+        stamped({
+          type: "task.blocked",
+          reason: { kind: "session_failed", message: "herdr crashed" },
+        }),
+      ],
+      commands: [],
+    });
+  });
+
+  test("blocks the task in Spec", () => {
+    const decision = send(run(...specRunning), sessionFailed);
+    expect(decision.ok && decision.events.map((e) => e.type)).toEqual(["task.blocked"]);
+  });
+
+  test("blocks the task in Checks", () => {
+    const decision = send(run(...awaitingMerge), sessionFailed);
+    expect(decision.ok && decision.events.map((e) => e.type)).toEqual(["task.blocked"]);
+  });
+
+  test("changes nothing while merging, since the merge doesn't need the agent", () => {
+    expect(send(run(...merging), sessionFailed)).toEqual({ ok: true, events: [], commands: [] });
   });
 });
