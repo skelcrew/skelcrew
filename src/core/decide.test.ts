@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { decideTask } from "./decide";
 import { evolveTask } from "./evolve";
 import { CommitSha, ProjectId, SessionId, TaskId } from "./ids";
+import { awaitedRequest, runningSession } from "./task";
 import type {
   BlockReason,
   Config,
@@ -50,28 +51,12 @@ function send(task: Task | null, step: Step, withConfig: Config = config): Decis
 // The session of the task's running agent, the way the daemon names the
 // sender of an agent's report. "nobody" when no agent is running.
 function agentOf(task: Task | null): SessionId {
-  if (task !== null) {
-    if ((task.phase === "spec" || task.phase === "in_progress") && task.step.kind === "running") {
-      return task.step.session;
-    }
-    if (task.phase === "checks" && task.step.kind === "gate") return task.step.session;
-  }
-  return SessionId.parse("nobody");
+  return (task && runningSession(task)) ?? SessionId.parse("nobody");
 }
 
 // The request the task's current step waits on, or 0 if none.
 function awaited(task: Task | null): number {
-  if (task === null) return 0;
-  switch (task.phase) {
-    case "spec":
-    case "ready":
-    case "in_progress":
-    case "checks":
-    case "done":
-      return "request" in task.step ? task.step.request : 0;
-    default:
-      return 0;
-  }
+  return (task && awaitedRequest(task)) ?? 0;
 }
 
 // Sends each input in turn and applies the accepted events with evolve, the

@@ -5,7 +5,7 @@
 // Events that can happen in any phase come first. The rest are grouped by
 // the phase they apply in, one function per phase, in lifecycle order.
 
-import { phaseNames, type TaskIn } from "./phases";
+import { phaseNames, type TaskIn } from "./task";
 import type { Brief, EvolvedTask, EvolveTask, Failure, Spec, Task, TaskEvent } from "./types";
 
 const noUsage = { tokens: 0, ms: 0 };

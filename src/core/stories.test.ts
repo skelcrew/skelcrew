@@ -12,6 +12,7 @@ import { describe, expect, test } from "bun:test";
 import { decideTask } from "./decide";
 import { evolveTask } from "./evolve";
 import { CommitSha, type ProjectId, SessionId, TaskId } from "./ids";
+import { awaitedRequest, runningSession } from "./task";
 import type { BranchFacts, Command, Config, Input, Project, Spec, Task, TaskEvent } from "./types";
 
 const config: Config = {
@@ -57,33 +58,20 @@ const start: Input = { by: "system", type: "start" };
 // matches them.
 type Step = Input | ((task: Task | null) => Input);
 
+// The session of the task's running agent, the way the daemon names the
+// sender of an agent's report. "nobody" when no agent is running.
+function agentOf(task: Task | null): SessionId {
+  return (task && runningSession(task)) ?? SessionId.parse("nobody");
+}
+
+// The request the task's current step waits on, or 0 if none.
 function awaited(task: Task | null): number {
-  if (task === null) return 0;
-  switch (task.phase) {
-    case "spec":
-    case "ready":
-    case "in_progress":
-    case "checks":
-    case "done":
-      return "request" in task.step ? task.step.request : 0;
-    default:
-      return 0;
-  }
+  return (task && awaitedRequest(task)) ?? 0;
 }
 
 const started =
   (session: SessionId): Step =>
   (t) => ({ by: "plugin", type: "session_started", request: awaited(t), session });
-// Agent reports come from the task's current agent, as the daemon names it.
-function agentOf(task: Task | null): SessionId {
-  if (task !== null) {
-    if ((task.phase === "spec" || task.phase === "in_progress") && task.step.kind === "running") {
-      return task.step.session;
-    }
-    if (task.phase === "checks" && task.step.kind === "gate") return task.step.session;
-  }
-  return SessionId.parse("nobody");
-}
 const submitSpec: Step = (t) => ({ by: "agent", type: "submit_spec", session: agentOf(t), spec });
 const approveSpec: Input = { by: "human", type: "approve_spec" };
 const worktreeCreated: Step = (t) => ({

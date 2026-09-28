@@ -12,6 +12,7 @@ import { decideTask } from "./decide";
 import { evolveTask } from "./evolve";
 import { CommitSha, ProjectId, SessionId, TaskId } from "./ids";
 import { schedule } from "./schedule";
+import { awaitedRequest, heldWorktree, runningSession } from "./task";
 import type {
   Command,
   Config,
@@ -121,46 +122,9 @@ const choices = fc.array(choice, { minLength: 1, maxLength: 300, size: "max" });
 // Reading a task, the way the rules talk about it
 // ---------------------------------------------------------------------------
 
-// The agent the task has running, if any. In Checks the develop agent stays
-// open, so it counts.
-function runningSession(task: Task): Session | null {
-  switch (task.phase) {
-    case "spec":
-    case "in_progress":
-      return task.step.kind === "running" ? task.step.session : null;
-    case "checks":
-      return task.step.kind === "gate" ? task.step.session : null;
-    default:
-      return null;
-  }
-}
-
-function heldWorktree(task: Task): string | null {
-  if (task.phase === "ready" && task.step.kind === "starting_session")
-    return task.step.worktree.path;
-  if (task.phase === "in_progress" || task.phase === "checks") return task.worktree.path;
-  return null;
-}
-
-// An agent that has started and is running. Starts still in flight are
-// counted separately, the way the daemon counts them.
-function runsAgent(task: Task): boolean {
-  return runningSession(task) !== null;
-}
-
 // The request the task's current step waits on, or null if none.
 function awaited(task: Task | null): number | null {
-  if (task === null) return null;
-  switch (task.phase) {
-    case "spec":
-    case "ready":
-    case "in_progress":
-    case "checks":
-    case "done":
-      return "request" in task.step ? task.step.request : null;
-    default:
-      return null;
-  }
+  return task && awaitedRequest(task);
 }
 
 // The fields each phase carries, besides the ones every task has. A task
@@ -616,9 +580,9 @@ describe("the invariants", () => {
             }
             // 8. Never more than max_running agents at once.
             const inFlight = checkers.reduce((sum, c) => sum + c.startsInFlight, 0);
-            expect(tasks().filter(runsAgent).length + inFlight).toBeLessThanOrEqual(
-              config.maxRunning,
-            );
+            expect(
+              tasks().filter((t) => runningSession(t) !== null).length + inFlight,
+            ).toBeLessThanOrEqual(config.maxRunning);
           });
         },
       ),

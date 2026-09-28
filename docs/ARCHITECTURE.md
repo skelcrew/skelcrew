@@ -62,7 +62,7 @@ task. That's how "prompts propose, the core decides" is enforced.
 | --- | --- |
 | `types.ts` | Every type the core uses: tasks, phases, inputs, events, commands, config. Start here. |
 | `ids.ts` | Branded IDs (`TaskId`, `ProjectId`, `SessionId`, `CommitSha`), checked with Zod. A task number can't be passed where a project ID is expected. |
-| `phases.ts` | Phase names as you see them ("In progress"), and `TaskIn<"checks">`, the type of a task in one phase. |
+| `task.ts` | Questions about one task, answered once for everyone: which agent it runs, which request it waits on, which worktree it holds, and what it waits on you for (the inbox). Also phase names as you see them ("In progress") and `TaskIn<"checks">`, the type of a task in one phase. |
 | `contracts.ts` | Small checks that return pass, or fail with reasons: is the spec complete, which files are critical, are attempts left, is the task within its safety cap. |
 | `decide.ts` | `decideTask`: the rules for tasks. It takes one input and returns events and commands, or a rejection. |
 | `evolve.ts` | `evolveTask`: applies one event to a task. It holds no rules. It only applies what `decideTask` accepted. |

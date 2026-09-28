@@ -7,7 +7,17 @@
 // evolve, then small helpers.
 
 import { attemptsLeft, criticalFiles, specComplete, withinSafetyCap } from "./contracts";
-import { phaseNames, type TaskIn } from "./phases";
+import {
+  agentKind,
+  agentUnderWay,
+  awaitedRequest,
+  heldWorktree,
+  phaseNames,
+  runningSession,
+  type TaskIn,
+  waitingForAgent,
+  waitingForWorktree,
+} from "./task";
 import type {
   Brief,
   Command,
@@ -673,42 +683,8 @@ function stillMerging(task: Task): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Reading the task
+// Refusing inputs from the wrong sender
 // ---------------------------------------------------------------------------
-
-// The session of the task's running agent, or null if none is running. In
-// Checks the develop agent stays open, so it counts as running.
-function runningSession(task: Task): SessionId | null {
-  switch (task.phase) {
-    case "spec":
-    case "in_progress":
-      return task.step.kind === "running" ? task.step.session : null;
-    case "checks":
-      return task.step.kind === "gate" ? task.step.session : null;
-    default:
-      return null;
-  }
-}
-
-// Which agent a question would come from, or null if none is running.
-function agentKind(task: Task): "spec" | "develop" | null {
-  if (runningSession(task) === null) return null;
-  return task.phase === "spec" ? "spec" : "develop";
-}
-
-// An agent running or starting, or a worktree being created for one.
-function agentUnderWay(task: Task): boolean {
-  if (runningSession(task) !== null) return true;
-  switch (task.phase) {
-    case "spec":
-    case "in_progress":
-      return task.step.kind === "starting";
-    case "ready":
-      return task.step.kind !== "queued";
-    default:
-      return false;
-  }
-}
 
 // Why an agent's report is refused: it doesn't come from the task's current
 // agent. Null for a report that does, and for anything not from an agent.
@@ -720,58 +696,12 @@ function notTheAgent(task: Task, input: Input): string | null {
   return null;
 }
 
-// The request a task's current step waits on, or null if it waits on none.
-function awaitedRequest(task: Task): number | null {
-  switch (task.phase) {
-    case "spec":
-    case "ready":
-    case "in_progress":
-    case "checks":
-    case "done":
-      return "request" in task.step ? task.step.request : null;
-    default:
-      return null;
-  }
-}
-
 // Why a reply is refused: it answers a request the task isn't waiting on.
 function notWaitingFor(task: Task, request: number): string {
   const awaited = awaitedRequest(task);
   const now =
     awaited === null ? "isn't waiting on any request" : `is waiting on request ${awaited}`;
   return `This reply answers request ${request}, but #${task.id} ${now}.`;
-}
-
-// The path of the worktree the task holds, or null if it holds none.
-function heldWorktree(task: Task): string | null {
-  if (task.phase === "ready" && task.step.kind === "starting_session")
-    return task.step.worktree.path;
-  if (task.phase === "in_progress" || task.phase === "checks") return task.worktree.path;
-  return null;
-}
-
-// Waiting for the worktree of this request. A reply to an earlier request
-// is late, even while the task waits for a newer one.
-function waitingForWorktree(task: Task, request: number): boolean {
-  return (
-    task.phase === "ready" &&
-    task.step.kind === "creating_worktree" &&
-    task.step.request === request
-  );
-}
-
-// Waiting for the agent of this request. An agent started for an earlier
-// request, such as a spec agent whose task has since moved on, is late.
-function waitingForAgent(task: Task, request: number): boolean {
-  switch (task.phase) {
-    case "spec":
-    case "in_progress":
-      return task.step.kind === "starting" && task.step.request === request;
-    case "ready":
-      return task.step.kind === "starting_session" && task.step.request === request;
-    default:
-      return false;
-  }
 }
 
 // ---------------------------------------------------------------------------

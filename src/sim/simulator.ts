@@ -11,6 +11,7 @@
 // It is test machinery, not rules, so it lives outside the core.
 
 import { CommitSha, SessionId, TaskId } from "../core/ids";
+import { type WaitingOn, waitingOnYou } from "../core/task";
 import type {
   Command,
   Config,
@@ -39,7 +40,7 @@ export type Behaviour = {
 // Something a task waits on you for, like an inbox item.
 export type Waiting = {
   task: TaskId;
-  for: "spec_approval" | "merge_approval" | "answer" | "retry";
+  for: WaitingOn;
 };
 
 type Queued = { taskId: TaskId; input: Input };
@@ -136,7 +137,7 @@ export class Simulator implements Tools {
   waitingOnYou(): Waiting[] {
     const waiting: Waiting[] = [];
     for (const task of this.loop.tasks()) {
-      const why = waitingFor(task);
+      const why = waitingOnYou(task);
       if (why !== null) waiting.push({ task: task.id, for: why });
     }
     return waiting;
@@ -341,14 +342,4 @@ export class Simulator implements Tools {
   private commit(): CommitSha {
     return CommitSha.parse(this.next().toString(16).padStart(40, "0"));
   }
-}
-
-function waitingFor(task: Task): Waiting["for"] | null {
-  if (task.blocked !== null) return "retry";
-  if (task.question !== null) return "answer";
-  if (task.phase === "spec" && task.step.kind === "awaiting_approval") return "spec_approval";
-  if (task.phase === "checks" && task.step.kind === "awaiting_merge_approval") {
-    return "merge_approval";
-  }
-  return null;
 }
