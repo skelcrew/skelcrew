@@ -118,7 +118,12 @@ Tests sit next to the code: `decide.ts` and `decide.test.ts`.
   property fails, fast-check shrinks the sequence to the few inputs that break the rule.
   These tests have already found real bugs, such as a question that could never be
   answered.
-- **Golden stories** (_planned_). Whole lifecycles saved as inputs and expected events.
+- **Golden stories** (`stories.test.ts`). Whole lifecycles, one line per input: what was
+  sent, the events it caused, and the commands for the daemon. The happy path, a task
+  blocked and retried, a merge that waits for approval, and a revert. The full events of
+  each story are also saved in `__snapshots__/`, so any change to the shape of the event
+  log shows up in review. Update the snapshots only on purpose, with
+  `bun test --update-snapshots`.
 - **The simulator** (_planned_). It stands in for agents, git and plugins, so full
   lifecycles run in tests.
 

@@ -1,0 +1,622 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`golden stories happy path: from an idea to a merged commit 1`] = `
+[
+  {
+    "at": 1000,
+    "project": null,
+    "source": null,
+    "taskId": 12,
+    "title": "CSV export",
+    "type": "task.created",
+    "v": 1,
+  },
+  {
+    "at": 2000,
+    "taskId": 12,
+    "type": "task.spec_requested",
+    "v": 1,
+  },
+  {
+    "at": 3000,
+    "taskId": 12,
+    "type": "task.dispatch_started",
+    "v": 1,
+  },
+  {
+    "at": 4000,
+    "session": "spec-1",
+    "taskId": 12,
+    "type": "task.spec_session_started",
+    "v": 1,
+  },
+  {
+    "at": 5000,
+    "by": "agent",
+    "spec": {
+      "acceptance": [
+        "Clicking Export downloads a CSV of the visible rows.",
+      ],
+      "openQuestions": [],
+      "scope": "Add a CSV export button to the reports page.",
+    },
+    "taskId": 12,
+    "type": "task.specced",
+    "v": 1,
+  },
+  {
+    "at": 6000,
+    "taskId": 12,
+    "type": "task.ready",
+    "v": 1,
+  },
+  {
+    "at": 7000,
+    "taskId": 12,
+    "type": "task.dispatch_started",
+    "v": 1,
+  },
+  {
+    "at": 8000,
+    "taskId": 12,
+    "type": "task.worktree_created",
+    "v": 1,
+    "worktree": {
+      "branch": "task/12-csv-export",
+      "path": "/repo/.worktrees/12",
+    },
+  },
+  {
+    "at": 9000,
+    "session": "develop-1",
+    "taskId": 12,
+    "type": "task.dispatched",
+    "v": 1,
+  },
+  {
+    "at": 10000,
+    "branch": {
+      "changedFiles": [
+        "src/reports/export.ts",
+      ],
+      "commits": 3,
+    },
+    "gate": "local",
+    "taskId": 12,
+    "type": "task.done_reported",
+    "v": 1,
+  },
+  {
+    "at": 11000,
+    "gate": "local",
+    "next": "review",
+    "taskId": 12,
+    "type": "task.gate_passed",
+    "v": 1,
+  },
+  {
+    "at": 12000,
+    "gate": "review",
+    "next": null,
+    "taskId": 12,
+    "type": "task.gate_passed",
+    "v": 1,
+  },
+  {
+    "at": 12000,
+    "taskId": 12,
+    "type": "task.checks_passed",
+    "v": 1,
+  },
+  {
+    "at": 12000,
+    "taskId": 12,
+    "type": "task.merge_started",
+    "v": 1,
+  },
+  {
+    "at": 13000,
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "taskId": 12,
+    "type": "task.merged",
+    "v": 1,
+  },
+]
+`;
+
+exports[`golden stories blocked: the local gate fails three times, you retry, and it merges 1`] = `
+[
+  {
+    "at": 1000,
+    "project": null,
+    "source": null,
+    "taskId": 12,
+    "title": "CSV export",
+    "type": "task.created",
+    "v": 1,
+  },
+  {
+    "at": 2000,
+    "taskId": 12,
+    "type": "task.spec_requested",
+    "v": 1,
+  },
+  {
+    "at": 3000,
+    "taskId": 12,
+    "type": "task.dispatch_started",
+    "v": 1,
+  },
+  {
+    "at": 4000,
+    "session": "spec-1",
+    "taskId": 12,
+    "type": "task.spec_session_started",
+    "v": 1,
+  },
+  {
+    "at": 5000,
+    "by": "agent",
+    "spec": {
+      "acceptance": [
+        "Clicking Export downloads a CSV of the visible rows.",
+      ],
+      "openQuestions": [],
+      "scope": "Add a CSV export button to the reports page.",
+    },
+    "taskId": 12,
+    "type": "task.specced",
+    "v": 1,
+  },
+  {
+    "at": 6000,
+    "taskId": 12,
+    "type": "task.ready",
+    "v": 1,
+  },
+  {
+    "at": 7000,
+    "taskId": 12,
+    "type": "task.dispatch_started",
+    "v": 1,
+  },
+  {
+    "at": 8000,
+    "taskId": 12,
+    "type": "task.worktree_created",
+    "v": 1,
+    "worktree": {
+      "branch": "task/12-csv-export",
+      "path": "/repo/.worktrees/12",
+    },
+  },
+  {
+    "at": 9000,
+    "session": "develop-1",
+    "taskId": 12,
+    "type": "task.dispatched",
+    "v": 1,
+  },
+  {
+    "at": 10000,
+    "branch": {
+      "changedFiles": [
+        "src/reports/export.ts",
+      ],
+      "commits": 3,
+    },
+    "gate": "local",
+    "taskId": 12,
+    "type": "task.done_reported",
+    "v": 1,
+  },
+  {
+    "at": 11000,
+    "failure": {
+      "step": "local",
+      "summary": "2 tests failed in export.test.ts",
+    },
+    "taskId": 12,
+    "type": "task.gate_failed",
+    "v": 1,
+  },
+  {
+    "at": 12000,
+    "branch": {
+      "changedFiles": [
+        "src/reports/export.ts",
+      ],
+      "commits": 3,
+    },
+    "gate": "local",
+    "taskId": 12,
+    "type": "task.done_reported",
+    "v": 1,
+  },
+  {
+    "at": 13000,
+    "failure": {
+      "step": "local",
+      "summary": "2 tests failed in export.test.ts",
+    },
+    "taskId": 12,
+    "type": "task.gate_failed",
+    "v": 1,
+  },
+  {
+    "at": 14000,
+    "branch": {
+      "changedFiles": [
+        "src/reports/export.ts",
+      ],
+      "commits": 3,
+    },
+    "gate": "local",
+    "taskId": 12,
+    "type": "task.done_reported",
+    "v": 1,
+  },
+  {
+    "at": 15000,
+    "failure": {
+      "step": "local",
+      "summary": "2 tests failed in export.test.ts",
+    },
+    "taskId": 12,
+    "type": "task.gate_failed",
+    "v": 1,
+  },
+  {
+    "at": 15000,
+    "reason": {
+      "failure": {
+        "step": "local",
+        "summary": "2 tests failed in export.test.ts",
+      },
+      "kind": "out_of_attempts",
+    },
+    "taskId": 12,
+    "type": "task.blocked",
+    "v": 1,
+  },
+  {
+    "at": 17000,
+    "taskId": 12,
+    "type": "task.unblocked",
+    "v": 1,
+  },
+  {
+    "at": 18000,
+    "taskId": 12,
+    "type": "task.dispatch_started",
+    "v": 1,
+  },
+  {
+    "at": 19000,
+    "session": "develop-1",
+    "taskId": 12,
+    "type": "task.dispatched",
+    "v": 1,
+  },
+  {
+    "at": 20000,
+    "branch": {
+      "changedFiles": [
+        "src/reports/export.ts",
+      ],
+      "commits": 3,
+    },
+    "gate": "local",
+    "taskId": 12,
+    "type": "task.done_reported",
+    "v": 1,
+  },
+  {
+    "at": 21000,
+    "gate": "local",
+    "next": "review",
+    "taskId": 12,
+    "type": "task.gate_passed",
+    "v": 1,
+  },
+  {
+    "at": 22000,
+    "gate": "review",
+    "next": null,
+    "taskId": 12,
+    "type": "task.gate_passed",
+    "v": 1,
+  },
+  {
+    "at": 22000,
+    "taskId": 12,
+    "type": "task.checks_passed",
+    "v": 1,
+  },
+  {
+    "at": 22000,
+    "taskId": 12,
+    "type": "task.merge_started",
+    "v": 1,
+  },
+  {
+    "at": 23000,
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "taskId": 12,
+    "type": "task.merged",
+    "v": 1,
+  },
+]
+`;
+
+exports[`golden stories escalated: a critical file waits for your approval, then merges 1`] = `
+[
+  {
+    "at": 1000,
+    "project": null,
+    "source": null,
+    "taskId": 12,
+    "title": "CSV export",
+    "type": "task.created",
+    "v": 1,
+  },
+  {
+    "at": 2000,
+    "taskId": 12,
+    "type": "task.spec_requested",
+    "v": 1,
+  },
+  {
+    "at": 3000,
+    "taskId": 12,
+    "type": "task.dispatch_started",
+    "v": 1,
+  },
+  {
+    "at": 4000,
+    "session": "spec-1",
+    "taskId": 12,
+    "type": "task.spec_session_started",
+    "v": 1,
+  },
+  {
+    "at": 5000,
+    "by": "agent",
+    "spec": {
+      "acceptance": [
+        "Clicking Export downloads a CSV of the visible rows.",
+      ],
+      "openQuestions": [],
+      "scope": "Add a CSV export button to the reports page.",
+    },
+    "taskId": 12,
+    "type": "task.specced",
+    "v": 1,
+  },
+  {
+    "at": 6000,
+    "taskId": 12,
+    "type": "task.ready",
+    "v": 1,
+  },
+  {
+    "at": 7000,
+    "taskId": 12,
+    "type": "task.dispatch_started",
+    "v": 1,
+  },
+  {
+    "at": 8000,
+    "taskId": 12,
+    "type": "task.worktree_created",
+    "v": 1,
+    "worktree": {
+      "branch": "task/12-csv-export",
+      "path": "/repo/.worktrees/12",
+    },
+  },
+  {
+    "at": 9000,
+    "session": "develop-1",
+    "taskId": 12,
+    "type": "task.dispatched",
+    "v": 1,
+  },
+  {
+    "at": 10000,
+    "branch": {
+      "changedFiles": [
+        "src/reports/export.ts",
+        "src/auth/login.ts",
+      ],
+      "commits": 2,
+    },
+    "gate": "local",
+    "taskId": 12,
+    "type": "task.done_reported",
+    "v": 1,
+  },
+  {
+    "at": 11000,
+    "gate": "local",
+    "next": "review",
+    "taskId": 12,
+    "type": "task.gate_passed",
+    "v": 1,
+  },
+  {
+    "at": 12000,
+    "gate": "review",
+    "next": null,
+    "taskId": 12,
+    "type": "task.gate_passed",
+    "v": 1,
+  },
+  {
+    "at": 12000,
+    "taskId": 12,
+    "type": "task.checks_passed",
+    "v": 1,
+  },
+  {
+    "at": 12000,
+    "criticalFiles": [
+      "src/auth/login.ts",
+    ],
+    "taskId": 12,
+    "type": "task.merge_approval_requested",
+    "v": 1,
+  },
+  {
+    "at": 13000,
+    "taskId": 12,
+    "type": "task.merge_started",
+    "v": 1,
+  },
+  {
+    "at": 14000,
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "taskId": 12,
+    "type": "task.merged",
+    "v": 1,
+  },
+]
+`;
+
+exports[`golden stories reverted: a merged task is undone and goes back to Spec with the reason 1`] = `
+[
+  {
+    "at": 1000,
+    "project": null,
+    "source": null,
+    "taskId": 12,
+    "title": "CSV export",
+    "type": "task.created",
+    "v": 1,
+  },
+  {
+    "at": 2000,
+    "taskId": 12,
+    "type": "task.spec_requested",
+    "v": 1,
+  },
+  {
+    "at": 3000,
+    "taskId": 12,
+    "type": "task.dispatch_started",
+    "v": 1,
+  },
+  {
+    "at": 4000,
+    "session": "spec-1",
+    "taskId": 12,
+    "type": "task.spec_session_started",
+    "v": 1,
+  },
+  {
+    "at": 5000,
+    "by": "agent",
+    "spec": {
+      "acceptance": [
+        "Clicking Export downloads a CSV of the visible rows.",
+      ],
+      "openQuestions": [],
+      "scope": "Add a CSV export button to the reports page.",
+    },
+    "taskId": 12,
+    "type": "task.specced",
+    "v": 1,
+  },
+  {
+    "at": 6000,
+    "taskId": 12,
+    "type": "task.ready",
+    "v": 1,
+  },
+  {
+    "at": 7000,
+    "taskId": 12,
+    "type": "task.dispatch_started",
+    "v": 1,
+  },
+  {
+    "at": 8000,
+    "taskId": 12,
+    "type": "task.worktree_created",
+    "v": 1,
+    "worktree": {
+      "branch": "task/12-csv-export",
+      "path": "/repo/.worktrees/12",
+    },
+  },
+  {
+    "at": 9000,
+    "session": "develop-1",
+    "taskId": 12,
+    "type": "task.dispatched",
+    "v": 1,
+  },
+  {
+    "at": 10000,
+    "branch": {
+      "changedFiles": [
+        "src/reports/export.ts",
+      ],
+      "commits": 3,
+    },
+    "gate": "local",
+    "taskId": 12,
+    "type": "task.done_reported",
+    "v": 1,
+  },
+  {
+    "at": 11000,
+    "gate": "local",
+    "next": "review",
+    "taskId": 12,
+    "type": "task.gate_passed",
+    "v": 1,
+  },
+  {
+    "at": 12000,
+    "gate": "review",
+    "next": null,
+    "taskId": 12,
+    "type": "task.gate_passed",
+    "v": 1,
+  },
+  {
+    "at": 12000,
+    "taskId": 12,
+    "type": "task.checks_passed",
+    "v": 1,
+  },
+  {
+    "at": 12000,
+    "taskId": 12,
+    "type": "task.merge_started",
+    "v": 1,
+  },
+  {
+    "at": 13000,
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "taskId": 12,
+    "type": "task.merged",
+    "v": 1,
+  },
+  {
+    "at": 14000,
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "reason": "Export breaks on empty reports.",
+    "taskId": 12,
+    "type": "task.reverted",
+    "v": 1,
+  },
+  {
+    "at": 15000,
+    "taskId": 12,
+    "type": "task.dispatch_started",
+    "v": 1,
+  },
+]
+`;
