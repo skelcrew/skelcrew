@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { evolve } from "./evolve";
-import { CommitSha, SessionId, TaskId } from "./ids";
+import { CommitSha, ProjectId, SessionId, TaskId } from "./ids";
 import type { EventBody, Spec, Task, TaskEvent } from "./types";
 
 const id = TaskId.parse(12);
@@ -610,6 +610,151 @@ describe("task.usage_recorded", () => {
     expect(replay(...inProgress, { type: "task.usage_recorded", usage })).toMatchObject({
       usage,
       usageAtRetry: { tokens: 0, ms: 0 },
+    });
+  });
+});
+
+const project = ProjectId.parse("reports");
+const done: EventBody[] = [...merging, { type: "task.merged", commit }];
+const dropped: EventBody[] = [...inProgress, { type: "task.dropped" }];
+
+describe("task.project_changed", () => {
+  test("moves the task to another project, keeping its phase", () => {
+    expect(replay(...inProgress, { type: "task.project_changed", project })).toMatchObject({
+      phase: "in_progress",
+      project,
+    });
+  });
+});
+
+describe("task.dropped", () => {
+  test("ends the task in Dropped, clearing its flags", () => {
+    const task = replay(
+      ...inProgress,
+      { type: "task.question_asked", question: developQuestion },
+      { type: "task.dropped" },
+    );
+    expect(task).toMatchObject({ phase: "dropped", question: null, blocked: null });
+    expect(task).not.toHaveProperty("worktree");
+  });
+
+  test("is refused for a task that is Done", () => {
+    expect(evolve(replay(...done), event({ type: "task.dropped" }))).toEqual({
+      ok: false,
+      reason: "task.dropped can't apply to #12 in Done.",
+    });
+  });
+});
+
+describe("a dropped task", () => {
+  test("refuses every event, since Dropped is final", () => {
+    expect(evolve(replay(...dropped), event({ type: "task.project_changed", project }))).toEqual({
+      ok: false,
+      reason: "task.project_changed can't apply to #12 in Dropped.",
+    });
+  });
+});
+
+describe("task.reverted", () => {
+  test("takes a Done task back to Spec, with the reason as the note", () => {
+    const reason = "Export breaks on empty reports.";
+    expect(replay(...done, { type: "task.reverted", commit, reason })).toMatchObject({
+      phase: "spec",
+      spec,
+      note: reason,
+      step: { kind: "queued" },
+    });
+  });
+
+  test("is refused outside Done", () => {
+    const reverted = event({ type: "task.reverted", commit, reason: "Broken." });
+    expect(evolve(replay(...inProgress), reverted)).toEqual({
+      ok: false,
+      reason: "task.reverted can't apply to #12 in In progress.",
+    });
+  });
+});
+
+describe("task.spec_sent_back from a later phase", () => {
+  const note = "Also export the totals row.";
+
+  test("takes a blocked task in In progress back to Spec, clearing the block", () => {
+    const task = replay(
+      ...inProgress,
+      { type: "task.blocked", reason: capReached },
+      { type: "task.spec_sent_back", note },
+    );
+    expect(task).toMatchObject({
+      phase: "spec",
+      spec,
+      note,
+      step: { kind: "queued" },
+      blocked: null,
+    });
+    expect(task).not.toHaveProperty("worktree");
+  });
+
+  test("takes a task in Checks back to Spec", () => {
+    expect(replay(...inChecks, { type: "task.spec_sent_back", note })).toMatchObject({
+      phase: "spec",
+      spec,
+      note,
+    });
+  });
+
+  test("gives the next build a new number, so its branch name differs", () => {
+    const task = replay(
+      ...inProgress,
+      { type: "task.spec_sent_back", note },
+      { type: "task.specced", spec, by: "agent" },
+      { type: "task.ready" },
+      { type: "task.dispatch_started" },
+    );
+    expect(task.builds).toBe(2);
+  });
+
+  test("is refused in Idea, which has no spec to send back", () => {
+    expect(evolve(replay(created), event({ type: "task.spec_sent_back", note }))).toEqual({
+      ok: false,
+      reason: "task.spec_sent_back can't apply to #12 in Idea.",
+    });
+  });
+});
+
+describe("a retry in In progress", () => {
+  const retried: EventBody[] = [
+    ...inProgress,
+    { type: "task.blocked", reason: capReached },
+    { type: "task.unblocked" },
+  ];
+  const session2 = SessionId.parse("session-2");
+
+  test("starts a new agent in the same worktree", () => {
+    const task = replay(
+      ...retried,
+      { type: "task.dispatch_started" },
+      { type: "task.dispatched", session: session2 },
+    );
+    expect(task).toMatchObject({
+      phase: "in_progress",
+      worktree,
+      step: { kind: "running", session: session2 },
+    });
+  });
+
+  test("marks the agent as starting until it runs", () => {
+    expect(replay(...retried, { type: "task.dispatch_started" })).toMatchObject({
+      phase: "in_progress",
+      step: { kind: "starting" },
+    });
+  });
+
+  test("refuses a new agent while one is running", () => {
+    expect(
+      evolve(replay(...inProgress), event({ type: "task.dispatched", session: session2 })),
+    ).toEqual({
+      ok: false,
+      reason: "task.dispatched can't apply: #12 isn't starting an agent.",
     });
   });
 });
