@@ -111,8 +111,13 @@ Tests sit next to the code: `decide.ts` and `decide.test.ts`.
 - **One test per rule**, allowed and rejected. The tests build a task in any phase by
   sending it real inputs, through a helper called `run` (or `replay` in the `evolveTask`
   tests). So every test starts from a state the real code can reach.
-- **Property tests** (_in progress_, `invariants.test.ts`). fast-check sends thousands of
-  random input sequences and checks every rule in `invariants.md` after every step.
+- **Property tests** (`invariants.test.ts`). fast-check sends random input sequences to
+  one task, and to four tasks sharing the scheduler. It checks every rule in
+  `invariants.md` after every step. Most steps pick an input the task accepts right now,
+  so runs reach every phase: a typical run merges and reverts dozens of tasks. When a
+  property fails, fast-check shrinks the sequence to the few inputs that break the rule.
+  These tests have already found real bugs, such as a question that could never be
+  answered.
 - **Golden stories** (_planned_). Whole lifecycles saved as inputs and expected events.
 - **The simulator** (_planned_). It stands in for agents, git and plugins, so full
   lifecycles run in tests.
