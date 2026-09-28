@@ -6,7 +6,7 @@
 // input. The rest are grouped by the phase they apply in, one function per
 // phase, like evolve.
 
-import { attemptsLeft, specComplete } from "./contracts";
+import { attemptsLeft, criticalFiles, specComplete } from "./contracts";
 import { phaseNames, type TaskIn } from "./phases";
 import type {
   Command,
@@ -299,36 +299,74 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
         return reject(`#${task.id} ${running}.`);
       }
 
-      if (input.ok) {
-        const next = config.gates[config.gates.indexOf(input.gate) + 1] ?? null;
-        if (next === null) return reject("Not handled yet.");
+      if (!input.ok) {
+        const failure: Failure = { step: input.gate, summary: input.summary };
+        return failedRound(task, { type: "task.gate_failed", failure }, failure, ctx);
+      }
+
+      const next = config.gates[config.gates.indexOf(input.gate) + 1] ?? null;
+      const passed: EventBody = { type: "task.gate_passed", gate: input.gate, next };
+      if (next !== null) {
         return accept(
-          [{ type: "task.gate_passed", gate: input.gate, next }],
+          [passed],
           [{ type: "run_gate", taskId: task.id, gate: next, worktree: task.worktree }],
         );
       }
 
-      // The same agent gets the failure while attempts remain. After the
-      // last one, the task is blocked and the agent stopped. The worktree
-      // stays, so a retry carries on with the same code.
-      const failure: Failure = { step: input.gate, summary: input.summary };
-      const failed: EventBody = { type: "task.gate_failed", failure };
-      if (attemptsLeft(task.attempts + 1, config.maxAttempts).ok) {
-        return accept(
-          [failed],
-          [
-            {
-              type: "send_to_session",
-              session: task.session,
-              text: `The ${input.gate} gate failed: ${input.summary}`,
-            },
-          ],
-        );
+      // The last gate passed. A merge that touches a critical path waits
+      // for your approval. Anything else merges now.
+      const critical = criticalFiles(task.branch, config.criticalPaths);
+      if (critical.length > 0) {
+        return accept([
+          passed,
+          { type: "task.checks_passed" },
+          { type: "task.merge_approval_requested", criticalFiles: critical },
+        ]);
       }
       return accept(
-        [failed, { type: "task.blocked", reason: { kind: "out_of_attempts", failure } }],
-        [{ type: "stop_session", session: task.session }],
+        [passed, { type: "task.checks_passed" }, { type: "task.merge_started" }],
+        [{ type: "merge", taskId: task.id, worktree: task.worktree }],
       );
+    }
+
+    case "approve_merge":
+      if (task.step !== "merge_approval") {
+        return reject(`#${task.id}'s merge isn't waiting for approval.`);
+      }
+      return accept(
+        [{ type: "task.merge_started" }],
+        [{ type: "merge", taskId: task.id, worktree: task.worktree }],
+      );
+
+    // Your note goes to the agent that wrote the code. It isn't a failure,
+    // so no attempt is used.
+    case "send_back_merge":
+      if (task.step !== "merge_approval") {
+        return reject(`#${task.id}'s merge isn't waiting for approval.`);
+      }
+      if (input.note.trim() === "") return reject("A send-back needs a note.");
+      return accept(
+        [{ type: "task.merge_sent_back", note: input.note }],
+        [{ type: "send_to_session", session: task.session, text: input.note }],
+      );
+
+    // The branch is now squashed into main, so removing the worktree loses
+    // nothing.
+    case "merged":
+      if (task.step !== "merging") return reject(`#${task.id} isn't merging.`);
+      return accept(
+        [{ type: "task.merged", commit: input.commit }],
+        [
+          { type: "stop_session", session: task.session },
+          { type: "remove_worktree", worktree: task.worktree },
+        ],
+      );
+
+    // A failed merge counts as an attempt, like a failed gate.
+    case "merge_failed": {
+      if (task.step !== "merging") return reject(`#${task.id} isn't merging.`);
+      const failure: Failure = { step: "merge", summary: input.summary };
+      return failedRound(task, { type: "task.merge_failed", failure }, failure, ctx);
     }
 
     default:
@@ -339,6 +377,34 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// A failed gate or merge. The same agent gets the failure while attempts
+// remain. After the last one, the task is blocked and the agent stopped.
+// The worktree stays, so a retry carries on with the same code.
+function failedRound(
+  task: TaskIn<"checks">,
+  failed: EventBody,
+  failure: Failure,
+  ctx: Context,
+): Decision {
+  if (attemptsLeft(task.attempts + 1, ctx.config.maxAttempts).ok) {
+    const what = failure.step === "merge" ? "The merge" : `The ${failure.step} gate`;
+    return ctx.accept(
+      [failed],
+      [
+        {
+          type: "send_to_session",
+          session: task.session,
+          text: `${what} failed: ${failure.summary}`,
+        },
+      ],
+    );
+  }
+  return ctx.accept(
+    [failed, { type: "task.blocked", reason: { kind: "out_of_attempts", failure } }],
+    [{ type: "stop_session", session: task.session }],
+  );
+}
 
 function asksForSpec(input: Input & { type: "add" | "issue_delegated" }): boolean {
   return input.type === "issue_delegated" || input.requestSpec;
