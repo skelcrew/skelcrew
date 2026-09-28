@@ -1,7 +1,7 @@
 # Core invariants
 
-Draft for the developer to edit. These are the rules the core must never break, whatever
-happens. The property tests feed the core thousands of random input sequences and check
+These are the rules the core must never break, whatever happens. The developer approves
+every change to this list. The property tests feed the core thousands of random input sequences and check
 every rule after every step. Each per-transition test is written against this list.
 
 A rule belongs here if breaking it would let an agent do something only the developer may
@@ -9,7 +9,7 @@ do, lose work, or leave the developer looking at a wrong picture.
 
 ## Only the core decides
 
-1. **Only the developer moves a task to Ready.** With `spec_approval: always`, every
+1. **An agent never approves a spec.** With `spec_approval: always`, every
    `task.ready` comes from an approval sent by the developer.
 2. **Agents and plugins never take the developer's decisions.** No agent, plugin or
    scheduler input ever produces a spec approval, a merge approval, a retry, a drop, a
