@@ -9,7 +9,7 @@
 import { attemptsLeft, criticalFiles, specComplete, withinSafetyCap } from "./contracts";
 import { phaseNames, type TaskIn } from "./phases";
 import type {
-  BlockReason,
+  Brief,
   Command,
   Config,
   DecideTask,
@@ -370,7 +370,7 @@ function inReady(task: TaskIn<"ready">, input: Input, ctx: Context): Decision {
     case "worktree_created":
       return accept(
         [{ type: "task.worktree_created", worktree: input.worktree }],
-        [startDevelop(task, input.worktree, null, null, null)],
+        [startDevelop(task, input.worktree, { failure: null, note: null, blocked: null })],
       );
 
     case "worktree_failed":
@@ -410,7 +410,7 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
       if (capped) return accept([capped]);
       return accept(
         [{ type: "task.dispatch_started" }],
-        [startDevelop(task, worktree, task.lastFailure, task.note, task.lastBlock)],
+        [startDevelop(task, worktree, task.brief)],
       );
     }
 
@@ -820,9 +820,7 @@ function removeWorktree(worktree: Worktree): Command {
 function startDevelop(
   task: TaskIn<"ready" | "in_progress">,
   worktree: Worktree,
-  lastFailure: Failure | null,
-  note: string | null,
-  lastBlock: BlockReason | null,
+  brief: Brief,
 ): Command {
   return {
     type: "start_develop_session",
@@ -830,9 +828,7 @@ function startDevelop(
     request: task.requests + 1,
     worktree,
     spec: task.spec,
-    lastFailure,
-    note,
-    lastBlock,
+    brief,
   };
 }
 

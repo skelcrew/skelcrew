@@ -184,7 +184,7 @@ const phaseFields: Record<Task["phase"], string[]> = {
   idea: [],
   spec: ["note", "spec", "step"],
   ready: ["spec", "step"],
-  in_progress: ["attempts", "lastBlock", "lastFailure", "note", "spec", "step", "worktree"],
+  in_progress: ["attempts", "brief", "spec", "step", "worktree"],
   checks: ["attempts", "branch", "spec", "step", "worktree"],
   done: ["mergeCommit", "spec", "step"],
   dropped: [],

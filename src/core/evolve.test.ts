@@ -261,7 +261,7 @@ describe("task.dispatched from Ready", () => {
       worktree,
       step: { kind: "running", session },
       attempts: 0,
-      lastFailure: null,
+      brief: { failure: null, note: null, blocked: null },
     });
   });
 
@@ -343,7 +343,7 @@ describe("task.gate_failed", () => {
       worktree,
       step: { kind: "running", session },
       attempts: 1,
-      lastFailure: localFailed,
+      brief: { failure: localFailed, note: null, blocked: null },
     });
   });
 
@@ -471,8 +471,7 @@ describe("task.merge_failed", () => {
       worktree,
       step: { kind: "queued" },
       attempts: 1,
-      lastFailure: mergeFailed,
-      note: null,
+      brief: { failure: mergeFailed, note: null, blocked: null },
     });
   });
 
@@ -496,8 +495,7 @@ describe("task.merge_sent_back", () => {
       worktree,
       step: { kind: "queued" },
       attempts: 0,
-      lastFailure: null,
-      note: "Don't touch login.",
+      brief: { failure: null, note: "Don't touch login.", blocked: null },
     });
   });
 
@@ -508,7 +506,10 @@ describe("task.merge_sent_back", () => {
       { type: "task.dispatch_started" },
       { type: "task.dispatched", session },
     );
-    expect(task).toMatchObject({ step: { kind: "running", session }, note: "Don't touch login." });
+    expect(task).toMatchObject({
+      step: { kind: "running", session },
+      brief: { note: "Don't touch login." },
+    });
     const done = replay(
       ...awaitingMergeApproval,
       { type: "task.merge_sent_back", note: "Don't touch login." },
@@ -517,7 +518,7 @@ describe("task.merge_sent_back", () => {
       { type: "task.done_reported", branch: branchFacts, gate: "local" },
       { type: "task.gate_failed", failure: localFailed },
     );
-    expect(done).toMatchObject({ phase: "in_progress", note: null });
+    expect(done).toMatchObject({ phase: "in_progress", brief: { note: null } });
   });
 
   test("is refused unless the merge is waiting for approval", () => {
@@ -873,7 +874,7 @@ describe("the reason for the last block", () => {
       { type: "task.blocked", reason: gaveUp },
       { type: "task.unblocked" },
     );
-    expect(task).toMatchObject({ phase: "in_progress", blocked: null, lastBlock: gaveUp });
+    expect(task).toMatchObject({ phase: "in_progress", blocked: null, brief: { blocked: gaveUp } });
   });
 
   test("is cleared once the agent reports done", () => {
@@ -886,7 +887,7 @@ describe("the reason for the last block", () => {
       { type: "task.done_reported", branch: branchFacts, gate: "local" },
       { type: "task.gate_failed", failure: localFailed },
     );
-    expect(task).toMatchObject({ phase: "in_progress", lastBlock: null });
+    expect(task).toMatchObject({ phase: "in_progress", brief: { blocked: null } });
   });
 });
 

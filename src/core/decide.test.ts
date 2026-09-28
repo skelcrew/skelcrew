@@ -497,9 +497,7 @@ describe("worktree_created", () => {
           request: 3,
           worktree,
           spec,
-          lastFailure: null,
-          note: null,
-          lastBlock: null,
+          brief: { failure: null, note: null, blocked: null },
         },
       ],
     });
@@ -657,9 +655,11 @@ describe("start in In progress, after a retry", () => {
           request: 4,
           worktree,
           spec,
-          lastFailure: null,
-          note: null,
-          lastBlock: { kind: "agent_gave_up", message: "The reports API is missing." },
+          brief: {
+            failure: null,
+            note: null,
+            blocked: { kind: "agent_gave_up", message: "The reports API is missing." },
+          },
         },
       ],
     });
@@ -787,9 +787,11 @@ describe("gate_result, failing", () => {
         request: 7,
         worktree,
         spec,
-        lastFailure: localFailure,
-        note: null,
-        lastBlock: { kind: "out_of_attempts", failure: localFailure },
+        brief: {
+          failure: localFailure,
+          note: null,
+          blocked: { kind: "out_of_attempts", failure: localFailure },
+        },
       },
     ]);
   });
@@ -882,9 +884,7 @@ describe("send_back_merge", () => {
         request: 6,
         worktree,
         spec,
-        lastFailure: null,
-        note: "Don't touch login.",
-        lastBlock: null,
+        brief: { failure: null, note: "Don't touch login.", blocked: null },
       },
     ]);
   });
@@ -936,9 +936,7 @@ describe("merge_failed", () => {
         request: 7,
         worktree,
         spec,
-        lastFailure: mergeFailure,
-        note: null,
-        lastBlock: null,
+        brief: { failure: mergeFailure, note: null, blocked: null },
       },
     ]);
   });

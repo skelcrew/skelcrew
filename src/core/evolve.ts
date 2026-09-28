@@ -6,9 +6,10 @@
 // the phase they apply in, one function per phase, in lifecycle order.
 
 import { phaseNames, type TaskIn } from "./phases";
-import type { EvolvedTask, EvolveTask, Failure, Spec, Task, TaskEvent } from "./types";
+import type { Brief, EvolvedTask, EvolveTask, Failure, Spec, Task, TaskEvent } from "./types";
 
 const noUsage = { tokens: 0, ms: 0 };
+const noBrief: Brief = { failure: null, note: null, blocked: null };
 
 export const evolveTask: EvolveTask = (task, event) => {
   if (event.type === "task.created") {
@@ -68,7 +69,7 @@ export const evolveTask: EvolveTask = (task, event) => {
       const cleared = { ...task, blocked: null, usageAtRetry: task.usage };
       return ok(
         cleared.phase === "in_progress"
-          ? { ...cleared, attempts: 0, lastBlock: task.blocked }
+          ? { ...cleared, attempts: 0, brief: { ...cleared.brief, blocked: task.blocked } }
           : cleared,
       );
     }
@@ -184,9 +185,7 @@ function inReady(task: TaskIn<"ready">, event: TaskEvent): EvolvedTask {
         worktree: step.worktree,
         step: { kind: "running", session: event.session },
         attempts: 0,
-        lastFailure: null,
-        note: null,
-        lastBlock: null,
+        brief: noBrief,
       });
     }
 
@@ -399,9 +398,7 @@ function stopAgent(task: Task): Task | null {
         worktree: task.worktree,
         attempts: task.attempts,
         step: { kind: "queued" },
-        lastFailure: null,
-        note: null,
-        lastBlock: null,
+        brief: noBrief,
       };
     }
     default:
@@ -415,7 +412,7 @@ function stopAgent(task: Task): Task | null {
 function backToAgent(
   task: TaskIn<"checks">,
   attempts: number,
-  lastFailure: Failure | null,
+  failure: Failure | null,
   note: string | null,
 ): Task {
   const step =
@@ -429,9 +426,7 @@ function backToAgent(
     worktree: task.worktree,
     step,
     attempts,
-    lastFailure,
-    note,
-    lastBlock: null,
+    brief: { failure, note, blocked: null },
   };
 }
 

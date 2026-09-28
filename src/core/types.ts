@@ -127,13 +127,7 @@ export type PhaseState =
       worktree: Worktree;
       step: DevelopStep;
       attempts: number; // failed gate or merge rounds since the last retry
-      lastFailure: Failure | null; // sent to the agent so it can fix it
-      // Your note from sending a merge back, for the next agent. Kept until
-      // the agent reports done again.
-      note: string | null;
-      // Why the task was last blocked, kept after a retry so the next agent
-      // knows why the last one stopped. Kept until the agent reports done.
-      lastBlock: BlockReason | null;
+      brief: Brief;
     }
   | {
       phase: "checks";
@@ -147,6 +141,16 @@ export type PhaseState =
   // squashed commit, so one commit is enough.
   | { phase: "done"; spec: Spec; mergeCommit: CommitSha; step: DoneStep }
   | { phase: "dropped" };
+
+// What the next develop agent should know, kept until an agent reports done:
+// the last gate or merge failure, your note from sending a merge back, and
+// why the task was last blocked. A new agent starts with all three, so it
+// doesn't repeat what went wrong.
+export type Brief = {
+  failure: Failure | null;
+  note: string | null;
+  blocked: BlockReason | null;
+};
 
 // Spec, Ready and In progress all wait for a free slot before an agent
 // starts. The steps are separate states because each waits on a different
@@ -445,13 +449,7 @@ export type Command =
       request: number;
       worktree: Worktree;
       spec: Spec;
-      // Set when a new agent picks up after a failure: what it must fix first.
-      lastFailure: Failure | null;
-      // Set after you send a merge back: what you asked for.
-      note: string | null;
-      // Set after a retry: why the last agent was stopped, such as giving up
-      // with "Need database credentials".
-      lastBlock: BlockReason | null;
+      brief: Brief;
     }
   | { type: "send_to_session"; session: SessionId; text: string }
   | { type: "stop_session"; session: SessionId }
