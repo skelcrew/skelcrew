@@ -254,3 +254,90 @@ describe("task.dispatched from Ready", () => {
     });
   });
 });
+
+const branchFacts = { commits: 3, changedFiles: ["src/reports/export.ts"] };
+const inProgress: EventBody[] = [
+  ...inReady,
+  { type: "task.dispatch_started" },
+  { type: "task.worktree_created", worktree },
+  { type: "task.dispatched", session },
+];
+const inChecks: EventBody[] = [
+  ...inProgress,
+  { type: "task.done_reported", branch: branchFacts, gate: "local" },
+];
+const localFailed = { step: "local" as const, summary: "2 tests failed in export.test.ts" };
+
+describe("task.done_reported", () => {
+  test("moves the task to Checks, running the first gate, with the agent kept open", () => {
+    expect(replay(...inChecks)).toMatchObject({
+      phase: "checks",
+      spec,
+      worktree,
+      session,
+      attempts: 0,
+      branch: branchFacts,
+      step: "local",
+    });
+  });
+
+  test("is refused outside In progress", () => {
+    const report = event({ type: "task.done_reported", branch: branchFacts, gate: "local" });
+    expect(evolve(replay(...inReady), report)).toEqual({
+      ok: false,
+      reason: "task.done_reported can't apply to #12 in Ready.",
+    });
+  });
+});
+
+describe("task.gate_passed", () => {
+  test("moves on to the next gate", () => {
+    expect(
+      replay(...inChecks, { type: "task.gate_passed", gate: "local", next: "review" }),
+    ).toMatchObject({ phase: "checks", step: "review" });
+  });
+
+  test("stays on the last gate until the checks are marked passed", () => {
+    expect(
+      replay(...inChecks, { type: "task.gate_passed", gate: "local", next: null }),
+    ).toMatchObject({ phase: "checks", step: "local" });
+  });
+
+  test("is refused for a gate that isn't running", () => {
+    const passed = event({ type: "task.gate_passed", gate: "review", next: null });
+    expect(evolve(replay(...inChecks), passed)).toEqual({
+      ok: false,
+      reason: "task.gate_passed can't apply: #12 is running the local gate, not review.",
+    });
+  });
+});
+
+describe("task.gate_failed", () => {
+  test("sends the task back to the same agent with the failure, counting one attempt", () => {
+    expect(replay(...inChecks, { type: "task.gate_failed", failure: localFailed })).toMatchObject({
+      phase: "in_progress",
+      worktree,
+      step: { kind: "running", session },
+      attempts: 1,
+      lastFailure: localFailed,
+    });
+  });
+
+  test("keeps counting attempts across rounds", () => {
+    const task = replay(
+      ...inChecks,
+      { type: "task.gate_failed", failure: localFailed },
+      { type: "task.done_reported", branch: branchFacts, gate: "local" },
+      { type: "task.gate_failed", failure: localFailed },
+    );
+    expect(task).toMatchObject({ phase: "in_progress", attempts: 2 });
+  });
+
+  test("is refused for a gate that isn't running", () => {
+    const failed = event({ type: "task.gate_failed", failure: { ...localFailed, step: "review" } });
+    expect(evolve(replay(...inChecks), failed)).toEqual({
+      ok: false,
+      reason: "task.gate_failed can't apply: #12 is running the local gate, not review.",
+    });
+  });
+});

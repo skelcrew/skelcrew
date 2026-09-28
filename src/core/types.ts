@@ -347,8 +347,12 @@ export type EventBody =
   // Answers are kept so past decisions can be searched later, and the spec
   // skill does not ask the same question twice.
   | { type: "task.question_answered"; text: string }
-  | { type: "task.done_reported"; branch: BranchFacts }
-  | { type: "task.gate_passed"; gate: GateName }
+  // Which gate runs next comes from workflow.yml, which evolve never sees.
+  // So decide writes it into the event: the first gate when the agent
+  // reports done, and the next one after each pass (null after the last).
+  // Replay then gives the same task even if workflow.yml changes later.
+  | { type: "task.done_reported"; branch: BranchFacts; gate: GateName }
+  | { type: "task.gate_passed"; gate: GateName; next: GateName | null }
   | { type: "task.gate_failed"; failure: Failure }
   | { type: "task.checks_passed" }
   // The files that matched a critical path, so the inbox summary can say
