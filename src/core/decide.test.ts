@@ -517,7 +517,7 @@ describe("report_done", () => {
     expect(send(run(...inProgress), reportDone)).toEqual({
       ok: true,
       events: [stamped({ type: "task.done_reported", branch, gate: "local" })],
-      commands: [{ type: "run_gate", taskId: id, gate: "local", worktree }],
+      commands: [{ type: "run_gate", taskId: id, gate: "local", round: 1, worktree }],
     });
   });
 
@@ -626,20 +626,24 @@ describe("start in In progress, after a retry", () => {
 // Checks: the gates
 // ---------------------------------------------------------------------------
 
-const gatePass = (gate: "local" | "review"): Input => ({
+// Each report of done starts a new round of checks. A gate result names the
+// round it belongs to.
+const gatePass = (gate: "local" | "review", round = 1): Input => ({
   by: "plugin",
   type: "gate_result",
   gate,
+  round,
   ok: true,
   summary: "All good.",
 });
-const localFail: Input = {
+const localFail = (round = 1): Input => ({
   by: "plugin",
   type: "gate_result",
   gate: "local",
+  round,
   ok: false,
   summary: "2 tests failed in export.test.ts",
-};
+});
 const localFailure: Failure = { step: "local", summary: "2 tests failed in export.test.ts" };
 
 const inChecks = [...inProgress, reportDone];
@@ -649,7 +653,7 @@ describe("gate_result, passing", () => {
     expect(send(run(...inChecks), gatePass("local"))).toEqual({
       ok: true,
       events: [stamped({ type: "task.gate_passed", gate: "local", next: "review" })],
-      commands: [{ type: "run_gate", taskId: id, gate: "review", worktree }],
+      commands: [{ type: "run_gate", taskId: id, gate: "review", round: 1, worktree }],
     });
   });
 
@@ -666,7 +670,7 @@ describe("gate_result, passing", () => {
 
 describe("gate_result, failing", () => {
   test("sends the failure back to the same agent", () => {
-    expect(send(run(...inChecks), localFail)).toEqual({
+    expect(send(run(...inChecks), localFail(1))).toEqual({
       ok: true,
       events: [stamped({ type: "task.gate_failed", failure: localFailure })],
       commands: [
@@ -680,8 +684,8 @@ describe("gate_result, failing", () => {
   });
 
   test("blocks the task and stops the agent when the last attempt fails", () => {
-    const task = run(...inChecks, localFail, reportDone, localFail, reportDone);
-    expect(send(task, localFail)).toEqual({
+    const task = run(...inChecks, localFail(1), reportDone, localFail(2), reportDone);
+    expect(send(task, localFail(3))).toEqual({
       ok: true,
       events: [
         stamped({ type: "task.gate_failed", failure: localFailure }),
@@ -695,7 +699,15 @@ describe("gate_result, failing", () => {
   });
 
   test("after a retry, the new agent is told what failed", () => {
-    const task = run(...inChecks, localFail, reportDone, localFail, reportDone, localFail, retry);
+    const task = run(
+      ...inChecks,
+      localFail(1),
+      reportDone,
+      localFail(2),
+      reportDone,
+      localFail(3),
+      retry,
+    );
     const decision = send(task, start);
     expect(decision.ok && decision.commands).toEqual([
       {
@@ -849,12 +861,12 @@ describe("merge_failed", () => {
     // Two failed gates, then both gates pass and the merge fails: attempt 3.
     const task = run(
       ...inChecks,
-      localFail,
+      localFail(1),
       reportDone,
-      localFail,
+      localFail(2),
       reportDone,
-      gatePass("local"),
-      gatePass("review"),
+      gatePass("local", 3),
+      gatePass("review", 3),
     );
     expect(send(task, mergeFail)).toEqual({
       ok: true,
@@ -1373,5 +1385,39 @@ describe("a worktree reply for an earlier build", () => {
       ok: false,
       rejection: { input: "worktree_failed", reason: "#12 isn't creating a worktree for build 1." },
     });
+  });
+});
+
+describe("a gate result from an earlier round of checks", () => {
+  // Round 1: local passes and the review starts. The agent crashes, you
+  // retry, and a new agent reports done: round 2, where local passes again.
+  const round2Reviewing: Input[] = [
+    ...inChecks,
+    gatePass("local", 1),
+    sessionFailed,
+    retry,
+    start,
+    { by: "plugin", type: "session_started", session: SessionId.parse("session-3") },
+    reportDone,
+    gatePass("local", 2),
+  ];
+
+  test("is refused, so it can't approve code it never checked", () => {
+    expect(send(run(...round2Reviewing), gatePass("review", 1))).toEqual({
+      ok: false,
+      rejection: {
+        input: "gate_result",
+        reason: "This result is from round 1 of #12's checks. They are on round 2.",
+      },
+    });
+  });
+
+  test("leaves the current round to its own result", () => {
+    const decision = send(run(...round2Reviewing), gatePass("review", 2));
+    expect(decision.ok && decision.events.map((e) => e.type)).toEqual([
+      "task.gate_passed",
+      "task.checks_passed",
+      "task.merge_started",
+    ]);
   });
 });

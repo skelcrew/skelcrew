@@ -191,6 +191,10 @@ export type Task = PhaseState & {
   // from main ("task/12-csv-export", then "task/12-csv-export-2"), so a
   // build after a send-back never starts on code written for the old spec.
   builds: number;
+  // How many times the agent has reported done: one round of checks each.
+  // Gate results name their round, so a late result from an earlier round
+  // can't pass or fail the current one.
+  rounds: number;
   // Two usage counters. `usage` never resets, so the record shows the true
   // cost. The safety cap counts from `usageAtRetry`, so a retried task gets
   // a fresh allowance instead of being blocked again at once.
@@ -294,7 +298,9 @@ export type PluginInput =
   | { type: "worktree_failed"; message: string; build: number }
   | { type: "session_started"; session: SessionId }
   | { type: "session_failed"; message: string }
-  | { type: "gate_result"; gate: GateName; ok: boolean; summary: string }
+  // `round` echoes run_gate's, so a result from an earlier round of checks
+  // can't pass or fail the current one.
+  | { type: "gate_result"; gate: GateName; round: number; ok: boolean; summary: string }
   | { type: "merged"; commit: CommitSha }
   | { type: "merge_failed"; summary: string };
 
@@ -413,7 +419,7 @@ export type Command =
     }
   | { type: "send_to_session"; session: SessionId; text: string }
   | { type: "stop_session"; session: SessionId }
-  | { type: "run_gate"; taskId: TaskId; gate: GateName; worktree: Worktree }
+  | { type: "run_gate"; taskId: TaskId; gate: GateName; round: number; worktree: Worktree }
   // The shell merges one task at a time. It brings the branch up to date
   // with main, runs the local checks again, then squash-merges. It answers
   // with "merged" or "merge_failed".

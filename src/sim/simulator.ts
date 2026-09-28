@@ -228,6 +228,7 @@ export class Simulator {
           by: "plugin",
           type: "gate_result",
           gate: command.gate,
+          round: command.round,
           ok,
           summary: ok ? "Passed." : `The ${command.gate} gate failed.`,
         });
