@@ -107,6 +107,51 @@ export const evolve: Evolve = (task, event) => {
       };
     }
 
+    case "task.done_reported": {
+      if (task.phase !== "in_progress") return wrongPhase(event, task);
+      const { step, lastFailure: _lastFailure, ...rest } = task;
+      if (step.kind !== "running") return refuse(event, `#${task.id} has no agent running`);
+      return {
+        ok: true,
+        task: {
+          ...rest,
+          phase: "checks",
+          session: step.session,
+          branch: event.branch,
+          step: event.gate,
+        },
+      };
+    }
+
+    // After the last gate, the step stays put. decide writes
+    // task.checks_passed in the same batch, and that moves the task on.
+    case "task.gate_passed": {
+      if (task.phase !== "checks") return wrongPhase(event, task);
+      const mismatch = notRunning(task, event.gate);
+      if (mismatch) return refuse(event, mismatch);
+      return event.next === null
+        ? { ok: true, task }
+        : { ok: true, task: { ...task, step: event.next } };
+    }
+
+    // Back to the same agent, which is still open and knows the code.
+    case "task.gate_failed": {
+      if (task.phase !== "checks") return wrongPhase(event, task);
+      const mismatch = notRunning(task, event.failure.step);
+      if (mismatch) return refuse(event, mismatch);
+      const { session, branch: _branch, step: _step, ...rest } = task;
+      return {
+        ok: true,
+        task: {
+          ...rest,
+          phase: "in_progress",
+          step: { kind: "running", session },
+          attempts: task.attempts + 1,
+          lastFailure: event.failure,
+        },
+      };
+    }
+
     default:
       return refuse(event, "not handled yet");
   }
@@ -114,6 +159,15 @@ export const evolve: Evolve = (task, event) => {
 
 function refuse(event: TaskEvent, why: string): Evolved {
   return { ok: false, reason: `${event.type} can't apply: ${why}.` };
+}
+
+// Says why a gate result doesn't fit, or null when that gate is running.
+function notRunning(task: Task & { phase: "checks" }, gate: string): string | null {
+  if (task.step === gate) return null;
+  if (task.step === "merge_approval" || task.step === "merging") {
+    return `#${task.id} isn't running a gate`;
+  }
+  return `#${task.id} is running the ${task.step} gate, not ${gate}`;
 }
 
 function wrongPhase(event: TaskEvent, task: Task): Evolved {
