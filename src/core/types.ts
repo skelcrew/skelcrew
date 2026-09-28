@@ -489,7 +489,11 @@ export type ProjectDecision =
 // on a task's state.
 export type DecideProject = (project: Project | null, envelope: ProjectEnvelope) => ProjectDecision;
 
-export type EvolveProject = (project: Project | null, event: ProjectEvent) => Project;
+// Like evolve, it refuses an event that doesn't fit, so replay stops at a
+// damaged log instead of rebuilding a wrong project.
+export type EvolveProject = (project: Project | null, event: ProjectEvent) => EvolvedProject;
+
+export type EvolvedProject = { ok: true; project: Project } | { ok: false; reason: string };
 
 // Picks which queued tasks in Spec, Ready or In progress to start next. It
 // keeps running sessions at or below maxRunning, not counting agents whose
