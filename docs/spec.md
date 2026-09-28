@@ -155,7 +155,7 @@ A task moves through six phases: Idea, Spec, Ready, In progress, Checks, Done. A
 **Who does the work.** Every phase with an agent in it can run two ways:
 
 - **In the background.** The scheduler starts an agent when a slot is free. Nobody watches it, and its questions go to the inbox. This is the default.
-- **Attended.** The developer starts the skill in their own harness, such as `/develop 12`. The skill takes the task through the CLI, and the core accepts only if the task is waiting to start and a slot is free. The developer watches it work and answers its questions in the conversation.
+- **Attended.** The developer starts the skill in their own harness, such as `/develop 12`. The skill claims the task through the CLI, and the core accepts only if the task is waiting to start and a slot is free. The developer watches it work and answers its questions in the conversation.
 
 Both take a slot under `max_running`, report through the CLI, and follow the same rules. The only differences are who pressed start and where questions go. A task can mix them: the developer works out a rewrite's spec attended, and a background agent builds it.
 
@@ -354,7 +354,7 @@ plugins:
 | `skelcrew log <task>` | Show a task's events and record entry |
 | `skelcrew check` | Decide whether a diff is safe to auto-merge; runs standalone in CI |
 | `skelcrew revert <task> "<reason>"` | Undo a merged task and return it to Spec with the reason |
-| `skelcrew take <task>` | Start work on a task in this harness session, attended; used by the skills |
+| `skelcrew claim <task>` | Start work on a task in this harness session, attended; used by the skills |
 | `skelcrew submit`, `done`, `ask`, `give-up` | How agents report: a finished spec, work done, a question, giving up; used by the skills |
 
 The TUI and the skills are both built on these commands, so neither can do what the other cannot.
