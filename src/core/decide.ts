@@ -70,6 +70,8 @@ export const decide: Decide = (task, envelope, config, projects) => {
       return inIdea(task, input, ctx);
     case "spec":
       return inSpec(task, input, ctx);
+    case "ready":
+      return inReady(task, input, ctx);
     default:
       return reject("Not handled yet.");
   }
@@ -145,6 +147,68 @@ function inSpec(task: TaskIn<"spec">, input: Input, ctx: Context): Decision {
       }
       if (input.note.trim() === "") return reject("A send-back needs a note.");
       return accept([{ type: "task.spec_sent_back", note: input.note }]);
+
+    default:
+      return reject("Not handled yet.");
+  }
+}
+
+function inReady(task: TaskIn<"ready">, input: Input, ctx: Context): Decision {
+  const { accept, reject } = ctx;
+  const { step } = task;
+
+  switch (input.type) {
+    // Each start is a new build, and the build number names its branch.
+    case "start": {
+      const refused = cantStart(task, ctx);
+      if (refused) return reject(refused);
+      return accept(
+        [{ type: "task.dispatch_started" }],
+        [{ type: "create_worktree", taskId: task.id, build: task.builds + 1 }],
+      );
+    }
+
+    case "worktree_created":
+      if (step.kind !== "creating_worktree") {
+        return reject(`#${task.id} isn't creating a worktree.`);
+      }
+      return accept(
+        [{ type: "task.worktree_created", worktree: input.worktree }],
+        [
+          {
+            type: "start_develop_session",
+            taskId: task.id,
+            worktree: input.worktree,
+            spec: task.spec,
+            lastFailure: null,
+          },
+        ],
+      );
+
+    case "worktree_failed":
+      if (step.kind !== "creating_worktree") {
+        return reject(`#${task.id} isn't creating a worktree.`);
+      }
+      return accept([
+        { type: "task.blocked", reason: { kind: "worktree_failed", message: input.message } },
+      ]);
+
+    case "session_started":
+      if (step.kind !== "starting_session") {
+        return reject(`#${task.id} isn't starting a develop agent.`);
+      }
+      return accept([{ type: "task.dispatched", session: input.session }]);
+
+    // A blocked task waits without a worktree, so the unused one is removed.
+    // The agent never ran, so no work is lost.
+    case "session_failed":
+      if (step.kind !== "starting_session") {
+        return reject(`#${task.id} isn't starting a develop agent.`);
+      }
+      return accept(
+        [{ type: "task.blocked", reason: { kind: "session_failed", message: input.message } }],
+        [{ type: "remove_worktree", worktree: step.worktree }],
+      );
 
     default:
       return reject("Not handled yet.");

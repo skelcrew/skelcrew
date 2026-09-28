@@ -382,3 +382,99 @@ describe("send_back_spec", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Ready
+// ---------------------------------------------------------------------------
+
+const worktree = { path: "/repo/.worktrees/12", branch: "task/12-csv-export" };
+const developSession = SessionId.parse("session-2");
+const worktreeCreated: Input = { by: "plugin", type: "worktree_created", worktree };
+const developStarted: Input = { by: "plugin", type: "session_started", session: developSession };
+
+const inReady = [...awaitingApproval, approve];
+const creatingWorktree = [...inReady, start];
+const startingDevelop = [...creatingWorktree, worktreeCreated];
+
+describe("start in Ready", () => {
+  test("creates a worktree for build 1", () => {
+    expect(send(run(...inReady), start)).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.dispatch_started" })],
+      commands: [{ type: "create_worktree", taskId: id, build: 1 }],
+    });
+  });
+
+  test("is rejected while the worktree is being created", () => {
+    expect(send(run(...creatingWorktree), start)).toEqual({
+      ok: false,
+      rejection: { input: "start", reason: "#12 isn't waiting for a slot." },
+    });
+  });
+});
+
+describe("worktree_created", () => {
+  test("starts a develop agent in the worktree, with the spec", () => {
+    expect(send(run(...creatingWorktree), worktreeCreated)).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.worktree_created", worktree })],
+      commands: [{ type: "start_develop_session", taskId: id, worktree, spec, lastFailure: null }],
+    });
+  });
+
+  test("is rejected when no worktree was asked for", () => {
+    expect(send(run(...inReady), worktreeCreated)).toEqual({
+      ok: false,
+      rejection: { input: "worktree_created", reason: "#12 isn't creating a worktree." },
+    });
+  });
+});
+
+describe("worktree_failed", () => {
+  test("blocks the task with the reason", () => {
+    const failed: Input = { by: "plugin", type: "worktree_failed", message: "disk full" };
+    expect(send(run(...creatingWorktree), failed)).toEqual({
+      ok: true,
+      events: [
+        stamped({
+          type: "task.blocked",
+          reason: { kind: "worktree_failed", message: "disk full" },
+        }),
+      ],
+      commands: [],
+    });
+  });
+});
+
+describe("session_started in Ready", () => {
+  test("moves the task to In progress", () => {
+    expect(send(run(...startingDevelop), developStarted)).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.dispatched", session: developSession })],
+      commands: [],
+    });
+  });
+
+  test("is rejected before the worktree exists", () => {
+    expect(send(run(...creatingWorktree), developStarted)).toEqual({
+      ok: false,
+      rejection: { input: "session_started", reason: "#12 isn't starting a develop agent." },
+    });
+  });
+});
+
+describe("session_failed in Ready", () => {
+  test("blocks the task and removes the unused worktree", () => {
+    const failed: Input = { by: "plugin", type: "session_failed", message: "herdr crashed" };
+    expect(send(run(...startingDevelop), failed)).toEqual({
+      ok: true,
+      events: [
+        stamped({
+          type: "task.blocked",
+          reason: { kind: "session_failed", message: "herdr crashed" },
+        }),
+      ],
+      commands: [{ type: "remove_worktree", worktree }],
+    });
+  });
+});
