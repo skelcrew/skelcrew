@@ -133,7 +133,7 @@ This resembles the Elm architecture and the decider pattern from event sourcing.
 
 **How the core is built.** The core is built in close collaboration with Claude, in live sessions rather than as background tasks:
 
-- the developer writes the types, contracts and invariants first; Claude implements against them
+- the types, contracts and invariants come first, and the developer approves them; Claude implements against them
 - tests come before implementation and are read closely, since a wrong test is more dangerous here than wrong code
 - one transition or contract at a time, with every diff read before it lands
 - Claude is asked to find input sequences that break an invariant, as an adversarial check
@@ -363,7 +363,7 @@ The TUI and the skills are both built on these commands, so neither can do what 
 
 Skelcrew should build itself as early as possible, and trust in auto-merge is earned from data rather than switched on. The existing CLI keeps building the new core until the daemon can take over.
 
-1. **Core in close collaboration.** State machine, contracts, event log and scheduler, with the full test approach and the simulator. Built interactively with Claude rather than delegated: the developer defines the types, contracts and invariants first, Claude implements against them, and every change to the core is read before it lands.
+1. **Core in close collaboration.** State machine, contracts, event log and scheduler, with the full test approach and the simulator. Built interactively with Claude rather than delegated: the types, contracts and invariants come first and the developer approves them, Claude implements against them, and every change to the core is read before it lands.
 2. **Smallest real loop, attended.** Daemon, CLI, built-in board, git plugin, local checks, and the default skills (spec, develop) used from the developer's harness. The developer starts each agent in their own session. Merging stays manual, and specs are approved with `skelcrew approve` until the inbox exists. One task goes from `skelcrew add` to a merged commit.
 3. **Dogfood day.** Skelcrew runs on its own repository; every change from here is a Skelcrew task.
 4. **Background runs and the TUI.** The process runner and Claude Code profile, so the scheduler starts agents itself. The TUI, for adding tasks, approving them, and seeing what is running and what waits on the developer.
