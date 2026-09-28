@@ -139,6 +139,35 @@ describe("the loop", () => {
     expect(loop.startWaiting()).toEqual([]);
   });
 
+  test("reports a failed save for a refused reply, so it can be sent again", () => {
+    let full = false;
+    const store = EventStore.open(":memory:");
+    const flaky: EventLog = {
+      appendTask: (events, starts) =>
+        full ? { ok: false, reason: "disk full" } : store.appendTask(events, starts),
+      appendProject: (events) => store.appendProject(events),
+    };
+    const loop = new Loop(config, new Recorded(), flaky);
+    loop.send(one, add());
+    loop.send(two, add());
+    loop.startWaiting();
+    loop.send(one, { by: "human", type: "drop" });
+
+    // #1's agent didn't start. The reply is refused, since #1 was dropped,
+    // but it still answers the start. Saving that fails.
+    const failed: Input = { by: "plugin", type: "session_failed", request: 1, message: "No." };
+    full = true;
+    expect(loop.send(one, failed)).toEqual({
+      ok: false,
+      rejection: { input: "session_failed", reason: "The events couldn't be saved: disk full" },
+    });
+    full = false;
+
+    // Sent again once saving works, the reply frees #1's slot for #2.
+    loop.send(one, failed);
+    expect(loop.startWaiting()).toEqual([two]);
+  });
+
   test("picks up where it left off from the saved events", () => {
     const store = EventStore.open(":memory:");
     const first = new Loop(config, new Recorded(), store);
