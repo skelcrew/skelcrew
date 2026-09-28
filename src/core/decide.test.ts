@@ -825,3 +825,149 @@ describe("merge_failed", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Questions
+// ---------------------------------------------------------------------------
+
+const ask = (text = "Include deleted rows?", options = ["Yes", "No"]): Input => ({
+  by: "agent",
+  type: "ask",
+  text,
+  options,
+});
+const answer = (text: string): Input => ({ by: "human", type: "answer", text });
+
+describe("ask", () => {
+  test("from the spec agent, stores the question for your inbox", () => {
+    expect(send(run(...specRunning), ask())).toEqual({
+      ok: true,
+      events: [
+        stamped({
+          type: "task.question_asked",
+          question: {
+            from: "spec",
+            text: "Include deleted rows?",
+            options: ["Yes", "No"],
+            askedAt: at,
+          },
+        }),
+      ],
+      commands: [],
+    });
+  });
+
+  test("from the develop agent, in In progress or Checks", () => {
+    for (const inputs of [inProgress, inChecks]) {
+      const decision = send(run(...inputs), ask());
+      expect(decision.ok && decision.events[0]).toMatchObject({ question: { from: "develop" } });
+    }
+  });
+
+  test("is rejected while another question is open", () => {
+    expect(send(run(...specRunning, ask()), ask("Which date format?"))).toEqual({
+      ok: false,
+      rejection: { input: "ask", reason: "#12 already has an open question." },
+    });
+  });
+
+  test("is rejected when no agent is running", () => {
+    expect(send(run(...awaitingApproval), ask())).toEqual({
+      ok: false,
+      rejection: { input: "ask", reason: "#12 has no agent running." },
+    });
+  });
+
+  test("is rejected without two to four options", () => {
+    for (const options of [["Yes"], ["A", "B", "C", "D", "E"]]) {
+      expect(send(run(...specRunning), ask("Include deleted rows?", options))).toEqual({
+        ok: false,
+        rejection: { input: "ask", reason: "A question needs two to four options." },
+      });
+    }
+  });
+});
+
+describe("answer", () => {
+  test("clears the question and sends your answer to the agent that asked", () => {
+    expect(send(run(...specRunning, ask()), answer("No"))).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.question_answered", text: "No" })],
+      commands: [{ type: "send_to_session", session, text: "No" }],
+    });
+  });
+
+  test("reaches the develop agent while the task is in Checks", () => {
+    const decision = send(run(...inChecks, ask()), answer("No"));
+    expect(decision.ok && decision.commands).toEqual([
+      { type: "send_to_session", session: developSession, text: "No" },
+    ]);
+  });
+
+  test("is rejected when no question is open", () => {
+    expect(send(run(...specRunning), answer("No"))).toEqual({
+      ok: false,
+      rejection: { input: "answer", reason: "#12 has no open question." },
+    });
+  });
+
+  test("is rejected when blank", () => {
+    expect(send(run(...specRunning, ask()), answer(" "))).toEqual({
+      ok: false,
+      rejection: { input: "answer", reason: "An answer needs text." },
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Usage and the safety cap
+// ---------------------------------------------------------------------------
+
+// The test config's cap is 200,000 tokens and 60 minutes.
+const usage = (tokens: number, minutes = 0): Input => ({
+  by: "system",
+  type: "usage",
+  usage: { tokens, ms: minutes * 60_000 },
+});
+
+describe("usage", () => {
+  test("records the totals while under the cap", () => {
+    expect(send(run(...inProgress), usage(50_000, 10))).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.usage_recorded", usage: { tokens: 50_000, ms: 600_000 } })],
+      commands: [],
+    });
+  });
+
+  test("blocks the task and stops the agent once it reaches the cap", () => {
+    expect(send(run(...inProgress), usage(200_000, 10))).toEqual({
+      ok: true,
+      events: [
+        stamped({ type: "task.usage_recorded", usage: { tokens: 200_000, ms: 600_000 } }),
+        stamped({
+          type: "task.blocked",
+          reason: { kind: "safety_cap", usage: { tokens: 200_000, ms: 600_000 } },
+        }),
+      ],
+      commands: [{ type: "stop_session", session: developSession }],
+    });
+  });
+
+  test("stops the spec agent too", () => {
+    const decision = send(run(...specRunning), usage(0, 60));
+    expect(decision.ok && decision.commands).toEqual([{ type: "stop_session", session }]);
+  });
+
+  test("counts only what was used since the last retry", () => {
+    const retried = run(...inProgress, usage(200_000), retry);
+    const decision = send(retried, usage(250_000));
+    expect(decision.ok && decision.events.map((e) => e.type)).toEqual(["task.usage_recorded"]);
+  });
+
+  test("only records the totals when no agent is running", () => {
+    for (const inputs of [awaitingApproval, [...inProgress, giveUp]]) {
+      const decision = send(run(...inputs), usage(300_000));
+      expect(decision.ok && decision.events.map((e) => e.type)).toEqual(["task.usage_recorded"]);
+    }
+  });
+});

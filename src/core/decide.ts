@@ -6,7 +6,7 @@
 // input. The rest are grouped by the phase they apply in, one function per
 // phase, like evolve.
 
-import { attemptsLeft, criticalFiles, specComplete } from "./contracts";
+import { attemptsLeft, criticalFiles, specComplete, withinSafetyCap } from "./contracts";
 import { phaseNames, type TaskIn } from "./phases";
 import type {
   Command,
@@ -18,7 +18,9 @@ import type {
   Input,
   Project,
   ProjectId,
+  SessionId,
   Spec,
+  Task,
 } from "./types";
 
 // What every phase function needs besides the task and the input.
@@ -71,6 +73,54 @@ export const decide: Decide = (task, envelope, config, projects) => {
   if (input.type === "retry") {
     if (task.blocked === null) return reject(`#${task.id} isn't blocked.`);
     return accept([{ type: "task.unblocked" }]);
+  }
+
+  switch (input.type) {
+    // One open question at a time, from the agent that is running.
+    case "ask": {
+      const from = agentKind(task);
+      if (from === null) return reject(`#${task.id} has no agent running.`);
+      if (task.question !== null) return reject(`#${task.id} already has an open question.`);
+      if (input.options.length < 2 || input.options.length > 4) {
+        return reject("A question needs two to four options.");
+      }
+      return accept([
+        {
+          type: "task.question_asked",
+          question: { from, text: input.text, options: input.options, askedAt: envelope.at },
+        },
+      ]);
+    }
+
+    case "answer": {
+      if (task.question === null) return reject(`#${task.id} has no open question.`);
+      if (input.text.trim() === "") return reject("An answer needs text.");
+      const session = runningSession(task);
+      if (session === null) return reject(`#${task.id} has no agent running.`);
+      return accept(
+        [{ type: "task.question_answered", text: input.text }],
+        [{ type: "send_to_session", session, text: input.text }],
+      );
+    }
+
+    // The safety cap counts from the last retry. It only blocks while an
+    // agent is running: a late report for a stopped agent has nothing to stop.
+    case "usage": {
+      const recorded: EventBody = { type: "task.usage_recorded", usage: input.usage };
+      const session = runningSession(task);
+      if (task.blocked !== null || session === null) return accept([recorded]);
+      if (withinSafetyCap(input.usage, task.usageAtRetry, config.safetyCap).ok) {
+        return accept([recorded]);
+      }
+      const used = {
+        tokens: input.usage.tokens - task.usageAtRetry.tokens,
+        ms: input.usage.ms - task.usageAtRetry.ms,
+      };
+      return accept(
+        [recorded, { type: "task.blocked", reason: { kind: "safety_cap", usage: used } }],
+        [{ type: "stop_session", session }],
+      );
+    }
   }
 
   switch (task.phase) {
@@ -377,6 +427,26 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// The session of the task's running agent, or null if none is running. In
+// Checks the develop agent stays open, so it counts as running.
+function runningSession(task: Task): SessionId | null {
+  switch (task.phase) {
+    case "spec":
+    case "in_progress":
+      return task.step.kind === "running" ? task.step.session : null;
+    case "checks":
+      return task.session;
+    default:
+      return null;
+  }
+}
+
+// Which agent a question would come from, or null if none is running.
+function agentKind(task: Task): "spec" | "develop" | null {
+  if (runningSession(task) === null) return null;
+  return task.phase === "spec" ? "spec" : "develop";
+}
 
 // A failed gate or merge. The same agent gets the failure while attempts
 // remain. After the last one, the task is blocked and the agent stopped.
