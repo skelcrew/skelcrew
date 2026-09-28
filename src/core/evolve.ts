@@ -186,6 +186,47 @@ export const evolve: Evolve = (task, event) => {
       }
       return { ok: true, task: backToAgent(task, task.attempts, null) };
 
+    case "task.question_asked": {
+      if (task.question !== null) return refuse(event, `#${task.id} already has an open question`);
+      const { from } = event.question;
+      const fits =
+        from === "spec"
+          ? task.phase === "spec"
+          : task.phase === "in_progress" || task.phase === "checks";
+      if (!fits) {
+        return refuse(event, `a ${from} question can't be open in ${phaseNames[task.phase]}`);
+      }
+      return { ok: true, task: { ...task, question: event.question } };
+    }
+
+    case "task.question_answered":
+      if (task.question === null) return refuse(event, `#${task.id} has no open question`);
+      return { ok: true, task: { ...task, question: null } };
+
+    // Blocking stops the agent, so its question is cleared too: there is no
+    // one left to answer. A task blocked in Checks goes back to In progress,
+    // keeping its worktree, so a retry carries on with the same code.
+    case "task.blocked": {
+      if (task.blocked !== null) return refuse(event, `#${task.id} is already blocked`);
+      const stopped = stopAgent(task);
+      if (stopped === null) return wrongPhase(event, task);
+      return { ok: true, task: { ...stopped, blocked: event.reason, question: null } };
+    }
+
+    // A retry starts fresh: no failed attempts, and the safety cap counts
+    // from the usage so far.
+    case "task.unblocked": {
+      if (task.blocked === null) return refuse(event, `#${task.id} isn't blocked`);
+      const cleared = { ...task, blocked: null, usageAtRetry: task.usage };
+      return {
+        ok: true,
+        task: cleared.phase === "in_progress" ? { ...cleared, attempts: 0 } : cleared,
+      };
+    }
+
+    case "task.usage_recorded":
+      return { ok: true, task: { ...task, usage: event.usage } };
+
     default:
       return refuse(event, "not handled yet");
   }
@@ -193,6 +234,23 @@ export const evolve: Evolve = (task, event) => {
 
 function refuse(event: TaskEvent, why: string): Evolved {
   return { ok: false, reason: `${event.type} can't apply: ${why}.` };
+}
+
+// The task with its agent stopped and waiting for a slot again, or null in
+// a phase with no work in flight.
+function stopAgent(task: Task): Task | null {
+  switch (task.phase) {
+    case "spec":
+    case "ready":
+    case "in_progress":
+      return { ...task, step: { kind: "queued" } };
+    case "checks": {
+      const { session: _session, branch: _branch, step: _step, ...rest } = task;
+      return { ...rest, phase: "in_progress", step: { kind: "queued" }, lastFailure: null };
+    }
+    default:
+      return null;
+  }
 }
 
 // From Checks back to In progress, with the same agent. Its session stayed

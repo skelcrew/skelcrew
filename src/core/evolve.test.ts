@@ -450,3 +450,166 @@ describe("task.merge_sent_back", () => {
     });
   });
 });
+
+const specQuestion = {
+  from: "spec" as const,
+  text: "Include deleted rows?",
+  options: ["Yes", "No"],
+  askedAt: at,
+};
+const developQuestion = { ...specQuestion, from: "develop" as const };
+const specRunning: EventBody[] = [
+  ...inSpec,
+  { type: "task.dispatch_started" },
+  { type: "task.spec_session_started", session },
+];
+const capReached = { kind: "safety_cap" as const, usage: { tokens: 200_000, ms: 0 } };
+const gatesFailed = { kind: "gates_failed" as const, failure: localFailed };
+
+describe("task.question_asked", () => {
+  test("stores the question", () => {
+    expect(
+      replay(...specRunning, { type: "task.question_asked", question: specQuestion }),
+    ).toMatchObject({ question: specQuestion });
+  });
+
+  test("is refused while another question is open", () => {
+    const task = replay(...specRunning, { type: "task.question_asked", question: specQuestion });
+    const second = event({ type: "task.question_asked", question: specQuestion });
+    expect(evolve(task, second)).toEqual({
+      ok: false,
+      reason: "task.question_asked can't apply: #12 already has an open question.",
+    });
+  });
+
+  test("is refused from the spec agent outside Spec", () => {
+    const asked = event({ type: "task.question_asked", question: specQuestion });
+    expect(evolve(replay(...inProgress), asked)).toEqual({
+      ok: false,
+      reason: "task.question_asked can't apply: a spec question can't be open in In progress.",
+    });
+  });
+
+  test("is refused from the develop agent outside In progress and Checks", () => {
+    const asked = event({ type: "task.question_asked", question: developQuestion });
+    expect(evolve(replay(...specRunning), asked)).toEqual({
+      ok: false,
+      reason: "task.question_asked can't apply: a develop question can't be open in Spec.",
+    });
+  });
+});
+
+describe("task.question_answered", () => {
+  test("clears the question", () => {
+    expect(
+      replay(
+        ...specRunning,
+        { type: "task.question_asked", question: specQuestion },
+        { type: "task.question_answered", text: "No" },
+      ),
+    ).toMatchObject({ question: null });
+  });
+
+  test("is refused when no question is open", () => {
+    expect(
+      evolve(replay(...specRunning), event({ type: "task.question_answered", text: "No" })),
+    ).toEqual({
+      ok: false,
+      reason: "task.question_answered can't apply: #12 has no open question.",
+    });
+  });
+});
+
+describe("task.blocked", () => {
+  test("stops the agent in In progress but keeps the worktree", () => {
+    expect(replay(...inProgress, { type: "task.blocked", reason: capReached })).toMatchObject({
+      phase: "in_progress",
+      blocked: capReached,
+      worktree,
+      step: { kind: "queued" },
+    });
+  });
+
+  test("sends a task blocked in Checks back to In progress, keeping its attempts", () => {
+    const task = replay(
+      ...inChecks,
+      { type: "task.gate_failed", failure: localFailed },
+      { type: "task.done_reported", branch: branchFacts, gate: "local" },
+      { type: "task.blocked", reason: capReached },
+    );
+    expect(task).toMatchObject({
+      phase: "in_progress",
+      blocked: capReached,
+      worktree,
+      step: { kind: "queued" },
+      attempts: 1,
+    });
+  });
+
+  test("stops the spec agent in Spec, keeping the spec", () => {
+    const task = replay(...specRunning, { type: "task.blocked", reason: capReached });
+    expect(task).toMatchObject({ phase: "spec", blocked: capReached, step: { kind: "queued" } });
+  });
+
+  test("clears an open question, since the agent that asked it is stopped", () => {
+    const task = replay(
+      ...specRunning,
+      { type: "task.question_asked", question: specQuestion },
+      { type: "task.blocked", reason: capReached },
+    );
+    expect(task.question).toBeNull();
+  });
+
+  test("is refused for a task that is already blocked", () => {
+    const task = replay(...inProgress, { type: "task.blocked", reason: capReached });
+    expect(evolve(task, event({ type: "task.blocked", reason: gatesFailed }))).toEqual({
+      ok: false,
+      reason: "task.blocked can't apply: #12 is already blocked.",
+    });
+  });
+
+  test("is refused in Idea, where no work is running", () => {
+    expect(evolve(replay(created), event({ type: "task.blocked", reason: capReached }))).toEqual({
+      ok: false,
+      reason: "task.blocked can't apply to #12 in Idea.",
+    });
+  });
+});
+
+describe("task.unblocked", () => {
+  const usage = { tokens: 250_000, ms: 30 * 60_000 };
+  const blockedAfterFailures: EventBody[] = [
+    ...inChecks,
+    { type: "task.gate_failed", failure: localFailed },
+    { type: "task.usage_recorded", usage },
+    { type: "task.blocked", reason: gatesFailed },
+  ];
+
+  test("clears the flag and resets the attempts and the safety cap", () => {
+    expect(replay(...blockedAfterFailures, { type: "task.unblocked" })).toMatchObject({
+      phase: "in_progress",
+      blocked: null,
+      attempts: 0,
+      usage,
+      usageAtRetry: usage,
+      step: { kind: "queued" },
+    });
+  });
+
+  test("is refused for a task that isn't blocked", () => {
+    expect(evolve(replay(...inProgress), event({ type: "task.unblocked" }))).toEqual({
+      ok: false,
+      reason: "task.unblocked can't apply: #12 isn't blocked.",
+    });
+  });
+});
+
+describe("task.usage_recorded", () => {
+  test("replaces the running totals", () => {
+    const usage = { tokens: 12_000, ms: 90_000 };
+    expect(replay(...inProgress, { type: "task.usage_recorded", usage })).toMatchObject({
+      usage,
+      usageAtRetry: { tokens: 0, ms: 0 },
+    });
+  });
+});
