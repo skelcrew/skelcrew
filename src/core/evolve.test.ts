@@ -191,3 +191,66 @@ describe("task.ready", () => {
     });
   });
 });
+
+const worktree = { path: "/repo/.worktrees/12", branch: "task/12-csv-export" };
+const inReady: EventBody[] = [...specced, { type: "task.ready" }];
+
+describe("task.dispatch_started in Ready", () => {
+  test("starts creating the worktree and counts a new build", () => {
+    const task = replay(...inReady, { type: "task.dispatch_started" });
+    expect(task).toMatchObject({ phase: "ready", step: { kind: "creating_worktree" }, builds: 1 });
+  });
+});
+
+describe("task.worktree_created", () => {
+  test("stores the worktree while the develop session starts", () => {
+    expect(
+      replay(
+        ...inReady,
+        { type: "task.dispatch_started" },
+        { type: "task.worktree_created", worktree },
+      ),
+    ).toMatchObject({ phase: "ready", step: { kind: "starting_session", worktree } });
+  });
+
+  test("is refused before the worktree was asked for", () => {
+    expect(evolve(replay(...inReady), event({ type: "task.worktree_created", worktree }))).toEqual({
+      ok: false,
+      reason: "task.worktree_created can't apply: #12 isn't creating a worktree.",
+    });
+  });
+
+  test("is refused outside Ready", () => {
+    expect(evolve(replay(...specced), event({ type: "task.worktree_created", worktree }))).toEqual({
+      ok: false,
+      reason: "task.worktree_created can't apply to #12 in Spec.",
+    });
+  });
+});
+
+describe("task.dispatched from Ready", () => {
+  const starting: EventBody[] = [
+    ...inReady,
+    { type: "task.dispatch_started" },
+    { type: "task.worktree_created", worktree },
+  ];
+
+  test("moves the task to In progress with its worktree and running session", () => {
+    expect(replay(...starting, { type: "task.dispatched", session })).toMatchObject({
+      phase: "in_progress",
+      spec,
+      worktree,
+      step: { kind: "running", session },
+      attempts: 0,
+      lastFailure: null,
+    });
+  });
+
+  test("is refused before the worktree exists", () => {
+    const task = replay(...inReady, { type: "task.dispatch_started" });
+    expect(evolve(task, event({ type: "task.dispatched", session }))).toEqual({
+      ok: false,
+      reason: "task.dispatched can't apply: #12 has no worktree yet.",
+    });
+  });
+});

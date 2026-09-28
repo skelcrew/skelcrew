@@ -47,9 +47,19 @@ export const evolve: Evolve = (task, event) => {
         task: { ...task, spec: event.spec, note: null, step: { kind: "awaiting_approval" } },
       };
 
+    // In Ready, each start is a new build with its own branch. The count
+    // goes up before the worktree exists, so a failed try never reuses it.
     case "task.dispatch_started":
-      if (task.phase !== "spec") return wrongPhase(event, task);
-      return { ok: true, task: { ...task, step: { kind: "starting" } } };
+      if (task.phase === "spec") {
+        return { ok: true, task: { ...task, step: { kind: "starting" } } };
+      }
+      if (task.phase === "ready") {
+        return {
+          ok: true,
+          task: { ...task, step: { kind: "creating_worktree" }, builds: task.builds + 1 },
+        };
+      }
+      return wrongPhase(event, task);
 
     case "task.spec_session_started":
       if (task.phase !== "spec") return wrongPhase(event, task);
@@ -66,6 +76,35 @@ export const evolve: Evolve = (task, event) => {
       const { spec, note: _note, step: _step, ...rest } = task;
       if (spec === null) return refuse(event, `#${task.id} has no spec`);
       return { ok: true, task: { ...rest, phase: "ready", spec, step: { kind: "queued" } } };
+    }
+
+    case "task.worktree_created":
+      if (task.phase !== "ready") return wrongPhase(event, task);
+      if (task.step.kind !== "creating_worktree") {
+        return refuse(event, `#${task.id} isn't creating a worktree`);
+      }
+      return {
+        ok: true,
+        task: { ...task, step: { kind: "starting_session", worktree: event.worktree } },
+      };
+
+    case "task.dispatched": {
+      if (task.phase !== "ready") return wrongPhase(event, task);
+      const { step, ...rest } = task;
+      if (step.kind !== "starting_session") {
+        return refuse(event, `#${task.id} has no worktree yet`);
+      }
+      return {
+        ok: true,
+        task: {
+          ...rest,
+          phase: "in_progress",
+          worktree: step.worktree,
+          step: { kind: "running", session: event.session },
+          attempts: 0,
+          lastFailure: null,
+        },
+      };
     }
 
     default:
