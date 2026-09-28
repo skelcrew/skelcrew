@@ -127,8 +127,8 @@ export const evolve: Evolve = (task, event) => {
     // task.checks_passed in the same batch, and that moves the task on.
     case "task.gate_passed": {
       if (task.phase !== "checks") return wrongPhase(event, task);
-      const why = whyGateNotRunning(task, event.gate);
-      if (why) return refuse(event, why);
+      const mismatch = gateMismatch(task, event.gate);
+      if (mismatch) return refuse(event, mismatch);
       return event.next === null
         ? { ok: true, task }
         : { ok: true, task: { ...task, step: event.next } };
@@ -137,8 +137,8 @@ export const evolve: Evolve = (task, event) => {
     // Back to the same agent, which is still open and knows the code.
     case "task.gate_failed": {
       if (task.phase !== "checks") return wrongPhase(event, task);
-      const why = whyGateNotRunning(task, event.failure.step);
-      if (why) return refuse(event, why);
+      const mismatch = gateMismatch(task, event.failure.step);
+      if (mismatch) return refuse(event, mismatch);
       return { ok: true, task: backToAgent(task, task.attempts + 1, event.failure) };
     }
 
@@ -212,8 +212,9 @@ function backToAgent(
   };
 }
 
-// Says why a gate result doesn't fit, or null when that gate is running.
-function whyGateNotRunning(task: Task & { phase: "checks" }, gate: string): string | null {
+// Returns what doesn't match between a gate result and the running gate,
+// or null when they match.
+function gateMismatch(task: Task & { phase: "checks" }, gate: string): string | null {
   if (task.step === gate) return null;
   if (task.step === "merge_approval" || task.step === "merging") {
     return `#${task.id} isn't running a gate`;
