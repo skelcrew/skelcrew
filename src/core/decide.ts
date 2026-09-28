@@ -9,6 +9,7 @@
 import { attemptsLeft, criticalFiles, specComplete, withinSafetyCap } from "./contracts";
 import { phaseNames, type TaskIn } from "./phases";
 import type {
+  BlockReason,
   Command,
   Config,
   DecideTask,
@@ -329,7 +330,7 @@ function inReady(task: TaskIn<"ready">, input: Input, ctx: Context): Decision {
     case "worktree_created":
       return accept(
         [{ type: "task.worktree_created", worktree: input.worktree }],
-        [startDevelop(task, input.worktree, null, null)],
+        [startDevelop(task, input.worktree, null, null, null)],
       );
 
     case "worktree_failed":
@@ -360,7 +361,8 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
 
   switch (input.type) {
     // After a retry, a send-back or a failed merge: a new agent in the same
-    // worktree, told what failed last and what you asked for.
+    // worktree, told what failed last, what you asked for, and why the last
+    // agent was stopped.
     case "start": {
       const refused = cantStart(task, ctx);
       if (refused) return reject(refused);
@@ -368,7 +370,7 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
       if (capped) return accept([capped]);
       return accept(
         [{ type: "task.dispatch_started" }],
-        [startDevelop(task, worktree, task.lastFailure, task.note)],
+        [startDevelop(task, worktree, task.lastFailure, task.note, task.lastBlock)],
       );
     }
 
@@ -712,6 +714,7 @@ function startDevelop(
   worktree: Worktree,
   lastFailure: Failure | null,
   note: string | null,
+  lastBlock: BlockReason | null,
 ): Command {
   return {
     type: "start_develop_session",
@@ -720,6 +723,7 @@ function startDevelop(
     spec: task.spec,
     lastFailure,
     note,
+    lastBlock,
   };
 }
 

@@ -437,6 +437,7 @@ describe("worktree_created", () => {
           spec,
           lastFailure: null,
           note: null,
+          lastBlock: null,
         },
       ],
     });
@@ -571,7 +572,7 @@ describe("retry", () => {
 describe("start in In progress, after a retry", () => {
   const retried = [...inProgress, giveUp, retry];
 
-  test("starts a new agent in the same worktree", () => {
+  test("starts a new agent in the same worktree, told why the last one stopped", () => {
     expect(send(run(...retried), start)).toEqual({
       ok: true,
       events: [stamped({ type: "task.dispatch_started" })],
@@ -583,6 +584,7 @@ describe("start in In progress, after a retry", () => {
           spec,
           lastFailure: null,
           note: null,
+          lastBlock: { kind: "agent_gave_up", message: "The reports API is missing." },
         },
       ],
     });
@@ -717,6 +719,7 @@ describe("gate_result, failing", () => {
         spec,
         lastFailure: localFailure,
         note: null,
+        lastBlock: { kind: "out_of_attempts", failure: localFailure },
       },
     ]);
   });
@@ -805,6 +808,7 @@ describe("send_back_merge", () => {
         spec,
         lastFailure: null,
         note: "Don't touch login.",
+        lastBlock: null,
       },
     ]);
   });
@@ -853,6 +857,7 @@ describe("merge_failed", () => {
         spec,
         lastFailure: mergeFailure,
         note: null,
+        lastBlock: null,
       },
     ]);
   });

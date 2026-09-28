@@ -61,11 +61,16 @@ export const evolveTask: EvolveTask = (task, event) => {
     }
 
     // A retry starts fresh: no failed attempts, and the safety cap counts
-    // from the usage so far.
+    // from the usage so far. The reason for the block is kept, so the next
+    // develop agent knows why the last one stopped.
     case "task.unblocked": {
       if (task.blocked === null) return refuse(event, `#${task.id} isn't blocked`);
       const cleared = { ...task, blocked: null, usageAtRetry: task.usage };
-      return ok(cleared.phase === "in_progress" ? { ...cleared, attempts: 0 } : cleared);
+      return ok(
+        cleared.phase === "in_progress"
+          ? { ...cleared, attempts: 0, lastBlock: task.blocked }
+          : cleared,
+      );
     }
 
     case "task.usage_recorded":
@@ -172,6 +177,7 @@ function inReady(task: TaskIn<"ready">, event: TaskEvent): EvolvedTask {
         attempts: 0,
         lastFailure: null,
         note: null,
+        lastBlock: null,
       });
     }
 
@@ -196,7 +202,7 @@ function inProgress(task: TaskIn<"in_progress">, event: TaskEvent): EvolvedTask 
       return ok({ ...task, step: { kind: "running", session: event.session } });
 
     case "task.done_reported": {
-      const { step, lastFailure: _lastFailure, note: _note, ...rest } = task;
+      const { step, lastFailure: _lastFailure, note: _note, lastBlock: _lastBlock, ...rest } = task;
       if (step.kind !== "running") return refuse(event, `#${task.id} has no agent running`);
       return ok({
         ...rest,
@@ -349,6 +355,7 @@ function stopAgent(task: Task): Task | null {
         step: { kind: "queued" },
         lastFailure: null,
         note: null,
+        lastBlock: null,
       };
     }
     default:
@@ -368,7 +375,7 @@ function backToAgent(
   const { session, branch: _branch, step: _step, ...rest } = task;
   const step =
     session === null ? { kind: "queued" as const } : { kind: "running" as const, session };
-  return { ...rest, phase: "in_progress", step, attempts, lastFailure, note };
+  return { ...rest, phase: "in_progress", step, attempts, lastFailure, note, lastBlock: null };
 }
 
 // Returns what doesn't match between a gate result and the running gate,
