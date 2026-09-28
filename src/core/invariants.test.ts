@@ -285,7 +285,7 @@ class Checker {
     const envelope = { taskId: this.id, at, input };
     const decision = decideTask(before, envelope, this.config, projects);
 
-    // 18. The same input always gives the same result.
+    // 19. The same input always gives the same result.
     expect(decideTask(before, envelope, this.config, projects)).toEqual(decision);
 
     // 3. A move in another tool is never obeyed.
@@ -307,7 +307,7 @@ class Checker {
     const { events, commands } = decision;
 
     for (const event of events) {
-      // 20. Every event belongs to its task and its moment.
+      // 21. Every event belongs to its task and its moment.
       expect(event.taskId).toBe(this.id);
       expect(event.at).toBe(at);
       this.checkEvent(event, input);
@@ -489,13 +489,13 @@ class Checker {
     // 16. A blocked task has no agent running.
     if (task.blocked !== null) expect(session).toBeNull();
 
-    // Usage totals never go down: the record keeps the true cost, and the
-    // safety cap counts from them. (Proposed as a new invariant.)
+    // 18. Usage totals never go down: the record keeps the true cost, and
+    // the safety cap counts from them.
     expect(task.usage.tokens).toBeGreaterThanOrEqual(this.lastUsage.tokens);
     expect(task.usage.ms).toBeGreaterThanOrEqual(this.lastUsage.ms);
     this.lastUsage = task.usage;
 
-    // 19. Replaying the log rebuilds the task exactly.
+    // 20. Replaying the log rebuilds the task exactly.
     let replayed: Task | null = null;
     for (const event of this.log) {
       const result = evolveTask(replayed, event);

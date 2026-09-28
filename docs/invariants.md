@@ -50,12 +50,15 @@ do, lose work, or leave the developer looking at a wrong picture.
 17. **Dropped is final.** A dropped task records no more events. A late worktree or
     agent is only removed or stopped. A Done task only accepts a revert, the answer
     to it, and a late usage report so the record keeps the true cost.
+18. **Usage totals never go down.** The record keeps a task's true cost, and the safety
+    cap counts from it. A delayed report with lower totals could otherwise hide cost, and
+    let an agent stuck in a loop run past its cap.
 
 ## Replay
 
-18. **The same input always gives the same result.** Same task, same input, same config:
+19. **The same input always gives the same result.** Same task, same input, same config:
     the same decision.
-19. **Replaying the log rebuilds the task exactly.** Folding a task's events through
+20. **Replaying the log rebuilds the task exactly.** Folding a task's events through
     `evolveTask` from nothing gives the same task the core had before.
-20. **Every event belongs to its task and its moment.** Its task ID and time match the
+21. **Every event belongs to its task and its moment.** Its task ID and time match the
     input that caused it.
