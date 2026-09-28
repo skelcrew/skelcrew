@@ -4,8 +4,8 @@
 // reverting the wrong commit.
 //
 // Zod adds the brand while it checks an outside value, so no code of ours
-// needs an `as` cast. IDs only enter through the boundaries (CLI, MCP server,
-// plugins, the database), and each boundary parses them with these schemas.
+// needs an `as` cast. IDs only enter through the boundaries (the CLI, plugins,
+// the database), and each boundary parses them with these schemas.
 
 import * as z from "zod";
 

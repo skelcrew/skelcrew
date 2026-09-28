@@ -244,10 +244,10 @@ export type ProjectEvent = ProjectEventBody & {
 // Inputs: everything that can happen to a task
 // ---------------------------------------------------------------------------
 //
-// Inputs are grouped by who can send them. The MCP server can only build an
-// AgentInput, so an agent has no way to express "approve this spec". That
-// makes "prompts propose, the core decides" a type error to break, not just
-// a runtime check.
+// Inputs are grouped by who can send them. A CLI call from an agent can only
+// become an AgentInput, so an agent has no way to express "approve this
+// spec". That makes "prompts propose, the core decides" a type error to
+// break, not just a runtime check.
 
 export type HumanInput =
   | {
@@ -302,8 +302,9 @@ export type SystemInput =
   | { type: "start" } // proposed by the scheduler when a slot is free
   | { type: "usage"; usage: Usage }; // running totals, read from transcripts
 
-// `by` is set by the boundary that received the input (CLI, MCP server,
-// plugin host), never by the sender. An agent cannot claim to be human.
+// `by` is set by the boundary that received the input (the CLI, from the
+// caller's identity, or the plugin host), never by the sender. An agent
+// cannot claim to be human.
 export type Input =
   | ({ by: "human" } & HumanInput)
   | ({ by: "agent" } & AgentInput)
