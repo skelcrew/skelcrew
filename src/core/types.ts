@@ -458,7 +458,13 @@ export type Decide = (
 // Why split decide and evolve: decide holds the rules, evolve only applies
 // facts. Replaying the log after a crash runs evolve alone, so old events
 // are never re-judged by rules that have since changed.
-export type Evolve = (task: Task | null, event: TaskEvent) => Task;
+//
+// decide never produces an event that doesn't fit the task. A damaged or
+// hand-edited log could, so evolve says which event and why instead of
+// guessing. Replay then stops there, rather than rebuilding a wrong task.
+export type Evolve = (task: Task | null, event: TaskEvent) => Evolved;
+
+export type Evolved = { ok: true; task: Task } | { ok: false; reason: string };
 
 export type ProjectDecision =
   | { ok: true; events: ProjectEvent[] }
