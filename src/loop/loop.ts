@@ -102,12 +102,15 @@ export class Loop {
   // One input for one task, at the given time: the clock by default, or a
   // simulated one in tests.
   send(taskId: TaskId, input: Input, at: number = Date.now()): Decision {
-    // A reply answers its start, whatever the core then makes of it.
-    if (answersStart(input)) this.pending.delete(key(taskId, input.request));
-
     const before = this.taskMap.get(taskId) ?? null;
     const decision = decideTask(before, { taskId, at, input }, this.config, this.projectMap);
-    if (!decision.ok) return decision;
+    // A reply answers its start once it has been handled: refused, or its
+    // events saved. If saving fails below, the start stays counted, since
+    // the task never recorded what the reply said.
+    if (!decision.ok) {
+      this.answered(taskId, input);
+      return decision;
+    }
 
     if (this.log !== null && decision.events.length > 0) {
       const saved = this.log.appendTask(decision.events);
@@ -118,6 +121,7 @@ export class Loop {
         };
       }
     }
+    this.answered(taskId, input);
     for (const event of decision.events) this.apply(event);
     for (const command of decision.commands) {
       if (startsSomething(command)) this.pending.add(key(command.taskId, command.request));
@@ -154,6 +158,10 @@ export class Loop {
     const picks = schedule(this.tasks(), this.projectMap, this.config, this.startsInFlight);
     for (const taskId of picks) this.send(taskId, { by: "system", type: "start" }, at);
     return picks;
+  }
+
+  private answered(taskId: TaskId, input: Input): void {
+    if (answersStart(input)) this.pending.delete(key(taskId, input.request));
   }
 
   // decideTask never produces an event evolveTask refuses. If it ever does,
