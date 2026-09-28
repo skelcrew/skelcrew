@@ -112,11 +112,17 @@ function create(
 // after the task was dropped. It is cleaned up and nothing is recorded, so
 // no worktree or agent is left behind (invariant 13). Null if the task is
 // waiting for it.
+//
+// A reply repeated for the agent or worktree the task already holds is
+// ignored. Cleaning it up would stop the agent that is working, or remove
+// the worktree it works in.
 function lateReply(task: Task, input: Input, ctx: Context): Decision | null {
   if (input.type === "worktree_created" && !waitingForWorktree(task)) {
+    if (heldWorktree(task) === input.worktree.path) return ctx.accept([]);
     return ctx.accept([], [removeWorktree(input.worktree)]);
   }
   if (input.type === "session_started" && !waitingForAgent(task)) {
+    if (runningSession(task) === input.session) return ctx.accept([]);
     return ctx.accept([], [stopSession(input.session)]);
   }
   return null;
@@ -638,6 +644,14 @@ function agentKind(task: Task): "spec" | "develop" | null {
 // An agent running or starting, or a worktree being created for one.
 function agentUnderWay(task: Task): boolean {
   return runningSession(task) !== null || waitingForAgent(task) || waitingForWorktree(task);
+}
+
+// The path of the worktree the task holds, or null if it holds none.
+function heldWorktree(task: Task): string | null {
+  if (task.phase === "ready" && task.step.kind === "starting_session")
+    return task.step.worktree.path;
+  if (task.phase === "in_progress" || task.phase === "checks") return task.worktree.path;
+  return null;
 }
 
 function waitingForWorktree(task: Task): boolean {

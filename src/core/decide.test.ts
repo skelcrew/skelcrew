@@ -1322,3 +1322,25 @@ describe("start for a task already over its safety cap", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Replies matched to their request (found by the Codex review)
+// ---------------------------------------------------------------------------
+
+describe("a reply repeated for what the task already holds", () => {
+  test("is ignored when it names the running agent, instead of stopping it", () => {
+    expect(send(run(...inProgress), developStarted)).toEqual({
+      ok: true,
+      events: [],
+      commands: [],
+    });
+  });
+
+  test("is ignored when it names the task's worktree, instead of removing it", () => {
+    expect(send(run(...inProgress), worktreeCreated)).toEqual({
+      ok: true,
+      events: [],
+      commands: [],
+    });
+  });
+});
