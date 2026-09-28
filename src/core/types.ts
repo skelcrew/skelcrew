@@ -53,10 +53,12 @@ export type Question = {
   askedAt: Timestamp;
 };
 
-// Each reason offers different choices in the inbox. A failed gate suggests
-// retry; an agent that gave up may suggest sending back to spec.
+// Each reason offers different choices in the inbox. Running out of attempts
+// suggests retry; an agent that gave up may suggest sending back to spec.
 export type BlockReason =
-  | { kind: "gates_failed"; failure: Failure }
+  // Failed gates and failed merges share one attempt count. `failure` is
+  // the last one, so the inbox can say whether a gate or the merge failed.
+  | { kind: "out_of_attempts"; failure: Failure }
   | { kind: "safety_cap"; usage: Usage }
   | { kind: "agent_gave_up"; message: string }
   | { kind: "worktree_failed"; message: string }

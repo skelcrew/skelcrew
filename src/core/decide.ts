@@ -326,7 +326,7 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
         );
       }
       return accept(
-        [failed, { type: "task.blocked", reason: { kind: "gates_failed", failure } }],
+        [failed, { type: "task.blocked", reason: { kind: "out_of_attempts", failure } }],
         [{ type: "stop_session", session: task.session }],
       );
     }

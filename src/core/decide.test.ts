@@ -664,7 +664,10 @@ describe("gate_result, failing", () => {
       ok: true,
       events: [
         stamped({ type: "task.gate_failed", failure: localFailure }),
-        stamped({ type: "task.blocked", reason: { kind: "gates_failed", failure: localFailure } }),
+        stamped({
+          type: "task.blocked",
+          reason: { kind: "out_of_attempts", failure: localFailure },
+        }),
       ],
       commands: [{ type: "stop_session", session: developSession }],
     });
