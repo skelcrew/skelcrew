@@ -136,6 +136,21 @@ Tests sit next to the code: `decide.ts` and `decide.test.ts`.
 
 `bun run check` runs the lint, the typecheck and every test. It must pass on every commit.
 
+## The event store
+
+`src/store/` saves the event log in SQLite and reads it back. It's the first piece of
+build step 2, outside the core because it touches the disk.
+
+| File | What it holds |
+| --- | --- |
+| `schema.ts` | A Zod schema for every event, typed against the core's own event types. The typechecker fails if they drift apart, and names any event the schemas miss. |
+| `store.ts` | `EventStore`: one table of events in order. `appendTask` saves one decision's events together, or none. `loadTasks` and `loadProjects` rebuild everything by replaying the events through `evolveTask` and `evolveProject`. |
+| `fixtures/v1-events.jsonl` | 56 real events in the version 1 shape. They must always load. The file is never edited: a change that breaks it needs a way to read old events instead. |
+
+Each event is checked against its schema twice: before it's written, and when it's read
+back. Objects are strict, so an unknown field is refused, not dropped. A damaged row is
+reported with its position, not guessed at.
+
 ## Around the core (planned)
 
 These parts are designed in the spec's Architecture and Plugins sections, and come in
