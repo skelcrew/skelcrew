@@ -296,7 +296,19 @@ class Checker {
         break;
 
       case "task.gate_passed":
+        // 5. A pass only counts for the round of checks it ran in: a late
+        // result checked code that has since changed.
+        if (input.type === "gate_result" && task !== null) {
+          expect(input.round).toBe(task.rounds);
+        }
         this.gatesPassed.add(event.gate);
+        break;
+
+      case "task.worktree_created":
+        // 14. A worktree is only kept for the build it was made for.
+        if (input.type === "worktree_created" && task !== null) {
+          expect(input.build).toBe(task.builds);
+        }
         break;
 
       case "task.checks_passed":
@@ -368,6 +380,11 @@ class Checker {
     // 13. Every agent and worktree is stopped or still stored on the task.
     for (const live of this.liveSessions) expect<Session | null>(live).toBe(session);
     for (const live of this.liveWorktrees) expect<string | null>(live).toBe(heldWorktree(task));
+    // And the reverse: what the task stores is really still there. A repeated
+    // reply must never stop the agent or remove the worktree the task uses.
+    if (session !== null) expect(this.liveSessions.has(session)).toBe(true);
+    const worktree = heldWorktree(task);
+    if (worktree !== null) expect(this.liveWorktrees.has(worktree)).toBe(true);
 
     // 10. No more failed rounds than max_attempts without a block.
     if (task.phase === "in_progress" || task.phase === "checks") {
