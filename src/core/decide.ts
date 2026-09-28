@@ -288,15 +288,8 @@ function inSpec(task: TaskIn<"spec">, input: Input, ctx: Context): Decision {
       const capped = safetyCapBlock(task, task.usage, ctx);
       if (capped) return accept([capped]);
       return accept(
-        [{ type: "task.dispatch_started" }],
-        [
-          {
-            type: "start_spec_session",
-            taskId: task.id,
-            request: task.requests + 1,
-            note: task.note,
-          },
-        ],
+        [{ type: "task.dispatch_started", request: next(task) }],
+        [{ type: "start_spec_session", taskId: task.id, request: next(task), note: task.note }],
       );
     }
 
@@ -355,21 +348,14 @@ function inReady(task: TaskIn<"ready">, input: Input, ctx: Context): Decision {
       const capped = safetyCapBlock(task, task.usage, ctx);
       if (capped) return accept([capped]);
       return accept(
-        [{ type: "task.dispatch_started" }],
-        [
-          {
-            type: "create_worktree",
-            taskId: task.id,
-            request: task.requests + 1,
-            build: task.builds + 1,
-          },
-        ],
+        [{ type: "task.dispatch_started", request: next(task) }],
+        [{ type: "create_worktree", taskId: task.id, request: next(task), build: task.builds + 1 }],
       );
     }
 
     case "worktree_created":
       return accept(
-        [{ type: "task.worktree_created", worktree: input.worktree }],
+        [{ type: "task.worktree_created", worktree: input.worktree, request: next(task) }],
         [startDevelop(task, input.worktree, { failure: null, note: null, blocked: null })],
       );
 
@@ -409,7 +395,7 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
       const capped = safetyCapBlock(task, task.usage, ctx);
       if (capped) return accept([capped]);
       return accept(
-        [{ type: "task.dispatch_started" }],
+        [{ type: "task.dispatch_started", request: next(task) }],
         [startDevelop(task, worktree, task.brief)],
       );
     }
@@ -433,8 +419,8 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
       const gate = config.gates[0];
       if (gate === undefined) return reject("workflow.yml has no gates.");
       return accept(
-        [{ type: "task.done_reported", branch: input.branch, gate }],
-        [{ type: "run_gate", taskId: task.id, request: task.requests + 1, gate, worktree }],
+        [{ type: "task.done_reported", branch: input.branch, gate, request: next(task) }],
+        [{ type: "run_gate", taskId: task.id, request: next(task), gate, worktree }],
       );
     }
 
@@ -453,7 +439,7 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
   const merge: Command = {
     type: "merge",
     taskId: task.id,
-    request: task.requests + 1,
+    request: next(task),
     worktree: task.worktree,
   };
 
@@ -473,22 +459,15 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
         return failedRound(task, { type: "task.gate_failed", failure }, failure, ctx);
       }
 
-      const next = config.gates[config.gates.indexOf(input.gate) + 1] ?? null;
-      const passed: EventBody = { type: "task.gate_passed", gate: input.gate, next };
-      if (next !== null) {
+      const nextGate = config.gates[config.gates.indexOf(input.gate) + 1];
+      if (nextGate !== undefined) {
+        const request = next(task);
         return accept(
-          [passed],
-          [
-            {
-              type: "run_gate",
-              taskId: task.id,
-              request: task.requests + 1,
-              gate: next,
-              worktree: task.worktree,
-            },
-          ],
+          [{ type: "task.gate_passed", gate: input.gate, next: { gate: nextGate, request } }],
+          [{ type: "run_gate", taskId: task.id, request, gate: nextGate, worktree: task.worktree }],
         );
       }
+      const passed: EventBody = { type: "task.gate_passed", gate: input.gate, next: null };
 
       // The last gate passed, so the agent is stopped: it would sit idle
       // while the merge waits or runs. A merge that touches a critical path
@@ -506,7 +485,11 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
         );
       }
       return accept(
-        [passed, { type: "task.checks_passed" }, { type: "task.merge_started" }],
+        [
+          passed,
+          { type: "task.checks_passed" },
+          { type: "task.merge_started", request: next(task) },
+        ],
         [stop, merge],
       );
     }
@@ -515,7 +498,7 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
       if (step.kind !== "awaiting_merge_approval") {
         return reject(`#${task.id}'s merge isn't waiting for approval.`);
       }
-      return accept([{ type: "task.merge_started" }], [merge]);
+      return accept([{ type: "task.merge_started", request: next(task) }], [merge]);
 
     // The task waits for a new agent, which gets your note. It isn't a
     // failure, so no attempt is used.
@@ -562,15 +545,8 @@ function inDone(task: TaskIn<"done">, input: Input, ctx: Context): Decision {
       if (step.kind === "reverting") return reject(`#${task.id} is already being reverted.`);
       if (isBlank(input.reason)) return reject("A revert needs a reason.");
       return accept(
-        [{ type: "task.revert_started", reason: input.reason }],
-        [
-          {
-            type: "revert",
-            taskId: task.id,
-            request: task.requests + 1,
-            commit: task.mergeCommit,
-          },
-        ],
+        [{ type: "task.revert_started", reason: input.reason, request: next(task) }],
+        [{ type: "revert", taskId: task.id, request: next(task), commit: task.mergeCommit }],
       );
 
     case "reverted":
@@ -825,7 +801,7 @@ function startDevelop(
   return {
     type: "start_develop_session",
     taskId: task.id,
-    request: task.requests + 1,
+    request: next(task),
     worktree,
     spec: task.spec,
     brief,
@@ -838,6 +814,13 @@ function unknownProject(project: ProjectId | null, ctx: Context): string | null 
     return `There is no project called ${project}.`;
   }
   return null;
+}
+
+// The number for the task's next request. Each input sends at most one
+// request, so the event that records it and the command that sends it both
+// use this number.
+function next(task: Task): number {
+  return task.requests + 1;
 }
 
 function isBlank(text: string): boolean {

@@ -268,7 +268,7 @@ describe("start in Spec", () => {
   test("starts a spec agent", () => {
     expect(send(run(...inSpec), start)).toEqual({
       ok: true,
-      events: [stamped({ type: "task.dispatch_started" })],
+      events: [stamped({ type: "task.dispatch_started", request: 1 })],
       commands: [{ type: "start_spec_session", taskId: id, request: 1, note: null }],
     });
   });
@@ -472,7 +472,7 @@ describe("start in Ready", () => {
   test("creates a worktree for build 1", () => {
     expect(send(run(...inReady), start)).toEqual({
       ok: true,
-      events: [stamped({ type: "task.dispatch_started" })],
+      events: [stamped({ type: "task.dispatch_started", request: 2 })],
       commands: [{ type: "create_worktree", taskId: id, request: 2, build: 1 }],
     });
   });
@@ -489,7 +489,7 @@ describe("worktree_created", () => {
   test("starts a develop agent in the worktree, with the spec", () => {
     expect(send(run(...creatingWorktree), worktreeCreated)).toEqual({
       ok: true,
-      events: [stamped({ type: "task.worktree_created", worktree })],
+      events: [stamped({ type: "task.worktree_created", worktree, request: 3 })],
       commands: [
         {
           type: "start_develop_session",
@@ -589,7 +589,7 @@ describe("report_done", () => {
   test("moves the task to Checks and runs the first gate", () => {
     expect(send(run(...inProgress), reportDone)).toEqual({
       ok: true,
-      events: [stamped({ type: "task.done_reported", branch, gate: "local" })],
+      events: [stamped({ type: "task.done_reported", branch, gate: "local", request: 4 })],
       commands: [{ type: "run_gate", taskId: id, request: 4, gate: "local", worktree }],
     });
   });
@@ -647,7 +647,7 @@ describe("start in In progress, after a retry", () => {
   test("starts a new agent in the same worktree, told why the last one stopped", () => {
     expect(send(run(...retried), start)).toEqual({
       ok: true,
-      events: [stamped({ type: "task.dispatch_started" })],
+      events: [stamped({ type: "task.dispatch_started", request: 4 })],
       commands: [
         {
           type: "start_develop_session",
@@ -731,7 +731,9 @@ describe("gate_result, passing", () => {
   test("runs the next gate", () => {
     expect(send(run(...inChecks), gatePass("local"))).toEqual({
       ok: true,
-      events: [stamped({ type: "task.gate_passed", gate: "local", next: "review" })],
+      events: [
+        stamped({ type: "task.gate_passed", gate: "local", next: { gate: "review", request: 5 } }),
+      ],
       commands: [{ type: "run_gate", taskId: id, request: 5, gate: "review", worktree }],
     });
   });
@@ -826,7 +828,7 @@ describe("the last gate passing", () => {
       events: [
         stamped({ type: "task.gate_passed", gate: "review", next: null }),
         stamped({ type: "task.checks_passed" }),
-        stamped({ type: "task.merge_started" }),
+        stamped({ type: "task.merge_started", request: 6 }),
       ],
       commands: [
         { type: "stop_session", session: developSession },
@@ -853,7 +855,7 @@ describe("approve_merge", () => {
   test("starts the merge", () => {
     expect(send(run(...awaitingMerge), approveMerge)).toEqual({
       ok: true,
-      events: [stamped({ type: "task.merge_started" })],
+      events: [stamped({ type: "task.merge_started", request: 6 })],
       commands: [{ type: "merge", taskId: id, request: 6, worktree }],
     });
   });
@@ -1285,7 +1287,13 @@ describe("revert", () => {
   test("asks version control to undo the merge commit, and the task stays Done until it has", () => {
     expect(send(run(...done), revert("Export breaks on empty reports."))).toEqual({
       ok: true,
-      events: [stamped({ type: "task.revert_started", reason: "Export breaks on empty reports." })],
+      events: [
+        stamped({
+          type: "task.revert_started",
+          reason: "Export breaks on empty reports.",
+          request: 7,
+        }),
+      ],
       commands: [{ type: "revert", taskId: id, request: 7, commit }],
     });
     expect(run(...done, revert("Broken.")).phase).toBe("done");
@@ -1512,7 +1520,7 @@ describe("a worktree reply for an earlier build", () => {
     const own: Input = { by: "plugin", type: "worktree_created", request: 3, worktree: build2 };
     const decision = send(run(...build2Waiting, build1Created), own);
     expect(decision.ok && decision.events).toEqual([
-      stamped({ type: "task.worktree_created", worktree: build2 }),
+      stamped({ type: "task.worktree_created", worktree: build2, request: 4 }),
     ]);
   });
 

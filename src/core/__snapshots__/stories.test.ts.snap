@@ -19,6 +19,7 @@ exports[`golden stories happy path: from an idea to a merged commit 1`] = `
   },
   {
     "at": 3000,
+    "request": 1,
     "taskId": 12,
     "type": "task.dispatch_started",
     "v": 1,
@@ -52,12 +53,14 @@ exports[`golden stories happy path: from an idea to a merged commit 1`] = `
   },
   {
     "at": 7000,
+    "request": 2,
     "taskId": 12,
     "type": "task.dispatch_started",
     "v": 1,
   },
   {
     "at": 8000,
+    "request": 3,
     "taskId": 12,
     "type": "task.worktree_created",
     "v": 1,
@@ -82,6 +85,7 @@ exports[`golden stories happy path: from an idea to a merged commit 1`] = `
       "commits": 3,
     },
     "gate": "local",
+    "request": 4,
     "taskId": 12,
     "type": "task.done_reported",
     "v": 1,
@@ -89,7 +93,10 @@ exports[`golden stories happy path: from an idea to a merged commit 1`] = `
   {
     "at": 11000,
     "gate": "local",
-    "next": "review",
+    "next": {
+      "gate": "review",
+      "request": 5,
+    },
     "taskId": 12,
     "type": "task.gate_passed",
     "v": 1,
@@ -110,6 +117,7 @@ exports[`golden stories happy path: from an idea to a merged commit 1`] = `
   },
   {
     "at": 12000,
+    "request": 6,
     "taskId": 12,
     "type": "task.merge_started",
     "v": 1,
@@ -143,6 +151,7 @@ exports[`golden stories blocked: the local gate fails three times, you retry, an
   },
   {
     "at": 3000,
+    "request": 1,
     "taskId": 12,
     "type": "task.dispatch_started",
     "v": 1,
@@ -176,12 +185,14 @@ exports[`golden stories blocked: the local gate fails three times, you retry, an
   },
   {
     "at": 7000,
+    "request": 2,
     "taskId": 12,
     "type": "task.dispatch_started",
     "v": 1,
   },
   {
     "at": 8000,
+    "request": 3,
     "taskId": 12,
     "type": "task.worktree_created",
     "v": 1,
@@ -206,6 +217,7 @@ exports[`golden stories blocked: the local gate fails three times, you retry, an
       "commits": 3,
     },
     "gate": "local",
+    "request": 4,
     "taskId": 12,
     "type": "task.done_reported",
     "v": 1,
@@ -229,6 +241,7 @@ exports[`golden stories blocked: the local gate fails three times, you retry, an
       "commits": 3,
     },
     "gate": "local",
+    "request": 5,
     "taskId": 12,
     "type": "task.done_reported",
     "v": 1,
@@ -252,6 +265,7 @@ exports[`golden stories blocked: the local gate fails three times, you retry, an
       "commits": 3,
     },
     "gate": "local",
+    "request": 6,
     "taskId": 12,
     "type": "task.done_reported",
     "v": 1,
@@ -287,6 +301,7 @@ exports[`golden stories blocked: the local gate fails three times, you retry, an
   },
   {
     "at": 18000,
+    "request": 7,
     "taskId": 12,
     "type": "task.dispatch_started",
     "v": 1,
@@ -307,6 +322,7 @@ exports[`golden stories blocked: the local gate fails three times, you retry, an
       "commits": 3,
     },
     "gate": "local",
+    "request": 8,
     "taskId": 12,
     "type": "task.done_reported",
     "v": 1,
@@ -314,7 +330,10 @@ exports[`golden stories blocked: the local gate fails three times, you retry, an
   {
     "at": 21000,
     "gate": "local",
-    "next": "review",
+    "next": {
+      "gate": "review",
+      "request": 9,
+    },
     "taskId": 12,
     "type": "task.gate_passed",
     "v": 1,
@@ -335,6 +354,7 @@ exports[`golden stories blocked: the local gate fails three times, you retry, an
   },
   {
     "at": 22000,
+    "request": 10,
     "taskId": 12,
     "type": "task.merge_started",
     "v": 1,
@@ -368,6 +388,7 @@ exports[`golden stories escalated: a critical file waits for your approval, then
   },
   {
     "at": 3000,
+    "request": 1,
     "taskId": 12,
     "type": "task.dispatch_started",
     "v": 1,
@@ -401,12 +422,14 @@ exports[`golden stories escalated: a critical file waits for your approval, then
   },
   {
     "at": 7000,
+    "request": 2,
     "taskId": 12,
     "type": "task.dispatch_started",
     "v": 1,
   },
   {
     "at": 8000,
+    "request": 3,
     "taskId": 12,
     "type": "task.worktree_created",
     "v": 1,
@@ -432,6 +455,7 @@ exports[`golden stories escalated: a critical file waits for your approval, then
       "commits": 2,
     },
     "gate": "local",
+    "request": 4,
     "taskId": 12,
     "type": "task.done_reported",
     "v": 1,
@@ -439,7 +463,10 @@ exports[`golden stories escalated: a critical file waits for your approval, then
   {
     "at": 11000,
     "gate": "local",
-    "next": "review",
+    "next": {
+      "gate": "review",
+      "request": 5,
+    },
     "taskId": 12,
     "type": "task.gate_passed",
     "v": 1,
@@ -469,6 +496,7 @@ exports[`golden stories escalated: a critical file waits for your approval, then
   },
   {
     "at": 13000,
+    "request": 6,
     "taskId": 12,
     "type": "task.merge_started",
     "v": 1,
@@ -502,6 +530,7 @@ exports[`golden stories reverted: a merged task is undone and goes back to Spec 
   },
   {
     "at": 3000,
+    "request": 1,
     "taskId": 12,
     "type": "task.dispatch_started",
     "v": 1,
@@ -535,12 +564,14 @@ exports[`golden stories reverted: a merged task is undone and goes back to Spec 
   },
   {
     "at": 7000,
+    "request": 2,
     "taskId": 12,
     "type": "task.dispatch_started",
     "v": 1,
   },
   {
     "at": 8000,
+    "request": 3,
     "taskId": 12,
     "type": "task.worktree_created",
     "v": 1,
@@ -565,6 +596,7 @@ exports[`golden stories reverted: a merged task is undone and goes back to Spec 
       "commits": 3,
     },
     "gate": "local",
+    "request": 4,
     "taskId": 12,
     "type": "task.done_reported",
     "v": 1,
@@ -572,7 +604,10 @@ exports[`golden stories reverted: a merged task is undone and goes back to Spec 
   {
     "at": 11000,
     "gate": "local",
-    "next": "review",
+    "next": {
+      "gate": "review",
+      "request": 5,
+    },
     "taskId": 12,
     "type": "task.gate_passed",
     "v": 1,
@@ -593,6 +628,7 @@ exports[`golden stories reverted: a merged task is undone and goes back to Spec 
   },
   {
     "at": 12000,
+    "request": 6,
     "taskId": 12,
     "type": "task.merge_started",
     "v": 1,
@@ -607,6 +643,7 @@ exports[`golden stories reverted: a merged task is undone and goes back to Spec 
   {
     "at": 14000,
     "reason": "Export breaks on empty reports.",
+    "request": 7,
     "taskId": 12,
     "type": "task.revert_started",
     "v": 1,
@@ -621,6 +658,7 @@ exports[`golden stories reverted: a merged task is undone and goes back to Spec 
   },
   {
     "at": 16000,
+    "request": 8,
     "taskId": 12,
     "type": "task.dispatch_started",
     "v": 1,

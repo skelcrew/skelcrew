@@ -10,18 +10,32 @@ function event(body: EventBody): TaskEvent {
   return { ...body, v: 1, taskId: id, at };
 }
 
+// An event, or one built from the task as it stands: an event that sends a
+// request takes the task's next request number, as decide gives it.
+type Body = EventBody | ((task: Task | null) => EventBody);
+const next = (task: Task | null) => (task?.requests ?? 0) + 1;
+
 // Folds events from nothing, the way replay does. Fails the test if any
 // event is refused, so tests can build a task in any phase.
-function replay(...bodies: EventBody[]): Task {
+function replay(...bodies: Body[]): Task {
   let task: Task | null = null;
   for (const body of bodies) {
-    const result = evolveTask(task, event(body));
+    const result = evolveTask(task, event(typeof body === "function" ? body(task) : body));
     if (!result.ok) throw new Error(result.reason);
     task = result.task;
   }
   if (task === null) throw new Error("replay needs at least one event");
   return task;
 }
+
+const dispatch: Body = (t) => ({ type: "task.dispatch_started", request: next(t) });
+const mergeStarted: Body = (t) => ({ type: "task.merge_started", request: next(t) });
+const passedTo =
+  (gate: "local" | "review"): Body =>
+  (t) => ({ type: "task.gate_passed", gate: "local", next: { gate, request: next(t) } });
+const revertStarted =
+  (reason: string): Body =>
+  (t) => ({ type: "task.revert_started", reason, request: next(t) });
 
 const created: EventBody = {
   type: "task.created",
@@ -137,12 +151,12 @@ describe("every other field", () => {
 });
 
 const session = SessionId.parse("session-1");
-const inSpec: EventBody[] = [created, { type: "task.spec_requested" }];
-const specced: EventBody[] = [...inSpec, { type: "task.specced", spec, by: "agent" }];
+const inSpec: Body[] = [created, { type: "task.spec_requested" }];
+const specced: Body[] = [...inSpec, { type: "task.specced", spec, by: "agent" }];
 
 describe("task.dispatch_started in Spec", () => {
   test("marks the spec session as starting", () => {
-    expect(replay(...inSpec, { type: "task.dispatch_started" })).toMatchObject({
+    expect(replay(...inSpec, dispatch)).toMatchObject({
       phase: "spec",
       step: { kind: "starting" },
     });
@@ -152,11 +166,7 @@ describe("task.dispatch_started in Spec", () => {
 describe("task.spec_session_started", () => {
   test("stores the session, so a drop can stop it", () => {
     expect(
-      replay(
-        ...inSpec,
-        { type: "task.dispatch_started" },
-        { type: "task.spec_session_started", session },
-      ),
+      replay(...inSpec, dispatch, { type: "task.spec_session_started", session }),
     ).toMatchObject({ phase: "spec", step: { kind: "running", session } });
   });
 
@@ -208,29 +218,34 @@ describe("task.ready", () => {
 });
 
 const worktree = { path: "/repo/.worktrees/12", branch: "task/12-csv-export" };
-const inReady: EventBody[] = [...specced, { type: "task.ready" }];
+const worktreeCreated: Body = (t) => ({
+  type: "task.worktree_created",
+  worktree,
+  request: next(t),
+});
+const inReady: Body[] = [...specced, { type: "task.ready" }];
 
 describe("task.dispatch_started in Ready", () => {
   test("starts creating the worktree and counts a new build", () => {
-    const task = replay(...inReady, { type: "task.dispatch_started" });
+    const task = replay(...inReady, dispatch);
     expect(task).toMatchObject({ phase: "ready", step: { kind: "creating_worktree" }, builds: 1 });
   });
 });
 
 describe("task.worktree_created", () => {
   test("stores the worktree while the develop session starts", () => {
-    expect(
-      replay(
-        ...inReady,
-        { type: "task.dispatch_started" },
-        { type: "task.worktree_created", worktree },
-      ),
-    ).toMatchObject({ phase: "ready", step: { kind: "starting_session", worktree } });
+    expect(replay(...inReady, dispatch, worktreeCreated)).toMatchObject({
+      phase: "ready",
+      step: { kind: "starting_session", worktree },
+    });
   });
 
   test("is refused before the worktree was asked for", () => {
     expect(
-      evolveTask(replay(...inReady), event({ type: "task.worktree_created", worktree })),
+      evolveTask(
+        replay(...inReady),
+        event({ type: "task.worktree_created", worktree, request: 1 }),
+      ),
     ).toEqual({
       ok: false,
       reason: "task.worktree_created can't apply: #12 isn't creating a worktree.",
@@ -239,7 +254,10 @@ describe("task.worktree_created", () => {
 
   test("is refused outside Ready", () => {
     expect(
-      evolveTask(replay(...specced), event({ type: "task.worktree_created", worktree })),
+      evolveTask(
+        replay(...specced),
+        event({ type: "task.worktree_created", worktree, request: 1 }),
+      ),
     ).toEqual({
       ok: false,
       reason: "task.worktree_created can't apply to #12 in Spec.",
@@ -248,11 +266,7 @@ describe("task.worktree_created", () => {
 });
 
 describe("task.dispatched from Ready", () => {
-  const starting: EventBody[] = [
-    ...inReady,
-    { type: "task.dispatch_started" },
-    { type: "task.worktree_created", worktree },
-  ];
+  const starting: Body[] = [...inReady, dispatch, worktreeCreated];
 
   test("moves the task to In progress with its worktree and running session", () => {
     expect(replay(...starting, { type: "task.dispatched", session })).toMatchObject({
@@ -266,7 +280,7 @@ describe("task.dispatched from Ready", () => {
   });
 
   test("is refused before the worktree exists", () => {
-    const task = replay(...inReady, { type: "task.dispatch_started" });
+    const task = replay(...inReady, dispatch);
     expect(evolveTask(task, event({ type: "task.dispatched", session }))).toEqual({
       ok: false,
       reason: "task.dispatched can't apply: #12 has no worktree yet.",
@@ -275,16 +289,19 @@ describe("task.dispatched from Ready", () => {
 });
 
 const branchFacts = { commits: 3, changedFiles: ["src/reports/export.ts"] };
-const inProgress: EventBody[] = [
+const doneReported: Body = (t) => ({
+  type: "task.done_reported",
+  branch: branchFacts,
+  gate: "local",
+  request: next(t),
+});
+const inProgress: Body[] = [
   ...inReady,
-  { type: "task.dispatch_started" },
-  { type: "task.worktree_created", worktree },
+  dispatch,
+  worktreeCreated,
   { type: "task.dispatched", session },
 ];
-const inChecks: EventBody[] = [
-  ...inProgress,
-  { type: "task.done_reported", branch: branchFacts, gate: "local" },
-];
+const inChecks: Body[] = [...inProgress, doneReported];
 const localFailed = { step: "local" as const, summary: "2 tests failed in export.test.ts" };
 
 describe("task.done_reported", () => {
@@ -306,7 +323,12 @@ describe("task.done_reported", () => {
   });
 
   test("is refused outside In progress", () => {
-    const report = event({ type: "task.done_reported", branch: branchFacts, gate: "local" });
+    const report = event({
+      type: "task.done_reported",
+      branch: branchFacts,
+      gate: "local",
+      request: 1,
+    });
     expect(evolveTask(replay(...inReady), report)).toEqual({
       ok: false,
       reason: "task.done_reported can't apply to #12 in Ready.",
@@ -316,9 +338,10 @@ describe("task.done_reported", () => {
 
 describe("task.gate_passed", () => {
   test("moves on to the next gate", () => {
-    expect(
-      replay(...inChecks, { type: "task.gate_passed", gate: "local", next: "review" }),
-    ).toMatchObject({ phase: "checks", step: { kind: "gate", gate: "review", session } });
+    expect(replay(...inChecks, passedTo("review"))).toMatchObject({
+      phase: "checks",
+      step: { kind: "gate", gate: "review", session },
+    });
   });
 
   test("stays on the last gate until the checks are marked passed", () => {
@@ -351,7 +374,7 @@ describe("task.gate_failed", () => {
     const task = replay(
       ...inChecks,
       { type: "task.gate_failed", failure: localFailed },
-      { type: "task.done_reported", branch: branchFacts, gate: "local" },
+      doneReported,
       { type: "task.gate_failed", failure: localFailed },
     );
     expect(task).toMatchObject({ phase: "in_progress", attempts: 2 });
@@ -367,16 +390,16 @@ describe("task.gate_failed", () => {
 });
 
 const commit = CommitSha.parse("a".repeat(40));
-const checksPassed: EventBody[] = [
+const checksPassed: Body[] = [
   ...inChecks,
   { type: "task.gate_passed", gate: "local", next: null },
   { type: "task.checks_passed" },
 ];
-const awaitingMergeApproval: EventBody[] = [
+const awaitingMergeApproval: Body[] = [
   ...checksPassed,
   { type: "task.merge_approval_requested", criticalFiles: ["src/auth/login.ts"] },
 ];
-const merging: EventBody[] = [...checksPassed, { type: "task.merge_started" }];
+const merging: Body[] = [...checksPassed, mergeStarted];
 const mergeFailed = { step: "merge" as const, summary: "Conflicts with main in export.ts" };
 
 describe("task.checks_passed", () => {
@@ -406,7 +429,7 @@ describe("task.merge_approval_requested", () => {
 describe("the agent stopping when the gates pass", () => {
   test("clears the develop agent's open question, since no one is left to answer it", () => {
     for (const next of [
-      { type: "task.merge_started" as const },
+      mergeStarted,
       { type: "task.merge_approval_requested" as const, criticalFiles: ["src/auth/login.ts"] },
     ]) {
       const task = replay(
@@ -432,14 +455,16 @@ describe("task.merge_started", () => {
   });
 
   test("starts merging once the developer approves", () => {
-    expect(replay(...awaitingMergeApproval, { type: "task.merge_started" })).toMatchObject({
+    expect(replay(...awaitingMergeApproval, mergeStarted)).toMatchObject({
       phase: "checks",
       step: { kind: "merging" },
     });
   });
 
   test("is refused while already merging", () => {
-    expect(evolveTask(replay(...merging), event({ type: "task.merge_started" }))).toEqual({
+    expect(
+      evolveTask(replay(...merging), event({ type: "task.merge_started", request: 1 })),
+    ).toEqual({
       ok: false,
       reason: "task.merge_started can't apply: #12 is already merging.",
     });
@@ -503,7 +528,7 @@ describe("task.merge_sent_back", () => {
     const task = replay(
       ...awaitingMergeApproval,
       { type: "task.merge_sent_back", note: "Don't touch login." },
-      { type: "task.dispatch_started" },
+      dispatch,
       { type: "task.dispatched", session },
     );
     expect(task).toMatchObject({
@@ -513,9 +538,9 @@ describe("task.merge_sent_back", () => {
     const done = replay(
       ...awaitingMergeApproval,
       { type: "task.merge_sent_back", note: "Don't touch login." },
-      { type: "task.dispatch_started" },
+      dispatch,
       { type: "task.dispatched", session },
-      { type: "task.done_reported", branch: branchFacts, gate: "local" },
+      doneReported,
       { type: "task.gate_failed", failure: localFailed },
     );
     expect(done).toMatchObject({ phase: "in_progress", brief: { note: null } });
@@ -537,11 +562,7 @@ const specQuestion = {
   askedAt: at,
 };
 const developQuestion = { ...specQuestion, from: "develop" as const };
-const specRunning: EventBody[] = [
-  ...inSpec,
-  { type: "task.dispatch_started" },
-  { type: "task.spec_session_started", session },
-];
+const specRunning: Body[] = [...inSpec, dispatch, { type: "task.spec_session_started", session }];
 const capReached = { kind: "safety_cap" as const, usage: { tokens: 200_000, ms: 0 } };
 const outOfAttempts = { kind: "out_of_attempts" as const, failure: localFailed };
 
@@ -613,7 +634,7 @@ describe("task.blocked", () => {
     const task = replay(
       ...inChecks,
       { type: "task.gate_failed", failure: localFailed },
-      { type: "task.done_reported", branch: branchFacts, gate: "local" },
+      doneReported,
       { type: "task.blocked", reason: capReached },
     );
     expect(task).toMatchObject({
@@ -659,7 +680,7 @@ describe("task.blocked", () => {
 
 describe("task.unblocked", () => {
   const usage = { tokens: 250_000, ms: 30 * 60_000 };
-  const blockedAfterFailures: EventBody[] = [
+  const blockedAfterFailures: Body[] = [
     ...inChecks,
     { type: "task.gate_failed", failure: localFailed },
     { type: "task.usage_recorded", usage },
@@ -696,8 +717,8 @@ describe("task.usage_recorded", () => {
 });
 
 const project = ProjectId.parse("reports");
-const done: EventBody[] = [...merging, { type: "task.merged", commit }];
-const dropped: EventBody[] = [...inProgress, { type: "task.dropped" }];
+const done: Body[] = [...merging, { type: "task.merged", commit }];
+const dropped: Body[] = [...inProgress, { type: "task.dropped" }];
 
 describe("task.project_changed", () => {
   test("moves the task to another project, keeping its phase", () => {
@@ -740,7 +761,7 @@ describe("a dropped task", () => {
 
 describe("reverting", () => {
   test("task.revert_started keeps the task Done, waiting on the revert's request", () => {
-    const task = replay(...done, { type: "task.revert_started", reason: "Broken." });
+    const task = replay(...done, revertStarted("Broken."));
     // The revert takes the next request number after the merge's.
     expect(task.phase === "done" && task.step).toEqual({
       kind: "reverting",
@@ -750,11 +771,10 @@ describe("reverting", () => {
   });
 
   test("task.revert_failed keeps the task Done and records why", () => {
-    const task = replay(
-      ...done,
-      { type: "task.revert_started", reason: "Broken." },
-      { type: "task.revert_failed", summary: "Conflicts in export.ts" },
-    );
+    const task = replay(...done, revertStarted("Broken."), {
+      type: "task.revert_failed",
+      summary: "Conflicts in export.ts",
+    });
     expect(task).toMatchObject({
       phase: "done",
       step: { kind: "revert_failed", summary: "Conflicts in export.ts" },
@@ -763,7 +783,7 @@ describe("reverting", () => {
 
   test("task.reverted takes the task back to Spec, with the reason as the note", () => {
     const reason = "Export breaks on empty reports.";
-    const started = { type: "task.revert_started" as const, reason };
+    const started = revertStarted(reason);
     expect(replay(...done, started, { type: "task.reverted", commit, reason })).toMatchObject({
       phase: "spec",
       spec,
@@ -814,7 +834,7 @@ describe("task.spec_sent_back from a later phase", () => {
       { type: "task.spec_sent_back", note },
       { type: "task.specced", spec, by: "agent" },
       { type: "task.ready" },
-      { type: "task.dispatch_started" },
+      dispatch,
     );
     expect(task.builds).toBe(2);
   });
@@ -828,7 +848,7 @@ describe("task.spec_sent_back from a later phase", () => {
 });
 
 describe("a retry in In progress", () => {
-  const retried: EventBody[] = [
+  const retried: Body[] = [
     ...inProgress,
     { type: "task.blocked", reason: capReached },
     { type: "task.unblocked" },
@@ -836,11 +856,7 @@ describe("a retry in In progress", () => {
   const session2 = SessionId.parse("session-2");
 
   test("starts a new agent in the same worktree", () => {
-    const task = replay(
-      ...retried,
-      { type: "task.dispatch_started" },
-      { type: "task.dispatched", session: session2 },
-    );
+    const task = replay(...retried, dispatch, { type: "task.dispatched", session: session2 });
     expect(task).toMatchObject({
       phase: "in_progress",
       worktree,
@@ -849,7 +865,7 @@ describe("a retry in In progress", () => {
   });
 
   test("marks the agent as starting until it runs", () => {
-    expect(replay(...retried, { type: "task.dispatch_started" })).toMatchObject({
+    expect(replay(...retried, dispatch)).toMatchObject({
       phase: "in_progress",
       step: { kind: "starting" },
     });
@@ -882,9 +898,9 @@ describe("the reason for the last block", () => {
       ...inProgress,
       { type: "task.blocked", reason: gaveUp },
       { type: "task.unblocked" },
-      { type: "task.dispatch_started" },
+      dispatch,
       { type: "task.dispatched", session },
-      { type: "task.done_reported", branch: branchFacts, gate: "local" },
+      doneReported,
       { type: "task.gate_failed", failure: localFailed },
     );
     expect(task).toMatchObject({ phase: "in_progress", brief: { blocked: null } });

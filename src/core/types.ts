@@ -212,9 +212,10 @@ export type Task = PhaseState & {
   // build after a send-back never starts on code written for the old spec.
   builds: number;
   // How many requests the task has sent that expect a reply: starting an
-  // agent, creating a worktree, running a gate, merging, reverting. Each gets
-  // the next number, and its reply must bring it back. A reply with any other
-  // number is late or repeated, so it can never answer the current request.
+  // agent, creating a worktree, running a gate, merging, reverting. decide
+  // gives each the next number and writes it into the event and the command;
+  // its reply must bring it back. A reply with any other number is late or
+  // repeated, so it can never answer the current request.
   requests: number;
   // Two usage counters. `usage` never resets, so the record shows the true
   // cost. The safety cap counts from `usageAtRetry`, so a retried task gets
@@ -389,8 +390,12 @@ export type EventBody =
   // The scheduler's start was accepted. What starts depends on the phase:
   // a spec session in Spec, a worktree in Ready, and a new develop session
   // in In progress after a retry.
-  | { type: "task.dispatch_started" }
-  | { type: "task.worktree_created"; worktree: Worktree }
+  //
+  // An event that sends a request says which number it used, so evolve
+  // records it instead of working it out, and the log shows which reply
+  // answers which event.
+  | { type: "task.dispatch_started"; request: number }
+  | { type: "task.worktree_created"; worktree: Worktree; request: number } // starts the develop agent
   | { type: "task.dispatched"; session: SessionId }
   | { type: "task.question_asked"; question: Question }
   // Answers are kept so past decisions can be searched later, and the spec
@@ -400,18 +405,18 @@ export type EventBody =
   // So decide writes it into the event: the first gate when the agent
   // reports done, and the next one after each pass (null after the last).
   // Replay then gives the same task even if workflow.yml changes later.
-  | { type: "task.done_reported"; branch: BranchFacts; gate: GateName }
-  | { type: "task.gate_passed"; gate: GateName; next: GateName | null }
+  | { type: "task.done_reported"; branch: BranchFacts; gate: GateName; request: number }
+  | { type: "task.gate_passed"; gate: GateName; next: { gate: GateName; request: number } | null }
   | { type: "task.gate_failed"; failure: Failure }
   | { type: "task.checks_passed" }
   // The files that matched a critical path, so the inbox summary can say
   // why this merge needs approval.
   | { type: "task.merge_approval_requested"; criticalFiles: string[] }
   | { type: "task.merge_sent_back"; note: string }
-  | { type: "task.merge_started" }
+  | { type: "task.merge_started"; request: number }
   | { type: "task.merge_failed"; failure: Failure }
   | { type: "task.merged"; commit: CommitSha }
-  | { type: "task.revert_started"; reason: string }
+  | { type: "task.revert_started"; reason: string; request: number }
   | { type: "task.revert_failed"; summary: string }
   | { type: "task.reverted"; commit: CommitSha; reason: string }
   | { type: "task.blocked"; reason: BlockReason }
