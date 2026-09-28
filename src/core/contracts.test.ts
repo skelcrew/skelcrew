@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { attemptsLeft, mergeAllowed, specComplete } from "./contracts";
+import { attemptsLeft, mergeAllowed, specComplete, withinSafetyCap } from "./contracts";
 import type { Spec } from "./types";
 
 const complete: Spec = {
@@ -119,5 +119,41 @@ describe("attemptsLeft", () => {
 
   test("still fails if the count has somehow gone past the limit", () => {
     expect(attemptsLeft(4, 3)).toEqual({ ok: false, reasons: ["All 3 attempts failed."] });
+  });
+});
+
+// The cap counts from the last retry: usage minus usageAtRetry.
+describe("withinSafetyCap", () => {
+  const cap = { tokens: 200_000, ms: 60 * 60_000 };
+  const zero = { tokens: 0, ms: 0 };
+
+  test("passes while the task is under both limits", () => {
+    expect(withinSafetyCap({ tokens: 199_999, ms: 59 * 60_000 }, zero, cap)).toEqual({ ok: true });
+  });
+
+  test("fails once the task reaches the token limit", () => {
+    expect(withinSafetyCap({ tokens: 200_000, ms: 0 }, zero, cap)).toEqual({
+      ok: false,
+      reasons: ["Used 200,000 tokens since the last retry. The cap is 200,000."],
+    });
+  });
+
+  test("fails once the task reaches the time limit, shown in minutes", () => {
+    expect(withinSafetyCap({ tokens: 0, ms: 61.5 * 60_000 }, zero, cap)).toEqual({
+      ok: false,
+      reasons: ["Ran for 61 minutes since the last retry. The cap is 60 minutes."],
+    });
+  });
+
+  test("lists both reasons when both limits are reached", () => {
+    const check = withinSafetyCap({ tokens: 250_000, ms: 90 * 60_000 }, zero, cap);
+    expect(check.ok).toBe(false);
+    expect(check.ok ? [] : check.reasons).toHaveLength(2);
+  });
+
+  test("counts only what was used since the last retry", () => {
+    const usage = { tokens: 500_000, ms: 150 * 60_000 };
+    const atRetry = { tokens: 400_000, ms: 120 * 60_000 };
+    expect(withinSafetyCap(usage, atRetry, cap)).toEqual({ ok: true });
   });
 });
