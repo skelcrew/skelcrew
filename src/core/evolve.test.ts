@@ -50,7 +50,7 @@ describe("task.created", () => {
         question: null,
         blocked: null,
         builds: 0,
-        rounds: 0,
+        requests: 0,
         usage: { tokens: 0, ms: 0 },
         usageAtRetry: { tokens: 0, ms: 0 },
       },
@@ -727,9 +727,14 @@ describe("a dropped task", () => {
 });
 
 describe("reverting", () => {
-  test("task.revert_started keeps the task Done while git works", () => {
+  test("task.revert_started keeps the task Done, waiting on the revert's request", () => {
     const task = replay(...done, { type: "task.revert_started", reason: "Broken." });
-    expect(task).toMatchObject({ phase: "done", reverting: "Broken.", revertFailure: null });
+    expect(task).toMatchObject({ phase: "done", revertFailure: null });
+    // The revert takes the next request number after the merge's.
+    expect(task.phase === "done" && task.reverting).toEqual({
+      reason: "Broken.",
+      request: task.requests,
+    });
   });
 
   test("task.revert_failed keeps the task Done and records why", () => {

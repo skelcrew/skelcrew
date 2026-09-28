@@ -37,21 +37,44 @@ const projects = new Map<ProjectId, Project>([
   [archive, { id: archive, name: "Archive", goal: "Old ideas", status: "parked", createdAt: 0 }],
 ]);
 
-function send(task: Task | null, input: Input, withConfig: Config = config): Decision {
+// A step is an input, or a reply built from the task as it stands: replies
+// answer the request the task is waiting on, the way the daemon matches them.
+// Tests of late replies give an earlier request number instead.
+type Step = Input | ((task: Task | null) => Input);
+
+function send(task: Task | null, step: Step, withConfig: Config = config): Decision {
+  const input = typeof step === "function" ? step(task) : step;
   return decideTask(task, { taskId: id, at, input }, withConfig, projects);
+}
+
+// The request the task's current step waits on, or 0 if none.
+function awaited(task: Task | null): number {
+  if (task === null) return 0;
+  switch (task.phase) {
+    case "spec":
+    case "ready":
+    case "in_progress":
+      return "request" in task.step ? task.step.request : 0;
+    case "checks":
+      return task.request ?? 0;
+    case "done":
+      return task.reverting?.request ?? 0;
+    default:
+      return 0;
+  }
 }
 
 // Sends each input in turn and applies the accepted events with evolve, the
 // way the daemon does. Fails the test if an input is rejected or evolve
 // refuses one of decide's events, so tests can build a task in any phase.
-function run(...inputs: Input[]): Task {
-  return runWith(config, ...inputs);
+function run(...steps: Step[]): Task {
+  return runWith(config, ...steps);
 }
 
-function runWith(withConfig: Config, ...inputs: Input[]): Task {
+function runWith(withConfig: Config, ...steps: Step[]): Task {
   let task: Task | null = null;
-  for (const input of inputs) {
-    const decision = send(task, input, withConfig);
+  for (const step of steps) {
+    const decision = send(task, step, withConfig);
     if (!decision.ok) throw new Error(decision.rejection.reason);
     for (const event of decision.events) {
       const result = evolveTask(task, event);
@@ -207,7 +230,18 @@ const session = SessionId.parse("session-1");
 const neverApprove: Config = { ...config, specApproval: "never" };
 
 const start: Input = { by: "system", type: "start" };
-const sessionStarted: Input = { by: "plugin", type: "session_started", session };
+const sessionStarted: Step = (t) => ({
+  by: "plugin",
+  type: "session_started",
+  request: awaited(t),
+  session,
+});
+const startFailed: Step = (t) => ({
+  by: "plugin",
+  type: "session_failed",
+  request: awaited(t),
+  message: "herdr crashed",
+});
 const submit: Input = { by: "agent", type: "submit_spec", spec };
 const approve: Input = { by: "human", type: "approve_spec" };
 const sendBack = (note: string): Input => ({ by: "human", type: "send_back_spec", note });
@@ -222,7 +256,7 @@ describe("start in Spec", () => {
     expect(send(run(...inSpec), start)).toEqual({
       ok: true,
       events: [stamped({ type: "task.dispatch_started" })],
-      commands: [{ type: "start_spec_session", taskId: id, note: null }],
+      commands: [{ type: "start_spec_session", taskId: id, request: 1, note: null }],
     });
   });
 
@@ -230,7 +264,12 @@ describe("start in Spec", () => {
     const task = run(...awaitingApproval, sendBack("Also export the totals row."));
     const decision = send(task, start);
     expect(decision.ok && decision.commands).toEqual([
-      { type: "start_spec_session", taskId: id, note: "Also export the totals row." },
+      {
+        type: "start_spec_session",
+        taskId: id,
+        request: 2,
+        note: "Also export the totals row.",
+      },
     ]);
   });
 
@@ -250,8 +289,7 @@ describe("start in Spec", () => {
   });
 
   test("is rejected for a blocked task", () => {
-    const failed: Input = { by: "plugin", type: "session_failed", message: "herdr crashed" };
-    const task = run(...inSpec, start, failed);
+    const task = run(...inSpec, start, startFailed);
     expect(send(task, start)).toEqual({
       ok: false,
       rejection: { input: "start", reason: "#12 is blocked." },
@@ -271,8 +309,7 @@ describe("session_started in Spec", () => {
 
 describe("session_failed in Spec", () => {
   test("blocks the task with the reason", () => {
-    const failed: Input = { by: "plugin", type: "session_failed", message: "herdr crashed" };
-    expect(send(run(...inSpec, start), failed)).toEqual({
+    expect(send(run(...inSpec, start), startFailed)).toEqual({
       ok: true,
       events: [
         stamped({
@@ -400,8 +437,18 @@ describe("send_back_spec", () => {
 
 const worktree = { path: "/repo/.worktrees/12", branch: "task/12-csv-export" };
 const developSession = SessionId.parse("session-2");
-const worktreeCreated: Input = { by: "plugin", type: "worktree_created", worktree, build: 1 };
-const developStarted: Input = { by: "plugin", type: "session_started", session: developSession };
+const worktreeCreated: Step = (t) => ({
+  by: "plugin",
+  type: "worktree_created",
+  request: awaited(t),
+  worktree,
+});
+const developStarted: Step = (t) => ({
+  by: "plugin",
+  type: "session_started",
+  request: awaited(t),
+  session: developSession,
+});
 
 const inReady = [...awaitingApproval, approve];
 const creatingWorktree = [...inReady, start];
@@ -412,7 +459,7 @@ describe("start in Ready", () => {
     expect(send(run(...inReady), start)).toEqual({
       ok: true,
       events: [stamped({ type: "task.dispatch_started" })],
-      commands: [{ type: "create_worktree", taskId: id, build: 1 }],
+      commands: [{ type: "create_worktree", taskId: id, request: 2, build: 1 }],
     });
   });
 
@@ -433,6 +480,7 @@ describe("worktree_created", () => {
         {
           type: "start_develop_session",
           taskId: id,
+          request: 3,
           worktree,
           spec,
           lastFailure: null,
@@ -454,7 +502,12 @@ describe("worktree_created", () => {
 
 describe("worktree_failed", () => {
   test("blocks the task with the reason", () => {
-    const failed: Input = { by: "plugin", type: "worktree_failed", message: "disk full", build: 1 };
+    const failed: Step = (t) => ({
+      by: "plugin",
+      type: "worktree_failed",
+      request: awaited(t),
+      message: "disk full",
+    });
     expect(send(run(...creatingWorktree), failed)).toEqual({
       ok: true,
       events: [
@@ -488,8 +541,7 @@ describe("session_started in Ready", () => {
 
 describe("session_failed in Ready", () => {
   test("blocks the task and removes the unused worktree", () => {
-    const failed: Input = { by: "plugin", type: "session_failed", message: "herdr crashed" };
-    expect(send(run(...startingDevelop), failed)).toEqual({
+    expect(send(run(...startingDevelop), startFailed)).toEqual({
       ok: true,
       events: [
         stamped({
@@ -518,7 +570,7 @@ describe("report_done", () => {
     expect(send(run(...inProgress), reportDone)).toEqual({
       ok: true,
       events: [stamped({ type: "task.done_reported", branch, gate: "local" })],
-      commands: [{ type: "run_gate", taskId: id, gate: "local", round: 1, worktree }],
+      commands: [{ type: "run_gate", taskId: id, request: 4, gate: "local", worktree }],
     });
   });
 
@@ -580,6 +632,7 @@ describe("start in In progress, after a retry", () => {
         {
           type: "start_develop_session",
           taskId: id,
+          request: 4,
           worktree,
           spec,
           lastFailure: null,
@@ -592,19 +645,19 @@ describe("start in In progress, after a retry", () => {
 
   test("records the new agent once it runs", () => {
     const again = SessionId.parse("session-3");
-    const decision = send(run(...retried, start), {
+    const decision = send(run(...retried, start), (t) => ({
       by: "plugin",
       type: "session_started",
+      request: awaited(t),
       session: again,
-    });
+    }));
     expect(decision.ok && decision.events).toEqual([
       stamped({ type: "task.dispatched", session: again }),
     ]);
   });
 
   test("blocks the task again if the agent fails to start, keeping the worktree", () => {
-    const failed: Input = { by: "plugin", type: "session_failed", message: "herdr crashed" };
-    expect(send(run(...retried, start), failed)).toEqual({
+    expect(send(run(...retried, start), startFailed)).toEqual({
       ok: true,
       events: [
         stamped({
@@ -628,21 +681,23 @@ describe("start in In progress, after a retry", () => {
 // Checks: the gates
 // ---------------------------------------------------------------------------
 
-// Each report of done starts a new round of checks. A gate result names the
-// round it belongs to.
-const gatePass = (gate: "local" | "review", round = 1): Input => ({
+// A gate result answers the request the task is waiting on: the gate that
+// is running.
+const gatePass =
+  (gate: "local" | "review"): Step =>
+  (t) => ({
+    by: "plugin",
+    type: "gate_result",
+    request: awaited(t),
+    gate,
+    ok: true,
+    summary: "All good.",
+  });
+const localFail: Step = (t) => ({
   by: "plugin",
   type: "gate_result",
-  gate,
-  round,
-  ok: true,
-  summary: "All good.",
-});
-const localFail = (round = 1): Input => ({
-  by: "plugin",
-  type: "gate_result",
+  request: awaited(t),
   gate: "local",
-  round,
   ok: false,
   summary: "2 tests failed in export.test.ts",
 });
@@ -655,7 +710,7 @@ describe("gate_result, passing", () => {
     expect(send(run(...inChecks), gatePass("local"))).toEqual({
       ok: true,
       events: [stamped({ type: "task.gate_passed", gate: "local", next: "review" })],
-      commands: [{ type: "run_gate", taskId: id, gate: "review", round: 1, worktree }],
+      commands: [{ type: "run_gate", taskId: id, request: 5, gate: "review", worktree }],
     });
   });
 
@@ -672,7 +727,7 @@ describe("gate_result, passing", () => {
 
 describe("gate_result, failing", () => {
   test("sends the failure back to the same agent", () => {
-    expect(send(run(...inChecks), localFail(1))).toEqual({
+    expect(send(run(...inChecks), localFail)).toEqual({
       ok: true,
       events: [stamped({ type: "task.gate_failed", failure: localFailure })],
       commands: [
@@ -686,8 +741,8 @@ describe("gate_result, failing", () => {
   });
 
   test("blocks the task and stops the agent when the last attempt fails", () => {
-    const task = run(...inChecks, localFail(1), reportDone, localFail(2), reportDone);
-    expect(send(task, localFail(3))).toEqual({
+    const task = run(...inChecks, localFail, reportDone, localFail, reportDone);
+    expect(send(task, localFail)).toEqual({
       ok: true,
       events: [
         stamped({ type: "task.gate_failed", failure: localFailure }),
@@ -701,20 +756,13 @@ describe("gate_result, failing", () => {
   });
 
   test("after a retry, the new agent is told what failed", () => {
-    const task = run(
-      ...inChecks,
-      localFail(1),
-      reportDone,
-      localFail(2),
-      reportDone,
-      localFail(3),
-      retry,
-    );
+    const task = run(...inChecks, localFail, reportDone, localFail, reportDone, localFail, retry);
     const decision = send(task, start);
     expect(decision.ok && decision.commands).toEqual([
       {
         type: "start_develop_session",
         taskId: id,
+        request: 7,
         worktree,
         spec,
         lastFailure: localFailure,
@@ -734,8 +782,13 @@ const authBranch = { commits: 2, changedFiles: ["src/reports/export.ts", "src/au
 const reportAuthDone: Input = { by: "agent", type: "report_done", branch: authBranch };
 const approveMerge: Input = { by: "human", type: "approve_merge" };
 const sendBackMerge = (note: string): Input => ({ by: "human", type: "send_back_merge", note });
-const merged: Input = { by: "plugin", type: "merged", commit };
-const mergeFail: Input = { by: "plugin", type: "merge_failed", summary: "Conflicts with main." };
+const merged: Step = (t) => ({ by: "plugin", type: "merged", request: awaited(t), commit });
+const mergeFail: Step = (t) => ({
+  by: "plugin",
+  type: "merge_failed",
+  request: awaited(t),
+  summary: "Conflicts with main.",
+});
 const mergeFailure: Failure = { step: "merge", summary: "Conflicts with main." };
 
 const lastGateRunning = [...inChecks, gatePass("local")];
@@ -753,7 +806,7 @@ describe("the last gate passing", () => {
       ],
       commands: [
         { type: "stop_session", session: developSession },
-        { type: "merge", taskId: id, worktree },
+        { type: "merge", taskId: id, request: 6, worktree },
       ],
     });
   });
@@ -777,7 +830,7 @@ describe("approve_merge", () => {
     expect(send(run(...awaitingMerge), approveMerge)).toEqual({
       ok: true,
       events: [stamped({ type: "task.merge_started" })],
-      commands: [{ type: "merge", taskId: id, worktree }],
+      commands: [{ type: "merge", taskId: id, request: 6, worktree }],
     });
   });
 
@@ -804,6 +857,7 @@ describe("send_back_merge", () => {
       {
         type: "start_develop_session",
         taskId: id,
+        request: 6,
         worktree,
         spec,
         lastFailure: null,
@@ -831,9 +885,13 @@ describe("merged", () => {
   });
 
   test("is rejected before the merge started", () => {
-    expect(send(run(...awaitingMerge), merged)).toEqual({
+    const early: Input = { by: "plugin", type: "merged", request: 6, commit };
+    expect(send(run(...awaitingMerge), early)).toEqual({
       ok: false,
-      rejection: { input: "merged", reason: "#12 isn't merging." },
+      rejection: {
+        input: "merged",
+        reason: "This reply answers request 6, but #12 isn't waiting on any request.",
+      },
     });
   });
 });
@@ -853,6 +911,7 @@ describe("merge_failed", () => {
       {
         type: "start_develop_session",
         taskId: id,
+        request: 7,
         worktree,
         spec,
         lastFailure: mergeFailure,
@@ -866,12 +925,12 @@ describe("merge_failed", () => {
     // Two failed gates, then both gates pass and the merge fails: attempt 3.
     const task = run(
       ...inChecks,
-      localFail(1),
+      localFail,
       reportDone,
-      localFail(2),
+      localFail,
       reportDone,
-      gatePass("local", 3),
-      gatePass("review", 3),
+      gatePass("local"),
+      gatePass("review"),
     );
     expect(send(task, mergeFail)).toEqual({
       ok: true,
@@ -1039,7 +1098,12 @@ describe("usage", () => {
 
 const drop: Input = { by: "human", type: "drop" };
 const sendBackToSpec = (note: string): Input => ({ by: "human", type: "send_back_to_spec", note });
-const sessionFailed: Input = { by: "plugin", type: "session_failed", message: "herdr crashed" };
+const crashed = (s: SessionId): Input => ({
+  by: "plugin",
+  type: "session_crashed",
+  session: s,
+  message: "herdr crashed",
+});
 
 describe("drop", () => {
   test("stops a running spec agent", () => {
@@ -1148,7 +1212,7 @@ describe("send_back_to_spec", () => {
 
 describe("a running agent crashing", () => {
   test("blocks the task in In progress, keeping the worktree", () => {
-    expect(send(run(...inProgress), sessionFailed)).toEqual({
+    expect(send(run(...inProgress), crashed(developSession))).toEqual({
       ok: true,
       events: [
         stamped({
@@ -1161,19 +1225,19 @@ describe("a running agent crashing", () => {
   });
 
   test("blocks the task in Spec", () => {
-    const decision = send(run(...specRunning), sessionFailed);
+    const decision = send(run(...specRunning), crashed(session));
     expect(decision.ok && decision.events.map((e) => e.type)).toEqual(["task.blocked"]);
   });
 
   test("blocks the task in Checks while a gate runs", () => {
-    const decision = send(run(...inChecks), sessionFailed);
+    const decision = send(run(...inChecks), crashed(developSession));
     expect(decision.ok && decision.events.map((e) => e.type)).toEqual(["task.blocked"]);
   });
 
   test("is rejected once the gates have passed, since the agent was already stopped", () => {
-    expect(send(run(...merging), sessionFailed)).toEqual({
+    expect(send(run(...merging), crashed(developSession))).toEqual({
       ok: false,
-      rejection: { input: "session_failed", reason: "#12 has no develop agent." },
+      rejection: { input: "session_crashed", reason: "#12's agent isn't session-2." },
     });
   });
 });
@@ -1190,24 +1254,25 @@ const changeProject = (project: ProjectId | null): Input => ({
 });
 const done = [...merging, merged];
 
-const reverted: Input = { by: "plugin", type: "reverted" };
-const revertFailed: Input = {
+const reverted: Step = (t) => ({ by: "plugin", type: "reverted", request: awaited(t) });
+const revertFailed: Step = (t) => ({
   by: "plugin",
   type: "revert_failed",
+  request: awaited(t),
   summary: "Conflicts in export.ts",
-};
+});
 
 describe("revert", () => {
-  test("asks git to undo the merge commit, and the task stays Done until it has", () => {
+  test("asks version control to undo the merge commit, and the task stays Done until it has", () => {
     expect(send(run(...done), revert("Export breaks on empty reports."))).toEqual({
       ok: true,
       events: [stamped({ type: "task.revert_started", reason: "Export breaks on empty reports." })],
-      commands: [{ type: "revert", taskId: id, commit }],
+      commands: [{ type: "revert", taskId: id, request: 7, commit }],
     });
     expect(run(...done, revert("Broken.")).phase).toBe("done");
   });
 
-  test("once git has reverted, takes the task back to Spec with your reason", () => {
+  test("once the revert has happened, takes the task back to Spec with your reason", () => {
     expect(send(run(...done, revert("Export breaks on empty reports.")), reverted)).toEqual({
       ok: true,
       events: [
@@ -1217,7 +1282,7 @@ describe("revert", () => {
     });
   });
 
-  test("when git fails, keeps the task Done and says why", () => {
+  test("when the revert fails, keeps the task Done and says why", () => {
     expect(send(run(...done, revert("Broken.")), revertFailed)).toEqual({
       ok: true,
       events: [stamped({ type: "task.revert_failed", summary: "Conflicts in export.ts" })],
@@ -1238,9 +1303,13 @@ describe("revert", () => {
   });
 
   test("a reply is rejected when no revert is under way", () => {
-    expect(send(run(...done), reverted)).toEqual({
+    const early: Input = { by: "plugin", type: "reverted", request: 7 };
+    expect(send(run(...done), early)).toEqual({
       ok: false,
-      rejection: { input: "reverted", reason: "#12 isn't being reverted." },
+      rejection: {
+        input: "reverted",
+        reason: "This reply answers request 7, but #12 isn't waiting on any request.",
+      },
     });
   });
 
@@ -1407,12 +1476,13 @@ describe("a reply repeated for what the task already holds", () => {
 
 describe("a worktree reply for an earlier build", () => {
   const build2 = { path: "/repo/.worktrees/12-2", branch: "task/12-csv-export-2" };
-  // Build 1's worktree is still being made when the task is sent back and
-  // started again as build 2.
+  // Build 1's worktree (request 2) is still being made when the task is sent
+  // back and started again as build 2 (request 3).
   const build2Waiting = [...creatingWorktree, sendBackToSpec("Split it."), provide, start];
+  const build1Created: Input = { by: "plugin", type: "worktree_created", request: 2, worktree };
 
   test("is removed, not used for the current build", () => {
-    expect(send(run(...build2Waiting), worktreeCreated)).toEqual({
+    expect(send(run(...build2Waiting), build1Created)).toEqual({
       ok: true,
       events: [],
       commands: [{ type: "remove_worktree", worktree }],
@@ -1420,52 +1490,211 @@ describe("a worktree reply for an earlier build", () => {
   });
 
   test("leaves the current build waiting for its own worktree", () => {
-    const own: Input = { by: "plugin", type: "worktree_created", worktree: build2, build: 2 };
-    const decision = send(run(...build2Waiting, worktreeCreated), own);
+    const own: Input = { by: "plugin", type: "worktree_created", request: 3, worktree: build2 };
+    const decision = send(run(...build2Waiting, build1Created), own);
     expect(decision.ok && decision.events).toEqual([
       stamped({ type: "task.worktree_created", worktree: build2 }),
     ]);
   });
 
   test("can't block the current build when it failed", () => {
-    const failed: Input = { by: "plugin", type: "worktree_failed", message: "disk full", build: 1 };
+    const failed: Input = {
+      by: "plugin",
+      type: "worktree_failed",
+      request: 2,
+      message: "disk full",
+    };
     expect(send(run(...build2Waiting), failed)).toEqual({
       ok: false,
-      rejection: { input: "worktree_failed", reason: "#12 isn't creating a worktree for build 1." },
+      rejection: {
+        input: "worktree_failed",
+        reason: "This reply answers request 2, but #12 is waiting on request 3.",
+      },
     });
   });
 });
 
-describe("a gate result from an earlier round of checks", () => {
-  // Round 1: local passes and the review starts. The agent crashes, you
-  // retry, and a new agent reports done: round 2, where local passes again.
-  const round2Reviewing: Input[] = [
+describe("a gate result from an earlier run of the checks", () => {
+  // Local passes (request 4) and the review starts (request 5). The agent
+  // crashes, you retry, and a new agent reports done: local runs again and
+  // passes (request 7), and the review starts again (request 8).
+  const reviewingAgain: Step[] = [
     ...inChecks,
-    gatePass("local", 1),
-    sessionFailed,
+    gatePass("local"),
+    crashed(developSession),
     retry,
     start,
-    { by: "plugin", type: "session_started", session: SessionId.parse("session-3") },
+    (t) => ({
+      by: "plugin",
+      type: "session_started",
+      request: awaited(t),
+      session: SessionId.parse("session-3"),
+    }),
     reportDone,
-    gatePass("local", 2),
+    gatePass("local"),
   ];
+  const oldReview: Input = {
+    by: "plugin",
+    type: "gate_result",
+    request: 5,
+    gate: "review",
+    ok: true,
+    summary: "All good.",
+  };
 
   test("is refused, so it can't approve code it never checked", () => {
-    expect(send(run(...round2Reviewing), gatePass("review", 1))).toEqual({
+    expect(send(run(...reviewingAgain), oldReview)).toEqual({
       ok: false,
       rejection: {
         input: "gate_result",
-        reason: "This result is from round 1 of #12's checks. They are on round 2.",
+        reason: "This reply answers request 5, but #12 is waiting on request 8.",
       },
     });
   });
 
-  test("leaves the current round to its own result", () => {
-    const decision = send(run(...round2Reviewing), gatePass("review", 2));
+  test("leaves the current run to its own result", () => {
+    const decision = send(run(...reviewingAgain), gatePass("review"));
     expect(decision.ok && decision.events.map((e) => e.type)).toEqual([
       "task.gate_passed",
       "task.checks_passed",
       "task.merge_started",
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Every reply matched to its request (found by the second Codex review)
+// ---------------------------------------------------------------------------
+
+describe("a merge reply for an earlier merge", () => {
+  // The first merge (request 6) conflicts. A new agent fixes it, the gates
+  // pass again (requests 8 and 9), and a second merge starts (request 10).
+  const mergingAgain: Step[] = [
+    ...merging,
+    mergeFail,
+    start,
+    developStarted,
+    reportDone,
+    gatePass("local"),
+    gatePass("review"),
+  ];
+
+  test("can't finish the current merge", () => {
+    const oldMerged: Input = { by: "plugin", type: "merged", request: 6, commit };
+    expect(send(run(...mergingAgain), oldMerged)).toEqual({
+      ok: false,
+      rejection: {
+        input: "merged",
+        reason: "This reply answers request 6, but #12 is waiting on request 10.",
+      },
+    });
+  });
+
+  test("can't fail the current merge", () => {
+    const oldFailed: Input = { by: "plugin", type: "merge_failed", request: 6, summary: "x" };
+    expect(send(run(...mergingAgain), oldFailed).ok).toBe(false);
+    expect(send(run(...mergingAgain), merged).ok).toBe(true);
+  });
+});
+
+describe("a revert reply for an earlier revert", () => {
+  // The first revert (request 7) fails, and you try again (request 8).
+  const revertingAgain: Step[] = [...done, revert("Broken."), revertFailed, revert("Broken.")];
+
+  test("can't confirm the current revert", () => {
+    const oldReverted: Input = { by: "plugin", type: "reverted", request: 7 };
+    expect(send(run(...revertingAgain), oldReverted)).toEqual({
+      ok: false,
+      rejection: {
+        input: "reverted",
+        reason: "This reply answers request 7, but #12 is waiting on request 8.",
+      },
+    });
+  });
+
+  test("can't fail the current revert, which then still succeeds", () => {
+    const oldFailed: Input = { by: "plugin", type: "revert_failed", request: 7, summary: "x" };
+    expect(send(run(...revertingAgain), oldFailed).ok).toBe(false);
+    expect(send(run(...revertingAgain), reverted).ok).toBe(true);
+  });
+});
+
+describe("a crash report for an earlier agent", () => {
+  test("can't block the task or make it forget the agent it has now", () => {
+    const replaced: Step[] = [
+      ...inProgress,
+      crashed(developSession),
+      retry,
+      start,
+      (t) => ({
+        by: "plugin",
+        type: "session_started",
+        request: awaited(t),
+        session: SessionId.parse("session-3"),
+      }),
+    ];
+    expect(send(run(...replaced), crashed(developSession))).toEqual({
+      ok: false,
+      rejection: { input: "session_crashed", reason: "#12's agent isn't session-2." },
+    });
+  });
+});
+
+describe("an agent started for an earlier request", () => {
+  // You write the spec yourself while the spec agent (request 1) is still
+  // starting. The task moves on, and its develop agent (request 3) starts.
+  const developStarting: Step[] = [...inSpec, start, provide, start, worktreeCreated];
+  const lateSpecAgent: Input = {
+    by: "plugin",
+    type: "session_started",
+    request: 1,
+    session: SessionId.parse("spec-late"),
+  };
+
+  test("is stopped, not taken as the develop agent", () => {
+    expect(send(run(...developStarting), lateSpecAgent)).toEqual({
+      ok: true,
+      events: [],
+      commands: [{ type: "stop_session", session: SessionId.parse("spec-late") }],
+    });
+  });
+
+  test("leaves the task waiting for the develop agent it asked for", () => {
+    const decision = send(run(...developStarting, lateSpecAgent), developStarted);
+    expect(decision.ok && decision.events).toEqual([
+      stamped({ type: "task.dispatched", session: developSession }),
+    ]);
+  });
+});
+
+describe("an agent started for an earlier request, after a retry", () => {
+  // The first develop agent answered request 3. After a give-up and a retry,
+  // a new agent is starting for request 4, when a repeat of request 3's
+  // reply arrives, naming another session.
+  test("is stopped, not taken as the new agent", () => {
+    const retrying: Step[] = [...inProgress, giveUp, retry, start];
+    const late: Input = {
+      by: "plugin",
+      type: "session_started",
+      request: 3,
+      session: SessionId.parse("stray"),
+    };
+    expect(send(run(...retrying), late)).toEqual({
+      ok: true,
+      events: [],
+      commands: [{ type: "stop_session", session: SessionId.parse("stray") }],
+    });
+  });
+});
+
+describe("a usage report older than the last one", () => {
+  test("is refused, so the totals never go down", () => {
+    expect(send(run(...inProgress, usage(50_000)), usage(10_000))).toEqual({
+      ok: false,
+      rejection: {
+        input: "usage",
+        reason: "This usage report for #12 is older than the last one.",
+      },
+    });
   });
 });

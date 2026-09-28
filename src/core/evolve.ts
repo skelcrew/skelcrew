@@ -23,7 +23,7 @@ export const evolveTask: EvolveTask = (task, event) => {
       question: null,
       blocked: null,
       builds: 0,
-      rounds: 0,
+      requests: 0,
       usage: noUsage,
       usageAtRetry: noUsage,
     });
@@ -113,7 +113,7 @@ function inIdea(task: TaskIn<"idea">, event: TaskEvent): EvolvedTask {
 function inSpec(task: TaskIn<"spec">, event: TaskEvent): EvolvedTask {
   switch (event.type) {
     case "task.dispatch_started":
-      return ok({ ...task, step: { kind: "starting" } });
+      return ok(withRequest(task, (request) => ({ kind: "starting", request })));
 
     case "task.spec_session_started":
       return ok({ ...task, step: { kind: "running", session: event.session } });
@@ -156,13 +156,22 @@ function inReady(task: TaskIn<"ready">, event: TaskEvent): EvolvedTask {
     // Each start is a new build with its own branch. The count goes up
     // before the worktree exists, so a failed try never reuses it.
     case "task.dispatch_started":
-      return ok({ ...task, step: { kind: "creating_worktree" }, builds: task.builds + 1 });
+      return ok({
+        ...withRequest(task, (request) => ({ kind: "creating_worktree", request })),
+        builds: task.builds + 1,
+      });
 
     case "task.worktree_created":
       if (task.step.kind !== "creating_worktree") {
         return refuse(event, `#${task.id} isn't creating a worktree`);
       }
-      return ok({ ...task, step: { kind: "starting_session", worktree: event.worktree } });
+      return ok(
+        withRequest(task, (request) => ({
+          kind: "starting_session",
+          worktree: event.worktree,
+          request,
+        })),
+      );
 
     case "task.dispatched": {
       const { step, ...rest } = task;
@@ -193,7 +202,7 @@ function inProgress(task: TaskIn<"in_progress">, event: TaskEvent): EvolvedTask 
   switch (event.type) {
     // After a retry: a new agent in the same worktree.
     case "task.dispatch_started":
-      return ok({ ...task, step: { kind: "starting" } });
+      return ok(withRequest(task, (request) => ({ kind: "starting", request })));
 
     case "task.dispatched":
       if (task.step.kind !== "starting") {
@@ -210,7 +219,8 @@ function inProgress(task: TaskIn<"in_progress">, event: TaskEvent): EvolvedTask 
         session: step.session,
         branch: event.branch,
         step: event.gate,
-        rounds: task.rounds + 1,
+        request: task.requests + 1,
+        requests: task.requests + 1,
       });
     }
 
@@ -229,7 +239,13 @@ function inChecks(task: TaskIn<"checks">, event: TaskEvent): EvolvedTask {
     case "task.gate_passed": {
       const mismatch = gateMismatch(task, event.gate);
       if (mismatch) return refuse(event, mismatch);
-      return ok(event.next === null ? task : { ...task, step: event.next });
+      if (event.next === null) return ok(task);
+      return ok({
+        ...task,
+        step: event.next,
+        request: task.requests + 1,
+        requests: task.requests + 1,
+      });
     }
 
     case "task.gate_failed": {
@@ -247,7 +263,7 @@ function inChecks(task: TaskIn<"checks">, event: TaskEvent): EvolvedTask {
     // A send-back or a failed merge queues the task for a new agent, so it
     // waits for a free slot.
     case "task.merge_approval_requested":
-      return ok({ ...task, step: "merge_approval", session: null, question: null });
+      return ok({ ...task, step: "merge_approval", request: null, session: null, question: null });
 
     // Not a failure, so no attempt is used. The note waits for the next agent.
     case "task.merge_sent_back":
@@ -258,7 +274,14 @@ function inChecks(task: TaskIn<"checks">, event: TaskEvent): EvolvedTask {
 
     case "task.merge_started":
       if (task.step === "merging") return refuse(event, `#${task.id} is already merging`);
-      return ok({ ...task, step: "merging", session: null, question: null });
+      return ok({
+        ...task,
+        step: "merging",
+        request: task.requests + 1,
+        requests: task.requests + 1,
+        session: null,
+        question: null,
+      });
 
     case "task.merged": {
       if (task.step !== "merging") return refuse(event, `#${task.id} isn't merging`);
@@ -295,7 +318,12 @@ function inChecks(task: TaskIn<"checks">, event: TaskEvent): EvolvedTask {
 function inDone(task: TaskIn<"done">, event: TaskEvent): EvolvedTask {
   switch (event.type) {
     case "task.revert_started":
-      return ok({ ...task, reverting: event.reason, revertFailure: null });
+      return ok({
+        ...task,
+        reverting: { reason: event.reason, request: task.requests + 1 },
+        requests: task.requests + 1,
+        revertFailure: null,
+      });
 
     case "task.revert_failed":
       return ok({ ...task, reverting: null, revertFailure: event.summary });
@@ -313,6 +341,13 @@ function inDone(task: TaskIn<"done">, event: TaskEvent): EvolvedTask {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// A step that sends a request: it takes the next request number, and the
+// step records it, so only the reply that brings it back can answer.
+function withRequest<T extends Task, S>(task: T, step: (request: number) => S) {
+  const request = task.requests + 1;
+  return { ...task, step: step(request), requests: request };
+}
 
 function ok(task: Task): EvolvedTask {
   return { ok: true, task };
@@ -341,7 +376,7 @@ function shared(task: Task) {
     question: null,
     blocked: null,
     builds: task.builds,
-    rounds: task.rounds,
+    requests: task.requests,
     usage: task.usage,
     usageAtRetry: task.usageAtRetry,
   };

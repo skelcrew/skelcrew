@@ -147,6 +147,9 @@ export type PhaseState =
       attempts: number;
       branch: BranchFacts;
       step: GateName | "merge_approval" | "merging";
+      // The request the task waits on: the running gate's, or the merge's.
+      // Null while the merge waits for the developer's approval.
+      request: number | null;
     }
   // mergeCommit is what `skelcrew revert` undoes. Each task lands as one
   // squashed commit, so one commit is enough.
@@ -158,7 +161,7 @@ export type PhaseState =
       // answers. The task stays Done until the revert has happened, so the
       // record never says it did when it didn't. `reverting` holds the reason
       // while it runs; `revertFailure` says why the last attempt failed.
-      reverting: string | null;
+      reverting: { reason: string; request: number } | null;
       revertFailure: string | null;
     }
   | { phase: "dropped" };
@@ -168,7 +171,7 @@ export type PhaseState =
 // reply from the shell, and a crash in between must replay to the right place.
 export type SpecStep =
   | { kind: "queued" } // waiting for a slot (maxRunning)
-  | { kind: "starting" } // start_spec_session sent, no reply yet
+  | { kind: "starting"; request: number } // start_spec_session sent, no reply yet
   | { kind: "running"; session: SessionId } // stored so drop can stop it
   | { kind: "awaiting_approval" }; // no agent running, so no slot used
 
@@ -176,15 +179,15 @@ export type SpecStep =
 // and the session both exist. Until then, it stays in Ready.
 export type ReadyStep =
   | { kind: "queued" }
-  | { kind: "creating_worktree" }
-  | { kind: "starting_session"; worktree: Worktree };
+  | { kind: "creating_worktree"; request: number }
+  | { kind: "starting_session"; worktree: Worktree; request: number };
 
 // In progress only waits for a slot after a block. Blocking stops the agent,
 // so a blocked task holds no slot while it waits for the developer. After a
 // retry, a new agent starts in the same worktree.
 export type DevelopStep =
   | { kind: "queued" }
-  | { kind: "starting" }
+  | { kind: "starting"; request: number }
   | { kind: "running"; session: SessionId };
 
 export type Task = PhaseState & {
@@ -204,10 +207,11 @@ export type Task = PhaseState & {
   // from main ("task/12-csv-export", then "task/12-csv-export-2"), so a
   // build after a send-back never starts on code written for the old spec.
   builds: number;
-  // How many times the agent has reported done: one round of checks each.
-  // Gate results name their round, so a late result from an earlier round
-  // can't pass or fail the current one.
-  rounds: number;
+  // How many requests the task has sent that expect a reply: starting an
+  // agent, creating a worktree, running a gate, merging, reverting. Each gets
+  // the next number, and its reply must bring it back. A reply with any other
+  // number is late or repeated, so it can never answer the current request.
+  requests: number;
   // Two usage counters. `usage` never resets, so the record shows the true
   // cost. The safety cap counts from `usageAtRetry`, so a retried task gets
   // a fresh allowance instead of being blocked again at once.
@@ -305,19 +309,20 @@ export type PluginInput =
       project: ProjectId | null; // mapped from e.g. a GitHub milestone
     }
   | { type: "external_move"; to: string } // e.g. issue dragged to Done
-  // Both name the build they answer, from create_worktree. A reply for an
-  // earlier build is late, and must never be used for the current one.
-  | { type: "worktree_created"; worktree: Worktree; build: number }
-  | { type: "worktree_failed"; message: string; build: number }
-  | { type: "session_started"; session: SessionId }
-  | { type: "session_failed"; message: string }
-  // `round` echoes run_gate's, so a result from an earlier round of checks
-  // can't pass or fail the current one.
-  | { type: "gate_result"; gate: GateName; round: number; ok: boolean; summary: string }
-  | { type: "merged"; commit: CommitSha }
-  | { type: "reverted" }
-  | { type: "revert_failed"; summary: string }
-  | { type: "merge_failed"; summary: string };
+  // Replies to commands. Each brings back the command's `request` number, so
+  // a late or repeated reply can never answer the current request.
+  | { type: "worktree_created"; request: number; worktree: Worktree }
+  | { type: "worktree_failed"; request: number; message: string }
+  | { type: "session_started"; request: number; session: SessionId }
+  | { type: "session_failed"; request: number; message: string } // the agent didn't start
+  | { type: "gate_result"; request: number; gate: GateName; ok: boolean; summary: string }
+  | { type: "merged"; request: number; commit: CommitSha }
+  | { type: "merge_failed"; request: number; summary: string }
+  | { type: "reverted"; request: number }
+  | { type: "revert_failed"; request: number; summary: string }
+  // Not a reply: an agent that was running has stopped. It names the
+  // session, so a report about an agent the task no longer has is refused.
+  | { type: "session_crashed"; session: SessionId; message: string };
 
 // Inputs the daemon makes itself. The scheduler's pick is an input, not a
 // direct change, so decide keeps the final say on every transition.
@@ -422,11 +427,14 @@ export type Event = TaskEvent | ProjectEvent;
 // an input. So every side effect can be faked in tests with a scripted reply.
 
 export type Command =
-  | { type: "start_spec_session"; taskId: TaskId; note: string | null }
-  | { type: "create_worktree"; taskId: TaskId; build: number } // names the branch
+  // Every command that expects a reply carries a request number, from the
+  // task's `requests` counter. The reply must bring it back.
+  | { type: "start_spec_session"; taskId: TaskId; request: number; note: string | null }
+  | { type: "create_worktree"; taskId: TaskId; request: number; build: number } // build names the branch
   | {
       type: "start_develop_session";
       taskId: TaskId;
+      request: number;
       worktree: Worktree;
       spec: Spec;
       // Set when a new agent picks up after a failure: what it must fix first.
@@ -439,7 +447,7 @@ export type Command =
     }
   | { type: "send_to_session"; session: SessionId; text: string }
   | { type: "stop_session"; session: SessionId }
-  | { type: "run_gate"; taskId: TaskId; gate: GateName; round: number; worktree: Worktree }
+  | { type: "run_gate"; taskId: TaskId; request: number; gate: GateName; worktree: Worktree }
   // The shell merges one task at a time. It brings the branch up to date
   // with main, runs the local checks again, then squash-merges. It answers
   // with "merged" or "merge_failed".
@@ -447,11 +455,11 @@ export type Command =
   // Why in the shell: decide sees one task at a time, so it cannot stop two
   // tasks merging at once. Only the shell sees all merges. Without this
   // step, two tasks that each pass alone could break main together.
-  | { type: "merge"; taskId: TaskId; worktree: Worktree }
+  | { type: "merge"; taskId: TaskId; request: number; worktree: Worktree }
   // The shell first commits any uncommitted changes to the worktree's
   // branch, so removing a worktree never loses work.
   | { type: "remove_worktree"; worktree: Worktree }
-  | { type: "revert"; taskId: TaskId; commit: CommitSha };
+  | { type: "revert"; taskId: TaskId; request: number; commit: CommitSha };
 
 // ---------------------------------------------------------------------------
 // Config: the parts of workflow.yml the core reads
