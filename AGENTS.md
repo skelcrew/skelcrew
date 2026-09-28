@@ -22,8 +22,8 @@ if a task asks for it. Stop and report the conflict instead.
 The core decides what agents may do, so it gets the closest care. The critical paths are
 the state machine, the gates, the merge policy and revert. They live in `src/core/`.
 
-- The human writes the types, contracts and invariants first. The code is written against
-  them.
+- The types, contracts and invariants come first, and the human approves them. The code is
+  written against them.
 - Tests come before code, and the human reads them closely. A wrong test here is more
   dangerous than wrong code.
 - One transition or contract at a time. The human reads every diff before it lands.
