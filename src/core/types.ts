@@ -29,14 +29,7 @@ export type Timestamp = number; // milliseconds since epoch
 // The six phases from the spec, plus Dropped as a second way to end.
 // Blocked is not here: it is a flag on the task (see Task.blocked), so a
 // blocked task keeps its phase and "retry" knows where to pick up again.
-export type Phase =
-  | "idea"
-  | "spec"
-  | "ready"
-  | "in_progress"
-  | "checks"
-  | "done"
-  | "dropped";
+export type Phase = "idea" | "spec" | "ready" | "in_progress" | "checks" | "done" | "dropped";
 
 // The checks a task passes before merging, run in the order Config.gates
 // lists them. Cheapest first: local commands take seconds, remote results
@@ -478,15 +471,9 @@ export type ProjectDecision =
 // The only place a project can change. `project` is null before it exists.
 // Projects have their own small decider because their rules never depend
 // on a task's state.
-export type DecideProject = (
-  project: Project | null,
-  envelope: ProjectEnvelope,
-) => ProjectDecision;
+export type DecideProject = (project: Project | null, envelope: ProjectEnvelope) => ProjectDecision;
 
-export type EvolveProject = (
-  project: Project | null,
-  event: ProjectEvent,
-) => Project;
+export type EvolveProject = (project: Project | null, event: ProjectEvent) => Project;
 
 // Picks which queued tasks in Spec, Ready or In progress to start next. It
 // keeps running sessions at or below maxRunning, and skips blocked tasks and
