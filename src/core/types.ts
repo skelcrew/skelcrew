@@ -532,10 +532,15 @@ export type EvolveProject = (project: Project | null, event: ProjectEvent) => Ev
 export type EvolvedProject = { ok: true; project: Project } | { ok: false; reason: string };
 
 // Picks which queued tasks in Spec, Ready or In progress to start next. It
-// keeps running sessions at or below maxRunning. A task past its gates
-// holds no slot, since its agent is stopped. It skips blocked tasks and tasks in parked
-// projects. It only proposes: each pick becomes a "start" input that decide
-// can reject.
+// keeps agents at or below maxRunning: those running, and those still
+// starting. It skips blocked tasks and tasks in parked projects. It only
+// proposes: each pick becomes a "start" input that decide can reject.
+//
+// `startsInFlight` comes from the daemon: the starts it has sent out
+// (start_spec_session, create_worktree, start_develop_session) and not yet
+// had answered. The tasks alone can't tell: a task dropped while its agent
+// was starting no longer says so, but the agent is still on its way up and
+// needs its slot until it reports in and is stopped.
 //
 // Why separate from decide: choosing what to start next means looking at
 // all tasks. decide only ever sees one, which keeps it small enough to read
@@ -544,4 +549,5 @@ export type Schedule = (
   tasks: Task[],
   projects: ReadonlyMap<ProjectId, Project>,
   config: Config,
+  startsInFlight: number,
 ) => TaskId[];
