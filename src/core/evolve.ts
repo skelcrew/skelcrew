@@ -2,7 +2,7 @@
 // already accepted, so it holds no rules of its own. Replaying a task's
 // events through it, starting from null, rebuilds the task exactly.
 
-import type { Evolve, Evolved, Failure, Phase, Task, TaskEvent } from "./types";
+import type { Evolve, Evolved, Failure, Phase, Spec, Task, TaskEvent } from "./types";
 
 const noUsage = { tokens: 0, ms: 0 };
 
@@ -31,6 +31,8 @@ export const evolve: Evolve = (task, event) => {
   if (task === null) {
     return refuse(event, `#${event.taskId} doesn't exist`);
   }
+  // Dropped is final.
+  if (task.phase === "dropped") return wrongPhase(event, task);
 
   switch (event.type) {
     case "task.spec_requested":
@@ -59,6 +61,10 @@ export const evolve: Evolve = (task, event) => {
           task: { ...task, step: { kind: "creating_worktree" }, builds: task.builds + 1 },
         };
       }
+      // After a retry: a new agent in the same worktree.
+      if (task.phase === "in_progress") {
+        return { ok: true, task: { ...task, step: { kind: "starting" } } };
+      }
       return wrongPhase(event, task);
 
     case "task.spec_session_started":
@@ -66,10 +72,28 @@ export const evolve: Evolve = (task, event) => {
       return { ok: true, task: { ...task, step: { kind: "running", session: event.session } } };
 
     // The old spec is kept, so the agent revises it with the note instead
-    // of starting over.
+    // of starting over. From a later phase, the worktree is dropped: the
+    // next build starts on a fresh branch.
     case "task.spec_sent_back":
-      if (task.phase !== "spec") return wrongPhase(event, task);
-      return { ok: true, task: { ...task, note: event.note, step: { kind: "queued" } } };
+      switch (task.phase) {
+        case "spec":
+          return {
+            ok: true,
+            task: {
+              ...task,
+              note: event.note,
+              step: { kind: "queued" },
+              question: null,
+              blocked: null,
+            },
+          };
+        case "ready":
+        case "in_progress":
+        case "checks":
+          return { ok: true, task: backToSpec(task, task.spec, event.note) };
+        default:
+          return wrongPhase(event, task);
+      }
 
     case "task.ready": {
       if (task.phase !== "spec") return wrongPhase(event, task);
@@ -89,6 +113,12 @@ export const evolve: Evolve = (task, event) => {
       };
 
     case "task.dispatched": {
+      if (task.phase === "in_progress") {
+        if (task.step.kind !== "starting") {
+          return refuse(event, `#${task.id} isn't starting an agent`);
+        }
+        return { ok: true, task: { ...task, step: { kind: "running", session: event.session } } };
+      }
       if (task.phase !== "ready") return wrongPhase(event, task);
       const { step, ...rest } = task;
       if (step.kind !== "starting_session") {
@@ -227,13 +257,44 @@ export const evolve: Evolve = (task, event) => {
     case "task.usage_recorded":
       return { ok: true, task: { ...task, usage: event.usage } };
 
-    default:
-      return refuse(event, "not handled yet");
+    case "task.project_changed":
+      return { ok: true, task: { ...task, project: event.project } };
+
+    // A Done task only changes through a revert.
+    case "task.dropped":
+      if (task.phase === "done") return wrongPhase(event, task);
+      return { ok: true, task: { ...shared(task), phase: "dropped" } };
+
+    // The revert reason becomes the note, so the redone spec addresses it.
+    case "task.reverted":
+      if (task.phase !== "done") return wrongPhase(event, task);
+      return { ok: true, task: backToSpec(task, task.spec, event.reason) };
   }
 };
 
 function refuse(event: TaskEvent, why: string): Evolved {
   return { ok: false, reason: `${event.type} can't apply: ${why}.` };
+}
+
+// The fields every phase has, with the flags cleared. Used when a task
+// leaves its phase for good, so nothing from the old phase is carried over.
+function shared(task: Task) {
+  return {
+    id: task.id,
+    title: task.title,
+    project: task.project,
+    source: task.source,
+    createdAt: task.createdAt,
+    question: null,
+    blocked: null,
+    builds: task.builds,
+    usage: task.usage,
+    usageAtRetry: task.usageAtRetry,
+  };
+}
+
+function backToSpec(task: Task, spec: Spec, note: string): Task {
+  return { ...shared(task), phase: "spec", spec, note, step: { kind: "queued" } };
 }
 
 // The task with its agent stopped and waiting for a slot again, or null in
