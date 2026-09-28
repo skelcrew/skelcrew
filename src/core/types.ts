@@ -1,4 +1,4 @@
-// Core types for Skelcrew. Draft 3.
+// Core types for Skelcrew. Draft 4.
 //
 // Everything here is plain data. The core never reads the clock, the disk or
 // the network: time and IDs arrive inside inputs, and all side effects leave
@@ -13,16 +13,12 @@
 // Basics
 // ---------------------------------------------------------------------------
 
-// IDs are plain strings for now. Branded types would stop a TaskId being
-// passed where a SessionId is expected, but creating one needs a cast, and
-// casts are banned. Revisit if mix-ups show up in practice.
-// Task IDs count up per repository: 1, 2, 3. They are shown as "#12" and
-// typed as "12" in commands, so they must be short. The daemon picks the
-// next number and passes it in; the core never makes one up.
-export type TaskId = number;
-export type ProjectId = string; // a short slug, e.g. "inbox", so commands can use it
-export type SessionId = string;
-export type CommitSha = string;
+// IDs are branded, so one kind can't be passed where another is expected.
+// ids.ts explains why and how.
+import type { CommitSha, ProjectId, SessionId, TaskId } from "./ids";
+
+export type { CommitSha, ProjectId, SessionId, TaskId };
+
 // Passed in, never read with Date.now(). That keeps decide deterministic.
 export type Timestamp = number; // milliseconds since epoch
 
