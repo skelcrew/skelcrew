@@ -1,16 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { Config, TaskEvent } from "../core/types";
 import { Simulator } from "../sim/simulator";
+import { config as base } from "../test/fixtures";
 import { parseProjectEvent, parseTaskEvent } from "./schema";
 
-const config: Config = {
-  gates: ["local", "review"],
-  maxAttempts: 2,
-  maxRunning: 2,
-  specApproval: "always",
-  criticalPaths: ["src/auth/**"],
-  safetyCap: { tokens: 200_000, ms: 60 * 60_000 },
-};
+const config: Config = { ...base, maxAttempts: 2 };
 
 // Real events from whole lifecycles: gates failing, a block and retry, a
 // critical merge, a merge conflict, a question, and a revert.

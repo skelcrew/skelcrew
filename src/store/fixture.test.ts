@@ -1,7 +1,10 @@
 // Old logs must stay readable. v1-events.jsonl holds real events, written
-// once by the simulator in the version 1 shape, one per line. It is never
-// edited or regenerated: if a change to the events breaks this test, the
-// change needs a way to read old events, not a new fixture.
+// by the simulator in the version 1 shape, one per line. It is never edited
+// or regenerated: if a change to the events breaks this test, the change
+// needs a way to read old events, not a new fixture.
+//
+// It was regenerated once, on 2026-09-28, when request numbers were added to
+// events. That was safe only because no real log existed yet.
 
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";

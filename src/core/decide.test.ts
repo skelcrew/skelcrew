@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { agentOf, awaited, commit, config, id, session, spec, worktree } from "../test/fixtures";
 import { decideTask } from "./decide";
 import { evolveTask } from "./evolve";
 import { CommitSha, ProjectId, SessionId, TaskId } from "./ids";
+import { awaitedRequest, runningSession } from "./task";
 import type {
   BlockReason,
   Config,
@@ -15,17 +17,7 @@ import type {
   TaskEvent,
 } from "./types";
 
-const id = TaskId.parse(12);
 const at = 5_000;
-
-const config: Config = {
-  gates: ["local", "review"],
-  maxAttempts: 3,
-  maxRunning: 2,
-  specApproval: "always",
-  criticalPaths: ["src/auth/**"],
-  safetyCap: { tokens: 200_000, ms: 60 * 60_000 },
-};
 
 const reports = ProjectId.parse("reports");
 const archive = ProjectId.parse("archive");
@@ -45,35 +37,6 @@ type Step = Input | ((task: Task | null) => Input);
 function send(task: Task | null, step: Step, withConfig: Config = config): Decision {
   const input = typeof step === "function" ? step(task) : step;
   return decideTask(task, { taskId: id, at, input }, withConfig, projects);
-}
-
-// The session of the task's running agent, the way the daemon names the
-// sender of an agent's report. "nobody" when no agent is running.
-function agentOf(task: Task | null): SessionId {
-  if (task !== null) {
-    if ((task.phase === "spec" || task.phase === "in_progress") && task.step.kind === "running") {
-      return task.step.session;
-    }
-    if (task.phase === "checks" && task.session !== null) return task.session;
-  }
-  return SessionId.parse("nobody");
-}
-
-// The request the task's current step waits on, or 0 if none.
-function awaited(task: Task | null): number {
-  if (task === null) return 0;
-  switch (task.phase) {
-    case "spec":
-    case "ready":
-    case "in_progress":
-      return "request" in task.step ? task.step.request : 0;
-    case "checks":
-      return task.request ?? 0;
-    case "done":
-      return task.reverting?.request ?? 0;
-    default:
-      return 0;
-  }
 }
 
 // Sends each input in turn and applies the accepted events with evolve, the
@@ -233,12 +196,6 @@ describe("any input", () => {
 // Spec
 // ---------------------------------------------------------------------------
 
-const spec: Spec = {
-  scope: "Add a CSV export button to the reports page.",
-  acceptance: ["Clicking Export downloads a CSV of the visible rows."],
-  openQuestions: [],
-};
-const session = SessionId.parse("session-1");
 const neverApprove: Config = { ...config, specApproval: "never" };
 
 const start: Input = { by: "system", type: "start" };
@@ -259,7 +216,7 @@ const submitWith =
   (t) => ({ by: "agent", type: "submit_spec", session: agentOf(t), spec: s });
 const submit = submitWith(spec);
 const approve: Input = { by: "human", type: "approve_spec" };
-const sendBack = (note: string): Input => ({ by: "human", type: "send_back_spec", note });
+const sendBack = (note: string): Input => ({ by: "human", type: "revise_spec", note });
 const provide: Input = { by: "human", type: "provide_spec", spec };
 
 const inSpec = [add, requestSpec];
@@ -270,7 +227,7 @@ describe("start in Spec", () => {
   test("starts a spec agent", () => {
     expect(send(run(...inSpec), start)).toEqual({
       ok: true,
-      events: [stamped({ type: "task.dispatch_started" })],
+      events: [stamped({ type: "task.dispatch_started", request: 1 })],
       commands: [{ type: "start_spec_session", taskId: id, request: 1, note: null }],
     });
   });
@@ -346,7 +303,7 @@ describe("submit_spec", () => {
     });
   });
 
-  test("never makes the task Ready by itself when approval is required (invariant 1)", () => {
+  test("never makes the task Ready by itself when approval is required", () => {
     expect(run(...awaitingApproval).phase).toBe("spec");
   });
 
@@ -430,7 +387,7 @@ describe("approve_spec", () => {
   });
 });
 
-describe("send_back_spec", () => {
+describe("revise_spec", () => {
   test("sends the spec back with your note", () => {
     expect(send(run(...awaitingApproval), sendBack("Also export the totals row."))).toEqual({
       ok: true,
@@ -442,7 +399,7 @@ describe("send_back_spec", () => {
   test("is rejected without a note", () => {
     expect(send(run(...awaitingApproval), sendBack(" "))).toEqual({
       ok: false,
-      rejection: { input: "send_back_spec", reason: "A send-back needs a note." },
+      rejection: { input: "revise_spec", reason: "A send-back needs a note." },
     });
   });
 });
@@ -451,7 +408,6 @@ describe("send_back_spec", () => {
 // Ready
 // ---------------------------------------------------------------------------
 
-const worktree = { path: "/repo/.worktrees/12", branch: "task/12-csv-export" };
 const developSession = SessionId.parse("session-2");
 const worktreeCreated: Step = (t) => ({
   by: "plugin",
@@ -474,7 +430,7 @@ describe("start in Ready", () => {
   test("creates a worktree for build 1", () => {
     expect(send(run(...inReady), start)).toEqual({
       ok: true,
-      events: [stamped({ type: "task.dispatch_started" })],
+      events: [stamped({ type: "task.dispatch_started", request: 2 })],
       commands: [{ type: "create_worktree", taskId: id, request: 2, build: 1 }],
     });
   });
@@ -491,7 +447,7 @@ describe("worktree_created", () => {
   test("starts a develop agent in the worktree, with the spec", () => {
     expect(send(run(...creatingWorktree), worktreeCreated)).toEqual({
       ok: true,
-      events: [stamped({ type: "task.worktree_created", worktree })],
+      events: [stamped({ type: "task.worktree_created", worktree, request: 3 })],
       commands: [
         {
           type: "start_develop_session",
@@ -499,9 +455,7 @@ describe("worktree_created", () => {
           request: 3,
           worktree,
           spec,
-          lastFailure: null,
-          note: null,
-          lastBlock: null,
+          brief: { failure: null, note: null, blocked: null },
         },
       ],
     });
@@ -593,7 +547,7 @@ describe("report_done", () => {
   test("moves the task to Checks and runs the first gate", () => {
     expect(send(run(...inProgress), reportDone)).toEqual({
       ok: true,
-      events: [stamped({ type: "task.done_reported", branch, gate: "local" })],
+      events: [stamped({ type: "task.done_reported", branch, gate: "local", request: 4 })],
       commands: [{ type: "run_gate", taskId: id, request: 4, gate: "local", worktree }],
     });
   });
@@ -651,7 +605,7 @@ describe("start in In progress, after a retry", () => {
   test("starts a new agent in the same worktree, told why the last one stopped", () => {
     expect(send(run(...retried), start)).toEqual({
       ok: true,
-      events: [stamped({ type: "task.dispatch_started" })],
+      events: [stamped({ type: "task.dispatch_started", request: 4 })],
       commands: [
         {
           type: "start_develop_session",
@@ -659,9 +613,11 @@ describe("start in In progress, after a retry", () => {
           request: 4,
           worktree,
           spec,
-          lastFailure: null,
-          note: null,
-          lastBlock: { kind: "agent_gave_up", message: "The reports API is missing." },
+          brief: {
+            failure: null,
+            note: null,
+            blocked: { kind: "agent_gave_up", message: "The reports API is missing." },
+          },
         },
       ],
     });
@@ -733,7 +689,9 @@ describe("gate_result, passing", () => {
   test("runs the next gate", () => {
     expect(send(run(...inChecks), gatePass("local"))).toEqual({
       ok: true,
-      events: [stamped({ type: "task.gate_passed", gate: "local", next: "review" })],
+      events: [
+        stamped({ type: "task.gate_passed", gate: "local", next: { gate: "review", request: 5 } }),
+      ],
       commands: [{ type: "run_gate", taskId: id, request: 5, gate: "review", worktree }],
     });
   });
@@ -789,9 +747,11 @@ describe("gate_result, failing", () => {
         request: 7,
         worktree,
         spec,
-        lastFailure: localFailure,
-        note: null,
-        lastBlock: { kind: "out_of_attempts", failure: localFailure },
+        brief: {
+          failure: localFailure,
+          note: null,
+          blocked: { kind: "out_of_attempts", failure: localFailure },
+        },
       },
     ]);
   });
@@ -801,11 +761,10 @@ describe("gate_result, failing", () => {
 // Checks: the merge
 // ---------------------------------------------------------------------------
 
-const commit = CommitSha.parse("b".repeat(40));
 const authBranch = { commits: 2, changedFiles: ["src/reports/export.ts", "src/auth/login.ts"] };
 const reportAuthDone = reportWith(authBranch);
 const approveMerge: Input = { by: "human", type: "approve_merge" };
-const sendBackMerge = (note: string): Input => ({ by: "human", type: "send_back_merge", note });
+const sendBackMerge = (note: string): Input => ({ by: "human", type: "revise_merge", note });
 const merged: Step = (t) => ({ by: "plugin", type: "merged", request: awaited(t), commit });
 const mergeFail: Step = (t) => ({
   by: "plugin",
@@ -826,7 +785,7 @@ describe("the last gate passing", () => {
       events: [
         stamped({ type: "task.gate_passed", gate: "review", next: null }),
         stamped({ type: "task.checks_passed" }),
-        stamped({ type: "task.merge_started" }),
+        stamped({ type: "task.merge_started", request: 6 }),
       ],
       commands: [
         { type: "stop_session", session: developSession },
@@ -853,7 +812,7 @@ describe("approve_merge", () => {
   test("starts the merge", () => {
     expect(send(run(...awaitingMerge), approveMerge)).toEqual({
       ok: true,
-      events: [stamped({ type: "task.merge_started" })],
+      events: [stamped({ type: "task.merge_started", request: 6 })],
       commands: [{ type: "merge", taskId: id, request: 6, worktree }],
     });
   });
@@ -866,7 +825,7 @@ describe("approve_merge", () => {
   });
 });
 
-describe("send_back_merge", () => {
+describe("revise_merge", () => {
   test("queues the task for a new agent, without using an attempt", () => {
     expect(send(run(...awaitingMerge), sendBackMerge("Don't touch login."))).toEqual({
       ok: true,
@@ -884,9 +843,7 @@ describe("send_back_merge", () => {
         request: 6,
         worktree,
         spec,
-        lastFailure: null,
-        note: "Don't touch login.",
-        lastBlock: null,
+        brief: { failure: null, note: "Don't touch login.", blocked: null },
       },
     ]);
   });
@@ -894,7 +851,7 @@ describe("send_back_merge", () => {
   test("is rejected without a note", () => {
     expect(send(run(...awaitingMerge), sendBackMerge(""))).toEqual({
       ok: false,
-      rejection: { input: "send_back_merge", reason: "A send-back needs a note." },
+      rejection: { input: "revise_merge", reason: "A send-back needs a note." },
     });
   });
 });
@@ -938,9 +895,7 @@ describe("merge_failed", () => {
         request: 7,
         worktree,
         spec,
-        lastFailure: mergeFailure,
-        note: null,
-        lastBlock: null,
+        brief: { failure: mergeFailure, note: null, blocked: null },
       },
     ]);
   });
@@ -1060,6 +1015,19 @@ describe("answer", () => {
   });
 });
 
+describe("an open spec question", () => {
+  test("stops the agent from submitting a spec until you answer", () => {
+    expect(send(run(...specRunning, ask()), submit)).toEqual({
+      ok: false,
+      rejection: { input: "submit_spec", reason: "#12 has an open question. Wait for the answer." },
+    });
+  });
+
+  test("is cleared when you write the spec yourself", () => {
+    expect(run(...specRunning, ask(), provide).question).toBeNull();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Usage and the safety cap
 // ---------------------------------------------------------------------------
@@ -1113,12 +1081,75 @@ describe("usage", () => {
   });
 });
 
+describe("the safety cap while an agent is starting", () => {
+  const capped: BlockReason = { kind: "safety_cap", usage: { tokens: 250_000, ms: 0 } };
+
+  test("blocks a task whose spec agent is still starting", () => {
+    expect(send(run(...inSpec, start), usage(250_000))).toEqual({
+      ok: true,
+      events: [
+        stamped({ type: "task.usage_recorded", usage: { tokens: 250_000, ms: 0 } }),
+        stamped({ type: "task.blocked", reason: capped }),
+      ],
+      commands: [],
+    });
+  });
+
+  test("blocks a task whose worktree is being created", () => {
+    const decision = send(run(...creatingWorktree), usage(250_000));
+    expect(decision.ok && decision.events.map((e) => e.type)).toEqual([
+      "task.usage_recorded",
+      "task.blocked",
+    ]);
+  });
+
+  test("blocks a task whose develop agent is starting, removing the unused worktree", () => {
+    expect(send(run(...startingDevelop), usage(250_000))).toEqual({
+      ok: true,
+      events: [
+        stamped({ type: "task.usage_recorded", usage: { tokens: 250_000, ms: 0 } }),
+        stamped({ type: "task.blocked", reason: capped }),
+      ],
+      commands: [{ type: "remove_worktree", worktree }],
+    });
+  });
+});
+
+describe("start for a task already over its safety cap", () => {
+  test("blocks the task instead of starting an agent", () => {
+    // The report arrived while the spec waited for approval, so it was only recorded.
+    const task = run(...awaitingApproval, usage(250_000), approve);
+    expect(send(task, start)).toEqual({
+      ok: true,
+      events: [
+        stamped({
+          type: "task.blocked",
+          reason: { kind: "safety_cap", usage: { tokens: 250_000, ms: 0 } },
+        }),
+      ],
+      commands: [],
+    });
+  });
+});
+
+describe("a usage report older than the last one", () => {
+  test("is refused, so the totals never go down", () => {
+    expect(send(run(...inProgress, usage(50_000)), usage(10_000))).toEqual({
+      ok: false,
+      rejection: {
+        input: "usage",
+        reason: "This usage report for #12 is older than the last one.",
+      },
+    });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Leaving a phase
 // ---------------------------------------------------------------------------
 
 const drop: Input = { by: "human", type: "drop" };
-const sendBackToSpec = (note: string): Input => ({ by: "human", type: "send_back_to_spec", note });
+const sendBackToSpec = (note: string): Input => ({ by: "human", type: "back_to_spec", note });
 // A crash report names the agent, and the request that started it.
 const crashed = (s: SessionId, request: number): Input => ({
   by: "plugin",
@@ -1178,25 +1209,7 @@ describe("drop", () => {
   });
 });
 
-describe("late replies for a dropped task", () => {
-  test("remove a worktree that finished after the drop", () => {
-    expect(send(run(...creatingWorktree, drop), worktreeCreated)).toEqual({
-      ok: true,
-      events: [],
-      commands: [{ type: "remove_worktree", worktree }],
-    });
-  });
-
-  test("stop an agent that started after the drop", () => {
-    expect(send(run(...inSpec, start, drop), sessionStarted)).toEqual({
-      ok: true,
-      events: [],
-      commands: [{ type: "stop_session", session }],
-    });
-  });
-});
-
-describe("send_back_to_spec", () => {
+describe("back_to_spec", () => {
   const note = "Split this into export and totals.";
 
   test("takes a blocked task back to Spec and removes its worktree", () => {
@@ -1218,7 +1231,7 @@ describe("send_back_to_spec", () => {
   test("is rejected without a note", () => {
     expect(send(run(...inProgress, giveUp), sendBackToSpec(""))).toEqual({
       ok: false,
-      rejection: { input: "send_back_to_spec", reason: "A send-back needs a note." },
+      rejection: { input: "back_to_spec", reason: "A send-back needs a note." },
     });
   });
 
@@ -1226,7 +1239,7 @@ describe("send_back_to_spec", () => {
     expect(send(run(add), sendBackToSpec(note))).toEqual({
       ok: false,
       rejection: {
-        input: "send_back_to_spec",
+        input: "back_to_spec",
         reason: "#12 is in Idea. Only a task past Spec can be sent back to it.",
       },
     });
@@ -1265,6 +1278,47 @@ describe("a running agent crashing", () => {
   });
 });
 
+describe("a crash reported before the agent's start reply", () => {
+  // The spec agent (request 1) starts and crashes at once, and the crash
+  // report overtakes the start reply.
+  const early = crashed(SessionId.parse("gone"), 1);
+  const lateStart: Input = {
+    by: "plugin",
+    type: "session_started",
+    request: 1,
+    session: SessionId.parse("gone"),
+  };
+
+  test("counts as a failed start and blocks the task", () => {
+    expect(send(run(...inSpec, start), early)).toEqual({
+      ok: true,
+      events: [
+        stamped({
+          type: "task.blocked",
+          reason: { kind: "session_failed", message: "herdr crashed" },
+        }),
+      ],
+      commands: [],
+    });
+  });
+
+  test("leaves the late start reply to be stopped, not recorded as running", () => {
+    expect(send(run(...inSpec, start, early), lateStart)).toEqual({
+      ok: true,
+      events: [],
+      commands: [{ type: "stop_session", session: SessionId.parse("gone") }],
+    });
+  });
+
+  test("is refused for a request the task isn't waiting on", () => {
+    const stale = crashed(SessionId.parse("gone"), 7);
+    expect(send(run(...inSpec, start), stale)).toEqual({
+      ok: false,
+      rejection: { input: "session_crashed", reason: "#12's agent isn't gone." },
+    });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Done, projects and outside moves
 // ---------------------------------------------------------------------------
@@ -1289,7 +1343,13 @@ describe("revert", () => {
   test("asks version control to undo the merge commit, and the task stays Done until it has", () => {
     expect(send(run(...done), revert("Export breaks on empty reports."))).toEqual({
       ok: true,
-      events: [stamped({ type: "task.revert_started", reason: "Export breaks on empty reports." })],
+      events: [
+        stamped({
+          type: "task.revert_started",
+          reason: "Export breaks on empty reports.",
+          request: 7,
+        }),
+      ],
       commands: [{ type: "revert", taskId: id, request: 7, commit }],
     });
     expect(run(...done, revert("Broken.")).phase).toBe("done");
@@ -1346,7 +1406,7 @@ describe("revert", () => {
   test("is rejected for a task that isn't done", () => {
     expect(send(run(...inProgress), revert("Broken."))).toEqual({
       ok: false,
-      rejection: { input: "revert", reason: "revert doesn't apply to #12 in In progress." },
+      rejection: { input: "revert", reason: "#12 is in In progress, so it can't take a revert." },
     });
   });
 });
@@ -1374,19 +1434,19 @@ describe("change_project", () => {
     });
   });
 
-  test("is rejected for a Done task, which only takes a revert (invariant 17)", () => {
+  test("is rejected for a Done task, which only takes a revert", () => {
     expect(send(run(...done), changeProject(reports))).toEqual({
       ok: false,
       rejection: {
         input: "change_project",
-        reason: "change_project doesn't apply to #12 in Done.",
+        reason: "#12 is in Done, so it can't take a project change.",
       },
     });
   });
 });
 
 describe("external_move", () => {
-  test("is always rejected: a move in another tool is only a request (invariant 3)", () => {
+  test("is always rejected: a move in another tool is only a request", () => {
     const moved: Input = { by: "plugin", type: "external_move", to: "Done" };
     expect(send(run(...inProgress), moved)).toEqual({
       ok: false,
@@ -1402,82 +1462,39 @@ describe("an input in the wrong phase", () => {
   test("is rejected with the phase it doesn't fit", () => {
     expect(send(run(...specRunning), approveMerge)).toEqual({
       ok: false,
-      rejection: { input: "approve_merge", reason: "approve_merge doesn't apply to #12 in Spec." },
+      rejection: {
+        input: "approve_merge",
+        reason: "#12 is in Spec, so it can't take a merge approval.",
+      },
     });
   });
 });
 
 // ---------------------------------------------------------------------------
-// Fixes for what the property tests found
+// Late and repeated replies
 // ---------------------------------------------------------------------------
 
-describe("an open spec question", () => {
-  test("stops the agent from submitting a spec until you answer", () => {
-    expect(send(run(...specRunning, ask()), submit)).toEqual({
-      ok: false,
-      rejection: { input: "submit_spec", reason: "#12 has an open question. Wait for the answer." },
-    });
-  });
+// Every reply names the request it answers. A reply to any other request is
+// late or repeated: it is cleaned up or refused, and never answers the
+// current one.
 
-  test("is cleared when you write the spec yourself", () => {
-    expect(run(...specRunning, ask(), provide).question).toBeNull();
-  });
-});
-
-describe("the safety cap while an agent is starting", () => {
-  const capped: BlockReason = { kind: "safety_cap", usage: { tokens: 250_000, ms: 0 } };
-
-  test("blocks a task whose spec agent is still starting", () => {
-    expect(send(run(...inSpec, start), usage(250_000))).toEqual({
+describe("late replies for a dropped task", () => {
+  test("remove a worktree that finished after the drop", () => {
+    expect(send(run(...creatingWorktree, drop), worktreeCreated)).toEqual({
       ok: true,
-      events: [
-        stamped({ type: "task.usage_recorded", usage: { tokens: 250_000, ms: 0 } }),
-        stamped({ type: "task.blocked", reason: capped }),
-      ],
-      commands: [],
-    });
-  });
-
-  test("blocks a task whose worktree is being created", () => {
-    const decision = send(run(...creatingWorktree), usage(250_000));
-    expect(decision.ok && decision.events.map((e) => e.type)).toEqual([
-      "task.usage_recorded",
-      "task.blocked",
-    ]);
-  });
-
-  test("blocks a task whose develop agent is starting, removing the unused worktree", () => {
-    expect(send(run(...startingDevelop), usage(250_000))).toEqual({
-      ok: true,
-      events: [
-        stamped({ type: "task.usage_recorded", usage: { tokens: 250_000, ms: 0 } }),
-        stamped({ type: "task.blocked", reason: capped }),
-      ],
+      events: [],
       commands: [{ type: "remove_worktree", worktree }],
     });
   });
-});
 
-describe("start for a task already over its safety cap", () => {
-  test("blocks the task instead of starting an agent", () => {
-    // The report arrived while the spec waited for approval, so it was only recorded.
-    const task = run(...awaitingApproval, usage(250_000), approve);
-    expect(send(task, start)).toEqual({
+  test("stop an agent that started after the drop", () => {
+    expect(send(run(...inSpec, start, drop), sessionStarted)).toEqual({
       ok: true,
-      events: [
-        stamped({
-          type: "task.blocked",
-          reason: { kind: "safety_cap", usage: { tokens: 250_000, ms: 0 } },
-        }),
-      ],
-      commands: [],
+      events: [],
+      commands: [{ type: "stop_session", session }],
     });
   });
 });
-
-// ---------------------------------------------------------------------------
-// Replies matched to their request (found by the Codex review)
-// ---------------------------------------------------------------------------
 
 describe("a reply repeated for what the task already holds", () => {
   test("is ignored when it names the running agent, instead of stopping it", () => {
@@ -1516,7 +1533,7 @@ describe("a worktree reply for an earlier build", () => {
     const own: Input = { by: "plugin", type: "worktree_created", request: 3, worktree: build2 };
     const decision = send(run(...build2Waiting, build1Created), own);
     expect(decision.ok && decision.events).toEqual([
-      stamped({ type: "task.worktree_created", worktree: build2 }),
+      stamped({ type: "task.worktree_created", worktree: build2, request: 4 }),
     ]);
   });
 
@@ -1584,10 +1601,6 @@ describe("a gate result from an earlier run of the checks", () => {
     ]);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Every reply matched to its request (found by the second Codex review)
-// ---------------------------------------------------------------------------
 
 describe("a merge reply for an earlier merge", () => {
   // The first merge (request 6) conflicts. A new agent fixes it, the gates
@@ -1710,20 +1723,8 @@ describe("an agent started for an earlier request, after a retry", () => {
   });
 });
 
-describe("a usage report older than the last one", () => {
-  test("is refused, so the totals never go down", () => {
-    expect(send(run(...inProgress, usage(50_000)), usage(10_000))).toEqual({
-      ok: false,
-      rejection: {
-        input: "usage",
-        reason: "This usage report for #12 is older than the last one.",
-      },
-    });
-  });
-});
-
 // ---------------------------------------------------------------------------
-// Only the current agent is heard (found by the third Codex review)
+// Reports from an agent the task has replaced
 // ---------------------------------------------------------------------------
 
 describe("a report from an agent the task has replaced", () => {
@@ -1762,51 +1763,6 @@ describe("a report from an agent the task has replaced", () => {
     expect(send(revising, oldSubmit)).toEqual({
       ok: false,
       rejection: { input: "submit_spec", reason: "#12's agent isn't session-1." },
-    });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// A crash before its start reply (found by the third Codex review)
-// ---------------------------------------------------------------------------
-
-describe("a crash reported before the agent's start reply", () => {
-  // The spec agent (request 1) starts and crashes at once, and the crash
-  // report overtakes the start reply.
-  const early = crashed(SessionId.parse("gone"), 1);
-  const lateStart: Input = {
-    by: "plugin",
-    type: "session_started",
-    request: 1,
-    session: SessionId.parse("gone"),
-  };
-
-  test("counts as a failed start and blocks the task", () => {
-    expect(send(run(...inSpec, start), early)).toEqual({
-      ok: true,
-      events: [
-        stamped({
-          type: "task.blocked",
-          reason: { kind: "session_failed", message: "herdr crashed" },
-        }),
-      ],
-      commands: [],
-    });
-  });
-
-  test("leaves the late start reply to be stopped, not recorded as running", () => {
-    expect(send(run(...inSpec, start, early), lateStart)).toEqual({
-      ok: true,
-      events: [],
-      commands: [{ type: "stop_session", session: SessionId.parse("gone") }],
-    });
-  });
-
-  test("is refused for a request the task isn't waiting on", () => {
-    const stale = crashed(SessionId.parse("gone"), 7);
-    expect(send(run(...inSpec, start), stale)).toEqual({
-      ok: false,
-      rejection: { input: "session_crashed", reason: "#12's agent isn't gone." },
     });
   });
 });

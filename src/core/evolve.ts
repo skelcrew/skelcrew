@@ -5,10 +5,11 @@
 // Events that can happen in any phase come first. The rest are grouped by
 // the phase they apply in, one function per phase, in lifecycle order.
 
-import { phaseNames, type TaskIn } from "./phases";
-import type { EvolvedTask, EvolveTask, Failure, Spec, Task, TaskEvent } from "./types";
+import { phaseNames, type TaskIn } from "./task";
+import type { Brief, EvolvedTask, EvolveTask, Failure, Spec, Task, TaskEvent } from "./types";
 
 const noUsage = { tokens: 0, ms: 0 };
+const noBrief: Brief = { failure: null, note: null, blocked: null };
 
 export const evolveTask: EvolveTask = (task, event) => {
   if (event.type === "task.created") {
@@ -68,7 +69,7 @@ export const evolveTask: EvolveTask = (task, event) => {
       const cleared = { ...task, blocked: null, usageAtRetry: task.usage };
       return ok(
         cleared.phase === "in_progress"
-          ? { ...cleared, attempts: 0, lastBlock: task.blocked }
+          ? { ...cleared, attempts: 0, brief: { ...cleared.brief, blocked: task.blocked } }
           : cleared,
       );
     }
@@ -113,7 +114,7 @@ function inIdea(task: TaskIn<"idea">, event: TaskEvent): EvolvedTask {
 function inSpec(task: TaskIn<"spec">, event: TaskEvent): EvolvedTask {
   switch (event.type) {
     case "task.dispatch_started":
-      return ok(withRequest(task, (request) => ({ kind: "starting", request })));
+      return ok(withRequest(task, event.request, { kind: "starting", request: event.request }));
 
     case "task.spec_session_started":
       return ok({ ...task, step: { kind: "running", session: event.session } });
@@ -141,9 +142,8 @@ function inSpec(task: TaskIn<"spec">, event: TaskEvent): EvolvedTask {
       });
 
     case "task.ready": {
-      const { spec, note: _note, step: _step, ...rest } = task;
-      if (spec === null) return refuse(event, `#${task.id} has no spec`);
-      return ok({ ...rest, phase: "ready", spec, step: { kind: "queued" } });
+      if (task.spec === null) return refuse(event, `#${task.id} has no spec`);
+      return ok({ ...base(task), phase: "ready", spec: task.spec, step: { kind: "queued" } });
     }
 
     default:
@@ -157,7 +157,7 @@ function inReady(task: TaskIn<"ready">, event: TaskEvent): EvolvedTask {
     // before the worktree exists, so a failed try never reuses it.
     case "task.dispatch_started":
       return ok({
-        ...withRequest(task, (request) => ({ kind: "creating_worktree", request })),
+        ...withRequest(task, event.request, { kind: "creating_worktree", request: event.request }),
         builds: task.builds + 1,
       });
 
@@ -166,27 +166,26 @@ function inReady(task: TaskIn<"ready">, event: TaskEvent): EvolvedTask {
         return refuse(event, `#${task.id} isn't creating a worktree`);
       }
       return ok(
-        withRequest(task, (request) => ({
+        withRequest(task, event.request, {
           kind: "starting_session",
           worktree: event.worktree,
-          request,
-        })),
+          request: event.request,
+        }),
       );
 
     case "task.dispatched": {
-      const { step, ...rest } = task;
+      const { step } = task;
       if (step.kind !== "starting_session") {
         return refuse(event, `#${task.id} has no worktree yet`);
       }
       return ok({
-        ...rest,
+        ...base(task),
         phase: "in_progress",
+        spec: task.spec,
         worktree: step.worktree,
         step: { kind: "running", session: event.session },
         attempts: 0,
-        lastFailure: null,
-        note: null,
-        lastBlock: null,
+        brief: noBrief,
       });
     }
 
@@ -202,7 +201,7 @@ function inProgress(task: TaskIn<"in_progress">, event: TaskEvent): EvolvedTask 
   switch (event.type) {
     // After a retry: a new agent in the same worktree.
     case "task.dispatch_started":
-      return ok(withRequest(task, (request) => ({ kind: "starting", request })));
+      return ok(withRequest(task, event.request, { kind: "starting", request: event.request }));
 
     case "task.dispatched":
       if (task.step.kind !== "starting") {
@@ -211,16 +210,17 @@ function inProgress(task: TaskIn<"in_progress">, event: TaskEvent): EvolvedTask 
       return ok({ ...task, step: { kind: "running", session: event.session } });
 
     case "task.done_reported": {
-      const { step, lastFailure: _lastFailure, note: _note, lastBlock: _lastBlock, ...rest } = task;
+      const { step } = task;
       if (step.kind !== "running") return refuse(event, `#${task.id} has no agent running`);
       return ok({
-        ...rest,
+        ...base(task),
         phase: "checks",
-        session: step.session,
+        spec: task.spec,
+        worktree: task.worktree,
+        attempts: task.attempts,
         branch: event.branch,
-        step: event.gate,
-        request: task.requests + 1,
-        requests: task.requests + 1,
+        step: { kind: "gate", gate: event.gate, request: event.request, session: step.session },
+        requests: event.request,
       });
     }
 
@@ -233,18 +233,23 @@ function inProgress(task: TaskIn<"in_progress">, event: TaskEvent): EvolvedTask 
 }
 
 function inChecks(task: TaskIn<"checks">, event: TaskEvent): EvolvedTask {
+  const { step } = task;
   switch (event.type) {
     // After the last gate, the step stays put. decide writes
     // task.checks_passed in the same batch, and that moves the task on.
     case "task.gate_passed": {
       const mismatch = gateMismatch(task, event.gate);
       if (mismatch) return refuse(event, mismatch);
-      if (event.next === null) return ok(task);
+      if (event.next === null || step.kind !== "gate") return ok(task);
       return ok({
         ...task,
-        step: event.next,
-        request: task.requests + 1,
-        requests: task.requests + 1,
+        step: {
+          kind: "gate",
+          gate: event.next.gate,
+          request: event.next.request,
+          session: step.session,
+        },
+        requests: event.next.request,
       });
     }
 
@@ -263,48 +268,37 @@ function inChecks(task: TaskIn<"checks">, event: TaskEvent): EvolvedTask {
     // A send-back or a failed merge queues the task for a new agent, so it
     // waits for a free slot.
     case "task.merge_approval_requested":
-      return ok({ ...task, step: "merge_approval", request: null, session: null, question: null });
+      return ok({ ...task, step: { kind: "awaiting_merge_approval" }, question: null });
 
     // Not a failure, so no attempt is used. The note waits for the next agent.
     case "task.merge_sent_back":
-      if (task.step !== "merge_approval") {
+      if (step.kind !== "awaiting_merge_approval") {
         return refuse(event, `#${task.id} isn't waiting for merge approval`);
       }
       return ok(backToAgent(task, task.attempts, null, event.note));
 
     case "task.merge_started":
-      if (task.step === "merging") return refuse(event, `#${task.id} is already merging`);
+      if (step.kind === "merging") return refuse(event, `#${task.id} is already merging`);
       return ok({
         ...task,
-        step: "merging",
-        request: task.requests + 1,
-        requests: task.requests + 1,
-        session: null,
+        step: { kind: "merging", request: event.request },
+        requests: event.request,
         question: null,
       });
 
-    case "task.merged": {
-      if (task.step !== "merging") return refuse(event, `#${task.id} isn't merging`);
-      const {
-        worktree: _worktree,
-        session: _session,
-        attempts: _attempts,
-        branch: _branch,
-        step: _step,
-        ...rest
-      } = task;
+    case "task.merged":
+      if (step.kind !== "merging") return refuse(event, `#${task.id} isn't merging`);
       return ok({
-        ...rest,
+        ...base(task),
         phase: "done",
+        spec: task.spec,
         mergeCommit: event.commit,
-        reverting: null,
-        revertFailure: null,
+        step: { kind: "merged" },
       });
-    }
 
     // A failed merge counts as an attempt, like a failed gate.
     case "task.merge_failed":
-      if (task.step !== "merging") return refuse(event, `#${task.id} isn't merging`);
+      if (step.kind !== "merging") return refuse(event, `#${task.id} isn't merging`);
       return ok(backToAgent(task, task.attempts + 1, event.failure, null));
 
     case "task.spec_sent_back":
@@ -320,18 +314,17 @@ function inDone(task: TaskIn<"done">, event: TaskEvent): EvolvedTask {
     case "task.revert_started":
       return ok({
         ...task,
-        reverting: { reason: event.reason, request: task.requests + 1 },
-        requests: task.requests + 1,
-        revertFailure: null,
+        step: { kind: "reverting", reason: event.reason, request: event.request },
+        requests: event.request,
       });
 
     case "task.revert_failed":
-      return ok({ ...task, reverting: null, revertFailure: event.summary });
+      return ok({ ...task, step: { kind: "revert_failed", summary: event.summary } });
 
     // The revert has happened. The reason becomes the note, so the redone
     // spec addresses it.
     case "task.reverted":
-      if (task.reverting === null) return refuse(event, `#${task.id} isn't being reverted`);
+      if (task.step.kind !== "reverting") return refuse(event, `#${task.id} isn't being reverted`);
       return ok(backToSpec(task, task.spec, event.reason));
     default:
       return wrongPhase(event, task);
@@ -342,11 +335,10 @@ function inDone(task: TaskIn<"done">, event: TaskEvent): EvolvedTask {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// A step that sends a request: it takes the next request number, and the
-// step records it, so only the reply that brings it back can answer.
-function withRequest<T extends Task, S>(task: T, step: (request: number) => S) {
-  const request = task.requests + 1;
-  return { ...task, step: step(request), requests: request };
+// A step that sends a request records the number the event gives it, so
+// only the reply that brings it back can answer. The counter follows it.
+function withRequest<T extends Task, S>(task: T, request: number, step: S) {
+  return { ...task, step, requests: request };
 }
 
 function ok(task: Task): EvolvedTask {
@@ -364,22 +356,28 @@ function wrongPhase(event: TaskEvent, task: Task): EvolvedTask {
   };
 }
 
-// The fields every phase has, with the flags cleared. Used when a task
-// leaves its phase for good, so nothing from the old phase is carried over.
-function shared(task: Task) {
+// The fields every task has, whatever its phase. A move to another phase is
+// built from these plus the new phase's own fields, never by copying the old
+// phase's, so nothing from the old phase is left behind.
+function base(task: Task) {
   return {
     id: task.id,
     title: task.title,
     project: task.project,
     source: task.source,
     createdAt: task.createdAt,
-    question: null,
-    blocked: null,
+    question: task.question,
+    blocked: task.blocked,
     builds: task.builds,
     requests: task.requests,
     usage: task.usage,
     usageAtRetry: task.usageAtRetry,
   };
+}
+
+// The same, with the flags cleared: for a task leaving its phase for good.
+function shared(task: Task) {
+  return { ...base(task), question: null, blocked: null };
 }
 
 // From a later phase, the worktree is dropped: the next build starts on a
@@ -397,14 +395,14 @@ function stopAgent(task: Task): Task | null {
     case "in_progress":
       return { ...task, step: { kind: "queued" } };
     case "checks": {
-      const { session: _session, branch: _branch, step: _step, ...rest } = task;
       return {
-        ...rest,
+        ...base(task),
         phase: "in_progress",
+        spec: task.spec,
+        worktree: task.worktree,
+        attempts: task.attempts,
         step: { kind: "queued" },
-        lastFailure: null,
-        note: null,
-        lastBlock: null,
+        brief: noBrief,
       };
     }
     default:
@@ -418,21 +416,29 @@ function stopAgent(task: Task): Task | null {
 function backToAgent(
   task: TaskIn<"checks">,
   attempts: number,
-  lastFailure: Failure | null,
+  failure: Failure | null,
   note: string | null,
 ): Task {
-  const { session, branch: _branch, step: _step, ...rest } = task;
   const step =
-    session === null ? { kind: "queued" as const } : { kind: "running" as const, session };
-  return { ...rest, phase: "in_progress", step, attempts, lastFailure, note, lastBlock: null };
+    task.step.kind === "gate"
+      ? { kind: "running" as const, session: task.step.session }
+      : { kind: "queued" as const };
+  return {
+    ...base(task),
+    phase: "in_progress",
+    spec: task.spec,
+    worktree: task.worktree,
+    step,
+    attempts,
+    brief: { failure, note, blocked: null },
+  };
 }
 
 // Returns what doesn't match between a gate result and the running gate,
 // or null when they match.
 function gateMismatch(task: TaskIn<"checks">, gate: string): string | null {
-  if (task.step === gate) return null;
-  if (task.step === "merge_approval" || task.step === "merging") {
-    return `#${task.id} isn't running a gate`;
-  }
-  return `#${task.id} is running the ${task.step} gate, not ${gate}`;
+  const { step } = task;
+  if (step.kind !== "gate") return `#${task.id} isn't running a gate`;
+  if (step.gate !== gate) return `#${task.id} is running the ${step.gate} gate, not ${gate}`;
+  return null;
 }

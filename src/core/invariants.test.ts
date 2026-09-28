@@ -12,6 +12,7 @@ import { decideTask } from "./decide";
 import { evolveTask } from "./evolve";
 import { CommitSha, ProjectId, SessionId, TaskId } from "./ids";
 import { schedule } from "./schedule";
+import { awaitedRequest, heldWorktree, runningSession } from "./task";
 import type {
   Command,
   Config,
@@ -66,12 +67,12 @@ const inputPool: Input[] = [
   { by: "human", type: "request_spec" },
   { by: "human", type: "provide_spec", spec },
   { by: "human", type: "approve_spec" },
-  { by: "human", type: "send_back_spec", note: "Add totals." },
+  { by: "human", type: "revise_spec", note: "Add totals." },
   { by: "human", type: "answer", text: "No" },
   { by: "human", type: "approve_merge" },
-  { by: "human", type: "send_back_merge", note: "Don't touch login." },
+  { by: "human", type: "revise_merge", note: "Don't touch login." },
   { by: "human", type: "retry" },
-  { by: "human", type: "send_back_to_spec", note: "Split it." },
+  { by: "human", type: "back_to_spec", note: "Split it." },
   { by: "human", type: "drop" },
   { by: "human", type: "revert", reason: "Broke exports." },
   { by: "human", type: "change_project", project: reports },
@@ -106,7 +107,7 @@ const unguided = new Set<Input["type"]>([
   "session_failed",
   "session_crashed",
   "worktree_failed",
-  "send_back_to_spec",
+  "back_to_spec",
 ]);
 
 // A request the task sent, as the daemon remembers it, so replies can be
@@ -121,49 +122,37 @@ const choices = fc.array(choice, { minLength: 1, maxLength: 300, size: "max" });
 // Reading a task, the way the rules talk about it
 // ---------------------------------------------------------------------------
 
-// The agent the task has running, if any. In Checks the develop agent stays
-// open, so it counts.
-function runningSession(task: Task): Session | null {
-  switch (task.phase) {
-    case "spec":
-    case "in_progress":
-      return task.step.kind === "running" ? task.step.session : null;
-    case "checks":
-      return task.session;
-    default:
-      return null;
-  }
-}
-
-function heldWorktree(task: Task): string | null {
-  if (task.phase === "ready" && task.step.kind === "starting_session")
-    return task.step.worktree.path;
-  if (task.phase === "in_progress" || task.phase === "checks") return task.worktree.path;
-  return null;
-}
-
-// An agent that has started and is running. Starts still in flight are
-// counted separately, the way the daemon counts them.
-function runsAgent(task: Task): boolean {
-  return runningSession(task) !== null;
-}
-
 // The request the task's current step waits on, or null if none.
 function awaited(task: Task | null): number | null {
-  if (task === null) return null;
-  switch (task.phase) {
-    case "spec":
-    case "ready":
-    case "in_progress":
-      return "request" in task.step ? task.step.request : null;
-    case "checks":
-      return task.request;
-    case "done":
-      return task.reverting?.request ?? null;
-    default:
-      return null;
-  }
+  return task && awaitedRequest(task);
 }
+
+// The fields each phase carries, besides the ones every task has. A task
+// must carry exactly these: a field left over from an earlier phase is a
+// state its type says can't exist.
+const everyTask = [
+  "blocked",
+  "builds",
+  "createdAt",
+  "id",
+  "phase",
+  "project",
+  "question",
+  "requests",
+  "source",
+  "title",
+  "usage",
+  "usageAtRetry",
+];
+const phaseFields: Record<Task["phase"], string[]> = {
+  idea: [],
+  spec: ["note", "spec", "step"],
+  ready: ["spec", "step"],
+  in_progress: ["attempts", "brief", "spec", "step", "worktree"],
+  checks: ["attempts", "branch", "spec", "step", "worktree"],
+  done: ["mergeCommit", "spec", "step"],
+  dropped: [],
+};
 
 // ---------------------------------------------------------------------------
 // The checker: follows one task and checks every rule after every step
@@ -507,6 +496,9 @@ class Checker {
     // 16. A blocked task has no agent running.
     if (task.blocked !== null) expect(session).toBeNull();
 
+    // Each phase carries exactly its own fields, and nothing left over.
+    expect(Object.keys(task).sort()).toEqual([...everyTask, ...phaseFields[task.phase]].sort());
+
     // 18. Usage totals never go down: the record keeps the true cost, and
     // the safety cap counts from them.
     expect(task.usage.tokens).toBeGreaterThanOrEqual(this.lastUsage.tokens);
@@ -588,9 +580,9 @@ describe("the invariants", () => {
             }
             // 8. Never more than max_running agents at once.
             const inFlight = checkers.reduce((sum, c) => sum + c.startsInFlight, 0);
-            expect(tasks().filter(runsAgent).length + inFlight).toBeLessThanOrEqual(
-              config.maxRunning,
-            );
+            expect(
+              tasks().filter((t) => runningSession(t) !== null).length + inFlight,
+            ).toBeLessThanOrEqual(config.maxRunning);
           });
         },
       ),

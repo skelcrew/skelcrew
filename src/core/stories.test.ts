@@ -9,31 +9,17 @@
 // `bun test --update-snapshots`, and say why in the commit.
 
 import { describe, expect, test } from "bun:test";
+import { agentOf, awaited, commit, config, id, spec, worktree } from "../test/fixtures";
 import { decideTask } from "./decide";
 import { evolveTask } from "./evolve";
 import { CommitSha, type ProjectId, SessionId, TaskId } from "./ids";
+import { awaitedRequest, runningSession } from "./task";
 import type { BranchFacts, Command, Config, Input, Project, Spec, Task, TaskEvent } from "./types";
 
-const config: Config = {
-  gates: ["local", "review"],
-  maxAttempts: 3,
-  maxRunning: 2,
-  specApproval: "always",
-  criticalPaths: ["src/auth/**"],
-  safetyCap: { tokens: 200_000, ms: 60 * 60_000 },
-};
 const projects = new Map<ProjectId, Project>();
-const id = TaskId.parse(12);
 
-const spec: Spec = {
-  scope: "Add a CSV export button to the reports page.",
-  acceptance: ["Clicking Export downloads a CSV of the visible rows."],
-  openQuestions: [],
-};
-const worktree = { path: "/repo/.worktrees/12", branch: "task/12-csv-export" };
 const specAgent = SessionId.parse("spec-1");
 const developAgent = SessionId.parse("develop-1");
-const commit = CommitSha.parse("a".repeat(40));
 const exportBranch: BranchFacts = { commits: 3, changedFiles: ["src/reports/export.ts"] };
 const authBranch: BranchFacts = {
   commits: 2,
@@ -57,35 +43,9 @@ const start: Input = { by: "system", type: "start" };
 // matches them.
 type Step = Input | ((task: Task | null) => Input);
 
-function awaited(task: Task | null): number {
-  if (task === null) return 0;
-  switch (task.phase) {
-    case "spec":
-    case "ready":
-    case "in_progress":
-      return "request" in task.step ? task.step.request : 0;
-    case "checks":
-      return task.request ?? 0;
-    case "done":
-      return task.reverting?.request ?? 0;
-    default:
-      return 0;
-  }
-}
-
 const started =
   (session: SessionId): Step =>
   (t) => ({ by: "plugin", type: "session_started", request: awaited(t), session });
-// Agent reports come from the task's current agent, as the daemon names it.
-function agentOf(task: Task | null): SessionId {
-  if (task !== null) {
-    if ((task.phase === "spec" || task.phase === "in_progress") && task.step.kind === "running") {
-      return task.step.session;
-    }
-    if (task.phase === "checks" && task.session !== null) return task.session;
-  }
-  return SessionId.parse("nobody");
-}
 const submitSpec: Step = (t) => ({ by: "agent", type: "submit_spec", session: agentOf(t), spec });
 const approveSpec: Input = { by: "human", type: "approve_spec" };
 const worktreeCreated: Step = (t) => ({

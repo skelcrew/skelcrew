@@ -11,20 +11,8 @@ import { evolveTask } from "../core/evolve";
 import { TaskId } from "../core/ids";
 import { evolveProject } from "../core/projects";
 import type { Project, ProjectEvent, ProjectId, Task, TaskEvent } from "../core/types";
+import type { Loaded, ReadableLog, Saved, StartRef, Starts } from "../loop/loop";
 import { parseProjectEvent, parseTaskEvent } from "./schema";
-
-export type Saved = { ok: true } | { ok: false; reason: string };
-
-// A start the loop has sent out: an agent or worktree for one request.
-export type StartRef = { taskId: TaskId; request: number };
-
-// The starts a decision sent out, and the one its input answered. They're
-// saved with its events, so a restart knows which starts are still out.
-export type Starts = { sent: StartRef[]; answered: StartRef[] };
-
-// A damaged log is reported with the position of the first event that
-// couldn't be read or didn't fit, so it can be found and looked at.
-export type Loaded<T> = ({ ok: true } & T) | { ok: false; seq: number; reason: string };
 
 // Each change to the table layout is one step, run once, in order. The
 // file's user_version says how many have run.
@@ -46,7 +34,7 @@ const migrations = [
 
 type Row = { seq: number; body: string };
 
-export class EventStore {
+export class EventStore implements ReadableLog {
   private constructor(private readonly db: Database) {}
 
   // Opens the file, creating it and its table when it's new. ":memory:" gives

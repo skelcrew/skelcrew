@@ -5,6 +5,7 @@
 // Ready, then Spec. Work closest to done gets the free slot, so fewer tasks
 // sit half-finished. Within a phase, the oldest task goes first.
 
+import { runningSession } from "./task";
 import type { Phase, Project, ProjectId, Schedule, Task } from "./types";
 
 const phaseOrder: Partial<Record<Phase, number>> = { in_progress: 0, ready: 1, spec: 2 };
@@ -28,15 +29,7 @@ export const schedule: Schedule = (tasks, projects, config, startsInFlight) => {
 // being started are counted through startsInFlight instead. A task past its
 // gates runs no agent: it was stopped while the merge waits or runs.
 function runsAgent(task: Task): boolean {
-  switch (task.phase) {
-    case "spec":
-    case "in_progress":
-      return task.step.kind === "running";
-    case "checks":
-      return task.session !== null;
-    default:
-      return false;
-  }
+  return runningSession(task) !== null;
 }
 
 // Blocked tasks also sit in "queued", but they wait for the developer.

@@ -7,9 +7,19 @@
 // evolve, then small helpers.
 
 import { attemptsLeft, criticalFiles, specComplete, withinSafetyCap } from "./contracts";
-import { phaseNames, type TaskIn } from "./phases";
+import {
+  agentUnderWay,
+  awaitedRequest,
+  heldWorktree,
+  inputNames,
+  phaseNames,
+  runningSession,
+  type TaskIn,
+  waitingForAgent,
+  waitingForWorktree,
+} from "./task";
 import type {
-  BlockReason,
+  Brief,
   Command,
   Config,
   DecideTask,
@@ -20,6 +30,7 @@ import type {
   Input,
   Project,
   ProjectId,
+  Question,
   SessionId,
   Spec,
   Task,
@@ -115,7 +126,8 @@ function create(
 // A worktree or agent the task isn't waiting for: its request number isn't
 // the one the task's step records. For example, a worktree that finished
 // after the task was dropped. It is cleaned up and nothing is recorded, so
-// no worktree or agent is left behind (invariant 13). Null if the task is
+// no worktree or agent is left behind ("Nothing gets lost" in
+// docs/invariants.md). Null if the task is
 // waiting for it.
 //
 // A reply repeated for the agent or worktree the task already holds is
@@ -139,7 +151,7 @@ const anyPhaseInputs = [
   "external_move",
   "change_project",
   "drop",
-  "send_back_to_spec",
+  "back_to_spec",
   "ask",
   "answer",
   "usage",
@@ -169,13 +181,15 @@ function inAnyPhase(task: Task, input: AnyPhaseInput, ctx: Context): Decision {
       if (task.blocked === null) return reject(`#${task.id} isn't blocked.`);
       return accept([{ type: "task.unblocked" }]);
 
-    // Moves in other tools are requests, never obeyed (invariant 3).
+    // Moves in other tools are requests, never obeyed ("Outside moves are
+    // requests" in docs/invariants.md).
     case "external_move":
       return reject(
         `Tasks only move through Skelcrew. The move to ${input.to} in the other tool was ignored.`,
       );
 
-    // A Done task only takes a revert (invariant 17).
+    // A Done task only takes a revert ("Dropped is final" in
+    // docs/invariants.md).
     case "change_project": {
       if (task.phase === "done") return wrongPhase(task, input, ctx);
       const missing = unknownProject(input.project, ctx);
@@ -194,7 +208,7 @@ function inAnyPhase(task: Task, input: AnyPhaseInput, ctx: Context): Decision {
 
     // The spec is kept and redone with your note. The next build starts on
     // a fresh branch; the shell saves any uncommitted work first.
-    case "send_back_to_spec": {
+    case "back_to_spec": {
       if (task.phase !== "ready" && task.phase !== "in_progress" && task.phase !== "checks") {
         return reject(
           `#${task.id} is in ${phaseNames[task.phase]}. Only a task past Spec can be sent back to it.`,
@@ -206,10 +220,10 @@ function inAnyPhase(task: Task, input: AnyPhaseInput, ctx: Context): Decision {
       return accept([{ type: "task.spec_sent_back", note: input.note }], leavePhase(task));
     }
 
-    // One open question at a time, from the agent that is running.
+    // One open question at a time, from the agent that is running. Only
+    // the running agent gets this far, so Spec means the spec agent.
     case "ask": {
-      const from = agentKind(task);
-      if (from === null) return reject(`#${task.id} has no agent running.`);
+      const from: Question["from"] = task.phase === "spec" ? "spec" : "develop";
       if (task.question !== null) return reject(`#${task.id} already has an open question.`);
       if (input.options.length < 2 || input.options.length > 4) {
         return reject("A question needs two to four options.");
@@ -283,21 +297,12 @@ function inSpec(task: TaskIn<"spec">, input: Input, ctx: Context): Decision {
 
   switch (input.type) {
     case "start": {
-      const refused = cantStart(task, ctx);
-      if (refused) return reject(refused);
-      const capped = safetyCapBlock(task, task.usage, ctx);
-      if (capped) return accept([capped]);
-      return accept(
-        [{ type: "task.dispatch_started" }],
-        [
-          {
-            type: "start_spec_session",
-            taskId: task.id,
-            request: task.requests + 1,
-            note: task.note,
-          },
-        ],
-      );
+      return startAgent(task, ctx, {
+        type: "start_spec_session",
+        taskId: task.id,
+        request: next(task),
+        note: task.note,
+      });
     }
 
     case "session_started":
@@ -312,11 +317,10 @@ function inSpec(task: TaskIn<"spec">, input: Input, ctx: Context): Decision {
 
     // A spec submitted before your answer would ignore it.
     case "submit_spec":
-      if (step.kind !== "running") return reject(`#${task.id} has no spec agent running.`);
       if (task.question !== null) {
         return reject(`#${task.id} has an open question. Wait for the answer.`);
       }
-      return acceptSpec(input.spec, "agent", ctx, [], [stopSession(step.session)]);
+      return acceptSpec(input.spec, "agent", ctx, [], [stopSession(input.session)]);
 
     // Your spec replaces the agent's work, so a running agent is stopped.
     case "provide_spec": {
@@ -331,7 +335,7 @@ function inSpec(task: TaskIn<"spec">, input: Input, ctx: Context): Decision {
       return accept([{ type: "task.ready" }]);
 
     // The note tells the spec agent what to change.
-    case "send_back_spec":
+    case "revise_spec":
       if (step.kind !== "awaiting_approval") {
         return reject(`#${task.id}'s spec isn't waiting for approval.`);
       }
@@ -350,27 +354,18 @@ function inReady(task: TaskIn<"ready">, input: Input, ctx: Context): Decision {
   switch (input.type) {
     // Each start is a new build, and the build number names its branch.
     case "start": {
-      const refused = cantStart(task, ctx);
-      if (refused) return reject(refused);
-      const capped = safetyCapBlock(task, task.usage, ctx);
-      if (capped) return accept([capped]);
-      return accept(
-        [{ type: "task.dispatch_started" }],
-        [
-          {
-            type: "create_worktree",
-            taskId: task.id,
-            request: task.requests + 1,
-            build: task.builds + 1,
-          },
-        ],
-      );
+      return startAgent(task, ctx, {
+        type: "create_worktree",
+        taskId: task.id,
+        request: next(task),
+        build: task.builds + 1,
+      });
     }
 
     case "worktree_created":
       return accept(
-        [{ type: "task.worktree_created", worktree: input.worktree }],
-        [startDevelop(task, input.worktree, null, null, null)],
+        [{ type: "task.worktree_created", worktree: input.worktree, request: next(task) }],
+        [startDevelop(task, input.worktree, { failure: null, note: null, blocked: null })],
       );
 
     case "worktree_failed":
@@ -404,14 +399,7 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
     // worktree, told what failed last, what you asked for, and why the last
     // agent was stopped.
     case "start": {
-      const refused = cantStart(task, ctx);
-      if (refused) return reject(refused);
-      const capped = safetyCapBlock(task, task.usage, ctx);
-      if (capped) return accept([capped]);
-      return accept(
-        [{ type: "task.dispatch_started" }],
-        [startDevelop(task, worktree, task.lastFailure, task.note, task.lastBlock)],
-      );
+      return startAgent(task, ctx, startDevelop(task, worktree, task.brief));
     }
 
     case "session_started":
@@ -428,19 +416,17 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
     // The agent stays open during Checks, so a failed gate goes straight
     // back to the agent that wrote the code.
     case "report_done": {
-      if (step.kind !== "running") return reject(`#${task.id} has no develop agent running.`);
       if (input.branch.commits === 0) return reject("The branch has no commits.");
       const gate = config.gates[0];
       if (gate === undefined) return reject("workflow.yml has no gates.");
       return accept(
-        [{ type: "task.done_reported", branch: input.branch, gate }],
-        [{ type: "run_gate", taskId: task.id, request: task.requests + 1, gate, worktree }],
+        [{ type: "task.done_reported", branch: input.branch, gate, request: next(task) }],
+        [{ type: "run_gate", taskId: task.id, request: next(task), gate, worktree }],
       );
     }
 
     case "give_up":
-      if (step.kind !== "running") return reject(`#${task.id} has no develop agent running.`);
-      return accept([blocked("agent_gave_up", input.message)], [stopSession(step.session)]);
+      return accept([blocked("agent_gave_up", input.message)], [stopSession(input.session)]);
 
     default:
       return wrongPhase(task, input, ctx);
@@ -449,10 +435,11 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
 
 function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision {
   const { accept, reject, config } = ctx;
+  const { step } = task;
   const merge: Command = {
     type: "merge",
     taskId: task.id,
-    request: task.requests + 1,
+    request: next(task),
     worktree: task.worktree,
   };
 
@@ -460,13 +447,11 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
     case "gate_result": {
       // A late result, from an earlier run of the checks, checked code that
       // has since changed.
-      if (input.request !== task.request) return reject(notWaitingFor(task, input.request));
-      if (task.step !== input.gate) {
-        const running =
-          task.step === "merge_approval" || task.step === "merging"
-            ? "isn't running a gate"
-            : `is running the ${task.step} gate, not ${input.gate}`;
-        return reject(`#${task.id} ${running}.`);
+      if (step.kind !== "gate" || step.request !== input.request) {
+        return reject(notWaitingFor(task, input.request));
+      }
+      if (step.gate !== input.gate) {
+        return reject(`#${task.id} is running the ${step.gate} gate, not ${input.gate}.`);
       }
 
       if (!input.ok) {
@@ -474,27 +459,20 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
         return failedRound(task, { type: "task.gate_failed", failure }, failure, ctx);
       }
 
-      const next = config.gates[config.gates.indexOf(input.gate) + 1] ?? null;
-      const passed: EventBody = { type: "task.gate_passed", gate: input.gate, next };
-      if (next !== null) {
+      const nextGate = config.gates[config.gates.indexOf(input.gate) + 1];
+      if (nextGate !== undefined) {
+        const request = next(task);
         return accept(
-          [passed],
-          [
-            {
-              type: "run_gate",
-              taskId: task.id,
-              request: task.requests + 1,
-              gate: next,
-              worktree: task.worktree,
-            },
-          ],
+          [{ type: "task.gate_passed", gate: input.gate, next: { gate: nextGate, request } }],
+          [{ type: "run_gate", taskId: task.id, request, gate: nextGate, worktree: task.worktree }],
         );
       }
+      const passed: EventBody = { type: "task.gate_passed", gate: input.gate, next: null };
 
       // The last gate passed, so the agent is stopped: it would sit idle
       // while the merge waits or runs. A merge that touches a critical path
       // waits for your approval. Anything else merges now.
-      const stop = task.session === null ? [] : [stopSession(task.session)];
+      const stop = stopSession(step.session);
       const critical = criticalFiles(task.branch, config.criticalPaths);
       if (critical.length > 0) {
         return accept(
@@ -503,25 +481,29 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
             { type: "task.checks_passed" },
             { type: "task.merge_approval_requested", criticalFiles: critical },
           ],
-          stop,
+          [stop],
         );
       }
       return accept(
-        [passed, { type: "task.checks_passed" }, { type: "task.merge_started" }],
-        [...stop, merge],
+        [
+          passed,
+          { type: "task.checks_passed" },
+          { type: "task.merge_started", request: next(task) },
+        ],
+        [stop, merge],
       );
     }
 
     case "approve_merge":
-      if (task.step !== "merge_approval") {
+      if (step.kind !== "awaiting_merge_approval") {
         return reject(`#${task.id}'s merge isn't waiting for approval.`);
       }
-      return accept([{ type: "task.merge_started" }], [merge]);
+      return accept([{ type: "task.merge_started", request: next(task) }], [merge]);
 
     // The task waits for a new agent, which gets your note. It isn't a
     // failure, so no attempt is used.
-    case "send_back_merge":
-      if (task.step !== "merge_approval") {
+    case "revise_merge":
+      if (step.kind !== "awaiting_merge_approval") {
         return reject(`#${task.id}'s merge isn't waiting for approval.`);
       }
       if (isBlank(input.note)) return reject("A send-back needs a note.");
@@ -530,7 +512,7 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
     // The branch is now squashed into main, so removing the worktree loses
     // nothing.
     case "merged":
-      if (task.step !== "merging" || task.request !== input.request) {
+      if (step.kind !== "merging" || step.request !== input.request) {
         return reject(notWaitingFor(task, input.request));
       }
       return accept(
@@ -540,7 +522,7 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
 
     // A failed merge counts as an attempt, like a failed gate.
     case "merge_failed": {
-      if (task.step !== "merging" || task.request !== input.request) {
+      if (step.kind !== "merging" || step.request !== input.request) {
         return reject(notWaitingFor(task, input.request));
       }
       const failure: Failure = { step: "merge", summary: input.summary };
@@ -557,32 +539,24 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
 // reason as its note. If the revert fails, the task stays Done and says why.
 function inDone(task: TaskIn<"done">, input: Input, ctx: Context): Decision {
   const { accept, reject } = ctx;
+  const { step } = task;
   switch (input.type) {
     case "revert":
-      if (task.reverting !== null) return reject(`#${task.id} is already being reverted.`);
+      if (step.kind === "reverting") return reject(`#${task.id} is already being reverted.`);
       if (isBlank(input.reason)) return reject("A revert needs a reason.");
       return accept(
-        [{ type: "task.revert_started", reason: input.reason }],
-        [
-          {
-            type: "revert",
-            taskId: task.id,
-            request: task.requests + 1,
-            commit: task.mergeCommit,
-          },
-        ],
+        [{ type: "task.revert_started", reason: input.reason, request: next(task) }],
+        [{ type: "revert", taskId: task.id, request: next(task), commit: task.mergeCommit }],
       );
 
     case "reverted":
-      if (task.reverting?.request !== input.request) {
+      if (step.kind !== "reverting" || step.request !== input.request) {
         return reject(notWaitingFor(task, input.request));
       }
-      return accept([
-        { type: "task.reverted", commit: task.mergeCommit, reason: task.reverting.reason },
-      ]);
+      return accept([{ type: "task.reverted", commit: task.mergeCommit, reason: step.reason }]);
 
     case "revert_failed":
-      if (task.reverting?.request !== input.request) {
+      if (step.kind !== "reverting" || step.request !== input.request) {
         return reject(notWaitingFor(task, input.request));
       }
       return accept([{ type: "task.revert_failed", summary: input.summary }]);
@@ -614,6 +588,21 @@ function acceptSpec(
     approved ? [...before, specced, { type: "task.ready" }] : [...before, specced],
     commands,
   );
+}
+
+// The scheduler's start. It is refused if the task can't take a slot, and
+// blocks the task if it is over its safety cap. Otherwise the task records
+// the request and sends the command that starts its agent or worktree.
+function startAgent(
+  task: TaskIn<"spec" | "ready" | "in_progress">,
+  ctx: Context,
+  command: Command,
+): Decision {
+  const refused = cantStart(task, ctx);
+  if (refused) return ctx.reject(refused);
+  const capped = safetyCapBlock(task, task.usage, ctx);
+  if (capped) return ctx.accept([capped]);
+  return ctx.accept([{ type: "task.dispatch_started", request: next(task) }], [command]);
 }
 
 // Why the scheduler's start is refused, or null if the task may start. The
@@ -662,7 +651,7 @@ function failedRound(
   failure: Failure,
   ctx: Context,
 ): Decision {
-  const { session } = task;
+  const session = task.step.kind === "gate" ? task.step.session : null;
   if (attemptsLeft(task.attempts + 1, ctx.config.maxAttempts).ok) {
     if (session === null) return ctx.accept([failed]);
     const text = `The ${failure.step} gate failed: ${failure.summary}`;
@@ -675,15 +664,11 @@ function failedRound(
 }
 
 // The commands that stop the task's agent and remove its worktree, for a
-// task leaving its phase for good. A worktree or agent still being created
+// task leaving its phase for good. That is what a block stops, plus the
+// worktree a blocked task keeps for its retry. A worktree or agent still being created
 // is cleaned up when its late reply arrives.
 function leavePhase(task: Task): Command[] {
-  const commands: Command[] = [];
-  const session = runningSession(task);
-  if (session !== null) commands.push(stopSession(session));
-  if (task.phase === "ready" && task.step.kind === "starting_session") {
-    commands.push(removeWorktree(task.step.worktree));
-  }
+  const commands = stopForBlock(task);
   if (task.phase === "in_progress" || task.phase === "checks") {
     commands.push(removeWorktree(task.worktree));
   }
@@ -692,49 +677,15 @@ function leavePhase(task: Task): Command[] {
 
 // Why a task can't leave while merging, or null if it isn't merging.
 function stillMerging(task: Task): string | null {
-  if (task.phase === "checks" && task.step === "merging") {
+  if (task.phase === "checks" && task.step.kind === "merging") {
     return `#${task.id} is merging. Wait until the merge finishes.`;
   }
   return null;
 }
 
 // ---------------------------------------------------------------------------
-// Reading the task
+// Refusing inputs from the wrong sender
 // ---------------------------------------------------------------------------
-
-// The session of the task's running agent, or null if none is running. In
-// Checks the develop agent stays open, so it counts as running.
-function runningSession(task: Task): SessionId | null {
-  switch (task.phase) {
-    case "spec":
-    case "in_progress":
-      return task.step.kind === "running" ? task.step.session : null;
-    case "checks":
-      return task.session;
-    default:
-      return null;
-  }
-}
-
-// Which agent a question would come from, or null if none is running.
-function agentKind(task: Task): "spec" | "develop" | null {
-  if (runningSession(task) === null) return null;
-  return task.phase === "spec" ? "spec" : "develop";
-}
-
-// An agent running or starting, or a worktree being created for one.
-function agentUnderWay(task: Task): boolean {
-  if (runningSession(task) !== null) return true;
-  switch (task.phase) {
-    case "spec":
-    case "in_progress":
-      return task.step.kind === "starting";
-    case "ready":
-      return task.step.kind !== "queued";
-    default:
-      return false;
-  }
-}
 
 // Why an agent's report is refused: it doesn't come from the task's current
 // agent. Null for a report that does, and for anything not from an agent.
@@ -746,62 +697,12 @@ function notTheAgent(task: Task, input: Input): string | null {
   return null;
 }
 
-// The request a task's current step waits on, or null if it waits on none.
-function awaitedRequest(task: Task): number | null {
-  switch (task.phase) {
-    case "spec":
-    case "ready":
-    case "in_progress":
-      return "request" in task.step ? task.step.request : null;
-    case "checks":
-      return task.request;
-    case "done":
-      return task.reverting?.request ?? null;
-    default:
-      return null;
-  }
-}
-
 // Why a reply is refused: it answers a request the task isn't waiting on.
 function notWaitingFor(task: Task, request: number): string {
   const awaited = awaitedRequest(task);
   const now =
     awaited === null ? "isn't waiting on any request" : `is waiting on request ${awaited}`;
   return `This reply answers request ${request}, but #${task.id} ${now}.`;
-}
-
-// The path of the worktree the task holds, or null if it holds none.
-function heldWorktree(task: Task): string | null {
-  if (task.phase === "ready" && task.step.kind === "starting_session")
-    return task.step.worktree.path;
-  if (task.phase === "in_progress" || task.phase === "checks") return task.worktree.path;
-  return null;
-}
-
-// Waiting for the worktree of this build. A reply for an earlier build is
-// late, even while the current build waits for its own.
-// Waiting for the worktree of this request. A reply to an earlier request
-// is late, even while the task waits for a newer one.
-function waitingForWorktree(task: Task, request: number): boolean {
-  return (
-    task.phase === "ready" &&
-    task.step.kind === "creating_worktree" &&
-    task.step.request === request
-  );
-}
-
-// Waiting for the agent of this request. An agent started for an earlier
-// request, such as a spec agent whose task has since moved on, is late.
-function waitingForAgent(task: Task, request: number): boolean {
-  switch (task.phase) {
-    case "spec":
-    case "in_progress":
-      return task.step.kind === "starting" && task.step.request === request;
-    case "ready":
-      return task.step.kind === "starting_session" && task.step.request === request;
-    default:
-      return false;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -826,19 +727,15 @@ function removeWorktree(worktree: Worktree): Command {
 function startDevelop(
   task: TaskIn<"ready" | "in_progress">,
   worktree: Worktree,
-  lastFailure: Failure | null,
-  note: string | null,
-  lastBlock: BlockReason | null,
+  brief: Brief,
 ): Command {
   return {
     type: "start_develop_session",
     taskId: task.id,
-    request: task.requests + 1,
+    request: next(task),
     worktree,
     spec: task.spec,
-    lastFailure,
-    note,
-    lastBlock,
+    brief,
   };
 }
 
@@ -850,10 +747,19 @@ function unknownProject(project: ProjectId | null, ctx: Context): string | null 
   return null;
 }
 
+// The number for the task's next request. Each input sends at most one
+// request, so the event that records it and the command that sends it both
+// use this number.
+function next(task: Task): number {
+  return task.requests + 1;
+}
+
 function isBlank(text: string): boolean {
   return text.trim() === "";
 }
 
 function wrongPhase(task: Task, input: Input, ctx: Context): Decision {
-  return ctx.reject(`${input.type} doesn't apply to #${task.id} in ${phaseNames[task.phase]}.`);
+  return ctx.reject(
+    `#${task.id} is in ${phaseNames[task.phase]}, so it can't take ${inputNames[input.type]}.`,
+  );
 }

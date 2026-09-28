@@ -1,4 +1,4 @@
-// Core types for Skelcrew. Draft 4.
+// Core types for Skelcrew.
 //
 // Everything here is plain data. The core never reads the clock, the disk or
 // the network: time and IDs arrive inside inputs, and all side effects leave
@@ -94,9 +94,10 @@ export type SourceRef = {
 };
 
 // Facts about the task's branch, gathered by the shell from version control.
-// The core never runs version control itself; the shell attaches these when
-// the agent reports done. `commits` enforces "branch has commits"; `changedFiles` feeds the
-// critical path check.
+// What the branch holds when the agent reports done. The core never runs
+// version control itself, so the shell reads these and attaches them.
+// `commits` must be above zero. `changedFiles` is checked against the
+// critical paths.
 export type BranchFacts = {
   commits: number;
   changedFiles: string[];
@@ -127,44 +128,30 @@ export type PhaseState =
       worktree: Worktree;
       step: DevelopStep;
       attempts: number; // failed gate or merge rounds since the last retry
-      lastFailure: Failure | null; // sent to the agent so it can fix it
-      // Your note from sending a merge back, for the next agent. Kept until
-      // the agent reports done again.
-      note: string | null;
-      // Why the task was last blocked, kept after a retry so the next agent
-      // knows why the last one stopped. Kept until the agent reports done.
-      lastBlock: BlockReason | null;
+      brief: Brief;
     }
   | {
       phase: "checks";
       spec: Spec;
       worktree: Worktree;
-      // The develop session stays open while the gates run, so a failure can
-      // go straight back to the agent that wrote the code. Once they pass,
-      // the agent is stopped and this is null: an idle agent waiting for a
-      // merge would otherwise wake up later without a free slot.
-      session: SessionId | null;
       attempts: number;
       branch: BranchFacts;
-      step: GateName | "merge_approval" | "merging";
-      // The request the task waits on: the running gate's, or the merge's.
-      // Null while the merge waits for the developer's approval.
-      request: number | null;
+      step: ChecksStep;
     }
   // mergeCommit is what `skelcrew revert` undoes. Each task lands as one
   // squashed commit, so one commit is enough.
-  | {
-      phase: "done";
-      spec: Spec;
-      mergeCommit: CommitSha;
-      // A revert is two steps, like a merge: version control is asked, then
-      // answers. The task stays Done until the revert has happened, so the
-      // record never says it did when it didn't. `reverting` holds the reason
-      // while it runs; `revertFailure` says why the last attempt failed.
-      reverting: { reason: string; request: number } | null;
-      revertFailure: string | null;
-    }
+  | { phase: "done"; spec: Spec; mergeCommit: CommitSha; step: DoneStep }
   | { phase: "dropped" };
+
+// What the next develop agent should know, kept until an agent reports done:
+// the last gate or merge failure, your note from sending a merge back, and
+// why the task was last blocked. A new agent starts with all three, so it
+// doesn't repeat what went wrong.
+export type Brief = {
+  failure: Failure | null;
+  note: string | null;
+  blocked: BlockReason | null;
+};
 
 // Spec, Ready and In progress all wait for a free slot before an agent
 // starts. The steps are separate states because each waits on a different
@@ -190,6 +177,24 @@ export type DevelopStep =
   | { kind: "starting"; request: number }
   | { kind: "running"; session: SessionId };
 
+// The develop agent stays open while the gates run, so a failure can go
+// straight back to the agent that wrote the code. Once they pass, it is
+// stopped: an idle agent waiting for a merge would otherwise wake up later
+// without a free slot. So only a running gate has a session.
+export type ChecksStep =
+  | { kind: "gate"; gate: GateName; request: number; session: SessionId }
+  | { kind: "awaiting_merge_approval" }
+  | { kind: "merging"; request: number };
+
+// A revert is two steps, like a merge: version control is asked, then
+// answers. The task stays Done until the revert has happened, so the record
+// never says it did when it didn't. A failed revert stays Done, and the
+// inbox says why.
+export type DoneStep =
+  | { kind: "merged" }
+  | { kind: "reverting"; reason: string; request: number }
+  | { kind: "revert_failed"; summary: string };
+
 export type Task = PhaseState & {
   id: TaskId;
   title: string;
@@ -208,9 +213,10 @@ export type Task = PhaseState & {
   // build after a send-back never starts on code written for the old spec.
   builds: number;
   // How many requests the task has sent that expect a reply: starting an
-  // agent, creating a worktree, running a gate, merging, reverting. Each gets
-  // the next number, and its reply must bring it back. A reply with any other
-  // number is late or repeated, so it can never answer the current request.
+  // agent, creating a worktree, running a gate, merging, reverting. decide
+  // gives each the next number and writes it into the event and the command;
+  // its reply must bring it back. A reply with any other number is late or
+  // repeated, so it can never answer the current request.
   requests: number;
   // Two usage counters. `usage` never resets, so the record shows the true
   // cost. The safety cap counts from `usageAtRetry`, so a retried task gets
@@ -281,12 +287,12 @@ export type HumanInput =
   | { type: "request_spec" }
   | { type: "provide_spec"; spec: Spec } // a spec written by hand
   | { type: "approve_spec" }
-  | { type: "send_back_spec"; note: string }
+  | { type: "revise_spec"; note: string } // "send back" on a spec: the spec agent redoes it
   | { type: "answer"; text: string }
   | { type: "approve_merge" }
-  | { type: "send_back_merge"; note: string }
+  | { type: "revise_merge"; note: string } // "send back" on a merge: a new develop agent
   | { type: "retry" }
-  | { type: "send_back_to_spec"; note: string }
+  | { type: "back_to_spec"; note: string } // from Ready, In progress or Checks: the spec was wrong
   | { type: "drop" }
   | { type: "revert"; reason: string }; // the reason guides the redone spec
 
@@ -385,8 +391,12 @@ export type EventBody =
   // The scheduler's start was accepted. What starts depends on the phase:
   // a spec session in Spec, a worktree in Ready, and a new develop session
   // in In progress after a retry.
-  | { type: "task.dispatch_started" }
-  | { type: "task.worktree_created"; worktree: Worktree }
+  //
+  // An event that sends a request says which number it used, so evolve
+  // records it instead of working it out, and the log shows which reply
+  // answers which event.
+  | { type: "task.dispatch_started"; request: number }
+  | { type: "task.worktree_created"; worktree: Worktree; request: number } // starts the develop agent
   | { type: "task.dispatched"; session: SessionId }
   | { type: "task.question_asked"; question: Question }
   // Answers are kept so past decisions can be searched later, and the spec
@@ -396,18 +406,18 @@ export type EventBody =
   // So decide writes it into the event: the first gate when the agent
   // reports done, and the next one after each pass (null after the last).
   // Replay then gives the same task even if workflow.yml changes later.
-  | { type: "task.done_reported"; branch: BranchFacts; gate: GateName }
-  | { type: "task.gate_passed"; gate: GateName; next: GateName | null }
+  | { type: "task.done_reported"; branch: BranchFacts; gate: GateName; request: number }
+  | { type: "task.gate_passed"; gate: GateName; next: { gate: GateName; request: number } | null }
   | { type: "task.gate_failed"; failure: Failure }
   | { type: "task.checks_passed" }
   // The files that matched a critical path, so the inbox summary can say
   // why this merge needs approval.
   | { type: "task.merge_approval_requested"; criticalFiles: string[] }
   | { type: "task.merge_sent_back"; note: string }
-  | { type: "task.merge_started" }
+  | { type: "task.merge_started"; request: number }
   | { type: "task.merge_failed"; failure: Failure }
   | { type: "task.merged"; commit: CommitSha }
-  | { type: "task.revert_started"; reason: string }
+  | { type: "task.revert_started"; reason: string; request: number }
   | { type: "task.revert_failed"; summary: string }
   | { type: "task.reverted"; commit: CommitSha; reason: string }
   | { type: "task.blocked"; reason: BlockReason }
@@ -445,13 +455,7 @@ export type Command =
       request: number;
       worktree: Worktree;
       spec: Spec;
-      // Set when a new agent picks up after a failure: what it must fix first.
-      lastFailure: Failure | null;
-      // Set after you send a merge back: what you asked for.
-      note: string | null;
-      // Set after a retry: why the last agent was stopped, such as giving up
-      // with "Need database credentials".
-      lastBlock: BlockReason | null;
+      brief: Brief;
     }
   | { type: "send_to_session"; session: SessionId; text: string }
   | { type: "stop_session"; session: SessionId }

@@ -1,17 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { config as base } from "../test/fixtures";
 import { evolveTask } from "./evolve";
 import { ProjectId, SessionId, TaskId } from "./ids";
 import { schedule } from "./schedule";
 import type { Config, EventBody, Project, Spec, Task } from "./types";
 
-const config: Config = {
-  gates: ["local"],
-  maxAttempts: 3,
-  maxRunning: 2,
-  specApproval: "always",
-  criticalPaths: [],
-  safetyCap: { tokens: 200_000, ms: 60 * 60_000 },
-};
+const config: Config = { ...base, gates: ["local"], criticalPaths: [] };
 
 const reports = ProjectId.parse("reports");
 const archive = ProjectId.parse("archive");
@@ -42,17 +36,22 @@ function task(n: number, project: ProjectId | null, ...bodies: EventBody[]): Tas
 
 // The events that bring a task to each state.
 const specQueued: EventBody[] = [{ type: "task.spec_requested" }];
+// Request numbers follow the lifecycle: 1 starts the spec agent, 2 creates
+// the worktree, 3 starts the develop agent, 4 runs the gate, 5 merges.
 const specRunning: EventBody[] = [
   ...specQueued,
-  { type: "task.dispatch_started" },
+  { type: "task.dispatch_started", request: 1 },
   { type: "task.spec_session_started", session },
 ];
 const awaitingApproval: EventBody[] = [...specRunning, { type: "task.specced", spec, by: "agent" }];
 const readyQueued: EventBody[] = [...awaitingApproval, { type: "task.ready" }];
-const creatingWorktree: EventBody[] = [...readyQueued, { type: "task.dispatch_started" }];
+const creatingWorktree: EventBody[] = [
+  ...readyQueued,
+  { type: "task.dispatch_started", request: 2 },
+];
 const developRunning: EventBody[] = [
   ...creatingWorktree,
-  { type: "task.worktree_created", worktree },
+  { type: "task.worktree_created", worktree, request: 3 },
   { type: "task.dispatched", session },
 ];
 const blocked: EventBody[] = [
@@ -62,7 +61,12 @@ const blocked: EventBody[] = [
 const retried: EventBody[] = [...blocked, { type: "task.unblocked" }];
 const awaitingMerge: EventBody[] = [
   ...developRunning,
-  { type: "task.done_reported", branch: { commits: 1, changedFiles: ["a.ts"] }, gate: "local" },
+  {
+    type: "task.done_reported",
+    branch: { commits: 1, changedFiles: ["a.ts"] },
+    gate: "local",
+    request: 4,
+  },
   { type: "task.gate_passed", gate: "local", next: null },
   { type: "task.checks_passed" },
   { type: "task.merge_approval_requested", criticalFiles: ["a.ts"] },
@@ -92,7 +96,7 @@ describe("schedule", () => {
   test("counts starts still in flight, which the daemon reports", () => {
     const tasks = [
       task(1, null, ...creatingWorktree),
-      task(2, null, ...specQueued, { type: "task.dispatch_started" }),
+      task(2, null, ...specQueued, { type: "task.dispatch_started", request: 1 }),
       task(3, null, ...specQueued),
     ];
     // Two starts are out: #1's worktree and #2's spec agent.
@@ -102,7 +106,13 @@ describe("schedule", () => {
   test("keeps the slot of a start still in flight for a task that was dropped", () => {
     // #1's agent was starting when #1 was dropped. It hasn't reported in yet.
     const tasks = [
-      task(1, null, ...specQueued, { type: "task.dispatch_started" }, { type: "task.dropped" }),
+      task(
+        1,
+        null,
+        ...specQueued,
+        { type: "task.dispatch_started", request: 1 },
+        { type: "task.dropped" },
+      ),
       task(2, null, ...specQueued),
     ];
     expect(schedule(tasks, projects, { ...config, maxRunning: 1 }, 1)).toEqual([]);
@@ -111,10 +121,15 @@ describe("schedule", () => {
   test("doesn't count a task merging, since its agent is stopped", () => {
     const merging: EventBody[] = [
       ...developRunning,
-      { type: "task.done_reported", branch: { commits: 1, changedFiles: ["a.ts"] }, gate: "local" },
+      {
+        type: "task.done_reported",
+        branch: { commits: 1, changedFiles: ["a.ts"] },
+        gate: "local",
+        request: 4,
+      },
       { type: "task.gate_passed", gate: "local", next: null },
       { type: "task.checks_passed" },
-      { type: "task.merge_started" },
+      { type: "task.merge_started", request: 5 },
     ];
     const tasks = [
       task(1, null, ...merging),

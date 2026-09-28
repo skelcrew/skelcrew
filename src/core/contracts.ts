@@ -28,40 +28,17 @@ function isBlank(text: string): boolean {
 }
 
 // Merge policy: a branch that changes a file on a critical path needs the
-// developer's approval before it merges. The reasons name each file and the
-// pattern it matched, so the inbox can say why approval is needed.
-export function mergeAllowed(branch: BranchFacts, criticalPaths: string[]): Check {
-  const reasons = criticalMatches(branch, criticalPaths).map(
-    ({ file, pattern }) => `${file} matches the critical path ${pattern}`,
-  );
-  return reasons.length === 0 ? { ok: true } : { ok: false, reasons };
-}
-
-// The changed files that match a critical path, so the inbox can list what
-// needs the developer's eye.
-export function criticalFiles(branch: BranchFacts, criticalPaths: string[]): string[] {
-  return criticalMatches(branch, criticalPaths).map(({ file }) => file);
-}
-
-// Each changed file that matches, with the first pattern it matches.
+// developer's approval before it merges. These are the files that match, so
+// the inbox can list what needs the developer's eye.
 //
 // `dot: true` makes ** match hidden files like src/auth/.env, which
 // picomatch skips by default. `windows: false` fixes the separator to "/"
 // on every machine, so the same inputs always give the same answer.
-function criticalMatches(
-  branch: BranchFacts,
-  criticalPaths: string[],
-): { file: string; pattern: string }[] {
-  const matchers = criticalPaths.map((pattern) => ({
-    pattern,
-    matches: picomatch(pattern, { dot: true, windows: false }),
-  }));
-  const found: { file: string; pattern: string }[] = [];
-  for (const file of branch.changedFiles) {
-    const hit = matchers.find((m) => m.matches(file));
-    if (hit) found.push({ file, pattern: hit.pattern });
-  }
-  return found;
+export function criticalFiles(branch: BranchFacts, criticalPaths: string[]): string[] {
+  const matchers = criticalPaths.map((pattern) =>
+    picomatch(pattern, { dot: true, windows: false }),
+  );
+  return branch.changedFiles.filter((file) => matchers.some((matches) => matches(file)));
 }
 
 // Attempts: after a failed gate or merge, the task goes back to the agent

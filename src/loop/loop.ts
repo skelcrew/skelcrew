@@ -40,22 +40,27 @@ export interface Tools {
 // A start the loop has sent out: an agent or worktree for one request.
 export type StartRef = { taskId: TaskId; request: number };
 
+// The starts a decision sent out, and the one its input answered. They're
+// saved with its events, so a restart knows which starts are still out.
+export type Starts = { sent: StartRef[]; answered: StartRef[] };
+
+export type Saved = { ok: true } | { ok: false; reason: string };
+
+// A damaged log is reported with the position of the first event that
+// couldn't be read or didn't fit, so it can be found and looked at.
+export type Loaded<T> = ({ ok: true } & T) | { ok: false; seq: number; reason: string };
+
 // Where events are saved, with the starts each decision sent out and the one
 // its input answered. EventStore is the real one.
 export interface EventLog {
-  appendTask(
-    events: TaskEvent[],
-    starts: { sent: StartRef[]; answered: StartRef[] },
-  ): { ok: true } | { ok: false; reason: string };
-  appendProject(events: ProjectEvent[]): { ok: true } | { ok: false; reason: string };
+  appendTask(events: TaskEvent[], starts: Starts): Saved;
+  appendProject(events: ProjectEvent[]): Saved;
 }
 
 // A saved log that can be read back, to pick up where a loop left off.
 export interface ReadableLog extends EventLog {
-  loadTasks(): { ok: true; tasks: Map<TaskId, Task> } | { ok: false; seq: number; reason: string };
-  loadProjects():
-    | { ok: true; projects: Map<ProjectId, Project> }
-    | { ok: false; seq: number; reason: string };
+  loadTasks(): Loaded<{ tasks: Map<TaskId, Task> }>;
+  loadProjects(): Loaded<{ projects: Map<ProjectId, Project> }>;
   loadStarts(): StartRef[];
 }
 
@@ -174,10 +179,7 @@ export class Loop {
 
   // Saves a decision's events and starts, then updates the count of starts
   // in flight to match. Nothing changes if saving fails.
-  private save(
-    events: TaskEvent[],
-    starts: { sent: StartRef[]; answered: StartRef[] },
-  ): { ok: true } | { ok: false; reason: string } {
+  private save(events: TaskEvent[], starts: Starts): Saved {
     const nothing = events.length === 0 && starts.sent.length === 0 && starts.answered.length === 0;
     if (this.log !== null && !nothing) {
       const saved = this.log.appendTask(events, starts);
