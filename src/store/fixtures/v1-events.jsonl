@@ -1,0 +1,56 @@
+{"type":"task.created","title":"CSV export","project":null,"source":null,"v":1,"taskId":1,"at":1000}
+{"type":"task.spec_requested","v":1,"taskId":1,"at":1000}
+{"type":"task.created","title":"Login fix","project":null,"source":null,"v":1,"taskId":2,"at":2000}
+{"type":"task.spec_requested","v":1,"taskId":2,"at":2000}
+{"type":"task.created","title":"Dark mode","project":null,"source":null,"v":1,"taskId":3,"at":3000}
+{"type":"task.dispatch_started","v":1,"taskId":1,"at":4000}
+{"type":"task.dispatch_started","v":1,"taskId":2,"at":5000}
+{"type":"task.spec_session_started","session":"session-1","v":1,"taskId":1,"at":6000}
+{"type":"task.spec_session_started","session":"session-2","v":1,"taskId":2,"at":7000}
+{"type":"task.question_asked","question":{"from":"spec","text":"Include deleted rows?","options":["Yes","No"],"askedAt":8000},"v":1,"taskId":1,"at":8000}
+{"type":"task.specced","spec":{"scope":"Build: Login fix.","acceptance":["It works as described."],"openQuestions":[]},"by":"agent","v":1,"taskId":2,"at":9000}
+{"type":"task.question_answered","text":"No","v":1,"taskId":1,"at":10000}
+{"type":"task.specced","spec":{"scope":"Build: CSV export.","acceptance":["It works as described."],"openQuestions":[]},"by":"agent","v":1,"taskId":1,"at":11000}
+{"type":"task.ready","v":1,"taskId":1,"at":12000}
+{"type":"task.dispatch_started","v":1,"taskId":1,"at":13000}
+{"type":"task.worktree_created","worktree":{"path":"/sim/worktrees/1-1","branch":"task/1-build-1"},"v":1,"taskId":1,"at":14000}
+{"type":"task.dispatched","session":"session-3","v":1,"taskId":1,"at":15000}
+{"type":"task.done_reported","branch":{"commits":1,"changedFiles":["src/task-1.ts"]},"gate":"local","v":1,"taskId":1,"at":16000}
+{"type":"task.gate_failed","failure":{"step":"local","summary":"The local gate failed."},"v":1,"taskId":1,"at":17000}
+{"type":"task.done_reported","branch":{"commits":1,"changedFiles":["src/task-1.ts"]},"gate":"local","v":1,"taskId":1,"at":18000}
+{"type":"task.gate_failed","failure":{"step":"local","summary":"The local gate failed."},"v":1,"taskId":1,"at":19000}
+{"type":"task.blocked","reason":{"kind":"out_of_attempts","failure":{"step":"local","summary":"The local gate failed."}},"v":1,"taskId":1,"at":19000}
+{"type":"task.unblocked","v":1,"taskId":1,"at":20000}
+{"type":"task.dispatch_started","v":1,"taskId":1,"at":21000}
+{"type":"task.dispatched","session":"session-4","v":1,"taskId":1,"at":22000}
+{"type":"task.done_reported","branch":{"commits":1,"changedFiles":["src/task-1.ts"]},"gate":"local","v":1,"taskId":1,"at":23000}
+{"type":"task.gate_passed","gate":"local","next":"review","v":1,"taskId":1,"at":24000}
+{"type":"task.gate_passed","gate":"review","next":null,"v":1,"taskId":1,"at":25000}
+{"type":"task.checks_passed","v":1,"taskId":1,"at":25000}
+{"type":"task.merge_started","v":1,"taskId":1,"at":25000}
+{"type":"task.merged","commit":"0000000000000000000000000000000000000005","v":1,"taskId":1,"at":26000}
+{"type":"task.ready","v":1,"taskId":2,"at":27000}
+{"type":"task.dispatch_started","v":1,"taskId":2,"at":28000}
+{"type":"task.worktree_created","worktree":{"path":"/sim/worktrees/2-1","branch":"task/2-build-1"},"v":1,"taskId":2,"at":29000}
+{"type":"task.dispatched","session":"session-6","v":1,"taskId":2,"at":30000}
+{"type":"task.done_reported","branch":{"commits":1,"changedFiles":["src/auth/login.ts"]},"gate":"local","v":1,"taskId":2,"at":31000}
+{"type":"task.gate_passed","gate":"local","next":"review","v":1,"taskId":2,"at":32000}
+{"type":"task.gate_passed","gate":"review","next":null,"v":1,"taskId":2,"at":33000}
+{"type":"task.checks_passed","v":1,"taskId":2,"at":33000}
+{"type":"task.merge_approval_requested","criticalFiles":["src/auth/login.ts"],"v":1,"taskId":2,"at":33000}
+{"type":"task.merge_started","v":1,"taskId":2,"at":34000}
+{"type":"task.merge_failed","failure":{"step":"merge","summary":"Conflicts with main."},"v":1,"taskId":2,"at":35000}
+{"type":"task.dispatch_started","v":1,"taskId":2,"at":36000}
+{"type":"task.dispatched","session":"session-7","v":1,"taskId":2,"at":37000}
+{"type":"task.done_reported","branch":{"commits":1,"changedFiles":["src/auth/login.ts"]},"gate":"local","v":1,"taskId":2,"at":38000}
+{"type":"task.gate_passed","gate":"local","next":"review","v":1,"taskId":2,"at":39000}
+{"type":"task.gate_passed","gate":"review","next":null,"v":1,"taskId":2,"at":40000}
+{"type":"task.checks_passed","v":1,"taskId":2,"at":40000}
+{"type":"task.merge_approval_requested","criticalFiles":["src/auth/login.ts"],"v":1,"taskId":2,"at":40000}
+{"type":"task.merge_started","v":1,"taskId":2,"at":41000}
+{"type":"task.merged","commit":"0000000000000000000000000000000000000008","v":1,"taskId":2,"at":42000}
+{"type":"task.revert_started","reason":"Broke login.","v":1,"taskId":2,"at":43000}
+{"type":"task.reverted","commit":"0000000000000000000000000000000000000008","reason":"Broke login.","v":1,"taskId":2,"at":44000}
+{"type":"task.dispatch_started","v":1,"taskId":2,"at":45000}
+{"type":"task.spec_session_started","session":"session-9","v":1,"taskId":2,"at":46000}
+{"type":"task.specced","spec":{"scope":"Build: Login fix.","acceptance":["It works as described."],"openQuestions":[]},"by":"agent","v":1,"taskId":2,"at":47000}
