@@ -32,12 +32,6 @@ export function runningSession(task: Task): SessionId | null {
   }
 }
 
-// Which agent a question would come from, or null if none is running.
-export function agentKind(task: Task): "spec" | "develop" | null {
-  if (runningSession(task) === null) return null;
-  return task.phase === "spec" ? "spec" : "develop";
-}
-
 // An agent running or starting, or a worktree being created for one.
 export function agentUnderWay(task: Task): boolean {
   if (runningSession(task) !== null) return true;

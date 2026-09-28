@@ -8,7 +8,6 @@
 
 import { attemptsLeft, criticalFiles, specComplete, withinSafetyCap } from "./contracts";
 import {
-  agentKind,
   agentUnderWay,
   awaitedRequest,
   heldWorktree,
@@ -30,6 +29,7 @@ import type {
   Input,
   Project,
   ProjectId,
+  Question,
   SessionId,
   Spec,
   Task,
@@ -216,10 +216,10 @@ function inAnyPhase(task: Task, input: AnyPhaseInput, ctx: Context): Decision {
       return accept([{ type: "task.spec_sent_back", note: input.note }], leavePhase(task));
     }
 
-    // One open question at a time, from the agent that is running.
+    // One open question at a time, from the agent that is running. Only
+    // the running agent gets this far, so Spec means the spec agent.
     case "ask": {
-      const from = agentKind(task);
-      if (from === null) return reject(`#${task.id} has no agent running.`);
+      const from: Question["from"] = task.phase === "spec" ? "spec" : "develop";
       if (task.question !== null) return reject(`#${task.id} already has an open question.`);
       if (input.options.length < 2 || input.options.length > 4) {
         return reject("A question needs two to four options.");
@@ -315,11 +315,10 @@ function inSpec(task: TaskIn<"spec">, input: Input, ctx: Context): Decision {
 
     // A spec submitted before your answer would ignore it.
     case "submit_spec":
-      if (step.kind !== "running") return reject(`#${task.id} has no spec agent running.`);
       if (task.question !== null) {
         return reject(`#${task.id} has an open question. Wait for the answer.`);
       }
-      return acceptSpec(input.spec, "agent", ctx, [], [stopSession(step.session)]);
+      return acceptSpec(input.spec, "agent", ctx, [], [stopSession(input.session)]);
 
     // Your spec replaces the agent's work, so a running agent is stopped.
     case "provide_spec": {
@@ -424,7 +423,6 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
     // The agent stays open during Checks, so a failed gate goes straight
     // back to the agent that wrote the code.
     case "report_done": {
-      if (step.kind !== "running") return reject(`#${task.id} has no develop agent running.`);
       if (input.branch.commits === 0) return reject("The branch has no commits.");
       const gate = config.gates[0];
       if (gate === undefined) return reject("workflow.yml has no gates.");
@@ -435,8 +433,7 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
     }
 
     case "give_up":
-      if (step.kind !== "running") return reject(`#${task.id} has no develop agent running.`);
-      return accept([blocked("agent_gave_up", input.message)], [stopSession(step.session)]);
+      return accept([blocked("agent_gave_up", input.message)], [stopSession(input.session)]);
 
     default:
       return wrongPhase(task, input, ctx);
