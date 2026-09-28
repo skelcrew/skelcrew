@@ -3,6 +3,7 @@ import { decideTask } from "./decide";
 import { evolveTask } from "./evolve";
 import { CommitSha, ProjectId, SessionId, TaskId } from "./ids";
 import type {
+  BlockReason,
   Config,
   Decision,
   EventBody,
@@ -1206,6 +1207,74 @@ describe("an input in the wrong phase", () => {
     expect(send(run(...specRunning), approveMerge)).toEqual({
       ok: false,
       rejection: { input: "approve_merge", reason: "approve_merge doesn't apply to #12 in Spec." },
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fixes for what the property tests found
+// ---------------------------------------------------------------------------
+
+describe("an open spec question", () => {
+  test("stops the agent from submitting a spec until you answer", () => {
+    expect(send(run(...specRunning, ask()), submit)).toEqual({
+      ok: false,
+      rejection: { input: "submit_spec", reason: "#12 has an open question. Wait for the answer." },
+    });
+  });
+
+  test("is cleared when you write the spec yourself", () => {
+    expect(run(...specRunning, ask(), provide).question).toBeNull();
+  });
+});
+
+describe("the safety cap while an agent is starting", () => {
+  const capped: BlockReason = { kind: "safety_cap", usage: { tokens: 250_000, ms: 0 } };
+
+  test("blocks a task whose spec agent is still starting", () => {
+    expect(send(run(...inSpec, start), usage(250_000))).toEqual({
+      ok: true,
+      events: [
+        stamped({ type: "task.usage_recorded", usage: { tokens: 250_000, ms: 0 } }),
+        stamped({ type: "task.blocked", reason: capped }),
+      ],
+      commands: [],
+    });
+  });
+
+  test("blocks a task whose worktree is being created", () => {
+    const decision = send(run(...creatingWorktree), usage(250_000));
+    expect(decision.ok && decision.events.map((e) => e.type)).toEqual([
+      "task.usage_recorded",
+      "task.blocked",
+    ]);
+  });
+
+  test("blocks a task whose develop agent is starting, removing the unused worktree", () => {
+    expect(send(run(...startingDevelop), usage(250_000))).toEqual({
+      ok: true,
+      events: [
+        stamped({ type: "task.usage_recorded", usage: { tokens: 250_000, ms: 0 } }),
+        stamped({ type: "task.blocked", reason: capped }),
+      ],
+      commands: [{ type: "remove_worktree", worktree }],
+    });
+  });
+});
+
+describe("start for a task already over its safety cap", () => {
+  test("blocks the task instead of starting an agent", () => {
+    // The report arrived while the spec waited for approval, so it was only recorded.
+    const task = run(...awaitingApproval, usage(250_000), approve);
+    expect(send(task, start)).toEqual({
+      ok: true,
+      events: [
+        stamped({
+          type: "task.blocked",
+          reason: { kind: "safety_cap", usage: { tokens: 250_000, ms: 0 } },
+        }),
+      ],
+      commands: [],
     });
   });
 });
