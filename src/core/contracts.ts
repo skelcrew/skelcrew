@@ -30,23 +30,38 @@ function isBlank(text: string): boolean {
 // Merge policy: a branch that changes a file on a critical path needs the
 // developer's approval before it merges. The reasons name each file and the
 // pattern it matched, so the inbox can say why approval is needed.
+export function mergeAllowed(branch: BranchFacts, criticalPaths: string[]): Check {
+  const reasons = criticalMatches(branch, criticalPaths).map(
+    ({ file, pattern }) => `${file} matches the critical path ${pattern}`,
+  );
+  return reasons.length === 0 ? { ok: true } : { ok: false, reasons };
+}
+
+// The changed files that match a critical path, so the inbox can list what
+// needs the developer's eye.
+export function criticalFiles(branch: BranchFacts, criticalPaths: string[]): string[] {
+  return criticalMatches(branch, criticalPaths).map(({ file }) => file);
+}
+
+// Each changed file that matches, with the first pattern it matches.
 //
 // `dot: true` makes ** match hidden files like src/auth/.env, which
 // picomatch skips by default. `windows: false` fixes the separator to "/"
 // on every machine, so the same inputs always give the same answer.
-export function mergeAllowed(branch: BranchFacts, criticalPaths: string[]): Check {
+function criticalMatches(
+  branch: BranchFacts,
+  criticalPaths: string[],
+): { file: string; pattern: string }[] {
   const matchers = criticalPaths.map((pattern) => ({
     pattern,
     matches: picomatch(pattern, { dot: true, windows: false }),
   }));
-  const reasons: string[] = [];
+  const found: { file: string; pattern: string }[] = [];
   for (const file of branch.changedFiles) {
     const hit = matchers.find((m) => m.matches(file));
-    if (hit) {
-      reasons.push(`${file} matches the critical path ${hit.pattern}`);
-    }
+    if (hit) found.push({ file, pattern: hit.pattern });
   }
-  return reasons.length === 0 ? { ok: true } : { ok: false, reasons };
+  return found;
 }
 
 // Attempts: after a failed gate or merge, the task goes back to the agent

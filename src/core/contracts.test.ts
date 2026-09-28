@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { attemptsLeft, mergeAllowed, specComplete, withinSafetyCap } from "./contracts";
+import {
+  attemptsLeft,
+  criticalFiles,
+  mergeAllowed,
+  specComplete,
+  withinSafetyCap,
+} from "./contracts";
 import type { Spec } from "./types";
 
 const complete: Spec = {
@@ -155,5 +161,31 @@ describe("withinSafetyCap", () => {
     const usage = { tokens: 500_000, ms: 150 * 60_000 };
     const atRetry = { tokens: 400_000, ms: 120 * 60_000 };
     expect(withinSafetyCap(usage, atRetry, cap)).toEqual({ ok: true });
+  });
+});
+
+describe("criticalFiles", () => {
+  const branch = (...changedFiles: string[]) => ({ commits: 1, changedFiles });
+
+  test("lists the changed files that match a critical path, in order", () => {
+    const changed = branch("src/auth/login.ts", "src/reports/export.ts", "migrations/001.sql");
+    expect(criticalFiles(changed, ["src/auth/**", "migrations/**"])).toEqual([
+      "src/auth/login.ts",
+      "migrations/001.sql",
+    ]);
+  });
+
+  test("is empty when nothing matches", () => {
+    expect(criticalFiles(branch("src/reports/export.ts"), ["src/auth/**"])).toEqual([]);
+  });
+
+  test("includes hidden files", () => {
+    expect(criticalFiles(branch("src/auth/.env"), ["src/auth/**"])).toEqual(["src/auth/.env"]);
+  });
+
+  test("lists a file once, even if it matches two patterns", () => {
+    expect(criticalFiles(branch("src/auth/login.ts"), ["src/auth/**", "src/**/*.ts"])).toEqual([
+      "src/auth/login.ts",
+    ]);
   });
 });
