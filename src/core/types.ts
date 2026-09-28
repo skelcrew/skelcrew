@@ -245,10 +245,9 @@ export type ProjectEvent = ProjectEventBody & {
 export type HumanInput =
   | {
       type: "add";
-      id: TaskId; // passed in, since the core never generates IDs
       title: string;
       project: ProjectId | null;
-      spec: boolean; // `add --spec`: capture and start speccing in one step
+      requestSpec: boolean; // `add --spec`: capture and ask for a spec in one step
     }
   | { type: "change_project"; project: ProjectId | null }
   | { type: "request_spec" }
@@ -277,7 +276,6 @@ export type AgentInput =
 export type PluginInput =
   | {
       type: "issue_delegated";
-      id: TaskId; // a new Skelcrew number, not the issue's number
       title: string;
       source: SourceRef;
       project: ProjectId | null; // mapped from e.g. a GitHub milestone
@@ -306,6 +304,9 @@ export type Input =
   | ({ by: "system" } & SystemInput);
 
 // The time rides along with every input, so decide never reads the clock.
+// For an input that creates a task (add, issue_delegated), taskId is the new
+// task's number. The shell picks it, since the core never makes up IDs. A
+// delegated issue gets a new Skelcrew number, not the issue's own number.
 export type Envelope = {
   taskId: TaskId;
   at: Timestamp;

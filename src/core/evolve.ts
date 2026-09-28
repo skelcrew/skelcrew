@@ -5,6 +5,7 @@
 // Events that can happen in any phase come first. The rest are grouped by
 // the phase they apply in, one function per phase, in lifecycle order.
 
+import { phaseNames } from "./phases";
 import type { Evolve, Evolved, Failure, Phase, Spec, Task, TaskEvent } from "./types";
 
 // A task in one phase, for example TaskIn<"checks">.
@@ -360,13 +361,3 @@ function gateMismatch(task: TaskIn<"checks">, gate: string): string | null {
   }
   return `#${task.id} is running the ${task.step} gate, not ${gate}`;
 }
-
-const phaseNames: Record<Phase, string> = {
-  idea: "Idea",
-  spec: "Spec",
-  ready: "Ready",
-  in_progress: "In progress",
-  checks: "Checks",
-  done: "Done",
-  dropped: "Dropped",
-};
