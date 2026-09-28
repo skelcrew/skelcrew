@@ -428,7 +428,8 @@ export type Config = {
   gates: GateName[]; // in order; "remote" only when a plugin reports it
   maxAttempts: number; // failed rounds before the task is blocked
   // Counts spec and develop sessions together. Both can ask questions, so
-  // both use up the developer's attention.
+  // both use up the developer's attention. An agent whose merge waits for
+  // approval is not counted: it is idle and can't ask anything.
   maxRunning: number;
   specApproval: "always" | "never";
   criticalPaths: string[]; // globs; a match sends the merge to the inbox
@@ -491,9 +492,10 @@ export type DecideProject = (project: Project | null, envelope: ProjectEnvelope)
 export type EvolveProject = (project: Project | null, event: ProjectEvent) => Project;
 
 // Picks which queued tasks in Spec, Ready or In progress to start next. It
-// keeps running sessions at or below maxRunning, and skips blocked tasks and
-// tasks in parked projects. It only proposes: each pick becomes a "start"
-// input that decide can reject.
+// keeps running sessions at or below maxRunning, not counting agents whose
+// merge waits for approval. It skips blocked tasks and tasks in parked
+// projects. It only proposes: each pick becomes a "start" input that decide
+// can reject.
 //
 // Why separate from decide: choosing what to start next means looking at
 // all tasks. decide only ever sees one, which keeps it small enough to read
