@@ -242,7 +242,7 @@ const submitWith =
   (t) => ({ by: "agent", type: "submit_spec", session: agentOf(t), spec: s });
 const submit = submitWith(spec);
 const approve: Input = { by: "human", type: "approve_spec" };
-const sendBack = (note: string): Input => ({ by: "human", type: "send_back_spec", note });
+const sendBack = (note: string): Input => ({ by: "human", type: "revise_spec", note });
 const provide: Input = { by: "human", type: "provide_spec", spec };
 
 const inSpec = [add, requestSpec];
@@ -413,7 +413,7 @@ describe("approve_spec", () => {
   });
 });
 
-describe("send_back_spec", () => {
+describe("revise_spec", () => {
   test("sends the spec back with your note", () => {
     expect(send(run(...awaitingApproval), sendBack("Also export the totals row."))).toEqual({
       ok: true,
@@ -425,7 +425,7 @@ describe("send_back_spec", () => {
   test("is rejected without a note", () => {
     expect(send(run(...awaitingApproval), sendBack(" "))).toEqual({
       ok: false,
-      rejection: { input: "send_back_spec", reason: "A send-back needs a note." },
+      rejection: { input: "revise_spec", reason: "A send-back needs a note." },
     });
   });
 });
@@ -792,7 +792,7 @@ const commit = CommitSha.parse("b".repeat(40));
 const authBranch = { commits: 2, changedFiles: ["src/reports/export.ts", "src/auth/login.ts"] };
 const reportAuthDone = reportWith(authBranch);
 const approveMerge: Input = { by: "human", type: "approve_merge" };
-const sendBackMerge = (note: string): Input => ({ by: "human", type: "send_back_merge", note });
+const sendBackMerge = (note: string): Input => ({ by: "human", type: "revise_merge", note });
 const merged: Step = (t) => ({ by: "plugin", type: "merged", request: awaited(t), commit });
 const mergeFail: Step = (t) => ({
   by: "plugin",
@@ -853,7 +853,7 @@ describe("approve_merge", () => {
   });
 });
 
-describe("send_back_merge", () => {
+describe("revise_merge", () => {
   test("queues the task for a new agent, without using an attempt", () => {
     expect(send(run(...awaitingMerge), sendBackMerge("Don't touch login."))).toEqual({
       ok: true,
@@ -879,7 +879,7 @@ describe("send_back_merge", () => {
   test("is rejected without a note", () => {
     expect(send(run(...awaitingMerge), sendBackMerge(""))).toEqual({
       ok: false,
-      rejection: { input: "send_back_merge", reason: "A send-back needs a note." },
+      rejection: { input: "revise_merge", reason: "A send-back needs a note." },
     });
   });
 });
@@ -1101,7 +1101,7 @@ describe("usage", () => {
 // ---------------------------------------------------------------------------
 
 const drop: Input = { by: "human", type: "drop" };
-const sendBackToSpec = (note: string): Input => ({ by: "human", type: "send_back_to_spec", note });
+const sendBackToSpec = (note: string): Input => ({ by: "human", type: "back_to_spec", note });
 // A crash report names the agent, and the request that started it.
 const crashed = (s: SessionId, request: number): Input => ({
   by: "plugin",
@@ -1179,7 +1179,7 @@ describe("late replies for a dropped task", () => {
   });
 });
 
-describe("send_back_to_spec", () => {
+describe("back_to_spec", () => {
   const note = "Split this into export and totals.";
 
   test("takes a blocked task back to Spec and removes its worktree", () => {
@@ -1201,7 +1201,7 @@ describe("send_back_to_spec", () => {
   test("is rejected without a note", () => {
     expect(send(run(...inProgress, giveUp), sendBackToSpec(""))).toEqual({
       ok: false,
-      rejection: { input: "send_back_to_spec", reason: "A send-back needs a note." },
+      rejection: { input: "back_to_spec", reason: "A send-back needs a note." },
     });
   });
 
@@ -1209,7 +1209,7 @@ describe("send_back_to_spec", () => {
     expect(send(run(add), sendBackToSpec(note))).toEqual({
       ok: false,
       rejection: {
-        input: "send_back_to_spec",
+        input: "back_to_spec",
         reason: "#12 is in Idea. Only a task past Spec can be sent back to it.",
       },
     });

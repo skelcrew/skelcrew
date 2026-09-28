@@ -149,7 +149,7 @@ const anyPhaseInputs = [
   "external_move",
   "change_project",
   "drop",
-  "send_back_to_spec",
+  "back_to_spec",
   "ask",
   "answer",
   "usage",
@@ -204,7 +204,7 @@ function inAnyPhase(task: Task, input: AnyPhaseInput, ctx: Context): Decision {
 
     // The spec is kept and redone with your note. The next build starts on
     // a fresh branch; the shell saves any uncommitted work first.
-    case "send_back_to_spec": {
+    case "back_to_spec": {
       if (task.phase !== "ready" && task.phase !== "in_progress" && task.phase !== "checks") {
         return reject(
           `#${task.id} is in ${phaseNames[task.phase]}. Only a task past Spec can be sent back to it.`,
@@ -331,7 +331,7 @@ function inSpec(task: TaskIn<"spec">, input: Input, ctx: Context): Decision {
       return accept([{ type: "task.ready" }]);
 
     // The note tells the spec agent what to change.
-    case "send_back_spec":
+    case "revise_spec":
       if (step.kind !== "awaiting_approval") {
         return reject(`#${task.id}'s spec isn't waiting for approval.`);
       }
@@ -498,7 +498,7 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
 
     // The task waits for a new agent, which gets your note. It isn't a
     // failure, so no attempt is used.
-    case "send_back_merge":
+    case "revise_merge":
       if (step.kind !== "awaiting_merge_approval") {
         return reject(`#${task.id}'s merge isn't waiting for approval.`);
       }

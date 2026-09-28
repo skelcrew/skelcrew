@@ -286,12 +286,12 @@ export type HumanInput =
   | { type: "request_spec" }
   | { type: "provide_spec"; spec: Spec } // a spec written by hand
   | { type: "approve_spec" }
-  | { type: "send_back_spec"; note: string }
+  | { type: "revise_spec"; note: string } // "send back" on a spec: the spec agent redoes it
   | { type: "answer"; text: string }
   | { type: "approve_merge" }
-  | { type: "send_back_merge"; note: string }
+  | { type: "revise_merge"; note: string } // "send back" on a merge: a new develop agent
   | { type: "retry" }
-  | { type: "send_back_to_spec"; note: string }
+  | { type: "back_to_spec"; note: string } // from Ready, In progress or Checks: the spec was wrong
   | { type: "drop" }
   | { type: "revert"; reason: string }; // the reason guides the redone spec
 

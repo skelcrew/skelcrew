@@ -67,12 +67,12 @@ const inputPool: Input[] = [
   { by: "human", type: "request_spec" },
   { by: "human", type: "provide_spec", spec },
   { by: "human", type: "approve_spec" },
-  { by: "human", type: "send_back_spec", note: "Add totals." },
+  { by: "human", type: "revise_spec", note: "Add totals." },
   { by: "human", type: "answer", text: "No" },
   { by: "human", type: "approve_merge" },
-  { by: "human", type: "send_back_merge", note: "Don't touch login." },
+  { by: "human", type: "revise_merge", note: "Don't touch login." },
   { by: "human", type: "retry" },
-  { by: "human", type: "send_back_to_spec", note: "Split it." },
+  { by: "human", type: "back_to_spec", note: "Split it." },
   { by: "human", type: "drop" },
   { by: "human", type: "revert", reason: "Broke exports." },
   { by: "human", type: "change_project", project: reports },
@@ -107,7 +107,7 @@ const unguided = new Set<Input["type"]>([
   "session_failed",
   "session_crashed",
   "worktree_failed",
-  "send_back_to_spec",
+  "back_to_spec",
 ]);
 
 // A request the task sent, as the daemon remembers it, so replies can be

@@ -160,7 +160,7 @@ function messages(commands: Command[], started: Map<TaskId, SessionId[]>): [Task
     out.push(
       [taskId, { by: "human", type: "retry" }],
       [taskId, { by: "human", type: "drop" }],
-      [taskId, { by: "human", type: "send_back_to_spec", note: "Again." }],
+      [taskId, { by: "human", type: "back_to_spec", note: "Again." }],
     );
   }
   return out;
