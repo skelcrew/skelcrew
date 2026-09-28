@@ -226,7 +226,7 @@ function inChecks(task: TaskIn<"checks">, event: TaskEvent): Evolved {
     case "task.checks_passed":
       return ok(task);
 
-    case "task.escalated":
+    case "task.merge_approval_requested":
       return ok({ ...task, step: "merge_approval" });
 
     // Not a failure, so no attempt is used. The note reaches the agent as

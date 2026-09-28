@@ -358,7 +358,7 @@ export type EventBody =
   | { type: "task.checks_passed" }
   // The files that matched a critical path, so the inbox summary can say
   // why this merge needs approval.
-  | { type: "task.escalated"; criticalFiles: string[] }
+  | { type: "task.merge_approval_requested"; criticalFiles: string[] }
   | { type: "task.merge_sent_back"; note: string }
   | { type: "task.merge_started" }
   | { type: "task.merge_failed"; failure: Failure }
