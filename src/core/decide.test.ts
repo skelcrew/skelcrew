@@ -478,3 +478,115 @@ describe("session_failed in Ready", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// In progress
+// ---------------------------------------------------------------------------
+
+const branch = { commits: 3, changedFiles: ["src/reports/export.ts"] };
+const reportDone: Input = { by: "agent", type: "report_done", branch };
+const giveUp: Input = { by: "agent", type: "give_up", message: "The reports API is missing." };
+const retry: Input = { by: "human", type: "retry" };
+
+const inProgress = [...startingDevelop, developStarted];
+
+describe("report_done", () => {
+  test("moves the task to Checks and runs the first gate", () => {
+    expect(send(run(...inProgress), reportDone)).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.done_reported", branch, gate: "local" })],
+      commands: [{ type: "run_gate", taskId: id, gate: "local", worktree }],
+    });
+  });
+
+  test("is rejected for a branch with no commits", () => {
+    expect(send(run(...inProgress), { ...reportDone, branch: { ...branch, commits: 0 } })).toEqual({
+      ok: false,
+      rejection: { input: "report_done", reason: "The branch has no commits." },
+    });
+  });
+
+  test("is rejected when no agent is running", () => {
+    expect(send(run(...inProgress, giveUp), reportDone)).toEqual({
+      ok: false,
+      rejection: { input: "report_done", reason: "#12 has no develop agent running." },
+    });
+  });
+});
+
+describe("give_up", () => {
+  test("blocks the task and stops the agent, keeping the worktree", () => {
+    expect(send(run(...inProgress), giveUp)).toEqual({
+      ok: true,
+      events: [
+        stamped({
+          type: "task.blocked",
+          reason: { kind: "agent_gave_up", message: "The reports API is missing." },
+        }),
+      ],
+      commands: [{ type: "stop_session", session: developSession }],
+    });
+  });
+});
+
+describe("retry", () => {
+  test("clears the block, so the scheduler can start the task again", () => {
+    expect(send(run(...inProgress, giveUp), retry)).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.unblocked" })],
+      commands: [],
+    });
+  });
+
+  test("is rejected for a task that isn't blocked", () => {
+    expect(send(run(...inProgress), retry)).toEqual({
+      ok: false,
+      rejection: { input: "retry", reason: "#12 isn't blocked." },
+    });
+  });
+});
+
+describe("start in In progress, after a retry", () => {
+  const retried = [...inProgress, giveUp, retry];
+
+  test("starts a new agent in the same worktree", () => {
+    expect(send(run(...retried), start)).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.dispatch_started" })],
+      commands: [{ type: "start_develop_session", taskId: id, worktree, spec, lastFailure: null }],
+    });
+  });
+
+  test("records the new agent once it runs", () => {
+    const again = SessionId.parse("session-3");
+    const decision = send(run(...retried, start), {
+      by: "plugin",
+      type: "session_started",
+      session: again,
+    });
+    expect(decision.ok && decision.events).toEqual([
+      stamped({ type: "task.dispatched", session: again }),
+    ]);
+  });
+
+  test("blocks the task again if the agent fails to start, keeping the worktree", () => {
+    const failed: Input = { by: "plugin", type: "session_failed", message: "herdr crashed" };
+    expect(send(run(...retried, start), failed)).toEqual({
+      ok: true,
+      events: [
+        stamped({
+          type: "task.blocked",
+          reason: { kind: "session_failed", message: "herdr crashed" },
+        }),
+      ],
+      commands: [],
+    });
+  });
+
+  test("is rejected while an agent is running", () => {
+    expect(send(run(...inProgress), start)).toEqual({
+      ok: false,
+      rejection: { input: "start", reason: "#12 isn't waiting for a slot." },
+    });
+  });
+});

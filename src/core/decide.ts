@@ -65,6 +65,13 @@ export const decide: Decide = (task, envelope, config, projects) => {
     return reject(`#${task.id} is in ${phaseNames[task.phase]}. Only an Idea can be specced.`);
   }
 
+  // Retry only clears the block. The scheduler then starts the task when a
+  // slot is free, so a retry never goes past max_running.
+  if (input.type === "retry") {
+    if (task.blocked === null) return reject(`#${task.id} isn't blocked.`);
+    return accept([{ type: "task.unblocked" }]);
+  }
+
   switch (task.phase) {
     case "idea":
       return inIdea(task, input, ctx);
@@ -72,6 +79,8 @@ export const decide: Decide = (task, envelope, config, projects) => {
       return inSpec(task, input, ctx);
     case "ready":
       return inReady(task, input, ctx);
+    case "in_progress":
+      return inProgress(task, input, ctx);
     default:
       return reject("Not handled yet.");
   }
@@ -208,6 +217,65 @@ function inReady(task: TaskIn<"ready">, input: Input, ctx: Context): Decision {
       return accept(
         [{ type: "task.blocked", reason: { kind: "session_failed", message: input.message } }],
         [{ type: "remove_worktree", worktree: step.worktree }],
+      );
+
+    default:
+      return reject("Not handled yet.");
+  }
+}
+
+function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): Decision {
+  const { accept, reject, config } = ctx;
+  const { step, worktree } = task;
+
+  switch (input.type) {
+    // After a retry: a new agent in the same worktree, told what failed last.
+    case "start": {
+      const refused = cantStart(task, ctx);
+      if (refused) return reject(refused);
+      return accept(
+        [{ type: "task.dispatch_started" }],
+        [
+          {
+            type: "start_develop_session",
+            taskId: task.id,
+            worktree,
+            spec: task.spec,
+            lastFailure: task.lastFailure,
+          },
+        ],
+      );
+    }
+
+    case "session_started":
+      if (step.kind !== "starting") return reject(`#${task.id} isn't starting a develop agent.`);
+      return accept([{ type: "task.dispatched", session: input.session }]);
+
+    // The worktree stays, so a retry carries on with the same code.
+    case "session_failed":
+      if (step.kind !== "starting") return reject(`#${task.id} isn't starting a develop agent.`);
+      return accept([
+        { type: "task.blocked", reason: { kind: "session_failed", message: input.message } },
+      ]);
+
+    // The agent stays open during Checks, so a failed gate goes straight
+    // back to the agent that wrote the code.
+    case "report_done": {
+      if (step.kind !== "running") return reject(`#${task.id} has no develop agent running.`);
+      if (input.branch.commits === 0) return reject("The branch has no commits.");
+      const gate = config.gates[0];
+      if (gate === undefined) return reject("workflow.yml has no gates.");
+      return accept(
+        [{ type: "task.done_reported", branch: input.branch, gate }],
+        [{ type: "run_gate", taskId: task.id, gate, worktree }],
+      );
+    }
+
+    case "give_up":
+      if (step.kind !== "running") return reject(`#${task.id} has no develop agent running.`);
+      return accept(
+        [{ type: "task.blocked", reason: { kind: "agent_gave_up", message: input.message } }],
+        [{ type: "stop_session", session: step.session }],
       );
 
     default:
