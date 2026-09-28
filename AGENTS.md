@@ -97,5 +97,11 @@ read, rewrite it.
 
 - `docs/spec.md`: the design. The source of truth for what Skelcrew does.
 - `docs/invariants.md`: the rules the core must never break. Tests are written against it.
+- `docs/ARCHITECTURE.md`: a map of the code for new developers: the parts, what each does,
+  and how an input flows through them.
 - `src/core/`: the core. Critical code, see above.
 - `CLAUDE.md` links to this file, so every agent reads the same rules.
+
+**Keep `docs/ARCHITECTURE.md` current.** A change that adds, removes, renames or moves a
+part it describes updates it in the same pull request. A map that no longer matches the
+code misleads every reader who trusts it.
