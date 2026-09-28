@@ -9,8 +9,8 @@ import type { Phase, Project, ProjectId, Schedule, Task } from "./types";
 
 const phaseOrder: Partial<Record<Phase, number>> = { in_progress: 0, ready: 1, spec: 2 };
 
-export const schedule: Schedule = (tasks, projects, config) => {
-  const free = config.maxRunning - tasks.filter(holdsSlot).length;
+export const schedule: Schedule = (tasks, projects, config, startsInFlight) => {
+  const free = config.maxRunning - tasks.filter(runsAgent).length - startsInFlight;
   if (free <= 0) return [];
   return tasks
     .filter((task) => waitingForSlot(task) && inActiveProject(task, projects))
@@ -24,16 +24,14 @@ export const schedule: Schedule = (tasks, projects, config) => {
     .map((task) => task.id);
 };
 
-// An agent running or being started, or a worktree being created for one.
-// A task past its gates holds no slot: its agent is stopped while the merge
-// waits or runs.
-function holdsSlot(task: Task): boolean {
+// An agent that has started and is running. Agents and worktrees still
+// being started are counted through startsInFlight instead. A task past its
+// gates runs no agent: it was stopped while the merge waits or runs.
+function runsAgent(task: Task): boolean {
   switch (task.phase) {
     case "spec":
     case "in_progress":
-      return task.step.kind === "starting" || task.step.kind === "running";
-    case "ready":
-      return task.step.kind !== "queued";
+      return task.step.kind === "running";
     case "checks":
       return task.session !== null;
     default:

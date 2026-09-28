@@ -77,7 +77,7 @@ describe("schedule", () => {
       task(2, null, ...specQueued),
       task(3, null, ...specQueued),
     ];
-    expect(schedule(tasks, projects, config)).toEqual(ids(1, 2));
+    expect(schedule(tasks, projects, config, 0)).toEqual(ids(1, 2));
   });
 
   test("counts running agents against the limit", () => {
@@ -86,16 +86,26 @@ describe("schedule", () => {
       task(2, null, ...specQueued),
       task(3, null, ...specQueued),
     ];
-    expect(schedule(tasks, projects, config)).toEqual(ids(2));
+    expect(schedule(tasks, projects, config, 0)).toEqual(ids(2));
   });
 
-  test("counts agents and worktrees that are still starting", () => {
+  test("counts starts still in flight, which the daemon reports", () => {
     const tasks = [
       task(1, null, ...creatingWorktree),
       task(2, null, ...specQueued, { type: "task.dispatch_started" }),
       task(3, null, ...specQueued),
     ];
-    expect(schedule(tasks, projects, config)).toEqual([]);
+    // Two starts are out: #1's worktree and #2's spec agent.
+    expect(schedule(tasks, projects, config, 2)).toEqual([]);
+  });
+
+  test("keeps the slot of a start still in flight for a task that was dropped", () => {
+    // #1's agent was starting when #1 was dropped. It hasn't reported in yet.
+    const tasks = [
+      task(1, null, ...specQueued, { type: "task.dispatch_started" }, { type: "task.dropped" }),
+      task(2, null, ...specQueued),
+    ];
+    expect(schedule(tasks, projects, { ...config, maxRunning: 1 }, 1)).toEqual([]);
   });
 
   test("doesn't count a task merging, since its agent is stopped", () => {
@@ -111,7 +121,7 @@ describe("schedule", () => {
       task(2, null, ...developRunning),
       task(3, null, ...specQueued),
     ];
-    expect(schedule(tasks, projects, config)).toEqual(ids(3));
+    expect(schedule(tasks, projects, config, 0)).toEqual(ids(3));
   });
 
   test("doesn't count a task whose merge waits for approval, since its agent is stopped", () => {
@@ -120,12 +130,12 @@ describe("schedule", () => {
       task(2, null, ...developRunning),
       task(3, null, ...specQueued),
     ];
-    expect(schedule(tasks, projects, config)).toEqual(ids(3));
+    expect(schedule(tasks, projects, config, 0)).toEqual(ids(3));
   });
 
   test("skips blocked tasks, which hold no slot", () => {
     const tasks = [task(1, null, ...blocked), task(2, null, ...specQueued)];
-    expect(schedule(tasks, projects, config)).toEqual(ids(2));
+    expect(schedule(tasks, projects, config, 0)).toEqual(ids(2));
   });
 
   test("skips tasks in a parked project, but starts tasks in active projects or none", () => {
@@ -134,12 +144,12 @@ describe("schedule", () => {
       task(2, reports, ...specQueued),
       task(3, null, ...specQueued),
     ];
-    expect(schedule(tasks, projects, config)).toEqual(ids(2, 3));
+    expect(schedule(tasks, projects, config, 0)).toEqual(ids(2, 3));
   });
 
   test("ignores tasks that aren't waiting for a slot", () => {
     const tasks = [task(1, null), task(2, null, ...awaitingApproval)];
-    expect(schedule(tasks, projects, config)).toEqual([]);
+    expect(schedule(tasks, projects, config, 0)).toEqual([]);
   });
 
   test("finishes before it starts: In progress, then Ready, then Spec", () => {
@@ -148,7 +158,7 @@ describe("schedule", () => {
       task(2, null, ...readyQueued),
       task(3, null, ...retried),
     ];
-    expect(schedule(tasks, projects, { ...config, maxRunning: 3 })).toEqual(ids(3, 2, 1));
+    expect(schedule(tasks, projects, { ...config, maxRunning: 3 }, 0)).toEqual(ids(3, 2, 1));
   });
 
   test("starts the oldest task first within a phase", () => {
@@ -157,6 +167,6 @@ describe("schedule", () => {
       task(1, null, ...readyQueued),
       task(2, null, ...readyQueued),
     ];
-    expect(schedule(tasks, projects, config)).toEqual(ids(1, 2));
+    expect(schedule(tasks, projects, config, 0)).toEqual(ids(1, 2));
   });
 });

@@ -164,17 +164,22 @@ function heldWorktree(task: Task): string | null {
   return null;
 }
 
-// What the slot limit counts: an agent running or starting, or a worktree
-// being created for one. A task past its gates has no agent, so it doesn't.
-function holdsSlot(task: Task): boolean {
+// An agent that has started and is running. Starts still in flight are
+// counted separately, the way the daemon counts them.
+function runsAgent(task: Task): boolean {
+  return runningSession(task) !== null;
+}
+
+// Whether the task was waiting for an agent or worktree to start, so a
+// failure report answers that start rather than reporting a crash.
+function wasStarting(task: Task | null): boolean {
+  if (task === null) return false;
   switch (task.phase) {
     case "spec":
     case "in_progress":
-      return task.step.kind === "starting" || task.step.kind === "running";
+      return task.step.kind === "starting";
     case "ready":
       return task.step.kind !== "queued";
-    case "checks":
-      return task.session !== null;
     default:
       return false;
   }
@@ -188,6 +193,15 @@ class Checker {
   task: Task | null = null;
   log: TaskEvent[] = [];
   liveSessions = new Set<Session>();
+  // Starts sent out and not yet answered, the way the daemon counts them.
+  // Kept by kind, since a reply only answers a request of its own kind, and
+  // worktrees by build, since a reply names the build it answers.
+  agentStarts = 0;
+  worktreeStarts = new Set<number>();
+
+  get startsInFlight(): number {
+    return this.agentStarts + this.worktreeStarts.size;
+  }
   liveWorktrees = new Set<string>();
   lastBuild = 0;
   // Since the last report of done: which gates passed, and whether the
@@ -312,6 +326,21 @@ class Checker {
 
   // Follows which agents and worktrees exist outside the core.
   private track(input: Input, events: TaskEvent[], commands: Command[], before: Task | null): void {
+    // A reply to a start the daemon sent, matched by kind. A failure report
+    // only answers a start if the task was waiting for one; otherwise it
+    // reports a crash.
+    const answersAgent =
+      input.type === "session_started" || (input.type === "session_failed" && wasStarting(before));
+    if (answersAgent && this.agentStarts > 0) this.agentStarts -= 1;
+    if (input.type === "worktree_created" || input.type === "worktree_failed") {
+      this.worktreeStarts.delete(input.build);
+    }
+    for (const command of commands) {
+      if (command.type === "start_spec_session" || command.type === "start_develop_session") {
+        this.agentStarts += 1;
+      }
+      if (command.type === "create_worktree") this.worktreeStarts.add(command.build);
+    }
     if (input.type === "session_started") this.liveSessions.add(input.session);
     if (input.type === "worktree_created") this.liveWorktrees.add(input.worktree.path);
     // A crashed agent is gone.
@@ -413,7 +442,8 @@ describe("the invariants", () => {
 
           sequence.forEach((step, i) => {
             if (step === "schedule") {
-              const picks = schedule(tasks(), projects, config);
+              const inFlight = checkers.reduce((sum, c) => sum + c.startsInFlight, 0);
+              const picks = schedule(tasks(), projects, config, inFlight);
               for (const id of picks) {
                 const task = tasks().find((t) => t.id === id);
                 // 9. The scheduler never picks a blocked task or one in a parked project.
@@ -433,7 +463,10 @@ describe("the invariants", () => {
               );
             }
             // 8. Never more than max_running agents at once.
-            expect(tasks().filter(holdsSlot).length).toBeLessThanOrEqual(config.maxRunning);
+            const inFlight = checkers.reduce((sum, c) => sum + c.startsInFlight, 0);
+            expect(tasks().filter(runsAgent).length + inFlight).toBeLessThanOrEqual(
+              config.maxRunning,
+            );
           });
         },
       ),

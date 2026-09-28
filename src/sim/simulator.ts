@@ -67,6 +67,9 @@ export class Simulator {
   private readonly asked = new Set<TaskId>();
   private now = 0;
   private counter = 0;
+  // Starts sent out and not yet answered, the way the daemon counts them
+  // for the scheduler.
+  private startsInFlight = 0;
 
   constructor(
     readonly config: Config,
@@ -109,7 +112,12 @@ export class Simulator {
         this.step(next.taskId, next.input);
         continue;
       }
-      const picks = schedule([...this.tasks.values()], this.projects, this.config);
+      const picks = schedule(
+        [...this.tasks.values()],
+        this.projects,
+        this.config,
+        this.startsInFlight,
+      );
       if (picks.length === 0) return;
       for (const taskId of picks)
         this.queue.push({ taskId, input: { by: "system", type: "start" } });
@@ -146,6 +154,7 @@ export class Simulator {
 
   private step(taskId: TaskId, input: Input): Decision {
     this.now += 1_000;
+    if (answersStart(input)) this.startsInFlight -= 1;
     const envelope = { taskId, at: this.now, input };
     const decision = decideTask(
       this.tasks.get(taskId) ?? null,
@@ -177,6 +186,7 @@ export class Simulator {
   // ---------------------------------------------------------------------------
 
   private carryOut(command: Command): void {
+    if (startsSomething(command)) this.startsInFlight += 1;
     switch (command.type) {
       case "start_spec_session":
         this.startAgent(command.taskId, "spec");
@@ -331,6 +341,23 @@ export class Simulator {
   private commit(): CommitSha {
     return CommitSha.parse(this.next().toString(16).padStart(40, "0"));
   }
+}
+
+function startsSomething(command: Command): boolean {
+  return (
+    command.type === "start_spec_session" ||
+    command.type === "start_develop_session" ||
+    command.type === "create_worktree"
+  );
+}
+
+function answersStart(input: Input): boolean {
+  return (
+    input.type === "session_started" ||
+    input.type === "session_failed" ||
+    input.type === "worktree_created" ||
+    input.type === "worktree_failed"
+  );
 }
 
 function waitingFor(task: Task): Waiting["for"] | null {
