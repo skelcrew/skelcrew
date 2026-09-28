@@ -101,7 +101,7 @@ decide(state, input, config):
 
 Inputs are everything that can happen to a task: an agent proposing done, a check result, a human answer, a work source signal, a clock tick. Phase transitions are one kind of outcome; many inputs change something without moving phase, and some are rejected (an agent proposing a merge, an issue dragged to Done by hand).
 
-**Scheduler.** A second pure function over all tasks decides what to start next. At most `max_running` agents work at once, counting both spec and develop sessions, so new work is paced by how many questions the developer can handle. It only starts tasks in active projects, or tasks with no project, and never starts a blocked task. Quota awareness comes later.
+**Scheduler.** A second pure function over all tasks decides what to start next. At most `max_running` agents work at once, counting both spec and develop sessions, so new work is paced by how many questions the developer can handle. An agent whose merge is waiting for the developer's approval does not count: it sits idle and cannot ask anything, and it stays open so a send-back reaches the agent that wrote the code. It only starts tasks in active projects, or tasks with no project, and never starts a blocked task. Quota awareness comes later.
 
 **Contracts and policies.** Small pure predicates called by decide: spec completeness, critical path match, attempts left. Each returns pass or fail with reasons, which become inbox text and record entries.
 
@@ -192,7 +192,7 @@ Item types:
 
 - **Question:** from spec or development, with two to four options plus free text.
 - **Approval:** a finished spec, or a merge touching critical paths, shown as a summary with approve or send back. A spec sent back returns to the spec agent with the developer's note. A merge sent back returns to In progress with the note.
-- **Blocked:** a task the core stopped, with its reason (gates failed repeatedly, safety cap reached, agent gave up, worktree or session failed) and options that fit it: retry, send back to spec, or drop. Retry resets the attempt count and the safety cap; the record keeps the totals. Only the core blocks tasks; agents ask questions or report giving up.
+- **Blocked:** a task the core stopped, with its reason (ran out of attempts, safety cap reached, agent gave up, worktree or session failed) and options that fit it: retry, send back to spec, or drop. Retry resets the attempt count and the safety cap; the record keeps the totals. Only the core blocks tasks; agents ask questions or report giving up.
 
   A blocked task keeps its phase and its worktree, but its agent is stopped, so it does not hold a slot while it waits. A task blocked during checks goes back to In progress. Retry puts the task back in the queue. When a slot is free, a new agent starts in the same worktree, with the last failure as its brief.
 
