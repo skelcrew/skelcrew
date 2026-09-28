@@ -472,7 +472,7 @@ const specRunning: EventBody[] = [
   { type: "task.spec_session_started", session },
 ];
 const capReached = { kind: "safety_cap" as const, usage: { tokens: 200_000, ms: 0 } };
-const gatesFailed = { kind: "gates_failed" as const, failure: localFailed };
+const outOfAttempts = { kind: "out_of_attempts" as const, failure: localFailed };
 
 describe("task.question_asked", () => {
   test("stores the question", () => {
@@ -570,7 +570,7 @@ describe("task.blocked", () => {
 
   test("is refused for a task that is already blocked", () => {
     const task = replay(...inProgress, { type: "task.blocked", reason: capReached });
-    expect(evolve(task, event({ type: "task.blocked", reason: gatesFailed }))).toEqual({
+    expect(evolve(task, event({ type: "task.blocked", reason: outOfAttempts }))).toEqual({
       ok: false,
       reason: "task.blocked can't apply: #12 is already blocked.",
     });
@@ -590,7 +590,7 @@ describe("task.unblocked", () => {
     ...inChecks,
     { type: "task.gate_failed", failure: localFailed },
     { type: "task.usage_recorded", usage },
-    { type: "task.blocked", reason: gatesFailed },
+    { type: "task.blocked", reason: outOfAttempts },
   ];
 
   test("clears the flag and resets the attempts and the safety cap", () => {
