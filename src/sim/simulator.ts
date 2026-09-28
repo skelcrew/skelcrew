@@ -210,6 +210,7 @@ export class Simulator {
           by: "plugin",
           type: "worktree_created",
           worktree: { path, branch },
+          build: command.build,
         });
         return;
       }

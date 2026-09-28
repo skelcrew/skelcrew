@@ -83,8 +83,17 @@ const inputPool: Input[] = [
   { by: "agent", type: "report_done", branch: { commits: 0, changedFiles: [] } },
   { by: "agent", type: "give_up", message: "Stuck." },
   { by: "plugin", type: "external_move", to: "Done" },
-  ...worktrees.map((worktree): Input => ({ by: "plugin", type: "worktree_created", worktree })),
-  { by: "plugin", type: "worktree_failed", message: "Disk full." },
+  ...worktrees.flatMap((worktree) =>
+    [1, 2, 3].map((build): Input => ({ by: "plugin", type: "worktree_created", worktree, build })),
+  ),
+  ...[1, 2, 3].map(
+    (build): Input => ({
+      by: "plugin",
+      type: "worktree_failed",
+      message: "Disk full.",
+      build,
+    }),
+  ),
   ...sessions.map((session): Input => ({ by: "plugin", type: "session_started", session })),
   { by: "plugin", type: "session_failed", message: "Crashed." },
   ...(["local", "review"] as const).flatMap((gate): Input[] => [

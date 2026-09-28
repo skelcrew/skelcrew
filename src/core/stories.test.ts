@@ -56,7 +56,7 @@ const start: Input = { by: "system", type: "start" };
 const started = (session: SessionId): Input => ({ by: "plugin", type: "session_started", session });
 const submitSpec: Input = { by: "agent", type: "submit_spec", spec };
 const approveSpec: Input = { by: "human", type: "approve_spec" };
-const worktreeCreated: Input = { by: "plugin", type: "worktree_created", worktree };
+const worktreeCreated: Input = { by: "plugin", type: "worktree_created", worktree, build: 1 };
 const reportDone = (branch: BranchFacts): Input => ({ by: "agent", type: "report_done", branch });
 const gate = (name: "local" | "review", ok: boolean): Input => ({
   by: "plugin",
