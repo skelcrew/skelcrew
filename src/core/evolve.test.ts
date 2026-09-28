@@ -387,17 +387,36 @@ describe("task.checks_passed", () => {
 });
 
 describe("task.merge_approval_requested", () => {
-  test("waits for the developer to approve the merge", () => {
+  test("waits for the developer to approve the merge, with the agent stopped", () => {
     expect(replay(...awaitingMergeApproval)).toMatchObject({
       phase: "checks",
       step: "merge_approval",
+      session: null,
     });
   });
 });
 
+describe("the agent stopping when the gates pass", () => {
+  test("clears the develop agent's open question, since no one is left to answer it", () => {
+    for (const next of [
+      { type: "task.merge_started" as const },
+      { type: "task.merge_approval_requested" as const, criticalFiles: ["src/auth/login.ts"] },
+    ]) {
+      const task = replay(
+        ...inChecks,
+        { type: "task.question_asked", question: developQuestion },
+        { type: "task.gate_passed", gate: "local", next: null },
+        { type: "task.checks_passed" },
+        next,
+      );
+      expect(task.question).toBeNull();
+    }
+  });
+});
+
 describe("task.merge_started", () => {
-  test("starts merging straight after the checks pass", () => {
-    expect(replay(...merging)).toMatchObject({ phase: "checks", step: "merging" });
+  test("starts merging straight after the checks pass, with the agent stopped", () => {
+    expect(replay(...merging)).toMatchObject({ phase: "checks", step: "merging", session: null });
   });
 
   test("starts merging once the developer approves", () => {
@@ -434,13 +453,14 @@ describe("task.merged", () => {
 });
 
 describe("task.merge_failed", () => {
-  test("sends the task back to the same agent with the failure, counting one attempt", () => {
+  test("queues the task for a new agent with the failure, counting one attempt", () => {
     expect(replay(...merging, { type: "task.merge_failed", failure: mergeFailed })).toMatchObject({
       phase: "in_progress",
       worktree,
-      step: { kind: "running", session },
+      step: { kind: "queued" },
       attempts: 1,
       lastFailure: mergeFailed,
+      note: null,
     });
   });
 
@@ -454,7 +474,7 @@ describe("task.merge_failed", () => {
 });
 
 describe("task.merge_sent_back", () => {
-  test("sends the task back to the same agent without counting an attempt", () => {
+  test("queues the task for a new agent with your note, without counting an attempt", () => {
     const task = replay(...awaitingMergeApproval, {
       type: "task.merge_sent_back",
       note: "Don't touch login.",
@@ -462,10 +482,30 @@ describe("task.merge_sent_back", () => {
     expect(task).toMatchObject({
       phase: "in_progress",
       worktree,
-      step: { kind: "running", session },
+      step: { kind: "queued" },
       attempts: 0,
       lastFailure: null,
+      note: "Don't touch login.",
     });
+  });
+
+  test("keeps the note until the next report of done", () => {
+    const task = replay(
+      ...awaitingMergeApproval,
+      { type: "task.merge_sent_back", note: "Don't touch login." },
+      { type: "task.dispatch_started" },
+      { type: "task.dispatched", session },
+    );
+    expect(task).toMatchObject({ step: { kind: "running", session }, note: "Don't touch login." });
+    const done = replay(
+      ...awaitingMergeApproval,
+      { type: "task.merge_sent_back", note: "Don't touch login." },
+      { type: "task.dispatch_started" },
+      { type: "task.dispatched", session },
+      { type: "task.done_reported", branch: branchFacts, gate: "local" },
+      { type: "task.gate_failed", failure: localFailed },
+    );
+    expect(done).toMatchObject({ phase: "in_progress", note: null });
   });
 
   test("is refused unless the merge is waiting for approval", () => {

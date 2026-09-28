@@ -170,6 +170,7 @@ function inReady(task: TaskIn<"ready">, event: TaskEvent): EvolvedTask {
         step: { kind: "running", session: event.session },
         attempts: 0,
         lastFailure: null,
+        note: null,
       });
     }
 
@@ -194,7 +195,7 @@ function inProgress(task: TaskIn<"in_progress">, event: TaskEvent): EvolvedTask 
       return ok({ ...task, step: { kind: "running", session: event.session } });
 
     case "task.done_reported": {
-      const { step, lastFailure: _lastFailure, ...rest } = task;
+      const { step, lastFailure: _lastFailure, note: _note, ...rest } = task;
       if (step.kind !== "running") return refuse(event, `#${task.id} has no agent running`);
       return ok({
         ...rest,
@@ -226,7 +227,7 @@ function inChecks(task: TaskIn<"checks">, event: TaskEvent): EvolvedTask {
     case "task.gate_failed": {
       const mismatch = gateMismatch(task, event.failure.step);
       if (mismatch) return refuse(event, mismatch);
-      return ok(backToAgent(task, task.attempts + 1, event.failure));
+      return ok(backToAgent(task, task.attempts + 1, event.failure, null));
     }
 
     // Only a fact for the record: every merge must follow a pass. The next
@@ -234,20 +235,22 @@ function inChecks(task: TaskIn<"checks">, event: TaskEvent): EvolvedTask {
     case "task.checks_passed":
       return ok(task);
 
+    // The agent is stopped once the gates pass, and its question with it.
+    // A send-back or a failed merge queues the task for a new agent, so it
+    // waits for a free slot.
     case "task.merge_approval_requested":
-      return ok({ ...task, step: "merge_approval" });
+      return ok({ ...task, step: "merge_approval", session: null, question: null });
 
-    // Not a failure, so no attempt is used. The note reaches the agent as
-    // a message.
+    // Not a failure, so no attempt is used. The note waits for the next agent.
     case "task.merge_sent_back":
       if (task.step !== "merge_approval") {
         return refuse(event, `#${task.id} isn't waiting for merge approval`);
       }
-      return ok(backToAgent(task, task.attempts, null));
+      return ok(backToAgent(task, task.attempts, null, event.note));
 
     case "task.merge_started":
       if (task.step === "merging") return refuse(event, `#${task.id} is already merging`);
-      return ok({ ...task, step: "merging" });
+      return ok({ ...task, step: "merging", session: null, question: null });
 
     case "task.merged": {
       if (task.step !== "merging") return refuse(event, `#${task.id} isn't merging`);
@@ -265,7 +268,7 @@ function inChecks(task: TaskIn<"checks">, event: TaskEvent): EvolvedTask {
     // A failed merge counts as an attempt, like a failed gate.
     case "task.merge_failed":
       if (task.step !== "merging") return refuse(event, `#${task.id} isn't merging`);
-      return ok(backToAgent(task, task.attempts + 1, event.failure));
+      return ok(backToAgent(task, task.attempts + 1, event.failure, null));
 
     case "task.spec_sent_back":
       return ok(backToSpec(task, task.spec, event.note));
@@ -337,24 +340,32 @@ function stopAgent(task: Task): Task | null {
       return { ...task, step: { kind: "queued" } };
     case "checks": {
       const { session: _session, branch: _branch, step: _step, ...rest } = task;
-      return { ...rest, phase: "in_progress", step: { kind: "queued" }, lastFailure: null };
+      return {
+        ...rest,
+        phase: "in_progress",
+        step: { kind: "queued" },
+        lastFailure: null,
+        note: null,
+      };
     }
     default:
       return null;
   }
 }
 
-// From Checks back to In progress, with the same agent. Its session stayed
-// open, so it still knows the code it wrote.
-function backToAgent(task: TaskIn<"checks">, attempts: number, lastFailure: Failure | null): Task {
+// From Checks back to In progress. While a gate runs, the same agent is
+// still open and carries on. Once the gates have passed, its agent was
+// stopped, so the task waits for a new one, with the failure or your note.
+function backToAgent(
+  task: TaskIn<"checks">,
+  attempts: number,
+  lastFailure: Failure | null,
+  note: string | null,
+): Task {
   const { session, branch: _branch, step: _step, ...rest } = task;
-  return {
-    ...rest,
-    phase: "in_progress",
-    step: { kind: "running", session },
-    attempts,
-    lastFailure,
-  };
+  const step =
+    session === null ? { kind: "queued" as const } : { kind: "running" as const, session };
+  return { ...rest, phase: "in_progress", step, attempts, lastFailure, note };
 }
 
 // Returns what doesn't match between a gate result and the running gate,

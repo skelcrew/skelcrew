@@ -128,14 +128,19 @@ export type PhaseState =
       step: DevelopStep;
       attempts: number; // failed gate or merge rounds since the last retry
       lastFailure: Failure | null; // sent to the agent so it can fix it
+      // Your note from sending a merge back, for the next agent. Kept until
+      // the agent reports done again.
+      note: string | null;
     }
   | {
       phase: "checks";
       spec: Spec;
       worktree: Worktree;
-      // The develop session stays open during checks, so a failure can go
-      // straight back to the agent that wrote the code.
-      session: SessionId;
+      // The develop session stays open while the gates run, so a failure can
+      // go straight back to the agent that wrote the code. Once they pass,
+      // the agent is stopped and this is null: an idle agent waiting for a
+      // merge would otherwise wake up later without a free slot.
+      session: SessionId | null;
       attempts: number;
       branch: BranchFacts;
       step: GateName | "merge_approval" | "merging";
@@ -398,8 +403,10 @@ export type Command =
       taskId: TaskId;
       worktree: Worktree;
       spec: Spec;
-      // Set when a retry starts a new agent: the failure it must fix first.
+      // Set when a new agent picks up after a failure: what it must fix first.
       lastFailure: Failure | null;
+      // Set after you send a merge back: what you asked for.
+      note: string | null;
     }
   | { type: "send_to_session"; session: SessionId; text: string }
   | { type: "stop_session"; session: SessionId }
@@ -428,8 +435,8 @@ export type Config = {
   gates: GateName[]; // in order; "remote" only when a plugin reports it
   maxAttempts: number; // failed rounds before the task is blocked
   // Counts spec and develop sessions together. Both can ask questions, so
-  // both use up the developer's attention. An agent whose merge waits for
-  // approval is not counted: it is idle and can't ask anything.
+  // both use up the developer's attention. A task past its gates holds no
+  // slot: its agent is stopped while the merge waits or runs.
   maxRunning: number;
   specApproval: "always" | "never";
   criticalPaths: string[]; // globs; a match sends the merge to the inbox
@@ -496,8 +503,8 @@ export type EvolveProject = (project: Project | null, event: ProjectEvent) => Ev
 export type EvolvedProject = { ok: true; project: Project } | { ok: false; reason: string };
 
 // Picks which queued tasks in Spec, Ready or In progress to start next. It
-// keeps running sessions at or below maxRunning, not counting agents whose
-// merge waits for approval. It skips blocked tasks and tasks in parked
+// keeps running sessions at or below maxRunning. A task past its gates
+// holds no slot, since its agent is stopped. It skips blocked tasks and tasks in parked
 // projects. It only proposes: each pick becomes a "start" input that decide
 // can reject.
 //
