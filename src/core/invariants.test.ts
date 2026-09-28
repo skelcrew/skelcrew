@@ -96,10 +96,13 @@ const inputPool: Input[] = [
   ),
   ...sessions.map((session): Input => ({ by: "plugin", type: "session_started", session })),
   { by: "plugin", type: "session_failed", message: "Crashed." },
-  ...(["local", "review"] as const).flatMap((gate): Input[] => [
-    { by: "plugin", type: "gate_result", gate, ok: true, summary: "Passed." },
-    { by: "plugin", type: "gate_result", gate, ok: false, summary: "Failed." },
-  ]),
+  // Rounds 1 to 6, so results from earlier rounds arrive late too.
+  ...(["local", "review"] as const).flatMap((gate) =>
+    [1, 2, 3, 4, 5, 6].flatMap((round): Input[] => [
+      { by: "plugin", type: "gate_result", gate, round, ok: true, summary: "Passed." },
+      { by: "plugin", type: "gate_result", gate, round, ok: false, summary: "Failed." },
+    ]),
+  ),
   { by: "plugin", type: "merged", commit },
   { by: "plugin", type: "merge_failed", summary: "Conflicts." },
   { by: "system", type: "start" },

@@ -58,10 +58,12 @@ const submitSpec: Input = { by: "agent", type: "submit_spec", spec };
 const approveSpec: Input = { by: "human", type: "approve_spec" };
 const worktreeCreated: Input = { by: "plugin", type: "worktree_created", worktree, build: 1 };
 const reportDone = (branch: BranchFacts): Input => ({ by: "agent", type: "report_done", branch });
-const gate = (name: "local" | "review", ok: boolean): Input => ({
+// Each report of done starts a new round of checks.
+const gate = (name: "local" | "review", ok: boolean, round = 1): Input => ({
   by: "plugin",
   type: "gate_result",
   gate: name,
+  round,
   ok,
   summary: ok ? "Passed." : "2 tests failed in export.test.ts",
 });
@@ -170,18 +172,18 @@ describe("golden stories", () => {
     const told = tell([
       ...toInProgress,
       reportDone(exportBranch),
-      gate("local", false),
+      gate("local", false, 1),
       reportDone(exportBranch),
-      gate("local", false),
+      gate("local", false, 2),
       reportDone(exportBranch),
-      gate("local", false),
+      gate("local", false, 3),
       reportDone(exportBranch),
       retry,
       start,
       started(developAgent),
       reportDone(exportBranch),
-      gate("local", true),
-      gate("review", true),
+      gate("local", true, 4),
+      gate("review", true, 4),
       merged,
     ]);
     expect(told.lines).toEqual([

@@ -23,6 +23,7 @@ export const evolveTask: EvolveTask = (task, event) => {
       question: null,
       blocked: null,
       builds: 0,
+      rounds: 0,
       usage: noUsage,
       usageAtRetry: noUsage,
     });
@@ -203,6 +204,7 @@ function inProgress(task: TaskIn<"in_progress">, event: TaskEvent): EvolvedTask 
         session: step.session,
         branch: event.branch,
         step: event.gate,
+        rounds: task.rounds + 1,
       });
     }
 
@@ -319,6 +321,7 @@ function shared(task: Task) {
     question: null,
     blocked: null,
     builds: task.builds,
+    rounds: task.rounds,
     usage: task.usage,
     usageAtRetry: task.usageAtRetry,
   };

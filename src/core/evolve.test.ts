@@ -50,6 +50,7 @@ describe("task.created", () => {
         question: null,
         blocked: null,
         builds: 0,
+        rounds: 0,
         usage: { tokens: 0, ms: 0 },
         usageAtRetry: { tokens: 0, ms: 0 },
       },

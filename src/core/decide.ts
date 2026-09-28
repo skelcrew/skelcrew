@@ -392,7 +392,7 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
       if (gate === undefined) return reject("workflow.yml has no gates.");
       return accept(
         [{ type: "task.done_reported", branch: input.branch, gate }],
-        [{ type: "run_gate", taskId: task.id, gate, worktree }],
+        [{ type: "run_gate", taskId: task.id, gate, round: task.rounds + 1, worktree }],
       );
     }
 
@@ -411,6 +411,12 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
 
   switch (input.type) {
     case "gate_result": {
+      // A late result from an earlier round checked code that has changed.
+      if (input.round !== task.rounds) {
+        return reject(
+          `This result is from round ${input.round} of #${task.id}'s checks. They are on round ${task.rounds}.`,
+        );
+      }
       if (task.step !== input.gate) {
         const running =
           task.step === "merge_approval" || task.step === "merging"
@@ -429,7 +435,15 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
       if (next !== null) {
         return accept(
           [passed],
-          [{ type: "run_gate", taskId: task.id, gate: next, worktree: task.worktree }],
+          [
+            {
+              type: "run_gate",
+              taskId: task.id,
+              gate: next,
+              round: task.rounds,
+              worktree: task.worktree,
+            },
+          ],
         );
       }
 
