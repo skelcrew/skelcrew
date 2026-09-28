@@ -48,7 +48,7 @@ do, lose work, or leave the developer looking at a wrong picture.
     Spec. A question from the develop agent only exists in In progress or Checks.
 16. **A blocked task has no agent running.**
 17. **Dropped is final.** A dropped task records no more events. A late worktree or
-    agent is only removed or stopped. A Done task only accepts a revert, git's answer
+    agent is only removed or stopped. A Done task only accepts a revert, the answer
     to it, and a late usage report so the record keeps the true cost.
 
 ## Replay

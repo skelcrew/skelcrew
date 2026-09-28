@@ -300,8 +300,8 @@ function inDone(task: TaskIn<"done">, event: TaskEvent): EvolvedTask {
     case "task.revert_failed":
       return ok({ ...task, reverting: null, revertFailure: event.summary });
 
-    // Git has reverted. The reason becomes the note, so the redone spec
-    // addresses it.
+    // The revert has happened. The reason becomes the note, so the redone
+    // spec addresses it.
     case "task.reverted":
       if (task.reverting === null) return refuse(event, `#${task.id} isn't being reverted`);
       return ok(backToSpec(task, task.spec, event.reason));

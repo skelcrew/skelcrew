@@ -93,9 +93,9 @@ export type SourceRef = {
   url: string;
 };
 
-// Facts about the task's branch, gathered by the shell from git. The core
-// never runs git itself; the shell attaches these when the agent reports
-// done. `commits` enforces "branch has commits"; `changedFiles` feeds the
+// Facts about the task's branch, gathered by the shell from version control.
+// The core never runs version control itself; the shell attaches these when
+// the agent reports done. `commits` enforces "branch has commits"; `changedFiles` feeds the
 // critical path check.
 export type BranchFacts = {
   commits: number;
@@ -154,10 +154,10 @@ export type PhaseState =
       phase: "done";
       spec: Spec;
       mergeCommit: CommitSha;
-      // A revert is two steps, like a merge: git is asked, then answers. The
-      // task stays Done until git has reverted, so the record never says a
-      // revert happened when it didn't. `reverting` holds the reason while
-      // git works; `revertFailure` says why the last attempt failed.
+      // A revert is two steps, like a merge: version control is asked, then
+      // answers. The task stays Done until the revert has happened, so the
+      // record never says it did when it didn't. `reverting` holds the reason
+      // while it runs; `revertFailure` says why the last attempt failed.
       reverting: string | null;
       revertFailure: string | null;
     }
@@ -291,7 +291,7 @@ export type HumanInput =
 export type AgentInput =
   | { type: "submit_spec"; spec: Spec }
   | { type: "ask"; text: string; options: string[] }
-  | { type: "report_done"; branch: BranchFacts } // shell attaches git facts
+  | { type: "report_done"; branch: BranchFacts } // shell attaches branch facts
   | { type: "give_up"; message: string };
 
 // Plugin inputs are either results of commands the core sent, or signals
