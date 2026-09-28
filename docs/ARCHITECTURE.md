@@ -113,7 +113,9 @@ task. That's how "prompts propose, the core decides" is enforced.
 
 ## Tests
 
-Tests sit next to the code: `decide.ts` and `decide.test.ts`.
+Tests sit next to the code: `decide.ts` and `decide.test.ts`. Values they share, such
+as the base config, a spec and a worktree, live in `src/test/fixtures.ts`. A test that
+needs a different config spreads the base one and changes only the fields it is about.
 
 - **One test per rule**, allowed and rejected. The tests build a task in any phase by
   sending it real inputs, through a helper called `run` (or `replay` in the `evolveTask`

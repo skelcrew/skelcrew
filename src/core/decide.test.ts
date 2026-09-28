@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { agentOf, awaited, commit, config, id, session, spec, worktree } from "../test/fixtures";
 import { decideTask } from "./decide";
 import { evolveTask } from "./evolve";
 import { CommitSha, ProjectId, SessionId, TaskId } from "./ids";
@@ -16,17 +17,7 @@ import type {
   TaskEvent,
 } from "./types";
 
-const id = TaskId.parse(12);
 const at = 5_000;
-
-const config: Config = {
-  gates: ["local", "review"],
-  maxAttempts: 3,
-  maxRunning: 2,
-  specApproval: "always",
-  criticalPaths: ["src/auth/**"],
-  safetyCap: { tokens: 200_000, ms: 60 * 60_000 },
-};
 
 const reports = ProjectId.parse("reports");
 const archive = ProjectId.parse("archive");
@@ -46,17 +37,6 @@ type Step = Input | ((task: Task | null) => Input);
 function send(task: Task | null, step: Step, withConfig: Config = config): Decision {
   const input = typeof step === "function" ? step(task) : step;
   return decideTask(task, { taskId: id, at, input }, withConfig, projects);
-}
-
-// The session of the task's running agent, the way the daemon names the
-// sender of an agent's report. "nobody" when no agent is running.
-function agentOf(task: Task | null): SessionId {
-  return (task && runningSession(task)) ?? SessionId.parse("nobody");
-}
-
-// The request the task's current step waits on, or 0 if none.
-function awaited(task: Task | null): number {
-  return (task && awaitedRequest(task)) ?? 0;
 }
 
 // Sends each input in turn and applies the accepted events with evolve, the
@@ -216,12 +196,6 @@ describe("any input", () => {
 // Spec
 // ---------------------------------------------------------------------------
 
-const spec: Spec = {
-  scope: "Add a CSV export button to the reports page.",
-  acceptance: ["Clicking Export downloads a CSV of the visible rows."],
-  openQuestions: [],
-};
-const session = SessionId.parse("session-1");
 const neverApprove: Config = { ...config, specApproval: "never" };
 
 const start: Input = { by: "system", type: "start" };
@@ -434,7 +408,6 @@ describe("revise_spec", () => {
 // Ready
 // ---------------------------------------------------------------------------
 
-const worktree = { path: "/repo/.worktrees/12", branch: "task/12-csv-export" };
 const developSession = SessionId.parse("session-2");
 const worktreeCreated: Step = (t) => ({
   by: "plugin",
@@ -788,7 +761,6 @@ describe("gate_result, failing", () => {
 // Checks: the merge
 // ---------------------------------------------------------------------------
 
-const commit = CommitSha.parse("b".repeat(40));
 const authBranch = { commits: 2, changedFiles: ["src/reports/export.ts", "src/auth/login.ts"] };
 const reportAuthDone = reportWith(authBranch);
 const approveMerge: Input = { by: "human", type: "approve_merge" };

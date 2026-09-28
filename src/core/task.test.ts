@@ -1,14 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { commit, id, session, spec, worktree } from "../test/fixtures";
 import { evolveTask } from "./evolve";
 import { CommitSha, SessionId, TaskId } from "./ids";
 import { waitingOnYou } from "./task";
 import type { EventBody, Spec, Task } from "./types";
-
-const id = TaskId.parse(12);
-const session = SessionId.parse("session-1");
-const spec: Spec = { scope: "Export CSV.", acceptance: ["It downloads."], openQuestions: [] };
-const worktree = { path: "/repo/.worktrees/12", branch: "task/12-csv-export" };
-const commit = CommitSha.parse("a".repeat(40));
 
 function replay(...bodies: EventBody[]): Task {
   let task: Task | null = null;

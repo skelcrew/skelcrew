@@ -6,16 +6,10 @@ import { join } from "node:path";
 import { ProjectId, TaskId } from "../core/ids";
 import type { Config, ProjectEvent, TaskEvent } from "../core/types";
 import { Simulator } from "../sim/simulator";
+import { config as base } from "../test/fixtures";
 import { EventStore } from "./store";
 
-const config: Config = {
-  gates: ["local", "review"],
-  maxAttempts: 2,
-  maxRunning: 2,
-  specApproval: "never",
-  criticalPaths: ["src/auth/**"],
-  safetyCap: { tokens: 200_000, ms: 60 * 60_000 },
-};
+const config: Config = { ...base, maxAttempts: 2, specApproval: "never" };
 
 // Three tasks run to the end, one of them through a failed gate and a merge
 // conflict, and a fourth left as an idea.

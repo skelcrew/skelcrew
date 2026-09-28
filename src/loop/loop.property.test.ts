@@ -12,15 +12,15 @@ import { decideTask } from "../core/decide";
 import { CommitSha, SessionId, TaskId } from "../core/ids";
 import type { Command, Config, Input, Spec, Task, TaskEvent } from "../core/types";
 import { EventStore } from "../store/store";
+import { config as base } from "../test/fixtures";
 import { type EventLog, Loop, type ReadableLog, type Starts, type Tools } from "./loop";
 
 const config: Config = {
+  ...base,
   gates: ["local"],
   maxAttempts: 2,
-  maxRunning: 2,
   specApproval: "never",
   criticalPaths: [],
-  safetyCap: { tokens: 200_000, ms: 60 * 60_000 },
 };
 const spec: Spec = { scope: "Export CSV.", acceptance: ["It downloads."], openQuestions: [] };
 const commit = CommitSha.parse("c".repeat(40));

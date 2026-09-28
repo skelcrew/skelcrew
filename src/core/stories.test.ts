@@ -9,32 +9,17 @@
 // `bun test --update-snapshots`, and say why in the commit.
 
 import { describe, expect, test } from "bun:test";
+import { agentOf, awaited, commit, config, id, spec, worktree } from "../test/fixtures";
 import { decideTask } from "./decide";
 import { evolveTask } from "./evolve";
 import { CommitSha, type ProjectId, SessionId, TaskId } from "./ids";
 import { awaitedRequest, runningSession } from "./task";
 import type { BranchFacts, Command, Config, Input, Project, Spec, Task, TaskEvent } from "./types";
 
-const config: Config = {
-  gates: ["local", "review"],
-  maxAttempts: 3,
-  maxRunning: 2,
-  specApproval: "always",
-  criticalPaths: ["src/auth/**"],
-  safetyCap: { tokens: 200_000, ms: 60 * 60_000 },
-};
 const projects = new Map<ProjectId, Project>();
-const id = TaskId.parse(12);
 
-const spec: Spec = {
-  scope: "Add a CSV export button to the reports page.",
-  acceptance: ["Clicking Export downloads a CSV of the visible rows."],
-  openQuestions: [],
-};
-const worktree = { path: "/repo/.worktrees/12", branch: "task/12-csv-export" };
 const specAgent = SessionId.parse("spec-1");
 const developAgent = SessionId.parse("develop-1");
-const commit = CommitSha.parse("a".repeat(40));
 const exportBranch: BranchFacts = { commits: 3, changedFiles: ["src/reports/export.ts"] };
 const authBranch: BranchFacts = {
   commits: 2,
@@ -57,17 +42,6 @@ const start: Input = { by: "system", type: "start" };
 // Replies answer the request the task is waiting on, the way the daemon
 // matches them.
 type Step = Input | ((task: Task | null) => Input);
-
-// The session of the task's running agent, the way the daemon names the
-// sender of an agent's report. "nobody" when no agent is running.
-function agentOf(task: Task | null): SessionId {
-  return (task && runningSession(task)) ?? SessionId.parse("nobody");
-}
-
-// The request the task's current step waits on, or 0 if none.
-function awaited(task: Task | null): number {
-  return (task && awaitedRequest(task)) ?? 0;
-}
 
 const started =
   (session: SessionId): Step =>

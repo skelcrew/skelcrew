@@ -1,15 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { Config } from "../core/types";
+import { config } from "../test/fixtures";
 import { Simulator } from "./simulator";
 
-const config: Config = {
-  gates: ["local", "review"],
-  maxAttempts: 3,
-  maxRunning: 2,
-  specApproval: "always",
-  criticalPaths: ["src/auth/**"],
-  safetyCap: { tokens: 200_000, ms: 60 * 60_000 },
-};
 const noApproval: Config = { ...config, specApproval: "never" };
 
 function count(sim: Simulator, type: string): number {

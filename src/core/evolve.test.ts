@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { commit, id, session, spec, worktree } from "../test/fixtures";
 import { evolveTask } from "./evolve";
 import { CommitSha, ProjectId, SessionId, TaskId } from "./ids";
 import type { EventBody, Spec, Task, TaskEvent } from "./types";
 
-const id = TaskId.parse(12);
 const at = 1_000;
 
 function event(body: EventBody): TaskEvent {
@@ -42,12 +42,6 @@ const created: EventBody = {
   title: "CSV export",
   project: null,
   source: null,
-};
-
-const spec: Spec = {
-  scope: "Add a CSV export button to the reports page.",
-  acceptance: ["Clicking Export downloads a CSV of the visible rows."],
-  openQuestions: [],
 };
 
 describe("task.created", () => {
@@ -150,7 +144,6 @@ describe("every other field", () => {
   });
 });
 
-const session = SessionId.parse("session-1");
 const inSpec: Body[] = [created, { type: "task.spec_requested" }];
 const specced: Body[] = [...inSpec, { type: "task.specced", spec, by: "agent" }];
 
@@ -217,7 +210,6 @@ describe("task.ready", () => {
   });
 });
 
-const worktree = { path: "/repo/.worktrees/12", branch: "task/12-csv-export" };
 const worktreeCreated: Body = (t) => ({
   type: "task.worktree_created",
   worktree,
@@ -389,7 +381,6 @@ describe("task.gate_failed", () => {
   });
 });
 
-const commit = CommitSha.parse("a".repeat(40));
 const checksPassed: Body[] = [
   ...inChecks,
   { type: "task.gate_passed", gate: "local", next: null },

@@ -1,17 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { config as base } from "../test/fixtures";
 import { evolveTask } from "./evolve";
 import { ProjectId, SessionId, TaskId } from "./ids";
 import { schedule } from "./schedule";
 import type { Config, EventBody, Project, Spec, Task } from "./types";
 
-const config: Config = {
-  gates: ["local"],
-  maxAttempts: 3,
-  maxRunning: 2,
-  specApproval: "always",
-  criticalPaths: [],
-  safetyCap: { tokens: 200_000, ms: 60 * 60_000 },
-};
+const config: Config = { ...base, gates: ["local"], criticalPaths: [] };
 
 const reports = ProjectId.parse("reports");
 const archive = ProjectId.parse("archive");

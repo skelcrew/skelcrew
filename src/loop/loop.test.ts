@@ -2,15 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { ProjectId, SessionId, TaskId } from "../core/ids";
 import type { Command, Config, Input } from "../core/types";
 import { EventStore } from "../store/store";
+import { config as base } from "../test/fixtures";
 import { type EventLog, Loop, type Tools } from "./loop";
 
 const config: Config = {
+  ...base,
   gates: ["local"],
-  maxAttempts: 3,
   maxRunning: 1,
   specApproval: "never",
   criticalPaths: [],
-  safetyCap: { tokens: 200_000, ms: 60 * 60_000 },
 };
 
 // Tools that only remember what they were asked to do.
