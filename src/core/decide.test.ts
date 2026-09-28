@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { decide } from "./decide";
-import { evolve } from "./evolve";
+import { decideTask } from "./decide";
+import { evolveTask } from "./evolve";
 import { CommitSha, ProjectId, SessionId, TaskId } from "./ids";
 import type {
   Config,
@@ -37,7 +37,7 @@ const projects = new Map<ProjectId, Project>([
 ]);
 
 function send(task: Task | null, input: Input, withConfig: Config = config): Decision {
-  return decide(task, { taskId: id, at, input }, withConfig, projects);
+  return decideTask(task, { taskId: id, at, input }, withConfig, projects);
 }
 
 // Sends each input in turn and applies the accepted events with evolve, the
@@ -53,7 +53,7 @@ function runWith(withConfig: Config, ...inputs: Input[]): Task {
     const decision = send(task, input, withConfig);
     if (!decision.ok) throw new Error(decision.rejection.reason);
     for (const event of decision.events) {
-      const result = evolve(task, event);
+      const result = evolveTask(task, event);
       if (!result.ok) throw new Error(result.reason);
       task = result.task;
     }

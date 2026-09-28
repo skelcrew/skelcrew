@@ -6,11 +6,11 @@
 // the phase they apply in, one function per phase, in lifecycle order.
 
 import { phaseNames, type TaskIn } from "./phases";
-import type { Evolve, Evolved, Failure, Spec, Task, TaskEvent } from "./types";
+import type { EvolvedTask, EvolveTask, Failure, Spec, Task, TaskEvent } from "./types";
 
 const noUsage = { tokens: 0, ms: 0 };
 
-export const evolve: Evolve = (task, event) => {
+export const evolveTask: EvolveTask = (task, event) => {
   if (event.type === "task.created") {
     if (task !== null) return refuse(event, `#${event.taskId} already exists`);
     return ok({
@@ -95,7 +95,7 @@ export const evolve: Evolve = (task, event) => {
   }
 };
 
-function inIdea(task: TaskIn<"idea">, event: TaskEvent): Evolved {
+function inIdea(task: TaskIn<"idea">, event: TaskEvent): EvolvedTask {
   switch (event.type) {
     case "task.spec_requested":
       return ok({ ...task, phase: "spec", spec: null, note: null, step: { kind: "queued" } });
@@ -104,7 +104,7 @@ function inIdea(task: TaskIn<"idea">, event: TaskEvent): Evolved {
   }
 }
 
-function inSpec(task: TaskIn<"spec">, event: TaskEvent): Evolved {
+function inSpec(task: TaskIn<"spec">, event: TaskEvent): EvolvedTask {
   switch (event.type) {
     case "task.dispatch_started":
       return ok({ ...task, step: { kind: "starting" } });
@@ -137,7 +137,7 @@ function inSpec(task: TaskIn<"spec">, event: TaskEvent): Evolved {
   }
 }
 
-function inReady(task: TaskIn<"ready">, event: TaskEvent): Evolved {
+function inReady(task: TaskIn<"ready">, event: TaskEvent): EvolvedTask {
   switch (event.type) {
     // Each start is a new build with its own branch. The count goes up
     // before the worktree exists, so a failed try never reuses it.
@@ -173,7 +173,7 @@ function inReady(task: TaskIn<"ready">, event: TaskEvent): Evolved {
   }
 }
 
-function inProgress(task: TaskIn<"in_progress">, event: TaskEvent): Evolved {
+function inProgress(task: TaskIn<"in_progress">, event: TaskEvent): EvolvedTask {
   switch (event.type) {
     // After a retry: a new agent in the same worktree.
     case "task.dispatch_started":
@@ -205,7 +205,7 @@ function inProgress(task: TaskIn<"in_progress">, event: TaskEvent): Evolved {
   }
 }
 
-function inChecks(task: TaskIn<"checks">, event: TaskEvent): Evolved {
+function inChecks(task: TaskIn<"checks">, event: TaskEvent): EvolvedTask {
   switch (event.type) {
     // After the last gate, the step stays put. decide writes
     // task.checks_passed in the same batch, and that moves the task on.
@@ -267,7 +267,7 @@ function inChecks(task: TaskIn<"checks">, event: TaskEvent): Evolved {
   }
 }
 
-function inDone(task: TaskIn<"done">, event: TaskEvent): Evolved {
+function inDone(task: TaskIn<"done">, event: TaskEvent): EvolvedTask {
   switch (event.type) {
     // The revert reason becomes the note, so the redone spec addresses it.
     case "task.reverted":
@@ -281,15 +281,15 @@ function inDone(task: TaskIn<"done">, event: TaskEvent): Evolved {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function ok(task: Task): Evolved {
+function ok(task: Task): EvolvedTask {
   return { ok: true, task };
 }
 
-function refuse(event: TaskEvent, why: string): Evolved {
+function refuse(event: TaskEvent, why: string): EvolvedTask {
   return { ok: false, reason: `${event.type} can't apply: ${why}.` };
 }
 
-function wrongPhase(event: TaskEvent, task: Task): Evolved {
+function wrongPhase(event: TaskEvent, task: Task): EvolvedTask {
   return {
     ok: false,
     reason: `${event.type} can't apply to #${task.id} in ${phaseNames[task.phase]}.`,
