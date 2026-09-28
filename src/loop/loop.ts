@@ -37,9 +37,16 @@ export interface Tools {
   carryOut(command: Command): void;
 }
 
-// Where events are saved. EventStore is the real one.
+// A start the loop has sent out: an agent or worktree for one request.
+export type StartRef = { taskId: TaskId; request: number };
+
+// Where events are saved, with the starts each decision sent out and the one
+// its input answered. EventStore is the real one.
 export interface EventLog {
-  appendTask(events: TaskEvent[]): { ok: true } | { ok: false; reason: string };
+  appendTask(
+    events: TaskEvent[],
+    starts: { sent: StartRef[]; answered: StartRef[] },
+  ): { ok: true } | { ok: false; reason: string };
   appendProject(events: ProjectEvent[]): { ok: true } | { ok: false; reason: string };
 }
 
@@ -49,6 +56,7 @@ export interface ReadableLog extends EventLog {
   loadProjects():
     | { ok: true; projects: Map<ProjectId, Project> }
     | { ok: false; seq: number; reason: string };
+  loadStarts(): StartRef[];
 }
 
 export class Loop {
@@ -63,9 +71,11 @@ export class Loop {
     private readonly log: EventLog | null,
     tasks: Map<TaskId, Task> = new Map(),
     projects: Map<ProjectId, Project> = new Map(),
+    starts: StartRef[] = [],
   ) {
     this.taskMap = tasks;
     this.projectMap = projects;
+    for (const start of starts) this.pending.add(key(start.taskId, start.request));
   }
 
   // Rebuilds tasks and projects from a saved log, then carries on from there.
@@ -78,7 +88,10 @@ export class Loop {
     if (!tasks.ok) return { ok: false, reason: `Event ${tasks.seq}: ${tasks.reason}` };
     const projects = log.loadProjects();
     if (!projects.ok) return { ok: false, reason: `Event ${projects.seq}: ${projects.reason}` };
-    return { ok: true, loop: new Loop(config, tools, log, tasks.tasks, projects.projects) };
+    return {
+      ok: true,
+      loop: new Loop(config, tools, log, tasks.tasks, projects.projects, log.loadStarts()),
+    };
   }
 
   get startsInFlight(): number {
@@ -105,28 +118,27 @@ export class Loop {
     const before = this.taskMap.get(taskId) ?? null;
     const decision = decideTask(before, { taskId, at, input }, this.config, this.projectMap);
     // A reply answers its start once it has been handled: refused, or its
-    // events saved. If saving fails below, the start stays counted, since
-    // the task never recorded what the reply said.
+    // events saved. If saving fails, the start stays counted, since the task
+    // never recorded what the reply said.
+    const answered = answersStart(input) ? [{ taskId, request: input.request }] : [];
     if (!decision.ok) {
-      this.answered(taskId, input);
+      this.save([], { sent: [], answered });
       return decision;
     }
 
-    if (this.log !== null && decision.events.length > 0) {
-      const saved = this.log.appendTask(decision.events);
-      if (!saved.ok) {
-        return {
-          ok: false,
-          rejection: { input: input.type, reason: `The events couldn't be saved: ${saved.reason}` },
-        };
-      }
+    const sent = decision.commands.filter(startsSomething).map((command) => ({
+      taskId: command.taskId,
+      request: command.request,
+    }));
+    const saved = this.save(decision.events, { sent, answered });
+    if (!saved.ok) {
+      return {
+        ok: false,
+        rejection: { input: input.type, reason: `The events couldn't be saved: ${saved.reason}` },
+      };
     }
-    this.answered(taskId, input);
     for (const event of decision.events) this.apply(event);
-    for (const command of decision.commands) {
-      if (startsSomething(command)) this.pending.add(key(command.taskId, command.request));
-      this.tools.carryOut(command);
-    }
+    for (const command of decision.commands) this.tools.carryOut(command);
     return decision;
   }
 
@@ -160,8 +172,20 @@ export class Loop {
     return picks;
   }
 
-  private answered(taskId: TaskId, input: Input): void {
-    if (answersStart(input)) this.pending.delete(key(taskId, input.request));
+  // Saves a decision's events and starts, then updates the count of starts
+  // in flight to match. Nothing changes if saving fails.
+  private save(
+    events: TaskEvent[],
+    starts: { sent: StartRef[]; answered: StartRef[] },
+  ): { ok: true } | { ok: false; reason: string } {
+    const nothing = events.length === 0 && starts.sent.length === 0 && starts.answered.length === 0;
+    if (this.log !== null && !nothing) {
+      const saved = this.log.appendTask(events, starts);
+      if (!saved.ok) return saved;
+    }
+    for (const start of starts.answered) this.pending.delete(key(start.taskId, start.request));
+    for (const start of starts.sent) this.pending.add(key(start.taskId, start.request));
+    return { ok: true };
   }
 
   // decideTask never produces an event evolveTask refuses. If it ever does,

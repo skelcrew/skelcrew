@@ -120,8 +120,8 @@ describe("the loop", () => {
     let full = false;
     const store = EventStore.open(":memory:");
     const flaky: EventLog = {
-      appendTask: (events) =>
-        full ? { ok: false, reason: "disk full" } : store.appendTask(events),
+      appendTask: (events, starts) =>
+        full ? { ok: false, reason: "disk full" } : store.appendTask(events, starts),
       appendProject: (events) => store.appendProject(events),
     };
     const loop = new Loop(config, new Recorded(), flaky);
@@ -151,6 +151,24 @@ describe("the loop", () => {
     loop.send(one, { by: "human", type: "request_spec" });
     const saved = store.loadTasks();
     expect(saved.ok && saved.tasks.get(one)?.phase).toBe("spec");
+  });
+
+  test("still counts a start in flight after a restart", () => {
+    const store = EventStore.open(":memory:");
+    const first = new Loop(config, new Recorded(), store);
+    first.send(one, add());
+    first.send(two, add());
+    expect(first.startWaiting()).toEqual([one]);
+
+    // The loop restarts before #1's agent reports in.
+    const reopened = Loop.open(config, new Recorded(), store);
+    if (!reopened.ok) throw new Error(reopened.reason);
+    expect(reopened.loop.startsInFlight).toBe(1);
+    expect(reopened.loop.startWaiting()).toEqual([]);
+
+    // Its reply still clears the start after the restart.
+    reopened.loop.send(one, started(1, "s1"));
+    expect(reopened.loop.startsInFlight).toBe(0);
   });
 
   test("creates and parks projects, and won't start a task in a parked one", () => {
