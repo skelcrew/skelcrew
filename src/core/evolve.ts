@@ -47,6 +47,27 @@ export const evolve: Evolve = (task, event) => {
         task: { ...task, spec: event.spec, note: null, step: { kind: "awaiting_approval" } },
       };
 
+    case "task.dispatch_started":
+      if (task.phase !== "spec") return wrongPhase(event, task);
+      return { ok: true, task: { ...task, step: { kind: "starting" } } };
+
+    case "task.spec_session_started":
+      if (task.phase !== "spec") return wrongPhase(event, task);
+      return { ok: true, task: { ...task, step: { kind: "running", session: event.session } } };
+
+    // The old spec is kept, so the agent revises it with the note instead
+    // of starting over.
+    case "task.spec_sent_back":
+      if (task.phase !== "spec") return wrongPhase(event, task);
+      return { ok: true, task: { ...task, note: event.note, step: { kind: "queued" } } };
+
+    case "task.ready": {
+      if (task.phase !== "spec") return wrongPhase(event, task);
+      const { spec, note: _note, step: _step, ...rest } = task;
+      if (spec === null) return refuse(event, `#${task.id} has no spec`);
+      return { ok: true, task: { ...rest, phase: "ready", spec, step: { kind: "queued" } } };
+    }
+
     default:
       return refuse(event, "not handled yet");
   }

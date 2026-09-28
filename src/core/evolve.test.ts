@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { evolve } from "./evolve";
-import { TaskId } from "./ids";
+import { SessionId, TaskId } from "./ids";
 import type { EventBody, Spec, Task, TaskEvent } from "./types";
 
 const id = TaskId.parse(12);
@@ -120,5 +120,74 @@ describe("every other field", () => {
     const { phase: _a, ...before } = idea;
     const { phase: _b, spec: _s, note: _n, step: _t, ...after } = specced;
     expect(after).toEqual(before);
+  });
+});
+
+const session = SessionId.parse("session-1");
+const inSpec: EventBody[] = [created, { type: "task.spec_requested" }];
+const specced: EventBody[] = [...inSpec, { type: "task.specced", spec, by: "agent" }];
+
+describe("task.dispatch_started in Spec", () => {
+  test("marks the spec session as starting", () => {
+    expect(replay(...inSpec, { type: "task.dispatch_started" })).toMatchObject({
+      phase: "spec",
+      step: { kind: "starting" },
+    });
+  });
+});
+
+describe("task.spec_session_started", () => {
+  test("stores the session, so a drop can stop it", () => {
+    expect(
+      replay(
+        ...inSpec,
+        { type: "task.dispatch_started" },
+        { type: "task.spec_session_started", session },
+      ),
+    ).toMatchObject({ phase: "spec", step: { kind: "running", session } });
+  });
+
+  test("is refused outside Spec", () => {
+    expect(evolve(replay(created), event({ type: "task.spec_session_started", session }))).toEqual({
+      ok: false,
+      reason: "task.spec_session_started can't apply to #12 in Idea.",
+    });
+  });
+});
+
+describe("task.spec_sent_back in Spec", () => {
+  test("keeps the spec, stores the note and waits for a slot again", () => {
+    expect(
+      replay(...specced, { type: "task.spec_sent_back", note: "Also export the totals row." }),
+    ).toMatchObject({
+      phase: "spec",
+      spec,
+      note: "Also export the totals row.",
+      step: { kind: "queued" },
+    });
+  });
+});
+
+describe("task.ready", () => {
+  test("moves a specced task to Ready, waiting for a slot", () => {
+    expect(replay(...specced, { type: "task.ready" })).toMatchObject({
+      phase: "ready",
+      spec,
+      step: { kind: "queued" },
+    });
+  });
+
+  test("is refused for a task in Spec with no spec yet", () => {
+    expect(evolve(replay(...inSpec), event({ type: "task.ready" }))).toEqual({
+      ok: false,
+      reason: "task.ready can't apply: #12 has no spec.",
+    });
+  });
+
+  test("is refused outside Spec", () => {
+    expect(evolve(replay(created), event({ type: "task.ready" }))).toEqual({
+      ok: false,
+      reason: "task.ready can't apply to #12 in Idea.",
+    });
   });
 });
