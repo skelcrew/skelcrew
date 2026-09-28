@@ -101,7 +101,7 @@ decide(state, input, config):
 
 Inputs are everything that can happen to a task: an agent proposing done, a check result, a human answer, a work source signal, a clock tick. Phase transitions are one kind of outcome; many inputs change something without moving phase, and some are rejected (an agent proposing a merge, an issue dragged to Done by hand).
 
-**Scheduler.** A second pure function over all tasks decides what to start next. At most `max_running` agents work at once, counting both spec and develop sessions, so new work is paced by how many questions the developer can handle. An agent whose merge is waiting for the developer's approval does not count: it sits idle and cannot ask anything, and it stays open so a send-back reaches the agent that wrote the code. It only starts tasks in active projects, or tasks with no project, and never starts a blocked task. Quota awareness comes later.
+**Scheduler.** A second pure function over all tasks decides what to start next. At most `max_running` agents work at once, counting both spec and develop sessions, so new work is paced by how many questions the developer can handle. An agent whose merge is waiting for the developer's approval does not count: it sits idle and cannot ask anything, and it stays open so a send-back reaches the agent that wrote the code. It only starts tasks in active projects, or tasks with no project, and never starts a blocked task. It starts the task closest to done first: In progress, then Ready, then Spec, oldest first within a phase. Quota awareness comes later.
 
 **Contracts and policies.** Small pure predicates called by decide: spec completeness, critical path match, attempts left. Each returns pass or fail with reasons, which become inbox text and record entries.
 
