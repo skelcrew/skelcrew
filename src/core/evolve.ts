@@ -1,221 +1,39 @@
 // Evolve: folds one event into a task. It only applies facts that decide
 // already accepted, so it holds no rules of its own. Replaying a task's
 // events through it, starting from null, rebuilds the task exactly.
+//
+// Events that can happen in any phase come first. The rest are grouped by
+// the phase they apply in, one function per phase, in lifecycle order.
 
 import type { Evolve, Evolved, Failure, Phase, Spec, Task, TaskEvent } from "./types";
+
+// A task in one phase, for example TaskIn<"checks">.
+type TaskIn<P extends Phase> = Extract<Task, { phase: P }>;
 
 const noUsage = { tokens: 0, ms: 0 };
 
 export const evolve: Evolve = (task, event) => {
   if (event.type === "task.created") {
-    if (task !== null) {
-      return refuse(event, `#${event.taskId} already exists`);
-    }
-    return {
-      ok: true,
-      task: {
-        phase: "idea",
-        id: event.taskId,
-        title: event.title,
-        project: event.project,
-        source: event.source,
-        createdAt: event.at,
-        question: null,
-        blocked: null,
-        builds: 0,
-        usage: noUsage,
-        usageAtRetry: noUsage,
-      },
-    };
+    if (task !== null) return refuse(event, `#${event.taskId} already exists`);
+    return ok({
+      phase: "idea",
+      id: event.taskId,
+      title: event.title,
+      project: event.project,
+      source: event.source,
+      createdAt: event.at,
+      question: null,
+      blocked: null,
+      builds: 0,
+      usage: noUsage,
+      usageAtRetry: noUsage,
+    });
   }
-  if (task === null) {
-    return refuse(event, `#${event.taskId} doesn't exist`);
-  }
+  if (task === null) return refuse(event, `#${event.taskId} doesn't exist`);
   // Dropped is final.
   if (task.phase === "dropped") return wrongPhase(event, task);
 
   switch (event.type) {
-    case "task.spec_requested":
-      if (task.phase !== "idea") return wrongPhase(event, task);
-      return {
-        ok: true,
-        task: { ...task, phase: "spec", spec: null, note: null, step: { kind: "queued" } },
-      };
-
-    case "task.specced":
-      if (task.phase !== "spec") return wrongPhase(event, task);
-      return {
-        ok: true,
-        task: { ...task, spec: event.spec, note: null, step: { kind: "awaiting_approval" } },
-      };
-
-    // In Ready, each start is a new build with its own branch. The count
-    // goes up before the worktree exists, so a failed try never reuses it.
-    case "task.dispatch_started":
-      if (task.phase === "spec") {
-        return { ok: true, task: { ...task, step: { kind: "starting" } } };
-      }
-      if (task.phase === "ready") {
-        return {
-          ok: true,
-          task: { ...task, step: { kind: "creating_worktree" }, builds: task.builds + 1 },
-        };
-      }
-      // After a retry: a new agent in the same worktree.
-      if (task.phase === "in_progress") {
-        return { ok: true, task: { ...task, step: { kind: "starting" } } };
-      }
-      return wrongPhase(event, task);
-
-    case "task.spec_session_started":
-      if (task.phase !== "spec") return wrongPhase(event, task);
-      return { ok: true, task: { ...task, step: { kind: "running", session: event.session } } };
-
-    // The old spec is kept, so the agent revises it with the note instead
-    // of starting over. From a later phase, the worktree is dropped: the
-    // next build starts on a fresh branch.
-    case "task.spec_sent_back":
-      switch (task.phase) {
-        case "spec":
-          return {
-            ok: true,
-            task: {
-              ...task,
-              note: event.note,
-              step: { kind: "queued" },
-              question: null,
-              blocked: null,
-            },
-          };
-        case "ready":
-        case "in_progress":
-        case "checks":
-          return { ok: true, task: backToSpec(task, task.spec, event.note) };
-        default:
-          return wrongPhase(event, task);
-      }
-
-    case "task.ready": {
-      if (task.phase !== "spec") return wrongPhase(event, task);
-      const { spec, note: _note, step: _step, ...rest } = task;
-      if (spec === null) return refuse(event, `#${task.id} has no spec`);
-      return { ok: true, task: { ...rest, phase: "ready", spec, step: { kind: "queued" } } };
-    }
-
-    case "task.worktree_created":
-      if (task.phase !== "ready") return wrongPhase(event, task);
-      if (task.step.kind !== "creating_worktree") {
-        return refuse(event, `#${task.id} isn't creating a worktree`);
-      }
-      return {
-        ok: true,
-        task: { ...task, step: { kind: "starting_session", worktree: event.worktree } },
-      };
-
-    case "task.dispatched": {
-      if (task.phase === "in_progress") {
-        if (task.step.kind !== "starting") {
-          return refuse(event, `#${task.id} isn't starting an agent`);
-        }
-        return { ok: true, task: { ...task, step: { kind: "running", session: event.session } } };
-      }
-      if (task.phase !== "ready") return wrongPhase(event, task);
-      const { step, ...rest } = task;
-      if (step.kind !== "starting_session") {
-        return refuse(event, `#${task.id} has no worktree yet`);
-      }
-      return {
-        ok: true,
-        task: {
-          ...rest,
-          phase: "in_progress",
-          worktree: step.worktree,
-          step: { kind: "running", session: event.session },
-          attempts: 0,
-          lastFailure: null,
-        },
-      };
-    }
-
-    case "task.done_reported": {
-      if (task.phase !== "in_progress") return wrongPhase(event, task);
-      const { step, lastFailure: _lastFailure, ...rest } = task;
-      if (step.kind !== "running") return refuse(event, `#${task.id} has no agent running`);
-      return {
-        ok: true,
-        task: {
-          ...rest,
-          phase: "checks",
-          session: step.session,
-          branch: event.branch,
-          step: event.gate,
-        },
-      };
-    }
-
-    // After the last gate, the step stays put. decide writes
-    // task.checks_passed in the same batch, and that moves the task on.
-    case "task.gate_passed": {
-      if (task.phase !== "checks") return wrongPhase(event, task);
-      const mismatch = gateMismatch(task, event.gate);
-      if (mismatch) return refuse(event, mismatch);
-      return event.next === null
-        ? { ok: true, task }
-        : { ok: true, task: { ...task, step: event.next } };
-    }
-
-    // Back to the same agent, which is still open and knows the code.
-    case "task.gate_failed": {
-      if (task.phase !== "checks") return wrongPhase(event, task);
-      const mismatch = gateMismatch(task, event.failure.step);
-      if (mismatch) return refuse(event, mismatch);
-      return { ok: true, task: backToAgent(task, task.attempts + 1, event.failure) };
-    }
-
-    // Only a fact for the record: every merge must follow a pass. The next
-    // event in the same batch starts the merge or waits for approval.
-    case "task.checks_passed":
-      if (task.phase !== "checks") return wrongPhase(event, task);
-      return { ok: true, task };
-
-    case "task.escalated":
-      if (task.phase !== "checks") return wrongPhase(event, task);
-      return { ok: true, task: { ...task, step: "merge_approval" } };
-
-    case "task.merge_started":
-      if (task.phase !== "checks") return wrongPhase(event, task);
-      if (task.step === "merging") return refuse(event, `#${task.id} is already merging`);
-      return { ok: true, task: { ...task, step: "merging" } };
-
-    case "task.merged": {
-      if (task.phase !== "checks") return wrongPhase(event, task);
-      if (task.step !== "merging") return refuse(event, `#${task.id} isn't merging`);
-      const {
-        worktree: _worktree,
-        session: _session,
-        attempts: _attempts,
-        branch: _branch,
-        step: _step,
-        ...rest
-      } = task;
-      return { ok: true, task: { ...rest, phase: "done", mergeCommit: event.commit } };
-    }
-
-    // A failed merge counts as an attempt, like a failed gate.
-    case "task.merge_failed":
-      if (task.phase !== "checks") return wrongPhase(event, task);
-      if (task.step !== "merging") return refuse(event, `#${task.id} isn't merging`);
-      return { ok: true, task: backToAgent(task, task.attempts + 1, event.failure) };
-
-    // Not a failure, so no attempt is used. The note reaches the agent as
-    // a message.
-    case "task.merge_sent_back":
-      if (task.phase !== "checks") return wrongPhase(event, task);
-      if (task.step !== "merge_approval") {
-        return refuse(event, `#${task.id} isn't waiting for merge approval`);
-      }
-      return { ok: true, task: backToAgent(task, task.attempts, null) };
-
     case "task.question_asked": {
       if (task.question !== null) return refuse(event, `#${task.id} already has an open question`);
       const { from } = event.question;
@@ -226,12 +44,12 @@ export const evolve: Evolve = (task, event) => {
       if (!fits) {
         return refuse(event, `a ${from} question can't be open in ${phaseNames[task.phase]}`);
       }
-      return { ok: true, task: { ...task, question: event.question } };
+      return ok({ ...task, question: event.question });
     }
 
     case "task.question_answered":
       if (task.question === null) return refuse(event, `#${task.id} has no open question`);
-      return { ok: true, task: { ...task, question: null } };
+      return ok({ ...task, question: null });
 
     // Blocking stops the agent, so its question is cleared too: there is no
     // one left to answer. A task blocked in Checks goes back to In progress,
@@ -240,7 +58,7 @@ export const evolve: Evolve = (task, event) => {
       if (task.blocked !== null) return refuse(event, `#${task.id} is already blocked`);
       const stopped = stopAgent(task);
       if (stopped === null) return wrongPhase(event, task);
-      return { ok: true, task: { ...stopped, blocked: event.reason, question: null } };
+      return ok({ ...stopped, blocked: event.reason, question: null });
     }
 
     // A retry starts fresh: no failed attempts, and the safety cap counts
@@ -248,32 +66,236 @@ export const evolve: Evolve = (task, event) => {
     case "task.unblocked": {
       if (task.blocked === null) return refuse(event, `#${task.id} isn't blocked`);
       const cleared = { ...task, blocked: null, usageAtRetry: task.usage };
-      return {
-        ok: true,
-        task: cleared.phase === "in_progress" ? { ...cleared, attempts: 0 } : cleared,
-      };
+      return ok(cleared.phase === "in_progress" ? { ...cleared, attempts: 0 } : cleared);
     }
 
     case "task.usage_recorded":
-      return { ok: true, task: { ...task, usage: event.usage } };
+      return ok({ ...task, usage: event.usage });
 
     case "task.project_changed":
-      return { ok: true, task: { ...task, project: event.project } };
+      return ok({ ...task, project: event.project });
 
     // A Done task only changes through a revert.
     case "task.dropped":
       if (task.phase === "done") return wrongPhase(event, task);
-      return { ok: true, task: { ...shared(task), phase: "dropped" } };
+      return ok({ ...shared(task), phase: "dropped" });
+  }
 
-    // The revert reason becomes the note, so the redone spec addresses it.
-    case "task.reverted":
-      if (task.phase !== "done") return wrongPhase(event, task);
-      return { ok: true, task: backToSpec(task, task.spec, event.reason) };
+  switch (task.phase) {
+    case "idea":
+      return inIdea(task, event);
+    case "spec":
+      return inSpec(task, event);
+    case "ready":
+      return inReady(task, event);
+    case "in_progress":
+      return inProgress(task, event);
+    case "checks":
+      return inChecks(task, event);
+    case "done":
+      return inDone(task, event);
   }
 };
 
+function inIdea(task: TaskIn<"idea">, event: TaskEvent): Evolved {
+  switch (event.type) {
+    case "task.spec_requested":
+      return ok({ ...task, phase: "spec", spec: null, note: null, step: { kind: "queued" } });
+    default:
+      return wrongPhase(event, task);
+  }
+}
+
+function inSpec(task: TaskIn<"spec">, event: TaskEvent): Evolved {
+  switch (event.type) {
+    case "task.dispatch_started":
+      return ok({ ...task, step: { kind: "starting" } });
+
+    case "task.spec_session_started":
+      return ok({ ...task, step: { kind: "running", session: event.session } });
+
+    case "task.specced":
+      return ok({ ...task, spec: event.spec, note: null, step: { kind: "awaiting_approval" } });
+
+    // The old spec is kept, so the agent revises it with the note instead
+    // of starting over.
+    case "task.spec_sent_back":
+      return ok({
+        ...task,
+        note: event.note,
+        step: { kind: "queued" },
+        question: null,
+        blocked: null,
+      });
+
+    case "task.ready": {
+      const { spec, note: _note, step: _step, ...rest } = task;
+      if (spec === null) return refuse(event, `#${task.id} has no spec`);
+      return ok({ ...rest, phase: "ready", spec, step: { kind: "queued" } });
+    }
+
+    default:
+      return wrongPhase(event, task);
+  }
+}
+
+function inReady(task: TaskIn<"ready">, event: TaskEvent): Evolved {
+  switch (event.type) {
+    // Each start is a new build with its own branch. The count goes up
+    // before the worktree exists, so a failed try never reuses it.
+    case "task.dispatch_started":
+      return ok({ ...task, step: { kind: "creating_worktree" }, builds: task.builds + 1 });
+
+    case "task.worktree_created":
+      if (task.step.kind !== "creating_worktree") {
+        return refuse(event, `#${task.id} isn't creating a worktree`);
+      }
+      return ok({ ...task, step: { kind: "starting_session", worktree: event.worktree } });
+
+    case "task.dispatched": {
+      const { step, ...rest } = task;
+      if (step.kind !== "starting_session") {
+        return refuse(event, `#${task.id} has no worktree yet`);
+      }
+      return ok({
+        ...rest,
+        phase: "in_progress",
+        worktree: step.worktree,
+        step: { kind: "running", session: event.session },
+        attempts: 0,
+        lastFailure: null,
+      });
+    }
+
+    case "task.spec_sent_back":
+      return ok(backToSpec(task, task.spec, event.note));
+
+    default:
+      return wrongPhase(event, task);
+  }
+}
+
+function inProgress(task: TaskIn<"in_progress">, event: TaskEvent): Evolved {
+  switch (event.type) {
+    // After a retry: a new agent in the same worktree.
+    case "task.dispatch_started":
+      return ok({ ...task, step: { kind: "starting" } });
+
+    case "task.dispatched":
+      if (task.step.kind !== "starting") {
+        return refuse(event, `#${task.id} isn't starting an agent`);
+      }
+      return ok({ ...task, step: { kind: "running", session: event.session } });
+
+    case "task.done_reported": {
+      const { step, lastFailure: _lastFailure, ...rest } = task;
+      if (step.kind !== "running") return refuse(event, `#${task.id} has no agent running`);
+      return ok({
+        ...rest,
+        phase: "checks",
+        session: step.session,
+        branch: event.branch,
+        step: event.gate,
+      });
+    }
+
+    case "task.spec_sent_back":
+      return ok(backToSpec(task, task.spec, event.note));
+
+    default:
+      return wrongPhase(event, task);
+  }
+}
+
+function inChecks(task: TaskIn<"checks">, event: TaskEvent): Evolved {
+  switch (event.type) {
+    // After the last gate, the step stays put. decide writes
+    // task.checks_passed in the same batch, and that moves the task on.
+    case "task.gate_passed": {
+      const mismatch = gateMismatch(task, event.gate);
+      if (mismatch) return refuse(event, mismatch);
+      return ok(event.next === null ? task : { ...task, step: event.next });
+    }
+
+    case "task.gate_failed": {
+      const mismatch = gateMismatch(task, event.failure.step);
+      if (mismatch) return refuse(event, mismatch);
+      return ok(backToAgent(task, task.attempts + 1, event.failure));
+    }
+
+    // Only a fact for the record: every merge must follow a pass. The next
+    // event in the same batch starts the merge or waits for approval.
+    case "task.checks_passed":
+      return ok(task);
+
+    case "task.escalated":
+      return ok({ ...task, step: "merge_approval" });
+
+    // Not a failure, so no attempt is used. The note reaches the agent as
+    // a message.
+    case "task.merge_sent_back":
+      if (task.step !== "merge_approval") {
+        return refuse(event, `#${task.id} isn't waiting for merge approval`);
+      }
+      return ok(backToAgent(task, task.attempts, null));
+
+    case "task.merge_started":
+      if (task.step === "merging") return refuse(event, `#${task.id} is already merging`);
+      return ok({ ...task, step: "merging" });
+
+    case "task.merged": {
+      if (task.step !== "merging") return refuse(event, `#${task.id} isn't merging`);
+      const {
+        worktree: _worktree,
+        session: _session,
+        attempts: _attempts,
+        branch: _branch,
+        step: _step,
+        ...rest
+      } = task;
+      return ok({ ...rest, phase: "done", mergeCommit: event.commit });
+    }
+
+    // A failed merge counts as an attempt, like a failed gate.
+    case "task.merge_failed":
+      if (task.step !== "merging") return refuse(event, `#${task.id} isn't merging`);
+      return ok(backToAgent(task, task.attempts + 1, event.failure));
+
+    case "task.spec_sent_back":
+      return ok(backToSpec(task, task.spec, event.note));
+
+    default:
+      return wrongPhase(event, task);
+  }
+}
+
+function inDone(task: TaskIn<"done">, event: TaskEvent): Evolved {
+  switch (event.type) {
+    // The revert reason becomes the note, so the redone spec addresses it.
+    case "task.reverted":
+      return ok(backToSpec(task, task.spec, event.reason));
+    default:
+      return wrongPhase(event, task);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function ok(task: Task): Evolved {
+  return { ok: true, task };
+}
+
 function refuse(event: TaskEvent, why: string): Evolved {
   return { ok: false, reason: `${event.type} can't apply: ${why}.` };
+}
+
+function wrongPhase(event: TaskEvent, task: Task): Evolved {
+  return {
+    ok: false,
+    reason: `${event.type} can't apply to #${task.id} in ${phaseNames[task.phase]}.`,
+  };
 }
 
 // The fields every phase has, with the flags cleared. Used when a task
@@ -293,6 +315,8 @@ function shared(task: Task) {
   };
 }
 
+// From a later phase, the worktree is dropped: the next build starts on a
+// fresh branch.
 function backToSpec(task: Task, spec: Spec, note: string): Task {
   return { ...shared(task), phase: "spec", spec, note, step: { kind: "queued" } };
 }
@@ -316,11 +340,7 @@ function stopAgent(task: Task): Task | null {
 
 // From Checks back to In progress, with the same agent. Its session stayed
 // open, so it still knows the code it wrote.
-function backToAgent(
-  task: Task & { phase: "checks" },
-  attempts: number,
-  lastFailure: Failure | null,
-): Task {
+function backToAgent(task: TaskIn<"checks">, attempts: number, lastFailure: Failure | null): Task {
   const { session, branch: _branch, step: _step, ...rest } = task;
   return {
     ...rest,
@@ -333,19 +353,12 @@ function backToAgent(
 
 // Returns what doesn't match between a gate result and the running gate,
 // or null when they match.
-function gateMismatch(task: Task & { phase: "checks" }, gate: string): string | null {
+function gateMismatch(task: TaskIn<"checks">, gate: string): string | null {
   if (task.step === gate) return null;
   if (task.step === "merge_approval" || task.step === "merging") {
     return `#${task.id} isn't running a gate`;
   }
   return `#${task.id} is running the ${task.step} gate, not ${gate}`;
-}
-
-function wrongPhase(event: TaskEvent, task: Task): Evolved {
-  return {
-    ok: false,
-    reason: `${event.type} can't apply to #${task.id} in ${phaseNames[task.phase]}.`,
-  };
 }
 
 const phaseNames: Record<Phase, string> = {
