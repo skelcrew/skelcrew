@@ -5,11 +5,8 @@
 // Events that can happen in any phase come first. The rest are grouped by
 // the phase they apply in, one function per phase, in lifecycle order.
 
-import { phaseNames } from "./phases";
-import type { Evolve, Evolved, Failure, Phase, Spec, Task, TaskEvent } from "./types";
-
-// A task in one phase, for example TaskIn<"checks">.
-type TaskIn<P extends Phase> = Extract<Task, { phase: P }>;
+import { phaseNames, type TaskIn } from "./phases";
+import type { Evolve, Evolved, Failure, Spec, Task, TaskEvent } from "./types";
 
 const noUsage = { tokens: 0, ms: 0 };
 
