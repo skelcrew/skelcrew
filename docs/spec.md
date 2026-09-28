@@ -21,6 +21,8 @@ Skelcrew does not replace harnesses, terminals or issue trackers. It works along
 - **Plain files for what people read.** Rules, skills and the record are Markdown and YAML in the repository, readable by humans and agents, versioned in git. Runtime state lives in SQLite.
 - **Personal where it should be.** Skills are the developer's craft and are swappable. Skelcrew ships good defaults but never requires them.
 - **Works with zero setup.** The full loop runs on one machine with git, Claude Code and a terminal.
+- **Fixed rules, open ways of working.** Features, rewrites and bug fixes each want a different process, and the developer picks one per task. The rules stay the same whoever does the work: a spec is approved before it is built, checks pass before a merge, and only the developer makes the developer's decisions.
+- **Meet the developer where they work.** The TUI is home for managing tasks: adding them, approving them, and seeing what waits on the developer. The harness is a full alternative, never a lesser one, so the developer is never forced out of it.
 
 ## Layer model
 
@@ -36,11 +38,13 @@ Skelcrew owns Coordination and Oversight, ships default skills into Context, and
 | 2 | Execution | Models, harnesses, sessions, isolation, version control | Claude Code, Herdr, git, worktrees | Uses via plugins |
 | 1 | Infrastructure | Laptop, or server plus network access | Mac mini, VPS, Tailscale | Runs on |
 
-The interface (CLI, TUI, phone) cuts across all layers rather than sitting on top.
+The interface (TUI, CLI, the developer's harness through skills, phone) cuts across all layers rather than sitting on top.
 
 ## Architecture
 
-Skelcrew is one binary with a headless daemon at its centre, thin clients around it, and plugins at its edges. Stack: TypeScript on Bun.
+Skelcrew is one binary with a headless daemon at its centre, clients around it, and plugins at its edges. Stack: TypeScript on Bun.
+
+Typing `skelcrew` opens the TUI. Any `skelcrew` command starts the daemon in the background if it is not running, so it works the same whether the developer starts from the TUI or from their harness. `skelcrew serve` runs the daemon alone, for a server or a machine with no terminal open.
 
 **Daemon** (`skelcrew serve`) owns all state and rules:
 
@@ -49,9 +53,18 @@ Skelcrew is one binary with a headless daemon at its centre, thin clients around
 - merge policy and reverts
 - dispatch
 - decision inbox and record
-- an MCP server that agents use to report progress, ask questions and propose transitions
 
-**Clients** talk to the daemon over one local socket protocol: the CLI first, then a TUI, later possibly a desktop or phone view. Clients hold no state.
+**Clients** talk to the daemon over one local socket protocol, through the `skelcrew` CLI. Clients hold no state.
+
+**Ways in.** Everything goes through the CLI, so there are three equal ways to drive Skelcrew:
+
+- **The TUI**, for managing tasks with a few keys: add, approve, send back, and see what is running and what waits on the developer.
+- **The developer's harness**, through skills that call the CLI. The developer can do anything the TUI does from a conversation. For example, they brainstorm a feature with Claude, then have it create a project and its tasks: `skelcrew project add`, then `skelcrew add --project` for each task.
+- **Agents**, which report progress, ask questions and propose transitions with the same CLI.
+
+Every CLI call carries who made it. The daemon gives each agent it starts an identity, and the core refuses anything only the developer may do from an agent, such as approving a spec. In the harness, the developer's own session calls the CLI as the developer. The default skills guard approvals there: only the developer can start the approve skill, and the harness asks before `skelcrew approve` runs. That guard lives in the harness's settings, not in the core, so it is weaker than approving in the TUI.
+
+Agents use the CLI rather than an MCP server. Every agent already has a shell, and a second door that only agents use would have to be kept in step with the CLI by hand.
 
 **Plugins** connect the daemon to other tools. Communication happens three ways:
 
@@ -81,7 +94,7 @@ Rules, enforced as Skelcrew's own gates:
 
 - `strict`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` in tsconfig
 - lint rules banning `any`, non-null assertions and unchecked casts (Biome or typescript-eslint)
-- runtime validation at every boundary: plugin input, MCP messages, config, external API responses (Zod or Valibot)
+- runtime validation at every boundary: plugin input, CLI requests, config, external API responses (Zod or Valibot)
 - errors as values in the core, so failure paths are visible in types
 - the state machine as a pure module with thorough tests
 
@@ -130,14 +143,23 @@ This resembles the Elm architecture and the decider pattern from event sourcing.
 A task moves through six phases: Idea, Spec, Ready, In progress, Checks, Done. A task can also end as Dropped, when the developer decides not to do it. Blocked is a side state.
 
 1. **Define.** The developer adds a task: `skelcrew add`, a task on the built-in board, or an issue delegated to Skelcrew in a work source plugin. A captured task waits in Idea until the developer asks for a spec; delegating an issue counts as asking. Each task gets the next number in the repository, shown as `#12`, and commands take that number. A delegated issue keeps its own number as a link, shown as `#12 CSV export (GitHub #40)`. Event: `task.created`.
-2. **Spec.** The daemon runs the spec skill. Anything it cannot decide becomes an inbox question with options. Intake can also be done by hand or interactively in the harness; the daemon only cares whether the result meets the spec contract. Event: `task.specced`.
+2. **Spec.** A spec agent writes the spec with the spec skill, started by the daemon or by the developer in their harness (see Who does the work, below). Anything it cannot decide becomes a question. A spec can also be written by hand; the core only cares whether the result meets the spec contract. Event: `task.specced`.
 3. **Ready.** The core checks the spec against the contract, then asks the developer to approve it in the inbox. When spec\_approval is always, only that approval moves the task to Ready; agents and plugins can never do it. A delegated issue never skips this step. Event: `task.ready`.
-4. **Dispatch.** The core asks the version control plugin for a worktree on a branch named after the task, such as `task/12-csv-export`, and the session plugin to start the harness in it with the develop skill. Each build of a task starts fresh from main on its own branch. If the task is sent back to spec and built again, the new branch is `task/12-csv-export-2`, and the old one is kept for reference. Before any worktree is removed, its uncommitted changes are committed to its branch, so no work is lost. Event: `task.dispatched`.
-5. **Develop.** The agent works and reports through MCP. If it needs information, it raises one clear question and the task stays In progress. If it cannot continue at all, it reports giving up; only the core moves a task to Blocked. Event when blocked: `task.blocked`.
+4. **Dispatch.** The core asks the version control plugin for a worktree on a branch named after the task, such as `task/12-csv-export`. Then either the session plugin starts the harness in it with the develop skill, or the developer starts the develop skill in their own harness. Each build of a task starts fresh from main on its own branch. If the task is sent back to spec and built again, the new branch is `task/12-csv-export-2`, and the old one is kept for reference. Before any worktree is removed, its uncommitted changes are committed to its branch, so no work is lost. Event: `task.dispatched`.
+5. **Develop.** The agent works and reports through the CLI. If it needs information, it raises one clear question and the task stays In progress. If it cannot continue at all, it reports giving up; only the core moves a task to Blocked. Event when blocked: `task.blocked`.
 6. **Checks and review.** The core runs the gates: local check commands, remote check results from plugins, then a review by a fresh agent session. Failures return to the developing agent; repeated failures block the task with a reason. Event: `task.checks_passed`.
 7. **Merge.** The merge policy either merges automatically or escalates to the inbox. Tasks merge one at a time. Just before merging, the branch is brought up to date with main and the local checks run again. If that fails, or the branch conflicts with main, the task returns to In progress with the failure, and it counts as a failed attempt. After the merge, the worktree is removed. Events: `task.merged` or `task.merge_approval_requested`.
 8. **Record.** The task's events are summarised into a Markdown entry.
 9. **Afterwards.** If a merged task turns out to be wrong, the developer reverts it with `skelcrew revert`. The core reverts the commit, returns the task to Spec with the reason attached, and records why. The revised spec needs approval again. Event: `task.reverted`.
+
+**Who does the work.** Every phase with an agent in it can run two ways:
+
+- **In the background.** The scheduler starts an agent when a slot is free. Nobody watches it, and its questions go to the inbox. This is the default.
+- **Attended.** The developer starts the skill in their own harness, such as `/develop 12`. The skill takes the task through the CLI, and the core accepts only if the task is waiting to start and a slot is free. The developer watches it work and answers its questions in the conversation.
+
+Both take a slot under `max_running`, report through the CLI, and follow the same rules. The only differences are who pressed start and where questions go. A task can mix them: the developer works out a rewrite's spec attended, and a background agent builds it.
+
+Skelcrew cannot stop a session it did not start. When the core lets go of an attended session, because its task was blocked or dropped, the session's next CLI call is refused, and the skill stops there. Nothing it reports after that counts.
 
 ## Projects
 
@@ -190,7 +212,7 @@ The inbox is the only place Skelcrew asks for the developer's attention, and eve
 
 Item types:
 
-- **Question:** from spec or development, with two to four options plus free text.
+- **Question:** from a background agent, in spec or development, with two to four options plus free text. An attended agent asks in the conversation instead.
 - **Approval:** a finished spec, or a merge touching critical paths, shown as a summary with approve or send back. A spec sent back returns to the spec agent with the developer's note. A merge sent back returns to In progress with the note.
 - **Blocked:** a task the core stopped, with its reason (ran out of attempts, safety cap reached, agent gave up, worktree or session failed) and options that fit it: retry, send back to spec, or drop. Retry resets the attempt count and the safety cap; the record keeps the totals. Only the core blocks tasks; agents ask questions or report giving up.
 
@@ -202,7 +224,7 @@ Rules:
 - Items are batched so they can be handled in one sitting.
 - Agent replies are short, like a chat message, never an essay.
 
-The inbox is core; where it appears is a plugin: CLI and TUI built in, desktop notifications as a nudge, phone push and issue tracker surfaces as first party plugins.
+The inbox is core; where it appears is a plugin: the TUI, the CLI and the harness through a skill built in, desktop notifications as a nudge, phone push and issue tracker surfaces as first party plugins.
 
 ## Record
 
@@ -240,7 +262,7 @@ Skelcrew traces tasks itself and links to the harness for agent-level detail; it
 Skelcrew does no code retrieval of its own; harnesses already search code well. It only makes its own history findable, so tasks build on what earlier tasks learned.
 
 - **Past decisions.** Answers already given ("CSV or Markdown for exports?") are searchable, so the spec skill does not ask the same question twice.
-- **Record search via MCP.** A plain text search tool over decisions and record entries. Embeddings only if plain search clearly fails.
+- **Record search through the CLI.** A plain text search over decisions and record entries. Embeddings only if plain search clearly fails.
 - **Learnings into Context.** When a task discovers something durable ("tests need the database running"), it proposes an addition to `AGENTS.md` or a conventions file. Proposals go through the normal gates and count as critical, so agents never quietly rewrite their own instructions.
 
 ## Evals
@@ -273,7 +295,7 @@ A plugin connects Skelcrew to another tool. Plugins bring information in and car
 Notes:
 
 - **Harnesses** are likely profiles rather than code: a command template, skills folder and flags. A code plugin only when a harness does something unusual.
-- **Process runner** runs the agent in a pseudo terminal, detached, logging output per task. State comes from the agent's MCP reports.
+- **Process runner** runs the agent in a pseudo terminal, detached, logging output per task. State comes from the agent's reports through the CLI.
 - **Work source plugins** translate Skelcrew's phases into the tool's states and turn manual changes (an issue dragged to Done) into signals the core validates.
 - **Linear** delegation uses its agent API, which requires a public webhook, so it arrives with a hosted relay. Polling for tagged issues works without one.
 - Local check commands are core, not a plugin, because running them is enforcing the gates.
@@ -316,8 +338,9 @@ plugins:
 
 | Command | Does |
 | --- | --- |
+| `skelcrew` | Open the TUI, starting the daemon if it is not running |
 | `skelcrew init` | Set up `.skelcrew/` and default skills in a repository |
-| `skelcrew serve` | Run the daemon (foreground or as a service) |
+| `skelcrew serve` | Run the daemon alone, for a server or a headless machine |
 | `skelcrew add "<task>"` | Capture a task as an Idea; `--spec` also starts speccing, `--project <name>` puts it in a project |
 | `skelcrew project add "<name>" "<goal>"` | Create a project |
 | `skelcrew project park <name>` | Stop new agents from starting in a project; `activate` undoes it |
@@ -331,21 +354,23 @@ plugins:
 | `skelcrew log <task>` | Show a task's events and record entry |
 | `skelcrew check` | Decide whether a diff is safe to auto-merge; runs standalone in CI |
 | `skelcrew revert <task> "<reason>"` | Undo a merged task and return it to Spec with the reason |
+| `skelcrew take <task>` | Start work on a task in this harness session, attended; used by the skills |
+| `skelcrew submit`, `done`, `ask`, `give-up` | How agents report: a finished spec, work done, a question, giving up; used by the skills |
 
-The TUI comes after the CLI, as another thin client over the same socket.
+The TUI and the skills are both built on these commands, so neither can do what the other cannot.
 
 ## Build plan
 
 Skelcrew should build itself as early as possible, and trust in auto-merge is earned from data rather than switched on. The existing CLI keeps building the new core until the daemon can take over.
 
 1. **Core in close collaboration.** State machine, contracts, event log and scheduler, with the full test approach and the simulator. Built interactively with Claude rather than delegated: the developer defines the types, contracts and invariants first, Claude implements against them, and every change to the core is read before it lands.
-2. **Smallest real loop.** Daemon, CLI, built-in board, process runner, git plugin, Claude Code profile and local checks. Merging stays manual, and specs are approved with `skelcrew approve` until the inbox exists. One task goes from `skelcrew add` to a merged commit.
+2. **Smallest real loop, attended.** Daemon, CLI, built-in board, git plugin, local checks, and the default skills (spec, develop) used from the developer's harness. The developer starts each agent in their own session. Merging stays manual, and specs are approved with `skelcrew approve` until the inbox exists. One task goes from `skelcrew add` to a merged commit.
 3. **Dogfood day.** Skelcrew runs on its own repository; every change from here is a Skelcrew task.
-4. **Inbox and intake.** Questions with options, the spec skill wired into intake, desktop notifications.
-5. **Auto-merge, gradually.** Start with every path critical, so all merges arrive as inbox summaries and the workflow stops at approval, like a pull request. Then loosen critical paths based on which approvals were rubber-stamped.
-6. **Record and digest.** A projection of the event log.
-7. **Second implementations.** GitHub next to the built-in board, Herdr next to the process runner, to validate the plugin interfaces.
-8. **TUI.** Card and status overview as a thin client.
+4. **Background runs and the TUI.** The process runner and Claude Code profile, so the scheduler starts agents itself. The TUI, for adding tasks, approving them, and seeing what is running and what waits on the developer.
+5. **Inbox and intake.** Questions with options, the spec skill wired into intake, desktop notifications.
+6. **Auto-merge, gradually.** Start with every path critical, so all merges arrive as inbox summaries and the workflow stops at approval, like a pull request. Then loosen critical paths based on which approvals were rubber-stamped.
+7. **Record and digest.** A projection of the event log.
+8. **Second implementations.** GitHub next to the built-in board, Herdr next to the process runner, to validate the plugin interfaces.
 
 Metrics tracked from step 3: inbox items per day, minutes spent on decisions, automatic versus approved merges, reverts and cost per task. They guide the design and are the evidence for users and funders.
 
@@ -355,11 +380,11 @@ v1 is single user, runs on one machine, and ships only the plugins its first use
 
 **In v1:**
 
-- daemon, CLI and the full lifecycle, with manual revert
+- daemon, CLI, TUI and the full lifecycle, attended and in the background, with manual revert
 - built-in board, projects, inbox, record and event log
 - built-in plugins: git, process runner, Claude Code profile, desktop notifications
 - first party plugins: GitHub (issues, pull requests, Actions results) and Herdr
-- default skills: spec, develop, review
+- default skills: spec, develop and review for agents, plus skills for the developer's own verbs (add, approve, status) in the harness
 - plugin interfaces defined internally, with two implementations for sessions (process runner, Herdr) and work sources (built-in board, GitHub)
 
 **Not in v1:**
