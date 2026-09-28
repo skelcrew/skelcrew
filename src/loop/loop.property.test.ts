@@ -13,7 +13,7 @@ import { CommitSha, SessionId, TaskId } from "../core/ids";
 import { runningSession } from "../core/task";
 import type { Command, Config, Input, Spec, Task, TaskEvent } from "../core/types";
 import { EventStore } from "../store/store";
-import { config as base } from "../test/fixtures";
+import { config as base, head } from "../test/fixtures";
 import { type EventLog, Loop, type ReadableLog, type Starts, type Tools } from "./loop";
 
 const config: Config = {
@@ -160,7 +160,7 @@ function messages(commands: Command[], started: Map<TaskId, SessionId[]>): [Task
             by: "agent",
             type: "report_done",
             session,
-            branch: { commits: 1, changedFiles: ["a.ts"] },
+            branch: { head, commits: 1, changedFiles: ["a.ts"] },
           },
         ],
         [taskId, { by: "agent", type: "give_up", session, message: "Stuck." }],

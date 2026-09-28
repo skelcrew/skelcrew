@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { commit, id, session, spec, worktree } from "../test/fixtures";
+import { commit, head, id, session, spec, worktree } from "../test/fixtures";
 import { evolveTask } from "./evolve";
 import { CommitSha, ProjectId, SessionId, TaskId } from "./ids";
 import type { EventBody, Spec, Task, TaskEvent } from "./types";
@@ -280,7 +280,7 @@ describe("task.dispatched from Ready", () => {
   });
 });
 
-const branchFacts = { commits: 3, changedFiles: ["src/reports/export.ts"] };
+const branchFacts = { head, commits: 3, changedFiles: ["src/reports/export.ts"] };
 const doneReported: Body = (t) => ({
   type: "task.done_reported",
   branch: branchFacts,

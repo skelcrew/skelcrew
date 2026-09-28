@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { ProjectId, TaskId } from "../core/ids";
 import type { Command, Config, ProjectEvent, TaskEvent } from "../core/types";
 import { Simulator } from "../sim/simulator";
-import { config as base } from "../test/fixtures";
+import { config as base, head } from "../test/fixtures";
 import { EventStore } from "./store";
 
 const config: Config = { ...base, maxAttempts: 2, specApproval: "never" };
@@ -86,7 +86,7 @@ describe("the event store", () => {
     // The type allows a negative count, but the stored shape doesn't.
     const bad: TaskEvent = {
       type: "task.done_reported",
-      branch: { commits: -1, changedFiles: [] },
+      branch: { head, commits: -1, changedFiles: [] },
       gate: "local",
       request: 1,
       v: 1,
@@ -196,7 +196,7 @@ describe("starts in flight", () => {
     const store = EventStore.open(":memory:");
     const bad: TaskEvent = {
       type: "task.done_reported",
-      branch: { commits: -1, changedFiles: [] },
+      branch: { head, commits: -1, changedFiles: [] },
       gate: "local",
       request: 1,
       v: 1,
@@ -247,7 +247,7 @@ describe("commands not yet carried out", () => {
     // The type allows a negative count, but the stored shape doesn't.
     const bad: TaskEvent = {
       type: "task.done_reported",
-      branch: { commits: -1, changedFiles: [] },
+      branch: { head, commits: -1, changedFiles: [] },
       gate: "local",
       request: 1,
       v: 1,

@@ -9,7 +9,7 @@
 // `bun test --update-snapshots`, and say why in the commit.
 
 import { describe, expect, test } from "bun:test";
-import { agentOf, awaited, commit, config, id, spec, worktree } from "../test/fixtures";
+import { agentOf, awaited, commit, config, head, id, spec, worktree } from "../test/fixtures";
 import { decideTask } from "./decide";
 import { evolveTask } from "./evolve";
 import { CommitSha, type ProjectId, SessionId, TaskId } from "./ids";
@@ -20,8 +20,9 @@ const projects = new Map<ProjectId, Project>();
 
 const specAgent = SessionId.parse("spec-1");
 const developAgent = SessionId.parse("develop-1");
-const exportBranch: BranchFacts = { commits: 3, changedFiles: ["src/reports/export.ts"] };
+const exportBranch: BranchFacts = { head, commits: 3, changedFiles: ["src/reports/export.ts"] };
 const authBranch: BranchFacts = {
+  head,
   commits: 2,
   changedFiles: ["src/reports/export.ts", "src/auth/login.ts"],
 };

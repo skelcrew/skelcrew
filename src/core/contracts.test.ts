@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { head } from "../test/fixtures";
 import { attemptsLeft, criticalFiles, specComplete, withinSafetyCap } from "./contracts";
 import type { Spec } from "./types";
 
@@ -120,7 +121,7 @@ describe("withinSafetyCap", () => {
 });
 
 describe("criticalFiles", () => {
-  const branch = (...changedFiles: string[]) => ({ commits: 1, changedFiles });
+  const branch = (...changedFiles: string[]) => ({ head, commits: 1, changedFiles });
 
   test("lists the changed files that match a critical path, in order", () => {
     const changed = branch("src/auth/login.ts", "src/reports/export.ts", "migrations/001.sql");

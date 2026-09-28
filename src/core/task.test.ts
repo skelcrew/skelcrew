@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { commit, id, session, spec, worktree } from "../test/fixtures";
+import { commit, head, id, session, spec, worktree } from "../test/fixtures";
 import { evolveTask } from "./evolve";
 import { CommitSha, SessionId, TaskId } from "./ids";
 import { waitingOnYou } from "./task";
@@ -37,7 +37,7 @@ const inChecks: EventBody[] = [
   { type: "task.dispatched", session },
   {
     type: "task.done_reported",
-    branch: { commits: 1, changedFiles: ["src/auth/a.ts"] },
+    branch: { head, commits: 1, changedFiles: ["src/auth/a.ts"] },
     gate: "local",
     request: 4,
   },

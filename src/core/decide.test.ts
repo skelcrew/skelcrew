@@ -6,6 +6,7 @@ import { CommitSha, ProjectId, SessionId, TaskId } from "./ids";
 import { awaitedRequest, runningSession } from "./task";
 import type {
   BlockReason,
+  BranchFacts,
   Config,
   Decision,
   EventBody,
@@ -528,9 +529,16 @@ describe("session_failed in Ready", () => {
 // In progress
 // ---------------------------------------------------------------------------
 
-const branch = { commits: 3, changedFiles: ["src/reports/export.ts"] };
+// Each report names the commit at the branch's tip, as the daemon reads it.
+const exportHead = CommitSha.parse("e".repeat(40));
+const authHead = CommitSha.parse("f".repeat(40));
+const branch: BranchFacts = {
+  head: exportHead,
+  commits: 3,
+  changedFiles: ["src/reports/export.ts"],
+};
 const reportWith =
-  (b: typeof branch): Step =>
+  (b: BranchFacts): Step =>
   (t) => ({ by: "agent", type: "report_done", session: agentOf(t), branch: b });
 const reportDone = reportWith(branch);
 const giveUp: Step = (t) => ({
@@ -548,7 +556,9 @@ describe("report_done", () => {
     expect(send(run(...inProgress), reportDone)).toEqual({
       ok: true,
       events: [stamped({ type: "task.done_reported", branch, gate: "local", request: 4 })],
-      commands: [{ type: "run_gate", taskId: id, request: 4, gate: "local", worktree }],
+      commands: [
+        { type: "run_gate", taskId: id, request: 4, gate: "local", worktree, head: exportHead },
+      ],
     });
   });
 
@@ -692,7 +702,9 @@ describe("gate_result, passing", () => {
       events: [
         stamped({ type: "task.gate_passed", gate: "local", next: { gate: "review", request: 5 } }),
       ],
-      commands: [{ type: "run_gate", taskId: id, request: 5, gate: "review", worktree }],
+      commands: [
+        { type: "run_gate", taskId: id, request: 5, gate: "review", worktree, head: exportHead },
+      ],
     });
   });
 
@@ -761,7 +773,11 @@ describe("gate_result, failing", () => {
 // Checks: the merge
 // ---------------------------------------------------------------------------
 
-const authBranch = { commits: 2, changedFiles: ["src/reports/export.ts", "src/auth/login.ts"] };
+const authBranch: BranchFacts = {
+  head: authHead,
+  commits: 2,
+  changedFiles: ["src/reports/export.ts", "src/auth/login.ts"],
+};
 const reportAuthDone = reportWith(authBranch);
 const approveMerge: Input = { by: "human", type: "approve_merge" };
 const sendBackMerge = (note: string): Input => ({ by: "human", type: "revise_merge", note });
@@ -789,7 +805,7 @@ describe("the last gate passing", () => {
       ],
       commands: [
         { type: "stop_session", session: developSession },
-        { type: "merge", taskId: id, request: 6, worktree },
+        { type: "merge", taskId: id, request: 6, worktree, head: exportHead },
       ],
     });
   });
@@ -813,7 +829,7 @@ describe("approve_merge", () => {
     expect(send(run(...awaitingMerge), approveMerge)).toEqual({
       ok: true,
       events: [stamped({ type: "task.merge_started", request: 6 })],
-      commands: [{ type: "merge", taskId: id, request: 6, worktree }],
+      commands: [{ type: "merge", taskId: id, request: 6, worktree, head: authHead }],
     });
   });
 
@@ -821,6 +837,27 @@ describe("approve_merge", () => {
     expect(send(run(...merging), approveMerge)).toEqual({
       ok: false,
       rejection: { input: "approve_merge", reason: "#12's merge isn't waiting for approval." },
+    });
+  });
+});
+
+// Found by Codex review. The agent's first report changed only
+// export.ts, and the local gate failed. The agent fixed it, also changing
+// login.ts, but its first report arrived again and was accepted first.
+describe("the commit that merges", () => {
+  const repeated = [...inChecks, localFail, reportDone];
+
+  test("is the one the gates tested, never one the agent made after its report", () => {
+    // The real report, with the critical file, comes too late to count.
+    expect(send(run(...repeated), reportAuthDone).ok).toBe(false);
+
+    const decision = send(run(...repeated, gatePass("local")), gatePass("review"));
+    expect(decision.ok && decision.commands).toContainEqual({
+      type: "merge",
+      taskId: id,
+      request: 7,
+      worktree,
+      head: exportHead,
     });
   });
 });

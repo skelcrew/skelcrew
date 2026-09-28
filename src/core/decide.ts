@@ -421,7 +421,16 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
       if (gate === undefined) return reject("workflow.yml has no gates.");
       return accept(
         [{ type: "task.done_reported", branch: input.branch, gate, request: next(task) }],
-        [{ type: "run_gate", taskId: task.id, request: next(task), gate, worktree }],
+        [
+          {
+            type: "run_gate",
+            taskId: task.id,
+            request: next(task),
+            gate,
+            worktree,
+            head: input.branch.head,
+          },
+        ],
       );
     }
 
@@ -441,6 +450,7 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
     taskId: task.id,
     request: next(task),
     worktree: task.worktree,
+    head: task.branch.head,
   };
 
   switch (input.type) {
@@ -464,7 +474,16 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
         const request = next(task);
         return accept(
           [{ type: "task.gate_passed", gate: input.gate, next: { gate: nextGate, request } }],
-          [{ type: "run_gate", taskId: task.id, request, gate: nextGate, worktree: task.worktree }],
+          [
+            {
+              type: "run_gate",
+              taskId: task.id,
+              request,
+              gate: nextGate,
+              worktree: task.worktree,
+              head: task.branch.head,
+            },
+          ],
         );
       }
       const passed: EventBody = { type: "task.gate_passed", gate: input.gate, next: null };
