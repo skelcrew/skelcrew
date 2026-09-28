@@ -332,8 +332,14 @@ export type EventBody =
   | { type: "task.spec_session_started"; session: SessionId }
   // `by` shows in the record whether an agent or the developer wrote it.
   | { type: "task.specced"; spec: Spec; by: "agent" | "human" }
+  // Covers every way back to Spec except a revert: a spec the developer
+  // didn't approve, and a task sent back from a later phase, for example
+  // after it was blocked. Both give the spec agent the note to work from.
   | { type: "task.spec_sent_back"; note: string }
   | { type: "task.ready" }
+  // The scheduler's start was accepted. What starts depends on the phase:
+  // a spec session in Spec, a worktree in Ready, and a new develop session
+  // in In progress after a retry.
   | { type: "task.dispatch_started" }
   | { type: "task.worktree_created"; worktree: Worktree }
   | { type: "task.dispatched"; session: SessionId }
