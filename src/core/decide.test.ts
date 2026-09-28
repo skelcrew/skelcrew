@@ -1119,9 +1119,11 @@ describe("usage", () => {
 
 const drop: Input = { by: "human", type: "drop" };
 const sendBackToSpec = (note: string): Input => ({ by: "human", type: "send_back_to_spec", note });
-const crashed = (s: SessionId): Input => ({
+// A crash report names the agent, and the request that started it.
+const crashed = (s: SessionId, request: number): Input => ({
   by: "plugin",
   type: "session_crashed",
+  request,
   session: s,
   message: "herdr crashed",
 });
@@ -1233,7 +1235,7 @@ describe("send_back_to_spec", () => {
 
 describe("a running agent crashing", () => {
   test("blocks the task in In progress, keeping the worktree", () => {
-    expect(send(run(...inProgress), crashed(developSession))).toEqual({
+    expect(send(run(...inProgress), crashed(developSession, 3))).toEqual({
       ok: true,
       events: [
         stamped({
@@ -1246,17 +1248,17 @@ describe("a running agent crashing", () => {
   });
 
   test("blocks the task in Spec", () => {
-    const decision = send(run(...specRunning), crashed(session));
+    const decision = send(run(...specRunning), crashed(session, 1));
     expect(decision.ok && decision.events.map((e) => e.type)).toEqual(["task.blocked"]);
   });
 
   test("blocks the task in Checks while a gate runs", () => {
-    const decision = send(run(...inChecks), crashed(developSession));
+    const decision = send(run(...inChecks), crashed(developSession, 3));
     expect(decision.ok && decision.events.map((e) => e.type)).toEqual(["task.blocked"]);
   });
 
   test("is rejected once the gates have passed, since the agent was already stopped", () => {
-    expect(send(run(...merging), crashed(developSession))).toEqual({
+    expect(send(run(...merging), crashed(developSession, 3))).toEqual({
       ok: false,
       rejection: { input: "session_crashed", reason: "#12's agent isn't session-2." },
     });
@@ -1542,7 +1544,7 @@ describe("a gate result from an earlier run of the checks", () => {
   const reviewingAgain: Step[] = [
     ...inChecks,
     gatePass("local"),
-    crashed(developSession),
+    crashed(developSession, 3),
     retry,
     start,
     (t) => ({
@@ -1644,7 +1646,7 @@ describe("a crash report for an earlier agent", () => {
   test("can't block the task or make it forget the agent it has now", () => {
     const replaced: Step[] = [
       ...inProgress,
-      crashed(developSession),
+      crashed(developSession, 3),
       retry,
       start,
       (t) => ({
@@ -1654,7 +1656,7 @@ describe("a crash report for an earlier agent", () => {
         session: SessionId.parse("session-3"),
       }),
     ];
-    expect(send(run(...replaced), crashed(developSession))).toEqual({
+    expect(send(run(...replaced), crashed(developSession, 3))).toEqual({
       ok: false,
       rejection: { input: "session_crashed", reason: "#12's agent isn't session-2." },
     });
@@ -1760,6 +1762,51 @@ describe("a report from an agent the task has replaced", () => {
     expect(send(revising, oldSubmit)).toEqual({
       ok: false,
       rejection: { input: "submit_spec", reason: "#12's agent isn't session-1." },
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A crash before its start reply (found by the third Codex review)
+// ---------------------------------------------------------------------------
+
+describe("a crash reported before the agent's start reply", () => {
+  // The spec agent (request 1) starts and crashes at once, and the crash
+  // report overtakes the start reply.
+  const early = crashed(SessionId.parse("gone"), 1);
+  const lateStart: Input = {
+    by: "plugin",
+    type: "session_started",
+    request: 1,
+    session: SessionId.parse("gone"),
+  };
+
+  test("counts as a failed start and blocks the task", () => {
+    expect(send(run(...inSpec, start), early)).toEqual({
+      ok: true,
+      events: [
+        stamped({
+          type: "task.blocked",
+          reason: { kind: "session_failed", message: "herdr crashed" },
+        }),
+      ],
+      commands: [],
+    });
+  });
+
+  test("leaves the late start reply to be stopped, not recorded as running", () => {
+    expect(send(run(...inSpec, start, early), lateStart)).toEqual({
+      ok: true,
+      events: [],
+      commands: [{ type: "stop_session", session: SessionId.parse("gone") }],
+    });
+  });
+
+  test("is refused for a request the task isn't waiting on", () => {
+    const stale = crashed(SessionId.parse("gone"), 7);
+    expect(send(run(...inSpec, start), stale)).toEqual({
+      ok: false,
+      rejection: { input: "session_crashed", reason: "#12's agent isn't gone." },
     });
   });
 });

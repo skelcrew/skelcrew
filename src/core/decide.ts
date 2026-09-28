@@ -244,15 +244,22 @@ function inAnyPhase(task: Task, input: AnyPhaseInput, ctx: Context): Decision {
       return accept([recorded, block], stopForBlock(task));
     }
 
-    // A running agent stopped. The report names it, so one about an agent
-    // the task no longer has, such as an earlier one after a retry, can't
-    // block the task or make it forget the agent it has now. A merge under
-    // way has no agent, since it was stopped when the gates passed.
+    // An agent stopped. The report names it, so one about an agent the task
+    // no longer has, such as an earlier one after a retry, can't block the
+    // task or make it forget the agent it has now. A merge under way has no
+    // agent, since it was stopped when the gates passed.
+    //
+    // A crash can overtake the agent's start reply. It names the request
+    // that started the agent, so if the task still waits on it, the crash
+    // counts as a failed start. The late start reply is then cleaned up.
     case "session_crashed":
-      if (runningSession(task) !== input.session) {
-        return reject(`#${task.id}'s agent isn't ${input.session}.`);
+      if (runningSession(task) === input.session) {
+        return accept([blocked("session_failed", input.message)]);
       }
-      return accept([blocked("session_failed", input.message)]);
+      if (waitingForAgent(task, input.request)) {
+        return accept([blocked("session_failed", input.message)], stopForBlock(task));
+      }
+      return reject(`#${task.id}'s agent isn't ${input.session}.`);
   }
 }
 

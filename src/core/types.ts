@@ -326,9 +326,11 @@ export type PluginInput =
   | { type: "merge_failed"; request: number; summary: string }
   | { type: "reverted"; request: number }
   | { type: "revert_failed"; request: number; summary: string }
-  // Not a reply: an agent that was running has stopped. It names the
-  // session, so a report about an agent the task no longer has is refused.
-  | { type: "session_crashed"; session: SessionId; message: string };
+  // An agent has stopped. It names the session, so a report about an agent
+  // the task no longer has is refused, and the request that started it, so a
+  // crash that overtakes the agent's start reply still counts as a failed
+  // start.
+  | { type: "session_crashed"; request: number; session: SessionId; message: string };
 
 // Inputs the daemon makes itself. The scheduler's pick is an input, not a
 // direct change, so decide keeps the final say on every transition.
