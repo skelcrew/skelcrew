@@ -125,23 +125,25 @@ export class Loop {
     // A reply answers its start once it has been handled: refused, or its
     // events saved. If saving fails, the start stays counted, since the task
     // never recorded what the reply said.
+    // A refused reply still answers its start, so that must be saved too.
+    // If it can't be, the caller hears about the failed save, not the
+    // refusal, so it sends the reply again.
     const answered = answersStart(input) ? [{ taskId, request: input.request }] : [];
-    if (!decision.ok) {
-      this.save([], { sent: [], answered });
-      return decision;
-    }
-
-    const sent = decision.commands.filter(startsSomething).map((command) => ({
-      taskId: command.taskId,
-      request: command.request,
-    }));
-    const saved = this.save(decision.events, { sent, answered });
+    const events = decision.ok ? decision.events : [];
+    const sent = decision.ok
+      ? decision.commands.filter(startsSomething).map((command) => ({
+          taskId: command.taskId,
+          request: command.request,
+        }))
+      : [];
+    const saved = this.save(events, { sent, answered });
     if (!saved.ok) {
       return {
         ok: false,
         rejection: { input: input.type, reason: `The events couldn't be saved: ${saved.reason}` },
       };
     }
+    if (!decision.ok) return decision;
     for (const event of decision.events) this.apply(event);
     for (const command of decision.commands) this.tools.carryOut(command);
     return decision;
