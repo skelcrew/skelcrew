@@ -124,8 +124,13 @@ Tests sit next to the code: `decide.ts` and `decide.test.ts`.
   each story are also saved in `__snapshots__/`, so any change to the shape of the event
   log shows up in review. Update the snapshots only on purpose, with
   `bun test --update-snapshots`.
-- **The simulator** (_planned_). It stands in for agents, git and plugins, so full
-  lifecycles run in tests.
+- **The simulator** (`src/sim/`). The daemon's loop, with fake tools in place of real
+  ones. It runs each input through `decideTask`, hands each command to a fake tool that
+  answers the way the real one would, and asks `schedule` what to start next. Each task
+  gets a script of what goes wrong, such as a gate that fails twice or a merge conflict.
+  So whole lifecycles, with several tasks sharing `max_running`, run in tests. It lives
+  outside the core because it's test machinery, not rules. The daemon will be the same
+  loop with real tools plugged in.
 
 `bun run check` runs the lint, the typecheck and every test. It must pass on every commit.
 
