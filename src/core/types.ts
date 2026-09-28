@@ -16,7 +16,10 @@
 // IDs are plain strings for now. Branded types would stop a TaskId being
 // passed where a SessionId is expected, but creating one needs a cast, and
 // casts are banned. Revisit if mix-ups show up in practice.
-export type TaskId = string;
+// Task IDs count up per repository: 1, 2, 3. They are shown as "#12" and
+// typed as "12" in commands, so they must be short. The daemon picks the
+// next number and passes it in; the core never makes one up.
+export type TaskId = number;
 export type ProjectId = string; // a short slug, e.g. "inbox", so commands can use it
 export type SessionId = string;
 export type CommitSha = string;
@@ -89,7 +92,14 @@ export type Usage = {
 // other's files.
 export type Worktree = {
   path: string;
-  branch: string;
+  branch: string; // e.g. "task/12-csv-export": the number keeps it unique
+};
+
+// Where a task came from, when it came from another tool. The task keeps
+// its own number; this is only a link, shown as "#12 CSV export (GitHub #40)".
+export type SourceRef = {
+  label: string; // e.g. "GitHub #40"
+  url: string;
 };
 
 // Facts about the task's branch, gathered by the shell from git. The core
@@ -121,8 +131,10 @@ export type PhaseState =
   | {
       phase: "in_progress";
       spec: Spec;
+      // Kept while the task is blocked, so a retry carries on with the
+      // same code instead of starting over.
       worktree: Worktree;
-      session: SessionId;
+      step: DevelopStep;
       attempts: number; // failed gate or merge rounds since the last retry
       lastFailure: Failure | null; // sent to the agent so it can fix it
     }
@@ -142,9 +154,9 @@ export type PhaseState =
   | { phase: "done"; spec: Spec; mergeCommit: CommitSha }
   | { phase: "dropped" };
 
-// Spec and Ready both wait for a free slot before an agent starts. The
-// steps are separate states because each waits on a different reply from
-// the shell, and a crash in between must replay to the right place.
+// Spec, Ready and In progress all wait for a free slot before an agent
+// starts. The steps are separate states because each waits on a different
+// reply from the shell, and a crash in between must replay to the right place.
 export type SpecStep =
   | { kind: "queued" } // waiting for a slot (maxRunning)
   | { kind: "starting" } // start_spec_session sent, no reply yet
@@ -158,15 +170,31 @@ export type ReadyStep =
   | { kind: "creating_worktree" }
   | { kind: "starting_session"; worktree: Worktree };
 
+// In progress only waits for a slot after a block. Blocking stops the agent,
+// so a blocked task holds no slot while it waits for the developer. After a
+// retry, a new agent starts in the same worktree.
+export type DevelopStep =
+  | { kind: "queued" }
+  | { kind: "starting" }
+  | { kind: "running"; session: SessionId };
+
 export type Task = PhaseState & {
   id: TaskId;
   title: string;
   project: ProjectId | null; // null means no project; the scheduler treats it as active
+  source: SourceRef | null; // null when added in Skelcrew itself
   createdAt: Timestamp;
   // At most one open question per task. A second question waits until the
   // first is answered, so the inbox never floods from one task.
   question: Question | null;
-  blocked: BlockReason | null; // Blocked is a flag on top of the phase
+  // Blocked is a flag on top of the phase. Blocking stops the task's agent
+  // and puts its step back to queued; the scheduler skips it until a retry
+  // clears the flag. A task blocked in Checks goes back to In progress.
+  blocked: BlockReason | null;
+  // How many times the task has been built. Each build gets its own branch
+  // from main ("task/12-csv-export", then "task/12-csv-export-2"), so a
+  // build after a send-back never starts on code written for the old spec.
+  builds: number;
   // Two usage counters. `usage` never resets, so the record shows the true
   // cost. The safety cap counts from `usageAtRetry`, so a retried task gets
   // a fresh allowance instead of being blocked again at once.
@@ -260,8 +288,9 @@ export type AgentInput =
 export type PluginInput =
   | {
       type: "issue_delegated";
-      id: TaskId;
+      id: TaskId; // a new Skelcrew number, not the issue's number
       title: string;
+      source: SourceRef;
       project: ProjectId | null; // mapped from e.g. a GitHub milestone
     }
   | { type: "external_move"; to: string } // e.g. issue dragged to Done
@@ -303,7 +332,12 @@ export type Envelope = {
 // state; anything left out is lost for good.
 
 export type EventBody =
-  | { type: "task.created"; title: string; project: ProjectId | null }
+  | {
+      type: "task.created";
+      title: string;
+      project: ProjectId | null;
+      source: SourceRef | null;
+    }
   | { type: "task.assigned"; project: ProjectId | null }
   | { type: "task.spec_requested" }
   | { type: "task.spec_session_started"; session: SessionId }
@@ -356,12 +390,14 @@ export type Event = TaskEvent | ProjectEvent;
 
 export type Command =
   | { type: "start_spec_session"; taskId: TaskId; note: string | null }
-  | { type: "create_worktree"; taskId: TaskId }
+  | { type: "create_worktree"; taskId: TaskId; build: number } // names the branch
   | {
       type: "start_develop_session";
       taskId: TaskId;
       worktree: Worktree;
       spec: Spec;
+      // Set when a retry starts a new agent: the failure it must fix first.
+      lastFailure: Failure | null;
     }
   | { type: "send_to_session"; session: SessionId; text: string }
   | { type: "stop_session"; session: SessionId }
@@ -374,6 +410,8 @@ export type Command =
   // tasks merging at once. Only the shell sees all merges. Without this
   // step, two tasks that each pass alone could break main together.
   | { type: "merge"; taskId: TaskId; worktree: Worktree }
+  // The shell first commits any uncommitted changes to the worktree's
+  // branch, so removing a worktree never loses work.
   | { type: "remove_worktree"; worktree: Worktree }
   | { type: "revert"; taskId: TaskId; commit: CommitSha };
 
@@ -450,9 +488,10 @@ export type EvolveProject = (
   event: ProjectEvent,
 ) => Project;
 
-// Picks which queued tasks in Spec or Ready to start next. It keeps running
-// sessions at or below maxRunning, and skips tasks in parked projects. It
-// only proposes: each pick becomes a "start" input that decide can reject.
+// Picks which queued tasks in Spec, Ready or In progress to start next. It
+// keeps running sessions at or below maxRunning, and skips blocked tasks and
+// tasks in parked projects. It only proposes: each pick becomes a "start"
+// input that decide can reject.
 //
 // Why separate from decide: choosing what to start next means looking at
 // all tasks. decide only ever sees one, which keeps it small enough to read

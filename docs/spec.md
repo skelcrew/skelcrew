@@ -101,7 +101,7 @@ decide(state, input, config):
 
 Inputs are everything that can happen to a task: an agent proposing done, a check result, a human answer, a work source signal, a clock tick. Phase transitions are one kind of outcome; many inputs change something without moving phase, and some are rejected (an agent proposing a merge, an issue dragged to Done by hand).
 
-**Scheduler.** A second pure function over all tasks decides what to start next. At most `max_running` agents work at once, counting both spec and develop sessions, so new work is paced by how many questions the developer can handle. It only starts tasks in active projects, or tasks with no project. Quota awareness comes later.
+**Scheduler.** A second pure function over all tasks decides what to start next. At most `max_running` agents work at once, counting both spec and develop sessions, so new work is paced by how many questions the developer can handle. It only starts tasks in active projects, or tasks with no project, and never starts a blocked task. Quota awareness comes later.
 
 **Contracts and policies.** Small pure predicates called by decide: spec completeness, critical path match, attempts left. Each returns pass or fail with reasons, which become inbox text and record entries.
 
@@ -129,10 +129,10 @@ This resembles the Elm architecture and the decider pattern from event sourcing.
 
 A task moves through six phases: Idea, Spec, Ready, In progress, Checks, Done. A task can also end as Dropped, when the developer decides not to do it. Blocked is a side state.
 
-1. **Define.** The developer adds a task: `skelcrew add`, a task on the built-in board, or an issue delegated to Skelcrew in a work source plugin. A captured task waits in Idea until the developer asks for a spec; delegating an issue counts as asking. Event: `task.created`.
+1. **Define.** The developer adds a task: `skelcrew add`, a task on the built-in board, or an issue delegated to Skelcrew in a work source plugin. A captured task waits in Idea until the developer asks for a spec; delegating an issue counts as asking. Each task gets the next number in the repository, shown as `#12`, and commands take that number. A delegated issue keeps its own number as a link, shown as `#12 CSV export (GitHub #40)`. Event: `task.created`.
 2. **Spec.** The daemon runs the spec skill. Anything it cannot decide becomes an inbox question with options. Intake can also be done by hand or interactively in the harness; the daemon only cares whether the result meets the spec contract. Event: `task.specced`.
 3. **Ready.** The core checks the spec against the contract, then asks the developer to approve it in the inbox. When spec\_approval is always, only that approval moves the task to Ready; agents and plugins can never do it. A delegated issue never skips this step. Event: `task.ready`.
-4. **Dispatch.** The core asks the version control plugin for a worktree and the session plugin to start the harness in it with the develop skill. Event: `task.dispatched`.
+4. **Dispatch.** The core asks the version control plugin for a worktree on a branch named after the task, such as `task/12-csv-export`, and the session plugin to start the harness in it with the develop skill. Each build of a task starts fresh from main on its own branch. If the task is sent back to spec and built again, the new branch is `task/12-csv-export-2`, and the old one is kept for reference. Before any worktree is removed, its uncommitted changes are committed to its branch, so no work is lost. Event: `task.dispatched`.
 5. **Develop.** The agent works and reports through MCP. If it needs information, it raises one clear question and the task stays In progress. If it cannot continue at all, it reports giving up; only the core moves a task to Blocked. Event when blocked: `task.blocked`.
 6. **Checks and review.** The core runs the gates: local check commands, remote check results from plugins, then a review by a fresh agent session. Failures return to the developing agent; repeated failures block the task with a reason. Event: `task.checks_passed`.
 7. **Merge.** The merge policy either merges automatically or escalates to the inbox. Tasks merge one at a time. Just before merging, the branch is brought up to date with main and the local checks run again. If that fails, or the branch conflicts with main, the task returns to In progress with the failure, and it counts as a failed attempt. After the merge, the worktree is removed. Events: `task.merged` or `task.escalated`.
@@ -193,6 +193,8 @@ Item types:
 - **Question:** from spec or development, with two to four options plus free text.
 - **Approval:** a finished spec, or a merge touching critical paths, shown as a summary with approve or send back. A spec sent back returns to the spec agent with the developer's note. A merge sent back returns to In progress with the note.
 - **Blocked:** a task the core stopped, with its reason (gates failed repeatedly, safety cap reached, agent gave up, worktree or session failed) and options that fit it: retry, send back to spec, or drop. Retry resets the attempt count and the safety cap; the record keeps the totals. Only the core blocks tasks; agents ask questions or report giving up.
+
+  A blocked task keeps its phase and its worktree, but its agent is stopped, so it does not hold a slot while it waits. A task blocked during checks goes back to In progress. Retry puts the task back in the queue. When a slot is free, a new agent starts in the same worktree, with the last failure as its brief.
 
 Rules:
 
