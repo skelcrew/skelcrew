@@ -15,6 +15,7 @@ import { schedule } from "./schedule";
 import type {
   Command,
   Config,
+  GateName,
   Input,
   Project,
   SessionId as Session,
@@ -54,12 +55,12 @@ const configs = fc.constantFrom<Config>(
 
 const spec: Spec = { scope: "Export CSV.", acceptance: ["It downloads."], openQuestions: [] };
 const incomplete: Spec = { ...spec, openQuestions: ["Include deleted rows?"] };
-const sessions = ["s1", "s2", "s3"].map((s) => SessionId.parse(s));
-const worktrees = ["/wt/a", "/wt/b"].map((path) => ({ path, branch: `task${path}` }));
 const commit = CommitSha.parse("c".repeat(40));
 
-// Every input a task can receive, with a few values each. `add` is sent
-// first by the property itself.
+// Every input a task can receive from you, its agents and the scheduler,
+// with a few values each. `add` is sent first by the property itself.
+// Replies to requests aren't here: each checker builds them from the
+// requests its task actually sent, old ones included (see replies()).
 const inputPool: Input[] = [
   { by: "human", type: "request_spec" },
   { by: "human", type: "provide_spec", spec },
@@ -72,8 +73,6 @@ const inputPool: Input[] = [
   { by: "human", type: "send_back_to_spec", note: "Split it." },
   { by: "human", type: "drop" },
   { by: "human", type: "revert", reason: "Broke exports." },
-  { by: "plugin", type: "reverted" },
-  { by: "plugin", type: "revert_failed", summary: "Conflicts." },
   { by: "human", type: "change_project", project: reports },
   { by: "human", type: "change_project", project: archive },
   { by: "human", type: "change_project", project: null },
@@ -85,28 +84,6 @@ const inputPool: Input[] = [
   { by: "agent", type: "report_done", branch: { commits: 0, changedFiles: [] } },
   { by: "agent", type: "give_up", message: "Stuck." },
   { by: "plugin", type: "external_move", to: "Done" },
-  ...worktrees.flatMap((worktree) =>
-    [1, 2, 3].map((build): Input => ({ by: "plugin", type: "worktree_created", worktree, build })),
-  ),
-  ...[1, 2, 3].map(
-    (build): Input => ({
-      by: "plugin",
-      type: "worktree_failed",
-      message: "Disk full.",
-      build,
-    }),
-  ),
-  ...sessions.map((session): Input => ({ by: "plugin", type: "session_started", session })),
-  { by: "plugin", type: "session_failed", message: "Crashed." },
-  // Rounds 1 to 6, so results from earlier rounds arrive late too.
-  ...(["local", "review"] as const).flatMap((gate) =>
-    [1, 2, 3, 4, 5, 6].flatMap((round): Input[] => [
-      { by: "plugin", type: "gate_result", gate, round, ok: true, summary: "Passed." },
-      { by: "plugin", type: "gate_result", gate, round, ok: false, summary: "Failed." },
-    ]),
-  ),
-  { by: "plugin", type: "merged", commit },
-  { by: "plugin", type: "merge_failed", summary: "Conflicts." },
   { by: "system", type: "start" },
   ...[1_000, 150_000, 250_000].map(
     (tokens): Input => ({ by: "system", type: "usage", usage: { tokens, ms: 60_000 } }),
@@ -133,9 +110,16 @@ const unguided = new Set<Input["type"]>([
   "change_project",
   "give_up",
   "session_failed",
+  "session_crashed",
   "worktree_failed",
   "send_back_to_spec",
 ]);
+
+// A request the task sent, as the daemon remembers it, so replies can be
+// built for it: on time, repeated, or long after the task moved on.
+type Sent =
+  | { request: number; kind: "agent" | "worktree" | "merge" | "revert" }
+  | { request: number; kind: "gate"; gate: GateName };
 const choice = fc.record({ guided: fc.integer({ min: 0, max: 9 }).map((x) => x < 8), n: fc.nat() });
 const choices = fc.array(choice, { minLength: 1, maxLength: 300, size: "max" });
 
@@ -170,18 +154,20 @@ function runsAgent(task: Task): boolean {
   return runningSession(task) !== null;
 }
 
-// Whether the task was waiting for an agent or worktree to start, so a
-// failure report answers that start rather than reporting a crash.
-function wasStarting(task: Task | null): boolean {
-  if (task === null) return false;
+// The request the task's current step waits on, or null if none.
+function awaited(task: Task | null): number | null {
+  if (task === null) return null;
   switch (task.phase) {
     case "spec":
-    case "in_progress":
-      return task.step.kind === "starting";
     case "ready":
-      return task.step.kind !== "queued";
+    case "in_progress":
+      return "request" in task.step ? task.step.request : null;
+    case "checks":
+      return task.request;
+    case "done":
+      return task.reverting?.request ?? null;
     default:
-      return false;
+      return null;
   }
 }
 
@@ -193,14 +179,16 @@ class Checker {
   task: Task | null = null;
   log: TaskEvent[] = [];
   liveSessions = new Set<Session>();
-  // Starts sent out and not yet answered, the way the daemon counts them.
-  // Kept by kind, since a reply only answers a request of its own kind, and
-  // worktrees by build, since a reply names the build it answers.
-  agentStarts = 0;
-  worktreeStarts = new Set<number>();
+  // Every request sent, and every agent ever started, for building replies.
+  sent: Sent[] = [];
+  started: Session[] = [];
+  // Starts sent out and not yet answered, the way the daemon counts them:
+  // by request number, since each reply names the request it answers.
+  startsPending = new Set<number>();
+  lastUsage = { tokens: 0, ms: 0 };
 
   get startsInFlight(): number {
-    return this.agentStarts + this.worktreeStarts.size;
+    return this.startsPending.size;
   }
   liveWorktrees = new Set<string>();
   lastBuild = 0;
@@ -215,9 +203,72 @@ class Checker {
     readonly config: Config,
   ) {}
 
+  // Replies for every request the task sent, and crash reports for every
+  // agent it ever started. Most answer requests long since dealt with, so
+  // late and repeated replies come up all the time.
+  replies(): Input[] {
+    const id = this.id;
+    const out: Input[] = this.started.map(
+      (session): Input => ({ by: "plugin", type: "session_crashed", session, message: "Crashed." }),
+    );
+    for (const sent of this.sent) {
+      const { request } = sent;
+      switch (sent.kind) {
+        case "agent":
+          out.push(
+            {
+              by: "plugin",
+              type: "session_started",
+              request,
+              session: SessionId.parse(`s${id}-${request}`),
+            },
+            { by: "plugin", type: "session_failed", request, message: "Didn't start." },
+          );
+          break;
+        case "worktree":
+          out.push(
+            {
+              by: "plugin",
+              type: "worktree_created",
+              request,
+              worktree: { path: `/wt/${id}-${request}`, branch: `task/${id}-${request}` },
+            },
+            { by: "plugin", type: "worktree_failed", request, message: "Disk full." },
+          );
+          break;
+        case "gate":
+          out.push(
+            { by: "plugin", type: "gate_result", request, gate: sent.gate, ok: true, summary: "." },
+            {
+              by: "plugin",
+              type: "gate_result",
+              request,
+              gate: sent.gate,
+              ok: false,
+              summary: ".",
+            },
+          );
+          break;
+        case "merge":
+          out.push(
+            { by: "plugin", type: "merged", request, commit },
+            { by: "plugin", type: "merge_failed", request, summary: "Conflicts." },
+          );
+          break;
+        case "revert":
+          out.push(
+            { by: "plugin", type: "reverted", request },
+            { by: "plugin", type: "revert_failed", request, summary: "Conflicts." },
+          );
+          break;
+      }
+    }
+    return out;
+  }
+
   // Turns a random choice into an input, from the inputs `allowed` lets through.
   pick(choice: Choice, at: number, allowed: (input: Input) => boolean = () => true): Input {
-    const pool = inputPool.filter(allowed);
+    const pool = [...inputPool, ...this.replies()].filter(allowed);
     const fits = pool.filter(
       (input) =>
         !unguided.has(input.type) &&
@@ -239,6 +290,18 @@ class Checker {
 
     // 3. A move in another tool is never obeyed.
     if (input.type === "external_move") expect(decision.ok).toBe(false);
+
+    // The daemon's bookkeeping happens whatever the core decides: a reply
+    // answers its start, and a crashed agent is gone.
+    if (
+      input.type === "session_started" ||
+      input.type === "session_failed" ||
+      input.type === "worktree_created" ||
+      input.type === "worktree_failed"
+    ) {
+      this.startsPending.delete(input.request);
+    }
+    if (input.type === "session_crashed") this.liveSessions.delete(input.session);
 
     if (!decision.ok) return;
     const { events, commands } = decision;
@@ -267,7 +330,7 @@ class Checker {
       }
     }
 
-    this.track(input, events, commands, before);
+    this.track(input, commands);
     this.checkTask();
   }
 
@@ -281,7 +344,7 @@ class Checker {
         break;
 
       // 2. Only you retry, drop, revert or change a task's project. The
-      // revert starts on your input; git's answer finishes it.
+      // revert starts on your input; version control's answer finishes it.
       case "task.unblocked":
       case "task.dropped":
       case "task.revert_started":
@@ -296,18 +359,34 @@ class Checker {
         break;
 
       case "task.gate_passed":
-        // 5. A pass only counts for the round of checks it ran in: a late
+        // 5. A pass only counts for the run of the gate it answers: a late
         // result checked code that has since changed.
-        if (input.type === "gate_result" && task !== null) {
-          expect(input.round).toBe(task.rounds);
-        }
+        if (input.type === "gate_result") expect<number | null>(input.request).toBe(awaited(task));
         this.gatesPassed.add(event.gate);
         break;
 
+      // 13, 14. An agent or worktree is only taken for the request that
+      // asked for it, never a late one from an earlier request.
       case "task.worktree_created":
-        // 14. A worktree is only kept for the build it was made for.
-        if (input.type === "worktree_created" && task !== null) {
-          expect(input.build).toBe(task.builds);
+      case "task.spec_session_started":
+      case "task.dispatched":
+        if (input.type === "worktree_created" || input.type === "session_started") {
+          expect<number | null>(input.request).toBe(awaited(task));
+        }
+        break;
+
+      // A merge or revert only finishes on the reply to its own request.
+      case "task.merged":
+      case "task.merge_failed":
+      case "task.reverted":
+      case "task.revert_failed":
+        if (
+          input.type === "merged" ||
+          input.type === "merge_failed" ||
+          input.type === "reverted" ||
+          input.type === "revert_failed"
+        ) {
+          expect<number | null>(input.request).toBe(awaited(task));
         }
         break;
 
@@ -328,38 +407,42 @@ class Checker {
         }
         this.mergeStarted = true;
         break;
-
-      case "task.merged":
-        // 7. Every merge follows a started merge.
-        expect(this.mergeStarted).toBe(true);
-        break;
     }
+    // 7. Every merge follows a started merge.
+    if (event.type === "task.merged") expect(this.mergeStarted).toBe(true);
   }
 
   // Follows which agents and worktrees exist outside the core.
-  private track(input: Input, events: TaskEvent[], commands: Command[], before: Task | null): void {
-    // A reply to a start the daemon sent, matched by kind. A failure report
-    // only answers a start if the task was waiting for one; otherwise it
-    // reports a crash.
-    const answersAgent =
-      input.type === "session_started" || (input.type === "session_failed" && wasStarting(before));
-    if (answersAgent && this.agentStarts > 0) this.agentStarts -= 1;
-    if (input.type === "worktree_created" || input.type === "worktree_failed") {
-      this.worktreeStarts.delete(input.build);
-    }
+  private track(input: Input, commands: Command[]): void {
     for (const command of commands) {
-      if (command.type === "start_spec_session" || command.type === "start_develop_session") {
-        this.agentStarts += 1;
+      switch (command.type) {
+        case "start_spec_session":
+        case "start_develop_session":
+          this.sent.push({ request: command.request, kind: "agent" });
+          this.startsPending.add(command.request);
+          break;
+        case "create_worktree":
+          this.sent.push({ request: command.request, kind: "worktree" });
+          this.startsPending.add(command.request);
+          break;
+        case "run_gate":
+          this.sent.push({ request: command.request, kind: "gate", gate: command.gate });
+          break;
+        case "merge":
+          this.sent.push({ request: command.request, kind: "merge" });
+          break;
+        case "revert":
+          this.sent.push({ request: command.request, kind: "revert" });
+          break;
+        default:
+          break;
       }
-      if (command.type === "create_worktree") this.worktreeStarts.add(command.build);
     }
-    if (input.type === "session_started") this.liveSessions.add(input.session);
+    if (input.type === "session_started") {
+      this.liveSessions.add(input.session);
+      if (!this.started.includes(input.session)) this.started.push(input.session);
+    }
     if (input.type === "worktree_created") this.liveWorktrees.add(input.worktree.path);
-    // A crashed agent is gone.
-    if (input.type === "session_failed" && before !== null && events.length > 0) {
-      const crashed = runningSession(before);
-      if (crashed !== null) this.liveSessions.delete(crashed);
-    }
     for (const command of commands) {
       if (command.type === "stop_session") this.liveSessions.delete(command.session);
       if (command.type === "remove_worktree") this.liveWorktrees.delete(command.worktree.path);
@@ -405,6 +488,12 @@ class Checker {
 
     // 16. A blocked task has no agent running.
     if (task.blocked !== null) expect(session).toBeNull();
+
+    // Usage totals never go down: the record keeps the true cost, and the
+    // safety cap counts from them. (Proposed as a new invariant.)
+    expect(task.usage.tokens).toBeGreaterThanOrEqual(this.lastUsage.tokens);
+    expect(task.usage.ms).toBeGreaterThanOrEqual(this.lastUsage.ms);
+    this.lastUsage = task.usage;
 
     // 19. Replaying the log rebuilds the task exactly.
     let replayed: Task | null = null;

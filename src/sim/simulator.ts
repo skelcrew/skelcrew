@@ -189,11 +189,11 @@ export class Simulator {
     if (startsSomething(command)) this.startsInFlight += 1;
     switch (command.type) {
       case "start_spec_session":
-        this.startAgent(command.taskId, "spec");
+        this.startAgent(command.taskId, command.request, "spec");
         return;
 
       case "start_develop_session":
-        this.startAgent(command.taskId, "develop");
+        this.startAgent(command.taskId, command.request, "develop");
         return;
 
       case "stop_session":
@@ -220,7 +220,7 @@ export class Simulator {
           by: "plugin",
           type: "worktree_created",
           worktree: { path, branch },
-          build: command.build,
+          request: command.request,
         });
         return;
       }
@@ -238,7 +238,7 @@ export class Simulator {
           by: "plugin",
           type: "gate_result",
           gate: command.gate,
-          round: command.round,
+          request: command.request,
           ok,
           summary: ok ? "Passed." : `The ${command.gate} gate failed.`,
         });
@@ -253,24 +253,30 @@ export class Simulator {
           this.reply(command.taskId, {
             by: "plugin",
             type: "merge_failed",
+            request: command.request,
             summary: "Conflicts with main.",
           });
           return;
         }
-        this.reply(command.taskId, { by: "plugin", type: "merged", commit: this.commit() });
+        this.reply(command.taskId, {
+          by: "plugin",
+          type: "merged",
+          request: command.request,
+          commit: this.commit(),
+        });
         return;
       }
 
       case "revert":
-        this.reply(command.taskId, { by: "plugin", type: "reverted" });
+        this.reply(command.taskId, { by: "plugin", type: "reverted", request: command.request });
         return;
     }
   }
 
-  private startAgent(taskId: TaskId, kind: Agent["kind"]): void {
+  private startAgent(taskId: TaskId, request: number, kind: Agent["kind"]): void {
     const session = SessionId.parse(`session-${this.next()}`);
     this.agents.set(session, { taskId, kind });
-    this.reply(taskId, { by: "plugin", type: "session_started", session });
+    this.reply(taskId, { by: "plugin", type: "session_started", request, session });
   }
 
   // ---------------------------------------------------------------------------

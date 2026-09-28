@@ -53,27 +53,56 @@ const add: Input = {
 };
 const requestSpec: Input = { by: "human", type: "request_spec" };
 const start: Input = { by: "system", type: "start" };
-const started = (session: SessionId): Input => ({ by: "plugin", type: "session_started", session });
+// Replies answer the request the task is waiting on, the way the daemon
+// matches them.
+type Step = Input | ((task: Task | null) => Input);
+
+function awaited(task: Task | null): number {
+  if (task === null) return 0;
+  switch (task.phase) {
+    case "spec":
+    case "ready":
+    case "in_progress":
+      return "request" in task.step ? task.step.request : 0;
+    case "checks":
+      return task.request ?? 0;
+    case "done":
+      return task.reverting?.request ?? 0;
+    default:
+      return 0;
+  }
+}
+
+const started =
+  (session: SessionId): Step =>
+  (t) => ({ by: "plugin", type: "session_started", request: awaited(t), session });
 const submitSpec: Input = { by: "agent", type: "submit_spec", spec };
 const approveSpec: Input = { by: "human", type: "approve_spec" };
-const worktreeCreated: Input = { by: "plugin", type: "worktree_created", worktree, build: 1 };
-const reportDone = (branch: BranchFacts): Input => ({ by: "agent", type: "report_done", branch });
-// Each report of done starts a new round of checks.
-const gate = (name: "local" | "review", ok: boolean, round = 1): Input => ({
+const worktreeCreated: Step = (t) => ({
   by: "plugin",
-  type: "gate_result",
-  gate: name,
-  round,
-  ok,
-  summary: ok ? "Passed." : "2 tests failed in export.test.ts",
+  type: "worktree_created",
+  request: awaited(t),
+  worktree,
 });
-const merged: Input = { by: "plugin", type: "merged", commit };
+const reportDone = (branch: BranchFacts): Input => ({ by: "agent", type: "report_done", branch });
+const gate =
+  (name: "local" | "review", ok: boolean): Step =>
+  (t) => ({
+    by: "plugin",
+    type: "gate_result",
+    request: awaited(t),
+    gate: name,
+    ok,
+    summary: ok ? "Passed." : "2 tests failed in export.test.ts",
+  });
+const merged: Step = (t) => ({ by: "plugin", type: "merged", request: awaited(t), commit });
+const reverted: Step = (t) => ({ by: "plugin", type: "reverted", request: awaited(t) });
 const retry: Input = { by: "human", type: "retry" };
 const approveMerge: Input = { by: "human", type: "approve_merge" };
 const revert: Input = { by: "human", type: "revert", reason: "Export breaks on empty reports." };
 
 // Up to a running develop agent: the start every story shares.
-const toInProgress: Input[] = [
+const toInProgress: Step[] = [
   add,
   requestSpec,
   start,
@@ -104,11 +133,12 @@ const toInProgressLines = [
 type Told = { lines: string[]; events: TaskEvent[]; task: Task | null };
 
 // Sends each input the way the daemon does, and writes one line per input.
-function tell(inputs: Input[]): Told {
+function tell(steps: Step[]): Told {
   let task: Task | null = null;
   const lines: string[] = [];
   const events: TaskEvent[] = [];
-  inputs.forEach((input, i) => {
+  steps.forEach((step, i) => {
+    const input = typeof step === "function" ? step(task) : step;
     const decision = decideTask(task, { taskId: id, at: 1_000 * (i + 1), input }, config, projects);
     if (!decision.ok) {
       lines.push(`${label(input)} → rejected: ${decision.rejection.reason}`);
@@ -172,18 +202,18 @@ describe("golden stories", () => {
     const told = tell([
       ...toInProgress,
       reportDone(exportBranch),
-      gate("local", false, 1),
+      gate("local", false),
       reportDone(exportBranch),
-      gate("local", false, 2),
+      gate("local", false),
       reportDone(exportBranch),
-      gate("local", false, 3),
+      gate("local", false),
       reportDone(exportBranch),
       retry,
       start,
       started(developAgent),
       reportDone(exportBranch),
-      gate("local", true, 4),
-      gate("review", true, 4),
+      gate("local", true),
+      gate("review", true),
       merged,
     ]);
     expect(told.lines).toEqual([
@@ -236,7 +266,7 @@ describe("golden stories", () => {
       gate("review", true),
       merged,
       revert,
-      { by: "plugin", type: "reverted" },
+      reverted,
       start,
     ]);
     expect(told.lines).toEqual([
