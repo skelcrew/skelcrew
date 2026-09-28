@@ -1,10 +1,11 @@
 // Old logs must stay readable. v1-events.jsonl holds real events, written
-// by the simulator in the version 1 shape, one per line. It is never edited
-// or regenerated: if a change to the events breaks this test, the change
-// needs a way to read old events, not a new fixture.
+// by the simulator in the version 1 shape, one per line.
 //
-// It was regenerated once, on 2026-09-28, when request numbers were added to
-// events. That was safe only because no real log existed yet.
+// Until Skelcrew first runs on a real repo, no real log exists, so an
+// event's shape may still change. The fixture is then regenerated in the
+// same commit, and the commit says so. From the first real run on, it is
+// never edited or regenerated: a change that breaks this test needs a way to
+// read old events, not a new fixture.
 
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";

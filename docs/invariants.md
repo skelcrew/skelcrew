@@ -23,6 +23,8 @@ do, lose work, or leave the developer looking at a wrong picture.
 5. **No task reaches Done without passing every gate** in `workflow.yml` on its latest
    build.
 6. **A task that touches a critical path merges only after the developer approves it.**
+   The approval and the checks cover the exact commit that merges. Code committed after
+   the done report never merges under them.
 7. **A merge only starts after the checks pass.** Every `task.merged` follows a
    `task.merge_started`, and every `task.merge_started` follows `task.checks_passed` on the
    same build.

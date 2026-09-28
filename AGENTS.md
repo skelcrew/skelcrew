@@ -100,9 +100,11 @@ read, rewrite it.
 - `docs/ARCHITECTURE.md`: a map of the code for new developers: the parts, what each does,
   and how an input flows through them.
 - `src/core/`: the core. Critical code, see above.
-- `src/store/fixtures/v1-events.jsonl`: saved events that must always read back. Once
-  Skelcrew keeps a real log, a change to the shape of an event needs a way to read the
-  old shape. The fixture is never regenerated to make a change pass.
+- `src/store/fixtures/v1-events.jsonl`: saved events that must always read back. Until
+  Skelcrew first runs on a real repo, an event's shape may change. The fixture is then
+  regenerated in the same commit, and the commit message says so. From the first real run
+  on, the fixture is never regenerated. A change to an event's shape then needs a way to
+  read the old shape.
 - `CLAUDE.md` links to this file, so every agent reads the same rules.
 
 **Keep `docs/ARCHITECTURE.md` current.** A change that adds, removes, renames or moves a
