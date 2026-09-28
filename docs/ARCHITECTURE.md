@@ -152,15 +152,21 @@ needs a different config spreads the base one and changes only the fields it is 
 it with fake tools, and the daemon will run it with real ones.
 
 1. `send(task, input)` asks `decideTask`.
-2. If accepted, it saves the events to the event store. If saving fails, nothing else
-   happens: the task doesn't change, and no command goes out.
+2. If accepted, it saves the events and their commands to the event store. If saving
+   fails, nothing else happens: the task doesn't change, and no command goes out.
 3. It applies the events with `evolveTask`.
-4. It hands each command to the tools. Their replies come back later through `send`.
+4. It hands each command to the tools, then marks it done in the store. Replies come back
+   later through `send`.
 
 `startWaiting()` asks `schedule` what to start, and sends the starts. The loop counts the
 starts it has sent out and not yet had answered, by task and request number, and gives
 that count to the scheduler. `Loop.open` rebuilds everything from a saved log and carries
 on from there.
+
+If the daemon dies between saving a decision and carrying out its commands, nothing is
+lost. `Loop.open` first carries out every saved command not yet marked done. So a command
+can reach the tools twice, and the tools must treat a repeat as a no-op. For example, a
+second "start #1, request 1" starts nothing.
 
 ## The event store
 
@@ -169,8 +175,8 @@ build step 2, outside the core because it touches the disk.
 
 | File | What it holds |
 | --- | --- |
-| `schema.ts` | A Zod schema for every event, typed against the core's own event types. The typechecker fails if they drift apart, and names any event the schemas miss. |
-| `store.ts` | `EventStore`: one table of events in order. `appendTask` saves one decision's events together, or none. `loadTasks` and `loadProjects` rebuild everything by replaying the events through `evolveTask` and `evolveProject`. A second table keeps the starts in flight, saved in the same transaction as the events, so a restart still knows which agents and worktrees are on their way. |
+| `schema.ts` | A Zod schema for every event and every command, typed against the core's own types. The typechecker fails if they drift apart, and names any event the schemas miss. |
+| `store.ts` | `EventStore`: one table of events in order. `appendTask` saves one decision's events together, or none. `loadTasks` and `loadProjects` rebuild everything by replaying the events through `evolveTask` and `evolveProject`. A second table keeps the starts in flight, saved in the same transaction as the events, so a restart still knows which agents and worktrees are on their way. A third table keeps each decision's commands until they are carried out. |
 | `fixtures/v1-events.jsonl` | 56 real events in the version 1 shape. They must always load. The file is never edited: a change that breaks it needs a way to read old events instead. |
 
 Each event is checked against its schema twice: before it's written, and when it's read

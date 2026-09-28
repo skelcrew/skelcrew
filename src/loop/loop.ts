@@ -33,6 +33,11 @@ import type {
 
 // Carries out the core's commands: starting agents, creating worktrees,
 // running gates, merging. Replies come back later through Loop.send.
+//
+// A command can arrive twice. If the daemon dies after a command went out
+// but before it was marked done, the command goes out again after the
+// restart. Doing it twice must have the same effect as doing it once. For
+// example, a second start for the same task and request starts nothing.
 export interface Tools {
   carryOut(command: Command): void;
 }
@@ -46,15 +51,26 @@ export type Starts = { sent: StartRef[]; answered: StartRef[] };
 
 export type Saved = { ok: true } | { ok: false; reason: string };
 
+// A saved decision, with the id of each of its commands, in order.
+export type Queued = { ok: true; ids: number[] } | { ok: false; reason: string };
+
+// A command saved with its decision and not yet carried out.
+export type SavedCommand = { id: number; command: Command };
+
 // A damaged log is reported with the position of the first event that
 // couldn't be read or didn't fit, so it can be found and looked at.
 export type Loaded<T> = ({ ok: true } & T) | { ok: false; seq: number; reason: string };
 
 // Where events are saved, with the starts each decision sent out and the one
 // its input answered. EventStore is the real one.
+//
+// Commands are saved with the events that caused them, and marked when
+// they are carried out. So a daemon that dies in between loses nothing: the
+// commands still waiting go out after the restart.
 export interface EventLog {
-  appendTask(events: TaskEvent[], starts: Starts): Saved;
+  appendTask(events: TaskEvent[], starts: Starts, commands: Command[]): Queued;
   appendProject(events: ProjectEvent[]): Saved;
+  carriedOut(id: number): Saved;
 }
 
 // A saved log that can be read back, to pick up where a loop left off.
@@ -62,6 +78,7 @@ export interface ReadableLog extends EventLog {
   loadTasks(): Loaded<{ tasks: Map<TaskId, Task> }>;
   loadProjects(): Loaded<{ projects: Map<ProjectId, Project> }>;
   loadStarts(): StartRef[];
+  loadCommands(): Loaded<{ commands: SavedCommand[] }>;
 }
 
 export class Loop {
@@ -84,6 +101,7 @@ export class Loop {
   }
 
   // Rebuilds tasks and projects from a saved log, then carries on from there.
+  // Commands saved but not carried out before the last stop go out first.
   static open(
     config: Config,
     tools: Tools,
@@ -93,10 +111,11 @@ export class Loop {
     if (!tasks.ok) return { ok: false, reason: `Event ${tasks.seq}: ${tasks.reason}` };
     const projects = log.loadProjects();
     if (!projects.ok) return { ok: false, reason: `Event ${projects.seq}: ${projects.reason}` };
-    return {
-      ok: true,
-      loop: new Loop(config, tools, log, tasks.tasks, projects.projects, log.loadStarts()),
-    };
+    const waiting = log.loadCommands();
+    if (!waiting.ok) return { ok: false, reason: `Command ${waiting.seq}: ${waiting.reason}` };
+    const loop = new Loop(config, tools, log, tasks.tasks, projects.projects, log.loadStarts());
+    for (const { id, command } of waiting.commands) loop.carryOut(id, command);
+    return { ok: true, loop };
   }
 
   get startsInFlight(): number {
@@ -136,7 +155,8 @@ export class Loop {
           request: command.request,
         }))
       : [];
-    const saved = this.save(events, { sent, answered });
+    const commands = decision.ok ? decision.commands : [];
+    const saved = this.save(events, { sent, answered }, commands);
     if (!saved.ok) {
       return {
         ok: false,
@@ -145,7 +165,7 @@ export class Loop {
     }
     if (!decision.ok) return decision;
     for (const event of decision.events) this.apply(event);
-    for (const command of decision.commands) this.tools.carryOut(command);
+    for (const [i, command] of commands.entries()) this.carryOut(saved.ids[i] ?? null, command);
     return decision;
   }
 
@@ -179,17 +199,31 @@ export class Loop {
     return picks;
   }
 
-  // Saves a decision's events and starts, then updates the count of starts
-  // in flight to match. Nothing changes if saving fails.
-  private save(events: TaskEvent[], starts: Starts): Saved {
-    const nothing = events.length === 0 && starts.sent.length === 0 && starts.answered.length === 0;
+  // Saves a decision's events, starts and commands, then updates the count
+  // of starts in flight to match. Nothing changes if saving fails. Without
+  // a log, commands get no ids and are only carried out.
+  private save(events: TaskEvent[], starts: Starts, commands: Command[]): Queued {
+    const nothing =
+      events.length === 0 &&
+      starts.sent.length === 0 &&
+      starts.answered.length === 0 &&
+      commands.length === 0;
+    let ids: number[] = [];
     if (this.log !== null && !nothing) {
-      const saved = this.log.appendTask(events, starts);
+      const saved = this.log.appendTask(events, starts, commands);
       if (!saved.ok) return saved;
+      ids = saved.ids;
     }
     for (const start of starts.answered) this.pending.delete(key(start.taskId, start.request));
     for (const start of starts.sent) this.pending.add(key(start.taskId, start.request));
-    return { ok: true };
+    return { ok: true, ids };
+  }
+
+  // Hands one command to the tools, then marks it done. If marking fails,
+  // the command goes out again after a restart, which the tools allow.
+  private carryOut(id: number | null, command: Command): void {
+    this.tools.carryOut(command);
+    if (id !== null && this.log !== null) this.log.carriedOut(id);
   }
 
   // decideTask never produces an event evolveTask refuses. If it ever does,

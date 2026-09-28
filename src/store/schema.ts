@@ -1,6 +1,6 @@
-// Zod schemas for stored events. Events are read back from SQLite, where
-// anything could have happened to them, so each one is checked before the
-// core sees it.
+// Zod schemas for stored events, and for commands saved until they are
+// carried out. Both are read back from SQLite, where anything could have
+// happened to them, so each one is checked before it is used.
 //
 // Every schema is annotated with the core's own type, so the typechecker
 // fails if the two drift apart. Objects are strict: an unknown field is
@@ -12,6 +12,8 @@ import { CommitSha, ProjectId, SessionId, TaskId } from "../core/ids";
 import type {
   BlockReason,
   BranchFacts,
+  Brief,
+  Command,
   EventBody,
   Failure,
   GateName,
@@ -66,6 +68,12 @@ const sourceRef: z.ZodType<SourceRef> = z.strictObject({ label: z.string(), url:
 const branchFacts: z.ZodType<BranchFacts> = z.strictObject({
   commits: z.number().int().min(0),
   changedFiles: z.array(z.string()),
+});
+
+const brief: z.ZodType<Brief> = z.strictObject({
+  failure: failure.nullable(),
+  note: z.string().nullable(),
+  blocked: blockReason.nullable(),
 });
 
 // ---------------------------------------------------------------------------
@@ -196,10 +204,51 @@ void everyProjectEvent;
 const projectEvent: z.ZodType<ProjectEvent> = projectEventUnion;
 
 // ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
+
+const request = z.number().int().min(1);
+
+const commands = {
+  start_spec_session: { taskId: TaskId, request, note: z.string().nullable() },
+  create_worktree: { taskId: TaskId, request, build: z.number().int().min(1) },
+  start_develop_session: { taskId: TaskId, request, worktree, spec, brief },
+  send_to_session: { session: SessionId, text: z.string() },
+  stop_session: { session: SessionId },
+  run_gate: { taskId: TaskId, request, gate: gateName, worktree },
+  merge: { taskId: TaskId, request, worktree },
+  remove_worktree: { worktree },
+  revert: { taskId: TaskId, request, commit: CommitSha },
+} satisfies Record<Command["type"], z.ZodRawShape>;
+
+function command<K extends keyof typeof commands>(type: K) {
+  return z.strictObject({ type: z.literal(type), ...commands[type] });
+}
+
+const commandUnion = z.discriminatedUnion("type", [
+  command("start_spec_session"),
+  command("create_worktree"),
+  command("start_develop_session"),
+  command("send_to_session"),
+  command("stop_session"),
+  command("run_gate"),
+  command("merge"),
+  command("remove_worktree"),
+  command("revert"),
+]);
+
+// Fails to typecheck if a command type has no schema in the union.
+type MissingCommand = Exclude<Command["type"], z.output<typeof commandUnion>["type"]>;
+const everyCommand: [MissingCommand] extends [never] ? true : MissingCommand = true;
+void everyCommand;
+
+const commandSchema: z.ZodType<Command> = commandUnion;
+
+// ---------------------------------------------------------------------------
 // Reading
 // ---------------------------------------------------------------------------
 
-export type Parsed<T> = { ok: true; event: T } | { ok: false; reason: string };
+export type Parsed<T> = { ok: true; value: T } | { ok: false; reason: string };
 
 export function parseTaskEvent(value: unknown): Parsed<TaskEvent> {
   return parse(taskEvent, value);
@@ -211,9 +260,13 @@ export function parseProjectEvent(value: unknown): Parsed<ProjectEvent> {
 
 function parse<T>(schema: z.ZodType<T>, value: unknown): Parsed<T> {
   const result = schema.safeParse(value);
-  if (result.success) return { ok: true, event: result.data };
+  if (result.success) return { ok: true, value: result.data };
   const reason = result.error.issues
     .map((issue) => `${issue.path.join(".") || "event"}: ${issue.message}`)
     .join("; ");
   return { ok: false, reason };
+}
+
+export function parseCommand(value: unknown): Parsed<Command> {
+  return parse(commandSchema, value);
 }

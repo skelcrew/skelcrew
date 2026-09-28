@@ -30,7 +30,7 @@ test("version 1 events still rebuild the tasks they described", () => {
   for (const line of lines) {
     const parsed = parseTaskEvent(JSON.parse(line));
     if (!parsed.ok) throw new Error(parsed.reason);
-    const saved = store.appendTask([parsed.event]);
+    const saved = store.appendTask([parsed.value]);
     if (!saved.ok) throw new Error(saved.reason);
   }
   const loaded = store.loadTasks();

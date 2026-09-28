@@ -10,6 +10,7 @@ import { describe, expect, test } from "bun:test";
 import * as fc from "fast-check";
 import { decideTask } from "../core/decide";
 import { CommitSha, SessionId, TaskId } from "../core/ids";
+import { runningSession } from "../core/task";
 import type { Command, Config, Input, Spec, Task, TaskEvent } from "../core/types";
 import { EventStore } from "../store/store";
 import { config as base } from "../test/fixtures";
@@ -30,10 +31,16 @@ const ids = [1, 2, 3, 4].map((n) => TaskId.parse(n));
 class Flaky implements ReadableLog {
   full = false;
   constructor(readonly store: EventStore) {}
-  appendTask(events: TaskEvent[], starts: Starts) {
+  appendTask(events: TaskEvent[], starts: Starts, commands: Command[]) {
     return this.full
       ? { ok: false as const, reason: "disk full" }
-      : this.store.appendTask(events, starts);
+      : this.store.appendTask(events, starts, commands);
+  }
+  carriedOut(id: number) {
+    return this.store.carriedOut(id);
+  }
+  loadCommands() {
+    return this.store.loadCommands();
   }
   appendProject(events: Parameters<EventLog["appendProject"]>[0]) {
     return this.store.appendProject(events);
@@ -50,12 +57,16 @@ class Flaky implements ReadableLog {
 }
 
 // Tools that remember every command, so replies can be built from them.
+// With `dying` set, the daemon dies at its next command, before it goes out.
 class Recorded implements Tools {
   commands: Command[] = [];
+  dying = false;
   carryOut(command: Command): void {
+    if (this.dying) throw new DaemonDied();
     this.commands.push(command);
   }
 }
+class DaemonDied extends Error {}
 
 // A request's outcome, fixed by its first reply: a real tool answers each
 // request one way, possibly more than once, never "failed" and then
@@ -169,22 +180,51 @@ function messages(commands: Command[], started: Map<TaskId, SessionId[]>): [Task
 // The agents actually running outside the loop: started and not stopped or
 // crashed, including ones whose start reply is waiting to be handled again.
 // What the slot limit is about.
-function runningAgents(commands: Command[], delivered: Input[]): number {
-  const up = new Set<string>();
-  const gone = new Set<string>();
+function runningAgents(commands: Command[], delivered: Input[]): Set<SessionId> {
+  const up = new Set<SessionId>();
+  const gone = new Set<SessionId>();
   for (const input of delivered) {
     if (input.type === "session_started") up.add(input.session);
     // A crashed agent stays down, even if its start reply arrives after.
     if (input.type === "session_crashed") gone.add(input.session);
   }
   for (const command of commands) if (command.type === "stop_session") gone.add(command.session);
-  return [...up].filter((session) => !gone.has(session)).length;
+  return new Set([...up].filter((session) => !gone.has(session)));
+}
+
+// Starts the tools were handed and that no reply has answered yet.
+function startsOut(commands: Command[], delivered: [TaskId, Input][]): Set<string> {
+  const out = new Set<string>();
+  for (const command of commands) {
+    if (
+      command.type === "start_spec_session" ||
+      command.type === "start_develop_session" ||
+      command.type === "create_worktree"
+    ) {
+      out.add(`${command.taskId}:${command.request}`);
+    }
+  }
+  for (const [taskId, input] of delivered) {
+    switch (input.type) {
+      case "session_started":
+      case "session_failed":
+      case "session_crashed":
+      case "worktree_created":
+      case "worktree_failed":
+        out.delete(`${taskId}:${input.request}`);
+        break;
+      default:
+        break;
+    }
+  }
+  return out;
 }
 
 type Step =
   | { kind: "message"; guided: boolean; n: number }
   | { kind: "start" }
   | { kind: "restart" }
+  | { kind: "die" }
   | { kind: "disk"; full: boolean };
 
 const step: fc.Arbitrary<Step> = fc.oneof(
@@ -198,17 +238,18 @@ const step: fc.Arbitrary<Step> = fc.oneof(
   },
   { weight: 4, arbitrary: fc.constant({ kind: "start" as const }) },
   { weight: 1, arbitrary: fc.constant({ kind: "restart" as const }) },
+  { weight: 1, arbitrary: fc.constant({ kind: "die" as const }) },
   { weight: 1, arbitrary: fc.record({ kind: fc.constant("disk" as const), full: fc.boolean() }) },
 );
 
 describe("the loop", () => {
-  test("keeps the slot limit and its saved log true through failed saves and restarts", () => {
+  test("keeps the slot limit and its saved log true through failed saves, crashes and restarts", () => {
     fc.assert(
       fc.property(fc.array(step, { minLength: 1, maxLength: 200, size: "max" }), (steps) => {
         const log = new Flaky(EventStore.open(":memory:"));
         const tools = new Recorded();
         let loop = new Loop(config, tools, log);
-        const delivered: Input[] = [];
+        const delivered: [TaskId, Input][] = [];
         const started = new Map<TaskId, SessionId[]>();
         const outcomes: Outcomes = new Map();
         // Inputs whose save failed: the daemon keeps them and delivers them
@@ -216,10 +257,47 @@ describe("the loop", () => {
         let retry: [TaskId, Input][] = [];
         let at = 0;
 
+        // The daemon starts again after it died. Its commands that never
+        // went out must go out now.
+        const restart = () => {
+          tools.dying = false;
+          log.full = false;
+          const reopened = Loop.open(config, tools, log);
+          if (!reopened.ok) throw new Error(reopened.reason);
+          loop = reopened.loop;
+        };
+        // Runs one daemon step. Returns its result, or `died` if the daemon
+        // died during it.
+        const died = Symbol("died");
+        const attempt = <T>(run: () => T): T | typeof died => {
+          try {
+            return run();
+          } catch (error) {
+            if (!(error instanceof DaemonDied)) throw error;
+            return died;
+          }
+        };
+
         const deliver = (id: TaskId, input: Input) => {
           const outcome = outcomeOf(id, input);
           if (outcome !== null && !outcomes.has(outcome[0])) outcomes.set(outcome[0], outcome[1]);
-          const decision = loop.send(id, input, at);
+          const decision = attempt(() => loop.send(id, input, at));
+          if (decision === died) {
+            // The daemon only dies carrying out commands, after the input
+            // was saved. So the input counts as delivered.
+            delivered.push([id, input]);
+            restart();
+            const task = loop.tasks().find((t) => t.id === id);
+            if (
+              input.type === "session_started" &&
+              task &&
+              runningSession(task) === input.session
+            ) {
+              started.set(id, [...(started.get(id) ?? []), input.session]);
+            }
+            redeliver();
+            return;
+          }
           if (
             !decision.ok &&
             decision.rejection.reason.startsWith("The events couldn't be saved")
@@ -227,7 +305,7 @@ describe("the loop", () => {
             retry.push([id, input]);
             return;
           }
-          delivered.push(input);
+          delivered.push([id, input]);
           if (decision.ok && input.type === "session_started" && decision.events.length > 0) {
             started.set(id, [...(started.get(id) ?? []), input.session]);
           }
@@ -255,17 +333,21 @@ describe("the loop", () => {
               break;
 
             case "start":
-              loop.startWaiting(at);
+              if (attempt(() => loop.startWaiting(at)) === died) {
+                restart();
+                redeliver();
+              }
+              break;
+
+            case "die":
+              tools.dying = true;
               break;
 
             case "restart": {
               // A restart only happens with the disk working, like a real
               // daemon starting up. It must keep the count of starts in flight.
-              log.full = false;
               const before = loop.startsInFlight;
-              const reopened = Loop.open(config, tools, log);
-              if (!reopened.ok) throw new Error(reopened.reason);
-              loop = reopened.loop;
+              restart();
               expect(loop.startsInFlight).toBe(before);
               redeliver();
               break;
@@ -289,8 +371,29 @@ describe("the loop", () => {
 
           // 8. Never more agents than max_running: the ones running outside
           // the loop never exceed the limit the loop enforces.
-          const inWorld = [...delivered, ...retry.map(([, input]) => input)];
-          expect(runningAgents(tools.commands, inWorld)).toBeLessThanOrEqual(config.maxRunning);
+          const inWorld = [...delivered, ...retry].map(([, input]) => input);
+          const up = runningAgents(tools.commands, inWorld);
+          expect(up.size).toBeLessThanOrEqual(config.maxRunning);
+
+          // 13, in the world: every agent that is up is held by its task, or
+          // its start reply is waiting to be handled. Otherwise nothing will
+          // ever stop it.
+          const held = new Set(loop.tasks().map(runningSession));
+          const waiting = new Set(
+            retry.flatMap(([, input]) => (input.type === "session_started" ? [input.session] : [])),
+          );
+          for (const session of up) {
+            expect({ session, tracked: held.has(session) || waiting.has(session) }).toEqual({
+              session,
+              tracked: true,
+            });
+          }
+
+          // Every start the loop counts as out was handed to the tools, so a
+          // reply can come back and free its slot.
+          expect(loop.startsInFlight).toBeLessThanOrEqual(
+            startsOut(tools.commands, delivered).size,
+          );
 
           // A failed save changes nothing: the loop's tasks always match a
           // fresh replay of the saved log.

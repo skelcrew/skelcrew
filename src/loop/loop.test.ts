@@ -21,6 +21,13 @@ class Recorded implements Tools {
   }
 }
 
+// Tools in a daemon that dies before it carries out anything.
+class Dying implements Tools {
+  carryOut(): void {
+    throw new Error("The daemon died.");
+  }
+}
+
 const one = TaskId.parse(1);
 const two = TaskId.parse(2);
 const add = (requestSpec = true, project: ProjectId | null = null): Input => ({
@@ -72,6 +79,7 @@ describe("the loop", () => {
     const broken: EventLog = {
       appendTask: () => ({ ok: false, reason: "disk full" }),
       appendProject: () => ({ ok: false, reason: "disk full" }),
+      carriedOut: () => ({ ok: false, reason: "disk full" }),
     };
     const loop = new Loop(config, tools, broken);
 
@@ -120,9 +128,10 @@ describe("the loop", () => {
     let full = false;
     const store = EventStore.open(":memory:");
     const flaky: EventLog = {
-      appendTask: (events, starts) =>
-        full ? { ok: false, reason: "disk full" } : store.appendTask(events, starts),
+      appendTask: (events, starts, commands) =>
+        full ? { ok: false, reason: "disk full" } : store.appendTask(events, starts, commands),
       appendProject: (events) => store.appendProject(events),
+      carriedOut: (id) => store.carriedOut(id),
     };
     const loop = new Loop(config, new Recorded(), flaky);
     loop.send(one, add());
@@ -143,9 +152,10 @@ describe("the loop", () => {
     let full = false;
     const store = EventStore.open(":memory:");
     const flaky: EventLog = {
-      appendTask: (events, starts) =>
-        full ? { ok: false, reason: "disk full" } : store.appendTask(events, starts),
+      appendTask: (events, starts, commands) =>
+        full ? { ok: false, reason: "disk full" } : store.appendTask(events, starts, commands),
       appendProject: (events) => store.appendProject(events),
+      carriedOut: (id) => store.carriedOut(id),
     };
     const loop = new Loop(config, new Recorded(), flaky);
     loop.send(one, add());
@@ -215,6 +225,53 @@ describe("the loop", () => {
     // Its reply still clears the start after the restart.
     reopened.loop.send(one, started(1, "s1"));
     expect(reopened.loop.startsInFlight).toBe(0);
+  });
+
+  test("carries out a saved start after a crash, instead of holding its slot forever", () => {
+    const store = EventStore.open(":memory:");
+    const first = new Loop(config, new Dying(), store);
+    first.send(one, add());
+    expect(() => first.startWaiting()).toThrow("The daemon died.");
+
+    // The start was saved, but never sent. After the restart it goes out.
+    const tools = new Recorded();
+    const reopened = Loop.open(config, tools, store);
+    if (!reopened.ok) throw new Error(reopened.reason);
+    expect(tools.commands).toEqual([
+      { type: "start_spec_session", taskId: one, request: 1, note: null },
+    ]);
+  });
+
+  test("stops a late agent after a crash, so it can't run past the limit", () => {
+    const store = EventStore.open(":memory:");
+    const first = new Loop(config, new Recorded(), store);
+    first.send(one, add());
+    first.send(two, add());
+    first.startWaiting();
+    first.send(one, { by: "human", type: "drop" });
+
+    // #1's agent comes up late. The loop saves that, then dies before it
+    // can stop the agent.
+    const dying = Loop.open(config, new Dying(), store);
+    if (!dying.ok) throw new Error(dying.reason);
+    expect(() => dying.loop.send(one, started(1, "late"))).toThrow("The daemon died.");
+
+    const tools = new Recorded();
+    const reopened = Loop.open(config, tools, store);
+    if (!reopened.ok) throw new Error(reopened.reason);
+    expect(tools.commands).toEqual([{ type: "stop_session", session: SessionId.parse("late") }]);
+  });
+
+  test("doesn't carry out a command again once it went out", () => {
+    const store = EventStore.open(":memory:");
+    const first = new Loop(config, new Recorded(), store);
+    first.send(one, add());
+    first.startWaiting();
+
+    const tools = new Recorded();
+    const reopened = Loop.open(config, tools, store);
+    if (!reopened.ok) throw new Error(reopened.reason);
+    expect(tools.commands).toEqual([]);
   });
 
   test("creates and parks projects, and won't start a task in a parked one", () => {

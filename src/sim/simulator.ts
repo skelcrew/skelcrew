@@ -71,13 +71,15 @@ export class Simulator implements Tools {
     readonly config: Config,
     projects: Project[] = [],
   ) {
-    // The saved events are kept in memory, for tests to read.
+    // The saved events are kept in memory, for tests to read. The simulator
+    // never restarts, so its commands need no ids.
     const log = {
       appendTask: (events: TaskEvent[]) => {
         this.events.push(...events);
-        return { ok: true as const };
+        return { ok: true as const, ids: [] };
       },
       appendProject: () => ({ ok: true as const }),
+      carriedOut: () => ({ ok: true as const }),
     };
     this.loop = new Loop(
       config,
