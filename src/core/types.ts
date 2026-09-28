@@ -150,7 +150,17 @@ export type PhaseState =
     }
   // mergeCommit is what `skelcrew revert` undoes. Each task lands as one
   // squashed commit, so one commit is enough.
-  | { phase: "done"; spec: Spec; mergeCommit: CommitSha }
+  | {
+      phase: "done";
+      spec: Spec;
+      mergeCommit: CommitSha;
+      // A revert is two steps, like a merge: git is asked, then answers. The
+      // task stays Done until git has reverted, so the record never says a
+      // revert happened when it didn't. `reverting` holds the reason while
+      // git works; `revertFailure` says why the last attempt failed.
+      reverting: string | null;
+      revertFailure: string | null;
+    }
   | { phase: "dropped" };
 
 // Spec, Ready and In progress all wait for a free slot before an agent
@@ -305,6 +315,8 @@ export type PluginInput =
   // can't pass or fail the current one.
   | { type: "gate_result"; gate: GateName; round: number; ok: boolean; summary: string }
   | { type: "merged"; commit: CommitSha }
+  | { type: "reverted" }
+  | { type: "revert_failed"; summary: string }
   | { type: "merge_failed"; summary: string };
 
 // Inputs the daemon makes itself. The scheduler's pick is an input, not a
@@ -382,6 +394,8 @@ export type EventBody =
   | { type: "task.merge_started" }
   | { type: "task.merge_failed"; failure: Failure }
   | { type: "task.merged"; commit: CommitSha }
+  | { type: "task.revert_started"; reason: string }
+  | { type: "task.revert_failed"; summary: string }
   | { type: "task.reverted"; commit: CommitSha; reason: string }
   | { type: "task.blocked"; reason: BlockReason }
   | { type: "task.unblocked" } // resets attempts and the safety cap

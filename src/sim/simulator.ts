@@ -252,6 +252,7 @@ export class Simulator {
       }
 
       case "revert":
+        this.reply(command.taskId, { by: "plugin", type: "reverted" });
         return;
     }
   }

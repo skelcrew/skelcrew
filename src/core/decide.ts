@@ -512,16 +512,28 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
   }
 }
 
-// The reason becomes the note for the redone spec. The shell reverts the
-// merge commit on main.
+// A revert is two steps, like a merge. The task stays Done until git has
+// reverted the merge commit, then goes back to Spec with the reason as its
+// note. If git fails, the task stays Done and says why.
 function inDone(task: TaskIn<"done">, input: Input, ctx: Context): Decision {
+  const { accept, reject } = ctx;
   switch (input.type) {
     case "revert":
-      if (isBlank(input.reason)) return ctx.reject("A revert needs a reason.");
-      return ctx.accept(
-        [{ type: "task.reverted", commit: task.mergeCommit, reason: input.reason }],
+      if (task.reverting !== null) return reject(`#${task.id} is already being reverted.`);
+      if (isBlank(input.reason)) return reject("A revert needs a reason.");
+      return accept(
+        [{ type: "task.revert_started", reason: input.reason }],
         [{ type: "revert", taskId: task.id, commit: task.mergeCommit }],
       );
+
+    case "reverted":
+      if (task.reverting === null) return reject(`#${task.id} isn't being reverted.`);
+      return accept([{ type: "task.reverted", commit: task.mergeCommit, reason: task.reverting }]);
+
+    case "revert_failed":
+      if (task.reverting === null) return reject(`#${task.id} isn't being reverted.`);
+      return accept([{ type: "task.revert_failed", summary: input.summary }]);
+
     default:
       return wrongPhase(task, input, ctx);
   }

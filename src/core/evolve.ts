@@ -270,7 +270,13 @@ function inChecks(task: TaskIn<"checks">, event: TaskEvent): EvolvedTask {
         step: _step,
         ...rest
       } = task;
-      return ok({ ...rest, phase: "done", mergeCommit: event.commit });
+      return ok({
+        ...rest,
+        phase: "done",
+        mergeCommit: event.commit,
+        reverting: null,
+        revertFailure: null,
+      });
     }
 
     // A failed merge counts as an attempt, like a failed gate.
@@ -288,8 +294,16 @@ function inChecks(task: TaskIn<"checks">, event: TaskEvent): EvolvedTask {
 
 function inDone(task: TaskIn<"done">, event: TaskEvent): EvolvedTask {
   switch (event.type) {
-    // The revert reason becomes the note, so the redone spec addresses it.
+    case "task.revert_started":
+      return ok({ ...task, reverting: event.reason, revertFailure: null });
+
+    case "task.revert_failed":
+      return ok({ ...task, reverting: null, revertFailure: event.summary });
+
+    // Git has reverted. The reason becomes the note, so the redone spec
+    // addresses it.
     case "task.reverted":
+      if (task.reverting === null) return refuse(event, `#${task.id} isn't being reverted`);
       return ok(backToSpec(task, task.spec, event.reason));
     default:
       return wrongPhase(event, task);

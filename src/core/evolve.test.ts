@@ -726,10 +726,29 @@ describe("a dropped task", () => {
   });
 });
 
-describe("task.reverted", () => {
-  test("takes a Done task back to Spec, with the reason as the note", () => {
+describe("reverting", () => {
+  test("task.revert_started keeps the task Done while git works", () => {
+    const task = replay(...done, { type: "task.revert_started", reason: "Broken." });
+    expect(task).toMatchObject({ phase: "done", reverting: "Broken.", revertFailure: null });
+  });
+
+  test("task.revert_failed keeps the task Done and records why", () => {
+    const task = replay(
+      ...done,
+      { type: "task.revert_started", reason: "Broken." },
+      { type: "task.revert_failed", summary: "Conflicts in export.ts" },
+    );
+    expect(task).toMatchObject({
+      phase: "done",
+      reverting: null,
+      revertFailure: "Conflicts in export.ts",
+    });
+  });
+
+  test("task.reverted takes the task back to Spec, with the reason as the note", () => {
     const reason = "Export breaks on empty reports.";
-    expect(replay(...done, { type: "task.reverted", commit, reason })).toMatchObject({
+    const started = { type: "task.revert_started" as const, reason };
+    expect(replay(...done, started, { type: "task.reverted", commit, reason })).toMatchObject({
       phase: "spec",
       spec,
       note: reason,

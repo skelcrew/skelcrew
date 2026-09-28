@@ -606,6 +606,13 @@ exports[`golden stories reverted: a merged task is undone and goes back to Spec 
   },
   {
     "at": 14000,
+    "reason": "Export breaks on empty reports.",
+    "taskId": 12,
+    "type": "task.revert_started",
+    "v": 1,
+  },
+  {
+    "at": 15000,
     "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "reason": "Export breaks on empty reports.",
     "taskId": 12,
@@ -613,7 +620,7 @@ exports[`golden stories reverted: a merged task is undone and goes back to Spec 
     "v": 1,
   },
   {
-    "at": 15000,
+    "at": 16000,
     "taskId": 12,
     "type": "task.dispatch_started",
     "v": 1,
