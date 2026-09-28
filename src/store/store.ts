@@ -10,9 +10,17 @@ import { Database } from "bun:sqlite";
 import { evolveTask } from "../core/evolve";
 import { TaskId } from "../core/ids";
 import { evolveProject } from "../core/projects";
-import type { Project, ProjectEvent, ProjectId, Task, TaskEvent } from "../core/types";
-import type { Loaded, ReadableLog, Saved, StartRef, Starts } from "../loop/loop";
-import { parseProjectEvent, parseTaskEvent } from "./schema";
+import type { Command, Project, ProjectEvent, ProjectId, Task, TaskEvent } from "../core/types";
+import type {
+  Loaded,
+  Queued,
+  ReadableLog,
+  Saved,
+  SavedCommand,
+  StartRef,
+  Starts,
+} from "../loop/loop";
+import { parseCommand, parseProjectEvent, parseTaskEvent } from "./schema";
 
 // Each change to the table layout is one step, run once, in order. The
 // file's user_version says how many have run.
@@ -29,6 +37,12 @@ const migrations = [
      task_id INTEGER NOT NULL,
      request INTEGER NOT NULL,
      PRIMARY KEY (task_id, request)
+   );`,
+  // Commands saved with their decision and not yet carried out. If the
+  // daemon dies before a command goes out, it goes out after the restart.
+  `CREATE TABLE commands (
+     id   INTEGER PRIMARY KEY AUTOINCREMENT,
+     body TEXT NOT NULL
    );`,
 ];
 
@@ -61,10 +75,40 @@ export class EventStore implements ReadableLog {
     this.db.close();
   }
 
-  // Saves one decision's events and its starts together: all of them, or
-  // none if any event fails its schema.
-  appendTask(events: TaskEvent[], starts: Starts = { sent: [], answered: [] }): Saved {
-    return this.append("task", events, parseTaskEvent, starts);
+  // Saves one decision's events, starts and commands together: all of them,
+  // or none if any event or command fails its schema. Returns the id of each
+  // command, in order, to mark it carried out later.
+  appendTask(
+    events: TaskEvent[],
+    starts: Starts = { sent: [], answered: [] },
+    commands: Command[] = [],
+  ): Queued {
+    for (const command of commands) {
+      const parsed = parseCommand(readJson(JSON.stringify(command)));
+      if (!parsed.ok) return { ok: false, reason: parsed.reason };
+    }
+    return this.append("task", events, parseTaskEvent, starts, commands);
+  }
+
+  // A command has been carried out, so a restart won't repeat it.
+  carriedOut(id: number): Saved {
+    this.db.query("DELETE FROM commands WHERE id = $id").run({ id });
+    return { ok: true };
+  }
+
+  // The commands saved and not yet carried out, oldest first. A damaged one
+  // is reported with its id, like a damaged event.
+  loadCommands(): Loaded<{ commands: SavedCommand[] }> {
+    const rows = this.db
+      .query<{ id: number; body: string }, []>("SELECT id, body FROM commands ORDER BY id")
+      .all();
+    const commands: SavedCommand[] = [];
+    for (const row of rows) {
+      const parsed = parseCommand(readJson(row.body));
+      if (!parsed.ok) return { ok: false, seq: row.id, reason: parsed.reason };
+      commands.push({ id: row.id, command: parsed.value });
+    }
+    return { ok: true, commands };
   }
 
   // The starts sent out and not yet answered, oldest first.
@@ -78,7 +122,8 @@ export class EventStore implements ReadableLog {
   }
 
   appendProject(events: ProjectEvent[]): Saved {
-    return this.append("project", events, parseProjectEvent);
+    const saved = this.append("project", events, parseProjectEvent);
+    return saved.ok ? { ok: true } : saved;
   }
 
   loadTasks(): Loaded<{ tasks: Map<TaskId, Task> }> {
@@ -86,7 +131,7 @@ export class EventStore implements ReadableLog {
     for (const row of this.rows("task")) {
       const parsed = parseTaskEvent(readJson(row.body));
       if (!parsed.ok) return { ok: false, seq: row.seq, reason: parsed.reason };
-      const { event } = parsed;
+      const event = parsed.value;
       const result = evolveTask(tasks.get(event.taskId) ?? null, event);
       if (!result.ok) return { ok: false, seq: row.seq, reason: result.reason };
       tasks.set(event.taskId, result.task);
@@ -99,7 +144,7 @@ export class EventStore implements ReadableLog {
     for (const row of this.rows("project")) {
       const parsed = parseProjectEvent(readJson(row.body));
       if (!parsed.ok) return { ok: false, seq: row.seq, reason: parsed.reason };
-      const { event } = parsed;
+      const event = parsed.value;
       const result = evolveProject(projects.get(event.projectId) ?? null, event);
       if (!result.ok) return { ok: false, seq: row.seq, reason: result.reason };
       projects.set(event.projectId, result.project);
@@ -112,7 +157,8 @@ export class EventStore implements ReadableLog {
     events: T[],
     parse: (value: unknown) => { ok: true } | { ok: false; reason: string },
     starts: Starts = { sent: [], answered: [] },
-  ): Saved {
+    commands: Command[] = [],
+  ): Queued {
     for (const event of events) {
       const parsed = parse(readJson(JSON.stringify(event)));
       if (!parsed.ok) return { ok: false, reason: parsed.reason };
@@ -124,12 +170,20 @@ export class EventStore implements ReadableLog {
     const answered = this.db.query(
       "DELETE FROM starts WHERE task_id = $taskId AND request = $request",
     );
-    this.db.transaction(() => {
+    const queue = this.db.query<{ id: number }, { body: string }>(
+      "INSERT INTO commands (body) VALUES ($body) RETURNING id",
+    );
+    const ids = this.db.transaction(() => {
       for (const event of events) insert.run({ stream, body: JSON.stringify(event) });
       for (const start of starts.answered) answered.run(start);
       for (const start of starts.sent) sent.run(start);
+      return commands.map((command) => {
+        const row = queue.get({ body: JSON.stringify(command) });
+        if (row === null) throw new Error("SQLite returned no id for a saved command.");
+        return row.id;
+      });
     })();
-    return { ok: true };
+    return { ok: true, ids };
   }
 
   private rows(stream: "task" | "project"): Row[] {

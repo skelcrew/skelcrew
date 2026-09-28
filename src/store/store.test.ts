@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProjectId, TaskId } from "../core/ids";
-import type { Config, ProjectEvent, TaskEvent } from "../core/types";
+import type { Command, Config, ProjectEvent, TaskEvent } from "../core/types";
 import { Simulator } from "../sim/simulator";
 import { config as base } from "../test/fixtures";
 import { EventStore } from "./store";
@@ -209,5 +209,65 @@ describe("starts in flight", () => {
     });
     expect(saved.ok).toBe(false);
     expect(store.loadStarts()).toEqual([]);
+  });
+});
+
+describe("commands not yet carried out", () => {
+  const id = TaskId.parse(1);
+  const created: TaskEvent = {
+    type: "task.created",
+    title: "CSV export",
+    project: null,
+    source: null,
+    v: 1,
+    taskId: id,
+    at: 1,
+  };
+  const start: Command = { type: "start_spec_session", taskId: id, request: 1, note: null };
+  const none = { sent: [], answered: [] };
+
+  test("are kept across closing and reopening the file, until carried out", () => {
+    const file = tempFile();
+    const first = EventStore.open(file);
+    const saved = first.appendTask([created], none, [start]);
+    if (!saved.ok) throw new Error(saved.reason);
+    first.close();
+
+    const [only] = saved.ids;
+    if (only === undefined) throw new Error("The command got no id.");
+
+    const second = EventStore.open(file);
+    expect(second.loadCommands()).toEqual({ ok: true, commands: [{ id: only, command: start }] });
+    second.carriedOut(only);
+    expect(second.loadCommands()).toEqual({ ok: true, commands: [] });
+  });
+
+  test("are saved together with the decision's events, or not at all", () => {
+    const store = EventStore.open(":memory:");
+    // The type allows a negative count, but the stored shape doesn't.
+    const bad: TaskEvent = {
+      type: "task.done_reported",
+      branch: { commits: -1, changedFiles: [] },
+      gate: "local",
+      request: 1,
+      v: 1,
+      taskId: id,
+      at: 2,
+    };
+    expect(store.appendTask([created, bad], none, [start]).ok).toBe(false);
+    expect(store.loadCommands()).toEqual({ ok: true, commands: [] });
+  });
+
+  test("reports a damaged command with its position", () => {
+    const file = tempFile();
+    const store = EventStore.open(file);
+    store.appendTask([created], none, [start]);
+    store.close();
+
+    const raw = new Database(file);
+    raw.run('UPDATE commands SET body = \'{"type":"launch_rocket"}\'');
+    raw.close();
+
+    expect(EventStore.open(file).loadCommands()).toMatchObject({ ok: false, seq: 1 });
   });
 });

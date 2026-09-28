@@ -42,7 +42,7 @@ describe("parseTaskEvent", () => {
     // A sanity check that the lifecycles above reach far.
     expect(types.size).toBeGreaterThanOrEqual(20);
     for (const event of events) {
-      expect(parseTaskEvent(stored(event))).toEqual({ ok: true, event });
+      expect(parseTaskEvent(stored(event))).toEqual({ ok: true, value: event });
     }
   });
 
@@ -83,7 +83,7 @@ describe("parseProjectEvent", () => {
       { type: "project.activated", v: 1, projectId: "reports", at: 3 },
     ];
     for (const event of events) {
-      expect<unknown>(parseProjectEvent(event)).toEqual({ ok: true, event });
+      expect<unknown>(parseProjectEvent(event)).toEqual({ ok: true, value: event });
     }
   });
 
