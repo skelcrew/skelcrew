@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { evolve } from "./evolve";
-import { SessionId, TaskId } from "./ids";
+import { CommitSha, SessionId, TaskId } from "./ids";
 import type { EventBody, Spec, Task, TaskEvent } from "./types";
 
 const id = TaskId.parse(12);
@@ -338,6 +338,115 @@ describe("task.gate_failed", () => {
     expect(evolve(replay(...inChecks), failed)).toEqual({
       ok: false,
       reason: "task.gate_failed can't apply: #12 is running the local gate, not review.",
+    });
+  });
+});
+
+const commit = CommitSha.parse("a".repeat(40));
+const checksPassed: EventBody[] = [
+  ...inChecks,
+  { type: "task.gate_passed", gate: "local", next: null },
+  { type: "task.checks_passed" },
+];
+const escalated: EventBody[] = [
+  ...checksPassed,
+  { type: "task.escalated", criticalFiles: ["src/auth/login.ts"] },
+];
+const merging: EventBody[] = [...checksPassed, { type: "task.merge_started" }];
+const mergeFailed = { step: "merge" as const, summary: "Conflicts with main in export.ts" };
+
+describe("task.checks_passed", () => {
+  test("leaves the task in Checks until the merge starts or waits for approval", () => {
+    expect(replay(...checksPassed)).toMatchObject({ phase: "checks", step: "local" });
+  });
+
+  test("is refused outside Checks", () => {
+    expect(evolve(replay(...inProgress), event({ type: "task.checks_passed" }))).toEqual({
+      ok: false,
+      reason: "task.checks_passed can't apply to #12 in In progress.",
+    });
+  });
+});
+
+describe("task.escalated", () => {
+  test("waits for the developer to approve the merge", () => {
+    expect(replay(...escalated)).toMatchObject({ phase: "checks", step: "merge_approval" });
+  });
+});
+
+describe("task.merge_started", () => {
+  test("starts merging straight after the checks pass", () => {
+    expect(replay(...merging)).toMatchObject({ phase: "checks", step: "merging" });
+  });
+
+  test("starts merging once the developer approves", () => {
+    expect(replay(...escalated, { type: "task.merge_started" })).toMatchObject({
+      phase: "checks",
+      step: "merging",
+    });
+  });
+
+  test("is refused while already merging", () => {
+    expect(evolve(replay(...merging), event({ type: "task.merge_started" }))).toEqual({
+      ok: false,
+      reason: "task.merge_started can't apply: #12 is already merging.",
+    });
+  });
+});
+
+describe("task.merged", () => {
+  test("moves the task to Done with the merge commit", () => {
+    const task = replay(...merging, { type: "task.merged", commit });
+    expect(task).toMatchObject({ phase: "done", spec, mergeCommit: commit });
+    expect(task).not.toHaveProperty("worktree");
+    expect(task).not.toHaveProperty("session");
+  });
+
+  test("is refused before the merge started", () => {
+    expect(evolve(replay(...escalated), event({ type: "task.merged", commit }))).toEqual({
+      ok: false,
+      reason: "task.merged can't apply: #12 isn't merging.",
+    });
+  });
+});
+
+describe("task.merge_failed", () => {
+  test("sends the task back to the same agent with the failure, counting one attempt", () => {
+    expect(replay(...merging, { type: "task.merge_failed", failure: mergeFailed })).toMatchObject({
+      phase: "in_progress",
+      worktree,
+      step: { kind: "running", session },
+      attempts: 1,
+      lastFailure: mergeFailed,
+    });
+  });
+
+  test("is refused before the merge started", () => {
+    const failed = event({ type: "task.merge_failed", failure: mergeFailed });
+    expect(evolve(replay(...escalated), failed)).toEqual({
+      ok: false,
+      reason: "task.merge_failed can't apply: #12 isn't merging.",
+    });
+  });
+});
+
+describe("task.merge_sent_back", () => {
+  test("sends the task back to the same agent without counting an attempt", () => {
+    const task = replay(...escalated, { type: "task.merge_sent_back", note: "Don't touch login." });
+    expect(task).toMatchObject({
+      phase: "in_progress",
+      worktree,
+      step: { kind: "running", session },
+      attempts: 0,
+      lastFailure: null,
+    });
+  });
+
+  test("is refused unless the merge is waiting for approval", () => {
+    const sentBack = event({ type: "task.merge_sent_back", note: "Don't touch login." });
+    expect(evolve(replay(...merging), sentBack)).toEqual({
+      ok: false,
+      reason: "task.merge_sent_back can't apply: #12 isn't waiting for merge approval.",
     });
   });
 });
