@@ -1115,3 +1115,97 @@ describe("a running agent crashing", () => {
     expect(send(run(...merging), sessionFailed)).toEqual({ ok: true, events: [], commands: [] });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Done, projects and outside moves
+// ---------------------------------------------------------------------------
+
+const revert = (reason: string): Input => ({ by: "human", type: "revert", reason });
+const changeProject = (project: ProjectId | null): Input => ({
+  by: "human",
+  type: "change_project",
+  project,
+});
+const done = [...merging, merged];
+
+describe("revert", () => {
+  test("undoes the merge commit and takes the task back to Spec with your reason", () => {
+    expect(send(run(...done), revert("Export breaks on empty reports."))).toEqual({
+      ok: true,
+      events: [
+        stamped({ type: "task.reverted", commit, reason: "Export breaks on empty reports." }),
+      ],
+      commands: [{ type: "revert", taskId: id, commit }],
+    });
+  });
+
+  test("is rejected without a reason", () => {
+    expect(send(run(...done), revert(""))).toEqual({
+      ok: false,
+      rejection: { input: "revert", reason: "A revert needs a reason." },
+    });
+  });
+
+  test("is rejected for a task that isn't done", () => {
+    expect(send(run(...inProgress), revert("Broken."))).toEqual({
+      ok: false,
+      rejection: { input: "revert", reason: "revert doesn't apply to #12 in In progress." },
+    });
+  });
+});
+
+describe("change_project", () => {
+  test("moves the task to another project", () => {
+    expect(send(run(...inProgress), changeProject(reports))).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.project_changed", project: reports })],
+      commands: [],
+    });
+  });
+
+  test("takes the task out of its project", () => {
+    const decision = send(run({ ...add, project: reports }), changeProject(null));
+    expect(decision.ok && decision.events).toEqual([
+      stamped({ type: "task.project_changed", project: null }),
+    ]);
+  });
+
+  test("is rejected for a project that doesn't exist", () => {
+    expect(send(run(add), changeProject(ProjectId.parse("billing")))).toEqual({
+      ok: false,
+      rejection: { input: "change_project", reason: "There is no project called billing." },
+    });
+  });
+
+  test("is rejected for a Done task, which only takes a revert (invariant 17)", () => {
+    expect(send(run(...done), changeProject(reports))).toEqual({
+      ok: false,
+      rejection: {
+        input: "change_project",
+        reason: "change_project doesn't apply to #12 in Done.",
+      },
+    });
+  });
+});
+
+describe("external_move", () => {
+  test("is always rejected: a move in another tool is only a request (invariant 3)", () => {
+    const moved: Input = { by: "plugin", type: "external_move", to: "Done" };
+    expect(send(run(...inProgress), moved)).toEqual({
+      ok: false,
+      rejection: {
+        input: "external_move",
+        reason: "Tasks only move through Skelcrew. The move to Done in the other tool was ignored.",
+      },
+    });
+  });
+});
+
+describe("an input in the wrong phase", () => {
+  test("is rejected with the phase it doesn't fit", () => {
+    expect(send(run(...specRunning), approveMerge)).toEqual({
+      ok: false,
+      rejection: { input: "approve_merge", reason: "approve_merge doesn't apply to #12 in Spec." },
+    });
+  });
+});
