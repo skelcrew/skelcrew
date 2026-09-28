@@ -57,10 +57,11 @@ const spec: Spec = { scope: "Export CSV.", acceptance: ["It downloads."], openQu
 const incomplete: Spec = { ...spec, openQuestions: ["Include deleted rows?"] };
 const commit = CommitSha.parse("c".repeat(40));
 
-// Every input a task can receive from you, its agents and the scheduler,
-// with a few values each. `add` is sent first by the property itself.
-// Replies to requests aren't here: each checker builds them from the
-// requests its task actually sent, old ones included (see replies()).
+// Every input a task can receive from you and the scheduler, with a few
+// values each. `add` is sent first by the property itself. Replies to
+// requests and agents' reports aren't here: each checker builds them from
+// the requests its task sent and the agents it started, old ones included
+// (see replies()).
 const inputPool: Input[] = [
   { by: "human", type: "request_spec" },
   { by: "human", type: "provide_spec", spec },
@@ -76,13 +77,6 @@ const inputPool: Input[] = [
   { by: "human", type: "change_project", project: reports },
   { by: "human", type: "change_project", project: archive },
   { by: "human", type: "change_project", project: null },
-  { by: "agent", type: "submit_spec", spec },
-  { by: "agent", type: "submit_spec", spec: incomplete },
-  { by: "agent", type: "ask", text: "Include deleted rows?", options: ["Yes", "No"] },
-  { by: "agent", type: "report_done", branch: { commits: 2, changedFiles: ["src/export.ts"] } },
-  { by: "agent", type: "report_done", branch: { commits: 1, changedFiles: ["src/auth/login.ts"] } },
-  { by: "agent", type: "report_done", branch: { commits: 0, changedFiles: [] } },
-  { by: "agent", type: "give_up", message: "Stuck." },
   { by: "plugin", type: "external_move", to: "Done" },
   { by: "system", type: "start" },
   ...[1_000, 150_000, 250_000].map(
@@ -203,14 +197,32 @@ class Checker {
     readonly config: Config,
   ) {}
 
-  // Replies for every request the task sent, and crash reports for every
-  // agent it ever started. Most answer requests long since dealt with, so
-  // late and repeated replies come up all the time.
+  // Replies for every request the task sent, and crash reports and reports
+  // from every agent it ever started. Most answer requests long since dealt
+  // with, or come from agents it has replaced, so late and repeated messages
+  // come up all the time.
   replies(): Input[] {
     const id = this.id;
-    const out: Input[] = this.started.map(
-      (session): Input => ({ by: "plugin", type: "session_crashed", session, message: "Crashed." }),
-    );
+    const out: Input[] = this.started.flatMap((session): Input[] => [
+      { by: "plugin", type: "session_crashed", session, message: "Crashed." },
+      { by: "agent", type: "submit_spec", session, spec },
+      { by: "agent", type: "submit_spec", session, spec: incomplete },
+      { by: "agent", type: "ask", session, text: "Include deleted rows?", options: ["Yes", "No"] },
+      {
+        by: "agent",
+        type: "report_done",
+        session,
+        branch: { commits: 2, changedFiles: ["src/export.ts"] },
+      },
+      {
+        by: "agent",
+        type: "report_done",
+        session,
+        branch: { commits: 1, changedFiles: ["src/auth/login.ts"] },
+      },
+      { by: "agent", type: "report_done", session, branch: { commits: 0, changedFiles: [] } },
+      { by: "agent", type: "give_up", session, message: "Stuck." },
+    ]);
     for (const sent of this.sent) {
       const { request } = sent;
       switch (sent.kind) {

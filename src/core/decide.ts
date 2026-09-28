@@ -48,6 +48,9 @@ export const decideTask: DecideTask = (task, envelope, config, projects) => {
   if (cleanup !== null) return cleanup;
   if (task.phase === "dropped") return ctx.reject(`#${task.id} was dropped.`);
 
+  const stranger = notTheAgent(task, input);
+  if (stranger !== null) return ctx.reject(stranger);
+
   if (worksInAnyPhase(input)) return inAnyPhase(task, input, ctx);
 
   switch (task.phase) {
@@ -724,6 +727,16 @@ function agentUnderWay(task: Task): boolean {
     default:
       return false;
   }
+}
+
+// Why an agent's report is refused: it doesn't come from the task's current
+// agent. Null for a report that does, and for anything not from an agent.
+function notTheAgent(task: Task, input: Input): string | null {
+  if (input.by !== "agent") return null;
+  const current = runningSession(task);
+  if (current === null) return `#${task.id} has no agent running.`;
+  if (current !== input.session) return `#${task.id}'s agent isn't ${input.session}.`;
+  return null;
 }
 
 // The request a task's current step waits on, or null if it waits on none.

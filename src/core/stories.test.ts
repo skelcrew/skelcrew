@@ -76,7 +76,17 @@ function awaited(task: Task | null): number {
 const started =
   (session: SessionId): Step =>
   (t) => ({ by: "plugin", type: "session_started", request: awaited(t), session });
-const submitSpec: Input = { by: "agent", type: "submit_spec", spec };
+// Agent reports come from the task's current agent, as the daemon names it.
+function agentOf(task: Task | null): SessionId {
+  if (task !== null) {
+    if ((task.phase === "spec" || task.phase === "in_progress") && task.step.kind === "running") {
+      return task.step.session;
+    }
+    if (task.phase === "checks" && task.session !== null) return task.session;
+  }
+  return SessionId.parse("nobody");
+}
+const submitSpec: Step = (t) => ({ by: "agent", type: "submit_spec", session: agentOf(t), spec });
 const approveSpec: Input = { by: "human", type: "approve_spec" };
 const worktreeCreated: Step = (t) => ({
   by: "plugin",
@@ -84,7 +94,9 @@ const worktreeCreated: Step = (t) => ({
   request: awaited(t),
   worktree,
 });
-const reportDone = (branch: BranchFacts): Input => ({ by: "agent", type: "report_done", branch });
+const reportDone =
+  (branch: BranchFacts): Step =>
+  (t) => ({ by: "agent", type: "report_done", session: agentOf(t), branch });
 const gate =
   (name: "local" | "review", ok: boolean): Step =>
   (t) => ({
@@ -224,7 +236,7 @@ describe("golden stories", () => {
       "plugin gate_result local failed → task.gate_failed | send_to_session",
       "agent report_done src/reports/export.ts → task.done_reported | run_gate",
       "plugin gate_result local failed → task.gate_failed, task.blocked | stop_session",
-      "agent report_done src/reports/export.ts → rejected: #12 has no develop agent running.",
+      "agent report_done src/reports/export.ts → rejected: #12 has no agent running.",
       "human retry → task.unblocked",
       "system start → task.dispatch_started | start_develop_session",
       "plugin session_started → task.dispatched",

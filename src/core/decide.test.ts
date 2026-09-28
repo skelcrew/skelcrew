@@ -47,6 +47,18 @@ function send(task: Task | null, step: Step, withConfig: Config = config): Decis
   return decideTask(task, { taskId: id, at, input }, withConfig, projects);
 }
 
+// The session of the task's running agent, the way the daemon names the
+// sender of an agent's report. "nobody" when no agent is running.
+function agentOf(task: Task | null): SessionId {
+  if (task !== null) {
+    if ((task.phase === "spec" || task.phase === "in_progress") && task.step.kind === "running") {
+      return task.step.session;
+    }
+    if (task.phase === "checks" && task.session !== null) return task.session;
+  }
+  return SessionId.parse("nobody");
+}
+
 // The request the task's current step waits on, or 0 if none.
 function awaited(task: Task | null): number {
   if (task === null) return 0;
@@ -242,7 +254,10 @@ const startFailed: Step = (t) => ({
   request: awaited(t),
   message: "herdr crashed",
 });
-const submit: Input = { by: "agent", type: "submit_spec", spec };
+const submitWith =
+  (s: Spec): Step =>
+  (t) => ({ by: "agent", type: "submit_spec", session: agentOf(t), spec: s });
+const submit = submitWith(spec);
 const approve: Input = { by: "human", type: "approve_spec" };
 const sendBack = (note: string): Input => ({ by: "human", type: "send_back_spec", note });
 const provide: Input = { by: "human", type: "provide_spec", spec };
@@ -344,10 +359,11 @@ describe("submit_spec", () => {
   });
 
   test("is rejected with every reason when the spec is incomplete", () => {
-    const incomplete: Input = {
-      ...submit,
-      spec: { ...spec, acceptance: [], openQuestions: ["Include deleted rows?"] },
-    };
+    const incomplete = submitWith({
+      ...spec,
+      acceptance: [],
+      openQuestions: ["Include deleted rows?"],
+    });
     expect(send(run(...specRunning), incomplete)).toEqual({
       ok: false,
       rejection: {
@@ -361,7 +377,7 @@ describe("submit_spec", () => {
   test("is rejected when no spec agent is running", () => {
     expect(send(run(...inSpec), submit)).toEqual({
       ok: false,
-      rejection: { input: "submit_spec", reason: "#12 has no spec agent running." },
+      rejection: { input: "submit_spec", reason: "#12 has no agent running." },
     });
   });
 });
@@ -559,8 +575,16 @@ describe("session_failed in Ready", () => {
 // ---------------------------------------------------------------------------
 
 const branch = { commits: 3, changedFiles: ["src/reports/export.ts"] };
-const reportDone: Input = { by: "agent", type: "report_done", branch };
-const giveUp: Input = { by: "agent", type: "give_up", message: "The reports API is missing." };
+const reportWith =
+  (b: typeof branch): Step =>
+  (t) => ({ by: "agent", type: "report_done", session: agentOf(t), branch: b });
+const reportDone = reportWith(branch);
+const giveUp: Step = (t) => ({
+  by: "agent",
+  type: "give_up",
+  session: agentOf(t),
+  message: "The reports API is missing.",
+});
 const retry: Input = { by: "human", type: "retry" };
 
 const inProgress = [...startingDevelop, developStarted];
@@ -575,7 +599,7 @@ describe("report_done", () => {
   });
 
   test("is rejected for a branch with no commits", () => {
-    expect(send(run(...inProgress), { ...reportDone, branch: { ...branch, commits: 0 } })).toEqual({
+    expect(send(run(...inProgress), reportWith({ ...branch, commits: 0 }))).toEqual({
       ok: false,
       rejection: { input: "report_done", reason: "The branch has no commits." },
     });
@@ -584,7 +608,7 @@ describe("report_done", () => {
   test("is rejected when no agent is running", () => {
     expect(send(run(...inProgress, giveUp), reportDone)).toEqual({
       ok: false,
-      rejection: { input: "report_done", reason: "#12 has no develop agent running." },
+      rejection: { input: "report_done", reason: "#12 has no agent running." },
     });
   });
 });
@@ -779,7 +803,7 @@ describe("gate_result, failing", () => {
 
 const commit = CommitSha.parse("b".repeat(40));
 const authBranch = { commits: 2, changedFiles: ["src/reports/export.ts", "src/auth/login.ts"] };
-const reportAuthDone: Input = { by: "agent", type: "report_done", branch: authBranch };
+const reportAuthDone = reportWith(authBranch);
 const approveMerge: Input = { by: "human", type: "approve_merge" };
 const sendBackMerge = (note: string): Input => ({ by: "human", type: "send_back_merge", note });
 const merged: Step = (t) => ({ by: "plugin", type: "merged", request: awaited(t), commit });
@@ -950,12 +974,9 @@ describe("merge_failed", () => {
 // Questions
 // ---------------------------------------------------------------------------
 
-const ask = (text = "Include deleted rows?", options = ["Yes", "No"]): Input => ({
-  by: "agent",
-  type: "ask",
-  text,
-  options,
-});
+const ask =
+  (text = "Include deleted rows?", options = ["Yes", "No"]): Step =>
+  (t) => ({ by: "agent", type: "ask", session: agentOf(t), text, options });
 const answer = (text: string): Input => ({ by: "human", type: "answer", text });
 
 describe("ask", () => {
@@ -1695,6 +1716,50 @@ describe("a usage report older than the last one", () => {
         input: "usage",
         reason: "This usage report for #12 is older than the last one.",
       },
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Only the current agent is heard (found by the third Codex review)
+// ---------------------------------------------------------------------------
+
+describe("a report from an agent the task has replaced", () => {
+  const replaced = SessionId.parse("session-2");
+  const current = SessionId.parse("session-3");
+  const newAgent: Step = (t) => ({
+    by: "plugin",
+    type: "session_started",
+    request: awaited(t),
+    session: current,
+  });
+
+  test("can't stop the new agent by giving up for it", () => {
+    const retried = run(...inProgress, giveUp, retry, start, newAgent);
+    const oldGiveUp: Input = {
+      by: "agent",
+      type: "give_up",
+      session: replaced,
+      message: "The reports API is missing.",
+    };
+    expect(send(retried, oldGiveUp)).toEqual({
+      ok: false,
+      rejection: { input: "give_up", reason: "#12's agent isn't session-2." },
+    });
+  });
+
+  test("can't resubmit the spec you sent back while the new agent revises it", () => {
+    const first = SessionId.parse("session-1");
+    const revising = run(
+      ...awaitingApproval,
+      sendBack("Also export the totals row."),
+      start,
+      (t) => ({ by: "plugin", type: "session_started", request: awaited(t), session: current }),
+    );
+    const oldSubmit: Input = { by: "agent", type: "submit_spec", session: first, spec };
+    expect(send(revising, oldSubmit)).toEqual({
+      ok: false,
+      rejection: { input: "submit_spec", reason: "#12's agent isn't session-1." },
     });
   });
 });
