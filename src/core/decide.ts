@@ -6,7 +6,7 @@
 // input. The rest are grouped by the phase they apply in, one function per
 // phase, like evolve.
 
-import { specComplete } from "./contracts";
+import { attemptsLeft, specComplete } from "./contracts";
 import { phaseNames, type TaskIn } from "./phases";
 import type {
   Command,
@@ -14,6 +14,7 @@ import type {
   Decide,
   Decision,
   EventBody,
+  Failure,
   Input,
   Project,
   ProjectId,
@@ -81,6 +82,8 @@ export const decide: Decide = (task, envelope, config, projects) => {
       return inReady(task, input, ctx);
     case "in_progress":
       return inProgress(task, input, ctx);
+    case "checks":
+      return inChecks(task, input, ctx);
     default:
       return reject("Not handled yet.");
   }
@@ -277,6 +280,56 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
         [{ type: "task.blocked", reason: { kind: "agent_gave_up", message: input.message } }],
         [{ type: "stop_session", session: step.session }],
       );
+
+    default:
+      return reject("Not handled yet.");
+  }
+}
+
+function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision {
+  const { accept, reject, config } = ctx;
+
+  switch (input.type) {
+    case "gate_result": {
+      if (task.step !== input.gate) {
+        const running =
+          task.step === "merge_approval" || task.step === "merging"
+            ? "isn't running a gate"
+            : `is running the ${task.step} gate, not ${input.gate}`;
+        return reject(`#${task.id} ${running}.`);
+      }
+
+      if (input.ok) {
+        const next = config.gates[config.gates.indexOf(input.gate) + 1] ?? null;
+        if (next === null) return reject("Not handled yet.");
+        return accept(
+          [{ type: "task.gate_passed", gate: input.gate, next }],
+          [{ type: "run_gate", taskId: task.id, gate: next, worktree: task.worktree }],
+        );
+      }
+
+      // The same agent gets the failure while attempts remain. After the
+      // last one, the task is blocked and the agent stopped. The worktree
+      // stays, so a retry carries on with the same code.
+      const failure: Failure = { step: input.gate, summary: input.summary };
+      const failed: EventBody = { type: "task.gate_failed", failure };
+      if (attemptsLeft(task.attempts + 1, config.maxAttempts).ok) {
+        return accept(
+          [failed],
+          [
+            {
+              type: "send_to_session",
+              session: task.session,
+              text: `The ${input.gate} gate failed: ${input.summary}`,
+            },
+          ],
+        );
+      }
+      return accept(
+        [failed, { type: "task.blocked", reason: { kind: "gates_failed", failure } }],
+        [{ type: "stop_session", session: task.session }],
+      );
+    }
 
     default:
       return reject("Not handled yet.");
