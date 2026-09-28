@@ -288,8 +288,10 @@ export type PluginInput =
       project: ProjectId | null; // mapped from e.g. a GitHub milestone
     }
   | { type: "external_move"; to: string } // e.g. issue dragged to Done
-  | { type: "worktree_created"; worktree: Worktree }
-  | { type: "worktree_failed"; message: string }
+  // Both name the build they answer, from create_worktree. A reply for an
+  // earlier build is late, and must never be used for the current one.
+  | { type: "worktree_created"; worktree: Worktree; build: number }
+  | { type: "worktree_failed"; message: string; build: number }
   | { type: "session_started"; session: SessionId }
   | { type: "session_failed"; message: string }
   | { type: "gate_result"; gate: GateName; ok: boolean; summary: string }

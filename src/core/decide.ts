@@ -117,7 +117,7 @@ function create(
 // ignored. Cleaning it up would stop the agent that is working, or remove
 // the worktree it works in.
 function lateReply(task: Task, input: Input, ctx: Context): Decision | null {
-  if (input.type === "worktree_created" && !waitingForWorktree(task)) {
+  if (input.type === "worktree_created" && !waitingForWorktree(task, input.build)) {
     if (heldWorktree(task) === input.worktree.path) return ctx.accept([]);
     return ctx.accept([], [removeWorktree(input.worktree)]);
   }
@@ -333,8 +333,8 @@ function inReady(task: TaskIn<"ready">, input: Input, ctx: Context): Decision {
       );
 
     case "worktree_failed":
-      if (step.kind !== "creating_worktree") {
-        return reject(`#${task.id} isn't creating a worktree.`);
+      if (!waitingForWorktree(task, input.build)) {
+        return reject(`#${task.id} isn't creating a worktree for build ${input.build}.`);
       }
       return accept([blocked("worktree_failed", input.message)]);
 
@@ -643,7 +643,9 @@ function agentKind(task: Task): "spec" | "develop" | null {
 
 // An agent running or starting, or a worktree being created for one.
 function agentUnderWay(task: Task): boolean {
-  return runningSession(task) !== null || waitingForAgent(task) || waitingForWorktree(task);
+  return (
+    runningSession(task) !== null || waitingForAgent(task) || waitingForWorktree(task, task.builds)
+  );
 }
 
 // The path of the worktree the task holds, or null if it holds none.
@@ -654,8 +656,10 @@ function heldWorktree(task: Task): string | null {
   return null;
 }
 
-function waitingForWorktree(task: Task): boolean {
-  return task.phase === "ready" && task.step.kind === "creating_worktree";
+// Waiting for the worktree of this build. A reply for an earlier build is
+// late, even while the current build waits for its own.
+function waitingForWorktree(task: Task, build: number): boolean {
+  return task.phase === "ready" && task.step.kind === "creating_worktree" && task.builds === build;
 }
 
 function waitingForAgent(task: Task): boolean {

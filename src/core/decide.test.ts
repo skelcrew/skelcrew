@@ -400,7 +400,7 @@ describe("send_back_spec", () => {
 
 const worktree = { path: "/repo/.worktrees/12", branch: "task/12-csv-export" };
 const developSession = SessionId.parse("session-2");
-const worktreeCreated: Input = { by: "plugin", type: "worktree_created", worktree };
+const worktreeCreated: Input = { by: "plugin", type: "worktree_created", worktree, build: 1 };
 const developStarted: Input = { by: "plugin", type: "session_started", session: developSession };
 
 const inReady = [...awaitingApproval, approve];
@@ -453,7 +453,7 @@ describe("worktree_created", () => {
 
 describe("worktree_failed", () => {
   test("blocks the task with the reason", () => {
-    const failed: Input = { by: "plugin", type: "worktree_failed", message: "disk full" };
+    const failed: Input = { by: "plugin", type: "worktree_failed", message: "disk full", build: 1 };
     expect(send(run(...creatingWorktree), failed)).toEqual({
       ok: true,
       events: [
@@ -1341,6 +1341,37 @@ describe("a reply repeated for what the task already holds", () => {
       ok: true,
       events: [],
       commands: [],
+    });
+  });
+});
+
+describe("a worktree reply for an earlier build", () => {
+  const build2 = { path: "/repo/.worktrees/12-2", branch: "task/12-csv-export-2" };
+  // Build 1's worktree is still being made when the task is sent back and
+  // started again as build 2.
+  const build2Waiting = [...creatingWorktree, sendBackToSpec("Split it."), provide, start];
+
+  test("is removed, not used for the current build", () => {
+    expect(send(run(...build2Waiting), worktreeCreated)).toEqual({
+      ok: true,
+      events: [],
+      commands: [{ type: "remove_worktree", worktree }],
+    });
+  });
+
+  test("leaves the current build waiting for its own worktree", () => {
+    const own: Input = { by: "plugin", type: "worktree_created", worktree: build2, build: 2 };
+    const decision = send(run(...build2Waiting, worktreeCreated), own);
+    expect(decision.ok && decision.events).toEqual([
+      stamped({ type: "task.worktree_created", worktree: build2 }),
+    ]);
+  });
+
+  test("can't block the current build when it failed", () => {
+    const failed: Input = { by: "plugin", type: "worktree_failed", message: "disk full", build: 1 };
+    expect(send(run(...build2Waiting), failed)).toEqual({
+      ok: false,
+      rejection: { input: "worktree_failed", reason: "#12 isn't creating a worktree for build 1." },
     });
   });
 });
