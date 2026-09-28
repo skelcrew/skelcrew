@@ -2,7 +2,17 @@ import { describe, expect, test } from "bun:test";
 import { decide } from "./decide";
 import { evolve } from "./evolve";
 import { ProjectId, SessionId, TaskId } from "./ids";
-import type { Config, Decision, EventBody, Input, Project, Spec, Task, TaskEvent } from "./types";
+import type {
+  Config,
+  Decision,
+  EventBody,
+  Failure,
+  Input,
+  Project,
+  Spec,
+  Task,
+  TaskEvent,
+} from "./types";
 
 const id = TaskId.parse(12);
 const at = 5_000;
@@ -588,5 +598,89 @@ describe("start in In progress, after a retry", () => {
       ok: false,
       rejection: { input: "start", reason: "#12 isn't waiting for a slot." },
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Checks: the gates
+// ---------------------------------------------------------------------------
+
+const gatePass = (gate: "local" | "review"): Input => ({
+  by: "plugin",
+  type: "gate_result",
+  gate,
+  ok: true,
+  summary: "All good.",
+});
+const localFail: Input = {
+  by: "plugin",
+  type: "gate_result",
+  gate: "local",
+  ok: false,
+  summary: "2 tests failed in export.test.ts",
+};
+const localFailure: Failure = { step: "local", summary: "2 tests failed in export.test.ts" };
+
+const inChecks = [...inProgress, reportDone];
+
+describe("gate_result, passing", () => {
+  test("runs the next gate", () => {
+    expect(send(run(...inChecks), gatePass("local"))).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.gate_passed", gate: "local", next: "review" })],
+      commands: [{ type: "run_gate", taskId: id, gate: "review", worktree }],
+    });
+  });
+
+  test("is rejected for a gate that isn't running", () => {
+    expect(send(run(...inChecks), gatePass("review"))).toEqual({
+      ok: false,
+      rejection: {
+        input: "gate_result",
+        reason: "#12 is running the local gate, not review.",
+      },
+    });
+  });
+});
+
+describe("gate_result, failing", () => {
+  test("sends the failure back to the same agent", () => {
+    expect(send(run(...inChecks), localFail)).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.gate_failed", failure: localFailure })],
+      commands: [
+        {
+          type: "send_to_session",
+          session: developSession,
+          text: "The local gate failed: 2 tests failed in export.test.ts",
+        },
+      ],
+    });
+  });
+
+  test("blocks the task and stops the agent when the last attempt fails", () => {
+    const task = run(...inChecks, localFail, reportDone, localFail, reportDone);
+    expect(send(task, localFail)).toEqual({
+      ok: true,
+      events: [
+        stamped({ type: "task.gate_failed", failure: localFailure }),
+        stamped({ type: "task.blocked", reason: { kind: "gates_failed", failure: localFailure } }),
+      ],
+      commands: [{ type: "stop_session", session: developSession }],
+    });
+  });
+
+  test("after a retry, the new agent is told what failed", () => {
+    const task = run(...inChecks, localFail, reportDone, localFail, reportDone, localFail, retry);
+    const decision = send(task, start);
+    expect(decision.ok && decision.commands).toEqual([
+      {
+        type: "start_develop_session",
+        taskId: id,
+        worktree,
+        spec,
+        lastFailure: localFailure,
+      },
+    ]);
   });
 });
