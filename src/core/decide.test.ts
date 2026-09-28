@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { decide } from "./decide";
 import { evolve } from "./evolve";
-import { ProjectId, SessionId, TaskId } from "./ids";
+import { CommitSha, ProjectId, SessionId, TaskId } from "./ids";
 import type {
   Config,
   Decision,
@@ -685,5 +685,143 @@ describe("gate_result, failing", () => {
         lastFailure: localFailure,
       },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Checks: the merge
+// ---------------------------------------------------------------------------
+
+const commit = CommitSha.parse("b".repeat(40));
+const authBranch = { commits: 2, changedFiles: ["src/reports/export.ts", "src/auth/login.ts"] };
+const reportAuthDone: Input = { by: "agent", type: "report_done", branch: authBranch };
+const approveMerge: Input = { by: "human", type: "approve_merge" };
+const sendBackMerge = (note: string): Input => ({ by: "human", type: "send_back_merge", note });
+const merged: Input = { by: "plugin", type: "merged", commit };
+const mergeFail: Input = { by: "plugin", type: "merge_failed", summary: "Conflicts with main." };
+const mergeFailure: Failure = { step: "merge", summary: "Conflicts with main." };
+
+const lastGateRunning = [...inChecks, gatePass("local")];
+const merging = [...lastGateRunning, gatePass("review")];
+const awaitingMerge = [...inProgress, reportAuthDone, gatePass("local"), gatePass("review")];
+
+describe("the last gate passing", () => {
+  test("starts the merge when no critical path is touched", () => {
+    expect(send(run(...lastGateRunning), gatePass("review"))).toEqual({
+      ok: true,
+      events: [
+        stamped({ type: "task.gate_passed", gate: "review", next: null }),
+        stamped({ type: "task.checks_passed" }),
+        stamped({ type: "task.merge_started" }),
+      ],
+      commands: [{ type: "merge", taskId: id, worktree }],
+    });
+  });
+
+  test("asks for your approval when a critical path is touched, naming the files", () => {
+    const task = run(...inProgress, reportAuthDone, gatePass("local"));
+    expect(send(task, gatePass("review"))).toEqual({
+      ok: true,
+      events: [
+        stamped({ type: "task.gate_passed", gate: "review", next: null }),
+        stamped({ type: "task.checks_passed" }),
+        stamped({ type: "task.merge_approval_requested", criticalFiles: ["src/auth/login.ts"] }),
+      ],
+      commands: [],
+    });
+  });
+});
+
+describe("approve_merge", () => {
+  test("starts the merge", () => {
+    expect(send(run(...awaitingMerge), approveMerge)).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.merge_started" })],
+      commands: [{ type: "merge", taskId: id, worktree }],
+    });
+  });
+
+  test("is rejected when no merge is waiting for approval", () => {
+    expect(send(run(...merging), approveMerge)).toEqual({
+      ok: false,
+      rejection: { input: "approve_merge", reason: "#12's merge isn't waiting for approval." },
+    });
+  });
+});
+
+describe("send_back_merge", () => {
+  test("sends your note to the same agent, without using an attempt", () => {
+    expect(send(run(...awaitingMerge), sendBackMerge("Don't touch login."))).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.merge_sent_back", note: "Don't touch login." })],
+      commands: [{ type: "send_to_session", session: developSession, text: "Don't touch login." }],
+    });
+  });
+
+  test("is rejected without a note", () => {
+    expect(send(run(...awaitingMerge), sendBackMerge(""))).toEqual({
+      ok: false,
+      rejection: { input: "send_back_merge", reason: "A send-back needs a note." },
+    });
+  });
+});
+
+describe("merged", () => {
+  test("moves the task to Done, stops the agent and removes the worktree", () => {
+    expect(send(run(...merging), merged)).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.merged", commit })],
+      commands: [
+        { type: "stop_session", session: developSession },
+        { type: "remove_worktree", worktree },
+      ],
+    });
+  });
+
+  test("is rejected before the merge started", () => {
+    expect(send(run(...awaitingMerge), merged)).toEqual({
+      ok: false,
+      rejection: { input: "merged", reason: "#12 isn't merging." },
+    });
+  });
+});
+
+describe("merge_failed", () => {
+  test("sends the failure back to the same agent, using an attempt", () => {
+    expect(send(run(...merging), mergeFail)).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.merge_failed", failure: mergeFailure })],
+      commands: [
+        {
+          type: "send_to_session",
+          session: developSession,
+          text: "The merge failed: Conflicts with main.",
+        },
+      ],
+    });
+  });
+
+  test("blocks the task when the last attempt fails", () => {
+    // Two failed gates, then both gates pass and the merge fails: attempt 3.
+    const task = run(
+      ...inChecks,
+      localFail,
+      reportDone,
+      localFail,
+      reportDone,
+      gatePass("local"),
+      gatePass("review"),
+    );
+    expect(send(task, mergeFail)).toEqual({
+      ok: true,
+      events: [
+        stamped({ type: "task.merge_failed", failure: mergeFailure }),
+        stamped({
+          type: "task.blocked",
+          reason: { kind: "out_of_attempts", failure: mergeFailure },
+        }),
+      ],
+      commands: [{ type: "stop_session", session: developSession }],
+    });
   });
 });
