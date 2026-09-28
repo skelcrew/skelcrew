@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { evolve } from "./evolve";
+import { evolveTask } from "./evolve";
 import { CommitSha, ProjectId, SessionId, TaskId } from "./ids";
 import type { EventBody, Spec, Task, TaskEvent } from "./types";
 
@@ -15,7 +15,7 @@ function event(body: EventBody): TaskEvent {
 function replay(...bodies: EventBody[]): Task {
   let task: Task | null = null;
   for (const body of bodies) {
-    const result = evolve(task, event(body));
+    const result = evolveTask(task, event(body));
     if (!result.ok) throw new Error(result.reason);
     task = result.task;
   }
@@ -38,7 +38,7 @@ const spec: Spec = {
 
 describe("task.created", () => {
   test("starts a new task in Idea with nothing used yet", () => {
-    expect(evolve(null, event(created))).toEqual({
+    expect(evolveTask(null, event(created))).toEqual({
       ok: true,
       task: {
         phase: "idea",
@@ -57,7 +57,7 @@ describe("task.created", () => {
   });
 
   test("is refused for a task that already exists", () => {
-    expect(evolve(replay(created), event(created))).toEqual({
+    expect(evolveTask(replay(created), event(created))).toEqual({
       ok: false,
       reason: "task.created can't apply: #12 already exists.",
     });
@@ -66,7 +66,7 @@ describe("task.created", () => {
 
 describe("any other event", () => {
   test("is refused for a task that doesn't exist yet", () => {
-    expect(evolve(null, event({ type: "task.spec_requested" }))).toEqual({
+    expect(evolveTask(null, event({ type: "task.spec_requested" }))).toEqual({
       ok: false,
       reason: "task.spec_requested can't apply: #12 doesn't exist.",
     });
@@ -82,7 +82,7 @@ describe("task.spec_requested", () => {
 
   test("is refused outside Idea", () => {
     const task = replay(created, { type: "task.spec_requested" });
-    expect(evolve(task, event({ type: "task.spec_requested" }))).toEqual({
+    expect(evolveTask(task, event({ type: "task.spec_requested" }))).toEqual({
       ok: false,
       reason: "task.spec_requested can't apply to #12 in Spec.",
     });
@@ -101,10 +101,12 @@ describe("task.specced", () => {
   });
 
   test("is refused outside Spec", () => {
-    expect(evolve(replay(created), event({ type: "task.specced", spec, by: "agent" }))).toEqual({
-      ok: false,
-      reason: "task.specced can't apply to #12 in Idea.",
-    });
+    expect(evolveTask(replay(created), event({ type: "task.specced", spec, by: "agent" }))).toEqual(
+      {
+        ok: false,
+        reason: "task.specced can't apply to #12 in Idea.",
+      },
+    );
   });
 });
 
@@ -148,7 +150,9 @@ describe("task.spec_session_started", () => {
   });
 
   test("is refused outside Spec", () => {
-    expect(evolve(replay(created), event({ type: "task.spec_session_started", session }))).toEqual({
+    expect(
+      evolveTask(replay(created), event({ type: "task.spec_session_started", session })),
+    ).toEqual({
       ok: false,
       reason: "task.spec_session_started can't apply to #12 in Idea.",
     });
@@ -178,14 +182,14 @@ describe("task.ready", () => {
   });
 
   test("is refused for a task in Spec with no spec yet", () => {
-    expect(evolve(replay(...inSpec), event({ type: "task.ready" }))).toEqual({
+    expect(evolveTask(replay(...inSpec), event({ type: "task.ready" }))).toEqual({
       ok: false,
       reason: "task.ready can't apply: #12 has no spec.",
     });
   });
 
   test("is refused outside Spec", () => {
-    expect(evolve(replay(created), event({ type: "task.ready" }))).toEqual({
+    expect(evolveTask(replay(created), event({ type: "task.ready" }))).toEqual({
       ok: false,
       reason: "task.ready can't apply to #12 in Idea.",
     });
@@ -214,14 +218,18 @@ describe("task.worktree_created", () => {
   });
 
   test("is refused before the worktree was asked for", () => {
-    expect(evolve(replay(...inReady), event({ type: "task.worktree_created", worktree }))).toEqual({
+    expect(
+      evolveTask(replay(...inReady), event({ type: "task.worktree_created", worktree })),
+    ).toEqual({
       ok: false,
       reason: "task.worktree_created can't apply: #12 isn't creating a worktree.",
     });
   });
 
   test("is refused outside Ready", () => {
-    expect(evolve(replay(...specced), event({ type: "task.worktree_created", worktree }))).toEqual({
+    expect(
+      evolveTask(replay(...specced), event({ type: "task.worktree_created", worktree })),
+    ).toEqual({
       ok: false,
       reason: "task.worktree_created can't apply to #12 in Spec.",
     });
@@ -248,7 +256,7 @@ describe("task.dispatched from Ready", () => {
 
   test("is refused before the worktree exists", () => {
     const task = replay(...inReady, { type: "task.dispatch_started" });
-    expect(evolve(task, event({ type: "task.dispatched", session }))).toEqual({
+    expect(evolveTask(task, event({ type: "task.dispatched", session }))).toEqual({
       ok: false,
       reason: "task.dispatched can't apply: #12 has no worktree yet.",
     });
@@ -283,7 +291,7 @@ describe("task.done_reported", () => {
 
   test("is refused outside In progress", () => {
     const report = event({ type: "task.done_reported", branch: branchFacts, gate: "local" });
-    expect(evolve(replay(...inReady), report)).toEqual({
+    expect(evolveTask(replay(...inReady), report)).toEqual({
       ok: false,
       reason: "task.done_reported can't apply to #12 in Ready.",
     });
@@ -305,7 +313,7 @@ describe("task.gate_passed", () => {
 
   test("is refused for a gate that isn't running", () => {
     const passed = event({ type: "task.gate_passed", gate: "review", next: null });
-    expect(evolve(replay(...inChecks), passed)).toEqual({
+    expect(evolveTask(replay(...inChecks), passed)).toEqual({
       ok: false,
       reason: "task.gate_passed can't apply: #12 is running the local gate, not review.",
     });
@@ -335,7 +343,7 @@ describe("task.gate_failed", () => {
 
   test("is refused for a gate that isn't running", () => {
     const failed = event({ type: "task.gate_failed", failure: { ...localFailed, step: "review" } });
-    expect(evolve(replay(...inChecks), failed)).toEqual({
+    expect(evolveTask(replay(...inChecks), failed)).toEqual({
       ok: false,
       reason: "task.gate_failed can't apply: #12 is running the local gate, not review.",
     });
@@ -361,7 +369,7 @@ describe("task.checks_passed", () => {
   });
 
   test("is refused outside Checks", () => {
-    expect(evolve(replay(...inProgress), event({ type: "task.checks_passed" }))).toEqual({
+    expect(evolveTask(replay(...inProgress), event({ type: "task.checks_passed" }))).toEqual({
       ok: false,
       reason: "task.checks_passed can't apply to #12 in In progress.",
     });
@@ -390,7 +398,7 @@ describe("task.merge_started", () => {
   });
 
   test("is refused while already merging", () => {
-    expect(evolve(replay(...merging), event({ type: "task.merge_started" }))).toEqual({
+    expect(evolveTask(replay(...merging), event({ type: "task.merge_started" }))).toEqual({
       ok: false,
       reason: "task.merge_started can't apply: #12 is already merging.",
     });
@@ -407,7 +415,7 @@ describe("task.merged", () => {
 
   test("is refused before the merge started", () => {
     expect(
-      evolve(replay(...awaitingMergeApproval), event({ type: "task.merged", commit })),
+      evolveTask(replay(...awaitingMergeApproval), event({ type: "task.merged", commit })),
     ).toEqual({
       ok: false,
       reason: "task.merged can't apply: #12 isn't merging.",
@@ -428,7 +436,7 @@ describe("task.merge_failed", () => {
 
   test("is refused before the merge started", () => {
     const failed = event({ type: "task.merge_failed", failure: mergeFailed });
-    expect(evolve(replay(...awaitingMergeApproval), failed)).toEqual({
+    expect(evolveTask(replay(...awaitingMergeApproval), failed)).toEqual({
       ok: false,
       reason: "task.merge_failed can't apply: #12 isn't merging.",
     });
@@ -452,7 +460,7 @@ describe("task.merge_sent_back", () => {
 
   test("is refused unless the merge is waiting for approval", () => {
     const sentBack = event({ type: "task.merge_sent_back", note: "Don't touch login." });
-    expect(evolve(replay(...merging), sentBack)).toEqual({
+    expect(evolveTask(replay(...merging), sentBack)).toEqual({
       ok: false,
       reason: "task.merge_sent_back can't apply: #12 isn't waiting for merge approval.",
     });
@@ -484,7 +492,7 @@ describe("task.question_asked", () => {
   test("is refused while another question is open", () => {
     const task = replay(...specRunning, { type: "task.question_asked", question: specQuestion });
     const second = event({ type: "task.question_asked", question: specQuestion });
-    expect(evolve(task, second)).toEqual({
+    expect(evolveTask(task, second)).toEqual({
       ok: false,
       reason: "task.question_asked can't apply: #12 already has an open question.",
     });
@@ -492,7 +500,7 @@ describe("task.question_asked", () => {
 
   test("is refused from the spec agent outside Spec", () => {
     const asked = event({ type: "task.question_asked", question: specQuestion });
-    expect(evolve(replay(...inProgress), asked)).toEqual({
+    expect(evolveTask(replay(...inProgress), asked)).toEqual({
       ok: false,
       reason: "task.question_asked can't apply: a spec question can't be open in In progress.",
     });
@@ -500,7 +508,7 @@ describe("task.question_asked", () => {
 
   test("is refused from the develop agent outside In progress and Checks", () => {
     const asked = event({ type: "task.question_asked", question: developQuestion });
-    expect(evolve(replay(...specRunning), asked)).toEqual({
+    expect(evolveTask(replay(...specRunning), asked)).toEqual({
       ok: false,
       reason: "task.question_asked can't apply: a develop question can't be open in Spec.",
     });
@@ -520,7 +528,7 @@ describe("task.question_answered", () => {
 
   test("is refused when no question is open", () => {
     expect(
-      evolve(replay(...specRunning), event({ type: "task.question_answered", text: "No" })),
+      evolveTask(replay(...specRunning), event({ type: "task.question_answered", text: "No" })),
     ).toEqual({
       ok: false,
       reason: "task.question_answered can't apply: #12 has no open question.",
@@ -570,14 +578,16 @@ describe("task.blocked", () => {
 
   test("is refused for a task that is already blocked", () => {
     const task = replay(...inProgress, { type: "task.blocked", reason: capReached });
-    expect(evolve(task, event({ type: "task.blocked", reason: outOfAttempts }))).toEqual({
+    expect(evolveTask(task, event({ type: "task.blocked", reason: outOfAttempts }))).toEqual({
       ok: false,
       reason: "task.blocked can't apply: #12 is already blocked.",
     });
   });
 
   test("is refused in Idea, where no work is running", () => {
-    expect(evolve(replay(created), event({ type: "task.blocked", reason: capReached }))).toEqual({
+    expect(
+      evolveTask(replay(created), event({ type: "task.blocked", reason: capReached })),
+    ).toEqual({
       ok: false,
       reason: "task.blocked can't apply to #12 in Idea.",
     });
@@ -605,7 +615,7 @@ describe("task.unblocked", () => {
   });
 
   test("is refused for a task that isn't blocked", () => {
-    expect(evolve(replay(...inProgress), event({ type: "task.unblocked" }))).toEqual({
+    expect(evolveTask(replay(...inProgress), event({ type: "task.unblocked" }))).toEqual({
       ok: false,
       reason: "task.unblocked can't apply: #12 isn't blocked.",
     });
@@ -647,7 +657,7 @@ describe("task.dropped", () => {
   });
 
   test("is refused for a task that is Done", () => {
-    expect(evolve(replay(...done), event({ type: "task.dropped" }))).toEqual({
+    expect(evolveTask(replay(...done), event({ type: "task.dropped" }))).toEqual({
       ok: false,
       reason: "task.dropped can't apply to #12 in Done.",
     });
@@ -656,7 +666,9 @@ describe("task.dropped", () => {
 
 describe("a dropped task", () => {
   test("refuses every event, since Dropped is final", () => {
-    expect(evolve(replay(...dropped), event({ type: "task.project_changed", project }))).toEqual({
+    expect(
+      evolveTask(replay(...dropped), event({ type: "task.project_changed", project })),
+    ).toEqual({
       ok: false,
       reason: "task.project_changed can't apply to #12 in Dropped.",
     });
@@ -676,7 +688,7 @@ describe("task.reverted", () => {
 
   test("is refused outside Done", () => {
     const reverted = event({ type: "task.reverted", commit, reason: "Broken." });
-    expect(evolve(replay(...inProgress), reverted)).toEqual({
+    expect(evolveTask(replay(...inProgress), reverted)).toEqual({
       ok: false,
       reason: "task.reverted can't apply to #12 in In progress.",
     });
@@ -722,7 +734,7 @@ describe("task.spec_sent_back from a later phase", () => {
   });
 
   test("is refused in Idea, which has no spec to send back", () => {
-    expect(evolve(replay(created), event({ type: "task.spec_sent_back", note }))).toEqual({
+    expect(evolveTask(replay(created), event({ type: "task.spec_sent_back", note }))).toEqual({
       ok: false,
       reason: "task.spec_sent_back can't apply to #12 in Idea.",
     });
@@ -759,7 +771,7 @@ describe("a retry in In progress", () => {
 
   test("refuses a new agent while one is running", () => {
     expect(
-      evolve(replay(...inProgress), event({ type: "task.dispatched", session: session2 })),
+      evolveTask(replay(...inProgress), event({ type: "task.dispatched", session: session2 })),
     ).toEqual({
       ok: false,
       reason: "task.dispatched can't apply: #12 isn't starting an agent.",

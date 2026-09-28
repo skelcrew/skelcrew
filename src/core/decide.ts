@@ -2,7 +2,7 @@
 // task, the config and the rules, then accepts it with events and commands,
 // or rejects it with a reason. It reads nothing else and changes nothing.
 //
-// `decide` below is the outline: each step is one line, in the order the
+// `decideTask` below is the outline: each step is one line, in the order the
 // rules apply. The steps follow it, then one function per phase, like
 // evolve, then small helpers.
 
@@ -11,7 +11,7 @@ import { phaseNames, type TaskIn } from "./phases";
 import type {
   Command,
   Config,
-  Decide,
+  DecideTask,
   Decision,
   Envelope,
   EventBody,
@@ -35,7 +35,7 @@ type Context = {
   projects: ReadonlyMap<ProjectId, Project>;
 };
 
-export const decide: Decide = (task, envelope, config, projects) => {
+export const decideTask: DecideTask = (task, envelope, config, projects) => {
   const ctx = makeContext(envelope, config, projects);
   const { input } = envelope;
 

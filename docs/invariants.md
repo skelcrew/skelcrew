@@ -56,6 +56,6 @@ do, lose work, or leave the developer looking at a wrong picture.
 18. **The same input always gives the same result.** Same task, same input, same config:
     the same decision.
 19. **Replaying the log rebuilds the task exactly.** Folding a task's events through
-    `evolve` from nothing gives the same task the core had before.
+    `evolveTask` from nothing gives the same task the core had before.
 20. **Every event belongs to its task and its moment.** Its task ID and time match the
     input that caused it.

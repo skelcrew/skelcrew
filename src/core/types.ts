@@ -459,7 +459,7 @@ export type Check = { ok: true } | { ok: false; reasons: string[] };
 
 // The only place a task can change. `task` is null before task.created.
 // `projects` lets decide reject a task put into a project that does not exist.
-export type Decide = (
+export type DecideTask = (
   task: Task | null,
   envelope: Envelope,
   config: Config,
@@ -476,9 +476,9 @@ export type Decide = (
 // decide never produces an event that doesn't fit the task. A damaged or
 // hand-edited log could, so evolve says which event and why instead of
 // guessing. Replay then stops there, rather than rebuilding a wrong task.
-export type Evolve = (task: Task | null, event: TaskEvent) => Evolved;
+export type EvolveTask = (task: Task | null, event: TaskEvent) => EvolvedTask;
 
-export type Evolved = { ok: true; task: Task } | { ok: false; reason: string };
+export type EvolvedTask = { ok: true; task: Task } | { ok: false; reason: string };
 
 export type ProjectDecision =
   | { ok: true; events: ProjectEvent[] }
