@@ -3,7 +3,7 @@
 // reasons become inbox text and record entries.
 
 import picomatch from "picomatch";
-import type { BranchFacts, Check, Spec } from "./types";
+import type { BranchFacts, Check, Spec, Usage } from "./types";
 
 // Spec to Ready: the spec has a scope, acceptance criteria and no open
 // questions. Approval is checked separately, by decide.
@@ -58,4 +58,33 @@ export function attemptsLeft(attempts: number, maxAttempts: number): Check {
   const reason =
     maxAttempts === 1 ? "The only attempt failed." : `All ${maxAttempts} attempts failed.`;
   return { ok: false, reasons: [reason] };
+}
+
+// Safety cap: a task that reaches the token or time limit since its last
+// retry is blocked. It catches an agent stuck in a loop within a session.
+export function withinSafetyCap(usage: Usage, usageAtRetry: Usage, cap: Usage): Check {
+  const tokens = usage.tokens - usageAtRetry.tokens;
+  const ms = usage.ms - usageAtRetry.ms;
+  const reasons: string[] = [];
+  if (tokens >= cap.tokens) {
+    reasons.push(
+      `Used ${withCommas(tokens)} tokens since the last retry. The cap is ${withCommas(cap.tokens)}.`,
+    );
+  }
+  if (ms >= cap.ms) {
+    reasons.push(
+      `Ran for ${minutes(ms)} minutes since the last retry. The cap is ${minutes(cap.ms)} minutes.`,
+    );
+  }
+  return reasons.length === 0 ? { ok: true } : { ok: false, reasons };
+}
+
+// By hand, not toLocaleString, which depends on the computer's language
+// setting. 1234567 becomes "1,234,567".
+function withCommas(n: number): string {
+  return String(Math.floor(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+function minutes(ms: number): number {
+  return Math.floor(ms / 60_000);
 }
