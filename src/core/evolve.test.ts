@@ -879,3 +879,16 @@ describe("the reason for the last block", () => {
     expect(task).toMatchObject({ phase: "in_progress", lastBlock: null });
   });
 });
+
+describe("leaving Checks", () => {
+  test("leaves nothing of Checks behind on a merged task", () => {
+    expect(replay(...merging, { type: "task.merged", commit })).not.toHaveProperty("request");
+  });
+
+  test("leaves nothing of Checks behind on a task sent back to its agent", () => {
+    const task = replay(...inChecks, { type: "task.gate_failed", failure: localFailed });
+    expect(task).not.toHaveProperty("request");
+    expect(task).not.toHaveProperty("session");
+    expect(task).not.toHaveProperty("branch");
+  });
+});

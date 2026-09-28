@@ -165,6 +165,33 @@ function awaited(task: Task | null): number | null {
   }
 }
 
+// The fields each phase carries, besides the ones every task has. A task
+// must carry exactly these: a field left over from an earlier phase is a
+// state its type says can't exist.
+const everyTask = [
+  "blocked",
+  "builds",
+  "createdAt",
+  "id",
+  "phase",
+  "project",
+  "question",
+  "requests",
+  "source",
+  "title",
+  "usage",
+  "usageAtRetry",
+];
+const phaseFields: Record<Task["phase"], string[]> = {
+  idea: [],
+  spec: ["note", "spec", "step"],
+  ready: ["spec", "step"],
+  in_progress: ["attempts", "lastBlock", "lastFailure", "note", "spec", "step", "worktree"],
+  checks: ["attempts", "branch", "request", "session", "spec", "step", "worktree"],
+  done: ["mergeCommit", "revertFailure", "reverting", "spec"],
+  dropped: [],
+};
+
 // ---------------------------------------------------------------------------
 // The checker: follows one task and checks every rule after every step
 // ---------------------------------------------------------------------------
@@ -506,6 +533,9 @@ class Checker {
 
     // 16. A blocked task has no agent running.
     if (task.blocked !== null) expect(session).toBeNull();
+
+    // Each phase carries exactly its own fields, and nothing left over.
+    expect(Object.keys(task).sort()).toEqual([...everyTask, ...phaseFields[task.phase]].sort());
 
     // 18. Usage totals never go down: the record keeps the true cost, and
     // the safety cap counts from them.

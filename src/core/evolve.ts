@@ -141,9 +141,8 @@ function inSpec(task: TaskIn<"spec">, event: TaskEvent): EvolvedTask {
       });
 
     case "task.ready": {
-      const { spec, note: _note, step: _step, ...rest } = task;
-      if (spec === null) return refuse(event, `#${task.id} has no spec`);
-      return ok({ ...rest, phase: "ready", spec, step: { kind: "queued" } });
+      if (task.spec === null) return refuse(event, `#${task.id} has no spec`);
+      return ok({ ...base(task), phase: "ready", spec: task.spec, step: { kind: "queued" } });
     }
 
     default:
@@ -174,13 +173,14 @@ function inReady(task: TaskIn<"ready">, event: TaskEvent): EvolvedTask {
       );
 
     case "task.dispatched": {
-      const { step, ...rest } = task;
+      const { step } = task;
       if (step.kind !== "starting_session") {
         return refuse(event, `#${task.id} has no worktree yet`);
       }
       return ok({
-        ...rest,
+        ...base(task),
         phase: "in_progress",
+        spec: task.spec,
         worktree: step.worktree,
         step: { kind: "running", session: event.session },
         attempts: 0,
@@ -211,11 +211,14 @@ function inProgress(task: TaskIn<"in_progress">, event: TaskEvent): EvolvedTask 
       return ok({ ...task, step: { kind: "running", session: event.session } });
 
     case "task.done_reported": {
-      const { step, lastFailure: _lastFailure, note: _note, lastBlock: _lastBlock, ...rest } = task;
+      const { step } = task;
       if (step.kind !== "running") return refuse(event, `#${task.id} has no agent running`);
       return ok({
-        ...rest,
+        ...base(task),
         phase: "checks",
+        spec: task.spec,
+        worktree: task.worktree,
+        attempts: task.attempts,
         session: step.session,
         branch: event.branch,
         step: event.gate,
@@ -285,17 +288,10 @@ function inChecks(task: TaskIn<"checks">, event: TaskEvent): EvolvedTask {
 
     case "task.merged": {
       if (task.step !== "merging") return refuse(event, `#${task.id} isn't merging`);
-      const {
-        worktree: _worktree,
-        session: _session,
-        attempts: _attempts,
-        branch: _branch,
-        step: _step,
-        ...rest
-      } = task;
       return ok({
-        ...rest,
+        ...base(task),
         phase: "done",
+        spec: task.spec,
         mergeCommit: event.commit,
         reverting: null,
         revertFailure: null,
@@ -364,22 +360,28 @@ function wrongPhase(event: TaskEvent, task: Task): EvolvedTask {
   };
 }
 
-// The fields every phase has, with the flags cleared. Used when a task
-// leaves its phase for good, so nothing from the old phase is carried over.
-function shared(task: Task) {
+// The fields every task has, whatever its phase. A move to another phase is
+// built from these plus the new phase's own fields, never by copying the old
+// phase's, so nothing from the old phase is left behind.
+function base(task: Task) {
   return {
     id: task.id,
     title: task.title,
     project: task.project,
     source: task.source,
     createdAt: task.createdAt,
-    question: null,
-    blocked: null,
+    question: task.question,
+    blocked: task.blocked,
     builds: task.builds,
     requests: task.requests,
     usage: task.usage,
     usageAtRetry: task.usageAtRetry,
   };
+}
+
+// The same, with the flags cleared: for a task leaving its phase for good.
+function shared(task: Task) {
+  return { ...base(task), question: null, blocked: null };
 }
 
 // From a later phase, the worktree is dropped: the next build starts on a
@@ -397,10 +399,12 @@ function stopAgent(task: Task): Task | null {
     case "in_progress":
       return { ...task, step: { kind: "queued" } };
     case "checks": {
-      const { session: _session, branch: _branch, step: _step, ...rest } = task;
       return {
-        ...rest,
+        ...base(task),
         phase: "in_progress",
+        spec: task.spec,
+        worktree: task.worktree,
+        attempts: task.attempts,
         step: { kind: "queued" },
         lastFailure: null,
         note: null,
@@ -421,10 +425,20 @@ function backToAgent(
   lastFailure: Failure | null,
   note: string | null,
 ): Task {
-  const { session, branch: _branch, step: _step, ...rest } = task;
+  const { session } = task;
   const step =
     session === null ? { kind: "queued" as const } : { kind: "running" as const, session };
-  return { ...rest, phase: "in_progress", step, attempts, lastFailure, note, lastBlock: null };
+  return {
+    ...base(task),
+    phase: "in_progress",
+    spec: task.spec,
+    worktree: task.worktree,
+    step,
+    attempts,
+    lastFailure,
+    note,
+    lastBlock: null,
+  };
 }
 
 // Returns what doesn't match between a gate result and the running gate,
