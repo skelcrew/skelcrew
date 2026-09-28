@@ -318,6 +318,12 @@ class Checker {
     if (!decision.ok) return;
     const { events, commands } = decision;
 
+    // Only the task's current agent is heard: a report from an agent the
+    // task has replaced never counts. (Proposed as a new invariant.)
+    if (input.by === "agent") {
+      expect<Session | null>(input.session).toBe(before === null ? null : runningSession(before));
+    }
+
     for (const event of events) {
       // 21. Every event belongs to its task and its moment.
       expect(event.taskId).toBe(this.id);
