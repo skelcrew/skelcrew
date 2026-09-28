@@ -201,9 +201,18 @@ type Start = Extract<
   Command,
   { type: "start_spec_session" | "start_develop_session" | "create_worktree" }
 >;
+// A crash names the request that started the agent, so it answers the start
+// too: the agent may crash before its start reply arrives, or instead of it.
 type StartReply = Extract<
   Input,
-  { type: "session_started" | "session_failed" | "worktree_created" | "worktree_failed" }
+  {
+    type:
+      | "session_started"
+      | "session_failed"
+      | "session_crashed"
+      | "worktree_created"
+      | "worktree_failed";
+  }
 >;
 
 function startsSomething(command: Command): command is Start {
@@ -218,6 +227,7 @@ function answersStart(input: Input): input is StartReply {
   return (
     input.type === "session_started" ||
     input.type === "session_failed" ||
+    input.type === "session_crashed" ||
     input.type === "worktree_created" ||
     input.type === "worktree_failed"
   );

@@ -204,7 +204,6 @@ class Checker {
   replies(): Input[] {
     const id = this.id;
     const out: Input[] = this.started.flatMap((session): Input[] => [
-      { by: "plugin", type: "session_crashed", session, message: "Crashed." },
       { by: "agent", type: "submit_spec", session, spec },
       { by: "agent", type: "submit_spec", session, spec: incomplete },
       { by: "agent", type: "ask", session, text: "Include deleted rows?", options: ["Yes", "No"] },
@@ -226,17 +225,17 @@ class Checker {
     for (const sent of this.sent) {
       const { request } = sent;
       switch (sent.kind) {
-        case "agent":
+        case "agent": {
+          // The agent a request starts is always named after it, so its
+          // crash can be reported before, after or instead of its start.
+          const session = SessionId.parse(`s${id}-${request}`);
           out.push(
-            {
-              by: "plugin",
-              type: "session_started",
-              request,
-              session: SessionId.parse(`s${id}-${request}`),
-            },
+            { by: "plugin", type: "session_started", request, session },
             { by: "plugin", type: "session_failed", request, message: "Didn't start." },
+            { by: "plugin", type: "session_crashed", request, session, message: "Crashed." },
           );
           break;
+        }
         case "worktree":
           out.push(
             {
@@ -308,6 +307,7 @@ class Checker {
     if (
       input.type === "session_started" ||
       input.type === "session_failed" ||
+      input.type === "session_crashed" ||
       input.type === "worktree_created" ||
       input.type === "worktree_failed"
     ) {

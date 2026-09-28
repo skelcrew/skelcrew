@@ -153,6 +153,23 @@ describe("the loop", () => {
     expect(saved.ok && saved.tasks.get(one)?.phase).toBe("spec");
   });
 
+  test("frees the slot when an agent crashes before its start reply", () => {
+    const loop = new Loop(config, new Recorded(), null);
+    loop.send(one, add());
+    loop.send(two, add());
+    expect(loop.startWaiting()).toEqual([one]);
+
+    loop.send(one, {
+      by: "plugin",
+      type: "session_crashed",
+      request: 1,
+      session: SessionId.parse("gone"),
+      message: "herdr crashed",
+    });
+    expect(loop.startsInFlight).toBe(0);
+    expect(loop.startWaiting()).toEqual([two]);
+  });
+
   test("still counts a start in flight after a restart", () => {
     const store = EventStore.open(":memory:");
     const first = new Loop(config, new Recorded(), store);
