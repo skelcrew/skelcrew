@@ -348,9 +348,9 @@ const checksPassed: EventBody[] = [
   { type: "task.gate_passed", gate: "local", next: null },
   { type: "task.checks_passed" },
 ];
-const escalated: EventBody[] = [
+const awaitingMergeApproval: EventBody[] = [
   ...checksPassed,
-  { type: "task.escalated", criticalFiles: ["src/auth/login.ts"] },
+  { type: "task.merge_approval_requested", criticalFiles: ["src/auth/login.ts"] },
 ];
 const merging: EventBody[] = [...checksPassed, { type: "task.merge_started" }];
 const mergeFailed = { step: "merge" as const, summary: "Conflicts with main in export.ts" };
@@ -368,9 +368,12 @@ describe("task.checks_passed", () => {
   });
 });
 
-describe("task.escalated", () => {
+describe("task.merge_approval_requested", () => {
   test("waits for the developer to approve the merge", () => {
-    expect(replay(...escalated)).toMatchObject({ phase: "checks", step: "merge_approval" });
+    expect(replay(...awaitingMergeApproval)).toMatchObject({
+      phase: "checks",
+      step: "merge_approval",
+    });
   });
 });
 
@@ -380,7 +383,7 @@ describe("task.merge_started", () => {
   });
 
   test("starts merging once the developer approves", () => {
-    expect(replay(...escalated, { type: "task.merge_started" })).toMatchObject({
+    expect(replay(...awaitingMergeApproval, { type: "task.merge_started" })).toMatchObject({
       phase: "checks",
       step: "merging",
     });
@@ -403,7 +406,9 @@ describe("task.merged", () => {
   });
 
   test("is refused before the merge started", () => {
-    expect(evolve(replay(...escalated), event({ type: "task.merged", commit }))).toEqual({
+    expect(
+      evolve(replay(...awaitingMergeApproval), event({ type: "task.merged", commit })),
+    ).toEqual({
       ok: false,
       reason: "task.merged can't apply: #12 isn't merging.",
     });
@@ -423,7 +428,7 @@ describe("task.merge_failed", () => {
 
   test("is refused before the merge started", () => {
     const failed = event({ type: "task.merge_failed", failure: mergeFailed });
-    expect(evolve(replay(...escalated), failed)).toEqual({
+    expect(evolve(replay(...awaitingMergeApproval), failed)).toEqual({
       ok: false,
       reason: "task.merge_failed can't apply: #12 isn't merging.",
     });
@@ -432,7 +437,10 @@ describe("task.merge_failed", () => {
 
 describe("task.merge_sent_back", () => {
   test("sends the task back to the same agent without counting an attempt", () => {
-    const task = replay(...escalated, { type: "task.merge_sent_back", note: "Don't touch login." });
+    const task = replay(...awaitingMergeApproval, {
+      type: "task.merge_sent_back",
+      note: "Don't touch login.",
+    });
     expect(task).toMatchObject({
       phase: "in_progress",
       worktree,
