@@ -2,7 +2,8 @@
 // phase. Each returns every reason it failed, in plain words, because the
 // reasons become inbox text and record entries.
 
-import type { Check, Spec } from "./types";
+import picomatch from "picomatch";
+import type { BranchFacts, Check, Spec } from "./types";
 
 // Spec to Ready: the spec has a scope, acceptance criteria and no open
 // questions. Approval is checked separately, by decide.
@@ -24,4 +25,26 @@ export function specComplete(spec: Spec): Check {
 
 function isBlank(text: string): boolean {
   return text.trim() === "";
+}
+
+// Merge policy: a branch that changes a file on a critical path needs the
+// developer's approval before it merges. The reasons name each file and the
+// pattern it matched, so the inbox can say why approval is needed.
+//
+// `dot: true` makes ** match hidden files like src/auth/.env, which
+// picomatch skips by default. `windows: false` fixes the separator to "/"
+// on every machine, so the same inputs always give the same answer.
+export function mergeAllowed(branch: BranchFacts, criticalPaths: string[]): Check {
+  const matchers = criticalPaths.map((pattern) => ({
+    pattern,
+    matches: picomatch(pattern, { dot: true, windows: false }),
+  }));
+  const reasons: string[] = [];
+  for (const file of branch.changedFiles) {
+    const hit = matchers.find((m) => m.matches(file));
+    if (hit) {
+      reasons.push(`${file} matches the critical path ${hit.pattern}`);
+    }
+  }
+  return reasons.length === 0 ? { ok: true } : { ok: false, reasons };
 }
