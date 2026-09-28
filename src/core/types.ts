@@ -250,7 +250,7 @@ export type HumanInput =
       project: ProjectId | null;
       spec: boolean; // `add --spec`: capture and start speccing in one step
     }
-  | { type: "assign"; project: ProjectId | null }
+  | { type: "change_project"; project: ProjectId | null }
   | { type: "request_spec" }
   | { type: "provide_spec"; spec: Spec } // a spec written by hand
   | { type: "approve_spec" }
@@ -327,7 +327,7 @@ export type EventBody =
       project: ProjectId | null;
       source: SourceRef | null;
     }
-  | { type: "task.assigned"; project: ProjectId | null }
+  | { type: "task.project_changed"; project: ProjectId | null }
   | { type: "task.spec_requested" }
   | { type: "task.spec_session_started"; session: SessionId }
   // `by` shows in the record whether an agent or the developer wrote it.

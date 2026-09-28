@@ -321,7 +321,7 @@ plugins:
 | `skelcrew add "<task>"` | Capture a task as an Idea; `--spec` also starts speccing, `--project <name>` puts it in a project |
 | `skelcrew project add "<name>" "<goal>"` | Create a project |
 | `skelcrew project park <name>` | Stop new agents from starting in a project; `activate` undoes it |
-| `skelcrew assign <task> <project>` | Move a task into a project, or out of it with `none` |
+| `skelcrew project set <task> <project>` | Put a task in a project, or take it out with `none` |
 | `skelcrew spec <task>` | Ask for an Idea to be specced |
 | `skelcrew approve <task>` | Approve a spec or a critical merge; `--send-back` returns it |
 | `skelcrew drop <task>` | Drop a task that is not done; stops its session and removes its worktree if it has them |
