@@ -116,6 +116,29 @@ describe("the loop", () => {
     expect(loop.startWaiting()).toEqual([two]);
   });
 
+  test("keeps counting a start whose reply couldn't be saved", () => {
+    let full = false;
+    const store = EventStore.open(":memory:");
+    const flaky: EventLog = {
+      appendTask: (events) =>
+        full ? { ok: false, reason: "disk full" } : store.appendTask(events),
+      appendProject: (events) => store.appendProject(events),
+    };
+    const loop = new Loop(config, new Recorded(), flaky);
+    loop.send(one, add());
+    loop.send(two, add());
+    loop.startWaiting();
+
+    full = true;
+    expect(loop.send(one, started(1, "s1")).ok).toBe(false);
+    full = false;
+
+    // #1's agent is up, but the task never recorded it. Its slot stays taken
+    // until the reply is handled, so #2 must wait.
+    expect(loop.startsInFlight).toBe(1);
+    expect(loop.startWaiting()).toEqual([]);
+  });
+
   test("picks up where it left off from the saved events", () => {
     const store = EventStore.open(":memory:");
     const first = new Loop(config, new Recorded(), store);
