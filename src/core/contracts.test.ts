@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mergeAllowed, specComplete } from "./contracts";
+import { attemptsLeft, mergeAllowed, specComplete } from "./contracts";
 import type { Spec } from "./types";
 
 const complete: Spec = {
@@ -98,5 +98,26 @@ describe("mergeAllowed", () => {
       ok: false,
       reasons: ["src/auth/login.ts matches the critical path src/auth/**"],
     });
+  });
+});
+
+// `attempts` counts failed rounds since the last retry, including the one
+// that just failed. decide calls this after every failed gate or merge.
+describe("attemptsLeft", () => {
+  test("sends the task back to the agent while attempts remain", () => {
+    expect(attemptsLeft(1, 3)).toEqual({ ok: true });
+    expect(attemptsLeft(2, 3)).toEqual({ ok: true });
+  });
+
+  test("fails when the last attempt has failed", () => {
+    expect(attemptsLeft(3, 3)).toEqual({ ok: false, reasons: ["All 3 attempts failed."] });
+  });
+
+  test("fails on the first failure when only one attempt is allowed", () => {
+    expect(attemptsLeft(1, 1)).toEqual({ ok: false, reasons: ["The only attempt failed."] });
+  });
+
+  test("still fails if the count has somehow gone past the limit", () => {
+    expect(attemptsLeft(4, 3)).toEqual({ ok: false, reasons: ["All 3 attempts failed."] });
   });
 });
