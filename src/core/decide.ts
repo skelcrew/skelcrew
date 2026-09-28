@@ -85,6 +85,20 @@ export const decide: Decide = (task, envelope, config, projects) => {
   }
 
   switch (input.type) {
+    // Moves in other tools are requests, never obeyed (invariant 3).
+    case "external_move":
+      return reject(
+        `Tasks only move through Skelcrew. The move to ${input.to} in the other tool was ignored.`,
+      );
+
+    // A Done task only takes a revert (invariant 17).
+    case "change_project":
+      if (task.phase === "done") return wrongPhase(task, input, ctx);
+      if (input.project !== null && !projects.has(input.project)) {
+        return reject(`There is no project called ${input.project}.`);
+      }
+      return accept([{ type: "task.project_changed", project: input.project }]);
+
     // Leaving for good stops the agent and removes the worktree, whatever
     // the task holds. A merge already under way is left to finish.
     case "drop":
@@ -166,12 +180,12 @@ export const decide: Decide = (task, envelope, config, projects) => {
       return inProgress(task, input, ctx);
     case "checks":
       return inChecks(task, input, ctx);
-    default:
-      return reject("Not handled yet.");
+    case "done":
+      return inDone(task, input, ctx);
   }
 };
 
-function inIdea(_task: TaskIn<"idea">, input: Input, ctx: Context): Decision {
+function inIdea(task: TaskIn<"idea">, input: Input, ctx: Context): Decision {
   switch (input.type) {
     case "request_spec":
       return ctx.accept([{ type: "task.spec_requested" }]);
@@ -180,7 +194,7 @@ function inIdea(_task: TaskIn<"idea">, input: Input, ctx: Context): Decision {
       return acceptSpec(input.spec, "human", ctx, [{ type: "task.spec_requested" }]);
 
     default:
-      return ctx.reject("Not handled yet.");
+      return wrongPhase(task, input, ctx);
   }
 }
 
@@ -242,7 +256,7 @@ function inSpec(task: TaskIn<"spec">, input: Input, ctx: Context): Decision {
       return accept([{ type: "task.spec_sent_back", note: input.note }]);
 
     default:
-      return reject("Not handled yet.");
+      return wrongPhase(task, input, ctx);
   }
 }
 
@@ -298,7 +312,7 @@ function inReady(task: TaskIn<"ready">, input: Input, ctx: Context): Decision {
       );
 
     default:
-      return reject("Not handled yet.");
+      return wrongPhase(task, input, ctx);
   }
 }
 
@@ -359,7 +373,7 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
       );
 
     default:
-      return reject("Not handled yet.");
+      return wrongPhase(task, input, ctx);
   }
 }
 
@@ -455,13 +469,32 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
     }
 
     default:
-      return reject("Not handled yet.");
+      return wrongPhase(task, input, ctx);
+  }
+}
+
+// The reason becomes the note for the redone spec. The shell reverts the
+// merge commit on main.
+function inDone(task: TaskIn<"done">, input: Input, ctx: Context): Decision {
+  switch (input.type) {
+    case "revert":
+      if (input.reason.trim() === "") return ctx.reject("A revert needs a reason.");
+      return ctx.accept(
+        [{ type: "task.reverted", commit: task.mergeCommit, reason: input.reason }],
+        [{ type: "revert", taskId: task.id, commit: task.mergeCommit }],
+      );
+    default:
+      return wrongPhase(task, input, ctx);
   }
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function wrongPhase(task: Task, input: Input, ctx: Context): Decision {
+  return ctx.reject(`${input.type} doesn't apply to #${task.id} in ${phaseNames[task.phase]}.`);
+}
 
 // The commands that stop the task's agent and remove its worktree, for a
 // task leaving its phase for good. A worktree or agent still being created
