@@ -125,6 +125,10 @@ Tests sit next to the code: `decide.ts` and `decide.test.ts`.
   property fails, fast-check shrinks the sequence to the few inputs that break the rule.
   These tests have already found real bugs, such as a question that could never be
   answered.
+- **The loop's property test** (`src/loop/loop.property.test.ts`). Four tasks run
+  through the real loop with random inputs, saves that sometimes fail, and restarts at
+  random moments. After every step it checks that no more agents run than
+  `max_running` allows, and that the loop's tasks match a fresh replay of the saved log.
 - **Golden stories** (`stories.test.ts`). Whole lifecycles, one line per input: what was
   sent, the events it caused, and the commands for the daemon. The happy path, a task
   blocked and retried, a merge that waits for approval, and a revert. The full events of
