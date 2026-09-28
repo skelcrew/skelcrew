@@ -1015,6 +1015,19 @@ describe("answer", () => {
   });
 });
 
+describe("an open spec question", () => {
+  test("stops the agent from submitting a spec until you answer", () => {
+    expect(send(run(...specRunning, ask()), submit)).toEqual({
+      ok: false,
+      rejection: { input: "submit_spec", reason: "#12 has an open question. Wait for the answer." },
+    });
+  });
+
+  test("is cleared when you write the spec yourself", () => {
+    expect(run(...specRunning, ask(), provide).question).toBeNull();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Usage and the safety cap
 // ---------------------------------------------------------------------------
@@ -1065,6 +1078,69 @@ describe("usage", () => {
       const decision = send(run(...inputs), usage(300_000));
       expect(decision.ok && decision.events.map((e) => e.type)).toEqual(["task.usage_recorded"]);
     }
+  });
+});
+
+describe("the safety cap while an agent is starting", () => {
+  const capped: BlockReason = { kind: "safety_cap", usage: { tokens: 250_000, ms: 0 } };
+
+  test("blocks a task whose spec agent is still starting", () => {
+    expect(send(run(...inSpec, start), usage(250_000))).toEqual({
+      ok: true,
+      events: [
+        stamped({ type: "task.usage_recorded", usage: { tokens: 250_000, ms: 0 } }),
+        stamped({ type: "task.blocked", reason: capped }),
+      ],
+      commands: [],
+    });
+  });
+
+  test("blocks a task whose worktree is being created", () => {
+    const decision = send(run(...creatingWorktree), usage(250_000));
+    expect(decision.ok && decision.events.map((e) => e.type)).toEqual([
+      "task.usage_recorded",
+      "task.blocked",
+    ]);
+  });
+
+  test("blocks a task whose develop agent is starting, removing the unused worktree", () => {
+    expect(send(run(...startingDevelop), usage(250_000))).toEqual({
+      ok: true,
+      events: [
+        stamped({ type: "task.usage_recorded", usage: { tokens: 250_000, ms: 0 } }),
+        stamped({ type: "task.blocked", reason: capped }),
+      ],
+      commands: [{ type: "remove_worktree", worktree }],
+    });
+  });
+});
+
+describe("start for a task already over its safety cap", () => {
+  test("blocks the task instead of starting an agent", () => {
+    // The report arrived while the spec waited for approval, so it was only recorded.
+    const task = run(...awaitingApproval, usage(250_000), approve);
+    expect(send(task, start)).toEqual({
+      ok: true,
+      events: [
+        stamped({
+          type: "task.blocked",
+          reason: { kind: "safety_cap", usage: { tokens: 250_000, ms: 0 } },
+        }),
+      ],
+      commands: [],
+    });
+  });
+});
+
+describe("a usage report older than the last one", () => {
+  test("is refused, so the totals never go down", () => {
+    expect(send(run(...inProgress, usage(50_000)), usage(10_000))).toEqual({
+      ok: false,
+      rejection: {
+        input: "usage",
+        reason: "This usage report for #12 is older than the last one.",
+      },
+    });
   });
 });
 
@@ -1129,24 +1205,6 @@ describe("drop", () => {
     expect(send(run(...merging, merged), drop)).toEqual({
       ok: false,
       rejection: { input: "drop", reason: "#12 is done. Use revert to undo it." },
-    });
-  });
-});
-
-describe("late replies for a dropped task", () => {
-  test("remove a worktree that finished after the drop", () => {
-    expect(send(run(...creatingWorktree, drop), worktreeCreated)).toEqual({
-      ok: true,
-      events: [],
-      commands: [{ type: "remove_worktree", worktree }],
-    });
-  });
-
-  test("stop an agent that started after the drop", () => {
-    expect(send(run(...inSpec, start, drop), sessionStarted)).toEqual({
-      ok: true,
-      events: [],
-      commands: [{ type: "stop_session", session }],
     });
   });
 });
@@ -1216,6 +1274,47 @@ describe("a running agent crashing", () => {
     expect(send(run(...merging), crashed(developSession, 3))).toEqual({
       ok: false,
       rejection: { input: "session_crashed", reason: "#12's agent isn't session-2." },
+    });
+  });
+});
+
+describe("a crash reported before the agent's start reply", () => {
+  // The spec agent (request 1) starts and crashes at once, and the crash
+  // report overtakes the start reply.
+  const early = crashed(SessionId.parse("gone"), 1);
+  const lateStart: Input = {
+    by: "plugin",
+    type: "session_started",
+    request: 1,
+    session: SessionId.parse("gone"),
+  };
+
+  test("counts as a failed start and blocks the task", () => {
+    expect(send(run(...inSpec, start), early)).toEqual({
+      ok: true,
+      events: [
+        stamped({
+          type: "task.blocked",
+          reason: { kind: "session_failed", message: "herdr crashed" },
+        }),
+      ],
+      commands: [],
+    });
+  });
+
+  test("leaves the late start reply to be stopped, not recorded as running", () => {
+    expect(send(run(...inSpec, start, early), lateStart)).toEqual({
+      ok: true,
+      events: [],
+      commands: [{ type: "stop_session", session: SessionId.parse("gone") }],
+    });
+  });
+
+  test("is refused for a request the task isn't waiting on", () => {
+    const stale = crashed(SessionId.parse("gone"), 7);
+    expect(send(run(...inSpec, start), stale)).toEqual({
+      ok: false,
+      rejection: { input: "session_crashed", reason: "#12's agent isn't gone." },
     });
   });
 });
@@ -1372,76 +1471,30 @@ describe("an input in the wrong phase", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Fixes for what the property tests found
+// Late and repeated replies
 // ---------------------------------------------------------------------------
 
-describe("an open spec question", () => {
-  test("stops the agent from submitting a spec until you answer", () => {
-    expect(send(run(...specRunning, ask()), submit)).toEqual({
-      ok: false,
-      rejection: { input: "submit_spec", reason: "#12 has an open question. Wait for the answer." },
-    });
-  });
+// Every reply names the request it answers. A reply to any other request is
+// late or repeated: it is cleaned up or refused, and never answers the
+// current one.
 
-  test("is cleared when you write the spec yourself", () => {
-    expect(run(...specRunning, ask(), provide).question).toBeNull();
-  });
-});
-
-describe("the safety cap while an agent is starting", () => {
-  const capped: BlockReason = { kind: "safety_cap", usage: { tokens: 250_000, ms: 0 } };
-
-  test("blocks a task whose spec agent is still starting", () => {
-    expect(send(run(...inSpec, start), usage(250_000))).toEqual({
+describe("late replies for a dropped task", () => {
+  test("remove a worktree that finished after the drop", () => {
+    expect(send(run(...creatingWorktree, drop), worktreeCreated)).toEqual({
       ok: true,
-      events: [
-        stamped({ type: "task.usage_recorded", usage: { tokens: 250_000, ms: 0 } }),
-        stamped({ type: "task.blocked", reason: capped }),
-      ],
-      commands: [],
-    });
-  });
-
-  test("blocks a task whose worktree is being created", () => {
-    const decision = send(run(...creatingWorktree), usage(250_000));
-    expect(decision.ok && decision.events.map((e) => e.type)).toEqual([
-      "task.usage_recorded",
-      "task.blocked",
-    ]);
-  });
-
-  test("blocks a task whose develop agent is starting, removing the unused worktree", () => {
-    expect(send(run(...startingDevelop), usage(250_000))).toEqual({
-      ok: true,
-      events: [
-        stamped({ type: "task.usage_recorded", usage: { tokens: 250_000, ms: 0 } }),
-        stamped({ type: "task.blocked", reason: capped }),
-      ],
+      events: [],
       commands: [{ type: "remove_worktree", worktree }],
     });
   });
-});
 
-describe("start for a task already over its safety cap", () => {
-  test("blocks the task instead of starting an agent", () => {
-    // The report arrived while the spec waited for approval, so it was only recorded.
-    const task = run(...awaitingApproval, usage(250_000), approve);
-    expect(send(task, start)).toEqual({
+  test("stop an agent that started after the drop", () => {
+    expect(send(run(...inSpec, start, drop), sessionStarted)).toEqual({
       ok: true,
-      events: [
-        stamped({
-          type: "task.blocked",
-          reason: { kind: "safety_cap", usage: { tokens: 250_000, ms: 0 } },
-        }),
-      ],
-      commands: [],
+      events: [],
+      commands: [{ type: "stop_session", session }],
     });
   });
 });
-
-// ---------------------------------------------------------------------------
-// Replies matched to their request (found by the Codex review)
-// ---------------------------------------------------------------------------
 
 describe("a reply repeated for what the task already holds", () => {
   test("is ignored when it names the running agent, instead of stopping it", () => {
@@ -1548,10 +1601,6 @@ describe("a gate result from an earlier run of the checks", () => {
     ]);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Every reply matched to its request (found by the second Codex review)
-// ---------------------------------------------------------------------------
 
 describe("a merge reply for an earlier merge", () => {
   // The first merge (request 6) conflicts. A new agent fixes it, the gates
@@ -1674,20 +1723,8 @@ describe("an agent started for an earlier request, after a retry", () => {
   });
 });
 
-describe("a usage report older than the last one", () => {
-  test("is refused, so the totals never go down", () => {
-    expect(send(run(...inProgress, usage(50_000)), usage(10_000))).toEqual({
-      ok: false,
-      rejection: {
-        input: "usage",
-        reason: "This usage report for #12 is older than the last one.",
-      },
-    });
-  });
-});
-
 // ---------------------------------------------------------------------------
-// Only the current agent is heard (found by the third Codex review)
+// Reports from an agent the task has replaced
 // ---------------------------------------------------------------------------
 
 describe("a report from an agent the task has replaced", () => {
@@ -1726,51 +1763,6 @@ describe("a report from an agent the task has replaced", () => {
     expect(send(revising, oldSubmit)).toEqual({
       ok: false,
       rejection: { input: "submit_spec", reason: "#12's agent isn't session-1." },
-    });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// A crash before its start reply (found by the third Codex review)
-// ---------------------------------------------------------------------------
-
-describe("a crash reported before the agent's start reply", () => {
-  // The spec agent (request 1) starts and crashes at once, and the crash
-  // report overtakes the start reply.
-  const early = crashed(SessionId.parse("gone"), 1);
-  const lateStart: Input = {
-    by: "plugin",
-    type: "session_started",
-    request: 1,
-    session: SessionId.parse("gone"),
-  };
-
-  test("counts as a failed start and blocks the task", () => {
-    expect(send(run(...inSpec, start), early)).toEqual({
-      ok: true,
-      events: [
-        stamped({
-          type: "task.blocked",
-          reason: { kind: "session_failed", message: "herdr crashed" },
-        }),
-      ],
-      commands: [],
-    });
-  });
-
-  test("leaves the late start reply to be stopped, not recorded as running", () => {
-    expect(send(run(...inSpec, start, early), lateStart)).toEqual({
-      ok: true,
-      events: [],
-      commands: [{ type: "stop_session", session: SessionId.parse("gone") }],
-    });
-  });
-
-  test("is refused for a request the task isn't waiting on", () => {
-    const stale = crashed(SessionId.parse("gone"), 7);
-    expect(send(run(...inSpec, start), stale)).toEqual({
-      ok: false,
-      rejection: { input: "session_crashed", reason: "#12's agent isn't gone." },
     });
   });
 });
