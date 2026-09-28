@@ -83,6 +83,11 @@ task. That's how "prompts propose, the core decides" is enforced.
 - **Commands are how the core touches the world without doing it.** `create_worktree`,
   `start_develop_session`, `merge` and so on. The daemon carries them out, and the results
   come back as inputs. In tests, a scripted reply stands in for each one.
+- **Every reply answers one request.** A command that expects a reply carries a request
+  number, and the reply must bring it back. For example, #12's first merge conflicts, a
+  new agent fixes it, and a second merge starts as request 10. A repeat of the first
+  merge's reply, for request 6, is refused, so it can't mark the new merge done. A late
+  agent or worktree is stopped or removed instead.
 - **Errors are values.** Functions return `{ ok: true, … }` or `{ ok: false, reason }`.
   Nothing in the core throws.
 - **Phases and flags.** A task is always in one phase: Idea, Spec, Ready, In progress,
