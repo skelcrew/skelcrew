@@ -96,5 +96,6 @@ read, rewrite it.
 ## Layout
 
 - `docs/spec.md`: the design. The source of truth for what Skelcrew does.
+- `docs/invariants.md`: the rules the core must never break. Tests are written against it.
 - `src/core/`: the core. Critical code, see above.
 - `CLAUDE.md` links to this file, so every agent reads the same rules.

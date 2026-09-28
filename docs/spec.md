@@ -112,7 +112,7 @@ Inputs are everything that can happen to a task: an agent proposing done, a chec
 **Testing:**
 
 - one test per transition, allowed and rejected
-- property-based invariants (fast-check): no task reaches Done without passing checks, rejected inputs never change state, replay always yields the same state
+- property-based invariants (fast-check): the full list is in `docs/invariants.md`. Examples: no task reaches Done without passing checks, rejected inputs never change state, no agent or worktree is ever left untracked, and replay always yields the same state
 - golden stories: full lifecycles as input sequences with expected events (happy path, blocked, escalated then approved, merged then reverted)
 - a simulator that feeds the core scripted plugin responses, so whole lifecycles run in milliseconds before any real plugin exists
 
