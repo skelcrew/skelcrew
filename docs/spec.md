@@ -150,7 +150,7 @@ A task moves through six phases: Idea, Spec, Ready, In progress, Checks, Done. A
 6. **Checks and review.** The core runs the gates: local check commands, remote check results from plugins, then a review by a fresh agent session. Failures return to the developing agent; repeated failures block the task with a reason. Event: `task.checks_passed`.
 7. **Merge.** The merge policy either merges automatically or escalates to the inbox. Tasks merge one at a time. Just before merging, the branch is brought up to date with main and the local checks run again. If that fails, or the branch conflicts with main, the task returns to In progress with the failure, and it counts as a failed attempt. After the merge, the worktree is removed. Events: `task.merged` or `task.merge_approval_requested`.
 8. **Record.** The task's events are summarised into a Markdown entry.
-9. **Afterwards.** If a merged task turns out to be wrong, the developer reverts it with `skelcrew revert`. The core asks git to revert the commit. Once git has, the task returns to Spec with the reason attached, and the record says why. If the revert fails, for example on a conflict, the task stays Done and the inbox says why, so the developer can revert it by hand. The revised spec needs approval again. Event: `task.reverted`.
+9. **Afterwards.** If a merged task turns out to be wrong, the developer reverts it with `skelcrew revert`. The core asks the version control plugin to revert the commit. Once it has, the task returns to Spec with the reason attached, and the record says why. If the revert fails, for example on a conflict, the task stays Done and the inbox says why, so the developer can revert it by hand. The revised spec needs approval again. Event: `task.reverted`.
 
 **Who does the work.** Every phase with an agent in it can run two ways:
 
@@ -202,7 +202,7 @@ Tasks merge automatically unless they touch critical paths; a task that turns ou
 
 **Merge shape.** Each task lands as one squashed commit on main, so undoing a task is a single revert.
 
-**Revert.** In v1, reverts are manual. `skelcrew revert <task> "<reason>"` asks git to revert the task's commit. Only once git has does the task return to Spec with the reason attached. A failed revert leaves the task Done, with the reason in the inbox. The revised spec needs approval again. Production rollback stays with the deploy tool, which picks up the revert.
+**Revert.** In v1, reverts are manual. `skelcrew revert <task> "<reason>"` asks the version control plugin to revert the task's commit. Only once it has does the task return to Spec with the reason attached. A failed revert leaves the task Done, with the reason in the inbox. The revised spec needs approval again. Production rollback stays with the deploy tool, which picks up the revert.
 
 **Later: automatic revert.** After v1, the core could re-run checks on main after every merge and listen to plugins such as GitHub Actions or Sentry. When main breaks, it would revert the most likely merge. The hard part is knowing which merge broke main when several landed close together.
 
@@ -217,7 +217,7 @@ Item types:
 - **Blocked:** a task the core stopped, with its reason (ran out of attempts, safety cap reached, agent gave up, worktree or session failed) and options that fit it: retry, send back to spec, or drop. Retry resets the attempt count and the safety cap; the record keeps the totals. Only the core blocks tasks; agents ask questions or report giving up.
 
   A blocked task keeps its phase and its worktree, but its agent is stopped, so it does not hold a slot while it waits. A task blocked during checks goes back to In progress. Retry puts the task back in the queue. When a slot is free, a new agent starts in the same worktree, with the last failure as its brief.
-- **Revert failed:** git couldn't revert a merged task, for example on a conflict. The task stays Done, and the item says why, so the developer can revert it by hand or try again.
+- **Revert failed:** version control couldn't revert a merged task, for example on a conflict. The task stays Done, and the item says why, so the developer can revert it by hand or try again.
 
 Rules:
 

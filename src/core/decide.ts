@@ -512,9 +512,9 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
   }
 }
 
-// A revert is two steps, like a merge. The task stays Done until git has
-// reverted the merge commit, then goes back to Spec with the reason as its
-// note. If git fails, the task stays Done and says why.
+// A revert is two steps, like a merge. The task stays Done until version
+// control has reverted the merge commit, then goes back to Spec with the
+// reason as its note. If the revert fails, the task stays Done and says why.
 function inDone(task: TaskIn<"done">, input: Input, ctx: Context): Decision {
   const { accept, reject } = ctx;
   switch (input.type) {
