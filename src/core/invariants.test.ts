@@ -72,6 +72,8 @@ const inputPool: Input[] = [
   { by: "human", type: "send_back_to_spec", note: "Split it." },
   { by: "human", type: "drop" },
   { by: "human", type: "revert", reason: "Broke exports." },
+  { by: "plugin", type: "reverted" },
+  { by: "plugin", type: "revert_failed", summary: "Conflicts." },
   { by: "human", type: "change_project", project: reports },
   { by: "human", type: "change_project", project: archive },
   { by: "human", type: "change_project", project: null },
@@ -242,7 +244,12 @@ class Checker {
     if (before?.phase === "dropped") expect(events).toEqual([]);
     if (before?.phase === "done") {
       for (const event of events) {
-        expect(["task.reverted", "task.usage_recorded"]).toContain(event.type);
+        expect([
+          "task.revert_started",
+          "task.revert_failed",
+          "task.reverted",
+          "task.usage_recorded",
+        ]).toContain(event.type);
       }
     }
 
@@ -259,10 +266,11 @@ class Checker {
         if (this.config.specApproval === "always") expect(input.by).toBe("human");
         break;
 
-      // 2. Only you retry, drop, revert or change a task's project.
+      // 2. Only you retry, drop, revert or change a task's project. The
+      // revert starts on your input; git's answer finishes it.
       case "task.unblocked":
       case "task.dropped":
-      case "task.reverted":
+      case "task.revert_started":
       case "task.project_changed":
         expect(input.by).toBe("human");
         break;

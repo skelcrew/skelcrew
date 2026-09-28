@@ -236,6 +236,7 @@ describe("golden stories", () => {
       gate("review", true),
       merged,
       revert,
+      { by: "plugin", type: "reverted" },
       start,
     ]);
     expect(told.lines).toEqual([
@@ -244,7 +245,8 @@ describe("golden stories", () => {
       "plugin gate_result local passed → task.gate_passed | run_gate",
       "plugin gate_result review passed → task.gate_passed, task.checks_passed, task.merge_started | stop_session, merge",
       "plugin merged → task.merged | remove_worktree",
-      "human revert → task.reverted | revert",
+      "human revert → task.revert_started | revert",
+      "plugin reverted → task.reverted",
       "system start → task.dispatch_started | start_spec_session",
     ]);
     expect(told.task).toMatchObject({

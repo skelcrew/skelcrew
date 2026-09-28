@@ -1190,14 +1190,57 @@ const changeProject = (project: ProjectId | null): Input => ({
 });
 const done = [...merging, merged];
 
+const reverted: Input = { by: "plugin", type: "reverted" };
+const revertFailed: Input = {
+  by: "plugin",
+  type: "revert_failed",
+  summary: "Conflicts in export.ts",
+};
+
 describe("revert", () => {
-  test("undoes the merge commit and takes the task back to Spec with your reason", () => {
+  test("asks git to undo the merge commit, and the task stays Done until it has", () => {
     expect(send(run(...done), revert("Export breaks on empty reports."))).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.revert_started", reason: "Export breaks on empty reports." })],
+      commands: [{ type: "revert", taskId: id, commit }],
+    });
+    expect(run(...done, revert("Broken.")).phase).toBe("done");
+  });
+
+  test("once git has reverted, takes the task back to Spec with your reason", () => {
+    expect(send(run(...done, revert("Export breaks on empty reports.")), reverted)).toEqual({
       ok: true,
       events: [
         stamped({ type: "task.reverted", commit, reason: "Export breaks on empty reports." }),
       ],
-      commands: [{ type: "revert", taskId: id, commit }],
+      commands: [],
+    });
+  });
+
+  test("when git fails, keeps the task Done and says why", () => {
+    expect(send(run(...done, revert("Broken.")), revertFailed)).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.revert_failed", summary: "Conflicts in export.ts" })],
+      commands: [],
+    });
+  });
+
+  test("is rejected while a revert is already under way", () => {
+    expect(send(run(...done, revert("Broken.")), revert("Broken."))).toEqual({
+      ok: false,
+      rejection: { input: "revert", reason: "#12 is already being reverted." },
+    });
+  });
+
+  test("can be tried again after it failed", () => {
+    const decision = send(run(...done, revert("Broken."), revertFailed), revert("Broken."));
+    expect(decision.ok && decision.events.map((e) => e.type)).toEqual(["task.revert_started"]);
+  });
+
+  test("a reply is rejected when no revert is under way", () => {
+    expect(send(run(...done), reverted)).toEqual({
+      ok: false,
+      rejection: { input: "reverted", reason: "#12 isn't being reverted." },
     });
   });
 
