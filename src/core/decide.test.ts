@@ -429,7 +429,16 @@ describe("worktree_created", () => {
     expect(send(run(...creatingWorktree), worktreeCreated)).toEqual({
       ok: true,
       events: [stamped({ type: "task.worktree_created", worktree })],
-      commands: [{ type: "start_develop_session", taskId: id, worktree, spec, lastFailure: null }],
+      commands: [
+        {
+          type: "start_develop_session",
+          taskId: id,
+          worktree,
+          spec,
+          lastFailure: null,
+          note: null,
+        },
+      ],
     });
   });
 
@@ -566,7 +575,16 @@ describe("start in In progress, after a retry", () => {
     expect(send(run(...retried), start)).toEqual({
       ok: true,
       events: [stamped({ type: "task.dispatch_started" })],
-      commands: [{ type: "start_develop_session", taskId: id, worktree, spec, lastFailure: null }],
+      commands: [
+        {
+          type: "start_develop_session",
+          taskId: id,
+          worktree,
+          spec,
+          lastFailure: null,
+          note: null,
+        },
+      ],
     });
   });
 
@@ -686,6 +704,7 @@ describe("gate_result, failing", () => {
         worktree,
         spec,
         lastFailure: localFailure,
+        note: null,
       },
     ]);
   });
@@ -717,7 +736,10 @@ describe("the last gate passing", () => {
         stamped({ type: "task.checks_passed" }),
         stamped({ type: "task.merge_started" }),
       ],
-      commands: [{ type: "merge", taskId: id, worktree }],
+      commands: [
+        { type: "stop_session", session: developSession },
+        { type: "merge", taskId: id, worktree },
+      ],
     });
   });
 
@@ -730,7 +752,7 @@ describe("the last gate passing", () => {
         stamped({ type: "task.checks_passed" }),
         stamped({ type: "task.merge_approval_requested", criticalFiles: ["src/auth/login.ts"] }),
       ],
-      commands: [],
+      commands: [{ type: "stop_session", session: developSession }],
     });
   });
 });
@@ -753,12 +775,26 @@ describe("approve_merge", () => {
 });
 
 describe("send_back_merge", () => {
-  test("sends your note to the same agent, without using an attempt", () => {
+  test("queues the task for a new agent, without using an attempt", () => {
     expect(send(run(...awaitingMerge), sendBackMerge("Don't touch login."))).toEqual({
       ok: true,
       events: [stamped({ type: "task.merge_sent_back", note: "Don't touch login." })],
-      commands: [{ type: "send_to_session", session: developSession, text: "Don't touch login." }],
+      commands: [],
     });
+  });
+
+  test("gives your note to the new agent when it starts", () => {
+    const decision = send(run(...awaitingMerge, sendBackMerge("Don't touch login.")), start);
+    expect(decision.ok && decision.commands).toEqual([
+      {
+        type: "start_develop_session",
+        taskId: id,
+        worktree,
+        spec,
+        lastFailure: null,
+        note: "Don't touch login.",
+      },
+    ]);
   });
 
   test("is rejected without a note", () => {
@@ -770,14 +806,11 @@ describe("send_back_merge", () => {
 });
 
 describe("merged", () => {
-  test("moves the task to Done, stops the agent and removes the worktree", () => {
+  test("moves the task to Done and removes the worktree", () => {
     expect(send(run(...merging), merged)).toEqual({
       ok: true,
       events: [stamped({ type: "task.merged", commit })],
-      commands: [
-        { type: "stop_session", session: developSession },
-        { type: "remove_worktree", worktree },
-      ],
+      commands: [{ type: "remove_worktree", worktree }],
     });
   });
 
@@ -790,18 +823,26 @@ describe("merged", () => {
 });
 
 describe("merge_failed", () => {
-  test("sends the failure back to the same agent, using an attempt", () => {
+  test("queues the task for a new agent, using an attempt", () => {
     expect(send(run(...merging), mergeFail)).toEqual({
       ok: true,
       events: [stamped({ type: "task.merge_failed", failure: mergeFailure })],
-      commands: [
-        {
-          type: "send_to_session",
-          session: developSession,
-          text: "The merge failed: Conflicts with main.",
-        },
-      ],
+      commands: [],
     });
+  });
+
+  test("gives the failure to the new agent when it starts", () => {
+    const decision = send(run(...merging, mergeFail), start);
+    expect(decision.ok && decision.commands).toEqual([
+      {
+        type: "start_develop_session",
+        taskId: id,
+        worktree,
+        spec,
+        lastFailure: mergeFailure,
+        note: null,
+      },
+    ]);
   });
 
   test("blocks the task when the last attempt fails", () => {
@@ -824,7 +865,7 @@ describe("merge_failed", () => {
           reason: { kind: "out_of_attempts", failure: mergeFailure },
         }),
       ],
-      commands: [{ type: "stop_session", session: developSession }],
+      commands: [],
     });
   });
 });
@@ -1011,7 +1052,7 @@ describe("drop", () => {
   });
 
   test("stops the agent and removes the worktree in Checks", () => {
-    const decision = send(run(...awaitingMerge), drop);
+    const decision = send(run(...inChecks), drop);
     expect(decision.ok && decision.commands).toEqual([
       { type: "stop_session", session: developSession },
       { type: "remove_worktree", worktree },
@@ -1063,7 +1104,7 @@ describe("send_back_to_spec", () => {
   });
 
   test("stops the agent too when one is running", () => {
-    const decision = send(run(...awaitingMerge), sendBackToSpec(note));
+    const decision = send(run(...inChecks), sendBackToSpec(note));
     expect(decision.ok && decision.commands).toEqual([
       { type: "stop_session", session: developSession },
       { type: "remove_worktree", worktree },
@@ -1107,13 +1148,16 @@ describe("a running agent crashing", () => {
     expect(decision.ok && decision.events.map((e) => e.type)).toEqual(["task.blocked"]);
   });
 
-  test("blocks the task in Checks", () => {
-    const decision = send(run(...awaitingMerge), sessionFailed);
+  test("blocks the task in Checks while a gate runs", () => {
+    const decision = send(run(...inChecks), sessionFailed);
     expect(decision.ok && decision.events.map((e) => e.type)).toEqual(["task.blocked"]);
   });
 
-  test("changes nothing while merging, since the merge doesn't need the agent", () => {
-    expect(send(run(...merging), sessionFailed)).toEqual({ ok: true, events: [], commands: [] });
+  test("is rejected once the gates have passed, since the agent was already stopped", () => {
+    expect(send(run(...merging), sessionFailed)).toEqual({
+      ok: false,
+      rejection: { input: "session_failed", reason: "#12 has no develop agent." },
+    });
   });
 });
 

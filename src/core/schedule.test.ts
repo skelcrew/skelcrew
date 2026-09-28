@@ -98,7 +98,23 @@ describe("schedule", () => {
     expect(schedule(tasks, projects, config)).toEqual([]);
   });
 
-  test("doesn't count an agent whose merge waits for approval", () => {
+  test("doesn't count a task merging, since its agent is stopped", () => {
+    const merging: EventBody[] = [
+      ...developRunning,
+      { type: "task.done_reported", branch: { commits: 1, changedFiles: ["a.ts"] }, gate: "local" },
+      { type: "task.gate_passed", gate: "local", next: null },
+      { type: "task.checks_passed" },
+      { type: "task.merge_started" },
+    ];
+    const tasks = [
+      task(1, null, ...merging),
+      task(2, null, ...developRunning),
+      task(3, null, ...specQueued),
+    ];
+    expect(schedule(tasks, projects, config)).toEqual(ids(3));
+  });
+
+  test("doesn't count a task whose merge waits for approval, since its agent is stopped", () => {
     const tasks = [
       task(1, null, ...awaitingMerge),
       task(2, null, ...developRunning),

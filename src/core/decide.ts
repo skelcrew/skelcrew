@@ -323,7 +323,7 @@ function inReady(task: TaskIn<"ready">, input: Input, ctx: Context): Decision {
     case "worktree_created":
       return accept(
         [{ type: "task.worktree_created", worktree: input.worktree }],
-        [startDevelop(task, input.worktree, null)],
+        [startDevelop(task, input.worktree, null, null)],
       );
 
     case "worktree_failed":
@@ -353,7 +353,8 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
   const { step, worktree } = task;
 
   switch (input.type) {
-    // After a retry: a new agent in the same worktree, told what failed last.
+    // After a retry, a send-back or a failed merge: a new agent in the same
+    // worktree, told what failed last and what you asked for.
     case "start": {
       const refused = cantStart(task, ctx);
       if (refused) return reject(refused);
@@ -361,7 +362,7 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
       if (capped) return accept([capped]);
       return accept(
         [{ type: "task.dispatch_started" }],
-        [startDevelop(task, worktree, task.lastFailure)],
+        [startDevelop(task, worktree, task.lastFailure, task.note)],
       );
     }
 
@@ -426,19 +427,24 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
         );
       }
 
-      // The last gate passed. A merge that touches a critical path waits
-      // for your approval. Anything else merges now.
+      // The last gate passed, so the agent is stopped: it would sit idle
+      // while the merge waits or runs. A merge that touches a critical path
+      // waits for your approval. Anything else merges now.
+      const stop = task.session === null ? [] : [stopSession(task.session)];
       const critical = criticalFiles(task.branch, config.criticalPaths);
       if (critical.length > 0) {
-        return accept([
-          passed,
-          { type: "task.checks_passed" },
-          { type: "task.merge_approval_requested", criticalFiles: critical },
-        ]);
+        return accept(
+          [
+            passed,
+            { type: "task.checks_passed" },
+            { type: "task.merge_approval_requested", criticalFiles: critical },
+          ],
+          stop,
+        );
       }
       return accept(
         [passed, { type: "task.checks_passed" }, { type: "task.merge_started" }],
-        [merge],
+        [...stop, merge],
       );
     }
 
@@ -448,17 +454,14 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
       }
       return accept([{ type: "task.merge_started" }], [merge]);
 
-    // Your note goes to the agent that wrote the code. It isn't a failure,
-    // so no attempt is used.
+    // The task waits for a new agent, which gets your note. It isn't a
+    // failure, so no attempt is used.
     case "send_back_merge":
       if (task.step !== "merge_approval") {
         return reject(`#${task.id}'s merge isn't waiting for approval.`);
       }
       if (isBlank(input.note)) return reject("A send-back needs a note.");
-      return accept(
-        [{ type: "task.merge_sent_back", note: input.note }],
-        [{ type: "send_to_session", session: task.session, text: input.note }],
-      );
+      return accept([{ type: "task.merge_sent_back", note: input.note }]);
 
     // The branch is now squashed into main, so removing the worktree loses
     // nothing.
@@ -466,13 +469,13 @@ function inChecks(task: TaskIn<"checks">, input: Input, ctx: Context): Decision 
       if (task.step !== "merging") return reject(`#${task.id} isn't merging.`);
       return accept(
         [{ type: "task.merged", commit: input.commit }],
-        [stopSession(task.session), removeWorktree(task.worktree)],
+        [removeWorktree(task.worktree)],
       );
 
-    // The agent crashed. A merge under way doesn't need it, so it carries
-    // on. Otherwise the task is blocked, keeping its worktree.
+    // The agent crashed while a gate ran. The task is blocked, keeping its
+    // worktree. Once the gates pass, there is no agent to crash.
     case "session_failed":
-      if (task.step === "merging") return accept([]);
+      if (task.session === null) return reject(`#${task.id} has no develop agent.`);
       return accept([blocked("session_failed", input.message)]);
 
     // A failed merge counts as an attempt, like a failed gate.
@@ -561,23 +564,26 @@ function stopForBlock(task: Task): Command[] {
   return commands;
 }
 
-// A failed gate or merge. The same agent gets the failure while attempts
-// remain. After the last one, the task is blocked and the agent stopped.
-// The worktree stays, so a retry carries on with the same code.
+// A failed gate or merge. While attempts remain, a failed gate goes to the
+// agent that is still open. A failed merge has no agent, since it was
+// stopped when the gates passed, so the task waits for a new one. After the
+// last attempt, the task is blocked. The worktree stays, so a retry carries
+// on with the same code.
 function failedRound(
   task: TaskIn<"checks">,
   failed: EventBody,
   failure: Failure,
   ctx: Context,
 ): Decision {
+  const { session } = task;
   if (attemptsLeft(task.attempts + 1, ctx.config.maxAttempts).ok) {
-    const what = failure.step === "merge" ? "The merge" : `The ${failure.step} gate`;
-    const text = `${what} failed: ${failure.summary}`;
-    return ctx.accept([failed], [{ type: "send_to_session", session: task.session, text }]);
+    if (session === null) return ctx.accept([failed]);
+    const text = `The ${failure.step} gate failed: ${failure.summary}`;
+    return ctx.accept([failed], [{ type: "send_to_session", session, text }]);
   }
   return ctx.accept(
     [failed, { type: "task.blocked", reason: { kind: "out_of_attempts", failure } }],
-    [stopSession(task.session)],
+    session === null ? [] : [stopSession(session)],
   );
 }
 
@@ -673,8 +679,16 @@ function startDevelop(
   task: TaskIn<"ready" | "in_progress">,
   worktree: Worktree,
   lastFailure: Failure | null,
+  note: string | null,
 ): Command {
-  return { type: "start_develop_session", taskId: task.id, worktree, spec: task.spec, lastFailure };
+  return {
+    type: "start_develop_session",
+    taskId: task.id,
+    worktree,
+    spec: task.spec,
+    lastFailure,
+    note,
+  };
 }
 
 // Why a project can't be used, or null if it exists (or is none).

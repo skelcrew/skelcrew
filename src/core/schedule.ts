@@ -25,8 +25,8 @@ export const schedule: Schedule = (tasks, projects, config) => {
 };
 
 // An agent running or being started, or a worktree being created for one.
-// An agent whose merge waits for approval is idle and can't ask anything,
-// so it doesn't count.
+// A task past its gates holds no slot: its agent is stopped while the merge
+// waits or runs.
 function holdsSlot(task: Task): boolean {
   switch (task.phase) {
     case "spec":
@@ -35,7 +35,7 @@ function holdsSlot(task: Task): boolean {
     case "ready":
       return task.step.kind !== "queued";
     case "checks":
-      return task.step !== "merge_approval";
+      return task.session !== null;
     default:
       return false;
   }
