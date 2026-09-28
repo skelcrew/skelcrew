@@ -1,18 +1,16 @@
-// The simulator: the daemon's loop, with fake tools in place of real ones.
+// The simulator: the loop the daemon runs, with fake tools in place of real
+// ones.
 //
-// It takes the next input, runs decideTask, saves the events and applies
-// them with evolveTask, the way the daemon will. Each command goes to a fake
-// tool, which answers the way the real one would: a worktree gets created,
-// an agent starts, a gate passes. The fake agents then do their job, driven
-// by each task's behaviour. When nothing is left to do, it asks schedule
-// what to start next.
+// The loop takes each input through the core, saves the events and hands
+// out the commands. Here each command goes to a fake tool, which answers the
+// way the real one would: a worktree gets created, an agent starts, a gate
+// passes. The fake agents then do their job, driven by each task's
+// behaviour. When nothing is left to do, the loop starts what the scheduler
+// picks.
 //
 // It is test machinery, not rules, so it lives outside the core.
 
-import { decideTask } from "../core/decide";
-import { evolveTask } from "../core/evolve";
 import { CommitSha, SessionId, TaskId } from "../core/ids";
-import { schedule } from "../core/schedule";
 import type {
   Command,
   Config,
@@ -26,6 +24,7 @@ import type {
   Task,
   TaskEvent,
 } from "../core/types";
+import { Loop, type Tools } from "../loop/loop";
 
 // How a task's fake agents and tools behave. Anything left out goes well:
 // gates pass, merges land, and agents never ask or give up.
@@ -49,14 +48,13 @@ type Agent = { taskId: TaskId; kind: "spec" | "develop" };
 // Safety net: a loop that never goes quiet is a bug, not a long test.
 const maxSteps = 10_000;
 
-export class Simulator {
+export class Simulator implements Tools {
   readonly events: TaskEvent[] = [];
   readonly rejections: { taskId: TaskId; input: Input; reason: string }[] = [];
   mostAgentsAtOnce = 0;
 
-  private readonly tasks = new Map<TaskId, Task>();
+  private readonly loop: Loop;
   private readonly behaviours = new Map<TaskId, Behaviour>();
-  private readonly projects: ReadonlyMap<ProjectId, Project>;
   private readonly queue: Queued[] = [];
   private readonly agents = new Map<SessionId, Agent>();
   private readonly worktrees = new Set<string>();
@@ -67,15 +65,26 @@ export class Simulator {
   private readonly asked = new Set<TaskId>();
   private now = 0;
   private counter = 0;
-  // Starts sent out and not yet answered, the way the daemon counts them
-  // for the scheduler.
-  private startsInFlight = 0;
 
   constructor(
     readonly config: Config,
     projects: Project[] = [],
   ) {
-    this.projects = new Map(projects.map((project) => [project.id, project]));
+    // The saved events are kept in memory, for tests to read.
+    const log = {
+      appendTask: (events: TaskEvent[]) => {
+        this.events.push(...events);
+        return { ok: true as const };
+      },
+      appendProject: () => ({ ok: true as const }),
+    };
+    this.loop = new Loop(
+      config,
+      this,
+      log,
+      new Map(),
+      new Map(projects.map((project) => [project.id, project])),
+    );
   }
 
   // `skelcrew add`: creates the next task, then runs until quiet.
@@ -83,7 +92,7 @@ export class Simulator {
     title: string,
     options: { requestSpec?: boolean; project?: ProjectId | null; behaviour?: Behaviour } = {},
   ): TaskId {
-    const taskId = TaskId.parse(this.tasks.size + 1);
+    const taskId = TaskId.parse(this.loop.tasks().length + 1);
     this.behaviours.set(taskId, options.behaviour ?? {});
     const decision = this.step(taskId, {
       by: "human",
@@ -112,28 +121,21 @@ export class Simulator {
         this.step(next.taskId, next.input);
         continue;
       }
-      const picks = schedule(
-        [...this.tasks.values()],
-        this.projects,
-        this.config,
-        this.startsInFlight,
-      );
+      this.now += 1_000;
+      const picks = this.loop.startWaiting(this.now);
+      this.mostAgentsAtOnce = Math.max(this.mostAgentsAtOnce, this.agents.size);
       if (picks.length === 0) return;
-      for (const taskId of picks)
-        this.queue.push({ taskId, input: { by: "system", type: "start" } });
     }
     throw new Error(`The simulation didn't go quiet within ${maxSteps} steps.`);
   }
 
   task(taskId: TaskId): Task {
-    const task = this.tasks.get(taskId);
-    if (task === undefined) throw new Error(`There is no task #${taskId}.`);
-    return task;
+    return this.loop.task(taskId);
   }
 
   waitingOnYou(): Waiting[] {
     const waiting: Waiting[] = [];
-    for (const task of this.tasks.values()) {
+    for (const task of this.loop.tasks()) {
       const why = waitingFor(task);
       if (why !== null) waiting.push({ task: task.id, for: why });
     }
@@ -149,30 +151,16 @@ export class Simulator {
   }
 
   // ---------------------------------------------------------------------------
-  // One input, the way the daemon handles it
+  // One input, through the loop
   // ---------------------------------------------------------------------------
 
   private step(taskId: TaskId, input: Input): Decision {
     this.now += 1_000;
-    if (answersStart(input)) this.startsInFlight -= 1;
-    const envelope = { taskId, at: this.now, input };
-    const decision = decideTask(
-      this.tasks.get(taskId) ?? null,
-      envelope,
-      this.config,
-      this.projects,
-    );
+    const decision = this.loop.send(taskId, input, this.now);
     if (!decision.ok) {
       this.rejections.push({ taskId, input, reason: decision.rejection.reason });
       return decision;
     }
-    for (const event of decision.events) {
-      const result = evolveTask(this.tasks.get(taskId) ?? null, event);
-      if (!result.ok) throw new Error(`evolveTask refused an event: ${result.reason}`);
-      this.tasks.set(taskId, result.task);
-      this.events.push(event);
-    }
-    for (const command of decision.commands) this.carryOut(command);
     // A new agent is recorded, so it starts its work.
     if (input.type === "session_started" && decision.events.length > 0) {
       this.agentStarted(input.session);
@@ -185,8 +173,8 @@ export class Simulator {
   // The fake tools
   // ---------------------------------------------------------------------------
 
-  private carryOut(command: Command): void {
-    if (startsSomething(command)) this.startsInFlight += 1;
+  // Called by the loop for each command: the fake tools.
+  carryOut(command: Command): void {
     switch (command.type) {
       case "start_spec_session":
         this.startAgent(command.taskId, command.request, "spec");
@@ -347,23 +335,6 @@ export class Simulator {
   private commit(): CommitSha {
     return CommitSha.parse(this.next().toString(16).padStart(40, "0"));
   }
-}
-
-function startsSomething(command: Command): boolean {
-  return (
-    command.type === "start_spec_session" ||
-    command.type === "start_develop_session" ||
-    command.type === "create_worktree"
-  );
-}
-
-function answersStart(input: Input): boolean {
-  return (
-    input.type === "session_started" ||
-    input.type === "session_failed" ||
-    input.type === "worktree_created" ||
-    input.type === "worktree_failed"
-  );
 }
 
 function waitingFor(task: Task): Waiting["for"] | null {

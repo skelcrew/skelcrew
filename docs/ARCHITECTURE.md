@@ -131,15 +131,30 @@ Tests sit next to the code: `decide.ts` and `decide.test.ts`.
   each story are also saved in `__snapshots__/`, so any change to the shape of the event
   log shows up in review. Update the snapshots only on purpose, with
   `bun test --update-snapshots`.
-- **The simulator** (`src/sim/`). The daemon's loop, with fake tools in place of real
-  ones. It runs each input through `decideTask`, hands each command to a fake tool that
-  answers the way the real one would, and asks `schedule` what to start next. Each task
-  gets a script of what goes wrong, such as a gate that fails twice or a merge conflict.
-  So whole lifecycles, with several tasks sharing `max_running`, run in tests. It lives
-  outside the core because it's test machinery, not rules. The daemon will be the same
-  loop with real tools plugged in.
+- **The simulator** (`src/sim/`). The loop, with fake tools in place of real ones. Each
+  command goes to a fake tool that answers the way the real one would, and fake agents
+  do their job. Each task gets a script of what goes wrong, such as a gate that fails
+  twice or a merge conflict. So whole lifecycles, with several tasks sharing
+  `max_running`, run in tests. It lives outside the core because it's test machinery,
+  not rules.
 
 `bun run check` runs the lint, the typecheck and every test. It must pass on every commit.
+
+## The loop
+
+`src/loop/loop.ts` is what every host of the core does with an input. The simulator runs
+it with fake tools, and the daemon will run it with real ones.
+
+1. `send(task, input)` asks `decideTask`.
+2. If accepted, it saves the events to the event store. If saving fails, nothing else
+   happens: the task doesn't change, and no command goes out.
+3. It applies the events with `evolveTask`.
+4. It hands each command to the tools. Their replies come back later through `send`.
+
+`startWaiting()` asks `schedule` what to start, and sends the starts. The loop counts the
+starts it has sent out and not yet had answered, by task and request number, and gives
+that count to the scheduler. `Loop.open` rebuilds everything from a saved log and carries
+on from there.
 
 ## The event store
 
