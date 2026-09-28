@@ -112,8 +112,16 @@ function inSpec(task: TaskIn<"spec">, event: TaskEvent): EvolvedTask {
     case "task.spec_session_started":
       return ok({ ...task, step: { kind: "running", session: event.session } });
 
+    // The spec agent is stopped once a spec is stored, so a question it
+    // left open could never be answered.
     case "task.specced":
-      return ok({ ...task, spec: event.spec, note: null, step: { kind: "awaiting_approval" } });
+      return ok({
+        ...task,
+        spec: event.spec,
+        note: null,
+        step: { kind: "awaiting_approval" },
+        question: null,
+      });
 
     // The old spec is kept, so the agent revises it with the note instead
     // of starting over.

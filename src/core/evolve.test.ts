@@ -100,6 +100,16 @@ describe("task.specced", () => {
     expect(task).toMatchObject({ spec, note: null, step: { kind: "awaiting_approval" } });
   });
 
+  test("clears an open question, since the spec agent that asked is stopped", () => {
+    const task = replay(
+      created,
+      { type: "task.spec_requested" },
+      { type: "task.question_asked", question: specQuestion },
+      { type: "task.specced", spec, by: "human" },
+    );
+    expect(task.question).toBeNull();
+  });
+
   test("is refused outside Spec", () => {
     expect(evolveTask(replay(created), event({ type: "task.specced", spec, by: "agent" }))).toEqual(
       {

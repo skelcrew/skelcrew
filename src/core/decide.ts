@@ -23,6 +23,7 @@ import type {
   Spec,
   Task,
   Timestamp,
+  Usage,
   Worktree,
 } from "./types";
 
@@ -216,23 +217,15 @@ function inAnyPhase(task: Task, input: AnyPhaseInput, ctx: Context): Decision {
       );
     }
 
-    // The safety cap counts from the last retry. It only blocks while an
-    // agent is running: a late report for a stopped agent has nothing to stop.
+    // The safety cap counts from the last retry. It blocks while an agent is
+    // running or starting. With no agent under way, the report is only
+    // recorded, and start checks the cap before the next agent runs.
     case "usage": {
       const recorded: EventBody = { type: "task.usage_recorded", usage: input.usage };
-      const session = runningSession(task);
-      if (task.blocked !== null || session === null) return accept([recorded]);
-      if (withinSafetyCap(input.usage, task.usageAtRetry, ctx.config.safetyCap).ok) {
-        return accept([recorded]);
-      }
-      const used = {
-        tokens: input.usage.tokens - task.usageAtRetry.tokens,
-        ms: input.usage.ms - task.usageAtRetry.ms,
-      };
-      return accept(
-        [recorded, { type: "task.blocked", reason: { kind: "safety_cap", usage: used } }],
-        [stopSession(session)],
-      );
+      if (task.blocked !== null || !agentUnderWay(task)) return accept([recorded]);
+      const block = safetyCapBlock(task, input.usage, ctx);
+      if (block === null) return accept([recorded]);
+      return accept([recorded, block], stopForBlock(task));
     }
   }
 }
@@ -259,6 +252,8 @@ function inSpec(task: TaskIn<"spec">, input: Input, ctx: Context): Decision {
     case "start": {
       const refused = cantStart(task, ctx);
       if (refused) return reject(refused);
+      const capped = safetyCapBlock(task, task.usage, ctx);
+      if (capped) return accept([capped]);
       return accept(
         [{ type: "task.dispatch_started" }],
         [{ type: "start_spec_session", taskId: task.id, note: task.note }],
@@ -275,8 +270,12 @@ function inSpec(task: TaskIn<"spec">, input: Input, ctx: Context): Decision {
       }
       return accept([blocked("session_failed", input.message)]);
 
+    // A spec submitted before your answer would ignore it.
     case "submit_spec":
       if (step.kind !== "running") return reject(`#${task.id} has no spec agent running.`);
+      if (task.question !== null) {
+        return reject(`#${task.id} has an open question. Wait for the answer.`);
+      }
       return acceptSpec(input.spec, "agent", ctx, [], [stopSession(step.session)]);
 
     // Your spec replaces the agent's work, so a running agent is stopped.
@@ -313,6 +312,8 @@ function inReady(task: TaskIn<"ready">, input: Input, ctx: Context): Decision {
     case "start": {
       const refused = cantStart(task, ctx);
       if (refused) return reject(refused);
+      const capped = safetyCapBlock(task, task.usage, ctx);
+      if (capped) return accept([capped]);
       return accept(
         [{ type: "task.dispatch_started" }],
         [{ type: "create_worktree", taskId: task.id, build: task.builds + 1 }],
@@ -356,6 +357,8 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
     case "start": {
       const refused = cantStart(task, ctx);
       if (refused) return reject(refused);
+      const capped = safetyCapBlock(task, task.usage, ctx);
+      if (capped) return accept([capped]);
       return accept(
         [{ type: "task.dispatch_started" }],
         [startDevelop(task, worktree, task.lastFailure)],
@@ -534,6 +537,30 @@ function cantStart(task: TaskIn<"spec" | "ready" | "in_progress">, ctx: Context)
   return null;
 }
 
+// The block for a task at or over its safety cap since the last retry, or
+// null if it is within it.
+function safetyCapBlock(task: Task, usage: Usage, ctx: Context): EventBody | null {
+  if (withinSafetyCap(usage, task.usageAtRetry, ctx.config.safetyCap).ok) return null;
+  const used = {
+    tokens: usage.tokens - task.usageAtRetry.tokens,
+    ms: usage.ms - task.usageAtRetry.ms,
+  };
+  return { type: "task.blocked", reason: { kind: "safety_cap", usage: used } };
+}
+
+// What blocking stops: a running agent, and in Ready, the worktree made for
+// an agent that is still starting, since a blocked task there can't hold
+// one. Anything still being created is cleaned up by its late reply.
+function stopForBlock(task: Task): Command[] {
+  const commands: Command[] = [];
+  const session = runningSession(task);
+  if (session !== null) commands.push(stopSession(session));
+  if (task.phase === "ready" && task.step.kind === "starting_session") {
+    commands.push(removeWorktree(task.step.worktree));
+  }
+  return commands;
+}
+
 // A failed gate or merge. The same agent gets the failure while attempts
 // remain. After the last one, the task is blocked and the agent stopped.
 // The worktree stays, so a retry carries on with the same code.
@@ -600,6 +627,11 @@ function runningSession(task: Task): SessionId | null {
 function agentKind(task: Task): "spec" | "develop" | null {
   if (runningSession(task) === null) return null;
   return task.phase === "spec" ? "spec" : "develop";
+}
+
+// An agent running or starting, or a worktree being created for one.
+function agentUnderWay(task: Task): boolean {
+  return runningSession(task) !== null || waitingForAgent(task) || waitingForWorktree(task);
 }
 
 function waitingForWorktree(task: Task): boolean {
