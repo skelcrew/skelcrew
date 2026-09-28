@@ -48,3 +48,14 @@ export function mergeAllowed(branch: BranchFacts, criticalPaths: string[]): Chec
   }
   return reasons.length === 0 ? { ok: true } : { ok: false, reasons };
 }
+
+// Attempts: after a failed gate or merge, the task goes back to the agent
+// if attempts remain. Otherwise decide blocks it with the last failure.
+export function attemptsLeft(attempts: number, maxAttempts: number): Check {
+  if (attempts < maxAttempts) {
+    return { ok: true };
+  }
+  const reason =
+    maxAttempts === 1 ? "The only attempt failed." : `All ${maxAttempts} attempts failed.`;
+  return { ok: false, reasons: [reason] };
+}
