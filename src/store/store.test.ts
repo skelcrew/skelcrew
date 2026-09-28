@@ -168,3 +168,50 @@ describe("the event store", () => {
     expect(loaded.ok && loaded.tasks.size).toBe(1);
   });
 });
+
+describe("starts in flight", () => {
+  const id = TaskId.parse(1);
+  const created: TaskEvent = {
+    type: "task.created",
+    title: "CSV export",
+    project: null,
+    source: null,
+    v: 1,
+    taskId: id,
+    at: 1,
+  };
+
+  test("are kept across closing and reopening the file, until answered", () => {
+    const file = tempFile();
+    const first = EventStore.open(file);
+    first.appendTask([created], { sent: [{ taskId: id, request: 1 }], answered: [] });
+    first.appendTask([], { sent: [{ taskId: id, request: 2 }], answered: [] });
+    first.close();
+
+    const second = EventStore.open(file);
+    expect(second.loadStarts()).toEqual([
+      { taskId: id, request: 1 },
+      { taskId: id, request: 2 },
+    ]);
+    second.appendTask([], { sent: [], answered: [{ taskId: id, request: 1 }] });
+    expect(second.loadStarts()).toEqual([{ taskId: id, request: 2 }]);
+  });
+
+  test("are saved together with the decision's events, or not at all", () => {
+    const store = EventStore.open(":memory:");
+    const bad: TaskEvent = {
+      type: "task.done_reported",
+      branch: { commits: -1, changedFiles: [] },
+      gate: "local",
+      v: 1,
+      taskId: id,
+      at: 2,
+    };
+    const saved = store.appendTask([created, bad], {
+      sent: [{ taskId: id, request: 1 }],
+      answered: [],
+    });
+    expect(saved.ok).toBe(false);
+    expect(store.loadStarts()).toEqual([]);
+  });
+});

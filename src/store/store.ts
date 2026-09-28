@@ -8,11 +8,19 @@
 
 import { Database } from "bun:sqlite";
 import { evolveTask } from "../core/evolve";
+import { TaskId } from "../core/ids";
 import { evolveProject } from "../core/projects";
-import type { Project, ProjectEvent, ProjectId, Task, TaskEvent, TaskId } from "../core/types";
+import type { Project, ProjectEvent, ProjectId, Task, TaskEvent } from "../core/types";
 import { parseProjectEvent, parseTaskEvent } from "./schema";
 
 export type Saved = { ok: true } | { ok: false; reason: string };
+
+// A start the loop has sent out: an agent or worktree for one request.
+export type StartRef = { taskId: TaskId; request: number };
+
+// The starts a decision sent out, and the one its input answered. They're
+// saved with its events, so a restart knows which starts are still out.
+export type Starts = { sent: StartRef[]; answered: StartRef[] };
 
 // A damaged log is reported with the position of the first event that
 // couldn't be read or didn't fit, so it can be found and looked at.
@@ -25,6 +33,14 @@ const migrations = [
      seq    INTEGER PRIMARY KEY AUTOINCREMENT,
      stream TEXT NOT NULL CHECK (stream IN ('task', 'project')),
      body   TEXT NOT NULL
+   );`,
+  // Starts sent out and not yet answered. Kept apart from the events: a late
+  // reply that is only cleaned up records no event, but still answers its
+  // start.
+  `CREATE TABLE starts (
+     task_id INTEGER NOT NULL,
+     request INTEGER NOT NULL,
+     PRIMARY KEY (task_id, request)
    );`,
 ];
 
@@ -57,10 +73,20 @@ export class EventStore {
     this.db.close();
   }
 
-  // Saves one decision's events together: all of them, or none if any fails
-  // its schema.
-  appendTask(events: TaskEvent[]): Saved {
-    return this.append("task", events, parseTaskEvent);
+  // Saves one decision's events and its starts together: all of them, or
+  // none if any event fails its schema.
+  appendTask(events: TaskEvent[], starts: Starts = { sent: [], answered: [] }): Saved {
+    return this.append("task", events, parseTaskEvent, starts);
+  }
+
+  // The starts sent out and not yet answered, oldest first.
+  loadStarts(): StartRef[] {
+    return this.db
+      .query<{ task_id: number; request: number }, []>(
+        "SELECT task_id, request FROM starts ORDER BY rowid",
+      )
+      .all()
+      .map((row) => ({ taskId: TaskId.parse(row.task_id), request: row.request }));
   }
 
   appendProject(events: ProjectEvent[]): Saved {
@@ -97,14 +123,23 @@ export class EventStore {
     stream: "task" | "project",
     events: T[],
     parse: (value: unknown) => { ok: true } | { ok: false; reason: string },
+    starts: Starts = { sent: [], answered: [] },
   ): Saved {
     for (const event of events) {
       const parsed = parse(readJson(JSON.stringify(event)));
       if (!parsed.ok) return { ok: false, reason: parsed.reason };
     }
     const insert = this.db.query("INSERT INTO events (stream, body) VALUES ($stream, $body)");
+    const sent = this.db.query(
+      "INSERT OR IGNORE INTO starts (task_id, request) VALUES ($taskId, $request)",
+    );
+    const answered = this.db.query(
+      "DELETE FROM starts WHERE task_id = $taskId AND request = $request",
+    );
     this.db.transaction(() => {
       for (const event of events) insert.run({ stream, body: JSON.stringify(event) });
+      for (const start of starts.answered) answered.run(start);
+      for (const start of starts.sent) sent.run(start);
     })();
     return { ok: true };
   }
