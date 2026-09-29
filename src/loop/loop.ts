@@ -34,12 +34,23 @@ import type {
 // Carries out the core's commands: starting agents, creating worktrees,
 // running gates, merging. Replies come back later through Loop.send.
 //
-// A command can arrive twice. If the daemon dies after a command went out
-// but before it was marked done, the command goes out again after the
-// restart. Doing it twice must have the same effect as doing it once. For
-// example, a second start for the same task and request starts nothing.
+// A tool calls `finished` once the command's work is done. For a command
+// that expects a reply, that means once the reply has been saved. Until
+// then the command counts as not done, so if the daemon dies first, work
+// that was still going on isn't lost: the command goes out again after
+// the restart. A tool whose work can't be lost, such as a real agent
+// already running on its own, may call it as soon as it has handed the
+// work on.
+//
+// So a command can arrive twice. Doing it twice must have the same effect
+// as doing it once. For example, a second start for the same task and
+// request starts nothing.
+//
+// A slot is freed when the core decides to stop an agent, not when the stop
+// completes. So while a stop is being carried out, one agent more than
+// max_running may briefly run. Tools should stop agents promptly.
 export interface Tools {
-  carryOut(command: Command): void;
+  carryOut(command: Command, finished: () => void): void;
 }
 
 // A start the loop has sent out: an agent or worktree for one request.
@@ -229,11 +240,13 @@ export class Loop {
     return { ok: true, ids };
   }
 
-  // Hands one command to the tools, then marks it done. If marking fails,
-  // the command goes out again after a restart, which the tools allow.
+  // Hands one command to the tools. It is marked done only when the tool
+  // says it has finished. If marking fails, the command goes out again
+  // after a restart, which the tools allow.
   private carryOut(id: number | null, command: Command): void {
-    this.tools.carryOut(command);
-    if (id !== null && this.log !== null) this.log.carriedOut(id);
+    this.tools.carryOut(command, () => {
+      if (id !== null && this.log !== null) this.log.carriedOut(id);
+    });
   }
 
   // decideTask never produces an event evolveTask refuses. If it ever does,

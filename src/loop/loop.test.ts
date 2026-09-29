@@ -13,12 +13,19 @@ const config: Config = {
   criticalPaths: [],
 };
 
-// Tools that only remember what they were asked to do.
+// Tools that only remember what they were asked to do, and finish it at once.
 class Recorded implements Tools {
   commands: Command[] = [];
-  carryOut(command: Command): void {
+  carryOut(command: Command, finished: () => void): void {
     this.commands.push(command);
+    finished();
   }
+}
+
+// Tools that take a command but never finish it, like a daemon that dies
+// while a worktree is still being made.
+class Unfinished implements Tools {
+  carryOut(): void {}
 }
 
 // Tools in a daemon that dies before it carries out anything.
@@ -265,6 +272,22 @@ describe("the loop", () => {
     const reopened = Loop.open(config, tools, store);
     if (!reopened.ok) throw new Error(reopened.reason);
     expect(tools.commands).toEqual([{ type: "stop_session", session: SessionId.parse("late") }]);
+  });
+
+  // Found by review: a command counted as done as soon as the tools took
+  // it, so work that was still going on when the daemon died was lost.
+  test("carries out a command again after a restart if its tool never finished it", () => {
+    const store = EventStore.open(":memory:");
+    const first = new Loop(config, new Unfinished(), store);
+    first.send(one, add());
+    first.startWaiting();
+
+    const tools = new Recorded();
+    const reopened = Loop.open(config, tools, store);
+    if (!reopened.ok) throw new Error(reopened.reason);
+    expect(tools.commands).toEqual([
+      { type: "start_spec_session", taskId: one, request: 1, note: null },
+    ]);
   });
 
   test("doesn't carry out a command again once it went out", () => {
