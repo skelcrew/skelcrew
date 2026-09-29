@@ -6,7 +6,7 @@
 // `skelcrew serve` in the background.
 
 import { randomUUID } from "node:crypto";
-import { connect, type Socket } from "node:net";
+import { Socket } from "node:net";
 import { type Command, encode, MAX_LINE, parseReply } from "../protocol/protocol";
 import type { Answer } from "./daemon";
 import { daemonPaths } from "./paths";
@@ -99,14 +99,14 @@ async function startAndWait(path: string, options: ClientOptions): Promise<Conne
 
 // A socket that doesn't exist, or has nobody listening, means no daemon
 // is running. Any other error is a real problem, and is reported.
+//
+// The error listener goes on before connecting. Under `bun test`, a
+// missing socket can fail inside connect() itself, before a listener added
+// afterwards would hear it, and the error was thrown instead.
 function open(path: string): Promise<Connected> {
   return new Promise((resolve) => {
-    const socket = connect(path);
-    socket.once("connect", () => {
-      socket.removeAllListeners("error");
-      resolve({ ok: true, socket });
-    });
-    socket.once("error", (error) => {
+    const socket = new Socket();
+    const failed = (error: Error) => {
       const code = "code" in error ? error.code : undefined;
       const missing = code === "ENOENT" || code === "ECONNREFUSED";
       resolve({
@@ -114,7 +114,17 @@ function open(path: string): Promise<Connected> {
         missing,
         message: `The daemon's socket ${path} couldn't be reached: ${error.message}`,
       });
+    };
+    socket.once("error", failed);
+    socket.once("connect", () => {
+      socket.off("error", failed);
+      resolve({ ok: true, socket });
     });
+    try {
+      socket.connect(path);
+    } catch (error) {
+      failed(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }
 

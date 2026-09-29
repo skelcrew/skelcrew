@@ -75,6 +75,19 @@ async function fakeDaemon(
 const add = (title: string): Command => ({ type: "add", title, spec: false, project: null });
 
 describe("the client", () => {
+  // Under `bun test`, the first connection a process makes to a missing
+  // socket fails at once, inside connect(). This test must stay first in
+  // the file to see that: it once threw instead of returning a failure.
+  test("returns a failure, never throws, when no daemon runs and none can start", async () => {
+    const repo = throwawayRepo(dirs);
+    const { counted, options } = noStart();
+    expect(await request(repo, add("CSV export"), options)).toEqual({
+      ok: false,
+      message: "No daemon here.",
+    });
+    expect(counted.starts).toBe(1);
+  });
+
   test("sends a command to the running daemon and returns its answer", async () => {
     const repo = throwawayRepo(dirs);
     await started(repo);
