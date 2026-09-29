@@ -35,7 +35,8 @@ import type {
 // running gates, merging. Replies come back later through Loop.send.
 //
 // A tool calls `finished` once the command's work is done. For a command
-// that expects a reply, that means once the reply has been saved. Until
+// that expects a reply, that means once the reply has been handled: saved,
+// or refused because its time had passed. Until
 // then the command counts as not done, so if the daemon dies first, work
 // that was still going on isn't lost: the command goes out again after
 // the restart. A tool whose work can't be lost, such as a real agent
@@ -46,9 +47,9 @@ import type {
 // as doing it once. For example, a second start for the same task and
 // request starts nothing.
 //
-// A slot is freed when the core decides to stop an agent, not when the stop
-// completes. So while a stop is being carried out, one agent more than
-// max_running may briefly run. Tools should stop agents promptly.
+// An agent being stopped keeps its slot until its stop has finished, so a
+// slow stop delays the next start rather than letting agents run past
+// max_running.
 export interface Tools {
   carryOut(command: Command, finished: () => void): void;
 }
@@ -97,6 +98,8 @@ export class Loop {
   private readonly projectMap: Map<ProjectId, Project>;
   // Starts sent out and not yet answered, as "task:request".
   private readonly pending = new Set<string>();
+  // Stops handed to the tools and not yet finished.
+  private readonly stopping = new Set<object>();
 
   constructor(
     private readonly config: Config,
@@ -133,6 +136,14 @@ export class Loop {
     return this.pending.size;
   }
 
+  // Slots taken by work on its way up or down: starts not yet answered,
+  // and stops not yet finished. An agent being stopped holds its slot
+  // until it has stopped, so max_running holds even while stops are slow.
+  // Stops still to do are saved commands, so this survives a restart.
+  private get inFlight(): number {
+    return this.pending.size + this.stopping.size;
+  }
+
   task(taskId: TaskId): Task {
     const task = this.taskMap.get(taskId);
     if (task === undefined) throw new Error(`There is no task #${taskId}.`);
@@ -154,7 +165,7 @@ export class Loop {
     // start only comes from the scheduler, which checks. A claim is checked
     // here.
     if (input.type === "claim") {
-      const inUse = slotsInUse(this.tasks(), this.startsInFlight);
+      const inUse = slotsInUse(this.tasks(), this.inFlight);
       if (inUse >= this.config.maxRunning) {
         const reason = `No slot is free: ${inUse} of ${this.config.maxRunning} agents are working or starting.`;
         return { ok: false, rejection: { input: input.type, reason } };
@@ -215,7 +226,7 @@ export class Loop {
   // Starts what the scheduler picks, within max_running. Returns the tasks
   // it started.
   startWaiting(at: number = Date.now()): TaskId[] {
-    const picks = schedule(this.tasks(), this.projectMap, this.config, this.startsInFlight);
+    const picks = schedule(this.tasks(), this.projectMap, this.config, this.inFlight);
     for (const taskId of picks) this.send(taskId, { by: "system", type: "start" }, at);
     return picks;
   }
@@ -241,11 +252,22 @@ export class Loop {
   }
 
   // Hands one command to the tools. It is marked done only when the tool
-  // says it has finished. If marking fails, the command goes out again
-  // after a restart, which the tools allow.
+  // says it has finished. A stop holds its agent's slot until then.
+  //
+  // `finished` never throws: it runs inside the tool's own code, often
+  // later, where an error could go unhandled. If marking fails, the command
+  // simply goes out again after a restart, which the tools allow.
   private carryOut(id: number | null, command: Command): void {
+    const stop = command.type === "stop_session" ? {} : null;
+    if (stop !== null) this.stopping.add(stop);
     this.tools.carryOut(command, () => {
-      if (id !== null && this.log !== null) this.log.carriedOut(id);
+      if (stop !== null) this.stopping.delete(stop);
+      if (id === null || this.log === null) return;
+      try {
+        this.log.carriedOut(id);
+      } catch {
+        // Left for the next restart.
+      }
     });
   }
 

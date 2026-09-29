@@ -58,29 +58,41 @@ class Flaky implements ReadableLog {
 
 // Tools that remember every command, so replies can be built from them.
 // With `dying` set, the daemon dies at its next command, before it goes out.
-// With `slow` set, a command is taken but its work only finishes at a later
-// "finish" step, like a worktree still being made. Work not yet finished
-// lives in the daemon, and a restart loses it.
+// How the tools finish a command:
+// - "now": the work is done and finished at once.
+// - "held": the work only happens at a later "finish" step, like a worktree
+//   still being made. A restart loses it.
+// - "late": the work happens at once, so its reply can arrive and be saved,
+//   but the tool only says it finished at a later step. A restart then
+//   sends the command out again, though its work was done.
+type Pace = "now" | "held" | "late";
+
 class Recorded implements Tools {
   commands: Command[] = [];
   dying = false;
-  slow = false;
-  unfinished: { command: Command; finished: () => void }[] = [];
+  pace: Pace = "now";
+  unfinished: { command: Command; finished: () => void; done: boolean }[] = [];
   carryOut(command: Command, finished: () => void): void {
     if (this.dying) throw new DaemonDied();
-    if (this.slow) {
-      this.unfinished.push({ command, finished });
+    if (this.pace === "now") {
+      this.commands.push(command);
+      finished();
       return;
     }
-    this.commands.push(command);
-    finished();
+    const done = this.pace === "late";
+    if (done) this.commands.push(command);
+    this.unfinished.push({ command, finished, done });
   }
   finish(): void {
-    for (const { command, finished } of this.unfinished) {
-      this.commands.push(command);
+    for (const { command, finished, done } of this.unfinished) {
+      if (!done) this.commands.push(command);
       finished();
     }
     this.unfinished = [];
+  }
+  // Commands whose work hasn't happened yet.
+  notDone(): Command[] {
+    return this.unfinished.filter((u) => !u.done).map((u) => u.command);
   }
 }
 class DaemonDied extends Error {}
@@ -248,7 +260,7 @@ type Step =
   | { kind: "start" }
   | { kind: "restart" }
   | { kind: "die" }
-  | { kind: "slow"; on: boolean }
+  | { kind: "pace"; pace: Pace }
   | { kind: "finish" }
   | { kind: "disk"; full: boolean };
 
@@ -264,8 +276,14 @@ const step: fc.Arbitrary<Step> = fc.oneof(
   { weight: 4, arbitrary: fc.constant({ kind: "start" as const }) },
   { weight: 1, arbitrary: fc.constant({ kind: "restart" as const }) },
   { weight: 1, arbitrary: fc.constant({ kind: "die" as const }) },
-  { weight: 1, arbitrary: fc.record({ kind: fc.constant("slow" as const), on: fc.boolean() }) },
-  { weight: 2, arbitrary: fc.constant({ kind: "finish" as const }) },
+  {
+    weight: 3,
+    arbitrary: fc.record({
+      kind: fc.constant("pace" as const),
+      pace: fc.constantFrom<Pace>("now", "held", "late"),
+    }),
+  },
+  { weight: 1, arbitrary: fc.constant({ kind: "finish" as const }) },
   { weight: 1, arbitrary: fc.record({ kind: fc.constant("disk" as const), full: fc.boolean() }) },
 );
 
@@ -374,8 +392,8 @@ describe("the loop", () => {
               tools.dying = true;
               break;
 
-            case "slow":
-              tools.slow = s.on;
+            case "pace":
+              tools.pace = s.pace;
               break;
 
             case "finish":
@@ -423,16 +441,14 @@ describe("the loop", () => {
           }
           const attended = loop.tasks().filter((t) => runningSession(t)?.startsWith("you-")).length;
           const up = runningAgents(tools.commands, inWorld);
-          // A slot is freed when the core decides to stop an agent, not when
-          // the stop completes. So an agent whose stop is still being
-          // carried out doesn't count: it may briefly run past the limit.
+          // An agent being stopped keeps its slot until its stop has
+          // finished, so every agent that is up counts.
+          expect(up.size + attended).toBeLessThanOrEqual(config.maxRunning);
           const stopping = new Set(
-            tools.unfinished.flatMap(({ command }) =>
-              command.type === "stop_session" ? [command.session] : [],
-            ),
+            tools
+              .notDone()
+              .flatMap((command) => (command.type === "stop_session" ? [command.session] : [])),
           );
-          const counted = [...up].filter((session) => !stopping.has(session)).length;
-          expect(counted + attended).toBeLessThanOrEqual(config.maxRunning);
 
           // 13, in the world: every agent that is up is held by its task,
           // its start reply is waiting to be handled, or a stop for it is
@@ -450,7 +466,7 @@ describe("the loop", () => {
           // reply can come back and free its slot.
           // Work still going on in the daemon counts too, until a restart
           // loses it.
-          const handedOut = [...tools.commands, ...tools.unfinished.map((u) => u.command)];
+          const handedOut = [...tools.commands, ...tools.notDone()];
           expect(loop.startsInFlight).toBeLessThanOrEqual(startsOut(handedOut, delivered).size);
 
           // A failed save changes nothing: the loop's tasks always match a

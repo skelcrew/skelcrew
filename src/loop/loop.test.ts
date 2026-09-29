@@ -28,6 +28,22 @@ class Unfinished implements Tools {
   carryOut(): void {}
 }
 
+// Tools that finish everything at once, except stops, which finish only
+// when `finishStops` is called.
+class SlowStops implements Tools {
+  commands: Command[] = [];
+  private stops: (() => void)[] = [];
+  carryOut(command: Command, finished: () => void): void {
+    this.commands.push(command);
+    if (command.type === "stop_session") this.stops.push(finished);
+    else finished();
+  }
+  finishStops(): void {
+    for (const finished of this.stops) finished();
+    this.stops = [];
+  }
+}
+
 // Tools in a daemon that dies before it carries out anything.
 class Dying implements Tools {
   carryOut(): void {
@@ -288,6 +304,95 @@ describe("the loop", () => {
     expect(tools.commands).toEqual([
       { type: "start_spec_session", taskId: one, request: 1, note: null },
     ]);
+  });
+
+  // Found by review: each stop still in progress freed a slot, so with a
+  // stop that hung, any number of agents could run past max_running.
+  test("keeps a stopping agent's slot until its stop has finished", () => {
+    const tools = new SlowStops();
+    const loop = new Loop(config, tools, EventStore.open(":memory:"));
+    loop.send(one, add());
+    loop.send(two, add());
+    expect(loop.startWaiting()).toEqual([one]);
+    loop.send(one, started(1, "s1"));
+    loop.send(one, { by: "human", type: "drop" });
+
+    // #1's agent is still being stopped, so its slot stays taken.
+    expect(loop.startWaiting()).toEqual([]);
+    tools.finishStops();
+    expect(loop.startWaiting()).toEqual([two]);
+  });
+
+  test("keeps that slot across a restart, until the stop finishes", () => {
+    const store = EventStore.open(":memory:");
+    const first = new Loop(config, new SlowStops(), store);
+    first.send(one, add());
+    first.send(two, add());
+    first.startWaiting();
+    first.send(one, started(1, "s1"));
+    first.send(one, { by: "human", type: "drop" });
+
+    const tools = new SlowStops();
+    const reopened = Loop.open(config, tools, store);
+    if (!reopened.ok) throw new Error(reopened.reason);
+    expect(reopened.loop.startWaiting()).toEqual([]);
+    tools.finishStops();
+    expect(reopened.loop.startWaiting()).toEqual([two]);
+  });
+
+  // Found by review: an error while marking a command done was thrown into
+  // the tool's own code, where it could go unhandled.
+  test("never throws from finished, and a command it couldn't mark goes out again", () => {
+    const store = EventStore.open(":memory:");
+    let broken = false;
+    const log = {
+      appendTask: store.appendTask.bind(store),
+      appendProject: store.appendProject.bind(store),
+      carriedOut: (id: number) => {
+        if (broken) throw new Error("database is locked");
+        return store.carriedOut(id);
+      },
+      loadTasks: store.loadTasks.bind(store),
+      loadProjects: store.loadProjects.bind(store),
+      loadStarts: store.loadStarts.bind(store),
+      loadCommands: store.loadCommands.bind(store),
+    };
+    let finish: () => void = () => {};
+    const holding: Tools = {
+      carryOut: (_command, finished) => {
+        finish = finished;
+      },
+    };
+    const loop = new Loop(config, holding, log);
+    loop.send(one, add());
+    loop.startWaiting();
+    broken = true;
+    expect(() => finish()).not.toThrow();
+
+    const tools = new Recorded();
+    const reopened = Loop.open(config, tools, store);
+    if (!reopened.ok) throw new Error(reopened.reason);
+    expect(tools.commands).toHaveLength(1);
+  });
+
+  // Found by review: the reply was saved, then the daemon died before the
+  // tool said it had finished. The start goes out again, and the second
+  // agent it brings up must be stopped.
+  test("stops a second agent when a start goes out again after its reply was saved", () => {
+    const store = EventStore.open(":memory:");
+    const first = new Loop(config, new Unfinished(), store);
+    first.send(one, add());
+    first.startWaiting();
+    first.send(one, started(1, "s1"));
+
+    const tools = new Recorded();
+    const reopened = Loop.open(config, tools, store);
+    if (!reopened.ok) throw new Error(reopened.reason);
+    reopened.loop.send(one, started(1, "s1-again"));
+    expect(tools.commands).toContainEqual({
+      type: "stop_session",
+      session: SessionId.parse("s1-again"),
+    });
   });
 
   test("doesn't carry out a command again once it went out", () => {
