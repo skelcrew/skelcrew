@@ -20,6 +20,7 @@ import {
 import { dirname, join } from "node:path";
 import { parseWorkflow, workflowFile } from "../config/workflow";
 import { detectChecks } from "./detect";
+import { outsideLink, outsideWarning } from "./paths";
 import { type AskBeforeApprove, addAskRule, askBeforeApproveLimit, settingsPath } from "./settings";
 import { defaultSkills } from "./skills";
 
@@ -35,6 +36,10 @@ export type InitReport = {
   updated: string[];
   // Files that existed and were left exactly as they were.
   unchanged: string[];
+  // Files init didn't write because they would land outside the
+  // repository, through a link such as .claude pointing at ~/.claude. Each
+  // has a warning that says why and how to add it.
+  byHand: string[];
   // Things you should look at, such as a workflow.yml init couldn't read.
   warnings: string[];
   // Whether Claude Code will now ask you before skelcrew approve runs: the
@@ -63,6 +68,7 @@ export function initRepository(dir: string): InitResult {
     created: [],
     updated: [],
     unchanged: [],
+    byHand: [],
     warnings: [],
     askBeforeApprove: "add by hand",
     askBeforeApproveLimit,
@@ -95,10 +101,13 @@ export function initRepository(dir: string): InitResult {
     if (workflow === null) report.unchanged.push(workflowPath);
     else writeNew(dir, workflowPath, workflow, report);
     for (const skill of defaultSkills) writeNew(dir, skill.path, skill.text, report);
-    const settings = addAskRule(dir);
-    report[settings.file].push(settingsPath);
-    report.askBeforeApprove = settings.askBeforeApprove;
-    if (settings.warning !== null) report.warnings.push(settings.warning);
+    const settingsLink = outsideLink(dir, settingsPath);
+    if (settingsLink === null) {
+      const settings = addAskRule(dir);
+      report[settings.file].push(settingsPath);
+      report.askBeforeApprove = settings.askBeforeApprove;
+      if (settings.warning !== null) report.warnings.push(settings.warning);
+    } else leaveOutside(settingsPath, settingsLink, report);
     ignoreDatabase(dir, report);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -119,9 +128,15 @@ export function initRepository(dir: string): InitResult {
 
 // Writes the file only if there is none. The "wx" flag makes the write
 // itself refuse an existing file, so nothing is overwritten even if a file
-// appears between the check and the write.
+// appears between the check and the write. A file that would land outside
+// the repository, through a link, isn't written at all.
 function writeNew(dir: string, path: string, text: string, report: InitReport): void {
   const full = join(dir, path);
+  const link = outsideLink(dir, path);
+  if (link !== null) {
+    leaveOutside(path, link, report);
+    return;
+  }
   if (existsSync(full)) {
     report.unchanged.push(path);
     return;
@@ -129,6 +144,11 @@ function writeNew(dir: string, path: string, text: string, report: InitReport): 
   mkdirSync(dirname(full), { recursive: true });
   writeFileSync(full, text, { flag: "wx" });
   report.created.push(path);
+}
+
+function leaveOutside(path: string, link: string, report: InitReport): void {
+  report.byHand.push(path);
+  report.warnings.push(outsideWarning(path, link));
 }
 
 // Lines that leave out the whole .skelcrew folder. Git would then never

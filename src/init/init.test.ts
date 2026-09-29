@@ -80,6 +80,7 @@ describe("initRepository", () => {
         created: [workflow, specSkill, developSkill, settings, ".gitignore"],
         updated: [],
         unchanged: [],
+        byHand: [],
         warnings: [],
         askBeforeApprove: "added",
         askBeforeApproveLimit: saysItCanBeBypassed,
@@ -173,6 +174,67 @@ describe("initRepository", () => {
     expect(result.updated).toEqual([]);
     expect(result.reason).toContain(workflow);
     expect(result.reason).toContain(specSkill);
+  });
+
+  // Some people link a repository's .claude folder to their own ~/.claude.
+  // Writing through that link would change their own settings and skills.
+  // The home folder here is a throwaway folder, never the real one.
+  describe("a folder that links outside the repository", () => {
+    function fakeHome(): string {
+      const home = repo({ ".claude/settings.json": '{\n  "model": "opus"\n}\n' });
+      mkdirSync(join(home, ".claude/skills"));
+      return home;
+    }
+
+    test("writes nothing through a linked .claude folder, and says what to add by hand", () => {
+      const home = fakeHome();
+      const before = everything(home);
+      const dir = repo(bunApp);
+      symlinkSync(join(home, ".claude"), join(dir, ".claude"));
+      const result = initRepository(dir);
+      expect(everything(home)).toEqual(before);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.report.byHand).toEqual([specSkill, developSkill, settings]);
+      expect(result.report.created).toEqual([workflow, ".gitignore"]);
+      expect(result.report.askBeforeApprove).toBe("add by hand");
+      expect(result.report.warnings).toHaveLength(3);
+      for (const warning of result.report.warnings) {
+        expect(warning).toContain(".claude");
+        expect(warning).toContain("outside the repository");
+      }
+    });
+
+    test("writes nothing through a linked skills folder", () => {
+      const home = fakeHome();
+      const before = everything(home);
+      const dir = repo(bunApp);
+      mkdirSync(join(dir, ".claude"));
+      symlinkSync(join(home, ".claude/skills"), join(dir, ".claude/skills"));
+      const result = initRepository(dir);
+      expect(everything(home)).toEqual(before);
+      expect(result.ok && result.report.byHand).toEqual([specSkill, developSkill]);
+      expect(result.ok && result.report.created).toContain(settings);
+    });
+
+    test("writes nothing through a linked .skelcrew folder", () => {
+      const elsewhere = repo();
+      const dir = repo(bunApp);
+      symlinkSync(elsewhere, join(dir, ".skelcrew"));
+      const result = initRepository(dir);
+      expect(everything(elsewhere)).toEqual({});
+      expect(result.ok && result.report.byHand).toEqual([workflow]);
+    });
+
+    // A link that stays inside the repository is fine.
+    test("writes through a link that stays inside the repository", () => {
+      const dir = repo(bunApp);
+      mkdirSync(join(dir, "config/claude"), { recursive: true });
+      symlinkSync(join(dir, "config/claude"), join(dir, ".claude"));
+      const result = initRepository(dir);
+      expect(result.ok && result.report.byHand).toEqual([]);
+      expect(existsSync(join(dir, "config/claude/skills/spec/SKILL.md"))).toBe(true);
+    });
   });
 
   test("says why it stopped when a Makefile can't be read", () => {
@@ -287,6 +349,7 @@ describe("initRepository", () => {
         created: [],
         updated: [],
         unchanged: [workflow, specSkill, developSkill, settings, ".gitignore"],
+        byHand: [],
         warnings: [],
         askBeforeApprove: "already there",
         askBeforeApproveLimit: saysItCanBeBypassed,
