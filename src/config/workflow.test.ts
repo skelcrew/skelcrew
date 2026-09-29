@@ -83,11 +83,11 @@ describe("parseWorkflow", () => {
   test("refuses a file with no checks, since the local gate would check nothing", () => {
     expect(parseWorkflow("max_running: 2\n")).toEqual({
       ok: false,
-      reasons: ["checks: list at least one command, such as `bun test`."],
+      reasons: ["checks: list at least one command, such as the one that runs your tests."],
     });
     expect(parseWorkflow("checks: []\n")).toEqual({
       ok: false,
-      reasons: ["checks: list at least one command, such as `bun test`."],
+      reasons: ["checks: list at least one command, such as the one that runs your tests."],
     });
   });
 
@@ -119,7 +119,7 @@ describe("parseWorkflow", () => {
   test("refuses an empty file", () => {
     expect(parseWorkflow("")).toEqual({
       ok: false,
-      reasons: ["checks: list at least one command, such as `bun test`."],
+      reasons: ["checks: list at least one command, such as the one that runs your tests."],
     });
   });
 });
