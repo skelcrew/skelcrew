@@ -11,7 +11,7 @@
 // started it and nothing was done in it since. Anything else at its path
 // is someone's work: it is refused and left as it is.
 
-import type { TaskId, Worktree } from "../core/types";
+import type { BranchFacts, TaskId, Worktree } from "../core/types";
 
 export type Done<T> = { ok: true; value: T } | { ok: false; message: string };
 
@@ -26,6 +26,13 @@ export interface VersionControl {
   // nothing. A failure leaves nothing behind, since the core then records
   // no worktree to clean up later.
   createWorktree(request: WorktreeRequest): Promise<Done<Worktree>>;
+
+  // What the task's branch holds, for when its agent reports done: the
+  // commit at its tip, its own commits beyond main, and every file it
+  // changed since it left main. A renamed file counts under both names.
+  // Refused while the worktree has uncommitted work, since the gates and
+  // the merge only see what is committed.
+  readBranch(worktree: Worktree): Promise<Done<BranchFacts>>;
 
   // Removes the worktree. Its uncommitted changes are committed to its
   // branch first, so no work is lost, and the branch is kept. Removing one

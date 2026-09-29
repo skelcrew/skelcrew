@@ -12,7 +12,8 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { $ } from "bun";
-import type { Worktree } from "../../core/types";
+import { CommitSha } from "../../core/ids";
+import type { BranchFacts, Worktree } from "../../core/types";
 import type { Done, VersionControl, WorktreeRequest } from "../version-control";
 
 // Worktrees sit inside the repository, where you can find them. The folder
@@ -41,6 +42,10 @@ export class Git implements VersionControl {
     return this.oneAtATime(() =>
       guard(`create the worktree for #${request.taskId}`, () => this.create(request)),
     );
+  }
+
+  readBranch(worktree: Worktree): Promise<Done<BranchFacts>> {
+    return this.oneAtATime(() => guard(`read ${worktree.branch}`, () => this.read(worktree)));
   }
 
   removeWorktree(worktree: Worktree): Promise<Done<null>> {
@@ -224,35 +229,9 @@ export class Git implements VersionControl {
     }
 
     // Nothing is saved or removed until it is certain this is the task's
-    // worktree, in this repository, on the task's branch. Saving on a
-    // detached HEAD would leave the work on no branch at all.
-    const ours = await this.isWorktree(worktree.path);
-    if (!ours.ok) return ours;
-    if (!ours.value)
-      return { ok: false, message: `${worktree.path} isn't a worktree of ${this.repo}.` };
-    const head = await branchOf(worktree.path);
-    if (head !== `refs/heads/${worktree.branch}`) {
-      const on = head ?? "no branch";
-      return {
-        ok: false,
-        message: `${worktree.path} is on ${on}, not ${worktree.branch}. Its work was left as it is.`,
-      };
-    }
-
-    // git doesn't show edits to files marked assume-unchanged or
-    // skip-worktree, so the save would miss them. Clearing the marks isn't
-    // safe either: in a sparse checkout, files left out would look deleted,
-    // and the save would commit that. So nothing is touched.
-    const files = await run(worktree.path, "ls-files", "-v");
-    if (!files.ok)
-      return { ok: false, message: `git couldn't list ${worktree.path}: ${files.err}` };
-    const hidden = files.out.split("\n").filter((line) => /^[a-zS]/.test(line));
-    if (hidden.length > 0) {
-      return {
-        ok: false,
-        message: `${hidden.length} file(s) in ${worktree.path} are marked so git hides their changes. The worktree was left as it is.`,
-      };
-    }
+    // worktree, on the task's branch, with no changes git hides.
+    const owned = await this.checkOwned(worktree);
+    if (!owned.ok) return owned;
 
     // Untracked files are listed whatever git's settings say, so a setting
     // that hides them can't hide them from the save.
@@ -320,6 +299,93 @@ export class Git implements VersionControl {
     const same =
       realpathSync(ours.out) === realpathSync(theirs.out) && realpathSync(top.out) === real;
     return { ok: true, value: same };
+  }
+
+  // Checks the worktree is this repository's, on its task's branch, and has
+  // no changes git hides. Saving on a detached HEAD would leave the work on
+  // no branch at all. git doesn't show edits to files marked
+  // assume-unchanged or skip-worktree, so a save would miss them. Clearing
+  // the marks isn't safe either: in a sparse checkout, files left out would
+  // look deleted. So nothing is touched.
+  private async checkOwned(worktree: Worktree): Promise<Done<null>> {
+    const ours = await this.isWorktree(worktree.path);
+    if (!ours.ok) return ours;
+    if (!ours.value) {
+      return { ok: false, message: `${worktree.path} isn't a worktree of ${this.repo}.` };
+    }
+    const head = await branchOf(worktree.path);
+    if (head !== `refs/heads/${worktree.branch}`) {
+      const on = head ?? "no branch";
+      return {
+        ok: false,
+        message: `${worktree.path} is on ${on}, not ${worktree.branch}. Its work was left as it is.`,
+      };
+    }
+    const files = await run(worktree.path, "ls-files", "-v");
+    if (!files.ok) {
+      return { ok: false, message: `git couldn't list ${worktree.path}: ${files.err}` };
+    }
+    const hidden = files.out.split("\n").filter((line) => /^[a-zS]/.test(line));
+    if (hidden.length > 0) {
+      return {
+        ok: false,
+        message: `${hidden.length} file(s) in ${worktree.path} are marked so git hides their changes. The worktree was left as it is.`,
+      };
+    }
+    return { ok: true, value: null };
+  }
+
+  private async read(worktree: Worktree): Promise<Done<BranchFacts>> {
+    if (!existsSync(worktree.path)) {
+      return { ok: false, message: `${worktree.path} doesn't exist.` };
+    }
+    const owned = await this.checkOwned(worktree);
+    if (!owned.ok) return owned;
+    const status = await run(worktree.path, "status", "--porcelain", "--untracked-files=all");
+    if (!status.ok) {
+      return { ok: false, message: `git couldn't read ${worktree.path}: ${status.err}` };
+    }
+    if (status.out !== "") {
+      return {
+        ok: false,
+        message: `${worktree.path} has uncommitted changes. Commit them first: the gates and the merge only see what is committed.`,
+      };
+    }
+
+    const branch = `refs/heads/${worktree.branch}`;
+    const main = `refs/heads/${this.main}`;
+    const head = await run(this.repo, "rev-parse", "--verify", branch);
+    const commits = await run(this.repo, "rev-list", "--count", `${main}..${branch}`);
+    const base = await run(this.repo, "merge-base", main, branch);
+    if (!head.ok || !commits.ok || !base.ok) {
+      const err = [head, commits, base].flatMap((r) => (r.ok ? [] : [r.err])).join(" ");
+      return { ok: false, message: `git couldn't read ${worktree.branch}: ${err}` };
+    }
+    // Renames count as a removal and an addition, so both names are listed.
+    // -z keeps names exactly, with no quoting of spaces or accents.
+    const diff = await runRaw(
+      this.repo,
+      "diff",
+      "--name-only",
+      "--no-renames",
+      "-z",
+      base.out,
+      head.out,
+    );
+    if (!diff.ok) return { ok: false, message: `git couldn't list the changed files: ${diff.err}` };
+    const sha = CommitSha.safeParse(head.out);
+    if (!sha.success) return { ok: false, message: `git gave "${head.out}" as the head commit.` };
+    return {
+      ok: true,
+      value: {
+        head: sha.data,
+        commits: Number(commits.out),
+        changedFiles: diff.out
+          .split("\0")
+          .filter((file) => file !== "")
+          .sort(),
+      },
+    };
   }
 
   // Adds the worktrees folder to .git/info/exclude, once.
@@ -397,9 +463,16 @@ type Run = { ok: true; out: string } | { ok: false; err: string };
 // .nothrow() covers git failing, not git failing to start, for example in
 // a folder that doesn't exist. That is caught here too.
 async function run(dir: string, ...args: string[]): Promise<Run> {
+  const result = await runRaw(dir, ...args);
+  return result.ok ? { ok: true, out: result.out.trim() } : result;
+}
+
+// Like run, but keeps the output exactly, for file names that could start
+// or end with a space.
+async function runRaw(dir: string, ...args: string[]): Promise<Run> {
   try {
     const result = await $`git ${args}`.cwd(dir).nothrow().quiet();
-    if (result.exitCode === 0) return { ok: true, out: result.stdout.toString().trim() };
+    if (result.exitCode === 0) return { ok: true, out: result.stdout.toString() };
     return { ok: false, err: result.stderr.toString().trim() || `exit code ${result.exitCode}` };
   } catch (error) {
     return { ok: false, err: error instanceof Error ? error.message : String(error) };

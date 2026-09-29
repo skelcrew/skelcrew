@@ -18,9 +18,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { $ } from "bun";
-import { TaskId } from "../core/ids";
+import { CommitSha, TaskId } from "../core/ids";
 import type { VersionControl } from "./version-control";
 
 export type Repo = { dir: string; main: string };
@@ -281,6 +281,103 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       const created = await make({ ...r, main: "trunk" }).createWorktree(csv);
       expect(created.ok).toBe(false);
       expect(!created.ok && created.message).toContain("trunk");
+    });
+  });
+
+  describe(`${name}: readBranch`, () => {
+    // A worktree with the given files committed, one commit each.
+    async function worked(r: Repo, files: Record<string, string>) {
+      const plugin = make(r);
+      const created = await plugin.createWorktree(csv);
+      if (!created.ok) throw new Error(created.message);
+      for (const [file, text] of Object.entries(files)) {
+        mkdirSync(dirname(join(created.value.path, file)), { recursive: true });
+        writeFileSync(join(created.value.path, file), text);
+        await git(created.value.path, "add", file);
+        await git(created.value.path, "commit", "-q", "-m", `Add ${file}`);
+      }
+      return { plugin, worktree: created.value };
+    }
+
+    test("reads the head commit, the branch's own commits, and the files it changed", async () => {
+      const r = await repo();
+      const { plugin, worktree } = await worked(r, {
+        "src/export.ts": "export {};\n",
+        "src/auth/login.ts": "login\n",
+      });
+      expect(await plugin.readBranch(worktree)).toEqual({
+        ok: true,
+        value: {
+          head: CommitSha.parse(await git(worktree.path, "rev-parse", "HEAD")),
+          commits: 2,
+          changedFiles: ["src/auth/login.ts", "src/export.ts"],
+        },
+      });
+    });
+
+    test("counts only the branch's own work after main moves on", async () => {
+      const r = await repo();
+      const { plugin, worktree } = await worked(r, { "src/export.ts": "export {};\n" });
+      writeFileSync(join(r.dir, "later.txt"), "on main\n");
+      await git(r.dir, "add", "later.txt");
+      await git(r.dir, "commit", "-q", "-m", "Later on main");
+
+      const read = await plugin.readBranch(worktree);
+      expect(read.ok && read.value.commits).toBe(1);
+      expect(read.ok && read.value.changedFiles).toEqual(["src/export.ts"]);
+    });
+
+    test("lists a renamed file under both names, so moving it out of a folder still counts", async () => {
+      const r = await repo();
+      const { plugin, worktree } = await worked(r, {});
+      await git(worktree.path, "mv", "README.md", "docs.md");
+      await git(worktree.path, "commit", "-q", "-m", "Rename");
+
+      const read = await plugin.readBranch(worktree);
+      expect(read.ok && read.value.changedFiles).toEqual(["README.md", "docs.md"]);
+    });
+
+    test("keeps file names exactly, spaces and accents included", async () => {
+      const r = await repo();
+      const { plugin, worktree } = await worked(r, { "notes/résumé plan.md": "x\n" });
+      const read = await plugin.readBranch(worktree);
+      expect(read.ok && read.value.changedFiles).toEqual(["notes/résumé plan.md"]);
+    });
+
+    test("reads no commits and no files for a branch nobody has worked on", async () => {
+      const r = await repo();
+      const { plugin, worktree } = await worked(r, {});
+      expect(await plugin.readBranch(worktree)).toEqual({
+        ok: true,
+        value: {
+          head: CommitSha.parse(await git(r.dir, "rev-parse", "main")),
+          commits: 0,
+          changedFiles: [],
+        },
+      });
+    });
+
+    test("refuses while there is uncommitted work, which the gates would never see", async () => {
+      const r = await repo();
+      const { plugin, worktree } = await worked(r, { "src/export.ts": "export {};\n" });
+      writeFileSync(join(worktree.path, "src/export.ts"), "export const x = 1;\n");
+      const read = await plugin.readBranch(worktree);
+      expect(read.ok).toBe(false);
+      expect(!read.ok && read.message).toContain("commit");
+    });
+
+    test("refuses a worktree that isn't on its task's branch", async () => {
+      const r = await repo();
+      const { plugin, worktree } = await worked(r, { "src/export.ts": "export {};\n" });
+      await git(worktree.path, "checkout", "-q", "--detach");
+      expect((await plugin.readBranch(worktree)).ok).toBe(false);
+    });
+
+    test("fails with a message, not a throw, for a worktree that is gone", async () => {
+      const r = await repo();
+      const { plugin, worktree } = await worked(r, {});
+      await plugin.removeWorktree(worktree);
+      expect((await plugin.readBranch(worktree)).ok).toBe(false);
     });
   });
 
