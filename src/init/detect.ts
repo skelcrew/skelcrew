@@ -159,7 +159,9 @@ function pytest(dir: string): { ok: true } | { ok: false; note: string | null } 
 const makefiles = ["GNUmakefile", "makefile", "Makefile"];
 
 // A target is a line that starts with its name and a colon, such as
-// `test:` or `test: build`. A variable such as `TEST := -v` is not one.
+// `test:` or `test: build`. A variable is not one. Make sets a variable
+// with colons followed by an equals sign: `test := -v`, `test ::= -v` or
+// `test :::= -v`.
 function makeTarget(
   dir: string,
   target: string,
@@ -169,7 +171,7 @@ function makeTarget(
   if (name === undefined) return { ok: false, note: null };
   const text = readText(join(dir, name));
   if (text === null) return { ok: false, note: `${name} can't be read, so it was skipped.` };
-  const pattern = new RegExp(`^${target}\\s*:(?!=)`);
+  const pattern = new RegExp(`^${target}\\s*:(?!:*=)`);
   if (text.split("\n").some((line) => pattern.test(line))) return { ok: true };
   return { ok: false, note: null };
 }

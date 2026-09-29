@@ -189,6 +189,14 @@ describe("detectChecks", () => {
     expect(detectChecks(repo({ Makefile: makefile })).ok).toBe(false);
   });
 
+  // GNU make also sets a variable with ::= and :::=.
+  test("doesn't take a variable set with ::= or :::= for a test target", () => {
+    for (const line of ["test ::= -v", "test :::= -v", "test::=-v"]) {
+      const makefile = `${line}\nbuild:\n\tgo build ./...\n`;
+      expect(detectChecks(repo({ Makefile: makefile })).ok).toBe(false);
+    }
+  });
+
   // A Makefile's test target usually wraps the project's own test command,
   // so running both would run the tests twice.
   test("leaves out make test when another check was found", () => {
