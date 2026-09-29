@@ -54,9 +54,20 @@ const specSkill = ".claude/skills/spec/SKILL.md";
 const developSkill = ".claude/skills/develop/SKILL.md";
 const dbLine = ".skelcrew/skelcrew.db*";
 const settings = ".claude/settings.json";
-// The Claude Code permission rule that makes it ask you before an agent
-// runs skelcrew approve.
-const askRule = "Bash(skelcrew approve *)";
+// The Claude Code permission rules that make it ask you before an agent
+// runs skelcrew approve. Each catches one usual way of typing it: plain,
+// through bunx, bun x or npx, or by a path to the program, such as
+// ./node_modules/.bin/skelcrew. The docs say a rule matches only the way
+// it is written, and a leading * stands in for any text.
+const askRules = [
+  "Bash(skelcrew approve *)",
+  "Bash(bunx skelcrew approve *)",
+  "Bash(bun x skelcrew approve *)",
+  "Bash(npx skelcrew approve *)",
+  "Bash(*/skelcrew approve *)",
+];
+// The report must say plainly that the rules can be got round.
+const saysItCanBeBypassed = expect.stringContaining("bash -c");
 
 describe("initRepository", () => {
   test("sets up a fresh repository, and says what it created", () => {
@@ -71,6 +82,7 @@ describe("initRepository", () => {
         unchanged: [],
         warnings: [],
         askBeforeApprove: "added",
+        askBeforeApproveLimit: saysItCanBeBypassed,
       },
     });
   });
@@ -277,6 +289,7 @@ describe("initRepository", () => {
         unchanged: [workflow, specSkill, developSkill, settings, ".gitignore"],
         warnings: [],
         askBeforeApprove: "already there",
+        askBeforeApproveLimit: saysItCanBeBypassed,
       },
     });
   });
@@ -293,10 +306,50 @@ describe("initRepository", () => {
   describe("the rule that makes Claude Code ask before skelcrew approve", () => {
     const settingsJson = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 
-    test("writes a settings file with the rule when there is none", () => {
+    test("writes a settings file with the rules when there is none", () => {
       const dir = repo(bunApp);
       initRepository(dir);
-      expect(JSON.parse(read(dir, settings))).toEqual({ permissions: { ask: [askRule] } });
+      expect(JSON.parse(read(dir, settings))).toEqual({ permissions: { ask: askRules } });
+    });
+
+    // Each rule stops one way of typing the command. Claude Code matches a
+    // rule against the command as written, so these forms need their own.
+    test("asks before the usual ways of typing skelcrew approve", () => {
+      const dir = repo(bunApp);
+      initRepository(dir);
+      const rules = JSON.parse(read(dir, settings)).permissions.ask;
+      for (const rule of [
+        "Bash(skelcrew approve *)",
+        "Bash(bunx skelcrew approve *)",
+        "Bash(bun x skelcrew approve *)",
+        "Bash(npx skelcrew approve *)",
+        "Bash(*/skelcrew approve *)",
+      ]) {
+        expect(rules).toContain(rule);
+      }
+    });
+
+    // Written another way, such as bash -c 'skelcrew approve 12', the
+    // command still runs without a question. The report says so.
+    test("says plainly that the rules can be got round", () => {
+      const result = initRepository(repo(bunApp));
+      const limit = result.ok ? result.report.askBeforeApproveLimit : "";
+      expect(limit).toContain("bash -c");
+      expect(limit).toContain("TUI");
+    });
+
+    test("adds only the rules your settings don't have yet", () => {
+      const have = ["Bash(git push *)", "Bash(skelcrew approve *)", "Bash(npx skelcrew approve:*)"];
+      const dir = repo({ ...bunApp, [settings]: settingsJson({ permissions: { ask: have } }) });
+      const result = initRepository(dir);
+      expect(JSON.parse(read(dir, settings)).permissions.ask).toEqual([
+        ...have,
+        "Bash(bunx skelcrew approve *)",
+        "Bash(bun x skelcrew approve *)",
+        "Bash(*/skelcrew approve *)",
+      ]);
+      expect(result.ok && result.report.updated).toContain(settings);
+      expect(result.ok && result.report.askBeforeApprove).toBe("added");
     });
 
     test("never writes your personal settings file", () => {
@@ -315,7 +368,7 @@ describe("initRepository", () => {
       const result = initRepository(dir);
       const expected = {
         ...mine,
-        permissions: { allow: ["Bash(bun test *)"], ask: ["Bash(git push *)", askRule] },
+        permissions: { allow: ["Bash(bun test *)"], ask: ["Bash(git push *)", ...askRules] },
       };
       expect(read(dir, settings)).toBe(settingsJson(expected));
       expect(result.ok && result.report.updated).toContain(settings);
@@ -327,7 +380,7 @@ describe("initRepository", () => {
       initRepository(dir);
       expect(JSON.parse(read(dir, settings))).toEqual({
         model: "opus",
-        permissions: { ask: [askRule] },
+        permissions: { ask: askRules },
       });
     });
 
@@ -335,14 +388,15 @@ describe("initRepository", () => {
       const mine = `${JSON.stringify({ permissions: { ask: [] } }, null, "\t")}\n`;
       const dir = repo({ ...bunApp, [settings]: mine });
       initRepository(dir);
-      const expected = JSON.stringify({ permissions: { ask: [askRule] } }, null, "\t");
+      const expected = JSON.stringify({ permissions: { ask: askRules } }, null, "\t");
       expect(read(dir, settings)).toBe(`${expected}\n`);
     });
 
-    // The docs give two ways to write the same rule.
-    test("leaves your settings alone when the rule is there already", () => {
-      for (const rule of [askRule, "Bash(skelcrew approve:*)"]) {
-        const mine = settingsJson({ permissions: { ask: [rule] } });
+    // The docs give two ways to write the same rule: "x *" and "x:*".
+    test("leaves your settings alone when the rules are there already", () => {
+      const older = askRules.map((rule) => rule.replace(/ \*\)$/, ":*)"));
+      for (const rules of [askRules, older]) {
+        const mine = settingsJson({ permissions: { ask: rules } });
         const dir = repo({ ...bunApp, [settings]: mine });
         const result = initRepository(dir);
         expect(read(dir, settings)).toBe(mine);
@@ -374,7 +428,7 @@ describe("initRepository", () => {
         const warnings = result.ok ? result.report.warnings : [];
         expect(warnings).toHaveLength(1);
         expect(warnings[0]).toContain(settings);
-        expect(warnings[0]).toContain(askRule);
+        for (const rule of askRules) expect(warnings[0]).toContain(rule);
       }
     });
 

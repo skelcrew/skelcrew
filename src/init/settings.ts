@@ -1,8 +1,15 @@
 // Makes Claude Code ask you before anything runs `skelcrew approve`. The
-// spec says this guard lives in the harness's settings, so init adds one
-// permission rule to the repository's .claude/settings.json. Claude Code
+// spec says this guard lives in the harness's settings, so init adds
+// permission rules to the repository's .claude/settings.json. Claude Code
 // checks "ask" rules before "allow" rules, so a broad allow rule elsewhere
 // can't skip the question.
+//
+// This guard catches the usual ways of typing the command, not every way.
+// Claude Code matches a rule against the command as it is written. So
+// `bash -c 'skelcrew approve 12'` or `skelcrew 'approve' 12` runs without
+// a question. The Claude Code docs say an ask rule isn't a security
+// boundary. That is why the spec calls this guard weaker than approving in
+// the TUI. The init report says so too.
 //
 // Your settings are yours, so init is careful with the file:
 //
@@ -15,6 +22,8 @@
 //   with the rule to add by hand.
 //
 // It never touches .claude/settings.local.json or your own user settings.
+// A second run adds nothing. A file with some of the rules gets only the
+// ones it lacks.
 
 import { lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -22,12 +31,34 @@ import * as z from "zod";
 
 export const settingsPath = ".claude/settings.json";
 
-// A trailing " *" also matches the bare command, so this covers
-// `skelcrew approve` with or without a task number.
-export const askRule = "Bash(skelcrew approve *)";
+// One rule for each usual way to run the command. A trailing " *" also
+// matches the bare command, so the first four cover `skelcrew approve`
+// with or without a task number. A leading "*" stands in for any text, so
+// the last one covers a path to the program, such as
+// `./node_modules/.bin/skelcrew approve 12` or
+// `/usr/local/bin/skelcrew approve 12`. With two wildcards the docs say
+// the trailing one no longer matches the bare command, so a path with no
+// task number isn't caught.
+export const askRules = [
+  "Bash(skelcrew approve *)",
+  "Bash(bunx skelcrew approve *)",
+  "Bash(bun x skelcrew approve *)",
+  "Bash(npx skelcrew approve *)",
+  "Bash(*/skelcrew approve *)",
+];
 
-// The older way to write the same rule, which Claude Code still reads.
-const sameRules = [askRule, "Bash(skelcrew approve:*)"];
+// What the report tells you about the guard, whether or not init added it.
+export const askBeforeApproveLimit = [
+  "Claude Code asks before the usual ways of running skelcrew approve, such as `skelcrew approve 12` or `npx skelcrew approve 12`.",
+  "It is not a lock. A command written another way, such as `bash -c 'skelcrew approve 12'`, runs without asking.",
+  "So this guard is weaker than approving in the TUI.",
+].join(" ");
+
+// Whether the list has the rule, written either way Claude Code reads:
+// "Bash(x *)" or the older "Bash(x:*)".
+function hasRule(list: string[], rule: string): boolean {
+  return list.includes(rule) || list.includes(rule.replace(/ \*\)$/, ":*)"));
+}
 
 // Whether the rule was added, was there already, or is for you to add.
 export type AskBeforeApprove = "added" | "already there" | "add by hand";
@@ -47,7 +78,7 @@ export function addAskRule(dir: string): SettingsResult {
   const kind = fileKind(full);
   if (kind === "missing") {
     mkdirSync(dirname(full), { recursive: true });
-    writeFileSync(full, `${JSON.stringify({ permissions: { ask: [askRule] } }, null, 2)}\n`, {
+    writeFileSync(full, `${JSON.stringify({ permissions: { ask: askRules } }, null, 2)}\n`, {
       flag: "wx",
     });
     return { askBeforeApprove: "added", file: "created", warning: null };
@@ -75,7 +106,8 @@ export function addAskRule(dir: string): SettingsResult {
   const ask = ruleList.safeParse(permissions.data.ask ?? []);
   if (!ask.success) return byHand("has an ask entry that isn't a list of rules");
 
-  if (ask.data.some((rule) => sameRules.includes(rule))) {
+  const missing = askRules.filter((rule) => !hasRule(ask.data, rule));
+  if (missing.length === 0) {
     return { askBeforeApprove: "already there", file: "unchanged", warning: null };
   }
 
@@ -99,7 +131,7 @@ export function addAskRule(dir: string): SettingsResult {
 
   const changed = {
     ...top.data,
-    permissions: { ...permissions.data, ask: [...ask.data, askRule] },
+    permissions: { ...permissions.data, ask: [...ask.data, ...missing] },
   };
   writeFileSync(full, `${JSON.stringify(changed, null, indent)}${end}`);
   return { askBeforeApprove: "added", file: "updated", warning: null };
@@ -111,8 +143,8 @@ function byHand(why: string): SettingsResult {
     file: "unchanged",
     warning: [
       "Claude Code should ask you before anything runs skelcrew approve.",
-      `Init couldn't add that rule, because ${settingsPath} ${why}, so the file was left as it is.`,
-      `Add "${askRule}" to the "ask" list under "permissions" in it yourself.`,
+      `Init couldn't add the rules for that, because ${settingsPath} ${why}, so the file was left as it is.`,
+      `Add these to the "ask" list under "permissions" in it yourself: ${askRules.map((rule) => `"${rule}"`).join(", ")}.`,
     ].join(" "),
   };
 }

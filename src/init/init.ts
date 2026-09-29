@@ -3,7 +3,8 @@
 // the default skills, and makes Claude Code ask you before anything runs
 // skelcrew approve. It never overwrites a file, so running it again changes
 // nothing. It only adds to two files you may have: a line to .gitignore and
-// one rule to .claude/settings.json. Everything else in them is kept.
+// the approve rules to .claude/settings.json. Everything else in them is
+// kept.
 //
 // Running the chosen checks on the current code is a separate step for the
 // caller: `localChecks(report.checks)(dir)` from src/checks/checks.ts.
@@ -19,7 +20,7 @@ import {
 import { dirname, join } from "node:path";
 import { parseWorkflow, workflowFile } from "../config/workflow";
 import { detectChecks } from "./detect";
-import { type AskBeforeApprove, addAskRule, settingsPath } from "./settings";
+import { type AskBeforeApprove, addAskRule, askBeforeApproveLimit, settingsPath } from "./settings";
 import { defaultSkills } from "./skills";
 
 // What init did. Each path is relative to the repository.
@@ -39,6 +40,9 @@ export type InitReport = {
   // Whether Claude Code will now ask you before skelcrew approve runs: the
   // rule was added, was there already, or is for you to add by hand.
   askBeforeApprove: AskBeforeApprove;
+  // What the rules can't stop, in plain words: a command typed another
+  // way, such as through bash -c, runs without asking.
+  askBeforeApproveLimit: string;
 };
 
 // A failed run may have written some files before it stopped. They are
@@ -61,6 +65,7 @@ export function initRepository(dir: string): InitResult {
     unchanged: [],
     warnings: [],
     askBeforeApprove: "add by hand",
+    askBeforeApproveLimit,
   };
 
   // The checks come first. If there are none, nothing is written at all.
