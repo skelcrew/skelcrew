@@ -41,8 +41,13 @@ export function initRepository(dir: string): InitResult {
   // The checks come first. If there are none, nothing is written at all.
   let workflow: string | null = null;
   if (existsSync(join(dir, workflowPath))) {
-    const parsed = parseWorkflow(readFileSync(join(dir, workflowPath), "utf8"));
-    if (parsed.ok) report.checks = parsed.workflow.checks;
+    const text = readText(join(dir, workflowPath));
+    const parsed = text === null ? null : parseWorkflow(text);
+    if (parsed === null) {
+      report.warnings.push(
+        `${workflowPath} is there, but can't be opened, so it was left as it is. Check that it is a file you can read.`,
+      );
+    } else if (parsed.ok) report.checks = parsed.workflow.checks;
     else {
       report.warnings.push(
         `${workflowPath} was already there, but can't be read, so it was left as it is: ${parsed.reasons.join(" ")}`,
@@ -101,4 +106,13 @@ function ignoreDatabase(dir: string, report: InitReport): void {
   const gap = current === "" || current.endsWith("\n") ? "" : "\n";
   appendFileSync(full, `${gap}${entry}`);
   report.updated.push(path);
+}
+
+// The file's text, or null if it can't be read, such as a folder.
+function readText(path: string): string | null {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
 }

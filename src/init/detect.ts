@@ -10,10 +10,15 @@
 //   script that runs no test runner init knows gives a warning.
 // - Cargo.toml: cargo test.
 // - go.mod: go test ./...
-// - A Makefile with a test target: make test, but only when nothing else
+// - A makefile with a test target: make test, but only when nothing else
 //   was found, since that target usually runs one of the commands above.
+//   The makefile is the one make itself reads: GNUmakefile, makefile or
+//   Makefile, whichever comes first.
+//
+// A file that can't be read is skipped, and the reason says so. Nothing
+// here throws.
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import * as z from "zod";
 
@@ -37,7 +42,11 @@ export function detectChecks(dir: string): Detected {
   } else if (node.note !== null) notes.push(node.note);
   if (existsSync(join(dir, "Cargo.toml"))) checks.push("cargo test");
   if (existsSync(join(dir, "go.mod"))) checks.push("go test ./...");
-  if (checks.length === 0 && hasMakeTarget(dir, "test")) checks.push("make test");
+  if (checks.length === 0) {
+    const make = makeTarget(dir, "test");
+    if (make.ok) checks.push("make test");
+    else if (make.note !== null) notes.push(make.note);
+  }
 
   const [first, ...rest] = checks;
   if (first !== undefined) return { ok: true, checks: [first, ...rest], warnings };
@@ -75,9 +84,13 @@ type PackageChecks =
 function packageChecks(dir: string): PackageChecks {
   const path = join(dir, "package.json");
   if (!existsSync(path)) return { ok: false, note: null };
+  const text = readText(path);
+  if (text === null) {
+    return { ok: false, note: "package.json can't be read, so its scripts were skipped." };
+  }
   let data: unknown;
   try {
-    data = JSON.parse(readFileSync(path, "utf8"));
+    data = JSON.parse(text);
   } catch {
     return { ok: false, note: "package.json isn't valid JSON, so its scripts were skipped." };
   }
@@ -124,15 +137,43 @@ function runner(dir: string): string {
   return "npm run";
 }
 
+// The makefiles make reads, in the order it looks for them. It uses the
+// first one it finds. The names are matched against the folder's list of
+// files, since on macOS a check for "makefile" also finds "Makefile".
+const makefiles = ["GNUmakefile", "makefile", "Makefile"];
+
 // A target is a line that starts with its name and a colon, such as
 // `test:` or `test: build`. A variable such as `TEST := -v` is not one.
-function hasMakeTarget(dir: string, target: string): boolean {
-  const path = join(dir, "Makefile");
-  if (!existsSync(path)) return false;
+function makeTarget(
+  dir: string,
+  target: string,
+): { ok: true } | { ok: false; note: string | null } {
+  const files = fileNames(dir);
+  const name = makefiles.find((file) => files.includes(file));
+  if (name === undefined) return { ok: false, note: null };
+  const text = readText(join(dir, name));
+  if (text === null) return { ok: false, note: `${name} can't be read, so it was skipped.` };
   const pattern = new RegExp(`^${target}\\s*:(?!=)`);
-  return readFileSync(path, "utf8")
-    .split("\n")
-    .some((line) => pattern.test(line));
+  if (text.split("\n").some((line) => pattern.test(line))) return { ok: true };
+  return { ok: false, note: null };
+}
+
+// The names of the files in a folder, or none if it can't be listed.
+function fileNames(dir: string): string[] {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
+}
+
+// The file's text, or null if it can't be read, such as a folder.
+function readText(path: string): string | null {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
 }
 
 function isFolder(path: string): boolean {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -122,6 +123,33 @@ describe("initRepository", () => {
     const warnings = result.ok ? result.report.warnings : [];
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("workflow.yml");
+  });
+
+  // A folder where a file should be, or a file you may not read, must end
+  // in a report, not a crash.
+  test("warns about a workflow.yml it can't open, and goes on", () => {
+    const folder = repo(bunApp);
+    mkdirSync(join(folder, workflow), { recursive: true });
+    const locked = repo({ ...bunApp, [workflow]: "checks:\n  - make ci\n" });
+    chmodSync(join(locked, workflow), 0o000);
+    for (const dir of [folder, locked]) {
+      const result = initRepository(dir);
+      expect(result.ok).toBe(true);
+      const warnings = result.ok ? result.report.warnings : [];
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain("workflow.yml");
+      expect(result.ok && result.report.unchanged).toContain(workflow);
+      expect(result.ok && result.report.created).toContain(developSkill);
+    }
+    chmodSync(join(locked, workflow), 0o644);
+  });
+
+  test("says why it stopped when a Makefile can't be read", () => {
+    const dir = repo();
+    mkdirSync(join(dir, "Makefile"));
+    const result = initRepository(dir);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.reason).toContain("Makefile");
   });
 
   test("keeps an existing skill as it is, and still writes the other one", () => {

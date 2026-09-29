@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { detectChecks } from "./detect";
@@ -209,6 +209,32 @@ describe("detectChecks", () => {
     expect(found.ok).toBe(false);
     const reason = !found.ok ? found.reason : "";
     expect(reason).toContain("package.json");
+  });
+
+  // make reads GNUmakefile first, then makefile, then Makefile.
+  test("reads the makefile make would read", () => {
+    const target = "test:\n\t./self-test\n";
+    for (const name of ["GNUmakefile", "makefile"]) {
+      expect(detectChecks(repo({ [name]: target }))).toEqual({
+        ok: true,
+        checks: ["make test"],
+        warnings: [],
+      });
+    }
+    const both = repo({ GNUmakefile: "build:\n\tcc app.c\n", Makefile: target });
+    expect(detectChecks(both).ok).toBe(false);
+  });
+
+  // A folder where a file should be can't be read. That must end in an
+  // answer, not a crash.
+  test("says what it couldn't read instead of failing", () => {
+    for (const name of ["Makefile", "package.json"]) {
+      const dir = repo();
+      mkdirSync(join(dir, name));
+      const found = detectChecks(dir);
+      expect(found.ok).toBe(false);
+      expect(!found.ok && found.reason).toContain(name);
+    }
   });
 
   test("says so when the folder doesn't exist", () => {
