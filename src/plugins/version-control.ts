@@ -4,7 +4,10 @@
 //
 // Every call may arrive twice. If the daemon dies after a command went out
 // but before it was marked done, the command goes out again after the
-// restart. Doing it twice must have the same effect as doing it once.
+// restart. Doing it twice must have the same effect as doing it once. Two
+// calls can also overlap, and must then answer as if one came after the
+// other. A worktree only counts as made once its creation has finished, so
+// one left half made by a crash is made again, not trusted.
 
 import type { TaskId, Worktree } from "../core/types";
 

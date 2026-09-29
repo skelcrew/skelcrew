@@ -227,6 +227,45 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       expect((await plugin.createWorktree(csv)).ok).toBe(false);
     });
 
+    // Found by Codex review: a second call for the same worktree must not
+    // take away the first call's worktree when it fails.
+    test("gives two calls at once for the same worktree the same answer", async () => {
+      const r = await repo();
+      const plugin = make(r);
+      const [first, second] = await Promise.all([
+        plugin.createWorktree(csv),
+        plugin.createWorktree(csv),
+      ]);
+      if (!first.ok) throw new Error(first.message);
+      expect(second).toEqual(first);
+      expect(existsSync(join(first.value.path, "README.md"))).toBe(true);
+    });
+
+    // Found by Codex review: if the daemon dies while a worktree is being
+    // made, a folder and branch exist, but creation never finished.
+    test("doesn't trust a worktree an earlier try left half made", async () => {
+      const r = await repo();
+      const path = join(r.dir, ".skelcrew", "worktrees", "12-csv-export");
+      await git(r.dir, "worktree", "add", "-q", "-b", "task/12-csv-export", path, "main");
+      const hook = join(r.dir, ".git", "hooks", "post-checkout");
+      writeFileSync(hook, "#!/bin/sh\nexit 1\n");
+      chmodSync(hook, 0o755);
+
+      expect((await make(r).createWorktree(csv)).ok).toBe(false);
+      expect(existsSync(path)).toBe(false);
+    });
+
+    test("finishes a worktree an earlier try left half made", async () => {
+      const r = await repo();
+      const path = join(r.dir, ".skelcrew", "worktrees", "12-csv-export");
+      await git(r.dir, "worktree", "add", "-q", "-b", "task/12-csv-export", path, "main");
+      const plugin = make(r);
+
+      const created = await plugin.createWorktree(csv);
+      if (!created.ok) throw new Error(created.message);
+      expect(await plugin.createWorktree(csv)).toEqual(created);
+    });
+
     test("carries on from an earlier try that made the branch and stopped", async () => {
       const r = await repo();
       await git(r.dir, "branch", "task/12-csv-export");

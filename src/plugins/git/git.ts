@@ -1,7 +1,14 @@
 // The built-in version-control plugin, on git worktrees. Each task's build
 // gets its own worktree and branch, so agents never share a checkout.
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { $ } from "bun";
 import type { Worktree } from "../../core/types";
@@ -24,12 +31,25 @@ export class Git implements VersionControl {
     this.repo = resolve(repo);
   }
 
+  // Calls run one at a time, so a call always knows what it made itself.
+  // Without this, a failing second call for the same worktree could clean
+  // up the worktree the first call made.
+  private last: Promise<unknown> = Promise.resolve();
+
   createWorktree(request: WorktreeRequest): Promise<Done<Worktree>> {
-    return guard(`create the worktree for #${request.taskId}`, () => this.create(request));
+    return this.oneAtATime(() =>
+      guard(`create the worktree for #${request.taskId}`, () => this.create(request)),
+    );
   }
 
   removeWorktree(worktree: Worktree): Promise<Done<null>> {
-    return guard(`remove ${worktree.path}`, () => this.remove(worktree));
+    return this.oneAtATime(() => guard(`remove ${worktree.path}`, () => this.remove(worktree)));
+  }
+
+  private oneAtATime<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.last.then(work, work);
+    this.last = next.catch(() => undefined);
+    return next;
   }
 
   private async create(request: WorktreeRequest): Promise<Done<Worktree>> {
@@ -46,8 +66,15 @@ export class Git implements VersionControl {
       if (!ours.value)
         return { ok: false, message: `${path} exists, but isn't a worktree of ${this.repo}.` };
       const current = await branchOf(path);
-      if (current === `refs/heads/${branch}`) return { ok: true, value: { path, branch } };
-      return { ok: false, message: `${path} exists, but isn't the worktree for ${branch}.` };
+      if (current !== `refs/heads/${branch}`) {
+        return { ok: false, message: `${path} exists, but isn't the worktree for ${branch}.` };
+      }
+      if (await isFinished(path)) return { ok: true, value: { path, branch } };
+      // Half made: an earlier try stopped before it finished, for example
+      // when the daemon died. The core never recorded it, so no agent has
+      // worked in it, and it is made again from the start.
+      const undone = await this.undoCreate(path, branch, false);
+      if (!undone.ok) return undone;
     }
 
     const main = await run(
@@ -102,8 +129,9 @@ export class Git implements VersionControl {
           path,
           `refs/heads/${this.main}`,
         );
-    if (!added.ok) {
-      const failed = `git couldn't create ${branch}: ${added.err}`;
+    const finished = added.ok ? await markFinished(path) : added;
+    if (!finished.ok) {
+      const failed = `git couldn't create ${branch}: ${finished.err}`;
       const undone = await this.undoCreate(path, branch, !exists.ok);
       return { ok: false, message: undone.ok ? failed : `${failed} ${undone.message}` };
     }
@@ -283,6 +311,27 @@ async function guard<T>(what: string, work: () => Promise<Done<T>>): Promise<Don
     const message = error instanceof Error ? error.message : String(error);
     return { ok: false, message: `Couldn't ${what}: ${message}` };
   }
+}
+
+// A worktree counts as made only once this mark exists. It sits in git's
+// own folder for the worktree, so it never shows up as a change, and it
+// goes when the worktree does.
+const finishedMark = "skelcrew-finished";
+
+async function markFinished(path: string): Promise<Run> {
+  const dir = await run(path, "rev-parse", "--path-format=absolute", "--git-dir");
+  if (!dir.ok) return dir;
+  try {
+    writeFileSync(join(dir.out, finishedMark), "");
+    return { ok: true, out: "" };
+  } catch (error) {
+    return { ok: false, err: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function isFinished(path: string): Promise<boolean> {
+  const dir = await run(path, "rev-parse", "--path-format=absolute", "--git-dir");
+  return dir.ok && existsSync(join(dir.out, finishedMark));
 }
 
 // The full name of the branch a worktree has checked out, such as
