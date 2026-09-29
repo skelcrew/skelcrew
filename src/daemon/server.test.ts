@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MAX_LINE } from "../protocol/protocol";
@@ -24,6 +24,20 @@ const add = (id: string, title: string) =>
   `${JSON.stringify({ id, command: { type: "add", title, spec: false, project: null } })}\n`;
 
 describe("the daemon's socket", () => {
+  // Found by review: something at the socket's path that couldn't be
+  // removed made serve throw, and kept the lock.
+  test("refuses to start, without throwing, when its socket path can't be cleared", async () => {
+    const repo = throwawayRepo(dirs);
+    const socket = join(repo, ".skelcrew", "daemon.sock");
+    mkdirSync(join(socket, "inside"), { recursive: true });
+    const served = await serve(repo);
+    expect(served.ok).toBe(false);
+    expect(!served.ok && served.message).toContain("daemon.sock");
+
+    rmSync(socket, { recursive: true });
+    await started(repo);
+  });
+
   test("answers a request with the request's id", async () => {
     const server = await started(throwawayRepo(dirs));
     const line = await openLine(server.socket);

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { takeLock } from "./lock";
 import { daemonPaths } from "./paths";
 import { cleanUp, openLine, throwawayRepo } from "./testing";
 
@@ -51,7 +52,12 @@ describe("stopping the daemon with a signal", () => {
       expect(await child.exited).toBe(0);
       await line.closed;
       expect(existsSync(found.paths.socket)).toBe(false);
-      expect(existsSync(found.paths.lock)).toBe(false);
+      // Let go of: another daemon can take the lock now. The lock file
+      // itself stays, by design.
+      const next = takeLock(found.paths.lock);
+      expect(next.ok).toBe(true);
+      if (next.ok) next.lock.release();
+      expect(existsSync(join(dirname(found.paths.lock), "daemon.pid"))).toBe(false);
     });
   }
 });
