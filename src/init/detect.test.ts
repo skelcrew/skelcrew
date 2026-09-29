@@ -29,17 +29,26 @@ describe("detectChecks", () => {
     expect(found).toEqual({
       ok: true,
       checks: ["npm run test", "npm run typecheck", "npm run lint"],
+      warnings: [],
     });
   });
 
   test("uses the package manager the lock file shows", () => {
     const withLock = (lock: string) =>
       detectChecks(repo({ "package.json": packageJson({ test: "vitest" }), [lock]: "" }));
-    expect(withLock("bun.lock")).toEqual({ ok: true, checks: ["bun run test"] });
-    expect(withLock("bun.lockb")).toEqual({ ok: true, checks: ["bun run test"] });
-    expect(withLock("pnpm-lock.yaml")).toEqual({ ok: true, checks: ["pnpm run test"] });
-    expect(withLock("yarn.lock")).toEqual({ ok: true, checks: ["yarn test"] });
-    expect(withLock("package-lock.json")).toEqual({ ok: true, checks: ["npm run test"] });
+    expect(withLock("bun.lock")).toEqual({ ok: true, checks: ["bun run test"], warnings: [] });
+    expect(withLock("bun.lockb")).toEqual({ ok: true, checks: ["bun run test"], warnings: [] });
+    expect(withLock("pnpm-lock.yaml")).toEqual({
+      ok: true,
+      checks: ["pnpm run test"],
+      warnings: [],
+    });
+    expect(withLock("yarn.lock")).toEqual({ ok: true, checks: ["yarn test"], warnings: [] });
+    expect(withLock("package-lock.json")).toEqual({
+      ok: true,
+      checks: ["npm run test"],
+      warnings: [],
+    });
   });
 
   test("uses a check script in place of the typecheck and lint scripts", () => {
@@ -53,7 +62,7 @@ describe("detectChecks", () => {
         "bun.lock": "",
       }),
     );
-    expect(found).toEqual({ ok: true, checks: ["bun run check"] });
+    expect(found).toEqual({ ok: true, checks: ["bun run check"], warnings: [] });
   });
 
   // SvelteKit's template has "check": "svelte-check", which checks types
@@ -68,14 +77,14 @@ describe("detectChecks", () => {
         "bun.lock": "",
       }),
     );
-    expect(found).toEqual({ ok: true, checks: ["bun run test", "bun run check"] });
+    expect(found).toEqual({ ok: true, checks: ["bun run test", "bun run check"], warnings: [] });
   });
 
   test("ignores scripts it doesn't know, such as build and dev", () => {
     const found = detectChecks(
       repo({ "package.json": packageJson({ build: "tsc", dev: "vite", test: "vitest" }) }),
     );
-    expect(found).toEqual({ ok: true, checks: ["npm run test"] });
+    expect(found).toEqual({ ok: true, checks: ["npm run test"], warnings: [] });
   });
 
   // `npm init` writes this test script. It always fails, so it isn't a check.
@@ -88,10 +97,51 @@ describe("detectChecks", () => {
     expect(found.ok).toBe(false);
   });
 
+  // A test script like "exit 0" always passes, so it would pass every gate
+  // without testing anything.
+  test("skips a test script that does nothing", () => {
+    for (const test of ["exit 0", "true", ":", 'echo "no tests yet"', "echo"]) {
+      const found = detectChecks(repo({ "package.json": packageJson({ test }) }));
+      expect(found.ok).toBe(false);
+    }
+  });
+
+  test("still runs the other scripts when the test script does nothing", () => {
+    const found = detectChecks(
+      repo({ "package.json": packageJson({ test: "exit 0", lint: "biome ci ." }) }),
+    );
+    expect(found).toEqual({ ok: true, checks: ["npm run lint"], warnings: [] });
+  });
+
+  test("gives no warning when the test script runs a known test runner", () => {
+    for (const test of [
+      "vitest run",
+      "jest --ci",
+      "bun test",
+      "node --test",
+      "mocha",
+      "npx vitest",
+    ]) {
+      const found = detectChecks(repo({ "package.json": packageJson({ test }) }));
+      expect(found.ok && found.warnings).toEqual([]);
+    }
+  });
+
+  test("warns when the test script runs no test runner it knows", () => {
+    const found = detectChecks(
+      repo({ "package.json": packageJson({ test: "./scripts/run-all.sh" }) }),
+    );
+    expect(found.ok && found.checks).toEqual(["npm run test"]);
+    const warnings = found.ok ? found.warnings : [];
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("./scripts/run-all.sh");
+  });
+
   test("runs cargo test for a Rust crate", () => {
     expect(detectChecks(repo({ "Cargo.toml": "[package]\nname = 'app'\n" }))).toEqual({
       ok: true,
       checks: ["cargo test"],
+      warnings: [],
     });
   });
 
@@ -99,6 +149,7 @@ describe("detectChecks", () => {
     expect(detectChecks(repo({ "go.mod": "module example.com/app\n" }))).toEqual({
       ok: true,
       checks: ["go test ./..."],
+      warnings: [],
     });
   });
 
@@ -107,6 +158,7 @@ describe("detectChecks", () => {
     expect(detectChecks(repo({ Makefile: makefile }))).toEqual({
       ok: true,
       checks: ["make test"],
+      warnings: [],
     });
   });
 
@@ -126,7 +178,7 @@ describe("detectChecks", () => {
     const found = detectChecks(
       repo({ "go.mod": "module example.com/app\n", Makefile: "test:\n\tgo test ./...\n" }),
     );
-    expect(found).toEqual({ ok: true, checks: ["go test ./..."] });
+    expect(found).toEqual({ ok: true, checks: ["go test ./..."], warnings: [] });
   });
 
   test("finds the checks of every language in the repository", () => {
@@ -140,6 +192,7 @@ describe("detectChecks", () => {
     expect(found).toEqual({
       ok: true,
       checks: ["npm run test", "cargo test", "go test ./..."],
+      warnings: [],
     });
   });
 

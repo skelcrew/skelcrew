@@ -52,6 +52,7 @@ export function initRepository(dir: string): InitResult {
     const detected = detectChecks(dir);
     if (!detected.ok) return { ok: false, reason: detected.reason };
     report.checks = detected.checks;
+    report.warnings.push(...detected.warnings);
     workflow = workflowFile(detected.checks);
   }
 

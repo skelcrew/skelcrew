@@ -68,6 +68,14 @@ describe("initRepository", () => {
     });
   });
 
+  test("passes on a warning about the checks it found", () => {
+    const dir = repo({ "package.json": JSON.stringify({ scripts: { test: "./run-tests.sh" } }) });
+    const result = initRepository(dir);
+    const warnings = result.ok ? result.report.warnings : [];
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("./run-tests.sh");
+  });
+
   test("writes a workflow.yml that reads back with the checks it found", () => {
     const dir = repo(bunApp);
     initRepository(dir);
