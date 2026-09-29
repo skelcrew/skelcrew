@@ -6,7 +6,8 @@
 //   since a check script usually runs the typecheck and lint. With no
 //   check script, its test, typecheck and lint scripts, in that order.
 //   They run with the package manager its lock file shows. A test script
-//   that does nothing, such as `exit 0`, counts as no test script. A test
+//   that does nothing, such as `exit 0` or `echo "no tests" && exit 0`,
+//   counts as no test script. A test
 //   script that runs no test runner init knows gives a warning.
 // - Cargo.toml: cargo test.
 // - go.mod: go test ./...
@@ -72,9 +73,18 @@ const packageSchema = z.object({ scripts: z.record(z.string(), z.string()).optio
 // The test script `npm init` writes. It always fails, so it isn't a check.
 const npmPlaceholder = 'echo "Error: no test specified" && exit 1';
 
-// Test scripts that pass without testing anything. `true` and `:` are
-// shell commands that do nothing. An echo alone only prints.
-const doesNothing = /^(exit 0|true|:|echo\b[^;&|]*)$/;
+// A command that passes without testing anything. `true` and `:` are
+// shell commands that do nothing. An echo only prints. A comment after
+// it, such as `true # todo`, changes nothing.
+const noOp = /^(exit 0|true|:|echo\b[^&|#]*)?\s*(#.*)?$/;
+
+// A test script made only of such commands tests nothing, however they
+// are joined. For example `echo "no tests yet" && exit 0`, `exit 0;` or
+// `echo skip; exit 0`. The script is split at every ;, && and ||. If any
+// piece does something else, such as `echo start && vitest`, it counts.
+function doesNothing(script: string): boolean {
+  return script.split(/;|&&|\|\|/).every((piece) => noOp.test(piece.trim()));
+}
 
 // The test runners init knows. A test script that runs none of them may
 // still test something, through a shell script for example, so it is
@@ -109,7 +119,7 @@ function packageChecks(dir: string): PackageChecks {
     const script = scripts[name];
     if (script === undefined) return false;
     const trimmed = script.trim();
-    if (name === "test" && doesNothing.test(trimmed)) return false;
+    if (name === "test" && doesNothing(trimmed)) return false;
     return trimmed !== "" && script !== npmPlaceholder;
   };
   // A check script usually runs the typecheck and lint, so it stands in for

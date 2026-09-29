@@ -106,6 +106,28 @@ describe("detectChecks", () => {
     }
   });
 
+  // Several do-nothing commands joined together still do nothing.
+  test("skips a test script made only of commands that do nothing", () => {
+    for (const test of [
+      'echo "no tests yet" && exit 0',
+      "exit 0;",
+      "true # todo",
+      "echo skip; exit 0",
+      "echo a || true",
+      ": ; true ;; ",
+    ]) {
+      const found = detectChecks(repo({ "package.json": packageJson({ test }) }));
+      expect(found.ok).toBe(false);
+    }
+  });
+
+  test("keeps a test script that runs something beside a do-nothing command", () => {
+    for (const test of ["echo start && vitest", "vitest; exit 0", "true && bun test"]) {
+      const found = detectChecks(repo({ "package.json": packageJson({ test }) }));
+      expect(found.ok && found.checks).toEqual(["npm run test"]);
+    }
+  });
+
   test("still runs the other scripts when the test script does nothing", () => {
     const found = detectChecks(
       repo({ "package.json": packageJson({ test: "exit 0", lint: "biome ci ." }) }),
