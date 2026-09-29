@@ -225,9 +225,9 @@ decides on. Every call may also arrive twice after a crash, and must then change
 
 | File | What it holds |
 | --- | --- |
-| `version-control.ts` | `VersionControl`: create and remove a task's worktree, read its branch when the agent reports done, and merge it. Revert comes next. |
+| `version-control.ts` | `VersionControl`: create and remove a task's worktree, read its branch when the agent reports done, merge it, and revert its commit on main. |
 | `version-control.contract.ts` | The tests every version-control plugin must pass, against a throwaway git repository. |
-| `git/git.ts` | The built-in plugin. Each build gets a worktree in `.skelcrew/worktrees/` on its own branch from main, such as `task/12-csv-export-2`. Removing one commits its uncommitted work first, and refuses if the worktree isn't on its task's branch or still has unsaved work after that. A merge is built in `.skelcrew/merging/`, checked there, and only then moves main. |
+| `git/git.ts` | The built-in plugin. Each build gets a worktree in `.skelcrew/worktrees/` on its own branch from main, such as `task/12-csv-export-2`. Removing one commits its uncommitted work first, and refuses if the worktree isn't on its task's branch or still has unsaved work after that. A merge is built in `.skelcrew/merging/`, checked there, and only then moves main. A revert is built the same way in `.skelcrew/reverting/`, as one new commit that undoes the task's commit. It moves main under the same rules as a merge, but runs no checks. |
 
 ## Around the core (planned)
 
