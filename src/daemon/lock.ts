@@ -36,11 +36,13 @@ export function takeLock(path: string, pid = process.pid): Locked {
   if (!system.ok) return { ok: false, message: couldNot(system.reason) };
 
   // Opened read-only, so a lock file the daemon can't write to still works.
-  // Files opened here aren't passed on to processes the daemon starts, so
-  // git or the checks can't keep the lock after the daemon has died.
+  // Close-on-exec, so no process the daemon starts, such as git or the
+  // checks, is handed the file and could keep the lock after the daemon has
+  // died. Bun's spawn happens to leave it out anyway on macOS; the flag
+  // makes that true however a process is started.
   let fd: number;
   try {
-    fd = openSync(path, constants.O_RDONLY | constants.O_CREAT, 0o644);
+    fd = openSync(path, constants.O_RDONLY | constants.O_CREAT | system.value.closeOnExec, 0o644);
   } catch (error) {
     return { ok: false, message: couldNot(describe(error)) };
   }
@@ -66,12 +68,22 @@ export function takeLock(path: string, pid = process.pid): Locked {
   return {
     ok: true,
     lock: {
+      // Never throws. The lock is let go of first, by closing the file, so
+      // nothing that fails after, such as removing daemon.pid from a folder
+      // that became read-only, can keep it held.
       release: () => {
         if (released) return;
         released = true;
-        if (readPid(pidFile) === pid) rmSync(pidFile, { force: true });
-        // Closing the file lets go of the lock.
-        closeSync(fd);
+        try {
+          closeSync(fd);
+        } catch {
+          // Already closed: the lock is gone either way.
+        }
+        try {
+          if (readPid(pidFile) === pid) rmSync(pidFile, { force: true });
+        } catch {
+          // Only used to say who runs the daemon. The next daemon overwrites it.
+        }
       },
     },
   };
@@ -82,6 +94,8 @@ type Libc = {
   errno(): number;
   // The error `flock` gives when another process holds the lock.
   wouldBlock: number;
+  // The `open` flag for close-on-exec. Bun's fs.constants lacks it.
+  closeOnExec: number;
 };
 
 let loaded: { ok: true; value: Libc } | { ok: false; reason: string } | null = null;
@@ -90,42 +104,74 @@ let loaded: { ok: true; value: Libc } | { ok: false; reason: string } | null = n
 // name between macOS and Linux.
 function libc(): { ok: true; value: Libc } | { ok: false; reason: string } {
   if (loaded !== null) return loaded;
+  // Values from each system's headers. On Linux, glibc's library is tried
+  // first, then musl's (Alpine and the like). musl is untested.
   const found =
     process.platform === "darwin"
-      ? { library: "libSystem.B.dylib", errnoAt: "__error", wouldBlock: 35 }
+      ? {
+          libraries: ["libSystem.B.dylib"],
+          errnoAt: "__error",
+          wouldBlock: 35,
+          closeOnExec: 0x1000000,
+        }
       : process.platform === "linux"
-        ? { library: "libc.so.6", errnoAt: "__errno_location", wouldBlock: 11 }
+        ? {
+            libraries: ["libc.so.6", `ld-musl-${muslArch()}.so.1`],
+            errnoAt: "__errno_location",
+            wouldBlock: 11,
+            closeOnExec: 0o2000000,
+          }
         : null;
   if (found === null) {
     loaded = { ok: false, reason: `Skelcrew's daemon doesn't run on ${process.platform} yet.` };
     return loaded;
   }
-  try {
-    const lib = dlopen(found.library, {
-      flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
-      [found.errnoAt]: { args: [], returns: FFIType.ptr },
-    });
-    const flock = lib.symbols.flock;
-    const errnoAt = lib.symbols[found.errnoAt];
-    if (flock === undefined || errnoAt === undefined) {
-      loaded = { ok: false, reason: `${found.library} has no flock.` };
+  const failures: string[] = [];
+  for (const library of found.libraries) {
+    const opened = openLibrary(library, found.errnoAt, found.wouldBlock, found.closeOnExec);
+    if (opened.ok) {
+      loaded = opened;
       return loaded;
     }
-    loaded = {
+    failures.push(`${library}: ${opened.reason}`);
+  }
+  loaded = { ok: false, reason: `the system library couldn't be loaded (${failures.join("; ")})` };
+  return loaded;
+}
+
+function openLibrary(
+  library: string,
+  errnoAt: string,
+  wouldBlock: number,
+  closeOnExec: number,
+): { ok: true; value: Libc } | { ok: false; reason: string } {
+  try {
+    const lib = dlopen(library, {
+      flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+      [errnoAt]: { args: [], returns: FFIType.ptr },
+    });
+    const flock = lib.symbols.flock;
+    const where = lib.symbols[errnoAt];
+    if (where === undefined) return { ok: false, reason: `it has no ${errnoAt}.` };
+    return {
       ok: true,
       value: {
         flock: (fd, operation) => Number(flock(fd, operation)),
         errno: () => {
-          const at = errnoAt();
+          const at = where();
           return typeof at === "number" && at !== 0 ? read.i32(at) : -1;
         },
-        wouldBlock: found.wouldBlock,
+        wouldBlock,
+        closeOnExec,
       },
     };
   } catch (error) {
-    loaded = { ok: false, reason: `the system library couldn't be loaded: ${describe(error)}` };
+    return { ok: false, reason: describe(error) };
   }
-  return loaded;
+}
+
+function muslArch(): string {
+  return process.arch === "arm64" ? "aarch64" : "x86_64";
 }
 
 function couldNot(reason: string): string {

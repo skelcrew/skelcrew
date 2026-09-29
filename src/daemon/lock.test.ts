@@ -211,6 +211,24 @@ describe("one daemon per repository", () => {
     await started(repo);
   });
 
+  // Found by review: with .skelcrew read-only, removing daemon.pid threw
+  // before the lock was let go, so the lock stayed held and stop threw.
+  test("lets go of the lock when it stops, even if it can't remove its pid file", async () => {
+    const repo = throwawayRepo(dirs);
+    const served = await serve(repo);
+    if (!served.ok) throw new Error(served.message);
+    const folder = join(repo, ".skelcrew");
+    chmodSync(folder, 0o555);
+    try {
+      await served.server.stop();
+      const next = takeLock(join(folder, "daemon.lock"));
+      expect(next.ok).toBe(true);
+      if (next.ok) next.lock.release();
+    } finally {
+      chmodSync(folder, 0o755);
+    }
+  });
+
   // Otherwise a daemon that failed to start would keep every later one out.
   test("lets go of the lock when it fails to start", async () => {
     const repo = throwawayRepo(dirs);
