@@ -130,6 +130,13 @@ function writeNew(dir: string, path: string, text: string, report: InitReport): 
 // see workflow.yml, so your rules could never be committed.
 const wholeFolder = [".skelcrew", ".skelcrew/", ".skelcrew/*", ".skelcrew/**"];
 
+// A later line can add workflow.yml back, as in `.skelcrew/*` followed by
+// `!.skelcrew/workflow.yml`. That works only when the line leaves out
+// what is in the folder. Git never looks inside a folder that is left out
+// whole, such as `.skelcrew/`, so no later line can add a file back.
+const contentsOnly = [".skelcrew/*", ".skelcrew/**"];
+const keepWorkflow = "!.skelcrew/workflow.yml";
+
 // Adds the database to .gitignore, after whatever is there already.
 function ignoreDatabase(dir: string, report: InitReport): void {
   const path = ".gitignore";
@@ -153,8 +160,14 @@ function ignoreDatabase(dir: string, report: InitReport): void {
 
   const current = readFileSync(full, "utf8");
   const lines = current.split("\n").map((line) => line.trim());
-  const folderLine = lines.find((line) => wholeFolder.includes(line.replace(/^\//, "")));
-  if (folderLine !== undefined) {
+  const folderLine = lines.findLast((line) => wholeFolder.includes(line.replace(/^\//, "")));
+  const addedBack =
+    folderLine !== undefined &&
+    contentsOnly.includes(folderLine.replace(/^\//, "")) &&
+    lines
+      .slice(lines.lastIndexOf(folderLine) + 1)
+      .some((line) => line.replace(/^!\//, "!") === keepWorkflow);
+  if (folderLine !== undefined && !addedBack) {
     report.warnings.push(
       `${path} has the line ${folderLine}, which leaves out all of .skelcrew. Git will never see .skelcrew/workflow.yml, so your rules can't be committed. Replace that line with ${databaseLine}.`,
     );

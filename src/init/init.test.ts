@@ -233,6 +233,35 @@ describe("initRepository", () => {
     }
   });
 
+  // Git lets a later line add a file back, but only when the folder itself
+  // isn't left out. Checked with git check-ignore.
+  test("doesn't warn when a later .gitignore line adds workflow.yml back", () => {
+    for (const lines of [
+      ".skelcrew/*\n!.skelcrew/workflow.yml",
+      "/.skelcrew/**\n!/.skelcrew/workflow.yml",
+    ]) {
+      const dir = repo({ ...bunApp, ".gitignore": `${lines}\n` });
+      const result = initRepository(dir);
+      expect(result.ok && result.report.warnings).toEqual([]);
+    }
+  });
+
+  test("still warns when git can't add workflow.yml back", () => {
+    for (const lines of [
+      // Git never looks inside a folder that is left out whole.
+      ".skelcrew/\n!.skelcrew/workflow.yml",
+      ".skelcrew\n!.skelcrew/workflow.yml",
+      // The last line that matches wins.
+      ".skelcrew/*\n!.skelcrew/workflow.yml\n.skelcrew/*",
+    ]) {
+      const dir = repo({ ...bunApp, ".gitignore": `${lines}\n` });
+      const result = initRepository(dir);
+      const warnings = result.ok ? result.report.warnings : [];
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain("workflow.yml");
+    }
+  });
+
   test("changes nothing when run a second time", () => {
     const dir = repo({ ...bunApp, ".gitignore": "node_modules/\n" });
     initRepository(dir);
