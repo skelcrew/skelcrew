@@ -596,6 +596,56 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       expect(await git(r.dir, "worktree", "list")).toBe(worktrees);
     });
 
+    // Found by Codex review: git overwrites an ignored file by default when
+    // the incoming commit tracks the same path.
+    test("never overwrites an ignored file in your checkout of main", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "secret.env": "from the task\n" });
+      writeFileSync(join(r.dir, ".git", "info", "exclude"), "secret.env\n", { flag: "a" });
+      writeFileSync(join(r.dir, "secret.env"), "my unsaved secret\n");
+      const before = await git(r.dir, "rev-parse", "main");
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      expect((await plugin.merge(request(head), pass)).ok).toBe(false);
+      expect(readFileSync(join(r.dir, "secret.env"), "utf8")).toBe("my unsaved secret\n");
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+    });
+
+    // Found by Codex review: a commit hook can add something the task never
+    // had, and nobody approved.
+    test("refuses when a commit hook changes what gets committed", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "a.ts": "a\n" });
+      const hook = join(r.dir, ".git", "hooks", "pre-commit");
+      writeFileSync(hook, "#!/bin/sh\necho extra > extra.txt\ngit add extra.txt\n");
+      chmodSync(hook, 0o755);
+      const before = await git(r.dir, "rev-parse", "main");
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      expect((await plugin.merge(request(head), pass)).ok).toBe(false);
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+    });
+
+    // Found by Codex review: git hides changes to files marked
+    // assume-unchanged, so a check could change one unseen.
+    test("refuses when the checks hide a change from git", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "a.ts": "broken\n" });
+      const before = await git(r.dir, "rev-parse", "main");
+      const hiding: RunChecks = async (dir) => {
+        await git(dir, "update-index", "--assume-unchanged", "a.ts");
+        writeFileSync(join(dir, "a.ts"), "fixed\n");
+        return { ok: true, value: null };
+      };
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      expect((await plugin.merge(request(head), hiding)).ok).toBe(false);
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+    });
+
     test("moves main when no checkout has it open", async () => {
       const r = await repo();
       const { plugin, heads, request } = await built(r, { "a.ts": "a\n" });

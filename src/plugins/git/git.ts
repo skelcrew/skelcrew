@@ -335,15 +335,12 @@ export class Git implements VersionControl {
         message: `${worktree.path} is on ${on}, not ${worktree.branch}. Its work was left as it is.`,
       };
     }
-    const files = await run(worktree.path, "ls-files", "-v");
-    if (!files.ok) {
-      return { ok: false, message: `git couldn't list ${worktree.path}: ${files.err}` };
-    }
-    const hidden = files.out.split("\n").filter((line) => /^[a-zS]/.test(line));
-    if (hidden.length > 0) {
+    const hidden = await hiddenFiles(worktree.path);
+    if (!hidden.ok) return hidden;
+    if (hidden.value > 0) {
       return {
         ok: false,
-        message: `${hidden.length} file(s) in ${worktree.path} are marked so git hides their changes. The worktree was left as it is.`,
+        message: `${hidden.value} file(s) in ${worktree.path} are marked so git hides their changes. The worktree was left as it is.`,
       };
     }
     return { ok: true, value: null };
@@ -497,6 +494,10 @@ export class Git implements VersionControl {
         conflicts.ok && conflicts.out !== "" ? conflicts.out.split("\n").join(", ") : squashed.err;
       return { ok: false, message: `#${request.taskId} conflicts with ${this.main} in ${files}.` };
     }
+    // What the squash staged. A commit hook could still add or change
+    // something no one approved, so the commit must hold exactly this.
+    const staged = await run(temp, "write-tree");
+    if (!staged.ok) return { ok: false, message: `git couldn't read the merge: ${staged.err}` };
     const committed = await run(
       temp,
       "commit",
@@ -511,6 +512,17 @@ export class Git implements VersionControl {
     const candidate = await run(temp, "rev-parse", "HEAD");
     if (!candidate.ok)
       return { ok: false, message: `git couldn't read the merge: ${candidate.err}` };
+    const tree = await run(temp, "rev-parse", "HEAD^{tree}");
+    if (!tree.ok || tree.out !== staged.out) {
+      return {
+        ok: false,
+        message: "A commit hook changed the merge, so it isn't what the task made.",
+      };
+    }
+    const hiddenBefore = await hiddenFiles(temp);
+    if (!hiddenBefore.ok || hiddenBefore.value > 0) {
+      return { ok: false, message: "Files in the merge are marked so git hides their changes." };
+    }
 
     // The checks run on the merged result. They may leave build output,
     // but must not commit or change tracked files: then they tested
@@ -533,6 +545,15 @@ export class Git implements VersionControl {
         message: "The checks changed tracked files, so they didn't test what would land.",
       };
     }
+    // git status doesn't show changes to files marked assume-unchanged or
+    // skip-worktree, so the checks mustn't leave any such marks.
+    const hiddenAfter = await hiddenFiles(temp);
+    if (!hiddenAfter.ok || hiddenAfter.value > 0) {
+      return {
+        ok: false,
+        message: "The checks hid changes from git, so they didn't test what would land.",
+      };
+    }
 
     // The receipt goes in before main moves, so a crash in between still
     // shows, on the next try, whether main moved.
@@ -546,7 +567,16 @@ export class Git implements VersionControl {
     const moved =
       checkout === null
         ? await run(this.repo, "update-ref", main, candidate.out, before)
-        : await run(checkout, "merge", "--ff-only", "--quiet", candidate.out);
+        : // --no-overwrite-ignore: git would otherwise replace an ignored
+          // file of yours when the merge tracks the same path.
+          await run(
+            checkout,
+            "merge",
+            "--ff-only",
+            "--no-overwrite-ignore",
+            "--quiet",
+            candidate.out,
+          );
     if (!moved.ok) {
       rmSync(receipt, { force: true });
       return { ok: false, message: `${this.main} couldn't be moved to the merge: ${moved.err}` };
@@ -636,6 +666,14 @@ async function markFinished(path: string): Promise<Run> {
 async function isFinished(path: string): Promise<boolean> {
   const dir = await run(path, "rev-parse", "--path-format=absolute", "--git-dir");
   return dir.ok && existsSync(join(dir.out, finishedMark));
+}
+
+// How many files are marked assume-unchanged or skip-worktree. git hides
+// changes to them from status, so a save or a check would miss them.
+async function hiddenFiles(dir: string): Promise<Done<number>> {
+  const files = await run(dir, "ls-files", "-v");
+  if (!files.ok) return { ok: false, message: `git couldn't list ${dir}: ${files.err}` };
+  return { ok: true, value: files.out.split("\n").filter((line) => /^[a-zS]/.test(line)).length };
 }
 
 function shaOf(text: string): Done<CommitSha> {
