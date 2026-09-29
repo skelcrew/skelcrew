@@ -7,6 +7,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -52,6 +53,10 @@ const workflow = ".skelcrew/workflow.yml";
 const specSkill = ".claude/skills/spec/SKILL.md";
 const developSkill = ".claude/skills/develop/SKILL.md";
 const dbLine = ".skelcrew/skelcrew.db*";
+const settings = ".claude/settings.json";
+// The Claude Code permission rule that makes it ask you before an agent
+// runs skelcrew approve.
+const askRule = "Bash(skelcrew approve *)";
 
 describe("initRepository", () => {
   test("sets up a fresh repository, and says what it created", () => {
@@ -61,10 +66,11 @@ describe("initRepository", () => {
       ok: true,
       report: {
         checks: ["bun run test", "bun run lint"],
-        created: [workflow, specSkill, developSkill, ".gitignore"],
+        created: [workflow, specSkill, developSkill, settings, ".gitignore"],
         updated: [],
         unchanged: [],
         warnings: [],
+        askBeforeApprove: "added",
       },
     });
   });
@@ -204,8 +210,9 @@ describe("initRepository", () => {
         checks: ["bun run test", "bun run lint"],
         created: [],
         updated: [],
-        unchanged: [workflow, specSkill, developSkill, ".gitignore"],
+        unchanged: [workflow, specSkill, developSkill, settings, ".gitignore"],
         warnings: [],
+        askBeforeApprove: "already there",
       },
     });
   });
@@ -217,5 +224,107 @@ describe("initRepository", () => {
     expect(!result.ok && result.reason).toContain("Found no checks to run");
     expect(everything(dir)).toEqual({ "README.md": "# app\n" });
     expect(existsSync(join(dir, ".skelcrew"))).toBe(false);
+  });
+
+  describe("the rule that makes Claude Code ask before skelcrew approve", () => {
+    const settingsJson = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
+
+    test("writes a settings file with the rule when there is none", () => {
+      const dir = repo(bunApp);
+      initRepository(dir);
+      expect(JSON.parse(read(dir, settings))).toEqual({ permissions: { ask: [askRule] } });
+    });
+
+    test("never writes your personal settings file", () => {
+      const dir = repo(bunApp);
+      initRepository(dir);
+      expect(existsSync(join(dir, ".claude/settings.local.json"))).toBe(false);
+    });
+
+    test("adds the rule to your settings, keeping everything else as it was", () => {
+      const mine = {
+        $schema: "https://json.schemastore.org/claude-code-settings.json",
+        permissions: { allow: ["Bash(bun test *)"], ask: ["Bash(git push *)"] },
+        env: { DEBUG: "1" },
+      };
+      const dir = repo({ ...bunApp, [settings]: settingsJson(mine) });
+      const result = initRepository(dir);
+      const expected = {
+        ...mine,
+        permissions: { allow: ["Bash(bun test *)"], ask: ["Bash(git push *)", askRule] },
+      };
+      expect(read(dir, settings)).toBe(settingsJson(expected));
+      expect(result.ok && result.report.updated).toContain(settings);
+      expect(result.ok && result.report.askBeforeApprove).toBe("added");
+    });
+
+    test("adds the list the rule goes in when your settings have none", () => {
+      const dir = repo({ ...bunApp, [settings]: settingsJson({ model: "opus" }) });
+      initRepository(dir);
+      expect(JSON.parse(read(dir, settings))).toEqual({
+        model: "opus",
+        permissions: { ask: [askRule] },
+      });
+    });
+
+    test("keeps settings indented with tabs the same way", () => {
+      const mine = `${JSON.stringify({ permissions: { ask: [] } }, null, "\t")}\n`;
+      const dir = repo({ ...bunApp, [settings]: mine });
+      initRepository(dir);
+      const expected = JSON.stringify({ permissions: { ask: [askRule] } }, null, "\t");
+      expect(read(dir, settings)).toBe(`${expected}\n`);
+    });
+
+    // The docs give two ways to write the same rule.
+    test("leaves your settings alone when the rule is there already", () => {
+      for (const rule of [askRule, "Bash(skelcrew approve:*)"]) {
+        const mine = settingsJson({ permissions: { ask: [rule] } });
+        const dir = repo({ ...bunApp, [settings]: mine });
+        const result = initRepository(dir);
+        expect(read(dir, settings)).toBe(mine);
+        expect(result.ok && result.report.unchanged).toContain(settings);
+        expect(result.ok && result.report.askBeforeApprove).toBe("already there");
+      }
+    });
+
+    // Each of these would need a guess, so init changes nothing and says
+    // what to add by hand.
+    test("leaves settings it can't safely change alone, and says what to add", () => {
+      const unclear = [
+        "{ not json",
+        "[]",
+        settingsJson({ permissions: "ask me" }),
+        settingsJson({ permissions: { ask: "Bash(rm *)" } }),
+        settingsJson({ permissions: { ask: [1] } }),
+        // Written back, this would lose its layout.
+        '{ "permissions": { "allow": ["Bash(ls *)"] } }\n',
+        // JSON allows this key, but copying it in JavaScript would drop it.
+        '{\n  "__proto__": {\n    "x": 1\n  }\n}\n',
+      ];
+      for (const mine of unclear) {
+        const dir = repo({ ...bunApp, [settings]: mine });
+        const result = initRepository(dir);
+        expect(read(dir, settings)).toBe(mine);
+        expect(result.ok && result.report.unchanged).toContain(settings);
+        expect(result.ok && result.report.askBeforeApprove).toBe("add by hand");
+        const warnings = result.ok ? result.report.warnings : [];
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain(settings);
+        expect(warnings[0]).toContain(askRule);
+      }
+    });
+
+    test("leaves a settings file that is a link or a folder alone", () => {
+      const linked = repo({ ...bunApp, "elsewhere.json": "{}\n" });
+      mkdirSync(join(linked, ".claude"));
+      symlinkSync(join(linked, "elsewhere.json"), join(linked, settings));
+      const folder = repo(bunApp);
+      mkdirSync(join(folder, settings), { recursive: true });
+      for (const dir of [linked, folder]) {
+        const result = initRepository(dir);
+        expect(result.ok && result.report.askBeforeApprove).toBe("add by hand");
+      }
+      expect(read(linked, "elsewhere.json")).toBe("{}\n");
+    });
   });
 });

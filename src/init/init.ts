@@ -1,7 +1,9 @@
 // What `skelcrew init` does to a repository. It writes .skelcrew/workflow.yml
-// with the checks it finds, keeps the runtime database out of git, and
-// writes the default skills. It never overwrites a file, so running it
-// again changes nothing, and a file you wrote yourself is kept as it is.
+// with the checks it finds, keeps the runtime database out of git, writes
+// the default skills, and makes Claude Code ask you before anything runs
+// skelcrew approve. It never overwrites a file, so running it again changes
+// nothing. It only adds to two files you may have: a line to .gitignore and
+// one rule to .claude/settings.json. Everything else in them is kept.
 //
 // Running the chosen checks on the current code is a separate step for the
 // caller: `localChecks(report.checks)(dir)` from src/checks/checks.ts.
@@ -10,6 +12,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { dirname, join } from "node:path";
 import { parseWorkflow, workflowFile } from "../config/workflow";
 import { detectChecks } from "./detect";
+import { type AskBeforeApprove, addAskRule, settingsPath } from "./settings";
 import { defaultSkills } from "./skills";
 
 // What init did. Each path is relative to the repository.
@@ -19,12 +22,16 @@ export type InitReport = {
   checks: string[];
   // Files that didn't exist and now do.
   created: string[];
-  // Files that existed and had something added: only .gitignore.
+  // Files that existed and had something added: .gitignore, and
+  // .claude/settings.json when the approve rule went in.
   updated: string[];
   // Files that existed and were left exactly as they were.
   unchanged: string[];
   // Things you should look at, such as a workflow.yml init couldn't read.
   warnings: string[];
+  // Whether Claude Code will now ask you before skelcrew approve runs: the
+  // rule was added, was there already, or is for you to add by hand.
+  askBeforeApprove: AskBeforeApprove;
 };
 
 // A failed run may have written some files before it stopped. They are
@@ -40,7 +47,14 @@ const workflowPath = ".skelcrew/workflow.yml";
 const databaseLine = ".skelcrew/skelcrew.db*";
 
 export function initRepository(dir: string): InitResult {
-  const report: InitReport = { checks: [], created: [], updated: [], unchanged: [], warnings: [] };
+  const report: InitReport = {
+    checks: [],
+    created: [],
+    updated: [],
+    unchanged: [],
+    warnings: [],
+    askBeforeApprove: "add by hand",
+  };
 
   // The checks come first. If there are none, nothing is written at all.
   let workflow: string | null = null;
@@ -69,6 +83,10 @@ export function initRepository(dir: string): InitResult {
     if (workflow === null) report.unchanged.push(workflowPath);
     else writeNew(dir, workflowPath, workflow, report);
     for (const skill of defaultSkills) writeNew(dir, skill.path, skill.text, report);
+    const settings = addAskRule(dir);
+    report[settings.file].push(settingsPath);
+    report.askBeforeApprove = settings.askBeforeApprove;
+    if (settings.warning !== null) report.warnings.push(settings.warning);
     ignoreDatabase(dir, report);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
