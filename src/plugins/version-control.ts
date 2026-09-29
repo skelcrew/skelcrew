@@ -64,7 +64,11 @@ export interface VersionControl {
   // result must be one commit on the old main, holding exactly main merged
   // with `head`. A failure leaves main as it was, and the message says
   // why. Asked again after it succeeded, it gives back the same commit and
-  // merges nothing twice.
+  // merges nothing twice. A known limit: this proves the merge once reached
+  // main, not that main still holds it. Merge a task, revert it, then merge
+  // the same head again, and it reports success with the work not on main.
+  // The normal flow can't do this, since a rebuilt task gets a new branch
+  // and head.
   merge(request: MergeRequest, runChecks: RunChecks): Promise<Done<CommitSha>>;
 
   // Undoes one commit on main by adding a new commit that reverses it, and
@@ -78,7 +82,8 @@ export interface VersionControl {
   // moving fails, a checkout of main is left as it was. A conflict leaves
   // main as it was, and the message names the files. No checks run. Asked
   // again after it succeeded, it gives back the same commit and reverts
-  // nothing twice.
+  // nothing twice. As with the merge, this proves the revert once reached
+  // main, not that main still has the commit undone.
   revert(request: RevertRequest): Promise<Done<CommitSha>>;
 
   // Removes the worktree. Its uncommitted changes are committed to its
