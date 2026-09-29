@@ -1,13 +1,14 @@
 ---
 name: spec
-description: Write the spec for a Skelcrew task together with the developer, then submit it for their approval. Use when the developer asks to spec a task, such as "/spec 12".
+description: Write the spec for a Skelcrew task together with the developer, then submit it for their approval. Use when the developer asks to spec a task, such as when the developer asks to spec task 12, or types "/spec 12".
 argument-hint: "[task number]"
 disable-model-invocation: true
 ---
 
 # Spec a Skelcrew task
 
-You write the spec for task $ARGUMENTS with the developer, here in this conversation.
+You write the spec for the task the developer named, such as 12, with the developer, here in
+this conversation.
 
 If you weren't given a task number, ask the developer which task, and wait. Don't run any
 `skelcrew` command until you have one.
@@ -22,9 +23,9 @@ This makes this session the one working on the task.
 If the claim is refused, tell the developer why, in one sentence, and stop. For example, the
 task may not be waiting for a spec, or too many agents may be working already.
 
-The claim prints your session. Submitting the spec needs it. Each shell command starts
-fresh, so setting it once doesn't last. Put `SKELCREW_SESSION=<the session it printed>` in
-front of the submit command, as shown below.
+The claim prints your session. Submitting the spec needs it. Your harness may start each
+shell command fresh, so setting it once may not last. Put
+`SKELCREW_SESSION=<the session it printed>` in front of the submit command, as shown below.
 
 ## 2. Work out the spec with the developer
 

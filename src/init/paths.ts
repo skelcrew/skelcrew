@@ -1,15 +1,16 @@
 // Whether a file init writes would land outside the repository. Some
-// people link a repository's .claude folder to their own ~/.claude. Init
-// would then write its skills and rules into their own settings, which
-// every other project reads too. So before init writes a file, it follows
+// people link a repository's .claude folder to their own ~/.claude, or its
+// .agents folder to their own ~/.agents. Init would then write its rules
+// into their own settings, or its skills into their own .agents/skills,
+// which every other project reads too. So before init writes a file, it follows
 // each link on the way to it and checks where it really leads.
 
 import { lstatSync, realpathSync } from "node:fs";
 import { join, sep } from "node:path";
 
 // The first part of the path that leads outside the repository, such as
-// ".claude" for ".claude/skills/spec/SKILL.md" when .claude is a link to
-// ~/.claude. Null when every part stays inside. A part that can't be
+// ".agents" for ".agents/skills/spec/SKILL.md" when .agents is a link to
+// ~/.agents. Null when every part stays inside. A part that can't be
 // checked, such as a link to nowhere, counts as outside, since init can't
 // tell where a write would go.
 export function outsideLink(dir: string, path: string): string | null {
@@ -33,10 +34,16 @@ export function outsideLink(dir: string, path: string): string | null {
 // What init tells you when it leaves a file alone for this reason.
 export function outsideWarning(path: string, link: string): string {
   return [
-    `Init didn't write ${path}, because ${link} is a link to a place outside the repository, such as your own ~/.claude.`,
+    `Init didn't write ${path}, because ${link} is a link to a place outside the repository, such as your own ${homeExample(link)}.`,
     "Writing there would change files other projects use too.",
     `To add it, make ${link} a real folder in the repository and run init again.`,
   ].join(" ");
+}
+
+// The usual place a link like this leads: ~/.agents for .agents or a
+// folder inside it, and ~/.claude otherwise.
+function homeExample(link: string): string {
+  return link === ".agents" || link.startsWith(".agents/") ? `~/${link}` : "~/.claude";
 }
 
 function linkKind(path: string): "missing" | "link" | "other" | "unknown" {

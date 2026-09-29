@@ -25,10 +25,47 @@ describe("defaultSkills", () => {
     ]);
   });
 
-  test("each starts with a name and a description, as Claude Code skills do", () => {
+  // Claude Code reads argument-hint and disable-model-invocation. Other
+  // harnesses ignore fields they don't know.
+  test("each starts with a name, a description and an argument hint", () => {
     for (const name of ["spec", "develop"]) {
       const front = frontmatter(skill(name));
-      expect(front).toMatchObject({ name, description: expect.any(String) });
+      expect(front).toMatchObject({
+        name,
+        description: expect.any(String),
+        "argument-hint": "[task number]",
+      });
+    }
+  });
+
+  // Not every harness has slash commands, so the description says in
+  // plain words when the skill is for.
+  test("each description says when to use it without needing a slash command", () => {
+    const asks = { spec: "asks to spec task 12", develop: "asks to build task 12" };
+    for (const [name, ask] of Object.entries(asks)) {
+      expect(frontmatter(skill(name))).toMatchObject({
+        description: expect.stringContaining(ask),
+      });
+    }
+  });
+
+  // Claude Code swaps $ARGUMENTS for what the developer typed. Other
+  // harnesses would show it as it is, so the skills never use it.
+  test("never rely on $ARGUMENTS, and name the task the developer gave", () => {
+    for (const name of ["spec", "develop"]) {
+      const text = skill(name).replaceAll(/\s+/g, " ");
+      expect(text).not.toContain("$ARGUMENTS");
+      expect(text).toContain("the task the developer named, such as 12");
+    }
+  });
+
+  // Claude Code starts each shell command fresh. Other harnesses may too,
+  // so the skills don't say which one does.
+  test("say that the harness may start each shell command fresh", () => {
+    for (const name of ["spec", "develop"]) {
+      const text = skill(name).replaceAll(/\s+/g, " ");
+      expect(text).not.toContain("Each shell command starts fresh");
+      expect(text).toContain("Your harness may start each shell command fresh");
     }
   });
 

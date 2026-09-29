@@ -52,6 +52,9 @@ export const askBeforeApproveLimit = [
   "Claude Code asks before the usual ways of running skelcrew approve, such as `skelcrew approve 12` or `npx skelcrew approve 12`.",
   "It is not a lock. A command written another way, such as `bash -c 'skelcrew approve 12'`, runs without asking.",
   "So this guard is weaker than approving in the TUI.",
+  "These rules work only in Claude Code.",
+  "So does the setting that lets only you start the spec and develop skills.",
+  "In another harness, set up its own guard, or approve only by typing skelcrew approve yourself.",
 ].join(" ");
 
 // Whether the list has the rule, written either way Claude Code reads:

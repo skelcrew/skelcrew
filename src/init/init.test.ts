@@ -258,6 +258,8 @@ describe("initRepository", () => {
       for (const warning of result.report.warnings) {
         expect(warning).toContain(".agents");
         expect(warning).toContain("outside the repository");
+        expect(warning).toContain("~/.agents");
+        expect(warning).not.toContain("~/.claude");
       }
     });
 
@@ -677,6 +679,17 @@ describe("initRepository", () => {
       const limit = result.ok ? result.report.askBeforeApproveLimit : "";
       expect(limit).toContain("bash -c");
       expect(limit).toContain("TUI");
+    });
+
+    // The rules in .claude/settings.json, and the skill setting that stops
+    // an agent starting a skill itself, work only in Claude Code.
+    test("says the guards work only in Claude Code, and what to do elsewhere", () => {
+      const result = initRepository(repo(bunApp));
+      const limit = result.ok ? result.report.askBeforeApproveLimit : "";
+      expect(limit).toContain("only in Claude Code");
+      expect(limit).toContain("In another harness, set up its own guard");
+      expect(limit).toContain("typing skelcrew approve yourself");
+      expect(limit).toContain("start the spec and develop skills");
     });
 
     test("adds only the rules your settings don't have yet", () => {

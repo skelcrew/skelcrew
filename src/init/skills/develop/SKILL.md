@@ -1,13 +1,14 @@
 ---
 name: develop
-description: Build a Skelcrew task whose spec is approved, while the developer watches, and report it done. Use when the developer asks to build a task, such as "/develop 12".
+description: Build a Skelcrew task whose spec is approved, while the developer watches, and report it done. Use when the developer asks to build a task, such as when the developer asks to build task 12, or types "/develop 12".
 argument-hint: "[task number]"
 disable-model-invocation: true
 ---
 
 # Build a Skelcrew task
 
-You build task $ARGUMENTS from its approved spec, here in this conversation.
+You build the task the developer named, such as 12, from its approved spec, here in this
+conversation.
 
 If you weren't given a task number, ask the developer which task, and wait. Don't run any
 `skelcrew` command until you have one.
@@ -22,9 +23,10 @@ This makes this session the one working on the task.
 If the claim is refused, tell the developer why, in one sentence, and stop. For example, the
 spec may not be approved yet, or too many agents may be working already.
 
-The claim prints your session. Every report you make needs it. Each shell command starts
-fresh, so setting it once doesn't last. Put `SKELCREW_SESSION=<the session it printed>` in
-front of every report, as the commands below show.
+The claim prints your session. Every report you make needs it. Your harness may start each
+shell command fresh, so setting it once may not last. Put
+`SKELCREW_SESSION=<the session it printed>` in front of every `done` and `give-up`, as the
+commands below show.
 
 The claim's output tells you where to work. If it doesn't, stop and tell the developer.
 
