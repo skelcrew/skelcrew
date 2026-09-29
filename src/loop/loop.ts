@@ -15,7 +15,7 @@
 import { decideTask } from "../core/decide";
 import { evolveTask } from "../core/evolve";
 import { decideProject, evolveProject } from "../core/projects";
-import { schedule } from "../core/schedule";
+import { schedule, slotsInUse } from "../core/schedule";
 import type {
   Command,
   Config,
@@ -139,6 +139,16 @@ export class Loop {
   // One input for one task, at the given time: the clock by default, or a
   // simulated one in tests.
   send(taskId: TaskId, input: Input, at: number = Date.now()): Decision {
+    // decide sees one task, so it can't tell whether a slot is free. A
+    // start only comes from the scheduler, which checks. A claim is checked
+    // here.
+    if (input.type === "claim") {
+      const inUse = slotsInUse(this.tasks(), this.startsInFlight);
+      if (inUse >= this.config.maxRunning) {
+        const reason = `No slot is free: ${inUse} of ${this.config.maxRunning} agents are working or starting.`;
+        return { ok: false, rejection: { input: input.type, reason } };
+      }
+    }
     const before = this.taskMap.get(taskId) ?? null;
     const decision = decideTask(before, { taskId, at, input }, this.config, this.projectMap);
     // A reply answers its start once it has been handled: refused, or its

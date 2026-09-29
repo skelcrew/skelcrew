@@ -100,7 +100,11 @@ const allowed = (outcomes: Outcomes, taskId: TaskId, input: Input): boolean => {
 
 // Replies to every command handed out so far, old ones included, and reports
 // from every agent started so far.
-function messages(commands: Command[], started: Map<TaskId, SessionId[]>): [TaskId, Input][] {
+function messages(
+  commands: Command[],
+  started: Map<TaskId, SessionId[]>,
+  nextClaim: SessionId,
+): [TaskId, Input][] {
   const out: [TaskId, Input][] = [];
   for (const command of commands) {
     switch (command.type) {
@@ -172,6 +176,8 @@ function messages(commands: Command[], started: Map<TaskId, SessionId[]>): [Task
       [taskId, { by: "human", type: "retry" }],
       [taskId, { by: "human", type: "drop" }],
       [taskId, { by: "human", type: "back_to_spec", note: "Again." }],
+      // Your harness session, with a session the daemon has never handed out.
+      [taskId, { by: "human", type: "claim", session: nextClaim }],
     );
   }
   return out;
@@ -251,6 +257,8 @@ describe("the loop", () => {
         let loop = new Loop(config, tools, log);
         const delivered: [TaskId, Input][] = [];
         const started = new Map<TaskId, SessionId[]>();
+        // Sessions you claimed tasks with, once they held a task.
+        const claimed = new Set<SessionId>();
         const outcomes: Outcomes = new Map();
         // Inputs whose save failed: the daemon keeps them and delivers them
         // again once saving works.
@@ -354,7 +362,8 @@ describe("the loop", () => {
             }
 
             case "message": {
-              const all = messages(tools.commands, started).filter(([id, input]) =>
+              const nextClaim = SessionId.parse(`you-${claimed.size + 1}`);
+              const all = messages(tools.commands, started, nextClaim).filter(([id, input]) =>
                 allowed(outcomes, id, input),
               );
               const fits = all.filter(([id, input]) => {
@@ -372,8 +381,18 @@ describe("the loop", () => {
           // 8. Never more agents than max_running: the ones running outside
           // the loop never exceed the limit the loop enforces.
           const inWorld = [...delivered, ...retry].map(([, input]) => input);
+          // Your claimed sessions are agents too, and report like one. One
+          // counts toward the limit while its task holds it. Once let go, it
+          // stops at its next report.
+          for (const task of loop.tasks()) {
+            const session = runningSession(task);
+            if (session === null || !session.startsWith("you-") || claimed.has(session)) continue;
+            claimed.add(session);
+            started.set(task.id, [...(started.get(task.id) ?? []), session]);
+          }
+          const attended = loop.tasks().filter((t) => runningSession(t)?.startsWith("you-")).length;
           const up = runningAgents(tools.commands, inWorld);
-          expect(up.size).toBeLessThanOrEqual(config.maxRunning);
+          expect(up.size + attended).toBeLessThanOrEqual(config.maxRunning);
 
           // 13, in the world: every agent that is up is held by its task, or
           // its start reply is waiting to be handled. Otherwise nothing will
