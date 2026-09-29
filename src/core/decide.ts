@@ -59,8 +59,8 @@ export const decideTask: DecideTask = (task, envelope, config, projects) => {
   if (cleanup !== null) return cleanup;
   if (task.phase === "dropped") return ctx.reject(`#${task.id} was dropped.`);
 
-  const stranger = wrongSender(task, input);
-  if (stranger !== null) return ctx.reject(stranger);
+  const refusal = wrongSender(task, input);
+  if (refusal !== null) return ctx.reject(refusal);
 
   if (worksInAnyPhase(input)) return inAnyPhase(task, input, ctx);
 
@@ -111,8 +111,8 @@ function create(
 ): Decision {
   if (task !== null) return ctx.reject(`#${task.id} already exists.`);
   if (isBlank(input.title)) return ctx.reject("A task needs a title.");
-  const missing = missingProject(input.project, ctx);
-  if (missing) return ctx.reject(missing);
+  const refusal = missingProject(input.project, ctx);
+  if (refusal !== null) return ctx.reject(refusal);
   const created: EventBody = {
     type: "task.created",
     title: input.title,
@@ -192,8 +192,8 @@ function inAnyPhase(task: Task, input: AnyPhaseInput, ctx: Context): Decision {
     // docs/invariants.md).
     case "change_project": {
       if (task.phase === "done") return wrongPhase(task, input, ctx);
-      const missing = missingProject(input.project, ctx);
-      if (missing) return reject(missing);
+      const refusal = missingProject(input.project, ctx);
+      if (refusal !== null) return reject(refusal);
       return accept([{ type: "task.project_changed", project: input.project }]);
     }
 
@@ -201,8 +201,8 @@ function inAnyPhase(task: Task, input: AnyPhaseInput, ctx: Context): Decision {
     // the task holds. A merge already under way is left to finish.
     case "drop": {
       if (task.phase === "done") return reject(`#${task.id} is done. Use revert to undo it.`);
-      const merging = mergeRefusal(task);
-      if (merging) return reject(merging);
+      const refusal = mergeRefusal(task);
+      if (refusal !== null) return reject(refusal);
       return accept([{ type: "task.dropped" }], leavePhase(task));
     }
 
@@ -214,8 +214,8 @@ function inAnyPhase(task: Task, input: AnyPhaseInput, ctx: Context): Decision {
           `#${task.id} is in ${phaseNames[task.phase]}. Only a task past Spec can be sent back to it.`,
         );
       }
-      const merging = mergeRefusal(task);
-      if (merging) return reject(merging);
+      const refusal = mergeRefusal(task);
+      if (refusal !== null) return reject(refusal);
       if (isBlank(input.note)) return reject("A send-back needs a note.");
       return accept([{ type: "task.spec_sent_back", note: input.note }], leavePhase(task));
     }
@@ -678,8 +678,8 @@ function startBlocker(
   task: TaskIn<"spec" | "ready" | "in_progress">,
   ctx: Context,
 ): Decision | null {
-  const refused = startRefusal(task, ctx);
-  if (refused) return ctx.reject(refused);
+  const refusal = startRefusal(task, ctx);
+  if (refusal !== null) return ctx.reject(refusal);
   const capped = safetyCapBlock(task, task.usage, ctx);
   if (capped) return ctx.accept([capped]);
   return null;
