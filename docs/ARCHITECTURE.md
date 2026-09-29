@@ -160,17 +160,22 @@ it with fake tools, and the daemon will run it with real ones.
 2. If accepted, it saves the events and their commands to the event store. If saving
    fails, nothing else happens: the task doesn't change, and no command goes out.
 3. It applies the events with `evolveTask`.
-4. It hands each command to the tools, then marks it done in the store. Replies come back
-   later through `send`.
+4. It hands each command to the tools. A command is marked done in the store only when
+   its tool says it has finished, which for a command that expects a reply means once
+   the reply has been handled: saved, or refused because its time had passed. Replies
+   come back later through `send`.
 
 `startWaiting()` asks `schedule` what to start, and sends the starts. A claim comes from
 you instead, so `send` checks for a free slot before passing it on. The loop counts the
-starts it has sent out and not yet had answered, by task and request number, and gives
-that count to the scheduler. `Loop.open` rebuilds everything from a saved log and carries
+starts it has sent out and not yet had answered, by task and request number, and the
+agents it is stopping whose stops haven't finished, and gives that count to the
+scheduler. So an agent being stopped keeps its slot until it has stopped, and
+`max_running` holds even while a stop is slow. `Loop.open` rebuilds everything from a saved log and carries
 on from there.
 
-If the daemon dies between saving a decision and carrying out its commands, nothing is
-lost. `Loop.open` first carries out every saved command not yet marked done. So a command
+If the daemon dies between saving a decision and finishing its commands, nothing is
+lost. `Loop.open` first carries out every saved command not yet marked done, including
+one whose work was still going on when the daemon died. So a command
 can reach the tools twice, and the tools must treat a repeat as a no-op. For example, a
 second "start #1, request 1" starts nothing.
 
@@ -254,9 +259,9 @@ decides on. Every call may also arrive twice after a crash, and must then change
 
 | File | What it holds |
 | --- | --- |
-| `version-control.ts` | `VersionControl`: create and remove a task's worktree, read its branch when the agent reports done, and merge it. Revert comes next. |
+| `version-control.ts` | `VersionControl`: create and remove a task's worktree, read its branch when the agent reports done, merge it, and revert its commit on main. |
 | `version-control.contract.ts` | The tests every version-control plugin must pass, against a throwaway git repository. |
-| `git/git.ts` | The built-in plugin. Each build gets a worktree in `.skelcrew/worktrees/` on its own branch from main, such as `task/12-csv-export-2`. Removing one commits its uncommitted work first, and refuses if the worktree isn't on its task's branch or still has unsaved work after that. A merge is built in `.skelcrew/merging/`, checked there, and only then moves main. |
+| `git/git.ts` | The built-in plugin. Each build gets a worktree in `.skelcrew/worktrees/` on its own branch from main, such as `task/12-csv-export-2`. Removing one commits its uncommitted work first, and refuses if the worktree isn't on its task's branch or still has unsaved work after that. A merge is built in `.skelcrew/merging/`, checked there, and only then moves main. A revert is built the same way in `.skelcrew/reverting/`, as one new commit that undoes the task's commit. It moves main under the same rules as a merge, but runs no checks. |
 
 ## Around the core (planned)
 

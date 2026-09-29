@@ -177,8 +177,10 @@ export class Simulator implements Tools {
   // The fake tools
   // ---------------------------------------------------------------------------
 
-  // Called by the loop for each command: the fake tools.
-  carryOut(command: Command): void {
+  // Called by the loop for each command: the fake tools. The simulator
+  // never restarts, so it finishes each command as soon as it is taken.
+  carryOut(command: Command, finished: () => void): void {
+    finished();
     switch (command.type) {
       case "start_spec_session":
         this.startAgent(command.taskId, command.request, "spec");

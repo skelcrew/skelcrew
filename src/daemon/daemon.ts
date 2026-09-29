@@ -26,15 +26,20 @@ export type DaemonOptions = {
   // The core never makes up IDs, so the daemon names each claimed session.
   newSession?: () => string;
   now?: () => number;
+  // A reply whose save failed is sent again after `retryMs`, then twice as
+  // long each time, but never more than `maxRetryMs` apart.
+  retryMs?: number;
+  maxRetryMs?: number;
 };
-
-// A reply whose save failed is sent again after this long.
-const retryMs = 1_000;
 
 export class Daemon {
   private queue: Promise<unknown> = Promise.resolve();
   private readonly newSession: () => string;
   private readonly now: () => number;
+  private readonly retryMs: number;
+  private readonly maxRetryMs: number;
+  private readonly retryTimers = new Set<ReturnType<typeof setTimeout>>();
+  private closed = false;
 
   private constructor(
     private readonly loop: Loop,
@@ -42,11 +47,15 @@ export class Daemon {
   ) {
     this.newSession = options.newSession ?? (() => `session-${randomUUID()}`);
     this.now = options.now ?? Date.now;
+    this.retryMs = options.retryMs ?? 1_000;
+    this.maxRetryMs = options.maxRetryMs ?? 30_000;
   }
 
-  // Opens the loop from the saved log. The tools must exist before the
-  // loop does, since opening carries out commands saved before the last
-  // stop. Their replies wait in the queue until the daemon is ready.
+  // Rebuilds every task from the saved events, and carries out any command
+  // that hadn't finished when the last daemon stopped. Then it takes
+  // requests. The tools must exist before that, since those commands go to
+  // them while the daemon is still being set up. Their replies wait in the
+  // queue until it is ready.
   static open(
     options: DaemonOptions,
   ): { ok: true; value: Daemon } | { ok: false; message: string } {
@@ -55,13 +64,23 @@ export class Daemon {
     if (!opened.ok)
       return { ok: false, message: `The saved log couldn't be read. ${opened.reason}` };
     const daemon = new Daemon(opened.loop, options);
-    tools.connect((taskId, input) => daemon.reply(taskId, input));
+    tools.connect((taskId, input, finished) => daemon.reply(taskId, input, finished));
     return { ok: true, value: daemon };
   }
 
   // One request from the CLI, answered once everything before it is done.
+  // It always gets an answer: an error, such as a locked database, becomes
+  // a refusal that says what happened.
   handle(command: Command): Promise<Answer> {
-    return this.oneAtATime(() => this.answer(command));
+    return this.oneAtATime(() => {
+      if (this.closed) return { ok: false, message: "The daemon is shutting down." };
+      try {
+        return this.answer(command);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { ok: false, message: `Skelcrew couldn't handle that: ${message}` };
+      }
+    });
   }
 
   private answer(command: Command): Answer {
@@ -119,7 +138,10 @@ export class Daemon {
       }
 
       case "claim": {
-        const session = SessionId.parse(this.newSession());
+        const named = SessionId.safeParse(this.newSession());
+        if (!named.success)
+          return { ok: false, message: "Skelcrew couldn't name a session for the claim." };
+        const session = named.data;
         const claimed = this.send(command.task, { by: "human", type: "claim", session });
         if (!claimed.ok) return claimed;
         const task = this.loop.task(command.task);
@@ -151,15 +173,44 @@ export class Daemon {
     }
   }
 
-  // A tool's reply, as a new input in the same queue as requests. If it
-  // couldn't be saved, it is sent again a moment later, since the core may
-  // be waiting on it. Any other refusal means it came too late to matter.
-  private reply(taskId: TaskId, input: Input): void {
+  // Stops the daemon. Requests after this are refused, and replies still
+  // waiting to be sent again are dropped. Their commands haven't finished,
+  // so they go out again when the daemon next starts. Resolves once the
+  // work already in the queue is done, so the store can then be closed.
+  close(): Promise<void> {
+    this.closed = true;
+    for (const timer of this.retryTimers) clearTimeout(timer);
+    this.retryTimers.clear();
+    return this.oneAtATime(() => undefined);
+  }
+
+  // A tool's reply, as a new input in the same queue as requests. Once it
+  // is handled, saved or refused as too late to matter, the command it
+  // answers has finished. If it couldn't be saved, whether the save failed
+  // or threw, it is sent again later, since the core may be waiting on it.
+  // It keeps being sent until it is saved or the daemon closes: a task
+  // keeps its slot until then.
+  private reply(taskId: TaskId, input: Input, finished: () => void, attempt = 0): void {
     void this.oneAtATime(() => {
-      const decision = this.loop.send(taskId, input, this.now());
-      if (!decision.ok && decision.rejection.reason.startsWith("The events couldn't be saved")) {
-        setTimeout(() => this.reply(taskId, input), retryMs);
+      if (this.closed) return;
+      let handled: boolean;
+      try {
+        const decision = this.loop.send(taskId, input, this.now());
+        handled =
+          decision.ok || !decision.rejection.reason.startsWith("The events couldn't be saved");
+      } catch {
+        handled = false;
       }
+      if (handled) {
+        finished();
+        return;
+      }
+      const wait = Math.min(this.retryMs * 2 ** attempt, this.maxRetryMs);
+      const timer = setTimeout(() => {
+        this.retryTimers.delete(timer);
+        this.reply(taskId, input, finished, attempt + 1);
+      }, wait);
+      this.retryTimers.add(timer);
     });
   }
 
@@ -220,22 +271,29 @@ function describeBlock(reason: BlockReason): string {
 // checks, so the commands that need them are answered with a failure at
 // once. An attended session can't be stopped or messaged by Skelcrew, so
 // those commands do nothing: its next report is refused instead.
-class DaemonTools implements Tools {
-  private deliver: ((taskId: TaskId, input: Input) => void) | null = null;
-  private early: [TaskId, Input][] = [];
+type Deliver = (taskId: TaskId, input: Input, finished: () => void) => void;
 
-  connect(deliver: (taskId: TaskId, input: Input) => void): void {
+class DaemonTools implements Tools {
+  private deliver: Deliver | null = null;
+  private early: [TaskId, Input, () => void][] = [];
+
+  connect(deliver: Deliver): void {
     this.deliver = deliver;
-    for (const [taskId, input] of this.early) deliver(taskId, input);
+    for (const [taskId, input, finished] of this.early) deliver(taskId, input, finished);
     this.early = [];
   }
 
-  carryOut(command: CoreCommand): void {
+  // A command with no reply has finished as soon as it is done here. One
+  // with a reply finishes when the daemon has handled that reply.
+  carryOut(command: CoreCommand, finished: () => void): void {
     const reply = this.replyTo(command);
-    if (reply === null) return;
+    if (reply === null) {
+      finished();
+      return;
+    }
     const [taskId, input] = reply;
-    if (this.deliver === null) this.early.push([taskId, input]);
-    else this.deliver(taskId, input);
+    if (this.deliver === null) this.early.push([taskId, input, finished]);
+    else this.deliver(taskId, input, finished);
   }
 
   private replyTo(command: CoreCommand): [TaskId, Input] | null {
