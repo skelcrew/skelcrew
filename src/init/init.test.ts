@@ -568,6 +568,82 @@ describe("initRepository", () => {
     });
   });
 
+  // Project instructions live in AGENTS.md, which any harness reads. Claude
+  // Code reads CLAUDE.md, so init makes that a link to AGENTS.md. It never
+  // moves or rewrites either file.
+  describe("the link from CLAUDE.md to AGENTS.md", () => {
+    const agents = "# Rules\n\nRun the tests.\n";
+
+    test("links CLAUDE.md to AGENTS.md when there is no CLAUDE.md", () => {
+      const dir = repo({ ...bunApp, "AGENTS.md": agents });
+      const result = initRepository(dir);
+      expect(readlinkSync(join(dir, "CLAUDE.md"))).toBe("AGENTS.md");
+      expect(read(dir, "CLAUDE.md")).toBe(agents);
+      expect(read(dir, "AGENTS.md")).toBe(agents);
+      expect(result.ok && result.report.linked).toEqual([specLink, developLink, "CLAUDE.md"]);
+      expect(result.ok && result.report.warnings).toEqual([]);
+    });
+
+    test("leaves both alone when both are there, in any form", () => {
+      const files = repo({ ...bunApp, "AGENTS.md": agents, "CLAUDE.md": "# Mine\n" });
+      const linked = repo({ ...bunApp, "AGENTS.md": agents, "notes.md": "# Notes\n" });
+      symlinkSync("notes.md", join(linked, "CLAUDE.md"));
+      const broken = repo({ ...bunApp, "AGENTS.md": agents });
+      symlinkSync("nowhere.md", join(broken, "CLAUDE.md"));
+      for (const dir of [files, linked, broken]) {
+        const before = everything(dir);
+        const linksBefore = links(dir);
+        const result = initRepository(dir);
+        for (const [path, text] of Object.entries(before)) expect(read(dir, path)).toBe(text);
+        expect(links(dir)).toEqual({
+          ...linksBefore,
+          [specLink]: "../../.agents/skills/spec",
+          [developLink]: "../../.agents/skills/develop",
+        });
+        expect(result.ok && result.report.unchanged).toContain("CLAUDE.md");
+        expect(result.ok && result.report.linked).toEqual([specLink, developLink]);
+        expect(result.ok && result.report.warnings).toEqual([]);
+      }
+    });
+
+    test("leaves a CLAUDE.md alone when there is no AGENTS.md, and says how to switch", () => {
+      const mine = "# My rules\n";
+      const dir = repo({ ...bunApp, "CLAUDE.md": mine });
+      const result = initRepository(dir);
+      expect(read(dir, "CLAUDE.md")).toBe(mine);
+      expect(links(dir)).not.toHaveProperty("CLAUDE.md");
+      expect(existsSync(join(dir, "AGENTS.md"))).toBe(false);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.report.unchanged).toContain("CLAUDE.md");
+      expect(result.report.linked).toEqual([specLink, developLink]);
+      expect(result.report.warnings).toHaveLength(1);
+      expect(result.report.warnings[0]).toContain("move it to AGENTS.md");
+      expect(result.report.warnings[0]).toContain("make CLAUDE.md a link to it");
+    });
+
+    test("does nothing when there is neither", () => {
+      const dir = repo(bunApp);
+      const result = initRepository(dir);
+      expect(existsSync(join(dir, "CLAUDE.md"))).toBe(false);
+      expect(existsSync(join(dir, "AGENTS.md"))).toBe(false);
+      expect(result.ok && result.report.linked).toEqual([specLink, developLink]);
+      expect(result.ok && result.report.unchanged).toEqual([]);
+    });
+
+    test("changes nothing when run a second time", () => {
+      const dir = repo({ ...bunApp, "AGENTS.md": agents });
+      initRepository(dir);
+      const linksBefore = links(dir);
+      const second = initRepository(dir);
+      expect(links(dir)).toEqual(linksBefore);
+      expect(linksBefore["CLAUDE.md"]).toBe("AGENTS.md");
+      expect(second.ok && second.report.linked).toEqual([]);
+      expect(second.ok && second.report.unchanged).toContain("CLAUDE.md");
+      expect(second.ok && second.report.warnings).toEqual([]);
+    });
+  });
+
   describe("the rules that make Claude Code ask before skelcrew approve", () => {
     const settingsJson = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 

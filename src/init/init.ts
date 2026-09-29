@@ -1,8 +1,9 @@
 // What `skelcrew init` does to a repository. It writes .skelcrew/workflow.yml
 // with the checks it finds, keeps Skelcrew's runtime files out of git,
 // writes the default skills to .agents/skills, links each one into
-// .claude/skills for Claude Code, and makes Claude Code ask you before
-// anything runs skelcrew approve. It never overwrites a file or replaces
+// .claude/skills for Claude Code, links CLAUDE.md to AGENTS.md when only
+// AGENTS.md is there, and makes Claude Code ask you before anything runs
+// skelcrew approve. It never overwrites a file or replaces
 // anything with a link, so running it again changes nothing. It only adds to two files you may have: the missing
 // runtime lines to .gitignore, and the approve rules to
 // .claude/settings.json. Everything else in them is kept.
@@ -121,6 +122,7 @@ export function initRepository(dir: string): InitResult {
     else writeNew(dir, workflowPath, workflow, report);
     for (const skill of defaultSkills) writeNew(dir, skill.path, skill.text, report);
     for (const skill of defaultSkills) linkSkill(dir, dirname(skill.path), report);
+    linkInstructions(dir, report);
     const settingsLink = outsideLink(dir, settingsPath);
     if (settingsLink === null) {
       const settings = addAskRule(dir);
@@ -219,6 +221,46 @@ function linkSkill(dir: string, folder: string, report: InitReport): void {
         `Init couldn't link ${path} to ${folder}: ${message}.`,
         `Claude Code won't find the ${name} skill until the link is there.`,
         `To add it, run \`ln -s ${target} ${path}\` in the repository.`,
+      ].join(" "),
+    );
+    return;
+  }
+  report.linked.push(path);
+}
+
+// Project instructions live in AGENTS.md, which most harnesses read. Claude
+// Code reads CLAUDE.md, so when there is an AGENTS.md and no CLAUDE.md,
+// init makes CLAUDE.md a link to it. It never moves or rewrites either
+// file. With both there, in any form, it leaves both alone.
+function linkInstructions(dir: string, report: InitReport): void {
+  const path = "CLAUDE.md";
+  const full = join(dir, path);
+  const hasAgents = isThere(join(dir, "AGENTS.md"));
+  if (isThere(full)) {
+    report.unchanged.push(path);
+    if (!hasAgents && !isLink(full)) {
+      report.warnings.push(
+        [
+          "CLAUDE.md holds your project instructions, but only Claude Code reads it. Other harnesses read AGENTS.md.",
+          "Init left it as it is.",
+          "To share one file with every harness, move it to AGENTS.md, then make CLAUDE.md a link to it:",
+          "`mv CLAUDE.md AGENTS.md && ln -s AGENTS.md CLAUDE.md`.",
+        ].join(" "),
+      );
+    }
+    return;
+  }
+  if (!hasAgents) return;
+  try {
+    symlinkSync("AGENTS.md", full);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    report.byHand.push(path);
+    report.warnings.push(
+      [
+        `Init couldn't link CLAUDE.md to AGENTS.md: ${message}.`,
+        "Claude Code won't read your instructions until the link is there.",
+        "To add it, run `ln -s AGENTS.md CLAUDE.md` in the repository.",
       ].join(" "),
     );
     return;
