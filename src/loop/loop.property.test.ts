@@ -469,6 +469,15 @@ describe("the loop", () => {
           const handedOut = [...tools.commands, ...tools.notDone()];
           expect(loop.startsInFlight).toBeLessThanOrEqual(startsOut(handedOut, delivered).size);
 
+          // Every agent the loop counts as being stopped has a stop the tools
+          // really haven't finished, so a slot is never held for nothing.
+          const stopsOut = new Set(
+            tools.unfinished.flatMap(({ command }) =>
+              command.type === "stop_session" ? [command.session] : [],
+            ),
+          );
+          expect(loop.stopsInFlight).toBeLessThanOrEqual(stopsOut.size);
+
           // A failed save changes nothing: the loop's tasks always match a
           // fresh replay of the saved log.
           const saved = log.loadTasks();

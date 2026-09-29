@@ -162,12 +162,15 @@ it with fake tools, and the daemon will run it with real ones.
 3. It applies the events with `evolveTask`.
 4. It hands each command to the tools. A command is marked done in the store only when
    its tool says it has finished, which for a command that expects a reply means once
-   the reply is saved. Replies come back later through `send`.
+   the reply has been handled: saved, or refused because its time had passed. Replies
+   come back later through `send`.
 
 `startWaiting()` asks `schedule` what to start, and sends the starts. A claim comes from
 you instead, so `send` checks for a free slot before passing it on. The loop counts the
-starts it has sent out and not yet had answered, by task and request number, and gives
-that count to the scheduler. `Loop.open` rebuilds everything from a saved log and carries
+starts it has sent out and not yet had answered, by task and request number, and the
+agents it is stopping whose stops haven't finished, and gives that count to the
+scheduler. So an agent being stopped keeps its slot until it has stopped, and
+`max_running` holds even while a stop is slow. `Loop.open` rebuilds everything from a saved log and carries
 on from there.
 
 If the daemon dies between saving a decision and finishing its commands, nothing is

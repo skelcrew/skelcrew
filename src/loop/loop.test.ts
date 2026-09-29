@@ -340,6 +340,41 @@ describe("the loop", () => {
     expect(reopened.loop.startWaiting()).toEqual([two]);
   });
 
+  // Found by review: a stop was counted before the tool took it, so a tool
+  // that threw kept the slot taken until the daemon restarted.
+  test("frees the slot when the tool throws instead of taking a stop", () => {
+    const throwing: Tools = {
+      carryOut: (command, finished) => {
+        if (command.type === "stop_session") throw new Error("kill: EPERM");
+        finished();
+      },
+    };
+    const loop = new Loop(config, throwing, EventStore.open(":memory:"));
+    loop.send(one, add());
+    loop.send(two, add());
+    loop.startWaiting();
+    loop.send(one, started(1, "s1"));
+    expect(() => loop.send(one, { by: "human", type: "drop" })).toThrow("kill: EPERM");
+    expect(loop.startWaiting()).toEqual([two]);
+  });
+
+  // Found by review: two stops for the same agent counted twice, so one
+  // agent held two slots.
+  test("counts an agent being stopped once, however many stops it gets", () => {
+    const tools = new SlowStops();
+    const loop = new Loop({ ...config, maxRunning: 2 }, tools, EventStore.open(":memory:"));
+    loop.send(one, add());
+    loop.startWaiting();
+    loop.send(one, { by: "human", type: "drop" });
+    // #1's agent comes up late, and its start reply arrives twice: each
+    // brings a stop for the same agent.
+    loop.send(one, started(1, "s1"));
+    loop.send(one, started(1, "s1"));
+    loop.send(two, add());
+    loop.send(TaskId.parse(3), add());
+    expect(loop.startWaiting()).toEqual([two]);
+  });
+
   // Found by review: an error while marking a command done was thrown into
   // the tool's own code, where it could go unhandled.
   test("never throws from finished, and a command it couldn't mark goes out again", () => {
@@ -376,9 +411,10 @@ describe("the loop", () => {
   });
 
   // Found by review: the reply was saved, then the daemon died before the
-  // tool said it had finished. The start goes out again, and the second
-  // agent it brings up must be stopped.
-  test("stops a second agent when a start goes out again after its reply was saved", () => {
+  // tool said it had finished, so the start goes out again. By the Tools
+  // rules a repeated start starts nothing. This is the backstop for a tool
+  // that breaks that rule and starts a second agent anyway: the core stops it.
+  test("stops a second agent if a tool breaks the rule and starts one on a repeated start", () => {
     const store = EventStore.open(":memory:");
     const first = new Loop(config, new Unfinished(), store);
     first.send(one, add());
@@ -419,7 +455,7 @@ describe("the loop", () => {
       ok: false,
       rejection: {
         input: "claim",
-        reason: "No slot is free: 1 of 1 agents are working or starting.",
+        reason: "No slot is free: 1 of 1 agents are working, starting or stopping.",
       },
     });
     const saved = store.loadTasks();
