@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -58,6 +59,16 @@ function links(dir: string): Record<string, string> {
 }
 
 const read = (dir: string, path: string) => readFileSync(join(dir, path), "utf8");
+
+// Whether anything is at the path, even a link to nowhere.
+function isThere(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const bunApp = {
   "package.json": JSON.stringify({ scripts: { test: "bun test", lint: "biome ci ." } }),
@@ -622,6 +633,58 @@ describe("initRepository", () => {
       expect(result.report.warnings).toHaveLength(1);
       expect(result.report.warnings[0]).toContain("move it to AGENTS.md");
       expect(result.report.warnings[0]).toContain("make CLAUDE.md a link to it");
+    });
+
+    // CLAUDE.md is committed and read by Claude Code. A link to an
+    // AGENTS.md that leads outside the repository, such as to a private
+    // file, would show that file's text to Claude Code and commit a link to
+    // it. A folder or a link to nowhere gives Claude Code nothing to read.
+    test("makes no link when AGENTS.md isn't a readable file in the repository, and says why", () => {
+      const home = repo({ "private.md": "# My private notes\n" });
+      const outside = repo(bunApp);
+      symlinkSync(join(home, "private.md"), join(outside, "AGENTS.md"));
+      const folder = repo(bunApp);
+      mkdirSync(join(folder, "AGENTS.md"));
+      const broken = repo(bunApp);
+      symlinkSync("nowhere.md", join(broken, "AGENTS.md"));
+      const cases = [
+        { dir: outside, why: "outside the repository" },
+        { dir: folder, why: "isn't a file" },
+        { dir: broken, why: "leads nowhere" },
+      ];
+      for (const { dir, why } of cases) {
+        const result = initRepository(dir);
+        expect(isThere(join(dir, "CLAUDE.md"))).toBe(false);
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.report.linked).toEqual([specLink, developLink]);
+        expect(result.report.warnings).toHaveLength(1);
+        expect(result.report.warnings[0]).toContain("CLAUDE.md");
+        expect(result.report.warnings[0]).toContain(why);
+      }
+    });
+
+    test("makes no link to an AGENTS.md it can't read, and says why", () => {
+      const dir = repo({ ...bunApp, "AGENTS.md": agents });
+      chmodSync(join(dir, "AGENTS.md"), 0o000);
+      try {
+        const result = initRepository(dir);
+        expect(isThere(join(dir, "CLAUDE.md"))).toBe(false);
+        expect(result.ok && result.report.warnings).toEqual([
+          expect.stringContaining("can't be read"),
+        ]);
+      } finally {
+        chmodSync(join(dir, "AGENTS.md"), 0o644);
+      }
+    });
+
+    test("links to an AGENTS.md that is a link to a file inside the repository", () => {
+      const dir = repo({ ...bunApp, "docs/agents.md": agents });
+      symlinkSync("docs/agents.md", join(dir, "AGENTS.md"));
+      const result = initRepository(dir);
+      expect(readlinkSync(join(dir, "CLAUDE.md"))).toBe("AGENTS.md");
+      expect(read(dir, "CLAUDE.md")).toBe(agents);
+      expect(result.ok && result.report.warnings).toEqual([]);
     });
 
     test("does nothing when there is neither", () => {

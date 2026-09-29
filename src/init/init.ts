@@ -12,12 +12,15 @@
 // caller: `localChecks(report.checks)(dir)` from src/checks/checks.ts.
 
 import {
+  accessSync,
   appendFileSync,
+  constants,
   existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
   realpathSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -231,7 +234,8 @@ function linkSkill(dir: string, folder: string, report: InitReport): void {
 // Project instructions live in AGENTS.md, which most harnesses read. Claude
 // Code reads CLAUDE.md, so when there is an AGENTS.md and no CLAUDE.md,
 // init makes CLAUDE.md a link to it. It never moves or rewrites either
-// file. With both there, in any form, it leaves both alone.
+// file. With both there, in any form, it leaves both alone. It makes the
+// link only when AGENTS.md is a file in the repository it can read.
 function linkInstructions(dir: string, report: InitReport): void {
   const path = "CLAUDE.md";
   const full = join(dir, path);
@@ -251,6 +255,17 @@ function linkInstructions(dir: string, report: InitReport): void {
     return;
   }
   if (!hasAgents) return;
+  const why = cantLinkAgents(dir);
+  if (why !== null) {
+    report.warnings.push(
+      [
+        `Init didn't make CLAUDE.md a link to AGENTS.md, because AGENTS.md ${why}.`,
+        "Claude Code won't read your project instructions until CLAUDE.md is there.",
+        "To add it, make AGENTS.md a file in the repository that you can read, and run init again.",
+      ].join(" "),
+    );
+    return;
+  }
   try {
     symlinkSync("AGENTS.md", full);
   } catch (error) {
@@ -266,6 +281,25 @@ function linkInstructions(dir: string, report: InitReport): void {
     return;
   }
   report.linked.push(path);
+}
+
+// Why CLAUDE.md shouldn't be a link to AGENTS.md, or null when it can be.
+// CLAUDE.md is committed and Claude Code reads it. So AGENTS.md must be a
+// file inside the repository that can be read. A link to a private file
+// outside it would show that file to Claude Code.
+function cantLinkAgents(dir: string): string | null {
+  const full = join(dir, "AGENTS.md");
+  if (isLink(full) && !existsSync(full)) return "is a link that leads nowhere";
+  if (outsideLink(dir, "AGENTS.md") !== null) {
+    return "is a link to a place outside the repository";
+  }
+  try {
+    if (!statSync(full).isFile()) return "isn't a file";
+    accessSync(full, constants.R_OK);
+  } catch {
+    return "can't be read";
+  }
+  return null;
 }
 
 function isThere(path: string): boolean {
