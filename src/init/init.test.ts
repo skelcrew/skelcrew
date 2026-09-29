@@ -789,6 +789,36 @@ describe("initRepository", () => {
       expect(limit).toContain("start the spec and develop skills");
     });
 
+    // When init couldn't add the rules, Claude Code doesn't ask yet. The
+    // report must not say it does, and must say what to add.
+    test("says the guard isn't in place yet when it couldn't add the rules", () => {
+      const broken = repo({ ...bunApp, [settings]: "{ not json" });
+      const home = repo({ ".claude/settings.json": "{}\n" });
+      const linked = repo(bunApp);
+      symlinkSync(join(home, ".claude"), join(linked, ".claude"));
+      for (const dir of [broken, linked]) {
+        const result = initRepository(dir);
+        expect(result.ok && result.report.askBeforeApprove).toBe("add by hand");
+        const limit = result.ok ? result.report.askBeforeApproveLimit : "";
+        expect(limit).not.toContain("Claude Code asks before");
+        expect(limit).toContain("not in place yet");
+        for (const rule of askRules) expect(limit).toContain(rule);
+        expect(limit).toContain("bash -c");
+      }
+    });
+
+    test("says Claude Code asks before approve when the rules are there", () => {
+      const added = initRepository(repo(bunApp));
+      const dir = repo(bunApp);
+      initRepository(dir);
+      const already = initRepository(dir);
+      for (const result of [added, already]) {
+        const limit = result.ok ? result.report.askBeforeApproveLimit : "";
+        expect(limit).toContain("Claude Code asks before");
+        expect(limit).not.toContain("not in place yet");
+      }
+    });
+
     test("adds only the rules your settings don't have yet", () => {
       const have = ["Bash(git push *)", "Bash(skelcrew approve *)", "Bash(npx skelcrew approve:*)"];
       const dir = repo({ ...bunApp, [settings]: settingsJson({ permissions: { ask: have } }) });

@@ -56,8 +56,9 @@ export type InitReport = {
   // Whether Claude Code will now ask you before skelcrew approve runs: the
   // rule was added, was there already, or is for you to add by hand.
   askBeforeApprove: AskBeforeApprove;
-  // What the rules can't stop, in plain words: a command typed another
-  // way, such as through bash -c, runs without asking.
+  // The guard in plain words: whether it is in place, what to add when
+  // it isn't, and what it can't stop. A command typed another way, such as
+  // through bash -c, runs without asking.
   askBeforeApproveLimit: string;
 };
 
@@ -92,7 +93,7 @@ export function initRepository(dir: string): InitResult {
     byHand: [],
     warnings: [],
     askBeforeApprove: "add by hand",
-    askBeforeApproveLimit,
+    askBeforeApproveLimit: "",
   };
 
   // The checks come first. If there are none, nothing is written at all.
@@ -153,6 +154,7 @@ export function initRepository(dir: string): InitResult {
       linked: report.linked,
     };
   }
+  report.askBeforeApproveLimit = askBeforeApproveLimit(report.askBeforeApprove);
   return { ok: true, report };
 }
 
