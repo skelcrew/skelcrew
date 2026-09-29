@@ -91,6 +91,14 @@ describe("parseWorkflow", () => {
     });
   });
 
+  // Found by review: a check of only spaces ran nothing, and passed.
+  test("refuses a check that is blank", () => {
+    expect(parseWorkflow('checks:\n  - bun test\n  - "   "\n')).toEqual({
+      ok: false,
+      reasons: ["checks.1: each check must be a command."],
+    });
+  });
+
   test("refuses a field it doesn't know, so a typo can't be silently ignored", () => {
     expect(parseWorkflow("checks:\n  - bun test\ncritical_path:\n  - src/auth/**\n")).toEqual({
       ok: false,
