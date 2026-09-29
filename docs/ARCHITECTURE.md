@@ -199,6 +199,15 @@ makes every path critical, so nothing merges without your approval. `workflowFil
 writes the file `skelcrew init` will create, with the check commands init finds in the
 repository.
 
+## The local checks
+
+`src/checks/checks.ts` runs the `checks` commands from `workflow.yml` in a folder, one
+after another, and stops at the first failure. That is the `local` gate, and the merge
+runs the same checks again on the merged result. A failure names the command and its exit
+code, then the end of its output, which is what the agent sees. Each command runs in a
+process group of its own, so a command that runs too long is stopped with everything it
+started. Input is closed and `CI=true` is set, so nothing waits for a person.
+
 ## Plugins
 
 `src/plugins/` connects the daemon to other tools. Each kind of plugin is an interface,
