@@ -17,6 +17,7 @@ import type { BranchFacts, Worktree } from "../../core/types";
 import type {
   Done,
   MergeRequest,
+  RevertRequest,
   RunChecks,
   VersionControl,
   WorktreeRequest,
@@ -28,6 +29,8 @@ import type {
 const worktreesFolder = ".skelcrew/worktrees";
 // A merge is built in a worktree of its own here, never in yours.
 const mergingFolder = ".skelcrew/merging";
+// And a revert here.
+const revertingFolder = ".skelcrew/reverting";
 
 // How failure messages name what is being put on main. The merge and the
 // revert share their steps, so they share the messages too.
@@ -47,6 +50,15 @@ const merging: Wording = {
   nothing: "Nothing was merged.",
   changes: "the task's changes",
   stopped: "The merge stopped partway.",
+};
+
+const reverting: Wording = {
+  thing: "the revert",
+  exactly: "exactly main with the commit undone",
+  during: "while the revert was being made",
+  nothing: "Nothing was reverted.",
+  changes: "the revert's changes",
+  stopped: "The revert stopped partway.",
 };
 
 export class Git implements VersionControl {
@@ -76,6 +88,10 @@ export class Git implements VersionControl {
     return this.oneAtATime(() =>
       guard(`merge #${request.taskId}`, () => this.squashMerge(request, runChecks)),
     );
+  }
+
+  revert(request: RevertRequest): Promise<Done<CommitSha>> {
+    return this.oneAtATime(() => guard(`revert #${request.taskId}`, () => this.undo(request)));
   }
 
   readBranch(worktree: Worktree): Promise<Done<BranchFacts>> {
@@ -408,13 +424,12 @@ export class Git implements VersionControl {
     };
   }
 
-  // Adds the worktrees folder to .git/info/exclude, once.
-  // Adds the worktrees and merging folders to .git/info/exclude, once each.
+  // Adds the plugin's worktree folders to .git/info/exclude, once each.
   private async ignoreWorktrees(): Promise<Done<null>> {
     const found = await run(this.repo, "rev-parse", "--git-path", "info/exclude");
     if (!found.ok) return { ok: false, message: `git couldn't find its ignore file: ${found.err}` };
     const file = isAbsolute(found.out) ? found.out : join(this.repo, found.out);
-    for (const folder of [worktreesFolder, mergingFolder]) {
+    for (const folder of [worktreesFolder, mergingFolder, revertingFolder]) {
       const line = `/${folder}/`;
       const current = existsSync(file) ? readFileSync(file, "utf8") : "";
       if (!current.split("\n").includes(line)) {
@@ -536,6 +551,121 @@ export class Git implements VersionControl {
     }
 
     return this.land(receipt, before, candidate.out, merging);
+  }
+
+  // The revert. Like the merge, it is built in a worktree of its own, and
+  // main only moves at the very end, to a result checked independently.
+  private async undo(request: RevertRequest): Promise<Done<CommitSha>> {
+    const common = await this.gitFolder();
+    if (!common.ok) return common;
+
+    // Already reverted? As with the merge, only a receipt whose commit is
+    // on main counts.
+    const receipt = join(common.value, "skelcrew-reverts", `${request.taskId}-${request.commit}`);
+    const landed = await this.landedBefore(receipt);
+    if (landed !== null) return landed;
+
+    const before = await this.mainNow();
+    if (!before.ok) return before;
+    const onMain = await run(
+      this.repo,
+      "merge-base",
+      "--is-ancestor",
+      request.commit,
+      before.value,
+    );
+    if (!onMain.ok) {
+      return {
+        ok: false,
+        message: `${request.commit} isn't on ${this.main}, so there is nothing to revert.`,
+      };
+    }
+    // A task lands as one commit with one parent. Undoing a commit that
+    // joins two branches would need a choice of which side to keep.
+    const parents = await run(this.repo, "rev-list", "--parents", "--max-count=1", request.commit);
+    if (!parents.ok) {
+      return { ok: false, message: `git couldn't read ${request.commit}: ${parents.err}` };
+    }
+    const count = parents.out.split(" ").length - 1;
+    if (count > 1) {
+      return {
+        ok: false,
+        message: `${request.commit} has more than one parent, so it isn't one task's commit. It wasn't reverted.`,
+      };
+    }
+    if (count === 0) {
+      return {
+        ok: false,
+        message: `${request.commit} is the first commit, with nothing before it to go back to.`,
+      };
+    }
+    const ignored = await this.ignoreWorktrees();
+    if (!ignored.ok) return ignored;
+
+    return this.inOwnWorktree(
+      join(this.repo, revertingFolder, String(request.taskId)),
+      join(common.value, "skelcrew-reverting", String(request.taskId)),
+      reverting,
+      (temp) => this.buildRevert(request, temp, receipt, before.value),
+    );
+  }
+
+  private async buildRevert(
+    request: RevertRequest,
+    temp: string,
+    receipt: string,
+    before: string,
+  ): Promise<Done<CommitSha>> {
+    const added = await run(this.repo, "worktree", "add", "--quiet", "--detach", temp, before);
+    if (!added.ok) return { ok: false, message: `git couldn't prepare the revert: ${added.err}` };
+
+    const undone = await run(temp, "revert", "--no-commit", request.commit);
+    if (!undone.ok) {
+      const files = await conflicted(temp, undone.err);
+      return {
+        ok: false,
+        message: `Reverting #${request.taskId} conflicts with ${this.main} in ${files}. Nothing was reverted.`,
+      };
+    }
+    // Main may no longer hold what the commit changed, for example if
+    // someone undid it by hand. Then there is nothing to commit.
+    const changes = await run(temp, "diff", "--cached", "--quiet", "HEAD");
+    if (changes.ok) {
+      return {
+        ok: false,
+        message: `Reverting ${request.commit} changes nothing: ${this.main} no longer holds what it added.`,
+      };
+    }
+    const committed = await run(
+      temp,
+      "commit",
+      "--quiet",
+      "--message",
+      `Revert #${request.taskId}: ${request.reason}`,
+      "--message",
+      `This reverts commit ${request.commit}.`,
+      "--message",
+      `Skelcrew-Task: ${request.taskId}`,
+    );
+    if (!committed.ok) {
+      return { ok: false, message: `git couldn't commit the revert: ${committed.err}` };
+    }
+    const candidate = await run(temp, "rev-parse", "HEAD");
+    if (!candidate.ok) {
+      return { ok: false, message: `git couldn't read the revert: ${candidate.err}` };
+    }
+    // Hooks run while the revert is made, so the result is checked against
+    // what it must be: one commit on the old main, holding what git gets by
+    // undoing the commit's changes on main. That is a merge of main and the
+    // commit's parent, from the commit itself.
+    const exact = await this.isExact(
+      candidate.out,
+      before,
+      [`--merge-base=${request.commit}`, before, `${request.commit}^`],
+      reverting,
+    );
+    if (!exact.ok) return exact;
+    return this.land(receipt, before, candidate.out, reverting);
   }
 
   // git's own folder, shared by every worktree of the repository.

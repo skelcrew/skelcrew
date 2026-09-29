@@ -28,6 +28,10 @@ export type MergeRequest = {
 // hands this to the merge, which calls it on the merged result.
 export type RunChecks = (dir: string) => Promise<Done<null>>;
 
+// What to undo: a commit a merge put on main, for this task. The reason
+// goes in the new commit's message.
+export type RevertRequest = { taskId: TaskId; commit: CommitSha; reason: string };
+
 // Which worktree to create. The core's create_worktree command has no
 // title, so the daemon adds the task's title for the branch name.
 export type WorktreeRequest = { taskId: TaskId; title: string; build: number };
@@ -62,6 +66,20 @@ export interface VersionControl {
   // why. Asked again after it succeeded, it gives back the same commit and
   // merges nothing twice.
   merge(request: MergeRequest, runChecks: RunChecks): Promise<Done<CommitSha>>;
+
+  // Undoes one commit on main by adding a new commit that reverses it, and
+  // gives back the new commit. The commit must be on main and have one
+  // parent, as a merge's squashed commit does. The result must be one
+  // commit on the old main, holding exactly main with that commit undone,
+  // so nothing a hook adds can land. Main moves under the same rules as a
+  // merge: only if it is still where the revert began, never over your
+  // uncommitted edits or ignored files, and not while main is being
+  // rebased or bisected or is checked out in more than one place. If
+  // moving fails, a checkout of main is left as it was. A conflict leaves
+  // main as it was, and the message names the files. No checks run. Asked
+  // again after it succeeded, it gives back the same commit and reverts
+  // nothing twice.
+  revert(request: RevertRequest): Promise<Done<CommitSha>>;
 
   // Removes the worktree. Its uncommitted changes are committed to its
   // branch first, so no work is lost, and the branch is kept. Removing one

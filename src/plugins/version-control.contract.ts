@@ -979,6 +979,312 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
     });
   });
 
+  describe(`${name}: revert`, () => {
+    const pass: RunChecks = async () => ({ ok: true, value: null });
+    const reason = "Broke the export";
+
+    // Merges a task that writes the given files, or removes those given as
+    // null. Returns the request to revert that merge.
+    async function landed(r: Repo, files: Record<string, string | null>) {
+      const plugin = make(r);
+      const created = await plugin.createWorktree(csv);
+      if (!created.ok) throw new Error(created.message);
+      for (const [file, text] of Object.entries(files)) {
+        if (text === null) await git(created.value.path, "rm", "-q", file);
+        else {
+          writeFileSync(join(created.value.path, file), text);
+          await git(created.value.path, "add", file);
+        }
+      }
+      await git(created.value.path, "commit", "-q", "-m", "Task work");
+      const head = CommitSha.parse(await git(created.value.path, "rev-parse", "HEAD"));
+      const merged = await plugin.merge({ ...csv, worktree: created.value, head }, pass);
+      if (!merged.ok) throw new Error(merged.message);
+      return { plugin, request: { taskId: csv.taskId, commit: merged.value, reason } };
+    }
+
+    async function commitOnMain(r: Repo, file: string, text: string) {
+      writeFileSync(join(r.dir, file), text);
+      await git(r.dir, "add", file);
+      await git(r.dir, "commit", "-q", "-m", `Add ${file} on main`);
+    }
+
+    async function filesOnMain(r: Repo): Promise<string[]> {
+      return (await git(r.dir, "ls-tree", "--name-only", "main")).split("\n");
+    }
+
+    function hook(r: Repo, name: string, script: string): () => void {
+      const path = join(r.dir, ".git", "hooks", name);
+      writeFileSync(path, script);
+      chmodSync(path, 0o755);
+      return () => rmSync(path);
+    }
+
+    test("undoes the commit with one new commit on the old main, keeping later work", async () => {
+      const r = await repo();
+      const { plugin, request } = await landed(r, { "a.ts": "a\n" });
+      await commitOnMain(r, "later.ts", "later\n");
+      const before = await git(r.dir, "rev-parse", "main");
+
+      const reverted = await plugin.revert(request);
+      if (!reverted.ok) throw new Error(reverted.message);
+      expect(await git(r.dir, "rev-parse", "main")).toBe(reverted.value);
+      // Its only parent is the old main.
+      expect(await git(r.dir, "rev-list", "--parents", "--max-count=1", "main")).toBe(
+        `${reverted.value} ${before}`,
+      );
+      expect(await filesOnMain(r)).toEqual(["README.md", "later.ts"]);
+      expect(existsSync(join(r.dir, "a.ts"))).toBe(false);
+      expect(await git(r.dir, "status", "--porcelain")).toBe("");
+    });
+
+    test("puts back a file the task changed", async () => {
+      const r = await repo();
+      const { plugin, request } = await landed(r, { "README.md": "# Changed by the task\n" });
+
+      expect((await plugin.revert(request)).ok).toBe(true);
+      expect(await git(r.dir, "show", "main:README.md")).toBe("# Test");
+    });
+
+    test("says in the commit message what was reverted and why", async () => {
+      const r = await repo();
+      const { plugin, request } = await landed(r, { "a.ts": "a\n" });
+
+      expect((await plugin.revert(request)).ok).toBe(true);
+      expect(await git(r.dir, "log", "-1", "--format=%s", "main")).toBe(
+        "Revert #12: Broke the export",
+      );
+      expect(await git(r.dir, "log", "-1", "--format=%b", "main")).toContain(request.commit);
+    });
+
+    test("leaves main as it was on a conflict, and names the file", async () => {
+      const r = await repo();
+      const { plugin, request } = await landed(r, { "a.ts": "a\n" });
+      await commitOnMain(r, "a.ts", "changed on main\n");
+      const before = await git(r.dir, "rev-parse", "main");
+      const worktrees = await git(r.dir, "worktree", "list");
+
+      const reverted = await plugin.revert(request);
+      expect(reverted.ok).toBe(false);
+      expect(!reverted.ok && reverted.message).toContain("a.ts");
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+      expect(await git(r.dir, "worktree", "list")).toBe(worktrees);
+      expect(await git(r.dir, "status", "--porcelain")).toBe("");
+    });
+
+    test("refuses a commit that isn't on main, and leaves main as it was", async () => {
+      const r = await repo();
+      const { plugin, request } = await landed(r, { "a.ts": "a\n" });
+      await git(r.dir, "checkout", "-q", "-b", "elsewhere");
+      await commitOnMain(r, "theirs.ts", "theirs\n");
+      const theirs = CommitSha.parse(await git(r.dir, "rev-parse", "HEAD"));
+      await git(r.dir, "checkout", "-q", "main");
+      const before = await git(r.dir, "rev-parse", "main");
+
+      const reverted = await plugin.revert({ ...request, commit: theirs });
+      expect(reverted.ok).toBe(false);
+      expect(!reverted.ok && reverted.message).toContain("isn't on main");
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+    });
+
+    test("fails with a message, not a throw, for a commit that doesn't exist", async () => {
+      const r = await repo();
+      const { plugin, request } = await landed(r, { "a.ts": "a\n" });
+      const before = await git(r.dir, "rev-parse", "main");
+
+      const reverted = await plugin.revert({ ...request, commit: CommitSha.parse("1".repeat(40)) });
+      expect(reverted.ok).toBe(false);
+      expect(!reverted.ok && reverted.message).toContain("isn't on main");
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+    });
+
+    test("refuses a commit with more than one parent", async () => {
+      const r = await repo();
+      const { plugin, request } = await landed(r, { "a.ts": "a\n" });
+      await git(r.dir, "checkout", "-q", "-b", "side");
+      await commitOnMain(r, "side.ts", "side\n");
+      await git(r.dir, "checkout", "-q", "main");
+      await git(r.dir, "merge", "-q", "--no-ff", "-m", "Merge side", "side");
+      const joined = CommitSha.parse(await git(r.dir, "rev-parse", "main"));
+
+      const reverted = await plugin.revert({ ...request, commit: joined });
+      expect(reverted.ok).toBe(false);
+      expect(!reverted.ok && reverted.message).toContain("more than one parent");
+      expect(await git(r.dir, "rev-parse", "main")).toBe(joined);
+    });
+
+    test("asked again after it succeeded, gives back the same commit and reverts nothing twice", async () => {
+      const r = await repo();
+      const { plugin, request } = await landed(r, { "a.ts": "a\n" });
+      const first = await plugin.revert(request);
+      if (!first.ok) throw new Error(first.message);
+      const commits = await git(r.dir, "rev-list", "--count", "main");
+
+      expect(await plugin.revert(request)).toEqual(first);
+      expect(await git(r.dir, "rev-list", "--count", "main")).toBe(commits);
+      expect(await git(r.dir, "rev-parse", "main")).toBe(first.value);
+    });
+
+    test("gives two calls at once the same answer, and reverts once", async () => {
+      const r = await repo();
+      const { plugin, request } = await landed(r, { "a.ts": "a\n" });
+      const commits = Number(await git(r.dir, "rev-list", "--count", "main"));
+
+      const [first, second] = await Promise.all([plugin.revert(request), plugin.revert(request)]);
+      if (!first.ok) throw new Error(first.message);
+      expect(second).toEqual(first);
+      expect(Number(await git(r.dir, "rev-list", "--count", "main"))).toBe(commits + 1);
+    });
+
+    // The same hooks the merge's tests use: one stages a file while the
+    // commit is made, one stages a file while the worktree is made, and
+    // one adds a commit of its own.
+    const hooks: [string, string][] = [
+      ["pre-commit", "#!/bin/sh\necho extra > extra.txt\ngit add extra.txt\n"],
+      ["post-checkout", "#!/bin/sh\necho extra > extra.txt\ngit add extra.txt\n"],
+      [
+        "post-commit",
+        '#!/bin/sh\n[ -n "$IN_HOOK" ] && exit 0\nIN_HOOK=1 git commit -q --allow-empty -m "extra from hook"\n',
+      ],
+    ];
+    for (const [name, script] of hooks) {
+      test(`refuses when a ${name} hook adds something, and reverts once it is gone`, async () => {
+        const r = await repo();
+        const { plugin, request } = await landed(r, { "a.ts": "a\n" });
+        const unhook = hook(r, name, script);
+        const before = await git(r.dir, "rev-parse", "main");
+
+        const reverted = await plugin.revert(request);
+        expect(reverted.ok).toBe(false);
+        expect(!reverted.ok && reverted.message).toContain("hook");
+        expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+
+        unhook();
+        const again = await plugin.revert(request);
+        if (!again.ok) throw new Error(again.message);
+        expect(await git(r.dir, "rev-list", "--parents", "--max-count=1", "main")).toBe(
+          `${again.value} ${before}`,
+        );
+        expect(await filesOnMain(r)).toEqual(["README.md"]);
+      });
+    }
+
+    // Someone takes a bad commit off main while the revert is being made.
+    // Moving main to the revert, which was built on top of it, would put
+    // the bad commit back.
+    test("refuses when main moved during the revert, and reverts on a retry", async () => {
+      const r = await repo();
+      const { plugin, request } = await landed(r, { "a.ts": "a\n" });
+      await commitOnMain(r, "bad.txt", "bad\n");
+      const unhook = hook(
+        r,
+        "pre-commit",
+        `#!/bin/sh\nunset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE\ncd "${r.dir}" && git reset -q --hard HEAD~1\n`,
+      );
+
+      const reverted = await plugin.revert(request);
+      unhook();
+      expect(reverted.ok).toBe(false);
+      expect(!reverted.ok && reverted.message).toContain("moved while the revert");
+      expect(await filesOnMain(r)).toEqual(["README.md", "a.ts"]);
+
+      expect((await plugin.revert(request)).ok).toBe(true);
+      expect(await filesOnMain(r)).toEqual(["README.md"]);
+    });
+
+    // With merge.autoStash, git stashes your edits instead of refusing, and
+    // can put them back with conflict markers.
+    test("never overwrites your uncommitted edit in your checkout of main", async () => {
+      const r = await repo();
+      await git(r.dir, "config", "merge.autoStash", "true");
+      const { plugin, request } = await landed(r, { "a.ts": "a\n" });
+      writeFileSync(join(r.dir, "a.ts"), "my edit\n");
+      const before = await git(r.dir, "rev-parse", "main");
+
+      const reverted = await plugin.revert(request);
+      expect(reverted.ok).toBe(false);
+      expect(readFileSync(join(r.dir, "a.ts"), "utf8")).toBe("my edit\n");
+      expect(await git(r.dir, "stash", "list")).toBe("");
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+
+      await git(r.dir, "checkout", "--", "a.ts");
+      expect((await plugin.revert(request)).ok).toBe(true);
+    });
+
+    test("never overwrites an ignored file in your checkout of main", async () => {
+      const r = await repo();
+      await commitOnMain(r, "secret.env", "committed\n");
+      const { plugin, request } = await landed(r, { "secret.env": null });
+      writeFileSync(join(r.dir, ".git", "info", "exclude"), "secret.env\n", { flag: "a" });
+      writeFileSync(join(r.dir, "secret.env"), "my unsaved secret\n");
+      const before = await git(r.dir, "rev-parse", "main");
+
+      const reverted = await plugin.revert(request);
+      expect(reverted.ok).toBe(false);
+      expect(readFileSync(join(r.dir, "secret.env"), "utf8")).toBe("my unsaved secret\n");
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+
+      rmSync(join(r.dir, "secret.env"));
+      expect((await plugin.revert(request)).ok).toBe(true);
+    });
+
+    test("puts your checkout back when main can't be moved", async () => {
+      const r = await repo();
+      const { plugin, request } = await landed(r, { "a.ts": "a\n" });
+      const unblock = blockMain(r);
+      const before = await git(r.dir, "rev-parse", "main");
+
+      const reverted = await plugin.revert(request);
+      unblock();
+      expect(reverted.ok).toBe(false);
+      expect(!reverted.ok && reverted.message).toContain("put back");
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+      expect(await git(r.dir, "status", "--porcelain")).toBe("");
+      expect(readFileSync(join(r.dir, "a.ts"), "utf8")).toBe("a\n");
+
+      expect((await plugin.revert(request)).ok).toBe(true);
+    });
+
+    test("refuses when main is checked out in more than one place", async () => {
+      const r = await repo();
+      const { plugin, request } = await landed(r, { "a.ts": "a\n" });
+      const second = join(r.dir, ".skelcrew", "second-main");
+      await git(r.dir, "worktree", "add", "-q", "-f", second, "main");
+      const before = await git(r.dir, "rev-parse", "main");
+
+      const reverted = await plugin.revert(request);
+      expect(reverted.ok).toBe(false);
+      expect(!reverted.ok && reverted.message).toContain("2 places");
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+    });
+
+    test("refuses while you are rebasing main", async () => {
+      const r = await repo();
+      const { plugin, request } = await landed(r, { "a.ts": "a\n" });
+      await git(r.dir, "checkout", "-q", "-b", "other");
+      await commitOnMain(r, "README.md", "# Other\n");
+      await git(r.dir, "checkout", "-q", "main");
+      await commitOnMain(r, "README.md", "# Mine\n");
+      await $`git rebase other`.cwd(r.dir).nothrow().quiet();
+      const before = await git(r.dir, "rev-parse", "main");
+
+      const reverted = await plugin.revert(request);
+      expect(reverted.ok).toBe(false);
+      expect(!reverted.ok && reverted.message).toContain("rebasing");
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+    });
+
+    test("moves main when no checkout has it open", async () => {
+      const r = await repo();
+      const { plugin, request } = await landed(r, { "a.ts": "a\n" });
+      await git(r.dir, "checkout", "-q", "--detach");
+
+      const reverted = await plugin.revert(request);
+      if (!reverted.ok) throw new Error(reverted.message);
+      expect(await git(r.dir, "rev-parse", "main")).toBe(reverted.value);
+    });
+  });
+
   describe(`${name}: removeWorktree`, () => {
     test("commits uncommitted work to the branch, then removes the worktree", async () => {
       const r = await repo();
