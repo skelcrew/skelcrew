@@ -209,6 +209,25 @@ queue, so everything happens one at a time. Its tools carry out the core's comma
 send the results back as new inputs. In this first version they have no git and no checks:
 a command that needs them is answered with a failure at once, so the core never waits.
 
+## The daemon's socket and the client
+
+These files put the daemon on a socket, one per repository, and let the CLI reach it.
+
+| File | What it holds |
+| --- | --- |
+| `paths.ts` | `daemonPaths`: where a repository's daemon keeps its files, worked out from the repository's real path. The socket is `.skelcrew/daemon.sock` when that path fits in 103 bytes, the most macOS allows. A deeper repository gets `skelcrew-<hash>.sock` in the temp folder instead. The daemon and the client both ask here, so they always agree. |
+| `server.ts` | `serve`: `skelcrew serve`'s job. It reads `.skelcrew/workflow.yml`, takes the lock, opens `.skelcrew/skelcrew.db` and the daemon, and listens. Each line on a connection is one request. The reply goes back on that connection with the request's id. A line that isn't a request is refused, and one over 1 MB also closes its connection. `serveUntilSignalled` stops it cleanly on SIGTERM or SIGINT. |
+| `lock.ts` | `takeLock`: one daemon per repository. The daemon holds `.skelcrew/daemon.lock` with its process id. A second daemon refuses to start. A lock whose process no longer runs was left by a daemon that died, and is taken over. |
+| `client.ts` | `request`: sends one command to a repository's daemon and returns the answer as a value. If no daemon is running, it starts one through a function it is given and waits for the socket. A request, once sent, has no time limit, since `done` waits for the checks. |
+
+An example: the CLI sends `add` while no daemon runs. The client finds no socket, so it
+starts `skelcrew serve` in the background. It retries the socket every 50 ms. Once the
+daemon listens, the client sends `{ "id": "…", "command": { "type": "add", … } }` and
+reads back `{ "id": "…", "ok": true, "result": { "task": 1 } }`.
+
+A daemon killed outright leaves its lock and its socket file behind. The next daemon sees
+that the lock's process is gone. It takes the lock over and removes the old socket file.
+
 ## The protocol
 
 `src/protocol/protocol.ts` is how the CLI and the daemon talk: one JSON message per line,
