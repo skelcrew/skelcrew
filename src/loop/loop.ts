@@ -26,6 +26,7 @@ import type {
   ProjectEvent,
   ProjectId,
   ProjectInput,
+  SessionId,
   Task,
   TaskEvent,
   TaskId,
@@ -34,12 +35,24 @@ import type {
 // Carries out the core's commands: starting agents, creating worktrees,
 // running gates, merging. Replies come back later through Loop.send.
 //
-// A command can arrive twice. If the daemon dies after a command went out
-// but before it was marked done, the command goes out again after the
-// restart. Doing it twice must have the same effect as doing it once. For
-// example, a second start for the same task and request starts nothing.
+// A tool calls `finished` once the command's work is done. For a command
+// that expects a reply, that means once the reply has been handled: saved,
+// or refused because its time had passed. Until
+// then the command counts as not done, so if the daemon dies first, work
+// that was still going on isn't lost: the command goes out again after
+// the restart. A tool whose work can't be lost, such as a real agent
+// already running on its own, may call it as soon as it has handed the
+// work on.
+//
+// So a command can arrive twice. Doing it twice must have the same effect
+// as doing it once. For example, a second start for the same task and
+// request starts nothing.
+//
+// An agent being stopped keeps its slot until its stop has finished, so a
+// slow stop delays the next start rather than letting agents run past
+// max_running.
 export interface Tools {
-  carryOut(command: Command): void;
+  carryOut(command: Command, finished: () => void): void;
 }
 
 // A start the loop has sent out: an agent or worktree for one request.
@@ -86,6 +99,9 @@ export class Loop {
   private readonly projectMap: Map<ProjectId, Project>;
   // Starts sent out and not yet answered, as "task:request".
   private readonly pending = new Set<string>();
+  // Agents being stopped, with how many of their stops haven't finished.
+  // Each agent counts once, however many stops it was sent.
+  private readonly stopping = new Map<SessionId, number>();
 
   constructor(
     private readonly config: Config,
@@ -122,6 +138,18 @@ export class Loop {
     return this.pending.size;
   }
 
+  get stopsInFlight(): number {
+    return this.stopping.size;
+  }
+
+  // Slots taken by work on its way up or down: starts not yet answered,
+  // and stops not yet finished. An agent being stopped holds its slot
+  // until it has stopped, so max_running holds even while stops are slow.
+  // Stops still to do are saved commands, so this survives a restart.
+  private get inFlight(): number {
+    return this.pending.size + this.stopping.size;
+  }
+
   task(taskId: TaskId): Task {
     const task = this.taskMap.get(taskId);
     if (task === undefined) throw new Error(`There is no task #${taskId}.`);
@@ -143,9 +171,9 @@ export class Loop {
     // start only comes from the scheduler, which checks. A claim is checked
     // here.
     if (input.type === "claim") {
-      const inUse = slotsInUse(this.tasks(), this.startsInFlight);
+      const inUse = slotsInUse(this.tasks(), this.inFlight);
       if (inUse >= this.config.maxRunning) {
-        const reason = `No slot is free: ${inUse} of ${this.config.maxRunning} agents are working or starting.`;
+        const reason = `No slot is free: ${inUse} of ${this.config.maxRunning} agents are working, starting or stopping.`;
         return { ok: false, rejection: { input: input.type, reason } };
       }
     }
@@ -204,7 +232,7 @@ export class Loop {
   // Starts what the scheduler picks, within max_running. Returns the tasks
   // it started.
   startWaiting(at: number = Date.now()): TaskId[] {
-    const picks = schedule(this.tasks(), this.projectMap, this.config, this.startsInFlight);
+    const picks = schedule(this.tasks(), this.projectMap, this.config, this.inFlight);
     for (const taskId of picks) this.send(taskId, { by: "system", type: "start" }, at);
     return picks;
   }
@@ -229,11 +257,49 @@ export class Loop {
     return { ok: true, ids };
   }
 
-  // Hands one command to the tools, then marks it done. If marking fails,
-  // the command goes out again after a restart, which the tools allow.
+  // Hands one command to the tools. It is marked done only when the tool
+  // says it has finished. A stop holds its agent's slot until then.
+  //
+  // `finished` never throws: it runs inside the tool's own code, often
+  // later, where an error could go unhandled. If marking fails, the command
+  // simply goes out again after a restart, which the tools allow.
+  //
+  // A stop counts from the moment it is handed over. If the tool throws
+  // instead of taking it, the count is undone before the error goes on, so
+  // the slot isn't held for a stop that never started.
   private carryOut(id: number | null, command: Command): void {
-    this.tools.carryOut(command);
-    if (id !== null && this.log !== null) this.log.carriedOut(id);
+    const agent = command.type === "stop_session" ? command.session : null;
+    let counted = false;
+    const letGo = () => {
+      if (agent !== null && counted) this.stopDone(agent);
+      counted = false;
+    };
+    if (agent !== null) {
+      this.stopping.set(agent, (this.stopping.get(agent) ?? 0) + 1);
+      counted = true;
+    }
+    try {
+      this.tools.carryOut(command, () => {
+        letGo();
+        if (id === null || this.log === null) return;
+        try {
+          this.log.carriedOut(id);
+        } catch {
+          // Left for the next restart.
+        }
+      });
+    } catch (error) {
+      letGo();
+      throw error;
+    }
+  }
+
+  // One stop for this agent has finished. The agent keeps its slot until
+  // every stop it was sent has.
+  private stopDone(agent: SessionId): void {
+    const left = (this.stopping.get(agent) ?? 1) - 1;
+    if (left > 0) this.stopping.set(agent, left);
+    else this.stopping.delete(agent);
   }
 
   // decideTask never produces an event evolveTask refuses. If it ever does,
