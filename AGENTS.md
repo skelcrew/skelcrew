@@ -10,7 +10,7 @@ These are correctness requirements, not preferences. A change that breaks one is
 if a task asks for it. Stop and report the conflict instead.
 
 - **The human merges.** Every change stops at a pull request. Auto-merge comes later, in
-  step 5 of the spec's build plan.
+  step 6 of the spec's build plan.
 - **Never force push. Never skip a check, and never use `--no-verify`.**
 - **Never weaken a test, fixture or assertion to get green.** If a test cannot pass
   honestly, stop and say why.
