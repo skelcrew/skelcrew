@@ -78,6 +78,37 @@ describe("defaultSkills", () => {
     }
   });
 
+  // The CLI (PR #40) needs the task number on every report, and the session
+  // the claim printed in SKELCREW_SESSION. Each shell command in Claude
+  // Code starts fresh, so an export wouldn't last. The session goes in
+  // front of each report instead.
+  test("put the session and the task number on every report", () => {
+    const reports = {
+      spec: ["SKELCREW_SESSION=<session> skelcrew submit 12 --file spec.json"],
+      develop: [
+        "SKELCREW_SESSION=<session> skelcrew done 12",
+        'SKELCREW_SESSION=<session> skelcrew give-up 12 "<reason>"',
+      ],
+    };
+    for (const [name, commands] of Object.entries(reports)) {
+      const text = skill(name);
+      expect(text).toContain("SKELCREW_SESSION=<the session it printed>");
+      for (const command of commands) expect(text).toContain(command);
+      // A report written without its task number fails.
+      for (const bare of ["`skelcrew submit`", "`skelcrew done`", "`skelcrew give-up`"]) {
+        expect(text).not.toContain(bare);
+      }
+    }
+  });
+
+  // The claim's answer doesn't name a worktree yet, so the skill can't
+  // promise one.
+  test("the develop skill stops if the claim doesn't say where to work", () => {
+    const text = skill("develop").replaceAll(/\s+/g, " ");
+    expect(text).not.toContain("The claim tells you the worktree");
+    expect(text).toContain("If it doesn't, stop and tell the developer.");
+  });
+
   // These files decide what an agent may do: which checks run, whether a
   // spec needs approval, which paths are critical, what Claude Code asks
   // about, and what the skills say. An agent that edits them changes its
