@@ -208,6 +208,20 @@ code, then the end of its output, which is what the agent sees. Each command run
 process group of its own, so a command that runs too long is stopped with everything it
 started. Input is closed and `CI=true` is set, so nothing waits for a person.
 
+## Init
+
+`src/init/` is what `skelcrew init` will do, built as functions the CLI will call. It sets
+up a repository and never overwrites a file, so running it twice changes nothing.
+
+| File | What it holds |
+| --- | --- |
+| `detect.ts` | `detectChecks`: finds the check commands a repository has. A `package.json` gives its `check` script alone, or else its `test`, `typecheck` and `lint` scripts, run with the package manager its lock file shows. `Cargo.toml` gives `cargo test`, and `go.mod` gives `go test ./...`. A Makefile's `test` target is used only when nothing else was found. |
+| `init.ts` | `initRepository`: writes `.skelcrew/workflow.yml` with the checks found, adds the database to `.gitignore`, and writes the default skills. A file already there is kept as it is and reported. If it finds no checks and there's no `workflow.yml` yet, it writes nothing and says why. |
+| `skills.ts` | The default skills, imported as text from `skills/spec/SKILL.md` and `skills/develop/SKILL.md`. They go to `.claude/skills/` in the repository. Each tells an agent in your harness how to work a task while you watch, with only the commands the CLI gives the skills. |
+
+To see whether the chosen checks pass on the current code, the caller runs them with
+`localChecks` from `src/checks/checks.ts`.
+
 ## Plugins
 
 `src/plugins/` connects the daemon to other tools. Each kind of plugin is an interface,
