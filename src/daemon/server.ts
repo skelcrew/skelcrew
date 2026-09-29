@@ -12,6 +12,7 @@ import { parseWorkflow } from "../config/workflow";
 import { encode, MAX_LINE, parseRequest, type Reply } from "../protocol/protocol";
 import { EventStore } from "../store/store";
 import { type Answer, Daemon, type DaemonOptions } from "./daemon";
+import { takeLock } from "./lock";
 import { daemonPaths } from "./paths";
 
 export type ServeOptions = {
@@ -44,10 +45,18 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
   const workflow = readWorkflow(repo, paths.workflow);
   if (!workflow.ok) return workflow;
 
+  const locked = takeLock(paths.lock);
+  if (!locked.ok) return locked;
+  const lock = locked.lock;
+  // Holding the lock means no other daemon runs here. So a socket file
+  // still there was left by one that died, and nobody answers on it.
+  rmSync(paths.socket, { force: true });
+
   let store: EventStore;
   try {
     store = EventStore.open(paths.store);
   } catch (error) {
+    lock.release();
     return { ok: false, message: `.skelcrew/skelcrew.db couldn't be opened: ${describe(error)}` };
   }
   const daemonOptions: DaemonOptions = { config: workflow.config, log: store };
@@ -55,6 +64,7 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
   const opened = Daemon.open(daemonOptions);
   if (!opened.ok) {
     store.close();
+    lock.release();
     return opened;
   }
 
@@ -62,6 +72,7 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
   const listening = await listener.listen(paths.socket);
   if (!listening.ok) {
     store.close();
+    lock.release();
     return listening;
   }
   return {
@@ -72,6 +83,7 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
         await listener.stop();
         store.close();
         rmSync(paths.socket, { force: true });
+        lock.release();
       },
     },
   };
