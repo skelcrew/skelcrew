@@ -910,3 +910,55 @@ describe("leaving Checks", () => {
     expect(task).not.toHaveProperty("branch");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Claiming a task, attended
+// ---------------------------------------------------------------------------
+
+describe("task.claimed", () => {
+  const you = SessionId.parse("you-1");
+
+  test("makes your session the spec agent", () => {
+    const task = replay(...inSpec, { type: "task.claimed", session: you, request: null });
+    expect(task).toMatchObject({ phase: "spec", step: { kind: "running", session: you } });
+  });
+
+  test("in Ready, creates a worktree for your session and counts a new build", () => {
+    const task = replay(...inReady, (t) => ({
+      type: "task.claimed",
+      session: you,
+      request: next(t),
+    }));
+    expect(task).toMatchObject({
+      phase: "ready",
+      step: { kind: "creating_worktree", request: 1, claimedBy: you },
+      requests: 1,
+      builds: 1,
+    });
+  });
+
+  test("makes your session the develop agent after a retry", () => {
+    const task = replay(
+      ...inProgress,
+      { type: "task.blocked", reason: { kind: "agent_gave_up", message: "Stuck." } },
+      { type: "task.unblocked" },
+      { type: "task.claimed", session: you, request: null },
+    );
+    expect(task).toMatchObject({ phase: "in_progress", step: { kind: "running", session: you } });
+  });
+
+  test("is refused in Ready without a request for the worktree", () => {
+    expect(
+      evolveTask(replay(...inReady), event({ type: "task.claimed", session: you, request: null })),
+    ).toEqual({
+      ok: false,
+      reason: "task.claimed can't apply: #12 needs a worktree before your session can work.",
+    });
+  });
+
+  test("is refused outside Spec, Ready and In progress", () => {
+    expect(
+      evolveTask(replay(created), event({ type: "task.claimed", session: you, request: null })),
+    ).toEqual({ ok: false, reason: "task.claimed can't apply to #12 in Idea." });
+  });
+});

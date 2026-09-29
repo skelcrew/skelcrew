@@ -117,6 +117,7 @@ function inSpec(task: TaskIn<"spec">, event: TaskEvent): EvolvedTask {
       return ok(withRequest(task, event.request, { kind: "starting", request: event.request }));
 
     case "task.spec_session_started":
+    case "task.claimed":
       return ok({ ...task, step: { kind: "running", session: event.session } });
 
     // The spec agent is stopped once a spec is stored, so a question it
@@ -157,7 +158,25 @@ function inReady(task: TaskIn<"ready">, event: TaskEvent): EvolvedTask {
     // before the worktree exists, so a failed try never reuses it.
     case "task.dispatch_started":
       return ok({
-        ...withRequest(task, event.request, { kind: "creating_worktree", request: event.request }),
+        ...withRequest(task, event.request, {
+          kind: "creating_worktree",
+          request: event.request,
+          claimedBy: null,
+        }),
+        builds: task.builds + 1,
+      });
+
+    // A claim is a new build too. Your session waits for its worktree.
+    case "task.claimed":
+      if (event.request === null) {
+        return refuse(event, `#${task.id} needs a worktree before your session can work`);
+      }
+      return ok({
+        ...withRequest(task, event.request, {
+          kind: "creating_worktree",
+          request: event.request,
+          claimedBy: event.session,
+        }),
         builds: task.builds + 1,
       });
 
@@ -207,6 +226,10 @@ function inProgress(task: TaskIn<"in_progress">, event: TaskEvent): EvolvedTask 
       if (task.step.kind !== "starting") {
         return refuse(event, `#${task.id} isn't starting an agent`);
       }
+      return ok({ ...task, step: { kind: "running", session: event.session } });
+
+    // After a retry: your session carries on in the same worktree.
+    case "task.claimed":
       return ok({ ...task, step: { kind: "running", session: event.session } });
 
     case "task.done_reported": {
@@ -337,7 +360,13 @@ function inDone(task: TaskIn<"done">, event: TaskEvent): EvolvedTask {
 
 // A step that sends a request records the number the event gives it, so
 // only the reply that brings it back can answer. The counter follows it.
-function withRequest<T extends Task, S>(task: T, request: number, step: S) {
+// The step must be one the task's phase allows. Typing it as T["step"]
+// makes the compiler check that, field by field.
+function withRequest<T extends Extract<Task, { step: unknown }>>(
+  task: T,
+  request: number,
+  step: T["step"],
+): T {
   return { ...task, step, requests: request };
 }
 

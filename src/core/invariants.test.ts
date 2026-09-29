@@ -226,6 +226,13 @@ class Checker {
       },
       { by: "agent", type: "give_up", session, message: "Stuck." },
     ]);
+    // Your harness session claiming the task. The daemon makes up a new
+    // session for every claim.
+    out.push({
+      by: "human",
+      type: "claim",
+      session: SessionId.parse(`you${id}-${this.started.length + 1}`),
+    });
     for (const sent of this.sent) {
       const { request } = sent;
       switch (sent.kind) {
@@ -473,6 +480,13 @@ class Checker {
       this.liveSessions.add(input.session);
       if (!this.started.includes(input.session)) this.started.push(input.session);
     }
+    // A claimed session starts working without a start reply: in Spec or
+    // In progress at once, in Ready once its worktree exists.
+    const running = this.task === null ? null : runningSession(this.task);
+    if (running !== null && !this.started.includes(running)) {
+      this.liveSessions.add(running);
+      this.started.push(running);
+    }
     if (input.type === "worktree_created") this.liveWorktrees.add(input.worktree.path);
     for (const command of commands) {
       if (command.type === "stop_session") this.liveSessions.delete(command.session);
@@ -595,10 +609,18 @@ describe("the invariants", () => {
                 checkers.find((c) => c.id === id)?.send({ by: "system", type: "start" }, i + 1);
               }
             } else {
-              // Only the scheduler starts tasks here.
+              // Only the scheduler starts tasks here. A claim goes through
+              // only with a slot free, as the loop checks before it.
+              const inFlight = checkers.reduce((sum, c) => sum + c.startsInFlight, 0);
+              const running = tasks().filter((t) => runningSession(t) !== null).length;
+              const free = config.maxRunning - running - inFlight > 0;
               const checker = checkers[step.task];
               checker?.send(
-                checker.pick(step.choice, i + 1, (input) => input.type !== "start"),
+                checker.pick(
+                  step.choice,
+                  i + 1,
+                  (input) => input.type !== "start" && (input.type !== "claim" || free),
+                ),
                 i + 1,
               );
             }

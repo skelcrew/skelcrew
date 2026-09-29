@@ -32,6 +32,7 @@ export const inputNames: Record<Input["type"], string> = {
   revise_merge: "a merge revision",
   retry: "a retry",
   back_to_spec: "a move back to Spec",
+  claim: "a claim",
   drop: "a drop",
   revert: "a revert",
   submit_spec: "a submitted spec",

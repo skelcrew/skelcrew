@@ -1508,6 +1508,128 @@ describe("an input in the wrong phase", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Claiming a task, attended
+// ---------------------------------------------------------------------------
+
+// Your harness session takes the task. The daemon makes up the session and
+// hands it to the skill, which sends it with every report.
+const you = SessionId.parse("you-1");
+const claim: Input = { by: "human", type: "claim", session: you };
+const fromYou = (input: { type: "submit_spec"; spec: Spec }): Input => ({
+  by: "agent",
+  session: you,
+  ...input,
+});
+
+describe("claim in Spec", () => {
+  test("makes your session the spec agent, and starts no agent", () => {
+    expect(send(run(...inSpec), claim)).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.claimed", session: you, request: null })],
+      commands: [],
+    });
+  });
+
+  test("then hears your session, and only yours", () => {
+    const task = run(...inSpec, claim);
+    expect(send(task, fromYou({ type: "submit_spec", spec })).ok).toBe(true);
+    expect(send(task, { by: "agent", type: "submit_spec", session, spec })).toEqual({
+      ok: false,
+      rejection: { input: "submit_spec", reason: "#12's agent isn't session-1." },
+    });
+  });
+});
+
+describe("claim in Ready", () => {
+  test("creates a worktree for your session, and starts no agent", () => {
+    expect(send(run(...inReady), claim)).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.claimed", session: you, request: 2 })],
+      commands: [{ type: "create_worktree", taskId: id, request: 2, build: 1 }],
+    });
+  });
+
+  test("makes your session the develop agent once the worktree exists", () => {
+    expect(send(run(...inReady, claim), worktreeCreated)).toEqual({
+      ok: true,
+      events: [
+        stamped({ type: "task.worktree_created", worktree, request: 2 }),
+        stamped({ type: "task.dispatched", session: you }),
+      ],
+      commands: [],
+    });
+  });
+});
+
+describe("claim in In progress", () => {
+  test("after a retry, makes your session the agent in the same worktree", () => {
+    expect(send(run(...inProgress, giveUp, retry), claim)).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.claimed", session: you, request: null })],
+      commands: [],
+    });
+  });
+});
+
+describe("claim, refused", () => {
+  test("for a blocked task", () => {
+    expect(send(run(...inProgress, giveUp), claim)).toEqual({
+      ok: false,
+      rejection: { input: "claim", reason: "#12 is blocked." },
+    });
+  });
+
+  test("for a task in a parked project", () => {
+    expect(send(run(...inSpec, changeProject(archive)), claim)).toEqual({
+      ok: false,
+      rejection: { input: "claim", reason: "#12 is in a parked project." },
+    });
+  });
+
+  test("while an agent is already on the task", () => {
+    expect(send(run(...specRunning), claim)).toEqual({
+      ok: false,
+      rejection: { input: "claim", reason: "#12 isn't waiting for a slot." },
+    });
+  });
+
+  test("in a phase with no agent to replace", () => {
+    expect(send(run(add), claim)).toEqual({
+      ok: false,
+      rejection: { input: "claim", reason: "#12 is in Idea, so it can't take a claim." },
+    });
+  });
+
+  test("for a task over its safety cap, which is blocked instead, like a start", () => {
+    // The report arrived while the spec waited for approval, so it was only recorded.
+    const task = run(...awaitingApproval, usage(250_000), approve);
+    expect(send(task, claim)).toEqual({
+      ok: true,
+      events: [
+        stamped({
+          type: "task.blocked",
+          reason: { kind: "safety_cap", usage: { tokens: 250_000, ms: 0 } },
+        }),
+      ],
+      commands: [],
+    });
+  });
+});
+
+describe("a claimed session, let go", () => {
+  // Skelcrew can't stop a session it didn't start. The stop goes to the
+  // tools, which ignore it, and the session's next report is refused.
+  test("has its next report refused once its task is blocked", () => {
+    const task = run(...inSpec, claim, usage(250_000));
+    expect(task.blocked).not.toBeNull();
+    expect(send(task, fromYou({ type: "submit_spec", spec }))).toEqual({
+      ok: false,
+      rejection: { input: "submit_spec", reason: "#12 has no agent running." },
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Late and repeated replies
 // ---------------------------------------------------------------------------
 
