@@ -211,6 +211,22 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       expect(existsSync(join(created.value.path, "README.md"))).toBe(true);
     });
 
+    // Found by Codex review: git can fail after it made the worktree, here
+    // in a hook. The core then records no worktree, so none may be left.
+    test("leaves nothing behind when creation fails partway, and fails again if asked again", async () => {
+      const r = await repo();
+      const hook = join(r.dir, ".git", "hooks", "post-checkout");
+      writeFileSync(hook, "#!/bin/sh\nexit 1\n");
+      chmodSync(hook, 0o755);
+      const plugin = make(r);
+
+      expect((await plugin.createWorktree(csv)).ok).toBe(false);
+      expect(existsSync(join(r.dir, ".skelcrew", "worktrees", "12-csv-export"))).toBe(false);
+      expect(await git(r.dir, "worktree", "list", "--porcelain")).not.toContain("12-csv-export");
+      expect(await git(r.dir, "branch", "--list", "task/12-csv-export")).toBe("");
+      expect((await plugin.createWorktree(csv)).ok).toBe(false);
+    });
+
     test("carries on from an earlier try that made the branch and stopped", async () => {
       const r = await repo();
       await git(r.dir, "branch", "task/12-csv-export");

@@ -18,7 +18,8 @@ export interface VersionControl {
   // A new worktree for this build of the task, on a new branch from main,
   // named after the task: "task/12-csv-export", then "task/12-csv-export-2"
   // for build 2. Asked again, it gives back the same worktree and changes
-  // nothing.
+  // nothing. A failure leaves nothing behind, since the core then records
+  // no worktree to clean up later.
   createWorktree(request: WorktreeRequest): Promise<Done<Worktree>>;
 
   // Removes the worktree. Its uncommitted changes are committed to its

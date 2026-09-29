@@ -102,8 +102,40 @@ export class Git implements VersionControl {
           path,
           `refs/heads/${this.main}`,
         );
-    if (!added.ok) return { ok: false, message: `git couldn't create ${branch}: ${added.err}` };
+    if (!added.ok) {
+      const failed = `git couldn't create ${branch}: ${added.err}`;
+      const undone = await this.undoCreate(path, branch, !exists.ok);
+      return { ok: false, message: undone.ok ? failed : `${failed} ${undone.message}` };
+    }
     return { ok: true, value: { path, branch } };
+  }
+
+  // git can fail after it made the worktree, for example in a hook. The
+  // core then records no worktree, so nothing may be left: this removes
+  // the worktree, and the branch if this call made it. Forcing is safe,
+  // since the worktree was checked out from main moments ago, and no agent
+  // has worked in it.
+  private async undoCreate(path: string, branch: string, madeBranch: boolean): Promise<Done<null>> {
+    if (existsSync(path)) {
+      const removed = await run(this.repo, "worktree", "remove", "--force", path);
+      if (!removed.ok) {
+        return {
+          ok: false,
+          message: `It left ${path} behind, and couldn't remove it: ${removed.err}`,
+        };
+      }
+    }
+    await run(this.repo, "worktree", "prune");
+    if (madeBranch) {
+      const deleted = await run(this.repo, "branch", "--delete", "--force", branch);
+      if (!deleted.ok) {
+        return {
+          ok: false,
+          message: `It left ${branch} behind, and couldn't delete it: ${deleted.err}`,
+        };
+      }
+    }
+    return { ok: true, value: null };
   }
 
   private async remove(worktree: Worktree): Promise<Done<null>> {
