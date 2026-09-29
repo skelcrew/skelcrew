@@ -2,7 +2,7 @@
 // gets its own worktree and branch, so agents never share a checkout.
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { $ } from "bun";
 import type { Worktree } from "../../core/types";
 import type { Done, VersionControl, WorktreeRequest } from "../version-control";
@@ -13,10 +13,16 @@ import type { Done, VersionControl, WorktreeRequest } from "../version-control";
 const worktreesFolder = ".skelcrew/worktrees";
 
 export class Git implements VersionControl {
+  // git runs inside the repository, so a relative path would be read from
+  // there and end up doubled. It is made absolute once, here.
+  readonly repo: string;
+
   constructor(
-    readonly repo: string,
+    repo: string,
     readonly main: string,
-  ) {}
+  ) {
+    this.repo = resolve(repo);
+  }
 
   createWorktree(request: WorktreeRequest): Promise<Done<Worktree>> {
     return guard(`create the worktree for #${request.taskId}`, () => this.create(request));
@@ -39,8 +45,8 @@ export class Git implements VersionControl {
       if (!ours.ok) return ours;
       if (!ours.value)
         return { ok: false, message: `${path} exists, but isn't a worktree of ${this.repo}.` };
-      const current = await run(path, "rev-parse", "--abbrev-ref", "HEAD");
-      if (current.ok && current.out === branch) return { ok: true, value: { path, branch } };
+      const current = await branchOf(path);
+      if (current === `refs/heads/${branch}`) return { ok: true, value: { path, branch } };
       return { ok: false, message: `${path} exists, but isn't the worktree for ${branch}.` };
     }
 
@@ -114,9 +120,9 @@ export class Git implements VersionControl {
     if (!ours.ok) return ours;
     if (!ours.value)
       return { ok: false, message: `${worktree.path} isn't a worktree of ${this.repo}.` };
-    const head = await run(worktree.path, "symbolic-ref", "--quiet", "--short", "HEAD");
-    if (!head.ok || head.out !== worktree.branch) {
-      const on = head.ok ? head.out : "no branch";
+    const head = await branchOf(worktree.path);
+    if (head !== `refs/heads/${worktree.branch}`) {
+      const on = head ?? "no branch";
       return {
         ok: false,
         message: `${worktree.path} is on ${on}, not ${worktree.branch}. Its work was left as it is.`,
@@ -245,6 +251,14 @@ async function guard<T>(what: string, work: () => Promise<Done<T>>): Promise<Don
     const message = error instanceof Error ? error.message : String(error);
     return { ok: false, message: `Couldn't ${what}: ${message}` };
   }
+}
+
+// The full name of the branch a worktree has checked out, such as
+// refs/heads/task/12-csv-export, or null on a detached HEAD. Full, because
+// with a same-named tag git shortens it to heads/task/12-csv-export.
+async function branchOf(path: string): Promise<string | null> {
+  const head = await run(path, "symbolic-ref", "--quiet", "HEAD");
+  return head.ok ? head.out : null;
 }
 
 type Run = { ok: true; out: string } | { ok: false; err: string };

@@ -18,7 +18,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { $ } from "bun";
 import { TaskId } from "../core/ids";
 import type { VersionControl } from "./version-control";
@@ -187,6 +187,28 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       await strangerAt(created.value.path);
 
       expect((await plugin.createWorktree(csv)).ok).toBe(false);
+    });
+
+    // Found by Codex review: with a same-named tag, git spells the branch
+    // "heads/task/12-csv-export", which must still count as the branch.
+    test("works the same with a tag of the branch's name in the repository", async () => {
+      const r = await repo();
+      await git(r.dir, "tag", "task/12-csv-export");
+      const plugin = make(r);
+      const first = await plugin.createWorktree(csv);
+      if (!first.ok) throw new Error(first.message);
+      expect(await plugin.createWorktree(csv)).toEqual(first);
+      expect(await plugin.removeWorktree(first.value)).toEqual({ ok: true, value: null });
+    });
+
+    // Found by Codex review: git runs inside the repository, so a relative
+    // path given to the plugin must not end up doubled.
+    test("gives back a worktree path that exists, even for a relative repository path", async () => {
+      const r = await repo();
+      const created = await make({ ...r, dir: relative(process.cwd(), r.dir) }).createWorktree(csv);
+      if (!created.ok) throw new Error(created.message);
+      expect(isAbsolute(created.value.path)).toBe(true);
+      expect(existsSync(join(created.value.path, "README.md"))).toBe(true);
     });
 
     test("carries on from an earlier try that made the branch and stopped", async () => {
