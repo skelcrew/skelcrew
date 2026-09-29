@@ -93,10 +93,9 @@ export type SourceRef = {
   url: string;
 };
 
-// Facts about the task's branch, gathered by the shell from version control.
-// What the branch holds when the agent reports done. The core never runs
-// version control itself, so the daemon reads these from git when the
-// report arrives. The agent never supplies them.
+// What the task's branch holds when the agent reports done. The core never
+// runs version control itself: when the report arrives, the daemon asks
+// the version-control plugin for these. The agent never supplies them.
 //
 // `head` is the commit at the branch's tip. The gates test exactly that
 // commit, the critical paths are checked against its files, and the merge
