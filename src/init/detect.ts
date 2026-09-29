@@ -10,6 +10,8 @@
 //   script that runs no test runner init knows gives a warning.
 // - Cargo.toml: cargo test.
 // - go.mod: go test ./...
+// - pyproject.toml with a [tool.pytest] or [tool.pytest.ini_options]
+//   table: pytest. Without one, there is no telling how the tests run.
 // - A makefile with a test target: make test, but only when nothing else
 //   was found, since that target usually runs one of the commands above.
 //   The makefile is the one make itself reads: GNUmakefile, makefile or
@@ -42,6 +44,9 @@ export function detectChecks(dir: string): Detected {
   } else if (node.note !== null) notes.push(node.note);
   if (existsSync(join(dir, "Cargo.toml"))) checks.push("cargo test");
   if (existsSync(join(dir, "go.mod"))) checks.push("go test ./...");
+  const python = pytest(dir);
+  if (python.ok) checks.push("pytest");
+  else if (python.note !== null) notes.push(python.note);
   if (checks.length === 0) {
     const make = makeTarget(dir, "test");
     if (make.ok) checks.push("make test");
@@ -135,6 +140,17 @@ function runner(dir: string): string {
   if (has("pnpm-lock.yaml")) return "pnpm run";
   if (has("yarn.lock")) return "yarn";
   return "npm run";
+}
+
+// A table header on a line of its own, such as [tool.pytest.ini_options].
+const pytestTable = /^\s*\[tool\.pytest(\.ini_options)?\]\s*(#.*)?$/m;
+
+function pytest(dir: string): { ok: true } | { ok: false; note: string | null } {
+  const path = join(dir, "pyproject.toml");
+  if (!existsSync(path)) return { ok: false, note: null };
+  const text = readText(path);
+  if (text === null) return { ok: false, note: "pyproject.toml can't be read, so it was skipped." };
+  return pytestTable.test(text) ? { ok: true } : { ok: false, note: null };
 }
 
 // The makefiles make reads, in the order it looks for them. It uses the

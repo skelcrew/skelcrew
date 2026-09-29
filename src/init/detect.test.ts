@@ -153,6 +153,23 @@ describe("detectChecks", () => {
     });
   });
 
+  test("runs pytest for a Python project that sets up pytest", () => {
+    for (const table of ["[tool.pytest.ini_options]", "[tool.pytest]"]) {
+      const pyproject = `[project]\nname = "app"\n\n${table}\ntestpaths = ["tests"]\n`;
+      expect(detectChecks(repo({ "pyproject.toml": pyproject }))).toEqual({
+        ok: true,
+        checks: ["pytest"],
+        warnings: [],
+      });
+    }
+  });
+
+  // Without pytest's settings there is no telling how the tests run.
+  test("doesn't guess a test command for a pyproject.toml without pytest", () => {
+    const pyproject = '[project]\nname = "app"\ndependencies = ["pytest-cov"]\n';
+    expect(detectChecks(repo({ "pyproject.toml": pyproject })).ok).toBe(false);
+  });
+
   test("runs make test for a Makefile with a test target", () => {
     const makefile = "build:\n\tcc -o app app.c\n\ntest: build\n\t./app --self-test\n";
     expect(detectChecks(repo({ Makefile: makefile }))).toEqual({
