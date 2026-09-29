@@ -54,9 +54,9 @@ const count = z
 const schema = z.strictObject({
   checks: z
     .array(z.string().min(1, { error: "each check must be a command." }), {
-      error: "list at least one command, such as `bun test`.",
+      error: "list at least one command, such as the one that runs your tests.",
     })
-    .min(1, { error: "list at least one command, such as `bun test`." }),
+    .min(1, { error: "list at least one command, such as the one that runs your tests." }),
   max_attempts: count.default(3),
   max_running: count.default(2),
   spec_approval: z
