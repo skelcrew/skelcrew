@@ -420,26 +420,31 @@ export class Git implements VersionControl {
     return { ok: true, value: null };
   }
 
-  // The merge, in five steps. Main only moves in the last one.
+  // The merge. Main only moves at the very end, and only to the exact
+  // commit the checks tested.
   private async squashMerge(request: MergeRequest, runChecks: RunChecks): Promise<Done<CommitSha>> {
     const main = `refs/heads/${this.main}`;
-    const branch = `refs/heads/${request.worktree.branch}`;
+    const common = await run(this.repo, "rev-parse", "--path-format=absolute", "--git-common-dir");
+    if (!common.ok) return { ok: false, message: `git couldn't find its folder: ${common.err}` };
 
-    // 1. Already merged: the commit on main names the head it landed.
-    const trailer = `Skelcrew-Head: ${request.head}`;
-    const found = await run(
+    // Already merged? The receipt holds the commit this plugin was about to
+    // put on main. Only if that exact commit is on main did the merge land.
+    // A commit's hash can't be faked by text in some other commit.
+    const receipt = join(common.out, "skelcrew-merges", `${request.taskId}-${request.head}`);
+    if (existsSync(receipt)) {
+      const candidate = readFileSync(receipt, "utf8").trim();
+      const landed = await run(this.repo, "merge-base", "--is-ancestor", candidate, main);
+      if (landed.ok) return shaOf(candidate);
+      rmSync(receipt, { force: true }); // an earlier try that never moved main
+    }
+
+    const onBranch = await run(
       this.repo,
-      "log",
-      main,
-      "--format=%H",
-      "--fixed-strings",
-      `--grep=${trailer}`,
+      "merge-base",
+      "--is-ancestor",
+      request.head,
+      `refs/heads/${request.worktree.branch}`,
     );
-    const earlier = found.ok ? found.out.split("\n")[0] : undefined;
-    if (earlier !== undefined && earlier !== "") return shaOf(earlier);
-
-    // 2. The head must be on the task's branch.
-    const onBranch = await run(this.repo, "merge-base", "--is-ancestor", request.head, branch);
     if (!onBranch.ok) {
       return { ok: false, message: `${request.head} isn't on ${request.worktree.branch}.` };
     }
@@ -448,66 +453,128 @@ export class Git implements VersionControl {
     const ignored = await this.ignoreWorktrees();
     if (!ignored.ok) return ignored;
 
-    // 3. Build the result in a worktree of its own, from main as it is now.
-    // A leftover from a crash is only ever an earlier try of this, so it
-    // goes first.
+    // The merge is built in a worktree of its own. Its mark goes in first,
+    // so a later try knows a leftover is this plugin's to clear.
     const temp = join(this.repo, mergingFolder, String(request.taskId));
-    await this.clearMerging(temp);
-    const added = await run(this.repo, "worktree", "add", "--quiet", "--detach", temp, before.out);
-    if (!added.ok) return { ok: false, message: `git couldn't prepare the merge: ${added.err}` };
+    const mark = join(common.out, "skelcrew-merging", String(request.taskId));
+    const cleared = await this.clearMerging(temp, mark);
+    if (!cleared.ok) return cleared;
+    mkdirSync(dirname(mark), { recursive: true });
+    writeFileSync(mark, "");
+
+    // Stays a failure if building throws. The guard at the edge reports it.
+    let result: Done<CommitSha> = { ok: false, message: "The merge stopped partway." };
     try {
-      const squashed = await run(temp, "merge", "--squash", "--quiet", request.head);
-      if (!squashed.ok) {
-        const conflicts = await run(temp, "diff", "--name-only", "--diff-filter=U");
-        const files =
-          conflicts.ok && conflicts.out !== ""
-            ? conflicts.out.split("\n").join(", ")
-            : squashed.err;
-        return {
-          ok: false,
-          message: `#${request.taskId} conflicts with ${this.main} in ${files}.`,
-        };
-      }
-      const committed = await run(
-        temp,
-        "commit",
-        "--quiet",
-        "--message",
-        `#${request.taskId} ${request.title}`,
-        "--message",
-        `Skelcrew-Task: ${request.taskId}\n${trailer}`,
-      );
-      if (!committed.ok)
-        return { ok: false, message: `git couldn't commit the merge: ${committed.err}` };
-
-      // 4. The checks run on the merged result.
-      const checked = await runChecks(temp);
-      if (!checked.ok) {
-        return { ok: false, message: `The checks failed on the merged result: ${checked.message}` };
-      }
-
-      // 5. Move main. In your checkout of main, a fast-forward, which git
-      // refuses if it would overwrite your uncommitted edits. Elsewhere,
-      // only if main hasn't moved since step 2.
-      const result = await run(temp, "rev-parse", "HEAD");
-      if (!result.ok) return { ok: false, message: `git couldn't read the merge: ${result.err}` };
-      const checkout = await this.checkoutOf(main);
-      const moved =
-        checkout === null
-          ? await run(this.repo, "update-ref", main, result.out, before.out)
-          : await run(checkout, "merge", "--ff-only", "--quiet", result.out);
-      if (!moved.ok) {
-        return { ok: false, message: `${this.main} couldn't be moved to the merge: ${moved.err}` };
-      }
-      return shaOf(result.out);
+      result = await this.buildAndLand(request, runChecks, temp, receipt, before.out);
     } finally {
-      await this.clearMerging(temp);
+      const cleanup = await this.clearMerging(temp, mark);
+      // After a merge that landed, main has moved, so the answer must stay
+      // a success. Its mark stays too, so the next merge clears the
+      // leftover. After a failure, the message says what was left behind.
+      if (!cleanup.ok && !result.ok) {
+        result = { ok: false, message: `${result.message} ${cleanup.message}` };
+      }
     }
+    return result;
   }
 
-  private async clearMerging(temp: string): Promise<void> {
-    if (existsSync(temp)) await run(this.repo, "worktree", "remove", "--force", temp);
+  private async buildAndLand(
+    request: MergeRequest,
+    runChecks: RunChecks,
+    temp: string,
+    receipt: string,
+    before: string,
+  ): Promise<Done<CommitSha>> {
+    const main = `refs/heads/${this.main}`;
+    const added = await run(this.repo, "worktree", "add", "--quiet", "--detach", temp, before);
+    if (!added.ok) return { ok: false, message: `git couldn't prepare the merge: ${added.err}` };
+
+    // Exactly the reported commit, squashed onto main as it is now.
+    const squashed = await run(temp, "merge", "--squash", "--quiet", request.head);
+    if (!squashed.ok) {
+      const conflicts = await run(temp, "diff", "--name-only", "--diff-filter=U");
+      const files =
+        conflicts.ok && conflicts.out !== "" ? conflicts.out.split("\n").join(", ") : squashed.err;
+      return { ok: false, message: `#${request.taskId} conflicts with ${this.main} in ${files}.` };
+    }
+    const committed = await run(
+      temp,
+      "commit",
+      "--quiet",
+      "--message",
+      `#${request.taskId} ${request.title}`,
+      "--message",
+      `Skelcrew-Task: ${request.taskId}\nSkelcrew-Head: ${request.head}`,
+    );
+    if (!committed.ok)
+      return { ok: false, message: `git couldn't commit the merge: ${committed.err}` };
+    const candidate = await run(temp, "rev-parse", "HEAD");
+    if (!candidate.ok)
+      return { ok: false, message: `git couldn't read the merge: ${candidate.err}` };
+
+    // The checks run on the merged result. They may leave build output,
+    // but must not commit or change tracked files: then they tested
+    // something other than what would land.
+    const checked = await runChecks(temp);
+    if (!checked.ok) {
+      return { ok: false, message: `The checks failed on the merged result: ${checked.message}` };
+    }
+    const after = await run(temp, "rev-parse", "HEAD");
+    const changed = await run(temp, "status", "--porcelain", "--untracked-files=no");
+    if (!after.ok || after.out !== candidate.out) {
+      return {
+        ok: false,
+        message: "The checks made a commit, so they didn't test what would land.",
+      };
+    }
+    if (!changed.ok || changed.out !== "") {
+      return {
+        ok: false,
+        message: "The checks changed tracked files, so they didn't test what would land.",
+      };
+    }
+
+    // The receipt goes in before main moves, so a crash in between still
+    // shows, on the next try, whether main moved.
+    mkdirSync(dirname(receipt), { recursive: true });
+    writeFileSync(receipt, candidate.out);
+
+    // In your checkout of main, a fast-forward, which git refuses if it
+    // would overwrite your uncommitted edits. Elsewhere, only if main
+    // hasn't moved since the merge began.
+    const checkout = await this.checkoutOf(main);
+    const moved =
+      checkout === null
+        ? await run(this.repo, "update-ref", main, candidate.out, before)
+        : await run(checkout, "merge", "--ff-only", "--quiet", candidate.out);
+    if (!moved.ok) {
+      rmSync(receipt, { force: true });
+      return { ok: false, message: `${this.main} couldn't be moved to the merge: ${moved.err}` };
+    }
+    return shaOf(candidate.out);
+  }
+
+  // Clears the merge's own worktree, but only if the plugin's mark says it
+  // put it there. Anything else at that path is someone's work.
+  private async clearMerging(temp: string, mark: string): Promise<Done<null>> {
+    if (existsSync(temp)) {
+      if (!existsSync(mark)) {
+        return {
+          ok: false,
+          message: `${temp} exists, but Skelcrew didn't put it there. It was left as it is.`,
+        };
+      }
+      const removed = await run(this.repo, "worktree", "remove", "--force", temp);
+      if (!removed.ok) {
+        return {
+          ok: false,
+          message: `The merge's own worktree ${temp} couldn't be removed: ${removed.err}`,
+        };
+      }
+    }
     await run(this.repo, "worktree", "prune");
+    rmSync(mark, { force: true });
+    return { ok: true, value: null };
   }
 
   // The worktree that has this branch checked out, or null if none has.

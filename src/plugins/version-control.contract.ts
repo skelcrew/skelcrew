@@ -509,6 +509,93 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       expect(await git(r.dir, "status", "--porcelain")).toBe("");
     });
 
+    // Found by Codex review: a check that changes the code tests something
+    // other than what would land.
+    test("refuses when the checks change the code they are checking", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "a.ts": "broken\n" });
+      const before = await git(r.dir, "rev-parse", "main");
+      const fixing: RunChecks = async (dir) => {
+        writeFileSync(join(dir, "a.ts"), "fixed\n");
+        return { ok: true, value: null };
+      };
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      const merged = await plugin.merge(request(head), fixing);
+      expect(merged.ok).toBe(false);
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+    });
+
+    test("refuses when the checks commit something of their own", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "a.ts": "a\n" });
+      const before = await git(r.dir, "rev-parse", "main");
+      const committing: RunChecks = async (dir) => {
+        writeFileSync(join(dir, "extra.ts"), "extra\n");
+        await git(dir, "add", "extra.ts");
+        await git(dir, "commit", "-q", "-m", "Extra");
+        return { ok: true, value: null };
+      };
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      expect((await plugin.merge(request(head), committing)).ok).toBe(false);
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+    });
+
+    test("lets the checks leave build output behind", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "a.ts": "a\n" });
+      const building: RunChecks = async (dir) => {
+        writeFileSync(join(dir, "coverage.txt"), "100%\n");
+        return { ok: true, value: null };
+      };
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      expect((await plugin.merge(request(head), building)).ok).toBe(true);
+    });
+
+    // Found by Codex review: text in a commit message is no proof that the
+    // task merged.
+    test("isn't fooled by a commit message that names the task's commit", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "a.ts": "a\n" });
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+      await git(
+        r.dir,
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "Note",
+        "-m",
+        `Skelcrew-Head: ${head}`,
+      );
+
+      const merged = await plugin.merge(request(head), pass);
+      expect(merged.ok).toBe(true);
+      expect(await git(r.dir, "show", "main:a.ts")).toBe("a");
+    });
+
+    // Found by Codex review: git can fail after it made the merge's own
+    // worktree, for example in a hook.
+    test("leaves nothing behind when preparing the merge fails partway", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "a.ts": "a\n" });
+      const worktrees = await git(r.dir, "worktree", "list");
+      const hook = join(r.dir, ".git", "hooks", "post-checkout");
+      writeFileSync(hook, "#!/bin/sh\nexit 1\n");
+      chmodSync(hook, 0o755);
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      expect((await plugin.merge(request(head), pass)).ok).toBe(false);
+      expect(await git(r.dir, "worktree", "list")).toBe(worktrees);
+    });
+
     test("moves main when no checkout has it open", async () => {
       const r = await repo();
       const { plugin, heads, request } = await built(r, { "a.ts": "a\n" });

@@ -49,8 +49,10 @@ export interface VersionControl {
 
   // Squash-merges exactly `head` onto main, as one commit. It brings the
   // work up to date with main first, then runs the checks on the result.
-  // Main only moves if both succeed, and never over uncommitted edits in a
-  // checkout of main. A failure leaves main as it was, and the message says
+  // The checks may leave build output, but mustn't commit or change tracked
+  // files, or they tested something other than what would land. Main only
+  // moves if all this succeeds, only to the exact commit the checks tested,
+  // and never over uncommitted edits in a checkout of main. A failure leaves main as it was, and the message says
   // why. Asked again after it succeeded, it gives back the same commit and
   // merges nothing twice.
   merge(request: MergeRequest, runChecks: RunChecks): Promise<Done<CommitSha>>;
