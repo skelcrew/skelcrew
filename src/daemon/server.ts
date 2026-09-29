@@ -89,6 +89,31 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
   };
 }
 
+export type Running =
+  | { ok: true; socket: string; stopped: Promise<void> }
+  | { ok: false; message: string };
+
+// `skelcrew serve`: serves until SIGTERM or SIGINT, then stops cleanly.
+// `stopped` resolves once it has.
+export async function serveUntilSignalled(
+  repo: string,
+  options: ServeOptions = {},
+): Promise<Running> {
+  const served = await serve(repo, options);
+  if (!served.ok) return served;
+  const server = served.server;
+  const stopped = new Promise<void>((resolve) => {
+    const onSignal = () => {
+      process.off("SIGTERM", onSignal);
+      process.off("SIGINT", onSignal);
+      void server.stop().then(resolve);
+    };
+    process.on("SIGTERM", onSignal);
+    process.on("SIGINT", onSignal);
+  });
+  return { ok: true, socket: server.socket, stopped };
+}
+
 function readWorkflow(
   repo: string,
   path: string,
