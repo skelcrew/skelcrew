@@ -27,7 +27,11 @@ export type InitReport = {
   warnings: string[];
 };
 
-export type InitResult = { ok: true; report: InitReport } | { ok: false; reason: string };
+// A failed run may have written some files before it stopped. They are
+// listed, so nothing is left behind without a word.
+export type InitResult =
+  | { ok: true; report: InitReport }
+  | { ok: false; reason: string; created: string[]; updated: string[] };
 
 const workflowPath = ".skelcrew/workflow.yml";
 
@@ -55,7 +59,7 @@ export function initRepository(dir: string): InitResult {
     }
   } else {
     const detected = detectChecks(dir);
-    if (!detected.ok) return { ok: false, reason: detected.reason };
+    if (!detected.ok) return { ok: false, reason: detected.reason, created: [], updated: [] };
     report.checks = detected.checks;
     report.warnings.push(...detected.warnings);
     workflow = workflowFile(detected.checks);
@@ -68,7 +72,17 @@ export function initRepository(dir: string): InitResult {
     ignoreDatabase(dir, report);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return { ok: false, reason: `Setting up the repository failed: ${message}` };
+    const written = [...report.created, ...report.updated];
+    const already =
+      written.length === 0
+        ? "It wrote nothing."
+        : `It had already written ${written.join(", ")}, which are still there.`;
+    return {
+      ok: false,
+      reason: `Setting up the repository failed: ${message} ${already}`,
+      created: report.created,
+      updated: report.updated,
+    };
   }
   return { ok: true, report };
 }

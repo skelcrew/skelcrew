@@ -144,6 +144,19 @@ describe("initRepository", () => {
     chmodSync(join(locked, workflow), 0o644);
   });
 
+  // A file where the develop skill's folder should be makes that write
+  // fail, after workflow.yml and the spec skill are written.
+  test("says which files it wrote when a later step fails", () => {
+    const dir = repo({ ...bunApp, ".claude/skills/develop": "not a folder" });
+    const result = initRepository(dir);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.created).toEqual([workflow, specSkill]);
+    expect(result.updated).toEqual([]);
+    expect(result.reason).toContain(workflow);
+    expect(result.reason).toContain(specSkill);
+  });
+
   test("says why it stopped when a Makefile can't be read", () => {
     const dir = repo();
     mkdirSync(join(dir, "Makefile"));
