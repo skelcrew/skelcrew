@@ -495,6 +495,36 @@ describe("initRepository", () => {
       }
     });
 
+    // A file or folder you may not write must end in a report, not a
+    // crash. The rest of init still runs.
+    test("says what to add by hand when it can't write the settings file", () => {
+      const mine = settingsJson({ model: "opus" });
+      const lockedFile = repo({ ...bunApp, [settings]: mine });
+      chmodSync(join(lockedFile, settings), 0o444);
+      // With the skills there already, init needs to write only settings.json
+      // in the locked folder.
+      const lockedFolder = repo({ ...bunApp, [specSkill]: "mine", [developSkill]: "mine" });
+      chmodSync(join(lockedFolder, ".claude"), 0o555);
+      try {
+        for (const dir of [lockedFile, lockedFolder]) {
+          const result = initRepository(dir);
+          expect(result.ok).toBe(true);
+          if (!result.ok) continue;
+          expect(result.report.askBeforeApprove).toBe("add by hand");
+          expect(result.report.unchanged).toContain(settings);
+          expect(result.report.created).toContain(".gitignore");
+          expect(result.report.warnings).toHaveLength(1);
+          expect(result.report.warnings[0]).toContain(settings);
+          for (const rule of askRules) expect(result.report.warnings[0]).toContain(rule);
+        }
+        expect(read(lockedFile, settings)).toBe(mine);
+      } finally {
+        // Put the rights back, so the folders can be removed.
+        chmodSync(join(lockedFile, settings), 0o644);
+        chmodSync(join(lockedFolder, ".claude"), 0o755);
+      }
+    });
+
     test("leaves a settings file that is a link or a folder alone", () => {
       const linked = repo({ ...bunApp, "elsewhere.json": "{}\n" });
       mkdirSync(join(linked, ".claude"));

@@ -77,10 +77,9 @@ export function addAskRule(dir: string): SettingsResult {
 
   const kind = fileKind(full);
   if (kind === "missing") {
-    mkdirSync(dirname(full), { recursive: true });
-    writeFileSync(full, `${JSON.stringify({ permissions: { ask: askRules } }, null, 2)}\n`, {
-      flag: "wx",
-    });
+    const text = `${JSON.stringify({ permissions: { ask: askRules } }, null, 2)}\n`;
+    const failed = write(full, text, "wx");
+    if (failed !== null) return byHand(`can't be created: ${failed}`);
     return { askBeforeApprove: "added", file: "created", warning: null };
   }
   if (kind === "link") return byHand("is a link to another file");
@@ -133,8 +132,26 @@ export function addAskRule(dir: string): SettingsResult {
     ...top.data,
     permissions: { ...permissions.data, ask: [...ask.data, ...missing] },
   };
-  writeFileSync(full, `${JSON.stringify(changed, null, indent)}${end}`);
+  const failed = write(full, `${JSON.stringify(changed, null, indent)}${end}`, "w");
+  if (failed !== null) return byHand(`can't be written: ${failed}`);
   return { askBeforeApprove: "added", file: "updated", warning: null };
+}
+
+// Writes the file, making its folder first if needed. Returns why it
+// failed, in plain words where it can, or null when it worked. The "wx" flag refuses a file that is already
+// there, so a new file never overwrites one that appeared meanwhile.
+function write(path: string, text: string, flag: "w" | "wx"): string | null {
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, text, { flag });
+    return null;
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? error.code : null;
+    if (code === "EACCES" || code === "EPERM" || code === "EROFS") {
+      return "init isn't allowed to write there";
+    }
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
 function byHand(why: string): SettingsResult {
