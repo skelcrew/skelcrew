@@ -32,8 +32,13 @@ export class Git implements VersionControl {
     const branch = branchName(request);
     const path = join(this.repo, worktreesFolder, branch.slice("task/".length));
 
-    // Asked again: the worktree is already there.
+    // Asked again: the worktree is already there. A folder at that path
+    // could also be some other repository, so it must be this one's.
     if (existsSync(path)) {
+      const ours = await this.isWorktree(path);
+      if (!ours.ok) return ours;
+      if (!ours.value)
+        return { ok: false, message: `${path} exists, but isn't a worktree of ${this.repo}.` };
       const current = await run(path, "rev-parse", "--abbrev-ref", "HEAD");
       if (current.ok && current.out === branch) return { ok: true, value: { path, branch } };
       return { ok: false, message: `${path} exists, but isn't the worktree for ${branch}.` };
@@ -88,12 +93,10 @@ export class Git implements VersionControl {
     // Nothing is saved or removed until it is certain this is the task's
     // worktree, in this repository, on the task's branch. Saving on a
     // detached HEAD would leave the work on no branch at all.
-    const listed = await run(this.repo, "worktree", "list", "--porcelain");
-    if (!listed.ok) return { ok: false, message: `git couldn't list worktrees: ${listed.err}` };
-    const real = realpathSync(worktree.path);
-    if (!listed.out.split("\n").includes(`worktree ${real}`)) {
+    const ours = await this.isWorktree(worktree.path);
+    if (!ours.ok) return ours;
+    if (!ours.value)
       return { ok: false, message: `${worktree.path} isn't a worktree of ${this.repo}.` };
-    }
     const head = await run(worktree.path, "symbolic-ref", "--quiet", "--short", "HEAD");
     if (!head.ok || head.out !== worktree.branch) {
       const on = head.ok ? head.out : "no branch";
@@ -103,7 +106,9 @@ export class Git implements VersionControl {
       };
     }
 
-    const status = await run(worktree.path, "status", "--porcelain");
+    // Untracked files are listed whatever git's settings say, so a setting
+    // that hides them can't hide them from the save.
+    const status = await run(worktree.path, "status", "--porcelain", "--untracked-files=all");
     if (!status.ok)
       return { ok: false, message: `git couldn't read ${worktree.path}: ${status.err}` };
     if (status.out !== "") {
@@ -128,18 +133,33 @@ export class Git implements VersionControl {
     // Something can still appear after the save, from a hook or a process
     // still writing. Then nothing is removed. Without --force, git makes the
     // same check again as it removes.
-    const after = await run(worktree.path, "status", "--porcelain");
+    const after = await run(worktree.path, "status", "--porcelain", "--untracked-files=all");
     if (!after.ok || after.out !== "") {
       return {
         ok: false,
         message: `${worktree.path} still has unsaved changes after saving. It was left as it is.`,
       };
     }
-    const removed = await run(this.repo, "worktree", "remove", worktree.path);
+    const removed = await run(
+      this.repo,
+      "-c",
+      "status.showUntrackedFiles=all",
+      "worktree",
+      "remove",
+      worktree.path,
+    );
     if (!removed.ok) {
       return { ok: false, message: `git couldn't remove ${worktree.path}: ${removed.err}` };
     }
     return { ok: true, value: null };
+  }
+
+  // Whether the folder is one of this repository's worktrees, by git's own
+  // list of them.
+  private async isWorktree(path: string): Promise<Done<boolean>> {
+    const listed = await run(this.repo, "worktree", "list", "--porcelain");
+    if (!listed.ok) return { ok: false, message: `git couldn't list worktrees: ${listed.err}` };
+    return { ok: true, value: listed.out.split("\n").includes(`worktree ${realpathSync(path)}`) };
   }
 
   // Adds the worktrees folder to .git/info/exclude, once.

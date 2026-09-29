@@ -103,6 +103,30 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       expect(!created.ok && created.message).toContain("task/12-csv-export");
     });
 
+    // Found by Codex review: a folder at the right path, on the right branch,
+    // can still be some other repository.
+    test("refuses a folder at the worktree's path that isn't this repository's worktree", async () => {
+      const r = await repo();
+      const path = join(r.dir, ".skelcrew", "worktrees", "12-csv-export");
+      mkdirSync(path, { recursive: true });
+      await $`git init -q -b task/12-csv-export`.cwd(path).quiet();
+      await git(
+        path,
+        "-c",
+        "user.name=T",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "Other",
+      );
+
+      const created = await make(r).createWorktree(csv);
+      expect(created.ok).toBe(false);
+    });
+
     test("carries on from an earlier try that made the branch and stopped", async () => {
       const r = await repo();
       await git(r.dir, "branch", "task/12-csv-export");
@@ -156,6 +180,20 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       expect(await git(r.dir, "rev-parse", "task/12-csv-export")).toBe(
         await git(r.dir, "rev-parse", "main"),
       );
+    });
+
+    // Found by Codex review: a setting that hides untracked files must not
+    // hide them from the save.
+    test("saves untracked files even when git is set to hide them", async () => {
+      const r = await repo();
+      await git(r.dir, "config", "status.showUntrackedFiles", "no");
+      const plugin = make(r);
+      const created = await plugin.createWorktree(csv);
+      if (!created.ok) throw new Error(created.message);
+      writeFileSync(join(created.value.path, "export.ts"), "export {};\n");
+
+      expect(await plugin.removeWorktree(created.value)).toEqual({ ok: true, value: null });
+      expect(await git(r.dir, "show", "task/12-csv-export:export.ts")).toBe("export {};");
     });
 
     // Found by Codex review: work written after the save commit, here by a
