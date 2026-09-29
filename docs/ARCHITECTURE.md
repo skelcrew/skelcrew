@@ -199,6 +199,18 @@ makes every path critical, so nothing merges without your approval. `workflowFil
 writes the file `skelcrew init` will create, with the check commands init finds in the
 repository.
 
+## Plugins
+
+`src/plugins/` connects the daemon to other tools. Each kind of plugin is an interface,
+and every call answers with a value, never a throw, so a failure becomes a reply the core
+decides on. Every call may also arrive twice after a crash, and must then change nothing.
+
+| File | What it holds |
+| --- | --- |
+| `version-control.ts` | `VersionControl`: create and remove a task's worktree. Reading a branch, merge and revert come next. |
+| `version-control.contract.ts` | The tests every version-control plugin must pass, against a throwaway git repository. |
+| `git/git.ts` | The built-in plugin. Each build gets a worktree in `.skelcrew/worktrees/` on its own branch from main, such as `task/12-csv-export-2`. Removing one commits its uncommitted work first, and refuses if the worktree isn't on its task's branch or still has unsaved work after that. |
+
 ## Around the core (planned)
 
 These parts are designed in the spec's Architecture and Plugins sections, and come in
