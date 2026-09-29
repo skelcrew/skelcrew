@@ -14,7 +14,8 @@ If you weren't given a task number, ask the developer which task, and wait. Don'
 
 ## 1. Claim the task
 
-Run `skelcrew claim $ARGUMENTS`. This makes this session the one working on the task.
+Run `skelcrew claim` with the task number the developer gave, such as `skelcrew claim 12`.
+This makes this session the one working on the task.
 
 If the claim is refused, tell the developer why, in one sentence, and stop. For example, the
 task may not be waiting for a spec, or too many agents may be working already.
@@ -34,11 +35,18 @@ Keep the spec short and plain. Show the developer the finished spec before you s
 ## 3. Submit it
 
 First run `skelcrew submit --help`. It says how to hand over the spec. Then run
-`skelcrew submit $ARGUMENTS` with the spec in that form. If it is refused because the spec
+`skelcrew submit` with the same task number and the spec in that form. If it is refused because the spec
 is missing something, fix what it names and submit again.
 
 Submitting is where your part ends. You never approve a spec. Only the developer does, by
 running `skelcrew approve` themselves. You never run it.
+
+## What you never do
+
+- Never approve anything. Never run `skelcrew approve`. Only the developer runs it.
+- Never edit `.skelcrew/workflow.yml`, `.claude/settings.json`, or the skills in
+  `.claude/skills/`. They set the rules you work under, such as whether a spec needs the
+  developer's approval. If one looks wrong, tell the developer.
 
 ## If you are refused
 

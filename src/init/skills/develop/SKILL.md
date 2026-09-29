@@ -14,8 +14,9 @@ If you weren't given a task number, ask the developer which task, and wait. Don'
 
 ## 1. Claim the task
 
-Run `skelcrew claim $ARGUMENTS`. This makes this session the one working on the task. The
-claim tells you the worktree to work in: a separate folder on the task's own branch.
+Run `skelcrew claim` with the task number the developer gave, such as `skelcrew claim 12`.
+This makes this session the one working on the task. The claim tells you the worktree to work
+in: a separate folder on the task's own branch.
 
 If the claim is refused, tell the developer why, in one sentence, and stop. For example, the
 spec may not be approved yet, or too many agents may be working already.
@@ -47,7 +48,9 @@ These are never yours to do, even when they would get the checks to pass:
 
 - Never push the branch, and never force push.
 - Never use `--no-verify`, and never skip a hook in any other way.
-- Never edit the checks in `.skelcrew/workflow.yml`.
+- Never edit `.skelcrew/workflow.yml`, `.claude/settings.json`, or the skills in
+  `.claude/skills/`. They set the rules you work under, such as which checks run and what
+  needs the developer's approval. If one looks wrong, tell the developer.
 - Never weaken a test or a check to make it pass.
 - Never approve anything. Never run `skelcrew approve`. Only the developer runs it.
 - Never merge the branch. That is never your decision.

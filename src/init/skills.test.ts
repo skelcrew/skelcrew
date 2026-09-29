@@ -66,6 +66,32 @@ describe("defaultSkills", () => {
     }
   });
 
+  // Started without a number, $ARGUMENTS is empty, so "skelcrew claim
+  // $ARGUMENTS" would read as a claim of nothing. The skill names the
+  // number the developer gave instead.
+  test("claim the task number the developer gave", () => {
+    for (const name of ["spec", "develop"]) {
+      const text = skill(name).replaceAll(/\s+/g, " ");
+      expect(text).not.toContain("claim $ARGUMENTS");
+      expect(text).not.toContain("submit $ARGUMENTS");
+      expect(text).toContain("with the task number the developer gave");
+    }
+  });
+
+  // These files decide what an agent may do: which checks run, whether a
+  // spec needs approval, which paths are critical, what Claude Code asks
+  // about, and what the skills say. An agent that edits them changes its
+  // own rules.
+  test("never edit the files that set the rules", () => {
+    for (const name of ["spec", "develop"]) {
+      const text = skill(name).replaceAll(/\s+/g, " ");
+      expect(text).toContain("Never edit `.skelcrew/workflow.yml`");
+      expect(text).toContain("`.claude/settings.json`");
+      expect(text).toContain("`.claude/skills/`");
+      expect(text).not.toContain("edit the checks");
+    }
+  });
+
   // The CLI isn't built yet, so the skill can't name its flags. Its help
   // says how the spec is passed.
   test("the spec skill reads how to pass the spec before submitting", () => {
