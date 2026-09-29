@@ -6,10 +6,7 @@
 import { spawn } from "node:child_process";
 import { statSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
-import type { Done } from "../plugins/version-control";
-
-// Runs the checks in a folder: passes, or fails with what broke.
-export type RunChecks = (dir: string) => Promise<Done<null>>;
+import type { RunChecks } from "../plugins/version-control";
 
 export type ChecksOptions = {
   // A command running longer than this is stopped and counts as failed.

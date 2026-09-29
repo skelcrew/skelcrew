@@ -14,12 +14,20 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { $ } from "bun";
 import { CommitSha } from "../../core/ids";
 import type { BranchFacts, Worktree } from "../../core/types";
-import type { Done, VersionControl, WorktreeRequest } from "../version-control";
+import type {
+  Done,
+  MergeRequest,
+  RunChecks,
+  VersionControl,
+  WorktreeRequest,
+} from "../version-control";
 
 // Worktrees sit inside the repository, where you can find them. The folder
 // is listed in the repository's local ignore file, so they never show up
 // as changes in your own checkout.
 const worktreesFolder = ".skelcrew/worktrees";
+// A merge is built in a worktree of its own here, never in yours.
+const mergingFolder = ".skelcrew/merging";
 
 export class Git implements VersionControl {
   // git runs inside the repository, so a relative path would be read from
@@ -41,6 +49,12 @@ export class Git implements VersionControl {
   createWorktree(request: WorktreeRequest): Promise<Done<Worktree>> {
     return this.oneAtATime(() =>
       guard(`create the worktree for #${request.taskId}`, () => this.create(request)),
+    );
+  }
+
+  merge(request: MergeRequest, runChecks: RunChecks): Promise<Done<CommitSha>> {
+    return this.oneAtATime(() =>
+      guard(`merge #${request.taskId}`, () => this.squashMerge(request, runChecks)),
     );
   }
 
@@ -91,19 +105,8 @@ export class Git implements VersionControl {
       if (!undone.ok) return undone;
     }
 
-    const main = await run(
-      this.repo,
-      "rev-parse",
-      "--verify",
-      "--quiet",
-      `refs/heads/${this.main}`,
-    );
-    if (!main.ok) {
-      return {
-        ok: false,
-        message: `The main branch "${this.main}" doesn't exist in ${this.repo}.`,
-      };
-    }
+    const main = await this.mainExists();
+    if (!main.ok) return main;
     const ignored = await this.ignoreWorktrees();
     if (!ignored.ok) return ignored;
 
@@ -321,15 +324,12 @@ export class Git implements VersionControl {
         message: `${worktree.path} is on ${on}, not ${worktree.branch}. Its work was left as it is.`,
       };
     }
-    const files = await run(worktree.path, "ls-files", "-v");
-    if (!files.ok) {
-      return { ok: false, message: `git couldn't list ${worktree.path}: ${files.err}` };
-    }
-    const hidden = files.out.split("\n").filter((line) => /^[a-zS]/.test(line));
-    if (hidden.length > 0) {
+    const hidden = await hiddenFiles(worktree.path);
+    if (!hidden.ok) return hidden;
+    if (hidden.value > 0) {
       return {
         ok: false,
-        message: `${hidden.length} file(s) in ${worktree.path} are marked so git hides their changes. The worktree was left as it is.`,
+        message: `${hidden.value} file(s) in ${worktree.path} are marked so git hides their changes. The worktree was left as it is.`,
       };
     }
     return { ok: true, value: null };
@@ -389,18 +389,318 @@ export class Git implements VersionControl {
   }
 
   // Adds the worktrees folder to .git/info/exclude, once.
+  // Adds the worktrees and merging folders to .git/info/exclude, once each.
   private async ignoreWorktrees(): Promise<Done<null>> {
     const found = await run(this.repo, "rev-parse", "--git-path", "info/exclude");
     if (!found.ok) return { ok: false, message: `git couldn't find its ignore file: ${found.err}` };
     const file = isAbsolute(found.out) ? found.out : join(this.repo, found.out);
-    const line = `/${worktreesFolder}/`;
-    const current = existsSync(file) ? readFileSync(file, "utf8") : "";
-    if (!current.split("\n").includes(line)) {
-      mkdirSync(dirname(file), { recursive: true });
-      const gap = current === "" || current.endsWith("\n") ? "" : "\n";
-      appendFileSync(file, `${gap}${line}\n`);
+    for (const folder of [worktreesFolder, mergingFolder]) {
+      const line = `/${folder}/`;
+      const current = existsSync(file) ? readFileSync(file, "utf8") : "";
+      if (!current.split("\n").includes(line)) {
+        mkdirSync(dirname(file), { recursive: true });
+        const gap = current === "" || current.endsWith("\n") ? "" : "\n";
+        appendFileSync(file, `${gap}${line}\n`);
+      }
     }
     return { ok: true, value: null };
+  }
+
+  // The merge. Main only moves at the very end, and only to the exact
+  // commit the checks tested.
+  private async squashMerge(request: MergeRequest, runChecks: RunChecks): Promise<Done<CommitSha>> {
+    const main = `refs/heads/${this.main}`;
+    const common = await run(this.repo, "rev-parse", "--path-format=absolute", "--git-common-dir");
+    if (!common.ok) return { ok: false, message: `git couldn't find its folder: ${common.err}` };
+
+    // Already merged? The receipt holds the commit this plugin was about to
+    // put on main. Only if that exact commit is on main did the merge land.
+    // A commit's hash can't be faked by text in some other commit.
+    const receipt = join(common.out, "skelcrew-merges", `${request.taskId}-${request.head}`);
+    if (existsSync(receipt)) {
+      const candidate = readFileSync(receipt, "utf8").trim();
+      const landed = await run(this.repo, "merge-base", "--is-ancestor", candidate, main);
+      if (landed.ok) return shaOf(candidate);
+      rmSync(receipt, { force: true }); // an earlier try that never moved main
+    }
+
+    const onBranch = await run(
+      this.repo,
+      "merge-base",
+      "--is-ancestor",
+      request.head,
+      `refs/heads/${request.worktree.branch}`,
+    );
+    if (!onBranch.ok) {
+      return { ok: false, message: `${request.head} isn't on ${request.worktree.branch}.` };
+    }
+    const exists = await this.mainExists();
+    if (!exists.ok) return exists;
+    const before = await run(this.repo, "rev-parse", "--verify", main);
+    if (!before.ok) return { ok: false, message: `The main branch "${this.main}" doesn't exist.` };
+    const ignored = await this.ignoreWorktrees();
+    if (!ignored.ok) return ignored;
+
+    // The merge is built in a worktree of its own. Its mark goes in first,
+    // so a later try knows a leftover is this plugin's to clear.
+    const temp = join(this.repo, mergingFolder, String(request.taskId));
+    const mark = join(common.out, "skelcrew-merging", String(request.taskId));
+    const cleared = await this.clearMerging(temp, mark);
+    if (!cleared.ok) return cleared;
+    mkdirSync(dirname(mark), { recursive: true });
+    writeFileSync(mark, "");
+
+    // Stays a failure if building throws. The guard at the edge reports it.
+    let result: Done<CommitSha> = { ok: false, message: "The merge stopped partway." };
+    try {
+      result = await this.buildAndLand(request, runChecks, temp, receipt, before.out);
+    } finally {
+      const cleanup = await this.clearMerging(temp, mark);
+      // After a merge that landed, main has moved, so the answer must stay
+      // a success. Its mark stays too, so the next merge clears the
+      // leftover. After a failure, the message says what was left behind.
+      if (!cleanup.ok && !result.ok) {
+        result = { ok: false, message: `${result.message} ${cleanup.message}` };
+      }
+    }
+    return result;
+  }
+
+  private async buildAndLand(
+    request: MergeRequest,
+    runChecks: RunChecks,
+    temp: string,
+    receipt: string,
+    before: string,
+  ): Promise<Done<CommitSha>> {
+    const added = await run(this.repo, "worktree", "add", "--quiet", "--detach", temp, before);
+    if (!added.ok) return { ok: false, message: `git couldn't prepare the merge: ${added.err}` };
+
+    // Exactly the reported commit, squashed onto main as it is now.
+    const squashed = await run(temp, "merge", "--squash", "--quiet", request.head);
+    if (!squashed.ok) {
+      const conflicts = await run(temp, "diff", "--name-only", "--diff-filter=U");
+      const files =
+        conflicts.ok && conflicts.out !== "" ? conflicts.out.split("\n").join(", ") : squashed.err;
+      return { ok: false, message: `#${request.taskId} conflicts with ${this.main} in ${files}.` };
+    }
+    const committed = await run(
+      temp,
+      "commit",
+      "--quiet",
+      "--message",
+      `#${request.taskId} ${request.title}`,
+      "--message",
+      `Skelcrew-Task: ${request.taskId}\nSkelcrew-Head: ${request.head}`,
+    );
+    if (!committed.ok)
+      return { ok: false, message: `git couldn't commit the merge: ${committed.err}` };
+    const candidate = await run(temp, "rev-parse", "HEAD");
+    if (!candidate.ok)
+      return { ok: false, message: `git couldn't read the merge: ${candidate.err}` };
+    // Hooks run while the merge is made, and one could stage a file or add
+    // a commit no one approved. So the result is checked against what it
+    // must be, worked out separately: exactly one commit on the old main,
+    // holding exactly main merged with the task's commit.
+    const exact = await this.isExactMerge(candidate.out, before, request.head);
+    if (!exact.ok) return exact;
+    const hiddenBefore = await hiddenFiles(temp);
+    if (!hiddenBefore.ok || hiddenBefore.value > 0) {
+      return { ok: false, message: "Files in the merge are marked so git hides their changes." };
+    }
+
+    // The checks run on the merged result. They may leave build output,
+    // but must not commit or change tracked files: then they tested
+    // something other than what would land.
+    const checked = await runChecks(temp);
+    if (!checked.ok) {
+      return { ok: false, message: `The checks failed on the merged result: ${checked.message}` };
+    }
+    const after = await run(temp, "rev-parse", "HEAD");
+    const changed = await run(temp, "status", "--porcelain", "--untracked-files=no");
+    if (!after.ok || after.out !== candidate.out) {
+      return {
+        ok: false,
+        message: "The checks made a commit, so they didn't test what would land.",
+      };
+    }
+    if (!changed.ok || changed.out !== "") {
+      return {
+        ok: false,
+        message: "The checks changed tracked files, so they didn't test what would land.",
+      };
+    }
+    // git status doesn't show changes to files marked assume-unchanged or
+    // skip-worktree, so the checks mustn't leave any such marks.
+    const hiddenAfter = await hiddenFiles(temp);
+    if (!hiddenAfter.ok || hiddenAfter.value > 0) {
+      return {
+        ok: false,
+        message: "The checks hid changes from git, so they didn't test what would land.",
+      };
+    }
+
+    // The receipt goes in before main moves, so a crash in between still
+    // shows, on the next try, whether main moved.
+    mkdirSync(dirname(receipt), { recursive: true });
+    writeFileSync(receipt, candidate.out);
+
+    const moved = await this.moveMain(before, candidate.out);
+    if (!moved.ok) {
+      rmSync(receipt, { force: true });
+      return moved;
+    }
+    return shaOf(candidate.out);
+  }
+
+  // Clears the merge's own worktree, but only if the plugin's mark says it
+  // put it there. Anything else at that path is someone's work.
+  private async clearMerging(temp: string, mark: string): Promise<Done<null>> {
+    if (existsSync(temp)) {
+      if (!existsSync(mark)) {
+        return {
+          ok: false,
+          message: `${temp} exists, but Skelcrew didn't put it there. It was left as it is.`,
+        };
+      }
+      const removed = await run(this.repo, "worktree", "remove", "--force", temp);
+      if (!removed.ok) {
+        return {
+          ok: false,
+          message: `The merge's own worktree ${temp} couldn't be removed: ${removed.err}`,
+        };
+      }
+    }
+    await run(this.repo, "worktree", "prune");
+    rmSync(mark, { force: true });
+    return { ok: true, value: null };
+  }
+
+  // Checks a branch has exactly the configured name. On macOS, git also
+  // finds "main" when asked for "Main", while every check that compares
+  // names would miss it.
+  private async mainExists(): Promise<Done<null>> {
+    const listed = await run(this.repo, "for-each-ref", "--format=%(refname)", "refs/heads/");
+    if (listed.ok && listed.out.split("\n").includes(`refs/heads/${this.main}`)) {
+      return { ok: true, value: null };
+    }
+    return { ok: false, message: `The main branch "${this.main}" doesn't exist in ${this.repo}.` };
+  }
+
+  // Whether the commit is exactly the merge: its one parent is the old main,
+  // and its contents are what git merge-tree makes of main and the head.
+  private async isExactMerge(commit: string, before: string, head: string): Promise<Done<null>> {
+    const parents = await run(this.repo, "rev-list", "--parents", "--max-count=1", commit);
+    if (!parents.ok || parents.out !== `${commit} ${before}`) {
+      return {
+        ok: false,
+        message: "A hook added a commit to the merge, so it isn't what the task made.",
+      };
+    }
+    // With main's .gitattributes, which the merge itself used, not those of
+    // whatever your checkout has open.
+    const expected = await run(
+      this.repo,
+      "-c",
+      `attr.tree=${before}`,
+      "merge-tree",
+      "--write-tree",
+      before,
+      head,
+    );
+    const tree = await run(this.repo, "rev-parse", `${commit}^{tree}`);
+    const wanted = expected.ok ? expected.out.split("\n")[0] : undefined;
+    if (!tree.ok || wanted === undefined || tree.out !== wanted) {
+      return {
+        ok: false,
+        message: "A hook changed what the merge holds, so it isn't what the task made.",
+      };
+    }
+    return { ok: true, value: null };
+  }
+
+  // Moves main from `before` to the merge, or fails and leaves main, and
+  // your checkout of it, as they were.
+  private async moveMain(before: string, merge: string): Promise<Done<null>> {
+    const main = `refs/heads/${this.main}`;
+    const where = await this.mainCheckout();
+    if (!where.ok) return where;
+
+    // Main must still be where the merge began. If someone moved it, for
+    // example to take a bad commit off, moving it now would undo that.
+    const now = await run(this.repo, "rev-parse", "--verify", main);
+    if (!now.ok || now.out !== before) {
+      return {
+        ok: false,
+        message: `${this.main} moved while the merge was being checked. Nothing was merged. Try again.`,
+      };
+    }
+
+    // No checkout has main open: move it, but only if it is still where the
+    // merge began.
+    if (where.value === null) {
+      const updated = await run(this.repo, "update-ref", main, merge, before);
+      if (updated.ok) return { ok: true, value: null };
+      return { ok: false, message: `${this.main} couldn't be moved to the merge: ${updated.err}` };
+    }
+
+    // Your staging area as it is now, so a failed move can be undone exactly.
+    const snapshot = await run(where.value, "write-tree");
+    // In your checkout of main, a fast-forward. git refuses it rather than
+    // overwrite your uncommitted edits, or, with --no-overwrite-ignore, your
+    // ignored files. --no-autostash stops git from stashing your edits
+    // instead of refusing.
+    const moved = await run(
+      where.value,
+      "merge",
+      "--ff-only",
+      "--no-overwrite-ignore",
+      "--no-autostash",
+      "--quiet",
+      merge,
+    );
+    if (moved.ok) return { ok: true, value: null };
+    const failed = `${this.main} couldn't be moved to the merge: ${moved.err}`;
+    const putBack = snapshot.ok
+      ? await putCheckoutBack(where.value, before, merge, snapshot.out)
+      : "Check `git status` there: it may hold the task's changes, staged.";
+    return { ok: false, message: `${failed} ${putBack}` };
+  }
+
+  // Your checkout of main, if one has it open, or null. Refused if main is
+  // open in more than one place, since only one could be updated, or if any
+  // checkout is rebasing or bisecting main. git lists a rebasing checkout
+  // as detached, so each checkout's own git folder is read.
+  private async mainCheckout(): Promise<Done<string | null>> {
+    const main = `refs/heads/${this.main}`;
+    const listed = await run(this.repo, "worktree", "list", "--porcelain");
+    if (!listed.ok) return { ok: false, message: `git couldn't list worktrees: ${listed.err}` };
+    const open: string[] = [];
+    const all: string[] = [];
+    for (const block of listed.out.split("\n\n")) {
+      const lines = block.split("\n");
+      const line = lines.find((l) => l.startsWith("worktree "));
+      if (line === undefined) continue;
+      const path = line.slice("worktree ".length);
+      all.push(path);
+      if (lines.includes(`branch ${main}`)) open.push(path);
+    }
+    if (open.length > 1) {
+      return {
+        ok: false,
+        message: `${this.main} is checked out in ${open.length} places: ${open.join(", ")}. Only one could be updated, so nothing was merged.`,
+      };
+    }
+    for (const path of all) {
+      const busy = await busyWith(path, this.main);
+      if (busy !== null) {
+        return {
+          ok: false,
+          message: `${path} is ${busy} ${this.main}. Nothing was merged. Finish or abort that first.`,
+        };
+      }
+    }
+    return { ok: true, value: open[0] ?? null };
   }
 }
 
@@ -448,6 +748,140 @@ async function markFinished(path: string): Promise<Run> {
 async function isFinished(path: string): Promise<boolean> {
   const dir = await run(path, "rev-parse", "--path-format=absolute", "--git-dir");
   return dir.ok && existsSync(join(dir.out, finishedMark));
+}
+
+// How many files are marked assume-unchanged or skip-worktree. git hides
+// changes to them from status, so a save or a check would miss them.
+async function hiddenFiles(dir: string): Promise<Done<number>> {
+  const files = await run(dir, "ls-files", "-v");
+  if (!files.ok) return { ok: false, message: `git couldn't list ${dir}: ${files.err}` };
+  return { ok: true, value: files.out.split("\n").filter((line) => /^[a-zS]/.test(line)).length };
+}
+
+// "rebasing" or "bisecting" if the checkout at `path` is doing that to the
+// branch, or null.
+async function busyWith(path: string, branch: string): Promise<string | null> {
+  if (!existsSync(path)) return null;
+  for (const [file, what] of [
+    ["rebase-merge/head-name", "rebasing"],
+    ["rebase-apply/head-name", "rebasing"],
+    ["BISECT_START", "bisecting"],
+  ] as const) {
+    const found = await run(path, "rev-parse", "--path-format=absolute", "--git-path", file);
+    if (!found.ok || !existsSync(found.out)) continue;
+    const name = readFileSync(found.out, "utf8").trim();
+    if (name === branch || name === `refs/heads/${branch}`) return what;
+  }
+  return null;
+}
+
+// After a failed fast-forward, git may have updated your files and staging
+// area without moving main. Only the files the merge touched are looked at,
+// by exact name. A file counts as git's doing only if it now holds exactly
+// what the merge made, differs from the snapshot of your staging area taken
+// before, and its working copy matches. Those are set back to the snapshot.
+// Everything else is yours and stays. Returns what the message should add.
+async function putCheckoutBack(
+  checkout: string,
+  before: string,
+  merge: string,
+  snapshot: string,
+): Promise<string> {
+  const unsure = "Check `git status` there: it may hold the task's changes, staged.";
+  const head = await run(checkout, "rev-parse", "HEAD");
+  if (!head.ok || head.out !== before) return unsure;
+  const touched = await runRaw(
+    checkout,
+    "diff",
+    "--name-only",
+    "--no-renames",
+    "-z",
+    before,
+    merge,
+  );
+  if (!touched.ok) return unsure;
+
+  const byGit: { path: string; back: string }[] = [];
+  for (const path of touched.out.split("\0").filter((p) => p !== "")) {
+    const now = await indexEntry(checkout, path);
+    const mine = await treeEntry(checkout, snapshot, path);
+    const merged = await treeEntry(checkout, merge, path);
+    if (now === null || mine === null || merged === null) return unsure;
+    if (now === mine) continue;
+    const clean = await run(checkout, "--literal-pathspecs", "diff", "--quiet", "--", path);
+    if (now !== merged || !clean.ok) return unsure;
+    byGit.push({ path, back: mine });
+  }
+  if (byGit.length === 0) return "Your checkout of main is as it was.";
+
+  // Files the merge added go first, so a folder it made can give way to
+  // the file that was there before.
+  const order = [...byGit].sort((a, b) => Number(a.back !== "") - Number(b.back !== ""));
+  for (const { path, back } of order) {
+    if (!(await setBack(checkout, path, back))) return unsure;
+  }
+  return "Your checkout of main was put back as it was, with your own edits kept.";
+}
+
+// A file's entry in the staging area, as "mode object", "" if it isn't
+// there, or null if git couldn't say. Exact names only: git would read the
+// name as a pattern, and a folder's name matches the files inside it.
+async function indexEntry(checkout: string, path: string): Promise<string | null> {
+  const listed = await runRaw(
+    checkout,
+    "--literal-pathspecs",
+    "ls-files",
+    "--stage",
+    "-z",
+    "--",
+    path,
+  );
+  if (!listed.ok) return null;
+  for (const line of listed.out.split("\0")) {
+    const [meta, name] = line.split("\t");
+    if (name !== path || meta === undefined) continue;
+    const [mode, object] = meta.split(" ");
+    return `${mode} ${object}`;
+  }
+  return "";
+}
+
+// The same, in a commit or tree. A folder at that name counts as no file.
+async function treeEntry(checkout: string, tree: string, path: string): Promise<string | null> {
+  const listed = await runRaw(checkout, "--literal-pathspecs", "ls-tree", "-z", tree, "--", path);
+  if (!listed.ok) return null;
+  for (const line of listed.out.split("\0")) {
+    const [meta, name] = line.split("\t");
+    if (name !== path || meta === undefined) continue;
+    const [mode, type, object] = meta.split(" ");
+    return type === "tree" ? "" : `${mode} ${object}`;
+  }
+  return "";
+}
+
+// Sets a file back to an entry, in the staging area and on disk, or
+// removes it if the entry is "".
+async function setBack(checkout: string, path: string, entry: string): Promise<boolean> {
+  if (entry === "") {
+    return (await run(checkout, "--literal-pathspecs", "rm", "--quiet", "--force", "--", path)).ok;
+  }
+  const [mode, object] = entry.split(" ");
+  const staged = await run(
+    checkout,
+    "update-index",
+    "--add",
+    "--cacheinfo",
+    `${mode},${object},${path}`,
+  );
+  if (!staged.ok) return false;
+  return (await run(checkout, "--literal-pathspecs", "checkout-index", "--force", "--", path)).ok;
+}
+
+function shaOf(text: string): Done<CommitSha> {
+  const sha = CommitSha.safeParse(text);
+  return sha.success
+    ? { ok: true, value: sha.data }
+    : { ok: false, message: `git gave "${text}" as a commit.` };
 }
 
 // The full name of the branch a worktree has checked out, such as

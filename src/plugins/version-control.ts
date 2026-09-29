@@ -11,9 +11,22 @@
 // started it and nothing was done in it since. Anything else at its path
 // is someone's work: it is refused and left as it is.
 
-import type { BranchFacts, TaskId, Worktree } from "../core/types";
+import type { BranchFacts, CommitSha, TaskId, Worktree } from "../core/types";
 
 export type Done<T> = { ok: true; value: T } | { ok: false; message: string };
+
+// What to merge: exactly `head` from the task's worktree, even if the
+// branch has moved on since. The title names the commit on main.
+export type MergeRequest = {
+  taskId: TaskId;
+  title: string;
+  worktree: Worktree;
+  head: CommitSha;
+};
+
+// Runs the local checks in a folder. The daemon owns the checks, so it
+// hands this to the merge, which calls it on the merged result.
+export type RunChecks = (dir: string) => Promise<Done<null>>;
 
 // Which worktree to create. The core's create_worktree command has no
 // title, so the daemon adds the task's title for the branch name.
@@ -33,6 +46,22 @@ export interface VersionControl {
   // Refused while the worktree has uncommitted work, since the gates and
   // the merge only see what is committed.
   readBranch(worktree: Worktree): Promise<Done<BranchFacts>>;
+
+  // Squash-merges exactly `head` onto main, as one commit. It brings the
+  // work up to date with main first, then runs the checks on the result.
+  // The checks may leave build output, but mustn't commit or change tracked
+  // files, or they tested something other than what would land. Main only
+  // moves if all this succeeds, only to the exact commit the checks tested,
+  // only if it is still where the merge began, and never over uncommitted
+  // edits or ignored files in a checkout of main. It doesn't move while
+  // main is being rebased or bisected, or is checked out in more than one
+  // place. If moving fails, a checkout of main is left as it was, with your
+  // own edits kept. Hooks run as usual, but nothing they add can land: the
+  // result must be one commit on the old main, holding exactly main merged
+  // with `head`. A failure leaves main as it was, and the message says
+  // why. Asked again after it succeeded, it gives back the same commit and
+  // merges nothing twice.
+  merge(request: MergeRequest, runChecks: RunChecks): Promise<Done<CommitSha>>;
 
   // Removes the worktree. Its uncommitted changes are committed to its
   // branch first, so no work is lost, and the branch is kept. Removing one
