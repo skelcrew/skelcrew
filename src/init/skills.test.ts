@@ -25,16 +25,13 @@ describe("defaultSkills", () => {
     ]);
   });
 
-  // Claude Code reads argument-hint and disable-model-invocation. Other
-  // harnesses ignore fields they don't know.
-  test("each starts with a name, a description and an argument hint", () => {
+  // argument-hint only changes how Claude Code shows the skill, and the
+  // shared Agent Skills check refuses it, so it stays out.
+  test("each starts with a name and a description, and no argument hint", () => {
     for (const name of ["spec", "develop"]) {
       const front = frontmatter(skill(name));
-      expect(front).toMatchObject({
-        name,
-        description: expect.any(String),
-        "argument-hint": "[task number]",
-      });
+      expect(front).toMatchObject({ name, description: expect.any(String) });
+      expect(front).not.toHaveProperty("argument-hint");
     }
   });
 

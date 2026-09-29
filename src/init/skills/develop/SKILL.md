@@ -1,7 +1,6 @@
 ---
 name: develop
 description: Build a Skelcrew task whose spec is approved, while the developer watches, and report it done. Use when the developer asks to build a task, such as when the developer asks to build task 12, or types "/develop 12".
-argument-hint: "[task number]"
 disable-model-invocation: true
 ---
 

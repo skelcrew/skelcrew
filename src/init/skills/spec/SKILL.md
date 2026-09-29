@@ -1,7 +1,6 @@
 ---
 name: spec
 description: Write the spec for a Skelcrew task together with the developer, then submit it for their approval. Use when the developer asks to spec a task, such as when the developer asks to spec task 12, or types "/spec 12".
-argument-hint: "[task number]"
 disable-model-invocation: true
 ---
 
