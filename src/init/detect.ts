@@ -7,8 +7,8 @@
 //   check script, its test, typecheck and lint scripts, in that order.
 //   They run with the package manager its lock file shows. A test script
 //   that does nothing, such as `exit 0` or `echo "no tests" && exit 0`,
-//   counts as no test script. A test
-//   script that runs no test runner init knows gives a warning.
+//   counts as no test script. A test script that runs no test runner
+//   init knows gives a warning.
 // - Cargo.toml: cargo test.
 // - go.mod: go test ./...
 // - pyproject.toml with a [tool.pytest] or [tool.pytest.ini_options]
