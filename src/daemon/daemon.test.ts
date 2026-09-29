@@ -248,6 +248,74 @@ describe("the daemon", () => {
     expect(answer.ok).toBe(false);
   });
 
+  // The loop keeps a command until its tool says it has finished, which for
+  // a command with a reply means once the reply is handled. Otherwise every
+  // command would go out again at each start.
+  test("leaves no command pending once its reply is handled", async () => {
+    const store = EventStore.open(":memory:");
+    const { daemon } = open(store);
+    await ok(daemon, add("CSV export"));
+    await ok(daemon, { type: "claim", task: task(1) });
+    await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
+    await ok(daemon, { type: "approve", task: task(1), sendBack: null });
+    await ok(daemon, { type: "claim", task: task(1) });
+    await Bun.sleep(20);
+    expect(store.loadCommands()).toEqual({ ok: true, commands: [] });
+  });
+
+  // A reply that could never be saved is given up after its retries. Its
+  // command then stays, and goes out again when the daemon next starts.
+  test("keeps a command whose reply was given up, for the next start", async () => {
+    const store = EventStore.open(":memory:");
+    let breakReplies = true;
+    const log = {
+      appendTask: (...args: Parameters<EventStore["appendTask"]>) => {
+        const [events] = args;
+        if (breakReplies && events.some((e) => e.type === "task.blocked")) {
+          throw new Error("database is locked");
+        }
+        return store.appendTask(...args);
+      },
+      appendProject: store.appendProject.bind(store),
+      carriedOut: store.carriedOut.bind(store),
+      loadTasks: store.loadTasks.bind(store),
+      loadProjects: store.loadProjects.bind(store),
+      loadStarts: store.loadStarts.bind(store),
+      loadCommands: store.loadCommands.bind(store),
+    };
+    let sessions = 0;
+    const newSession = () => {
+      sessions += 1;
+      return `you-${sessions}`;
+    };
+    const first = Daemon.open({ config, log, retryMs: 1, retries: 1, newSession });
+    if (!first.ok) throw new Error(first.message);
+    await ok(first.value, add("CSV export"));
+    await ok(first.value, { type: "claim", task: task(1) });
+    await ok(first.value, { type: "submit", task: task(1), session: you(1), spec });
+    await ok(first.value, { type: "approve", task: task(1), sendBack: null });
+    await ok(first.value, { type: "claim", task: task(1) });
+    await Bun.sleep(50);
+    expect(store.loadCommands().ok && store.loadCommands()).toMatchObject({
+      commands: [{ command: { type: "create_worktree" } }],
+    });
+
+    // The next start carries it out again, and this time the reply is saved.
+    breakReplies = false;
+    const second = Daemon.open({ config, log: store, newSession });
+    if (!second.ok) throw new Error(second.message);
+    await Bun.sleep(20);
+    expect(await ok(second.value, { type: "status" })).toMatchObject({
+      tasks: [
+        {
+          task: 1,
+          blocked:
+            "The worktree couldn't be made: Making worktrees isn't built into the daemon yet.",
+        },
+      ],
+    });
+  });
+
   test("picks up where it left off after a restart", async () => {
     const first = open();
     await ok(first.daemon, add("CSV export"));

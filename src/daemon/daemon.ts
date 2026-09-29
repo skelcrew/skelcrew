@@ -49,9 +49,11 @@ export class Daemon {
     this.retries = options.retries ?? 5;
   }
 
-  // Opens the loop from the saved log. The tools must exist before the
-  // loop does, since opening carries out commands saved before the last
-  // stop. Their replies wait in the queue until the daemon is ready.
+  // Rebuilds every task from the saved events, and carries out any command
+  // that hadn't finished when the last daemon stopped. Then it takes
+  // requests. The tools must exist before that, since those commands go to
+  // them while the daemon is still being set up. Their replies wait in the
+  // queue until it is ready.
   static open(
     options: DaemonOptions,
   ): { ok: true; value: Daemon } | { ok: false; message: string } {
@@ -60,7 +62,7 @@ export class Daemon {
     if (!opened.ok)
       return { ok: false, message: `The saved log couldn't be read. ${opened.reason}` };
     const daemon = new Daemon(opened.loop, options);
-    tools.connect((taskId, input) => daemon.reply(taskId, input));
+    tools.connect((taskId, input, finished) => daemon.reply(taskId, input, finished));
     return { ok: true, value: daemon };
   }
 
@@ -168,22 +170,28 @@ export class Daemon {
     }
   }
 
-  // A tool's reply, as a new input in the same queue as requests. If it
-  // couldn't be saved, whether the save failed or threw, it is sent again
-  // later, since the core may be waiting on it. After the last try it is
-  // given up. Any other refusal means the reply came too late to matter.
-  private reply(taskId: TaskId, input: Input, attempt = 0): void {
+  // A tool's reply, as a new input in the same queue as requests. Once it
+  // is handled, saved or refused as too late to matter, the command it
+  // answers has finished. If it couldn't be saved, whether the save failed
+  // or threw, it is sent again later, since the core may be waiting on it.
+  // After the last try it is given up, and its command isn't finished: it
+  // goes out again when the daemon next starts.
+  private reply(taskId: TaskId, input: Input, finished: () => void, attempt = 0): void {
     void this.oneAtATime(() => {
-      let saved: boolean;
+      let handled: boolean;
       try {
         const decision = this.loop.send(taskId, input, this.now());
-        saved =
+        handled =
           decision.ok || !decision.rejection.reason.startsWith("The events couldn't be saved");
       } catch {
-        saved = false;
+        handled = false;
       }
-      if (!saved && attempt < this.retries) {
-        setTimeout(() => this.reply(taskId, input, attempt + 1), this.retryMs * 2 ** attempt);
+      if (handled) finished();
+      else if (attempt < this.retries) {
+        setTimeout(
+          () => this.reply(taskId, input, finished, attempt + 1),
+          this.retryMs * 2 ** attempt,
+        );
       }
     });
   }
@@ -245,22 +253,29 @@ function describeBlock(reason: BlockReason): string {
 // checks, so the commands that need them are answered with a failure at
 // once. An attended session can't be stopped or messaged by Skelcrew, so
 // those commands do nothing: its next report is refused instead.
-class DaemonTools implements Tools {
-  private deliver: ((taskId: TaskId, input: Input) => void) | null = null;
-  private early: [TaskId, Input][] = [];
+type Deliver = (taskId: TaskId, input: Input, finished: () => void) => void;
 
-  connect(deliver: (taskId: TaskId, input: Input) => void): void {
+class DaemonTools implements Tools {
+  private deliver: Deliver | null = null;
+  private early: [TaskId, Input, () => void][] = [];
+
+  connect(deliver: Deliver): void {
     this.deliver = deliver;
-    for (const [taskId, input] of this.early) deliver(taskId, input);
+    for (const [taskId, input, finished] of this.early) deliver(taskId, input, finished);
     this.early = [];
   }
 
-  carryOut(command: CoreCommand): void {
+  // A command with no reply has finished as soon as it is done here. One
+  // with a reply finishes when the daemon has handled that reply.
+  carryOut(command: CoreCommand, finished: () => void): void {
     const reply = this.replyTo(command);
-    if (reply === null) return;
+    if (reply === null) {
+      finished();
+      return;
+    }
     const [taskId, input] = reply;
-    if (this.deliver === null) this.early.push([taskId, input]);
-    else this.deliver(taskId, input);
+    if (this.deliver === null) this.early.push([taskId, input, finished]);
+    else this.deliver(taskId, input, finished);
   }
 
   private replyTo(command: CoreCommand): [TaskId, Input] | null {
