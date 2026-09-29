@@ -21,7 +21,7 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { $ } from "bun";
 import { CommitSha, TaskId } from "../core/ids";
-import type { VersionControl } from "./version-control";
+import type { RunChecks, VersionControl } from "./version-control";
 
 export type Repo = { dir: string; main: string };
 
@@ -378,6 +378,182 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       const { plugin, worktree } = await worked(r, {});
       await plugin.removeWorktree(worktree);
       expect((await plugin.readBranch(worktree)).ok).toBe(false);
+    });
+  });
+
+  describe(`${name}: merge`, () => {
+    const pass: RunChecks = async () => ({ ok: true, value: null });
+
+    // A worktree with the given files committed, one commit each. Returns
+    // the head after each commit.
+    async function built(r: Repo, files: Record<string, string>) {
+      const plugin = make(r);
+      const created = await plugin.createWorktree(csv);
+      if (!created.ok) throw new Error(created.message);
+      const heads: CommitSha[] = [];
+      for (const [file, text] of Object.entries(files)) {
+        writeFileSync(join(created.value.path, file), text);
+        await git(created.value.path, "add", file);
+        await git(created.value.path, "commit", "-q", "-m", `Add ${file}`);
+        heads.push(CommitSha.parse(await git(created.value.path, "rev-parse", "HEAD")));
+      }
+      const request = (head: CommitSha) => ({ ...csv, worktree: created.value, head });
+      return { plugin, heads, request };
+    }
+
+    async function commitOnMain(r: Repo, file: string, text: string) {
+      writeFileSync(join(r.dir, file), text);
+      await git(r.dir, "add", file);
+      await git(r.dir, "commit", "-q", "-m", `Add ${file} on main`);
+    }
+
+    test("lands the work on main as one new commit, named after the task", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "a.ts": "a\n", "b.ts": "b\n" });
+      const before = await git(r.dir, "rev-parse", "main");
+      const head = heads[1];
+      if (head === undefined) throw new Error("no head");
+
+      const merged = await plugin.merge(request(head), pass);
+      if (!merged.ok) throw new Error(merged.message);
+      expect(await git(r.dir, "rev-parse", "main")).toBe(merged.value);
+      expect(await git(r.dir, "rev-parse", "main^")).toBe(before);
+      expect(await git(r.dir, "log", "-1", "--format=%s", "main")).toBe("#12 CSV export");
+      expect(await git(r.dir, "show", "main:b.ts")).toBe("b");
+    });
+
+    test("lands exactly the reported commit, never one made after it", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "a.ts": "a\n", "late.ts": "late\n" });
+      const reported = heads[0];
+      if (reported === undefined) throw new Error("no head");
+
+      const merged = await plugin.merge(request(reported), pass);
+      if (!merged.ok) throw new Error(merged.message);
+      expect(await git(r.dir, "show", "main:a.ts")).toBe("a");
+      expect(await git(r.dir, "ls-tree", "--name-only", "main")).not.toContain("late.ts");
+    });
+
+    test("brings the work up to date with main, and runs the checks on the result", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "a.ts": "a\n" });
+      await commitOnMain(r, "newer.ts", "newer\n");
+      const seen: boolean[] = [];
+      const checks: RunChecks = async (dir) => {
+        seen.push(existsSync(join(dir, "newer.ts")) && existsSync(join(dir, "a.ts")));
+        return { ok: true, value: null };
+      };
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      const merged = await plugin.merge(request(head), checks);
+      expect(merged.ok).toBe(true);
+      expect(seen).toEqual([true]);
+      expect(await git(r.dir, "ls-tree", "--name-only", "main")).toContain("newer.ts");
+    });
+
+    test("leaves main as it was when the checks fail, and says why", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "a.ts": "a\n" });
+      const before = await git(r.dir, "rev-parse", "main");
+      const failing: RunChecks = async () => ({ ok: false, message: "2 tests failed" });
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      const merged = await plugin.merge(request(head), failing);
+      expect(merged.ok).toBe(false);
+      expect(!merged.ok && merged.message).toContain("2 tests failed");
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+    });
+
+    test("leaves main as it was on a conflict, and names the file", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "a.ts": "branch\n" });
+      await commitOnMain(r, "a.ts", "main\n");
+      const before = await git(r.dir, "rev-parse", "main");
+      const worktrees = await git(r.dir, "worktree", "list");
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      const merged = await plugin.merge(request(head), pass);
+      expect(merged.ok).toBe(false);
+      expect(!merged.ok && merged.message).toContain("a.ts");
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+      expect(await git(r.dir, "worktree", "list")).toBe(worktrees);
+    });
+
+    test("asked again after it succeeded, gives back the same commit and merges nothing twice", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "a.ts": "a\n" });
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+      const first = await plugin.merge(request(head), pass);
+      let ranAgain = false;
+      const second = await plugin.merge(request(head), async () => {
+        ranAgain = true;
+        return { ok: true, value: null };
+      });
+      expect(second).toEqual(first);
+      expect(ranAgain).toBe(false);
+      expect(await git(r.dir, "rev-parse", "main")).toBe(first.ok ? first.value : "");
+    });
+
+    test("updates your checkout of main, which stays clean", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "a.ts": "a\n" });
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      expect((await plugin.merge(request(head), pass)).ok).toBe(true);
+      expect(readFileSync(join(r.dir, "a.ts"), "utf8")).toBe("a\n");
+      expect(await git(r.dir, "status", "--porcelain")).toBe("");
+    });
+
+    test("moves main when no checkout has it open", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "a.ts": "a\n" });
+      await git(r.dir, "checkout", "-q", "--detach");
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      const merged = await plugin.merge(request(head), pass);
+      if (!merged.ok) throw new Error(merged.message);
+      expect(await git(r.dir, "rev-parse", "main")).toBe(merged.value);
+    });
+
+    test("never overwrites your uncommitted edits in your checkout of main", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "README.md": "# From the task\n" });
+      writeFileSync(join(r.dir, "README.md"), "# My edit\n");
+      const before = await git(r.dir, "rev-parse", "main");
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      const merged = await plugin.merge(request(head), pass);
+      expect(merged.ok).toBe(false);
+      expect(readFileSync(join(r.dir, "README.md"), "utf8")).toBe("# My edit\n");
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+    });
+
+    test("refuses a commit from another branch, and leaves main as it was", async () => {
+      const r = await repo();
+      const { plugin, request } = await built(r, { "a.ts": "a\n" });
+      await git(r.dir, "checkout", "-q", "-b", "elsewhere");
+      await commitOnMain(r, "theirs.ts", "theirs\n");
+      const theirs = CommitSha.parse(await git(r.dir, "rev-parse", "HEAD"));
+      await git(r.dir, "checkout", "-q", "main");
+      const before = await git(r.dir, "rev-parse", "main");
+
+      const merged = await plugin.merge(request(theirs), pass);
+      expect(merged.ok).toBe(false);
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+    });
+
+    test("fails with a message, not a throw, for a commit that doesn't exist", async () => {
+      const r = await repo();
+      const { plugin, request } = await built(r, { "a.ts": "a\n" });
+      const merged = await plugin.merge(request(CommitSha.parse("1".repeat(40))), pass);
+      expect(merged.ok).toBe(false);
     });
   });
 

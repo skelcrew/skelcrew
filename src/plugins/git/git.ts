@@ -14,12 +14,20 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { $ } from "bun";
 import { CommitSha } from "../../core/ids";
 import type { BranchFacts, Worktree } from "../../core/types";
-import type { Done, VersionControl, WorktreeRequest } from "../version-control";
+import type {
+  Done,
+  MergeRequest,
+  RunChecks,
+  VersionControl,
+  WorktreeRequest,
+} from "../version-control";
 
 // Worktrees sit inside the repository, where you can find them. The folder
 // is listed in the repository's local ignore file, so they never show up
 // as changes in your own checkout.
 const worktreesFolder = ".skelcrew/worktrees";
+// A merge is built in a worktree of its own here, never in yours.
+const mergingFolder = ".skelcrew/merging";
 
 export class Git implements VersionControl {
   // git runs inside the repository, so a relative path would be read from
@@ -41,6 +49,12 @@ export class Git implements VersionControl {
   createWorktree(request: WorktreeRequest): Promise<Done<Worktree>> {
     return this.oneAtATime(() =>
       guard(`create the worktree for #${request.taskId}`, () => this.create(request)),
+    );
+  }
+
+  merge(request: MergeRequest, runChecks: RunChecks): Promise<Done<CommitSha>> {
+    return this.oneAtATime(() =>
+      guard(`merge #${request.taskId}`, () => this.squashMerge(request, runChecks)),
     );
   }
 
@@ -389,18 +403,125 @@ export class Git implements VersionControl {
   }
 
   // Adds the worktrees folder to .git/info/exclude, once.
+  // Adds the worktrees and merging folders to .git/info/exclude, once each.
   private async ignoreWorktrees(): Promise<Done<null>> {
     const found = await run(this.repo, "rev-parse", "--git-path", "info/exclude");
     if (!found.ok) return { ok: false, message: `git couldn't find its ignore file: ${found.err}` };
     const file = isAbsolute(found.out) ? found.out : join(this.repo, found.out);
-    const line = `/${worktreesFolder}/`;
-    const current = existsSync(file) ? readFileSync(file, "utf8") : "";
-    if (!current.split("\n").includes(line)) {
-      mkdirSync(dirname(file), { recursive: true });
-      const gap = current === "" || current.endsWith("\n") ? "" : "\n";
-      appendFileSync(file, `${gap}${line}\n`);
+    for (const folder of [worktreesFolder, mergingFolder]) {
+      const line = `/${folder}/`;
+      const current = existsSync(file) ? readFileSync(file, "utf8") : "";
+      if (!current.split("\n").includes(line)) {
+        mkdirSync(dirname(file), { recursive: true });
+        const gap = current === "" || current.endsWith("\n") ? "" : "\n";
+        appendFileSync(file, `${gap}${line}\n`);
+      }
     }
     return { ok: true, value: null };
+  }
+
+  // The merge, in five steps. Main only moves in the last one.
+  private async squashMerge(request: MergeRequest, runChecks: RunChecks): Promise<Done<CommitSha>> {
+    const main = `refs/heads/${this.main}`;
+    const branch = `refs/heads/${request.worktree.branch}`;
+
+    // 1. Already merged: the commit on main names the head it landed.
+    const trailer = `Skelcrew-Head: ${request.head}`;
+    const found = await run(
+      this.repo,
+      "log",
+      main,
+      "--format=%H",
+      "--fixed-strings",
+      `--grep=${trailer}`,
+    );
+    const earlier = found.ok ? found.out.split("\n")[0] : undefined;
+    if (earlier !== undefined && earlier !== "") return shaOf(earlier);
+
+    // 2. The head must be on the task's branch.
+    const onBranch = await run(this.repo, "merge-base", "--is-ancestor", request.head, branch);
+    if (!onBranch.ok) {
+      return { ok: false, message: `${request.head} isn't on ${request.worktree.branch}.` };
+    }
+    const before = await run(this.repo, "rev-parse", "--verify", main);
+    if (!before.ok) return { ok: false, message: `The main branch "${this.main}" doesn't exist.` };
+    const ignored = await this.ignoreWorktrees();
+    if (!ignored.ok) return ignored;
+
+    // 3. Build the result in a worktree of its own, from main as it is now.
+    // A leftover from a crash is only ever an earlier try of this, so it
+    // goes first.
+    const temp = join(this.repo, mergingFolder, String(request.taskId));
+    await this.clearMerging(temp);
+    const added = await run(this.repo, "worktree", "add", "--quiet", "--detach", temp, before.out);
+    if (!added.ok) return { ok: false, message: `git couldn't prepare the merge: ${added.err}` };
+    try {
+      const squashed = await run(temp, "merge", "--squash", "--quiet", request.head);
+      if (!squashed.ok) {
+        const conflicts = await run(temp, "diff", "--name-only", "--diff-filter=U");
+        const files =
+          conflicts.ok && conflicts.out !== ""
+            ? conflicts.out.split("\n").join(", ")
+            : squashed.err;
+        return {
+          ok: false,
+          message: `#${request.taskId} conflicts with ${this.main} in ${files}.`,
+        };
+      }
+      const committed = await run(
+        temp,
+        "commit",
+        "--quiet",
+        "--message",
+        `#${request.taskId} ${request.title}`,
+        "--message",
+        `Skelcrew-Task: ${request.taskId}\n${trailer}`,
+      );
+      if (!committed.ok)
+        return { ok: false, message: `git couldn't commit the merge: ${committed.err}` };
+
+      // 4. The checks run on the merged result.
+      const checked = await runChecks(temp);
+      if (!checked.ok) {
+        return { ok: false, message: `The checks failed on the merged result: ${checked.message}` };
+      }
+
+      // 5. Move main. In your checkout of main, a fast-forward, which git
+      // refuses if it would overwrite your uncommitted edits. Elsewhere,
+      // only if main hasn't moved since step 2.
+      const result = await run(temp, "rev-parse", "HEAD");
+      if (!result.ok) return { ok: false, message: `git couldn't read the merge: ${result.err}` };
+      const checkout = await this.checkoutOf(main);
+      const moved =
+        checkout === null
+          ? await run(this.repo, "update-ref", main, result.out, before.out)
+          : await run(checkout, "merge", "--ff-only", "--quiet", result.out);
+      if (!moved.ok) {
+        return { ok: false, message: `${this.main} couldn't be moved to the merge: ${moved.err}` };
+      }
+      return shaOf(result.out);
+    } finally {
+      await this.clearMerging(temp);
+    }
+  }
+
+  private async clearMerging(temp: string): Promise<void> {
+    if (existsSync(temp)) await run(this.repo, "worktree", "remove", "--force", temp);
+    await run(this.repo, "worktree", "prune");
+  }
+
+  // The worktree that has this branch checked out, or null if none has.
+  private async checkoutOf(ref: string): Promise<string | null> {
+    const listed = await run(this.repo, "worktree", "list", "--porcelain");
+    if (!listed.ok) return null;
+    for (const block of listed.out.split("\n\n")) {
+      const lines = block.split("\n");
+      if (lines.includes(`branch ${ref}`)) {
+        const path = lines.find((line) => line.startsWith("worktree "));
+        if (path !== undefined) return path.slice("worktree ".length);
+      }
+    }
+    return null;
   }
 }
 
@@ -448,6 +569,13 @@ async function markFinished(path: string): Promise<Run> {
 async function isFinished(path: string): Promise<boolean> {
   const dir = await run(path, "rev-parse", "--path-format=absolute", "--git-dir");
   return dir.ok && existsSync(join(dir.out, finishedMark));
+}
+
+function shaOf(text: string): Done<CommitSha> {
+  const sha = CommitSha.safeParse(text);
+  return sha.success
+    ? { ok: true, value: sha.data }
+    : { ok: false, message: `git gave "${text}" as a commit.` };
 }
 
 // The full name of the branch a worktree has checked out, such as
