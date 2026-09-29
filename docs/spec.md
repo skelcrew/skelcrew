@@ -299,6 +299,7 @@ Notes:
 
 - **Harnesses** are likely profiles rather than code: a command template, skills folder and flags. A code plugin only when a harness does something unusual.
 - **Process runner** runs the agent in a pseudo terminal, detached, logging output per task. State comes from the agent's reports through the CLI.
+- **Version control plugins** assume a git repository, for now, to keep things simple. A plugin changes how git is used, as Jujutsu would, not whether. The aim is to not assume git later, but the core stores commits as git hashes, so a repository like SVN would need changes to the core as well as a plugin.
 - **Work source plugins** translate Skelcrew's phases into the tool's states and turn manual changes (an issue dragged to Done) into signals the core validates.
 - **Linear** delegation uses its agent API, which requires a public webhook, so it arrives with a hosted relay. Polling for tagged issues works without one.
 - Local check commands are core, not a plugin, because running them is enforcing the gates.
@@ -409,3 +410,4 @@ v1 is single user, runs on one machine, and ships only the plugins its first use
 - [ ] Should every learning proposal count as critical, or only changes to `AGENTS.md`?
 - [ ] What should the default safety cap be, in tokens and in time?
 - [ ] Which seeded bug types matter most for the review gate eval, and what catch rate is good enough to loosen a critical path?
+- [ ] Where do plugins not written by the Skelcrew project live, and how are they loaded? A plugin runs inside the daemon, next to the rules, so loading outside code is also a question of trust.
