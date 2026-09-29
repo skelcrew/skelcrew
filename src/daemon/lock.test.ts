@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { takeLock } from "./lock";
 import { type Server, serve } from "./server";
 import { cleanUp, daemonInAnotherProcess, openLine, throwawayRepo } from "./testing";
 
@@ -31,6 +32,25 @@ async function deadPid(): Promise<number> {
   const child = Bun.spawn(["true"]);
   await child.exited;
   return child.pid;
+}
+
+// Starts `count` processes at once that each try to take the lock and hold
+// it a moment. Returns how many got it.
+async function raceFor(lock: string, count: number): Promise<number> {
+  const script = join(dirname(lock), "..", "race.ts");
+  writeFileSync(
+    script,
+    `import { takeLock } from ${JSON.stringify(join(import.meta.dir, "lock.ts"))};\n` +
+      "const taken = takeLock(process.argv[2] ?? '');\n" +
+      "console.log(taken.ok ? 'GOT' : 'NO');\n" +
+      "await Bun.sleep(800);\n",
+  );
+  const children = Array.from({ length: count }, () =>
+    Bun.spawn([process.execPath, script, lock], { stdout: "pipe" }),
+  );
+  const said = await Promise.all(children.map((child) => new Response(child.stdout).text()));
+  await Promise.all(children.map((child) => child.exited));
+  return said.filter((out) => out.trim() === "GOT").length;
 }
 
 describe("one daemon per repository", () => {
@@ -107,6 +127,55 @@ describe("one daemon per repository", () => {
       await other.exited;
     }
   });
+
+  // Found by review: the SQLite lock took a shared hold before the
+  // exclusive one, so daemons starting at once blocked each other, and
+  // often none of them ran.
+  test("lets exactly one of several daemons starting at once on a fresh lock run, never none", async () => {
+    for (let round = 0; round < 10; round += 1) {
+      const repo = throwawayRepo(dirs);
+      const lock = join(repo, ".skelcrew", "daemon.lock");
+      expect({ round, holders: await raceFor(lock, 4) }).toEqual({ round, holders: 1 });
+    }
+  }, 60_000);
+
+  // Found by review: SQLite opened a read-only lock file read-only, and its
+  // exclusive hold then locked nothing, so every daemon thought it held it.
+  test("lets exactly one daemon hold a lock file it can't write to", async () => {
+    const repo = throwawayRepo(dirs);
+    const lock = join(repo, ".skelcrew", "daemon.lock");
+    writeFileSync(lock, "");
+    chmodSync(lock, 0o444);
+    expect(await raceFor(lock, 3)).toBe(1);
+  }, 30_000);
+
+  // A daemon starts git and the checks. They mustn't keep its lock after it
+  // has died.
+  test("frees the lock when its daemon dies, even if something it started still runs", async () => {
+    const repo = throwawayRepo(dirs);
+    const lock = join(repo, ".skelcrew", "daemon.lock");
+    const script = join(repo, "hold.ts");
+    writeFileSync(
+      script,
+      `import { takeLock } from ${JSON.stringify(join(import.meta.dir, "lock.ts"))};\n` +
+        "const taken = takeLock(process.argv[2] ?? '');\n" +
+        "Bun.spawn(['sleep', '10']);\n" +
+        "console.log(taken.ok ? 'GOT' : 'NO');\n" +
+        "await Bun.sleep(10_000);\n",
+    );
+    const holder = Bun.spawn([process.execPath, script, lock], { stdout: "pipe" });
+    const reader = holder.stdout.getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe("GOT\n");
+    holder.kill("SIGKILL");
+    await holder.exited;
+    try {
+      const taken = takeLock(lock);
+      expect(taken.ok).toBe(true);
+      if (taken.ok) taken.lock.release();
+    } finally {
+      Bun.spawnSync(["pkill", "-f", "sleep 10"]);
+    }
+  }, 30_000);
 
   // Found by review: when several daemons started at once after a crash,
   // one could clear a lock another had just taken, and two ran together.
