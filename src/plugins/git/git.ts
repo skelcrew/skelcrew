@@ -828,8 +828,11 @@ export class Git implements VersionControl {
     if (!where.ok) return where;
 
     // Main must still be where the work began. If someone moved it, for
-    // example to take a bad commit off, moving it now would undo that.
+    // example to take a bad commit off, moving it now would undo that. The
+    // one exception is main already at exactly the checked result, for
+    // example because a hook moved it there: then the move is done.
     const now = await run(this.repo, "rev-parse", "--verify", main);
+    if (now.ok && now.out === after) return { ok: true, value: null };
     if (!now.ok || now.out !== before) {
       return {
         ok: false,

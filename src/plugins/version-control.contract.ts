@@ -693,6 +693,26 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       expect(await git(r.dir, "ls-tree", "--name-only", "main")).not.toContain("bad.txt");
     });
 
+    // Found by review: a hook moved main to the merge itself, and the merge
+    // then said main had moved and nothing was merged.
+    test("succeeds when a hook already moved main to exactly the merge", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "a.ts": "a\n" });
+      const hook = join(r.dir, ".git", "hooks", "post-commit");
+      writeFileSync(hook, "#!/bin/sh\ngit update-ref refs/heads/main HEAD\n");
+      chmodSync(hook, 0o755);
+      const before = await git(r.dir, "rev-parse", "main");
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      const merged = await plugin.merge(request(head), pass);
+      rmSync(hook);
+      if (!merged.ok) throw new Error(merged.message);
+      expect(await git(r.dir, "rev-parse", "main")).toBe(merged.value);
+      expect(await git(r.dir, "rev-parse", "main^")).toBe(before);
+      expect(await git(r.dir, "show", "main:a.ts")).toBe("a");
+    });
+
     // Found by review: with merge.autoStash, git stashes your edits instead
     // of refusing, and can put them back with conflict markers.
     test("never stashes your edits, even when git is set to", async () => {
@@ -1189,6 +1209,24 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       expect(await filesOnMain(r)).toEqual(["README.md", "a.ts"]);
 
       expect((await plugin.revert(request)).ok).toBe(true);
+      expect(await filesOnMain(r)).toEqual(["README.md"]);
+    });
+
+    // Found by review: a hook moved main to the revert itself, and the
+    // revert then said main had moved and nothing was reverted.
+    test("succeeds when a hook already moved main to exactly the revert", async () => {
+      const r = await repo();
+      const { plugin, request } = await landed(r, { "a.ts": "a\n" });
+      const unhook = hook(r, "post-commit", "#!/bin/sh\ngit update-ref refs/heads/main HEAD\n");
+      const before = await git(r.dir, "rev-parse", "main");
+
+      const reverted = await plugin.revert(request);
+      unhook();
+      if (!reverted.ok) throw new Error(reverted.message);
+      expect(await git(r.dir, "rev-parse", "main")).toBe(reverted.value);
+      expect(await git(r.dir, "rev-list", "--parents", "--max-count=1", "main")).toBe(
+        `${reverted.value} ${before}`,
+      );
       expect(await filesOnMain(r)).toEqual(["README.md"]);
     });
 
