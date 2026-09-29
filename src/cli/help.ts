@@ -1,0 +1,102 @@
+// What `skelcrew --help` and `skelcrew <command> --help` print. Agents read
+// these too: the spec skill sends them to `skelcrew submit --help`.
+
+export const mainHelp = [
+  "Skelcrew moves coding tasks from idea to merged code.",
+  "",
+  "Your commands:",
+  '  skelcrew add "<task>"       Capture a task as an Idea. --spec also asks for a spec.',
+  "  skelcrew spec <task>        Ask for an Idea to be specced.",
+  "  skelcrew approve <task>     Approve a spec or a merge. --send-back returns it with a note.",
+  "  skelcrew drop <task>        Drop a task that isn't done.",
+  "  skelcrew status             Show what waits on you, and tasks by phase.",
+  "  skelcrew log <task>         Show a task's events.",
+  "  skelcrew serve              Run the daemon in this terminal.",
+  "",
+  "Agents' commands, used by the skills:",
+  "  skelcrew claim <task>       Start work on a task in this session.",
+  "  skelcrew submit <task>      Hand over a finished spec.",
+  "  skelcrew done <task>        Report the work done, and wait for the checks.",
+  '  skelcrew give-up <task> "<reason>"   Report that the task can\'t be finished.',
+  "",
+  "A task is written as 12 or #12.",
+  "Run `skelcrew <command> --help` for more on one command.",
+];
+
+const session = [
+  "Set SKELCREW_SESSION to the session `skelcrew claim` printed. Put it in front of the",
+  "command, since each shell in a harness starts without it.",
+];
+
+export const commandHelp: Record<string, string[]> = {
+  add: [
+    'Usage: skelcrew add "<task>" [--spec] [--project <name>]',
+    "",
+    "Captures a task as an Idea, and prints its number.",
+    "  --spec              Also ask for a spec, so the task waits for one.",
+    "  --project <name>    Put the task in a project, such as inbox.",
+  ],
+  spec: ["Usage: skelcrew spec <task>", "", "Asks for an Idea to be specced."],
+  approve: [
+    'Usage: skelcrew approve <task> [--send-back "<note>"]',
+    "",
+    "Approves the spec or the merge that waits for you.",
+    '  --send-back "<note>"   Return it instead, with your note.',
+  ],
+  drop: [
+    "Usage: skelcrew drop <task>",
+    "",
+    "Drops a task that isn't done. Its agent and worktree are let go.",
+  ],
+  status: ["Usage: skelcrew status", "", "Shows what waits on you, then every task by phase."],
+  log: ["Usage: skelcrew log <task>", "", "Shows a task's events."],
+  claim: [
+    "Usage: skelcrew claim <task>",
+    "",
+    "Makes this session the agent working on the task, attended.",
+    "It prints the session to report with.",
+  ],
+  submit: [
+    "Usage: skelcrew submit <task> [--file <path>]",
+    "",
+    "Hands over the spec for a task you claimed.",
+    "The spec is JSON, read from the file named with --file <path>, or from standard input.",
+    "It has exactly three fields:",
+    '  "scope"           Text: what the task changes, and what it leaves alone.',
+    '  "acceptance"      A list of texts. Each is a check a test or a person can make.',
+    '  "openQuestions"   A list of texts. Leave it empty, [], once every question is answered.',
+    "",
+    "For example, spec.json:",
+    "  {",
+    '    "scope": "Add a CSV export button to the reports page.",',
+    '    "acceptance": ["Clicking Export downloads a CSV of the visible rows."],',
+    '    "openQuestions": []',
+    "  }",
+    "",
+    "Then:",
+    "  SKELCREW_SESSION=<session> skelcrew submit 12 --file spec.json",
+    "",
+    ...session,
+  ],
+  done: [
+    "Usage: skelcrew done <task>",
+    "",
+    "Reports the work on the task's branch as done. It waits while the checks run,",
+    "then prints whether they passed. If they failed, it prints what failed.",
+    "",
+    ...session,
+  ],
+  "give-up": [
+    'Usage: skelcrew give-up <task> "<reason>"',
+    "",
+    "Reports that the task can't be finished, with the reason in a sentence or two.",
+    "",
+    ...session,
+  ],
+  serve: [
+    "Usage: skelcrew serve",
+    "",
+    "Runs this repository's daemon in this terminal, until Ctrl-C.",
+    "Other commands start it in the background when it isn't running.",
+  ],
+};
