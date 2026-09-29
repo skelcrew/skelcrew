@@ -359,7 +359,7 @@ plugins:
 | `skelcrew check` | Decide whether a diff is safe to auto-merge; runs standalone in CI |
 | `skelcrew revert <task> "<reason>"` | Undo a merged task and return it to Spec with the reason |
 | `skelcrew claim <task>` | Start work on a task in this harness session, attended; used by the skills |
-| `skelcrew submit`, `done`, `ask`, `give-up` | How agents report: a finished spec, work done, a question, giving up; used by the skills |
+| `skelcrew submit`, `done`, `ask`, `give-up` | How agents report: a finished spec, work done, a question, giving up; used by the skills. `done` waits until the local checks finish and prints the result, so an attended agent hears about a failed gate. Skelcrew can't send anything into a harness session it didn't start. |
 
 The TUI and the skills are both built on these commands, so neither can do what the other cannot.
 
