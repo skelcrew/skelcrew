@@ -105,19 +105,8 @@ export class Git implements VersionControl {
       if (!undone.ok) return undone;
     }
 
-    const main = await run(
-      this.repo,
-      "rev-parse",
-      "--verify",
-      "--quiet",
-      `refs/heads/${this.main}`,
-    );
-    if (!main.ok) {
-      return {
-        ok: false,
-        message: `The main branch "${this.main}" doesn't exist in ${this.repo}.`,
-      };
-    }
+    const main = await this.mainExists();
+    if (!main.ok) return main;
     const ignored = await this.ignoreWorktrees();
     if (!ignored.ok) return ignored;
 
@@ -445,6 +434,8 @@ export class Git implements VersionControl {
     if (!onBranch.ok) {
       return { ok: false, message: `${request.head} isn't on ${request.worktree.branch}.` };
     }
+    const exists = await this.mainExists();
+    if (!exists.ok) return exists;
     const before = await run(this.repo, "rev-parse", "--verify", main);
     if (!before.ok) return { ok: false, message: `The main branch "${this.main}" doesn't exist.` };
     const ignored = await this.ignoreWorktrees();
@@ -494,10 +485,6 @@ export class Git implements VersionControl {
         conflicts.ok && conflicts.out !== "" ? conflicts.out.split("\n").join(", ") : squashed.err;
       return { ok: false, message: `#${request.taskId} conflicts with ${this.main} in ${files}.` };
     }
-    // What the squash staged. A commit hook could still add or change
-    // something no one approved, so the commit must hold exactly this.
-    const staged = await run(temp, "write-tree");
-    if (!staged.ok) return { ok: false, message: `git couldn't read the merge: ${staged.err}` };
     const committed = await run(
       temp,
       "commit",
@@ -512,13 +499,12 @@ export class Git implements VersionControl {
     const candidate = await run(temp, "rev-parse", "HEAD");
     if (!candidate.ok)
       return { ok: false, message: `git couldn't read the merge: ${candidate.err}` };
-    const tree = await run(temp, "rev-parse", "HEAD^{tree}");
-    if (!tree.ok || tree.out !== staged.out) {
-      return {
-        ok: false,
-        message: "A commit hook changed the merge, so it isn't what the task made.",
-      };
-    }
+    // Hooks run while the merge is made, and one could stage a file or add
+    // a commit no one approved. So the result is checked against what it
+    // must be, worked out separately: exactly one commit on the old main,
+    // holding exactly main merged with the task's commit.
+    const exact = await this.isExactMerge(candidate.out, before, request.head);
+    if (!exact.ok) return exact;
     const hiddenBefore = await hiddenFiles(temp);
     if (!hiddenBefore.ok || hiddenBefore.value > 0) {
       return { ok: false, message: "Files in the merge are marked so git hides their changes." };
@@ -588,6 +574,39 @@ export class Git implements VersionControl {
     }
     await run(this.repo, "worktree", "prune");
     rmSync(mark, { force: true });
+    return { ok: true, value: null };
+  }
+
+  // Checks a branch has exactly the configured name. On macOS, git also
+  // finds "main" when asked for "Main", while every check that compares
+  // names would miss it.
+  private async mainExists(): Promise<Done<null>> {
+    const listed = await run(this.repo, "for-each-ref", "--format=%(refname)", "refs/heads/");
+    if (listed.ok && listed.out.split("\n").includes(`refs/heads/${this.main}`)) {
+      return { ok: true, value: null };
+    }
+    return { ok: false, message: `The main branch "${this.main}" doesn't exist in ${this.repo}.` };
+  }
+
+  // Whether the commit is exactly the merge: its one parent is the old main,
+  // and its contents are what git merge-tree makes of main and the head.
+  private async isExactMerge(commit: string, before: string, head: string): Promise<Done<null>> {
+    const parents = await run(this.repo, "rev-list", "--parents", "--max-count=1", commit);
+    if (!parents.ok || parents.out !== `${commit} ${before}`) {
+      return {
+        ok: false,
+        message: "A hook added a commit to the merge, so it isn't what the task made.",
+      };
+    }
+    const expected = await run(this.repo, "merge-tree", "--write-tree", before, head);
+    const tree = await run(this.repo, "rev-parse", `${commit}^{tree}`);
+    const wanted = expected.ok ? expected.out.split("\n")[0] : undefined;
+    if (!tree.ok || wanted === undefined || tree.out !== wanted) {
+      return {
+        ok: false,
+        message: "A hook changed what the merge holds, so it isn't what the task made.",
+      };
+    }
     return { ok: true, value: null };
   }
 
@@ -744,22 +763,72 @@ async function busyWith(path: string, branch: string): Promise<string | null> {
 }
 
 // After a failed fast-forward, git may have updated your files and staging
-// area without moving main. If main is still `before` and the staging area
-// holds exactly the merge, it is switched back, keeping any edits of yours.
+// area without moving main. Only the files the merge touched are looked at.
+// Each must be either untouched, as main had it, or exactly as the merge
+// made it, in both the staging area and the file. Those the merge made are
+// switched back to main's. Anything else of yours, staged or not, is kept.
 // Returns what the message should add.
 async function putCheckoutBack(checkout: string, before: string, merge: string): Promise<string> {
   const unsure = "Check `git status` there: it may hold the task's changes, staged.";
   const head = await run(checkout, "rev-parse", "HEAD");
-  const staged = await run(checkout, "write-tree");
-  const mergeTree = await run(checkout, "rev-parse", `${merge}^{tree}`);
-  const beforeTree = await run(checkout, "rev-parse", `${before}^{tree}`);
-  if (!head.ok || head.out !== before || !staged.ok || !mergeTree.ok || !beforeTree.ok) {
-    return unsure;
+  if (!head.ok || head.out !== before) return unsure;
+  const touched = await runRaw(
+    checkout,
+    "diff",
+    "--name-only",
+    "--no-renames",
+    "-z",
+    before,
+    merge,
+  );
+  if (!touched.ok) return unsure;
+
+  const fromMerge: string[] = [];
+  for (const path of touched.out.split("\0").filter((p) => p !== "")) {
+    const state = await fileState(checkout, path, before, merge);
+    if (state === "other") return unsure;
+    if (state === "merge") fromMerge.push(path);
   }
-  if (staged.out === beforeTree.out) return "Your checkout of main is as it was.";
-  if (staged.out !== mergeTree.out) return unsure;
-  const back = await run(checkout, "read-tree", "-m", "-u", merge, before);
-  return back.ok ? "Your checkout of main was put back as it was." : unsure;
+  if (fromMerge.length === 0) return "Your checkout of main is as it was.";
+
+  for (const path of fromMerge) {
+    const back = await switchBack(checkout, path, before);
+    if (!back) return unsure;
+  }
+  return "Your checkout of main was put back as it was, with your own edits kept.";
+}
+
+// Whether a file in your checkout is as main had it ("main"), exactly as
+// the merge made it ("merge"), or something else ("other").
+async function fileState(
+  checkout: string,
+  path: string,
+  before: string,
+  merge: string,
+): Promise<"main" | "merge" | "other"> {
+  const staged = await run(checkout, "ls-files", "--stage", "--", path);
+  const unstaged = await run(checkout, "diff", "--quiet", "--", path);
+  const entry = async (commit: string) => {
+    const tree = await run(checkout, "ls-tree", commit, "--", path);
+    if (!tree.ok || tree.out === "") return "";
+    const [mode, , oid] = tree.out.split(/\s+/);
+    return `${mode} ${oid} 0`;
+  };
+  if (!staged.ok) return "other";
+  const now = staged.out === "" ? "" : (staged.out.split("\t")[0] ?? "");
+  // Staged as main has it: any unstaged edit on top is yours, and stays.
+  if (now === (await entry(before))) return "main";
+  // Staged as the merge made it, and the file itself matches: git put it
+  // there, so it can be switched back. An edit on top would be yours.
+  if (now === (await entry(merge)) && unstaged.ok) return "merge";
+  return "other";
+}
+
+async function switchBack(checkout: string, path: string, before: string): Promise<boolean> {
+  const inMain = await run(checkout, "cat-file", "-e", `${before}:${path}`);
+  if (inMain.ok) return (await run(checkout, "checkout", before, "--", path)).ok;
+  const removed = await run(checkout, "rm", "--quiet", "--force", "--", path);
+  return removed.ok;
 }
 
 function shaOf(text: string): Done<CommitSha> {
