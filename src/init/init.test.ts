@@ -54,11 +54,13 @@ const specSkill = ".claude/skills/spec/SKILL.md";
 const developSkill = ".claude/skills/develop/SKILL.md";
 const dbLine = ".skelcrew/skelcrew.db*";
 // The files the daemon keeps while it runs: its log, the lock that stops a
-// second daemon, and the socket the CLI talks to it through.
+// second daemon, the file naming its process, and the socket the CLI talks
+// to it through.
 const runtimeLines = [
   dbLine,
   ".skelcrew/daemon.log",
   ".skelcrew/daemon.lock",
+  ".skelcrew/daemon.pid",
   ".skelcrew/daemon.sock",
 ];
 const settings = ".claude/settings.json";
