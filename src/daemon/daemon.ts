@@ -27,9 +27,9 @@ export type DaemonOptions = {
   newSession?: () => string;
   now?: () => number;
   // A reply whose save failed is sent again after `retryMs`, then twice as
-  // long each time, up to `retries` times.
+  // long each time, but never more than `maxRetryMs` apart.
   retryMs?: number;
-  retries?: number;
+  maxRetryMs?: number;
 };
 
 export class Daemon {
@@ -37,7 +37,9 @@ export class Daemon {
   private readonly newSession: () => string;
   private readonly now: () => number;
   private readonly retryMs: number;
-  private readonly retries: number;
+  private readonly maxRetryMs: number;
+  private readonly retryTimers = new Set<ReturnType<typeof setTimeout>>();
+  private closed = false;
 
   private constructor(
     private readonly loop: Loop,
@@ -46,7 +48,7 @@ export class Daemon {
     this.newSession = options.newSession ?? (() => `session-${randomUUID()}`);
     this.now = options.now ?? Date.now;
     this.retryMs = options.retryMs ?? 1_000;
-    this.retries = options.retries ?? 5;
+    this.maxRetryMs = options.maxRetryMs ?? 30_000;
   }
 
   // Rebuilds every task from the saved events, and carries out any command
@@ -71,6 +73,7 @@ export class Daemon {
   // a refusal that says what happened.
   handle(command: Command): Promise<Answer> {
     return this.oneAtATime(() => {
+      if (this.closed) return { ok: false, message: "The daemon is shutting down." };
       try {
         return this.answer(command);
       } catch (error) {
@@ -170,14 +173,26 @@ export class Daemon {
     }
   }
 
+  // Stops the daemon. Requests after this are refused, and replies still
+  // waiting to be sent again are dropped. Their commands haven't finished,
+  // so they go out again when the daemon next starts. Resolves once the
+  // work already in the queue is done, so the store can then be closed.
+  close(): Promise<void> {
+    this.closed = true;
+    for (const timer of this.retryTimers) clearTimeout(timer);
+    this.retryTimers.clear();
+    return this.oneAtATime(() => undefined);
+  }
+
   // A tool's reply, as a new input in the same queue as requests. Once it
   // is handled, saved or refused as too late to matter, the command it
   // answers has finished. If it couldn't be saved, whether the save failed
   // or threw, it is sent again later, since the core may be waiting on it.
-  // After the last try it is given up, and its command isn't finished: it
-  // goes out again when the daemon next starts.
+  // It keeps being sent until it is saved or the daemon closes: a task
+  // keeps its slot until then.
   private reply(taskId: TaskId, input: Input, finished: () => void, attempt = 0): void {
     void this.oneAtATime(() => {
+      if (this.closed) return;
       let handled: boolean;
       try {
         const decision = this.loop.send(taskId, input, this.now());
@@ -186,13 +201,16 @@ export class Daemon {
       } catch {
         handled = false;
       }
-      if (handled) finished();
-      else if (attempt < this.retries) {
-        setTimeout(
-          () => this.reply(taskId, input, finished, attempt + 1),
-          this.retryMs * 2 ** attempt,
-        );
+      if (handled) {
+        finished();
+        return;
       }
+      const wait = Math.min(this.retryMs * 2 ** attempt, this.maxRetryMs);
+      const timer = setTimeout(() => {
+        this.retryTimers.delete(timer);
+        this.reply(taskId, input, finished, attempt + 1);
+      }, wait);
+      this.retryTimers.add(timer);
     });
   }
 

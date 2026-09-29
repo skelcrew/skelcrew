@@ -39,6 +39,50 @@ const add = (title: string, withSpec = true): Command => ({
 const task = (n: number) => TaskId.parse(n);
 const you = (n: number) => SessionId.parse(`you-${n}`);
 
+// A daemon whose store throws when saving a tool's reply, while
+// `broken.replies` is on. Here the only reply is the failure that blocks
+// a task. `broken.tries` counts the saves it refused.
+function failingReplies(options: { retryMs: number; maxRetryMs: number }) {
+  const store = EventStore.open(":memory:");
+  const broken = { replies: false, tries: 0 };
+  const log = {
+    appendTask: (...args: Parameters<EventStore["appendTask"]>) => {
+      const [events] = args;
+      if (broken.replies && events.some((e) => e.type === "task.blocked")) {
+        broken.tries += 1;
+        throw new Error("database is locked");
+      }
+      return store.appendTask(...args);
+    },
+    appendProject: store.appendProject.bind(store),
+    carriedOut: store.carriedOut.bind(store),
+    loadTasks: store.loadTasks.bind(store),
+    loadProjects: store.loadProjects.bind(store),
+    loadStarts: store.loadStarts.bind(store),
+    loadCommands: store.loadCommands.bind(store),
+  };
+  let sessions = 0;
+  const opened = Daemon.open({
+    config,
+    log,
+    ...options,
+    newSession: () => {
+      sessions += 1;
+      return `you-${sessions}`;
+    },
+  });
+  if (!opened.ok) throw new Error(opened.message);
+  return { daemon: opened.value, store, broken };
+}
+
+// Takes task 1 through Spec, so the next claim asks for a worktree.
+async function readyToClaim(daemon: Daemon) {
+  await ok(daemon, add("CSV export"));
+  await ok(daemon, { type: "claim", task: task(1) });
+  await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
+  await ok(daemon, { type: "approve", task: task(1), sendBack: null });
+}
+
 describe("the daemon", () => {
   test("gives each new task the next number", async () => {
     const { daemon } = open();
@@ -187,52 +231,46 @@ describe("the daemon", () => {
     expect(await ok(opened.value, add("CSV export"))).toEqual({ task: 1 });
   });
 
-  // Found by review: a tool's reply whose save threw was dropped, and one
-  // whose save kept failing was retried every second, for ever.
-  test("retries a reply that couldn't be saved a few times, then stops", async () => {
-    const store = EventStore.open(":memory:");
-    let tries = 0;
-    let breakReplies = false;
-    const log = {
-      appendTask: (...args: Parameters<EventStore["appendTask"]>) => {
-        const [events] = args;
-        if (breakReplies && events.some((e) => e.type === "task.blocked")) {
-          tries += 1;
-          throw new Error("database is locked");
-        }
-        return store.appendTask(...args);
-      },
-      appendProject: store.appendProject.bind(store),
-      carriedOut: store.carriedOut.bind(store),
-      loadTasks: store.loadTasks.bind(store),
-      loadProjects: store.loadProjects.bind(store),
-      loadStarts: store.loadStarts.bind(store),
-      loadCommands: store.loadCommands.bind(store),
-    };
-    let sessions = 0;
-    const opened = Daemon.open({
-      config,
-      log,
-      retryMs: 5,
-      retries: 3,
-      newSession: () => {
-        sessions += 1;
-        return `you-${sessions}`;
-      },
-    });
-    if (!opened.ok) throw new Error(opened.message);
-    const daemon = opened.value;
-    await ok(daemon, add("CSV export"));
-    await ok(daemon, { type: "claim", task: task(1) });
-    await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
-    await ok(daemon, { type: "approve", task: task(1), sendBack: null });
+  // Found by review: a tool's reply whose save threw was dropped. A later
+  // review found that giving up after a few tries kept the task's slot
+  // taken until the next restart, even once the database was fine again.
+  test("keeps sending a reply until it is saved, then the command finishes", async () => {
+    const { daemon, store, broken } = failingReplies({ retryMs: 1, maxRetryMs: 5 });
+    await readyToClaim(daemon);
 
     // Claiming in Ready asks for a worktree. Without git its reply is a
     // failure that blocks the task, and saving that reply now throws.
-    breakReplies = true;
+    broken.replies = true;
     await ok(daemon, { type: "claim", task: task(1) });
     await Bun.sleep(200);
-    expect(tries).toBe(4);
+    // Waits double from 1 ms but stop growing at 5 ms, so 200 ms fits
+    // many tries. Without the cap it would be about 8.
+    expect(broken.tries).toBeGreaterThan(15);
+    expect(store.loadCommands()).toMatchObject({
+      commands: [{ command: { type: "create_worktree" } }],
+    });
+
+    broken.replies = false;
+    await Bun.sleep(50);
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, blocked: expect.stringContaining("The worktree couldn't be made") }],
+    });
+    expect(store.loadCommands()).toEqual({ ok: true, commands: [] });
+    await daemon.close();
+  });
+
+  test("once closed, sends no more replies and refuses requests", async () => {
+    const { daemon, broken } = failingReplies({ retryMs: 1, maxRetryMs: 5 });
+    await readyToClaim(daemon);
+    broken.replies = true;
+    await ok(daemon, { type: "claim", task: task(1) });
+    await Bun.sleep(20);
+    await daemon.close();
+    const tries = broken.tries;
+    await Bun.sleep(50);
+    expect(broken.tries).toBe(tries);
+    const answer = await daemon.handle({ type: "status" });
+    expect(answer).toEqual({ ok: false, message: "The daemon is shutting down." });
   });
 
   // Found by review: a session name the schema refuses threw.
@@ -263,46 +301,21 @@ describe("the daemon", () => {
     expect(store.loadCommands()).toEqual({ ok: true, commands: [] });
   });
 
-  // A reply that could never be saved is given up after its retries. Its
+  // A reply still unsaved when the daemon closes is left behind. Its
   // command then stays, and goes out again when the daemon next starts.
-  test("keeps a command whose reply was given up, for the next start", async () => {
-    const store = EventStore.open(":memory:");
-    let breakReplies = true;
-    const log = {
-      appendTask: (...args: Parameters<EventStore["appendTask"]>) => {
-        const [events] = args;
-        if (breakReplies && events.some((e) => e.type === "task.blocked")) {
-          throw new Error("database is locked");
-        }
-        return store.appendTask(...args);
-      },
-      appendProject: store.appendProject.bind(store),
-      carriedOut: store.carriedOut.bind(store),
-      loadTasks: store.loadTasks.bind(store),
-      loadProjects: store.loadProjects.bind(store),
-      loadStarts: store.loadStarts.bind(store),
-      loadCommands: store.loadCommands.bind(store),
-    };
-    let sessions = 0;
-    const newSession = () => {
-      sessions += 1;
-      return `you-${sessions}`;
-    };
-    const first = Daemon.open({ config, log, retryMs: 1, retries: 1, newSession });
-    if (!first.ok) throw new Error(first.message);
-    await ok(first.value, add("CSV export"));
-    await ok(first.value, { type: "claim", task: task(1) });
-    await ok(first.value, { type: "submit", task: task(1), session: you(1), spec });
-    await ok(first.value, { type: "approve", task: task(1), sendBack: null });
-    await ok(first.value, { type: "claim", task: task(1) });
-    await Bun.sleep(50);
-    expect(store.loadCommands().ok && store.loadCommands()).toMatchObject({
+  test("keeps a command whose reply wasn't saved before closing, for the next start", async () => {
+    const { daemon: first, store, broken } = failingReplies({ retryMs: 1, maxRetryMs: 5 });
+    await readyToClaim(first);
+    broken.replies = true;
+    await ok(first, { type: "claim", task: task(1) });
+    await Bun.sleep(20);
+    await first.close();
+    expect(store.loadCommands()).toMatchObject({
       commands: [{ command: { type: "create_worktree" } }],
     });
 
     // The next start carries it out again, and this time the reply is saved.
-    breakReplies = false;
-    const second = Daemon.open({ config, log: store, newSession });
+    const second = Daemon.open({ config, log: store });
     if (!second.ok) throw new Error(second.message);
     await Bun.sleep(20);
     expect(await ok(second.value, { type: "status" })).toMatchObject({
@@ -314,6 +327,7 @@ describe("the daemon", () => {
         },
       ],
     });
+    expect(store.loadCommands()).toEqual({ ok: true, commands: [] });
   });
 
   test("picks up where it left off after a restart", async () => {
