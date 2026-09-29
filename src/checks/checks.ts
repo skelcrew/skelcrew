@@ -47,7 +47,10 @@ export function localChecks(commands: string[], options: ChecksOptions = {}): Ru
         case "timed_out":
           return {
             ok: false,
-            message: `\`${command}\` took longer than ${timeoutMs / 1000} seconds, so it was stopped.`,
+            message: joined(
+              `\`${command}\` took longer than ${timeoutMs / 1000} seconds, so it was stopped.`,
+              result.output,
+            ),
           };
         case "not_started":
           return { ok: false, message: `\`${command}\` couldn't start: ${result.reason}` };
@@ -87,7 +90,7 @@ function isFolder(path: string): boolean {
 type Ran =
   | { kind: "exited"; code: number; output: string }
   | { kind: "signalled"; signal: string; output: string }
-  | { kind: "timed_out" }
+  | { kind: "timed_out"; output: string }
   | { kind: "not_started"; reason: string };
 
 // One command, through the shell, since a check is a line of shell such as
@@ -97,10 +100,16 @@ type Ran =
 // in the order they came.
 //
 // The command runs in a process group of its own, and the result is
-// decided when the shell exits, not when its output closes. Then the whole
-// group is stopped, so nothing it started in the background keeps running,
-// and the run moves on shortly after, even if something that left the
-// group still holds the output open.
+// decided when the shell exits, not when its output closes. From then on
+// the time limit no longer counts. Then the whole group is stopped, so
+// nothing it started in the background keeps running, and the run moves on
+// once the output has closed, or shortly after if something that left the
+// group still holds it open.
+//
+// Stopping by group has one limit: a command that turns on job control
+// (`set -m`) gives each background job a group of its own, and those are
+// left running. Finding every process a command hid from its group isn't
+// possible in general.
 function runOne(
   command: string,
   dir: string,
@@ -127,27 +136,41 @@ function runOne(
     const output = new Tail(tail.lines, tail.chars);
     child.stdout?.on("data", (chunk: Buffer) => output.push(chunk));
 
+    // The output can close before or after the exit, so both are watched
+    // from the start.
+    let outputClosed = false;
+    let ended: (() => Ran) | null = null;
     let settled = false;
     const finish = (ran: Ran) => {
       if (settled) return;
       settled = true;
       clearTimeout(limit);
-      stopGroup(child.pid);
+      clearTimeout(grace);
       child.stdout?.destroy();
       resolve(ran);
     };
-    const limit = setTimeout(() => finish({ kind: "timed_out" }), timeoutMs);
+    const limit = setTimeout(() => {
+      stopGroup(child.pid);
+      finish({ kind: "timed_out", output: output.text() });
+    }, timeoutMs);
+    let grace: ReturnType<typeof setTimeout> | undefined;
 
+    child.stdout?.on("close", () => {
+      outputClosed = true;
+      if (ended !== null) finish(ended());
+    });
     child.on("error", (error) => finish({ kind: "not_started", reason: error.message }));
     child.on("exit", (code, signal) => {
-      const ended = (): Ran =>
+      clearTimeout(limit);
+      ended = () =>
         signal !== null
           ? { kind: "signalled", signal, output: output.text() }
           : { kind: "exited", code: code ?? 1, output: output.text() };
       // Stopping the group closes the output held by anything it started.
       stopGroup(child.pid);
-      child.stdout?.on("close", () => finish(ended()));
-      setTimeout(() => finish(ended()), lastOutputMs);
+      const result = ended;
+      if (outputClosed) finish(result());
+      else grace = setTimeout(() => finish(result()), lastOutputMs);
     });
   });
 }
@@ -176,12 +199,18 @@ class Tail {
 
   push(chunk: Buffer): void {
     this.kept += this.decoder.write(chunk);
-    if (this.kept.length > this.chars * 4) this.kept = this.kept.slice(-this.chars * 2);
+    if (this.kept.length > this.chars * 4) this.kept = wholeEnd(this.kept, this.chars * 2);
   }
 
   text(): string {
     const all = (this.kept + this.decoder.end()).trimEnd();
     const last = all.split("\n").slice(-this.lines).join("\n");
-    return last.length > this.chars ? `…${last.slice(-this.chars)}` : last;
+    return [...last].length > this.chars ? `…${wholeEnd(last, this.chars)}` : last;
   }
+}
+
+// The last `count` characters of the text, counted as whole characters, so
+// an emoji is never cut in half.
+function wholeEnd(text: string, count: number): string {
+  return [...text].slice(-count).join("");
 }

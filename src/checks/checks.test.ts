@@ -118,6 +118,48 @@ describe("localChecks", () => {
     expect(!lines.ok && lines.message).toContain("\n200000");
   });
 
+  // Found by review: every command waited the full grace period after it
+  // exited, because the output had already closed.
+  test("moves on at once when a command's output has closed", async () => {
+    const started = Date.now();
+    const result = await localChecks(Array(10).fill("true"))(folder());
+    expect(result.ok).toBe(true);
+    expect(Date.now() - started).toBeLessThan(1_500);
+  });
+
+  // Found by review: a command that exited just before the limit lost to
+  // it, so a pass became a timeout and a failure lost its output.
+  test("keeps the real result of a command that finishes just before the limit", async () => {
+    const limit = { timeoutMs: 500 };
+    expect(await localChecks(["sleep 0.35; echo passed"], limit)(folder())).toEqual({
+      ok: true,
+      value: null,
+    });
+    const failed = await localChecks(
+      ["sleep 0.35; echo 'expected 2 got 3'; exit 1"],
+      limit,
+    )(folder());
+    expect(!failed.ok && failed.message).toContain("exit code 1");
+    expect(!failed.ok && failed.message).toContain("expected 2 got 3");
+  });
+
+  // Found by review: a timeout said nothing about what was running.
+  test("shows the end of the output when a command times out", async () => {
+    const result = await localChecks(["echo 'running test_hangs_forever'; sleep 5"], {
+      timeoutMs: 300,
+    })(folder());
+    // As a line of its own: the message's first line names the command,
+    // which contains the same words.
+    const lines = !result.ok ? result.message.split("\n") : [];
+    expect(lines.slice(1)).toContain("running test_hangs_forever");
+  });
+
+  // Found by review: trimming could cut an emoji in half.
+  test("trims the output on whole characters", async () => {
+    const result = await localChecks(["printf 'a😀b'; exit 1"], { outputChars: 2 })(folder());
+    expect(!result.ok && result.message).toEndWith("…😀b");
+  });
+
   test("names the signal when a command is killed by one", async () => {
     const result = await localChecks(["kill -9 $$"])(folder());
     expect(result).toEqual({ ok: false, message: "`kill -9 $$` was stopped by SIGKILL." });
