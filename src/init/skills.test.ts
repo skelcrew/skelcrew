@@ -12,14 +12,16 @@ function frontmatter(text: string): unknown {
 }
 
 function skill(name: string): string {
-  return defaultSkills.find((one) => one.path === `.claude/skills/${name}/SKILL.md`)?.text ?? "";
+  return defaultSkills.find((one) => one.path === `.agents/skills/${name}/SKILL.md`)?.text ?? "";
 }
 
 describe("defaultSkills", () => {
-  test("are the spec and develop skills, where Claude Code looks for them", () => {
+  // Skills live in .agents/skills, so no one harness owns them. Init links
+  // them into .claude/skills for Claude Code.
+  test("are the spec and develop skills, in .agents/skills", () => {
     expect(defaultSkills.map((one) => one.path)).toEqual([
-      ".claude/skills/spec/SKILL.md",
-      ".claude/skills/develop/SKILL.md",
+      ".agents/skills/spec/SKILL.md",
+      ".agents/skills/develop/SKILL.md",
     ]);
   });
 
@@ -118,7 +120,8 @@ describe("defaultSkills", () => {
       const text = skill(name).replaceAll(/\s+/g, " ");
       expect(text).toContain("Never edit `.skelcrew/workflow.yml`");
       expect(text).toContain("`.claude/settings.json`");
-      expect(text).toContain("`.claude/skills/`");
+      expect(text).toContain("`.agents/skills/`");
+      expect(text).not.toContain("`.claude/skills/`");
       expect(text).not.toContain("edit the checks");
     }
   });

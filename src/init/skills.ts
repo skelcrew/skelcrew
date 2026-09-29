@@ -6,10 +6,11 @@
 import develop from "./skills/develop/SKILL.md" with { type: "text" };
 import spec from "./skills/spec/SKILL.md" with { type: "text" };
 
-// Where the skill goes, relative to the repository, and what it says.
+// Where the skill goes, relative to the repository, and what it says. The
+// skills live in .agents/skills, so no one harness owns them.
 export type Skill = { path: string; text: string };
 
 export const defaultSkills: Skill[] = [
-  { path: ".claude/skills/spec/SKILL.md", text: spec },
-  { path: ".claude/skills/develop/SKILL.md", text: develop },
+  { path: ".agents/skills/spec/SKILL.md", text: spec },
+  { path: ".agents/skills/develop/SKILL.md", text: develop },
 ];

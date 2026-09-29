@@ -56,7 +56,7 @@ running `skelcrew approve` themselves. You never run it.
 
 - Never approve anything. Never run `skelcrew approve`. Only the developer runs it.
 - Never edit `.skelcrew/workflow.yml`, `.claude/settings.json`, or the skills in
-  `.claude/skills/`. They set the rules you work under, such as whether a spec needs the
+  `.agents/skills/`. They set the rules you work under, such as whether a spec needs the
   developer's approval. If one looks wrong, tell the developer.
 
 ## If you are refused

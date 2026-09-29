@@ -67,7 +67,7 @@ These are never yours to do, even when they would get the checks to pass:
 - Never push the branch, and never force push.
 - Never use `--no-verify`, and never skip a hook in any other way.
 - Never edit `.skelcrew/workflow.yml`, `.claude/settings.json`, or the skills in
-  `.claude/skills/`. They set the rules you work under, such as which checks run and what
+  `.agents/skills/`. They set the rules you work under, such as which checks run and what
   needs the developer's approval. If one looks wrong, tell the developer.
 - Never weaken a test or a check to make it pass.
 - Never approve anything. Never run `skelcrew approve`. Only the developer runs it.

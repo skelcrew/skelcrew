@@ -50,8 +50,8 @@ const bunApp = {
   "bun.lock": "",
 };
 const workflow = ".skelcrew/workflow.yml";
-const specSkill = ".claude/skills/spec/SKILL.md";
-const developSkill = ".claude/skills/develop/SKILL.md";
+const specSkill = ".agents/skills/spec/SKILL.md";
+const developSkill = ".agents/skills/develop/SKILL.md";
 const dbLine = ".skelcrew/skelcrew.db*";
 // The files the daemon keeps while it runs: its log, the lock that stops a
 // second daemon, the file naming its process, and the socket the CLI talks
@@ -114,10 +114,11 @@ describe("initRepository", () => {
     expect(parsed.workflow.checks).toEqual(["bun run test", "bun run lint"]);
   });
 
-  test("writes the default skills where Claude Code looks for them", () => {
+  test("writes the default skills in .agents/skills", () => {
     const dir = repo(bunApp);
     initRepository(dir);
     for (const skill of defaultSkills) expect(read(dir, skill.path)).toBe(skill.text);
+    expect(defaultSkills.map((skill) => skill.path)).toEqual([specSkill, developSkill]);
   });
 
   // The database, the files SQLite keeps beside it, and the daemon's own
@@ -178,7 +179,7 @@ describe("initRepository", () => {
   // A file where the develop skill's folder should be makes that write
   // fail, after workflow.yml and the spec skill are written.
   test("says which files it wrote when a later step fails", () => {
-    const dir = repo({ ...bunApp, ".claude/skills/develop": "not a folder" });
+    const dir = repo({ ...bunApp, ".agents/skills/develop": "not a folder" });
     const result = initRepository(dir);
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -207,22 +208,42 @@ describe("initRepository", () => {
       expect(everything(home)).toEqual(before);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      expect(result.report.byHand).toEqual([specSkill, developSkill, settings]);
-      expect(result.report.created).toEqual([workflow, ".gitignore"]);
+      expect(result.report.byHand).toEqual([settings]);
+      expect(result.report.created).toEqual([workflow, specSkill, developSkill, ".gitignore"]);
       expect(result.report.askBeforeApprove).toBe("add by hand");
-      expect(result.report.warnings).toHaveLength(3);
+      expect(result.report.warnings).toHaveLength(1);
       for (const warning of result.report.warnings) {
         expect(warning).toContain(".claude");
         expect(warning).toContain("outside the repository");
       }
     });
 
-    test("writes nothing through a linked skills folder", () => {
-      const home = fakeHome();
+    // Other tools read .agents from your home folder too, so a repository
+    // may link its own .agents there.
+    test("writes nothing through a linked .agents folder, and says what to add by hand", () => {
+      const home = repo({ ".agents/skills/mine/SKILL.md": "my own skill\n" });
       const before = everything(home);
       const dir = repo(bunApp);
-      mkdirSync(join(dir, ".claude"));
-      symlinkSync(join(home, ".claude/skills"), join(dir, ".claude/skills"));
+      symlinkSync(join(home, ".agents"), join(dir, ".agents"));
+      const result = initRepository(dir);
+      expect(everything(home)).toEqual(before);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.report.byHand).toEqual([specSkill, developSkill]);
+      expect(result.report.created).toEqual([workflow, settings, ".gitignore"]);
+      expect(result.report.warnings).toHaveLength(2);
+      for (const warning of result.report.warnings) {
+        expect(warning).toContain(".agents");
+        expect(warning).toContain("outside the repository");
+      }
+    });
+
+    test("writes nothing through a linked .agents/skills folder", () => {
+      const home = repo({ ".agents/skills/mine/SKILL.md": "my own skill\n" });
+      const before = everything(home);
+      const dir = repo(bunApp);
+      mkdirSync(join(dir, ".agents"));
+      symlinkSync(join(home, ".agents/skills"), join(dir, ".agents/skills"));
       const result = initRepository(dir);
       expect(everything(home)).toEqual(before);
       expect(result.ok && result.report.byHand).toEqual([specSkill, developSkill]);
@@ -243,9 +264,12 @@ describe("initRepository", () => {
       const dir = repo(bunApp);
       mkdirSync(join(dir, "config/claude"), { recursive: true });
       symlinkSync(join(dir, "config/claude"), join(dir, ".claude"));
+      mkdirSync(join(dir, "config/agents"), { recursive: true });
+      symlinkSync(join(dir, "config/agents"), join(dir, ".agents"));
       const result = initRepository(dir);
       expect(result.ok && result.report.byHand).toEqual([]);
-      expect(existsSync(join(dir, "config/claude/skills/spec/SKILL.md"))).toBe(true);
+      expect(existsSync(join(dir, "config/claude/settings.json"))).toBe(true);
+      expect(existsSync(join(dir, "config/agents/skills/spec/SKILL.md"))).toBe(true);
     });
   });
 
@@ -529,9 +553,9 @@ describe("initRepository", () => {
       const mine = settingsJson({ model: "opus" });
       const lockedFile = repo({ ...bunApp, [settings]: mine });
       chmodSync(join(lockedFile, settings), 0o444);
-      // With the skills there already, init needs to write only settings.json
-      // in the locked folder.
-      const lockedFolder = repo({ ...bunApp, [specSkill]: "mine", [developSkill]: "mine" });
+      // Init needs to write only settings.json in the locked folder.
+      const lockedFolder = repo(bunApp);
+      mkdirSync(join(lockedFolder, ".claude"));
       chmodSync(join(lockedFolder, ".claude"), 0o555);
       try {
         for (const dir of [lockedFile, lockedFolder]) {
