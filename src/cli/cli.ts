@@ -48,18 +48,25 @@ export async function run(args: string[], context: Context): Promise<Outcome> {
   if (handler === undefined) {
     return refused(`There is no command ${name}. Run \`skelcrew --help\` to see them all.`);
   }
-  if (rest.includes("--help") || rest.includes("-h")) return said(...(commandHelp[name] ?? []));
+  // Help only when it's the command's only argument: `-h` could also be a
+  // reason, a note or a title.
+  if (rest.length === 1 && (rest[0] === "--help" || rest[0] === "-h")) {
+    return said(...(commandHelp[name] ?? []));
+  }
   return handler(rest, context);
 }
 
 const handlers: Record<string, Handler> = {
   add: async (args, context) => {
-    const parsed = parse("add", () =>
-      parseArgs({
-        args,
-        allowPositionals: true,
-        options: { spec: { type: "boolean" }, project: { type: "string" } },
-      }),
+    const parsed = parse(
+      "add",
+      () =>
+        parseArgs({
+          args,
+          allowPositionals: true,
+          options: { spec: { type: "boolean" }, project: { type: "string" } },
+        }),
+      args,
     );
     if (!parsed.ok) return parsed.outcome;
     const [title, ...extra] = parsed.value.positionals;
@@ -145,7 +152,11 @@ const handlers: Record<string, Handler> = {
     }),
 
   "give-up": async (args, context) => {
-    const parsed = parse("give-up", () => parseArgs({ args, allowPositionals: true, options: {} }));
+    const parsed = parse(
+      "give-up",
+      () => parseArgs({ args, allowPositionals: true, options: {} }),
+      args,
+    );
     if (!parsed.ok) return parsed.outcome;
     const [written, message, ...extra] = parsed.value.positionals;
     const task = taskNumber("give-up", written);
@@ -192,16 +203,50 @@ type Options = Record<string, { type: "string" | "boolean" }>;
 type Checked<T> = { ok: true; value: T } | { ok: false; outcome: Outcome };
 
 // parseArgs throws on an option it doesn't know. That becomes a refusal.
-function parse<T>(name: string, parseThem: () => T): Checked<T> {
+// Often it is a title, note or reason that starts with a dash, so the
+// refusal shows how to pass one: after `--`.
+function parse<T>(name: string, parseThem: () => T, args: string[] = []): Checked<T> {
   try {
     return { ok: true, value: parseThem() };
   } catch (error) {
-    const message = error instanceof Error ? error.message.replace(/\.$/, "") : String(error);
+    const message = error instanceof Error ? error.message : String(error);
+    // Node names the option with or without its dashes, so the argument is
+    // found by what follows them.
+    const option = /Unknown option '-*([^']+)'/.exec(message)?.[1];
+    const at =
+      option === undefined
+        ? -1
+        : args.findIndex((arg) => arg.startsWith("-") && arg.replace(/^-+/, "").startsWith(option));
+    const value = args[at];
+    if (value !== undefined) {
+      const example = [
+        "skelcrew",
+        name,
+        ...args.slice(0, at).map(shellWord),
+        "--",
+        shellWord(value),
+      ];
+      return {
+        ok: false,
+        outcome: refused(
+          `${value.split(/[\s=]/)[0]} isn't an option of \`skelcrew ${name}\`. Run \`skelcrew ${name} --help\` to see its options.`,
+          `If it's part of a title, note or reason, put -- before it: ${example.join(" ")}`,
+        ),
+      };
+    }
     return {
       ok: false,
-      outcome: refused(`${message}. Run \`skelcrew ${name} --help\` to see how to use it.`),
+      outcome: refused(
+        `${message.replace(/\.$/, "")}. Run \`skelcrew ${name} --help\` to see how to use it.`,
+      ),
     };
   }
+}
+
+// An argument as it would be typed: quoted if it holds anything but plain
+// letters, digits and a few safe marks.
+function shellWord(arg: string): string {
+  return /^[\w#./:@-]+$/.test(arg) ? arg : JSON.stringify(arg);
 }
 
 // A command that takes one task number, and the options given.
@@ -211,7 +256,7 @@ async function withTask(
   options: Options,
   then: (task: TaskId, values: Values) => Outcome | Promise<Outcome>,
 ): Promise<Outcome> {
-  const parsed = parse(name, () => parseArgs({ args, allowPositionals: true, options }));
+  const parsed = parse(name, () => parseArgs({ args, allowPositionals: true, options }), args);
   if (!parsed.ok) return parsed.outcome;
   const [written, ...extra] = parsed.value.positionals;
   const task = taskNumber(name, written);
@@ -274,8 +319,19 @@ async function readSpec(
   file: string | undefined,
   context: Context,
 ): Promise<Checked<z.infer<typeof specFile>>> {
-  let text: string;
+  // Standard input is read only when asked for, with `--file -`. Waiting on
+  // it otherwise could hang for ever on an input nobody writes to.
   if (file === undefined) {
+    return {
+      ok: false,
+      outcome: refused(
+        "No spec was given. Name its file with --file <path>, or use --file - to read it from standard input.",
+        "Run `skelcrew submit --help` to see the form.",
+      ),
+    };
+  }
+  let text: string;
+  if (file === "-") {
     text = await context.readStdin();
   } else {
     try {

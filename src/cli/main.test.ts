@@ -4,7 +4,8 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { takeLock } from "../daemon/lock";
 import { daemonPaths } from "../daemon/paths";
 import { type Server, serve } from "../daemon/server";
 import { cleanUp, throwawayRepo } from "../daemon/testing";
@@ -50,14 +51,27 @@ function lockOf(repo: string): string {
   return found.paths.lock;
 }
 
+// The process id of the daemon running for a repository.
+function pidOf(repo: string): number {
+  return Number(readFileSync(join(dirname(lockOf(repo)), "daemon.pid"), "utf8").trim());
+}
+
+// Whether a daemon has let go of the repository: its lock can be taken.
+function lockIsFree(repo: string): boolean {
+  const taken = takeLock(lockOf(repo));
+  if (!taken.ok) return false;
+  taken.lock.release();
+  return true;
+}
+
 // Stops the daemon a test started in the background, and waits until it
 // has let go of the repository.
 async function stopBackgroundDaemon(repo: string) {
-  const pid = Number(readFileSync(lockOf(repo), "utf8").trim());
+  const pid = pidOf(repo);
   pids.push(pid);
   process.kill(pid, "SIGTERM");
-  for (let i = 0; i < 100 && existsSync(lockOf(repo)); i += 1) await Bun.sleep(20);
-  expect(existsSync(lockOf(repo))).toBe(false);
+  for (let i = 0; i < 100 && !lockIsFree(repo); i += 1) await Bun.sleep(20);
+  expect(lockIsFree(repo)).toBe(true);
 }
 
 const context = (repo: string) => ({
@@ -71,7 +85,7 @@ describe("the skelcrew program", () => {
   test("starts the daemon in the background when none is running", async () => {
     const repo = throwawayRepo(dirs);
     const added = await run(["add", "CSV export"], context(repo));
-    const pid = Number(readFileSync(lockOf(repo), "utf8").trim());
+    const pid = pidOf(repo);
     pids.push(pid);
     expect(added).toEqual({ code: 0, out: ["Added #1: CSV export."], err: [] });
     expect(pid).not.toBe(process.pid);
@@ -104,7 +118,7 @@ describe("the skelcrew program", () => {
     expect(new TextDecoder().decode(rest.value)).toBe("The daemon stopped.\n");
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stderr).text()).toBe("");
-    expect(existsSync(lockOf(repo))).toBe(false);
+    expect(lockIsFree(repo)).toBe(true);
   });
 
   test("reads a spec from standard input and prints the answer", async () => {
@@ -115,7 +129,7 @@ describe("the skelcrew program", () => {
     await run(["add", "CSV export", "--spec"], context(repo));
     await run(["claim", "1"], context(repo));
     const spec = { scope: "Export CSV.", acceptance: ["It downloads."], openQuestions: [] };
-    const { result } = skelcrew(repo, ["submit", "#1"], JSON.stringify(spec), {
+    const { result } = skelcrew(repo, ["submit", "#1", "--file", "-"], JSON.stringify(spec), {
       SKELCREW_SESSION: "you-1",
     });
     expect(await result()).toEqual({ code: 0, out: "Submitted the spec for #1.\n", err: "" });

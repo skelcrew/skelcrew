@@ -58,7 +58,10 @@ const specJson = JSON.stringify({
 async function specced(repo: string) {
   await cli(repo, ["add", "CSV export", "--spec"]);
   await cli(repo, ["claim", "1"]);
-  await cli(repo, ["submit", "1"], { session: "you-1", readStdin: async () => specJson });
+  await cli(repo, ["submit", "1", "--file", "-"], {
+    session: "you-1",
+    readStdin: async () => specJson,
+  });
 }
 
 // A stand-in daemon that answers every request with this result, for the
@@ -186,7 +189,7 @@ describe("skelcrew submit", () => {
     const repo = await repoWithDaemon();
     await cli(repo, ["add", "CSV export", "--spec"]);
     await cli(repo, ["claim", "1"]);
-    const outcome = await cli(repo, ["submit", "1"], {
+    const outcome = await cli(repo, ["submit", "1", "--file", "-"], {
       session: "you-1",
       readStdin: async () => specJson,
     });
@@ -206,7 +209,9 @@ describe("skelcrew submit", () => {
 
   test("refuses without SKELCREW_SESSION", async () => {
     const repo = await repoWithDaemon();
-    expect(await cli(repo, ["submit", "1"], { readStdin: async () => specJson })).toEqual(
+    expect(
+      await cli(repo, ["submit", "1", "--file", "-"], { readStdin: async () => specJson }),
+    ).toEqual(
       refused(
         "SKELCREW_SESSION isn't set. Set it to the session `skelcrew claim` printed, like this:",
         "SKELCREW_SESSION=<session> skelcrew submit 1",
@@ -232,7 +237,7 @@ describe("skelcrew submit", () => {
 
   test("refuses a spec that isn't JSON", async () => {
     const repo = await repoWithDaemon();
-    const outcome = await cli(repo, ["submit", "1"], {
+    const outcome = await cli(repo, ["submit", "1", "--file", "-"], {
       session: "you-1",
       readStdin: async () => "scope: CSV",
     });
@@ -253,7 +258,7 @@ describe("skelcrew submit", () => {
     const repo = await repoWithDaemon();
     await cli(repo, ["add", "CSV export", "--spec"]);
     await cli(repo, ["claim", "1"]);
-    const outcome = await cli(repo, ["submit", "1"], {
+    const outcome = await cli(repo, ["submit", "1", "--file", "-"], {
       session: "someone-else",
       readStdin: async () => specJson,
     });
@@ -269,6 +274,44 @@ describe("skelcrew submit", () => {
     expect(help).toContain('"scope"');
     expect(help).toContain('"acceptance"');
     expect(help).toContain('"openQuestions"');
+  });
+});
+
+// Found by review: with standard input open and never written, submit
+// waited for ever.
+describe("skelcrew submit, without a spec", () => {
+  test("refuses at once, rather than wait on standard input", async () => {
+    const repo = await repoWithDaemon();
+    await cli(repo, ["add", "CSV export", "--spec"]);
+    await cli(repo, ["claim", "1"]);
+    const outcome = await cli(repo, ["submit", "1"], {
+      session: "you-1",
+      readStdin: () => new Promise<string>(() => {}),
+    });
+    expect(outcome.code).toBe(1);
+    expect(outcome.err.join("\n")).toContain("--file -");
+  });
+});
+
+// Found by review: help was shown for any argument that was exactly -h or
+// --help, even a reason, and nothing was reported.
+describe("arguments that start with a dash", () => {
+  test("shows a command's help only when --help is its only argument", async () => {
+    const repo = await repoWithDaemon();
+    expect((await cli(repo, ["give-up", "--help"])).code).toBe(0);
+    const outcome = await cli(repo, ["give-up", "1", "-h"], { session: "you-1" });
+    expect(outcome.code).toBe(1);
+    expect(outcome.out).toEqual([]);
+  });
+
+  test("says in plain words how to pass a title that starts with a dash", async () => {
+    const repo = await repoWithDaemon();
+    const outcome = await cli(repo, ["add", "-x: remove the flag"]);
+    expect(outcome.code).toBe(1);
+    expect(outcome.err.join("\n")).toContain('skelcrew add -- "-x: remove the flag"');
+    expect(await cli(repo, ["add", "--", "-x: remove the flag"])).toEqual(
+      said(["Added #1: -x: remove the flag."]),
+    );
   });
 });
 
@@ -316,7 +359,10 @@ describe("skelcrew status", () => {
     await cli(repo, ["add", "Totals"]);
     await cli(repo, ["add", "CSV export", "--spec"]);
     await cli(repo, ["claim", "2"]);
-    await cli(repo, ["submit", "2"], { session: "you-1", readStdin: async () => specJson });
+    await cli(repo, ["submit", "2", "--file", "-"], {
+      session: "you-1",
+      readStdin: async () => specJson,
+    });
     await cli(repo, ["add", "PDF export"]);
     await cli(repo, ["drop", "3"]);
     expect(await cli(repo, ["status"])).toEqual(

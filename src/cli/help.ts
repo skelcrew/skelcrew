@@ -57,10 +57,11 @@ export const commandHelp: Record<string, string[]> = {
     "It prints the session to report with.",
   ],
   submit: [
-    "Usage: skelcrew submit <task> [--file <path>]",
+    "Usage: skelcrew submit <task> --file <path>",
     "",
     "Hands over the spec for a task you claimed.",
-    "The spec is JSON, read from the file named with --file <path>, or from standard input.",
+    "The spec is JSON, read from the file named with --file <path>.",
+    "Use --file - to read it from standard input instead.",
     "It has exactly three fields:",
     '  "scope"           Text: what the task changes, and what it leaves alone.',
     '  "acceptance"      A list of texts. Each is a check a test or a person can make.',
