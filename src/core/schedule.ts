@@ -11,7 +11,7 @@ import type { Phase, Project, ProjectId, Schedule, Task } from "./types";
 const phaseOrder: Partial<Record<Phase, number>> = { in_progress: 0, ready: 1, spec: 2 };
 
 export const schedule: Schedule = (tasks, projects, config, startsInFlight) => {
-  const free = config.maxRunning - tasks.filter(runsAgent).length - startsInFlight;
+  const free = config.maxRunning - slotsInUse(tasks, startsInFlight);
   if (free <= 0) return [];
   return tasks
     .filter((task) => waitingForSlot(task) && inActiveProject(task, projects))
@@ -24,6 +24,12 @@ export const schedule: Schedule = (tasks, projects, config, startsInFlight) => {
     .slice(0, free)
     .map((task) => task.id);
 };
+
+// Slots taken: agents running, plus agents and worktrees still starting.
+// A claim needs a free slot too, and the loop checks it with this.
+export function slotsInUse(tasks: readonly Task[], startsInFlight: number): number {
+  return tasks.filter(runsAgent).length + startsInFlight;
+}
 
 // An agent that has started and is running. Agents and worktrees still
 // being started are counted through startsInFlight instead. A task past its

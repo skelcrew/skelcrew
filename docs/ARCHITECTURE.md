@@ -163,7 +163,8 @@ it with fake tools, and the daemon will run it with real ones.
 4. It hands each command to the tools, then marks it done in the store. Replies come back
    later through `send`.
 
-`startWaiting()` asks `schedule` what to start, and sends the starts. The loop counts the
+`startWaiting()` asks `schedule` what to start, and sends the starts. A claim comes from
+you instead, so `send` checks for a free slot before passing it on. The loop counts the
 starts it has sent out and not yet had answered, by task and request number, and gives
 that count to the scheduler. `Loop.open` rebuilds everything from a saved log and carries
 on from there.

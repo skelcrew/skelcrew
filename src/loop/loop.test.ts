@@ -37,6 +37,11 @@ const add = (requestSpec = true, project: ProjectId | null = null): Input => ({
   project,
   requestSpec,
 });
+const claim = (session: string): Input => ({
+  by: "human",
+  type: "claim",
+  session: SessionId.parse(session),
+});
 const started = (request: number, session: string): Input => ({
   by: "plugin",
   type: "session_started",
@@ -272,6 +277,35 @@ describe("the loop", () => {
     const reopened = Loop.open(config, tools, store);
     if (!reopened.ok) throw new Error(reopened.reason);
     expect(tools.commands).toEqual([]);
+  });
+
+  test("refuses a claim when every slot is taken, and saves nothing", () => {
+    const store = EventStore.open(":memory:");
+    const loop = new Loop(config, new Recorded(), store);
+    loop.send(one, add());
+    loop.send(two, add());
+    expect(loop.startWaiting()).toEqual([one]);
+
+    // #1's agent is on its way up, and max_running is 1.
+    expect(loop.send(two, claim("you-1"))).toEqual({
+      ok: false,
+      rejection: {
+        input: "claim",
+        reason: "No slot is free: 1 of 1 agents are working or starting.",
+      },
+    });
+    const saved = store.loadTasks();
+    expect(saved.ok && saved.tasks.get(two)?.phase).toBe("spec");
+    expect(saved.ok && saved.tasks.get(two)).toMatchObject({ step: { kind: "queued" } });
+  });
+
+  test("lets a claim through when a slot is free, and your session then holds it", () => {
+    const loop = new Loop(config, new Recorded(), null);
+    loop.send(one, add());
+    loop.send(two, add());
+
+    expect(loop.send(one, claim("you-1")).ok).toBe(true);
+    expect(loop.startWaiting()).toEqual([]);
   });
 
   test("creates and parks projects, and won't start a task in a parked one", () => {
