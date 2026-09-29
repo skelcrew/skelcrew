@@ -52,7 +52,10 @@ export interface VersionControl {
   // The checks may leave build output, but mustn't commit or change tracked
   // files, or they tested something other than what would land. Main only
   // moves if all this succeeds, only to the exact commit the checks tested,
-  // and never over uncommitted edits in a checkout of main. A failure leaves main as it was, and the message says
+  // only if it is still where the merge began, and never over uncommitted
+  // edits or ignored files in a checkout of main. It doesn't move while
+  // main is being rebased or bisected, or is checked out in more than one
+  // place. If moving fails, a checkout of main is left as it was. A failure leaves main as it was, and the message says
   // why. Asked again after it succeeded, it gives back the same commit and
   // merges nothing twice.
   merge(request: MergeRequest, runChecks: RunChecks): Promise<Done<CommitSha>>;

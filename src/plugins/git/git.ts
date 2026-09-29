@@ -560,26 +560,10 @@ export class Git implements VersionControl {
     mkdirSync(dirname(receipt), { recursive: true });
     writeFileSync(receipt, candidate.out);
 
-    // In your checkout of main, a fast-forward, which git refuses if it
-    // would overwrite your uncommitted edits. Elsewhere, only if main
-    // hasn't moved since the merge began.
-    const checkout = await this.checkoutOf(main);
-    const moved =
-      checkout === null
-        ? await run(this.repo, "update-ref", main, candidate.out, before)
-        : // --no-overwrite-ignore: git would otherwise replace an ignored
-          // file of yours when the merge tracks the same path.
-          await run(
-            checkout,
-            "merge",
-            "--ff-only",
-            "--no-overwrite-ignore",
-            "--quiet",
-            candidate.out,
-          );
+    const moved = await this.moveMain(before, candidate.out);
     if (!moved.ok) {
       rmSync(receipt, { force: true });
-      return { ok: false, message: `${this.main} couldn't be moved to the merge: ${moved.err}` };
+      return moved;
     }
     return shaOf(candidate.out);
   }
@@ -607,18 +591,84 @@ export class Git implements VersionControl {
     return { ok: true, value: null };
   }
 
-  // The worktree that has this branch checked out, or null if none has.
-  private async checkoutOf(ref: string): Promise<string | null> {
+  // Moves main from `before` to the merge, or fails and leaves main, and
+  // your checkout of it, as they were.
+  private async moveMain(before: string, merge: string): Promise<Done<null>> {
+    const main = `refs/heads/${this.main}`;
+    const where = await this.mainCheckout();
+    if (!where.ok) return where;
+
+    // Main must still be where the merge began. If someone moved it, for
+    // example to take a bad commit off, moving it now would undo that.
+    const now = await run(this.repo, "rev-parse", "--verify", main);
+    if (!now.ok || now.out !== before) {
+      return {
+        ok: false,
+        message: `${this.main} moved while the merge was being checked. Nothing was merged. Try again.`,
+      };
+    }
+
+    // No checkout has main open: move it, but only if it is still where the
+    // merge began.
+    if (where.value === null) {
+      const updated = await run(this.repo, "update-ref", main, merge, before);
+      if (updated.ok) return { ok: true, value: null };
+      return { ok: false, message: `${this.main} couldn't be moved to the merge: ${updated.err}` };
+    }
+
+    // In your checkout of main, a fast-forward. git refuses it rather than
+    // overwrite your uncommitted edits, or, with --no-overwrite-ignore, your
+    // ignored files. --no-autostash stops git from stashing your edits
+    // instead of refusing.
+    const moved = await run(
+      where.value,
+      "merge",
+      "--ff-only",
+      "--no-overwrite-ignore",
+      "--no-autostash",
+      "--quiet",
+      merge,
+    );
+    if (moved.ok) return { ok: true, value: null };
+    const failed = `${this.main} couldn't be moved to the merge: ${moved.err}`;
+    const putBack = await putCheckoutBack(where.value, before, merge);
+    return { ok: false, message: `${failed} ${putBack}` };
+  }
+
+  // Your checkout of main, if one has it open, or null. Refused if main is
+  // open in more than one place, since only one could be updated, or if any
+  // checkout is rebasing or bisecting main. git lists a rebasing checkout
+  // as detached, so each checkout's own git folder is read.
+  private async mainCheckout(): Promise<Done<string | null>> {
+    const main = `refs/heads/${this.main}`;
     const listed = await run(this.repo, "worktree", "list", "--porcelain");
-    if (!listed.ok) return null;
+    if (!listed.ok) return { ok: false, message: `git couldn't list worktrees: ${listed.err}` };
+    const open: string[] = [];
+    const all: string[] = [];
     for (const block of listed.out.split("\n\n")) {
       const lines = block.split("\n");
-      if (lines.includes(`branch ${ref}`)) {
-        const path = lines.find((line) => line.startsWith("worktree "));
-        if (path !== undefined) return path.slice("worktree ".length);
+      const line = lines.find((l) => l.startsWith("worktree "));
+      if (line === undefined) continue;
+      const path = line.slice("worktree ".length);
+      all.push(path);
+      if (lines.includes(`branch ${main}`)) open.push(path);
+    }
+    if (open.length > 1) {
+      return {
+        ok: false,
+        message: `${this.main} is checked out in ${open.length} places: ${open.join(", ")}. Only one could be updated, so nothing was merged.`,
+      };
+    }
+    for (const path of all) {
+      const busy = await busyWith(path, this.main);
+      if (busy !== null) {
+        return {
+          ok: false,
+          message: `${path} is ${busy} ${this.main}. Nothing was merged. Finish or abort that first.`,
+        };
       }
     }
-    return null;
+    return { ok: true, value: open[0] ?? null };
   }
 }
 
@@ -674,6 +724,42 @@ async function hiddenFiles(dir: string): Promise<Done<number>> {
   const files = await run(dir, "ls-files", "-v");
   if (!files.ok) return { ok: false, message: `git couldn't list ${dir}: ${files.err}` };
   return { ok: true, value: files.out.split("\n").filter((line) => /^[a-zS]/.test(line)).length };
+}
+
+// "rebasing" or "bisecting" if the checkout at `path` is doing that to the
+// branch, or null.
+async function busyWith(path: string, branch: string): Promise<string | null> {
+  if (!existsSync(path)) return null;
+  for (const [file, what] of [
+    ["rebase-merge/head-name", "rebasing"],
+    ["rebase-apply/head-name", "rebasing"],
+    ["BISECT_START", "bisecting"],
+  ] as const) {
+    const found = await run(path, "rev-parse", "--path-format=absolute", "--git-path", file);
+    if (!found.ok || !existsSync(found.out)) continue;
+    const name = readFileSync(found.out, "utf8").trim();
+    if (name === branch || name === `refs/heads/${branch}`) return what;
+  }
+  return null;
+}
+
+// After a failed fast-forward, git may have updated your files and staging
+// area without moving main. If main is still `before` and the staging area
+// holds exactly the merge, it is switched back, keeping any edits of yours.
+// Returns what the message should add.
+async function putCheckoutBack(checkout: string, before: string, merge: string): Promise<string> {
+  const unsure = "Check `git status` there: it may hold the task's changes, staged.";
+  const head = await run(checkout, "rev-parse", "HEAD");
+  const staged = await run(checkout, "write-tree");
+  const mergeTree = await run(checkout, "rev-parse", `${merge}^{tree}`);
+  const beforeTree = await run(checkout, "rev-parse", `${before}^{tree}`);
+  if (!head.ok || head.out !== before || !staged.ok || !mergeTree.ok || !beforeTree.ok) {
+    return unsure;
+  }
+  if (staged.out === beforeTree.out) return "Your checkout of main is as it was.";
+  if (staged.out !== mergeTree.out) return unsure;
+  const back = await run(checkout, "read-tree", "-m", "-u", merge, before);
+  return back.ok ? "Your checkout of main was put back as it was." : unsure;
 }
 
 function shaOf(text: string): Done<CommitSha> {

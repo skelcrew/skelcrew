@@ -646,6 +646,94 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       expect(await git(r.dir, "rev-parse", "main")).toBe(before);
     });
 
+    // Found by review: during a rebase git lists your checkout as detached,
+    // and aborting the rebase would take the merge off main again.
+    test("refuses while you are rebasing main", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "a.ts": "a\n" });
+      await git(r.dir, "checkout", "-q", "-b", "other");
+      await commitOnMain(r, "README.md", "# Other\n");
+      await git(r.dir, "checkout", "-q", "main");
+      await commitOnMain(r, "README.md", "# Mine\n");
+      await $`git rebase other`.cwd(r.dir).nothrow().quiet();
+      const before = await git(r.dir, "rev-parse", "main");
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      expect((await plugin.merge(request(head), pass)).ok).toBe(false);
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+    });
+
+    // Found by review: main moved back during the checks, and the merge put
+    // the removed commit back.
+    test("refuses when main moved while the checks ran", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "a.ts": "a\n" });
+      await commitOnMain(r, "bad.txt", "bad\n");
+      const resetting: RunChecks = async () => {
+        await git(r.dir, "reset", "-q", "--hard", "HEAD~1");
+        return { ok: true, value: null };
+      };
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      expect((await plugin.merge(request(head), resetting)).ok).toBe(false);
+      expect(await git(r.dir, "ls-tree", "--name-only", "main")).not.toContain("bad.txt");
+    });
+
+    // Found by review: with merge.autoStash, git stashes your edits instead
+    // of refusing, and can put them back with conflict markers.
+    test("never stashes your edits, even when git is set to", async () => {
+      const r = await repo();
+      await git(r.dir, "config", "merge.autoStash", "true");
+      const { plugin, heads, request } = await built(r, { "README.md": "# From the task\n" });
+      writeFileSync(join(r.dir, "README.md"), "# My edit\n");
+      const before = await git(r.dir, "rev-parse", "main");
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      expect((await plugin.merge(request(head), pass)).ok).toBe(false);
+      expect(readFileSync(join(r.dir, "README.md"), "utf8")).toBe("# My edit\n");
+      expect(await git(r.dir, "stash", "list")).toBe("");
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+    });
+
+    // Found by review: git can update your files, then fail to move main.
+    test("puts your checkout back when main can't be moved", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "a.ts": "a\n" });
+      const hook = join(r.dir, ".git", "hooks", "reference-transaction");
+      writeFileSync(
+        hook,
+        '#!/bin/sh\nwhile read old new ref; do\n  if [ "$1" = prepared ] && [ "$ref" = refs/heads/main ]; then exit 1; fi\ndone\nexit 0\n',
+      );
+      chmodSync(hook, 0o755);
+      const before = await git(r.dir, "rev-parse", "main");
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      expect((await plugin.merge(request(head), pass)).ok).toBe(false);
+      rmSync(hook);
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+      expect(await git(r.dir, "status", "--porcelain")).toBe("");
+      expect(existsSync(join(r.dir, "a.ts"))).toBe(false);
+    });
+
+    // Found by review: only one checkout of main would be updated, and the
+    // other would show the merge undone.
+    test("refuses when main is checked out in more than one place", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "a.ts": "a\n" });
+      const second = join(r.dir, ".skelcrew", "second-main");
+      await git(r.dir, "worktree", "add", "-q", "-f", second, "main");
+      const before = await git(r.dir, "rev-parse", "main");
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      expect((await plugin.merge(request(head), pass)).ok).toBe(false);
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+    });
+
     test("moves main when no checkout has it open", async () => {
       const r = await repo();
       const { plugin, heads, request } = await built(r, { "a.ts": "a\n" });
