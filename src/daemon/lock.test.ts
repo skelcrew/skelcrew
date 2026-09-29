@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Server, serve } from "./server";
-import { cleanUp, openLine, throwawayRepo } from "./testing";
+import { cleanUp, daemonInAnotherProcess, openLine, throwawayRepo } from "./testing";
 
 const dirs: string[] = [];
 const servers: Server[] = [];
@@ -24,25 +24,6 @@ async function answers(server: Server): Promise<unknown> {
   const reply = JSON.parse(await line.next());
   line.close();
   return reply;
-}
-
-// A daemon in a process of its own, which prints its pid once it listens.
-async function daemonInAnotherProcess(repo: string) {
-  const script = `
-    import { serve } from ${JSON.stringify(join(import.meta.dir, "server.ts"))};
-    const served = await serve(process.env.REPO);
-    if (!served.ok) { console.error(served.message); process.exit(1); }
-    console.log("ready");
-  `;
-  const child = Bun.spawn([process.execPath, "-e", script], {
-    env: { ...process.env, REPO: repo },
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const reader = child.stdout.getReader();
-  const first = await reader.read();
-  expect(new TextDecoder().decode(first.value)).toContain("ready");
-  return child;
 }
 
 // The pid of a process that has finished, so no process has it now.

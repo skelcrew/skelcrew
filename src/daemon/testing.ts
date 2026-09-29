@@ -17,6 +17,26 @@ export function throwawayRepo(dirs: string[], name = ""): string {
   return repo;
 }
 
+// A daemon in a process of its own, returned once it listens. Killing it
+// with SIGKILL leaves its lock and socket file behind, like a crash.
+export async function daemonInAnotherProcess(repo: string) {
+  const script = `
+    import { serve } from ${JSON.stringify(join(import.meta.dir, "server.ts"))};
+    const served = await serve(process.env.REPO);
+    if (!served.ok) { console.error(served.message); process.exit(1); }
+    console.log("ready");
+  `;
+  const child = Bun.spawn([process.execPath, "-e", script], {
+    env: { ...process.env, REPO: repo },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const first = await child.stdout.getReader().read();
+  const said = new TextDecoder().decode(first.value);
+  if (!said.includes("ready")) throw new Error(`The daemon didn't start: ${said}`);
+  return child;
+}
+
 export function cleanUp(dirs: string[]): void {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 }
