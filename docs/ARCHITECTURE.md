@@ -188,6 +188,15 @@ Each event is checked against its schema twice: before it's written, and when it
 back. Objects are strict, so an unknown field is refused, not dropped. A damaged row is
 reported with its position, not guessed at.
 
+## The workflow file
+
+`src/config/workflow.ts` reads `.skelcrew/workflow.yml`: the core's config and the
+commands the local gate runs. Every field is checked with Zod, and a file that doesn't
+fit is refused with every reason, in plain words. An unknown field is refused too, so a
+typo like `critical_path` can't be silently ignored. A file without `critical_paths`
+makes every path critical, so nothing merges without your approval. `defaultWorkflow`
+is the file `skelcrew init` will write.
+
 ## Around the core (planned)
 
 These parts are designed in the spec's Architecture and Plugins sections, and come in
