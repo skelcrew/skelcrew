@@ -4,7 +4,8 @@
 // daemon, not in a plugin.
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { statSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import type { Done } from "../plugins/version-control";
 
 // Runs the checks in a folder: passes, or fails with what broke.
@@ -15,43 +16,77 @@ export type ChecksOptions = {
   timeoutMs?: number;
   // How many lines of a failing command's output its failure keeps.
   outputLines?: number;
+  // And how many characters at most, for output with very long lines.
+  outputChars?: number;
 };
 
+// Once a command has exited, its output gets this long to finish arriving.
+// Something that escaped its process group can hold the output open for
+// ever, so the run doesn't wait for that.
+const lastOutputMs = 300;
+
 // Runs the commands one after another, in the folder it is given, and stops
-// at the first failure. The failure names the command and its exit code,
+// at the first failure. The failure names the command and how it ended,
 // then the end of its output, where test runners say what broke. That is
 // what the agent sees.
 export function localChecks(commands: string[], options: ChecksOptions = {}): RunChecks {
   const timeoutMs = options.timeoutMs ?? 30 * 60_000;
-  const outputLines = options.outputLines ?? 40;
+  const tail = { lines: options.outputLines ?? 40, chars: options.outputChars ?? 4_000 };
 
   return async (dir) => {
-    if (!existsSync(dir)) return { ok: false, message: `There is no folder at ${dir} to check.` };
-    for (const command of commands) {
-      const result = await runOne(command, dir, timeoutMs);
-      if (result.kind === "timed_out") {
-        return {
-          ok: false,
-          message: `\`${command}\` took longer than ${timeoutMs / 1000} seconds, so it was stopped.`,
-        };
+    for (const [i, command] of commands.entries()) {
+      if (!isFolder(dir)) {
+        const message =
+          i === 0
+            ? `There is no folder at ${dir} to check.`
+            : `The folder ${dir} disappeared while the checks ran, before \`${command}\`.`;
+        return { ok: false, message };
       }
-      if (result.kind === "not_started") {
-        return { ok: false, message: `\`${command}\` couldn't start: ${result.reason}` };
-      }
-      if (result.code !== 0) {
-        const tail = result.output.trimEnd().split("\n").slice(-outputLines).join("\n");
-        return {
-          ok: false,
-          message: `\`${command}\` failed with exit code ${result.code}.\n${tail}`,
-        };
+      const result = await runOne(command, dir, timeoutMs, tail);
+      switch (result.kind) {
+        case "timed_out":
+          return {
+            ok: false,
+            message: `\`${command}\` took longer than ${timeoutMs / 1000} seconds, so it was stopped.`,
+          };
+        case "not_started":
+          return { ok: false, message: `\`${command}\` couldn't start: ${result.reason}` };
+        case "signalled":
+          return {
+            ok: false,
+            message: joined(`\`${command}\` was stopped by ${result.signal}.`, result.output),
+          };
+        case "exited":
+          if (result.code !== 0) {
+            return {
+              ok: false,
+              message: joined(
+                `\`${command}\` failed with exit code ${result.code}.`,
+                result.output,
+              ),
+            };
+          }
       }
     }
     return { ok: true, value: null };
   };
 }
 
+function joined(first: string, output: string): string {
+  return output === "" ? first : `${first}\n${output}`;
+}
+
+function isFolder(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 type Ran =
-  | { kind: "finished"; code: number; output: string }
+  | { kind: "exited"; code: number; output: string }
+  | { kind: "signalled"; signal: string; output: string }
   | { kind: "timed_out" }
   | { kind: "not_started"; reason: string };
 
@@ -61,34 +96,58 @@ type Ran =
 // the like not to wait for a person. Output and errors are read together,
 // in the order they came.
 //
-// The command runs in a process group of its own. A check often starts
-// processes of its own, such as test workers, so on a timeout the whole
-// group is stopped, not just the shell.
-function runOne(command: string, dir: string, timeoutMs: number): Promise<Ran> {
+// The command runs in a process group of its own, and the result is
+// decided when the shell exits, not when its output closes. Then the whole
+// group is stopped, so nothing it started in the background keeps running,
+// and the run moves on shortly after, even if something that left the
+// group still holds the output open.
+function runOne(
+  command: string,
+  dir: string,
+  timeoutMs: number,
+  tail: { lines: number; chars: number },
+): Promise<Ran> {
   return new Promise((resolve) => {
-    const child = spawn("sh", ["-c", `exec 2>&1; ${command}`], {
-      cwd: dir,
-      stdio: ["ignore", "pipe", "ignore"],
-      env: { ...process.env, CI: "true" },
-      detached: true,
-    });
-    const chunks: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn("sh", ["-c", `exec 2>&1; ${command}`], {
+        cwd: dir,
+        stdio: ["ignore", "pipe", "ignore"],
+        env: { ...process.env, CI: "true" },
+        detached: true,
+      });
+    } catch (error) {
+      resolve({
+        kind: "not_started",
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
 
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const output = new Tail(tail.lines, tail.chars);
+    child.stdout?.on("data", (chunk: Buffer) => output.push(chunk));
+
+    let settled = false;
+    const finish = (ran: Ran) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(limit);
       stopGroup(child.pid);
-    }, timeoutMs);
+      child.stdout?.destroy();
+      resolve(ran);
+    };
+    const limit = setTimeout(() => finish({ kind: "timed_out" }), timeoutMs);
 
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      resolve({ kind: "not_started", reason: error.message });
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      if (timedOut) return resolve({ kind: "timed_out" });
-      resolve({ kind: "finished", code: code ?? 1, output: Buffer.concat(chunks).toString() });
+    child.on("error", (error) => finish({ kind: "not_started", reason: error.message }));
+    child.on("exit", (code, signal) => {
+      const ended = (): Ran =>
+        signal !== null
+          ? { kind: "signalled", signal, output: output.text() }
+          : { kind: "exited", code: code ?? 1, output: output.text() };
+      // Stopping the group closes the output held by anything it started.
+      stopGroup(child.pid);
+      child.stdout?.on("close", () => finish(ended()));
+      setTimeout(() => finish(ended()), lastOutputMs);
     });
   });
 }
@@ -100,5 +159,29 @@ function stopGroup(pid: number | undefined): void {
     process.kill(-pid, "SIGKILL");
   } catch {
     // The group has already gone.
+  }
+}
+
+// Keeps only the end of a command's output, so a command that prints a
+// great deal can't fill the daemon's memory. Bytes are decoded as they
+// arrive, so a character split across two chunks stays whole.
+class Tail {
+  private decoder = new StringDecoder("utf8");
+  private kept = "";
+
+  constructor(
+    private readonly lines: number,
+    private readonly chars: number,
+  ) {}
+
+  push(chunk: Buffer): void {
+    this.kept += this.decoder.write(chunk);
+    if (this.kept.length > this.chars * 4) this.kept = this.kept.slice(-this.chars * 2);
+  }
+
+  text(): string {
+    const all = (this.kept + this.decoder.end()).trimEnd();
+    const last = all.split("\n").slice(-this.lines).join("\n");
+    return last.length > this.chars ? `…${last.slice(-this.chars)}` : last;
   }
 }

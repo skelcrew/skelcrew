@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { $ } from "bun";
 import { localChecks } from "./checks";
 
 let dirs: string[] = [];
@@ -72,6 +73,72 @@ describe("localChecks", () => {
 
   test("runs the commands with CI=true, so test watchers don't wait", async () => {
     expect((await localChecks(['test "$CI" = true'])(folder())).ok).toBe(true);
+  });
+
+  // Found by review: a helper that leaves the process group, like a test
+  // server started in its own session, kept the output open, and the run
+  // waited past its limit.
+  test("returns in time even when a process escapes and holds the output open", async () => {
+    const started = Date.now();
+    const escaping = `perl -MPOSIX -e 'POSIX::setsid(); sleep 20' skelcrew-escaped & echo passed`;
+    const result = await localChecks([escaping], { timeoutMs: 1_000 })(folder());
+    await $`pkill -f skelcrew-escaped`.nothrow().quiet();
+    expect(Date.now() - started).toBeLessThan(3_000);
+    expect(result).toEqual({ ok: true, value: null });
+  });
+
+  // Found by review: a background job kept the output open, so a command
+  // that passed at once was reported as a timeout.
+  test("decides by the command's own exit, not by when its output closes", async () => {
+    const started = Date.now();
+    const result = await localChecks(["sleep 3 & echo done"], { timeoutMs: 5_000 })(folder());
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(result).toEqual({ ok: true, value: null });
+  });
+
+  // Found by review: after a pass, a background process kept running.
+  test("stops everything a command started once it has finished", async () => {
+    const dir = folder();
+    const result = await localChecks(["sleep 7 >/dev/null 2>&1 & echo $! > pid; echo ok"])(dir);
+    expect(result.ok).toBe(true);
+    const pid = Number(readFileSync(join(dir, "pid"), "utf8"));
+    await Bun.sleep(100);
+    expect(() => process.kill(pid, 0)).toThrow();
+  });
+
+  // Found by review: all output was kept, and one long line became a
+  // message of millions of characters.
+  test("keeps the failure message short, however much a command prints", async () => {
+    const lines = await localChecks(["seq 1 200000; exit 1"])(folder());
+    const oneLine = await localChecks(["head -c 1000000 /dev/zero | tr '\\0' x; exit 1"])(folder());
+    for (const result of [lines, oneLine]) {
+      expect(result.ok).toBe(false);
+      expect(!result.ok && result.message.length).toBeLessThan(5_000);
+    }
+    expect(!lines.ok && lines.message).toContain("\n200000");
+  });
+
+  test("names the signal when a command is killed by one", async () => {
+    const result = await localChecks(["kill -9 $$"])(folder());
+    expect(result).toEqual({ ok: false, message: "`kill -9 $$` was stopped by SIGKILL." });
+  });
+
+  // Found by review: a file where the folder should be threw.
+  test("fails with a message, not a throw, when the folder is a file", async () => {
+    const file = join(folder(), "a-file");
+    writeFileSync(file, "");
+    expect(await localChecks(["true"])(file)).toEqual({
+      ok: false,
+      message: `There is no folder at ${file} to check.`,
+    });
+  });
+
+  test("says so plainly when the folder disappears during the checks", async () => {
+    const dir = folder();
+    expect(await localChecks(['rm -rf "$PWD"', "true"])(dir)).toEqual({
+      ok: false,
+      message: `The folder ${dir} disappeared while the checks ran, before \`true\`.`,
+    });
   });
 
   test("fails with a message, not a throw, for a folder that doesn't exist", async () => {
