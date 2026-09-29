@@ -473,7 +473,6 @@ export class Git implements VersionControl {
     receipt: string,
     before: string,
   ): Promise<Done<CommitSha>> {
-    const main = `refs/heads/${this.main}`;
     const added = await run(this.repo, "worktree", "add", "--quiet", "--detach", temp, before);
     if (!added.ok) return { ok: false, message: `git couldn't prepare the merge: ${added.err}` };
 
@@ -598,7 +597,17 @@ export class Git implements VersionControl {
         message: "A hook added a commit to the merge, so it isn't what the task made.",
       };
     }
-    const expected = await run(this.repo, "merge-tree", "--write-tree", before, head);
+    // With main's .gitattributes, which the merge itself used, not those of
+    // whatever your checkout has open.
+    const expected = await run(
+      this.repo,
+      "-c",
+      `attr.tree=${before}`,
+      "merge-tree",
+      "--write-tree",
+      before,
+      head,
+    );
     const tree = await run(this.repo, "rev-parse", `${commit}^{tree}`);
     const wanted = expected.ok ? expected.out.split("\n")[0] : undefined;
     if (!tree.ok || wanted === undefined || tree.out !== wanted) {
@@ -635,6 +644,8 @@ export class Git implements VersionControl {
       return { ok: false, message: `${this.main} couldn't be moved to the merge: ${updated.err}` };
     }
 
+    // Your staging area as it is now, so a failed move can be undone exactly.
+    const snapshot = await run(where.value, "write-tree");
     // In your checkout of main, a fast-forward. git refuses it rather than
     // overwrite your uncommitted edits, or, with --no-overwrite-ignore, your
     // ignored files. --no-autostash stops git from stashing your edits
@@ -650,7 +661,9 @@ export class Git implements VersionControl {
     );
     if (moved.ok) return { ok: true, value: null };
     const failed = `${this.main} couldn't be moved to the merge: ${moved.err}`;
-    const putBack = await putCheckoutBack(where.value, before, merge);
+    const putBack = snapshot.ok
+      ? await putCheckoutBack(where.value, before, merge, snapshot.out)
+      : "Check `git status` there: it may hold the task's changes, staged.";
     return { ok: false, message: `${failed} ${putBack}` };
   }
 
@@ -763,12 +776,17 @@ async function busyWith(path: string, branch: string): Promise<string | null> {
 }
 
 // After a failed fast-forward, git may have updated your files and staging
-// area without moving main. Only the files the merge touched are looked at.
-// Each must be either untouched, as main had it, or exactly as the merge
-// made it, in both the staging area and the file. Those the merge made are
-// switched back to main's. Anything else of yours, staged or not, is kept.
-// Returns what the message should add.
-async function putCheckoutBack(checkout: string, before: string, merge: string): Promise<string> {
+// area without moving main. Only the files the merge touched are looked at,
+// by exact name. A file counts as git's doing only if it now holds exactly
+// what the merge made, differs from the snapshot of your staging area taken
+// before, and its working copy matches. Those are set back to the snapshot.
+// Everything else is yours and stays. Returns what the message should add.
+async function putCheckoutBack(
+  checkout: string,
+  before: string,
+  merge: string,
+  snapshot: string,
+): Promise<string> {
   const unsure = "Check `git status` there: it may hold the task's changes, staged.";
   const head = await run(checkout, "rev-parse", "HEAD");
   if (!head.ok || head.out !== before) return unsure;
@@ -783,52 +801,80 @@ async function putCheckoutBack(checkout: string, before: string, merge: string):
   );
   if (!touched.ok) return unsure;
 
-  const fromMerge: string[] = [];
+  const byGit: { path: string; back: string }[] = [];
   for (const path of touched.out.split("\0").filter((p) => p !== "")) {
-    const state = await fileState(checkout, path, before, merge);
-    if (state === "other") return unsure;
-    if (state === "merge") fromMerge.push(path);
+    const now = await indexEntry(checkout, path);
+    const mine = await treeEntry(checkout, snapshot, path);
+    const merged = await treeEntry(checkout, merge, path);
+    if (now === null || mine === null || merged === null) return unsure;
+    if (now === mine) continue;
+    const clean = await run(checkout, "--literal-pathspecs", "diff", "--quiet", "--", path);
+    if (now !== merged || !clean.ok) return unsure;
+    byGit.push({ path, back: mine });
   }
-  if (fromMerge.length === 0) return "Your checkout of main is as it was.";
+  if (byGit.length === 0) return "Your checkout of main is as it was.";
 
-  for (const path of fromMerge) {
-    const back = await switchBack(checkout, path, before);
-    if (!back) return unsure;
+  // Files the merge added go first, so a folder it made can give way to
+  // the file that was there before.
+  const order = [...byGit].sort((a, b) => Number(a.back !== "") - Number(b.back !== ""));
+  for (const { path, back } of order) {
+    if (!(await setBack(checkout, path, back))) return unsure;
   }
   return "Your checkout of main was put back as it was, with your own edits kept.";
 }
 
-// Whether a file in your checkout is as main had it ("main"), exactly as
-// the merge made it ("merge"), or something else ("other").
-async function fileState(
-  checkout: string,
-  path: string,
-  before: string,
-  merge: string,
-): Promise<"main" | "merge" | "other"> {
-  const staged = await run(checkout, "ls-files", "--stage", "--", path);
-  const unstaged = await run(checkout, "diff", "--quiet", "--", path);
-  const entry = async (commit: string) => {
-    const tree = await run(checkout, "ls-tree", commit, "--", path);
-    if (!tree.ok || tree.out === "") return "";
-    const [mode, , oid] = tree.out.split(/\s+/);
-    return `${mode} ${oid} 0`;
-  };
-  if (!staged.ok) return "other";
-  const now = staged.out === "" ? "" : (staged.out.split("\t")[0] ?? "");
-  // Staged as main has it: any unstaged edit on top is yours, and stays.
-  if (now === (await entry(before))) return "main";
-  // Staged as the merge made it, and the file itself matches: git put it
-  // there, so it can be switched back. An edit on top would be yours.
-  if (now === (await entry(merge)) && unstaged.ok) return "merge";
-  return "other";
+// A file's entry in the staging area, as "mode object", "" if it isn't
+// there, or null if git couldn't say. Exact names only: git would read the
+// name as a pattern, and a folder's name matches the files inside it.
+async function indexEntry(checkout: string, path: string): Promise<string | null> {
+  const listed = await runRaw(
+    checkout,
+    "--literal-pathspecs",
+    "ls-files",
+    "--stage",
+    "-z",
+    "--",
+    path,
+  );
+  if (!listed.ok) return null;
+  for (const line of listed.out.split("\0")) {
+    const [meta, name] = line.split("\t");
+    if (name !== path || meta === undefined) continue;
+    const [mode, object] = meta.split(" ");
+    return `${mode} ${object}`;
+  }
+  return "";
 }
 
-async function switchBack(checkout: string, path: string, before: string): Promise<boolean> {
-  const inMain = await run(checkout, "cat-file", "-e", `${before}:${path}`);
-  if (inMain.ok) return (await run(checkout, "checkout", before, "--", path)).ok;
-  const removed = await run(checkout, "rm", "--quiet", "--force", "--", path);
-  return removed.ok;
+// The same, in a commit or tree. A folder at that name counts as no file.
+async function treeEntry(checkout: string, tree: string, path: string): Promise<string | null> {
+  const listed = await runRaw(checkout, "--literal-pathspecs", "ls-tree", "-z", tree, "--", path);
+  if (!listed.ok) return null;
+  for (const line of listed.out.split("\0")) {
+    const [meta, name] = line.split("\t");
+    if (name !== path || meta === undefined) continue;
+    const [mode, type, object] = meta.split(" ");
+    return type === "tree" ? "" : `${mode} ${object}`;
+  }
+  return "";
+}
+
+// Sets a file back to an entry, in the staging area and on disk, or
+// removes it if the entry is "".
+async function setBack(checkout: string, path: string, entry: string): Promise<boolean> {
+  if (entry === "") {
+    return (await run(checkout, "--literal-pathspecs", "rm", "--quiet", "--force", "--", path)).ok;
+  }
+  const [mode, object] = entry.split(" ");
+  const staged = await run(
+    checkout,
+    "update-index",
+    "--add",
+    "--cacheinfo",
+    `${mode},${object},${path}`,
+  );
+  if (!staged.ok) return false;
+  return (await run(checkout, "--literal-pathspecs", "checkout-index", "--force", "--", path)).ok;
 }
 
 function shaOf(text: string): Done<CommitSha> {

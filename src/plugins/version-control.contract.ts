@@ -41,6 +41,18 @@ export async function git(dir: string, ...args: string[]): Promise<string> {
   return (await $`git ${args}`.cwd(dir).quiet().text()).trim();
 }
 
+// Makes git refuse to move main, the way a lock held by another git process
+// would, after it has already updated your checkout. Returns how to undo it.
+function blockMain(r: Repo): () => void {
+  const hook = join(r.dir, ".git", "hooks", "reference-transaction");
+  writeFileSync(
+    hook,
+    '#!/bin/sh\nwhile read old new ref; do\n  if [ "$1" = prepared ] && [ "$ref" = refs/heads/main ]; then exit 1; fi\ndone\nexit 0\n',
+  );
+  chmodSync(hook, 0o755);
+  return () => rmSync(hook);
+}
+
 // Moves a worktree's folder aside, which git doesn't notice, and puts a
 // separate repository at its old path, on the same branch name.
 async function strangerAt(path: string): Promise<void> {
@@ -393,7 +405,7 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       const heads: CommitSha[] = [];
       for (const [file, text] of Object.entries(files)) {
         writeFileSync(join(created.value.path, file), text);
-        await git(created.value.path, "add", file);
+        await git(created.value.path, "--literal-pathspecs", "add", file);
         await git(created.value.path, "commit", "-q", "-m", `Add ${file}`);
         heads.push(CommitSha.parse(await git(created.value.path, "rev-parse", "HEAD")));
       }
@@ -822,6 +834,101 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       expect((await wrongCase.merge(request(head), pass)).ok).toBe(false);
       expect((await wrongCase.createWorktree({ ...csv, build: 2 })).ok).toBe(false);
       expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+    });
+
+    // Found by review: git reads a file name as a pattern, and a leading
+    // ":" is special, so the put-back looked for the wrong file.
+    test("puts back a file whose name starts with a colon", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { ":colon.txt": "task\n" });
+      const unblock = blockMain(r);
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      expect((await plugin.merge(request(head), pass)).ok).toBe(false);
+      unblock();
+      expect(await git(r.dir, "status", "--porcelain")).toBe("");
+      expect(existsSync(join(r.dir, ":colon.txt"))).toBe(false);
+    });
+
+    // Found by review: "pages/[id].tsx" also matches "pages/i.tsx" as a
+    // pattern, and your staged edit to the second was reset.
+    test("keeps your staged edit to a file a pattern in the task's file name would match", async () => {
+      const r = await repo();
+      mkdirSync(join(r.dir, "pages"));
+      await commitOnMain(r, "pages/[id].tsx", "id\n");
+      await commitOnMain(r, "pages/i.tsx", "i\n");
+      const { plugin, heads, request } = await built(r, { "pages/[id].tsx": "task\n" });
+      writeFileSync(join(r.dir, "pages", "i.tsx"), "my edit\n");
+      await git(r.dir, "add", "pages/i.tsx");
+      const unblock = blockMain(r);
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      expect((await plugin.merge(request(head), pass)).ok).toBe(false);
+      unblock();
+      expect(await git(r.dir, "status", "--porcelain")).toBe("M  pages/i.tsx");
+      expect(readFileSync(join(r.dir, "pages", "[id].tsx"), "utf8")).toBe("id\n");
+    });
+
+    // Found by review: a change you had staged yourself, the same as the
+    // task's, was taken for git's and wiped.
+    test("keeps your own staged change even when it matches the task's", async () => {
+      const r = await repo();
+      const { plugin, heads, request } = await built(r, { "README.md": "# Same\n" });
+      writeFileSync(join(r.dir, "README.md"), "# Same\n");
+      await git(r.dir, "add", "README.md");
+      const unblock = blockMain(r);
+      const head = heads[0];
+      if (head === undefined) throw new Error("no head");
+
+      expect((await plugin.merge(request(head), pass)).ok).toBe(false);
+      unblock();
+      expect(await git(r.dir, "status", "--porcelain")).toBe("M  README.md");
+      expect(readFileSync(join(r.dir, "README.md"), "utf8")).toBe("# Same\n");
+    });
+
+    // Found by review: a task that turned a file into a folder wasn't put
+    // back.
+    test("puts back a task that turned a file into a folder", async () => {
+      const r = await repo();
+      await commitOnMain(r, "config", "file\n");
+      const { plugin, request } = await built(r, {});
+      const worktree = request(CommitSha.parse("0".repeat(40))).worktree;
+      await git(worktree.path, "rm", "-q", "config");
+      mkdirSync(join(worktree.path, "config"));
+      writeFileSync(join(worktree.path, "config", "app.json"), "{}\n");
+      await git(worktree.path, "add", "config/app.json");
+      await git(worktree.path, "commit", "-q", "-m", "Folder");
+      const head = CommitSha.parse(await git(worktree.path, "rev-parse", "HEAD"));
+      const unblock = blockMain(r);
+
+      expect((await plugin.merge(request(head), pass)).ok).toBe(false);
+      unblock();
+      expect(await git(r.dir, "status", "--porcelain")).toBe("");
+      expect(readFileSync(join(r.dir, "config"), "utf8")).toBe("file\n");
+    });
+
+    // Found by review: the expected merge was worked out with the
+    // .gitattributes of your checkout, not main's, which the merge uses.
+    test("lands a valid merge whatever your checkout's .gitattributes say", async () => {
+      const r = await repo();
+      await commitOnMain(r, ".gitattributes", "CHANGELOG.md merge=union\n");
+      await commitOnMain(r, "CHANGELOG.md", "one\n");
+      const { plugin, request } = await built(r, {});
+      const worktree = request(CommitSha.parse("0".repeat(40))).worktree;
+      writeFileSync(join(worktree.path, "CHANGELOG.md"), "one\nfrom the task\n");
+      await git(worktree.path, "commit", "-q", "-am", "Task line");
+      const head = CommitSha.parse(await git(worktree.path, "rev-parse", "HEAD"));
+      writeFileSync(join(r.dir, "CHANGELOG.md"), "one\nfrom main\n");
+      await git(r.dir, "commit", "-q", "-am", "Main line");
+      await git(r.dir, "checkout", "-q", "-b", "old", "main~3");
+
+      const merged = await plugin.merge(request(head), pass);
+      if (!merged.ok) throw new Error(merged.message);
+      const changelog = await git(r.dir, "show", "main:CHANGELOG.md");
+      expect(changelog).toContain("from the task");
+      expect(changelog).toContain("from main");
     });
 
     test("moves main when no checkout has it open", async () => {

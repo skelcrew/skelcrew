@@ -23,7 +23,7 @@ describe("branchName", () => {
   });
 
   test("keeps at most 40 characters of the title, never ending on a dash", () => {
-    const name = branchName({ taskId, title: "a".repeat(39) + " b and more", build: 1 });
+    const name = branchName({ taskId, title: `${"a".repeat(39)} b and more`, build: 1 });
     expect(name).toBe(`task/12-${"a".repeat(39)}`);
   });
 
