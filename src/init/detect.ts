@@ -2,9 +2,10 @@
 // workflow.yml that `skelcrew init` writes. It only looks at a few files
 // and follows fixed rules, so anyone can tell why it chose what it did:
 //
-// - package.json: its check script alone if it has one, since it usually
-//   runs the others. Otherwise its test, typecheck and lint scripts, in
-//   that order. They run with the package manager its lock file shows.
+// - package.json: its test script, then its check script if it has one,
+//   since a check script usually runs the typecheck and lint. With no
+//   check script, its test, typecheck and lint scripts, in that order.
+//   They run with the package manager its lock file shows.
 // - Cargo.toml: cargo test.
 // - go.mod: go test ./...
 // - A Makefile with a test target: make test, but only when nothing else
@@ -69,7 +70,15 @@ function packageChecks(dir: string): PackageChecks {
     const script = scripts[name];
     return script !== undefined && script.trim() !== "" && script !== npmPlaceholder;
   };
-  const names = has("check") ? ["check"] : ["test", "typecheck", "lint"].filter(has);
+  // A check script usually runs the typecheck and lint, so it stands in for
+  // them. The test script always runs when there is one, even beside a
+  // check script. A check script often runs no test: SvelteKit's is
+  // "svelte-check", which checks types only. If it does run the tests too,
+  // they run twice, which is slower but safe. Tests go first, as they do
+  // without a check script.
+  const names = has("check")
+    ? ["test", "check"].filter(has)
+    : ["test", "typecheck", "lint"].filter(has);
   const run = runner(dir);
   return { ok: true, checks: names.map((name) => `${run} ${name}`) };
 }

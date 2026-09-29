@@ -215,7 +215,7 @@ up a repository and never overwrites a file, so running it twice changes nothing
 
 | File | What it holds |
 | --- | --- |
-| `detect.ts` | `detectChecks`: finds the check commands a repository has. A `package.json` gives its `check` script alone, or else its `test`, `typecheck` and `lint` scripts, run with the package manager its lock file shows. `Cargo.toml` gives `cargo test`, and `go.mod` gives `go test ./...`. A Makefile's `test` target is used only when nothing else was found. |
+| `detect.ts` | `detectChecks`: finds the check commands a repository has. A `package.json` gives its `test` script, then its `check` script, or its `typecheck` and `lint` scripts when there is no `check`. They run with the package manager its lock file shows. The `test` script runs even beside a `check` script, since a `check` script often runs no test. `Cargo.toml` gives `cargo test`, and `go.mod` gives `go test ./...`. A Makefile's `test` target is used only when nothing else was found. |
 | `init.ts` | `initRepository`: writes `.skelcrew/workflow.yml` with the checks found, adds the database to `.gitignore`, and writes the default skills. A file already there is kept as it is and reported. If it finds no checks and there's no `workflow.yml` yet, it writes nothing and says why. |
 | `skills.ts` | The default skills, imported as text from `skills/spec/SKILL.md` and `skills/develop/SKILL.md`. They go to `.claude/skills/` in the repository. Each tells an agent in your harness how to work a task while you watch, with only the commands the CLI gives the skills. |
 

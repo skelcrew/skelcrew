@@ -42,11 +42,33 @@ describe("detectChecks", () => {
     expect(withLock("package-lock.json")).toEqual({ ok: true, checks: ["npm run test"] });
   });
 
-  test("prefers a check script alone, since it usually runs the others", () => {
+  test("uses a check script in place of the typecheck and lint scripts", () => {
     const found = detectChecks(
-      repo({ "package.json": packageJson({ ...allThree, check: "bun run lint" }), "bun.lock": "" }),
+      repo({
+        "package.json": packageJson({
+          typecheck: "tsc",
+          lint: "biome ci .",
+          check: "tsc && biome ci .",
+        }),
+        "bun.lock": "",
+      }),
     );
     expect(found).toEqual({ ok: true, checks: ["bun run check"] });
+  });
+
+  // SvelteKit's template has "check": "svelte-check", which checks types
+  // only, with the tests in "test". A check script alone would run no test.
+  test("runs the test script as well as a check script", () => {
+    const found = detectChecks(
+      repo({
+        "package.json": packageJson({
+          check: "svelte-check --tsconfig ./tsconfig.json",
+          test: "vitest",
+        }),
+        "bun.lock": "",
+      }),
+    );
+    expect(found).toEqual({ ok: true, checks: ["bun run test", "bun run check"] });
   });
 
   test("ignores scripts it doesn't know, such as build and dev", () => {
