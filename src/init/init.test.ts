@@ -6,6 +6,8 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -43,6 +45,18 @@ function everything(dir: string): Record<string, string> {
   return files;
 }
 
+// Every link in the folder with where it points, to see that nothing
+// changed. Links are not followed.
+function links(dir: string): Record<string, string> {
+  const found: Record<string, string> = {};
+  for (const entry of readdirSync(dir, { recursive: true, withFileTypes: true })) {
+    if (!entry.isSymbolicLink()) continue;
+    const path = join(entry.parentPath, entry.name);
+    found[relative(dir, path)] = readlinkSync(path);
+  }
+  return found;
+}
+
 const read = (dir: string, path: string) => readFileSync(join(dir, path), "utf8");
 
 const bunApp = {
@@ -52,6 +66,10 @@ const bunApp = {
 const workflow = ".skelcrew/workflow.yml";
 const specSkill = ".agents/skills/spec/SKILL.md";
 const developSkill = ".agents/skills/develop/SKILL.md";
+// Claude Code looks for skills in .claude/skills, so init links each one
+// there.
+const specLink = ".claude/skills/spec";
+const developLink = ".claude/skills/develop";
 const dbLine = ".skelcrew/skelcrew.db*";
 // The files the daemon keeps while it runs: its log, the lock that stops a
 // second daemon, the file naming its process, and the socket the CLI talks
@@ -88,6 +106,7 @@ describe("initRepository", () => {
       report: {
         checks: ["bun run test", "bun run lint"],
         created: [workflow, specSkill, developSkill, settings, ".gitignore"],
+        linked: [specLink, developLink],
         updated: [],
         unchanged: [],
         byHand: [],
@@ -184,6 +203,7 @@ describe("initRepository", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.created).toEqual([workflow, specSkill]);
+    expect(result.linked).toEqual([]);
     expect(result.updated).toEqual([]);
     expect(result.reason).toContain(workflow);
     expect(result.reason).toContain(specSkill);
@@ -208,10 +228,11 @@ describe("initRepository", () => {
       expect(everything(home)).toEqual(before);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      expect(result.report.byHand).toEqual([settings]);
+      expect(result.report.byHand).toEqual([specLink, developLink, settings]);
       expect(result.report.created).toEqual([workflow, specSkill, developSkill, ".gitignore"]);
+      expect(result.report.linked).toEqual([]);
       expect(result.report.askBeforeApprove).toBe("add by hand");
-      expect(result.report.warnings).toHaveLength(1);
+      expect(result.report.warnings).toHaveLength(3);
       for (const warning of result.report.warnings) {
         expect(warning).toContain(".claude");
         expect(warning).toContain("outside the repository");
@@ -229,9 +250,11 @@ describe("initRepository", () => {
       expect(everything(home)).toEqual(before);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      expect(result.report.byHand).toEqual([specSkill, developSkill]);
+      expect(result.report.byHand).toEqual([specSkill, developSkill, specLink, developLink]);
       expect(result.report.created).toEqual([workflow, settings, ".gitignore"]);
-      expect(result.report.warnings).toHaveLength(2);
+      expect(result.report.linked).toEqual([]);
+      expect(links(dir)).toEqual({ ".agents": join(home, ".agents") });
+      expect(result.report.warnings).toHaveLength(4);
       for (const warning of result.report.warnings) {
         expect(warning).toContain(".agents");
         expect(warning).toContain("outside the repository");
@@ -246,8 +269,27 @@ describe("initRepository", () => {
       symlinkSync(join(home, ".agents/skills"), join(dir, ".agents/skills"));
       const result = initRepository(dir);
       expect(everything(home)).toEqual(before);
-      expect(result.ok && result.report.byHand).toEqual([specSkill, developSkill]);
+      expect(result.ok && result.report.byHand).toEqual([
+        specSkill,
+        developSkill,
+        specLink,
+        developLink,
+      ]);
       expect(result.ok && result.report.created).toContain(settings);
+      expect(existsSync(join(dir, specLink))).toBe(false);
+    });
+
+    test("links nothing through a .claude/skills folder that links outside", () => {
+      const home = repo({ ".claude/skills/mine/SKILL.md": "my own skill\n" });
+      const before = everything(home);
+      const dir = repo(bunApp);
+      mkdirSync(join(dir, ".claude"));
+      symlinkSync(join(home, ".claude/skills"), join(dir, ".claude/skills"));
+      const result = initRepository(dir);
+      expect(everything(home)).toEqual(before);
+      expect(links(home)).toEqual({});
+      expect(result.ok && result.report.byHand).toEqual([specLink, developLink]);
+      expect(result.ok && result.report.created).toContain(specSkill);
     });
 
     test("writes nothing through a linked .skelcrew folder", () => {
@@ -270,6 +312,8 @@ describe("initRepository", () => {
       expect(result.ok && result.report.byHand).toEqual([]);
       expect(existsSync(join(dir, "config/claude/settings.json"))).toBe(true);
       expect(existsSync(join(dir, "config/agents/skills/spec/SKILL.md"))).toBe(true);
+      expect(result.ok && result.report.linked).toEqual([specLink, developLink]);
+      expect(read(dir, `${specLink}/SKILL.md`)).toBe(read(dir, specSkill));
     });
   });
 
@@ -392,15 +436,27 @@ describe("initRepository", () => {
     const dir = repo({ ...bunApp, ".gitignore": "node_modules/\n" });
     initRepository(dir);
     const before = everything(dir);
+    const linksBefore = links(dir);
     const second = initRepository(dir);
     expect(everything(dir)).toEqual(before);
+    expect(links(dir)).toEqual(linksBefore);
+    expect(Object.keys(linksBefore).sort()).toEqual([developLink, specLink]);
     expect(second).toEqual({
       ok: true,
       report: {
         checks: ["bun run test", "bun run lint"],
         created: [],
+        linked: [],
         updated: [],
-        unchanged: [workflow, specSkill, developSkill, settings, ".gitignore"],
+        unchanged: [
+          workflow,
+          specSkill,
+          developSkill,
+          specLink,
+          developLink,
+          settings,
+          ".gitignore",
+        ],
         byHand: [],
         warnings: [],
         askBeforeApprove: "already there",
@@ -416,6 +472,100 @@ describe("initRepository", () => {
     expect(!result.ok && result.reason).toContain("Found no checks to run");
     expect(everything(dir)).toEqual({ "README.md": "# app\n" });
     expect(existsSync(join(dir, ".skelcrew"))).toBe(false);
+  });
+
+  describe("the links that show Claude Code the skills", () => {
+    test("links each skill into .claude/skills, with a relative link", () => {
+      const dir = repo(bunApp);
+      initRepository(dir);
+      expect(readlinkSync(join(dir, specLink))).toBe("../../.agents/skills/spec");
+      expect(readlinkSync(join(dir, developLink))).toBe("../../.agents/skills/develop");
+      for (const skill of defaultSkills) {
+        const name = skill.path.split("/")[2] ?? "";
+        expect(read(dir, `.claude/skills/${name}/SKILL.md`)).toBe(skill.text);
+      }
+    });
+
+    // A relative link still works when the repository moves or is cloned.
+    test("the links still work after the repository moves", () => {
+      const dir = repo(bunApp);
+      initRepository(dir);
+      const moved = `${dir}-moved`;
+      dirs.push(moved);
+      renameSync(dir, moved);
+      expect(read(moved, `${specLink}/SKILL.md`)).toBe(read(moved, specSkill));
+    });
+
+    test("leaves the other skills in .claude/skills as they are", () => {
+      const dir = repo({ ...bunApp, ".claude/skills/mine/SKILL.md": "my own skill\n" });
+      symlinkSync("../../elsewhere/theirs", join(dir, ".claude/skills/theirs"));
+      initRepository(dir);
+      expect(read(dir, ".claude/skills/mine/SKILL.md")).toBe("my own skill\n");
+      expect(links(dir)).toEqual({
+        ".claude/skills/theirs": "../../elsewhere/theirs",
+        [specLink]: "../../.agents/skills/spec",
+        [developLink]: "../../.agents/skills/develop",
+      });
+    });
+
+    // Whatever is there already stays: a folder, say from an earlier init
+    // that wrote the skills there, a file, a link to somewhere else, or a
+    // link to nothing. Claude Code uses that one, so init says so.
+    test("leaves anything already at a link's place alone, and says so", () => {
+      const folder = repo({ ...bunApp, [`${specLink}/SKILL.md`]: "an older spec skill\n" });
+      const file = repo({ ...bunApp, [specLink]: "a file\n" });
+      const elsewhere = repo({ ...bunApp, "mine/spec/SKILL.md": "my own spec skill\n" });
+      mkdirSync(join(elsewhere, ".claude/skills"), { recursive: true });
+      symlinkSync("../../mine/spec", join(elsewhere, specLink));
+      const broken = repo(bunApp);
+      mkdirSync(join(broken, ".claude/skills"), { recursive: true });
+      symlinkSync("../../nowhere", join(broken, specLink));
+      for (const dir of [folder, file, elsewhere, broken]) {
+        const before = everything(dir);
+        const linksBefore = links(dir);
+        const result = initRepository(dir);
+        expect(result.ok).toBe(true);
+        if (!result.ok) continue;
+        expect(result.report.unchanged).toContain(specLink);
+        expect(result.report.linked).toEqual([developLink]);
+        expect(result.report.warnings).toHaveLength(1);
+        expect(result.report.warnings[0]).toContain(specLink);
+        expect(result.report.warnings[0]).toContain(".agents/skills/spec");
+        for (const [path, text] of Object.entries(before)) expect(read(dir, path)).toBe(text);
+        expect(links(dir)).toEqual({
+          ...linksBefore,
+          [developLink]: "../../.agents/skills/develop",
+        });
+      }
+    });
+
+    // A file where the skills folder should be means no link can be made.
+    // That ends in a report, not a crash, and the rest of init still runs.
+    test("says so when it can't make a link, and goes on", () => {
+      const dir = repo({ ...bunApp, ".claude/skills": "not a folder\n" });
+      const result = initRepository(dir);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(read(dir, ".claude/skills")).toBe("not a folder\n");
+      expect(result.report.linked).toEqual([]);
+      expect(result.report.byHand).toEqual([specLink, developLink]);
+      expect(result.report.created).toContain(settings);
+      expect(result.report.warnings).toHaveLength(2);
+      expect(result.report.warnings[0]).toContain(specLink);
+      expect(result.report.warnings[1]).toContain(developLink);
+    });
+
+    // A folder where .gitignore should be makes the last step fail.
+    test("lists the links it made when a later step fails", () => {
+      const dir = repo(bunApp);
+      mkdirSync(join(dir, ".gitignore"));
+      const result = initRepository(dir);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.linked).toEqual([specLink, developLink]);
+      expect(result.reason).toContain(specLink);
+      expect(result.reason).toContain(developLink);
+    });
   });
 
   describe("the rules that make Claude Code ask before skelcrew approve", () => {
@@ -553,9 +703,11 @@ describe("initRepository", () => {
       const mine = settingsJson({ model: "opus" });
       const lockedFile = repo({ ...bunApp, [settings]: mine });
       chmodSync(join(lockedFile, settings), 0o444);
-      // Init needs to write only settings.json in the locked folder.
+      // With the skills folder there already, init needs to write only
+      // settings.json in the locked folder. The links go in .claude/skills,
+      // which stays open.
       const lockedFolder = repo(bunApp);
-      mkdirSync(join(lockedFolder, ".claude"));
+      mkdirSync(join(lockedFolder, ".claude/skills"), { recursive: true });
       chmodSync(join(lockedFolder, ".claude"), 0o555);
       try {
         for (const dir of [lockedFile, lockedFolder]) {

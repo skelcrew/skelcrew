@@ -1,8 +1,9 @@
 // What `skelcrew init` does to a repository. It writes .skelcrew/workflow.yml
 // with the checks it finds, keeps Skelcrew's runtime files out of git,
-// writes the default skills, and makes Claude Code ask you before anything
-// runs skelcrew approve. It never overwrites a file, so running it again
-// changes nothing. It only adds to two files you may have: the missing
+// writes the default skills to .agents/skills, links each one into
+// .claude/skills for Claude Code, and makes Claude Code ask you before
+// anything runs skelcrew approve. It never overwrites a file or replaces
+// anything with a link, so running it again changes nothing. It only adds to two files you may have: the missing
 // runtime lines to .gitignore, and the approve rules to
 // .claude/settings.json. Everything else in them is kept.
 //
@@ -15,9 +16,11 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { parseWorkflow, workflowFile } from "../config/workflow";
 import { detectChecks } from "./detect";
 import { outsideLink, outsideWarning } from "./paths";
@@ -31,14 +34,18 @@ export type InitReport = {
   checks: string[];
   // Files that didn't exist and now do.
   created: string[];
+  // Links that didn't exist and now do, such as .claude/skills/spec, which
+  // shows Claude Code the skill in .agents/skills/spec.
+  linked: string[];
   // Files that existed and had something added: .gitignore, and
   // .claude/settings.json when the approve rules went in.
   updated: string[];
-  // Files that existed and were left exactly as they were.
+  // Files and links that existed and were left exactly as they were.
   unchanged: string[];
-  // Files init didn't write because they would land outside the
-  // repository, through a link such as .claude pointing at ~/.claude. Each
-  // has a warning that says why and how to add it.
+  // Files and links init didn't make. Most would land outside the
+  // repository, through a link such as .claude pointing at ~/.claude.
+  // Some links can't be made at all. Each has a warning that says why and
+  // how to add it.
   byHand: string[];
   // Things you should look at, such as a workflow.yml init couldn't read.
   warnings: string[];
@@ -50,11 +57,11 @@ export type InitReport = {
   askBeforeApproveLimit: string;
 };
 
-// A failed run may have written some files before it stopped. They are
-// listed, so nothing is left behind without a word.
+// A failed run may have written some files and made some links before it
+// stopped. They are listed, so nothing is left behind without a word.
 export type InitResult =
   | { ok: true; report: InitReport }
-  | { ok: false; reason: string; created: string[]; updated: string[] };
+  | { ok: false; reason: string; created: string[]; updated: string[]; linked: string[] };
 
 const workflowPath = ".skelcrew/workflow.yml";
 
@@ -75,6 +82,7 @@ export function initRepository(dir: string): InitResult {
   const report: InitReport = {
     checks: [],
     created: [],
+    linked: [],
     updated: [],
     unchanged: [],
     byHand: [],
@@ -100,7 +108,9 @@ export function initRepository(dir: string): InitResult {
     }
   } else {
     const detected = detectChecks(dir);
-    if (!detected.ok) return { ok: false, reason: detected.reason, created: [], updated: [] };
+    if (!detected.ok) {
+      return { ok: false, reason: detected.reason, created: [], updated: [], linked: [] };
+    }
     report.checks = detected.checks;
     report.warnings.push(...detected.warnings);
     workflow = workflowFile(detected.checks);
@@ -110,6 +120,7 @@ export function initRepository(dir: string): InitResult {
     if (workflow === null) report.unchanged.push(workflowPath);
     else writeNew(dir, workflowPath, workflow, report);
     for (const skill of defaultSkills) writeNew(dir, skill.path, skill.text, report);
+    for (const skill of defaultSkills) linkSkill(dir, dirname(skill.path), report);
     const settingsLink = outsideLink(dir, settingsPath);
     if (settingsLink === null) {
       const settings = addAskRule(dir);
@@ -121,15 +132,20 @@ export function initRepository(dir: string): InitResult {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const written = [...report.created, ...report.updated];
+    const done = [
+      ...(written.length === 0 ? [] : [`written ${written.join(", ")}`]),
+      ...(report.linked.length === 0 ? [] : [`linked ${report.linked.join(", ")}`]),
+    ];
     const already =
-      written.length === 0
+      done.length === 0
         ? "It wrote nothing."
-        : `It had already written ${written.join(", ")}, which are still there.`;
+        : `It had already ${done.join(", and ")}, which are still there.`;
     return {
       ok: false,
       reason: `Setting up the repository failed: ${message} ${already}`,
       created: report.created,
       updated: report.updated,
+      linked: report.linked,
     };
   }
   return { ok: true, report };
@@ -153,6 +169,78 @@ function writeNew(dir: string, path: string, text: string, report: InitReport): 
   mkdirSync(dirname(full), { recursive: true });
   writeFileSync(full, text, { flag: "wx" });
   report.created.push(path);
+}
+
+// Claude Code looks for skills in .claude/skills, not .agents/skills.
+const claudeSkills = ".claude/skills";
+
+// Links the skill's folder, such as .agents/skills/spec, into
+// .claude/skills, so Claude Code finds it. The link is relative, so it
+// still works when the repository is moved or cloned. Anything already at
+// the link's place stays, whatever it is. Nothing is linked through a
+// folder that leads outside the repository.
+function linkSkill(dir: string, folder: string, report: InitReport): void {
+  const name = basename(folder);
+  const path = `${claudeSkills}/${name}`;
+  const full = join(dir, path);
+  // A link to a skill folder outside the repository would show Claude Code
+  // a skill init didn't write.
+  const outside = outsideLink(dir, folder) ?? outsideLink(dir, claudeSkills);
+  if (outside !== null) {
+    leaveOutside(path, outside, report);
+    return;
+  }
+  // lstat, not exists, so that a link to nowhere counts as something there.
+  if (isThere(full)) {
+    report.unchanged.push(path);
+    if (realPath(full) !== realPath(join(dir, folder))) {
+      report.warnings.push(
+        [
+          `${path} is already there, so init left it alone.`,
+          `Claude Code will use that one, not the ${name} skill in ${folder}.`,
+          `To use the one in ${folder}, move ${path} out of the way and run init again.`,
+        ].join(" "),
+      );
+    }
+    return;
+  }
+  const target = join("../..", folder);
+  try {
+    mkdirSync(join(dir, claudeSkills), { recursive: true });
+    // Worked out from where the folders really are, in case .claude is a
+    // link to another folder in the repository.
+    const from = realpathSync(join(dir, claudeSkills));
+    symlinkSync(relative(from, join(realpathSync(dir), folder)), full);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    report.byHand.push(path);
+    report.warnings.push(
+      [
+        `Init couldn't link ${path} to ${folder}: ${message}.`,
+        `Claude Code won't find the ${name} skill until the link is there.`,
+        `To add it, run \`ln -s ${target} ${path}\` in the repository.`,
+      ].join(" "),
+    );
+    return;
+  }
+  report.linked.push(path);
+}
+
+function isThere(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function realPath(path: string): string | null {
+  try {
+    return realpathSync(path);
+  } catch {
+    return null;
+  }
 }
 
 function leaveOutside(path: string, link: string, report: InitReport): void {
