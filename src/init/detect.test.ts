@@ -93,6 +93,11 @@ describe("detectChecks", () => {
     expect(detectChecks(repo({ Makefile: makefile })).ok).toBe(false);
   });
 
+  test("doesn't take a variable named test for a test target", () => {
+    const makefile = "test := -v\nbuild:\n\tgo build ./...\n";
+    expect(detectChecks(repo({ Makefile: makefile })).ok).toBe(false);
+  });
+
   // A Makefile's test target usually wraps the project's own test command,
   // so running both would run the tests twice.
   test("leaves out make test when another check was found", () => {
