@@ -209,7 +209,7 @@ decides on. Every call may also arrive twice after a crash, and must then change
 | --- | --- |
 | `version-control.ts` | `VersionControl`: create and remove a task's worktree. Reading a branch, merge and revert come next. |
 | `version-control.contract.ts` | The tests every version-control plugin must pass, against a throwaway git repository. |
-| `git/git.ts` | The built-in plugin. Each build gets a worktree in `.skelcrew/worktrees/` on its own branch from main, such as `task/12-csv-export-2`. Removing one commits its uncommitted work first. |
+| `git/git.ts` | The built-in plugin. Each build gets a worktree in `.skelcrew/worktrees/` on its own branch from main, such as `task/12-csv-export-2`. Removing one commits its uncommitted work first, and refuses if the worktree isn't on its task's branch or still has unsaved work after that. |
 
 ## Around the core (planned)
 

@@ -3,7 +3,7 @@
 // versionControlContract with a way to make one.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
@@ -87,10 +87,43 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       expect(await git(r.dir, "status", "--porcelain")).toBe("");
     });
 
-    test("names a title with odd characters safely", async () => {
+    // Found by Codex review: a branch with the right name isn't proof that
+    // an earlier try made it.
+    test("refuses a branch of that name with commits that aren't on main", async () => {
       const r = await repo();
-      const created = await make(r).createWorktree({ ...csv, title: "Fix: users' résumé (v2)!" });
-      expect(created.ok && created.value.branch).toBe("task/12-fix-users-r-sum-v2");
+      await git(r.dir, "branch", "task/12-csv-export");
+      await git(r.dir, "checkout", "-q", "task/12-csv-export");
+      writeFileSync(join(r.dir, "unrelated.txt"), "someone else's work\n");
+      await git(r.dir, "add", "unrelated.txt");
+      await git(r.dir, "commit", "-q", "-m", "Unrelated");
+      await git(r.dir, "checkout", "-q", "main");
+
+      const created = await make(r).createWorktree(csv);
+      expect(created.ok).toBe(false);
+      expect(!created.ok && created.message).toContain("task/12-csv-export");
+    });
+
+    test("carries on from an earlier try that made the branch and stopped", async () => {
+      const r = await repo();
+      await git(r.dir, "branch", "task/12-csv-export");
+      const created = await make(r).createWorktree(csv);
+      expect(created.ok && created.value.branch).toBe("task/12-csv-export");
+    });
+
+    test("fails with a message, not a throw, when the repository is missing", async () => {
+      const r = await repo();
+      const missing = join(r.dir, "nowhere");
+      const created = await make({ ...r, dir: missing }).createWorktree(csv);
+      expect(created).toEqual({ ok: false, message: `There is no repository at ${missing}.` });
+    });
+
+    test("fails with a message, not a throw, when it can't update the ignore file", async () => {
+      const r = await repo();
+      // A folder where the ignore file should be.
+      rmSync(join(r.dir, ".git", "info", "exclude"), { force: true });
+      mkdirSync(join(r.dir, ".git", "info", "exclude"), { recursive: true });
+      const created = await make(r).createWorktree(csv);
+      expect(created.ok).toBe(false);
     });
 
     test("fails with a message, not a throw, when main doesn't exist", async () => {
@@ -122,6 +155,54 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       await plugin.removeWorktree(created.value);
       expect(await git(r.dir, "rev-parse", "task/12-csv-export")).toBe(
         await git(r.dir, "rev-parse", "main"),
+      );
+    });
+
+    // Found by Codex review: work written after the save commit, here by a
+    // hook, must never be deleted.
+    test("refuses to remove a worktree that still has unsaved work after saving", async () => {
+      const r = await repo();
+      const plugin = make(r);
+      const created = await plugin.createWorktree(csv);
+      if (!created.ok) throw new Error(created.message);
+      const hook = join(r.dir, ".git", "hooks", "post-commit");
+      writeFileSync(hook, "#!/bin/sh\necho late > late.txt\n");
+      chmodSync(hook, 0o755);
+      writeFileSync(join(created.value.path, "export.ts"), "export {};\n");
+
+      const removed = await plugin.removeWorktree(created.value);
+      expect(removed.ok).toBe(false);
+      expect(existsSync(join(created.value.path, "late.txt"))).toBe(true);
+    });
+
+    // Found by Codex review: saving on a detached HEAD leaves the work on
+    // no branch, and removing the worktree then loses it.
+    test("refuses to save or remove a worktree that isn't on its task's branch", async () => {
+      const r = await repo();
+      const plugin = make(r);
+      const created = await plugin.createWorktree(csv);
+      if (!created.ok) throw new Error(created.message);
+      await git(created.value.path, "checkout", "-q", "--detach");
+      writeFileSync(join(created.value.path, "export.ts"), "export {};\n");
+
+      const removed = await plugin.removeWorktree(created.value);
+      expect(removed.ok).toBe(false);
+      expect(existsSync(join(created.value.path, "export.ts"))).toBe(true);
+    });
+
+    test("refuses to touch a worktree that belongs to another repository", async () => {
+      const r = await repo();
+      const other = await repo();
+      const created = await make(other).createWorktree(csv);
+      if (!created.ok) throw new Error(created.message);
+      writeFileSync(join(created.value.path, "export.ts"), "export {};\n");
+
+      const removed = await make(r).removeWorktree(created.value);
+      expect(removed.ok).toBe(false);
+      expect(existsSync(join(created.value.path, "export.ts"))).toBe(true);
+      // Nothing was committed in the other repository either.
+      expect(await git(other.dir, "rev-parse", "task/12-csv-export")).toBe(
+        await git(other.dir, "rev-parse", "main"),
       );
     });
 
