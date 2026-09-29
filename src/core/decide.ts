@@ -5,6 +5,11 @@
 // `decideTask` below is the outline: each step is one line, in the order the
 // rules apply. The steps follow it, then one function per phase, like
 // evolve, then small helpers.
+//
+// A helper named for a problem returns that problem as a reason, or null if
+// there is none. For example, senderMismatch returns "#12's agent isn't
+// session-1." for a report from an agent the task has replaced. evolve's
+// gateMismatch works the same way.
 
 import { attemptsLeft, criticalFiles, specComplete, withinSafetyCap } from "./contracts";
 import {
@@ -59,8 +64,8 @@ export const decideTask: DecideTask = (task, envelope, config, projects) => {
   if (cleanup !== null) return cleanup;
   if (task.phase === "dropped") return ctx.reject(`#${task.id} was dropped.`);
 
-  const stranger = notTheAgent(task, input);
-  if (stranger !== null) return ctx.reject(stranger);
+  const mismatch = senderMismatch(task, input);
+  if (mismatch !== null) return ctx.reject(mismatch);
 
   if (worksInAnyPhase(input)) return inAnyPhase(task, input, ctx);
 
@@ -111,8 +116,8 @@ function create(
 ): Decision {
   if (task !== null) return ctx.reject(`#${task.id} already exists.`);
   if (isBlank(input.title)) return ctx.reject("A task needs a title.");
-  const missing = unknownProject(input.project, ctx);
-  if (missing) return ctx.reject(missing);
+  const unknown = unknownProject(input.project, ctx);
+  if (unknown !== null) return ctx.reject(unknown);
   const created: EventBody = {
     type: "task.created",
     title: input.title,
@@ -192,8 +197,8 @@ function inAnyPhase(task: Task, input: AnyPhaseInput, ctx: Context): Decision {
     // docs/invariants.md).
     case "change_project": {
       if (task.phase === "done") return wrongPhase(task, input, ctx);
-      const missing = unknownProject(input.project, ctx);
-      if (missing) return reject(missing);
+      const unknown = unknownProject(input.project, ctx);
+      if (unknown !== null) return reject(unknown);
       return accept([{ type: "task.project_changed", project: input.project }]);
     }
 
@@ -201,8 +206,8 @@ function inAnyPhase(task: Task, input: AnyPhaseInput, ctx: Context): Decision {
     // the task holds. A merge already under way is left to finish.
     case "drop": {
       if (task.phase === "done") return reject(`#${task.id} is done. Use revert to undo it.`);
-      const merging = stillMerging(task);
-      if (merging) return reject(merging);
+      const merging = mergeInProgress(task);
+      if (merging !== null) return reject(merging);
       return accept([{ type: "task.dropped" }], leavePhase(task));
     }
 
@@ -214,8 +219,8 @@ function inAnyPhase(task: Task, input: AnyPhaseInput, ctx: Context): Decision {
           `#${task.id} is in ${phaseNames[task.phase]}. Only a task past Spec can be sent back to it.`,
         );
       }
-      const merging = stillMerging(task);
-      if (merging) return reject(merging);
+      const merging = mergeInProgress(task);
+      if (merging !== null) return reject(merging);
       if (isBlank(input.note)) return reject("A send-back needs a note.");
       return accept([{ type: "task.spec_sent_back", note: input.note }], leavePhase(task));
     }
@@ -370,7 +375,7 @@ function inReady(task: TaskIn<"ready">, input: Input, ctx: Context): Decision {
     // new build.
     case "claim":
       return (
-        cantGoAhead(task, ctx) ??
+        refusedStart(task, ctx) ??
         accept(
           [{ type: "task.claimed", session: input.session, request: next(task) }],
           [
@@ -655,7 +660,7 @@ function startAgent(
   command: Command,
 ): Decision {
   return (
-    cantGoAhead(task, ctx) ??
+    refusedStart(task, ctx) ??
     ctx.accept([{ type: "task.dispatch_started", request: next(task) }], [command])
   );
 }
@@ -667,32 +672,25 @@ function claimAgent(
   ctx: Context,
   session: SessionId,
 ): Decision {
-  return cantGoAhead(task, ctx) ?? ctx.accept([{ type: "task.claimed", session, request: null }]);
+  return refusedStart(task, ctx) ?? ctx.accept([{ type: "task.claimed", session, request: null }]);
 }
 
-// What happens to a start or a claim that can't go ahead: refused if the
-// task can't take a slot, and the task blocked if it is over its safety
-// cap. Null if it can go ahead. Only the loop knows whether a slot is free,
+// The decision for a start or a claim that can't go ahead, or null if it
+// can. It is refused if the task can't take a slot, and the task is blocked
+// if it is over its safety cap. The scheduler never picks such a task, but
+// decide keeps the final say. Only the loop knows whether a slot is free,
 // so it checks that before sending either.
-function cantGoAhead(
+function refusedStart(
   task: TaskIn<"spec" | "ready" | "in_progress">,
   ctx: Context,
 ): Decision | null {
-  const refused = cantStart(task, ctx);
-  if (refused) return ctx.reject(refused);
-  const capped = safetyCapBlock(task, task.usage, ctx);
-  if (capped) return ctx.accept([capped]);
-  return null;
-}
-
-// Why the scheduler's start is refused, or null if the task may start. The
-// scheduler should never ask for these, but decide keeps the final say.
-function cantStart(task: TaskIn<"spec" | "ready" | "in_progress">, ctx: Context): string | null {
-  if (task.blocked !== null) return `#${task.id} is blocked.`;
+  if (task.blocked !== null) return ctx.reject(`#${task.id} is blocked.`);
   if (task.project !== null && ctx.projects.get(task.project)?.status === "parked") {
-    return `#${task.id} is in a parked project.`;
+    return ctx.reject(`#${task.id} is in a parked project.`);
   }
-  if (task.step.kind !== "queued") return `#${task.id} isn't waiting for a slot.`;
+  if (task.step.kind !== "queued") return ctx.reject(`#${task.id} isn't waiting for a slot.`);
+  const capped = safetyCapBlock(task, task.usage, ctx);
+  if (capped !== null) return ctx.accept([capped]);
   return null;
 }
 
@@ -755,8 +753,9 @@ function leavePhase(task: Task): Command[] {
   return commands;
 }
 
-// Why a task can't leave while merging, or null if it isn't merging.
-function stillMerging(task: Task): string | null {
+// A merge in progress, which a task can't leave during. The reason, or null
+// if it isn't merging.
+function mergeInProgress(task: Task): string | null {
   if (task.phase === "checks" && task.step.kind === "merging") {
     return `#${task.id} is merging. Wait until the merge finishes.`;
   }
@@ -767,9 +766,9 @@ function stillMerging(task: Task): string | null {
 // Refusing inputs from the wrong sender
 // ---------------------------------------------------------------------------
 
-// Why an agent's report is refused: it doesn't come from the task's current
-// agent. Null for a report that does, and for anything not from an agent.
-function notTheAgent(task: Task, input: Input): string | null {
+// A report from an agent that isn't the task's current one. The reason, or
+// null for a report that is, and for anything not from an agent.
+function senderMismatch(task: Task, input: Input): string | null {
   if (input.by !== "agent") return null;
   const current = runningSession(task);
   if (current === null) return `#${task.id} has no agent running.`;
@@ -819,7 +818,8 @@ function startDevelop(
   };
 }
 
-// Why a project can't be used, or null if it exists (or is none).
+// A project that doesn't exist. The reason, or null if it exists or is
+// none.
 function unknownProject(project: ProjectId | null, ctx: Context): string | null {
   if (project !== null && !ctx.projects.has(project)) {
     return `There is no project called ${project}.`;
