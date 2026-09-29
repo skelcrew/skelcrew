@@ -209,13 +209,14 @@ function linkSkill(dir: string, folder: string, report: InitReport): void {
     }
     return;
   }
-  const target = join("../..", folder);
+  // Worked out from where the folders really are, in case .claude is a
+  // link to another folder in the repository. With .claude a link to
+  // config/claude, the link is ../../../.agents/skills/spec. The warning
+  // below gives this same link, so its command makes one that works.
+  const target = relative(realOrPlanned(join(dir, claudeSkills)), realOrPlanned(join(dir, folder)));
   try {
     mkdirSync(join(dir, claudeSkills), { recursive: true });
-    // Worked out from where the folders really are, in case .claude is a
-    // link to another folder in the repository.
-    const from = realpathSync(join(dir, claudeSkills));
-    symlinkSync(relative(from, join(realpathSync(dir), folder)), full);
+    symlinkSync(target, full);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     report.byHand.push(path);
@@ -309,6 +310,18 @@ function isThere(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+// Where the path really is, following every link on the way. A part that
+// isn't there yet is added as it is, after the real path of the part above
+// it. So .claude/skills, with .claude a link to config/claude and no
+// skills folder yet, gives the repository's config/claude/skills.
+function realOrPlanned(path: string): string {
+  const real = realPath(path);
+  if (real !== null) return real;
+  const parent = dirname(path);
+  if (parent === path) return path;
+  return join(realOrPlanned(parent), basename(path));
 }
 
 function realPath(path: string): string | null {

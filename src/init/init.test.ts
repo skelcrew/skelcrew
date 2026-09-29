@@ -568,6 +568,40 @@ describe("initRepository", () => {
       expect(result.report.warnings[1]).toContain(developLink);
     });
 
+    // With .claude a link to config/claude, the real skills folder is
+    // config/claude/skills, three folders below the repository. So the
+    // link must be ../../../.agents/skills/spec, not ../../.agents/...
+    // The command in the warning must make the link init would have made.
+    test("gives a command that makes a working link when .claude is linked inside the repository", () => {
+      const dir = repo(bunApp);
+      mkdirSync(join(dir, "config/claude/skills"), { recursive: true });
+      symlinkSync("config/claude", join(dir, ".claude"));
+      const skills = join(dir, "config/claude/skills");
+      chmodSync(skills, 0o555);
+      let result: ReturnType<typeof initRepository>;
+      try {
+        result = initRepository(dir);
+      } finally {
+        chmodSync(skills, 0o755);
+      }
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.report.byHand).toEqual([specLink, developLink]);
+      expect(result.report.warnings).toHaveLength(2);
+      expect(result.report.warnings[0]).toContain(
+        "`ln -s ../../../.agents/skills/spec .claude/skills/spec`",
+      );
+      // Running each command, as the warning says, gives a working link.
+      for (const warning of result.report.warnings) {
+        const command = /`ln -s (\S+) (\S+)`/.exec(warning);
+        const target = command?.[1] ?? "";
+        const path = command?.[2] ?? "";
+        symlinkSync(target, join(dir, path));
+      }
+      expect(read(dir, `${specLink}/SKILL.md`)).toBe(read(dir, specSkill));
+      expect(read(dir, `${developLink}/SKILL.md`)).toBe(read(dir, developSkill));
+    });
+
     // A folder where .gitignore should be makes the last step fail.
     test("lists the links it made when a later step fails", () => {
       const dir = repo(bunApp);
