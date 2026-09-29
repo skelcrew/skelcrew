@@ -3,7 +3,7 @@
 // it, and a file that doesn't fit is refused with every reason at once.
 
 import * as z from "zod";
-import type { Config, Usage } from "../core/types";
+import type { Config } from "../core/types";
 
 export type Workflow = { config: Config; checks: string[] };
 
@@ -36,12 +36,14 @@ spec_approval: always
 # "**" matches every file, so every merge waits for you.
 critical_paths:
   - "**"
+
+# A task that uses this much since its last retry is blocked. It catches an
+# agent stuck in a loop.
+safety_cap:
+  tokens: 2000000
+  minutes: 120
 `;
 }
-
-// One default limit per task, until the cap shows what the right numbers
-// are. The spec leaves the values open.
-const safetyCap: Usage = { tokens: 2_000_000, ms: 2 * 60 * 60_000 };
 
 const wholeNumber = "must be a whole number, 1 or more.";
 const count = z
@@ -63,6 +65,11 @@ const schema = z.strictObject({
   critical_paths: z
     .array(z.string(), { error: "must be a list of file patterns." })
     .default(["**"]),
+  // How much one task may use since its last retry before it is blocked.
+  // It catches an agent stuck in a loop.
+  safety_cap: z
+    .strictObject({ tokens: count, minutes: count })
+    .default({ tokens: 2_000_000, minutes: 120 }),
   // In the spec's example. Not used until the review gate and plugins exist.
   review: z.strictObject({ model: z.string() }).optional(),
   plugins: z.record(z.string(), z.string()).optional(),
@@ -99,7 +106,7 @@ export function parseWorkflow(text: string): ParsedWorkflow {
         maxRunning: file.max_running,
         specApproval: file.spec_approval,
         criticalPaths: file.critical_paths,
-        safetyCap,
+        safetyCap: { tokens: file.safety_cap.tokens, ms: file.safety_cap.minutes * 60_000 },
       },
     },
   };

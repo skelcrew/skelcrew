@@ -52,6 +52,34 @@ describe("parseWorkflow", () => {
     expect(parsed.ok && parsed.workflow.config.criticalPaths).toEqual(["**"]);
   });
 
+  test("reads the safety cap, in tokens and minutes", () => {
+    const parsed = parseWorkflow(
+      "checks:\n  - bun test\nsafety_cap:\n  tokens: 500000\n  minutes: 30\n",
+    );
+    expect(parsed.ok && parsed.workflow.config.safetyCap).toEqual({
+      tokens: 500_000,
+      ms: 30 * 60_000,
+    });
+  });
+
+  test("uses 2,000,000 tokens and 2 hours when the safety cap is left out", () => {
+    const parsed = parseWorkflow("checks:\n  - bun test\n");
+    expect(parsed.ok && parsed.workflow.config.safetyCap).toEqual({
+      tokens: 2_000_000,
+      ms: 120 * 60_000,
+    });
+  });
+
+  test("refuses a safety cap with a part missing or not a positive whole number", () => {
+    expect(parseWorkflow("checks:\n  - bun test\nsafety_cap:\n  tokens: 0\n")).toEqual({
+      ok: false,
+      reasons: [
+        "safety_cap.tokens: must be a whole number, 1 or more.",
+        "safety_cap.minutes: must be a whole number, 1 or more.",
+      ],
+    });
+  });
+
   test("refuses a file with no checks, since the local gate would check nothing", () => {
     expect(parseWorkflow("max_running: 2\n")).toEqual({
       ok: false,
@@ -103,6 +131,11 @@ describe("workflowFile", () => {
     if (!parsed.ok) throw new Error(parsed.reasons.join(" "));
     expect(parsed.workflow.checks).toEqual(["npm test", "npm run lint"]);
     expect(parsed.workflow.config.criticalPaths).toEqual(["**"]);
+  });
+
+  test("writes the default safety cap, so you can see and change it", () => {
+    const text = workflowFile(["npm test"]);
+    expect(text).toContain("safety_cap:\n  tokens: 2000000\n  minutes: 120\n");
   });
 
   test("keeps a command exactly, even with characters YAML treats specially", () => {
