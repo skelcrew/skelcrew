@@ -30,7 +30,8 @@ const lastOutputMs = 300;
 // then the end of its output, where test runners say what broke. That is
 // what the agent sees.
 export function localChecks(commands: string[], options: ChecksOptions = {}): RunChecks {
-  const timeoutMs = options.timeoutMs ?? 30 * 60_000;
+  // A timer can't hold a longer delay than this, and would fire at once.
+  const timeoutMs = Math.min(options.timeoutMs ?? 30 * 60_000, 2_147_483_647);
   const tail = { lines: options.outputLines ?? 40, chars: options.outputChars ?? 4_000 };
 
   return async (dir) => {
@@ -119,7 +120,10 @@ function runOne(
   return new Promise((resolve) => {
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn("sh", ["-c", `exec 2>&1; ${command}`], {
+      // The shell reads a whole line before running any of it. So the
+      // redirect comes first, and the command is read afterwards, by eval:
+      // that way even a syntax error in it reaches the output.
+      child = spawn("sh", ["-c", 'exec 2>&1; eval "$1"', "sh", command], {
         cwd: dir,
         stdio: ["ignore", "pipe", "ignore"],
         env: { ...process.env, CI: "true" },
@@ -197,9 +201,16 @@ class Tail {
     private readonly chars: number,
   ) {}
 
+  // When the kept text grows too long, it is cut back to its end. Blank
+  // output at the very end is set aside first, so a long run of empty lines
+  // can't push the real lines before it out.
   push(chunk: Buffer): void {
     this.kept += this.decoder.write(chunk);
-    if (this.kept.length > this.chars * 4) this.kept = wholeEnd(this.kept, this.chars * 2);
+    if (this.kept.length > this.chars * 4) {
+      const real = this.kept.trimEnd();
+      const blank = this.kept.slice(real.length, real.length + this.chars);
+      this.kept = wholeEnd(real, this.chars * 2) + blank;
+    }
   }
 
   text(): string {
@@ -210,7 +221,8 @@ class Tail {
 }
 
 // The last `count` characters of the text, counted as whole characters, so
-// an emoji is never cut in half.
+// an emoji is never cut in half. A flag is two such characters, so a cut
+// can still land between them. That only changes how the first flag looks.
 function wholeEnd(text: string, count: number): string {
   return [...text].slice(-count).join("");
 }

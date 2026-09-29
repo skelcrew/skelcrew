@@ -160,6 +160,29 @@ describe("localChecks", () => {
     expect(!result.ok && result.message).toEndWith("…😀b");
   });
 
+  // Found by review: the shell reads the whole line before running it, so
+  // its complaint about a syntax error went nowhere.
+  test("shows the shell's own complaint about a syntax error", async () => {
+    const result = await localChecks(["echo before; if then"])(folder());
+    const lines = !result.ok ? result.message.split("\n").slice(1).join("\n") : "";
+    expect(lines).toContain("syntax error");
+  });
+
+  // Found by review: when the last stretch of output was all blank, the
+  // real lines before it were lost.
+  test("keeps the real output before a long run of blank lines", async () => {
+    const result = await localChecks(["echo 'expected 1 got 2'; yes '' | head -n 20000; exit 1"])(
+      folder(),
+    );
+    expect(!result.ok && result.message).toContain("\nexpected 1 got 2");
+  });
+
+  // Found by review: a timer can't hold a delay this long, and fired at once.
+  test("treats a very long time limit as the longest a timer can hold", async () => {
+    const result = await localChecks(["sleep 0.2"], { timeoutMs: 2 ** 31 })(folder());
+    expect(result).toEqual({ ok: true, value: null });
+  });
+
   test("names the signal when a command is killed by one", async () => {
     const result = await localChecks(["kill -9 $$"])(folder());
     expect(result).toEqual({ ok: false, message: "`kill -9 $$` was stopped by SIGKILL." });
