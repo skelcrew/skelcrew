@@ -2,11 +2,15 @@
 name: spec
 description: Write the spec for a Skelcrew task together with the developer, then submit it for their approval. Use when the developer asks to spec a task, such as "/spec 12".
 argument-hint: "[task number]"
+disable-model-invocation: true
 ---
 
 # Spec a Skelcrew task
 
 You write the spec for task $ARGUMENTS with the developer, here in this conversation.
+
+If you weren't given a task number, ask the developer which task, and wait. Don't run any
+`skelcrew` command until you have one.
 
 ## 1. Claim the task
 
@@ -29,13 +33,14 @@ Keep the spec short and plain. Show the developer the finished spec before you s
 
 ## 3. Submit it
 
-Run `skelcrew submit` with the spec. If it is refused because the spec is missing
-something, fix what it names and submit again.
+First run `skelcrew submit --help`. It says how to hand over the spec. Then run
+`skelcrew submit $ARGUMENTS` with the spec in that form. If it is refused because the spec
+is missing something, fix what it names and submit again.
 
 Submitting is where your part ends. You never approve a spec. Only the developer does, by
 running `skelcrew approve` themselves. You never run it.
 
 ## If you are refused
 
-If a call is refused because the task was let go, because it was blocked or dropped, stop
-at once. Tell the developer, and do nothing more for this task.
+If a call is refused because the task was blocked or dropped, stop at once. Tell the
+developer, and do nothing more for this task.

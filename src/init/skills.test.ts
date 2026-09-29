@@ -49,4 +49,52 @@ describe("defaultSkills", () => {
     expect(text).toContain("skelcrew done");
     expect(text).toContain("skelcrew give-up");
   });
+
+  // Only the developer starts a task. Claude must not start one because
+  // the conversation seemed to call for it.
+  test("only the developer can start them", () => {
+    for (const name of ["spec", "develop"]) {
+      expect(frontmatter(skill(name))).toMatchObject({ "disable-model-invocation": true });
+    }
+  });
+
+  test("ask for a task number instead of claiming nothing", () => {
+    for (const name of ["spec", "develop"]) {
+      expect(skill(name)).toContain(
+        "If you weren't given a task number, ask the developer which task, and wait.",
+      );
+    }
+  });
+
+  // The CLI isn't built yet, so the skill can't name its flags. Its help
+  // says how the spec is passed.
+  test("the spec skill reads how to pass the spec before submitting", () => {
+    expect(skill("spec")).toContain("skelcrew submit --help");
+  });
+
+  test("the develop skill names each thing it must never do", () => {
+    const text = skill("develop");
+    for (const never of [
+      "Never push",
+      "force push",
+      "--no-verify",
+      "skip a hook",
+      ".skelcrew/workflow.yml",
+      "Never weaken a test",
+      "Never approve",
+      "Never merge",
+    ]) {
+      expect(text).toContain(never);
+    }
+  });
+
+  test("stop when the task is blocked or dropped", () => {
+    for (const name of ["spec", "develop"]) {
+      const text = skill(name).replaceAll(/\s+/g, " ");
+      expect(text).toContain(
+        "If a call is refused because the task was blocked or dropped, stop at once.",
+      );
+      expect(text).not.toContain("let go");
+    }
+  });
 });

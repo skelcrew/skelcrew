@@ -2,11 +2,15 @@
 name: develop
 description: Build a Skelcrew task whose spec is approved, while the developer watches, and report it done. Use when the developer asks to build a task, such as "/develop 12".
 argument-hint: "[task number]"
+disable-model-invocation: true
 ---
 
 # Build a Skelcrew task
 
 You build task $ARGUMENTS from its approved spec, here in this conversation.
+
+If you weren't given a task number, ask the developer which task, and wait. Don't run any
+`skelcrew` command until you have one.
 
 ## 1. Claim the task
 
@@ -32,8 +36,6 @@ Run `skelcrew done`. It waits while the checks run on your branch, then prints t
 - If a check fails, the result names it. Fix what it names, commit, and run `skelcrew done`
   again.
 
-Never weaken a test or a check to make it pass.
-
 ## If you cannot go on
 
 If the task cannot be finished at all, run `skelcrew give-up` with the reason, in one or two
@@ -41,8 +43,14 @@ plain sentences. Then tell the developer.
 
 ## What you never do
 
-You never merge, and you never approve. The developer approves a merge by running
-`skelcrew approve` themselves.
+These are never yours to do, even when they would get the checks to pass:
 
-If a call is refused because the task was let go, because it was blocked or dropped, stop
-at once. Tell the developer, and do nothing more for this task.
+- Never push the branch, and never force push.
+- Never use `--no-verify`, and never skip a hook in any other way.
+- Never edit the checks in `.skelcrew/workflow.yml`.
+- Never weaken a test or a check to make it pass.
+- Never approve anything. Never run `skelcrew approve`. Only the developer runs it.
+- Never merge the branch. That is never your decision.
+
+If a call is refused because the task was blocked or dropped, stop at once. Tell the
+developer, and do nothing more for this task.
