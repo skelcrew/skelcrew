@@ -299,6 +299,7 @@ Notes:
 
 - **Harnesses** are likely profiles rather than code: a command template, skills folder and flags. A code plugin only when a harness does something unusual.
 - **Process runner** runs the agent in a pseudo terminal, detached, logging output per task. State comes from the agent's reports through the CLI.
+- **Version control plugins** assume a git repository, for now, to keep things simple. A plugin changes how git is used, as Jujutsu would, not whether. The aim is to not assume git later, but the core stores commits as git hashes, so a repository like SVN would need changes to the core as well as a plugin.
 - **Work source plugins** translate Skelcrew's phases into the tool's states and turn manual changes (an issue dragged to Done) into signals the core validates.
 - **Linear** delegation uses its agent API, which requires a public webhook, so it arrives with a hosted relay. Polling for tagged issues works without one.
 - Local check commands are core, not a plugin, because running them is enforcing the gates.
