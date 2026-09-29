@@ -8,7 +8,14 @@
 // Running the chosen checks on the current code is a separate step for the
 // caller: `localChecks(report.checks)(dir)` from src/checks/checks.ts.
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { parseWorkflow, workflowFile } from "../config/workflow";
 import { detectChecks } from "./detect";
@@ -119,25 +126,57 @@ function writeNew(dir: string, path: string, text: string, report: InitReport): 
   report.created.push(path);
 }
 
+// Lines that leave out the whole .skelcrew folder. Git would then never
+// see workflow.yml, so your rules could never be committed.
+const wholeFolder = [".skelcrew", ".skelcrew/", ".skelcrew/*", ".skelcrew/**"];
+
 // Adds the database to .gitignore, after whatever is there already.
 function ignoreDatabase(dir: string, report: InitReport): void {
   const path = ".gitignore";
   const full = join(dir, path);
-  const entry = `# Skelcrew's runtime database. It stays out of git.\n${databaseLine}\n`;
+  const comment = "# Skelcrew's runtime database. It stays out of git.";
+
+  // A linked .gitignore lives somewhere else, maybe outside the repository
+  // or shared with other ones. It isn't init's to change.
+  if (isLink(full)) {
+    report.unchanged.push(path);
+    report.warnings.push(
+      `${path} is a link to another file, so init left it alone. Add the line ${databaseLine} to it yourself, to keep Skelcrew's database out of git.`,
+    );
+    return;
+  }
   if (!existsSync(full)) {
-    writeFileSync(full, entry, { flag: "wx" });
+    writeFileSync(full, `${comment}\n${databaseLine}\n`, { flag: "wx" });
     report.created.push(path);
     return;
   }
+
   const current = readFileSync(full, "utf8");
   const lines = current.split("\n").map((line) => line.trim());
+  const folderLine = lines.find((line) => wholeFolder.includes(line.replace(/^\//, "")));
+  if (folderLine !== undefined) {
+    report.warnings.push(
+      `${path} has the line ${folderLine}, which leaves out all of .skelcrew. Git will never see .skelcrew/workflow.yml, so your rules can't be committed. Replace that line with ${databaseLine}.`,
+    );
+  }
   if (lines.includes(databaseLine) || lines.includes(`/${databaseLine}`)) {
     report.unchanged.push(path);
     return;
   }
-  const gap = current === "" || current.endsWith("\n") ? "" : "\n";
-  appendFileSync(full, `${gap}${entry}`);
+  // A file written on Windows ends its lines with \r\n. The new lines end
+  // the same way, so the file doesn't end up with a mix.
+  const eol = current.includes("\r\n") ? "\r\n" : "\n";
+  const gap = current === "" || current.endsWith("\n") ? "" : eol;
+  appendFileSync(full, `${gap}${comment}${eol}${databaseLine}${eol}`);
   report.updated.push(path);
+}
+
+function isLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 // The file's text, or null if it can't be read, such as a folder.

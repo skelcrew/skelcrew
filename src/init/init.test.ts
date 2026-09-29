@@ -198,6 +198,41 @@ describe("initRepository", () => {
     expect(result.ok && result.report.unchanged).toContain(".gitignore");
   });
 
+  // A linked .gitignore lives outside the repository, or is shared with
+  // other ones. Init doesn't change it.
+  test("leaves a linked .gitignore alone, and says what to add", () => {
+    const dir = repo({ ...bunApp, "shared-ignore": "node_modules/\n" });
+    symlinkSync(join(dir, "shared-ignore"), join(dir, ".gitignore"));
+    const result = initRepository(dir);
+    expect(read(dir, "shared-ignore")).toBe("node_modules/\n");
+    expect(result.ok && result.report.unchanged).toContain(".gitignore");
+    const warnings = result.ok ? result.report.warnings : [];
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain(".gitignore");
+    expect(warnings[0]).toContain(dbLine);
+  });
+
+  test("keeps the line endings of a .gitignore written on Windows", () => {
+    const dir = repo({ ...bunApp, ".gitignore": "node_modules/\r\ndist\r\n" });
+    initRepository(dir);
+    const text = read(dir, ".gitignore");
+    expect(text.startsWith("node_modules/\r\ndist\r\n")).toBe(true);
+    expect(text.replaceAll("\r\n", "")).not.toContain("\n");
+    expect(text.split("\r\n")).toContain(dbLine);
+  });
+
+  // Git would then never see workflow.yml, so it could never be committed.
+  test("warns when .gitignore leaves out all of .skelcrew", () => {
+    for (const line of [".skelcrew/", "/.skelcrew", ".skelcrew", ".skelcrew/*", ".skelcrew/**"]) {
+      const dir = repo({ ...bunApp, ".gitignore": `${line}\n` });
+      const result = initRepository(dir);
+      const warnings = result.ok ? result.report.warnings : [];
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain(line);
+      expect(warnings[0]).toContain("workflow.yml");
+    }
+  });
+
   test("changes nothing when run a second time", () => {
     const dir = repo({ ...bunApp, ".gitignore": "node_modules/\n" });
     initRepository(dir);
