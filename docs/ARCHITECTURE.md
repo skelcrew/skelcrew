@@ -217,7 +217,7 @@ These files put the daemon on a socket, one per repository, and let the CLI reac
 | --- | --- |
 | `paths.ts` | `daemonPaths`: where a repository's daemon keeps its files, worked out from the repository's real path. The socket is `.skelcrew/daemon.sock` when that path fits in 103 bytes, the most macOS allows. A deeper repository gets `skelcrew-<hash>.sock` in the temp folder instead. The daemon and the client both ask here, so they always agree. |
 | `server.ts` | `serve`: `skelcrew serve`'s job. It reads `.skelcrew/workflow.yml`, takes the lock, opens `.skelcrew/skelcrew.db` and the daemon, and listens. Each line on a connection is one request. The reply goes back on that connection with the request's id. A line that isn't a request is refused, and one over 1 MB also closes its connection. `serveUntilSignalled` stops it cleanly on SIGTERM or SIGINT. |
-| `lock.ts` | `takeLock`: one daemon per repository. The daemon holds `.skelcrew/daemon.lock` with its process id. A second daemon refuses to start. A lock whose process no longer runs was left by a daemon that died, and is taken over. |
+| `lock.ts` | `takeLock`: one daemon per repository. `.skelcrew/daemon.lock` is a small SQLite file the daemon holds in an exclusive transaction while it runs. The operating system keeps that hold for the daemon's process and lets go of it when the process ends, however it ends. So a second daemon is refused at once, and a crashed one never keeps the next out. The lock file is never deleted. The process id goes in `.skelcrew/daemon.pid`, only to say who runs the daemon. |
 | `client.ts` | `request`: sends one command to a repository's daemon and returns the answer as a value. If no daemon is running, it starts one through a function it is given and waits for the socket. A request, once sent, has no time limit, since `done` waits for the checks. |
 
 An example: the CLI sends `add` while no daemon runs. The client finds no socket, so it
@@ -225,8 +225,8 @@ starts `skelcrew serve` in the background. It retries the socket every 50 ms. On
 daemon listens, the client sends `{ "id": "…", "command": { "type": "add", … } }` and
 reads back `{ "id": "…", "ok": true, "result": { "task": 1 } }`.
 
-A daemon killed outright leaves its lock and its socket file behind. The next daemon sees
-that the lock's process is gone. It takes the lock over and removes the old socket file.
+A daemon killed outright leaves its socket file behind, but its hold on the lock ends
+with its process. The next daemon takes the lock and removes the old socket file.
 
 ## The protocol
 

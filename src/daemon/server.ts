@@ -50,7 +50,15 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
   const lock = locked.lock;
   // Holding the lock means no other daemon runs here. So a socket file
   // still there was left by one that died, and nobody answers on it.
-  rmSync(paths.socket, { force: true });
+  try {
+    rmSync(paths.socket, { force: true });
+  } catch (error) {
+    lock.release();
+    return {
+      ok: false,
+      message: `${paths.socket} couldn't be cleared for the daemon's socket: ${describe(error)}`,
+    };
+  }
 
   let store: EventStore;
   try {
@@ -82,7 +90,11 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
       stop: async () => {
         await listener.stop();
         store.close();
-        rmSync(paths.socket, { force: true });
+        try {
+          rmSync(paths.socket, { force: true });
+        } catch {
+          // The next daemon clears it, or says why it can't.
+        }
         lock.release();
       },
     },
