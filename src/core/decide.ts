@@ -305,6 +305,10 @@ function inSpec(task: TaskIn<"spec">, input: Input, ctx: Context): Decision {
       });
     }
 
+    // Your session writes the spec, so no agent is started.
+    case "claim":
+      return claimAgent(task, ctx, input.session);
+
     case "session_started":
       return accept([{ type: "task.spec_session_started", session: input.session }]);
 
@@ -362,11 +366,40 @@ function inReady(task: TaskIn<"ready">, input: Input, ctx: Context): Decision {
       });
     }
 
-    case "worktree_created":
+    // Your session still needs a worktree, so one is created first, as a
+    // new build.
+    case "claim":
+      return (
+        cantGoAhead(task, ctx) ??
+        accept(
+          [{ type: "task.claimed", session: input.session, request: next(task) }],
+          [
+            {
+              type: "create_worktree",
+              taskId: task.id,
+              request: next(task),
+              build: task.builds + 1,
+            },
+          ],
+        )
+      );
+
+    // For a claimed task, your session becomes the agent now. No agent is
+    // started, so no new request is sent: the event keeps the worktree's.
+    // Otherwise a develop agent is started in the worktree.
+    case "worktree_created": {
+      const claimedBy = step.kind === "creating_worktree" ? step.claimedBy : null;
+      if (claimedBy !== null) {
+        return accept([
+          { type: "task.worktree_created", worktree: input.worktree, request: input.request },
+          { type: "task.dispatched", session: claimedBy },
+        ]);
+      }
       return accept(
         [{ type: "task.worktree_created", worktree: input.worktree, request: next(task) }],
         [startDevelop(task, input.worktree, { failure: null, note: null, blocked: null })],
       );
+    }
 
     case "worktree_failed":
       if (!waitingForWorktree(task, input.request)) {
@@ -401,6 +434,11 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
     case "start": {
       return startAgent(task, ctx, startDevelop(task, worktree, task.brief));
     }
+
+    // Your session carries on in the same worktree. The skill reads the
+    // brief from the task.
+    case "claim":
+      return claimAgent(task, ctx, input.session);
 
     case "session_started":
       return accept([{ type: "task.dispatched", session: input.session }]);
@@ -609,19 +647,42 @@ function acceptSpec(
   );
 }
 
-// The scheduler's start. It is refused if the task can't take a slot, and
-// blocks the task if it is over its safety cap. Otherwise the task records
-// the request and sends the command that starts its agent or worktree.
+// The scheduler's start. Unless it can't go ahead, the task records the
+// request and sends the command that starts its agent or worktree.
 function startAgent(
   task: TaskIn<"spec" | "ready" | "in_progress">,
   ctx: Context,
   command: Command,
 ): Decision {
+  return (
+    cantGoAhead(task, ctx) ??
+    ctx.accept([{ type: "task.dispatch_started", request: next(task) }], [command])
+  );
+}
+
+// Your session takes the task where it needs no worktree first: in Spec,
+// or in In progress after a retry. It is the agent from now on.
+function claimAgent(
+  task: TaskIn<"spec" | "in_progress">,
+  ctx: Context,
+  session: SessionId,
+): Decision {
+  return cantGoAhead(task, ctx) ?? ctx.accept([{ type: "task.claimed", session, request: null }]);
+}
+
+// What happens to a start or a claim that can't go ahead: refused if the
+// task can't take a slot, and the task blocked if it is over its safety
+// cap. Null if it can go ahead. Only the loop knows whether a slot is free,
+// so it checks that before sending either.
+function cantGoAhead(
+  task: TaskIn<"spec" | "ready" | "in_progress">,
+  ctx: Context,
+): Decision | null {
   const refused = cantStart(task, ctx);
   if (refused) return ctx.reject(refused);
   const capped = safetyCapBlock(task, task.usage, ctx);
   if (capped) return ctx.accept([capped]);
-  return ctx.accept([{ type: "task.dispatch_started", request: next(task) }], [command]);
+  return null;
 }
 
 // Why the scheduler's start is refused, or null if the task may start. The

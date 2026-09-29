@@ -88,6 +88,11 @@ task. That's how "prompts propose, the core decides" is enforced.
   new agent fixes it, and a second merge starts as request 10. A repeat of the first
   merge's reply, for request 6, is refused, so it can't mark the new merge done. A late
   agent or worktree is stopped or removed instead.
+- **An agent is started or claimed.** The scheduler's `start` makes the daemon start an
+  agent. A `claim` makes your own harness session the agent, attended: the core records
+  your session and starts nothing. In Ready it still creates the worktree first. From
+  then on, only that session is heard. Only the loop sees every task, so it checks for a
+  free slot before either goes through.
 - **Errors are values.** Functions return `{ ok: true, … }` or `{ ok: false, reason }`.
   Nothing in the core throws.
 - **Phases and flags.** A task is always in one phase: Idea, Spec, Ready, In progress,

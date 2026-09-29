@@ -169,9 +169,13 @@ export type SpecStep =
 
 // The spec contract says a task only reaches In progress once the worktree
 // and the session both exist. Until then, it stays in Ready.
+//
+// A task you claim still needs a worktree. `claimedBy` remembers your
+// session, so once the worktree exists, your session is the agent and no
+// agent is started.
 export type ReadyStep =
   | { kind: "queued" }
-  | { kind: "creating_worktree"; request: number }
+  | { kind: "creating_worktree"; request: number; claimedBy: SessionId | null }
   | { kind: "starting_session"; worktree: Worktree; request: number };
 
 // In progress only waits for a slot after a block. Blocking stops the agent,
@@ -298,6 +302,11 @@ export type HumanInput =
   | { type: "revise_merge"; note: string } // "send back" on a merge: a new develop agent
   | { type: "retry" }
   | { type: "back_to_spec"; note: string } // from Ready, In progress or Checks: the spec was wrong
+  // Your harness session takes the task, attended. The daemon makes up
+  // `session` and hands it to the skill. The skill sends it with every
+  // report, so only this session is heard. Skelcrew didn't start it, so it
+  // can't stop it: once let go, its next report is refused.
+  | { type: "claim"; session: SessionId }
   | { type: "drop" }
   | { type: "revert"; reason: string }; // the reason guides the redone spec
 
@@ -403,6 +412,9 @@ export type EventBody =
   | { type: "task.dispatch_started"; request: number }
   | { type: "task.worktree_created"; worktree: Worktree; request: number } // starts the develop agent
   | { type: "task.dispatched"; session: SessionId }
+  // Your session took the task. `request` is set only in Ready, where a
+  // worktree is created first.
+  | { type: "task.claimed"; session: SessionId; request: number | null }
   | { type: "task.question_asked"; question: Question }
   // Answers are kept so past decisions can be searched later, and the spec
   // skill does not ask the same question twice.

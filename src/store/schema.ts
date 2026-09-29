@@ -101,6 +101,7 @@ const taskEvents = {
   "task.dispatch_started": { request: z.number().int().positive() },
   "task.worktree_created": { worktree, request: z.number().int().positive() },
   "task.dispatched": { session: SessionId },
+  "task.claimed": { session: SessionId, request: z.number().int().positive().nullable() },
   "task.question_asked": { question },
   "task.question_answered": { text: z.string() },
   "task.done_reported": {
@@ -145,6 +146,7 @@ const taskEventUnion = z.discriminatedUnion("type", [
   task("task.dispatch_started"),
   task("task.worktree_created"),
   task("task.dispatched"),
+  task("task.claimed"),
   task("task.question_asked"),
   task("task.question_answered"),
   task("task.done_reported"),
