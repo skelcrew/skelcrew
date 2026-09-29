@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { defaultWorkflow, parseWorkflow } from "./workflow";
+import { parseWorkflow, workflowFile } from "./workflow";
 
 // The example from the spec's "Configuration and repository layout".
 const specExample = `
@@ -96,11 +96,18 @@ describe("parseWorkflow", () => {
   });
 });
 
-describe("defaultWorkflow", () => {
-  test("is the file init writes: it reads back, and every path is critical", () => {
-    const parsed = parseWorkflow(defaultWorkflow);
+describe("workflowFile", () => {
+  // Init detects the repository's checks. The file only writes them down.
+  test("writes the checks init found, and reads back with every path critical", () => {
+    const parsed = parseWorkflow(workflowFile(["npm test", "npm run lint"]));
     if (!parsed.ok) throw new Error(parsed.reasons.join(" "));
+    expect(parsed.workflow.checks).toEqual(["npm test", "npm run lint"]);
     expect(parsed.workflow.config.criticalPaths).toEqual(["**"]);
-    expect(parsed.workflow.checks.length).toBeGreaterThan(0);
+  });
+
+  test("keeps a command exactly, even with characters YAML treats specially", () => {
+    const checks: [string, ...string[]] = ['echo "a: b" # not a comment', "make -j4 test"];
+    const parsed = parseWorkflow(workflowFile(checks));
+    expect(parsed.ok && parsed.workflow.checks).toEqual(checks);
   });
 });

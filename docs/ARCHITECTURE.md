@@ -194,8 +194,9 @@ reported with its position, not guessed at.
 commands the local gate runs. Every field is checked with Zod, and a file that doesn't
 fit is refused with every reason, in plain words. An unknown field is refused too, so a
 typo like `critical_path` can't be silently ignored. A file without `critical_paths`
-makes every path critical, so nothing merges without your approval. `defaultWorkflow`
-is the file `skelcrew init` will write.
+makes every path critical, so nothing merges without your approval. `workflowFile`
+writes the file `skelcrew init` will create, with the check commands init finds in the
+repository.
 
 ## Around the core (planned)
 

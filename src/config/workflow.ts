@@ -9,14 +9,19 @@ export type Workflow = { config: Config; checks: string[] };
 
 export type ParsedWorkflow = { ok: true; workflow: Workflow } | { ok: false; reasons: string[] };
 
-// The file `skelcrew init` writes. Every path is critical, so nothing
-// merges without your approval until auto-merge is earned (build plan,
-// step 6).
-export const defaultWorkflow = `# Skelcrew's rules for this repository.
+// The file `skelcrew init` writes, with the checks it found in the
+// repository. Every path is critical, so nothing merges without your
+// approval until auto-merge is earned (build plan, step 6).
+//
+// Each command is written as a JSON string, which YAML reads as a quoted
+// string. So a command with ":" or "#" in it reads back exactly.
+export function workflowFile(checks: [string, ...string[]]): string {
+  const commands = checks.map((command) => `  - ${JSON.stringify(command)}`).join("\n");
+  return `# Skelcrew's rules for this repository.
 
 # The local gate runs these in the task's worktree. Each must pass.
 checks:
-  - bun test
+${commands}
 
 # Failed rounds (gates or merges) before a task is blocked.
 max_attempts: 3
@@ -32,6 +37,7 @@ spec_approval: always
 critical_paths:
   - "**"
 `;
+}
 
 // One default limit per task, until the cap shows what the right numbers
 // are. The spec leaves the values open.
