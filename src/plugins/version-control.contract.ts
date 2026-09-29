@@ -1230,6 +1230,27 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       expect(await filesOnMain(r)).toEqual(["README.md"]);
     });
 
+    // Found by review: a merge rule in .gitattributes can keep main's
+    // version of a file, so undoing the commit changes nothing. Main still
+    // holds what the commit added, so the message mustn't say otherwise.
+    test("says only that the revert would change nothing when a merge rule keeps main's version", async () => {
+      const r = await repo();
+      await git(r.dir, "config", "merge.keepmain.driver", "true");
+      await commitOnMain(r, ".gitattributes", "notes.txt merge=keepmain\n");
+      await commitOnMain(r, "notes.txt", "one\n");
+      const { plugin, request } = await landed(r, { "notes.txt": "one\ntwo\n" });
+      await commitOnMain(r, "notes.txt", "one\ntwo\nthree\n");
+      const before = await git(r.dir, "rev-parse", "main");
+
+      const reverted = await plugin.revert(request);
+      expect(reverted.ok).toBe(false);
+      expect(!reverted.ok && reverted.message).toBe(
+        `Reverting ${request.commit} would change nothing on main.`,
+      );
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+      expect(await git(r.dir, "show", "main:notes.txt")).toBe("one\ntwo\nthree");
+    });
+
     // With merge.autoStash, git stashes your edits instead of refusing, and
     // can put them back with conflict markers.
     test("never overwrites your uncommitted edit in your checkout of main", async () => {

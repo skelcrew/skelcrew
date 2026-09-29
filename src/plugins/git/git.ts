@@ -627,13 +627,14 @@ export class Git implements VersionControl {
         message: `Reverting #${request.taskId} conflicts with ${this.main} in ${files}. Nothing was reverted.`,
       };
     }
-    // Main may no longer hold what the commit changed, for example if
-    // someone undid it by hand. Then there is nothing to commit.
+    // Undoing the commit may change nothing. Someone may have undone it by
+    // hand, or a merge rule in .gitattributes may keep main's version. The
+    // message doesn't guess which.
     const changes = await run(temp, "diff", "--cached", "--quiet", "HEAD");
     if (changes.ok) {
       return {
         ok: false,
-        message: `Reverting ${request.commit} changes nothing: ${this.main} no longer holds what it added.`,
+        message: `Reverting ${request.commit} would change nothing on ${this.main}.`,
       };
     }
     const committed = await run(
