@@ -33,7 +33,7 @@ import type {
 
 const gateName: z.ZodType<GateName> = z.enum(["local", "remote", "review"]);
 
-const spec: z.ZodType<Spec> = z.strictObject({
+export const spec: z.ZodType<Spec> = z.strictObject({
   scope: z.string(),
   acceptance: z.array(z.string()),
   openQuestions: z.array(z.string()),
