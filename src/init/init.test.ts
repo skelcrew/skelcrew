@@ -366,7 +366,7 @@ describe("initRepository", () => {
     expect(existsSync(join(dir, ".skelcrew"))).toBe(false);
   });
 
-  describe("the rule that makes Claude Code ask before skelcrew approve", () => {
+  describe("the rules that make Claude Code ask before skelcrew approve", () => {
     const settingsJson = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 
     test("writes a settings file with the rules when there is none", () => {
@@ -421,7 +421,7 @@ describe("initRepository", () => {
       expect(existsSync(join(dir, ".claude/settings.local.json"))).toBe(false);
     });
 
-    test("adds the rule to your settings, keeping everything else as it was", () => {
+    test("adds the rules to your settings, keeping everything else as it was", () => {
       const mine = {
         $schema: "https://json.schemastore.org/claude-code-settings.json",
         permissions: { allow: ["Bash(bun test *)"], ask: ["Bash(git push *)"] },
@@ -438,7 +438,7 @@ describe("initRepository", () => {
       expect(result.ok && result.report.askBeforeApprove).toBe("added");
     });
 
-    test("adds the list the rule goes in when your settings have none", () => {
+    test("adds the list the rules go in when your settings have none", () => {
       const dir = repo({ ...bunApp, [settings]: settingsJson({ model: "opus" }) });
       initRepository(dir);
       expect(JSON.parse(read(dir, settings))).toEqual({

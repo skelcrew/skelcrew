@@ -32,7 +32,7 @@ export type InitReport = {
   // Files that didn't exist and now do.
   created: string[];
   // Files that existed and had something added: .gitignore, and
-  // .claude/settings.json when the approve rule went in.
+  // .claude/settings.json when the approve rules went in.
   updated: string[];
   // Files that existed and were left exactly as they were.
   unchanged: string[];

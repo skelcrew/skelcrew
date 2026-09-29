@@ -13,13 +13,13 @@
 //
 // Your settings are yours, so init is careful with the file:
 //
-// - With no file, it writes one holding only the rule.
-// - With a file, it adds the rule and keeps everything else. It writes the
-//   file back only when that changes nothing but the rule. For example, a
+// - With no file, it writes one holding only the rules.
+// - With a file, it adds the rules and keeps everything else. It writes the
+//   file back only when that changes nothing but the rules. For example, a
 //   file with its lists on one line would come back spread over several
 //   lines, so init leaves it alone.
 // - Whenever it can't tell what is safe, it changes nothing and warns you
-//   with the rule to add by hand.
+//   with the rules to add by hand.
 //
 // It never touches .claude/settings.local.json or your own user settings.
 // A second run adds nothing. A file with some of the rules gets only the
@@ -60,7 +60,7 @@ function hasRule(list: string[], rule: string): boolean {
   return list.includes(rule) || list.includes(rule.replace(/ \*\)$/, ":*)"));
 }
 
-// Whether the rule was added, was there already, or is for you to add.
+// Whether the rules were added, were there already, or are for you to add.
 export type AskBeforeApprove = "added" | "already there" | "add by hand";
 
 export type SettingsResult = {
@@ -112,7 +112,7 @@ export function addAskRule(dir: string): SettingsResult {
 
   // Write the file back the way it is laid out now: the same indent, and a
   // last newline if it had one. If that doesn't give back the same text,
-  // writing it would change more than the rule.
+  // writing it would change more than the rules.
   const indent = /^([ \t]+)"/m.exec(text)?.[1] ?? "  ";
   const end = text.endsWith("\n") ? "\n" : "";
   if (`${JSON.stringify(data, null, indent)}${end}` !== text) {
