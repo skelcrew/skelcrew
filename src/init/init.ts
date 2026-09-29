@@ -27,6 +27,7 @@ import {
 import { basename, dirname, join, relative } from "node:path";
 import { parseWorkflow, workflowFile } from "../config/workflow";
 import { detectChecks } from "./detect";
+import { leftOutBy } from "./gitignore";
 import { outsideLink, outsideWarning } from "./paths";
 import { type AskBeforeApprove, addAskRule, askBeforeApproveLimit, settingsPath } from "./settings";
 import { defaultSkills } from "./skills";
@@ -388,6 +389,7 @@ function ignoreRuntimeFiles(dir: string, report: InitReport): void {
       `${path} has the line ${folderLine}, which leaves out all of .skelcrew. Git will never see .skelcrew/workflow.yml, so your rules can't be committed. Replace that line with these: ${listed}.`,
     );
   }
+  report.warnings.push(...sharedFilesLeftOut(lines));
   const missing = runtimeLines.filter(
     (line) => !lines.includes(line) && !lines.includes(`/${line}`),
   );
@@ -401,6 +403,31 @@ function ignoreRuntimeFiles(dir: string, report: InitReport): void {
   const gap = current === "" || current.endsWith("\n") ? "" : eol;
   appendFileSync(full, `${gap}${[comment, ...missing].join(eol)}${eol}`);
   report.updated.push(path);
+}
+
+// What init sets up for Claude Code and means to be committed: the skill
+// links, the approve rules, and the skills the links lead to.
+const shared = [
+  ...defaultSkills.map((skill) => `${claudeSkills}/${basename(dirname(skill.path))}`),
+  settingsPath,
+  ...defaultSkills.map((skill) => skill.path),
+];
+
+// A warning for each .gitignore line that leaves out some of them. Git
+// wouldn't see those files, so teammates who clone wouldn't get them.
+function sharedFilesLeftOut(lines: string[]): string[] {
+  const byLine = new Map<string, string[]>();
+  for (const path of shared) {
+    const line = leftOutBy(lines, path);
+    if (line !== null) byLine.set(line, [...(byLine.get(line) ?? []), path]);
+  }
+  return [...byLine].map(([line, paths]) =>
+    [
+      `.gitignore has the line ${line}, which leaves out ${paths.join(", ")}.`,
+      "Git won't see them, so teammates who clone the repository won't get them.",
+      "To share them, remove that line, or change it so it no longer covers them.",
+    ].join(" "),
+  );
 }
 
 function isLink(path: string): boolean {

@@ -445,6 +445,72 @@ describe("initRepository", () => {
     }
   });
 
+  // The skill links, the skills and the approve rules are meant to be
+  // committed, so teammates who clone the repository get them. Each case
+  // below was checked with git check-ignore.
+  describe("a .gitignore that leaves out what init sets up for Claude Code", () => {
+    function warningsFor(gitignore: string): string[] {
+      const dir = repo({ ...bunApp, ".gitignore": gitignore });
+      const result = initRepository(dir);
+      return result.ok ? result.report.warnings : [];
+    }
+
+    test("warns when it leaves out .claude", () => {
+      for (const line of [".claude/", "/.claude", ".claude/*", ".claude/**", "**/.claude"]) {
+        const warnings = warningsFor(`${line}\n`);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain(line);
+        expect(warnings[0]).toContain(specLink);
+        expect(warnings[0]).toContain(developLink);
+        expect(warnings[0]).toContain(settings);
+        expect(warnings[0]).toContain("clone");
+      }
+    });
+
+    test("warns when it leaves out .claude/skills or .claude/settings.json alone", () => {
+      const skills = warningsFor(".claude/skills/\n");
+      expect(skills).toHaveLength(1);
+      expect(skills[0]).toContain(specLink);
+      expect(skills[0]).not.toContain(settings);
+      for (const line of [".claude/settings.json", "*.json"]) {
+        const warnings = warningsFor(`${line}\n`);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain(settings);
+        expect(warnings[0]).not.toContain(specLink);
+      }
+    });
+
+    test("warns when it leaves out .agents or the skills in it", () => {
+      for (const line of [".agents/", ".agents/*", "skills/"]) {
+        const warnings = warningsFor(`${line}\n`);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain(specSkill);
+        expect(warnings[0]).toContain(developSkill);
+      }
+    });
+
+    // Git never looks inside a folder that is left out whole, so a later
+    // line can't add a file back.
+    test("still warns when a later line can't add a file back", () => {
+      const warnings = warningsFor(".claude/\n!.claude/settings.json\n");
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain(settings);
+      expect(warnings[0]).toContain(specLink);
+    });
+
+    test("doesn't warn when nothing init sets up is left out", () => {
+      for (const lines of [
+        ".claude/settings.local.json",
+        ".claude/*\n!.claude/settings.json\n!.claude/skills/",
+        ".claude/**\n!.claude/settings.json\n!.claude/skills/**\n!.claude/skills",
+        // Git sees a link as a file, so a line for a folder doesn't match it.
+        ".claude/skills/spec/",
+      ]) {
+        expect(warningsFor(`${lines}\n`)).toEqual([]);
+      }
+    });
+  });
+
   test("changes nothing when run a second time", () => {
     const dir = repo({ ...bunApp, ".gitignore": "node_modules/\n" });
     initRepository(dir);
