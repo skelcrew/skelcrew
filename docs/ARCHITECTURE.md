@@ -199,6 +199,15 @@ makes every path critical, so nothing merges without your approval. `workflowFil
 writes the file `skelcrew init` will create, with the check commands init finds in the
 repository.
 
+## The protocol
+
+`src/protocol/protocol.ts` is how the CLI and the daemon talk: one JSON message per line,
+over the daemon's local socket. A request is `{ id, command }`, with one command for each
+CLI command. A reply is `{ id, ok: true, result }` or `{ id, ok: false, message }`. An
+agent's reports (`submit`, `done`, `give_up`) carry the session its claim handed out.
+Your commands carry no identity, since the protocol can't prove who calls. Everything read
+from the socket is checked with Zod first, and a line over 1 MB is refused.
+
 ## The local checks
 
 `src/checks/checks.ts` runs the `checks` commands from `workflow.yml` in a folder, one
