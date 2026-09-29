@@ -3,7 +3,16 @@
 // versionControlContract with a way to make one.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
@@ -26,6 +35,26 @@ export async function makeRepo(): Promise<Repo> {
 
 export async function git(dir: string, ...args: string[]): Promise<string> {
   return (await $`git ${args}`.cwd(dir).quiet().text()).trim();
+}
+
+// Moves a worktree's folder aside, which git doesn't notice, and puts a
+// separate repository at its old path, on the same branch name.
+async function strangerAt(path: string): Promise<void> {
+  renameSync(path, `${path}-moved`);
+  mkdirSync(path);
+  await $`git init -q -b task/12-csv-export`.cwd(path).quiet();
+  await git(
+    path,
+    "-c",
+    "user.name=T",
+    "-c",
+    "user.email=t@t",
+    "commit",
+    "-q",
+    "--allow-empty",
+    "-m",
+    "Theirs",
+  );
 }
 
 export function versionControlContract(name: string, make: (repo: Repo) => VersionControl): void {
@@ -125,6 +154,35 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
 
       const created = await make(r).createWorktree(csv);
       expect(created.ok).toBe(false);
+    });
+
+    // Found by Codex review: a tag of the same name must not stand in for
+    // the branch in the safety check.
+    test("refuses a branch with commits not on main, even with a same-named tag on main", async () => {
+      const r = await repo();
+      await git(r.dir, "tag", "task/12-csv-export");
+      await git(r.dir, "checkout", "-q", "-b", "task/12-csv-export");
+      writeFileSync(join(r.dir, "unrelated.txt"), "someone else's work\n");
+      await git(r.dir, "add", "unrelated.txt");
+      await git(r.dir, "commit", "-q", "-m", "Unrelated");
+      await git(r.dir, "checkout", "-q", "main");
+      const before = await git(r.dir, "rev-parse", "refs/heads/task/12-csv-export");
+
+      const created = await make(r).createWorktree(csv);
+      expect(created.ok).toBe(false);
+      expect(await git(r.dir, "rev-parse", "refs/heads/task/12-csv-export")).toBe(before);
+    });
+
+    // Found by Codex review: git can still list a worktree whose folder was
+    // moved away, while another repository sits at its old path.
+    test("refuses another repository at the path of a worktree that was moved away", async () => {
+      const r = await repo();
+      const plugin = make(r);
+      const created = await plugin.createWorktree(csv);
+      if (!created.ok) throw new Error(created.message);
+      await strangerAt(created.value.path);
+
+      expect((await plugin.createWorktree(csv)).ok).toBe(false);
     });
 
     test("carries on from an earlier try that made the branch and stopped", async () => {
@@ -242,6 +300,37 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       expect(await git(other.dir, "rev-parse", "task/12-csv-export")).toBe(
         await git(other.dir, "rev-parse", "main"),
       );
+    });
+
+    // Found by Codex review: git hides edits to files marked
+    // assume-unchanged or skip-worktree, so a save would miss them.
+    for (const flag of ["--assume-unchanged", "--skip-worktree"]) {
+      test(`refuses to remove a worktree with an edit git hides (${flag})`, async () => {
+        const r = await repo();
+        const plugin = make(r);
+        const created = await plugin.createWorktree(csv);
+        if (!created.ok) throw new Error(created.message);
+        await git(created.value.path, "update-index", flag, "README.md");
+        writeFileSync(join(created.value.path, "README.md"), "# Edited\n");
+
+        const removed = await plugin.removeWorktree(created.value);
+        expect(removed.ok).toBe(false);
+        expect(readFileSync(join(created.value.path, "README.md"), "utf8")).toBe("# Edited\n");
+      });
+    }
+
+    test("refuses to touch another repository at the path of a worktree that was moved away", async () => {
+      const r = await repo();
+      const plugin = make(r);
+      const created = await plugin.createWorktree(csv);
+      if (!created.ok) throw new Error(created.message);
+      await strangerAt(created.value.path);
+      writeFileSync(join(created.value.path, "theirs.txt"), "their work\n");
+      const theirs = await git(created.value.path, "rev-parse", "HEAD");
+
+      expect((await plugin.removeWorktree(created.value)).ok).toBe(false);
+      expect(await git(created.value.path, "rev-parse", "HEAD")).toBe(theirs);
+      expect(existsSync(join(created.value.path, "theirs.txt"))).toBe(true);
     });
 
     test("does nothing for a worktree that is already gone", async () => {

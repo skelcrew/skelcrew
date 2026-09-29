@@ -66,19 +66,36 @@ export class Git implements VersionControl {
     // It then moves up to main, where a new branch would start.
     const exists = await run(this.repo, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`);
     if (exists.ok) {
-      const onMain = await run(this.repo, "merge-base", "--is-ancestor", branch, this.main);
+      // Full names throughout, so a tag called task/12-csv-export can
+      // never stand in for the branch.
+      const onMain = await run(
+        this.repo,
+        "merge-base",
+        "--is-ancestor",
+        `refs/heads/${branch}`,
+        `refs/heads/${this.main}`,
+      );
       if (!onMain.ok) {
         return {
           ok: false,
           message: `${branch} already exists, with commits that aren't on ${this.main}. Skelcrew won't build on someone else's work. Rename or delete that branch, then retry.`,
         };
       }
-      const moved = await run(this.repo, "branch", "--force", branch, this.main);
+      const moved = await run(this.repo, "branch", "--force", branch, `refs/heads/${this.main}`);
       if (!moved.ok) return { ok: false, message: `git couldn't reset ${branch}: ${moved.err}` };
     }
     const added = exists.ok
       ? await run(this.repo, "worktree", "add", "--quiet", path, branch)
-      : await run(this.repo, "worktree", "add", "--quiet", "-b", branch, path, this.main);
+      : await run(
+          this.repo,
+          "worktree",
+          "add",
+          "--quiet",
+          "-b",
+          branch,
+          path,
+          `refs/heads/${this.main}`,
+        );
     if (!added.ok) return { ok: false, message: `git couldn't create ${branch}: ${added.err}` };
     return { ok: true, value: { path, branch } };
   }
@@ -103,6 +120,21 @@ export class Git implements VersionControl {
       return {
         ok: false,
         message: `${worktree.path} is on ${on}, not ${worktree.branch}. Its work was left as it is.`,
+      };
+    }
+
+    // git doesn't show edits to files marked assume-unchanged or
+    // skip-worktree, so the save would miss them. Clearing the marks isn't
+    // safe either: in a sparse checkout, files left out would look deleted,
+    // and the save would commit that. So nothing is touched.
+    const files = await run(worktree.path, "ls-files", "-v");
+    if (!files.ok)
+      return { ok: false, message: `git couldn't list ${worktree.path}: ${files.err}` };
+    const hidden = files.out.split("\n").filter((line) => /^[a-zS]/.test(line));
+    if (hidden.length > 0) {
+      return {
+        ok: false,
+        message: `${hidden.length} file(s) in ${worktree.path} are marked so git hides their changes. The worktree was left as it is.`,
       };
     }
 
@@ -154,12 +186,24 @@ export class Git implements VersionControl {
     return { ok: true, value: null };
   }
 
-  // Whether the folder is one of this repository's worktrees, by git's own
-  // list of them.
+  // Whether the folder is one of this repository's worktrees. git's list
+  // alone isn't proof: it still lists a worktree whose folder was moved
+  // away, and something else can sit at the old path. So the folder's own
+  // git data must point back to this repository, and the folder must be
+  // its own top level, not a folder inside something else.
   private async isWorktree(path: string): Promise<Done<boolean>> {
+    const real = realpathSync(path);
     const listed = await run(this.repo, "worktree", "list", "--porcelain");
     if (!listed.ok) return { ok: false, message: `git couldn't list worktrees: ${listed.err}` };
-    return { ok: true, value: listed.out.split("\n").includes(`worktree ${realpathSync(path)}`) };
+    if (!listed.out.split("\n").includes(`worktree ${real}`)) return { ok: true, value: false };
+
+    const ours = await run(this.repo, "rev-parse", "--path-format=absolute", "--git-common-dir");
+    const theirs = await run(path, "rev-parse", "--path-format=absolute", "--git-common-dir");
+    const top = await run(path, "rev-parse", "--show-toplevel");
+    if (!ours.ok || !theirs.ok || !top.ok) return { ok: true, value: false };
+    const same =
+      realpathSync(ours.out) === realpathSync(theirs.out) && realpathSync(top.out) === real;
+    return { ok: true, value: same };
   }
 
   // Adds the worktrees folder to .git/info/exclude, once.
