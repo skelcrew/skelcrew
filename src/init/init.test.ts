@@ -53,6 +53,14 @@ const workflow = ".skelcrew/workflow.yml";
 const specSkill = ".claude/skills/spec/SKILL.md";
 const developSkill = ".claude/skills/develop/SKILL.md";
 const dbLine = ".skelcrew/skelcrew.db*";
+// The files the daemon keeps while it runs: its log, the lock that stops a
+// second daemon, and the socket the CLI talks to it through.
+const runtimeLines = [
+  dbLine,
+  ".skelcrew/daemon.log",
+  ".skelcrew/daemon.lock",
+  ".skelcrew/daemon.sock",
+];
 const settings = ".claude/settings.json";
 // The Claude Code permission rules that make it ask you before an agent
 // runs skelcrew approve. Each catches one usual way of typing it: plain,
@@ -110,11 +118,13 @@ describe("initRepository", () => {
     for (const skill of defaultSkills) expect(read(dir, skill.path)).toBe(skill.text);
   });
 
-  // The database, and the files SQLite keeps beside it, are runtime state.
-  test("keeps the database out of git", () => {
+  // The database, the files SQLite keeps beside it, and the daemon's own
+  // files are runtime state.
+  test("keeps the database and the daemon's files out of git", () => {
     const dir = repo(bunApp);
     initRepository(dir);
-    expect(read(dir, ".gitignore").split("\n")).toContain(dbLine);
+    const lines = read(dir, ".gitignore").split("\n");
+    for (const line of runtimeLines) expect(lines).toContain(line);
   });
 
   test("keeps an existing workflow.yml as it is, and uses its checks", () => {
@@ -254,18 +264,34 @@ describe("initRepository", () => {
     expect(result.ok && result.report.created).toContain(developSkill);
   });
 
-  test("adds the database to an existing .gitignore, keeping what it had", () => {
+  test("adds the runtime files to an existing .gitignore, keeping what it had", () => {
     const mine = "node_modules/\n# build output\ndist";
     const dir = repo({ ...bunApp, ".gitignore": mine });
     const result = initRepository(dir);
     const text = read(dir, ".gitignore");
     expect(text.startsWith(`${mine}\n`)).toBe(true);
-    expect(text.split("\n").filter((line) => line === dbLine)).toHaveLength(1);
+    for (const runtime of runtimeLines) {
+      expect(text.split("\n").filter((line) => line === runtime)).toHaveLength(1);
+    }
     expect(result.ok && result.report.updated).toEqual([".gitignore"]);
   });
 
-  test("leaves a .gitignore that already ignores the database alone", () => {
-    const mine = `node_modules/\n${dbLine}\n`;
+  test("adds only the lines a .gitignore is missing", () => {
+    const mine = `node_modules/\n${dbLine}\n/.skelcrew/daemon.log\n`;
+    const dir = repo({ ...bunApp, ".gitignore": mine });
+    const result = initRepository(dir);
+    const text = read(dir, ".gitignore");
+    expect(text.startsWith(mine)).toBe(true);
+    const added = text.slice(mine.length).split("\n");
+    expect(added).toContain(".skelcrew/daemon.lock");
+    expect(added).toContain(".skelcrew/daemon.sock");
+    expect(added).not.toContain(dbLine);
+    expect(added).not.toContain(".skelcrew/daemon.log");
+    expect(result.ok && result.report.updated).toEqual([".gitignore"]);
+  });
+
+  test("leaves a .gitignore that already ignores the runtime files alone", () => {
+    const mine = `node_modules/\n${runtimeLines.join("\n")}\n`;
     const dir = repo({ ...bunApp, ".gitignore": mine });
     const result = initRepository(dir);
     expect(read(dir, ".gitignore")).toBe(mine);
@@ -283,7 +309,7 @@ describe("initRepository", () => {
     const warnings = result.ok ? result.report.warnings : [];
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain(".gitignore");
-    expect(warnings[0]).toContain(dbLine);
+    for (const line of runtimeLines) expect(warnings[0]).toContain(line);
   });
 
   test("keeps the line endings of a .gitignore written on Windows", () => {
@@ -292,7 +318,7 @@ describe("initRepository", () => {
     const text = read(dir, ".gitignore");
     expect(text.startsWith("node_modules/\r\ndist\r\n")).toBe(true);
     expect(text.replaceAll("\r\n", "")).not.toContain("\n");
-    expect(text.split("\r\n")).toContain(dbLine);
+    for (const line of runtimeLines) expect(text.split("\r\n")).toContain(line);
   });
 
   // Git would then never see workflow.yml, so it could never be committed.
