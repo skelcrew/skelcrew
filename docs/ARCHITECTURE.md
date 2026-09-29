@@ -199,6 +199,16 @@ makes every path critical, so nothing merges without your approval. `workflowFil
 writes the file `skelcrew init` will create, with the check commands init finds in the
 repository.
 
+## The daemon
+
+`src/daemon/daemon.ts` is where the CLI's requests become core inputs. `Daemon.open`
+rebuilds the loop from the saved log. `handle(command)` takes one protocol command, turns
+it into inputs for the core through the loop, and answers. It hands out task numbers and
+session names, since the core never makes up IDs. Requests and the tools' replies share one
+queue, so everything happens one at a time. Its tools carry out the core's commands and
+send the results back as new inputs. In this first version they have no git and no checks:
+a command that needs them is answered with a failure at once, so the core never waits.
+
 ## The protocol
 
 `src/protocol/protocol.ts` is how the CLI and the daemon talk: one JSON message per line,
