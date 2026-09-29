@@ -160,6 +160,94 @@ describe("the daemon", () => {
     });
   });
 
+  // Found by review: the real store throws on errors such as a locked
+  // database, and the request then got no answer at all.
+  test("answers every request, even when saving throws", async () => {
+    const store = EventStore.open(":memory:");
+    let broken = false;
+    const log = {
+      appendTask: (...args: Parameters<EventStore["appendTask"]>) => {
+        if (broken) throw new Error("database is locked");
+        return store.appendTask(...args);
+      },
+      appendProject: store.appendProject.bind(store),
+      carriedOut: store.carriedOut.bind(store),
+      loadTasks: store.loadTasks.bind(store),
+      loadProjects: store.loadProjects.bind(store),
+      loadStarts: store.loadStarts.bind(store),
+      loadCommands: store.loadCommands.bind(store),
+    };
+    const opened = Daemon.open({ config, log });
+    if (!opened.ok) throw new Error(opened.message);
+    broken = true;
+    const answer = await opened.value.handle(add("CSV export"));
+    expect(answer.ok).toBe(false);
+    expect(!answer.ok && answer.message).toContain("database is locked");
+    broken = false;
+    expect(await ok(opened.value, add("CSV export"))).toEqual({ task: 1 });
+  });
+
+  // Found by review: a tool's reply whose save threw was dropped, and one
+  // whose save kept failing was retried every second, for ever.
+  test("retries a reply that couldn't be saved a few times, then stops", async () => {
+    const store = EventStore.open(":memory:");
+    let tries = 0;
+    let breakReplies = false;
+    const log = {
+      appendTask: (...args: Parameters<EventStore["appendTask"]>) => {
+        const [events] = args;
+        if (breakReplies && events.some((e) => e.type === "task.blocked")) {
+          tries += 1;
+          throw new Error("database is locked");
+        }
+        return store.appendTask(...args);
+      },
+      appendProject: store.appendProject.bind(store),
+      carriedOut: store.carriedOut.bind(store),
+      loadTasks: store.loadTasks.bind(store),
+      loadProjects: store.loadProjects.bind(store),
+      loadStarts: store.loadStarts.bind(store),
+      loadCommands: store.loadCommands.bind(store),
+    };
+    let sessions = 0;
+    const opened = Daemon.open({
+      config,
+      log,
+      retryMs: 5,
+      retries: 3,
+      newSession: () => {
+        sessions += 1;
+        return `you-${sessions}`;
+      },
+    });
+    if (!opened.ok) throw new Error(opened.message);
+    const daemon = opened.value;
+    await ok(daemon, add("CSV export"));
+    await ok(daemon, { type: "claim", task: task(1) });
+    await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
+    await ok(daemon, { type: "approve", task: task(1), sendBack: null });
+
+    // Claiming in Ready asks for a worktree. Without git its reply is a
+    // failure that blocks the task, and saving that reply now throws.
+    breakReplies = true;
+    await ok(daemon, { type: "claim", task: task(1) });
+    await Bun.sleep(200);
+    expect(tries).toBe(4);
+  });
+
+  // Found by review: a session name the schema refuses threw.
+  test("refuses a claim when it can't name a session", async () => {
+    const opened = Daemon.open({
+      config,
+      log: EventStore.open(":memory:"),
+      newSession: () => "",
+    });
+    if (!opened.ok) throw new Error(opened.message);
+    await ok(opened.value, add("CSV export"));
+    const answer = await opened.value.handle({ type: "claim", task: task(1) });
+    expect(answer.ok).toBe(false);
+  });
+
   test("picks up where it left off after a restart", async () => {
     const first = open();
     await ok(first.daemon, add("CSV export"));

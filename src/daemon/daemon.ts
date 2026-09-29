@@ -26,15 +26,18 @@ export type DaemonOptions = {
   // The core never makes up IDs, so the daemon names each claimed session.
   newSession?: () => string;
   now?: () => number;
+  // A reply whose save failed is sent again after `retryMs`, then twice as
+  // long each time, up to `retries` times.
+  retryMs?: number;
+  retries?: number;
 };
-
-// A reply whose save failed is sent again after this long.
-const retryMs = 1_000;
 
 export class Daemon {
   private queue: Promise<unknown> = Promise.resolve();
   private readonly newSession: () => string;
   private readonly now: () => number;
+  private readonly retryMs: number;
+  private readonly retries: number;
 
   private constructor(
     private readonly loop: Loop,
@@ -42,6 +45,8 @@ export class Daemon {
   ) {
     this.newSession = options.newSession ?? (() => `session-${randomUUID()}`);
     this.now = options.now ?? Date.now;
+    this.retryMs = options.retryMs ?? 1_000;
+    this.retries = options.retries ?? 5;
   }
 
   // Opens the loop from the saved log. The tools must exist before the
@@ -60,8 +65,17 @@ export class Daemon {
   }
 
   // One request from the CLI, answered once everything before it is done.
+  // It always gets an answer: an error, such as a locked database, becomes
+  // a refusal that says what happened.
   handle(command: Command): Promise<Answer> {
-    return this.oneAtATime(() => this.answer(command));
+    return this.oneAtATime(() => {
+      try {
+        return this.answer(command);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { ok: false, message: `Skelcrew couldn't handle that: ${message}` };
+      }
+    });
   }
 
   private answer(command: Command): Answer {
@@ -119,7 +133,10 @@ export class Daemon {
       }
 
       case "claim": {
-        const session = SessionId.parse(this.newSession());
+        const named = SessionId.safeParse(this.newSession());
+        if (!named.success)
+          return { ok: false, message: "Skelcrew couldn't name a session for the claim." };
+        const session = named.data;
         const claimed = this.send(command.task, { by: "human", type: "claim", session });
         if (!claimed.ok) return claimed;
         const task = this.loop.task(command.task);
@@ -152,13 +169,21 @@ export class Daemon {
   }
 
   // A tool's reply, as a new input in the same queue as requests. If it
-  // couldn't be saved, it is sent again a moment later, since the core may
-  // be waiting on it. Any other refusal means it came too late to matter.
-  private reply(taskId: TaskId, input: Input): void {
+  // couldn't be saved, whether the save failed or threw, it is sent again
+  // later, since the core may be waiting on it. After the last try it is
+  // given up. Any other refusal means the reply came too late to matter.
+  private reply(taskId: TaskId, input: Input, attempt = 0): void {
     void this.oneAtATime(() => {
-      const decision = this.loop.send(taskId, input, this.now());
-      if (!decision.ok && decision.rejection.reason.startsWith("The events couldn't be saved")) {
-        setTimeout(() => this.reply(taskId, input), retryMs);
+      let saved: boolean;
+      try {
+        const decision = this.loop.send(taskId, input, this.now());
+        saved =
+          decision.ok || !decision.rejection.reason.startsWith("The events couldn't be saved");
+      } catch {
+        saved = false;
+      }
+      if (!saved && attempt < this.retries) {
+        setTimeout(() => this.reply(taskId, input, attempt + 1), this.retryMs * 2 ** attempt);
       }
     });
   }
