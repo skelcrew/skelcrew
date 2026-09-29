@@ -241,29 +241,16 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       expect(existsSync(join(first.value.path, "README.md"))).toBe(true);
     });
 
-    // Found by Codex review: if the daemon dies while a worktree is being
-    // made, a folder and branch exist, but creation never finished.
-    test("doesn't trust a worktree an earlier try left half made", async () => {
+    // Found by Codex review: a worktree at the right path and branch, made
+    // by someone else, is theirs. Its work must never be removed.
+    test("refuses a worktree it didn't make at its path, and keeps the work in it", async () => {
       const r = await repo();
       const path = join(r.dir, ".skelcrew", "worktrees", "12-csv-export");
       await git(r.dir, "worktree", "add", "-q", "-b", "task/12-csv-export", path, "main");
-      const hook = join(r.dir, ".git", "hooks", "post-checkout");
-      writeFileSync(hook, "#!/bin/sh\nexit 1\n");
-      chmodSync(hook, 0o755);
+      writeFileSync(join(path, "mine.txt"), "someone's work\n");
 
       expect((await make(r).createWorktree(csv)).ok).toBe(false);
-      expect(existsSync(path)).toBe(false);
-    });
-
-    test("finishes a worktree an earlier try left half made", async () => {
-      const r = await repo();
-      const path = join(r.dir, ".skelcrew", "worktrees", "12-csv-export");
-      await git(r.dir, "worktree", "add", "-q", "-b", "task/12-csv-export", path, "main");
-      const plugin = make(r);
-
-      const created = await plugin.createWorktree(csv);
-      if (!created.ok) throw new Error(created.message);
-      expect(await plugin.createWorktree(csv)).toEqual(created);
+      expect(readFileSync(join(path, "mine.txt"), "utf8")).toBe("someone's work\n");
     });
 
     test("carries on from an earlier try that made the branch and stopped", async () => {

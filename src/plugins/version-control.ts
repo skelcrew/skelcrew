@@ -6,8 +6,10 @@
 // but before it was marked done, the command goes out again after the
 // restart. Doing it twice must have the same effect as doing it once. Two
 // calls can also overlap, and must then answer as if one came after the
-// other. A worktree only counts as made once its creation has finished, so
-// one left half made by a crash is made again, not trusted.
+// other. A worktree only counts as made once its creation has finished. One
+// left half made by a crash is made again only with proof the plugin
+// started it and nothing was done in it since. Anything else at its path
+// is someone's work: it is refused and left as it is.
 
 import type { TaskId, Worktree } from "../core/types";
 

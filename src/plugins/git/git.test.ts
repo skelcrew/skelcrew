@@ -1,6 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { TaskId } from "../../core/ids";
-import { versionControlContract } from "../version-control.contract";
+import { git, makeRepo, type Repo, versionControlContract } from "../version-control.contract";
 import { branchName, Git } from "./git";
 
 versionControlContract("git", (repo) => new Git(repo.dir, repo.main));
@@ -27,5 +29,54 @@ describe("branchName", () => {
 
   test("uses only the number for a title with no letters or digits", () => {
     expect(branchName({ taskId, title: "!!!", build: 1 })).toBe("task/12");
+  });
+});
+
+// If the daemon dies while a worktree is being made, the folder and branch
+// can exist without creation having finished. These tests fake that state
+// the way the git plugin leaves it: its "creating" mark, and no "finished"
+// mark.
+describe("a worktree left half made by a crash", () => {
+  const csv = { taskId: TaskId.parse(12), title: "CSV export", build: 1 };
+  let dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+    dirs = [];
+  });
+
+  async function halfMade(): Promise<{ r: Repo; path: string }> {
+    const r = await makeRepo();
+    dirs.push(r.dir);
+    const path = join(r.dir, ".skelcrew", "worktrees", "12-csv-export");
+    mkdirSync(join(r.dir, ".git", "skelcrew-creating"), { recursive: true });
+    writeFileSync(join(r.dir, ".git", "skelcrew-creating", "12-csv-export"), "");
+    await git(r.dir, "worktree", "add", "-q", "-b", "task/12-csv-export", path, "main");
+    return { r, path };
+  }
+
+  test("is made again from the start, and then counts as made", async () => {
+    const { r } = await halfMade();
+    const plugin = new Git(r.dir, r.main);
+    const created = await plugin.createWorktree(csv);
+    if (!created.ok) throw new Error(created.message);
+    expect(await plugin.createWorktree(csv)).toEqual(created);
+  });
+
+  test("isn't trusted: a step that fails now fails, and leaves nothing behind", async () => {
+    const { r, path } = await halfMade();
+    const hook = join(r.dir, ".git", "hooks", "post-checkout");
+    writeFileSync(hook, "#!/bin/sh\nexit 1\n");
+    chmodSync(hook, 0o755);
+
+    expect((await new Git(r.dir, r.main).createWorktree(csv)).ok).toBe(false);
+    expect(existsSync(path)).toBe(false);
+  });
+
+  test("is left as it is if anything was written in it", async () => {
+    const { r, path } = await halfMade();
+    writeFileSync(join(path, "mine.txt"), "someone's work\n");
+
+    expect((await new Git(r.dir, r.main).createWorktree(csv)).ok).toBe(false);
+    expect(existsSync(join(path, "mine.txt"))).toBe(true);
   });
 });

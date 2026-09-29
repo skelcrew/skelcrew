@@ -7,9 +7,10 @@ import {
   mkdirSync,
   readFileSync,
   realpathSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { $ } from "bun";
 import type { Worktree } from "../../core/types";
 import type { Done, VersionControl, WorktreeRequest } from "../version-control";
@@ -70,9 +71,17 @@ export class Git implements VersionControl {
         return { ok: false, message: `${path} exists, but isn't the worktree for ${branch}.` };
       }
       if (await isFinished(path)) return { ok: true, value: { path, branch } };
-      // Half made: an earlier try stopped before it finished, for example
-      // when the daemon died. The core never recorded it, so no agent has
-      // worked in it, and it is made again from the start.
+      // Not finished. It is only made again if there is proof this plugin
+      // started it and stopped, for example when the daemon died, and that
+      // nothing was done in it since. Anything else is someone's work.
+      const halfMade = await this.isHalfMade(path, branch);
+      if (!halfMade.ok) return halfMade;
+      if (!halfMade.value) {
+        return {
+          ok: false,
+          message: `${path} exists, but Skelcrew didn't finish making it, or there is work in it. It was left as it is.`,
+        };
+      }
       const undone = await this.undoCreate(path, branch, false);
       if (!undone.ok) return undone;
     }
@@ -117,6 +126,13 @@ export class Git implements VersionControl {
       const moved = await run(this.repo, "branch", "--force", branch, `refs/heads/${this.main}`);
       if (!moved.ok) return { ok: false, message: `git couldn't reset ${branch}: ${moved.err}` };
     }
+    // The "creating" mark goes in first, as proof for a later try that this
+    // plugin started the worktree, if it stops before finishing.
+    const creating = await this.creatingMark(path);
+    if (!creating.ok) return creating;
+    mkdirSync(dirname(creating.value), { recursive: true });
+    writeFileSync(creating.value, "");
+
     const added = exists.ok
       ? await run(this.repo, "worktree", "add", "--quiet", path, branch)
       : await run(
@@ -133,9 +149,43 @@ export class Git implements VersionControl {
     if (!finished.ok) {
       const failed = `git couldn't create ${branch}: ${finished.err}`;
       const undone = await this.undoCreate(path, branch, !exists.ok);
-      return { ok: false, message: undone.ok ? failed : `${failed} ${undone.message}` };
+      if (!undone.ok) return { ok: false, message: `${failed} ${undone.message}` };
+      rmSync(creating.value, { force: true });
+      return { ok: false, message: failed };
     }
+    rmSync(creating.value, { force: true });
     return { ok: true, value: { path, branch } };
+  }
+
+  // Where the "creating" mark for a worktree goes: in the repository's own
+  // git folder, which outlives the worktree's.
+  private async creatingMark(path: string): Promise<Done<string>> {
+    const common = await run(this.repo, "rev-parse", "--path-format=absolute", "--git-common-dir");
+    if (!common.ok) return { ok: false, message: `git couldn't find its folder: ${common.err}` };
+    return { ok: true, value: join(common.out, "skelcrew-creating", basename(path)) };
+  }
+
+  // Proof that an unfinished worktree is safe to make again: this plugin's
+  // "creating" mark, no changes of any kind in it, and no commits on its
+  // branch beyond main.
+  private async isHalfMade(path: string, branch: string): Promise<Done<boolean>> {
+    const mark = await this.creatingMark(path);
+    if (!mark.ok) return mark;
+    if (!existsSync(mark.value)) return { ok: true, value: false };
+    const status = await run(path, "status", "--porcelain", "--untracked-files=all");
+    if (!status.ok || status.out !== "") return { ok: true, value: false };
+    const files = await run(path, "ls-files", "-v");
+    if (!files.ok || files.out.split("\n").some((line) => /^[a-zS]/.test(line))) {
+      return { ok: true, value: false };
+    }
+    const onMain = await run(
+      this.repo,
+      "merge-base",
+      "--is-ancestor",
+      `refs/heads/${branch}`,
+      `refs/heads/${this.main}`,
+    );
+    return { ok: true, value: onMain.ok };
   }
 
   // git can fail after it made the worktree, for example in a hook. The
