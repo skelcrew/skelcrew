@@ -1,6 +1,10 @@
 // The tests every version-control plugin must pass, run against a
 // throwaway git repository. A plugin's own test file calls
 // versionControlContract with a way to make one.
+//
+// For now, Skelcrew assumes a git repository, to keep things simple (see
+// the spec's Plugins notes). A plugin changes how git is used, not whether.
+// So these tests set up their cases, and check the results, through git.
 
 import { afterEach, describe, expect, test } from "bun:test";
 import {
