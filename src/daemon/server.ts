@@ -89,6 +89,10 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
       socket: paths.socket,
       stop: async () => {
         await listener.stop();
+        // Retries of unsaved replies stop here, before the store closes.
+        // Otherwise they would keep failing against a closed store, and
+        // keep the process from exiting.
+        await opened.value.close();
         store.close();
         try {
           rmSync(paths.socket, { force: true });
