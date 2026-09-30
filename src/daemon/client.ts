@@ -11,7 +11,7 @@ import { Socket } from "node:net";
 import { type Command, encode, MAX_LINE, parseReply } from "../protocol/protocol";
 import type { Answer } from "./daemon";
 import { ALREADY_RUNNING } from "./lock";
-import { daemonPaths, foreignFolder } from "./paths";
+import { daemonPaths, ownSocketFolder } from "./paths";
 
 // What starting the daemon gave. `exited` says why the daemon stopped, or
 // null while it still runs, so a daemon that can't start is reported at
@@ -46,9 +46,11 @@ export async function request(
   const path = found.paths.socket;
   const shared = found.paths.sharedSocketFolder;
   if (shared !== null) {
-    const unsafe = unsafeSocket(shared, path);
+    const unsafe = unsafeFolder(shared);
     if (unsafe !== null) return { ok: false, message: unsafe };
   }
+  // Each try checks the socket first, when it is in the folder in /tmp.
+  const connect = () => (shared === null ? open(path) : openIfOwn(path));
 
   const id = (options.newId ?? randomUUID)();
   const line = encode({ id, command });
@@ -59,15 +61,18 @@ export async function request(
     };
   }
 
-  let connected = await open(path);
+  let connected = await connect();
   if (!connected.ok && connected.missing) {
-    connected = await startAndWait(path, options);
+    connected = await startAndWait(connect, options);
   }
   if (!connected.ok) return { ok: false, message: connected.message };
   return exchange(connected.socket, line, id);
 }
 
-async function startAndWait(path: string, options: ClientOptions): Promise<Connected> {
+async function startAndWait(
+  connect: () => Promise<Connected>,
+  options: ClientOptions,
+): Promise<Connected> {
   const first = await start(options);
   if (!first.ok) return first;
   let started = first.started;
@@ -76,8 +81,11 @@ async function startAndWait(path: string, options: ClientOptions): Promise<Conne
   const giveUpAt = Date.now() + limit;
   let exitedAt: number | null = null;
   let why = "";
+  // The last "already running" refusal, kept for the final message: it
+  // says how to get past a daemon nobody can reach.
+  let running: string | null = null;
   for (;;) {
-    const connected = await open(path);
+    const connected = await connect();
     if (connected.ok || !connected.missing) return connected;
     if (exitedAt === null && started.exited !== undefined) {
       const reason = started.exited();
@@ -93,15 +101,17 @@ async function startAndWait(path: string, options: ClientOptions): Promise<Conne
       if (!why.startsWith(ALREADY_RUNNING)) {
         return { ok: false, missing: true, message: `The daemon stopped while starting. ${why}` };
       }
+      running = why;
       const again = await start(options);
       if (!again.ok) return again;
       started = again.started;
       exitedAt = null;
     }
     if (Date.now() >= giveUpAt) {
+      const reason = exitedAt !== null ? why : running;
       const message =
-        exitedAt !== null
-          ? `The daemon stopped while starting. ${why}`
+        reason !== null
+          ? `The daemon stopped while starting. ${reason}`
           : `The daemon didn't answer within ${limit / 1000} seconds of starting it.`;
       return { ok: false, missing: true, message };
     }
@@ -109,26 +119,19 @@ async function startAndWait(path: string, options: ClientOptions): Promise<Conne
   }
 }
 
-// Why a socket in the shared folder in /tmp can't be trusted, or null if
-// it can. Anyone who can change the folder, or who owns the socket, could
-// answer in the daemon's place and see every command. A folder that
-// doesn't exist yet is fine: the daemon makes it when it starts.
-function unsafeSocket(folder: string, socket: string): string | null {
+// Why the shared folder in /tmp can't be trusted, or null if it can. It
+// is made first if it isn't there, so nobody else can make it while a
+// daemon starts. A folder of the user's that others can change is refused
+// too: someone may have put a socket in it.
+function unsafeFolder(folder: string): string | null {
+  const unsafe = ownSocketFolder(folder);
+  if (unsafe !== null) return unsafe;
   try {
-    const foreign = foreignFolder(folder);
-    if (foreign !== null) return foreign;
-    if ((lstatSync(folder).mode & 0o077) !== 0) {
-      return `${folder} is open to other users, so skelcrew won't use it. Run \`chmod 700 ${folder}\`, then try again.`;
-    }
-    if (lstatSync(socket).uid !== process.getuid?.()) {
-      return `${socket} belongs to another user, so skelcrew won't use it. Remove it, then try again.`;
-    }
-    return null;
+    if ((lstatSync(folder).mode & 0o077) === 0) return null;
   } catch (error) {
-    const code = error instanceof Error && "code" in error ? error.code : undefined;
-    if (code === "ENOENT") return null;
     return `${folder} couldn't be checked: ${describe(error)}`;
   }
+  return `${folder} is open to other users, so skelcrew won't use it. Run \`chmod 700 ${folder}\`, then try again.`;
 }
 
 async function start(
@@ -142,6 +145,26 @@ async function start(
   }
   if (!started.ok) return { ok: false, missing: true, message: started.message };
   return { ok: true, started };
+}
+
+// Connects only to a socket of the user's own. Someone else's could answer
+// in the daemon's place and see every command. No socket yet is fine: the
+// connect then says nobody is there.
+async function openIfOwn(path: string): Promise<Connected> {
+  let owner: number | null = null;
+  try {
+    owner = lstatSync(path).uid;
+  } catch {
+    // Not there. The connect below finds that too.
+  }
+  if (owner !== null && owner !== process.getuid?.()) {
+    return {
+      ok: false,
+      missing: false,
+      message: `${path} belongs to another user, so skelcrew won't use it. Remove it, then try again.`,
+    };
+  }
+  return open(path);
 }
 
 // A socket that doesn't exist, or has nobody listening, means no daemon

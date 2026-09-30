@@ -5,7 +5,7 @@
 // Many connections can be open at once, and each may send many requests.
 // The daemon's own queue still decides them one at a time.
 
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import * as z from "zod";
 import { parseWorkflow } from "../config/workflow";
@@ -13,7 +13,7 @@ import { encode, MAX_LINE, parseRequest, type Reply } from "../protocol/protocol
 import { EventStore } from "../store/store";
 import { type Answer, Daemon, type DaemonOptions } from "./daemon";
 import { takeLock } from "./lock";
-import { daemonPaths, foreignFolder } from "./paths";
+import { daemonPaths, ownSocketFolder } from "./paths";
 
 export type ServeOptions = {
   // How long stopping waits for requests already being answered. Past
@@ -151,9 +151,8 @@ export async function serveUntilSignalled(
 // there could be reached, or stood in for, by someone else.
 function privateFolder(path: string): { ok: true } | { ok: false; message: string } {
   try {
-    mkdirSync(path, { mode: 0o700, recursive: true });
-    const foreign = foreignFolder(path);
-    if (foreign !== null) return { ok: false, message: foreign };
+    const unsafe = ownSocketFolder(path);
+    if (unsafe !== null) return { ok: false, message: unsafe };
     if ((lstatSync(path).mode & 0o077) !== 0) chmodSync(path, 0o700);
     return { ok: true };
   } catch (error) {
