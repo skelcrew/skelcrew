@@ -17,12 +17,14 @@ import { waitingOnYou } from "../core/task";
 import type { BlockReason, Config, Command as CoreCommand, Input, Task } from "../core/types";
 import { Loop, type ReadableLog, type Tools } from "../loop/loop";
 import type { Command } from "../protocol/protocol";
+import type { EventStore } from "../store/store";
 
 export type Answer = { ok: true; result: unknown } | { ok: false; message: string };
 
 export type DaemonOptions = {
   config: Config;
-  log: ReadableLog;
+  // `loadTaskEvents` reads a task's events back for `skelcrew log`.
+  log: ReadableLog & Pick<EventStore, "loadTaskEvents">;
   // The core never makes up IDs, so the daemon names each claimed session.
   newSession?: () => string;
   now?: () => number;
@@ -36,6 +38,7 @@ export class Daemon {
   private queue: Promise<unknown> = Promise.resolve();
   private readonly newSession: () => string;
   private readonly now: () => number;
+  private readonly log: DaemonOptions["log"];
   private readonly retryMs: number;
   private readonly maxRetryMs: number;
   private readonly retryTimers = new Set<ReturnType<typeof setTimeout>>();
@@ -47,6 +50,7 @@ export class Daemon {
   ) {
     this.newSession = options.newSession ?? (() => `session-${randomUUID()}`);
     this.now = options.now ?? Date.now;
+    this.log = options.log;
     this.retryMs = options.retryMs ?? 1_000;
     this.maxRetryMs = options.maxRetryMs ?? 30_000;
   }
@@ -167,8 +171,22 @@ export class Daemon {
           message: command.message,
         });
 
+      // The task's events as saved. The CLI puts them in plain words.
+      case "log": {
+        if (this.find(command.task) === null) {
+          return { ok: false, message: `#${command.task} doesn't exist.` };
+        }
+        const loaded = this.log.loadTaskEvents(command.task);
+        if (!loaded.ok) {
+          return {
+            ok: false,
+            message: `Event ${loaded.seq} of the saved log couldn't be read: ${loaded.reason}`,
+          };
+        }
+        return { ok: true, result: { events: loaded.events } };
+      }
+
       case "done":
-      case "log":
         return { ok: false, message: `\`${command.type}\` isn't built into the daemon yet.` };
     }
   }

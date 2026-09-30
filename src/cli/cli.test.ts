@@ -446,9 +446,7 @@ describe("skelcrew status", () => {
 describe("skelcrew log", () => {
   test("passes on the daemon's refusal", async () => {
     const repo = await repoWithDaemon();
-    expect(await cli(repo, ["log", "1"])).toEqual(
-      refused("`log` isn't built into the daemon yet."),
-    );
+    expect(await cli(repo, ["log", "9"])).toEqual(refused("#9 doesn't exist."));
   });
 });
 
