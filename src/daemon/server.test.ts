@@ -174,6 +174,24 @@ describe("the daemon's socket", () => {
     expect(ids).toEqual(Array.from({ length: 50 }, (_, i) => `r${i}`));
   });
 
+  // Found by review: each new line restarted the wait for quiet, so a
+  // client that kept sending held a stop open for the whole grace period.
+  test("stops within a second, even while a client keeps sending", async () => {
+    const served = await serve(throwawayRepo(dirs), { graceMs: 5_000 });
+    if (!served.ok) throw new Error(served.message);
+    const line = await openLine(served.server.socket);
+    const status = `${JSON.stringify({ id: "s", command: { type: "status" } })}\n`;
+    const sending = setInterval(() => line.send(status), 20);
+    try {
+      const began = Date.now();
+      await served.server.stop();
+      expect(Date.now() - began).toBeLessThan(1_000);
+    } finally {
+      clearInterval(sending);
+      line.close();
+    }
+  }, 15_000);
+
   test("stops listening and removes its socket when stopped", async () => {
     const server = await served(throwawayRepo(dirs));
     const line = await openLine(server.socket);

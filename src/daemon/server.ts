@@ -40,7 +40,10 @@ const defaultGraceMs = 30_000;
 // How long the connections must stay quiet before a stopping daemon closes
 // them. Requests already on their way arrive in that time, and are
 // answered "The daemon is stopping." instead of meeting a closed door.
+// A client that never goes quiet holds the stop open for QUIET_LIMIT_MS
+// at most.
 const QUIET_MS = 50;
+const QUIET_LIMIT_MS = 500;
 
 export async function serve(repo: string, options: ServeOptions = {}): Promise<Served> {
   const found = daemonPaths(repo);
@@ -217,10 +220,10 @@ class Listener {
   private async shutDown(): Promise<void> {
     const closed = new Promise<void>((resolve) => this.server.close(() => resolve()));
     const pending = [...this.inFlight].map((request) => request.done);
-    const deadline = Date.now() + this.graceMs;
     await Promise.race([Promise.all(pending), sleep(this.graceMs)]);
+    const quietBy = Date.now() + QUIET_LIMIT_MS;
     await sleep(QUIET_MS);
-    while (Date.now() - this.lastData < QUIET_MS && Date.now() < deadline) await sleep(QUIET_MS);
+    while (Date.now() - this.lastData < QUIET_MS && Date.now() < quietBy) await sleep(QUIET_MS);
     for (const request of this.inFlight) {
       this.answer(request, { ok: false, message: "The daemon stopped before this finished." });
     }
