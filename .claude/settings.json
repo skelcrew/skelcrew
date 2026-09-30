@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "ask": [
+      "Bash(skelcrew approve *)",
+      "Bash(bunx skelcrew approve *)",
+      "Bash(bun x skelcrew approve *)",
+      "Bash(npx skelcrew approve *)",
+      "Bash(*/skelcrew approve *)"
+    ]
+  }
+}
