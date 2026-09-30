@@ -144,6 +144,7 @@ const taskView = z.object({
   waitingOnYou: z.string().nullable(),
   pullRequest: z.string().nullable(),
   noPullRequest: z.string().nullable(),
+  pullRequestNote: z.string().nullable(),
 });
 
 async function statusOf(daemon: Daemon) {
@@ -325,6 +326,39 @@ describe("a draft pull request for reading", () => {
     const head = await git(repo.dir, "rev-parse", "task/1-csv-export");
     expect(github.shown[1]).toMatchObject({ branch: "task/1-csv-export", head });
     expect(github.opened).toBe(1);
+  });
+
+  // For example, the agent amended its commit after a send-back, and the
+  // push was refused. The link alone would show the old work as if new.
+  test("says the pull request shows older work when the new work couldn't be pushed", async () => {
+    const { daemon, repo, github } = await waitingForApproval();
+    await until(() => github.open.size === 1);
+    const old = await git(repo.dir, "rev-parse", "task/1-csv-export");
+    await ok(daemon, { type: "approve", task: one, sendBack: "Add totals." });
+    github.failure = "git couldn't push the branch: ! [rejected] (non-fast-forward)";
+    await workDone(daemon, "totals.csv");
+    await until(() => github.shown.length === 2);
+    await until(async () => (await statusOf(daemon)).pullRequestNote !== null);
+    expect(await statusOf(daemon)).toMatchObject({
+      waitingOnYou: "merge_approval",
+      pullRequest: "https://github.com/owner/repo/pull/41",
+      noPullRequest: null,
+      pullRequestNote: `It still shows older work, commit ${old.slice(0, 7)}. git couldn't push the branch: ! [rejected] (non-fast-forward)`,
+    });
+  });
+
+  test("says nothing more once the pull request shows the newest work", async () => {
+    const { daemon, github } = await waitingForApproval();
+    await until(async () => (await statusOf(daemon)).pullRequest !== null);
+    expect((await statusOf(daemon)).pullRequestNote).toBeNull();
+    await ok(daemon, { type: "approve", task: one, sendBack: "Add totals." });
+    await workDone(daemon, "totals.csv");
+    await until(() => github.shown.length === 2);
+    await Bun.sleep(50);
+    expect(await statusOf(daemon)).toMatchObject({
+      waitingOnYou: "merge_approval",
+      pullRequestNote: null,
+    });
   });
 
   test("is closed when the task is dropped", async () => {

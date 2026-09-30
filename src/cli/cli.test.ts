@@ -645,6 +645,25 @@ describe("skelcrew status", () => {
     ]);
   });
 
+  test("warns when the pull request shows older work, and says why", async () => {
+    const repo = throwawayRepo(dirs);
+    await fakeDaemon(repo, {
+      tasks: [
+        {
+          ...waitingMerge,
+          pullRequest: "https://github.com/owner/repo/pull/41",
+          noPullRequest: null,
+          pullRequestNote:
+            "It still shows older work, commit 3f9c2ab. `gh` isn't logged in to GitHub. Run `gh auth login`.",
+        },
+      ],
+    });
+    expect((await cli(repo, ["status"])).out.slice(0, 2)).toEqual([
+      "Waiting on you:",
+      "- #1 CSV export: approve its merge. Read it first on GitHub: https://github.com/owner/repo/pull/41 It still shows older work, commit 3f9c2ab. `gh` isn't logged in to GitHub. Run `gh auth login`.",
+    ]);
+  });
+
   test("says why a merge has no pull request", async () => {
     const repo = throwawayRepo(dirs);
     await fakeDaemon(repo, {

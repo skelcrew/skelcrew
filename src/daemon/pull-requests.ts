@@ -44,8 +44,13 @@ export interface PullRequestLog {
 }
 
 // What `status` shows of a task's pull request: its link, or why there is
-// none while its merge waits for you.
-export type Shown = { pullRequest: string | null; noPullRequest: string | null };
+// none while its merge waits for you. `pullRequestNote` warns when the
+// link shows older work than the merge waiting for you, and says why.
+export type Shown = {
+  pullRequest: string | null;
+  noPullRequest: string | null;
+  pullRequestNote: string | null;
+};
 
 // Work that couldn't be shown. It isn't tried again for the same commit
 // until the retry timer next fires.
@@ -91,15 +96,29 @@ export class DraftPullRequests {
 
   shown(task: Task): Shown {
     const open = this.open.get(task.id);
-    if (open !== undefined) return { pullRequest: open.url, noPullRequest: null };
     const failed = this.failed.get(task.id);
-    if (failed !== undefined && waitingOnYou(task) === "merge_approval") {
+    const waiting = task.phase === "checks" && waitingOnYou(task) === "merge_approval";
+    if (open !== undefined) {
+      // For example, after a send-back the agent amended its commit, and
+      // the push was refused. The draft still shows the old commit.
+      let pullRequestNote: string | null = null;
+      if (task.phase === "checks" && waiting && open.head !== task.branch.head) {
+        const why =
+          failed !== undefined && failed.head === task.branch.head
+            ? failed.message
+            : "Skelcrew is pushing the new work.";
+        pullRequestNote = `It still shows older work, commit ${open.head.slice(0, 7)}. ${why}`;
+      }
+      return { pullRequest: open.url, noPullRequest: null, pullRequestNote };
+    }
+    if (failed !== undefined && waiting) {
       return {
         pullRequest: null,
         noPullRequest: `No pull request was opened. ${failed.message}`,
+        pullRequestNote: null,
       };
     }
-    return { pullRequest: null, noPullRequest: null };
+    return { pullRequest: null, noPullRequest: null, pullRequestNote: null };
   }
 
   // Looks at every task again, in the background. One look runs at a

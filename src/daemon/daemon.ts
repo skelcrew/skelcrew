@@ -379,7 +379,7 @@ export class Daemon {
         return this.send(command.task, { by: "human", type: "drop" });
 
       case "status": {
-        const none = { pullRequest: null, noPullRequest: null };
+        const none = { pullRequest: null, noPullRequest: null, pullRequestNote: null };
         const tasks = [...this.loop.tasks()]
           .sort((a, b) => a.id - b.id)
           .map((task) => ({ ...view(task), ...(this.pullRequests?.shown(task) ?? none) }));

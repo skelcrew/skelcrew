@@ -240,7 +240,8 @@ branch, by being merged, dropped or sent back to Spec, gets its draft closed. If
 request can't be opened, such as with no `origin` remote or no `gh`, the task waits as
 always, and `status` says why there is none. Work that failed is tried again every five
 minutes, so after `gh auth login` the draft appears without a restart. `status` gives each task's link as `pullRequest`, or the reason as
-`noPullRequest`.
+`noPullRequest`. When the draft shows older work than the merge waiting for you, such as
+after a push that was refused, `pullRequestNote` says so and why.
 
 ## The daemon's socket and the client
 
@@ -277,7 +278,7 @@ from the socket is checked with Zod first, and a line over 1 MB is refused.
 
 | File | What it holds |
 | --- | --- |
-| `cli.ts` | `run(args, context)`: one command line in, the lines to print and the exit code out. Tests call it as a function. It checks every argument with Zod, finds the repository's main folder through git, so from inside a task's worktree, which holds its own copy of `.skelcrew/`, it still reaches the main folder's daemon, and sends the command through the client. It checks each answer against the shape that command expects. `status` lists what waits on you first, including a task nobody is working on, with the command to claim it, since Skelcrew doesn't start agents itself yet. A merge that waits for you comes with the link to its draft pull request, or the reason there is none. Then it lists tasks by project and phase, each with the session working on it, if any. |
+| `cli.ts` | `run(args, context)`: one command line in, the lines to print and the exit code out. Tests call it as a function. It checks every argument with Zod, finds the repository's main folder through git, so from inside a task's worktree, which holds its own copy of `.skelcrew/`, it still reaches the main folder's daemon, and sends the command through the client. It checks each answer against the shape that command expects. `status` lists what waits on you first, including a task nobody is working on, with the command to claim it, since Skelcrew doesn't start agents itself yet. A merge that waits for you comes with the link to its draft pull request, or the reason there is none. If the draft shows older work, the line says so and why. Then it lists tasks by project and phase, each with the session working on it, if any. |
 | `log.ts` | What `skelcrew log` prints: one line per event, oldest first, with its time and what happened in plain words, like `2026-09-30 10:02  You claimed it, as you-2.` The daemon answers with the task's saved events, and the CLI checks them against the store's event schema before it words them. A reply must stay under 1 MB, and every spec is saved whole. So for a long-lived task, the daemon sends only the newest events that fit and says how many older ones it left out. The CLI prints that count first, like `4 older events are left out.` |
 | `init.ts` | `skelcrew init`: finds the top of the git repository, runs `initRepository` there, and prints its report in a few lines. The report says which checks and setup commands it chose, what init created, linked, updated and left alone, what to do by hand, the warnings, whether Claude Code will ask before `skelcrew approve`, and the next step. A failed init prints its reason and exits 1. |
 | `help.ts` | What `--help` prints, for the program and each command. `skelcrew submit --help` shows the spec's JSON form, since the spec skill sends agents there. |
