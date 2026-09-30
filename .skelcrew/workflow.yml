@@ -1,0 +1,30 @@
+# Skelcrew's rules for this repository.
+
+# These prepare a fresh copy of the task's code, such as installing its
+# dependencies, before the checks run there.
+setup:
+  - "bun install --frozen-lockfile"
+
+# The local gate runs these in a fresh copy of the task's code. Each must pass.
+checks:
+  - "bun run check"
+
+# Failed rounds (gates or merges) before a task is blocked.
+max_attempts: 3
+
+# Agents working at once, spec and develop together, yours included.
+max_running: 2
+
+# always: only you make a spec Ready. never: a complete spec is Ready at once.
+spec_approval: always
+
+# A merge that changes a file matching one of these waits for your approval.
+# "**" matches every file, so every merge waits for you.
+critical_paths:
+  - "**"
+
+# A task that uses this much since its last retry is blocked. It catches an
+# agent stuck in a loop.
+safety_cap:
+  tokens: 2000000
+  minutes: 120
