@@ -387,6 +387,20 @@ describe("skelcrew approve", () => {
     expect(outcome).toEqual(said([`Approved #1. It merged into main as ${main}.`]));
   });
 
+  // The throwaway repository has no origin remote, so gh is never run.
+  test("without an origin remote, the merge waits as before, and status says why there is no pull request", async () => {
+    const repo = await repoWithDaemon();
+    await checked(repo);
+    const line =
+      "- #1 CSV export: approve its merge. No pull request was opened. This repository has no `origin` remote.";
+    for (let i = 0; i < 100; i++) {
+      if ((await cli(repo, ["status"])).out.includes(line)) break;
+      await Bun.sleep(10);
+    }
+    expect((await cli(repo, ["status"])).out.slice(0, 2)).toEqual(["Waiting on you:", line]);
+    expect((await cli(repo, ["approve", "1"])).out[0]).toStartWith("Approved #1. It merged");
+  });
+
   // Main gets its own export.csv, so the task's merge conflicts with it.
   function conflictOnMain(repo: string) {
     writeFileSync(join(repo, "export.csv"), "x,y\n");
@@ -596,6 +610,52 @@ describe("skelcrew status", () => {
       ],
     });
     expect((await cli(repo, ["status"])).out).toContain("- #1 CSV export (merging)");
+  });
+
+  const waitingMerge = {
+    task: 1,
+    title: "CSV export",
+    phase: "checks",
+    step: "awaiting_merge_approval",
+    session: null,
+    project: null,
+    blocked: null,
+    question: null,
+    waitingOnYou: "merge_approval",
+  };
+
+  test("gives the link to a merge's pull request, to read before approving", async () => {
+    const repo = throwawayRepo(dirs);
+    await fakeDaemon(repo, {
+      tasks: [
+        {
+          ...waitingMerge,
+          pullRequest: "https://github.com/owner/repo/pull/41",
+          noPullRequest: null,
+        },
+      ],
+    });
+    expect((await cli(repo, ["status"])).out.slice(0, 2)).toEqual([
+      "Waiting on you:",
+      "- #1 CSV export: approve its merge. Read it first on GitHub: https://github.com/owner/repo/pull/41",
+    ]);
+  });
+
+  test("says why a merge has no pull request", async () => {
+    const repo = throwawayRepo(dirs);
+    await fakeDaemon(repo, {
+      tasks: [
+        {
+          ...waitingMerge,
+          pullRequest: null,
+          noPullRequest: "No pull request was opened. This repository has no `origin` remote.",
+        },
+      ],
+    });
+    expect((await cli(repo, ["status"])).out.slice(0, 2)).toEqual([
+      "Waiting on you:",
+      "- #1 CSV export: approve its merge. No pull request was opened. This repository has no `origin` remote.",
+    ]);
   });
 
   // A claim cut off by a restart loses its answer, so the session shows

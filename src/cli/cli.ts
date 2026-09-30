@@ -483,6 +483,10 @@ const statusResult = z.object({
       blocked: z.string().nullable(),
       question: z.string().nullable(),
       waitingOnYou: z.enum(waitingOn).nullable(),
+      // The draft pull request to read before approving a merge, or why
+      // there is none. A daemon from before pull requests leaves them out.
+      pullRequest: z.string().nullable().optional(),
+      noPullRequest: z.string().nullable().optional(),
     }),
   ),
 });
@@ -561,8 +565,15 @@ function needs(task: TaskView): string {
       return `answer its question: ${task.question ?? ""}`;
     case "spec_approval":
       return "approve its spec.";
-    case "merge_approval":
+    case "merge_approval": {
+      if (typeof task.pullRequest === "string") {
+        return `approve its merge. Read it first on GitHub: ${task.pullRequest}`;
+      }
+      if (typeof task.noPullRequest === "string") {
+        return `approve its merge. ${task.noPullRequest}`;
+      }
       return "approve its merge.";
+    }
     case "revert_failed":
       return "its revert failed. Revert it by hand, or try again.";
     case null:
