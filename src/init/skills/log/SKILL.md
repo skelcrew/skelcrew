@@ -90,6 +90,6 @@ as the developer's own command. In another harness, they type it in a terminal, 
 the `!`. They can also approve with `/approve 12`.
 
 Showing is all this skill does.
-You never run `skelcrew approve` or `skelcrew reject` yourself.
+Never run `skelcrew approve` yourself, and never run `skelcrew reject`.
 
 Write so it makes sense on the first read. The plain answer first. One idea per sentence.

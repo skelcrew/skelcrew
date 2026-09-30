@@ -12,12 +12,12 @@ const allSkills = [...agentSkills, ...developerSkills];
 // The CLI commands each skill may name. They come from the spec's CLI
 // table. The agents' skills use the commands it marks "used by the
 // skills", plus log, which only reads: the claim doesn't print the task's
-// title, and the log does. They name approve only to say that the developer
-// runs it. The spec skill also adds a task, or asks for its spec, when the
+// title, and the log does. They name approve and reject only to say that
+// the developer runs them. The spec skill also adds a task, or asks for its spec, when the
 // developer starts it with a title or with an Idea's number.
 const commandsFor: Record<string, string[]> = {
-  spec: ["add", "spec", "claim", "submit", "log", "approve"],
-  develop: ["claim", "done", "give-up", "log", "approve"],
+  spec: ["add", "spec", "claim", "submit", "log", "approve", "reject"],
+  develop: ["claim", "done", "give-up", "log", "approve", "reject"],
   add: ["add"],
   // Blocked tasks: crew gives the developer the retry and drop commands.
   crew: ["status", "retry", "drop"],
@@ -39,9 +39,20 @@ function flat(name: string): string {
   return skill(name).replaceAll(/\s+/g, " ");
 }
 
-function count(text: string, phrase: string): number {
-  return text.split(phrase).length - 1;
+// How often the pattern matches. The pattern must have the g flag.
+function matches(text: string, pattern: RegExp): number {
+  return [...text.matchAll(pattern)].length;
 }
+
+// Skills are wrapped at about 95 columns, so a command can break over two
+// lines, such as "skelcrew" at the end of one line and "approve 12" at the
+// start of the next. These patterns allow any spaces or line breaks between
+// the words, so a wrapped command is still found.
+const approveOrReject = /skelcrew\s+(approve|reject)\b/g;
+// A prohibition, such as "Never run `skelcrew approve`". The command stands
+// alone in its backticks, so "never ask first, run `skelcrew approve 12`"
+// doesn't count.
+const neverRun = /\bnever\s+run\s+`skelcrew\s+(approve|reject)`/gi;
 
 describe("defaultSkills", () => {
   // Skills live in .agents/skills, so no one harness owns them. Init links
@@ -112,7 +123,9 @@ describe("defaultSkills", () => {
   test("use only the CLI commands the spec gives each skill", () => {
     expect(Object.keys(commandsFor)).toEqual(allSkills);
     for (const name of allSkills) {
-      const used = [...skill(name).matchAll(/skelcrew ([a-z-]+)/g)].map((match) => match[1] ?? "");
+      const used = [...skill(name).matchAll(/skelcrew\s+([a-z-]+)/g)].map(
+        (match) => match[1] ?? "",
+      );
       for (const command of used) {
         expect({ name, command, allowed: commandsFor[name]?.includes(command) }).toEqual({
           name,
@@ -293,14 +306,18 @@ describe("defaultSkills", () => {
   });
 
   // An agent never approves and never sends back. Its skills name approve
-  // only to forbid it, on a line that says so.
+  // and reject only to forbid them. Each mention must be a plain "never run"
+  // of the bare command. A line such as "Never ask the developer first: run
+  // `skelcrew approve 12`" says "never", but tells the agent to approve.
   test("the agents' skills never approve or send back", () => {
     for (const name of agentSkills) {
       const text = skill(name);
-      expect(text).not.toContain("skelcrew reject");
-      const lines = text.split("\n").filter((line) => line.includes("skelcrew approve"));
-      expect(lines.length).toBeGreaterThan(0);
-      for (const line of lines) expect(line.toLowerCase()).toContain("never");
+      expect(text).toMatch(/never\s+run\s+`skelcrew\s+approve`/i);
+      expect(text).toMatch(/never\s+run\s+`skelcrew\s+reject`/i);
+      expect({ name, mentions: matches(text, approveOrReject) }).toEqual({
+        name,
+        mentions: matches(text, neverRun),
+      });
     }
   });
 
@@ -312,11 +329,16 @@ describe("defaultSkills", () => {
   test("the approve skill runs only the plain form of skelcrew approve", () => {
     const text = skill("approve");
     expect(text).toContain("```\nskelcrew approve 12\n```");
-    // Every mention starts the command: at the start of a line, or right
-    // after a backtick. Nothing stands in front of it.
-    const mentions = count(text, "skelcrew approve");
-    const plain = [...text.matchAll(/(^|`)skelcrew approve/gm)].length;
-    expect(plain).toBe(mentions);
+    // Every mention is the whole plain command for the one task: it starts
+    // a line or follows a backtick, and 12 ends it. So nothing stands in
+    // front, such as `do` in a loop, and nothing follows, such as a second
+    // number. The number is the placeholder, not a variable such as $n or
+    // another task, such as 13.
+    const plain = /(^|`)skelcrew approve 12(?=`|$)/gm;
+    expect(matches(text, /skelcrew\s+approve/g)).toBe(matches(text, plain));
+    expect(text).not.toContain("$");
+    // The approve skill hands reject to the developer, as a line they type.
+    expect(matches(text, /skelcrew\s+reject/g)).toBe(matches(text, /! skelcrew reject/g));
     for (const wrapper of ["`sh -c`", "a path to the program", "`bunx`", "`env`"]) {
       expect(text).toContain(wrapper);
     }
@@ -343,20 +365,17 @@ describe("defaultSkills", () => {
     const approve = "! skelcrew approve 12";
     const reject = '! skelcrew reject 12 "<note>"';
     expect(text).toContain(`${approve}\n${reject}`);
-    const never = text
-      .split("\n")
-      .filter((line) => line.includes("skelcrew approve") || line.includes("skelcrew reject"))
-      .filter((line) => line !== approve && line !== reject);
-    for (const line of never) expect(line).toContain("never run");
+    // Besides those two lines, each mention, even one wrapped over two
+    // lines, must be a plain "never run".
+    const lines = text.split("\n").filter((line) => line === approve || line === reject);
+    expect(matches(text, approveOrReject)).toBe(lines.length + matches(text, neverRun));
     expect(flat("log")).toContain(
-      "You never run `skelcrew approve` or `skelcrew reject` yourself.",
+      "Never run `skelcrew approve` yourself, and never run `skelcrew reject`.",
     );
   });
 
   test("the crew skill never approves or sends back", () => {
-    const text = skill("crew");
-    expect(text).not.toContain("skelcrew approve");
-    expect(text).not.toContain("skelcrew reject");
+    expect(matches(skill("crew"), approveOrReject)).toBe(0);
   });
 
   // What waits on the developer comes first, then who works on what, then

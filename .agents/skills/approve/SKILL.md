@@ -53,5 +53,9 @@ Give the command's answer in one sentence. For example:
 - "Approved #12. It merged into main as a1b2c3d." for a merge.
 - A merge that failed says why, and what to do next. Pass that on as it is.
 
-If the developer changes their mind before approving, they can send it back by typing
-`skelcrew reject 12 "<note>"` themselves.
+If the developer changes their mind before approving, they can send it back instead. They
+type this line themselves, with their note:
+
+```
+! skelcrew reject 12 "<note>"
+```

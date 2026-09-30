@@ -169,12 +169,13 @@ SPEC
 
 If it is refused because the spec is missing something, fix what it names and submit again.
 
-Submitting is where your part ends. You never approve a spec. Only the developer does, by
-running `skelcrew approve` themselves. You never run it.
+Submitting is where your part ends. You never approve a spec, and you never send one back.
+Only the developer does either.
 
 ## What you never do
 
-- Never approve anything. Never run `skelcrew approve`. Only the developer runs it.
+- Never approve anything, and never send work back. Never run `skelcrew approve`, and never
+  run `skelcrew reject`. Only the developer runs them.
 - Never edit `.skelcrew/workflow.yml`, `.claude/settings.json`, or the skills in
   `.agents/skills/`. They set the rules you work under, such as whether a spec needs the
   developer's approval. If one looks wrong, tell the developer.

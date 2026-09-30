@@ -186,7 +186,8 @@ These are never yours to do, even when they would get the checks to pass:
   `.agents/skills/`. They set the rules you work under, such as which checks run and what
   needs the developer's approval. If one looks wrong, tell the developer.
 - Never weaken a test or a check to make it pass.
-- Never approve anything. Never run `skelcrew approve`. Only the developer runs it.
+- Never approve anything, and never send work back. Never run `skelcrew approve`, and never
+  run `skelcrew reject`. Only the developer runs them.
 - Never merge the branch. That is never your decision.
 
 If a call is refused because the task was blocked or dropped, stop at once. Tell the
