@@ -179,11 +179,13 @@ type Manager = "bun" | "pnpm" | "yarn" | "npm";
 // 2. The packageManager field in package.json, such as "pnpm@9.12.0".
 //    The developer wrote it down on purpose, and Node's Corepack reads it.
 //    A name init doesn't know, such as "deno@2.0.0", is skipped.
-// 3. A package.json script that runs bun or bunx, such as
+// 3. A bunfig.toml file. It is Bun's own settings file, and no other
+//    package manager reads it.
+// 4. A package.json script that runs bun or bunx, such as
 //    "test": "bun test". That script only works with Bun installed. A
 //    Bun project with no dependencies has no lock file, since bun install
 //    makes none, so this is often the only sign.
-// 4. Nothing else: npm, which comes with Node.
+// 5. Nothing else: npm, which comes with Node.
 function packageManager(dir: string): { name: Manager; lock: boolean } {
   const has = (file: string) => existsSync(join(dir, file));
   if (has("bun.lock") || has("bun.lockb")) return { name: "bun", lock: true };
@@ -193,6 +195,7 @@ function packageManager(dir: string): { name: Manager; lock: boolean } {
   const data = readPackage(dir);
   const named = namedSchema.safeParse(data);
   if (named.success) return { name: named.data.packageManager, lock: false };
+  if (has("bunfig.toml")) return { name: "bun", lock: false };
   const scripts = packageSchema.safeParse(data);
   const runs = scripts.success ? Object.values(scripts.data.scripts ?? {}) : [];
   if (runs.some((script) => runsBun.test(script))) return { name: "bun", lock: false };

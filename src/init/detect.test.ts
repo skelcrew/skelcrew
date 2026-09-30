@@ -114,6 +114,12 @@ describe("detectChecks", () => {
     }
   });
 
+  test("runs a package's scripts with bun when there is a bunfig.toml", () => {
+    const dir = repo({ "package.json": packageJson({ test: "vitest" }), "bunfig.toml": "" });
+    expect(detectChecks(dir)).toEqual({ ok: true, checks: ["bun run test"], warnings: [] });
+    expect(detectSetup(dir)).toEqual(["bun install"]);
+  });
+
   test("uses a check script in place of the typecheck and lint scripts", () => {
     const found = detectChecks(
       repo({
