@@ -210,6 +210,20 @@ describe("defaultSkills", () => {
     expect(text).toContain("Don't ask the developer to confirm first.");
   });
 
+  // "/spec 12 focus on the API" is a title by the rule, but the developer
+  // most likely meant task 12. Adding a task called "12 focus on the API"
+  // would be wrong. So the skill checks for task 12 and asks first.
+  test("the spec skill asks before adding a title that starts with an existing task's number", () => {
+    const text = flat("spec");
+    const asks = text.indexOf("such as `12 focus on the API`");
+    expect(asks).toBeGreaterThan(-1);
+    expect(text).toContain("run `skelcrew log 12`");
+    expect(text).toContain(
+      "If the task exists, ask the developer whether they meant #12, and wait. Add nothing until they answer.",
+    );
+    expect(asks).toBeLessThan(text.indexOf("skelcrew add '<title>' --spec"));
+  });
+
   test("the develop skill claims the task, reports done, and can give up", () => {
     const text = skill("develop");
     expect(text).toContain("skelcrew claim");

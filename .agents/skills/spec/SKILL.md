@@ -24,6 +24,13 @@ First tell a number from a title. It is a task number when it is only digits, wi
 Anything else is a title, such as `CSV export` or `Fix the 404 on login`. So `404` alone is a
 number. To start a task with a title of only digits, the developer adds a word.
 
+**A number and then more words**, such as `12 focus on the API`, is a title by that rule. But
+the developer may have meant task 12, with a note on what to focus on. So first run
+`skelcrew log 12`, with that first number. If it says the task doesn't exist, go on with the
+whole text as a title. If the task exists, ask the developer whether they meant #12, and
+wait. Add nothing until they answer. If they meant #12, spec #12, and take the rest of the
+text as their guidance for the spec.
+
 **With a title**, add the task and ask for its spec in one step:
 
 ```
