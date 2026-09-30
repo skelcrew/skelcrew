@@ -226,9 +226,13 @@ export class Daemon {
           message: command.message,
         });
 
+      // Clears the block. The daemon doesn't start agents yet, so the task
+      // waits in its phase until you claim it again.
+      case "retry":
+        return this.send(command.task, { by: "human", type: "retry" });
+
       case "done":
       case "log":
-      case "retry":
         return { ok: false, message: `\`${command.type}\` isn't built into the daemon yet.` };
     }
   }
