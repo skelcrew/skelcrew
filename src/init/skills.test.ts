@@ -1,12 +1,29 @@
 import { describe, expect, test } from "bun:test";
 import { defaultSkills } from "./skills";
 
-// The skills an agent in your harness uses to report. They are the
-// commands the spec's CLI table marks "used by the skills", plus approve,
-// which a skill names only to say that the developer runs it, and log,
-// which only reads: the claim doesn't print the task's title, and the log
-// does.
-const skillCommands = ["claim", "submit", "done", "ask", "give-up", "approve", "log"];
+// Two kinds of skill. An agent uses spec and develop to work a task and
+// report on it. The developer uses the others for their own verbs: add a
+// task, see what goes on, show one task, approve, and send back.
+const agentSkills = ["spec", "develop"];
+const developerSkills = ["idea", "crew", "show", "approve", "reject"];
+const allSkills = [...agentSkills, ...developerSkills];
+
+// The CLI commands each skill may name. They come from the spec's CLI
+// table. The agents' skills use the commands it marks "used by the
+// skills", plus log, which only reads: the claim doesn't print the task's
+// title, and the log does. They name approve only to say that the developer
+// runs it. The spec skill also adds a task, or asks for its spec, when the
+// developer starts it with a title or with an Idea's number.
+const commandsFor: Record<string, string[]> = {
+  spec: ["add", "spec", "claim", "submit", "log", "approve"],
+  develop: ["claim", "done", "give-up", "log", "approve"],
+  idea: ["add"],
+  // Blocked tasks: crew gives the developer the retry and drop commands.
+  crew: ["status", "retry", "drop"],
+  show: ["status", "log", "approve", "reject", "retry", "drop"],
+  approve: ["status", "log", "approve", "reject"],
+  reject: ["status", "log", "reject"],
+};
 
 function frontmatter(text: string): unknown {
   const match = /^---\n([\s\S]*?)\n---\n/.exec(text);
@@ -17,20 +34,28 @@ function skill(name: string): string {
   return defaultSkills.find((one) => one.path === `.agents/skills/${name}/SKILL.md`)?.text ?? "";
 }
 
+// The skill's text on one line, so a phrase is found wherever it wraps.
+function flat(name: string): string {
+  return skill(name).replaceAll(/\s+/g, " ");
+}
+
+function count(text: string, phrase: string): number {
+  return text.split(phrase).length - 1;
+}
+
 describe("defaultSkills", () => {
   // Skills live in .agents/skills, so no one harness owns them. Init links
   // them into .claude/skills for Claude Code.
-  test("are the spec and develop skills, in .agents/skills", () => {
-    expect(defaultSkills.map((one) => one.path)).toEqual([
-      ".agents/skills/spec/SKILL.md",
-      ".agents/skills/develop/SKILL.md",
-    ]);
+  test("are the agents' spec and develop, then the developer's own verbs, in .agents/skills", () => {
+    expect(defaultSkills.map((one) => one.path)).toEqual(
+      allSkills.map((name) => `.agents/skills/${name}/SKILL.md`),
+    );
   });
 
   // argument-hint only changes how Claude Code shows the skill, and the
   // shared Agent Skills check refuses it, so it stays out.
   test("each starts with a name and a description, and no argument hint", () => {
-    for (const name of ["spec", "develop"]) {
+    for (const name of allSkills) {
       const front = frontmatter(skill(name));
       expect(front).toMatchObject({ name, description: expect.any(String) });
       expect(front).not.toHaveProperty("argument-hint");
@@ -40,7 +65,16 @@ describe("defaultSkills", () => {
   // Not every harness has slash commands, so the description says in
   // plain words when the skill is for.
   test("each description says when to use it without needing a slash command", () => {
-    const asks = { spec: "asks to spec task 12", develop: "asks to build task 12" };
+    const asks = {
+      spec: "asks to spec task 12",
+      develop: "asks to build task 12",
+      idea: "asks to add a task",
+      crew: "asks what is going on",
+      show: "asks where task 12 stands",
+      approve: "asks to approve task 12",
+      reject: "asks to send task 12 back",
+    };
+    expect(Object.keys(asks)).toEqual(allSkills);
     for (const [name, ask] of Object.entries(asks)) {
       expect(frontmatter(skill(name))).toMatchObject({
         description: expect.stringContaining(ask),
@@ -49,29 +83,44 @@ describe("defaultSkills", () => {
   });
 
   // Claude Code swaps $ARGUMENTS for what the developer typed. Other
-  // harnesses would show it as it is, so the skills never use it.
-  test("never rely on $ARGUMENTS, and name the task the developer gave", () => {
-    for (const name of ["spec", "develop"]) {
-      const text = skill(name).replaceAll(/\s+/g, " ");
-      expect(text).not.toContain("$ARGUMENTS");
-      expect(text).toContain("the task the developer named, such as 12");
+  // harnesses would show it as it is, so the skills never use it. Nor do
+  // they name one harness's tools.
+  test("never rely on $ARGUMENTS or on one harness's tools", () => {
+    for (const name of allSkills) {
+      const text = flat(name);
+      for (const word of ["$ARGUMENTS", "$0", "$1", "Bash tool", "AskUserQuestion", "Skill tool"]) {
+        expect({ name, found: text.includes(word) }).toEqual({ name, found: false });
+      }
+    }
+  });
+
+  test("name the task the developer gave", () => {
+    for (const name of ["spec", "develop", "show", "approve", "reject"]) {
+      expect(flat(name)).toContain("the task the developer named, such as 12");
     }
   });
 
   // Claude Code starts each shell command fresh. Other harnesses may too,
   // so the skills don't say which one does.
   test("say that the harness may start each shell command fresh", () => {
-    for (const name of ["spec", "develop"]) {
-      const text = skill(name).replaceAll(/\s+/g, " ");
+    for (const name of agentSkills) {
+      const text = flat(name);
       expect(text).not.toContain("Each shell command starts fresh");
       expect(text).toContain("Your harness may start each shell command fresh");
     }
   });
 
-  test("use only the CLI commands the spec gives the skills", () => {
-    for (const one of defaultSkills) {
-      const used = [...one.text.matchAll(/skelcrew ([a-z-]+)/g)].map((match) => match[1] ?? "");
-      for (const command of used) expect(skillCommands).toContain(command);
+  test("use only the CLI commands the spec gives each skill", () => {
+    expect(Object.keys(commandsFor)).toEqual(allSkills);
+    for (const name of allSkills) {
+      const used = [...skill(name).matchAll(/skelcrew ([a-z-]+)/g)].map((match) => match[1] ?? "");
+      for (const command of used) {
+        expect({ name, command, allowed: commandsFor[name]?.includes(command) }).toEqual({
+          name,
+          command,
+          allowed: true,
+        });
+      }
     }
   });
 
@@ -79,6 +128,10 @@ describe("defaultSkills", () => {
   // differently. An agent told to run one of these would fail, or do what
   // Skelcrew now does itself: agents here never push, open pull requests or
   // keep their own record. Add to this list when another old word turns up.
+  //
+  // The show skill is named like the old `skelcrew show` command. The
+  // skill is fine: the command is still banned, as a command, in every
+  // skill, and no skill may name a command it wasn't given (above).
   test("never name a command or place from the earlier Skelcrew", () => {
     const old = [
       "skelcrew show",
@@ -108,7 +161,13 @@ describe("defaultSkills", () => {
       "/run",
     ];
     for (const one of defaultSkills) {
-      const text = one.text.replaceAll(/\s+/g, " ");
+      // The developer reads a merge's diff in the draft pull request that
+      // Skelcrew opens. So a developer's skill may point to that draft.
+      // Nothing else about pull requests is allowed, and the agents' skills
+      // may not mention one at all.
+      const developers = developerSkills.some((name) => one.path.includes(`/${name}/`));
+      const whole = one.text.replaceAll(/\s+/g, " ");
+      const text = developers ? whole.replaceAll("draft pull request", "draft") : whole;
       expect({ path: one.path, found: old.filter((word) => text.includes(word)) }).toEqual({
         path: one.path,
         found: [],
@@ -122,6 +181,19 @@ describe("defaultSkills", () => {
     expect(text).toContain("skelcrew submit");
   });
 
+  // Typing /spec with a title is the ask for a spec, so the skill adds the
+  // task and goes on. With an Idea's number, it asks for the spec itself
+  // instead of stopping at the refused claim.
+  test("the spec skill takes a title or a number, and says how it tells them apart", () => {
+    const text = flat("spec");
+    expect(text).toContain(
+      "It is a task number when it is only digits, with or without a # in front, such as 12 or #12.",
+    );
+    expect(text).toContain('skelcrew add "<title>" --spec');
+    expect(text).toContain("skelcrew spec 12");
+    expect(text).toContain("Don't ask the developer to confirm first.");
+  });
+
   test("the develop skill claims the task, reports done, and can give up", () => {
     const text = skill("develop");
     expect(text).toContain("skelcrew claim");
@@ -129,28 +201,36 @@ describe("defaultSkills", () => {
     expect(text).toContain("skelcrew give-up");
   });
 
-  // Only the developer starts a task. Claude must not start one because
-  // the conversation seemed to call for it.
-  test("only the developer can start them", () => {
-    for (const name of ["spec", "develop"]) {
+  // Only the developer starts a task, approves or sends back. Claude must
+  // not do any of these because the conversation seemed to call for it.
+  // Claude may add an idea, give an overview, or show a task by itself,
+  // since they only add a task or read.
+  test("only the developer can start the ones that start, approve or send back work", () => {
+    for (const name of ["spec", "develop", "approve", "reject"]) {
       expect(frontmatter(skill(name))).toMatchObject({ "disable-model-invocation": true });
+    }
+    for (const name of ["idea", "crew", "show"]) {
+      expect(frontmatter(skill(name))).not.toHaveProperty("disable-model-invocation");
     }
   });
 
-  test("ask for a task number instead of claiming nothing", () => {
-    for (const name of ["spec", "develop"]) {
+  test("ask for a task number instead of acting on nothing", () => {
+    for (const name of ["develop", "show", "approve", "reject"]) {
       expect(skill(name)).toContain(
         "If you weren't given a task number, ask the developer which task, and wait.",
       );
     }
+    expect(skill("spec")).toContain(
+      "If you weren't given a task number or a title, ask the developer which task, and wait.",
+    );
   });
 
   // Started without a number, $ARGUMENTS is empty, so "skelcrew claim
   // $ARGUMENTS" would read as a claim of nothing. The skill names the
   // number the developer gave instead.
   test("claim the task number the developer gave", () => {
-    for (const name of ["spec", "develop"]) {
-      const text = skill(name).replaceAll(/\s+/g, " ");
+    for (const name of agentSkills) {
+      const text = flat(name);
       expect(text).not.toContain("claim $ARGUMENTS");
       expect(text).not.toContain("submit $ARGUMENTS");
       expect(text).toContain("with the task number the developer gave");
@@ -180,10 +260,16 @@ describe("defaultSkills", () => {
     }
   });
 
+  // The developer's commands carry no session: the developer isn't an
+  // agent working a task.
+  test("the developer's skills run their commands without a session", () => {
+    for (const name of developerSkills) expect(skill(name)).not.toContain("SKELCREW_SESSION");
+  });
+
   // The claim's answer doesn't name a worktree yet, so the skill can't
   // promise one.
   test("the develop skill stops if the claim doesn't say where to work", () => {
-    const text = skill("develop").replaceAll(/\s+/g, " ");
+    const text = flat("develop");
     expect(text).not.toContain("The claim tells you the worktree");
     expect(text).toContain("If it doesn't, stop and tell the developer.");
   });
@@ -193,8 +279,8 @@ describe("defaultSkills", () => {
   // about, and what the skills say. An agent that edits them changes its
   // own rules.
   test("never edit the files that set the rules", () => {
-    for (const name of ["spec", "develop"]) {
-      const text = skill(name).replaceAll(/\s+/g, " ");
+    for (const name of agentSkills) {
+      const text = flat(name);
       expect(text).toContain("Never edit `.skelcrew/workflow.yml`");
       expect(text).toContain("`.claude/settings.json`");
       expect(text).toContain("`.agents/skills/`");
@@ -203,10 +289,121 @@ describe("defaultSkills", () => {
     }
   });
 
-  // The CLI isn't built yet, so the skill can't name its flags. Its help
-  // says how the spec is passed.
-  test("the spec skill reads how to pass the spec before submitting", () => {
-    expect(skill("spec")).toContain("skelcrew submit --help");
+  // An agent never approves and never sends back. Its skills name approve
+  // only to forbid it, on a line that says so.
+  test("the agents' skills never approve or send back", () => {
+    for (const name of agentSkills) {
+      const text = skill(name);
+      expect(text).not.toContain("skelcrew reject");
+      const lines = text.split("\n").filter((line) => line.includes("skelcrew approve"));
+      expect(lines.length).toBeGreaterThan(0);
+      for (const line of lines) expect(line.toLowerCase()).toContain("never");
+    }
+  });
+
+  // /approve is the one skill that runs approve. It runs only the plain
+  // form, because Claude Code's ask rule in .claude/settings.json matches
+  // the command as written. So `sh -c 'skelcrew approve 12'`, a path to
+  // the program, or a variable set in front could run without the
+  // developer's confirmation.
+  test("the approve skill runs only the plain form of skelcrew approve", () => {
+    const text = skill("approve");
+    expect(text).toContain("```\nskelcrew approve 12\n```");
+    // Every mention starts the command: at the start of a line, or right
+    // after a backtick. Nothing stands in front of it.
+    const mentions = count(text, "skelcrew approve");
+    const plain = [...text.matchAll(/(^|`)skelcrew approve/gm)].length;
+    expect(plain).toBe(mentions);
+    for (const wrapper of ["`sh -c`", "a path to the program", "`bunx`", "`env`"]) {
+      expect(text).toContain(wrapper);
+    }
+  });
+
+  test("the approve skill says the harness asks the developer to confirm, and that this is intended", () => {
+    const text = flat("approve");
+    expect(text).toContain("Claude Code will ask the developer to confirm.");
+    expect(text).toContain("This is intended.");
+  });
+
+  test("the approve skill shows the task before it approves", () => {
+    const text = skill("approve");
+    const shows = text.indexOf("## 1. Show the task");
+    const approves = text.indexOf("## 2. Approve it");
+    expect(shows).toBeGreaterThan(-1);
+    expect(approves).toBeGreaterThan(shows);
+  });
+
+  // /show only reads. It hands the developer the two commands to type, and
+  // never runs either itself. Nor does /crew.
+  test("the show skill ends with both lines for the developer, and runs neither", () => {
+    const text = skill("show");
+    const approve = "! skelcrew approve 12";
+    const reject = '! skelcrew reject 12 "<note>"';
+    expect(text).toContain(`${approve}\n${reject}`);
+    const never = text
+      .split("\n")
+      .filter((line) => line.includes("skelcrew approve") || line.includes("skelcrew reject"))
+      .filter((line) => line !== approve && line !== reject);
+    for (const line of never) expect(line).toContain("never run");
+    expect(flat("show")).toContain(
+      "You never run `skelcrew approve` or `skelcrew reject` yourself.",
+    );
+  });
+
+  test("the crew skill never approves or sends back", () => {
+    const text = skill("crew");
+    expect(text).not.toContain("skelcrew approve");
+    expect(text).not.toContain("skelcrew reject");
+  });
+
+  // What waits on the developer comes first, then who works on what, then
+  // the rest. `skelcrew status` has no form for programs yet, so the skill
+  // reads its text.
+  test("the crew skill reads status and tells what waits on the developer first", () => {
+    const text = skill("crew");
+    expect(text).toContain("skelcrew status");
+    const order = ["### Waiting on you", "### Who is working on what", "### The rest"].map(
+      (heading) => text.indexOf(heading),
+    );
+    for (const place of order) expect(place).toBeGreaterThan(-1);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(flat("crew")).toContain("Leave out dropped tasks, unless the developer asks for them.");
+  });
+
+  test("the show skill reads the task's line in status and its log", () => {
+    const text = skill("show");
+    expect(text).toContain("skelcrew status");
+    expect(text).toContain("skelcrew log 12");
+  });
+
+  test("the show skill says what to look at for a merge that waits", () => {
+    const text = flat("show");
+    for (const part of [
+      "draft pull request",
+      "git diff --stat",
+      "acceptance criterion",
+      "outside the spec's scope",
+      "changed tests",
+      "critical",
+    ]) {
+      expect(text).toContain(part);
+    }
+  });
+
+  test("the reject skill sends it back with the developer's note, and asks for one if missing", () => {
+    const text = flat("reject");
+    expect(text).toContain('skelcrew reject 12 "<note>"');
+    expect(text).toContain(
+      "If you weren't given a note, ask the developer what to change, and wait.",
+    );
+  });
+
+  // An idea waits until the developer asks for its spec. So /idea only
+  // captures it.
+  test("the idea skill adds the task as an Idea, and asks for no spec", () => {
+    const text = flat("idea");
+    expect(text).toContain('skelcrew add "<title>"');
+    expect(text).not.toContain("--spec");
   });
 
   // The spec skill's method: understand the code before asking anything,
@@ -222,7 +419,7 @@ describe("defaultSkills", () => {
   });
 
   test("the spec skill asks its questions together, each with a recommended answer", () => {
-    const text = skill("spec").replaceAll(/\s+/g, " ");
+    const text = flat("spec");
     expect(text).toContain("in one message, each question with the answer you recommend first");
     expect(text).not.toContain("one at a time");
   });
@@ -240,7 +437,12 @@ describe("defaultSkills", () => {
     const check = text.indexOf("### Check every sentence about today");
     expect(check).toBeGreaterThan(-1);
     expect(check).toBeLessThan(text.indexOf("## 3. Submit it"));
-    expect(text.replaceAll(/\s+/g, " ")).toContain("run the command or read the line");
+    expect(flat("spec")).toContain("run the command or read the line");
+  });
+
+  // The CLI's help says how to pass the spec.
+  test("the spec skill reads how to pass the spec before submitting", () => {
+    expect(skill("spec")).toContain("skelcrew submit --help");
   });
 
   // The develop skill's method, in order: understand the code, test first,
@@ -268,19 +470,19 @@ describe("defaultSkills", () => {
   });
 
   test("the develop skill reviews at most three rounds, then asks the developer", () => {
-    const text = skill("develop").replaceAll(/\s+/g, " ");
+    const text = flat("develop");
     expect(text).toContain("At most three rounds.");
     expect(text).toContain("don't report done. Tell the developer what remains");
   });
 
   test("the develop skill verifies each acceptance criterion by running something", () => {
-    const text = skill("develop").replaceAll(/\s+/g, " ");
-    expect(text).toContain("establish each acceptance criterion by running something");
+    expect(flat("develop")).toContain("establish each acceptance criterion by running something");
   });
 
   test("the develop skill reports honestly", () => {
-    const text = skill("develop").replaceAll(/\s+/g, " ");
-    expect(text).toContain("Never claim a check ran, or a criterion holds, unless you saw it.");
+    expect(flat("develop")).toContain(
+      "Never claim a check ran, or a criterion holds, unless you saw it.",
+    );
   });
 
   test("the develop skill names each thing it must never do", () => {
@@ -300,8 +502,8 @@ describe("defaultSkills", () => {
   });
 
   test("stop when the task is blocked or dropped", () => {
-    for (const name of ["spec", "develop"]) {
-      const text = skill(name).replaceAll(/\s+/g, " ");
+    for (const name of agentSkills) {
+      const text = flat(name);
       expect(text).toContain(
         "If a call is refused because the task was blocked or dropped, stop at once.",
       );
