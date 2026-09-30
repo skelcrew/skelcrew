@@ -1,13 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import {
-  chmodSync,
-  existsSync,
-  lstatSync,
-  mkdtempSync,
-  rmdirSync,
-  symlinkSync,
-  unlinkSync,
-} from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdtempSync, symlinkSync } from "node:fs";
 import { createServer, type Server as NetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
