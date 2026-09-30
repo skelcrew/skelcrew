@@ -470,7 +470,7 @@ export class Git implements VersionControl {
     const found = await run(this.repo, "rev-parse", "--git-path", "info/exclude");
     if (!found.ok) return { ok: false, message: `git couldn't find its ignore file: ${found.err}` };
     const file = isAbsolute(found.out) ? found.out : join(this.repo, found.out);
-    for (const folder of [worktreesFolder, mergingFolder, revertingFolder]) {
+    for (const folder of [worktreesFolder, mergingFolder, revertingFolder, checkingFolder]) {
       const line = `/${folder}/`;
       const current = existsSync(file) ? readFileSync(file, "utf8") : "";
       if (!current.split("\n").includes(line)) {

@@ -407,6 +407,33 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       return { plugin, worktree, head };
     }
 
+    // Found while dogfooding: while checks ran, their copy showed up in
+    // `git status`, and `git add -A` picked it up as an embedded repository.
+    test("keeps its copy out of git in the repository while the checks run", async () => {
+      const r = await repo();
+      const { plugin, head } = await committed(r);
+      let status = "not read";
+      let staged = "not read";
+      await plugin.checkCommit({ taskId: csv.taskId, head }, async () => {
+        status = await git(r.dir, "status", "--porcelain");
+        staged = await git(r.dir, "add", "--all", "--dry-run");
+        return { ok: true, value: null };
+      });
+      expect(status).toBe("");
+      expect(staged).toBe("");
+    });
+
+    test("lists its copy's folder in git's ignore list once, however often it checks", async () => {
+      const r = await repo();
+      const { plugin, head } = await committed(r);
+      const passes: RunChecks = async () => ({ ok: true, value: null });
+      await plugin.checkCommit({ taskId: csv.taskId, head }, passes);
+      await plugin.checkCommit({ taskId: csv.taskId, head }, passes);
+      const exclude = join(r.dir, await git(r.dir, "rev-parse", "--git-path", "info/exclude"));
+      const lines = readFileSync(exclude, "utf8").split("\n");
+      expect(lines.filter((line) => line === "/.skelcrew/checking/")).toHaveLength(1);
+    });
+
     test("runs the checks on exactly the commit, not on uncommitted edits", async () => {
       const r = await repo();
       const { plugin, worktree, head } = await committed(r);
