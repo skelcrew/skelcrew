@@ -512,4 +512,26 @@ describe("running a program", () => {
       else process.env.GIT_SSH_COMMAND = saved;
     }
   });
+
+  // Decided with the developer: a repository's own ssh command, such as
+  // one that goes through a password manager's ssh agent, is kept too.
+  // Skelcrew's setting would otherwise replace it.
+  test("keeps the repository's core.sshCommand", async () => {
+    const repo = await makeRepo();
+    const saved = { command: process.env.GIT_SSH_COMMAND, ssh: process.env.GIT_SSH };
+    delete process.env.GIT_SSH_COMMAND;
+    delete process.env.GIT_SSH;
+    try {
+      await git(repo.dir, "config", "core.sshCommand", "ssh -i ~/.ssh/work");
+      const ran = await runProgram(["sh", "-c", 'printf "%s" "$GIT_SSH_COMMAND"'], {
+        cwd: repo.dir,
+        timeoutMs: 5_000,
+      });
+      expect(ran).toEqual({ exitCode: 0, stdout: "", stderr: "" });
+    } finally {
+      if (saved.command !== undefined) process.env.GIT_SSH_COMMAND = saved.command;
+      if (saved.ssh !== undefined) process.env.GIT_SSH = saved.ssh;
+      rmSync(repo.dir, { recursive: true, force: true });
+    }
+  });
 });

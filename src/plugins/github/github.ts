@@ -288,9 +288,30 @@ function parseCreated(out: string): Done<PullRequest> {
 // password, ssh won't ask for a passphrase or about a new host, and gh
 // won't prompt or check for updates. A program still running at its time
 // limit is killed.
+// Whether git has an ssh command set for the folder, in any of its config
+// files. Any failure, such as no git, counts as none.
+function hasSshCommand(cwd: string): boolean {
+  try {
+    const ran = Bun.spawnSync(["git", "config", "--get", "core.sshCommand"], {
+      cwd,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    return ran.exitCode === 0 && ran.stdout.toString().trim() !== "";
+  } catch {
+    return false;
+  }
+}
+
 export async function runProgram(command: string[], options: RunOptions): Promise<Ran> {
-  // Your own ssh command, such as one that picks a key, is kept.
-  const ownSsh = process.env.GIT_SSH_COMMAND !== undefined || process.env.GIT_SSH !== undefined;
+  // Your own ssh command, such as one that picks a key or goes through a
+  // password manager's agent, is kept: in the environment, or as the
+  // repository's core.sshCommand. The time limit still stops it if it waits
+  // for an answer.
+  const ownSsh =
+    process.env.GIT_SSH_COMMAND !== undefined ||
+    process.env.GIT_SSH !== undefined ||
+    hasSshCommand(options.cwd);
   let child: ReturnType<typeof Bun.spawn<"pipe", "pipe", "pipe">>;
   try {
     child = Bun.spawn(command, {
