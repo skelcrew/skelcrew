@@ -41,6 +41,32 @@ export type RevertRequest = { taskId: TaskId; commit: CommitSha; reason: string 
 // title, so the daemon adds the task's title for the branch name.
 export type WorktreeRequest = { taskId: TaskId; title: string; build: number };
 
+// How many characters of the title a short name keeps, at most.
+const maxTitleLength = 40;
+
+// The name a task goes by in the repository, such as "12-csv-export". Its
+// branch is "task/12-csv-export", and its spec file
+// "docs/specs/12-csv-export.md". The title keeps only lowercase letters and
+// digits, joined by dashes. A title longer than 40 characters is cut after
+// the last whole word that fits, so "take-a-discount-off-the-total-a-whole-
+// percentage" becomes "take-a-discount-off-the-total-a-whole". Only a first
+// word longer than 40 characters is cut inside the word. A title with no
+// letters or digits leaves only the number, such as "12".
+export function shortName(taskId: TaskId, title: string): string {
+  const all = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  let words = "";
+  for (const word of all.split("-")) {
+    const longer = words === "" ? word : `${words}-${word}`;
+    if (longer.length > maxTitleLength) break;
+    words = longer;
+  }
+  if (words === "") words = all.slice(0, maxTitleLength);
+  return words === "" ? String(taskId) : `${taskId}-${words}`;
+}
+
 export interface VersionControl {
   // A new worktree for this build of the task, on a new branch from main,
   // named after the task: "task/12-csv-export", then "task/12-csv-export-2"
