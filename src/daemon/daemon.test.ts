@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as z from "zod";
 import { localChecks } from "../checks/checks";
 import { ProjectId, SessionId, TaskId } from "../core/ids";
 import type { Config } from "../core/types";
+import { Loop } from "../loop/loop";
 import { Git } from "../plugins/git/git";
 import type { VersionControl } from "../plugins/version-control";
 import { git, makeRepo } from "../plugins/version-control.contract";
@@ -546,7 +547,7 @@ describe("the daemon with git", () => {
         await real.createWorktree(request);
         return new Promise(() => {});
       },
-      readBranch: (worktree) => real.readBranch(worktree),
+      readBranch: (worktree, specFile) => real.readBranch(worktree, specFile),
       merge: (request, runChecks) => real.merge(request, runChecks),
       revert: (request) => real.revert(request),
       removeWorktree: (worktree) => real.removeWorktree(worktree),
@@ -584,7 +585,7 @@ describe("the daemon with git", () => {
         await released;
         return real.createWorktree(request);
       },
-      readBranch: (worktree) => real.readBranch(worktree),
+      readBranch: (worktree, specFile) => real.readBranch(worktree, specFile),
       merge: (request, runChecks) => real.merge(request, runChecks),
       revert: (request) => real.revert(request),
       removeWorktree: (worktree) => real.removeWorktree(worktree),
@@ -901,5 +902,118 @@ describe("the daemon with git", () => {
       phase: "in_progress",
       worktree: { path, branch: "task/1-csv-export" },
     });
+  });
+});
+
+// Decided by the developer: the approved spec is a Markdown file in the
+// repository, docs/specs/<number>-<short name>.md. It lands on main with
+// the work, so it shows in the diff you review and outlives Skelcrew.
+describe("the spec as a file", () => {
+  const repos: string[] = [];
+  afterEach(() => {
+    for (const dir of repos.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  const specPath = join("docs", "specs", "1-csv-export.md");
+  // What the fixture spec looks like as a file.
+  const specText = `# #1 CSV export
+
+The spec task #1 was built from.
+
+## Scope
+
+Add a CSV export button to the reports page.
+
+## Acceptance criteria
+
+- Clicking Export downloads a CSV of the visible rows.
+`;
+
+  // A daemon for a real repository on `store`, with numbered sessions
+  // starting after `sessions`.
+  function openInRepo(dir: string, store: EventStore, sessions = 0) {
+    const opened = Daemon.open({
+      config: { ...config, criticalPaths: ["**"] },
+      log: store,
+      versionControl: new Git(dir, "main"),
+      runChecks: localChecks(["true"]),
+      newSession: () => {
+        sessions += 1;
+        return `you-${sessions}`;
+      },
+    });
+    if (!opened.ok) throw new Error(opened.message);
+    return opened.value;
+  }
+
+  async function claimedInRepo() {
+    const repo = await makeRepo();
+    repos.push(repo.dir);
+    const store = EventStore.open(":memory:");
+    const daemon = openInRepo(repo.dir, store);
+    await readyToClaim(daemon);
+    const claim = z
+      .object({ worktree: z.object({ path: z.string() }) })
+      .parse(await ok(daemon, { type: "claim", task: task(1) }));
+    return { daemon, repo, store, path: claim.worktree.path };
+  }
+
+  test("a claimed Ready task's branch has its spec, committed before any work", async () => {
+    const { path } = await claimedInRepo();
+    expect(readFileSync(join(path, specPath), "utf8")).toBe(specText);
+    expect(await git(path, "rev-list", "--count", "main..HEAD")).toBe("1");
+    expect(await git(path, "status", "--porcelain")).toBe("");
+  });
+
+  test("done is still refused when the agent made no commits of its own", async () => {
+    const { daemon } = await claimedInRepo();
+    expect(await daemon.handle({ type: "done", task: task(1), session: you(2) })).toEqual({
+      ok: false,
+      message: "The branch has no commits.",
+    });
+  });
+
+  test("the merged commit on main holds the spec next to the work", async () => {
+    const { daemon, repo, path } = await claimedInRepo();
+    writeFileSync(join(path, "export.csv"), "a,b\n");
+    await git(path, "add", "export.csv");
+    await git(path, "commit", "-q", "-m", "Export");
+    await ok(daemon, { type: "done", task: task(1), session: you(2) });
+    await ok(daemon, { type: "approve", task: task(1), sendBack: null });
+    expect(await git(repo.dir, "show", "--format=", "--name-only", "main")).toBe(
+      `${specPath}\nexport.csv`,
+    );
+    expect(await git(repo.dir, "show", `main:${specPath}`)).toBe(specText.trim());
+  });
+
+  test("a second build, after the spec was sent back, has the revised spec", async () => {
+    const { daemon, repo, store } = await claimedInRepo();
+    await daemon.close();
+    // No CLI command sends a task in progress back to its spec yet. So the
+    // send-back goes to the core through the loop, as that command will.
+    const loop = Loop.open(config, { carryOut: (_command, finished) => finished() }, store);
+    if (!loop.ok) throw new Error(loop.reason);
+    const sent = loop.loop.send(task(1), {
+      by: "human",
+      type: "back_to_spec",
+      note: "Export only the selected rows.",
+    });
+    if (!sent.ok) throw new Error(sent.rejection.reason);
+
+    const again = openInRepo(repo.dir, store, 2);
+    await ok(again, { type: "claim", task: task(1) });
+    const revised = { ...spec, scope: "Add a CSV export of the selected rows." };
+    await ok(again, { type: "submit", task: task(1), session: you(3), spec: revised });
+    await ok(again, { type: "approve", task: task(1), sendBack: null });
+    const claim = z
+      .object({ worktree: z.object({ path: z.string(), branch: z.string() }) })
+      .parse(await ok(again, { type: "claim", task: task(1) }));
+    expect(claim.worktree.branch).toBe("task/1-csv-export-2");
+    expect(readFileSync(join(claim.worktree.path, specPath), "utf8")).toBe(
+      specText.replace(
+        "Add a CSV export button to the reports page.",
+        "Add a CSV export of the selected rows.",
+      ),
+    );
   });
 });

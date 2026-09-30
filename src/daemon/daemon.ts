@@ -21,6 +21,7 @@ import type {
   Config,
   Command as CoreCommand,
   Input,
+  Spec,
   Task,
   TaskEvent,
   Worktree,
@@ -29,6 +30,7 @@ import { Loop, type ReadableLog, type Tools } from "../loop/loop";
 import type { RunChecks, VersionControl } from "../plugins/version-control";
 import { type Command, MAX_LINE } from "../protocol/protocol";
 import type { EventStore } from "../store/store";
+import { specFile, specPath } from "./spec-file";
 
 export type Answer = { ok: true; result: unknown } | { ok: false; message: string };
 
@@ -118,6 +120,7 @@ export class Daemon {
     tools.connect(
       (taskId, input, finished) => daemon.reply(taskId, input, finished),
       (taskId) => daemon.find(taskId)?.title ?? `#${taskId}`,
+      (taskId) => specOf(daemon.find(taskId)),
     );
     return { ok: true, value: daemon };
   }
@@ -160,9 +163,10 @@ export class Daemon {
     // The agent waits for their result, and reports nothing new.
     if (found.running) return this.checkedOnceDone(taskId);
 
+    // The spec's own commit isn't the agent's work, so it isn't counted.
     let facts: Awaited<ReturnType<VersionControl["readBranch"]>>;
     try {
-      facts = await versionControl.readBranch(found.worktree);
+      facts = await versionControl.readBranch(found.worktree, found.specFile);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       facts = { ok: false, message: `git couldn't read the branch: ${message}` };
@@ -194,7 +198,7 @@ export class Daemon {
   private worktreeOf(
     taskId: TaskId,
     session: SessionId,
-  ): { worktree: Worktree; running: false } | { running: true } | Answer {
+  ): { worktree: Worktree; specFile: string; running: false } | { running: true } | Answer {
     const task = this.find(taskId);
     if (task === null) return { ok: false, message: `#${taskId} doesn't exist.` };
     const agent = runningSession(task);
@@ -208,7 +212,7 @@ export class Daemon {
         message: `#${taskId} isn't in In progress, so there is no work to report.`,
       };
     }
-    return { worktree: task.worktree, running: false };
+    return { worktree: task.worktree, specFile: specPath(task.id, task.title), running: false };
   }
 
   // What `done` tells the agent once the gates have run.
@@ -547,6 +551,12 @@ export class Daemon {
   }
 }
 
+// The spec a task is built from, once it has one.
+function specOf(task: Task | null): Spec | null {
+  if (task === null || !("spec" in task)) return null;
+  return task.spec;
+}
+
 // What `status` shows of a task.
 function view(task: Task) {
   return {
@@ -610,6 +620,7 @@ type Deliver = (taskId: TaskId, input: Input, finished: () => void) => void;
 class DaemonTools implements Tools {
   private deliver: Deliver | null = null;
   private titleOf: (taskId: TaskId) => string = (taskId) => `#${taskId}`;
+  private specOf: (taskId: TaskId) => Spec | null = () => null;
   private early: [TaskId, Input, () => void][] = [];
   // Commands that go to a plugin, held until `connect`: at start-up the
   // loop sends out unfinished commands before titles can be looked up.
@@ -626,9 +637,14 @@ class DaemonTools implements Tools {
     private readonly runChecks: RunChecks | null,
   ) {}
 
-  connect(deliver: Deliver, titleOf: (taskId: TaskId) => string): void {
+  connect(
+    deliver: Deliver,
+    titleOf: (taskId: TaskId) => string,
+    specOf: (taskId: TaskId) => Spec | null,
+  ): void {
     this.deliver = deliver;
     this.titleOf = titleOf;
+    this.specOf = specOf;
     for (const [taskId, input, finished] of this.early) deliver(taskId, input, finished);
     this.early = [];
     for (const [command, finished] of this.held.splice(0)) this.carryOut(command, finished);
@@ -758,13 +774,16 @@ class DaemonTools implements Tools {
     finished: () => void,
   ): Promise<void> {
     const { taskId, request, build } = command;
+    const title = this.titleOf(taskId);
+    // The spec goes on the branch first, so it lands on main with the work.
+    const spec = this.specOf(taskId);
     let input: Input;
     try {
-      const made = await versionControl.createWorktree({
-        taskId,
-        title: this.titleOf(taskId),
-        build,
-      });
+      const made = await versionControl.createWorktree(
+        spec === null
+          ? { taskId, title, build }
+          : { taskId, title, build, spec: specFile(taskId, title, spec) },
+      );
       input = made.ok
         ? { by: "plugin", type: "worktree_created", request, worktree: made.value }
         : { by: "plugin", type: "worktree_failed", request, message: made.message };
