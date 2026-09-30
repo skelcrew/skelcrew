@@ -3,8 +3,10 @@ import { defaultSkills } from "./skills";
 
 // The skills an agent in your harness uses to report. They are the
 // commands the spec's CLI table marks "used by the skills", plus approve,
-// which a skill names only to say that the developer runs it.
-const skillCommands = ["claim", "submit", "done", "ask", "give-up", "approve"];
+// which a skill names only to say that the developer runs it, and log,
+// which only reads: the claim doesn't print the task's title, and the log
+// does.
+const skillCommands = ["claim", "submit", "done", "ask", "give-up", "approve", "log"];
 
 function frontmatter(text: string): unknown {
   const match = /^---\n([\s\S]*?)\n---\n/.exec(text);
@@ -73,6 +75,47 @@ describe("defaultSkills", () => {
     }
   });
 
+  // The skills' method came from an earlier Skelcrew, whose tool worked
+  // differently. An agent told to run one of these would fail, or do what
+  // Skelcrew now does itself: agents here never push, open pull requests or
+  // keep their own record. Add to this list when another old word turns up.
+  test("never name a command or place from the earlier Skelcrew", () => {
+    const old = [
+      "skelcrew show",
+      "skelcrew move",
+      "skelcrew comment",
+      "skelcrew queue",
+      "skelcrew export",
+      "skelcrew release",
+      "skelcrew block",
+      "skelcrew list",
+      "skelcrew trace",
+      "skelcrew files",
+      "skelcrew describe",
+      "docs/TODO.md",
+      "docs/ROADMAP.md",
+      "docs/plans/",
+      "docs/specs/",
+      ".agents/roles",
+      "run record",
+      "pull request",
+      "gh pr",
+      "git push",
+      "/code",
+      "/plan",
+      "/research",
+      "/audit",
+      "/run",
+    ];
+    for (const one of defaultSkills) {
+      const text = one.text.replaceAll(/\s+/g, " ");
+      expect({ path: one.path, found: old.filter((word) => text.includes(word)) }).toEqual({
+        path: one.path,
+        found: [],
+      });
+    }
+  });
+
   test("the spec skill claims the task and submits the spec", () => {
     const text = skill("spec");
     expect(text).toContain("skelcrew claim");
@@ -120,7 +163,7 @@ describe("defaultSkills", () => {
   // front of each report instead.
   test("put the session and the task number on every report", () => {
     const reports = {
-      spec: ["SKELCREW_SESSION=<session> skelcrew submit 12 --file spec.json"],
+      spec: ["SKELCREW_SESSION=<session> skelcrew submit 12 --file -"],
       develop: [
         "SKELCREW_SESSION=<session> skelcrew done 12",
         'SKELCREW_SESSION=<session> skelcrew give-up 12 "<reason>"',
@@ -164,6 +207,80 @@ describe("defaultSkills", () => {
   // says how the spec is passed.
   test("the spec skill reads how to pass the spec before submitting", () => {
     expect(skill("spec")).toContain("skelcrew submit --help");
+  });
+
+  // The spec skill's method: understand the code before asking anything,
+  // ask once, write the spec in a fixed shape, and run every sentence about
+  // what the code does today instead of trusting memory.
+  test("the spec skill reads the task and the code before it asks", () => {
+    const text = skill("spec");
+    expect(text).toContain("skelcrew log 12");
+    const ground = text.indexOf("### Ground it in the code first");
+    const ask = text.indexOf("### Ask once, with your answers");
+    expect(ground).toBeGreaterThan(-1);
+    expect(ask).toBeGreaterThan(ground);
+  });
+
+  test("the spec skill asks its questions together, each with a recommended answer", () => {
+    const text = skill("spec").replaceAll(/\s+/g, " ");
+    expect(text).toContain("in one message, each question with the answer you recommend first");
+    expect(text).not.toContain("one at a time");
+  });
+
+  test("the spec skill gives the spec a fixed shape inside its scope", () => {
+    const text = skill("spec");
+    const parts = ["Goal", "Today", "Change", "Approach", "Tests", "Out of scope"];
+    const places = parts.map((part) => text.indexOf(`**${part}:**`));
+    for (const place of places) expect(place).toBeGreaterThan(-1);
+    expect(places).toEqual([...places].sort((a, b) => a - b));
+  });
+
+  test("the spec skill runs every sentence about today before it submits", () => {
+    const text = skill("spec");
+    const check = text.indexOf("### Check every sentence about today");
+    expect(check).toBeGreaterThan(-1);
+    expect(check).toBeLessThan(text.indexOf("## 3. Submit it"));
+    expect(text.replaceAll(/\s+/g, " ")).toContain("run the command or read the line");
+  });
+
+  // The develop skill's method, in order: understand the code, test first,
+  // review the diff against the spec in rounds, verify by running it, then
+  // report done. Skelcrew's checks run the tests, but nothing else reads
+  // the code against the spec before the developer does.
+  test("the develop skill understands, builds test first, reviews and verifies before done", () => {
+    const text = skill("develop");
+    const steps = [
+      "### Understand first",
+      "### Test first",
+      "## 3. Review your own diff",
+      "## 4. Verify by running it",
+      "## 5. Report it done",
+    ].map((heading) => text.indexOf(heading));
+    for (const step of steps) expect(step).toBeGreaterThan(-1);
+    expect(steps).toEqual([...steps].sort((a, b) => a - b));
+    expect(text.indexOf("SKELCREW_SESSION=<session> skelcrew done 12")).toBeGreaterThan(
+      steps[4] ?? -1,
+    );
+  });
+
+  test("the develop skill writes the failing test first", () => {
+    expect(skill("develop")).toContain("Write the failing test first.");
+  });
+
+  test("the develop skill reviews at most three rounds, then asks the developer", () => {
+    const text = skill("develop").replaceAll(/\s+/g, " ");
+    expect(text).toContain("At most three rounds.");
+    expect(text).toContain("don't report done. Tell the developer what remains");
+  });
+
+  test("the develop skill verifies each acceptance criterion by running something", () => {
+    const text = skill("develop").replaceAll(/\s+/g, " ");
+    expect(text).toContain("establish each acceptance criterion by running something");
+  });
+
+  test("the develop skill reports honestly", () => {
+    const text = skill("develop").replaceAll(/\s+/g, " ");
+    expect(text).toContain("Never claim a check ran, or a criterion holds, unless you saw it.");
   });
 
   test("the develop skill names each thing it must never do", () => {

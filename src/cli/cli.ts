@@ -619,7 +619,8 @@ function claimed(task: TaskId, claim: z.infer<typeof claimResult>): string[] {
     lines.push("Why it's back:", ...claim.failure.split("\n"));
   }
   if (claim.spec !== null && claim.spec !== undefined) {
-    lines.push("Its spec so far:", `Scope: ${claim.spec.scope}`);
+    const heading = claim.phase === "spec" ? "Its spec so far:" : "The spec to build:";
+    lines.push(heading, ...`Scope: ${claim.spec.scope}`.split("\n"));
     lines.push("Acceptance:", ...claim.spec.acceptance.map((line) => `- ${line}`));
     if (claim.spec.openQuestions.length > 0) {
       lines.push("Open questions:", ...claim.spec.openQuestions.map((line) => `- ${line}`));

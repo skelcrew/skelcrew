@@ -541,7 +541,13 @@ export class Daemon {
       case "in_progress": {
         // Why the task is back, if a gate or a merge failed.
         const failure = task.brief.failure?.summary;
-        const result = { session, phase: "in_progress", worktree: task.worktree };
+        // The spec comes with it, so the session knows what to build.
+        const result = {
+          session,
+          phase: "in_progress",
+          worktree: task.worktree,
+          spec: task.spec,
+        };
         return { ok: true, result: failure === undefined ? result : { ...result, failure } };
       }
       default:

@@ -216,6 +216,10 @@ describe("skelcrew claim", () => {
         "Your session is you-2.",
         "Set SKELCREW_SESSION to it for each report, like this:",
         "SKELCREW_SESSION=you-2 skelcrew done 1",
+        "The spec to build:",
+        "Scope: Add a CSV export button to the reports page.",
+        "Acceptance:",
+        "- Clicking Export downloads a CSV of the visible rows.",
       ]),
     );
   });
