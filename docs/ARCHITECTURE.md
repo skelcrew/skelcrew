@@ -268,6 +268,9 @@ An agent's reports (`submit`, `done`, `give-up`) take the session from `SKELCREW
 `SKELCREW_SESSION=session-… skelcrew submit 12`. The session goes in front of each command,
 since each shell in a harness starts without the variable.
 
+`retry` clears a blocked task's block. The daemon doesn't start agents itself yet, so the
+task then waits in its phase until it is claimed again. The CLI says so.
+
 `init` comes with its own pull request, and bare `skelcrew` will open the TUI. Until then,
 both only say so.
 

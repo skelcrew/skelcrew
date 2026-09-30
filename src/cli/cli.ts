@@ -106,6 +106,18 @@ const handlers: Record<string, Handler> = {
       ask(context, { type: "drop", task }, anything, () => said(`Dropped #${task}.`)),
     ),
 
+  // The daemon doesn't start agents yet, so a retried task waits in its
+  // phase until it is claimed again.
+  retry: async (args, context) =>
+    withTask("retry", args, {}, (task) =>
+      ask(context, { type: "retry", task }, anything, () =>
+        said(
+          `Retried #${task}.`,
+          `Skelcrew doesn't start agents itself yet, so claim it again: skelcrew claim ${task}`,
+        ),
+      ),
+    ),
+
   status: async (args, context) => {
     const parsed = parse("status", () => parseArgs({ args, options: {} }));
     if (!parsed.ok) return parsed.outcome;

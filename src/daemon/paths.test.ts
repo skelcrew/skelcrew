@@ -55,6 +55,16 @@ describe("daemonPaths", () => {
     }
   });
 
+  // Tests give their own, so they never touch a real user's folder.
+  test("puts the socket in a folder the caller gives, when the path is long", () => {
+    const repo = join(folder("sk-"), "a-folder-with-a-rather-long-name".repeat(3));
+    mkdirSync(repo);
+    const found = daemonPaths(repo, "/tmp/sk-own");
+    if (!found.ok) throw new Error(found.message);
+    expect(found.paths.sharedSocketFolder).toBe("/tmp/sk-own");
+    expect(found.paths.socket.startsWith("/tmp/sk-own/")).toBe(true);
+  });
+
   test("gives two long repositories different sockets", () => {
     const long = "a-folder-with-a-rather-long-name".repeat(3);
     const one = join(folder("sk-"), long);

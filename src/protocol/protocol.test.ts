@@ -12,6 +12,7 @@ describe("parseRequest", () => {
       { type: "approve", task: 12, sendBack: null },
       { type: "approve", task: 12, sendBack: "Split it." },
       { type: "drop", task: 12 },
+      { type: "retry", task: 12 },
       { type: "status" },
       { type: "log", task: 12 },
       { type: "claim", task: 12 },

@@ -331,13 +331,17 @@ describe("the daemon's socket", () => {
 
 // The socket folder in /tmp is shared by all of one user's repositories.
 // Only that user may open it, or another user could reach their daemons.
+// On a folder of the test's own, since other daemons on this machine may
+// be using the real one.
 test("keeps the socket folder in /tmp for the user alone", async () => {
   const repo = throwawayRepo(dirs, "a-folder-with-a-rather-long-name".repeat(3));
-  const base = `/tmp/skelcrew-${process.getuid?.()}`;
-  mkdirSync(base, { recursive: true });
+  const base = mkdtempSync("/tmp/sk-");
+  dirs.push(base);
   chmodSync(base, 0o755);
-  const server = await started(repo);
-  expect(dirname(server.socket)).toBe(base);
+  const served = await serve(repo, { socketFolder: base });
+  if (!served.ok) throw new Error(served.message);
+  servers.push(served.server);
+  expect(dirname(served.server.socket)).toBe(base);
   expect(statSync(base).mode & 0o777).toBe(0o700);
 });
 

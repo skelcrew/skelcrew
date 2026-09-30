@@ -24,6 +24,8 @@ export type ClientOptions = {
   // sent, has no time limit: `done` waits for the checks.
   startTimeoutMs?: number;
   newId?: () => string;
+  // Replaces the socket folder in /tmp, for tests.
+  socketFolder?: string;
 };
 
 const defaultStartTimeoutMs = 10_000;
@@ -41,7 +43,7 @@ export async function request(
   command: Command,
   options: ClientOptions,
 ): Promise<Answer> {
-  const found = daemonPaths(repo);
+  const found = daemonPaths(repo, options.socketFolder);
   if (!found.ok) return found;
   const path = found.paths.socket;
   const shared = found.paths.sharedSocketFolder;

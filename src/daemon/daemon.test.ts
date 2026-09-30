@@ -190,6 +190,23 @@ describe("the daemon", () => {
     });
   });
 
+  test("refuses to retry a task that isn't blocked, in the core's words", async () => {
+    const { daemon } = open();
+    await ok(daemon, add("CSV export"));
+    expect(await daemon.handle({ type: "retry", task: task(1) })).toEqual({
+      ok: false,
+      message: "#1 isn't blocked.",
+    });
+  });
+
+  test("refuses to retry a task that doesn't exist", async () => {
+    const { daemon } = open();
+    expect(await daemon.handle({ type: "retry", task: task(9) })).toEqual({
+      ok: false,
+      message: "#9 doesn't exist.",
+    });
+  });
+
   // Without git, a claim in Ready can't get its worktree. The core must
   // hear that at once, rather than wait for a worktree that never comes.
   test("answers a command it can't carry out yet with a failure, at once", async () => {
@@ -666,6 +683,29 @@ describe("the daemon with git", () => {
     expect(!answer.ok && answer.message).toStartWith("The worktree couldn't be made:");
     expect(await ok(daemon, { type: "status" })).toMatchObject({
       tasks: [{ task: 1, blocked: expect.stringMatching(/^The worktree couldn't be made:/) }],
+    });
+  });
+
+  // Skelcrew doesn't start agents itself yet, so after a retry the task
+  // waits in its phase until you claim it again.
+  test("retries a task whose agent gave up, and a new claim works in the same worktree", async () => {
+    const { daemon, repo } = await readyInRepo();
+    await ok(daemon, { type: "claim", task: task(1) });
+    await ok(daemon, { type: "give_up", task: task(1), session: you(2), message: "Stuck." });
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, phase: "in_progress", blocked: "The agent gave up: Stuck." }],
+    });
+
+    expect(await ok(daemon, { type: "retry", task: task(1) })).toEqual({});
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, phase: "in_progress", step: "queued", blocked: null, waitingOnYou: null }],
+    });
+
+    const path = join(repo.dir, ".skelcrew", "worktrees", "1-csv-export");
+    expect(await ok(daemon, { type: "claim", task: task(1) })).toEqual({
+      session: "you-3",
+      phase: "in_progress",
+      worktree: { path, branch: "task/1-csv-export" },
     });
   });
 });

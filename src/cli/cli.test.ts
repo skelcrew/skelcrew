@@ -385,6 +385,39 @@ describe("skelcrew drop", () => {
   });
 });
 
+describe("skelcrew retry", () => {
+  test("retries a blocked task, and says to claim it again", async () => {
+    const repo = await repoWithDaemon();
+    await specced(repo);
+    await cli(repo, ["approve", "1"]);
+    await cli(repo, ["claim", "1"]);
+    await cli(repo, ["give-up", "1", "Stuck."], { session: "you-2" });
+    expect(await cli(repo, ["retry", "1"])).toEqual(
+      said([
+        "Retried #1.",
+        "Skelcrew doesn't start agents itself yet, so claim it again: skelcrew claim 1",
+      ]),
+    );
+    expect((await cli(repo, ["claim", "1"])).out[0]).toBe("Claimed #1. It is in In progress.");
+  });
+
+  test("passes on the refusal for a task that isn't blocked", async () => {
+    const repo = await repoWithDaemon();
+    await cli(repo, ["add", "CSV export"]);
+    expect(await cli(repo, ["retry", "1"])).toEqual(refused("#1 isn't blocked."));
+  });
+
+  test("passes on the refusal for a task that doesn't exist", async () => {
+    const repo = await repoWithDaemon();
+    expect(await cli(repo, ["retry", "4"])).toEqual(refused("#4 doesn't exist."));
+  });
+
+  test("--help says what it does", async () => {
+    const repo = await repoWithDaemon();
+    expect((await cli(repo, ["retry", "--help"])).out[0]).toBe("Usage: skelcrew retry <task>");
+  });
+});
+
 describe("skelcrew status", () => {
   test("shows what waits on you, then tasks by phase", async () => {
     const repo = await repoWithDaemon();
@@ -564,7 +597,7 @@ describe("other commands", () => {
   test("--help lists the commands", async () => {
     const repo = await repoWithDaemon();
     const help = (await cli(repo, ["--help"])).out.join("\n");
-    for (const command of ["add", "spec", "approve", "drop", "status", "log", "claim"]) {
+    for (const command of ["add", "spec", "approve", "drop", "retry", "status", "log", "claim"]) {
       expect(help).toContain(`skelcrew ${command}`);
     }
     for (const command of ["submit", "done", "give-up", "serve"]) {
