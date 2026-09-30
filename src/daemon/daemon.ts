@@ -244,6 +244,7 @@ function view(task: Task) {
   return {
     task: task.id,
     title: task.title,
+    project: task.project,
     phase: task.phase,
     step: "step" in task ? task.step.kind : null,
     blocked: task.blocked === null ? null : describeBlock(task.blocked),

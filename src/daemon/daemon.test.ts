@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { SessionId, TaskId } from "../core/ids";
+import { ProjectId, SessionId, TaskId } from "../core/ids";
 import type { Config } from "../core/types";
 import type { Command } from "../protocol/protocol";
 import { EventStore } from "../store/store";
@@ -339,6 +339,38 @@ describe("the daemon", () => {
       tasks: [
         { task: 1, title: "CSV export" },
         { task: 2, title: "PDF export" },
+      ],
+    });
+  });
+});
+
+// There is no project command yet, so a test makes its project straight in
+// the store, the way `skelcrew project add` will.
+function withProject(id: string): EventStore {
+  const store = EventStore.open(":memory:");
+  const saved = store.appendProject([
+    {
+      v: 1,
+      type: "project.created",
+      projectId: ProjectId.parse(id),
+      at: 1,
+      name: id,
+      goal: "Export reports as CSV and PDF.",
+    },
+  ]);
+  if (!saved.ok) throw new Error(saved.reason);
+  return store;
+}
+
+describe("status", () => {
+  test("says which project each task is in, or none", async () => {
+    const { daemon } = open(withProject("reports"));
+    await ok(daemon, { type: "add", title: "CSV export", spec: false, project: "reports" });
+    await ok(daemon, add("Totals", false));
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [
+        { task: 1, title: "CSV export", project: "reports" },
+        { task: 2, title: "Totals", project: null },
       ],
     });
   });

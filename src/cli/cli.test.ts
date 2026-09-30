@@ -3,9 +3,11 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { createServer, type Server as NetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ProjectId } from "../core/ids";
 import { daemonPaths } from "../daemon/paths";
 import { type Server, serve } from "../daemon/server";
 import { cleanUp, throwawayRepo } from "../daemon/testing";
+import { EventStore } from "../store/store";
 import { type Context, run } from "./cli";
 
 const dirs: string[] = [];
@@ -18,9 +20,27 @@ afterEach(async () => {
 });
 
 // A throwaway repository with its daemon running in this process. Sessions
-// are numbered, so tests can name them.
-async function repoWithDaemon(): Promise<string> {
+// are numbered, so tests can name them. There is no project command yet, so
+// the projects are made straight in the store before the daemon starts.
+async function repoWithDaemon(projects: string[] = []): Promise<string> {
   const repo = throwawayRepo(dirs);
+  if (projects.length > 0) {
+    const found = daemonPaths(repo);
+    if (!found.ok) throw new Error(found.message);
+    const store = EventStore.open(found.paths.store);
+    const saved = store.appendProject(
+      projects.map((id) => ({
+        v: 1,
+        type: "project.created",
+        projectId: ProjectId.parse(id),
+        at: 1,
+        name: id,
+        goal: `The ${id} project.`,
+      })),
+    );
+    store.close();
+    if (!saved.ok) throw new Error(saved.reason);
+  }
   let sessions = 0;
   const served = await serve(repo, {
     newSession: () => {
@@ -393,6 +413,26 @@ describe("skelcrew status", () => {
       "Ready:",
       "- #1 CSV export (blocked: The worktree couldn't be made: Making worktrees isn't built into the daemon yet.)",
     ]);
+  });
+
+  test("groups tasks by project first when any task has one", async () => {
+    const repo = await repoWithDaemon(["reports"]);
+    await cli(repo, ["add", "CSV export", "--project", "reports"]);
+    await cli(repo, ["add", "Totals"]);
+    await cli(repo, ["add", "PDF export", "--project", "reports", "--spec"]);
+    expect(await cli(repo, ["status"])).toEqual(
+      said([
+        "Project reports:",
+        "  Idea:",
+        "  - #1 CSV export",
+        "  Spec:",
+        "  - #3 PDF export",
+        "",
+        "No project:",
+        "  Idea:",
+        "  - #2 Totals",
+      ]),
+    );
   });
 
   test("says so when there are no tasks", async () => {
