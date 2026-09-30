@@ -16,7 +16,10 @@ max_attempts: 3
 max_running: 2
 
 # always: only you make a spec Ready. never: a complete spec is Ready at once.
-spec_approval: always
+# While all work is attended, the developer agrees to each spec in the
+# spec session before it is submitted, so it needs no second approval.
+# Set back to always when Skelcrew starts agents itself (build step 4).
+spec_approval: never
 
 # A merge that changes a file matching one of these waits for your approval.
 # "**" matches every file, so every merge waits for you.
