@@ -15,6 +15,7 @@ import { request, type Started } from "../daemon/client";
 import { serveUntilSignalled } from "../daemon/server";
 import type { Command } from "../protocol/protocol";
 import { commandHelp, mainHelp } from "./help";
+import { init } from "./init";
 
 export type Context = {
   cwd: string;
@@ -41,9 +42,6 @@ export async function run(args: string[], context: Context): Promise<Outcome> {
     return { code: 1, out: mainHelp, err: ["The TUI isn't built yet. Use the commands above."] };
   }
   if (name === "--help" || name === "-h" || name === "help") return said(...mainHelp);
-  if (name === "init") {
-    return refused("`skelcrew init` isn't built yet. It comes with pull request #34.");
-  }
   const handler = handlers[name];
   if (handler === undefined) {
     return refused(`There is no command ${name}. Run \`skelcrew --help\` to see them all.`);
@@ -57,6 +55,8 @@ export async function run(args: string[], context: Context): Promise<Outcome> {
 }
 
 const handlers: Record<string, Handler> = {
+  init: async (args, context) => init(args, context.cwd),
+
   add: async (args, context) => {
     const parsed = parse(
       "add",

@@ -502,13 +502,6 @@ describe("skelcrew give-up", () => {
 });
 
 describe("other commands", () => {
-  test("init says it isn't here yet", async () => {
-    const repo = await repoWithDaemon();
-    expect(await cli(repo, ["init"])).toEqual(
-      refused("`skelcrew init` isn't built yet. It comes with pull request #34."),
-    );
-  });
-
   test("refuses a command it doesn't know", async () => {
     const repo = await repoWithDaemon();
     expect(await cli(repo, ["merge", "1"])).toEqual(

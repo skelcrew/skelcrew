@@ -5,6 +5,7 @@ export const mainHelp = [
   "Skelcrew moves coding tasks from idea to merged code.",
   "",
   "Your commands:",
+  "  skelcrew init               Set up Skelcrew where your git repository starts.",
   '  skelcrew add "<task>"       Capture a task as an Idea. --spec also asks for a spec.',
   "  skelcrew spec <task>        Ask for an Idea to be specced.",
   "  skelcrew approve <task>     Approve a spec or a merge. --send-back returns it with a note.",
@@ -29,6 +30,13 @@ const session = [
 ];
 
 export const commandHelp: Record<string, string[]> = {
+  init: [
+    "Usage: skelcrew init",
+    "",
+    "Sets up Skelcrew in this git repository: the checks in .skelcrew/workflow.yml,",
+    "the default skills, and the lines that keep its runtime files out of git.",
+    "It never overwrites a file, so running it again changes nothing.",
+  ],
   add: [
     'Usage: skelcrew add "<task>" [--spec] [--project <name>]',
     "",
