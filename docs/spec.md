@@ -399,7 +399,7 @@ Skelcrew runs where a git repository starts, the folder that holds `.git`. A fol
 | `skelcrew project park <name>` | Stop new agents from starting in a project; `activate` undoes it |
 | `skelcrew project set <task> <project>` | Put a task in a project, or take it out with `none` |
 | `skelcrew spec <task>` | Ask for an Idea to be specced |
-| `skelcrew approve <task>` | Approve a spec or a critical merge; `--send-back` returns it |
+| `skelcrew approve <task>` | Approve a spec or a critical merge; `reject` sends it back |
 | `skelcrew reject <task> "<note>"` | Send a spec back to Spec, or a critical merge back to In progress, with a note saying what to change |
 | `skelcrew retry <task>` | Retry a blocked task; it waits for a claim until Skelcrew starts agents itself |
 | `skelcrew drop <task>` | Drop a task that is not done; stops its session and removes its worktree if it has them |

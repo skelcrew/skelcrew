@@ -227,7 +227,7 @@ describe("skelcrew claim", () => {
   test("shows the developer's note when a spec was sent back", async () => {
     const repo = await repoWithDaemon();
     await specced(repo);
-    await cli(repo, ["approve", "1", "--send-back", "Add totals."]);
+    await cli(repo, ["reject", "1", "Add totals."]);
     const outcome = await cli(repo, ["claim", "1"]);
     expect(outcome.out).toContain("The developer's note: Add totals.");
     expect(outcome.out).toContain("Scope: Add a CSV export button to the reports page.");
@@ -465,12 +465,19 @@ describe("skelcrew approve", () => {
     expect((await cli(repo, ["status"])).out).toContain("Ready:");
   });
 
-  test("with --send-back, returns it with a note", async () => {
+  // Sending back is `skelcrew reject` now. The old flag is refused, and
+  // nothing is approved or sent back.
+  test("no longer takes --send-back", async () => {
     const repo = await repoWithDaemon();
     await specced(repo);
-    expect(await cli(repo, ["approve", "1", "--send-back", "Add totals."])).toEqual(
-      said(["Sent #1 back with your note."]),
+    const outcome = await cli(repo, ["approve", "1", "--send-back", "Add totals."]);
+    expect(outcome.code).toBe(1);
+    expect(outcome.err[0]).toBe(
+      "--send-back isn't an option of `skelcrew approve`. Run `skelcrew approve --help` to see its options.",
     );
+    expect((await cli(repo, ["status"])).out).toContain("- #1 CSV export: approve its spec.");
+    expect((await cli(repo, ["approve", "--help"])).out.join("\n")).not.toContain("--send-back");
+    expect((await cli(repo, ["--help"])).out.join("\n")).not.toContain("--send-back");
   });
 
   test("passes on the refusal when nothing waits for approval", async () => {
@@ -775,7 +782,7 @@ describe("skelcrew log", () => {
     await cli(repo, ["add", "CSV export", "--spec", "--project", "reports"]);
     await cli(repo, ["claim", "1"]);
     await submit("you-1");
-    await cli(repo, ["approve", "1", "--send-back", "Add totals."]);
+    await cli(repo, ["reject", "1", "Add totals."]);
     await cli(repo, ["claim", "1"]);
     await submit("you-2");
     await cli(repo, ["approve", "1"]);
@@ -812,7 +819,7 @@ describe("skelcrew log", () => {
     for (const session of ["you-1", "you-2", "you-3"]) {
       await cli(repo, ["claim", "1"]);
       await cli(repo, ["submit", "1", "--file", "-"], { session, readStdin: async () => big });
-      await cli(repo, ["approve", "1", "--send-back", "Shorter, please."]);
+      await cli(repo, ["reject", "1", "Shorter, please."]);
     }
 
     const outcome = await cli(repo, ["log", "1"]);

@@ -27,12 +27,8 @@ const command = z.discriminatedUnion("type", [
     project: z.string().min(1).nullable(),
   }),
   z.strictObject({ type: z.literal("spec"), task: TaskId }),
-  // A spec or a critical merge. `sendBack` returns it with a note instead.
-  z.strictObject({
-    type: z.literal("approve"),
-    task: TaskId,
-    sendBack: z.string().min(1).nullable(),
-  }),
+  // A spec or a critical merge. `reject` sends it back instead.
+  z.strictObject({ type: z.literal("approve"), task: TaskId }),
   // Sends back the spec or the critical merge that waits for you, with a
   // note that says what to change.
   z.strictObject({

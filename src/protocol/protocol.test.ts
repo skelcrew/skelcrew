@@ -9,8 +9,7 @@ describe("parseRequest", () => {
     const commands = [
       { type: "add", title: "CSV export", spec: true, project: null },
       { type: "spec", task: 12 },
-      { type: "approve", task: 12, sendBack: null },
-      { type: "approve", task: 12, sendBack: "Split it." },
+      { type: "approve", task: 12 },
       { type: "reject", task: 12, note: "Split it." },
       { type: "drop", task: 12 },
       { type: "retry", task: 12 },
@@ -31,6 +30,12 @@ describe("parseRequest", () => {
   test("refuses an agent's report without its session", () => {
     const line = JSON.stringify({ id: "r1", command: { type: "done", task: 12 } });
     expect(parseRequest(line).ok).toBe(false);
+  });
+
+  // Sending back is its own command, so an approve can't carry a note.
+  test("refuses an approve that carries a note to send it back", () => {
+    const command = { type: "approve", task: 12, sendBack: "Split it." };
+    expect(parseRequest(JSON.stringify({ id: "r1", command })).ok).toBe(false);
   });
 
   // Sending work back always says what to change.

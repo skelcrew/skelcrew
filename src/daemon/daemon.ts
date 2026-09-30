@@ -154,7 +154,7 @@ export class Daemon {
   // the reply can get in.
   async handle(command: Command): Promise<Answer> {
     if (command.type === "done") return this.done(command.task, command.session);
-    if (command.type === "approve" && command.sendBack === null) {
+    if (command.type === "approve") {
       const refused = await this.beforeMerge(command.task);
       if (refused !== null) return refused;
     }
@@ -353,20 +353,15 @@ export class Daemon {
         const task = this.find(command.task);
         if (task === null) return { ok: false, message: `#${command.task} doesn't exist.` };
         // Already merging, such as after a restart: wait for the same result.
-        if (task.phase === "checks" && task.step.kind === "merging" && command.sendBack === null) {
+        if (task.phase === "checks" && task.step.kind === "merging") {
           return this.waitForMerge(command.task);
         }
-        const note = command.sendBack;
         const waiting = waitingOnYou(task);
         const input: Input | null =
           waiting === "spec_approval"
-            ? note === null
-              ? { by: "human", type: "approve_spec" }
-              : { by: "human", type: "revise_spec", note }
+            ? { by: "human", type: "approve_spec" }
             : waiting === "merge_approval"
-              ? note === null
-                ? { by: "human", type: "approve_merge" }
-                : { by: "human", type: "revise_merge", note }
+              ? { by: "human", type: "approve_merge" }
               : null;
         if (input === null) {
           return { ok: false, message: `#${command.task} has nothing waiting for your approval.` };

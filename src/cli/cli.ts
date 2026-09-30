@@ -93,30 +93,19 @@ const handlers: Record<string, Handler> = {
     ),
 
   approve: async (args, context) =>
-    withTask("approve", args, { "send-back": { type: "string" } }, (task, values) => {
-      const note = values["send-back"];
-      if (note !== undefined && typeof note !== "string") return usage("approve");
-      if (note !== undefined && note.trim() === "") {
-        return refused('Say what to change, like this: --send-back "Add totals."');
-      }
-      return ask(
-        context,
-        { type: "approve", task, sendBack: note ?? null },
-        approveResult,
-        (result) => {
-          if (note !== undefined) return said(`Sent #${task} back with your note.`);
-          if (!("merged" in result)) return said(`Approved #${task}.`);
-          if (result.merged) {
-            return said(`Approved #${task}. It merged into main as ${result.commit.slice(0, 7)}.`);
-          }
-          // Nothing starts an agent in step 2, so the task waits for a claim.
-          const next = result.outOfAttempts
-            ? `Approved #${task}, but the merge failed, and #${task} is out of attempts. Retry it with skelcrew retry ${task}, or drop it.`
-            : `Approved #${task}, but the merge failed. #${task} is back in In progress. Claim it to fix it: skelcrew claim ${task}`;
-          return { code: 1, out: [next, "Why:", ...result.summary.split("\n")], err: [] };
-        },
-      );
-    }),
+    withTask("approve", args, {}, (task) =>
+      ask(context, { type: "approve", task }, approveResult, (result) => {
+        if (!("merged" in result)) return said(`Approved #${task}.`);
+        if (result.merged) {
+          return said(`Approved #${task}. It merged into main as ${result.commit.slice(0, 7)}.`);
+        }
+        // Nothing starts an agent in step 2, so the task waits for a claim.
+        const next = result.outOfAttempts
+          ? `Approved #${task}, but the merge failed, and #${task} is out of attempts. Retry it with skelcrew retry ${task}, or drop it.`
+          : `Approved #${task}, but the merge failed. #${task} is back in In progress. Claim it to fix it: skelcrew claim ${task}`;
+        return { code: 1, out: [next, "Why:", ...result.summary.split("\n")], err: [] };
+      }),
+    ),
 
   reject: async (args, context) => {
     const parsed = parse(
