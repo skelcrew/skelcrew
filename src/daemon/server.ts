@@ -5,9 +5,10 @@
 // Many connections can be open at once, and each may send many requests.
 // The daemon's own queue still decides them one at a time.
 
-import { chmodSync, existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import * as z from "zod";
+import { preparedChecks } from "../checks/checks";
 import { parseWorkflow } from "../config/workflow";
 import { Git } from "../plugins/git/git";
 import { encode, MAX_LINE, parseRequest, type Reply } from "../protocol/protocol";
@@ -91,6 +92,7 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
     config: workflow.config,
     log: store,
     versionControl: new Git(paths.repo, workflow.mainBranch),
+    runChecks: preparedChecks(workflow.setup, workflow.checks),
   };
   if (options.newSession !== undefined) daemonOptions.newSession = options.newSession;
   const opened = Daemon.open(daemonOptions);
@@ -113,11 +115,13 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
     server: {
       socket: paths.socket,
       stop: async () => {
-        await listener.stop();
-        // Retries of unsaved replies stop here, before the store closes.
-        // Otherwise they would keep failing against a closed store, and
-        // keep the process from exiting.
+        // The daemon closes first. That stops running checks at once, and
+        // answers every request waiting on them, such as a done, with "The
+        // daemon is shutting down." Retries of unsaved replies stop too,
+        // before the store closes: they would keep failing against a closed
+        // store, and keep the process from exiting.
         await opened.value.close();
+        await listener.stop();
         store.close();
         try {
           rmSync(paths.socket, { force: true });
@@ -185,6 +189,21 @@ function mainBranch(repo: string, branch: string): { ok: true } | { ok: false; m
   if (git("rev-parse", "--git-dir") !== 0) {
     return { ok: false, message: `${repo} isn't a git repository. Skelcrew needs one.` };
   }
+  // Only where the repository starts. From a folder inside it, worktrees
+  // and merges would cover the whole repository, which isn't supported.
+  const top = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"], {
+    cwd: repo,
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const here = realpathSync(repo);
+  const start = top.exitCode === 0 ? realpathSync(top.stdout.toString().trim()) : here;
+  if (start !== here) {
+    return {
+      ok: false,
+      message: `${here} is inside the git repository at ${start}. Run Skelcrew there, where the repository starts.`,
+    };
+  }
   if (git("rev-parse", "--verify", "--quiet", `refs/heads/${branch}`) !== 0) {
     return {
       ok: false,
@@ -198,7 +217,13 @@ function readWorkflow(
   repo: string,
   path: string,
 ):
-  | { ok: true; config: DaemonOptions["config"]; mainBranch: string }
+  | {
+      ok: true;
+      config: DaemonOptions["config"];
+      mainBranch: string;
+      checks: string[];
+      setup: string[];
+    }
   | { ok: false; message: string } {
   if (!existsSync(path)) {
     return {
@@ -217,7 +242,8 @@ function readWorkflow(
     const reasons = parsed.reasons.map((reason) => `- ${reason}`);
     return { ok: false, message: [".skelcrew/workflow.yml doesn't fit:", ...reasons].join("\n") };
   }
-  return { ok: true, config: parsed.workflow.config, mainBranch: parsed.workflow.mainBranch };
+  const { config, mainBranch, checks, setup } = parsed.workflow;
+  return { ok: true, config, mainBranch, checks, setup };
 }
 
 // A request being answered, so stopping can wait for it or refuse it.

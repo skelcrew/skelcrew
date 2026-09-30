@@ -45,6 +45,23 @@ describe("parseWorkflow", () => {
     });
   });
 
+  test("runs no setup when the file doesn't say", () => {
+    const parsed = parseWorkflow("checks:\n  - bun test\n");
+    expect(parsed.ok && parsed.workflow.setup).toEqual([]);
+  });
+
+  test("reads the setup commands, run before the checks in a fresh copy", () => {
+    const parsed = parseWorkflow("setup:\n  - bun install\nchecks:\n  - bun test\n");
+    expect(parsed.ok && parsed.workflow.setup).toEqual(["bun install"]);
+  });
+
+  test("refuses a setup command that is blank", () => {
+    expect(parseWorkflow('setup:\n  - " "\nchecks:\n  - bun test\n')).toEqual({
+      ok: false,
+      reasons: ["setup.0: each setup step must be a command."],
+    });
+  });
+
   test("uses main as the main branch when the file doesn't say", () => {
     const parsed = parseWorkflow("checks:\n  - bun test\n");
     expect(parsed.ok && parsed.workflow.mainBranch).toBe("main");

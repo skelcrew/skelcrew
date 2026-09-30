@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { $ } from "bun";
-import { localChecks } from "./checks";
+import { localChecks, preparedChecks } from "./checks";
 
 let dirs: string[] = [];
 function folder(): string {
@@ -210,5 +210,58 @@ describe("localChecks", () => {
   test("fails with a message, not a throw, for a folder that doesn't exist", async () => {
     const result = await localChecks(["true"])(join(folder(), "nowhere"));
     expect(result.ok).toBe(false);
+  });
+});
+
+// The daemon stops the checks when it stops, so none outlives it.
+describe("stopping the checks", () => {
+  test("stops a running check, and everything it started, when told to", async () => {
+    const dir = folder();
+    const marker = join(dir, "finished.txt");
+    const stop = new AbortController();
+    const running = localChecks([`sleep 1; touch ${marker}`, "touch second.txt"])(dir, stop.signal);
+    await Bun.sleep(200);
+    stop.abort();
+    const result = await running;
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.message).toContain("was stopped, since Skelcrew stopped");
+    await Bun.sleep(1_200);
+    expect(existsSync(marker)).toBe(false);
+    expect(existsSync(join(dir, "second.txt"))).toBe(false);
+  });
+
+  test("runs nothing when told to stop before it starts", async () => {
+    const dir = folder();
+    const stop = new AbortController();
+    stop.abort();
+    const result = await preparedChecks(["touch setup.txt"], ["true"])(dir, stop.signal);
+    expect(result.ok).toBe(false);
+    expect(existsSync(join(dir, "setup.txt"))).toBe(false);
+  });
+});
+
+// A fresh copy of a task's code has no dependencies, so setup runs first.
+describe("preparedChecks", () => {
+  test("runs the setup, then the checks, in the same folder", async () => {
+    const dir = folder();
+    const result = await preparedChecks(
+      ["echo ready > setup.txt"],
+      ["grep -q ready setup.txt"],
+    )(dir);
+    expect(result).toEqual({ ok: true, value: null });
+  });
+
+  test("says the setup failed, and runs no checks", async () => {
+    const dir = folder();
+    const result = await preparedChecks(["echo no network; exit 1"], ["touch checked.txt"])(dir);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.message).toStartWith("The setup failed, so no checks ran.");
+    expect(!result.ok && result.message).toContain("no network");
+    expect(existsSync(join(dir, "checked.txt"))).toBe(false);
+  });
+
+  test("runs only the checks when there is no setup", async () => {
+    const dir = folder();
+    expect(await preparedChecks([], ["true"])(dir)).toEqual({ ok: true, value: null });
   });
 });

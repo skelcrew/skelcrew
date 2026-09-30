@@ -321,6 +321,8 @@ Rules and record are committed and reviewed like code. The SQLite database holds
 Example `workflow.yml`:
 
 ```yaml
+setup:
+  - bun install --frozen-lockfile
 checks:
   - bun test
   - bun run typecheck
@@ -338,6 +340,10 @@ plugins:
   sessions: herdr
   work_source: github
 ```
+
+`setup` prepares a fresh copy of a task's code before the checks run there, such as installing its dependencies. The checks never run in the agent's own worktree: each gate and each merge checks a fresh copy of the exact commit, so nothing the agent does meanwhile can change what is checked. A failed setup fails the gate, like a failed check.
+
+Skelcrew runs where a git repository starts, the folder that holds `.git`. A folder inside a repository, such as one project in a repository that holds several, isn't supported yet.
 
 `main_branch` is the branch tasks start from and merge into. It is `main` when left out. The daemon refuses to start if the branch doesn't exist.
 
@@ -415,4 +421,5 @@ v1 is single user, runs on one machine, and ships only the plugins its first use
 - [ ] What should the default safety cap be, in tokens and in time?
 - [ ] Which seeded bug types matter most for the review gate eval, and what catch rate is good enough to loosen a critical path?
 - [ ] Where do plugins not written by the Skelcrew project live, and how are they loaded? A plugin runs inside the daemon, next to the rules, so loading outside code is also a question of trust.
+- [ ] How are the checks kept out of an agent's reach? The commands come from `workflow.yml` on main, but they run the task's own code: `bun test` runs the scripts and `package.json` on the agent's branch. So an agent could make its own checks pass. While every path is critical, the developer sees such a change at merge approval. Before auto-merge (build step 6), changes to what the checks run may need to count as critical, or be flagged.
 - [ ] Is Windows supported, and when? The daemon assumes Unix today: its lock (`flock`), its socket, stopping processes by group and signal, and running checks through `sh`. Each would need a Windows version.

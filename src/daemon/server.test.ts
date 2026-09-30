@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -12,6 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import * as z from "zod";
 import { MAX_LINE } from "../protocol/protocol";
+import { spec } from "../test/fixtures";
 import { type Server, serve } from "./server";
 import { cleanUp, openLine, throwawayRepo } from "./testing";
 
@@ -32,7 +34,53 @@ async function started(repo: string): Promise<Server> {
 const add = (id: string, title: string) =>
   `${JSON.stringify({ id, command: { type: "add", title, spec: false, project: null } })}\n`;
 
+// Sends one request on its own connection and gives back the reply.
+async function send(socket: string, command: unknown): Promise<unknown> {
+  const line = await openLine(socket);
+  line.send(`${JSON.stringify({ id: "r", command })}\n`);
+  const reply = JSON.parse(await line.next());
+  line.close();
+  return reply;
+}
+
 describe("the daemon's socket", () => {
+  // Found by review: stopping waited up to 30 seconds for requests being
+  // answered, and a done waiting on checks was one. The checks were only
+  // stopped after that.
+  test("stops at once while a done waits on checks, and tells it why", async () => {
+    const repo = throwawayRepo(dirs);
+    writeFileSync(join(repo, ".skelcrew", "workflow.yml"), 'checks:\n  - "sleep 40"\n');
+    let sessions = 0;
+    const served = await serve(repo, {
+      newSession: () => {
+        sessions += 1;
+        return `you-${sessions}`;
+      },
+    });
+    if (!served.ok) throw new Error(served.message);
+    const socket = served.server.socket;
+    await send(socket, { type: "add", title: "CSV export", spec: true, project: null });
+    await send(socket, { type: "claim", task: 1 });
+    await send(socket, { type: "submit", task: 1, session: "you-1", spec });
+    await send(socket, { type: "approve", task: 1, sendBack: null });
+    await send(socket, { type: "claim", task: 1 });
+    const worktree = join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export");
+    writeFileSync(join(worktree, "export.csv"), "a,b\n");
+    const git = (...args: string[]) =>
+      Bun.spawnSync(["git", "-c", "user.name=A", "-c", "user.email=a@a", ...args], {
+        cwd: worktree,
+      });
+    git("add", "export.csv");
+    git("commit", "-q", "-m", "Export");
+
+    const done = send(socket, { type: "done", task: 1, session: "you-2" });
+    await Bun.sleep(500);
+    const began = Date.now();
+    await served.server.stop();
+    expect(Date.now() - began).toBeLessThan(5_000);
+    expect(await done).toEqual({ id: "r", ok: false, message: "The daemon is shutting down." });
+  }, 20_000);
+
   // Found by review: something at the socket's path that couldn't be
   // removed made serve throw, and kept the lock.
   test("refuses to start, without throwing, when its socket path can't be cleared", async () => {
@@ -169,6 +217,19 @@ describe("the daemon's socket", () => {
     const out = await new Response(child.stdout).text();
     await child.exited;
     expect(out.trim()).toBe(JSON.stringify("Skelcrew needs git, and couldn't find it."));
+  });
+
+  // A folder inside a git repository would get worktrees and merges of
+  // the whole repository, which nobody has tested.
+  test("refuses to start in a folder inside a git repository, not where it starts", async () => {
+    const top = throwawayRepo(dirs);
+    const web = join(top, "web");
+    mkdirSync(join(web, ".skelcrew"), { recursive: true });
+    writeFileSync(join(web, ".skelcrew", "workflow.yml"), 'checks:\n  - "true"\n');
+    expect(await serve(web)).toEqual({
+      ok: false,
+      message: `${realpathSync(web)} is inside the git repository at ${realpathSync(top)}. Run Skelcrew there, where the repository starts.`,
+    });
   });
 
   test("refuses to start outside a git repository", async () => {
