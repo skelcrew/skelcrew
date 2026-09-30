@@ -1,6 +1,8 @@
-// Makes Claude Code ask you before anything runs `skelcrew approve`. The
-// spec says this guard lives in the harness's settings, so init adds
-// permission rules to the repository's .claude/settings.json. Claude Code
+// Makes Claude Code ask you before anything runs `skelcrew approve` or
+// `skelcrew reject`. The spec says this guard lives in the harness's
+// settings, so init adds permission rules to the repository's
+// .claude/settings.json. Reject needs the guard too: an agent that sent a
+// task back unasked would write a note the next agent reads as yours. Claude Code
 // checks "ask" rules before "allow" rules, so a broad allow rule elsewhere
 // can't skip the question.
 //
@@ -31,21 +33,21 @@ import * as z from "zod";
 
 export const settingsPath = ".claude/settings.json";
 
-// One rule for each usual way to run the command. A trailing " *" also
-// matches the bare command, so the first four cover `skelcrew approve`
-// with or without a task number. A leading "*" stands in for any text, so
+// One rule for each usual way to run each command. A trailing " *" also
+// matches the bare command, so the first four of each cover
+// `skelcrew approve` with or without a task number. A leading "*" stands in for any text, so
 // the last one covers a path to the program, such as
 // `./node_modules/.bin/skelcrew approve 12` or
 // `/usr/local/bin/skelcrew approve 12`. With two wildcards the docs say
 // the trailing one no longer matches the bare command, so a path with no
 // task number isn't caught.
-export const askRules = [
-  "Bash(skelcrew approve *)",
-  "Bash(bunx skelcrew approve *)",
-  "Bash(bun x skelcrew approve *)",
-  "Bash(npx skelcrew approve *)",
-  "Bash(*/skelcrew approve *)",
-];
+export const askRules = ["approve", "reject"].flatMap((verb) => [
+  `Bash(skelcrew ${verb} *)`,
+  `Bash(bunx skelcrew ${verb} *)`,
+  `Bash(bun x skelcrew ${verb} *)`,
+  `Bash(npx skelcrew ${verb} *)`,
+  `Bash(*/skelcrew ${verb} *)`,
+]);
 
 // What the report tells you about the guard. It says whether the guard is
 // in place, and what it can't stop either way.
@@ -54,12 +56,12 @@ export function askBeforeApproveLimit(state: AskBeforeApprove): string {
     state === "add by hand"
       ? [
           "The guard is not in place yet.",
-          "Claude Code won't ask you before anything runs skelcrew approve.",
+          "Claude Code won't ask you before anything runs skelcrew approve or skelcrew reject.",
           `To add it, put these in the "ask" list under "permissions" in ${settingsPath}: ${askRules.map((rule) => `"${rule}"`).join(", ")}.`,
-          "Then Claude Code will ask before the usual ways of running skelcrew approve.",
+          "Then Claude Code will ask before the usual ways of running skelcrew approve or skelcrew reject.",
         ]
       : [
-          "Claude Code asks before the usual ways of running skelcrew approve, such as `skelcrew approve 12` or `npx skelcrew approve 12`.",
+          "Claude Code asks before the usual ways of running skelcrew approve or skelcrew reject, such as `skelcrew approve 12` or `npx skelcrew reject 12 'Add totals.'`.",
         ];
   return [
     ...inPlace,
@@ -176,7 +178,7 @@ function byHand(why: string): SettingsResult {
     askBeforeApprove: "add by hand",
     file: "unchanged",
     warning: [
-      "Claude Code should ask you before anything runs skelcrew approve.",
+      "Claude Code should ask you before anything runs skelcrew approve or skelcrew reject.",
       `Init couldn't add the rules for that, because ${settingsPath} ${why}, so the file was left as it is.`,
       `Add these to the "ask" list under "permissions" in it yourself: ${askRules.map((rule) => `"${rule}"`).join(", ")}.`,
     ].join(" "),

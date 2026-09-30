@@ -53,7 +53,8 @@ function init(cwd: string, args: string[] = []) {
   });
 }
 
-const approving = "Approving: Claude Code will ask you before skelcrew approve runs.";
+const approving =
+  "Approving: Claude Code will ask you before skelcrew approve or skelcrew reject runs.";
 
 describe("skelcrew init", () => {
   test("sets up a fresh repository and says what it did", async () => {
@@ -118,7 +119,7 @@ describe("skelcrew init", () => {
       "Init couldn't add the rules for that, because .claude/settings.json isn't valid JSON",
     );
     expect(outcome.out).toContain(
-      "Approving: Claude Code won't ask you before skelcrew approve runs, because init couldn't add the rules.",
+      "Approving: Claude Code won't ask you before skelcrew approve or skelcrew reject runs, because init couldn't add the rules.",
     );
     expect(outcome.out).toContain(
       'To add them, see the note about .claude/settings.json under "Look at these".',

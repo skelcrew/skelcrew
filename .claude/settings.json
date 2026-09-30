@@ -5,7 +5,12 @@
       "Bash(bunx skelcrew approve *)",
       "Bash(bun x skelcrew approve *)",
       "Bash(npx skelcrew approve *)",
-      "Bash(*/skelcrew approve *)"
+      "Bash(*/skelcrew approve *)",
+      "Bash(skelcrew reject *)",
+      "Bash(bunx skelcrew reject *)",
+      "Bash(bun x skelcrew reject *)",
+      "Bash(npx skelcrew reject *)",
+      "Bash(*/skelcrew reject *)"
     ]
   }
 }

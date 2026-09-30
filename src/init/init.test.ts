@@ -104,16 +104,22 @@ const settings = ".claude/settings.json";
 // unreadable or read-only would test nothing. They are skipped as root.
 const asRoot = process.getuid?.() === 0;
 // The Claude Code permission rules that make it ask you before an agent
-// runs skelcrew approve. Each catches one usual way of typing it: plain,
-// through bunx, bun x or npx, or by a path to the program, such as
-// ./node_modules/.bin/skelcrew. The docs say a rule matches only the way
-// it is written, and a leading * stands in for any text.
+// runs skelcrew approve or skelcrew reject. Each catches one usual way of
+// typing it: plain, through bunx, bun x or npx, or by a path to the
+// program, such as ./node_modules/.bin/skelcrew. The docs say a rule
+// matches only the way it is written, and a leading * stands in for any
+// text.
 const askRules = [
   "Bash(skelcrew approve *)",
   "Bash(bunx skelcrew approve *)",
   "Bash(bun x skelcrew approve *)",
   "Bash(npx skelcrew approve *)",
   "Bash(*/skelcrew approve *)",
+  "Bash(skelcrew reject *)",
+  "Bash(bunx skelcrew reject *)",
+  "Bash(bun x skelcrew reject *)",
+  "Bash(npx skelcrew reject *)",
+  "Bash(*/skelcrew reject *)",
 ];
 // The report must say plainly that the rules can be got round.
 const saysItCanBeBypassed = expect.stringContaining("bash -c");
@@ -817,7 +823,7 @@ describe("initRepository", () => {
     });
   });
 
-  describe("the rules that make Claude Code ask before skelcrew approve", () => {
+  describe("the rules that make Claude Code ask before skelcrew approve or reject", () => {
     const settingsJson = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 
     test("writes a settings file with the rules when there is none", () => {
@@ -838,6 +844,24 @@ describe("initRepository", () => {
         "Bash(bun x skelcrew approve *)",
         "Bash(npx skelcrew approve *)",
         "Bash(*/skelcrew approve *)",
+      ]) {
+        expect(rules).toContain(rule);
+      }
+    });
+
+    // An agent that sent a task back unasked would put words in the
+    // developer's mouth: the next claim prints its note as "The developer's
+    // note". So reject gets the same rules as approve.
+    test("asks before the usual ways of typing skelcrew reject", () => {
+      const dir = repo(bunApp);
+      initRepository(dir);
+      const rules = JSON.parse(read(dir, settings)).permissions.ask;
+      for (const rule of [
+        "Bash(skelcrew reject *)",
+        "Bash(bunx skelcrew reject *)",
+        "Bash(bun x skelcrew reject *)",
+        "Bash(npx skelcrew reject *)",
+        "Bash(*/skelcrew reject *)",
       ]) {
         expect(rules).toContain(rule);
       }
@@ -889,6 +913,7 @@ describe("initRepository", () => {
       for (const result of [added, already]) {
         const limit = result.ok ? result.report.askBeforeApproveLimit : "";
         expect(limit).toContain("Claude Code asks before");
+        expect(limit).toContain("skelcrew approve or skelcrew reject");
         expect(limit).not.toContain("not in place yet");
       }
     });
@@ -902,6 +927,11 @@ describe("initRepository", () => {
         "Bash(bunx skelcrew approve *)",
         "Bash(bun x skelcrew approve *)",
         "Bash(*/skelcrew approve *)",
+        "Bash(skelcrew reject *)",
+        "Bash(bunx skelcrew reject *)",
+        "Bash(bun x skelcrew reject *)",
+        "Bash(npx skelcrew reject *)",
+        "Bash(*/skelcrew reject *)",
       ]);
       expect(result.ok && result.report.updated).toContain(settings);
       expect(result.ok && result.report.askBeforeApprove).toBe("added");
