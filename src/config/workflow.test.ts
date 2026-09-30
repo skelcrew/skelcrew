@@ -180,6 +180,22 @@ describe("workflowFile", () => {
     expect(text).toContain("safety_cap:\n  tokens: 2000000\n  minutes: 120\n");
   });
 
+  test("writes the setup init found, before the checks", () => {
+    const text = workflowFile(["bun run test"], ["bun install --frozen-lockfile"]);
+    expect(text.indexOf("setup:")).toBeLessThan(text.indexOf("checks:"));
+    const parsed = parseWorkflow(text);
+    if (!parsed.ok) throw new Error(parsed.reasons.join(" "));
+    expect(parsed.workflow.setup).toEqual(["bun install --frozen-lockfile"]);
+    expect(parsed.workflow.checks).toEqual(["bun run test"]);
+  });
+
+  test("writes no setup when init found none", () => {
+    const text = workflowFile(["cargo test"], []);
+    expect(text).not.toContain("setup:");
+    const parsed = parseWorkflow(text);
+    expect(parsed.ok && parsed.workflow.setup).toEqual([]);
+  });
+
   test("keeps a command exactly, even with characters YAML treats specially", () => {
     const checks: [string, ...string[]] = ['echo "a: b" # not a comment', "make -j4 test"];
     const parsed = parseWorkflow(workflowFile(checks));

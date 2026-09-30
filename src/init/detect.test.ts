@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { detectChecks } from "./detect";
+import { detectChecks, detectSetup } from "./detect";
 
 let dirs: string[] = [];
 // A throwaway repository folder holding the files it is given.
@@ -289,5 +289,35 @@ describe("detectChecks", () => {
     expect(found.ok).toBe(false);
     const reason = !found.ok ? found.reason : "";
     expect(reason).toContain("There is no folder");
+  });
+});
+
+// The checks run in a fresh copy of the code, which has no dependencies
+// installed. The setup installs them first, the way the lock file shows.
+describe("detectSetup", () => {
+  test("installs a package's dependencies from its lock file, without changing it", () => {
+    const withLock = (lock: string) =>
+      detectSetup(repo({ "package.json": packageJson({ test: "vitest" }), [lock]: "" }));
+    expect(withLock("bun.lock")).toEqual(["bun install --frozen-lockfile"]);
+    expect(withLock("bun.lockb")).toEqual(["bun install --frozen-lockfile"]);
+    expect(withLock("pnpm-lock.yaml")).toEqual(["pnpm install --frozen-lockfile"]);
+    expect(withLock("package-lock.json")).toEqual(["npm ci"]);
+  });
+
+  // Yarn 1 and later Yarn name the flag that keeps the lock file
+  // differently, so plain yarn install works with both.
+  test("installs with plain yarn install for yarn", () => {
+    const dir = repo({ "package.json": packageJson({ test: "vitest" }), "yarn.lock": "" });
+    expect(detectSetup(dir)).toEqual(["yarn install"]);
+  });
+
+  test("installs with npm install when there is no lock file", () => {
+    const dir = repo({ "package.json": packageJson({ test: "vitest" }) });
+    expect(detectSetup(dir)).toEqual(["npm install"]);
+  });
+
+  test("sets up nothing without a package.json", () => {
+    expect(detectSetup(repo({ "Cargo.toml": "[package]\n" }))).toEqual([]);
+    expect(detectSetup(repo({ "go.mod": "module app\n" }))).toEqual([]);
   });
 });

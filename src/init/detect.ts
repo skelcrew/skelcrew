@@ -67,6 +67,22 @@ export function detectChecks(dir: string): Detected {
   };
 }
 
+// The commands that prepare a fresh copy of the code before the checks run
+// there, for the `setup` in workflow.yml. A package.json gets its
+// dependencies installed by the package manager its lock file shows,
+// without changing the lock file where that manager has a flag for it.
+// Yarn 1 calls that flag --frozen-lockfile and later Yarn --immutable, so
+// yarn gets a plain install. Cargo and Go fetch what they need themselves.
+export function detectSetup(dir: string): string[] {
+  const has = (file: string) => existsSync(join(dir, file));
+  if (!has("package.json")) return [];
+  if (has("bun.lock") || has("bun.lockb")) return ["bun install --frozen-lockfile"];
+  if (has("pnpm-lock.yaml")) return ["pnpm install --frozen-lockfile"];
+  if (has("yarn.lock")) return ["yarn install"];
+  if (has("package-lock.json")) return ["npm ci"];
+  return ["npm install"];
+}
+
 // Only the scripts matter. Everything else in package.json is let through.
 const packageSchema = z.object({ scripts: z.record(z.string(), z.string()).optional() });
 

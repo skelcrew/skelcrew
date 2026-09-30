@@ -37,6 +37,7 @@ function report(repo: string, report: InitReport): string[] {
       ? `Set up Skelcrew in ${repo}.`
       : `Skelcrew was already set up in ${repo}. Nothing changed.`,
     ...list("The checks it runs", report.checks),
+    ...list("Before them, it runs", report.setup),
     ...list("Created", report.created),
     ...list("Linked", report.linked),
     ...list("Updated", report.updated),

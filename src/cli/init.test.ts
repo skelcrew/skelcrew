@@ -63,6 +63,7 @@ describe("skelcrew init", () => {
       out: [
         `Set up Skelcrew in ${repo}.`,
         "The checks it runs: bun run test, bun run lint.",
+        "Before them, it runs: bun install --frozen-lockfile.",
         "Created: .skelcrew/workflow.yml, .agents/skills/spec/SKILL.md, .agents/skills/develop/SKILL.md, .claude/settings.json, .gitignore.",
         "Linked: .claude/skills/spec, .claude/skills/develop.",
         "",
@@ -83,6 +84,7 @@ describe("skelcrew init", () => {
       out: [
         `Skelcrew was already set up in ${repo}. Nothing changed.`,
         "The checks it runs: bun run test, bun run lint.",
+        "Before them, it runs: bun install --frozen-lockfile.",
         "Already there, left as they were: .skelcrew/workflow.yml, .agents/skills/spec/SKILL.md, .agents/skills/develop/SKILL.md, .claude/skills/spec, .claude/skills/develop, .claude/settings.json, .gitignore.",
         "",
         approving,
