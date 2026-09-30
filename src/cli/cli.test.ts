@@ -449,6 +449,26 @@ describe("skelcrew done", () => {
     });
   });
 
+  // Through a real daemon: claim the task, commit in its worktree, then
+  // report done. The test repository's only check is `true`.
+  test("runs the checks on the task's branch and prints that they passed", async () => {
+    const repo = await repoWithDaemon();
+    await specced(repo);
+    await cli(repo, ["approve", "1"]);
+    await cli(repo, ["claim", "1"]);
+    const worktree = join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export");
+    writeFileSync(join(worktree, "export.csv"), "a,b\n");
+    const git = (...args: string[]) =>
+      Bun.spawnSync(["git", "-c", "user.name=Agent", "-c", "user.email=a@a", ...args], {
+        cwd: worktree,
+      });
+    git("add", "export.csv");
+    git("commit", "-q", "-m", "Export");
+    expect(await cli(repo, ["done", "1"], { session: "you-2" })).toEqual(
+      said(["The checks passed for #1."]),
+    );
+  });
+
   test("refuses without SKELCREW_SESSION", async () => {
     const repo = await repoWithDaemon();
     expect(await cli(repo, ["done", "1"])).toEqual(
@@ -462,7 +482,7 @@ describe("skelcrew done", () => {
   test("passes on the daemon's refusal", async () => {
     const repo = await repoWithDaemon();
     expect(await cli(repo, ["done", "1"], { session: "you-1" })).toEqual(
-      refused("`done` isn't built into the daemon yet."),
+      refused("#1 doesn't exist."),
     );
   });
 });

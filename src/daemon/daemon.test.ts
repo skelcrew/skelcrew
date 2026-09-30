@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import * as z from "zod";
+import { localChecks } from "../checks/checks";
 import { SessionId, TaskId } from "../core/ids";
 import type { Config } from "../core/types";
 import { Git } from "../plugins/git/git";
@@ -366,15 +368,18 @@ describe("the daemon with git", () => {
     for (const dir of repos.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  // A daemon for a real repository, with task 1 approved and Ready.
-  async function readyInRepo() {
+  // A daemon for a real repository, with task 1 approved and Ready. Its
+  // local gate runs `checks`.
+  async function readyInRepo(checks: string[] = ["true"]) {
     const repo = await makeRepo();
     repos.push(repo.dir);
     let sessions = 0;
     const opened = Daemon.open({
-      config,
+      // Every path critical, as `skelcrew init` writes it.
+      config: { ...config, criticalPaths: ["**"] },
       log: EventStore.open(":memory:"),
       versionControl: new Git(repo.dir, repo.main),
+      runChecks: localChecks(checks),
       newSession: () => {
         sessions += 1;
         return `you-${sessions}`;
@@ -398,6 +403,80 @@ describe("the daemon with git", () => {
     expect(await git(path, "branch", "--show-current")).toBe("task/1-csv-export");
     expect(await ok(daemon, { type: "status" })).toMatchObject({
       tasks: [{ task: 1, phase: "in_progress", step: "running", blocked: null }],
+    });
+  });
+
+  // Claims task 1 and commits a file in its worktree, as an agent would.
+  async function claimedWithWork(daemon: Daemon): Promise<string> {
+    const claim = z
+      .object({ worktree: z.object({ path: z.string() }) })
+      .parse(await ok(daemon, { type: "claim", task: task(1) }));
+    const path = claim.worktree.path;
+    writeFileSync(join(path, "export.csv"), "a,b\n");
+    await git(path, "add", "export.csv");
+    await git(
+      path,
+      "-c",
+      "user.name=Agent",
+      "-c",
+      "user.email=a@a",
+      "commit",
+      "-q",
+      "-m",
+      "Export",
+    );
+    return path;
+  }
+
+  // Task 1's claim in Ready is the second session named.
+  const done = (session = you(2)): Command => ({ type: "done", task: task(1), session });
+
+  test("done runs the checks on your branch, and says they passed", async () => {
+    const { daemon } = await readyInRepo();
+    await claimedWithWork(daemon);
+    expect(await ok(daemon, done())).toEqual({ passed: true });
+    // Every path is critical, so the merge waits for you.
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, phase: "checks", waitingOnYou: "merge_approval" }],
+    });
+  });
+
+  test("done says why the checks failed, and the task goes back to its agent", async () => {
+    const { daemon } = await readyInRepo(["echo 'expected 1 got 2'; exit 1"]);
+    await claimedWithWork(daemon);
+    const answer = z
+      .object({ passed: z.literal(false), summary: z.string() })
+      .parse(await ok(daemon, done()));
+    expect(answer.summary).toContain("expected 1 got 2");
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, phase: "in_progress", step: "running", blocked: null }],
+    });
+  });
+
+  test("done is refused while the worktree has uncommitted work", async () => {
+    const { daemon } = await readyInRepo();
+    const path = await claimedWithWork(daemon);
+    writeFileSync(join(path, "draft.txt"), "not yet\n");
+    const answer = await daemon.handle(done());
+    expect(answer.ok).toBe(false);
+    expect(!answer.ok && answer.message).toContain("has uncommitted changes");
+  });
+
+  test("done is refused when the branch has no commits", async () => {
+    const { daemon } = await readyInRepo();
+    await ok(daemon, { type: "claim", task: task(1) });
+    expect(await daemon.handle(done())).toEqual({
+      ok: false,
+      message: "The branch has no commits.",
+    });
+  });
+
+  test("done is refused from a session that isn't the task's", async () => {
+    const { daemon } = await readyInRepo();
+    await claimedWithWork(daemon);
+    expect(await daemon.handle(done(you(9)))).toEqual({
+      ok: false,
+      message: "#1's agent isn't you-9.",
     });
   });
 
