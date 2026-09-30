@@ -21,9 +21,12 @@ export type DaemonPaths = {
 const MAX_SOCKET_PATH = 103;
 
 // Paths start from the repository's real path, so a repository reached
-// through a link gets the same socket as the daemon sees.
+// through a link gets the same socket as the daemon sees. `socketFolder`
+// replaces the folder in /tmp. Tests give their own, so they never touch a
+// real user's folder.
 export function daemonPaths(
   repo: string,
+  socketFolder = `/tmp/skelcrew-${process.getuid?.() ?? "user"}`,
 ): { ok: true; paths: DaemonPaths } | { ok: false; message: string } {
   let real: string;
   try {
@@ -38,7 +41,7 @@ export function daemonPaths(
     // A fixed folder, not the temp folder, which can differ between two
     // shells of the same user. The user id keeps users apart.
     const hash = createHash("sha256").update(real).digest("hex").slice(0, 16);
-    sharedSocketFolder = `/tmp/skelcrew-${process.getuid?.() ?? "user"}`;
+    sharedSocketFolder = socketFolder;
     socket = join(sharedSocketFolder, `${hash}.sock`);
   }
   return {

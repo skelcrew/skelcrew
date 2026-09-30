@@ -31,8 +31,14 @@ export function localChecks(commands: string[], options: ChecksOptions = {}): Ru
   const timeoutMs = Math.min(options.timeoutMs ?? 30 * 60_000, 2_147_483_647);
   const tail = { lines: options.outputLines ?? 40, chars: options.outputChars ?? 4_000 };
 
-  return async (dir) => {
+  return async (dir, stop) => {
     for (const [i, command] of commands.entries()) {
+      if (stop?.aborted) {
+        return {
+          ok: false,
+          message: `The checks were stopped before \`${command}\`, since Skelcrew stopped.`,
+        };
+      }
       if (!isFolder(dir)) {
         const message =
           i === 0
@@ -40,7 +46,7 @@ export function localChecks(commands: string[], options: ChecksOptions = {}): Ru
             : `The folder ${dir} disappeared while the checks ran, before \`${command}\`.`;
         return { ok: false, message };
       }
-      const result = await runOne(command, dir, timeoutMs, tail);
+      const result = await runOne(command, dir, timeoutMs, tail, stop);
       switch (result.kind) {
         case "timed_out":
           return {
@@ -49,6 +55,11 @@ export function localChecks(commands: string[], options: ChecksOptions = {}): Ru
               `\`${command}\` took longer than ${timeoutMs / 1000} seconds, so it was stopped.`,
               result.output,
             ),
+          };
+        case "stopped":
+          return {
+            ok: false,
+            message: joined(`\`${command}\` was stopped, since Skelcrew stopped.`, result.output),
           };
         case "not_started":
           return { ok: false, message: `\`${command}\` couldn't start: ${result.reason}` };
@@ -89,6 +100,7 @@ type Ran =
   | { kind: "exited"; code: number; output: string }
   | { kind: "signalled"; signal: string; output: string }
   | { kind: "timed_out"; output: string }
+  | { kind: "stopped"; output: string }
   | { kind: "not_started"; reason: string };
 
 // One command, through the shell, since a check is a line of shell such as
@@ -113,6 +125,7 @@ function runOne(
   dir: string,
   timeoutMs: number,
   tail: { lines: number; chars: number },
+  stop: AbortSignal | undefined,
 ): Promise<Ran> {
   return new Promise((resolve) => {
     let child: ReturnType<typeof spawn>;
@@ -142,11 +155,16 @@ function runOne(
     let outputClosed = false;
     let ended: (() => Ran) | null = null;
     let settled = false;
+    const onStop = () => {
+      stopGroup(child.pid);
+      finish({ kind: "stopped", output: output.text() });
+    };
     const finish = (ran: Ran) => {
       if (settled) return;
       settled = true;
       clearTimeout(limit);
       clearTimeout(grace);
+      stop?.removeEventListener("abort", onStop);
       child.stdout?.destroy();
       resolve(ran);
     };
@@ -155,6 +173,7 @@ function runOne(
       finish({ kind: "timed_out", output: output.text() });
     }, timeoutMs);
     let grace: ReturnType<typeof setTimeout> | undefined;
+    stop?.addEventListener("abort", onStop);
 
     child.stdout?.on("close", () => {
       outputClosed = true;
@@ -222,4 +241,22 @@ class Tail {
 // can still land between them. That only changes how the first flag looks.
 function wholeEnd(text: string, count: number): string {
   return [...text].slice(-count).join("");
+}
+
+// The setup commands, such as installing dependencies, then the checks, in
+// the same folder. A failed setup stops there, and says it was the setup.
+export function preparedChecks(
+  setup: string[],
+  checks: string[],
+  options: ChecksOptions = {},
+): RunChecks {
+  const prepare = localChecks(setup, options);
+  const check = localChecks(checks, options);
+  return async (dir, stop) => {
+    const prepared = await prepare(dir, stop);
+    if (!prepared.ok) {
+      return { ok: false, message: `The setup failed, so no checks ran. ${prepared.message}` };
+    }
+    return check(dir, stop);
+  };
 }

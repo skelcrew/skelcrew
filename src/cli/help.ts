@@ -5,10 +5,12 @@ export const mainHelp = [
   "Skelcrew moves coding tasks from idea to merged code.",
   "",
   "Your commands:",
+  "  skelcrew init               Set up Skelcrew where your git repository starts.",
   '  skelcrew add "<task>"       Capture a task as an Idea. --spec also asks for a spec.',
   "  skelcrew spec <task>        Ask for an Idea to be specced.",
   "  skelcrew approve <task>     Approve a spec or a merge. --send-back returns it with a note.",
   "  skelcrew drop <task>        Drop a task that isn't done.",
+  "  skelcrew retry <task>       Clear a blocked task, so it can be claimed again.",
   "  skelcrew status             Show what waits on you, and tasks by phase.",
   "  skelcrew log <task>         Show a task's events.",
   "  skelcrew serve              Run the daemon in this terminal.",
@@ -29,6 +31,13 @@ const session = [
 ];
 
 export const commandHelp: Record<string, string[]> = {
+  init: [
+    "Usage: skelcrew init",
+    "",
+    "Sets up Skelcrew in this git repository: the checks in .skelcrew/workflow.yml,",
+    "the default skills, and the lines that keep its runtime files out of git.",
+    "It never overwrites a file, so running it again changes nothing.",
+  ],
   add: [
     'Usage: skelcrew add "<task>" [--spec] [--project <name>]',
     "",
@@ -41,12 +50,21 @@ export const commandHelp: Record<string, string[]> = {
     'Usage: skelcrew approve <task> [--send-back "<note>"]',
     "",
     "Approves the spec or the merge that waits for you.",
+    "Approving a merge merges the task into main now, and waits for it:",
+    "the checks run again on the merged result first. Commit or stash your",
+    "own edits on main before you approve.",
     '  --send-back "<note>"   Return it instead, with your note.',
   ],
   drop: [
     "Usage: skelcrew drop <task>",
     "",
     "Drops a task that isn't done. Its agent and worktree are let go.",
+  ],
+  retry: [
+    "Usage: skelcrew retry <task>",
+    "",
+    "Clears a blocked task's block, and gives it fresh attempts and a fresh safety cap.",
+    "It keeps its phase and its worktree. Claim it again to carry on.",
   ],
   status: ["Usage: skelcrew status", "", "Shows what waits on you, then every task by phase."],
   log: ["Usage: skelcrew log <task>", "", "Shows a task's events."],

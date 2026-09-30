@@ -16,6 +16,7 @@ import { serveUntilSignalled } from "../daemon/server";
 import type { Command } from "../protocol/protocol";
 import { taskEvent } from "../store/schema";
 import { commandHelp, mainHelp } from "./help";
+import { init } from "./init";
 import { leftOutLine, logLines } from "./log";
 
 export type Context = {
@@ -43,9 +44,6 @@ export async function run(args: string[], context: Context): Promise<Outcome> {
     return { code: 1, out: mainHelp, err: ["The TUI isn't built yet. Use the commands above."] };
   }
   if (name === "--help" || name === "-h" || name === "help") return said(...mainHelp);
-  if (name === "init") {
-    return refused("`skelcrew init` isn't built yet. It comes with pull request #34.");
-  }
   const handler = handlers[name];
   if (handler === undefined) {
     return refused(`There is no command ${name}. Run \`skelcrew --help\` to see them all.`);
@@ -59,6 +57,8 @@ export async function run(args: string[], context: Context): Promise<Outcome> {
 }
 
 const handlers: Record<string, Handler> = {
+  init: async (args, context) => init(args, context.cwd),
+
   add: async (args, context) => {
     const parsed = parse(
       "add",
@@ -98,14 +98,40 @@ const handlers: Record<string, Handler> = {
       if (note !== undefined && note.trim() === "") {
         return refused('Say what to change, like this: --send-back "Add totals."');
       }
-      return ask(context, { type: "approve", task, sendBack: note ?? null }, anything, () =>
-        said(note === undefined ? `Approved #${task}.` : `Sent #${task} back with your note.`),
+      return ask(
+        context,
+        { type: "approve", task, sendBack: note ?? null },
+        approveResult,
+        (result) => {
+          if (note !== undefined) return said(`Sent #${task} back with your note.`);
+          if (!("merged" in result)) return said(`Approved #${task}.`);
+          if (result.merged) {
+            return said(`Approved #${task}. It merged into main as ${result.commit.slice(0, 7)}.`);
+          }
+          // Nothing starts an agent in step 2, so the task waits for a claim.
+          const next = result.outOfAttempts
+            ? `Approved #${task}, but the merge failed, and #${task} is out of attempts. Retry it with skelcrew retry ${task}, or drop it.`
+            : `Approved #${task}, but the merge failed. #${task} is back in In progress. Claim it to fix it: skelcrew claim ${task}`;
+          return { code: 1, out: [next, "Why:", ...result.summary.split("\n")], err: [] };
+        },
       );
     }),
 
   drop: async (args, context) =>
     withTask("drop", args, {}, (task) =>
       ask(context, { type: "drop", task }, anything, () => said(`Dropped #${task}.`)),
+    ),
+
+  // The daemon doesn't start agents yet, so a retried task waits in its
+  // phase until it is claimed again.
+  retry: async (args, context) =>
+    withTask("retry", args, {}, (task) =>
+      ask(context, { type: "retry", task }, anything, () =>
+        said(
+          `Retried #${task}.`,
+          `Skelcrew doesn't start agents itself yet, so claim it again: skelcrew claim ${task}`,
+        ),
+      ),
     ),
 
   status: async (args, context) => {
@@ -452,6 +478,8 @@ const statusResult = z.object({
       title: z.string(),
       project: z.string().nullable(),
       phase: z.enum(phases),
+      // The step within the phase, such as "merging". Only some are shown.
+      step: z.string().nullable(),
       blocked: z.string().nullable(),
       question: z.string().nullable(),
       waitingOnYou: z.enum(waitingOn).nullable(),
@@ -498,7 +526,8 @@ function byPhase(tasks: TaskView[], indent: string): string[] {
     lines.push(`${indent}${phaseNames[phase]}:`);
     for (const task of inPhase) {
       const blocked = task.blocked === null ? "" : ` (blocked: ${task.blocked})`;
-      lines.push(`${indent}- #${task.task} ${task.title}${blocked}`);
+      const merging = task.step === "merging" ? " (merging)" : "";
+      lines.push(`${indent}- #${task.task} ${task.title}${merging}${blocked}`);
     }
   }
   return lines;
@@ -538,6 +567,7 @@ const claimResult = z.object({
     .optional(),
   note: z.string().nullable().optional(),
   worktree: z.object({ path: z.string(), branch: z.string() }).optional(),
+  failure: z.string().optional(),
 });
 
 function claimed(task: TaskId, claim: z.infer<typeof claimResult>): string[] {
@@ -554,6 +584,9 @@ function claimed(task: TaskId, claim: z.infer<typeof claimResult>): string[] {
   if (claim.note !== null && claim.note !== undefined) {
     lines.push(`The developer's note: ${claim.note}`);
   }
+  if (claim.failure !== undefined) {
+    lines.push("Why it's back:", ...claim.failure.split("\n"));
+  }
   if (claim.spec !== null && claim.spec !== undefined) {
     lines.push("Its spec so far:", `Scope: ${claim.spec.scope}`);
     lines.push("Acceptance:", ...claim.spec.acceptance.map((line) => `- ${line}`));
@@ -564,8 +597,16 @@ function claimed(task: TaskId, claim: z.infer<typeof claimResult>): string[] {
   return lines;
 }
 
-// What `done` answers once the checks have run. The daemon doesn't build
-// `done` yet, so this is the shape the CLI asks of it.
+// A spec's approval answers nothing more. A merge's says whether it landed.
+// Strict, so a broken merge answer can't pass as a spec's approval.
+const approveResult = z.union([
+  z.object({ merged: z.literal(true), commit: z.string() }),
+  z.object({ merged: z.literal(false), outOfAttempts: z.boolean(), summary: z.string() }),
+  z.strictObject({}),
+]);
+
+// What `done` answers once the checks have run.
+
 const doneResult = z.discriminatedUnion("passed", [
   z.object({ passed: z.literal(true) }),
   z.object({ passed: z.literal(false), summary: z.string() }),

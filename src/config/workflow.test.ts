@@ -45,6 +45,23 @@ describe("parseWorkflow", () => {
     });
   });
 
+  test("runs no setup when the file doesn't say", () => {
+    const parsed = parseWorkflow("checks:\n  - bun test\n");
+    expect(parsed.ok && parsed.workflow.setup).toEqual([]);
+  });
+
+  test("reads the setup commands, run before the checks in a fresh copy", () => {
+    const parsed = parseWorkflow("setup:\n  - bun install\nchecks:\n  - bun test\n");
+    expect(parsed.ok && parsed.workflow.setup).toEqual(["bun install"]);
+  });
+
+  test("refuses a setup command that is blank", () => {
+    expect(parseWorkflow('setup:\n  - " "\nchecks:\n  - bun test\n')).toEqual({
+      ok: false,
+      reasons: ["setup.0: each setup step must be a command."],
+    });
+  });
+
   test("uses main as the main branch when the file doesn't say", () => {
     const parsed = parseWorkflow("checks:\n  - bun test\n");
     expect(parsed.ok && parsed.workflow.mainBranch).toBe("main");
@@ -161,6 +178,22 @@ describe("workflowFile", () => {
   test("writes the default safety cap, so you can see and change it", () => {
     const text = workflowFile(["npm test"]);
     expect(text).toContain("safety_cap:\n  tokens: 2000000\n  minutes: 120\n");
+  });
+
+  test("writes the setup init found, before the checks", () => {
+    const text = workflowFile(["bun run test"], ["bun install --frozen-lockfile"]);
+    expect(text.indexOf("setup:")).toBeLessThan(text.indexOf("checks:"));
+    const parsed = parseWorkflow(text);
+    if (!parsed.ok) throw new Error(parsed.reasons.join(" "));
+    expect(parsed.workflow.setup).toEqual(["bun install --frozen-lockfile"]);
+    expect(parsed.workflow.checks).toEqual(["bun run test"]);
+  });
+
+  test("writes no setup when init found none", () => {
+    const text = workflowFile(["cargo test"], []);
+    expect(text).not.toContain("setup:");
+    const parsed = parseWorkflow(text);
+    expect(parsed.ok && parsed.workflow.setup).toEqual([]);
   });
 
   test("keeps a command exactly, even with characters YAML treats specially", () => {

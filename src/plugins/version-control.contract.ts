@@ -393,6 +393,125 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
     });
   });
 
+  describe(`${name}: checkCommit`, () => {
+    // A worktree with export.csv committed, and its head commit.
+    async function committed(r: Repo) {
+      const plugin = make(r);
+      const created = await plugin.createWorktree(csv);
+      if (!created.ok) throw new Error(created.message);
+      const worktree = created.value;
+      writeFileSync(join(worktree.path, "export.csv"), "committed\n");
+      await git(worktree.path, "add", "export.csv");
+      await git(worktree.path, "commit", "-q", "-m", "Export");
+      const head = CommitSha.parse(await git(worktree.path, "rev-parse", "HEAD"));
+      return { plugin, worktree, head };
+    }
+
+    test("runs the checks on exactly the commit, not on uncommitted edits", async () => {
+      const r = await repo();
+      const { plugin, worktree, head } = await committed(r);
+      writeFileSync(join(worktree.path, "export.csv"), "edited, not committed\n");
+      let seen = "";
+      const checked = await plugin.checkCommit({ taskId: csv.taskId, head }, async (dir) => {
+        seen = readFileSync(join(dir, "export.csv"), "utf8");
+        return { ok: true, value: null };
+      });
+      expect(checked).toEqual({ ok: true, value: null });
+      expect(seen).toBe("committed\n");
+    });
+
+    test("passes on the checks' failure", async () => {
+      const r = await repo();
+      const { plugin, head } = await committed(r);
+      expect(
+        await plugin.checkCommit({ taskId: csv.taskId, head }, async () => ({
+          ok: false,
+          message: "bun test failed.",
+        })),
+      ).toEqual({ ok: false, message: "bun test failed." });
+    });
+
+    test("leaves the task's worktree alone, and removes its copy, even when the checks write files", async () => {
+      const r = await repo();
+      const { plugin, worktree, head } = await committed(r);
+      let copy = "";
+      await plugin.checkCommit({ taskId: csv.taskId, head }, async (dir) => {
+        copy = dir;
+        writeFileSync(join(dir, "coverage.txt"), "95%\n");
+        return { ok: false, message: "failed" };
+      });
+      expect(copy).not.toBe(worktree.path);
+      expect(existsSync(copy)).toBe(false);
+      expect(existsSync(join(worktree.path, "coverage.txt"))).toBe(false);
+      expect(await git(worktree.path, "status", "--porcelain")).toBe("");
+    });
+
+    // Found by review: a check that left a read-only folder in the copy
+    // made its removal fail halfway, and every later check of the task
+    // failed until someone deleted the folder by hand.
+    test("removes its copy even when the checks leave a read-only folder", async () => {
+      const r = await repo();
+      const { plugin, head } = await committed(r);
+      let copy = "";
+      const locked: RunChecks = async (dir) => {
+        copy = dir;
+        mkdirSync(join(dir, "cache", "module"), { recursive: true });
+        writeFileSync(join(dir, "cache", "module", "file.go"), "package m\n");
+        chmodSync(join(dir, "cache", "module"), 0o555);
+        chmodSync(join(dir, "cache"), 0o555);
+        return { ok: true, value: null };
+      };
+      expect(await plugin.checkCommit({ taskId: csv.taskId, head }, locked)).toEqual({
+        ok: true,
+        value: null,
+      });
+      expect(existsSync(copy)).toBe(false);
+      expect(await plugin.checkCommit({ taskId: csv.taskId, head }, locked)).toEqual({
+        ok: true,
+        value: null,
+      });
+    });
+
+    test("says so when the commit doesn't exist", async () => {
+      const r = await repo();
+      const plugin = make(r);
+      const missing = CommitSha.parse("0".repeat(40));
+      const checked = await plugin.checkCommit({ taskId: csv.taskId, head: missing }, async () => ({
+        ok: true,
+        value: null,
+      }));
+      expect(checked.ok).toBe(false);
+    });
+  });
+
+  // Before a merge is approved: your own edits in a checkout of main would
+  // stop main from moving, through no fault of the task's work.
+  describe(`${name}: uncommittedOnMain`, () => {
+    test("lists the files you changed but didn't commit in your checkout of main", async () => {
+      const r = await repo();
+      writeFileSync(join(r.dir, "README.md"), "# Edited\n");
+      expect(await make(r).uncommittedOnMain()).toEqual({ ok: true, value: ["README.md"] });
+    });
+
+    test("lists nothing when your checkout of main is clean", async () => {
+      const r = await repo();
+      expect(await make(r).uncommittedOnMain()).toEqual({ ok: true, value: [] });
+    });
+
+    test("leaves out files git doesn't track", async () => {
+      const r = await repo();
+      writeFileSync(join(r.dir, "notes.txt"), "mine\n");
+      expect(await make(r).uncommittedOnMain()).toEqual({ ok: true, value: [] });
+    });
+
+    test("lists nothing when main isn't checked out anywhere", async () => {
+      const r = await repo();
+      await git(r.dir, "checkout", "-q", "--detach");
+      writeFileSync(join(r.dir, "README.md"), "# Edited\n");
+      expect(await make(r).uncommittedOnMain()).toEqual({ ok: true, value: [] });
+    });
+  });
+
   describe(`${name}: merge`, () => {
     const pass: RunChecks = async () => ({ ok: true, value: null });
 

@@ -5,8 +5,10 @@
 import * as z from "zod";
 import type { Config } from "../core/types";
 
-// `mainBranch` is the branch tasks start from and merge into.
-export type Workflow = { config: Config; checks: string[]; mainBranch: string };
+// `mainBranch` is the branch tasks start from and merge into. `setup`
+// prepares a fresh copy of a task's code, such as installing its
+// dependencies, before the checks run there.
+export type Workflow = { config: Config; checks: string[]; setup: string[]; mainBranch: string };
 
 export type ParsedWorkflow = { ok: true; workflow: Workflow } | { ok: false; reasons: string[] };
 
@@ -16,13 +18,23 @@ export type ParsedWorkflow = { ok: true; workflow: Workflow } | { ok: false; rea
 //
 // Each command is written as a JSON string, which YAML reads as a quoted
 // string. So a command with ":" or "#" in it reads back exactly.
-export function workflowFile(checks: [string, ...string[]]): string {
-  const commands = checks.map((command) => `  - ${JSON.stringify(command)}`).join("\n");
+export function workflowFile(checks: [string, ...string[]], setup: string[] = []): string {
+  const list = (items: string[]) =>
+    items.map((command) => `  - ${JSON.stringify(command)}`).join("\n");
+  const setupPart =
+    setup.length === 0
+      ? ""
+      : `
+# These prepare a fresh copy of the task's code, such as installing its
+# dependencies, before the checks run there.
+setup:
+${list(setup)}
+`;
   return `# Skelcrew's rules for this repository.
-
-# The local gate runs these in the task's worktree. Each must pass.
+${setupPart}
+# The local gate runs these in a fresh copy of the task's code. Each must pass.
 checks:
-${commands}
+${list(checks)}
 
 # Failed rounds (gates or merges) before a task is blocked.
 max_attempts: 3
@@ -76,6 +88,14 @@ const schema = z.strictObject({
   safety_cap: z
     .strictObject({ tokens: count, minutes: count })
     .default({ tokens: 2_000_000, minutes: 120 }),
+  setup: z
+    .array(
+      z.string().refine((command) => command.trim() !== "", {
+        error: "each setup step must be a command.",
+      }),
+      { error: "must be a list of commands." },
+    )
+    .default([]),
   main_branch: z
     .string({ error: "must be a branch name, such as main." })
     .refine((name) => name.trim() !== "", { error: "must be a branch name, such as main." })
@@ -110,6 +130,7 @@ export function parseWorkflow(text: string): ParsedWorkflow {
     ok: true,
     workflow: {
       checks: file.checks,
+      setup: file.setup,
       mainBranch: file.main_branch,
       config: {
         gates: ["local"],

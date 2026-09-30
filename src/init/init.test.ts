@@ -118,6 +118,7 @@ describe("initRepository", () => {
       ok: true,
       report: {
         checks: ["bun run test", "bun run lint"],
+        setup: ["bun install --frozen-lockfile"],
         created: [workflow, specSkill, developSkill, settings, ".gitignore"],
         linked: [specLink, developLink],
         updated: [],
@@ -144,6 +145,14 @@ describe("initRepository", () => {
     const parsed = parseWorkflow(read(dir, workflow));
     if (!parsed.ok) throw new Error(parsed.reasons.join(" "));
     expect(parsed.workflow.checks).toEqual(["bun run test", "bun run lint"]);
+    expect(parsed.workflow.setup).toEqual(["bun install --frozen-lockfile"]);
+  });
+
+  test("keeps an existing workflow.yml's setup, and reports it", () => {
+    const mine = "setup:\n  - make deps\nchecks:\n  - make ci\n";
+    const dir = repo({ ...bunApp, [workflow]: mine });
+    const result = initRepository(dir);
+    expect(result.ok && result.report.setup).toEqual(["make deps"]);
   });
 
   test("writes the default skills in .agents/skills", () => {
@@ -526,6 +535,7 @@ describe("initRepository", () => {
       ok: true,
       report: {
         checks: ["bun run test", "bun run lint"],
+        setup: ["bun install --frozen-lockfile"],
         created: [],
         linked: [],
         updated: [],

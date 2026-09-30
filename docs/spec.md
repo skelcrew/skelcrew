@@ -321,6 +321,8 @@ Rules and record are committed and reviewed like code. The SQLite database holds
 Example `workflow.yml`:
 
 ```yaml
+setup:
+  - bun install --frozen-lockfile
 checks:
   - bun test
   - bun run typecheck
@@ -339,6 +341,10 @@ plugins:
   work_source: github
 ```
 
+`setup` prepares a fresh copy of a task's code before the checks run there, such as installing its dependencies. The checks never run in the agent's own worktree: each gate and each merge checks a fresh copy of the exact commit, so nothing the agent does meanwhile can change what is checked. A failed setup fails the gate, like a failed check.
+
+Skelcrew runs where a git repository starts, the folder that holds `.git`. A folder inside a repository, such as one project in a repository that holds several, isn't supported yet.
+
 `main_branch` is the branch tasks start from and merge into. It is `main` when left out. The daemon refuses to start if the branch doesn't exist.
 
 ## CLI
@@ -354,6 +360,7 @@ plugins:
 | `skelcrew project set <task> <project>` | Put a task in a project, or take it out with `none` |
 | `skelcrew spec <task>` | Ask for an Idea to be specced |
 | `skelcrew approve <task>` | Approve a spec or a critical merge; `--send-back` returns it |
+| `skelcrew retry <task>` | Retry a blocked task; it waits for a claim until Skelcrew starts agents itself |
 | `skelcrew drop <task>` | Drop a task that is not done; stops its session and removes its worktree if it has them |
 | `skelcrew inbox` | List open decisions and answer them |
 | `skelcrew status` | Show tasks by project and phase, and running sessions |
@@ -371,7 +378,7 @@ The TUI and the skills are both built on these commands, so neither can do what 
 Skelcrew should build itself as early as possible, and trust in auto-merge is earned from data rather than switched on. The existing CLI keeps building the new core until the daemon can take over.
 
 1. **Core in close collaboration.** State machine, contracts, event log and scheduler, with the full test approach and the simulator. Built interactively with Claude rather than delegated: the types, contracts and invariants come first and the developer approves them, Claude implements against them, and every change to the core is read before it lands.
-2. **Smallest real loop, attended.** Daemon, CLI, built-in board, git plugin, local checks, and the default skills (spec, develop) used from the developer's harness. The developer starts each agent in their own session. Merging stays manual, and specs are approved with `skelcrew approve` until the inbox exists. One task goes from `skelcrew add` to a merged commit.
+2. **Smallest real loop, attended.** Daemon, CLI, built-in board, git plugin, local checks, and the default skills (spec, develop) used from the developer's harness. The developer starts each agent in their own session. Every merge waits for the developer's approval, as do specs, with `skelcrew approve` until the inbox exists. Skelcrew then carries out the merge. One task goes from `skelcrew add` to a merged commit.
 3. **Dogfood day.** Skelcrew runs on its own repository; every change from here is a Skelcrew task.
 4. **Background runs and the TUI.** The process runner and Claude Code profile, so the scheduler starts agents itself. The TUI, for adding tasks, approving them, and seeing what is running and what waits on the developer.
 5. **Inbox and intake.** Questions with options, the spec skill wired into intake, desktop notifications.
@@ -414,4 +421,5 @@ v1 is single user, runs on one machine, and ships only the plugins its first use
 - [ ] What should the default safety cap be, in tokens and in time?
 - [ ] Which seeded bug types matter most for the review gate eval, and what catch rate is good enough to loosen a critical path?
 - [ ] Where do plugins not written by the Skelcrew project live, and how are they loaded? A plugin runs inside the daemon, next to the rules, so loading outside code is also a question of trust.
+- [ ] How are the checks kept out of an agent's reach? The commands come from `workflow.yml` on main, but they run the task's own code: `bun test` runs the scripts and `package.json` on the agent's branch. So an agent could make its own checks pass. While every path is critical, the developer sees such a change at merge approval. Before auto-merge (build step 6), changes to what the checks run may need to count as critical, or be flagged.
 - [ ] Is Windows supported, and when? The daemon assumes Unix today: its lock (`flock`), its socket, stopping processes by group and signal, and running checks through `sh`. Each would need a Windows version.

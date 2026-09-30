@@ -15,6 +15,9 @@ import type { BranchFacts, CommitSha, TaskId, Worktree } from "../core/types";
 
 export type Done<T> = { ok: true; value: T } | { ok: false; message: string };
 
+// The commit a task's agent reported done, to check.
+export type CheckRequest = { taskId: TaskId; head: CommitSha };
+
 // What to merge: exactly `head` from the task's worktree, even if the
 // branch has moved on since. The title names the commit on main.
 export type MergeRequest = {
@@ -25,8 +28,10 @@ export type MergeRequest = {
 };
 
 // Runs the local checks in a folder. The daemon owns the checks, so it
-// hands this to the merge, which calls it on the merged result.
-export type RunChecks = (dir: string) => Promise<Done<null>>;
+// hands this to the gate and the merge, which call it on a copy of their
+// own. `stop` ends them early, such as when the daemon stops, and they then
+// count as failed.
+export type RunChecks = (dir: string, stop?: AbortSignal) => Promise<Done<null>>;
 
 // What to undo: a commit a merge put on main, for this task. The reason
 // goes in the new commit's message.
@@ -50,6 +55,18 @@ export interface VersionControl {
   // Refused while the worktree has uncommitted work, since the gates and
   // the merge only see what is committed.
   readBranch(worktree: Worktree): Promise<Done<BranchFacts>>;
+
+  // Runs the checks in a fresh copy of exactly `head`, then removes the
+  // copy. Nothing in the task's worktree is seen or changed, so an agent
+  // editing meanwhile, or a check that writes files, can't change what is
+  // checked. Gives back the checks' own result, or why the copy couldn't be
+  // made.
+  checkCommit(request: CheckRequest, runChecks: RunChecks): Promise<Done<null>>;
+
+  // The tracked files with uncommitted changes in any checkout of main.
+  // A merge can't move main over them, so the daemon asks before merging.
+  // Files git doesn't track are left out.
+  uncommittedOnMain(): Promise<Done<string[]>>;
 
   // Squash-merges exactly `head` onto main, as one commit. It brings the
   // work up to date with main first, then runs the checks on the result.

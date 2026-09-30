@@ -7,9 +7,11 @@
 // queue. Neither the loop nor the git plugin is built for two things at
 // once, and it keeps task numbers from ever repeating.
 //
-// Making and removing worktrees go to the version control plugin. The checks and merging
-// aren't wired in yet. A command that needs them is answered at once with a
-// failure, so the core never waits on something that won't happen.
+// Making and removing worktrees, reading branches and merging go to the
+// version control plugin, and the local gate to the checks runner. Starting
+// agents and reverting aren't wired in yet. A command that needs them is
+// answered at once with a failure, so the core never waits on something
+// that won't happen.
 
 import { randomUUID } from "node:crypto";
 import { ProjectId, SessionId, TaskId } from "../core/ids";
@@ -24,7 +26,7 @@ import type {
   Worktree,
 } from "../core/types";
 import { Loop, type ReadableLog, type Tools } from "../loop/loop";
-import type { VersionControl } from "../plugins/version-control";
+import type { RunChecks, VersionControl } from "../plugins/version-control";
 import { type Command, MAX_LINE } from "../protocol/protocol";
 import type { EventStore } from "../store/store";
 
@@ -41,15 +43,22 @@ export type DaemonOptions = {
   // long each time, but never more than `maxRetryMs` apart.
   retryMs?: number;
   maxRetryMs?: number;
-  // Makes the worktrees. Without it, making one fails at once.
+  // Makes the worktrees and reads their branches. Without it, making one
+  // fails at once, and `done` is refused.
   versionControl?: VersionControl;
+  // The local gate: runs the repository's checks in a folder. Without it,
+  // the gate fails at once.
+  runChecks?: RunChecks;
 };
 
 // An answer that has to wait for a tool's reply, such as a claim waiting
 // for its worktree. `until` says when the task is ready to answer.
-type Later = { later: { task: TaskId; until: (task: Task) => boolean; answer: () => Answer } };
+// `answer` gets the task as it was then, or null if it is gone.
+type Later = {
+  later: { task: TaskId; until: (task: Task) => boolean; answer: (task: Task | null) => Answer };
+};
 
-type Waiter = { task: TaskId; until: (task: Task) => boolean; wake: () => void };
+type Waiter = { task: TaskId; until: (task: Task) => boolean; wake: (task: Task | null) => void };
 
 export class Daemon {
   private queue: Promise<unknown> = Promise.resolve();
@@ -58,12 +67,14 @@ export class Daemon {
   private readonly log: DaemonOptions["log"];
   private readonly retryMs: number;
   private readonly maxRetryMs: number;
+  private readonly versionControl: VersionControl | null;
   private readonly retryTimers = new Set<ReturnType<typeof setTimeout>>();
   private closed = false;
   private waiters = new Set<Waiter>();
 
   private constructor(
     private readonly loop: Loop,
+    private readonly tools: DaemonTools,
     options: DaemonOptions,
   ) {
     this.newSession = options.newSession ?? (() => `session-${randomUUID()}`);
@@ -71,6 +82,7 @@ export class Daemon {
     this.log = options.log;
     this.retryMs = options.retryMs ?? 1_000;
     this.maxRetryMs = options.maxRetryMs ?? 30_000;
+    this.versionControl = options.versionControl ?? null;
   }
 
   // Rebuilds every task from the saved events, and carries out any command
@@ -81,11 +93,11 @@ export class Daemon {
   static open(
     options: DaemonOptions,
   ): { ok: true; value: Daemon } | { ok: false; message: string } {
-    const tools = new DaemonTools(options.versionControl ?? null);
+    const tools = new DaemonTools(options.versionControl ?? null, options.runChecks ?? null);
     const opened = Loop.open(options.config, tools, options.log);
     if (!opened.ok)
       return { ok: false, message: `The saved log couldn't be read. ${opened.reason}` };
-    const daemon = new Daemon(opened.loop, options);
+    const daemon = new Daemon(opened.loop, tools, options);
     tools.connect(
       (taskId, input, finished) => daemon.reply(taskId, input, finished),
       (taskId) => daemon.find(taskId)?.title ?? `#${taskId}`,
@@ -99,6 +111,11 @@ export class Daemon {
   // An answer that waits for a tool's reply waits outside the queue, so
   // the reply can get in.
   async handle(command: Command): Promise<Answer> {
+    if (command.type === "done") return this.done(command.task, command.session);
+    if (command.type === "approve" && command.sendBack === null) {
+      const refused = await this.beforeMerge(command.task);
+      if (refused !== null) return refused;
+    }
     const first = await this.oneAtATime(() => {
       const answered = this.guarded(() => this.answer(command));
       // A request can settle a waiting claim too, such as a drop.
@@ -107,8 +124,128 @@ export class Daemon {
     });
     if (!("later" in first)) return first;
     const { task, until, answer } = first.later;
-    await this.settled(task, until);
-    return this.oneAtATime(() => this.guarded(answer));
+    const settled = await this.settled(task, until);
+    return this.oneAtATime(() => this.guarded(() => answer(settled)));
+  }
+
+  // An agent reports its work done. The daemon reads the task's branch,
+  // which the core needs, then waits while the gates run. Reading the
+  // branch and waiting both happen outside the queue, so replies can get
+  // in. The answer says whether the checks passed, and why not.
+  private async done(taskId: TaskId, session: SessionId): Promise<Answer> {
+    const versionControl = this.versionControl;
+    if (versionControl === null) {
+      return { ok: false, message: "`done` needs git, which this daemon doesn't have." };
+    }
+    const found = await this.oneAtATime(() => this.guarded(() => this.worktreeOf(taskId, session)));
+    if ("ok" in found) return found;
+    // The checks are already running, for example again after a restart.
+    // The agent waits for their result, and reports nothing new.
+    if (found.running) return this.checkedOnceDone(taskId);
+
+    let facts: Awaited<ReturnType<VersionControl["readBranch"]>>;
+    try {
+      facts = await versionControl.readBranch(found.worktree);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      facts = { ok: false, message: `git couldn't read the branch: ${message}` };
+    }
+    if (!facts.ok) return { ok: false, message: facts.message };
+    const branch = facts.value;
+
+    const reported = await this.oneAtATime(() =>
+      this.guarded(() => this.send(taskId, { by: "agent", type: "report_done", session, branch })),
+    );
+    if (!reported.ok) return reported;
+    return this.checkedOnceDone(taskId);
+  }
+
+  // Read at the moment the gates finish. A merge may start right after,
+  // and its outcome isn't the checks'.
+  private async checkedOnceDone(taskId: TaskId): Promise<Answer> {
+    const settled = await this.settled(
+      taskId,
+      (task) => !(task.phase === "checks" && task.step.kind === "gate"),
+    );
+    if (this.closed || settled === null)
+      return { ok: false, message: "The daemon is shutting down." };
+    return this.checked(settled);
+  }
+
+  // Where the agent's work is, or that its checks are already running. Only
+  // the task's own agent is heard, before anything is read.
+  private worktreeOf(
+    taskId: TaskId,
+    session: SessionId,
+  ): { worktree: Worktree; running: false } | { running: true } | Answer {
+    const task = this.find(taskId);
+    if (task === null) return { ok: false, message: `#${taskId} doesn't exist.` };
+    const agent = runningSession(task);
+    if (agent !== null && agent !== session) {
+      return { ok: false, message: `#${taskId}'s agent isn't ${session}.` };
+    }
+    if (task.phase === "checks" && task.step.kind === "gate") return { running: true };
+    if (task.phase !== "in_progress") {
+      return {
+        ok: false,
+        message: `#${taskId} isn't in In progress, so there is no work to report.`,
+      };
+    }
+    return { worktree: task.worktree, running: false };
+  }
+
+  // What `done` tells the agent once the gates have run.
+  private checked(task: Task): Answer {
+    const taskId = task.id;
+    if (task.blocked !== null) return { ok: false, message: describeBlock(task.blocked) };
+    switch (task.phase) {
+      case "in_progress":
+        return {
+          ok: true,
+          result: {
+            passed: false,
+            summary: task.brief.failure?.summary ?? "The checks didn't pass.",
+          },
+        };
+      case "checks":
+      case "done":
+        return { ok: true, result: { passed: true } };
+      case "dropped":
+        return { ok: false, message: `#${taskId} was dropped while its checks ran.` };
+      default:
+        return { ok: false, message: `#${taskId} is now in ${phaseNames[task.phase]}.` };
+    }
+  }
+
+  // Before approving a merge: your own uncommitted edits in a checkout of
+  // main would stop main from moving, through no fault of the task's work.
+  // So the approval is refused while there are any, and nothing changes.
+  private async beforeMerge(taskId: TaskId): Promise<Answer | null> {
+    const versionControl = this.versionControl;
+    if (versionControl === null) return null;
+    const waiting = await this.oneAtATime(() => {
+      const task = this.find(taskId);
+      return task !== null && waitingOnYou(task) === "merge_approval";
+    });
+    if (!waiting) return null;
+    let changed: Awaited<ReturnType<VersionControl["uncommittedOnMain"]>>;
+    try {
+      changed = await versionControl.uncommittedOnMain();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      changed = { ok: false, message };
+    }
+    if (!changed.ok) {
+      return {
+        ok: false,
+        message: `Your checkout of main couldn't be checked: ${changed.message}`,
+      };
+    }
+    if (changed.value.length === 0) return null;
+    return {
+      ok: false,
+      message: `Your checkout of main has uncommitted changes in ${changed.value.join(", ")}. Commit or stash them, then approve again. Nothing was merged.`,
+    };
   }
 
   private guarded<T>(work: () => T): T | Answer {
@@ -121,12 +258,13 @@ export class Daemon {
     }
   }
 
-  // Resolves once `until` holds for the task, checked after each reply.
-  // Closing the daemon wakes every waiter.
-  private settled(taskId: TaskId, until: (task: Task) => boolean): Promise<void> {
+  // Resolves once `until` holds for the task, checked after each reply,
+  // with the task as it was then. Null if the task is gone. Closing the
+  // daemon wakes every waiter.
+  private settled(taskId: TaskId, until: (task: Task) => boolean): Promise<Task | null> {
     return new Promise((wake) => {
       const task = this.find(taskId);
-      if (task === null || until(task) || this.closed) wake();
+      if (task === null || until(task) || this.closed) wake(task);
       else this.waiters.add({ task: taskId, until, wake });
     });
   }
@@ -136,7 +274,7 @@ export class Daemon {
       const task = this.find(waiter.task);
       if (task === null || waiter.until(task) || this.closed) {
         this.waiters.delete(waiter);
-        waiter.wake();
+        waiter.wake(task);
       }
     }
   }
@@ -169,6 +307,10 @@ export class Daemon {
       case "approve": {
         const task = this.find(command.task);
         if (task === null) return { ok: false, message: `#${command.task} doesn't exist.` };
+        // Already merging, such as after a restart: wait for the same result.
+        if (task.phase === "checks" && task.step.kind === "merging" && command.sendBack === null) {
+          return this.waitForMerge(command.task);
+        }
         const note = command.sendBack;
         const waiting = waitingOnYou(task);
         const input: Input | null =
@@ -184,7 +326,11 @@ export class Daemon {
         if (input === null) {
           return { ok: false, message: `#${command.task} has nothing waiting for your approval.` };
         }
-        return this.send(command.task, input);
+        const approved = this.send(command.task, input);
+        if (!approved.ok || input.type !== "approve_merge") return approved;
+        // An approved merge happens now. The answer waits for it, so you
+        // hear whether it landed.
+        return this.waitForMerge(command.task);
       }
 
       case "drop":
@@ -231,6 +377,11 @@ export class Daemon {
           message: command.message,
         });
 
+      // Clears the block. The daemon doesn't start agents yet, so the task
+      // waits in its phase until you claim it again.
+      case "retry":
+        return this.send(command.task, { by: "human", type: "retry" });
+
       // The task's events as saved. The CLI puts them in plain words.
       case "log": {
         if (this.find(command.task) === null) {
@@ -246,8 +397,9 @@ export class Daemon {
         return { ok: true, result: newestThatFit(loaded.events) };
       }
 
+      // Answered in `handle`, since it waits outside the queue.
       case "done":
-        return { ok: false, message: `\`${command.type}\` isn't built into the daemon yet.` };
+        return { ok: false, message: "`done` couldn't be handled." };
     }
   }
 
@@ -257,6 +409,7 @@ export class Daemon {
   // work already in the queue is done, so the store can then be closed.
   close(): Promise<void> {
     this.closed = true;
+    this.tools.stop();
     for (const timer of this.retryTimers) clearTimeout(timer);
     this.retryTimers.clear();
     this.wakeWaiters();
@@ -294,6 +447,36 @@ export class Daemon {
     });
   }
 
+  private waitForMerge(taskId: TaskId): Later {
+    return {
+      later: {
+        task: taskId,
+        until: (task) => !(task.phase === "checks" && task.step.kind === "merging"),
+        answer: (task) => this.mergedOrNot(taskId, task),
+      },
+    };
+  }
+
+  private mergedOrNot(taskId: TaskId, task: Task | null): Answer {
+    if (this.closed) return { ok: false, message: "The daemon is shutting down." };
+    if (task === null) return { ok: false, message: `#${taskId} doesn't exist.` };
+    const blocked = task.blocked;
+    if (blocked?.kind === "out_of_attempts" && blocked.failure.step === "merge") {
+      return {
+        ok: true,
+        result: { merged: false, outOfAttempts: true, summary: blocked.failure.summary },
+      };
+    }
+    if (blocked !== null) return { ok: false, message: describeBlock(blocked) };
+    if (task.phase === "done")
+      return { ok: true, result: { merged: true, commit: task.mergeCommit } };
+    if (task.phase === "in_progress") {
+      const summary = task.brief.failure?.summary ?? "The merge didn't happen.";
+      return { ok: true, result: { merged: false, outOfAttempts: false, summary } };
+    }
+    return { ok: false, message: `#${taskId} is now in ${phaseNames[task.phase]}.` };
+  }
+
   // What a claim tells the session: where the task stands, and where to
   // work once it has a worktree.
   private claimed(taskId: TaskId, session: SessionId): Answer {
@@ -311,8 +494,12 @@ export class Daemon {
     switch (task.phase) {
       case "spec":
         return { ok: true, result: { session, phase: "spec", spec: task.spec, note: task.note } };
-      case "in_progress":
-        return { ok: true, result: { session, phase: "in_progress", worktree: task.worktree } };
+      case "in_progress": {
+        // Why the task is back, if a gate or a merge failed.
+        const failure = task.brief.failure?.summary;
+        const result = { session, phase: "in_progress", worktree: task.worktree };
+        return { ok: true, result: failure === undefined ? result : { ...result, failure } };
+      }
       default:
         return { ok: true, result: { session, phase: task.phase } };
     }
@@ -393,9 +580,10 @@ export function describeBlock(reason: BlockReason): string {
   }
 }
 
-// Carries out the core's commands. Worktrees go to the version control
-// plugin. The checks and merging aren't built in yet, so the commands that
-// need them are answered with a failure at once. An attended session can't
+// Carries out the core's commands. Worktrees and merges go to the version
+// control plugin, and the local gate to the checks runner. Starting agents
+// and reverting aren't built in yet, so those commands are answered with a
+// failure at once. An attended session can't
 // be stopped or messaged by Skelcrew, so those commands do nothing: its
 // next report is refused instead.
 type Deliver = (taskId: TaskId, input: Input, finished: () => void) => void;
@@ -407,8 +595,17 @@ class DaemonTools implements Tools {
   // Commands that go to a plugin, held until `connect`: at start-up the
   // loop sends out unfinished commands before titles can be looked up.
   private held: [CoreCommand, () => void][] = [];
+  // Stops running checks when the daemon stops, so none outlives it.
+  private readonly stopping = new AbortController();
 
-  constructor(private readonly versionControl: VersionControl | null) {}
+  stop(): void {
+    this.stopping.abort();
+  }
+
+  constructor(
+    private readonly versionControl: VersionControl | null,
+    private readonly runChecks: RunChecks | null,
+  ) {}
 
   connect(deliver: Deliver, titleOf: (taskId: TaskId) => string): void {
     this.deliver = deliver;
@@ -426,8 +623,22 @@ class DaemonTools implements Tools {
       else void this.createWorktree(this.versionControl, command, finished);
       return;
     }
+    if (command.type === "merge" && this.versionControl !== null && this.runChecks !== null) {
+      if (this.deliver === null) this.held.push([command, finished]);
+      else void this.merge(this.versionControl, this.runChecks, command, finished);
+      return;
+    }
     if (command.type === "remove_worktree" && this.versionControl !== null) {
       void this.removeWorktree(this.versionControl, command.worktree, finished);
+      return;
+    }
+    if (
+      command.type === "run_gate" &&
+      command.gate === "local" &&
+      this.versionControl !== null &&
+      this.runChecks !== null
+    ) {
+      void this.runLocalGate(this.versionControl, this.runChecks, command, finished);
       return;
     }
     const reply = this.replyTo(command);
@@ -436,6 +647,66 @@ class DaemonTools implements Tools {
       return;
     }
     const [taskId, input] = reply;
+    this.send(taskId, input, finished);
+  }
+
+  // The checks run in a fresh copy of the commit the agent reported, never
+  // in its worktree. So an agent editing meanwhile, or a check that writes
+  // files, can't change what is checked.
+  private async runLocalGate(
+    versionControl: VersionControl,
+    runChecks: RunChecks,
+    command: Extract<CoreCommand, { type: "run_gate" }>,
+    finished: () => void,
+  ): Promise<void> {
+    const { taskId, request, gate, head } = command;
+    let summary: string | null;
+    try {
+      const signal = this.stopping.signal;
+      const checked = await versionControl.checkCommit({ taskId, head }, (dir) =>
+        runChecks(dir, signal),
+      );
+      summary = checked.ok ? null : checked.message;
+    } catch (error) {
+      summary = `The checks couldn't run: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    const input: Input =
+      summary === null
+        ? {
+            by: "plugin",
+            type: "gate_result",
+            request,
+            gate,
+            ok: true,
+            summary: "The checks passed.",
+          }
+        : { by: "plugin", type: "gate_result", request, gate, ok: false, summary };
+    this.send(taskId, input, finished);
+  }
+
+  // The merge brings the work up to date with main, runs the setup and the
+  // checks on the result in a copy of its own, and only then moves main.
+  private async merge(
+    versionControl: VersionControl,
+    runChecks: RunChecks,
+    command: Extract<CoreCommand, { type: "merge" }>,
+    finished: () => void,
+  ): Promise<void> {
+    const { taskId, request, worktree, head } = command;
+    const signal = this.stopping.signal;
+    let input: Input;
+    try {
+      const merged = await versionControl.merge(
+        { taskId, title: this.titleOf(taskId), worktree, head },
+        (dir) => runChecks(dir, signal),
+      );
+      input = merged.ok
+        ? { by: "plugin", type: "merged", request, commit: merged.value }
+        : { by: "plugin", type: "merge_failed", request, summary: merged.message };
+    } catch (error) {
+      const summary = `The merge couldn't run: ${error instanceof Error ? error.message : String(error)}`;
+      input = { by: "plugin", type: "merge_failed", request, summary };
+    }
     this.send(taskId, input, finished);
   }
 
