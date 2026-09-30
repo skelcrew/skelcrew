@@ -7,7 +7,6 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { cleanUp } from "../daemon/testing";
-import { askBeforeApproveLimit } from "../init/settings";
 import { run } from "./cli";
 
 const dirs: string[] = [];
@@ -54,7 +53,7 @@ function init(cwd: string, args: string[] = []) {
   });
 }
 
-const approving = `Approving: ${askBeforeApproveLimit("added")}`;
+const approving = "Approving: Claude Code will ask you before skelcrew approve runs.";
 
 describe("skelcrew init", () => {
   test("sets up a fresh repository and says what it did", async () => {
@@ -103,6 +102,23 @@ describe("skelcrew init", () => {
     const warnings = outcome.out.slice(outcome.out.indexOf("Look at these:") + 1);
     expect(warnings[0]).toStartWith("- Init couldn't link .claude/skills/spec");
     expect(warnings[1]).toStartWith("- Init couldn't link .claude/skills/develop");
+  });
+
+  test("when it can't add the approve rules, says Claude Code won't ask, and where to look", async () => {
+    // A settings file that isn't valid JSON is left as it is.
+    const repo = gitRepo({ ...bunApp, ".claude/settings.json": "{" });
+    const outcome = await init(repo);
+    expect(outcome.code).toBe(0);
+    const warnings = outcome.out.slice(outcome.out.indexOf("Look at these:") + 1);
+    expect(warnings[0]).toContain(
+      "Init couldn't add the rules for that, because .claude/settings.json isn't valid JSON",
+    );
+    expect(outcome.out).toContain(
+      "Approving: Claude Code won't ask you before skelcrew approve runs, because init couldn't add the rules.",
+    );
+    expect(outcome.out).toContain(
+      'To add them, see the note about .claude/settings.json under "Look at these".',
+    );
   });
 
   test("refuses when it finds no checks, and writes nothing", async () => {
