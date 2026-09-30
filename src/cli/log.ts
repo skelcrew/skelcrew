@@ -73,7 +73,7 @@ function happened(event: TaskEvent, before: TaskEvent[]): string {
       const { text, options } = event.question;
       return options.length === 0
         ? `The agent asked: ${text}`
-        : `The agent asked: ${text} Options: ${options.join(", ")}.`;
+        : `The agent asked: ${text}\nOptions: ${options.join(", ")}.`;
     }
     case "task.question_answered":
       return `You answered: ${event.text}`;

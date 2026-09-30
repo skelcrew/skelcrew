@@ -533,7 +533,8 @@ describe("skelcrew log", () => {
         "2026-09-30 10:02  The agent said it's done: 3 commits, 1 changed file. The local checks started.",
         "2026-09-30 10:03  The local checks failed: bun test failed.",
         "                  1 test failed.",
-        "2026-09-30 10:04  The agent asked: Commas or semicolons? Options: Commas, Semicolons.",
+        "2026-09-30 10:04  The agent asked: Commas or semicolons?",
+        "                  Options: Commas, Semicolons.",
         "2026-09-30 10:05  You answered: Semicolons.",
         "2026-09-30 10:06  The local checks passed.",
         "2026-09-30 10:06  All checks passed.",
@@ -622,6 +623,29 @@ describe("skelcrew log", () => {
         "2026-09-30 10:02  Used 800 tokens in under a minute so far.",
         "2026-09-30 10:02  Used 1,234,567 tokens in 1 minute so far.",
         "2026-09-30 10:02  Used 2,500,000 tokens in 45 minutes so far.",
+      ]),
+    );
+  });
+
+  // Found by review: "The agent asked: Use Postgres Options: Yes, No."
+  test("keeps a question apart from its options", async () => {
+    const repo = throwawayRepo(dirs);
+    const at = new Date(2026, 8, 30, 10, 2).getTime();
+    await fakeDaemon(repo, {
+      events: [
+        {
+          v: 1,
+          taskId: 4,
+          at,
+          type: "task.question_asked",
+          question: { from: "develop", text: "Use Postgres", options: ["Yes", "No"], askedAt: at },
+        },
+      ],
+    });
+    expect(await cli(repo, ["log", "4"])).toEqual(
+      said([
+        "2026-09-30 10:02  The agent asked: Use Postgres",
+        "                  Options: Yes, No.",
       ]),
     );
   });
