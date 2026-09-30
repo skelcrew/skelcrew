@@ -96,8 +96,22 @@ const handlers: Record<string, Handler> = {
       if (note !== undefined && note.trim() === "") {
         return refused('Say what to change, like this: --send-back "Add totals."');
       }
-      return ask(context, { type: "approve", task, sendBack: note ?? null }, anything, () =>
-        said(note === undefined ? `Approved #${task}.` : `Sent #${task} back with your note.`),
+      return ask(
+        context,
+        { type: "approve", task, sendBack: note ?? null },
+        approveResult,
+        (result) => {
+          if (note !== undefined) return said(`Sent #${task} back with your note.`);
+          if (!("merged" in result)) return said(`Approved #${task}.`);
+          if (result.merged) {
+            return said(`Approved #${task}. It merged into main as ${result.commit.slice(0, 7)}.`);
+          }
+          // Nothing starts an agent in step 2, so the task waits for a claim.
+          const next = result.outOfAttempts
+            ? `Approved #${task}, but the merge failed, and #${task} is out of attempts. Retry it with skelcrew retry ${task}, or drop it.`
+            : `Approved #${task}, but the merge failed. #${task} is back in In progress. Claim it to fix it: skelcrew claim ${task}`;
+          return { code: 1, out: [next, "Why:", ...result.summary.split("\n")], err: [] };
+        },
       );
     }),
 
@@ -461,6 +475,8 @@ const statusResult = z.object({
       task: TaskId,
       title: z.string(),
       phase: z.enum(phases),
+      // The step within the phase, such as "merging". Only some are shown.
+      step: z.string().nullable(),
       blocked: z.string().nullable(),
       question: z.string().nullable(),
       waitingOnYou: z.enum(waitingOn).nullable(),
@@ -485,7 +501,8 @@ function status(tasks: TaskView[]): string[] {
     lines.push(`${phaseNames[phase]}:`);
     for (const task of inPhase) {
       const blocked = task.blocked === null ? "" : ` (blocked: ${task.blocked})`;
-      lines.push(`- #${task.task} ${task.title}${blocked}`);
+      const merging = task.step === "merging" ? " (merging)" : "";
+      lines.push(`- #${task.task} ${task.title}${merging}${blocked}`);
     }
   }
   return lines;
@@ -521,6 +538,7 @@ const claimResult = z.object({
     .optional(),
   note: z.string().nullable().optional(),
   worktree: z.object({ path: z.string(), branch: z.string() }).optional(),
+  failure: z.string().optional(),
 });
 
 function claimed(task: TaskId, claim: z.infer<typeof claimResult>): string[] {
@@ -537,6 +555,9 @@ function claimed(task: TaskId, claim: z.infer<typeof claimResult>): string[] {
   if (claim.note !== null && claim.note !== undefined) {
     lines.push(`The developer's note: ${claim.note}`);
   }
+  if (claim.failure !== undefined) {
+    lines.push("Why it's back:", ...claim.failure.split("\n"));
+  }
   if (claim.spec !== null && claim.spec !== undefined) {
     lines.push("Its spec so far:", `Scope: ${claim.spec.scope}`);
     lines.push("Acceptance:", ...claim.spec.acceptance.map((line) => `- ${line}`));
@@ -547,8 +568,16 @@ function claimed(task: TaskId, claim: z.infer<typeof claimResult>): string[] {
   return lines;
 }
 
-// What `done` answers once the checks have run. The daemon doesn't build
-// `done` yet, so this is the shape the CLI asks of it.
+// A spec's approval answers nothing more. A merge's says whether it landed.
+// Strict, so a broken merge answer can't pass as a spec's approval.
+const approveResult = z.union([
+  z.object({ merged: z.literal(true), commit: z.string() }),
+  z.object({ merged: z.literal(false), outOfAttempts: z.boolean(), summary: z.string() }),
+  z.strictObject({}),
+]);
+
+// What `done` answers once the checks have run.
+
 const doneResult = z.discriminatedUnion("passed", [
   z.object({ passed: z.literal(true) }),
   z.object({ passed: z.literal(false), summary: z.string() }),

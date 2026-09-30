@@ -213,8 +213,10 @@ session names, since the core never makes up IDs. Requests and the tools' replie
 queue, so everything happens one at a time. Its tools carry out the core's commands and
 send the results back as new inputs. Making and removing worktrees go to the git plugin,
 and the local gate to the checks runner. Commands for a plugin that arrive at start-up,
-before the daemon can look up titles, wait until it can. Merging isn't wired in yet: a
-command that needs it is answered with a failure at once, so the core never waits. A claim
+before the daemon can look up titles, wait until it can. Merges go to the git plugin too:
+it brings the work up to date with main, runs the setup and the checks on the result, and
+only then moves main. Approving a merge first checks your checkout of main, and refuses while it has uncommitted edits, since they would stop main from moving. Then it waits for the merge, and answers with the new commit on main or why the merge failed, including when that used the task's last attempt. Approving again while a merge is under way, such as after a restart, waits for the same result. Starting agents and reverting aren't wired in yet: a command
+that needs them is answered with a failure at once, so the core never waits. A claim
 in Ready waits for the task's worktree, outside the queue, and answers with where to work.
 `done` reads the task's branch, reports it to the core, and waits outside the queue while
 the gate runs. It answers whether the checks passed, and why not. The gate runs the checks in a fresh
@@ -323,7 +325,7 @@ decides on. Every call may also arrive twice after a crash, and must then change
 | --- | --- |
 | `version-control.ts` | `VersionControl`: create and remove a task's worktree, read its branch when the agent reports done, merge it, and revert its commit on main. |
 | `version-control.contract.ts` | The tests every version-control plugin must pass, against a throwaway git repository. |
-| `git/git.ts` | The built-in plugin. Each build gets a worktree in `.skelcrew/worktrees/` on its own branch from main, such as `task/12-csv-export-2`. Removing one commits its uncommitted work first, and refuses if the worktree isn't on its task's branch or still has unsaved work after that. A merge is built in `.skelcrew/merging/`, checked there, and only then moves main. A revert is built the same way in `.skelcrew/reverting/`, as one new commit that undoes the task's commit. It moves main under the same rules as a merge, but runs no checks. The gate's checks run in a fresh copy of the reported commit in `.skelcrew/checking/`, removed afterwards. Its own copies are marked, so even one git can only half remove, such as with a read-only folder left in it, is made writable and deleted. |
+| `git/git.ts` | The built-in plugin. Each build gets a worktree in `.skelcrew/worktrees/` on its own branch from main, such as `task/12-csv-export-2`. Removing one commits its uncommitted work first, and refuses if the worktree isn't on its task's branch or still has unsaved work after that. A merge is built in `.skelcrew/merging/`, checked there, and only then moves main. A revert is built the same way in `.skelcrew/reverting/`, as one new commit that undoes the task's commit. It moves main under the same rules as a merge, but runs no checks. The gate's checks run in a fresh copy of the reported commit in `.skelcrew/checking/`, removed afterwards. Its own copies are marked, so even one git can only half remove, such as with a read-only folder left in it, is made writable and deleted. `uncommittedOnMain` lists the tracked files with uncommitted changes in any checkout of main, which a merge can't move over. |
 | `git/top.ts` | `repositoryTop`: asks git where the repository that holds a folder starts, the folder with its `.git`. It fails with a plain message when git isn't installed or the folder isn't in a repository. `insideRepository` is the message for a folder inside a repository. `skelcrew init` uses both. The daemon has its own copy of this check for now. |
 
 ## Around the core (planned)

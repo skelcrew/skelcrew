@@ -396,13 +396,18 @@ describe("the daemon with git", () => {
   // local gate runs `checks`, or only `true`.
   async function readyInRepo(
     repo?: Awaited<ReturnType<typeof makeRepo>>,
-    options: { versionControl?: VersionControl; store?: EventStore; checks?: string[] } = {},
+    options: {
+      versionControl?: VersionControl;
+      store?: EventStore;
+      checks?: string[];
+      maxAttempts?: number;
+    } = {},
   ) {
     repo ??= await newRepo();
     let sessions = 0;
     const opened = Daemon.open({
       // Every path critical, as `skelcrew init` writes it.
-      config: { ...config, criticalPaths: ["**"] },
+      config: { ...config, criticalPaths: ["**"], maxAttempts: options.maxAttempts ?? 3 },
       log: options.store ?? EventStore.open(":memory:"),
       versionControl: options.versionControl ?? new Git(repo.dir, repo.main),
       runChecks: localChecks(options.checks ?? ["true"]),
@@ -450,6 +455,7 @@ describe("the daemon with git", () => {
       revert: (request) => real.revert(request),
       removeWorktree: (worktree) => real.removeWorktree(worktree),
       checkCommit: (request, runChecks) => real.checkCommit(request, runChecks),
+      uncommittedOnMain: () => real.uncommittedOnMain(),
     };
     const first = await readyInRepo(repo, { versionControl: cutOff, store });
     void first.daemon.handle({ type: "claim", task: task(1) });
@@ -487,6 +493,7 @@ describe("the daemon with git", () => {
       revert: (request) => real.revert(request),
       removeWorktree: (worktree) => real.removeWorktree(worktree),
       checkCommit: (request, runChecks) => real.checkCommit(request, runChecks),
+      uncommittedOnMain: () => real.uncommittedOnMain(),
     };
     const { daemon } = await readyInRepo(repo, { versionControl: held });
     const claim = daemon.handle({ type: "claim", task: task(1) });
@@ -646,6 +653,97 @@ describe("the daemon with git", () => {
     await daemon.close();
     await Bun.sleep(1_200);
     expect(existsSync(marker)).toBe(false);
+  });
+
+  test("approving a merge merges the task into main, and says as which commit", async () => {
+    const { daemon, repo } = await readyInRepo();
+    await claimedWithWork(daemon);
+    await ok(daemon, done());
+    const answer = z
+      .object({ merged: z.literal(true), commit: z.string() })
+      .parse(await ok(daemon, { type: "approve", task: task(1), sendBack: null }));
+    expect(await git(repo.dir, "rev-parse", "main")).toBe(answer.commit);
+    expect(await git(repo.dir, "show", "main:export.csv")).toBe("a,b");
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, phase: "done" }],
+    });
+  });
+
+  test("approving a merge that fails says why, and the task goes back to its agent", async () => {
+    const { daemon, repo } = await readyInRepo();
+    await claimedWithWork(daemon);
+    await ok(daemon, done());
+    await conflictOnMain(repo.dir);
+    const answer = z
+      .object({ merged: z.literal(false), summary: z.string() })
+      .parse(await ok(daemon, { type: "approve", task: task(1), sendBack: null }));
+    expect(answer.summary).toContain("conflicts");
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, phase: "in_progress" }],
+    });
+  });
+
+  // Main gets its own export.csv, so the task's merge conflicts with it.
+  async function conflictOnMain(dir: string) {
+    writeFileSync(join(dir, "export.csv"), "x,y\n");
+    await git(dir, "add", "export.csv");
+    await git(dir, "commit", "-q", "-m", "Theirs");
+  }
+
+  // Decided with the developer: your own edits in your checkout of main
+  // would stop the merge, through no fault of the task's work. So the
+  // approval is refused first, and the task keeps waiting for it.
+  test("refuses to approve a merge while your checkout of main has uncommitted edits", async () => {
+    const { daemon, repo } = await readyInRepo();
+    await claimedWithWork(daemon);
+    await ok(daemon, done());
+    writeFileSync(join(repo.dir, "README.md"), "# Mine, not committed\n");
+    expect(await daemon.handle({ type: "approve", task: task(1), sendBack: null })).toEqual({
+      ok: false,
+      message:
+        "Your checkout of main has uncommitted changes in README.md. Commit or stash them, then approve again. Nothing was merged.",
+    });
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, waitingOnYou: "merge_approval" }],
+    });
+  });
+
+  // Found by review: after a failed merge, the next claim didn't say why
+  // the task was back.
+  test("a claim after a failed merge says why the task is back", async () => {
+    const { daemon, repo } = await readyInRepo();
+    await claimedWithWork(daemon);
+    await ok(daemon, done());
+    await conflictOnMain(repo.dir);
+    await ok(daemon, { type: "approve", task: task(1), sendBack: null });
+    const claim = z
+      .object({ failure: z.string() })
+      .parse(await ok(daemon, { type: "claim", task: task(1) }));
+    expect(claim.failure).toContain("conflicts");
+  });
+
+  // Found by review: a second approve while the merge ran was refused, so
+  // after a restart nobody could hear the result.
+  test("approving a merge that is already under way waits for its result", async () => {
+    const { daemon } = await readyInRepo(undefined, { checks: ["sleep 0.5"] });
+    await claimedWithWork(daemon);
+    await ok(daemon, done());
+    const first = daemon.handle({ type: "approve", task: task(1), sendBack: null });
+    await Bun.sleep(150);
+    const second = await daemon.handle({ type: "approve", task: task(1), sendBack: null });
+    expect(second).toEqual(await first);
+    expect(second).toMatchObject({ ok: true, result: { merged: true } });
+  });
+
+  test("a merge that fails on the last attempt says the task is out of attempts", async () => {
+    const { daemon, repo } = await readyInRepo(undefined, { maxAttempts: 1 });
+    await claimedWithWork(daemon);
+    await ok(daemon, done());
+    await conflictOnMain(repo.dir);
+    const answer = z
+      .object({ merged: z.literal(false), outOfAttempts: z.literal(true), summary: z.string() })
+      .parse(await ok(daemon, { type: "approve", task: task(1), sendBack: null }));
+    expect(answer.summary).toContain("conflicts");
   });
 
   test("done is refused while the worktree has uncommitted work", async () => {
