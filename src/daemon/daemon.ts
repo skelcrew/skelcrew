@@ -21,6 +21,7 @@ import type {
   Config,
   Command as CoreCommand,
   Input,
+  Spec,
   Task,
   TaskEvent,
   Worktree,
@@ -31,6 +32,7 @@ import type { RunChecks, VersionControl } from "../plugins/version-control";
 import { type Command, MAX_LINE } from "../protocol/protocol";
 import type { EventStore } from "../store/store";
 import { DraftPullRequests, type PullRequestLog } from "./pull-requests";
+import { specFile } from "./spec-file";
 
 export type Answer = { ok: true; result: unknown } | { ok: false; message: string };
 
@@ -138,6 +140,7 @@ export class Daemon {
     tools.connect(
       (taskId, input, finished) => daemon.reply(taskId, input, finished),
       (taskId) => daemon.find(taskId)?.title ?? `#${taskId}`,
+      (taskId) => specOf(daemon.find(taskId)),
     );
     // A merge may have started waiting, or finished, while no daemon ran.
     daemon.pullRequests?.update();
@@ -582,6 +585,12 @@ export class Daemon {
   }
 }
 
+// The spec a task is built from, once it has one.
+function specOf(task: Task | null): Spec | null {
+  if (task === null || !("spec" in task)) return null;
+  return task.spec;
+}
+
 // What `status` shows of a task.
 function view(task: Task) {
   return {
@@ -645,6 +654,7 @@ type Deliver = (taskId: TaskId, input: Input, finished: () => void) => void;
 class DaemonTools implements Tools {
   private deliver: Deliver | null = null;
   private titleOf: (taskId: TaskId) => string = (taskId) => `#${taskId}`;
+  private specOf: (taskId: TaskId) => Spec | null = () => null;
   private early: [TaskId, Input, () => void][] = [];
   // Commands that go to a plugin, held until `connect`: at start-up the
   // loop sends out unfinished commands before titles can be looked up.
@@ -661,9 +671,14 @@ class DaemonTools implements Tools {
     private readonly runChecks: RunChecks | null,
   ) {}
 
-  connect(deliver: Deliver, titleOf: (taskId: TaskId) => string): void {
+  connect(
+    deliver: Deliver,
+    titleOf: (taskId: TaskId) => string,
+    specOf: (taskId: TaskId) => Spec | null,
+  ): void {
     this.deliver = deliver;
     this.titleOf = titleOf;
+    this.specOf = specOf;
     for (const [taskId, input, finished] of this.early) deliver(taskId, input, finished);
     this.early = [];
     for (const [command, finished] of this.held.splice(0)) this.carryOut(command, finished);
@@ -740,6 +755,8 @@ class DaemonTools implements Tools {
 
   // The merge brings the work up to date with main, runs the setup and the
   // checks on the result in a copy of its own, and only then moves main.
+  // The task's spec goes in with the work, written from the spec the task
+  // was built from, never from the agent's branch.
   private async merge(
     versionControl: VersionControl,
     runChecks: RunChecks,
@@ -748,10 +765,14 @@ class DaemonTools implements Tools {
   ): Promise<void> {
     const { taskId, request, worktree, head } = command;
     const signal = this.stopping.signal;
+    const title = this.titleOf(taskId);
+    const spec = this.specOf(taskId);
     let input: Input;
     try {
       const merged = await versionControl.merge(
-        { taskId, title: this.titleOf(taskId), worktree, head },
+        spec === null
+          ? { taskId, title, worktree, head }
+          : { taskId, title, worktree, head, file: specFile(taskId, title, spec) },
         (dir) => runChecks(dir, signal),
       );
       input = merged.ok
