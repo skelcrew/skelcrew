@@ -1,6 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  rmdirSync,
+  symlinkSync,
+  unlinkSync,
+} from "node:fs";
 import { createServer, type Server as NetServer } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { type Command, MAX_LINE } from "../protocol/protocol";
 import { type ClientOptions, request, type Started } from "./client";
 import { daemonPaths } from "./paths";
@@ -190,6 +201,31 @@ describe("the client", () => {
     expect(starts).toBe(2);
   });
 
+  // Found by review: after starting again, the time limit could run out
+  // before the new daemon exited. The user then lost the advice to stop
+  // the daemon that holds the lock.
+  test("keeps the advice to stop a daemon it can't reach, however the time runs out", async () => {
+    const running =
+      "The daemon is already running for this repository, as process 123. If skelcrew can't reach it, stop that process and try again.";
+    for (const limit of [1_400, 2_700]) {
+      const answer = await request(
+        throwawayRepo(dirs),
+        { type: "status" },
+        {
+          start: (): Started => {
+            const began = Date.now();
+            return { ok: true, exited: () => (Date.now() - began > 300 ? running : null) };
+          },
+          startTimeoutMs: limit,
+        },
+      );
+      expect(answer).toEqual({
+        ok: false,
+        message: `The daemon stopped while starting. ${running}`,
+      });
+    }
+  }, 15_000);
+
   test("gives up when the daemon doesn't answer in time after starting it", async () => {
     const repo = throwawayRepo(dirs);
     const answer = await request(repo, add("CSV export"), {
@@ -266,6 +302,20 @@ describe("the socket folder in /tmp", () => {
   const deep = "a-folder-with-a-rather-long-name".repeat(3);
   const base = `/tmp/skelcrew-${process.getuid?.()}`;
 
+  // Removes the folder, which must be empty, or the link in its place.
+  function removeBase() {
+    if (!existsSync(base) && !isLink(base)) return;
+    if (isLink(base)) unlinkSync(base);
+    else rmdirSync(base);
+  }
+
+  // The folder is the user's own. Every test leaves it as it was found.
+  afterEach(async () => {
+    for (const server of servers.splice(0)) await server.stop();
+    removeBase();
+    mkdirSync(base, { mode: 0o700 });
+  });
+
   test("isn't used while other users can change it", async () => {
     const repo = throwawayRepo(dirs, deep);
     await started(repo);
@@ -288,4 +338,40 @@ describe("the socket folder in /tmp", () => {
     const { options } = noStart();
     expect(await request(repo, { type: "status" }, options)).toMatchObject({ ok: true });
   });
+
+  // Found by review: a missing folder counted as safe. While the client
+  // waited for the daemon it started, another user could make the folder
+  // and answer in the daemon's place.
+  test("is made for its user alone before the client first connects", async () => {
+    const repo = throwawayRepo(dirs, deep);
+    removeBase();
+    const { options } = noStart();
+    await request(repo, { type: "status" }, options);
+    const made = lstatSync(base);
+    expect(made.isDirectory()).toBe(true);
+    expect(made.uid).toBe(process.getuid?.() ?? -1);
+    expect(made.mode & 0o777).toBe(0o700);
+  });
+
+  test("isn't used when it is a link, even one of the user's own", async () => {
+    const repo = throwawayRepo(dirs, deep);
+    const elsewhere = mkdtempSync(join(tmpdir(), "sk-elsewhere-"));
+    dirs.push(elsewhere);
+    removeBase();
+    symlinkSync(elsewhere, base);
+    const { counted, options } = noStart();
+    expect(await request(repo, { type: "status" }, options)).toEqual({
+      ok: false,
+      message: `${base} isn't a folder, so skelcrew won't use it. Remove it, then try again.`,
+    });
+    expect(counted.starts).toBe(0);
+  });
 });
+
+function isLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}

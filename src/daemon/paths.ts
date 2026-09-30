@@ -2,7 +2,7 @@
 // both ask here, so they always agree on the socket.
 
 import { createHash } from "node:crypto";
-import { lstatSync, realpathSync } from "node:fs";
+import { lstatSync, mkdirSync, realpathSync, type Stats } from "node:fs";
 import { join } from "node:path";
 
 export type DaemonPaths = {
@@ -54,11 +54,26 @@ export function daemonPaths(
   };
 }
 
-// Why the socket folder in /tmp can't be trusted, or null if it can. It
-// must be a real folder that belongs to this user. Otherwise its owner
-// could put their own socket there, and answer in the daemon's place.
-export function foreignFolder(path: string): string | null {
-  const found = lstatSync(path);
-  if (found.isDirectory() && found.uid === process.getuid?.()) return null;
+// Makes the socket folder in /tmp if it isn't there, for this user alone.
+// Then says why it can't be trusted, or null if it can. It must be a real
+// folder that belongs to this user. Otherwise its owner could put their
+// own socket there, and answer in the daemon's place. Once it is the
+// user's own, nobody else can put anything in it, or move it away.
+export function ownSocketFolder(path: string): string | null {
+  try {
+    mkdirSync(path, { mode: 0o700, recursive: true });
+  } catch {
+    // Something else is at the path. What it is decides the answer.
+  }
+  let found: Stats;
+  try {
+    found = lstatSync(path);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return `${path} couldn't be made for the daemon's socket: ${reason}`;
+  }
+  const mine = found.uid === process.getuid?.();
+  if (mine && found.isDirectory()) return null;
+  if (mine) return `${path} isn't a folder, so skelcrew won't use it. Remove it, then try again.`;
   return `${path} belongs to another user, so skelcrew won't use it. An administrator must remove it.`;
 }
