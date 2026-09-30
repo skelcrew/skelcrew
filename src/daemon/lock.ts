@@ -27,6 +27,10 @@ import { join } from "node:path";
 
 export type Lock = { release(): void };
 
+// How a refusal because another daemon holds the lock begins. The client
+// looks for it: the other daemon may be on its way out.
+export const ALREADY_RUNNING = "The daemon is already running for this repository";
+
 export type Locked = { ok: true; lock: Lock } | { ok: false; message: string };
 
 // From <sys/file.h>: an exclusive lock, and don't wait for it.
@@ -60,8 +64,8 @@ export function takeLock(repo: string, pid = process.pid): Locked {
       // still holds the lock. So say how to get past it.
       const message =
         holder === null
-          ? "The daemon is already running for this repository. If skelcrew can't reach it, stop the daemon and try again."
-          : `The daemon is already running for this repository, as process ${holder}. If skelcrew can't reach it, stop that process and try again.`;
+          ? `${ALREADY_RUNNING}. If skelcrew can't reach it, stop the daemon and try again.`
+          : `${ALREADY_RUNNING}, as process ${holder}. If skelcrew can't reach it, stop that process and try again.`;
       return { ok: false, message };
     }
     return { ok: false, message: couldNot(`the system refused it, with error ${errno}`) };

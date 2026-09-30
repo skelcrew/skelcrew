@@ -159,6 +159,37 @@ describe("the client", () => {
     });
   });
 
+  // Found by review: a command sent while the daemon was stopping started
+  // a new one, which found the old one still holding the lock. The user
+  // was told it was "already running", though it was on its way out.
+  test("starts the daemon again when the old one was still stopping", async () => {
+    const repo = throwawayRepo(dirs);
+    let starts = 0;
+    const answer = await request(
+      repo,
+      { type: "status" },
+      {
+        start: (): Started => {
+          starts += 1;
+          if (starts === 1) {
+            return {
+              ok: true,
+              exited: () =>
+                "The daemon is already running for this repository, as process 123. If skelcrew can't reach it, stop that process and try again.",
+            };
+          }
+          void serve(repo).then((served) => {
+            if (served.ok) servers.push(served.server);
+          });
+          return { ok: true };
+        },
+        startTimeoutMs: 5_000,
+      },
+    );
+    expect(answer).toEqual({ ok: true, result: { tasks: [] } });
+    expect(starts).toBe(2);
+  });
+
   test("gives up when the daemon doesn't answer in time after starting it", async () => {
     const repo = throwawayRepo(dirs);
     const answer = await request(repo, add("CSV export"), {
