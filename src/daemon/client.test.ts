@@ -1,14 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import {
-  chmodSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  mkdtempSync,
-  rmdirSync,
-  symlinkSync,
-  unlinkSync,
-} from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdtempSync, symlinkSync } from "node:fs";
 import { createServer, type Server as NetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -367,11 +358,3 @@ describe("the socket folder in /tmp", () => {
     expect(counted.starts).toBe(0);
   });
 });
-
-function isLink(path: string): boolean {
-  try {
-    return lstatSync(path).isSymbolicLink();
-  } catch {
-    return false;
-  }
-}

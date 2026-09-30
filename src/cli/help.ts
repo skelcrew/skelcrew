@@ -42,6 +42,9 @@ export const commandHelp: Record<string, string[]> = {
     'Usage: skelcrew approve <task> [--send-back "<note>"]',
     "",
     "Approves the spec or the merge that waits for you.",
+    "Approving a merge merges the task into main now, and waits for it:",
+    "the checks run again on the merged result first. Commit or stash your",
+    "own edits on main before you approve.",
     '  --send-back "<note>"   Return it instead, with your note.',
   ],
   drop: [

@@ -484,6 +484,34 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
     });
   });
 
+  // Before a merge is approved: your own edits in a checkout of main would
+  // stop main from moving, through no fault of the task's work.
+  describe(`${name}: uncommittedOnMain`, () => {
+    test("lists the files you changed but didn't commit in your checkout of main", async () => {
+      const r = await repo();
+      writeFileSync(join(r.dir, "README.md"), "# Edited\n");
+      expect(await make(r).uncommittedOnMain()).toEqual({ ok: true, value: ["README.md"] });
+    });
+
+    test("lists nothing when your checkout of main is clean", async () => {
+      const r = await repo();
+      expect(await make(r).uncommittedOnMain()).toEqual({ ok: true, value: [] });
+    });
+
+    test("leaves out files git doesn't track", async () => {
+      const r = await repo();
+      writeFileSync(join(r.dir, "notes.txt"), "mine\n");
+      expect(await make(r).uncommittedOnMain()).toEqual({ ok: true, value: [] });
+    });
+
+    test("lists nothing when main isn't checked out anywhere", async () => {
+      const r = await repo();
+      await git(r.dir, "checkout", "-q", "--detach");
+      writeFileSync(join(r.dir, "README.md"), "# Edited\n");
+      expect(await make(r).uncommittedOnMain()).toEqual({ ok: true, value: [] });
+    });
+  });
+
   describe(`${name}: merge`, () => {
     const pass: RunChecks = async () => ({ ok: true, value: null });
 

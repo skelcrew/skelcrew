@@ -348,6 +348,78 @@ describe("arguments that start with a dash", () => {
 });
 
 describe("skelcrew approve", () => {
+  // Takes task 1 through its checks, so its merge waits for approval.
+  async function checked(repo: string) {
+    await specced(repo);
+    await cli(repo, ["approve", "1"]);
+    await cli(repo, ["claim", "1"]);
+    commitIn(join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export"));
+    await cli(repo, ["done", "1"], { session: "you-2" });
+  }
+
+  test("approves a merge, and says the commit it landed as on main", async () => {
+    const repo = await repoWithDaemon();
+    await checked(repo);
+    const outcome = await cli(repo, ["approve", "1"]);
+    const main = Bun.spawnSync(["git", "rev-parse", "--short", "main"], { cwd: repo })
+      .stdout.toString()
+      .trim();
+    expect(outcome).toEqual(said([`Approved #1. It merged into main as ${main}.`]));
+  });
+
+  // Main gets its own export.csv, so the task's merge conflicts with it.
+  function conflictOnMain(repo: string) {
+    writeFileSync(join(repo, "export.csv"), "x,y\n");
+    const git = (...args: string[]) =>
+      Bun.spawnSync(["git", "-c", "user.name=T", "-c", "user.email=t@t", ...args], { cwd: repo });
+    git("add", "export.csv");
+    git("commit", "-q", "-m", "Theirs");
+  }
+
+  // Found by review: "it went back to its agent" was wrong when working
+  // attended. No agent runs until someone claims the task.
+  test("says why a merge failed, and to claim the task to fix it", async () => {
+    const repo = await repoWithDaemon();
+    await checked(repo);
+    conflictOnMain(repo);
+    const outcome = await cli(repo, ["approve", "1"]);
+    expect(outcome.code).toBe(1);
+    expect(outcome.out[0]).toBe(
+      "Approved #1, but the merge failed. #1 is back in In progress. Claim it to fix it: skelcrew claim 1",
+    );
+    expect(outcome.out[1]).toBe("Why:");
+    expect(outcome.out.join("\n")).toContain("conflicts");
+
+    const claim = await cli(repo, ["claim", "1"]);
+    expect(claim.out).toContain("Why it's back:");
+    expect(claim.out.join("\n")).toContain("conflicts");
+  });
+
+  test("says when a failed merge used the last attempt, and how to go on", async () => {
+    const repo = throwawayRepo(dirs);
+    writeFileSync(
+      join(repo, ".skelcrew", "workflow.yml"),
+      'checks:\n  - "true"\nmax_attempts: 1\n',
+    );
+    await served(repo);
+    await checked(repo);
+    conflictOnMain(repo);
+    const outcome = await cli(repo, ["approve", "1"]);
+    expect(outcome.code).toBe(1);
+    expect(outcome.out[0]).toBe(
+      "Approved #1, but the merge failed, and #1 is out of attempts. Retry it with skelcrew retry 1, or drop it.",
+    );
+    expect(outcome.out.join("\n")).toContain("conflicts");
+  });
+
+  // Found by review: any answer passed as a plain approval, so a broken
+  // merge answer printed "Approved #1." and exit 0.
+  test("refuses a merge answer it can't read, rather than call it approved", async () => {
+    const repo = throwawayRepo(dirs);
+    await fakeDaemon(repo, { merged: true });
+    expect((await cli(repo, ["approve", "1"])).code).toBe(1);
+  });
+
   test("approves a spec", async () => {
     const repo = await repoWithDaemon();
     await specced(repo);
@@ -460,6 +532,25 @@ describe("skelcrew status", () => {
       "Ready:",
       `- #1 CSV export (blocked: The worktree couldn't be made: ${worktree} exists, but isn't a worktree of ${realpathSync(repo)}.)`,
     ]);
+  });
+
+  // Found by review: nothing showed a merge under way.
+  test("shows a task whose merge is under way", async () => {
+    const repo = throwawayRepo(dirs);
+    await fakeDaemon(repo, {
+      tasks: [
+        {
+          task: 1,
+          title: "CSV export",
+          phase: "checks",
+          step: "merging",
+          blocked: null,
+          question: null,
+          waitingOnYou: null,
+        },
+      ],
+    });
+    expect((await cli(repo, ["status"])).out).toContain("- #1 CSV export (merging)");
   });
 
   test("says so when there are no tasks", async () => {
