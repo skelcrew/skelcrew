@@ -35,15 +35,22 @@ export class GitHub implements PullRequests {
   // shows whether gh is installed, logged in and pointed at GitHub. So
   // without gh, nothing is pushed.
   async show(request: ShowRequest): Promise<Done<PullRequest>> {
-    const origin = await this.run(["git", "remote", "get-url", "origin"]);
-    if (!origin.ok) {
-      return origin.missing
-        ? { ok: false, message: "git isn't installed." }
-        : { ok: false, message: "This repository has no `origin` remote." };
-    }
+    const repo = await this.originRepo();
+    if (!repo.ok) return repo;
 
     const list = await this.gh(
-      ["pr", "list", "--head", request.branch, "--state", "open", "--json", "number,url"],
+      [
+        "pr",
+        "list",
+        "--repo",
+        repo.value,
+        "--head",
+        request.branch,
+        "--state",
+        "open",
+        "--json",
+        "number,url",
+      ],
       "gh couldn't list the pull requests",
     );
     if (!list.ok) return list;
@@ -67,6 +74,8 @@ export class GitHub implements PullRequests {
       [
         "pr",
         "create",
+        "--repo",
+        repo.value,
         "--draft",
         "--base",
         request.base,
@@ -90,13 +99,32 @@ export class GitHub implements PullRequests {
   // `gh pr close --delete-branch` isn't used, since it deletes the local
   // branch too.
   async close(request: CloseRequest): Promise<Done<null>> {
+    const repo = await this.originRepo();
+    if (!repo.ok) return repo;
     const closed = await this.gh(
-      ["pr", "close", String(request.number), "--comment", request.comment],
+      ["pr", "close", String(request.number), "--repo", repo.value, "--comment", request.comment],
       "gh couldn't close the pull request",
     );
     if (!closed.ok) return closed;
     await this.run(["git", "push", "origin", "--delete", request.branch]);
     return { ok: true, value: null };
+  }
+
+  // The GitHub repository behind origin, such as "owner/repo". Skelcrew
+  // pushes to origin, so gh must look there too. Left to itself, gh picks
+  // an `upstream` remote first, which on a fork is someone else's project.
+  private async originRepo(): Promise<Done<string>> {
+    const origin = await this.run(["git", "remote", "get-url", "origin"]);
+    if (!origin.ok) {
+      return origin.missing
+        ? { ok: false, message: "git isn't installed." }
+        : { ok: false, message: "This repository has no `origin` remote." };
+    }
+    const url = origin.out.trim();
+    const repo = githubRepo(url);
+    if (repo === null)
+      return { ok: false, message: `The \`origin\` remote isn't on GitHub: ${url}` };
+    return { ok: true, value: repo };
   }
 
   private async gh(args: string[], failure: string, stdin?: string): Promise<Done<string>> {
@@ -125,6 +153,22 @@ export class GitHub implements PullRequests {
     const err = ran.stderr.trim() || `exit code ${ran.exitCode}`;
     return { ok: false, missing: false, exitCode: ran.exitCode, err };
   }
+}
+
+// The ways a GitHub remote is written: git@github.com:owner/repo.git,
+// ssh://git@github.com/owner/repo.git and https://github.com/owner/repo,
+// each with or without ".git".
+const githubRemotes = [
+  /^git@github\.com:([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/,
+  /^(?:https|ssh):\/\/(?:[^@/]+@)?github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/,
+];
+
+function githubRepo(url: string): string | null {
+  for (const pattern of githubRemotes) {
+    const [, owner, name] = pattern.exec(url) ?? [];
+    if (owner !== undefined && name !== undefined) return `${owner}/${name}`;
+  }
+  return null;
 }
 
 function parseList(out: string): Done<PullRequest | null> {

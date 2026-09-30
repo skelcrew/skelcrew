@@ -66,6 +66,8 @@ describe("showing a branch as a pull request", () => {
       "gh",
       "pr",
       "list",
+      "--repo",
+      "skelcrew/skelcrew",
       "--head",
       "task/12-csv-export",
       "--state",
@@ -84,6 +86,8 @@ describe("showing a branch as a pull request", () => {
       "gh",
       "pr",
       "create",
+      "--repo",
+      "skelcrew/skelcrew",
       "--draft",
       "--base",
       "main",
@@ -116,6 +120,44 @@ describe("showing a branch as a pull request", () => {
     expect(await github.show(show)).toEqual({
       ok: false,
       message: "This repository has no `origin` remote.",
+    });
+    expect(ran("gh")).toHaveLength(0);
+    expect(ran("git push")).toHaveLength(0);
+  });
+
+  // On a fork, origin is your fork, and gh on its own would pick the
+  // project it came from. So every gh call names the repository behind
+  // origin.
+  const origins: [string, string][] = [
+    ["git@github.com:owner/repo.git", "owner/repo"],
+    ["git@github.com:owner/repo", "owner/repo"],
+    ["https://github.com/owner/repo.git", "owner/repo"],
+    ["https://github.com/owner/repo", "owner/repo"],
+    ["https://github.com/owner/repo/", "owner/repo"],
+    ["ssh://git@github.com/owner/my.repo.git", "owner/my.repo"],
+  ];
+  for (const [url, repo] of origins) {
+    test(`asks gh about the repository behind origin ${url}`, async () => {
+      const { github, calls } = scripted([
+        ["git remote get-url origin", ok(`${url}\n`)],
+        ["gh pr list", recorded.noOpenPullRequest],
+        ["git push", recorded.pushed],
+        ["gh pr create", recorded.created],
+      ]);
+      expect((await github.show(show)).ok).toBe(true);
+      const gh = calls.filter((call) => call.command[0] === "gh");
+      expect(gh).toHaveLength(2);
+      for (const call of gh) expect(call.command.slice(3, 5)).toEqual(["--repo", repo]);
+    });
+  }
+
+  test("says so when origin isn't on GitHub, and runs neither gh nor a push", async () => {
+    const { github, ran } = scripted([
+      ["git remote get-url origin", ok("git@gitlab.com:owner/repo.git\n")],
+    ]);
+    expect(await github.show(show)).toEqual({
+      ok: false,
+      message: "The `origin` remote isn't on GitHub: git@gitlab.com:owner/repo.git",
     });
     expect(ran("gh")).toHaveLength(0);
     expect(ran("git push")).toHaveLength(0);
@@ -203,18 +245,21 @@ describe("closing a pull request", () => {
 
   test("closes it with the comment, then deletes the pushed branch on origin", async () => {
     const { github, calls } = scripted([
+      ["git remote get-url origin", recorded.origin],
       ["gh pr close", recorded.closed],
       ["git push origin --delete", recorded.pushed],
     ]);
     expect(await github.close(close)).toEqual({ ok: true, value: null });
     expect(calls.map((call) => call.command)).toEqual([
-      ["gh", "pr", "close", "41", "--comment", "Merged as abc1234."],
+      ["git", "remote", "get-url", "origin"],
+      ["gh", "pr", "close", "41", "--repo", "skelcrew/skelcrew", "--comment", "Merged as abc1234."],
       ["git", "push", "origin", "--delete", "task/12-csv-export"],
     ]);
   });
 
   test("still counts as closed when the pushed branch is already gone", async () => {
     const { github } = scripted([
+      ["git remote get-url origin", recorded.origin],
       ["gh pr close", recorded.closed],
       [
         "git push origin --delete",
@@ -225,7 +270,10 @@ describe("closing a pull request", () => {
   });
 
   test("says why gh couldn't close it, and deletes nothing", async () => {
-    const { github, ran } = scripted([["gh pr close", recorded.loggedOut]]);
+    const { github, ran } = scripted([
+      ["git remote get-url origin", recorded.origin],
+      ["gh pr close", recorded.loggedOut],
+    ]);
     expect(await github.close(close)).toEqual({
       ok: false,
       message: "`gh` isn't logged in to GitHub. Run `gh auth login`.",
