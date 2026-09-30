@@ -107,6 +107,10 @@ export class Daemon {
   // the reply can get in.
   async handle(command: Command): Promise<Answer> {
     if (command.type === "done") return this.done(command.task, command.session);
+    if (command.type === "approve" && command.sendBack === null) {
+      const refused = await this.beforeMerge(command.task);
+      if (refused !== null) return refused;
+    }
     const first = await this.oneAtATime(() => {
       const answered = this.guarded(() => this.answer(command));
       // A request can settle a waiting claim too, such as a drop.
@@ -208,6 +212,37 @@ export class Daemon {
     }
   }
 
+  // Before approving a merge: your own uncommitted edits in a checkout of
+  // main would stop main from moving, through no fault of the task's work.
+  // So the approval is refused while there are any, and nothing changes.
+  private async beforeMerge(taskId: TaskId): Promise<Answer | null> {
+    const versionControl = this.versionControl;
+    if (versionControl === null) return null;
+    const waiting = await this.oneAtATime(() => {
+      const task = this.find(taskId);
+      return task !== null && waitingOnYou(task) === "merge_approval";
+    });
+    if (!waiting) return null;
+    let changed: Awaited<ReturnType<VersionControl["uncommittedOnMain"]>>;
+    try {
+      changed = await versionControl.uncommittedOnMain();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      changed = { ok: false, message };
+    }
+    if (!changed.ok) {
+      return {
+        ok: false,
+        message: `Your checkout of main couldn't be checked: ${changed.message}`,
+      };
+    }
+    if (changed.value.length === 0) return null;
+    return {
+      ok: false,
+      message: `Your checkout of main has uncommitted changes in ${changed.value.join(", ")}. Commit or stash them, then approve again. Nothing was merged.`,
+    };
+  }
+
   private guarded<T>(work: () => T): T | Answer {
     if (this.closed) return { ok: false, message: "The daemon is shutting down." };
     try {
@@ -267,6 +302,10 @@ export class Daemon {
       case "approve": {
         const task = this.find(command.task);
         if (task === null) return { ok: false, message: `#${command.task} doesn't exist.` };
+        // Already merging, such as after a restart: wait for the same result.
+        if (task.phase === "checks" && task.step.kind === "merging" && command.sendBack === null) {
+          return this.waitForMerge(command.task);
+        }
         const note = command.sendBack;
         const waiting = waitingOnYou(task);
         const input: Input | null =
@@ -286,13 +325,7 @@ export class Daemon {
         if (!approved.ok || input.type !== "approve_merge") return approved;
         // An approved merge happens now. The answer waits for it, so you
         // hear whether it landed.
-        return {
-          later: {
-            task: command.task,
-            until: (task) => !(task.phase === "checks" && task.step.kind === "merging"),
-            answer: (task) => this.mergedOrNot(command.task, task),
-          },
-        };
+        return this.waitForMerge(command.task);
       }
 
       case "drop":
@@ -396,15 +429,32 @@ export class Daemon {
     });
   }
 
+  private waitForMerge(taskId: TaskId): Later {
+    return {
+      later: {
+        task: taskId,
+        until: (task) => !(task.phase === "checks" && task.step.kind === "merging"),
+        answer: (task) => this.mergedOrNot(taskId, task),
+      },
+    };
+  }
+
   private mergedOrNot(taskId: TaskId, task: Task | null): Answer {
     if (this.closed) return { ok: false, message: "The daemon is shutting down." };
     if (task === null) return { ok: false, message: `#${taskId} doesn't exist.` };
-    if (task.blocked !== null) return { ok: false, message: describeBlock(task.blocked) };
+    const blocked = task.blocked;
+    if (blocked?.kind === "out_of_attempts" && blocked.failure.step === "merge") {
+      return {
+        ok: true,
+        result: { merged: false, outOfAttempts: true, summary: blocked.failure.summary },
+      };
+    }
+    if (blocked !== null) return { ok: false, message: describeBlock(blocked) };
     if (task.phase === "done")
       return { ok: true, result: { merged: true, commit: task.mergeCommit } };
     if (task.phase === "in_progress") {
       const summary = task.brief.failure?.summary ?? "The merge didn't happen.";
-      return { ok: true, result: { merged: false, summary } };
+      return { ok: true, result: { merged: false, outOfAttempts: false, summary } };
     }
     return { ok: false, message: `#${taskId} is now in ${phaseNames[task.phase]}.` };
   }
@@ -426,8 +476,12 @@ export class Daemon {
     switch (task.phase) {
       case "spec":
         return { ok: true, result: { session, phase: "spec", spec: task.spec, note: task.note } };
-      case "in_progress":
-        return { ok: true, result: { session, phase: "in_progress", worktree: task.worktree } };
+      case "in_progress": {
+        // Why the task is back, if a gate or a merge failed.
+        const failure = task.brief.failure?.summary;
+        const result = { session, phase: "in_progress", worktree: task.worktree };
+        return { ok: true, result: failure === undefined ? result : { ...result, failure } };
+      }
       default:
         return { ok: true, result: { session, phase: task.phase } };
     }

@@ -116,6 +116,12 @@ export class Git implements VersionControl {
     return result;
   }
 
+  uncommittedOnMain(): Promise<Done<string[]>> {
+    return this.oneAtATime(() =>
+      guard("look for uncommitted changes on main", () => this.changesOnMain()),
+    );
+  }
+
   merge(request: MergeRequest, runChecks: RunChecks): Promise<Done<CommitSha>> {
     return this.oneAtATime(() =>
       guard(`merge #${request.taskId}`, () => this.squashMerge(request, runChecks)),
@@ -471,6 +477,33 @@ export class Git implements VersionControl {
       }
     }
     return { ok: true, value: null };
+  }
+
+  private async changesOnMain(): Promise<Done<string[]>> {
+    const listed = await run(this.repo, "worktree", "list", "--porcelain");
+    if (!listed.ok) return { ok: false, message: `git couldn't list the worktrees: ${listed.err}` };
+    // Each worktree is a block of lines: "worktree <path>", then "branch
+    // <ref>" if a branch is checked out there.
+    const checkouts: string[] = [];
+    let path: string | null = null;
+    for (const line of listed.out.split("\n")) {
+      if (line.startsWith("worktree ")) path = line.slice("worktree ".length);
+      if (line === `branch refs/heads/${this.main}` && path !== null) checkouts.push(path);
+    }
+    const files = new Set<string>();
+    for (const checkout of checkouts) {
+      // Raw output: each line starts with a status that may be a space.
+      const status = await runRaw(checkout, "status", "--porcelain", "--untracked-files=no");
+      if (!status.ok) return { ok: false, message: `git couldn't read ${checkout}: ${status.err}` };
+      for (const line of status.out.split("\n")) {
+        if (line.length < 4) continue;
+        // "XY name", or "XY old -> new" for a rename.
+        const name = line.slice(3);
+        const arrow = name.indexOf(" -> ");
+        files.add(arrow === -1 ? name : name.slice(arrow + 4));
+      }
+    }
+    return { ok: true, value: [...files].sort() };
   }
 
   // A detached copy of exactly the reported commit, for the gate's checks,

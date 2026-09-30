@@ -63,6 +63,11 @@ export interface VersionControl {
   // made.
   checkCommit(request: CheckRequest, runChecks: RunChecks): Promise<Done<null>>;
 
+  // The tracked files with uncommitted changes in any checkout of main.
+  // A merge can't move main over them, so the daemon asks before merging.
+  // Files git doesn't track are left out.
+  uncommittedOnMain(): Promise<Done<string[]>>;
+
   // Squash-merges exactly `head` onto main, as one commit. It brings the
   // work up to date with main first, then runs the checks on the result.
   // The checks may leave build output, but mustn't commit or change tracked
