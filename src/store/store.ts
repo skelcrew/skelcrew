@@ -11,6 +11,7 @@ import { evolveTask } from "../core/evolve";
 import { TaskId } from "../core/ids";
 import { evolveProject } from "../core/projects";
 import type { Command, Project, ProjectEvent, ProjectId, Task, TaskEvent } from "../core/types";
+import { OpenPullRequest, type PullRequestLog } from "../daemon/pull-requests";
 import type {
   Loaded,
   Queued,
@@ -44,11 +45,17 @@ const migrations = [
      id   INTEGER PRIMARY KEY AUTOINCREMENT,
      body TEXT NOT NULL
    );`,
+  // The draft pull request each task has open for reading, if any. Not an
+  // event: the core never hears of them.
+  `CREATE TABLE pull_requests (
+     task_id INTEGER PRIMARY KEY,
+     body    TEXT NOT NULL
+   );`,
 ];
 
 type Row = { seq: number; body: string };
 
-export class EventStore implements ReadableLog {
+export class EventStore implements ReadableLog, PullRequestLog {
   private constructor(private readonly db: Database) {}
 
   // Opens the file, creating it and its table when it's new. ":memory:" gives
@@ -109,6 +116,37 @@ export class EventStore implements ReadableLog {
       commands.push({ id: row.id, command: parsed.value });
     }
     return { ok: true, commands };
+  }
+
+  // The pull requests opened for reading and not yet closed, by task. A
+  // damaged one is reported with its task number.
+  loadPullRequests(): Loaded<{ pullRequests: OpenPullRequest[] }> {
+    const rows = this.db
+      .query<{ task_id: number; body: string }, []>(
+        "SELECT task_id, body FROM pull_requests ORDER BY task_id",
+      )
+      .all();
+    const pullRequests: OpenPullRequest[] = [];
+    for (const row of rows) {
+      const parsed = OpenPullRequest.safeParse(readJson(row.body));
+      if (!parsed.success) {
+        return { ok: false, seq: row.task_id, reason: parsed.error.message };
+      }
+      pullRequests.push(parsed.data);
+    }
+    return { ok: true, pullRequests };
+  }
+
+  savePullRequest(pullRequest: OpenPullRequest): Saved {
+    this.db
+      .query("INSERT OR REPLACE INTO pull_requests (task_id, body) VALUES ($task, $body)")
+      .run({ task: pullRequest.task, body: JSON.stringify(pullRequest) });
+    return { ok: true };
+  }
+
+  forgetPullRequest(task: TaskId): Saved {
+    this.db.query("DELETE FROM pull_requests WHERE task_id = $task").run({ task });
+    return { ok: true };
   }
 
   // The starts sent out and not yet answered, oldest first.
