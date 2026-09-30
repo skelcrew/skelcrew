@@ -11,6 +11,7 @@ import * as z from "zod";
 import { preparedChecks } from "../checks/checks";
 import { parseWorkflow } from "../config/workflow";
 import { Git } from "../plugins/git/git";
+import { mainRepository } from "../plugins/git/top";
 import { encode, MAX_LINE, parseRequest, type Reply } from "../protocol/protocol";
 import { EventStore } from "../store/store";
 import { type Answer, Daemon, type DaemonOptions } from "./daemon";
@@ -202,6 +203,15 @@ function mainBranch(repo: string, branch: string): { ok: true } | { ok: false; m
     return {
       ok: false,
       message: `${here} is inside the git repository at ${start}. Run Skelcrew there, where the repository starts.`,
+    };
+  }
+  // A task's worktree holds its own copy of .skelcrew/, but the tasks live
+  // in the main folder's daemon. A daemon here would have none of them.
+  const main = mainRepository(repo);
+  if (main.ok && main.top !== here) {
+    return {
+      ok: false,
+      message: `${here} is a worktree of the repository at ${main.top}. Run Skelcrew there.`,
     };
   }
   if (git("rev-parse", "--verify", "--quiet", `refs/heads/${branch}`) !== 0) {

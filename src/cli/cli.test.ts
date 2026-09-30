@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { createServer, type Server as NetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -916,6 +916,29 @@ describe("skelcrew log", () => {
   test("passes on the daemon's refusal", async () => {
     const repo = await repoWithDaemon();
     expect(await cli(repo, ["log", "9"])).toEqual(refused("#9 doesn't exist."));
+  });
+});
+
+// Found in the first real run: from inside a task's worktree, the CLI took
+// the worktree's own copy of .skelcrew as the repository, started a second,
+// empty daemon there, and done said "#1 doesn't exist".
+describe("inside a task's worktree", () => {
+  test("reaches the repository's own daemon, and starts no other", async () => {
+    const repo = await repoWithDaemon();
+    // Committed, as after `skelcrew init`, so each worktree has a copy.
+    const git = (...args: string[]) =>
+      Bun.spawnSync(["git", "-c", "user.name=T", "-c", "user.email=t@t", ...args], { cwd: repo });
+    git("add", ".skelcrew/workflow.yml");
+    git("commit", "-q", "-m", "Set up Skelcrew");
+    await specced(repo);
+    await cli(repo, ["approve", "1"]);
+    await cli(repo, ["claim", "1"]);
+    const worktree = join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export");
+    expect(existsSync(join(worktree, ".skelcrew", "workflow.yml"))).toBe(true);
+    commitIn(worktree);
+    expect(await cli(worktree, ["done", "1"], { session: "you-2" })).toEqual(
+      said(["The checks passed for #1."]),
+    );
   });
 });
 
