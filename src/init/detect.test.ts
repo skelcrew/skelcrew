@@ -21,6 +21,14 @@ function packageJson(scripts: Record<string, string>): string {
   return JSON.stringify({ name: "app", scripts });
 }
 
+// The package.json from Skelcrew's first real run. It has no
+// dependencies, so bun install makes no lock file.
+const bunWithoutLock = JSON.stringify({
+  name: "app",
+  type: "module",
+  scripts: { test: "bun test" },
+});
+
 const allThree = { lint: "biome ci .", typecheck: "tsc", test: "vitest" };
 
 describe("detectChecks", () => {
@@ -49,6 +57,13 @@ describe("detectChecks", () => {
       checks: ["npm run test"],
       warnings: [],
     });
+  });
+
+  // Skelcrew's first real run: a Bun project with no dependencies, so
+  // bun install made no lock file. Init chose npm run test.
+  test("runs a Bun project's scripts with bun when there is no lock file", () => {
+    const found = detectChecks(repo({ "package.json": bunWithoutLock }));
+    expect(found).toEqual({ ok: true, checks: ["bun run test"], warnings: [] });
   });
 
   test("uses a check script in place of the typecheck and lint scripts", () => {
@@ -122,9 +137,14 @@ describe("detectChecks", () => {
   });
 
   test("keeps a test script that runs something beside a do-nothing command", () => {
-    for (const test of ["echo start && vitest", "vitest; exit 0", "true && bun test"]) {
+    // A script that runs bun shows a Bun project, so it runs with bun.
+    for (const { test, check } of [
+      { test: "echo start && vitest", check: "npm run test" },
+      { test: "vitest; exit 0", check: "npm run test" },
+      { test: "true && bun test", check: "bun run test" },
+    ]) {
       const found = detectChecks(repo({ "package.json": packageJson({ test }) }));
-      expect(found.ok && found.checks).toEqual(["npm run test"]);
+      expect(found.ok && found.checks).toEqual([check]);
     }
   });
 
@@ -293,7 +313,8 @@ describe("detectChecks", () => {
 });
 
 // The checks run in a fresh copy of the code, which has no dependencies
-// installed. The setup installs them first, the way the lock file shows.
+// installed. The setup installs them first, with the project's package
+// manager.
 describe("detectSetup", () => {
   test("installs a package's dependencies from its lock file, without changing it", () => {
     const withLock = (lock: string) =>
@@ -314,6 +335,10 @@ describe("detectSetup", () => {
   test("installs with npm install when there is no lock file", () => {
     const dir = repo({ "package.json": packageJson({ test: "vitest" }) });
     expect(detectSetup(dir)).toEqual(["npm install"]);
+  });
+
+  test("installs with bun install for a Bun project with no lock file", () => {
+    expect(detectSetup(repo({ "package.json": bunWithoutLock }))).toEqual(["bun install"]);
   });
 
   test("sets up nothing without a package.json", () => {
