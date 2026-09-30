@@ -151,6 +151,8 @@ A task moves through six phases: Idea, Spec, Ready, In progress, Checks, Done. A
 5. **Develop.** The agent works and reports through the CLI. If it needs information, it raises one clear question and the task stays In progress. If it cannot continue at all, it reports giving up; only the core moves a task to Blocked. Event when blocked: `task.blocked`.
 6. **Checks and review.** The core runs the gates: local check commands, remote check results from plugins, then a review by a fresh agent session. Failures return to the developing agent; repeated failures block the task with a reason. Event: `task.checks_passed`.
 7. **Merge.** The merge policy either merges automatically or escalates to the inbox. Tasks merge one at a time. Just before merging, the branch is brought up to date with main and the local checks run again. If that fails, or the branch conflicts with main, the task returns to In progress with the failure, and it counts as a failed attempt. After the merge, the worktree is removed. Events: `task.merged` or `task.merge_approval_requested`.
+
+   When a merge waits for approval, Skelcrew pushes the task's branch and opens a draft pull request on GitHub, so the developer can read the diff there. It is only for reading. `skelcrew approve` still merges, on the developer's machine. See Merge policy, below.
 8. **Record.** The task's events are summarised into a Markdown entry.
 9. **Afterwards.** If a merged task turns out to be wrong, the developer reverts it with `skelcrew revert`. The core asks the version control plugin to revert the commit. Once it has, the task returns to Spec with the reason attached, and the record says why. If the revert fails, for example on a conflict, the task stays Done and the inbox says why, so the developer can revert it by hand. The revised spec needs approval again. Event: `task.reverted`.
 
@@ -204,6 +206,16 @@ Tasks merge automatically unless they touch critical paths; a task that turns ou
 
 **Merge shape.** Each task lands as one squashed commit on main, so undoing a task is a single revert.
 
+**A pull request to read.** The developer reads diffs on GitHub. So when a merge waits for approval, Skelcrew pushes the task's branch and opens a draft pull request for it. For example, #12's checks pass, and a draft called "#12 CSV export" appears on GitHub. It holds the spec's scope and acceptance criteria, the checks that passed, and a line saying it is merged with `skelcrew approve 12`, not on GitHub.
+
+- **Reading only.** `skelcrew approve` merges on the developer's machine, as one squashed commit. Nothing is merged on GitHub.
+- **Where the link is.** `skelcrew status` gives the link next to the merge that waits.
+- **After the merge.** main on GitHub moves only when the developer pushes it, so the pull request can't close itself. Skelcrew closes it, with a comment naming the commit on main, and deletes the branch it pushed. The local branch stays.
+- **After a send-back or a failed merge.** The task goes back to its agent on the same branch. The draft stays open, and the next wait pushes the new work to it. A task that is dropped or sent back to Spec gets its draft closed, with a comment saying why.
+- **Never in the way.** GitHub is not required. Without an `origin` remote, or without `gh`, or with `gh` logged out, the merge waits for approval as always. `skelcrew status` says in one line why there is no pull request. A failed push works the same way.
+- **Once.** A restart neither loses a pull request nor opens a second one.
+- **Skelcrew pushes, agents don't.** Agents still never push. Skelcrew never force pushes.
+
 **Revert.** In v1, reverts are manual. `skelcrew revert <task> "<reason>"` asks the version control plugin to revert the task's commit. Only once it has does the task return to Spec with the reason attached. A failed revert leaves the task Done, with the reason in the inbox. The revised spec needs approval again. Production rollback stays with the deploy tool, which picks up the revert.
 
 **Later: automatic revert.** After v1, the core could re-run checks on main after every merge and listen to plugins such as GitHub Actions or Sentry. When main breaks, it would revert the most likely merge. The hard part is knowing which merge broke main when several landed close together.
@@ -215,7 +227,7 @@ The inbox is the only place Skelcrew asks for the developer's attention, and eve
 Item types:
 
 - **Question:** from a background agent, in spec or development, with two to four options plus free text. An attended agent asks in the conversation instead.
-- **Approval:** a finished spec, or a merge touching critical paths, shown as a summary with approve or send back. A spec sent back returns to the spec agent with the developer's note. A merge sent back returns to In progress with the note.
+- **Approval:** a finished spec, or a merge touching critical paths, shown as a summary with approve or send back. A merge also links to its draft pull request, when there is one, for reading the diff. A spec sent back returns to the spec agent with the developer's note. A merge sent back returns to In progress with the note.
 - **Blocked:** a task the core stopped, with its reason (ran out of attempts, safety cap reached, agent gave up, worktree or session failed) and options that fit it: retry, send back to spec, or drop. Retry resets the attempt count and the safety cap; the record keeps the totals. Only the core blocks tasks; agents ask questions or report giving up.
 
   A blocked task keeps its phase and its worktree, but its agent is stopped, so it does not hold a slot while it waits. A task blocked during checks goes back to In progress. Retry puts the task back in the queue. When a slot is free, a new agent starts in the same worktree, with the last failure as its brief.
@@ -363,7 +375,7 @@ Skelcrew runs where a git repository starts, the folder that holds `.git`. A fol
 | `skelcrew retry <task>` | Retry a blocked task; it waits for a claim until Skelcrew starts agents itself |
 | `skelcrew drop <task>` | Drop a task that is not done; stops its session and removes its worktree if it has them |
 | `skelcrew inbox` | List open decisions and answer them |
-| `skelcrew status` | Show tasks by project and phase, and running sessions |
+| `skelcrew status` | Show tasks by project and phase, and running sessions; a merge that waits gets its pull request's link |
 | `skelcrew attach <task>` | Follow a task's session or log |
 | `skelcrew log <task>` | Show a task's events and record entry |
 | `skelcrew check` | Decide whether a diff is safe to auto-merge; runs standalone in CI |
@@ -378,13 +390,13 @@ The TUI and the skills are both built on these commands, so neither can do what 
 Skelcrew should build itself as early as possible, and trust in auto-merge is earned from data rather than switched on. The existing CLI keeps building the new core until the daemon can take over.
 
 1. **Core in close collaboration.** State machine, contracts, event log and scheduler, with the full test approach and the simulator. Built interactively with Claude rather than delegated: the types, contracts and invariants come first and the developer approves them, Claude implements against them, and every change to the core is read before it lands.
-2. **Smallest real loop, attended.** Daemon, CLI, built-in board, git plugin, local checks, and the default skills (spec, develop) used from the developer's harness. The developer starts each agent in their own session. Every merge waits for the developer's approval, as do specs, with `skelcrew approve` until the inbox exists. Skelcrew then carries out the merge. One task goes from `skelcrew add` to a merged commit.
+2. **Smallest real loop, attended.** Daemon, CLI, built-in board, git plugin, local checks, and the default skills (spec, develop) used from the developer's harness. The developer starts each agent in their own session. Every merge waits for the developer's approval, as do specs, with `skelcrew approve` until the inbox exists. Skelcrew then carries out the merge. One task goes from `skelcrew add` to a merged commit. A merge that waits also gets a draft pull request on GitHub, for reading only. This brings a small part of step 8's GitHub plugin forward.
 3. **Dogfood day.** Skelcrew runs on its own repository; every change from here is a Skelcrew task.
 4. **Background runs and the TUI.** The process runner and Claude Code profile, so the scheduler starts agents itself. The TUI, for adding tasks, approving them, and seeing what is running and what waits on the developer.
 5. **Inbox and intake.** Questions with options, the spec skill wired into intake, desktop notifications.
 6. **Auto-merge, gradually.** Start with every path critical, so all merges arrive as inbox summaries and the workflow stops at approval, like a pull request. Then loosen critical paths based on which approvals were rubber-stamped.
 7. **Record and digest.** A projection of the event log.
-8. **Second implementations.** GitHub next to the built-in board, Herdr next to the process runner, to validate the plugin interfaces.
+8. **Second implementations.** GitHub next to the built-in board, Herdr next to the process runner, to validate the plugin interfaces. The draft pull requests for reading already exist from step 2. This step adds GitHub as a work source.
 
 Metrics tracked from step 3: inbox items per day, minutes spent on decisions, automatic versus approved merges, reverts and cost per task. They guide the design and are the evidence for users and funders.
 
