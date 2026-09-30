@@ -6,6 +6,8 @@ import { realpathSync } from "node:fs";
 import { join } from "node:path";
 
 export type DaemonPaths = {
+  // The repository's real path. The daemon locks this folder.
+  repo: string;
   folder: string;
   workflow: string;
   store: string;
@@ -42,6 +44,7 @@ export function daemonPaths(
   return {
     ok: true,
     paths: {
+      repo: real,
       folder,
       workflow: join(folder, "workflow.yml"),
       store: join(folder, "skelcrew.db"),

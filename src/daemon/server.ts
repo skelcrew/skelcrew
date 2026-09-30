@@ -50,7 +50,7 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
   const workflow = readWorkflow(repo, paths.workflow);
   if (!workflow.ok) return workflow;
 
-  const locked = takeLock(paths.folder);
+  const locked = takeLock(paths.repo);
   if (!locked.ok) return locked;
   const lock = locked.lock;
   if (paths.sharedSocketFolder !== null) {

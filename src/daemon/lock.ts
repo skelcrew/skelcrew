@@ -1,5 +1,5 @@
 // One daemon per repository. The daemon takes an exclusive `flock` on the
-// .skelcrew folder itself and keeps it for as long as it runs. The operating
+// repository's folder and keeps it for as long as it runs. The operating
 // system keeps that lock for the daemon's process and lets go of it the
 // moment the process ends, however it ends. So:
 //
@@ -8,9 +8,10 @@
 // - a daemon that crashed never keeps the next one out;
 // - no process id is ever trusted, so a reused one can't block a start;
 // - it works the same on a folder the daemon can't write to;
-// - deleting files in .skelcrew can't let a second daemon in. A lock on a
-//   file inside it could: the next daemon would lock a new file of the
-//   same name, and two daemons would then share one database.
+// - deleting or replacing .skelcrew, or anything in it, can't let a second
+//   daemon in. A lock on something inside the repository could: the next
+//   daemon would lock the replacement, and two daemons would then share
+//   one database.
 //
 // The lock is taken through the system's C library, since Bun has no
 // `flock` of its own. It is the same on macOS and Linux. Windows has no
@@ -32,23 +33,24 @@ export type Locked = { ok: true; lock: Lock } | { ok: false; message: string };
 const LOCK_EX = 2;
 const LOCK_NB = 4;
 
-// `folder` is the repository's .skelcrew folder.
-export function takeLock(folder: string, pid = process.pid): Locked {
+// `repo` is the repository's folder.
+export function takeLock(repo: string, pid = process.pid): Locked {
   const system = libc();
   if (!system.ok) return { ok: false, message: couldNot(system.reason) };
 
-  // Opened read-only: a folder can't be opened any other way. Close-on-exec, so no process the daemon starts, such as git or the
-  // checks, is handed the file and could keep the lock after the daemon has
-  // died. Bun's spawn happens to leave it out anyway on macOS; the flag
+  // Opened read-only, since a folder can't be opened any other way.
+  // Close-on-exec, so no process the daemon starts, such as git or the
+  // checks, is handed the folder and could keep the lock after the daemon
+  // has died. Bun's spawn happens to leave it out anyway on macOS. The flag
   // makes that true however a process is started.
   let fd: number;
   try {
-    fd = openSync(folder, constants.O_RDONLY | system.value.closeOnExec);
+    fd = openSync(repo, constants.O_RDONLY | system.value.closeOnExec);
   } catch (error) {
     return { ok: false, message: couldNot(describe(error)) };
   }
 
-  const pidFile = join(folder, "daemon.pid");
+  const pidFile = join(repo, ".skelcrew", "daemon.pid");
   if (system.value.flock(fd, LOCK_EX | LOCK_NB) !== 0) {
     const errno = system.value.errno();
     closeSync(fd);
@@ -110,8 +112,9 @@ let loaded: { ok: true; value: Libc } | { ok: false; reason: string } | null = n
 // name between macOS and Linux.
 function libc(): { ok: true; value: Libc } | { ok: false; reason: string } {
   if (loaded !== null) return loaded;
-  // Values from each system's headers. On Linux, glibc's library is tried
-  // first, then musl's (Alpine and the like). musl is untested.
+  // Values from each system's headers. On Linux, glibc's library name is
+  // tried first. On musl (Alpine and the like) that name loads musl too,
+  // and its own name is a fallback.
   const found =
     process.platform === "darwin"
       ? {
@@ -181,7 +184,7 @@ function muslArch(): string {
 }
 
 function couldNot(reason: string): string {
-  return `The lock on the .skelcrew folder couldn't be taken: ${reason}`;
+  return `The lock on the repository's folder couldn't be taken: ${reason}`;
 }
 
 function readPid(path: string): number | null {

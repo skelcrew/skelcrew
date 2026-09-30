@@ -58,7 +58,7 @@ describe("stopping the daemon with a signal", () => {
       await line.closed;
       expect(existsSync(found.paths.socket)).toBe(false);
       // Let go of: another daemon can take the lock now.
-      const next = takeLock(found.paths.folder);
+      const next = takeLock(found.paths.repo);
       expect(next.ok).toBe(true);
       if (next.ok) next.lock.release();
       expect(existsSync(join(found.paths.folder, "daemon.pid"))).toBe(false);
