@@ -1,6 +1,6 @@
 ---
-name: show
-description: Show where one Skelcrew task stands, with its spec and history, and what the developer has to decide. Use when the developer asks where task 12 stands, or what its spec or merge holds, or types "/show 12". Also use it when you need a task's state yourself.
+name: log
+description: Show where one Skelcrew task stands, with its spec and history, and what the developer has to decide. Use when the developer asks where task 12 stands, or what its spec or merge holds, or types "/log 12". Also use it when you need a task's state yourself.
 ---
 
 # Show a Skelcrew task

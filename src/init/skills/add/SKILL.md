@@ -1,6 +1,6 @@
 ---
-name: idea
-description: Capture a task as an Idea in Skelcrew, to spec later. Use when the developer asks to add a task or keep an idea, such as when the developer asks to add a task called "CSV export", or types "/idea CSV export". Also use it while brainstorming tasks with the developer, for each task they agree to keep.
+name: add
+description: Capture a task as an Idea in Skelcrew, to spec later. Use when the developer asks to add a task or keep an idea, such as when the developer asks to add a task called "CSV export", or types "/add CSV export". Also use it while brainstorming tasks with the developer, for each task they agree to keep.
 ---
 
 # Add an idea to Skelcrew

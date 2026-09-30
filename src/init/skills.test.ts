@@ -6,7 +6,7 @@ import { defaultSkills } from "./skills";
 // task, see what goes on, show one task, and approve. Sending back has no
 // skill: the developer types `skelcrew reject` themselves.
 const agentSkills = ["spec", "develop"];
-const developerSkills = ["idea", "crew", "show", "approve"];
+const developerSkills = ["add", "crew", "log", "approve"];
 const allSkills = [...agentSkills, ...developerSkills];
 
 // The CLI commands each skill may name. They come from the spec's CLI
@@ -18,10 +18,10 @@ const allSkills = [...agentSkills, ...developerSkills];
 const commandsFor: Record<string, string[]> = {
   spec: ["add", "spec", "claim", "submit", "log", "approve"],
   develop: ["claim", "done", "give-up", "log", "approve"],
-  idea: ["add"],
+  add: ["add"],
   // Blocked tasks: crew gives the developer the retry and drop commands.
   crew: ["status", "retry", "drop"],
-  show: ["status", "log", "approve", "reject", "retry", "drop"],
+  log: ["status", "log", "approve", "reject", "retry", "drop"],
   approve: ["status", "log", "approve", "reject"],
 };
 
@@ -68,9 +68,9 @@ describe("defaultSkills", () => {
     const asks = {
       spec: "asks to spec task 12",
       develop: "asks to build task 12",
-      idea: "asks to add a task",
+      add: "asks to add a task",
       crew: "asks what is going on",
-      show: "asks where task 12 stands",
+      log: "asks where task 12 stands",
       approve: "asks to approve task 12",
     };
     expect(Object.keys(asks)).toEqual(allSkills);
@@ -94,7 +94,7 @@ describe("defaultSkills", () => {
   });
 
   test("name the task the developer gave", () => {
-    for (const name of ["spec", "develop", "show", "approve"]) {
+    for (const name of ["spec", "develop", "log", "approve"]) {
       expect(flat(name)).toContain("the task the developer named, such as 12");
     }
   });
@@ -128,9 +128,10 @@ describe("defaultSkills", () => {
   // Skelcrew now does itself: agents here never push, open pull requests or
   // keep their own record. Add to this list when another old word turns up.
   //
-  // The show skill is named like the old `skelcrew show` command. The
-  // skill is fine: the command is still banned, as a command, in every
-  // skill, and no skill may name a command it wasn't given (above).
+  // The old `skelcrew show` command is still banned, as a command, in
+  // every skill. The skills that were once called /idea and /show are now
+  // /add and /log, like the CLI's commands, so their old names are banned
+  // too.
   test("never name a command or place from the earlier Skelcrew", () => {
     const old = [
       "skelcrew show",
@@ -158,6 +159,9 @@ describe("defaultSkills", () => {
       "/research",
       "/audit",
       "/run",
+      // The skills' own old names, from before they matched the CLI.
+      "/idea",
+      "/show",
     ];
     for (const one of defaultSkills) {
       // The developer reads a merge's diff in the draft pull request that
@@ -208,13 +212,13 @@ describe("defaultSkills", () => {
     for (const name of ["spec", "develop", "approve"]) {
       expect(frontmatter(skill(name))).toMatchObject({ "disable-model-invocation": true });
     }
-    for (const name of ["idea", "crew", "show"]) {
+    for (const name of ["add", "crew", "log"]) {
       expect(frontmatter(skill(name))).not.toHaveProperty("disable-model-invocation");
     }
   });
 
   test("ask for a task number instead of acting on nothing", () => {
-    for (const name of ["develop", "show", "approve"]) {
+    for (const name of ["develop", "log", "approve"]) {
       expect(skill(name)).toContain(
         "If you weren't given a task number, ask the developer which task, and wait.",
       );
@@ -332,10 +336,10 @@ describe("defaultSkills", () => {
     expect(approves).toBeGreaterThan(shows);
   });
 
-  // /show only reads. It hands the developer the two commands to type, and
+  // /log only reads. It hands the developer the two commands to type, and
   // never runs either itself. Nor does /crew.
-  test("the show skill ends with both lines for the developer, and runs neither", () => {
-    const text = skill("show");
+  test("the log skill ends with both lines for the developer, and runs neither", () => {
+    const text = skill("log");
     const approve = "! skelcrew approve 12";
     const reject = '! skelcrew reject 12 "<note>"';
     expect(text).toContain(`${approve}\n${reject}`);
@@ -344,7 +348,7 @@ describe("defaultSkills", () => {
       .filter((line) => line.includes("skelcrew approve") || line.includes("skelcrew reject"))
       .filter((line) => line !== approve && line !== reject);
     for (const line of never) expect(line).toContain("never run");
-    expect(flat("show")).toContain(
+    expect(flat("log")).toContain(
       "You never run `skelcrew approve` or `skelcrew reject` yourself.",
     );
   });
@@ -369,14 +373,14 @@ describe("defaultSkills", () => {
     expect(flat("crew")).toContain("Leave out dropped tasks, unless the developer asks for them.");
   });
 
-  test("the show skill reads the task's line in status and its log", () => {
-    const text = skill("show");
+  test("the log skill reads the task's line in status and its log", () => {
+    const text = skill("log");
     expect(text).toContain("skelcrew status");
     expect(text).toContain("skelcrew log 12");
   });
 
-  test("the show skill says what to look at for a merge that waits", () => {
-    const text = flat("show");
+  test("the log skill says what to look at for a merge that waits", () => {
+    const text = flat("log");
     for (const part of [
       "draft pull request",
       "git diff --stat",
@@ -400,10 +404,10 @@ describe("defaultSkills", () => {
     }
   });
 
-  // An idea waits until the developer asks for its spec. So /idea only
+  // An idea waits until the developer asks for its spec. So /add only
   // captures it.
-  test("the idea skill adds the task as an Idea, and asks for no spec", () => {
-    const text = flat("idea");
+  test("the add skill adds the task as an Idea, and asks for no spec", () => {
+    const text = flat("add");
     expect(text).toContain('skelcrew add "<title>"');
     expect(text).not.toContain("--spec");
   });
