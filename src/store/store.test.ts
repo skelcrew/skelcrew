@@ -154,6 +154,31 @@ describe("the event store", () => {
     expect(loaded.ok && loaded.projects.get(reports)?.status).toBe("parked");
   });
 
+  test("reads back one task's events, oldest first", () => {
+    const sim = simulated();
+    const store = EventStore.open(":memory:");
+    save(store, sim.events);
+    const two = TaskId.parse(2);
+    const events = sim.events.filter((event) => event.taskId === two);
+    expect(events.length).toBeGreaterThan(5);
+    expect(store.loadTaskEvents(two)).toEqual({ ok: true, events });
+    expect(store.loadTaskEvents(TaskId.parse(9))).toEqual({ ok: true, events: [] });
+  });
+
+  test("reports a damaged row among one task's events with its position", () => {
+    const file = tempFile();
+    const store = EventStore.open(file);
+    save(store, simulated().events.slice(0, 3));
+    store.close();
+
+    const raw = new Database(file);
+    raw.run('UPDATE events SET body = \'{"type":"task.ready","v":1,"taskId":1}\' WHERE seq = 2');
+    raw.close();
+
+    const loaded = EventStore.open(file).loadTaskEvents(TaskId.parse(1));
+    expect(loaded).toMatchObject({ ok: false, seq: 2 });
+  });
+
   test("opens an existing file without redoing its setup", () => {
     const file = tempFile();
     EventStore.open(file).close();
