@@ -74,12 +74,10 @@ const workflowPath = ".skelcrew/workflow.yml";
 // The files Skelcrew keeps in .skelcrew while it runs. They stay out of
 // git. SQLite keeps two more files beside the database, ending in -wal and
 // -shm, and the * in the first line covers them. The daemon keeps its log,
-// the lock that stops a second daemon starting, a file naming its process,
-// and the socket the CLI talks to it through.
+// a file naming its process, and the socket the CLI talks to it through.
 const runtimeLines = [
   ".skelcrew/skelcrew.db*",
   ".skelcrew/daemon.log",
-  ".skelcrew/daemon.lock",
   ".skelcrew/daemon.pid",
   ".skelcrew/daemon.sock",
 ];

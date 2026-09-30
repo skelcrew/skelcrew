@@ -82,13 +82,11 @@ const developSkill = ".agents/skills/develop/SKILL.md";
 const specLink = ".claude/skills/spec";
 const developLink = ".claude/skills/develop";
 const dbLine = ".skelcrew/skelcrew.db*";
-// The files the daemon keeps while it runs: its log, the lock that stops a
-// second daemon, the file naming its process, and the socket the CLI talks
-// to it through.
+// The files the daemon keeps while it runs: its log, the file naming its
+// process, and the socket the CLI talks to it through.
 const runtimeLines = [
   dbLine,
   ".skelcrew/daemon.log",
-  ".skelcrew/daemon.lock",
   ".skelcrew/daemon.pid",
   ".skelcrew/daemon.sock",
 ];
@@ -366,7 +364,7 @@ describe("initRepository", () => {
     const text = read(dir, ".gitignore");
     expect(text.startsWith(mine)).toBe(true);
     const added = text.slice(mine.length).split("\n");
-    expect(added).toContain(".skelcrew/daemon.lock");
+    expect(added).toContain(".skelcrew/daemon.pid");
     expect(added).toContain(".skelcrew/daemon.sock");
     expect(added).not.toContain(dbLine);
     expect(added).not.toContain(".skelcrew/daemon.log");

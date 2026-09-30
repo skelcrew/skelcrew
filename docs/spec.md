@@ -411,3 +411,4 @@ v1 is single user, runs on one machine, and ships only the plugins its first use
 - [ ] What should the default safety cap be, in tokens and in time?
 - [ ] Which seeded bug types matter most for the review gate eval, and what catch rate is good enough to loosen a critical path?
 - [ ] Where do plugins not written by the Skelcrew project live, and how are they loaded? A plugin runs inside the daemon, next to the rules, so loading outside code is also a question of trust.
+- [ ] Is Windows supported, and when? The daemon assumes Unix today: its lock (`flock`), its socket, stopping processes by group and signal, and running checks through `sh`. Each would need a Windows version.
