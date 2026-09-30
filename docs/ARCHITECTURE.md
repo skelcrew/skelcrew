@@ -201,7 +201,7 @@ safety cap, the commands the local gate runs, and the main branch (`main_branch`
 fit is refused with every reason, in plain words. An unknown field is refused too, so a
 typo like `critical_path` can't be silently ignored. A file without `critical_paths`
 makes every path critical, so nothing merges without your approval. `workflowFile`
-writes the file `skelcrew init` will create, with the check commands init finds in the
+writes the file `skelcrew init` creates, with the check commands init finds in the
 repository.
 
 ## The daemon
@@ -254,6 +254,7 @@ from the socket is checked with Zod first, and a line over 1 MB is refused.
 | File | What it holds |
 | --- | --- |
 | `cli.ts` | `run(args, context)`: one command line in, the lines to print and the exit code out. Tests call it as a function. It checks every argument with Zod, finds the repository by looking for `.skelcrew/` from the current folder upwards, and sends the command through the client. It checks each answer against the shape that command expects. |
+| `init.ts` | `skelcrew init`: finds the top of the git repository, runs `initRepository` there, and prints its report in a few lines. The report says what init created, linked, updated and left alone, what to do by hand, the warnings, whether Claude Code will ask before `skelcrew approve`, and the next step. A failed init prints its reason and exits 1. |
 | `help.ts` | What `--help` prints, for the program and each command. `skelcrew submit --help` shows the spec's JSON form, since the spec skill sends agents there. |
 | `start.ts` | `startDaemon`: runs `skelcrew serve` in the background, in its own process group, so Ctrl-C in the terminal doesn't stop it. Its output goes to `.skelcrew/daemon.log`. If it exits before it answers, the command prints what it wrote there. |
 | `main.ts` | The program: runs one command, prints its lines, and exits. A refusal goes to standard error, with exit code 1. |
@@ -263,8 +264,11 @@ An agent's reports (`submit`, `done`, `give-up`) take the session from `SKELCREW
 `SKELCREW_SESSION=session-… skelcrew submit 12`. The session goes in front of each command,
 since each shell in a harness starts without the variable.
 
-`init` comes with its own pull request, and bare `skelcrew` will open the TUI. Until then,
-both only say so.
+`init` doesn't go through the daemon. It asks git where the repository starts and sets up
+that folder, even when run from a subfolder such as `src/`. A subfolder with a `.skelcrew`
+of its own is refused, since Skelcrew doesn't run on part of a repository.
+
+Bare `skelcrew` will open the TUI. Until then, it only says so.
 
 ## The local checks
 
@@ -277,7 +281,7 @@ started. Input is closed and `CI=true` is set, so nothing waits for a person.
 
 ## Init
 
-`src/init/` is what `skelcrew init` will do, built as functions the CLI will call. It sets
+`src/init/` is what `skelcrew init` does, built as functions the CLI calls. It sets
 up a repository and never overwrites a file, so running it twice changes nothing. It only
 adds to two existing files: the missing runtime lines to `.gitignore`, and the approve
 rules to `.claude/settings.json`.
@@ -312,6 +316,7 @@ decides on. Every call may also arrive twice after a crash, and must then change
 | `version-control.ts` | `VersionControl`: create and remove a task's worktree, read its branch when the agent reports done, merge it, and revert its commit on main. |
 | `version-control.contract.ts` | The tests every version-control plugin must pass, against a throwaway git repository. |
 | `git/git.ts` | The built-in plugin. Each build gets a worktree in `.skelcrew/worktrees/` on its own branch from main, such as `task/12-csv-export-2`. Removing one commits its uncommitted work first, and refuses if the worktree isn't on its task's branch or still has unsaved work after that. A merge is built in `.skelcrew/merging/`, checked there, and only then moves main. A revert is built the same way in `.skelcrew/reverting/`, as one new commit that undoes the task's commit. It moves main under the same rules as a merge, but runs no checks. |
+| `git/top.ts` | `repositoryTop`: asks git where the repository that holds a folder starts, the folder with its `.git`. It fails with a plain message when git isn't installed or the folder isn't in a repository. `insideRepository` is the message for a folder inside a repository. `skelcrew init` uses both. The daemon has its own copy of this check for now. |
 
 ## Around the core (planned)
 
