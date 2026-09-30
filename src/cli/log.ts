@@ -60,7 +60,7 @@ function happened(event: TaskEvent, before: TaskEvent[]): string {
         : "The task is Ready to build from this spec.";
     }
     case "task.dispatch_started":
-      return "Picked to start, since a slot was free.";
+      return "Skelcrew picked it to start.";
     case "task.worktree_created":
       return `Its worktree was made on branch ${event.worktree.branch}, at ${event.worktree.path}.`;
     case "task.dispatched":

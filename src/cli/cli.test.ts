@@ -650,6 +650,19 @@ describe("skelcrew log", () => {
     );
   });
 
+  // Found by review: "Picked to start, since a slot was free." A slot means
+  // nothing to someone who hasn't read max_running's docs.
+  test("says Skelcrew picked the task to start", async () => {
+    const repo = throwawayRepo(dirs);
+    const at = new Date(2026, 8, 30, 10, 2).getTime();
+    await fakeDaemon(repo, {
+      events: [{ v: 1, taskId: 4, at, type: "task.dispatch_started", request: 1 }],
+    });
+    expect(await cli(repo, ["log", "4"])).toEqual(
+      said(["2026-09-30 10:02  Skelcrew picked it to start."]),
+    );
+  });
+
   test("refuses an answer that isn't a list of events", async () => {
     const repo = throwawayRepo(dirs);
     await fakeDaemon(repo, { events: [{ type: "task.exploded", v: 1, taskId: 1, at: 1 }] });
