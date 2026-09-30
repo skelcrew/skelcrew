@@ -90,6 +90,8 @@ Why TypeScript over Go or Rust:
 
 Rust offers stronger compile-time guarantees and Go more uniform code, but both would make critical review slower and less reliable for this developer.
 
+The TUI is built with Ink, which draws the terminal screen from React components. The screen code should be easy to read at a glance, and Ink's layout reads like the screen it draws. Ink loads only when bare `skelcrew` opens the TUI, so the other commands stay fast for agents.
+
 Rules, enforced as Skelcrew's own gates:
 
 - `strict`, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` in tsconfig
