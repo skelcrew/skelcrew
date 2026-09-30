@@ -18,8 +18,17 @@ export type Runner = (command: string[], options: { cwd: string; stdin?: string 
 // gh exits with 4 when it needs a login.
 const NEEDS_LOGIN = 4;
 
-// `gh pr list --json number,url`: a list, empty when there is none.
-const listed = z.array(z.object({ number: z.number().int().positive(), url: z.url() }));
+// `gh pr list --json number,url,isCrossRepository`: a list, empty when
+// there is none. `--head` matches the branch name in any repository, so a
+// pull request from someone's fork with a branch of the same name is in it
+// too, marked as cross-repository.
+const listed = z.array(
+  z.object({
+    number: z.number().int().positive(),
+    url: z.url(),
+    isCrossRepository: z.boolean(),
+  }),
+);
 
 // `gh pr create` prints the new pull request's link last, such as
 // https://github.com/owner/repo/pull/41.
@@ -49,7 +58,7 @@ export class GitHub implements PullRequests {
         "--state",
         "open",
         "--json",
-        "number,url",
+        "number,url,isCrossRepository",
       ],
       "gh couldn't list the pull requests",
     );
@@ -185,8 +194,8 @@ function parseList(out: string): Done<PullRequest | null> {
       message: `gh's list of pull requests didn't make sense: ${z.prettifyError(parsed.error)}`,
     };
   }
-  const [first] = parsed.data;
-  return { ok: true, value: first === undefined ? null : first };
+  const own = parsed.data.find((found) => !found.isCrossRepository);
+  return { ok: true, value: own === undefined ? null : { number: own.number, url: own.url } };
 }
 
 function parseCreated(out: string): Done<PullRequest> {

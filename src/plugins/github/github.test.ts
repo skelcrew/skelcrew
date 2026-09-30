@@ -23,7 +23,14 @@ const recorded = {
   origin: ok("git@github.com:skelcrew/skelcrew.git\n"),
   noOrigin: failed(2, "error: No such remote 'origin'\n"),
   noOpenPullRequest: ok("[]\n"),
-  openPullRequest: ok('[{"number":40,"url":"https://github.com/skelcrew/skelcrew/pull/40"}]\n'),
+  openPullRequest: ok(
+    '[{"headRepositoryOwner":{"id":"O_kgDOE3QLJg","login":"skelcrew"},"isCrossRepository":false,"number":40,"url":"https://github.com/skelcrew/skelcrew/pull/40"}]\n',
+  ),
+  // Someone's fork has a branch with the same name, and a pull request
+  // from it into this repository.
+  strangersPullRequest: ok(
+    '[{"headRepositoryOwner":{"id":"MDQ6VXNlcjE=","login":"stranger"},"isCrossRepository":true,"number":39,"url":"https://github.com/skelcrew/skelcrew/pull/39"}]\n',
+  ),
   loggedOut: failed(
     4,
     "To get started with GitHub CLI, please run:  gh auth login\nAlternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.\n",
@@ -73,7 +80,7 @@ describe("showing a branch as a pull request", () => {
       "--state",
       "open",
       "--json",
-      "number,url",
+      "number,url,isCrossRepository",
     ]);
     expect(ran("git push")[0]?.command).toEqual([
       "git",
@@ -99,6 +106,51 @@ describe("showing a branch as a pull request", () => {
       "-",
     ]);
     expect(create?.stdin).toBe("The body.");
+  });
+
+  // Every Skelcrew branch is named like task/12-..., so a stranger's fork
+  // can have one too. Their pull request is never taken as Skelcrew's.
+  test("ignores a pull request from someone's fork with the same branch name", async () => {
+    const { github, ran } = scripted([
+      ["git remote get-url origin", recorded.origin],
+      ["gh pr list", recorded.strangersPullRequest],
+      ["git push", recorded.pushed],
+      ["gh pr create", recorded.created],
+    ]);
+    expect(await github.show(show)).toEqual({
+      ok: true,
+      value: { number: 41, url: "https://github.com/skelcrew/skelcrew/pull/41" },
+    });
+    expect(ran("gh pr create")).toHaveLength(1);
+  });
+
+  test("picks its own pull request when a fork's comes first in the list", async () => {
+    const { github, ran } = scripted([
+      ["git remote get-url origin", recorded.origin],
+      [
+        "gh pr list",
+        ok(
+          '[{"isCrossRepository":true,"number":39,"url":"https://github.com/skelcrew/skelcrew/pull/39"},{"isCrossRepository":false,"number":40,"url":"https://github.com/skelcrew/skelcrew/pull/40"}]',
+        ),
+      ],
+      ["git push", recorded.pushed],
+    ]);
+    expect(await github.show(show)).toEqual({
+      ok: true,
+      value: { number: 40, url: "https://github.com/skelcrew/skelcrew/pull/40" },
+    });
+    expect(ran("gh pr create")).toHaveLength(0);
+  });
+
+  test("refuses a list that doesn't say which pull requests come from a fork", async () => {
+    const { github, ran } = scripted([
+      ["git remote get-url origin", recorded.origin],
+      ["gh pr list", ok('[{"number":40,"url":"https://github.com/skelcrew/skelcrew/pull/40"}]')],
+    ]);
+    const shown = await github.show(show);
+    expect(shown.ok).toBe(false);
+    expect(!shown.ok && shown.message).toStartWith("gh's list of pull requests didn't make sense:");
+    expect(ran("git push")).toHaveLength(0);
   });
 
   test("gives back the open pull request the branch already has, and opens no second one", async () => {
