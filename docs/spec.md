@@ -212,7 +212,7 @@ Tasks merge automatically unless they touch critical paths; a task that turns ou
 
 - **Reading only.** `skelcrew approve` merges on the developer's machine, as one squashed commit. Nothing is merged on GitHub.
 - **Where the link is.** `skelcrew status` gives the link next to the merge that waits.
-- **After the merge.** main on GitHub moves only when the developer pushes it, so the pull request can't close itself. Skelcrew closes it, with a comment naming the commit on main, and deletes the branch it pushed. The local branch stays.
+- **After the merge.** main on GitHub moves only when the developer pushes it, so the pull request can't close itself. Skelcrew closes it, with a comment naming the commit on main, and deletes the branch it pushed. The local branch stays. If someone added commits to the pushed branch on GitHub, such as with "Commit suggestion", those commits weren't merged. So the branch is kept, and the closing comment says so.
 - **After a send-back or a failed merge.** The task goes back to its agent on the same branch. The draft stays open, and the next wait pushes the new work to it. A task that is dropped or sent back to Spec gets its draft closed, with a comment saying why.
 - **Never in the way.** GitHub is not required. Without an `origin` remote, or without `gh`, or with `gh` logged out, the merge waits for approval as always. `skelcrew status` says in one line why there is no pull request. A failed push works the same way.
 - **Once.** A restart neither loses a pull request nor opens a second one.
