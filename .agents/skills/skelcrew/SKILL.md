@@ -1,6 +1,6 @@
 ---
-name: crew
-description: Tell the developer what waits on them in Skelcrew, who is working on what, and the rest, in plain words. Use when the developer asks what is going on, what waits for them, or what the crew is doing, or types "/crew".
+name: skelcrew
+description: Tell the developer what waits on them in Skelcrew, who is working on what, and the rest, in plain words. Use when the developer asks what is going on, what waits for them, or what the crew is doing, or types "/skelcrew".
 ---
 
 # What the crew is doing

@@ -327,7 +327,7 @@ Notes:
   workflow.yml    phases, gates, check commands, critical paths, plugins
   record/         record entries and daily digests
   skelcrew.db     events, state, board, inbox and costs (SQLite, gitignored)
-.agents/skills/   default skills (add, spec, develop, crew, log, approve), linked into .claude/skills/ for Claude Code
+.agents/skills/   default skills (add, spec, develop, skelcrew, log, approve), linked into .claude/skills/ for Claude Code
 docs/specs/       each merged task's approved spec, such as 12-csv-export.md, written by Skelcrew at merge
 ```
 

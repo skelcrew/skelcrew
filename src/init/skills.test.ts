@@ -6,7 +6,7 @@ import { defaultSkills } from "./skills";
 // task, see what goes on, show one task, and approve. Sending back has no
 // skill: the developer types `skelcrew reject` themselves.
 const agentSkills = ["spec", "develop"];
-const developerSkills = ["add", "crew", "log", "approve"];
+const developerSkills = ["add", "skelcrew", "log", "approve"];
 const allSkills = [...agentSkills, ...developerSkills];
 
 // The CLI commands each skill may name. They come from the spec's CLI
@@ -20,8 +20,8 @@ const commandsFor: Record<string, string[]> = {
   // Develop reads status to check the spec is approved before it claims.
   develop: ["status", "claim", "done", "give-up", "log", "approve", "reject"],
   add: ["add"],
-  // Blocked tasks: crew gives the developer the retry and drop commands.
-  crew: ["status", "retry", "drop"],
+  // Blocked tasks: /skelcrew gives the developer the retry and drop commands.
+  skelcrew: ["status", "retry", "drop"],
   log: ["status", "log", "approve", "reject", "retry", "drop"],
   approve: ["status", "log", "approve", "reject"],
 };
@@ -81,7 +81,7 @@ describe("defaultSkills", () => {
       spec: "asks to spec task 12",
       develop: "asks to build task 12",
       add: "asks to add a task",
-      crew: "asks what is going on",
+      skelcrew: "asks what is going on",
       log: "asks where task 12 stands",
       approve: "asks to approve task 12",
     };
@@ -124,7 +124,10 @@ describe("defaultSkills", () => {
   test("use only the CLI commands the spec gives each skill", () => {
     expect(Object.keys(commandsFor)).toEqual(allSkills);
     for (const name of allSkills) {
-      const used = [...skill(name).matchAll(/skelcrew\s+([a-z-]+)/g)].map(
+      // "/skelcrew" is a skill, not the CLI, so a slash in front doesn't
+      // count. Nor does the skelcrew skill's "name: skelcrew" line.
+      const text = skill(name).replace(/^name: skelcrew$/m, "");
+      const used = [...text.matchAll(/(?<!\/)skelcrew\s+([a-z-]+)/g)].map(
         (match) => match[1] ?? "",
       );
       for (const command of used) {
@@ -143,9 +146,9 @@ describe("defaultSkills", () => {
   // keep their own record. Add to this list when another old word turns up.
   //
   // The old `skelcrew show` command is still banned, as a command, in
-  // every skill. The skills that were once called /idea and /show are now
-  // /add and /log, like the CLI's commands, so their old names are banned
-  // too.
+  // every skill. The skills that were once called /idea, /show and /crew
+  // are now /add, /log and /skelcrew, like the CLI, so their old names are
+  // banned too.
   test("never name a command or place from the earlier Skelcrew", () => {
     const old = [
       "skelcrew show",
@@ -176,6 +179,7 @@ describe("defaultSkills", () => {
       // The skills' own old names, from before they matched the CLI.
       "/idea",
       "/show",
+      "/crew",
     ];
     for (const one of defaultSkills) {
       // The developer reads a merge's diff in the draft pull request that
@@ -254,7 +258,7 @@ describe("defaultSkills", () => {
     for (const name of ["spec", "develop", "approve"]) {
       expect(frontmatter(skill(name))).toMatchObject({ "disable-model-invocation": true });
     }
-    for (const name of ["add", "crew", "log"]) {
+    for (const name of ["add", "skelcrew", "log"]) {
       expect(frontmatter(skill(name))).not.toHaveProperty("disable-model-invocation");
     }
   });
@@ -388,7 +392,7 @@ describe("defaultSkills", () => {
   });
 
   // /log only reads. It hands the developer the two commands to type, and
-  // never runs either itself. Nor does /crew.
+  // never runs either itself. Nor does /skelcrew.
   test("the log skill ends with both lines for the developer, and runs neither", () => {
     const text = skill("log");
     const approve = "! skelcrew approve 12";
@@ -403,22 +407,24 @@ describe("defaultSkills", () => {
     );
   });
 
-  test("the crew skill never approves or sends back", () => {
-    expect(matches(skill("crew"), approveOrReject)).toBe(0);
+  test("the skelcrew skill never approves or sends back", () => {
+    expect(matches(skill("skelcrew"), approveOrReject)).toBe(0);
   });
 
   // What waits on the developer comes first, then who works on what, then
   // the rest. `skelcrew status` has no form for programs yet, so the skill
   // reads its text.
-  test("the crew skill reads status and tells what waits on the developer first", () => {
-    const text = skill("crew");
+  test("the skelcrew skill reads status and tells what waits on the developer first", () => {
+    const text = skill("skelcrew");
     expect(text).toContain("skelcrew status");
     const order = ["### Waiting on you", "### Who is working on what", "### The rest"].map(
       (heading) => text.indexOf(heading),
     );
     for (const place of order) expect(place).toBeGreaterThan(-1);
     expect(order).toEqual([...order].sort((a, b) => a - b));
-    expect(flat("crew")).toContain("Leave out dropped tasks, unless the developer asks for them.");
+    expect(flat("skelcrew")).toContain(
+      "Leave out dropped tasks, unless the developer asks for them.",
+    );
   });
 
   test("the log skill reads the task's line in status and its log", () => {

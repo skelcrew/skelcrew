@@ -82,7 +82,7 @@ const developSkill = ".agents/skills/develop/SKILL.md";
 const specLink = ".claude/skills/spec";
 // Every default skill, in the order init writes them: the agents' spec and
 // develop, then the developer's own verbs.
-const skillNames = ["spec", "develop", "add", "crew", "log", "approve"];
+const skillNames = ["spec", "develop", "add", "skelcrew", "log", "approve"];
 const skillFiles = skillNames.map((name) => `.agents/skills/${name}/SKILL.md`);
 const skillLinks = skillNames.map((name) => `.claude/skills/${name}`);
 // Where each link in .claude/skills leads.

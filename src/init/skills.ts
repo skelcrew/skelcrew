@@ -5,9 +5,9 @@
 
 import add from "./skills/add/SKILL.md" with { type: "text" };
 import approve from "./skills/approve/SKILL.md" with { type: "text" };
-import crew from "./skills/crew/SKILL.md" with { type: "text" };
 import develop from "./skills/develop/SKILL.md" with { type: "text" };
 import log from "./skills/log/SKILL.md" with { type: "text" };
+import skelcrew from "./skills/skelcrew/SKILL.md" with { type: "text" };
 import spec from "./skills/spec/SKILL.md" with { type: "text" };
 
 // Where the skill goes, relative to the repository, and what it says. The
@@ -22,7 +22,7 @@ export const defaultSkills: Skill[] = [
   { path: ".agents/skills/spec/SKILL.md", text: spec },
   { path: ".agents/skills/develop/SKILL.md", text: develop },
   { path: ".agents/skills/add/SKILL.md", text: add },
-  { path: ".agents/skills/crew/SKILL.md", text: crew },
+  { path: ".agents/skills/skelcrew/SKILL.md", text: skelcrew },
   { path: ".agents/skills/log/SKILL.md", text: log },
   { path: ".agents/skills/approve/SKILL.md", text: approve },
 ];
