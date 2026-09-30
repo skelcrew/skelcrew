@@ -118,6 +118,26 @@ const handlers: Record<string, Handler> = {
       );
     }),
 
+  reject: async (args, context) => {
+    const parsed = parse(
+      "reject",
+      () => parseArgs({ args, allowPositionals: true, options: {} }),
+      args,
+    );
+    if (!parsed.ok) return parsed.outcome;
+    const [written, note, ...extra] = parsed.value.positionals;
+    const task = taskNumber("reject", written);
+    if (!task.ok) return task.outcome;
+    const example = `skelcrew reject ${task.value} "Add totals."`;
+    if (note === undefined || note.trim() === "") {
+      return refused(`Say what to change, like this: ${example}`);
+    }
+    if (extra.length > 0) return refused(`Put the note in quotes, like this: ${example}`);
+    return ask(context, { type: "reject", task: task.value, note }, rejectResult, ({ phase }) =>
+      said(`Sent #${task.value} back to ${phaseNames[phase]} with your note.`),
+    );
+  },
+
   drop: async (args, context) =>
     withTask("drop", args, {}, (task) =>
       ask(context, { type: "drop", task }, anything, () => said(`Dropped #${task}.`)),
@@ -639,6 +659,9 @@ const approveResult = z.union([
   z.object({ merged: z.literal(false), outOfAttempts: z.boolean(), summary: z.string() }),
   z.strictObject({}),
 ]);
+
+// Where a rejected spec or merge went: Spec or In progress.
+const rejectResult = z.object({ phase: z.enum(phases) });
 
 // What `done` answers once the checks have run.
 

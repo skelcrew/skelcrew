@@ -160,6 +160,35 @@ describe("the daemon", () => {
     });
   });
 
+  test("reject sends a spec back to Spec with your note", async () => {
+    const { daemon } = open();
+    await ok(daemon, add("CSV export"));
+    await ok(daemon, { type: "claim", task: task(1) });
+    await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
+    expect(await ok(daemon, { type: "reject", task: task(1), note: "Add totals." })).toEqual({
+      phase: "spec",
+    });
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, phase: "spec", waitingOnYou: null }],
+    });
+    expect(await ok(daemon, { type: "claim", task: task(1) })).toMatchObject({
+      note: "Add totals.",
+    });
+  });
+
+  test("reject refuses when nothing waits for your approval", async () => {
+    const { daemon } = open();
+    await ok(daemon, add("CSV export"));
+    expect(await daemon.handle({ type: "reject", task: task(1), note: "Add totals." })).toEqual({
+      ok: false,
+      message: "#1 has nothing waiting for your approval.",
+    });
+    expect(await daemon.handle({ type: "reject", task: task(9), note: "Add totals." })).toEqual({
+      ok: false,
+      message: "#9 doesn't exist.",
+    });
+  });
+
   test("says in status which session is working on each task", async () => {
     const { daemon } = open();
     await ok(daemon, add("CSV export"));
@@ -763,6 +792,20 @@ describe("the daemon with git", () => {
     expect(await git(repo.dir, "show", "main:export.csv")).toBe("a,b");
     expect(await ok(daemon, { type: "status" })).toMatchObject({
       tasks: [{ task: 1, phase: "done" }],
+    });
+  });
+
+  test("reject sends a merge back to In progress with your note, and merges nothing", async () => {
+    const { daemon, repo } = await readyInRepo();
+    await claimedWithWork(daemon);
+    await ok(daemon, done());
+    const main = await git(repo.dir, "rev-parse", "main");
+    expect(await ok(daemon, { type: "reject", task: task(1), note: "Add totals." })).toEqual({
+      phase: "in_progress",
+    });
+    expect(await git(repo.dir, "rev-parse", "main")).toBe(main);
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, phase: "in_progress", waitingOnYou: null }],
     });
   });
 

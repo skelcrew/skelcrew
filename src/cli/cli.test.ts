@@ -371,16 +371,16 @@ describe("arguments that start with a dash", () => {
   });
 });
 
-describe("skelcrew approve", () => {
-  // Takes task 1 through its checks, so its merge waits for approval.
-  async function checked(repo: string) {
-    await specced(repo);
-    await cli(repo, ["approve", "1"]);
-    await cli(repo, ["claim", "1"]);
-    commitIn(join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export"));
-    await cli(repo, ["done", "1"], { session: "you-2" });
-  }
+// Takes task 1 through its checks, so its merge waits for approval.
+async function checked(repo: string) {
+  await specced(repo);
+  await cli(repo, ["approve", "1"]);
+  await cli(repo, ["claim", "1"]);
+  commitIn(join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export"));
+  await cli(repo, ["done", "1"], { session: "you-2" });
+}
 
+describe("skelcrew approve", () => {
   test("approves a merge, and says the commit it landed as on main", async () => {
     const repo = await repoWithDaemon();
     await checked(repo);
@@ -478,6 +478,63 @@ describe("skelcrew approve", () => {
     await cli(repo, ["add", "CSV export"]);
     expect(await cli(repo, ["approve", "1"])).toEqual(
       refused("#1 has nothing waiting for your approval."),
+    );
+  });
+});
+
+describe("skelcrew reject", () => {
+  test("sends a spec back to Spec with your note", async () => {
+    const repo = await repoWithDaemon();
+    await specced(repo);
+    expect(await cli(repo, ["reject", "#1", "Add totals."])).toEqual(
+      said(["Sent #1 back to Spec with your note."]),
+    );
+    const claim = await cli(repo, ["claim", "1"]);
+    expect(claim.out).toContain("The developer's note: Add totals.");
+  });
+
+  test("sends a merge back to In progress with your note", async () => {
+    const repo = await repoWithDaemon();
+    await checked(repo);
+    expect(await cli(repo, ["reject", "1", "Add totals."])).toEqual(
+      said(["Sent #1 back to In progress with your note."]),
+    );
+    expect((await cli(repo, ["status"])).out).toContain("In progress:");
+  });
+
+  test("refuses without a note, or with a blank one", async () => {
+    const repo = await repoWithDaemon();
+    await specced(repo);
+    const example = 'Say what to change, like this: skelcrew reject 1 "Add totals."';
+    expect(await cli(repo, ["reject", "1"])).toEqual(refused(example));
+    expect(await cli(repo, ["reject", "1", "  "])).toEqual(refused(example));
+    // Nothing was sent back.
+    expect((await cli(repo, ["status"])).out).toContain("- #1 CSV export: approve its spec.");
+  });
+
+  test("asks for the note in quotes when it is several words", async () => {
+    const repo = await repoWithDaemon();
+    await specced(repo);
+    expect(await cli(repo, ["reject", "1", "Add", "totals."])).toEqual(
+      refused('Put the note in quotes, like this: skelcrew reject 1 "Add totals."'),
+    );
+  });
+
+  test("passes on the refusal when nothing waits for approval", async () => {
+    const repo = await repoWithDaemon();
+    await cli(repo, ["add", "CSV export"]);
+    expect(await cli(repo, ["reject", "1", "Add totals."])).toEqual(
+      refused("#1 has nothing waiting for your approval."),
+    );
+  });
+
+  test("is in the help", async () => {
+    const repo = await repoWithDaemon();
+    expect((await cli(repo, ["--help"])).out.join("\n")).toContain(
+      'skelcrew reject <task> "<note>"',
+    );
+    expect((await cli(repo, ["reject", "--help"])).out[0]).toBe(
+      'Usage: skelcrew reject <task> "<note>"',
     );
   });
 });

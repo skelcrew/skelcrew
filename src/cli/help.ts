@@ -9,6 +9,7 @@ export const mainHelp = [
   '  skelcrew add "<task>"       Capture a task as an Idea. --spec also asks for a spec.',
   "  skelcrew spec <task>        Ask for an Idea to be specced.",
   "  skelcrew approve <task>     Approve a spec or a merge. --send-back returns it with a note.",
+  '  skelcrew reject <task> "<note>"   Send a spec or a merge back, with what to change.',
   "  skelcrew drop <task>        Drop a task that isn't done.",
   "  skelcrew retry <task>       Clear a blocked task, so it can be claimed again.",
   "  skelcrew status             Show what waits on you, and tasks by phase.",
@@ -54,6 +55,13 @@ export const commandHelp: Record<string, string[]> = {
     "the checks run again on the merged result first. Commit or stash your",
     "own edits on main before you approve.",
     '  --send-back "<note>"   Return it instead, with your note.',
+  ],
+  reject: [
+    'Usage: skelcrew reject <task> "<note>"',
+    "",
+    "Sends back the spec or the merge that waits for you, with your note.",
+    "A spec goes back to Spec, and a merge back to In progress.",
+    "The note says what to change. It can't be left out.",
   ],
   drop: [
     "Usage: skelcrew drop <task>",

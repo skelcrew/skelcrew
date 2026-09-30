@@ -378,6 +378,27 @@ export class Daemon {
         return this.waitForMerge(command.task);
       }
 
+      // A spec goes back to Spec, and a merge back to In progress. The
+      // answer says which, so the CLI can tell you where it went.
+      case "reject": {
+        const task = this.find(command.task);
+        if (task === null) return { ok: false, message: `#${command.task} doesn't exist.` };
+        const note = command.note;
+        const waiting = waitingOnYou(task);
+        const input: Input | null =
+          waiting === "spec_approval"
+            ? { by: "human", type: "revise_spec", note }
+            : waiting === "merge_approval"
+              ? { by: "human", type: "revise_merge", note }
+              : null;
+        if (input === null) {
+          return { ok: false, message: `#${command.task} has nothing waiting for your approval.` };
+        }
+        const sent = this.send(command.task, input);
+        if (!sent.ok) return sent;
+        return { ok: true, result: { phase: this.find(command.task)?.phase ?? task.phase } };
+      }
+
       case "drop":
         return this.send(command.task, { by: "human", type: "drop" });
 
