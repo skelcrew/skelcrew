@@ -22,6 +22,8 @@ export type ServeOptions = {
   // this, they are refused.
   graceMs?: number;
   newSession?: () => string;
+  // Replaces the socket folder in /tmp, for tests.
+  socketFolder?: string;
 };
 
 export type Server = {
@@ -48,7 +50,7 @@ const QUIET_MS = 50;
 const QUIET_LIMIT_MS = 500;
 
 export async function serve(repo: string, options: ServeOptions = {}): Promise<Served> {
-  const found = daemonPaths(repo);
+  const found = daemonPaths(repo, options.socketFolder);
   if (!found.ok) return found;
   const paths = found.paths;
 
@@ -113,11 +115,13 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
     server: {
       socket: paths.socket,
       stop: async () => {
-        await listener.stop();
-        // Retries of unsaved replies stop here, before the store closes.
-        // Otherwise they would keep failing against a closed store, and
-        // keep the process from exiting.
+        // The daemon closes first. That stops running checks at once, and
+        // answers every request waiting on them, such as a done, with "The
+        // daemon is shutting down." Retries of unsaved replies stop too,
+        // before the store closes: they would keep failing against a closed
+        // store, and keep the process from exiting.
         await opened.value.close();
+        await listener.stop();
         store.close();
         try {
           rmSync(paths.socket, { force: true });

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -300,42 +300,44 @@ describe("the client", () => {
 // daemon's place, and see every command.
 describe("the socket folder in /tmp", () => {
   const deep = "a-folder-with-a-rather-long-name".repeat(3);
-  const base = `/tmp/skelcrew-${process.getuid?.()}`;
+  // A socket folder of the tests' own, not yet made, in place of the real
+  // one: other daemons on this machine may be using that.
+  let base = "";
+  beforeEach(() => {
+    const parent = mkdtempSync("/tmp/sk-");
+    dirs.push(parent);
+    base = join(parent, "sockets");
+  });
 
-  // Removes the folder, which must be empty, or the link in its place.
-  function removeBase() {
-    if (!existsSync(base) && !isLink(base)) return;
-    if (isLink(base)) unlinkSync(base);
-    else rmdirSync(base);
+  // A daemon for the repository, with its socket in `base`.
+  async function startedHere(repo: string) {
+    const served = await serve(repo, { socketFolder: base });
+    if (!served.ok) throw new Error(served.message);
+    servers.push(served.server);
   }
 
-  // The folder is the user's own. Every test leaves it as it was found.
-  afterEach(async () => {
-    for (const server of servers.splice(0)) await server.stop();
-    removeBase();
-    mkdirSync(base, { mode: 0o700 });
-  });
+  // A client that starts nothing, looking in `base`.
+  function lookingHere() {
+    const { counted, options } = noStart();
+    return { counted, options: { ...options, socketFolder: base } };
+  }
 
   test("isn't used while other users can change it", async () => {
     const repo = throwawayRepo(dirs, deep);
-    await started(repo);
+    await startedHere(repo);
     chmodSync(base, 0o777);
-    try {
-      const { counted, options } = noStart();
-      expect(await request(repo, { type: "status" }, options)).toEqual({
-        ok: false,
-        message: `${base} is open to other users, so skelcrew won't use it. Run \`chmod 700 ${base}\`, then try again.`,
-      });
-      expect(counted.starts).toBe(0);
-    } finally {
-      chmodSync(base, 0o700);
-    }
+    const { counted, options } = lookingHere();
+    expect(await request(repo, { type: "status" }, options)).toEqual({
+      ok: false,
+      message: `${base} is open to other users, so skelcrew won't use it. Run \`chmod 700 ${base}\`, then try again.`,
+    });
+    expect(counted.starts).toBe(0);
   });
 
   test("is used once only its user can change it", async () => {
     const repo = throwawayRepo(dirs, deep);
-    await started(repo);
-    const { options } = noStart();
+    await startedHere(repo);
+    const { options } = lookingHere();
     expect(await request(repo, { type: "status" }, options)).toMatchObject({ ok: true });
   });
 
@@ -344,8 +346,7 @@ describe("the socket folder in /tmp", () => {
   // and answer in the daemon's place.
   test("is made for its user alone before the client first connects", async () => {
     const repo = throwawayRepo(dirs, deep);
-    removeBase();
-    const { options } = noStart();
+    const { options } = lookingHere();
     await request(repo, { type: "status" }, options);
     const made = lstatSync(base);
     expect(made.isDirectory()).toBe(true);
@@ -357,9 +358,8 @@ describe("the socket folder in /tmp", () => {
     const repo = throwawayRepo(dirs, deep);
     const elsewhere = mkdtempSync(join(tmpdir(), "sk-elsewhere-"));
     dirs.push(elsewhere);
-    removeBase();
     symlinkSync(elsewhere, base);
-    const { counted, options } = noStart();
+    const { counted, options } = lookingHere();
     expect(await request(repo, { type: "status" }, options)).toEqual({
       ok: false,
       message: `${base} isn't a folder, so skelcrew won't use it. Remove it, then try again.`,

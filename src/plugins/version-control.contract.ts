@@ -446,6 +446,32 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       expect(await git(worktree.path, "status", "--porcelain")).toBe("");
     });
 
+    // Found by review: a check that left a read-only folder in the copy
+    // made its removal fail halfway, and every later check of the task
+    // failed until someone deleted the folder by hand.
+    test("removes its copy even when the checks leave a read-only folder", async () => {
+      const r = await repo();
+      const { plugin, head } = await committed(r);
+      let copy = "";
+      const locked: RunChecks = async (dir) => {
+        copy = dir;
+        mkdirSync(join(dir, "cache", "module"), { recursive: true });
+        writeFileSync(join(dir, "cache", "module", "file.go"), "package m\n");
+        chmodSync(join(dir, "cache", "module"), 0o555);
+        chmodSync(join(dir, "cache"), 0o555);
+        return { ok: true, value: null };
+      };
+      expect(await plugin.checkCommit({ taskId: csv.taskId, head }, locked)).toEqual({
+        ok: true,
+        value: null,
+      });
+      expect(existsSync(copy)).toBe(false);
+      expect(await plugin.checkCommit({ taskId: csv.taskId, head }, locked)).toEqual({
+        ok: true,
+        value: null,
+      });
+    });
+
     test("says so when the commit doesn't exist", async () => {
       const r = await repo();
       const plugin = make(r);
