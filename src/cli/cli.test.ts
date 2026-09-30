@@ -488,7 +488,7 @@ describe("skelcrew log", () => {
       "You sent the spec back: Add totals.",
       "Claimed by you-2.",
       "The agent sent a spec: Add a CSV export button to the reports page.",
-      "The spec was approved. The task is Ready.",
+      "The task is Ready to build from this spec.",
       "Claimed by you-3.",
       `Its worktree was made on branch task/1-csv-export, at ${worktree}.`,
       "Your session is working on it.",
@@ -571,6 +571,36 @@ describe("skelcrew log", () => {
         "2026-09-30 10:02  Merged as commit aaaaaaa.",
         "2026-09-30 10:02  Reverting it, because: It broke the export.",
         "2026-09-30 10:02  The revert went through, undoing commit aaaaaaa. The task went back to Spec with your reason: It broke the export.",
+      ]),
+    );
+  });
+
+  // Found by review: the log said "The spec was approved." when nobody
+  // approved it. With spec_approval: never, or a spec you wrote yourself,
+  // the task goes to Ready on its own. The saved events can't tell your
+  // approval from spec_approval: never, so that line fits both.
+  test("says when a spec went to Ready without an approval", async () => {
+    const repo = throwawayRepo(dirs);
+    const stamp = (minute: number) => ({
+      v: 1,
+      taskId: 4,
+      at: new Date(2026, 8, 30, 10, minute).getTime(),
+    });
+    const spec = { scope: "Add a CSV export.", acceptance: ["It downloads."], openQuestions: [] };
+    await fakeDaemon(repo, {
+      events: [
+        { ...stamp(2), type: "task.specced", spec, by: "agent" },
+        { ...stamp(2), type: "task.ready" },
+        { ...stamp(3), type: "task.specced", spec, by: "human" },
+        { ...stamp(3), type: "task.ready" },
+      ],
+    });
+    expect(await cli(repo, ["log", "4"])).toEqual(
+      said([
+        "2026-09-30 10:02  The agent sent a spec: Add a CSV export.",
+        "2026-09-30 10:02  The task is Ready to build from this spec.",
+        "2026-09-30 10:03  A spec was written by hand: Add a CSV export.",
+        "2026-09-30 10:03  A spec you write needs no approval, so the task is Ready.",
       ]),
     );
   });

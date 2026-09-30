@@ -50,8 +50,15 @@ function happened(event: TaskEvent, before: TaskEvent[]): string {
         : `A spec was written by hand: ${event.spec.scope}`;
     case "task.spec_sent_back":
       return `You sent the spec back: ${event.note}`;
-    case "task.ready":
-      return "The spec was approved. The task is Ready.";
+    // The saved events don't say whether you approved an agent's spec, or
+    // spec_approval: never let it through. A spec you write always goes
+    // straight to Ready.
+    case "task.ready": {
+      const last = before.at(-1);
+      return last?.type === "task.specced" && last.by === "human"
+        ? "A spec you write needs no approval, so the task is Ready."
+        : "The task is Ready to build from this spec.";
+    }
     case "task.dispatch_started":
       return "Picked to start, since a slot was free.";
     case "task.worktree_created":
