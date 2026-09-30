@@ -54,8 +54,13 @@ export function takeLock(folder: string, pid = process.pid): Locked {
     closeSync(fd);
     if (errno === system.value.wouldBlock) {
       const holder = readPid(pidFile);
-      const who = holder === null ? "" : `, as process ${holder}`;
-      return { ok: false, message: `The daemon is already running for this repository${who}.` };
+      // A daemon nobody can reach, say because its socket file was deleted,
+      // still holds the lock. So say how to get past it.
+      const message =
+        holder === null
+          ? "The daemon is already running for this repository. If skelcrew can't reach it, stop the daemon and try again."
+          : `The daemon is already running for this repository, as process ${holder}. If skelcrew can't reach it, stop that process and try again.`;
+      return { ok: false, message };
     }
     return { ok: false, message: couldNot(`the system refused it, with error ${errno}`) };
   }

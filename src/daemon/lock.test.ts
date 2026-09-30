@@ -59,7 +59,7 @@ describe("one daemon per repository", () => {
     const first = await started(repo);
     expect(await serve(repo)).toEqual({
       ok: false,
-      message: `The daemon is already running for this repository, as process ${process.pid}.`,
+      message: `The daemon is already running for this repository, as process ${process.pid}. If skelcrew can't reach it, stop that process and try again.`,
     });
     expect(await answers(first)).toMatchObject({ id: "r1", ok: true });
   });
@@ -70,7 +70,7 @@ describe("one daemon per repository", () => {
     try {
       expect(await serve(repo)).toEqual({
         ok: false,
-        message: `The daemon is already running for this repository, as process ${child.pid}.`,
+        message: `The daemon is already running for this repository, as process ${child.pid}. If skelcrew can't reach it, stop that process and try again.`,
       });
     } finally {
       child.kill("SIGKILL");
@@ -92,7 +92,8 @@ describe("one daemon per repository", () => {
       if (second.ok) await second.server.stop();
       expect(second).toEqual({
         ok: false,
-        message: "The daemon is already running for this repository.",
+        message:
+          "The daemon is already running for this repository. If skelcrew can't reach it, stop the daemon and try again.",
       });
     } finally {
       child.kill("SIGKILL");
