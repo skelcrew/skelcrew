@@ -29,7 +29,9 @@ export type MergeRequest = {
 
 // Runs the local checks in a folder. The daemon owns the checks, so it
 // hands this to the merge, which calls it on the merged result.
-export type RunChecks = (dir: string) => Promise<Done<null>>;
+// Runs the checks in a folder. `stop` ends them early, such as when the
+// daemon stops, and they then count as failed.
+export type RunChecks = (dir: string, stop?: AbortSignal) => Promise<Done<null>>;
 
 // What to undo: a commit a merge put on main, for this task. The reason
 // goes in the new commit's message.

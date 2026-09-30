@@ -566,6 +566,71 @@ describe("the daemon with git", () => {
     expect(existsSync(join(path, "coverage.txt"))).toBe(false);
   });
 
+  // Found by review: a second done while the checks ran was refused as
+  // "isn't in In progress", though the work was being checked.
+  test("done while the checks are already running waits for their result", async () => {
+    const { daemon } = await readyInRepo(undefined, { checks: ["sleep 0.5"] });
+    await claimedWithWork(daemon);
+    const first = daemon.handle(done());
+    await Bun.sleep(100);
+    expect(await daemon.handle(done())).toEqual({ ok: true, result: { passed: true } });
+    expect(await first).toEqual({ ok: true, result: { passed: true } });
+  });
+
+  // Found by review: after a restart, the checks ran again, but the agent
+  // couldn't hear the result.
+  test("done after a restart waits for the checks that run again", async () => {
+    const repo = await newRepo();
+    const store = EventStore.open(":memory:");
+    const first = await readyInRepo(repo, { store, checks: ["sleep 5"] });
+    await claimedWithWork(first.daemon);
+    const cut = first.daemon.handle(done());
+    await Bun.sleep(300);
+    await first.daemon.close();
+    expect(await cut).toEqual({ ok: false, message: "The daemon is shutting down." });
+
+    const second = Daemon.open({
+      config: { ...config, criticalPaths: ["**"] },
+      log: store,
+      versionControl: new Git(repo.dir, repo.main),
+      runChecks: localChecks(["true"]),
+    });
+    if (!second.ok) throw new Error(second.message);
+    expect(await second.value.handle(done())).toEqual({ ok: true, result: { passed: true } });
+  });
+
+  test("done from another session is refused before anything is read", async () => {
+    const { daemon } = await readyInRepo();
+    const path = await claimedWithWork(daemon);
+    writeFileSync(join(path, "draft.txt"), "not yet\n");
+    expect(await daemon.handle(done(you(9)))).toEqual({
+      ok: false,
+      message: "#1's agent isn't you-9.",
+    });
+  });
+
+  test("done says so when the task is dropped while its checks run", async () => {
+    const { daemon } = await readyInRepo(undefined, { checks: ["sleep 1"] });
+    await claimedWithWork(daemon);
+    const answer = daemon.handle(done());
+    await Bun.sleep(200);
+    await ok(daemon, { type: "drop", task: task(1) });
+    expect(await answer).toEqual({ ok: false, message: "#1 was dropped while its checks ran." });
+  });
+
+  // Found by review: a check kept running after the daemon stopped, and
+  // could overlap with the same check run again at the next start.
+  test("closing the daemon stops a check that is running", async () => {
+    const marker = join(await newRepo().then((r) => r.dir), "finished.txt");
+    const { daemon } = await readyInRepo(undefined, { checks: [`sleep 1; touch ${marker}`] });
+    await claimedWithWork(daemon);
+    void daemon.handle(done());
+    await Bun.sleep(300);
+    await daemon.close();
+    await Bun.sleep(1_200);
+    expect(existsSync(marker)).toBe(false);
+  });
+
   test("done is refused while the worktree has uncommitted work", async () => {
     const { daemon } = await readyInRepo();
     const path = await claimedWithWork(daemon);

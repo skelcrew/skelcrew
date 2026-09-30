@@ -66,6 +66,7 @@ export class Daemon {
 
   private constructor(
     private readonly loop: Loop,
+    private readonly tools: DaemonTools,
     options: DaemonOptions,
   ) {
     this.newSession = options.newSession ?? (() => `session-${randomUUID()}`);
@@ -87,7 +88,7 @@ export class Daemon {
     const opened = Loop.open(options.config, tools, options.log);
     if (!opened.ok)
       return { ok: false, message: `The saved log couldn't be read. ${opened.reason}` };
-    const daemon = new Daemon(opened.loop, options);
+    const daemon = new Daemon(opened.loop, tools, options);
     tools.connect(
       (taskId, input, finished) => daemon.reply(taskId, input, finished),
       (taskId) => daemon.find(taskId)?.title ?? `#${taskId}`,
@@ -123,8 +124,11 @@ export class Daemon {
     if (versionControl === null) {
       return { ok: false, message: "`done` needs git, which this daemon doesn't have." };
     }
-    const found = await this.oneAtATime(() => this.guarded(() => this.worktreeOf(taskId)));
-    if (!("worktree" in found)) return found;
+    const found = await this.oneAtATime(() => this.guarded(() => this.worktreeOf(taskId, session)));
+    if ("ok" in found) return found;
+    // The checks are already running, for example again after a restart.
+    // The agent waits for their result, and reports nothing new.
+    if (found.running) return this.checkedOnceDone(taskId);
 
     let facts: Awaited<ReturnType<VersionControl["readBranch"]>>;
     try {
@@ -140,8 +144,12 @@ export class Daemon {
       this.guarded(() => this.send(taskId, { by: "agent", type: "report_done", session, branch })),
     );
     if (!reported.ok) return reported;
-    // Read at the moment the gates finish. A merge may start right after,
-    // and its outcome isn't the checks'.
+    return this.checkedOnceDone(taskId);
+  }
+
+  // Read at the moment the gates finish. A merge may start right after,
+  // and its outcome isn't the checks'.
+  private async checkedOnceDone(taskId: TaskId): Promise<Answer> {
     const settled = await this.settled(
       taskId,
       (task) => !(task.phase === "checks" && task.step.kind === "gate"),
@@ -151,16 +159,26 @@ export class Daemon {
     return this.checked(settled);
   }
 
-  private worktreeOf(taskId: TaskId): { worktree: Worktree } | Answer {
+  // Where the agent's work is, or that its checks are already running. Only
+  // the task's own agent is heard, before anything is read.
+  private worktreeOf(
+    taskId: TaskId,
+    session: SessionId,
+  ): { worktree: Worktree; running: false } | { running: true } | Answer {
     const task = this.find(taskId);
     if (task === null) return { ok: false, message: `#${taskId} doesn't exist.` };
+    const agent = runningSession(task);
+    if (agent !== null && agent !== session) {
+      return { ok: false, message: `#${taskId}'s agent isn't ${session}.` };
+    }
+    if (task.phase === "checks" && task.step.kind === "gate") return { running: true };
     if (task.phase !== "in_progress") {
       return {
         ok: false,
         message: `#${taskId} isn't in In progress, so there is no work to report.`,
       };
     }
-    return { worktree: task.worktree };
+    return { worktree: task.worktree, running: false };
   }
 
   // What `done` tells the agent once the gates have run.
@@ -179,8 +197,10 @@ export class Daemon {
       case "checks":
       case "done":
         return { ok: true, result: { passed: true } };
+      case "dropped":
+        return { ok: false, message: `#${taskId} was dropped while its checks ran.` };
       default:
-        return { ok: false, message: `#${taskId} is now in ${task.phase}.` };
+        return { ok: false, message: `#${taskId} is now in ${phaseNames[task.phase]}.` };
     }
   }
 
@@ -319,6 +339,7 @@ export class Daemon {
   // work already in the queue is done, so the store can then be closed.
   close(): Promise<void> {
     this.closed = true;
+    this.tools.stop();
     for (const timer of this.retryTimers) clearTimeout(timer);
     this.retryTimers.clear();
     this.wakeWaiters();
@@ -447,6 +468,12 @@ class DaemonTools implements Tools {
   // Commands that go to a plugin, held until `connect`: at start-up the
   // loop sends out unfinished commands before titles can be looked up.
   private held: [CoreCommand, () => void][] = [];
+  // Stops running checks when the daemon stops, so none outlives it.
+  private readonly stopping = new AbortController();
+
+  stop(): void {
+    this.stopping.abort();
+  }
 
   constructor(
     private readonly versionControl: VersionControl | null,
@@ -503,7 +530,10 @@ class DaemonTools implements Tools {
     const { taskId, request, gate, head } = command;
     let summary: string | null;
     try {
-      const checked = await versionControl.checkCommit({ taskId, head }, runChecks);
+      const signal = this.stopping.signal;
+      const checked = await versionControl.checkCommit({ taskId, head }, (dir) =>
+        runChecks(dir, signal),
+      );
       summary = checked.ok ? null : checked.message;
     } catch (error) {
       summary = `The checks couldn't run: ${error instanceof Error ? error.message : String(error)}`;

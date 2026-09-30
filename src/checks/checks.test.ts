@@ -213,6 +213,33 @@ describe("localChecks", () => {
   });
 });
 
+// The daemon stops the checks when it stops, so none outlives it.
+describe("stopping the checks", () => {
+  test("stops a running check, and everything it started, when told to", async () => {
+    const dir = folder();
+    const marker = join(dir, "finished.txt");
+    const stop = new AbortController();
+    const running = localChecks([`sleep 1; touch ${marker}`, "touch second.txt"])(dir, stop.signal);
+    await Bun.sleep(200);
+    stop.abort();
+    const result = await running;
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.message).toContain("was stopped, since Skelcrew stopped");
+    await Bun.sleep(1_200);
+    expect(existsSync(marker)).toBe(false);
+    expect(existsSync(join(dir, "second.txt"))).toBe(false);
+  });
+
+  test("runs nothing when told to stop before it starts", async () => {
+    const dir = folder();
+    const stop = new AbortController();
+    stop.abort();
+    const result = await preparedChecks(["touch setup.txt"], ["true"])(dir, stop.signal);
+    expect(result.ok).toBe(false);
+    expect(existsSync(join(dir, "setup.txt"))).toBe(false);
+  });
+});
+
 // A fresh copy of a task's code has no dependencies, so setup runs first.
 describe("preparedChecks", () => {
   test("runs the setup, then the checks, in the same folder", async () => {
