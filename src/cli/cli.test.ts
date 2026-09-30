@@ -444,6 +444,103 @@ describe("skelcrew status", () => {
 });
 
 describe("skelcrew log", () => {
+  test("shows each event with its time, oldest first, in plain words", async () => {
+    const repo = await repoWithDaemon(["reports"]);
+    const submit = (session: string) =>
+      cli(repo, ["submit", "1", "--file", "-"], { session, readStdin: async () => specJson });
+    await cli(repo, ["add", "CSV export", "--spec", "--project", "reports"]);
+    await cli(repo, ["claim", "1"]);
+    await submit("you-1");
+    await cli(repo, ["approve", "1", "--send-back", "Add totals."]);
+    await cli(repo, ["claim", "1"]);
+    await submit("you-2");
+    await cli(repo, ["approve", "1"]);
+    // Claiming in Ready needs a worktree, which the daemon can't make yet.
+    await cli(repo, ["claim", "1"]);
+
+    const outcome = await cli(repo, ["log", "#1"]);
+    expect(outcome.code).toBe(0);
+    for (const line of outcome.out) expect(line).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2} {2}\S/);
+    expect(outcome.out.map((line) => line.slice(18))).toEqual([
+      "Added to project reports: CSV export.",
+      "A spec was asked for.",
+      "Claimed by you-1.",
+      "The agent sent a spec: Add a CSV export button to the reports page.",
+      "You sent the spec back: Add totals.",
+      "Claimed by you-2.",
+      "The agent sent a spec: Add a CSV export button to the reports page.",
+      "The spec was approved. The task is Ready.",
+      "Claimed by you-3.",
+      "Blocked. The worktree couldn't be made: Making worktrees isn't built into the daemon yet.",
+    ]);
+  });
+
+  // The daemon can't take a task this far yet, so a stand-in answers.
+  test("shows checks, a merge and multi-line summaries", async () => {
+    const repo = throwawayRepo(dirs);
+    const task = 4;
+    const at = (minute: number) => new Date(2026, 8, 30, 10, minute).getTime();
+    const stamp = (minute: number) => ({ v: 1, taskId: task, at: at(minute) });
+    await fakeDaemon(repo, {
+      events: [
+        {
+          ...stamp(2),
+          type: "task.done_reported",
+          branch: { head: "a".repeat(40), commits: 3, changedFiles: ["src/export.ts"] },
+          gate: "local",
+          request: 2,
+        },
+        {
+          ...stamp(3),
+          type: "task.gate_failed",
+          failure: { step: "local", summary: "bun test failed.\n1 test failed." },
+        },
+        { ...stamp(4), type: "task.question_asked", question: question() },
+        { ...stamp(5), type: "task.question_answered", text: "Semicolons." },
+        { ...stamp(6), type: "task.gate_passed", gate: "local", next: null },
+        { ...stamp(6), type: "task.checks_passed" },
+        {
+          ...stamp(6),
+          type: "task.merge_approval_requested",
+          criticalFiles: ["src/core/decide.ts"],
+        },
+        { ...stamp(7), type: "task.merge_started", request: 3 },
+        { ...stamp(8), type: "task.merged", commit: "b".repeat(40) },
+      ],
+    });
+    expect(await cli(repo, ["log", "4"])).toEqual(
+      said([
+        "2026-09-30 10:02  The agent said it's done: 3 commits, 1 changed file. The local checks started.",
+        "2026-09-30 10:03  The local checks failed: bun test failed.",
+        "                  1 test failed.",
+        "2026-09-30 10:04  The agent asked: Commas or semicolons? Options: Commas, Semicolons.",
+        "2026-09-30 10:05  You answered: Semicolons.",
+        "2026-09-30 10:06  The local checks passed.",
+        "2026-09-30 10:06  All checks passed.",
+        "2026-09-30 10:06  It waits for your approval to merge, since it changes critical files: src/core/decide.ts.",
+        "2026-09-30 10:07  Merging started.",
+        "2026-09-30 10:08  Merged as commit bbbbbbb.",
+      ]),
+    );
+
+    function question() {
+      return {
+        from: "develop",
+        text: "Commas or semicolons?",
+        options: ["Commas", "Semicolons"],
+        askedAt: at(4),
+      };
+    }
+  });
+
+  test("refuses an answer that isn't a list of events", async () => {
+    const repo = throwawayRepo(dirs);
+    await fakeDaemon(repo, { events: [{ type: "task.exploded", v: 1, taskId: 1, at: 1 }] });
+    const outcome = await cli(repo, ["log", "1"]);
+    expect(outcome.code).toBe(1);
+    expect(outcome.err.join("\n")).toContain("The daemon's answer to log doesn't fit");
+  });
+
   test("passes on the daemon's refusal", async () => {
     const repo = await repoWithDaemon();
     expect(await cli(repo, ["log", "9"])).toEqual(refused("#9 doesn't exist."));

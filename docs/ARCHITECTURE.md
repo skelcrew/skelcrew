@@ -250,6 +250,7 @@ from the socket is checked with Zod first, and a line over 1 MB is refused.
 | File | What it holds |
 | --- | --- |
 | `cli.ts` | `run(args, context)`: one command line in, the lines to print and the exit code out. Tests call it as a function. It checks every argument with Zod, finds the repository by looking for `.skelcrew/` from the current folder upwards, and sends the command through the client. It checks each answer against the shape that command expects. |
+| `log.ts` | What `skelcrew log` prints: one line per event, oldest first, with its time and what happened in plain words, like `2026-09-30 10:02  Claimed by you-2.` The daemon answers with the task's saved events, and the CLI checks them against the store's event schema before it words them. |
 | `help.ts` | What `--help` prints, for the program and each command. `skelcrew submit --help` shows the spec's JSON form, since the spec skill sends agents there. |
 | `start.ts` | `startDaemon`: runs `skelcrew serve` in the background, in its own process group, so Ctrl-C in the terminal doesn't stop it. Its output goes to `.skelcrew/daemon.log`. If it exits before it answers, the command prints what it wrote there. |
 | `main.ts` | The program: runs one command, prints its lines, and exits. A refusal goes to standard error, with exit code 1. |

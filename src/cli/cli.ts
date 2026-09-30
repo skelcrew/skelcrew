@@ -14,7 +14,9 @@ import type { Phase } from "../core/types";
 import { request, type Started } from "../daemon/client";
 import { serveUntilSignalled } from "../daemon/server";
 import type { Command } from "../protocol/protocol";
+import { taskEvent } from "../store/schema";
 import { commandHelp, mainHelp } from "./help";
+import { logLines } from "./log";
 
 export type Context = {
   cwd: string;
@@ -114,9 +116,7 @@ const handlers: Record<string, Handler> = {
 
   log: async (args, context) =>
     withTask("log", args, {}, (task) =>
-      ask(context, { type: "log", task }, anything, (result) =>
-        said(...JSON.stringify(result, null, 2).split("\n")),
-      ),
+      ask(context, { type: "log", task }, logResult, ({ events }) => said(...logLines(events))),
     ),
 
   claim: async (args, context) =>
@@ -518,6 +518,10 @@ function needs(task: TaskView): string {
       return "";
   }
 }
+
+// What `log` answers: the task's events as saved, checked against the
+// store's own schema.
+const logResult = z.object({ events: z.array(taskEvent) });
 
 const claimResult = z.object({
   session: SessionId,

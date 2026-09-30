@@ -271,7 +271,7 @@ function view(task: Task) {
   };
 }
 
-function describeBlock(reason: BlockReason): string {
+export function describeBlock(reason: BlockReason): string {
   switch (reason.kind) {
     case "out_of_attempts":
       return `Out of attempts. The last failure, in ${reason.failure.step}: ${reason.failure.summary}`;
