@@ -9,6 +9,7 @@ import { chmodSync, existsSync, lstatSync, readFileSync, rmSync } from "node:fs"
 import { createServer, type Socket } from "node:net";
 import * as z from "zod";
 import { parseWorkflow } from "../config/workflow";
+import { Git } from "../plugins/git/git";
 import { encode, MAX_LINE, parseRequest, type Reply } from "../protocol/protocol";
 import { EventStore } from "../store/store";
 import { type Answer, Daemon, type DaemonOptions } from "./daemon";
@@ -52,6 +53,8 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
 
   const workflow = readWorkflow(repo, paths.workflow);
   if (!workflow.ok) return workflow;
+  const main = mainBranch(repo, workflow.mainBranch);
+  if (!main.ok) return main;
 
   const locked = takeLock(paths.repo);
   if (!locked.ok) return locked;
@@ -82,7 +85,11 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
     lock.release();
     return { ok: false, message: `.skelcrew/skelcrew.db couldn't be opened: ${describe(error)}` };
   }
-  const daemonOptions: DaemonOptions = { config: workflow.config, log: store };
+  const daemonOptions: DaemonOptions = {
+    config: workflow.config,
+    log: store,
+    versionControl: new Git(paths.repo, workflow.mainBranch),
+  };
   if (options.newSession !== undefined) daemonOptions.newSession = options.newSession;
   const opened = Daemon.open(daemonOptions);
   if (!opened.ok) {
@@ -163,10 +170,34 @@ function privateFolder(path: string): { ok: true } | { ok: false; message: strin
   }
 }
 
+// Tasks start from the main branch and merge into it, so it must exist.
+function mainBranch(repo: string, branch: string): { ok: true } | { ok: false; message: string } {
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", ...args], { cwd: repo, stdout: "ignore", stderr: "ignore" }).exitCode;
+  // Starting a program that isn't installed throws.
+  try {
+    git("--version");
+  } catch {
+    return { ok: false, message: "Skelcrew needs git, and couldn't find it." };
+  }
+  if (git("rev-parse", "--git-dir") !== 0) {
+    return { ok: false, message: `${repo} isn't a git repository. Skelcrew needs one.` };
+  }
+  if (git("rev-parse", "--verify", "--quiet", `refs/heads/${branch}`) !== 0) {
+    return {
+      ok: false,
+      message: `This repository has no branch ${branch}. Set main_branch in .skelcrew/workflow.yml to the branch tasks start from and merge into.`,
+    };
+  }
+  return { ok: true };
+}
+
 function readWorkflow(
   repo: string,
   path: string,
-): { ok: true; config: DaemonOptions["config"] } | { ok: false; message: string } {
+):
+  | { ok: true; config: DaemonOptions["config"]; mainBranch: string }
+  | { ok: false; message: string } {
   if (!existsSync(path)) {
     return {
       ok: false,
@@ -184,7 +215,7 @@ function readWorkflow(
     const reasons = parsed.reasons.map((reason) => `- ${reason}`);
     return { ok: false, message: [".skelcrew/workflow.yml doesn't fit:", ...reasons].join("\n") };
   }
-  return { ok: true, config: parsed.workflow.config };
+  return { ok: true, config: parsed.workflow.config, mainBranch: parsed.workflow.mainBranch };
 }
 
 // A request being answered, so stopping can wait for it or refuse it.

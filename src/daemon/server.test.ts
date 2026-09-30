@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import * as z from "zod";
 import { MAX_LINE } from "../protocol/protocol";
@@ -122,6 +131,52 @@ describe("the daemon's socket", () => {
     expect(served).toEqual({
       ok: false,
       message: `${repo} has no .skelcrew/workflow.yml. Run \`skelcrew init\` there first.`,
+    });
+  });
+
+  test("refuses to start when the main branch doesn't exist, and says how to set it", async () => {
+    const repo = throwawayRepo(dirs);
+    writeFileSync(
+      join(repo, ".skelcrew", "workflow.yml"),
+      'checks:\n  - "true"\nmain_branch: trunk\n',
+    );
+    expect(await serve(repo)).toEqual({
+      ok: false,
+      message:
+        "This repository has no branch trunk. Set main_branch in .skelcrew/workflow.yml to the branch tasks start from and merge into.",
+    });
+  });
+
+  // Found by review: without git, starting threw a raw "Executable not
+  // found" error.
+  // In a process of its own, since PATH is read when the process starts.
+  test("refuses to start without git, and says so", async () => {
+    const repo = throwawayRepo(dirs);
+    // An empty folder: an empty PATH falls back to the usual places.
+    const noGit = mkdtempSync(join(tmpdir(), "sk-nogit-"));
+    dirs.push(noGit);
+    const script = `
+      import { serve } from ${JSON.stringify(join(import.meta.dir, "server.ts"))};
+      const served = await serve(process.env.REPO ?? "");
+      if (served.ok) await served.server.stop();
+      console.log(JSON.stringify(served.ok ? "started" : served.message));
+    `;
+    const child = Bun.spawn([process.execPath, "-e", script], {
+      env: { REPO: repo, PATH: noGit },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = await new Response(child.stdout).text();
+    await child.exited;
+    expect(out.trim()).toBe(JSON.stringify("Skelcrew needs git, and couldn't find it."));
+  });
+
+  test("refuses to start outside a git repository", async () => {
+    const repo = throwawayRepo(dirs);
+    rmSync(join(repo, ".git"), { recursive: true });
+    expect(await serve(repo)).toEqual({
+      ok: false,
+      message: `${repo} isn't a git repository. Skelcrew needs one.`,
     });
   });
 

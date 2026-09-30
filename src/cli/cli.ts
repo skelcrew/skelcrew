@@ -535,12 +535,16 @@ const claimResult = z.object({
     .nullable()
     .optional(),
   note: z.string().nullable().optional(),
+  worktree: z.object({ path: z.string(), branch: z.string() }).optional(),
 });
 
 function claimed(task: TaskId, claim: z.infer<typeof claimResult>): string[] {
   const report = claim.phase === "spec" ? "submit" : "done";
   const lines = [
     `Claimed #${task}. It is in ${phaseNames[claim.phase]}.`,
+    ...(claim.worktree === undefined
+      ? []
+      : [`Work in ${claim.worktree.path}, on the branch ${claim.worktree.branch}.`]),
     `Your session is ${claim.session}.`,
     "Set SKELCREW_SESSION to it for each report, like this:",
     `SKELCREW_SESSION=${claim.session} skelcrew ${report} ${task}`,

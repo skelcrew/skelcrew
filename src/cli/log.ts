@@ -13,8 +13,8 @@ import { describeBlock } from "../daemon/daemon";
 const INDENT = " ".repeat(18);
 
 export function logLines(events: TaskEvent[]): string[] {
-  return events.flatMap((event) => {
-    const [first = "", ...rest] = happened(event).split("\n");
+  return events.flatMap((event, index) => {
+    const [first = "", ...rest] = happened(event, events.slice(0, index)).split("\n");
     return [`${time(event.at)}  ${first}`, ...rest.map((line) => `${INDENT}${line}`)];
   });
 }
@@ -27,7 +27,9 @@ function time(at: number): string {
   return `${day} ${two(date.getHours())}:${two(date.getMinutes())}`;
 }
 
-function happened(event: TaskEvent): string {
+// `before` holds the events that came before this one, oldest first. Some
+// lines depend on them.
+function happened(event: TaskEvent, before: TaskEvent[]): string {
   switch (event.type) {
     case "task.created": {
       const where = event.project === null ? "Added" : `Added to project ${event.project}`;
@@ -55,7 +57,9 @@ function happened(event: TaskEvent): string {
     case "task.worktree_created":
       return `Its worktree was made on branch ${event.worktree.branch}, at ${event.worktree.path}.`;
     case "task.dispatched":
-      return `An agent started as ${event.session}.`;
+      return claimedBy(before) === event.session
+        ? "Your session is working on it."
+        : `An agent started as ${event.session}.`;
     case "task.claimed":
       return `Claimed by ${event.session}.`;
     case "task.question_asked": {
@@ -106,6 +110,16 @@ function happened(event: TaskEvent): string {
     case "task.usage_recorded":
       return `Used ${event.usage.tokens} tokens in ${Math.round(event.usage.ms / 60_000)} minutes so far.`;
   }
+}
+
+// The session that claimed the task, if a claim was its latest start. A
+// claim in Ready waits for the worktree, then the claiming session becomes
+// the agent. No agent is started.
+function claimedBy(before: TaskEvent[]): string | null {
+  const start = before.findLast(
+    (event) => event.type === "task.claimed" || event.type === "task.dispatch_started",
+  );
+  return start?.type === "task.claimed" ? start.session : null;
 }
 
 function checks(gate: GateName): string {
