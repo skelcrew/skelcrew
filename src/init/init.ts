@@ -1,5 +1,6 @@
 // What `skelcrew init` does to a repository. It writes .skelcrew/workflow.yml
-// with the checks it finds, keeps Skelcrew's runtime files out of git,
+// with the checks it finds and the setup they need, such as installing the
+// dependencies. It keeps Skelcrew's runtime files out of git,
 // writes the default skills to .agents/skills, links each one into
 // .claude/skills for Claude Code, links CLAUDE.md to AGENTS.md when only
 // AGENTS.md is there, and makes Claude Code ask you before anything runs
@@ -26,7 +27,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { parseWorkflow, workflowFile } from "../config/workflow";
-import { detectChecks } from "./detect";
+import { detectChecks, detectSetup } from "./detect";
 import { leftOutBy } from "./gitignore";
 import { outsideLink, outsideWarning } from "./paths";
 import { type AskBeforeApprove, addAskRule, askBeforeApproveLimit, settingsPath } from "./settings";
@@ -37,6 +38,10 @@ export type InitReport = {
   // The checks workflow.yml holds: the ones init chose, or the ones in the
   // file that was already there.
   checks: string[];
+  // The commands that prepare a fresh copy of the code before the checks,
+  // such as bun install --frozen-lockfile. Chosen the same way, or taken
+  // from the workflow.yml that was already there.
+  setup: string[];
   // Files that didn't exist and now do.
   created: string[];
   // Links that didn't exist and now do, such as .claude/skills/spec, which
@@ -85,6 +90,7 @@ const runtimeLines = [
 export function initRepository(dir: string): InitResult {
   const report: InitReport = {
     checks: [],
+    setup: [],
     created: [],
     linked: [],
     updated: [],
@@ -104,8 +110,10 @@ export function initRepository(dir: string): InitResult {
       report.warnings.push(
         `${workflowPath} is there, but can't be opened, so it was left as it is. Check that it is a file you can read.`,
       );
-    } else if (parsed.ok) report.checks = parsed.workflow.checks;
-    else {
+    } else if (parsed.ok) {
+      report.checks = parsed.workflow.checks;
+      report.setup = parsed.workflow.setup;
+    } else {
       report.warnings.push(
         `${workflowPath} was already there, but can't be read, so it was left as it is: ${parsed.reasons.join(" ")}`,
       );
@@ -116,8 +124,9 @@ export function initRepository(dir: string): InitResult {
       return { ok: false, reason: detected.reason, created: [], updated: [], linked: [] };
     }
     report.checks = detected.checks;
+    report.setup = detectSetup(dir);
     report.warnings.push(...detected.warnings);
-    workflow = workflowFile(detected.checks);
+    workflow = workflowFile(detected.checks, report.setup);
   }
 
   try {

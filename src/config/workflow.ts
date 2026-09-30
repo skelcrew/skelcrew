@@ -18,13 +18,23 @@ export type ParsedWorkflow = { ok: true; workflow: Workflow } | { ok: false; rea
 //
 // Each command is written as a JSON string, which YAML reads as a quoted
 // string. So a command with ":" or "#" in it reads back exactly.
-export function workflowFile(checks: [string, ...string[]]): string {
-  const commands = checks.map((command) => `  - ${JSON.stringify(command)}`).join("\n");
+export function workflowFile(checks: [string, ...string[]], setup: string[] = []): string {
+  const list = (items: string[]) =>
+    items.map((command) => `  - ${JSON.stringify(command)}`).join("\n");
+  const setupPart =
+    setup.length === 0
+      ? ""
+      : `
+# These prepare a fresh copy of the task's code, such as installing its
+# dependencies, before the checks run there.
+setup:
+${list(setup)}
+`;
   return `# Skelcrew's rules for this repository.
-
-# The local gate runs these in the task's worktree. Each must pass.
+${setupPart}
+# The local gate runs these in a fresh copy of the task's code. Each must pass.
 checks:
-${commands}
+${list(checks)}
 
 # Failed rounds (gates or merges) before a task is blocked.
 max_attempts: 3
