@@ -605,6 +605,27 @@ describe("skelcrew log", () => {
     );
   });
 
+  // Found by review: "Used 1234567 tokens in 0 minutes so far."
+  test("shows token use with separators, and a short run as under a minute", async () => {
+    const repo = throwawayRepo(dirs);
+    const stamp = { v: 1, taskId: 4, at: new Date(2026, 8, 30, 10, 2).getTime() };
+    const used = (tokens: number, ms: number) => ({
+      ...stamp,
+      type: "task.usage_recorded",
+      usage: { tokens, ms },
+    });
+    await fakeDaemon(repo, {
+      events: [used(800, 20_000), used(1_234_567, 60_000), used(2_500_000, 2_700_000)],
+    });
+    expect(await cli(repo, ["log", "4"])).toEqual(
+      said([
+        "2026-09-30 10:02  Used 800 tokens in under a minute so far.",
+        "2026-09-30 10:02  Used 1,234,567 tokens in 1 minute so far.",
+        "2026-09-30 10:02  Used 2,500,000 tokens in 45 minutes so far.",
+      ]),
+    );
+  });
+
   test("refuses an answer that isn't a list of events", async () => {
     const repo = throwawayRepo(dirs);
     await fakeDaemon(repo, { events: [{ type: "task.exploded", v: 1, taskId: 1, at: 1 }] });

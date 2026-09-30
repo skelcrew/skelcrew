@@ -116,7 +116,7 @@ function happened(event: TaskEvent, before: TaskEvent[]): string {
     case "task.dropped":
       return "Dropped.";
     case "task.usage_recorded":
-      return `Used ${event.usage.tokens} tokens in ${Math.round(event.usage.ms / 60_000)} minutes so far.`;
+      return `Used ${event.usage.tokens.toLocaleString("en-US")} tokens in ${duration(event.usage.ms)} so far.`;
   }
 }
 
@@ -132,6 +132,11 @@ function claimedBy(before: TaskEvent[]): string | null {
 
 function checks(gate: GateName): string {
   return `The ${gate} checks`;
+}
+
+// "under a minute", "1 minute", "45 minutes".
+function duration(ms: number): string {
+  return ms < 60_000 ? "under a minute" : count(Math.round(ms / 60_000), "minute");
 }
 
 function count(n: number, thing: string): string {
