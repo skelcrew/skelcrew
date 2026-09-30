@@ -663,6 +663,26 @@ describe("skelcrew log", () => {
     );
   });
 
+  // Found by review: "The review checks passed." The review is one step.
+  test("calls the review step the review", async () => {
+    const repo = throwawayRepo(dirs);
+    const stamp = { v: 1, taskId: 4, at: new Date(2026, 8, 30, 10, 2).getTime() };
+    await fakeDaemon(repo, {
+      events: [
+        { ...stamp, type: "task.gate_passed", gate: "local", next: { gate: "review", request: 3 } },
+        { ...stamp, type: "task.gate_failed", failure: { step: "review", summary: "No tests." } },
+        { ...stamp, type: "task.gate_passed", gate: "review", next: null },
+      ],
+    });
+    expect(await cli(repo, ["log", "4"])).toEqual(
+      said([
+        "2026-09-30 10:02  The local checks passed. The review started.",
+        "2026-09-30 10:02  The review failed: No tests.",
+        "2026-09-30 10:02  The review passed.",
+      ]),
+    );
+  });
+
   test("refuses an answer that isn't a list of events", async () => {
     const repo = throwawayRepo(dirs);
     await fakeDaemon(repo, { events: [{ type: "task.exploded", v: 1, taskId: 1, at: 1 }] });

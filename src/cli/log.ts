@@ -130,8 +130,9 @@ function claimedBy(before: TaskEvent[]): string | null {
   return start?.type === "task.claimed" ? start.session : null;
 }
 
+// The local and remote gates run several checks. The review is one step.
 function checks(gate: GateName): string {
-  return `The ${gate} checks`;
+  return gate === "review" ? "The review" : `The ${gate} checks`;
 }
 
 // "under a minute", "1 minute", "45 minutes".
