@@ -25,6 +25,7 @@ describe("daemonPaths", () => {
   test("keeps the socket in .skelcrew/ when its path is short enough", () => {
     const repo = realpathSync(folder("sk-"));
     expect(paths(repo)).toEqual({
+      repo,
       folder: join(repo, ".skelcrew"),
       workflow: join(repo, ".skelcrew", "workflow.yml"),
       store: join(repo, ".skelcrew", "skelcrew.db"),

@@ -13,7 +13,7 @@ import { encode, MAX_LINE, parseRequest, type Reply } from "../protocol/protocol
 import { EventStore } from "../store/store";
 import { type Answer, Daemon, type DaemonOptions } from "./daemon";
 import { takeLock } from "./lock";
-import { daemonPaths } from "./paths";
+import { daemonPaths, foreignFolder } from "./paths";
 
 export type ServeOptions = {
   // How long stopping waits for requests already being answered. Past
@@ -40,7 +40,10 @@ const defaultGraceMs = 30_000;
 // How long the connections must stay quiet before a stopping daemon closes
 // them. Requests already on their way arrive in that time, and are
 // answered "The daemon is stopping." instead of meeting a closed door.
+// A client that never goes quiet holds the stop open for QUIET_LIMIT_MS
+// at most.
 const QUIET_MS = 50;
+const QUIET_LIMIT_MS = 500;
 
 export async function serve(repo: string, options: ServeOptions = {}): Promise<Served> {
   const found = daemonPaths(repo);
@@ -50,7 +53,7 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
   const workflow = readWorkflow(repo, paths.workflow);
   if (!workflow.ok) return workflow;
 
-  const locked = takeLock(paths.folder);
+  const locked = takeLock(paths.repo);
   if (!locked.ok) return locked;
   const lock = locked.lock;
   if (paths.sharedSocketFolder !== null) {
@@ -149,14 +152,9 @@ export async function serveUntilSignalled(
 function privateFolder(path: string): { ok: true } | { ok: false; message: string } {
   try {
     mkdirSync(path, { mode: 0o700, recursive: true });
-    const found = lstatSync(path);
-    if (!found.isDirectory() || found.uid !== process.getuid?.()) {
-      return {
-        ok: false,
-        message: `${path} isn't a folder of yours, so the daemon's socket can't go there. Remove it, then try again.`,
-      };
-    }
-    if ((found.mode & 0o077) !== 0) chmodSync(path, 0o700);
+    const foreign = foreignFolder(path);
+    if (foreign !== null) return { ok: false, message: foreign };
+    if ((lstatSync(path).mode & 0o077) !== 0) chmodSync(path, 0o700);
     return { ok: true };
   } catch (error) {
     return {
@@ -222,10 +220,10 @@ class Listener {
   private async shutDown(): Promise<void> {
     const closed = new Promise<void>((resolve) => this.server.close(() => resolve()));
     const pending = [...this.inFlight].map((request) => request.done);
-    const deadline = Date.now() + this.graceMs;
     await Promise.race([Promise.all(pending), sleep(this.graceMs)]);
+    const quietBy = Date.now() + QUIET_LIMIT_MS;
     await sleep(QUIET_MS);
-    while (Date.now() - this.lastData < QUIET_MS && Date.now() < deadline) await sleep(QUIET_MS);
+    while (Date.now() - this.lastData < QUIET_MS && Date.now() < quietBy) await sleep(QUIET_MS);
     for (const request of this.inFlight) {
       this.answer(request, { ok: false, message: "The daemon stopped before this finished." });
     }

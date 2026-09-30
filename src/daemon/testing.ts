@@ -37,6 +37,10 @@ export async function daemonInAnotherProcess(repo: string) {
   return child;
 }
 
+// Root ignores file permissions, so tests that make a file or folder
+// read-only would test nothing. They are skipped when running as root.
+export const asRoot = process.getuid?.() === 0;
+
 export function cleanUp(dirs: string[]): void {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 }

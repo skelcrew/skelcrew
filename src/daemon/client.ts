@@ -6,10 +6,12 @@
 // `skelcrew serve` in the background.
 
 import { randomUUID } from "node:crypto";
+import { lstatSync } from "node:fs";
 import { Socket } from "node:net";
 import { type Command, encode, MAX_LINE, parseReply } from "../protocol/protocol";
 import type { Answer } from "./daemon";
-import { daemonPaths } from "./paths";
+import { ALREADY_RUNNING } from "./lock";
+import { daemonPaths, foreignFolder } from "./paths";
 
 // What starting the daemon gave. `exited` says why the daemon stopped, or
 // null while it still runs, so a daemon that can't start is reported at
@@ -42,6 +44,11 @@ export async function request(
   const found = daemonPaths(repo);
   if (!found.ok) return found;
   const path = found.paths.socket;
+  const shared = found.paths.sharedSocketFolder;
+  if (shared !== null) {
+    const unsafe = unsafeSocket(shared, path);
+    if (unsafe !== null) return { ok: false, message: unsafe };
+  }
 
   const id = (options.newId ?? randomUUID)();
   const line = encode({ id, command });
@@ -61,13 +68,9 @@ export async function request(
 }
 
 async function startAndWait(path: string, options: ClientOptions): Promise<Connected> {
-  let started: Started;
-  try {
-    started = await options.start();
-  } catch (error) {
-    return { ok: false, missing: true, message: describe(error) };
-  }
-  if (!started.ok) return { ok: false, missing: true, message: started.message };
+  const first = await start(options);
+  if (!first.ok) return first;
+  let started = first.started;
 
   const limit = options.startTimeoutMs ?? defaultStartTimeoutMs;
   const giveUpAt = Date.now() + limit;
@@ -84,7 +87,16 @@ async function startAndWait(path: string, options: ClientOptions): Promise<Conne
       }
     }
     if (exitedAt !== null && Date.now() - exitedAt > afterExitMs) {
-      return { ok: false, missing: true, message: `The daemon stopped while starting. ${why}` };
+      // The daemon that holds the lock may be stopping. If so, a daemon
+      // started once it has gone takes over. Otherwise it is a real one
+      // nobody can reach, and the start time limit reports it.
+      if (!why.startsWith(ALREADY_RUNNING)) {
+        return { ok: false, missing: true, message: `The daemon stopped while starting. ${why}` };
+      }
+      const again = await start(options);
+      if (!again.ok) return again;
+      started = again.started;
+      exitedAt = null;
     }
     if (Date.now() >= giveUpAt) {
       const message =
@@ -95,6 +107,41 @@ async function startAndWait(path: string, options: ClientOptions): Promise<Conne
     }
     await sleep(pollMs);
   }
+}
+
+// Why a socket in the shared folder in /tmp can't be trusted, or null if
+// it can. Anyone who can change the folder, or who owns the socket, could
+// answer in the daemon's place and see every command. A folder that
+// doesn't exist yet is fine: the daemon makes it when it starts.
+function unsafeSocket(folder: string, socket: string): string | null {
+  try {
+    const foreign = foreignFolder(folder);
+    if (foreign !== null) return foreign;
+    if ((lstatSync(folder).mode & 0o077) !== 0) {
+      return `${folder} is open to other users, so skelcrew won't use it. Run \`chmod 700 ${folder}\`, then try again.`;
+    }
+    if (lstatSync(socket).uid !== process.getuid?.()) {
+      return `${socket} belongs to another user, so skelcrew won't use it. Remove it, then try again.`;
+    }
+    return null;
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? error.code : undefined;
+    if (code === "ENOENT") return null;
+    return `${folder} couldn't be checked: ${describe(error)}`;
+  }
+}
+
+async function start(
+  options: ClientOptions,
+): Promise<{ ok: true; started: Started & { ok: true } } | (Connected & { ok: false })> {
+  let started: Started;
+  try {
+    started = await options.start();
+  } catch (error) {
+    return { ok: false, missing: true, message: describe(error) };
+  }
+  if (!started.ok) return { ok: false, missing: true, message: started.message };
+  return { ok: true, started };
 }
 
 // A socket that doesn't exist, or has nobody listening, means no daemon

@@ -1,9 +1,20 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { takeLock } from "./lock";
 import { type Server, serve } from "./server";
-import { cleanUp, daemonInAnotherProcess, openLine, throwawayRepo } from "./testing";
+import { asRoot, cleanUp, daemonInAnotherProcess, openLine, throwawayRepo } from "./testing";
 
 const dirs: string[] = [];
 const servers: Server[] = [];
@@ -35,9 +46,12 @@ async function deadPid(): Promise<number> {
 }
 
 // Starts `count` processes at once that each try to take the lock on
-// `folder` and hold it a moment. Returns how many got it.
-async function raceFor(folder: string, count: number): Promise<number> {
-  const script = join(folder, "..", "race.ts");
+// `repo` and hold it a moment. Returns how many got it. The script goes in
+// a folder of its own, since `repo` may be read-only.
+async function raceFor(repo: string, count: number): Promise<number> {
+  const scripts = mkdtempSync(join(tmpdir(), "sk-race-"));
+  dirs.push(scripts);
+  const script = join(scripts, "race.ts");
   writeFileSync(
     script,
     `import { takeLock } from ${JSON.stringify(join(import.meta.dir, "lock.ts"))};\n` +
@@ -46,7 +60,7 @@ async function raceFor(folder: string, count: number): Promise<number> {
       "await Bun.sleep(800);\n",
   );
   const children = Array.from({ length: count }, () =>
-    Bun.spawn([process.execPath, script, folder], { stdout: "pipe" }),
+    Bun.spawn([process.execPath, script, repo], { stdout: "pipe" }),
   );
   const said = await Promise.all(children.map((child) => new Response(child.stdout).text()));
   await Promise.all(children.map((child) => child.exited));
@@ -94,6 +108,31 @@ describe("one daemon per repository", () => {
         ok: false,
         message:
           "The daemon is already running for this repository. If skelcrew can't reach it, stop the daemon and try again.",
+      });
+    } finally {
+      child.kill("SIGKILL");
+      await child.exited;
+    }
+  });
+
+  // Found by review: the lock was on .skelcrew, so replacing that folder
+  // let a second daemon in. Both gave out task #2 again.
+  test("refuses a second daemon after .skelcrew is replaced by a copy", async () => {
+    const repo = throwawayRepo(dirs);
+    const child = await daemonInAnotherProcess(repo);
+    try {
+      const folder = join(repo, ".skelcrew");
+      renameSync(folder, join(repo, ".skelcrew-old"));
+      // Everything but the socket, which can't be copied on Linux.
+      cpSync(join(repo, ".skelcrew-old"), folder, {
+        recursive: true,
+        filter: (from) => !from.endsWith("daemon.sock"),
+      });
+      const second = await serve(repo);
+      if (second.ok) await second.server.stop();
+      expect(second).toEqual({
+        ok: false,
+        message: `The daemon is already running for this repository, as process ${child.pid}. If skelcrew can't reach it, stop that process and try again.`,
       });
     } finally {
       child.kill("SIGKILL");
@@ -155,49 +194,55 @@ describe("one daemon per repository", () => {
   test("lets exactly one of several daemons starting at once run, never none", async () => {
     for (let round = 0; round < 10; round += 1) {
       const repo = throwawayRepo(dirs);
-      const folder = join(repo, ".skelcrew");
-      expect({ round, holders: await raceFor(folder, 4) }).toEqual({ round, holders: 1 });
+      expect({ round, holders: await raceFor(repo, 4) }).toEqual({ round, holders: 1 });
     }
   }, 60_000);
 
   // Found by review: SQLite opened a read-only lock file read-only, and its
   // exclusive hold then locked nothing, so every daemon thought it held it.
-  test("lets exactly one daemon hold the lock on a folder it can't write to", async () => {
-    const repo = throwawayRepo(dirs);
-    const folder = join(repo, ".skelcrew");
-    chmodSync(folder, 0o555);
-    try {
-      expect(await raceFor(folder, 3)).toBe(1);
-    } finally {
-      chmodSync(folder, 0o755);
-    }
-  }, 30_000);
+  test.skipIf(asRoot)(
+    "lets exactly one daemon hold the lock on a repository it can't write to",
+    async () => {
+      const repo = throwawayRepo(dirs);
+      chmodSync(repo, 0o555);
+      try {
+        expect(await raceFor(repo, 3)).toBe(1);
+      } finally {
+        chmodSync(repo, 0o755);
+      }
+    },
+    30_000,
+  );
 
   // A daemon starts git and the checks. They mustn't keep its lock after it
   // has died.
   test("frees the lock when its daemon dies, even if something it started still runs", async () => {
     const repo = throwawayRepo(dirs);
-    const folder = join(repo, ".skelcrew");
     const script = join(repo, "hold.ts");
     writeFileSync(
       script,
       `import { takeLock } from ${JSON.stringify(join(import.meta.dir, "lock.ts"))};\n` +
         "const taken = takeLock(process.argv[2] ?? '');\n" +
-        "Bun.spawn(['sleep', '10']);\n" +
-        "console.log(taken.ok ? 'GOT' : 'NO');\n" +
+        "const child = Bun.spawn(['sleep', '10']);\n" +
+        "console.log((taken.ok ? 'GOT ' : 'NO ') + child.pid);\n" +
         "await Bun.sleep(10_000);\n",
     );
-    const holder = Bun.spawn([process.execPath, script, folder], { stdout: "pipe" });
+    const holder = Bun.spawn([process.execPath, script, repo], { stdout: "pipe" });
     const reader = holder.stdout.getReader();
-    expect(new TextDecoder().decode((await reader.read()).value)).toBe("GOT\n");
+    const [got, pid] = new TextDecoder()
+      .decode((await reader.read()).value)
+      .trim()
+      .split(" ");
+    expect(got).toBe("GOT");
     holder.kill("SIGKILL");
     await holder.exited;
     try {
-      const taken = takeLock(folder);
+      const taken = takeLock(repo);
       expect(taken.ok).toBe(true);
       if (taken.ok) taken.lock.release();
     } finally {
-      Bun.spawnSync(["pkill", "-f", "sleep 10"]);
+      // Only the process it started, never someone else's.
+      if (pid !== undefined) process.kill(Number(pid), "SIGKILL");
     }
   }, 30_000);
 
@@ -218,7 +263,7 @@ describe("one daemon per repository", () => {
       // A daemon that died left its pid file behind.
       writeFileSync(join(folder, "daemon.pid"), `${await deadPid()}\n`);
       const children = Array.from({ length: 12 }, () =>
-        Bun.spawn([process.execPath, script, folder], { stdout: "pipe" }),
+        Bun.spawn([process.execPath, script, repo], { stdout: "pipe" }),
       );
       const said = await Promise.all(children.map((child) => new Response(child.stdout).text()));
       await Promise.all(children.map((child) => child.exited));
@@ -237,21 +282,24 @@ describe("one daemon per repository", () => {
 
   // Found by review: with .skelcrew read-only, removing daemon.pid threw
   // before the lock was let go, so the lock stayed held and stop threw.
-  test("lets go of the lock when it stops, even if it can't remove its pid file", async () => {
-    const repo = throwawayRepo(dirs);
-    const served = await serve(repo);
-    if (!served.ok) throw new Error(served.message);
-    const folder = join(repo, ".skelcrew");
-    chmodSync(folder, 0o555);
-    try {
-      await served.server.stop();
-      const next = takeLock(folder);
-      expect(next.ok).toBe(true);
-      if (next.ok) next.lock.release();
-    } finally {
-      chmodSync(folder, 0o755);
-    }
-  });
+  test.skipIf(asRoot)(
+    "lets go of the lock when it stops, even if it can't remove its pid file",
+    async () => {
+      const repo = throwawayRepo(dirs);
+      const served = await serve(repo);
+      if (!served.ok) throw new Error(served.message);
+      const folder = join(repo, ".skelcrew");
+      chmodSync(folder, 0o555);
+      try {
+        await served.server.stop();
+        const next = takeLock(repo);
+        expect(next.ok).toBe(true);
+        if (next.ok) next.lock.release();
+      } finally {
+        chmodSync(folder, 0o755);
+      }
+    },
+  );
 
   // Otherwise a daemon that failed to start would keep every later one out.
   test("lets go of the lock when it fails to start", async () => {
