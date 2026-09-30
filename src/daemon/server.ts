@@ -79,6 +79,7 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
   const listener = new Listener(opened.value, options.graceMs ?? defaultGraceMs);
   const listening = await listener.listen(paths.socket);
   if (!listening.ok) {
+    await opened.value.close();
     store.close();
     lock.release();
     return listening;
