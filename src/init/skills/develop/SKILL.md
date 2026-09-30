@@ -31,6 +31,9 @@ The claim's output tells you where to work. If it doesn't, stop and tell the dev
 
 ## 2. Do the work
 
+The spec is in your worktree, named like the branch, such as `docs/specs/12-csv-export.md`.
+Read it, and don't edit it.
+
 Work only where the claim told you to. Build what the spec asks for, and nothing more. If
 something in the spec is unclear, ask the developer in the conversation and wait for the
 answer. Don't guess.
