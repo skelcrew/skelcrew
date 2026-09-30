@@ -73,6 +73,47 @@ describe("defaultSkills", () => {
     }
   });
 
+  // The skills' method came from an earlier Skelcrew, whose tool worked
+  // differently. An agent told to run one of these would fail, or do what
+  // Skelcrew now does itself: agents here never push, open pull requests or
+  // keep their own record. Add to this list when another old word turns up.
+  test("never name a command or place from the earlier Skelcrew", () => {
+    const old = [
+      "skelcrew show",
+      "skelcrew move",
+      "skelcrew comment",
+      "skelcrew queue",
+      "skelcrew export",
+      "skelcrew release",
+      "skelcrew block",
+      "skelcrew list",
+      "skelcrew trace",
+      "skelcrew files",
+      "skelcrew describe",
+      "docs/TODO.md",
+      "docs/ROADMAP.md",
+      "docs/plans/",
+      "docs/specs/",
+      ".agents/roles",
+      "run record",
+      "pull request",
+      "gh pr",
+      "git push",
+      "/code",
+      "/plan",
+      "/research",
+      "/audit",
+      "/run",
+    ];
+    for (const one of defaultSkills) {
+      const text = one.text.replaceAll(/\s+/g, " ");
+      expect({ path: one.path, found: old.filter((word) => text.includes(word)) }).toEqual({
+        path: one.path,
+        found: [],
+      });
+    }
+  });
+
   test("the spec skill claims the task and submits the spec", () => {
     const text = skill("spec");
     expect(text).toContain("skelcrew claim");
