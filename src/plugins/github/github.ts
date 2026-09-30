@@ -115,20 +115,47 @@ export class GitHub implements PullRequests {
     return parseCreated(created.value);
   }
 
-  // Deleting the pushed branch is tidying up: the pull request is already
-  // closed, and the local branch keeps the work. So a branch that can't be
-  // deleted, such as one already gone, doesn't count as a failure.
-  // `gh pr close --delete-branch` isn't used, since it deletes the local
-  // branch too.
+  // Closes the pull request, then deletes the branch Skelcrew pushed, but
+  // only if nobody added to it. For example, a reviewer's "Commit
+  // suggestion" on the draft adds a commit on GitHub only. `approve` merged
+  // the local branch, so deleting the pushed one would lose that commit.
+  //
+  // The branch is looked at before closing, so the comment can say it was
+  // kept. It is deleted after closing, since GitHub closes a pull request
+  // whose branch is deleted, and the comment would then be lost.
+  //
+  // Deleting is tidying up: the local branch keeps the work. So a branch
+  // that can't be deleted, such as one already gone, doesn't count as a
+  // failure. `gh pr close --delete-branch` isn't used, since it deletes the
+  // local branch too.
   async close(request: CloseRequest): Promise<Done<null>> {
     const repo = await this.originRepo();
     if (!repo.ok) return repo;
+    const ref = `refs/heads/${request.branch}`;
+    const listed = await this.run(["git", "ls-remote", "origin", ref], GH_MS);
+    // "<commit>\trefs/heads/<branch>", or nothing when it's gone. A branch
+    // that couldn't be looked at is left alone.
+    const onOrigin = listed.ok ? (listed.out.split("\t")[0]?.trim() ?? "") : null;
+    const moved = onOrigin !== null && onOrigin !== "" && onOrigin !== request.head;
+    const comment = moved
+      ? `${request.comment}\n\nThe branch \`${request.branch}\` here has commits that weren't merged, such as a committed suggestion. Skelcrew left it in place, so they aren't lost.`
+      : request.comment;
+
     const closed = await this.gh(
-      ["pr", "close", String(request.number), "--repo", repo.value, "--comment", request.comment],
+      ["pr", "close", String(request.number), "--repo", repo.value, "--comment", comment],
       "gh couldn't close the pull request",
     );
     if (!closed.ok) return closed;
-    await this.run(["git", "push", "origin", "--delete", request.branch], PUSH_MS);
+    if (onOrigin === request.head) {
+      // Not a forced push. For a delete, --force-with-lease only adds a
+      // check: git refuses unless the branch on origin is still at the
+      // commit Skelcrew pushed. So a commit added since, even in the moment
+      // since the look above, is never deleted.
+      await this.run(
+        ["git", "push", `--force-with-lease=${ref}:${request.head}`, "origin", `:${ref}`],
+        PUSH_MS,
+      );
+    }
     return { ok: true, value: null };
   }
 

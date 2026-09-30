@@ -145,6 +145,7 @@ export class DraftPullRequests {
       const closed = await this.plugin.close({
         number: open.number,
         branch: open.branch,
+        head: open.head,
         comment: closingComment(task),
       });
       if (this.stopped) return;

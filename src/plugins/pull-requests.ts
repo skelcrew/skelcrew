@@ -23,8 +23,8 @@ export type ShowRequest = {
 };
 
 // Which pull request to close, the comment to leave on it, and the branch
-// Skelcrew pushed for it.
-export type CloseRequest = { number: number; branch: string; comment: string };
+// Skelcrew pushed for it, with the commit it last pushed there.
+export type CloseRequest = { number: number; branch: string; head: CommitSha; comment: string };
 
 export interface PullRequests {
   // Pushes `head` to `branch`, never by force, then gives back the open
@@ -34,6 +34,8 @@ export interface PullRequests {
   show(request: ShowRequest): Promise<Done<PullRequest>>;
 
   // Closes the pull request with a comment, then deletes the pushed branch
-  // on the remote. The local branch is kept, as it always is.
+  // on the remote, but only while it is still at `head`. A branch with
+  // commits added on GitHub is kept, and the comment says so. The local
+  // branch is kept, as it always is.
   close(request: CloseRequest): Promise<Done<null>>;
 }

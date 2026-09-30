@@ -2,8 +2,12 @@
 // runs gh or reaches GitHub: a scripted runner answers each command the way
 // the real one did, and remembers what was asked.
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { CommitSha } from "../../core/ids";
+import { git, makeRepo } from "../version-control.contract";
 import { GitHub, type Ran, runProgram } from "./github";
 
 const head = CommitSha.parse("0123456789abcdef0123456789abcdef01234567");
@@ -292,38 +296,101 @@ describe("showing a branch as a pull request", () => {
   });
 });
 
+// Closing, with real git. A local bare repository stands in for GitHub as
+// origin, and gh is scripted. Only reading origin's URL is scripted too, so
+// Skelcrew still sees a GitHub repository.
 describe("closing a pull request", () => {
-  const close = { number: 41, branch: "task/12-csv-export", comment: "Merged as abc1234." };
+  const branch = "task/12-csv-export";
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
 
-  test("closes it with the comment, then deletes the pushed branch on origin", async () => {
-    const { github, calls } = scripted([
-      ["git remote get-url origin", recorded.origin],
-      ["gh pr close", recorded.closed],
-      ["git push origin --delete", recorded.pushed],
-    ]);
-    expect(await github.close(close)).toEqual({ ok: true, value: null });
-    expect(calls.map((call) => call.command)).toEqual([
-      ["git", "remote", "get-url", "origin"],
-      ["gh", "pr", "close", "41", "--repo", "skelcrew/skelcrew", "--comment", "Merged as abc1234."],
-      ["git", "push", "origin", "--delete", "task/12-csv-export"],
-    ]);
+  // A repository whose origin is a bare repository, with the task's branch
+  // pushed there. Gives back the pushed commit.
+  async function pushedBranch(whileClosing: () => Promise<void> = async () => {}) {
+    const repo = await makeRepo();
+    const bare = mkdtempSync(join(tmpdir(), "skelcrew-origin-"));
+    dirs.push(repo.dir, bare);
+    await git(bare, "init", "-q", "--bare");
+    await git(repo.dir, "remote", "add", "origin", bare);
+    const pushed = CommitSha.parse(await git(repo.dir, "rev-parse", "HEAD"));
+    await git(repo.dir, "push", "-q", "origin", `${pushed}:refs/heads/${branch}`);
+    const calls: Call[] = [];
+    const github = new GitHub(repo.dir, async (command, options) => {
+      calls.push({ command, stdin: options.stdin, timeoutMs: options.timeoutMs });
+      const line = command.join(" ");
+      if (line === "git remote get-url origin") return recorded.origin;
+      if (line.startsWith("gh pr close")) {
+        await whileClosing();
+        return recorded.closed;
+      }
+      if (command[0] === "git") return runProgram(command, options);
+      throw new Error(`Nothing scripted for: ${line}`);
+    });
+    const onOrigin = async () =>
+      (await git(bare, "for-each-ref", "--format=%(objectname)", `refs/heads/${branch}`)) || null;
+    const comment = () => calls.find((call) => call.command[1] === "pr")?.command.at(-1);
+    return { repo, pushed, github, onOrigin, comment };
+  }
+
+  test("closes it with the comment, then deletes the branch it pushed", async () => {
+    const { pushed, github, onOrigin, comment } = await pushedBranch();
+    const closed = await github.close({ number: 41, branch, head: pushed, comment: "Merged." });
+    expect(closed).toEqual({ ok: true, value: null });
+    expect(comment()).toBe("Merged.");
+    expect(await onOrigin()).toBeNull();
+  });
+
+  // For example, a reviewer used "Commit suggestion" on the draft. approve
+  // merged only your local branch, so that commit is only on GitHub.
+  test("keeps the branch when it has commits Skelcrew didn't push, and says so", async () => {
+    const { repo, pushed, github, onOrigin, comment } = await pushedBranch();
+    await git(repo.dir, "commit", "-q", "--allow-empty", "-m", "Suggestion from review");
+    const suggestion = await git(repo.dir, "rev-parse", "HEAD");
+    await git(repo.dir, "push", "-q", "origin", `${suggestion}:refs/heads/${branch}`);
+
+    const closed = await github.close({ number: 41, branch, head: pushed, comment: "Merged." });
+    expect(closed).toEqual({ ok: true, value: null });
+    expect(await onOrigin()).toBe(suggestion);
+    expect(comment()).toBe(
+      "Merged.\n\nThe branch `task/12-csv-export` here has commits that weren't merged, such as a committed suggestion. Skelcrew left it in place, so they aren't lost.",
+    );
+  });
+
+  // The suggestion lands after Skelcrew looked at the branch, but before
+  // it deletes it. git itself refuses the delete.
+  test("keeps the branch when a commit lands on it while the pull request closes", async () => {
+    let suggestion = "";
+    let repoDir = "";
+    const { pushed, github, onOrigin } = await pushedBranch(async () => {
+      await git(repoDir, "commit", "-q", "--allow-empty", "-m", "Suggestion from review");
+      suggestion = await git(repoDir, "rev-parse", "HEAD");
+      await git(repoDir, "push", "-q", "origin", `${suggestion}:refs/heads/${branch}`);
+    }).then((made) => {
+      repoDir = made.repo.dir;
+      return made;
+    });
+    const closed = await github.close({ number: 41, branch, head: pushed, comment: "Merged." });
+    expect(closed).toEqual({ ok: true, value: null });
+    expect(suggestion).not.toBe("");
+    expect(await onOrigin()).toBe(suggestion);
   });
 
   test("still counts as closed when the pushed branch is already gone", async () => {
-    const { github } = scripted([
-      ["git remote get-url origin", recorded.origin],
-      ["gh pr close", recorded.closed],
-      [
-        "git push origin --delete",
-        failed(1, "error: unable to delete 'x': remote ref does not exist"),
-      ],
-    ]);
-    expect(await github.close(close)).toEqual({ ok: true, value: null });
+    const { repo, pushed, github, onOrigin, comment } = await pushedBranch();
+    await git(repo.dir, "push", "-q", "origin", `:refs/heads/${branch}`);
+    const closed = await github.close({ number: 41, branch, head: pushed, comment: "Merged." });
+    expect(closed).toEqual({ ok: true, value: null });
+    expect(comment()).toBe("Merged.");
+    expect(await onOrigin()).toBeNull();
   });
 
   test("says why gh couldn't close it, and deletes nothing", async () => {
+    const close = { number: 41, branch, head, comment: "Merged." };
     const { github, ran } = scripted([
       ["git remote get-url origin", recorded.origin],
+      ["git ls-remote", ok(`${head}\trefs/heads/${branch}\n`)],
       ["gh pr close", recorded.loggedOut],
     ]);
     expect(await github.close(close)).toEqual({
