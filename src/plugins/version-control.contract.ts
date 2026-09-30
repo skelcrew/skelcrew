@@ -1118,6 +1118,197 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
     });
   });
 
+  // The merge can add one file of its own, the task's approved spec. It is
+  // written at merge time only, so the task's branch never holds it.
+  describe(`${name}: merge with the task's spec`, () => {
+    const pass: RunChecks = async () => ({ ok: true, value: null });
+    const path = "docs/specs/12-csv-export.md";
+    const spec = { path, text: "# #12 CSV export\n\nThe approved spec.\n" };
+
+    // A worktree for this build, with the given files committed in one
+    // commit. Returns the plugin, the worktree and the merge request.
+    async function built(r: Repo, files: Record<string, string>, build = 1) {
+      const plugin = make(r);
+      const created = await plugin.createWorktree({ ...csv, build });
+      if (!created.ok) throw new Error(created.message);
+      for (const [file, text] of Object.entries(files)) {
+        mkdirSync(dirname(join(created.value.path, file)), { recursive: true });
+        writeFileSync(join(created.value.path, file), text);
+        await git(created.value.path, "add", "--force", file);
+      }
+      await git(created.value.path, "commit", "-q", "-m", "Task work");
+      const head = CommitSha.parse(await git(created.value.path, "rev-parse", "HEAD"));
+      const request = { ...csv, worktree: created.value, head, file: spec };
+      return { plugin, worktree: created.value, head, request };
+    }
+
+    function hook(r: Repo, name: string, script: string): void {
+      const file = join(r.dir, ".git", "hooks", name);
+      writeFileSync(file, script);
+      chmodSync(file, 0o755);
+    }
+
+    async function commitOnMain(r: Repo, file: string, text: string) {
+      mkdirSync(dirname(join(r.dir, file)), { recursive: true });
+      writeFileSync(join(r.dir, file), text);
+      await git(r.dir, "add", "--force", file);
+      await git(r.dir, "commit", "-q", "-m", `Add ${file} on main`);
+    }
+
+    test("lands the spec with the work, in the one commit on main", async () => {
+      const r = await repo();
+      const { plugin, request } = await built(r, { "a.ts": "a\n" });
+      const before = await git(r.dir, "rev-parse", "main");
+
+      const merged = await plugin.merge(request, pass);
+      if (!merged.ok) throw new Error(merged.message);
+      expect(await git(r.dir, "rev-parse", "main^")).toBe(before);
+      expect(await git(r.dir, "show", `main:${path}`)).toBe(spec.text.trim());
+      expect(await git(r.dir, "show", "main:a.ts")).toBe("a");
+    });
+
+    test("runs the checks with the spec in place", async () => {
+      const r = await repo();
+      const { plugin, request } = await built(r, { "a.ts": "a\n" });
+      const seen: string[] = [];
+      const checks: RunChecks = async (dir) => {
+        seen.push(readFileSync(join(dir, path), "utf8"));
+        return { ok: true, value: null };
+      };
+
+      expect((await plugin.merge(request, checks)).ok).toBe(true);
+      expect(seen).toEqual([spec.text]);
+    });
+
+    test("never puts the spec on the task's branch", async () => {
+      const r = await repo();
+      const { plugin, worktree, head, request } = await built(r, { "a.ts": "a\n" });
+
+      expect((await plugin.merge(request, pass)).ok).toBe(true);
+      expect(await git(r.dir, "rev-parse", worktree.branch)).toBe(head);
+      expect(await git(r.dir, "ls-tree", "-r", "--name-only", worktree.branch)).not.toContain(path);
+      expect(existsSync(join(worktree.path, path))).toBe(false);
+    });
+
+    test("lands the spec even when the repository ignores docs/", async () => {
+      const r = await repo();
+      await commitOnMain(r, ".gitignore", "docs/\n");
+      const { plugin, request } = await built(r, { "a.ts": "a\n" });
+
+      const merged = await plugin.merge(request, pass);
+      if (!merged.ok) throw new Error(merged.message);
+      expect(await git(r.dir, "show", `main:${path}`)).toBe(spec.text.trim());
+    });
+
+    test("lands the approved text, not a version the agent wrote on its branch", async () => {
+      const r = await repo();
+      const { plugin, request } = await built(r, { "a.ts": "a\n", [path]: "# Rewritten\n" });
+
+      expect((await plugin.merge(request, pass)).ok).toBe(true);
+      expect(await git(r.dir, "show", `main:${path}`)).toBe(spec.text.trim());
+    });
+
+    test("never writes the spec through a docs folder the task made a link", async () => {
+      const r = await repo();
+      const outside = mkdtempSync(join(tmpdir(), "skelcrew-outside-"));
+      dirs.push(outside);
+      const plugin = make(r);
+      const created = await plugin.createWorktree(csv);
+      if (!created.ok) throw new Error(created.message);
+      await $`ln -s ${outside} docs`.cwd(created.value.path).quiet();
+      await git(created.value.path, "add", "docs");
+      await git(created.value.path, "commit", "-q", "-m", "Link docs");
+      const head = CommitSha.parse(await git(created.value.path, "rev-parse", "HEAD"));
+      const before = await git(r.dir, "rev-parse", "main");
+
+      const merged = await plugin.merge(
+        { ...csv, worktree: created.value, head, file: spec },
+        pass,
+      );
+      expect(merged.ok).toBe(false);
+      expect(existsSync(join(outside, "specs"))).toBe(false);
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+    });
+
+    test("refuses when a hook changes the spec in the merge", async () => {
+      const r = await repo();
+      const { plugin, request } = await built(r, { "a.ts": "a\n" });
+      hook(r, "pre-commit", `#!/bin/sh\necho changed >> ${path}\ngit add --force ${path}\n`);
+      const before = await git(r.dir, "rev-parse", "main");
+
+      const merged = await plugin.merge(request, pass);
+      expect(merged.ok).toBe(false);
+      expect(!merged.ok && merged.message).toContain("A hook changed");
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+    });
+
+    test("refuses when a hook removes the spec from the merge", async () => {
+      const r = await repo();
+      const { plugin, request } = await built(r, { "a.ts": "a\n" });
+      hook(r, "pre-commit", `#!/bin/sh\ngit rm -q --cached ${path}\n`);
+      const before = await git(r.dir, "rev-parse", "main");
+
+      const merged = await plugin.merge(request, pass);
+      expect(merged.ok).toBe(false);
+      expect(!merged.ok && merged.message).toContain("A hook changed");
+      expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+    });
+
+    test("asked again after it succeeded, gives back the same commit and merges nothing twice", async () => {
+      const r = await repo();
+      const { plugin, request } = await built(r, { "a.ts": "a\n" });
+      const first = await plugin.merge(request, pass);
+      let ranAgain = false;
+      const second = await plugin.merge(request, async () => {
+        ranAgain = true;
+        return { ok: true, value: null };
+      });
+      expect(second).toEqual(first);
+      expect(ranAgain).toBe(false);
+      expect(await git(r.dir, "rev-parse", "main")).toBe(first.ok ? first.value : "");
+    });
+
+    test("replaces a different spec already on main at that path", async () => {
+      const r = await repo();
+      await commitOnMain(r, path, "# An older spec\n");
+      const { plugin, request } = await built(r, { "a.ts": "a\n" });
+
+      expect((await plugin.merge(request, pass)).ok).toBe(true);
+      expect(await git(r.dir, "show", `main:${path}`)).toBe(spec.text.trim());
+    });
+
+    test("leaves the same spec already on main as it is, and still lands the work", async () => {
+      const r = await repo();
+      await commitOnMain(r, path, spec.text);
+      const { plugin, request } = await built(r, { "a.ts": "a\n" });
+
+      const merged = await plugin.merge(request, pass);
+      if (!merged.ok) throw new Error(merged.message);
+      expect(await git(r.dir, "diff", "--name-only", "main^", "main")).toBe("a.ts");
+    });
+
+    test("lands the revised spec when a task is built again after a revert", async () => {
+      const r = await repo();
+      const first = await built(r, { "a.ts": "a\n" });
+      const merged = await first.plugin.merge(first.request, pass);
+      if (!merged.ok) throw new Error(merged.message);
+      const reverted = await first.plugin.revert({
+        taskId: csv.taskId,
+        commit: merged.value,
+        reason: "Wrong format",
+      });
+      if (!reverted.ok) throw new Error(reverted.message);
+      expect(await git(r.dir, "ls-tree", "-r", "--name-only", "main")).not.toContain(path);
+
+      const revised = { path, text: "# #12 CSV export\n\nThe revised spec.\n" };
+      const second = await built(r, { "a.ts": "a, revised\n" }, 2);
+      const again = await second.plugin.merge({ ...second.request, file: revised }, pass);
+      if (!again.ok) throw new Error(again.message);
+      expect(await git(r.dir, "show", `main:${path}`)).toBe(revised.text.trim());
+      expect(await git(r.dir, "show", "main:a.ts")).toBe("a, revised");
+    });
+  });
+
   describe(`${name}: revert`, () => {
     const pass: RunChecks = async () => ({ ok: true, value: null });
     const reason = "Broke the export";

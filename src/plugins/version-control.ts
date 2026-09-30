@@ -19,13 +19,21 @@ export type Done<T> = { ok: true; value: T } | { ok: false; message: string };
 export type CheckRequest = { taskId: TaskId; head: CommitSha };
 
 // What to merge: exactly `head` from the task's worktree, even if the
-// branch has moved on since. The title names the commit on main.
+// branch has moved on since. The title names the commit on main. `file`,
+// if given, is one more file the merge writes into its commit, such as the
+// task's approved spec at docs/specs/12-csv-export.md. The task's branch
+// never holds it.
 export type MergeRequest = {
   taskId: TaskId;
   title: string;
   worktree: Worktree;
   head: CommitSha;
+  file?: FileToAdd;
 };
+
+// A file for the merge to add: where it goes in the repository, and its
+// text, exactly.
+export type FileToAdd = { path: string; text: string };
 
 // Runs the local checks in a folder. The daemon owns the checks, so it
 // hands this to the gate and the merge, which call it on a copy of their
@@ -79,8 +87,11 @@ export interface VersionControl {
   // place. If moving fails, a checkout of main is left as it was, with your
   // own edits kept. Hooks run as usual, but nothing they add can land: the
   // result must be one commit on the old main, holding exactly main merged
-  // with `head`. A failure leaves main as it was, and the message says
-  // why. Asked again after it succeeded, it gives back the same commit and
+  // with `head`, plus the request's file with exactly its text, if it has
+  // one. That file replaces any version on main or on the branch, and is
+  // added even if the repository's ignore files cover it. The checks see
+  // it. The task's branch is never changed. A failure leaves main as it
+  // was, and the message says why. Asked again after it succeeded, it gives back the same commit and
   // merges nothing twice. A known limit: this proves the merge once reached
   // main, not that main still holds it. Merge a task, revert it, then merge
   // the same head again, and it reports success with the work not on main.
