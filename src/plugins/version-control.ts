@@ -15,11 +15,11 @@ import type { BranchFacts, CommitSha, TaskId, Worktree } from "../core/types";
 
 export type Done<T> = { ok: true; value: T } | { ok: false; message: string };
 
-// What to merge: exactly `head` from the task's worktree, even if the
-// branch has moved on since. The title names the commit on main.
 // The commit a task's agent reported done, to check.
 export type CheckRequest = { taskId: TaskId; head: CommitSha };
 
+// What to merge: exactly `head` from the task's worktree, even if the
+// branch has moved on since. The title names the commit on main.
 export type MergeRequest = {
   taskId: TaskId;
   title: string;
@@ -28,9 +28,9 @@ export type MergeRequest = {
 };
 
 // Runs the local checks in a folder. The daemon owns the checks, so it
-// hands this to the merge, which calls it on the merged result.
-// Runs the checks in a folder. `stop` ends them early, such as when the
-// daemon stops, and they then count as failed.
+// hands this to the gate and the merge, which call it on a copy of their
+// own. `stop` ends them early, such as when the daemon stops, and they then
+// count as failed.
 export type RunChecks = (dir: string, stop?: AbortSignal) => Promise<Done<null>>;
 
 // What to undo: a commit a merge put on main, for this task. The reason

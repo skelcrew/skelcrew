@@ -3,8 +3,11 @@
 
 import {
   appendFileSync,
+  chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -470,8 +473,8 @@ export class Git implements VersionControl {
     return { ok: true, value: null };
   }
 
-  // The merge. Main only moves at the very end, and only to the exact
-  // commit the checks tested.
+  // A detached copy of exactly the reported commit, for the gate's checks,
+  // marked as Skelcrew's own so a leftover one can be cleared.
   private async copyToCheck(request: CheckRequest): Promise<Done<{ temp: string; mark: string }>> {
     const common = await this.gitFolder();
     if (!common.ok) return common;
@@ -502,6 +505,8 @@ export class Git implements VersionControl {
     return { ok: true, value: { temp, mark } };
   }
 
+  // The merge. Main only moves at the very end, and only to the exact
+  // commit the checks tested.
   private async squashMerge(request: MergeRequest, runChecks: RunChecks): Promise<Done<CommitSha>> {
     const common = await this.gitFolder();
     if (!common.ok) return common;
@@ -818,12 +823,21 @@ export class Git implements VersionControl {
           message: `${temp} exists, but Skelcrew didn't put it there. It was left as it is.`,
         };
       }
+      // git can stop halfway, such as on a read-only folder the checks
+      // left: it forgets the worktree but leaves the folder. The mark says
+      // the folder is Skelcrew's own, so it is made writable and deleted.
       const removed = await run(this.repo, "worktree", "remove", "--force", temp);
-      if (!removed.ok) {
-        return {
-          ok: false,
-          message: `Skelcrew's own worktree ${temp} couldn't be removed: ${removed.err}`,
-        };
+      if (existsSync(temp)) {
+        try {
+          writableAll(temp);
+          rmSync(temp, { recursive: true, force: true });
+        } catch (error) {
+          const reason = removed.ok ? describeError(error) : removed.err;
+          return {
+            ok: false,
+            message: `Skelcrew's own worktree ${temp} couldn't be removed: ${reason}`,
+          };
+        }
       }
     }
     await run(this.repo, "worktree", "prune");
@@ -1192,4 +1206,17 @@ async function runRaw(dir: string, ...args: string[]): Promise<Run> {
   } catch (error) {
     return { ok: false, err: error instanceof Error ? error.message : String(error) };
   }
+}
+
+// Gives the owner write permission on a folder and every folder in it, so
+// it can be deleted. Links aren't followed.
+function writableAll(path: string): void {
+  const found = lstatSync(path);
+  if (!found.isDirectory()) return;
+  chmodSync(path, found.mode | 0o700);
+  for (const entry of readdirSync(path)) writableAll(join(path, entry));
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
