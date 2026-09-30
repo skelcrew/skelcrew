@@ -6,6 +6,7 @@
 // now, in mainBranch in src/daemon/server.ts, and can switch to this one.
 
 import { realpathSync } from "node:fs";
+import { basename, dirname } from "node:path";
 
 export type Top = { ok: true; top: string } | { ok: false; message: string };
 
@@ -34,4 +35,24 @@ export function repositoryTop(folder: string): Top {
 // repository instead of where the repository starts.
 export function insideRepository(folder: string, top: string): string {
   return `${folder} is inside the git repository at ${top}. Run Skelcrew there, where the repository starts.`;
+}
+
+// The real path of the repository's main folder, the one Skelcrew runs in,
+// even from inside one of its worktrees. A task's worktree holds its own
+// copy of .skelcrew/, so going by the nearest .skelcrew/ would find the
+// worktree instead. git's shared folder (`.git` of the main folder) says
+// where the main folder is.
+export function mainRepository(folder: string): Top {
+  const top = repositoryTop(folder);
+  if (!top.ok) return top;
+  const ran = Bun.spawnSync(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], {
+    cwd: folder,
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  if (ran.exitCode !== 0) return top;
+  const shared = ran.stdout.toString().trim();
+  // A repository with no main folder, only its .git, keeps the top.
+  if (basename(shared) !== ".git") return top;
+  return { ok: true, top: realpathSync(dirname(shared)) };
 }

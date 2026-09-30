@@ -5,7 +5,7 @@
 // answer from the daemon is checked against the shape this command expects.
 
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import * as z from "zod";
 import { SessionId, TaskId } from "../core/ids";
@@ -13,6 +13,7 @@ import { phaseNames, type WaitingOn } from "../core/task";
 import type { Phase } from "../core/types";
 import { request, type Started } from "../daemon/client";
 import { serveUntilSignalled } from "../daemon/server";
+import { mainRepository } from "../plugins/git/top";
 import type { Command } from "../protocol/protocol";
 import { taskEvent } from "../store/schema";
 import { commandHelp, mainHelp } from "./help";
@@ -433,16 +434,14 @@ async function ask<T>(
   return show(result.data);
 }
 
-// The nearest folder, from here upwards, that has a .skelcrew/ folder.
+// The repository's main folder, if Skelcrew is set up there. It comes
+// from git, so from inside a task's worktree, which holds its own copy of
+// .skelcrew/, it is still the main folder, and its daemon.
 function findRepo(from: string): string | null {
-  let dir = resolve(from);
-  for (;;) {
-    const folder = join(dir, ".skelcrew");
-    if (existsSync(folder) && statSync(folder).isDirectory()) return dir;
-    const parent = dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
+  const main = mainRepository(resolve(from));
+  if (!main.ok) return null;
+  const folder = join(main.top, ".skelcrew");
+  return existsSync(folder) && statSync(folder).isDirectory() ? main.top : null;
 }
 
 function noRepo(): Outcome {

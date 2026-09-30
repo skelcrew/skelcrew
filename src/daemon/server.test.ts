@@ -232,6 +232,23 @@ describe("the daemon's socket", () => {
     });
   });
 
+  // Found in the first real run: a command run inside a task's worktree
+  // started a second, empty daemon there. The worktree holds its own copy
+  // of .skelcrew/, but its tasks live in the main folder's daemon.
+  test("refuses to start in a worktree, and names the repository's main folder", async () => {
+    const repo = throwawayRepo(dirs);
+    const git = (...args: string[]) =>
+      Bun.spawnSync(["git", "-c", "user.name=T", "-c", "user.email=t@t", ...args], { cwd: repo });
+    git("add", ".skelcrew/workflow.yml");
+    git("commit", "-q", "-m", "Set up Skelcrew");
+    const worktree = join(repo, "other");
+    git("worktree", "add", "-q", worktree, "-b", "other");
+    expect(await serve(worktree)).toEqual({
+      ok: false,
+      message: `${realpathSync(worktree)} is a worktree of the repository at ${realpathSync(repo)}. Run Skelcrew there.`,
+    });
+  });
+
   test("refuses to start outside a git repository", async () => {
     const repo = throwawayRepo(dirs);
     rmSync(join(repo, ".git"), { recursive: true });
