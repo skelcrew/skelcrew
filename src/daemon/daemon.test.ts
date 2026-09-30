@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as z from "zod";
 import { localChecks } from "../checks/checks";
 import { SessionId, TaskId } from "../core/ids";
 import type { Config } from "../core/types";
 import { Git } from "../plugins/git/git";
+import type { VersionControl } from "../plugins/version-control";
 import { git, makeRepo } from "../plugins/version-control.contract";
 import type { Command } from "../protocol/protocol";
 import { EventStore } from "../store/store";
@@ -368,18 +369,26 @@ describe("the daemon with git", () => {
     for (const dir of repos.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  // A daemon for a real repository, with task 1 approved and Ready. Its
-  // local gate runs `checks`.
-  async function readyInRepo(checks: string[] = ["true"]) {
+  async function newRepo() {
     const repo = await makeRepo();
     repos.push(repo.dir);
+    return repo;
+  }
+
+  // A daemon for a real repository, with task 1 approved and Ready. Its
+  // local gate runs `checks`, or only `true`.
+  async function readyInRepo(
+    repo?: Awaited<ReturnType<typeof makeRepo>>,
+    options: { versionControl?: VersionControl; store?: EventStore; checks?: string[] } = {},
+  ) {
+    repo ??= await newRepo();
     let sessions = 0;
     const opened = Daemon.open({
       // Every path critical, as `skelcrew init` writes it.
       config: { ...config, criticalPaths: ["**"] },
-      log: EventStore.open(":memory:"),
-      versionControl: new Git(repo.dir, repo.main),
-      runChecks: localChecks(checks),
+      log: options.store ?? EventStore.open(":memory:"),
+      versionControl: options.versionControl ?? new Git(repo.dir, repo.main),
+      runChecks: localChecks(options.checks ?? ["true"]),
       newSession: () => {
         sessions += 1;
         return `you-${sessions}`;
@@ -404,6 +413,84 @@ describe("the daemon with git", () => {
     expect(await ok(daemon, { type: "status" })).toMatchObject({
       tasks: [{ task: 1, phase: "in_progress", step: "running", blocked: null }],
     });
+  });
+
+  // Found by review: at start-up, the daemon sent unfinished commands out
+  // before it could look up titles. A worktree cut off by a restart was
+  // made again on a branch named "task/1-1", beside the first.
+  test("makes a worktree cut off by a restart again, on the same branch", async () => {
+    const repo = await newRepo();
+    const store = EventStore.open(":memory:");
+    // Makes the worktree, then never answers, as if the daemon stopped.
+    const real = new Git(repo.dir, repo.main);
+    const cutOff: VersionControl = {
+      createWorktree: async (request) => {
+        await real.createWorktree(request);
+        return new Promise(() => {});
+      },
+      readBranch: (worktree) => real.readBranch(worktree),
+      merge: (request, runChecks) => real.merge(request, runChecks),
+      revert: (request) => real.revert(request),
+      removeWorktree: (worktree) => real.removeWorktree(worktree),
+    };
+    const first = await readyInRepo(repo, { versionControl: cutOff, store });
+    void first.daemon.handle({ type: "claim", task: task(1) });
+    await Bun.sleep(300);
+    await first.daemon.close();
+
+    const second = Daemon.open({ config, log: store, versionControl: real });
+    if (!second.ok) throw new Error(second.message);
+    await Bun.sleep(300);
+    expect(await git(repo.dir, "branch", "--list", "task/*", "--format=%(refname:short)")).toBe(
+      "task/1-csv-export",
+    );
+    expect(await ok(second.value, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, phase: "in_progress", step: "running", blocked: null }],
+    });
+  });
+
+  // Found by review: a claim waiting for its worktree only looked again
+  // after a tool's reply. Dropped meanwhile, it waited for git, then said
+  // "Claimed".
+  test("tells a waiting claim at once that its task was dropped", async () => {
+    const repo = await newRepo();
+    let release = () => {};
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const real = new Git(repo.dir, repo.main);
+    const held: VersionControl = {
+      createWorktree: async (request) => {
+        await released;
+        return real.createWorktree(request);
+      },
+      readBranch: (worktree) => real.readBranch(worktree),
+      merge: (request, runChecks) => real.merge(request, runChecks),
+      revert: (request) => real.revert(request),
+      removeWorktree: (worktree) => real.removeWorktree(worktree),
+    };
+    const { daemon } = await readyInRepo(repo, { versionControl: held });
+    const claim = daemon.handle({ type: "claim", task: task(1) });
+    await Bun.sleep(50);
+    await ok(daemon, { type: "drop", task: task(1) });
+    const answer = await Promise.race([claim, Bun.sleep(200).then(() => "still waiting")]);
+    release();
+    expect(answer).toEqual({
+      ok: false,
+      message: "#1 was dropped before its worktree was made.",
+    });
+  });
+
+  // Found by review: the daemon made worktrees but never removed them, so
+  // a dropped task's folder stayed.
+  test("removes a dropped task's worktree", async () => {
+    const { daemon, repo } = await readyInRepo();
+    await ok(daemon, { type: "claim", task: task(1) });
+    const path = join(repo.dir, ".skelcrew", "worktrees", "1-csv-export");
+    expect(existsSync(path)).toBe(true);
+    await ok(daemon, { type: "drop", task: task(1) });
+    await Bun.sleep(300);
+    expect(existsSync(path)).toBe(false);
   });
 
   // Claims task 1 and commits a file in its worktree, as an agent would.
@@ -442,7 +529,9 @@ describe("the daemon with git", () => {
   });
 
   test("done says why the checks failed, and the task goes back to its agent", async () => {
-    const { daemon } = await readyInRepo(["echo 'expected 1 got 2'; exit 1"]);
+    const { daemon } = await readyInRepo(undefined, {
+      checks: ["echo 'expected 1 got 2'; exit 1"],
+    });
     await claimedWithWork(daemon);
     const answer = z
       .object({ passed: z.literal(false), summary: z.string() })

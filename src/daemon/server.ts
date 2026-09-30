@@ -176,6 +176,12 @@ function privateFolder(path: string): { ok: true } | { ok: false; message: strin
 function mainBranch(repo: string, branch: string): { ok: true } | { ok: false; message: string } {
   const git = (...args: string[]) =>
     Bun.spawnSync(["git", ...args], { cwd: repo, stdout: "ignore", stderr: "ignore" }).exitCode;
+  // Starting a program that isn't installed throws.
+  try {
+    git("--version");
+  } catch {
+    return { ok: false, message: "Skelcrew needs git, and couldn't find it." };
+  }
   if (git("rev-parse", "--git-dir") !== 0) {
     return { ok: false, message: `${repo} isn't a git repository. Skelcrew needs one.` };
   }
