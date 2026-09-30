@@ -313,7 +313,7 @@ Notes:
   workflow.yml    phases, gates, check commands, critical paths, plugins
   record/         record entries and daily digests
   skelcrew.db     events, state, board, inbox and costs (SQLite, gitignored)
-.claude/skills/   default skills (spec, develop, review)
+.agents/skills/   default skills (spec, develop, review), linked into .claude/skills/ for Claude Code
 ```
 
 Rules and record are committed and reviewed like code. The SQLite database holds runtime state and stays out of git; tasks that should be visible in git belong in a work source like GitHub Issues.
