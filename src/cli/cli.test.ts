@@ -21,16 +21,32 @@ afterEach(async () => {
 // are numbered, so tests can name them.
 async function repoWithDaemon(): Promise<string> {
   const repo = throwawayRepo(dirs);
+  await served(repo);
+  return repo;
+}
+
+// Starts a daemon for the repository, naming sessions you-1, you-2 and on.
+async function served(repo: string): Promise<void> {
   let sessions = 0;
-  const served = await serve(repo, {
+  const started = await serve(repo, {
     newSession: () => {
       sessions += 1;
       return `you-${sessions}`;
     },
   });
-  if (!served.ok) throw new Error(served.message);
-  servers.push(served.server);
-  return repo;
+  if (!started.ok) throw new Error(started.message);
+  servers.push(started.server);
+}
+
+// Commits a file in a worktree, as an agent would.
+function commitIn(worktree: string): void {
+  writeFileSync(join(worktree, "export.csv"), "a,b\n");
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", "-c", "user.name=Agent", "-c", "user.email=a@a", ...args], {
+      cwd: worktree,
+    });
+  git("add", "export.csv");
+  git("commit", "-q", "-m", "Export");
 }
 
 // Runs the CLI as a function, the way a person would from the repository.
@@ -456,14 +472,23 @@ describe("skelcrew done", () => {
     await specced(repo);
     await cli(repo, ["approve", "1"]);
     await cli(repo, ["claim", "1"]);
-    const worktree = join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export");
-    writeFileSync(join(worktree, "export.csv"), "a,b\n");
-    const git = (...args: string[]) =>
-      Bun.spawnSync(["git", "-c", "user.name=Agent", "-c", "user.email=a@a", ...args], {
-        cwd: worktree,
-      });
-    git("add", "export.csv");
-    git("commit", "-q", "-m", "Export");
+    commitIn(join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export"));
+    expect(await cli(repo, ["done", "1"], { session: "you-2" })).toEqual(
+      said(["The checks passed for #1."]),
+    );
+  });
+
+  test("runs the setup from workflow.yml before the checks", async () => {
+    const repo = throwawayRepo(dirs);
+    writeFileSync(
+      join(repo, ".skelcrew", "workflow.yml"),
+      'setup:\n  - "echo ready > setup.txt"\nchecks:\n  - "grep -q ready setup.txt"\n',
+    );
+    await served(repo);
+    await specced(repo);
+    await cli(repo, ["approve", "1"]);
+    await cli(repo, ["claim", "1"]);
+    commitIn(join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export"));
     expect(await cli(repo, ["done", "1"], { session: "you-2" })).toEqual(
       said(["The checks passed for #1."]),
     );

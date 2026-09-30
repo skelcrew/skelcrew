@@ -8,7 +8,7 @@
 import { chmodSync, existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import * as z from "zod";
-import { localChecks } from "../checks/checks";
+import { preparedChecks } from "../checks/checks";
 import { parseWorkflow } from "../config/workflow";
 import { Git } from "../plugins/git/git";
 import { encode, MAX_LINE, parseRequest, type Reply } from "../protocol/protocol";
@@ -90,7 +90,7 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
     config: workflow.config,
     log: store,
     versionControl: new Git(paths.repo, workflow.mainBranch),
-    runChecks: localChecks(workflow.checks),
+    runChecks: preparedChecks(workflow.setup, workflow.checks),
   };
   if (options.newSession !== undefined) daemonOptions.newSession = options.newSession;
   const opened = Daemon.open(daemonOptions);
@@ -198,7 +198,13 @@ function readWorkflow(
   repo: string,
   path: string,
 ):
-  | { ok: true; config: DaemonOptions["config"]; mainBranch: string; checks: string[] }
+  | {
+      ok: true;
+      config: DaemonOptions["config"];
+      mainBranch: string;
+      checks: string[];
+      setup: string[];
+    }
   | { ok: false; message: string } {
   if (!existsSync(path)) {
     return {
@@ -217,8 +223,8 @@ function readWorkflow(
     const reasons = parsed.reasons.map((reason) => `- ${reason}`);
     return { ok: false, message: [".skelcrew/workflow.yml doesn't fit:", ...reasons].join("\n") };
   }
-  const { config, mainBranch, checks } = parsed.workflow;
-  return { ok: true, config, mainBranch, checks };
+  const { config, mainBranch, checks, setup } = parsed.workflow;
+  return { ok: true, config, mainBranch, checks, setup };
 }
 
 // A request being answered, so stopping can wait for it or refuse it.

@@ -219,7 +219,7 @@ in Ready waits for the task's worktree, outside the queue, and answers with wher
 `done` reads the task's branch, reports it to the core, and waits outside the queue while
 the gate runs. It answers whether the checks passed, and why not. The gate runs the checks in a fresh
 copy of the reported commit, never in the agent's worktree, so edits made meanwhile and
-files the checks write change nothing. `serve` refuses to start without git, outside a git repository, or
+files the checks write change nothing. The `setup` commands run in that copy first, such as an install. `serve` refuses to start without git, outside a git repository, or
 when the main branch from `workflow.yml` doesn't exist.
 
 ## The daemon's socket and the client
@@ -315,7 +315,7 @@ decides on. Every call may also arrive twice after a crash, and must then change
 | --- | --- |
 | `version-control.ts` | `VersionControl`: create and remove a task's worktree, read its branch when the agent reports done, merge it, and revert its commit on main. |
 | `version-control.contract.ts` | The tests every version-control plugin must pass, against a throwaway git repository. |
-| `git/git.ts` | The built-in plugin. Each build gets a worktree in `.skelcrew/worktrees/` on its own branch from main, such as `task/12-csv-export-2`. Removing one commits its uncommitted work first, and refuses if the worktree isn't on its task's branch or still has unsaved work after that. A merge is built in `.skelcrew/merging/`, checked there, and only then moves main. A revert is built the same way in `.skelcrew/reverting/`, as one new commit that undoes the task's commit. The gate's checks run in a fresh copy of the reported commit in `.skelcrew/checking/`, removed afterwards. It moves main under the same rules as a merge, but runs no checks. |
+| `git/git.ts` | The built-in plugin. Each build gets a worktree in `.skelcrew/worktrees/` on its own branch from main, such as `task/12-csv-export-2`. Removing one commits its uncommitted work first, and refuses if the worktree isn't on its task's branch or still has unsaved work after that. A merge is built in `.skelcrew/merging/`, checked there, and only then moves main. A revert is built the same way in `.skelcrew/reverting/`, as one new commit that undoes the task's commit. It moves main under the same rules as a merge, but runs no checks. The gate's checks run in a fresh copy of the reported commit in `.skelcrew/checking/`, removed afterwards. |
 
 ## Around the core (planned)
 

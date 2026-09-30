@@ -223,3 +223,21 @@ class Tail {
 function wholeEnd(text: string, count: number): string {
   return [...text].slice(-count).join("");
 }
+
+// The setup commands, such as installing dependencies, then the checks, in
+// the same folder. A failed setup stops there, and says it was the setup.
+export function preparedChecks(
+  setup: string[],
+  checks: string[],
+  options: ChecksOptions = {},
+): RunChecks {
+  const prepare = localChecks(setup, options);
+  const check = localChecks(checks, options);
+  return async (dir) => {
+    const prepared = await prepare(dir);
+    if (!prepared.ok) {
+      return { ok: false, message: `The setup failed, so no checks ran. ${prepared.message}` };
+    }
+    return check(dir);
+  };
+}
