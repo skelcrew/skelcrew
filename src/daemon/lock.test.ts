@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { takeLock } from "./lock";
 import { type Server, serve } from "./server";
-import { cleanUp, daemonInAnotherProcess, openLine, throwawayRepo } from "./testing";
+import { asRoot, cleanUp, daemonInAnotherProcess, openLine, throwawayRepo } from "./testing";
 
 const dirs: string[] = [];
 const servers: Server[] = [];
@@ -197,15 +197,19 @@ describe("one daemon per repository", () => {
 
   // Found by review: SQLite opened a read-only lock file read-only, and its
   // exclusive hold then locked nothing, so every daemon thought it held it.
-  test("lets exactly one daemon hold the lock on a repository it can't write to", async () => {
-    const repo = throwawayRepo(dirs);
-    chmodSync(repo, 0o555);
-    try {
-      expect(await raceFor(repo, 3)).toBe(1);
-    } finally {
-      chmodSync(repo, 0o755);
-    }
-  }, 30_000);
+  test.skipIf(asRoot)(
+    "lets exactly one daemon hold the lock on a repository it can't write to",
+    async () => {
+      const repo = throwawayRepo(dirs);
+      chmodSync(repo, 0o555);
+      try {
+        expect(await raceFor(repo, 3)).toBe(1);
+      } finally {
+        chmodSync(repo, 0o755);
+      }
+    },
+    30_000,
+  );
 
   // A daemon starts git and the checks. They mustn't keep its lock after it
   // has died.
@@ -216,13 +220,17 @@ describe("one daemon per repository", () => {
       script,
       `import { takeLock } from ${JSON.stringify(join(import.meta.dir, "lock.ts"))};\n` +
         "const taken = takeLock(process.argv[2] ?? '');\n" +
-        "Bun.spawn(['sleep', '10']);\n" +
-        "console.log(taken.ok ? 'GOT' : 'NO');\n" +
+        "const child = Bun.spawn(['sleep', '10']);\n" +
+        "console.log((taken.ok ? 'GOT ' : 'NO ') + child.pid);\n" +
         "await Bun.sleep(10_000);\n",
     );
     const holder = Bun.spawn([process.execPath, script, repo], { stdout: "pipe" });
     const reader = holder.stdout.getReader();
-    expect(new TextDecoder().decode((await reader.read()).value)).toBe("GOT\n");
+    const [got, pid] = new TextDecoder()
+      .decode((await reader.read()).value)
+      .trim()
+      .split(" ");
+    expect(got).toBe("GOT");
     holder.kill("SIGKILL");
     await holder.exited;
     try {
@@ -230,7 +238,8 @@ describe("one daemon per repository", () => {
       expect(taken.ok).toBe(true);
       if (taken.ok) taken.lock.release();
     } finally {
-      Bun.spawnSync(["pkill", "-f", "sleep 10"]);
+      // Only the process it started, never someone else's.
+      if (pid !== undefined) process.kill(Number(pid), "SIGKILL");
     }
   }, 30_000);
 
@@ -270,21 +279,24 @@ describe("one daemon per repository", () => {
 
   // Found by review: with .skelcrew read-only, removing daemon.pid threw
   // before the lock was let go, so the lock stayed held and stop threw.
-  test("lets go of the lock when it stops, even if it can't remove its pid file", async () => {
-    const repo = throwawayRepo(dirs);
-    const served = await serve(repo);
-    if (!served.ok) throw new Error(served.message);
-    const folder = join(repo, ".skelcrew");
-    chmodSync(folder, 0o555);
-    try {
-      await served.server.stop();
-      const next = takeLock(repo);
-      expect(next.ok).toBe(true);
-      if (next.ok) next.lock.release();
-    } finally {
-      chmodSync(folder, 0o755);
-    }
-  });
+  test.skipIf(asRoot)(
+    "lets go of the lock when it stops, even if it can't remove its pid file",
+    async () => {
+      const repo = throwawayRepo(dirs);
+      const served = await serve(repo);
+      if (!served.ok) throw new Error(served.message);
+      const folder = join(repo, ".skelcrew");
+      chmodSync(folder, 0o555);
+      try {
+        await served.server.stop();
+        const next = takeLock(repo);
+        expect(next.ok).toBe(true);
+        if (next.ok) next.lock.release();
+      } finally {
+        chmodSync(folder, 0o755);
+      }
+    },
+  );
 
   // Otherwise a daemon that failed to start would keep every later one out.
   test("lets go of the lock when it fails to start", async () => {

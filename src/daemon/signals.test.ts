@@ -8,7 +8,7 @@ import { Loop } from "../loop/loop";
 import { EventStore } from "../store/store";
 import { takeLock } from "./lock";
 import { daemonPaths } from "./paths";
-import { cleanUp, openLine, throwawayRepo } from "./testing";
+import { asRoot, cleanUp, openLine, throwawayRepo } from "./testing";
 
 const dirs: string[] = [];
 afterEach(() => cleanUp(dirs));
@@ -92,7 +92,7 @@ function replyThatCantBeSaved(repo: string): void {
 
 // Found by review: without stopping the daemon's retries, a daemon
 // retrying a reply ignored SIGTERM and never exited.
-describe("a daemon still trying to save a reply", () => {
+describe.skipIf(asRoot)("a daemon still trying to save a reply", () => {
   test("exits when stopped with a signal", async () => {
     const repo = throwawayRepo(dirs);
     replyThatCantBeSaved(repo);
