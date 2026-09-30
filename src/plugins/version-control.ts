@@ -19,13 +19,21 @@ export type Done<T> = { ok: true; value: T } | { ok: false; message: string };
 export type CheckRequest = { taskId: TaskId; head: CommitSha };
 
 // What to merge: exactly `head` from the task's worktree, even if the
-// branch has moved on since. The title names the commit on main.
+// branch has moved on since. The title names the commit on main. `file`,
+// if given, is one more file the merge writes into its commit, such as the
+// task's approved spec at docs/specs/12-csv-export.md. The task's branch
+// never holds it.
 export type MergeRequest = {
   taskId: TaskId;
   title: string;
   worktree: Worktree;
   head: CommitSha;
+  file?: FileToAdd;
 };
+
+// A file for the merge to add: where it goes in the repository, and its
+// text, exactly.
+export type FileToAdd = { path: string; text: string };
 
 // Runs the local checks in a folder. The daemon owns the checks, so it
 // hands this to the gate and the merge, which call it on a copy of their
@@ -40,6 +48,32 @@ export type RevertRequest = { taskId: TaskId; commit: CommitSha; reason: string 
 // Which worktree to create. The core's create_worktree command has no
 // title, so the daemon adds the task's title for the branch name.
 export type WorktreeRequest = { taskId: TaskId; title: string; build: number };
+
+// How many characters of the title a short name keeps, at most.
+const maxTitleLength = 40;
+
+// The name a task goes by in the repository, such as "12-csv-export". Its
+// branch is "task/12-csv-export", and its spec file
+// "docs/specs/12-csv-export.md". The title keeps only lowercase letters and
+// digits, joined by dashes. A title longer than 40 characters is cut after
+// the last whole word that fits, so "take-a-discount-off-the-total-a-whole-
+// percentage" becomes "take-a-discount-off-the-total-a-whole". Only a first
+// word longer than 40 characters is cut inside the word. A title with no
+// letters or digits leaves only the number, such as "12".
+export function shortName(taskId: TaskId, title: string): string {
+  const all = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  let words = "";
+  for (const word of all.split("-")) {
+    const longer = words === "" ? word : `${words}-${word}`;
+    if (longer.length > maxTitleLength) break;
+    words = longer;
+  }
+  if (words === "") words = all.slice(0, maxTitleLength);
+  return words === "" ? String(taskId) : `${taskId}-${words}`;
+}
 
 export interface VersionControl {
   // A new worktree for this build of the task, on a new branch from main,
@@ -79,13 +113,28 @@ export interface VersionControl {
   // place. If moving fails, a checkout of main is left as it was, with your
   // own edits kept. Hooks run as usual, but nothing they add can land: the
   // result must be one commit on the old main, holding exactly main merged
-  // with `head`. A failure leaves main as it was, and the message says
-  // why. Asked again after it succeeded, it gives back the same commit and
-  // merges nothing twice. A known limit: this proves the merge once reached
-  // main, not that main still holds it. Merge a task, revert it, then merge
-  // the same head again, and it reports success with the work not on main.
-  // The normal flow can't do this, since a rebuilt task gets a new branch
-  // and head.
+  // with `head`, plus the request's file with exactly its text, if it has
+  // one. That file replaces any version on main or on the branch, and is
+  // added even if the repository's ignore files cover it. The checks see
+  // it. The merge is refused if it already holds a path that differs from
+  // the file's only in letter case, such as docs/specs/12-CSV-export.md,
+  // and the message names that path. The task's branch is never changed.
+  // A failure leaves main as it was, and the message says why. Asked again
+  // after it succeeded, it gives back the same commit and merges nothing
+  // twice.
+  //
+  // Known limits:
+  // - This proves the merge once reached main, not that main still holds
+  //   it. Merge a task, revert it, then merge the same head again, and it
+  //   reports success with the work not on main.
+  // - A finished merge is remembered by task and head only, not by the
+  //   file. Asked again for the same task and head with a revised spec, it
+  //   gives back the earlier commit and lands nothing new.
+  //   The normal flow can't hit either limit, since a rebuilt task gets a
+  //   new branch and head.
+  // - Attributes set on the branch, such as a .gitattributes with eol or
+  //   ident for docs/specs/*, can change the copy of the file the checks
+  //   read. What lands on main is always the file's exact text.
   merge(request: MergeRequest, runChecks: RunChecks): Promise<Done<CommitSha>>;
 
   // Undoes one commit on main by adding a new commit that reverses it, and

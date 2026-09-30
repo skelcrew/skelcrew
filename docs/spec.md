@@ -18,7 +18,7 @@ Skelcrew does not replace harnesses, terminals or issue trackers. It works along
 - **Prompts propose, the core decides.** Agents can suggest a transition. Only the core, following deterministic rules, performs it.
 - **Focus on what matters.** Building is cheap now, so the risk is building the wrong things. The workflow should make distraction harder, not easier.
 - **Rules are core, everything else is a plugin.** Anything that decides whether work may move lives in the core. Anything that connects to another tool is a plugin, even when it ships built in.
-- **Plain files for what people read.** Rules, skills and the record are Markdown and YAML in the repository, readable by humans and agents, versioned in git. Runtime state lives in SQLite.
+- **Plain files for what people read.** Rules, skills, specs and the record are Markdown and YAML in the repository, readable by humans and agents, versioned in git. Runtime state lives in SQLite.
 - **Personal where it should be.** Skills are the developer's craft and are swappable. Skelcrew ships good defaults but never requires them.
 - **Works with zero setup.** The full loop runs on one machine with git, Claude Code and a terminal.
 - **Fixed rules, open ways of working.** Features, rewrites and bug fixes each want a different process, and the developer picks one per task. The rules stay the same whoever does the work: a spec is approved before it is built, checks pass before a merge, and only the developer makes the developer's decisions.
@@ -152,9 +152,9 @@ A task moves through six phases: Idea, Spec, Ready, In progress, Checks, Done. A
 4. **Dispatch.** The core asks the version control plugin for a worktree on a branch named after the task, such as `task/12-csv-export`. Then either the session plugin starts the harness in it with the develop skill, or the developer starts the develop skill in their own harness. Each build of a task starts fresh from main on its own branch. If the task is sent back to spec and built again, the new branch is `task/12-csv-export-2`, and the old one is kept for reference. Before any worktree is removed, its uncommitted changes are committed to its branch, so no work is lost. Event: `task.dispatched`.
 5. **Develop.** The agent works and reports through the CLI. If it needs information, it raises one clear question and the task stays In progress. If it cannot continue at all, it reports giving up; only the core moves a task to Blocked. Event when blocked: `task.blocked`.
 6. **Checks and review.** The core runs the gates: local check commands, remote check results from plugins, then a review by a fresh agent session. Failures return to the developing agent; repeated failures block the task with a reason. Event: `task.checks_passed`.
-7. **Merge.** The merge policy either merges automatically or escalates to the inbox. Tasks merge one at a time. Just before merging, the branch is brought up to date with main and the local checks run again. If that fails, or the branch conflicts with main, the task returns to In progress with the failure, and it counts as a failed attempt. After the merge, the worktree is removed. Events: `task.merged` or `task.merge_approval_requested`.
+7. **Merge.** The merge policy either merges automatically or escalates to the inbox. Tasks merge one at a time. Just before merging, the branch is brought up to date with main and the local checks run again. If that fails, or the branch conflicts with main, the task returns to In progress with the failure, and it counts as a failed attempt. The approved spec goes into the same commit, as a file Skelcrew writes (see Specs as files, below). After the merge, the worktree is removed. Events: `task.merged` or `task.merge_approval_requested`.
 8. **Record.** The task's events are summarised into a Markdown entry.
-9. **Afterwards.** If a merged task turns out to be wrong, the developer reverts it with `skelcrew revert`. The core asks the version control plugin to revert the commit. Once it has, the task returns to Spec with the reason attached, and the record says why. If the revert fails, for example on a conflict, the task stays Done and the inbox says why, so the developer can revert it by hand. The revised spec needs approval again. Event: `task.reverted`.
+9. **Afterwards.** If a merged task turns out to be wrong, the developer reverts it with `skelcrew revert`. The core asks the version control plugin to revert the commit. Once it has, the task returns to Spec with the reason attached, and the record says why. The revert undoes the whole commit, spec file included. The next build's merge writes the revised spec. If the revert fails, for example on a conflict, the task stays Done and the inbox says why, so the developer can revert it by hand. The revised spec needs approval again. Event: `task.reverted`.
 
 **Who does the work.** Every phase with an agent in it can run two ways:
 
@@ -204,7 +204,7 @@ Tasks merge automatically unless they touch critical paths; a task that turns ou
 
 **Merge policy.** `skelcrew check` compares the files a task changed against the critical paths in `workflow.yml` (for example auth, payments, migrations). No match: merge. Match: escalate to the inbox as a short summary with approve or send back, never a raw diff. The same command runs standalone in any CI.
 
-**Merge shape.** Each task lands as one squashed commit on main, so undoing a task is a single revert.
+**Merge shape.** Each task lands as one squashed commit on main, holding its work and its approved spec, so undoing a task is a single revert.
 
 **Revert.** In v1, reverts are manual. `skelcrew revert <task> "<reason>"` asks the version control plugin to revert the task's commit. Only once it has does the task return to Spec with the reason attached. A failed revert leaves the task Done, with the reason in the inbox. The revised spec needs approval again. Production rollback stays with the deploy tool, which picks up the revert.
 
@@ -316,9 +316,10 @@ Notes:
   record/         record entries and daily digests
   skelcrew.db     events, state, board, inbox and costs (SQLite, gitignored)
 .agents/skills/   default skills (spec, develop, review), linked into .claude/skills/ for Claude Code
+docs/specs/       each merged task's approved spec, such as 12-csv-export.md, written by Skelcrew at merge
 ```
 
-Rules and record are committed and reviewed like code. The SQLite database holds runtime state and stays out of git; tasks that should be visible in git belong in a work source like GitHub Issues.
+Rules, specs and record are committed and reviewed like code. The SQLite database holds runtime state and stays out of git; tasks that should be visible in git belong in a work source like GitHub Issues.
 
 Example `workflow.yml`:
 
@@ -342,6 +343,31 @@ plugins:
   sessions: herdr
   work_source: github
 ```
+
+**Specs as files.** Each task's approved spec lands on main with its work, in the one squashed commit, as `docs/specs/<number>-<short name>.md`. The short name is the branch's: `task/12-csv-export` pairs with `docs/specs/12-csv-export.md`. Skelcrew writes the file at merge time, from the spec the developer approved. The agent never writes it, and the task's branch never holds it. So an agent can't change the spec that lands, and the branch holds only the agent's work. The spec then stays next to the code it asked for, readable without Skelcrew. The file holds the task's number and title, the scope and the acceptance criteria:
+
+```markdown
+# #12 CSV export
+
+The spec task #12 was built from.
+
+## Scope
+
+Add a CSV export button to the reports page.
+
+## Acceptance criteria
+
+- Clicking Export downloads a CSV of the visible rows.
+```
+
+- The developer reads the spec before approving the merge. A build claim prints it whole, and `skelcrew log` shows its scope. Once merges wait in a draft pull request, it will show there too.
+- The merge's checks run with the file in place. Nothing a hook does can change it: main gets exactly the work plus the approved text, or nothing.
+- A repository whose `.gitignore` covers `docs/` still gets the file.
+- The file isn't among the files a task changed, since its branch never holds it. So a critical path like `docs/**` doesn't make every task critical.
+- A file already at that path, left by an earlier build or edited by hand, is replaced. If it already holds the same text, it is left as it is.
+- A spec made Ready without the developer's approval, with `spec_approval: never`, is written the same way. The file is what was built.
+- The spec in Skelcrew is the source of truth. Editing the file changes nothing Skelcrew does.
+- The folder is always `docs/specs/`. It can become a `workflow.yml` setting once someone needs another place.
 
 `setup` prepares a fresh copy of a task's code before the checks run there, such as installing its dependencies. The checks never run in the agent's own worktree: each gate and each merge checks a fresh copy of the exact commit, so nothing the agent does meanwhile can change what is checked. A failed setup fails the gate, like a failed check.
 

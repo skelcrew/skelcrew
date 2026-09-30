@@ -766,6 +766,64 @@ describe("the daemon with git", () => {
     });
   });
 
+  // Decided with the developer: the approved spec lands with the work, in
+  // the one commit on main. Skelcrew writes it at merge time, so the
+  // agent's branch never holds it and the agent can't change it.
+  const specPath = "docs/specs/1-csv-export.md";
+  const specText = [
+    "# #1 CSV export",
+    "",
+    "The spec task #1 was built from.",
+    "",
+    "## Scope",
+    "",
+    "Add a CSV export button to the reports page.",
+    "",
+    "## Acceptance criteria",
+    "",
+    "- Clicking Export downloads a CSV of the visible rows.",
+    "",
+  ].join("\n");
+
+  test("approving a merge lands the task's spec with its work, and not on its branch", async () => {
+    const { daemon, repo } = await readyInRepo();
+    await claimedWithWork(daemon);
+    await ok(daemon, done());
+    const answer = z
+      .object({ merged: z.literal(true), commit: z.string() })
+      .parse(await ok(daemon, { type: "approve", task: task(1), sendBack: null }));
+    expect(await git(repo.dir, "rev-parse", "main")).toBe(answer.commit);
+    expect(await git(repo.dir, "show", `main:${specPath}`)).toBe(specText.trim());
+    expect(await git(repo.dir, "show", "main:export.csv")).toBe("a,b");
+    expect(await git(repo.dir, "ls-tree", "-r", "--name-only", "task/1-csv-export")).not.toContain(
+      specPath,
+    );
+  });
+
+  test("approving a merge replaces an older spec on main at the same path", async () => {
+    const { daemon, repo } = await readyInRepo();
+    mkdirSync(join(repo.dir, "docs", "specs"), { recursive: true });
+    writeFileSync(join(repo.dir, specPath), "# #1 An earlier build's spec\n");
+    await git(repo.dir, "add", specPath);
+    await git(repo.dir, "commit", "-q", "-m", "An earlier build");
+    await claimedWithWork(daemon);
+    await ok(daemon, done());
+    await ok(daemon, { type: "approve", task: task(1), sendBack: null });
+    expect(await git(repo.dir, "show", `main:${specPath}`)).toBe(specText.trim());
+  });
+
+  test("approving a merge leaves the same spec already on main as it is", async () => {
+    const { daemon, repo } = await readyInRepo();
+    mkdirSync(join(repo.dir, "docs", "specs"), { recursive: true });
+    writeFileSync(join(repo.dir, specPath), specText);
+    await git(repo.dir, "add", specPath);
+    await git(repo.dir, "commit", "-q", "-m", "The same spec");
+    await claimedWithWork(daemon);
+    await ok(daemon, done());
+    await ok(daemon, { type: "approve", task: task(1), sendBack: null });
+    expect(await git(repo.dir, "diff", "--name-only", "main^", "main")).toBe("export.csv");
+  });
+
   test("approving a merge that fails says why, and the task goes back to its agent", async () => {
     const { daemon, repo } = await readyInRepo();
     await claimedWithWork(daemon);

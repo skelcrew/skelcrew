@@ -1,6 +1,7 @@
 // The built-in version-control plugin, on git worktrees. Each task's build
 // gets its own worktree and branch, so agents never share a checkout.
 
+import { randomUUID } from "node:crypto";
 import {
   appendFileSync,
   chmodSync,
@@ -20,12 +21,14 @@ import type { BranchFacts, Worktree } from "../../core/types";
 import type {
   CheckRequest,
   Done,
+  FileToAdd,
   MergeRequest,
   RevertRequest,
   RunChecks,
   VersionControl,
   WorktreeRequest,
 } from "../version-control";
+import { shortName } from "../version-control";
 
 // Worktrees sit inside the repository, where you can find them. The folder
 // is listed in the repository's local ignore file, so they never show up
@@ -591,6 +594,14 @@ export class Git implements VersionControl {
       const files = await conflicted(temp, squashed.err);
       return { ok: false, message: `#${request.taskId} conflicts with ${this.main} in ${files}.` };
     }
+    // The merge's own file, such as the task's approved spec, goes in with
+    // the work. It replaces any version on main or on the branch.
+    if (request.file !== undefined) {
+      const clash = await caseClash(temp, request.head, this.main, request.file);
+      if (!clash.ok) return clash;
+      const written = await writeFile(temp, request.file);
+      if (!written.ok) return written;
+    }
     const committed = await run(
       temp,
       "commit",
@@ -608,8 +619,15 @@ export class Git implements VersionControl {
     // Hooks run while the merge is made, and one could stage a file or add
     // a commit no one approved. So the result is checked against what it
     // must be, worked out separately: exactly one commit on the old main,
-    // holding exactly main merged with the task's commit.
-    const exact = await this.isExact(candidate.out, before, [before, request.head], merging);
+    // holding exactly main merged with the task's commit, plus the merge's
+    // own file with exactly its text.
+    const exact = await this.isExact(
+      candidate.out,
+      before,
+      [before, request.head],
+      merging,
+      request.file,
+    );
     if (!exact.ok) return exact;
     const hiddenBefore = await hiddenFiles(temp);
     if (!hiddenBefore.ok || hiddenBefore.value > 0) {
@@ -891,13 +909,15 @@ export class Git implements VersionControl {
 
   // Whether the commit is exactly what it must be: its one parent is the
   // old main, and its contents are what `git merge-tree` makes of
-  // `mergeArgs`. The merge-tree is worked out separately, so no hook can
-  // touch it.
+  // `mergeArgs`, with `file`, if given, set to exactly its text. The
+  // expected contents are worked out separately, in a staging area of
+  // their own, so no hook can touch them.
   private async isExact(
     commit: string,
     before: string,
     mergeArgs: string[],
     wording: Wording,
+    file?: FileToAdd,
   ): Promise<Done<null>> {
     const parents = await run(this.repo, "rev-list", "--parents", "--max-count=1", commit);
     if (!parents.ok || parents.out !== `${commit} ${before}`) {
@@ -917,7 +937,9 @@ export class Git implements VersionControl {
       ...mergeArgs,
     );
     const tree = await run(this.repo, "rev-parse", `${commit}^{tree}`);
-    const wanted = expected.ok ? expected.out.split("\n")[0] : undefined;
+    const merged = expected.ok ? expected.out.split("\n")[0] : undefined;
+    const wanted =
+      merged === undefined || file === undefined ? merged : await this.withFile(merged, file);
     if (!tree.ok || wanted === undefined || tree.out !== wanted) {
       return {
         ok: false,
@@ -925,6 +947,37 @@ export class Git implements VersionControl {
       };
     }
     return { ok: true, value: null };
+  }
+
+  // The tree `tree` with `file` set to exactly its text, or undefined if
+  // git couldn't make it. It is built in a staging area of its own, which
+  // no hook sees, and removed afterwards with its lock. The name is new
+  // each time, so a lock a crash left, or a merge running at the same
+  // time, can't get in the way.
+  private async withFile(tree: string, file: FileToAdd): Promise<string | undefined> {
+    const common = await this.gitFolder();
+    if (!common.ok) return undefined;
+    const index = join(common.value, `skelcrew-expected-${randomUUID()}`);
+    try {
+      const blob = await runIn(this.repo, { input: file.text }, "hash-object", "-w", "--stdin");
+      if (!blob.ok) return undefined;
+      const read = await runIn(this.repo, { index }, "read-tree", tree);
+      if (!read.ok) return undefined;
+      const added = await runIn(
+        this.repo,
+        { index },
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        `100644,${blob.out},${file.path}`,
+      );
+      if (!added.ok) return undefined;
+      const written = await runIn(this.repo, { index }, "write-tree");
+      return written.ok ? written.out : undefined;
+    } finally {
+      rmSync(index, { force: true });
+      rmSync(`${index}.lock`, { force: true });
+    }
   }
 
   // Moves main from `before` to `after`, or fails and leaves main, and
@@ -1018,28 +1071,11 @@ export class Git implements VersionControl {
   }
 }
 
-// How many characters of the title a branch name keeps, at most.
-const maxTitleLength = 40;
-
-// "task/12-csv-export" for build 1, "task/12-csv-export-2" for build 2. The
-// title keeps only lowercase letters and digits, joined by dashes. A title
-// longer than 40 characters is cut after the last whole word that fits, so
-// "take-a-discount-off-the-total-a-whole-percentage" becomes
-// "take-a-discount-off-the-total-a-whole". Only a first word longer than
-// 40 characters is cut inside the word.
+// "task/12-csv-export" for build 1, "task/12-csv-export-2" for build 2.
+// The task's short name comes after "task/", so the branch pairs with the
+// spec file, docs/specs/12-csv-export.md.
 export function branchName(request: WorktreeRequest): string {
-  const all = request.title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  let words = "";
-  for (const word of all.split("-")) {
-    const longer = words === "" ? word : `${words}-${word}`;
-    if (longer.length > maxTitleLength) break;
-    words = longer;
-  }
-  if (words === "") words = all.slice(0, maxTitleLength);
-  const name = words === "" ? `task/${request.taskId}` : `task/${request.taskId}-${words}`;
+  const name = `task/${shortName(request.taskId, request.title)}`;
   return request.build > 1 ? `${name}-${request.build}` : name;
 }
 
@@ -1081,6 +1117,64 @@ async function hiddenFiles(dir: string): Promise<Done<number>> {
   const files = await run(dir, "ls-files", "-v");
   if (!files.ok) return { ok: false, message: `git couldn't list ${dir}: ${files.err}` };
   return { ok: true, value: files.out.split("\n").filter((line) => /^[a-zS]/.test(line)).length };
+}
+
+// Refuses when the merge already holds a path that equals `file`'s path
+// if letter case is ignored, but isn't the same. For example,
+// docs/specs/12-CSV-export.md beside docs/specs/12-csv-export.md. On a disk
+// that ignores case, such as macOS's, the two are one file, so writing the
+// spec would change the other. The message names the other path.
+async function caseClash(
+  dir: string,
+  head: string,
+  main: string,
+  file: FileToAdd,
+): Promise<Done<null>> {
+  const listed = await runRaw(dir, "ls-files", "-z");
+  if (!listed.ok) return { ok: false, message: `git couldn't list the merge: ${listed.err}` };
+  const wanted = file.path.toLowerCase();
+  const other = listed.out
+    .split("\0")
+    .find((path) => path !== file.path && path.toLowerCase() === wanted);
+  if (other === undefined) return { ok: true, value: null };
+  const onBranch = await run(dir, "cat-file", "-e", `${head}:${other}`);
+  const where = onBranch.ok ? "The task's branch" : main;
+  return {
+    ok: false,
+    message: `${where} has ${other}, which differs from ${file.path} only in letter case. Rename or remove it.`,
+  };
+}
+
+// Puts `file` into the merge's staging area with exactly its text, then
+// writes it out, so the checks see it. git adds it whatever the ignore
+// files say, so a repository that ignores docs/ still gets its spec. git
+// also refuses to write it through a link, such as a docs folder a task
+// made into a link to somewhere else.
+async function writeFile(dir: string, file: FileToAdd): Promise<Done<null>> {
+  const failed = (err: string): Done<null> => ({
+    ok: false,
+    message: `git couldn't add ${file.path} to the merge: ${err}`,
+  });
+  const blob = await runIn(dir, { input: file.text }, "hash-object", "-w", "--stdin");
+  if (!blob.ok) return failed(blob.err);
+  const staged = await run(
+    dir,
+    "update-index",
+    "--add",
+    "--cacheinfo",
+    `100644,${blob.out},${file.path}`,
+  );
+  if (!staged.ok) return failed(staged.err);
+  const written = await run(
+    dir,
+    "--literal-pathspecs",
+    "checkout-index",
+    "--force",
+    "--",
+    file.path,
+  );
+  if (!written.ok) return failed(written.err);
+  return { ok: true, value: null };
 }
 
 // "rebasing" or "bisecting" if the checkout at `path` is doing that to the
@@ -1243,8 +1337,25 @@ async function run(dir: string, ...args: string[]): Promise<Run> {
 // Like run, but keeps the output exactly, for file names that could start
 // or end with a space.
 async function runRaw(dir: string, ...args: string[]): Promise<Run> {
+  return runWith(dir, {}, ...args);
+}
+
+// Like run, with text for git to read, or another staging area than the
+// folder's own.
+async function runIn(dir: string, options: RunOptions, ...args: string[]): Promise<Run> {
+  const result = await runWith(dir, options, ...args);
+  return result.ok ? { ok: true, out: result.out.trim() } : result;
+}
+
+type RunOptions = { input?: string; index?: string };
+
+async function runWith(dir: string, options: RunOptions, ...args: string[]): Promise<Run> {
   try {
-    const result = await $`git ${args}`.cwd(dir).nothrow().quiet();
+    const env =
+      options.index === undefined ? process.env : { ...process.env, GIT_INDEX_FILE: options.index };
+    const command =
+      options.input === undefined ? $`git ${args}` : $`git ${args} < ${Buffer.from(options.input)}`;
+    const result = await command.cwd(dir).env(env).nothrow().quiet();
     if (result.exitCode === 0) return { ok: true, out: result.stdout.toString() };
     return { ok: false, err: result.stderr.toString().trim() || `exit code ${result.exitCode}` };
   } catch (error) {
