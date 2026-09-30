@@ -45,6 +45,23 @@ describe("parseWorkflow", () => {
     });
   });
 
+  test("uses main as the main branch when the file doesn't say", () => {
+    const parsed = parseWorkflow("checks:\n  - bun test\n");
+    expect(parsed.ok && parsed.workflow.mainBranch).toBe("main");
+  });
+
+  test("reads the main branch from main_branch", () => {
+    const parsed = parseWorkflow("checks:\n  - bun test\nmain_branch: master\n");
+    expect(parsed.ok && parsed.workflow.mainBranch).toBe("master");
+  });
+
+  test("refuses a main_branch that is blank", () => {
+    expect(parseWorkflow('checks:\n  - bun test\nmain_branch: " "\n')).toEqual({
+      ok: false,
+      reasons: ["main_branch: must be a branch name, such as main."],
+    });
+  });
+
   // Until auto-merge is earned, a file that says nothing merges nothing
   // without your approval.
   test("makes every path critical when critical_paths is left out", () => {

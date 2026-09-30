@@ -325,6 +325,7 @@ checks:
   - bun test
   - bun run typecheck
   - bun run lint
+main_branch: main
 max_attempts: 3
 max_running: 2
 spec_approval: always
@@ -337,6 +338,8 @@ plugins:
   sessions: herdr
   work_source: github
 ```
+
+`main_branch` is the branch tasks start from and merge into. It is `main` when left out. The daemon refuses to start if the branch doesn't exist.
 
 ## CLI
 
