@@ -228,6 +228,7 @@ export class Daemon {
 
       case "done":
       case "log":
+      case "retry":
         return { ok: false, message: `\`${command.type}\` isn't built into the daemon yet.` };
     }
   }

@@ -34,6 +34,8 @@ const command = z.discriminatedUnion("type", [
     sendBack: z.string().min(1).nullable(),
   }),
   z.strictObject({ type: z.literal("drop"), task: TaskId }),
+  // Clears a block, so the task can be claimed again.
+  z.strictObject({ type: z.literal("retry"), task: TaskId }),
   z.strictObject({ type: z.literal("status") }),
   z.strictObject({ type: z.literal("log"), task: TaskId }),
   z.strictObject({ type: z.literal("claim"), task: TaskId }),
