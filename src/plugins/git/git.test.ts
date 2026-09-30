@@ -152,3 +152,73 @@ describe("the merge's own worktree", () => {
     expect(existsSync(join(theirs, "unsaved.txt"))).toBe(true);
   });
 });
+
+// A revert is built in .skelcrew/reverting/<task>, and leaves a receipt in
+// git's folder before it moves main, like the merge.
+describe("the revert's own worktree and receipt", () => {
+  let dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+    dirs = [];
+  });
+
+  // A repository with task 12 merged. Returns the merge and the task's head.
+  async function merged() {
+    const r = await makeRepo();
+    dirs.push(r.dir);
+    const plugin = new Git(r.dir, r.main);
+    const taskId = TaskId.parse(12);
+    const created = await plugin.createWorktree({ taskId, title: "CSV export", build: 1 });
+    if (!created.ok) throw new Error(created.message);
+    writeFileSync(join(created.value.path, "a.ts"), "a\n");
+    await git(created.value.path, "add", "a.ts");
+    await git(created.value.path, "commit", "-q", "-m", "A");
+    const head = CommitSha.parse(await git(created.value.path, "rev-parse", "HEAD"));
+    const landed = await plugin.merge(
+      { taskId, title: "CSV export", worktree: created.value, head },
+      async () => ({ ok: true, value: null }),
+    );
+    if (!landed.ok) throw new Error(landed.message);
+    const request = { taskId, commit: landed.value, reason: "Broke the export" };
+    return { r, plugin, request, head };
+  }
+
+  test("isn't cleared if the plugin didn't make it, and its work is kept", async () => {
+    const { r, plugin, request } = await merged();
+    const theirs = join(r.dir, ".skelcrew", "reverting", "12");
+    await git(r.dir, "worktree", "add", "-q", "--detach", theirs, "main");
+    writeFileSync(join(theirs, "unsaved.txt"), "someone's work\n");
+    const before = await git(r.dir, "rev-parse", "main");
+
+    const reverted = await plugin.revert(request);
+    expect(reverted.ok).toBe(false);
+    expect(existsSync(join(theirs, "unsaved.txt"))).toBe(true);
+    expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+
+    await git(r.dir, "worktree", "remove", "--force", theirs);
+    expect((await plugin.revert(request)).ok).toBe(true);
+  });
+
+  test("is cleared if the plugin's mark says it made it, and the revert goes ahead", async () => {
+    const { r, plugin, request } = await merged();
+    const leftover = join(r.dir, ".skelcrew", "reverting", "12");
+    mkdirSync(join(r.dir, ".git", "skelcrew-reverting"), { recursive: true });
+    writeFileSync(join(r.dir, ".git", "skelcrew-reverting", "12"), "");
+    await git(r.dir, "worktree", "add", "-q", "--detach", leftover, "main");
+
+    expect((await plugin.revert(request)).ok).toBe(true);
+    expect(existsSync(leftover)).toBe(false);
+  });
+
+  test("from a try that never moved main, doesn't count as reverted", async () => {
+    const { r, plugin, request, head } = await merged();
+    // The task's own head is not on main, since the merge squashed it.
+    mkdirSync(join(r.dir, ".git", "skelcrew-reverts"), { recursive: true });
+    writeFileSync(join(r.dir, ".git", "skelcrew-reverts", `12-${request.commit}`), head);
+
+    const reverted = await plugin.revert(request);
+    if (!reverted.ok) throw new Error(reverted.message);
+    expect(reverted.value).not.toBe(head);
+    expect(await git(r.dir, "ls-tree", "--name-only", "main")).toBe("README.md");
+  });
+});

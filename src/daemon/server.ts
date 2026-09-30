@@ -5,7 +5,7 @@
 // Many connections can be open at once, and each may send many requests.
 // The daemon's own queue still decides them one at a time.
 
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import * as z from "zod";
 import { parseWorkflow } from "../config/workflow";
@@ -37,6 +37,11 @@ const UNKNOWN_ID = "unknown";
 
 const defaultGraceMs = 30_000;
 
+// How long the connections must stay quiet before a stopping daemon closes
+// them. Requests already on their way arrive in that time, and are
+// answered "The daemon is stopping." instead of meeting a closed door.
+const QUIET_MS = 50;
+
 export async function serve(repo: string, options: ServeOptions = {}): Promise<Served> {
   const found = daemonPaths(repo);
   if (!found.ok) return found;
@@ -45,9 +50,16 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
   const workflow = readWorkflow(repo, paths.workflow);
   if (!workflow.ok) return workflow;
 
-  const locked = takeLock(paths.lock);
+  const locked = takeLock(paths.folder);
   if (!locked.ok) return locked;
   const lock = locked.lock;
+  if (paths.sharedSocketFolder !== null) {
+    const made = privateFolder(paths.sharedSocketFolder);
+    if (!made.ok) {
+      lock.release();
+      return made;
+    }
+  }
   // Holding the lock means no other daemon runs here. So a socket file
   // still there was left by one that died, and nobody answers on it.
   try {
@@ -79,6 +91,7 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
   const listener = new Listener(opened.value, options.graceMs ?? defaultGraceMs);
   const listening = await listener.listen(paths.socket);
   if (!listening.ok) {
+    await opened.value.close();
     store.close();
     lock.release();
     return listening;
@@ -89,6 +102,10 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
       socket: paths.socket,
       stop: async () => {
         await listener.stop();
+        // Retries of unsaved replies stop here, before the store closes.
+        // Otherwise they would keep failing against a closed store, and
+        // keep the process from exiting.
+        await opened.value.close();
         store.close();
         try {
           rmSync(paths.socket, { force: true });
@@ -126,6 +143,29 @@ export async function serveUntilSignalled(
   return { ok: true, socket: server.socket, stopped };
 }
 
+// Makes the folder for sockets in /tmp if needed, and makes sure only this
+// user can open it. Another user's folder, or a link, is refused: a daemon
+// there could be reached, or stood in for, by someone else.
+function privateFolder(path: string): { ok: true } | { ok: false; message: string } {
+  try {
+    mkdirSync(path, { mode: 0o700, recursive: true });
+    const found = lstatSync(path);
+    if (!found.isDirectory() || found.uid !== process.getuid?.()) {
+      return {
+        ok: false,
+        message: `${path} isn't a folder of yours, so the daemon's socket can't go there. Remove it, then try again.`,
+      };
+    }
+    if ((found.mode & 0o077) !== 0) chmodSync(path, 0o700);
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      message: `${path} couldn't be made for the daemon's socket: ${describe(error)}`,
+    };
+  }
+}
+
 function readWorkflow(
   repo: string,
   path: string,
@@ -158,6 +198,7 @@ class Listener {
   private readonly sockets = new Set<Socket>();
   private readonly inFlight = new Set<InFlight>();
   private stopping: Promise<void> | null = null;
+  private lastData = 0;
 
   constructor(
     private readonly daemon: Daemon,
@@ -181,7 +222,10 @@ class Listener {
   private async shutDown(): Promise<void> {
     const closed = new Promise<void>((resolve) => this.server.close(() => resolve()));
     const pending = [...this.inFlight].map((request) => request.done);
+    const deadline = Date.now() + this.graceMs;
     await Promise.race([Promise.all(pending), sleep(this.graceMs)]);
+    await sleep(QUIET_MS);
+    while (Date.now() - this.lastData < QUIET_MS && Date.now() < deadline) await sleep(QUIET_MS);
     for (const request of this.inFlight) {
       this.answer(request, { ok: false, message: "The daemon stopped before this finished." });
     }
@@ -196,6 +240,7 @@ class Listener {
     socket.on("error", () => socket.destroy());
     let buffer = Buffer.alloc(0);
     socket.on("data", (chunk: Buffer) => {
+      this.lastData = Date.now();
       buffer = Buffer.concat([buffer, chunk]);
       let end = buffer.indexOf(10);
       while (end !== -1 && !socket.writableEnded) {

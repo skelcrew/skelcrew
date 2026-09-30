@@ -28,20 +28,30 @@ describe("daemonPaths", () => {
       folder: join(repo, ".skelcrew"),
       workflow: join(repo, ".skelcrew", "workflow.yml"),
       store: join(repo, ".skelcrew", "skelcrew.db"),
-      lock: join(repo, ".skelcrew", "daemon.lock"),
       socket: join(repo, ".skelcrew", "daemon.sock"),
+      sharedSocketFolder: null,
     });
   });
 
   // macOS refuses a socket path over 103 bytes, so a deep repository gets
   // a short socket in the temp folder instead.
-  test("puts the socket in the temp folder when the repository's path is long", () => {
+  // Found by review: the socket's folder came from TMPDIR, so a shell with
+  // another TMPDIR, such as an agent's sandbox, looked in the wrong place.
+  test("puts the socket in the user's folder in /tmp when the repository's path is long, whatever TMPDIR says", () => {
     const repo = join(folder("sk-"), "a-folder-with-a-rather-long-name".repeat(3));
     mkdirSync(repo);
-    const socket = paths(repo).socket;
-    expect(socket.startsWith(realpathSync(tmpdir()))).toBe(true);
-    expect(Buffer.byteLength(socket)).toBeLessThanOrEqual(103);
-    expect(paths(repo).socket).toBe(socket);
+    const before = process.env.TMPDIR;
+    try {
+      process.env.TMPDIR = folder("sk-a-");
+      const socket = paths(repo).socket;
+      process.env.TMPDIR = folder("sk-b-");
+      expect(paths(repo).socket).toBe(socket);
+      expect(socket.startsWith(`/tmp/skelcrew-${process.getuid?.()}/`)).toBe(true);
+      expect(Buffer.byteLength(socket)).toBeLessThanOrEqual(103);
+    } finally {
+      if (before === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = before;
+    }
   });
 
   test("gives two long repositories different sockets", () => {

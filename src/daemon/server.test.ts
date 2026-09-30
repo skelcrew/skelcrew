@@ -1,7 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import * as z from "zod";
 import { MAX_LINE } from "../protocol/protocol";
 import { type Server, serve } from "./server";
 import { cleanUp, openLine, throwawayRepo } from "./testing";
@@ -156,6 +165,24 @@ describe("the daemon's socket", () => {
     again.close();
   });
 
+  // Found by review: requests sent just before a stop got no answer at
+  // all, so the client couldn't tell whether anything was saved.
+  test("answers every request sent just before it stops", async () => {
+    const served = await serve(throwawayRepo(dirs));
+    if (!served.ok) throw new Error(served.message);
+    const line = await openLine(served.server.socket);
+    line.send(Array.from({ length: 50 }, (_, i) => add(`r${i}`, `Task ${i}`)).join(""));
+    const stopped = served.server.stop();
+    const ids: string[] = [];
+    for (let i = 0; i < 50; i += 1) {
+      const next = await Promise.race([line.next(), line.closed.then(() => null)]);
+      if (next === null) break;
+      ids.push(z.object({ id: z.string() }).parse(JSON.parse(next)).id);
+    }
+    await stopped;
+    expect(ids).toEqual(Array.from({ length: 50 }, (_, i) => `r${i}`));
+  });
+
   test("stops listening and removes its socket when stopped", async () => {
     const server = await served(throwawayRepo(dirs));
     const line = await openLine(server.socket);
@@ -169,12 +196,24 @@ describe("the daemon's socket", () => {
     const repo = throwawayRepo(dirs, "a-folder-with-a-rather-long-name".repeat(3));
     const server = await started(repo);
     expect(server.socket.startsWith(join(repo, ".skelcrew"))).toBe(false);
-    expect(server.socket.startsWith(realpathSync(tmpdir()))).toBe(true);
+    expect(server.socket.startsWith(`/tmp/skelcrew-${process.getuid?.()}/`)).toBe(true);
     const line = await openLine(server.socket);
     line.send(add("r1", "CSV export"));
     expect(JSON.parse(await line.next())).toEqual({ id: "r1", ok: true, result: { task: 1 } });
     line.close();
   });
+});
+
+// The socket folder in /tmp is shared by all of one user's repositories.
+// Only that user may open it, or another user could reach their daemons.
+test("keeps the socket folder in /tmp for the user alone", async () => {
+  const repo = throwawayRepo(dirs, "a-folder-with-a-rather-long-name".repeat(3));
+  const base = `/tmp/skelcrew-${process.getuid?.()}`;
+  mkdirSync(base, { recursive: true });
+  chmodSync(base, 0o755);
+  const server = await started(repo);
+  expect(dirname(server.socket)).toBe(base);
+  expect(statSync(base).mode & 0o777).toBe(0o700);
 });
 
 // A server this test stops itself, so afterEach doesn't stop it twice.

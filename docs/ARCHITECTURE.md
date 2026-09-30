@@ -160,17 +160,22 @@ it with fake tools, and the daemon will run it with real ones.
 2. If accepted, it saves the events and their commands to the event store. If saving
    fails, nothing else happens: the task doesn't change, and no command goes out.
 3. It applies the events with `evolveTask`.
-4. It hands each command to the tools, then marks it done in the store. Replies come back
-   later through `send`.
+4. It hands each command to the tools. A command is marked done in the store only when
+   its tool says it has finished, which for a command that expects a reply means once
+   the reply has been handled: saved, or refused because its time had passed. Replies
+   come back later through `send`.
 
 `startWaiting()` asks `schedule` what to start, and sends the starts. A claim comes from
 you instead, so `send` checks for a free slot before passing it on. The loop counts the
-starts it has sent out and not yet had answered, by task and request number, and gives
-that count to the scheduler. `Loop.open` rebuilds everything from a saved log and carries
+starts it has sent out and not yet had answered, by task and request number, and the
+agents it is stopping whose stops haven't finished, and gives that count to the
+scheduler. So an agent being stopped keeps its slot until it has stopped, and
+`max_running` holds even while a stop is slow. `Loop.open` rebuilds everything from a saved log and carries
 on from there.
 
-If the daemon dies between saving a decision and carrying out its commands, nothing is
-lost. `Loop.open` first carries out every saved command not yet marked done. So a command
+If the daemon dies between saving a decision and finishing its commands, nothing is
+lost. `Loop.open` first carries out every saved command not yet marked done, including
+one whose work was still going on when the daemon died. So a command
 can reach the tools twice, and the tools must treat a repeat as a no-op. For example, a
 second "start #1, request 1" starts nothing.
 
@@ -215,9 +220,9 @@ These files put the daemon on a socket, one per repository, and let the CLI reac
 
 | File | What it holds |
 | --- | --- |
-| `paths.ts` | `daemonPaths`: where a repository's daemon keeps its files, worked out from the repository's real path. The socket is `.skelcrew/daemon.sock` when that path fits in 103 bytes, the most macOS allows. A deeper repository gets `skelcrew-<hash>.sock` in the temp folder instead. The daemon and the client both ask here, so they always agree. |
+| `paths.ts` | `daemonPaths`: where a repository's daemon keeps its files, worked out from the repository's real path. The socket is `.skelcrew/daemon.sock` when that path fits in 103 bytes, the most macOS allows. A deeper repository gets `<hash>.sock` in `/tmp/skelcrew-<user id>/` instead. That folder is the same from every shell, and the daemon makes it so only the user can open it. The daemon and the client both ask here, so they always agree. |
 | `server.ts` | `serve`: `skelcrew serve`'s job. It reads `.skelcrew/workflow.yml`, takes the lock, opens `.skelcrew/skelcrew.db` and the daemon, and listens. Each line on a connection is one request. The reply goes back on that connection with the request's id. A line that isn't a request is refused, and one over 1 MB also closes its connection. `serveUntilSignalled` stops it cleanly on SIGTERM or SIGINT. |
-| `lock.ts` | `takeLock`: one daemon per repository. `.skelcrew/daemon.lock` is a small SQLite file the daemon holds in an exclusive transaction while it runs. The operating system keeps that hold for the daemon's process and lets go of it when the process ends, however it ends. So a second daemon is refused at once, and a crashed one never keeps the next out. The lock file is never deleted. The process id goes in `.skelcrew/daemon.pid`, only to say who runs the daemon. |
+| `lock.ts` | `takeLock`: one daemon per repository. The daemon takes an exclusive `flock` on the `.skelcrew` folder itself and keeps it while it runs. The operating system frees it when the process ends, however it ends. `flock` gets the lock or doesn't in one step, so of several daemons starting at once exactly one runs, and it works on a folder the daemon can't write to. Deleting files in `.skelcrew` can't let a second daemon in, as it could with a lock file. No process id is trusted. The process id goes in `.skelcrew/daemon.pid`, only to say who runs the daemon. It is called through the C library on macOS and Linux; other systems are refused plainly. |
 | `client.ts` | `request`: sends one command to a repository's daemon and returns the answer as a value. If no daemon is running, it starts one through a function it is given and waits for the socket. A request, once sent, has no time limit, since `done` waits for the checks. |
 
 An example: the CLI sends `add` while no daemon runs. The client finds no socket, so it
@@ -266,6 +271,32 @@ code, then the end of its output, which is what the agent sees. Each command run
 process group of its own, so a command that runs too long is stopped with everything it
 started. Input is closed and `CI=true` is set, so nothing waits for a person.
 
+## Init
+
+`src/init/` is what `skelcrew init` will do, built as functions the CLI will call. It sets
+up a repository and never overwrites a file, so running it twice changes nothing. It only
+adds to two existing files: the missing runtime lines to `.gitignore`, and the approve
+rules to `.claude/settings.json`.
+
+The skills live in `.agents/skills/`, so Skelcrew isn't bound to one harness. Claude Code
+looks in `.claude/skills/` instead, so init adds one link per skill there. For example,
+`.claude/skills/spec` points to `../../.agents/skills/spec`. Other skills already in
+`.claude/skills/` stay as they are. In the same way, project instructions live in
+`AGENTS.md`, and Claude Code reads `CLAUDE.md`. So a repository with an `AGENTS.md` and no
+`CLAUDE.md` gets `CLAUDE.md` as a link to it. Init doesn't write instructions itself.
+
+| File | What it holds |
+| --- | --- |
+| `detect.ts` | `detectChecks`: finds the check commands a repository has. A `package.json` gives its `test` script, then its `check` script, or its `typecheck` and `lint` scripts when there is no `check`. They run with the package manager its lock file shows. The `test` script runs even beside a `check` script, since a `check` script often runs no test. A `test` script that does nothing, such as `exit 0`, counts as none. One that runs no test runner init knows, such as `vitest` or `jest`, gives a warning. `Cargo.toml` gives `cargo test`, and `go.mod` gives `go test ./...`. A `pyproject.toml` with a `[tool.pytest]` or `[tool.pytest.ini_options]` table gives `pytest`. A makefile's `test` target is used only when nothing else was found. The makefile is the one `make` reads: `GNUmakefile`, `makefile` or `Makefile`, whichever comes first. A file that can't be read is skipped and named in the reason. It never throws. |
+| `gitignore.ts` | `leftOutBy`: says which line of a `.gitignore` leaves out a path, read the way `git check-ignore` reads it. The last line that matches wins, a line starting with `!` adds a path back, and nothing inside a left-out folder can be added back. Init uses it to warn when the skill links, the skills or the approve rules would never be committed. It reads only the repository's top `.gitignore`. |
+| `init.ts` | `initRepository`: writes `.skelcrew/workflow.yml` with the checks found, adds Skelcrew's runtime files to `.gitignore` (the database, and the daemon's log, lock and socket), writes the default skills to `.agents/skills/`, links each into `.claude/skills/`, and adds the approve rules to `.claude/settings.json`. A file already there is kept as it is and reported. Each link is relative, so it still works when the repository moves. Anything already where a link would go stays, even a link to nowhere. It is reported, with a warning that Claude Code will use that one instead. A link init can't make, such as when `.claude/skills` is a file, is listed under `byHand` with a warning that gives the command to make it. The command uses the same relative path init would have used, so it works even when `.claude` is a link to another folder in the repository. With an `AGENTS.md` and no `CLAUDE.md`, it makes `CLAUDE.md` a link to `AGENTS.md`. It does so only when `AGENTS.md` is a file inside the repository that it can read. A link to a file outside the repository, a folder, or a link to nowhere gets no `CLAUDE.md`, and a warning says why. With both, in any form, it leaves both alone. With only a real `CLAUDE.md`, it leaves it alone and warns how to switch: move it to `AGENTS.md`, then make `CLAUDE.md` a link to it. New links are listed under `linked`. A file or link that would land outside the repository through a link, such as a `.claude` or `.agents` folder linked to your home folder, isn't made. It is listed under `byHand` with a warning that says why. Warnings from finding the checks go into its report. A `workflow.yml` it can't open, such as a folder, is left alone with a warning. A linked `.gitignore` is left alone with a warning that says what to add. Each `.gitignore` line goes in once, and only if it is missing. New lines use the file's own line endings. It warns if `.gitignore` leaves out all of `.skelcrew/`, since `workflow.yml` could then never be committed. It doesn't warn when a later line adds `workflow.yml` back, as in `.skelcrew/*` followed by `!.skelcrew/workflow.yml`. It also warns when `.gitignore` leaves out the skill links, the skills or `.claude/settings.json`, such as with a `.claude/` line. Teammates who clone the repository wouldn't get them. If it finds no checks and there's no `workflow.yml` yet, it writes nothing and says why. If a later step fails, the result still lists every file it wrote and every link it made before it stopped. |
+| `paths.ts` | `outsideLink`: says whether a file init writes would land outside the repository. It follows each link on the way to the file, from the repository down, and names the first one that leads outside. A link it can't follow counts as outside. |
+| `settings.ts` | `addAskRule`: makes Claude Code ask you before anything runs `skelcrew approve`. The spec puts this guard in the harness's settings. It adds one rule to the `ask` list in the repository's `.claude/settings.json` for each usual way to type the command: plain, through `bunx`, `bun x` or `npx`, and by a path such as `./node_modules/.bin/skelcrew`. It adds only the rules the file lacks, and keeps everything else in the file. It writes the file back only when nothing but the rules change. Otherwise, such as for a file that isn't valid JSON, is a link, or can't be written, it changes nothing and warns you with the rules to add by hand. The rest of init carries on. The guard can be got round: `bash -c 'skelcrew approve 12'` runs without asking. The init report says so, in `askBeforeApproveLimit`. When init couldn't add the rules, that text says the guard is not in place yet, and lists the rules to add. It also says the rules work only in Claude Code. Another harness needs its own guard, or the developer approves only by typing the command. It never touches `.claude/settings.local.json` or your user settings. |
+| `skills.ts` | The default skills, imported as text from `skills/spec/SKILL.md` and `skills/develop/SKILL.md`. They go to `.agents/skills/` in the repository, so no one harness owns them. Init links each into `.claude/skills/` for Claude Code. Each tells an agent in your harness how to work a task while you watch, with only the commands the CLI gives the skills. They work in any harness as written: they name the task the developer gave rather than Claude Code's `$ARGUMENTS`, and describe when to use them in plain words, not only as a slash command. In Claude Code, only you can start them, through `disable-model-invocation`. Other harnesses ignore that field. |
+
+To see whether the chosen checks pass on the current code, the caller runs them with
+`localChecks` from `src/checks/checks.ts`.
+
 ## Plugins
 
 `src/plugins/` connects the daemon to other tools. Each kind of plugin is an interface,
@@ -274,9 +305,9 @@ decides on. Every call may also arrive twice after a crash, and must then change
 
 | File | What it holds |
 | --- | --- |
-| `version-control.ts` | `VersionControl`: create and remove a task's worktree, read its branch when the agent reports done, and merge it. Revert comes next. |
+| `version-control.ts` | `VersionControl`: create and remove a task's worktree, read its branch when the agent reports done, merge it, and revert its commit on main. |
 | `version-control.contract.ts` | The tests every version-control plugin must pass, against a throwaway git repository. |
-| `git/git.ts` | The built-in plugin. Each build gets a worktree in `.skelcrew/worktrees/` on its own branch from main, such as `task/12-csv-export-2`. Removing one commits its uncommitted work first, and refuses if the worktree isn't on its task's branch or still has unsaved work after that. A merge is built in `.skelcrew/merging/`, checked there, and only then moves main. |
+| `git/git.ts` | The built-in plugin. Each build gets a worktree in `.skelcrew/worktrees/` on its own branch from main, such as `task/12-csv-export-2`. Removing one commits its uncommitted work first, and refuses if the worktree isn't on its task's branch or still has unsaved work after that. A merge is built in `.skelcrew/merging/`, checked there, and only then moves main. A revert is built the same way in `.skelcrew/reverting/`, as one new commit that undoes the task's commit. It moves main under the same rules as a merge, but runs no checks. |
 
 ## Around the core (planned)
 

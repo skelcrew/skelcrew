@@ -3,15 +3,16 @@
 
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export type DaemonPaths = {
   folder: string;
   workflow: string;
   store: string;
-  lock: string;
   socket: string;
+  // Where the socket goes when it can't go in .skelcrew/: a folder in /tmp
+  // for this user alone, which the daemon makes. Null when it fits.
+  sharedSocketFolder: string | null;
 };
 
 // macOS refuses a socket path longer than this. Linux allows 107.
@@ -30,9 +31,13 @@ export function daemonPaths(
   }
   const folder = join(real, ".skelcrew");
   let socket = join(folder, "daemon.sock");
+  let sharedSocketFolder: string | null = null;
   if (Buffer.byteLength(socket) > MAX_SOCKET_PATH) {
+    // A fixed folder, not the temp folder, which can differ between two
+    // shells of the same user. The user id keeps users apart.
     const hash = createHash("sha256").update(real).digest("hex").slice(0, 16);
-    socket = join(realpathSync(tmpdir()), `skelcrew-${hash}.sock`);
+    sharedSocketFolder = `/tmp/skelcrew-${process.getuid?.() ?? "user"}`;
+    socket = join(sharedSocketFolder, `${hash}.sock`);
   }
   return {
     ok: true,
@@ -40,8 +45,8 @@ export function daemonPaths(
       folder,
       workflow: join(folder, "workflow.yml"),
       store: join(folder, "skelcrew.db"),
-      lock: join(folder, "daemon.lock"),
       socket,
+      sharedSocketFolder,
     },
   };
 }
