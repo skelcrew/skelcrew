@@ -44,6 +44,12 @@ const add = (title: string, withSpec = true): Command => ({
   project: null,
 });
 const task = (n: number) => TaskId.parse(n);
+
+// Claims task n and gives back the session name the claim printed.
+async function claimedSession(daemon: Daemon, n: number): Promise<string> {
+  const result = await ok(daemon, { type: "claim", task: task(n) });
+  return z.object({ session: z.string() }).parse(result).session;
+}
 const you = (n: number) => SessionId.parse(`you-${n}`);
 
 // A daemon whose store throws when saving a tool's reply, while
@@ -334,6 +340,24 @@ describe("the daemon", () => {
     await ok(opened.value, add("CSV export"));
     const answer = await opened.value.handle({ type: "claim", task: task(1) });
     expect(answer.ok).toBe(false);
+  });
+
+  // Found in the first real run: "session-e41c254c-3354-4fa3-b176-ad7aba45064c
+  // is working on it" was too long to read.
+  test("names each claimed session short and different", async () => {
+    const opened = Daemon.open({
+      config: { ...config, maxRunning: 2 },
+      log: EventStore.open(":memory:"),
+    });
+    if (!opened.ok) throw new Error(opened.message);
+    const daemon = opened.value;
+    await ok(daemon, add("CSV export"));
+    await ok(daemon, add("PDF export"));
+    const first = await claimedSession(daemon, 1);
+    const second = await claimedSession(daemon, 2);
+    expect(first).toMatch(/^session-[a-z0-9]{8}$/);
+    expect(second).toMatch(/^session-[a-z0-9]{8}$/);
+    expect(second).not.toBe(first);
   });
 
   // The loop keeps a command until its tool says it has finished, which for

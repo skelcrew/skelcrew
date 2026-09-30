@@ -852,12 +852,12 @@ describe("skelcrew log", () => {
     );
   });
 
-  // A real session is named like session-ee6f38c0, so "as session
-  // session-ee6f38c0" would say "session" twice.
+  // A real session is named like session-k3x9q2mf, so "as session
+  // session-k3x9q2mf" would say "session" twice.
   test("names a claim's session once", async () => {
     const repo = throwawayRepo(dirs);
     const at = new Date(2026, 8, 30, 10, 2).getTime();
-    const session = "session-ee6f38c0-ac85-46d4-909c-e59d65c0b208";
+    const session = "session-k3x9q2mf";
     await fakeDaemon(repo, {
       leftOut: 0,
       events: [{ v: 1, taskId: 4, at, type: "task.claimed", session, request: null }],

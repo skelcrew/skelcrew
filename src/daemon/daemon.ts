@@ -13,7 +13,7 @@
 // answered at once with a failure, so the core never waits on something
 // that won't happen.
 
-import { randomUUID } from "node:crypto";
+import { randomInt } from "node:crypto";
 import { ProjectId, SessionId, TaskId } from "../core/ids";
 import { phaseNames, runningSession, waitingOnYou } from "../core/task";
 import type {
@@ -60,6 +60,22 @@ type Later = {
 
 type Waiter = { task: TaskId; until: (task: Task) => boolean; wake: (task: Task | null) => void };
 
+// A session name such as "session-k3x9q2mf". An agent's reports carry it,
+// so it must be short enough to read but hard to guess. Eight letters or
+// digits give 36^8, about 2.8 trillion names. Guessing one would take
+// trillions of tries. Two random picks match about once in 1.7 million
+// sessions.
+const SESSION_LENGTH = 8;
+const SESSION_LETTERS = "abcdefghijklmnopqrstuvwxyz0123456789";
+
+function shortSession(): string {
+  let name = "";
+  for (let i = 0; i < SESSION_LENGTH; i++) {
+    name += SESSION_LETTERS.charAt(randomInt(SESSION_LETTERS.length));
+  }
+  return `session-${name}`;
+}
+
 export class Daemon {
   private queue: Promise<unknown> = Promise.resolve();
   private readonly newSession: () => string;
@@ -77,7 +93,7 @@ export class Daemon {
     private readonly tools: DaemonTools,
     options: DaemonOptions,
   ) {
-    this.newSession = options.newSession ?? (() => `session-${randomUUID()}`);
+    this.newSession = options.newSession ?? shortSession;
     this.now = options.now ?? Date.now;
     this.log = options.log;
     this.retryMs = options.retryMs ?? 1_000;
