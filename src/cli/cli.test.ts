@@ -483,13 +483,13 @@ describe("skelcrew log", () => {
     expect(outcome.out.map((line) => line.slice(18))).toEqual([
       "Added to project reports: CSV export.",
       "A spec was asked for.",
-      "Claimed by you-1.",
+      "You claimed it, as session you-1.",
       "The agent sent a spec: Add a CSV export button to the reports page.",
       "You sent the spec back: Add totals.",
-      "Claimed by you-2.",
+      "You claimed it, as session you-2.",
       "The agent sent a spec: Add a CSV export button to the reports page.",
       "The task is Ready to build from this spec.",
-      "Claimed by you-3.",
+      "You claimed it, as session you-3.",
       `Its worktree was made on branch task/1-csv-export, at ${worktree}.`,
       "Your session is working on it.",
     ]);
