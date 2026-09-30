@@ -5,7 +5,7 @@
 // Many connections can be open at once, and each may send many requests.
 // The daemon's own queue still decides them one at a time.
 
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import * as z from "zod";
 import { parseWorkflow } from "../config/workflow";
@@ -48,6 +48,13 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
   const locked = takeLock(paths.folder);
   if (!locked.ok) return locked;
   const lock = locked.lock;
+  if (paths.sharedSocketFolder !== null) {
+    const made = privateFolder(paths.sharedSocketFolder);
+    if (!made.ok) {
+      lock.release();
+      return made;
+    }
+  }
   // Holding the lock means no other daemon runs here. So a socket file
   // still there was left by one that died, and nobody answers on it.
   try {
@@ -129,6 +136,29 @@ export async function serveUntilSignalled(
     process.on("SIGINT", onSignal);
   });
   return { ok: true, socket: server.socket, stopped };
+}
+
+// Makes the folder for sockets in /tmp if needed, and makes sure only this
+// user can open it. Another user's folder, or a link, is refused: a daemon
+// there could be reached, or stood in for, by someone else.
+function privateFolder(path: string): { ok: true } | { ok: false; message: string } {
+  try {
+    mkdirSync(path, { mode: 0o700, recursive: true });
+    const found = lstatSync(path);
+    if (!found.isDirectory() || found.uid !== process.getuid?.()) {
+      return {
+        ok: false,
+        message: `${path} isn't a folder of yours, so the daemon's socket can't go there. Remove it, then try again.`,
+      };
+    }
+    if ((found.mode & 0o077) !== 0) chmodSync(path, 0o700);
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      message: `${path} couldn't be made for the daemon's socket: ${describe(error)}`,
+    };
+  }
 }
 
 function readWorkflow(
