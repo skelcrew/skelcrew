@@ -3,8 +3,10 @@ import { defaultSkills } from "./skills";
 
 // The skills an agent in your harness uses to report. They are the
 // commands the spec's CLI table marks "used by the skills", plus approve,
-// which a skill names only to say that the developer runs it.
-const skillCommands = ["claim", "submit", "done", "ask", "give-up", "approve"];
+// which a skill names only to say that the developer runs it, and log,
+// which only reads: the claim doesn't print the task's title, and the log
+// does.
+const skillCommands = ["claim", "submit", "done", "ask", "give-up", "approve", "log"];
 
 function frontmatter(text: string): unknown {
   const match = /^---\n([\s\S]*?)\n---\n/.exec(text);
@@ -205,6 +207,40 @@ describe("defaultSkills", () => {
   // says how the spec is passed.
   test("the spec skill reads how to pass the spec before submitting", () => {
     expect(skill("spec")).toContain("skelcrew submit --help");
+  });
+
+  // The spec skill's method: understand the code before asking anything,
+  // ask once, write the spec in a fixed shape, and run every sentence about
+  // what the code does today instead of trusting memory.
+  test("the spec skill reads the task and the code before it asks", () => {
+    const text = skill("spec");
+    expect(text).toContain("skelcrew log 12");
+    const ground = text.indexOf("### Ground it in the code first");
+    const ask = text.indexOf("### Ask once, with your answers");
+    expect(ground).toBeGreaterThan(-1);
+    expect(ask).toBeGreaterThan(ground);
+  });
+
+  test("the spec skill asks its questions together, each with a recommended answer", () => {
+    const text = skill("spec").replaceAll(/\s+/g, " ");
+    expect(text).toContain("in one message, each question with the answer you recommend first");
+    expect(text).not.toContain("one at a time");
+  });
+
+  test("the spec skill gives the spec a fixed shape inside its scope", () => {
+    const text = skill("spec");
+    const parts = ["Goal", "Today", "Change", "Approach", "Tests", "Out of scope"];
+    const places = parts.map((part) => text.indexOf(`**${part}:**`));
+    for (const place of places) expect(place).toBeGreaterThan(-1);
+    expect(places).toEqual([...places].sort((a, b) => a - b));
+  });
+
+  test("the spec skill runs every sentence about today before it submits", () => {
+    const text = skill("spec");
+    const check = text.indexOf("### Check every sentence about today");
+    expect(check).toBeGreaterThan(-1);
+    expect(check).toBeLessThan(text.indexOf("## 3. Submit it"));
+    expect(text.replaceAll(/\s+/g, " ")).toContain("run the command or read the line");
   });
 
   test("the develop skill names each thing it must never do", () => {
