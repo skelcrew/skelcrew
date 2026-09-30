@@ -21,6 +21,8 @@ export type ServeOptions = {
   // this, they are refused.
   graceMs?: number;
   newSession?: () => string;
+  // Replaces the socket folder in /tmp, for tests.
+  socketFolder?: string;
 };
 
 export type Server = {
@@ -47,7 +49,7 @@ const QUIET_MS = 50;
 const QUIET_LIMIT_MS = 500;
 
 export async function serve(repo: string, options: ServeOptions = {}): Promise<Served> {
-  const found = daemonPaths(repo);
+  const found = daemonPaths(repo, options.socketFolder);
   if (!found.ok) return found;
   const paths = found.paths;
 
