@@ -123,8 +123,11 @@ describe("one daemon per repository", () => {
     try {
       const folder = join(repo, ".skelcrew");
       renameSync(folder, join(repo, ".skelcrew-old"));
-      cpSync(join(repo, ".skelcrew-old"), folder, { recursive: true });
-      rmSync(join(folder, "daemon.sock"), { force: true });
+      // Everything but the socket, which can't be copied on Linux.
+      cpSync(join(repo, ".skelcrew-old"), folder, {
+        recursive: true,
+        filter: (from) => !from.endsWith("daemon.sock"),
+      });
       const second = await serve(repo);
       if (second.ok) await second.server.stop();
       expect(second).toEqual({
