@@ -195,7 +195,9 @@ describe("detectChecks", () => {
       "bun test",
       "tsc && vitest run",
       "npm run testing",
+      "npm testing",
       "echo npm test",
+      "echo npm run test",
     ]) {
       const found = detectChecks(
         repo({ "package.json": packageJson({ check, test: "vitest" }), "package-lock.json": "" }),

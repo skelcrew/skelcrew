@@ -97,12 +97,17 @@ const npmPlaceholder = 'echo "Error: no test specified" && exit 1';
 // it, such as `true # todo`, changes nothing.
 const noOp = /^(exit 0|true|:|echo\b[^&|#]*)?\s*(#.*)?$/;
 
+// The commands a script runs, split at every ;, && and ||.
+function commands(script: string): string[] {
+  return script.split(/;|&&|\|\|/);
+}
+
 // A test script made only of such commands tests nothing, however they
 // are joined. For example `echo "no tests yet" && exit 0`, `exit 0;` or
 // `echo skip; exit 0`. The script is split at every ;, && and ||. If any
 // piece does something else, such as `echo start && vitest`, it counts.
 function doesNothing(script: string): boolean {
-  return script.split(/;|&&|\|\|/).every((piece) => noOp.test(piece.trim()));
+  return commands(script).every((piece) => noOp.test(piece.trim()));
 }
 
 // Running the test script by name, such as `npm test` or `bun run test`,
@@ -113,7 +118,7 @@ const testScript = /^(npm|pnpm|yarn|bun) run test(\s|$)|^(npm|pnpm|yarn) test(\s
 // Whether any piece of the check script runs the test script. The script
 // is split as doesNothing splits it, so `tsc && npm test` counts.
 function runsTestScript(check: string): boolean {
-  return check.split(/;|&&|\|\|/).some((piece) => testScript.test(piece.trim()));
+  return commands(check).some((piece) => testScript.test(piece.trim()));
 }
 
 // The test runners init knows. A test script that runs none of them may
