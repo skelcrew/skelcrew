@@ -6,10 +6,11 @@
 // `skelcrew serve` in the background.
 
 import { randomUUID } from "node:crypto";
+import { lstatSync } from "node:fs";
 import { Socket } from "node:net";
 import { type Command, encode, MAX_LINE, parseReply } from "../protocol/protocol";
 import type { Answer } from "./daemon";
-import { daemonPaths } from "./paths";
+import { daemonPaths, foreignFolder } from "./paths";
 
 // What starting the daemon gave. `exited` says why the daemon stopped, or
 // null while it still runs, so a daemon that can't start is reported at
@@ -42,6 +43,11 @@ export async function request(
   const found = daemonPaths(repo);
   if (!found.ok) return found;
   const path = found.paths.socket;
+  const shared = found.paths.sharedSocketFolder;
+  if (shared !== null) {
+    const unsafe = unsafeSocket(shared, path);
+    if (unsafe !== null) return { ok: false, message: unsafe };
+  }
 
   const id = (options.newId ?? randomUUID)();
   const line = encode({ id, command });
@@ -94,6 +100,28 @@ async function startAndWait(path: string, options: ClientOptions): Promise<Conne
       return { ok: false, missing: true, message };
     }
     await sleep(pollMs);
+  }
+}
+
+// Why a socket in the shared folder in /tmp can't be trusted, or null if
+// it can. Anyone who can change the folder, or who owns the socket, could
+// answer in the daemon's place and see every command. A folder that
+// doesn't exist yet is fine: the daemon makes it when it starts.
+function unsafeSocket(folder: string, socket: string): string | null {
+  try {
+    const foreign = foreignFolder(folder);
+    if (foreign !== null) return foreign;
+    if ((lstatSync(folder).mode & 0o077) !== 0) {
+      return `${folder} is open to other users, so skelcrew won't use it. Run \`chmod 700 ${folder}\`, then try again.`;
+    }
+    if (lstatSync(socket).uid !== process.getuid?.()) {
+      return `${socket} belongs to another user, so skelcrew won't use it. Remove it, then try again.`;
+    }
+    return null;
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? error.code : undefined;
+    if (code === "ENOENT") return null;
+    return `${folder} couldn't be checked: ${describe(error)}`;
   }
 }
 

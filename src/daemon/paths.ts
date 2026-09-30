@@ -2,7 +2,7 @@
 // both ask here, so they always agree on the socket.
 
 import { createHash } from "node:crypto";
-import { realpathSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
 export type DaemonPaths = {
@@ -52,4 +52,13 @@ export function daemonPaths(
       sharedSocketFolder,
     },
   };
+}
+
+// Why the socket folder in /tmp can't be trusted, or null if it can. It
+// must be a real folder that belongs to this user. Otherwise its owner
+// could put their own socket there, and answer in the daemon's place.
+export function foreignFolder(path: string): string | null {
+  const found = lstatSync(path);
+  if (found.isDirectory() && found.uid === process.getuid?.()) return null;
+  return `${path} belongs to another user, so skelcrew won't use it. An administrator must remove it.`;
 }

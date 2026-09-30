@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync } from "node:fs";
 import { createServer, type Server as NetServer } from "node:net";
 import { type Command, MAX_LINE } from "../protocol/protocol";
 import { type ClientOptions, request, type Started } from "./client";
@@ -225,5 +225,36 @@ describe("the client", () => {
       ok: false,
       message: "The daemon's reply isn't valid JSON.",
     });
+  });
+});
+
+// Found by review: the client connected to any socket in the shared folder
+// in /tmp. Another user who made that folder first could answer in the
+// daemon's place, and see every command.
+describe("the socket folder in /tmp", () => {
+  const deep = "a-folder-with-a-rather-long-name".repeat(3);
+  const base = `/tmp/skelcrew-${process.getuid?.()}`;
+
+  test("isn't used while other users can change it", async () => {
+    const repo = throwawayRepo(dirs, deep);
+    await started(repo);
+    chmodSync(base, 0o777);
+    try {
+      const { counted, options } = noStart();
+      expect(await request(repo, { type: "status" }, options)).toEqual({
+        ok: false,
+        message: `${base} is open to other users, so skelcrew won't use it. Run \`chmod 700 ${base}\`, then try again.`,
+      });
+      expect(counted.starts).toBe(0);
+    } finally {
+      chmodSync(base, 0o700);
+    }
+  });
+
+  test("is used once only its user can change it", async () => {
+    const repo = throwawayRepo(dirs, deep);
+    await started(repo);
+    const { options } = noStart();
+    expect(await request(repo, { type: "status" }, options)).toMatchObject({ ok: true });
   });
 });

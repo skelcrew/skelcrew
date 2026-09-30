@@ -13,7 +13,7 @@ import { encode, MAX_LINE, parseRequest, type Reply } from "../protocol/protocol
 import { EventStore } from "../store/store";
 import { type Answer, Daemon, type DaemonOptions } from "./daemon";
 import { takeLock } from "./lock";
-import { daemonPaths } from "./paths";
+import { daemonPaths, foreignFolder } from "./paths";
 
 export type ServeOptions = {
   // How long stopping waits for requests already being answered. Past
@@ -149,14 +149,9 @@ export async function serveUntilSignalled(
 function privateFolder(path: string): { ok: true } | { ok: false; message: string } {
   try {
     mkdirSync(path, { mode: 0o700, recursive: true });
-    const found = lstatSync(path);
-    if (!found.isDirectory() || found.uid !== process.getuid?.()) {
-      return {
-        ok: false,
-        message: `${path} isn't a folder of yours, so the daemon's socket can't go there. Remove it, then try again.`,
-      };
-    }
-    if ((found.mode & 0o077) !== 0) chmodSync(path, 0o700);
+    const foreign = foreignFolder(path);
+    if (foreign !== null) return { ok: false, message: foreign };
+    if ((lstatSync(path).mode & 0o077) !== 0) chmodSync(path, 0o700);
     return { ok: true };
   } catch (error) {
     return {
