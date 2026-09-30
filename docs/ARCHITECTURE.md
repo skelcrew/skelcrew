@@ -19,7 +19,7 @@ like Claude Code, git and GitHub.
 ```
      you, in the TUI    you, in your harness       agents
             │                   │                    │
-            └──────────►  skelcrew CLI (planned)  ◄──┘
+            └──────────►    skelcrew CLI    ◄────────┘
                                 │
                              daemon  ◄────────────  plugins (planned):
                            (planned)                git, sessions, GitHub…
@@ -242,6 +242,26 @@ agent's reports (`submit`, `done`, `give_up`) carry the session its claim handed
 Your commands carry no identity, since the protocol can't prove who calls. Everything read
 from the socket is checked with Zod first, and a line over 1 MB is refused.
 
+## The CLI
+
+`src/cli/` is the `skelcrew` command, for you and for agents. `package.json` names
+`src/cli/main.ts` as the program.
+
+| File | What it holds |
+| --- | --- |
+| `cli.ts` | `run(args, context)`: one command line in, the lines to print and the exit code out. Tests call it as a function. It checks every argument with Zod, finds the repository by looking for `.skelcrew/` from the current folder upwards, and sends the command through the client. It checks each answer against the shape that command expects. |
+| `help.ts` | What `--help` prints, for the program and each command. `skelcrew submit --help` shows the spec's JSON form, since the spec skill sends agents there. |
+| `start.ts` | `startDaemon`: runs `skelcrew serve` in the background, in its own process group, so Ctrl-C in the terminal doesn't stop it. Its output goes to `.skelcrew/daemon.log`. If it exits before it answers, the command prints what it wrote there. |
+| `main.ts` | The program: runs one command, prints its lines, and exits. A refusal goes to standard error, with exit code 1. |
+
+An agent's reports (`submit`, `done`, `give-up`) take the session from `SKELCREW_SESSION`.
+`claim` prints the session, with the command to report with, like
+`SKELCREW_SESSION=session-… skelcrew submit 12`. The session goes in front of each command,
+since each shell in a harness starts without the variable.
+
+`init` comes with its own pull request, and bare `skelcrew` will open the TUI. Until then,
+both only say so.
+
 ## The local checks
 
 `src/checks/checks.ts` runs the `checks` commands from `workflow.yml` in a folder, one
@@ -297,9 +317,8 @@ build step 2 onwards.
 - **The daemon** (`skelcrew serve`) holds all state. It owns the SQLite database, calls the
   core, carries out commands, and runs the local checks. The checks are part of the
   daemon, not a plugin, because running them is enforcing the gates.
-- **The CLI** is the one way in, for you and for agents. Typing `skelcrew` opens the TUI,
-  and any command starts the daemon if it isn't running. Everything sent through it is
-  checked with Zod before it reaches the core. Clients hold no state.
+- **The TUI.** Typing `skelcrew` will open it. It is built on the same commands as the
+  CLI, so neither can do what the other cannot.
 - **Two ways to work:** the TUI, and your own harness through skills that call the CLI.
   Agents run in the background, started by the daemon, or attended, started by you in
   your harness. The spec's "Who does the work" section describes both.
