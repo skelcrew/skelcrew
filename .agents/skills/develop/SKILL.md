@@ -16,11 +16,24 @@ The commands below use 12 as the task number. Use the number the developer gave 
 
 ## 1. Claim the task
 
-Run `skelcrew claim` with the task number the developer gave, such as `skelcrew claim 12`.
-This makes this session the one working on the task.
+First check that the task's spec is approved. Run:
 
-If the claim is refused, tell the developer why, in one sentence, and stop. For example, the
-spec may not be approved yet, or too many agents may be working already.
+```
+skelcrew status
+```
+
+Find the task's line, such as `- #12 CSV export`. The heading above it names its phase. If it
+is under Idea or Spec, don't claim it. A claim there would make you its spec writer, not its
+builder. Tell the developer "#12 has no approved spec yet. Run `/spec 12` first." Then stop.
+
+Otherwise, run `skelcrew claim` with the task number the developer gave, such as
+`skelcrew claim 12`. This makes this session the one working on the task.
+
+If the claim is refused, tell the developer why, in one sentence, and stop. For example, too
+many agents may be working already.
+
+If the claim says the task is in Spec, stop too, and tell the developer the same thing. Do no
+work on it.
 
 The claim prints your session. Every report you make needs it. Your harness may start each
 shell command fresh, so setting it once may not last. Put

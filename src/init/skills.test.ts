@@ -17,7 +17,8 @@ const allSkills = [...agentSkills, ...developerSkills];
 // developer starts it with a title or with an Idea's number.
 const commandsFor: Record<string, string[]> = {
   spec: ["add", "spec", "claim", "submit", "log", "approve", "reject"],
-  develop: ["claim", "done", "give-up", "log", "approve", "reject"],
+  // Develop reads status to check the spec is approved before it claims.
+  develop: ["status", "claim", "done", "give-up", "log", "approve", "reject"],
   add: ["add"],
   // Blocked tasks: crew gives the developer the retry and drop commands.
   crew: ["status", "retry", "drop"],
@@ -222,6 +223,20 @@ describe("defaultSkills", () => {
       "If the task exists, ask the developer whether they meant #12, and wait. Add nothing until they answer.",
     );
     expect(asks).toBeLessThan(text.indexOf("skelcrew add '<title>' --spec"));
+  });
+
+  // A claim in Spec is accepted: it makes the session the task's spec
+  // agent. So "/develop 7" on a task in Spec would start writing its spec.
+  // The skill checks the phase first, and stops if the claim still lands
+  // in Spec.
+  test("the develop skill stops without claiming when the task has no approved spec", () => {
+    const text = flat("develop");
+    const checks = text.indexOf("skelcrew status");
+    expect(checks).toBeGreaterThan(-1);
+    expect(checks).toBeLessThan(text.indexOf("skelcrew claim 12"));
+    expect(text).toContain("If it is under Idea or Spec, don't claim it.");
+    expect(text).toContain("#12 has no approved spec yet. Run `/spec 12` first.");
+    expect(text).toContain("If the claim says the task is in Spec");
   });
 
   test("the develop skill claims the task, reports done, and can give up", () => {
