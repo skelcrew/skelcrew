@@ -1230,6 +1230,23 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
       expect(await git(r.dir, "rev-parse", "main")).toBe(before);
     });
 
+    // Found in review: on macOS these made the merge fail with a message
+    // about the checks changing files, which said nothing about the cause.
+    for (const other of ["docs/specs/12-CSV-export.md", "Docs/specs/12-csv-export.md"]) {
+      test(`refuses a branch with ${other}, naming it, since it differs only in letter case`, async () => {
+        const r = await repo();
+        const { plugin, request } = await built(r, { "a.ts": "a\n", [other]: "# Mine\n" });
+        const before = await git(r.dir, "rev-parse", "main");
+
+        const merged = await plugin.merge(request, pass);
+        expect(merged.ok).toBe(false);
+        expect(!merged.ok && merged.message).toBe(
+          `The task's branch has ${other}, which differs from ${path} only in letter case. Rename or remove it.`,
+        );
+        expect(await git(r.dir, "rev-parse", "main")).toBe(before);
+      });
+    }
+
     test("refuses when a hook changes the spec in the merge", async () => {
       const r = await repo();
       const { plugin, request } = await built(r, { "a.ts": "a\n" });

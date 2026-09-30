@@ -596,6 +596,8 @@ export class Git implements VersionControl {
     // The merge's own file, such as the task's approved spec, goes in with
     // the work. It replaces any version on main or on the branch.
     if (request.file !== undefined) {
+      const clash = await caseClash(temp, request.head, this.main, request.file);
+      if (!clash.ok) return clash;
       const written = await writeFile(temp, request.file);
       if (!written.ok) return written;
     }
@@ -1112,6 +1114,32 @@ async function hiddenFiles(dir: string): Promise<Done<number>> {
   const files = await run(dir, "ls-files", "-v");
   if (!files.ok) return { ok: false, message: `git couldn't list ${dir}: ${files.err}` };
   return { ok: true, value: files.out.split("\n").filter((line) => /^[a-zS]/.test(line)).length };
+}
+
+// Refuses when the merge already holds a path that equals `file`'s path
+// if letter case is ignored, but isn't the same. For example,
+// docs/specs/12-CSV-export.md beside docs/specs/12-csv-export.md. On a disk
+// that ignores case, such as macOS's, the two are one file, so writing the
+// spec would change the other. The message names the other path.
+async function caseClash(
+  dir: string,
+  head: string,
+  main: string,
+  file: FileToAdd,
+): Promise<Done<null>> {
+  const listed = await runRaw(dir, "ls-files", "-z");
+  if (!listed.ok) return { ok: false, message: `git couldn't list the merge: ${listed.err}` };
+  const wanted = file.path.toLowerCase();
+  const other = listed.out
+    .split("\0")
+    .find((path) => path !== file.path && path.toLowerCase() === wanted);
+  if (other === undefined) return { ok: true, value: null };
+  const onBranch = await run(dir, "cat-file", "-e", `${head}:${other}`);
+  const where = onBranch.ok ? "The task's branch" : main;
+  return {
+    ok: false,
+    message: `${where} has ${other}, which differs from ${file.path} only in letter case. Rename or remove it.`,
+  };
 }
 
 // Puts `file` into the merge's staging area with exactly its text, then
