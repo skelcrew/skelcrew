@@ -4,7 +4,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { takeLock } from "../daemon/lock";
 import { daemonPaths } from "../daemon/paths";
 import { type Server, serve } from "../daemon/server";
@@ -45,20 +45,21 @@ function skelcrew(repo: string, args: string[], input = "", env: Record<string, 
   };
 }
 
-function lockOf(repo: string): string {
+// The repository's .skelcrew folder, which the daemon locks.
+function folderOf(repo: string): string {
   const found = daemonPaths(repo);
   if (!found.ok) throw new Error(found.message);
-  return found.paths.lock;
+  return found.paths.folder;
 }
 
 // The process id of the daemon running for a repository.
 function pidOf(repo: string): number {
-  return Number(readFileSync(join(dirname(lockOf(repo)), "daemon.pid"), "utf8").trim());
+  return Number(readFileSync(join(folderOf(repo), "daemon.pid"), "utf8").trim());
 }
 
 // Whether a daemon has let go of the repository: its lock can be taken.
 function lockIsFree(repo: string): boolean {
-  const taken = takeLock(lockOf(repo));
+  const taken = takeLock(folderOf(repo));
   if (!taken.ok) return false;
   taken.lock.release();
   return true;
