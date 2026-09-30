@@ -3,7 +3,7 @@
 // standard input, exit codes and a daemon started in the background.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { takeLock } from "../daemon/lock";
 import { daemonPaths } from "../daemon/paths";
