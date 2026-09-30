@@ -1018,16 +1018,27 @@ export class Git implements VersionControl {
   }
 }
 
+// How many characters of the title a branch name keeps, at most.
+const maxTitleLength = 40;
+
 // "task/12-csv-export" for build 1, "task/12-csv-export-2" for build 2. The
-// title keeps only lowercase letters and digits, joined by dashes, and at
-// most 40 characters of it.
+// title keeps only lowercase letters and digits, joined by dashes. A title
+// longer than 40 characters is cut after the last whole word that fits, so
+// "take-a-discount-off-the-total-a-whole-percentage" becomes
+// "take-a-discount-off-the-total-a-whole". Only a first word longer than
+// 40 characters is cut inside the word.
 export function branchName(request: WorktreeRequest): string {
-  const words = request.title
+  const all = request.title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40)
-    .replace(/-+$/, "");
+    .replace(/^-+|-+$/g, "");
+  let words = "";
+  for (const word of all.split("-")) {
+    const longer = words === "" ? word : `${words}-${word}`;
+    if (longer.length > maxTitleLength) break;
+    words = longer;
+  }
+  if (words === "") words = all.slice(0, maxTitleLength);
   const name = words === "" ? `task/${request.taskId}` : `task/${request.taskId}-${words}`;
   return request.build > 1 ? `${name}-${request.build}` : name;
 }
