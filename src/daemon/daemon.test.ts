@@ -360,42 +360,6 @@ describe("the daemon", () => {
     expect(second).not.toBe(first);
   });
 
-  // A dropped task's session is only in its saved events, but its name
-  // still belongs to that agent.
-  test("picks again when a name was used before, even by a dropped task", async () => {
-    const names = ["you-1", "you-1", "you-2"];
-    const opened = Daemon.open({
-      config,
-      log: EventStore.open(":memory:"),
-      newSession: () => names.shift() ?? "",
-    });
-    if (!opened.ok) throw new Error(opened.message);
-    const daemon = opened.value;
-    await ok(daemon, add("CSV export"));
-    await ok(daemon, add("PDF export"));
-    expect(await claimedSession(daemon, 1)).toBe("you-1");
-    await ok(daemon, { type: "drop", task: task(1) });
-    expect(await claimedSession(daemon, 2)).toBe("you-2");
-  });
-
-  test("refuses a claim when every name it picks is taken", async () => {
-    const opened = Daemon.open({
-      config,
-      log: EventStore.open(":memory:"),
-      newSession: () => "you-1",
-    });
-    if (!opened.ok) throw new Error(opened.message);
-    const daemon = opened.value;
-    await ok(daemon, add("CSV export"));
-    await ok(daemon, add("PDF export"));
-    expect(await claimedSession(daemon, 1)).toBe("you-1");
-    await ok(daemon, { type: "drop", task: task(1) });
-    expect(await daemon.handle({ type: "claim", task: task(2) })).toEqual({
-      ok: false,
-      message: "Skelcrew couldn't name a session for the claim.",
-    });
-  });
-
   // The loop keeps a command until its tool says it has finished, which for
   // a command with a reply means once the reply is handled. Otherwise every
   // command would go out again at each start.

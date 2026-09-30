@@ -210,8 +210,8 @@ repository, and the setup commands when it finds any.
 rebuilds the loop from the saved log. `handle(command)` takes one protocol command, turns
 it into inputs for the core through the loop, and answers. It hands out task numbers and
 session names, since the core never makes up IDs. A session name is short and random, like
-`session-k3x9q2mf`. The daemon checks it against every session in the saved events, so no
-name is ever handed out twice. Requests and the tools' replies share one
+`session-k3x9q2mf`: eight random letters or digits, hard to guess and unlikely ever to
+repeat. Requests and the tools' replies share one
 queue, so everything happens one at a time. Its tools carry out the core's commands and
 send the results back as new inputs. Making and removing worktrees go to the git plugin,
 and the local gate to the checks runner. Commands for a plugin that arrive at start-up,
