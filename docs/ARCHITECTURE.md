@@ -233,7 +233,9 @@ request and every reply, and once at start, `DraftPullRequests` looks at each ta
 background and compares it with the pull requests it opened. For example, #12's checks
 pass and its merge waits: it pushes `task/12-csv-export` and opens a draft titled
 "#12 CSV export". You approve, and it closes the draft with a comment naming the new
-commit on main. The open ones are remembered in the store, so a restart neither loses one
+commit on main. The comments say "Task 12", since on GitHub "#12" links to its own
+pull request 12. The spec's text goes into the body inside fenced blocks, so a "#56" or
+"@name" in it links to nothing and notifies nobody. The open ones are remembered in the store, so a restart neither loses one
 nor opens a second. After a send-back or a failed merge the task keeps its branch, so its
 draft stays open and the next wait pushes the new work to it. A task that leaves its
 branch, by being merged, dropped or sent back to Spec, gets its draft closed. If a pull

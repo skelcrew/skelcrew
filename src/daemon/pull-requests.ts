@@ -228,11 +228,11 @@ function body(task: Extract<Task, { phase: "checks" }>, gates: GateName[]): stri
     "",
     "## Scope",
     "",
-    task.spec.scope,
+    fenced(task.spec.scope),
     "",
     "## Acceptance criteria",
     "",
-    ...task.spec.acceptance.map((line) => `- ${line}`),
+    fenced(task.spec.acceptance.map((line) => `- ${line}`).join("\n")),
     "",
     "## Checks",
     "",
@@ -246,13 +246,25 @@ function body(task: Extract<Task, { phase: "checks" }>, gates: GateName[]): stri
   ].join("\n");
 }
 
+// The spec's text as a fenced block. On GitHub, "#56" in plain text links
+// to pull request 56 there, and "@name" notifies that person. Inside a
+// fenced block both stay plain text. The fence is longer than any run of
+// backticks in the text, so the text can't end it early.
+function fenced(text: string): string {
+  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${fence}text\n${text}\n${fence}`;
+}
+
+// Says "Task 12", never "#12": on GitHub, "#12" links to its own issue or
+// pull request 12, which is something else.
 function closingComment(task: Task): string {
   switch (task.phase) {
     case "done":
       return `Merged into main as ${task.mergeCommit.slice(0, 7)} with \`skelcrew approve ${task.id}\`. Skelcrew merges on your machine, so main on GitHub has it once you push main.`;
     case "dropped":
-      return `#${task.id} was dropped, so this pull request is closed. Nothing was merged.`;
+      return `Task ${task.id} was dropped, so this pull request is closed. Nothing was merged.`;
     default:
-      return `#${task.id} went back to ${phaseNames[task.phase]}. Its next build gets a new branch and a new pull request.`;
+      return `Task ${task.id} went back to ${phaseNames[task.phase]}. Its next build gets a new branch and a new pull request.`;
   }
 }

@@ -10,7 +10,7 @@ import { join } from "node:path";
 import * as z from "zod";
 import { localChecks } from "../checks/checks";
 import { SessionId, TaskId } from "../core/ids";
-import type { Config } from "../core/types";
+import type { Config, Spec } from "../core/types";
 import { Git } from "../plugins/git/git";
 import type {
   CloseRequest,
@@ -125,6 +125,7 @@ async function waitingForApproval(
   github = new FakeGitHub(),
   store = EventStore.open(":memory:"),
   retryMs = 60_000,
+  taskSpec: Spec = spec,
 ) {
   const repo = await makeRepo();
   repos.push(repo.dir);
@@ -133,7 +134,7 @@ async function waitingForApproval(
   const claim = z
     .object({ session: SessionId })
     .parse(await ok(daemon, { type: "claim", task: one }));
-  await ok(daemon, { type: "submit", task: one, session: claim.session, spec });
+  await ok(daemon, { type: "submit", task: one, session: claim.session, spec: taskSpec });
   await ok(daemon, { type: "approve", task: one, sendBack: null });
   await workDone(daemon);
   return { daemon, repo, github, store };
@@ -367,5 +368,35 @@ describe("a draft pull request for reading", () => {
     await ok(daemon, { type: "drop", task: one });
     await until(() => github.closed.length === 1);
     expect(github.closed[0]?.comment).toContain("dropped");
+  });
+
+  // On GitHub, "#1" links to GitHub's own issue or pull request 1, which
+  // is something else. So Skelcrew's comments say "Task 1".
+  test("names the task in words in its closing comment, not as #1", async () => {
+    const { daemon, github } = await waitingForApproval();
+    await until(() => github.open.size === 1);
+    await ok(daemon, { type: "drop", task: one });
+    await until(() => github.closed.length === 1);
+    expect(github.closed[0]?.comment).toBe(
+      "Task 1 was dropped, so this pull request is closed. Nothing was merged.",
+    );
+  });
+
+  // The spec is pasted into the body. There, "#56" would link to GitHub's
+  // pull request 56, and "@simon" would notify someone. Inside a fenced
+  // block GitHub shows both as plain text.
+  test("puts the spec's text in fenced blocks, so GitHub links and notifies nothing", async () => {
+    const github = new FakeGitHub();
+    const taskSpec: Spec = {
+      scope: "Fix the export from #56, as @simon asked.",
+      acceptance: ["Works like #57.", "Ask @ana to try ```csv``` files."],
+      openQuestions: [],
+    };
+    await waitingForApproval(github, EventStore.open(":memory:"), 60_000, taskSpec);
+    await until(() => github.shown.length === 1);
+    const body = github.shown[0]?.body ?? "";
+    expect(body).toContain(
+      "## Scope\n\n```text\nFix the export from #56, as @simon asked.\n```\n\n## Acceptance criteria\n\n````text\n- Works like #57.\n- Ask @ana to try ```csv``` files.\n````\n",
+    );
   });
 });
