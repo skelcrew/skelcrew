@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { createServer, type Server as NetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -164,6 +164,22 @@ describe("skelcrew claim", () => {
         "Your session is you-1.",
         "Set SKELCREW_SESSION to it for each report, like this:",
         "SKELCREW_SESSION=you-1 skelcrew submit 1",
+      ]),
+    );
+  });
+
+  test("in Ready, says where to work once the worktree is made", async () => {
+    const repo = await repoWithDaemon();
+    await specced(repo);
+    await cli(repo, ["approve", "1"]);
+    const worktree = join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export");
+    expect(await cli(repo, ["claim", "1"])).toEqual(
+      said([
+        "Claimed #1. It is in In progress.",
+        `Work in ${worktree}, on the branch task/1-csv-export.`,
+        "Your session is you-2.",
+        "Set SKELCREW_SESSION to it for each report, like this:",
+        "SKELCREW_SESSION=you-2 skelcrew done 1",
       ]),
     );
   });
@@ -384,14 +400,16 @@ describe("skelcrew status", () => {
     const repo = await repoWithDaemon();
     await specced(repo);
     await cli(repo, ["approve", "1"]);
-    // Claiming in Ready needs a worktree, which the daemon can't make yet.
+    // A folder where the worktree should go, so it can't be made.
+    const worktree = join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export");
+    mkdirSync(worktree, { recursive: true });
     await cli(repo, ["claim", "1"]);
     expect((await cli(repo, ["status"])).out).toEqual([
       "Waiting on you:",
       "- #1 CSV export: blocked, so retry or drop it.",
       "",
       "Ready:",
-      "- #1 CSV export (blocked: The worktree couldn't be made: Making worktrees isn't built into the daemon yet.)",
+      `- #1 CSV export (blocked: The worktree couldn't be made: ${worktree} exists, but isn't a worktree of ${realpathSync(repo)}.)`,
     ]);
   });
 

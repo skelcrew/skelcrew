@@ -125,6 +125,28 @@ describe("the daemon's socket", () => {
     });
   });
 
+  test("refuses to start when the main branch doesn't exist, and says how to set it", async () => {
+    const repo = throwawayRepo(dirs);
+    writeFileSync(
+      join(repo, ".skelcrew", "workflow.yml"),
+      'checks:\n  - "true"\nmain_branch: trunk\n',
+    );
+    expect(await serve(repo)).toEqual({
+      ok: false,
+      message:
+        "This repository has no branch trunk. Set main_branch in .skelcrew/workflow.yml to the branch tasks start from and merge into.",
+    });
+  });
+
+  test("refuses to start outside a git repository", async () => {
+    const repo = throwawayRepo(dirs);
+    rmSync(join(repo, ".git"), { recursive: true });
+    expect(await serve(repo)).toEqual({
+      ok: false,
+      message: `${repo} isn't a git repository. Skelcrew needs one.`,
+    });
+  });
+
   test("refuses to start with a workflow.yml that doesn't fit, with every reason", async () => {
     const repo = throwawayRepo(dirs);
     writeFileSync(join(repo, ".skelcrew", "workflow.yml"), "checks: []\nmax_running: 0\n");

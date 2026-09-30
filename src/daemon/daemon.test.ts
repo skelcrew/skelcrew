@@ -1,6 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { SessionId, TaskId } from "../core/ids";
 import type { Config } from "../core/types";
+import { Git } from "../plugins/git/git";
+import { git, makeRepo } from "../plugins/version-control.contract";
 import type { Command } from "../protocol/protocol";
 import { EventStore } from "../store/store";
 import { config as base, spec } from "../test/fixtures";
@@ -191,7 +195,11 @@ describe("the daemon", () => {
     await ok(daemon, { type: "claim", task: task(1) });
     await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
     await ok(daemon, { type: "approve", task: task(1), sendBack: null });
-    await ok(daemon, { type: "claim", task: task(1) });
+    // The claim waits for the worktree, so it hears why there is none.
+    expect(await daemon.handle({ type: "claim", task: task(1) })).toEqual({
+      ok: false,
+      message: "The worktree couldn't be made: Making worktrees isn't built into the daemon yet.",
+    });
     expect(await ok(daemon, { type: "status" })).toMatchObject({
       tasks: [
         {
@@ -239,9 +247,10 @@ describe("the daemon", () => {
     await readyToClaim(daemon);
 
     // Claiming in Ready asks for a worktree. Without git its reply is a
-    // failure that blocks the task, and saving that reply now throws.
+    // failure that blocks the task, and saving that reply now throws. The
+    // claim waits for that reply, so it gets its answer only once it saves.
     broken.replies = true;
-    await ok(daemon, { type: "claim", task: task(1) });
+    const claim = daemon.handle({ type: "claim", task: task(1) });
     await Bun.sleep(200);
     // Waits double from 1 ms but stop growing at 5 ms, so 200 ms fits
     // many tries. Without the cap it would be about 8.
@@ -256,6 +265,10 @@ describe("the daemon", () => {
       tasks: [{ task: 1, blocked: expect.stringContaining("The worktree couldn't be made") }],
     });
     expect(store.loadCommands()).toEqual({ ok: true, commands: [] });
+    expect(await claim).toEqual({
+      ok: false,
+      message: "The worktree couldn't be made: Making worktrees isn't built into the daemon yet.",
+    });
     await daemon.close();
   });
 
@@ -263,9 +276,11 @@ describe("the daemon", () => {
     const { daemon, broken } = failingReplies({ retryMs: 1, maxRetryMs: 5 });
     await readyToClaim(daemon);
     broken.replies = true;
-    await ok(daemon, { type: "claim", task: task(1) });
+    const claim = daemon.handle({ type: "claim", task: task(1) });
     await Bun.sleep(20);
     await daemon.close();
+    // A claim still waiting for its worktree hears the daemon has closed.
+    expect(await claim).toEqual({ ok: false, message: "The daemon is shutting down." });
     const tries = broken.tries;
     await Bun.sleep(50);
     expect(broken.tries).toBe(tries);
@@ -296,8 +311,8 @@ describe("the daemon", () => {
     await ok(daemon, { type: "claim", task: task(1) });
     await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
     await ok(daemon, { type: "approve", task: task(1), sendBack: null });
-    await ok(daemon, { type: "claim", task: task(1) });
-    await Bun.sleep(20);
+    // Without git, the claim's worktree fails, and that reply is handled.
+    expect((await daemon.handle({ type: "claim", task: task(1) })).ok).toBe(false);
     expect(store.loadCommands()).toEqual({ ok: true, commands: [] });
   });
 
@@ -307,9 +322,10 @@ describe("the daemon", () => {
     const { daemon: first, store, broken } = failingReplies({ retryMs: 1, maxRetryMs: 5 });
     await readyToClaim(first);
     broken.replies = true;
-    await ok(first, { type: "claim", task: task(1) });
+    const claim = first.handle({ type: "claim", task: task(1) });
     await Bun.sleep(20);
     await first.close();
+    expect(await claim).toEqual({ ok: false, message: "The daemon is shutting down." });
     expect(store.loadCommands()).toMatchObject({
       commands: [{ command: { type: "create_worktree" } }],
     });
@@ -340,6 +356,59 @@ describe("the daemon", () => {
         { task: 1, title: "CSV export" },
         { task: 2, title: "PDF export" },
       ],
+    });
+  });
+});
+
+describe("the daemon with git", () => {
+  const repos: string[] = [];
+  afterEach(() => {
+    for (const dir of repos.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  // A daemon for a real repository, with task 1 approved and Ready.
+  async function readyInRepo() {
+    const repo = await makeRepo();
+    repos.push(repo.dir);
+    let sessions = 0;
+    const opened = Daemon.open({
+      config,
+      log: EventStore.open(":memory:"),
+      versionControl: new Git(repo.dir, repo.main),
+      newSession: () => {
+        sessions += 1;
+        return `you-${sessions}`;
+      },
+    });
+    if (!opened.ok) throw new Error(opened.message);
+    const daemon = opened.value;
+    await readyToClaim(daemon);
+    return { daemon, repo };
+  }
+
+  test("makes a worktree when you claim a task in Ready, and says where to work", async () => {
+    const { daemon, repo } = await readyInRepo();
+    const result = await ok(daemon, { type: "claim", task: task(1) });
+    const path = join(repo.dir, ".skelcrew", "worktrees", "1-csv-export");
+    expect(result).toEqual({
+      session: "you-2",
+      phase: "in_progress",
+      worktree: { path, branch: "task/1-csv-export" },
+    });
+    expect(await git(path, "branch", "--show-current")).toBe("task/1-csv-export");
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, phase: "in_progress", step: "running", blocked: null }],
+    });
+  });
+
+  test("refuses the claim and says why when the worktree can't be made", async () => {
+    const { daemon, repo } = await readyInRepo();
+    mkdirSync(join(repo.dir, ".skelcrew", "worktrees", "1-csv-export"), { recursive: true });
+    const answer = await daemon.handle({ type: "claim", task: task(1) });
+    expect(answer.ok).toBe(false);
+    expect(!answer.ok && answer.message).toStartWith("The worktree couldn't be made:");
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, blocked: expect.stringMatching(/^The worktree couldn't be made:/) }],
     });
   });
 });

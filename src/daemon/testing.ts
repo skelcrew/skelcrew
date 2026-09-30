@@ -6,14 +6,23 @@ import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// A folder with .skelcrew/workflow.yml, removed by cleanUp. The prefix is
-// short, so the socket fits in .skelcrew/.
+// A git repository with one commit on main and .skelcrew/workflow.yml,
+// removed by cleanUp. The prefix is short, so the socket fits in
+// .skelcrew/.
 export function throwawayRepo(dirs: string[], name = ""): string {
   const top = mkdtempSync(join(tmpdir(), "sk-"));
   dirs.push(top);
   const repo = name === "" ? top : join(top, name);
   mkdirSync(join(repo, ".skelcrew"), { recursive: true });
   writeFileSync(join(repo, ".skelcrew", "workflow.yml"), 'checks:\n  - "true"\n');
+  const git = (...args: string[]) => {
+    const ran = Bun.spawnSync(["git", "-c", "user.name=Test", "-c", "user.email=t@t", ...args], {
+      cwd: repo,
+    });
+    if (ran.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${ran.stderr.toString()}`);
+  };
+  git("init", "-q", "-b", "main");
+  git("commit", "-q", "--allow-empty", "-m", "First");
   return repo;
 }
 

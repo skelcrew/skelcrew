@@ -7,15 +7,16 @@
 // queue. Neither the loop nor the git plugin is built for two things at
 // once, and it keeps task numbers from ever repeating.
 //
-// This first version has no git and no checks. A command that needs them
-// is answered at once with a failure, so the core never waits on something
-// that won't happen.
+// Worktrees go to the version control plugin. The checks and merging
+// aren't wired in yet. A command that needs them is answered at once with a
+// failure, so the core never waits on something that won't happen.
 
 import { randomUUID } from "node:crypto";
 import { ProjectId, SessionId, TaskId } from "../core/ids";
 import { waitingOnYou } from "../core/task";
 import type { BlockReason, Config, Command as CoreCommand, Input, Task } from "../core/types";
 import { Loop, type ReadableLog, type Tools } from "../loop/loop";
+import type { VersionControl } from "../plugins/version-control";
 import type { Command } from "../protocol/protocol";
 
 export type Answer = { ok: true; result: unknown } | { ok: false; message: string };
@@ -30,7 +31,15 @@ export type DaemonOptions = {
   // long each time, but never more than `maxRetryMs` apart.
   retryMs?: number;
   maxRetryMs?: number;
+  // Makes the worktrees. Without it, making one fails at once.
+  versionControl?: VersionControl;
 };
+
+// An answer that has to wait for a tool's reply, such as a claim waiting
+// for its worktree. `until` says when the task is ready to answer.
+type Later = { later: { task: TaskId; until: (task: Task) => boolean; answer: () => Answer } };
+
+type Waiter = { task: TaskId; until: (task: Task) => boolean; wake: () => void };
 
 export class Daemon {
   private queue: Promise<unknown> = Promise.resolve();
@@ -40,6 +49,7 @@ export class Daemon {
   private readonly maxRetryMs: number;
   private readonly retryTimers = new Set<ReturnType<typeof setTimeout>>();
   private closed = false;
+  private waiters = new Set<Waiter>();
 
   private constructor(
     private readonly loop: Loop,
@@ -59,31 +69,62 @@ export class Daemon {
   static open(
     options: DaemonOptions,
   ): { ok: true; value: Daemon } | { ok: false; message: string } {
-    const tools = new DaemonTools();
+    const tools = new DaemonTools(options.versionControl ?? null);
     const opened = Loop.open(options.config, tools, options.log);
     if (!opened.ok)
       return { ok: false, message: `The saved log couldn't be read. ${opened.reason}` };
     const daemon = new Daemon(opened.loop, options);
-    tools.connect((taskId, input, finished) => daemon.reply(taskId, input, finished));
+    tools.connect(
+      (taskId, input, finished) => daemon.reply(taskId, input, finished),
+      (taskId) => daemon.find(taskId)?.title ?? `#${taskId}`,
+    );
     return { ok: true, value: daemon };
   }
 
   // One request from the CLI, answered once everything before it is done.
   // It always gets an answer: an error, such as a locked database, becomes
   // a refusal that says what happened.
-  handle(command: Command): Promise<Answer> {
-    return this.oneAtATime(() => {
-      if (this.closed) return { ok: false, message: "The daemon is shutting down." };
-      try {
-        return this.answer(command);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return { ok: false, message: `Skelcrew couldn't handle that: ${message}` };
-      }
+  // An answer that waits for a tool's reply waits outside the queue, so
+  // the reply can get in.
+  async handle(command: Command): Promise<Answer> {
+    const first = await this.oneAtATime(() => this.guarded(() => this.answer(command)));
+    if (!("later" in first)) return first;
+    const { task, until, answer } = first.later;
+    await this.settled(task, until);
+    return this.oneAtATime(() => this.guarded(answer));
+  }
+
+  private guarded<T>(work: () => T): T | Answer {
+    if (this.closed) return { ok: false, message: "The daemon is shutting down." };
+    try {
+      return work();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, message: `Skelcrew couldn't handle that: ${message}` };
+    }
+  }
+
+  // Resolves once `until` holds for the task, checked after each reply.
+  // Closing the daemon wakes every waiter.
+  private settled(taskId: TaskId, until: (task: Task) => boolean): Promise<void> {
+    return new Promise((wake) => {
+      const task = this.find(taskId);
+      if (task === null || until(task) || this.closed) wake();
+      else this.waiters.add({ task: taskId, until, wake });
     });
   }
 
-  private answer(command: Command): Answer {
+  private wakeWaiters(): void {
+    for (const waiter of this.waiters) {
+      const task = this.find(waiter.task);
+      if (task === null || waiter.until(task) || this.closed) {
+        this.waiters.delete(waiter);
+        waiter.wake();
+      }
+    }
+  }
+
+  private answer(command: Command): Answer | Later {
     switch (command.type) {
       case "add": {
         let project: ProjectId | null = null;
@@ -144,11 +185,17 @@ export class Daemon {
         const session = named.data;
         const claimed = this.send(command.task, { by: "human", type: "claim", session });
         if (!claimed.ok) return claimed;
-        const task = this.loop.task(command.task);
-        if (task.phase === "spec") {
-          return { ok: true, result: { session, phase: "spec", spec: task.spec, note: task.note } };
-        }
-        return { ok: true, result: { session, phase: task.phase } };
+        // In Ready, the claim waits for the task's worktree, since that is
+        // where the session works.
+        const making = (task: Task) =>
+          task.phase === "ready" && task.step.kind === "creating_worktree";
+        return {
+          later: {
+            task: command.task,
+            until: (task) => !making(task),
+            answer: () => this.claimed(command.task, session),
+          },
+        };
       }
 
       case "submit":
@@ -181,6 +228,7 @@ export class Daemon {
     this.closed = true;
     for (const timer of this.retryTimers) clearTimeout(timer);
     this.retryTimers.clear();
+    this.wakeWaiters();
     return this.oneAtATime(() => undefined);
   }
 
@@ -203,6 +251,7 @@ export class Daemon {
       }
       if (handled) {
         finished();
+        this.wakeWaiters();
         return;
       }
       const wait = Math.min(this.retryMs * 2 ** attempt, this.maxRetryMs);
@@ -214,6 +263,21 @@ export class Daemon {
     });
   }
 
+  // What a claim tells the session: where the task stands, and where to
+  // work once it has a worktree.
+  private claimed(taskId: TaskId, session: SessionId): Answer {
+    const task = this.loop.task(taskId);
+    if (task.blocked !== null) return { ok: false, message: describeBlock(task.blocked) };
+    switch (task.phase) {
+      case "spec":
+        return { ok: true, result: { session, phase: "spec", spec: task.spec, note: task.note } };
+      case "in_progress":
+        return { ok: true, result: { session, phase: "in_progress", worktree: task.worktree } };
+      default:
+        return { ok: true, result: { session, phase: task.phase } };
+    }
+  }
+
   private send(taskId: TaskId, input: Input): Answer {
     const decision = this.loop.send(taskId, input, this.now());
     return decision.ok
@@ -221,7 +285,7 @@ export class Daemon {
       : { ok: false, message: decision.rejection.reason };
   }
 
-  private find(taskId: TaskId): Task | null {
+  find(taskId: TaskId): Task | null {
     return this.loop.tasks().find((task) => task.id === taskId) ?? null;
   }
 
@@ -267,18 +331,23 @@ function describeBlock(reason: BlockReason): string {
   }
 }
 
-// Carries out the core's commands. This first version has no git and no
-// checks, so the commands that need them are answered with a failure at
-// once. An attended session can't be stopped or messaged by Skelcrew, so
-// those commands do nothing: its next report is refused instead.
+// Carries out the core's commands. Worktrees go to the version control
+// plugin. The checks and merging aren't built in yet, so the commands that
+// need them are answered with a failure at once. An attended session can't
+// be stopped or messaged by Skelcrew, so those commands do nothing: its
+// next report is refused instead.
 type Deliver = (taskId: TaskId, input: Input, finished: () => void) => void;
 
 class DaemonTools implements Tools {
   private deliver: Deliver | null = null;
+  private titleOf: (taskId: TaskId) => string = (taskId) => `#${taskId}`;
   private early: [TaskId, Input, () => void][] = [];
 
-  connect(deliver: Deliver): void {
+  constructor(private readonly versionControl: VersionControl | null) {}
+
+  connect(deliver: Deliver, titleOf: (taskId: TaskId) => string): void {
     this.deliver = deliver;
+    this.titleOf = titleOf;
     for (const [taskId, input, finished] of this.early) deliver(taskId, input, finished);
     this.early = [];
   }
@@ -286,14 +355,47 @@ class DaemonTools implements Tools {
   // A command with no reply has finished as soon as it is done here. One
   // with a reply finishes when the daemon has handled that reply.
   carryOut(command: CoreCommand, finished: () => void): void {
+    if (command.type === "create_worktree" && this.versionControl !== null) {
+      void this.createWorktree(this.versionControl, command, finished);
+      return;
+    }
     const reply = this.replyTo(command);
     if (reply === null) {
       finished();
       return;
     }
     const [taskId, input] = reply;
+    this.send(taskId, input, finished);
+  }
+
+  private send(taskId: TaskId, input: Input, finished: () => void): void {
     if (this.deliver === null) this.early.push([taskId, input, finished]);
     else this.deliver(taskId, input, finished);
+  }
+
+  // The plugin never throws, but a failure here must still reach the core,
+  // which would otherwise wait for the worktree for ever.
+  private async createWorktree(
+    versionControl: VersionControl,
+    command: Extract<CoreCommand, { type: "create_worktree" }>,
+    finished: () => void,
+  ): Promise<void> {
+    const { taskId, request, build } = command;
+    let input: Input;
+    try {
+      const made = await versionControl.createWorktree({
+        taskId,
+        title: this.titleOf(taskId),
+        build,
+      });
+      input = made.ok
+        ? { by: "plugin", type: "worktree_created", request, worktree: made.value }
+        : { by: "plugin", type: "worktree_failed", request, message: made.message };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      input = { by: "plugin", type: "worktree_failed", request, message };
+    }
+    this.send(taskId, input, finished);
   }
 
   private replyTo(command: CoreCommand): [TaskId, Input] | null {
