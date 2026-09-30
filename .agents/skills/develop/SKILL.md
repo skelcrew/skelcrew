@@ -171,8 +171,11 @@ If the task cannot be finished at all, give up with the reason, in one or two pl
 sentences:
 
 ```
-SKELCREW_SESSION=<session> skelcrew give-up 12 "<reason>"
+SKELCREW_SESSION=<session> skelcrew give-up 12 '<reason>'
 ```
+
+Put the reason in single quotes, so the shell keeps it as it is. Write a single quote inside
+it as `'\''`.
 
 Then tell the developer.
 

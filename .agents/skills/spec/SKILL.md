@@ -27,11 +27,13 @@ number. To start a task with a title of only digits, the developer adds a word.
 **With a title**, add the task and ask for its spec in one step:
 
 ```
-skelcrew add "<title>" --spec
+skelcrew add '<title>' --spec
 ```
 
-Put the developer's title where `<title>` is, in quotes, so it stays one piece. It prints the
-new number, such as "Added #12: CSV export." Tell the developer that number, and use it from
+Put the developer's title where `<title>` is, in single quotes. Single quotes keep it as it
+is. Inside double quotes, the shell would still run anything in backticks and replace words
+that start with `$`. If the title holds a single quote, write that quote as `'\''`. For
+example, `Don't cache` becomes `'Don'\''t cache'`. The command prints the new number, such as "Added #12: CSV export." Tell the developer that number, and use it from
 here on.
 
 **Then claim it.** Run `skelcrew claim` with the task number the developer gave, or the one

@@ -57,5 +57,8 @@ If the developer changes their mind before approving, they can send it back inst
 type this line themselves, with their note:
 
 ```
-! skelcrew reject 12 "<note>"
+! skelcrew reject 12 '<note>'
 ```
+
+The note goes in single quotes, so the shell keeps it as it is. A single quote inside it is
+written `'\''`.

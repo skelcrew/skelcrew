@@ -82,8 +82,11 @@ number:
 
 ```
 ! skelcrew approve 12
-! skelcrew reject 12 "<note>"
+! skelcrew reject 12 '<note>'
 ```
+
+The note goes in single quotes, so the shell keeps it as it is. A single quote inside it is
+written `'\''`, so `Don't` becomes `Don'\''t`.
 
 Say that the developer types one of them. In Claude Code, a line that starts with `!` runs
 as the developer's own command. In another harness, they type it in a terminal, without

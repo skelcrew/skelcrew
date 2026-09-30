@@ -16,11 +16,15 @@ If you weren't given a title, ask the developer what the task is, and wait.
 
 ## 2. Add it
 
-Run this, with the title in quotes, so it stays one piece:
+Run this, with the title in single quotes:
 
 ```
-skelcrew add "<title>"
+skelcrew add '<title>'
 ```
+
+Single quotes keep the title as it is. Inside double quotes, the shell would still run
+anything in backticks and replace words that start with `$`. If the title holds a single
+quote, write that quote as `'\''`. For example, `Don't cache` becomes `'Don'\''t cache'`.
 
 It prints the new task's number, such as "Added #12: CSV export."
 

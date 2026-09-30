@@ -205,7 +205,7 @@ describe("defaultSkills", () => {
     expect(text).toContain(
       "It is a task number when it is only digits, with or without a # in front, such as 12 or #12.",
     );
-    expect(text).toContain('skelcrew add "<title>" --spec');
+    expect(text).toContain("skelcrew add '<title>' --spec");
     expect(text).toContain("skelcrew spec 12");
     expect(text).toContain("Don't ask the developer to confirm first.");
   });
@@ -262,7 +262,7 @@ describe("defaultSkills", () => {
       spec: ["SKELCREW_SESSION=<session> skelcrew submit 12 --file -"],
       develop: [
         "SKELCREW_SESSION=<session> skelcrew done 12",
-        'SKELCREW_SESSION=<session> skelcrew give-up 12 "<reason>"',
+        "SKELCREW_SESSION=<session> skelcrew give-up 12 '<reason>'",
       ],
     };
     for (const [name, commands] of Object.entries(reports)) {
@@ -363,7 +363,7 @@ describe("defaultSkills", () => {
   test("the log skill ends with both lines for the developer, and runs neither", () => {
     const text = skill("log");
     const approve = "! skelcrew approve 12";
-    const reject = '! skelcrew reject 12 "<note>"';
+    const reject = "! skelcrew reject 12 '<note>'";
     expect(text).toContain(`${approve}\n${reject}`);
     // Besides those two lines, each mention, even one wrapped over two
     // lines, must be a plain "never run".
@@ -423,11 +423,32 @@ describe("defaultSkills", () => {
     }
   });
 
+  // Inside double quotes the shell still runs backticks and expands $. So
+  // a title such as "Fix `rm -rf` in $HOME" would run a command. Text the
+  // developer typed goes in single quotes, where the shell changes nothing.
+  test("no skill puts the developer's text in double quotes", () => {
+    for (const one of defaultSkills) {
+      const found = ['"<title>"', '"<note>"', '"<reason>"'].filter((it) => one.text.includes(it));
+      expect({ path: one.path, found }).toEqual({ path: one.path, found: [] });
+    }
+  });
+
+  // A single quote inside the text would end the quoted part early. The
+  // skills say how to write one: '\'' closes the quote, adds a quote, and
+  // opens it again.
+  test("the skills that pass the developer's text say how to quote it", () => {
+    for (const name of ["add", "spec", "log", "approve"]) {
+      const text = flat(name);
+      expect({ name, single: text.includes("in single quotes") }).toEqual({ name, single: true });
+      expect({ name, escape: text.includes("`'\\''`") }).toEqual({ name, escape: true });
+    }
+  });
+
   // An idea waits until the developer asks for its spec. So /add only
   // captures it.
   test("the add skill adds the task as an Idea, and asks for no spec", () => {
     const text = flat("add");
-    expect(text).toContain('skelcrew add "<title>"');
+    expect(text).toContain("skelcrew add '<title>'");
     expect(text).not.toContain("--spec");
   });
 
