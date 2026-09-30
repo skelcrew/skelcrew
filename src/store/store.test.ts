@@ -296,3 +296,49 @@ describe("commands not yet carried out", () => {
     expect(EventStore.open(file).loadCommands()).toMatchObject({ ok: false, seq: 1 });
   });
 });
+
+describe("pull requests opened for reading", () => {
+  const opened = (task: number, number: number) => ({
+    task: TaskId.parse(task),
+    branch: `task/${task}-csv-export`,
+    head,
+    number,
+    url: `https://github.com/owner/repo/pull/${number}`,
+  });
+
+  test("are remembered after the store is opened again, one per task", () => {
+    const file = tempFile();
+    const store = EventStore.open(file);
+    expect(store.savePullRequest(opened(1, 40))).toEqual({ ok: true });
+    store.savePullRequest(opened(2, 41));
+    // Task 1 was built again and has a new pull request.
+    store.savePullRequest(opened(1, 42));
+    store.close();
+
+    expect(EventStore.open(file).loadPullRequests()).toEqual({
+      ok: true,
+      pullRequests: [opened(1, 42), opened(2, 41)],
+    });
+  });
+
+  test("are forgotten once closed", () => {
+    const store = EventStore.open(":memory:");
+    store.savePullRequest(opened(1, 40));
+    store.savePullRequest(opened(2, 41));
+    expect(store.forgetPullRequest(TaskId.parse(1))).toEqual({ ok: true });
+    expect(store.loadPullRequests()).toEqual({ ok: true, pullRequests: [opened(2, 41)] });
+  });
+
+  test("a damaged one is reported with its task", () => {
+    const file = tempFile();
+    const store = EventStore.open(file);
+    store.savePullRequest(opened(3, 40));
+    store.close();
+
+    const raw = new Database(file);
+    raw.run(`UPDATE pull_requests SET body = '{"number":"forty"}'`);
+    raw.close();
+
+    expect(EventStore.open(file).loadPullRequests()).toMatchObject({ ok: false, seq: 3 });
+  });
+});

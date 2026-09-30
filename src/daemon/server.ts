@@ -12,6 +12,7 @@ import { preparedChecks } from "../checks/checks";
 import { parseWorkflow } from "../config/workflow";
 import { Git } from "../plugins/git/git";
 import { mainRepository } from "../plugins/git/top";
+import { GitHub } from "../plugins/github/github";
 import { encode, MAX_LINE, parseRequest, type Reply } from "../protocol/protocol";
 import { EventStore } from "../store/store";
 import { type Answer, Daemon, type DaemonOptions } from "./daemon";
@@ -94,6 +95,8 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
     log: store,
     versionControl: new Git(paths.repo, workflow.mainBranch),
     runChecks: preparedChecks(workflow.setup, workflow.checks),
+    // Without an origin remote or gh, none is opened, and status says why.
+    pullRequests: { plugin: new GitHub(paths.repo), log: store, base: workflow.mainBranch },
   };
   if (options.newSession !== undefined) daemonOptions.newSession = options.newSession;
   const opened = Daemon.open(daemonOptions);
