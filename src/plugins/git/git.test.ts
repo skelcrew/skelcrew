@@ -30,6 +30,56 @@ describe("branchName", () => {
   test("uses only the number for a title with no letters or digits", () => {
     expect(branchName({ taskId, title: "!!!", build: 1 })).toBe("task/12");
   });
+
+  // Skelcrew's first real run cut this title to "...-a-whole-pe".
+  const discount = "Take a discount off the total: a whole percentage, rounded to the nearest cent";
+
+  test("cuts a long title after its last whole word that fits", () => {
+    expect(branchName({ taskId: TaskId.parse(1), title: discount, build: 1 })).toBe(
+      "task/1-take-a-discount-off-the-total-a-whole",
+    );
+  });
+
+  test("adds the build number after the cut title", () => {
+    expect(branchName({ taskId: TaskId.parse(1), title: discount, build: 2 })).toBe(
+      "task/1-take-a-discount-off-the-total-a-whole-2",
+    );
+  });
+
+  test("keeps a title of exactly 40 characters whole", () => {
+    const title = "Take a discount off the total a whole xy";
+    expect(branchName({ taskId, title, build: 1 })).toBe(
+      "task/12-take-a-discount-off-the-total-a-whole-xy",
+    );
+  });
+
+  test("cuts the first word if even that is longer than 40 characters", () => {
+    const name = branchName({ taskId, title: `${"a".repeat(45)} b`, build: 1 });
+    expect(name).toBe(`task/12-${"a".repeat(40)}`);
+  });
+});
+
+describe("the worktree folder", () => {
+  let dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+    dirs = [];
+  });
+
+  test("is named like the branch, cut at a whole word", async () => {
+    const r = await makeRepo();
+    dirs.push(r.dir);
+    const created = await new Git(r.dir, r.main).createWorktree({
+      taskId: TaskId.parse(1),
+      title: "Take a discount off the total: a whole percentage, rounded to the nearest cent",
+      build: 1,
+    });
+    if (!created.ok) throw new Error(created.message);
+    expect(created.value.branch).toBe("task/1-take-a-discount-off-the-total-a-whole");
+    expect(created.value.path).toBe(
+      join(r.dir, ".skelcrew", "worktrees", "1-take-a-discount-off-the-total-a-whole"),
+    );
+  });
 });
 
 // If the daemon dies while a worktree is being made, the folder and branch
