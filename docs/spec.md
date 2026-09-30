@@ -372,7 +372,7 @@ Add a CSV export button to the reports page.
 - Clicking Export downloads a CSV of the visible rows.
 ```
 
-- The developer reads the spec before approving the merge. A build claim prints it whole, and `skelcrew log` shows its scope. Once merges wait in a draft pull request, it will show there too.
+- The developer reads the spec before approving the merge. A build claim prints it whole, and `skelcrew log` shows its scope and acceptance criteria. Once merges wait in a draft pull request, it will show there too.
 - The merge's checks run with the file in place. Nothing a hook does can change it: main gets exactly the work plus the approved text, or nothing.
 - A repository whose `.gitignore` covers `docs/` still gets the file.
 - The file isn't among the files a task changed, since its branch never holds it. So a critical path like `docs/**` doesn't make every task critical.

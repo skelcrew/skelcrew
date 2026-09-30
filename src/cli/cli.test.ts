@@ -792,15 +792,23 @@ describe("skelcrew log", () => {
 
     const outcome = await cli(repo, ["log", "#1"]);
     expect(outcome.code).toBe(0);
-    for (const line of outcome.out) expect(line).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2} {2}\S/);
+    // Each event's first line starts with its time. A text over several
+    // lines, such as a spec, keeps its other lines indented under it.
+    for (const line of outcome.out) {
+      expect(line).toMatch(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}| {16}) {2}\S/);
+    }
     expect(outcome.out.map((line) => line.slice(18))).toEqual([
       "Added to project reports: CSV export.",
       "A spec was asked for.",
       "You claimed it, as you-1.",
       "The agent sent a spec: Add a CSV export button to the reports page.",
+      "Acceptance criteria:",
+      "- Clicking Export downloads a CSV of the visible rows.",
       "You sent the spec back: Add totals.",
       "You claimed it, as you-2.",
       "The agent sent a spec: Add a CSV export button to the reports page.",
+      "Acceptance criteria:",
+      "- Clicking Export downloads a CSV of the visible rows.",
       "The task is Ready to build from this spec.",
       "You claimed it, as you-3.",
       `Its worktree was made on branch task/1-csv-export, at ${worktree}.`,
@@ -832,9 +840,13 @@ describe("skelcrew log", () => {
       "You sent the spec back: Shorter, please.",
       "You claimed it, as you-2.",
       "The agent sent a spec: Add a CSV export. x",
+      "Acceptance criteria:",
+      "- It downloads.",
       "You sent the spec back: Shorter, please.",
       "You claimed it, as you-3.",
       "The agent sent a spec: Add a CSV export. x",
+      "Acceptance criteria:",
+      "- It downloads.",
       "You sent the spec back: Shorter, please.",
     ]);
   });
@@ -946,9 +958,37 @@ describe("skelcrew log", () => {
     expect(await cli(repo, ["log", "4"])).toEqual(
       said([
         "2026-09-30 10:02  The agent sent a spec: Add a CSV export.",
+        "                  Acceptance criteria:",
+        "                  - It downloads.",
         "2026-09-30 10:02  The task is Ready to build from this spec.",
         "2026-09-30 10:03  A spec was written by hand: Add a CSV export.",
+        "                  Acceptance criteria:",
+        "                  - It downloads.",
         "2026-09-30 10:03  A spec you write needs no approval, so the task is Ready.",
+      ]),
+    );
+  });
+
+  // The /show skill reads the whole spec from the log, not only its scope.
+  test("shows a spec's acceptance criteria under its scope", async () => {
+    const repo = throwawayRepo(dirs);
+    const at = new Date(2026, 8, 30, 10, 2).getTime();
+    const spec = {
+      scope: "Goal: export the report.\nToday: there is no export.",
+      acceptance: ["Clicking Export downloads a CSV.", "The CSV has a header row."],
+      openQuestions: [],
+    };
+    await fakeDaemon(repo, {
+      leftOut: 0,
+      events: [{ v: 1, taskId: 4, at, type: "task.specced", spec, by: "agent" }],
+    });
+    expect(await cli(repo, ["log", "4"])).toEqual(
+      said([
+        "2026-09-30 10:02  The agent sent a spec: Goal: export the report.",
+        "                  Today: there is no export.",
+        "                  Acceptance criteria:",
+        "                  - Clicking Export downloads a CSV.",
+        "                  - The CSV has a header row.",
       ]),
     );
   });
