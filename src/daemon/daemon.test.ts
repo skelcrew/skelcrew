@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { SessionId, TaskId } from "../core/ids";
 import type { Config } from "../core/types";
 import { Git } from "../plugins/git/git";
+import type { VersionControl } from "../plugins/version-control";
 import { git, makeRepo } from "../plugins/version-control.contract";
 import type { Command } from "../protocol/protocol";
 import { EventStore } from "../store/store";
@@ -366,15 +367,23 @@ describe("the daemon with git", () => {
     for (const dir of repos.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  // A daemon for a real repository, with task 1 approved and Ready.
-  async function readyInRepo() {
+  async function newRepo() {
     const repo = await makeRepo();
     repos.push(repo.dir);
+    return repo;
+  }
+
+  // A daemon for a real repository, with task 1 approved and Ready.
+  async function readyInRepo(
+    repo?: Awaited<ReturnType<typeof makeRepo>>,
+    options: { versionControl?: VersionControl; store?: EventStore } = {},
+  ) {
+    repo ??= await newRepo();
     let sessions = 0;
     const opened = Daemon.open({
       config,
-      log: EventStore.open(":memory:"),
-      versionControl: new Git(repo.dir, repo.main),
+      log: options.store ?? EventStore.open(":memory:"),
+      versionControl: options.versionControl ?? new Git(repo.dir, repo.main),
       newSession: () => {
         sessions += 1;
         return `you-${sessions}`;
@@ -399,6 +408,84 @@ describe("the daemon with git", () => {
     expect(await ok(daemon, { type: "status" })).toMatchObject({
       tasks: [{ task: 1, phase: "in_progress", step: "running", blocked: null }],
     });
+  });
+
+  // Found by review: at start-up, the daemon sent unfinished commands out
+  // before it could look up titles. A worktree cut off by a restart was
+  // made again on a branch named "task/1-1", beside the first.
+  test("makes a worktree cut off by a restart again, on the same branch", async () => {
+    const repo = await newRepo();
+    const store = EventStore.open(":memory:");
+    // Makes the worktree, then never answers, as if the daemon stopped.
+    const real = new Git(repo.dir, repo.main);
+    const cutOff: VersionControl = {
+      createWorktree: async (request) => {
+        await real.createWorktree(request);
+        return new Promise(() => {});
+      },
+      readBranch: (worktree) => real.readBranch(worktree),
+      merge: (request, runChecks) => real.merge(request, runChecks),
+      revert: (request) => real.revert(request),
+      removeWorktree: (worktree) => real.removeWorktree(worktree),
+    };
+    const first = await readyInRepo(repo, { versionControl: cutOff, store });
+    void first.daemon.handle({ type: "claim", task: task(1) });
+    await Bun.sleep(300);
+    await first.daemon.close();
+
+    const second = Daemon.open({ config, log: store, versionControl: real });
+    if (!second.ok) throw new Error(second.message);
+    await Bun.sleep(300);
+    expect(await git(repo.dir, "branch", "--list", "task/*", "--format=%(refname:short)")).toBe(
+      "task/1-csv-export",
+    );
+    expect(await ok(second.value, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, phase: "in_progress", step: "running", blocked: null }],
+    });
+  });
+
+  // Found by review: a claim waiting for its worktree only looked again
+  // after a tool's reply. Dropped meanwhile, it waited for git, then said
+  // "Claimed".
+  test("tells a waiting claim at once that its task was dropped", async () => {
+    const repo = await newRepo();
+    let release = () => {};
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const real = new Git(repo.dir, repo.main);
+    const held: VersionControl = {
+      createWorktree: async (request) => {
+        await released;
+        return real.createWorktree(request);
+      },
+      readBranch: (worktree) => real.readBranch(worktree),
+      merge: (request, runChecks) => real.merge(request, runChecks),
+      revert: (request) => real.revert(request),
+      removeWorktree: (worktree) => real.removeWorktree(worktree),
+    };
+    const { daemon } = await readyInRepo(repo, { versionControl: held });
+    const claim = daemon.handle({ type: "claim", task: task(1) });
+    await Bun.sleep(50);
+    await ok(daemon, { type: "drop", task: task(1) });
+    const answer = await Promise.race([claim, Bun.sleep(200).then(() => "still waiting")]);
+    release();
+    expect(answer).toEqual({
+      ok: false,
+      message: "#1 was dropped before its worktree was made.",
+    });
+  });
+
+  // Found by review: the daemon made worktrees but never removed them, so
+  // a dropped task's folder stayed.
+  test("removes a dropped task's worktree", async () => {
+    const { daemon, repo } = await readyInRepo();
+    await ok(daemon, { type: "claim", task: task(1) });
+    const path = join(repo.dir, ".skelcrew", "worktrees", "1-csv-export");
+    expect(existsSync(path)).toBe(true);
+    await ok(daemon, { type: "drop", task: task(1) });
+    await Bun.sleep(300);
+    expect(existsSync(path)).toBe(false);
   });
 
   test("refuses the claim and says why when the worktree can't be made", async () => {

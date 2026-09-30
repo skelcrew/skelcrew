@@ -211,11 +211,12 @@ rebuilds the loop from the saved log. `handle(command)` takes one protocol comma
 it into inputs for the core through the loop, and answers. It hands out task numbers and
 session names, since the core never makes up IDs. Requests and the tools' replies share one
 queue, so everything happens one at a time. Its tools carry out the core's commands and
-send the results back as new inputs. Worktrees go to the git plugin. The checks and merging
-aren't wired in yet: a command that needs them is answered with a failure at once, so the
+send the results back as new inputs. Making and removing worktrees go to the git plugin.
+Commands for a plugin that arrive at start-up, before the daemon can look up titles, wait
+until it can. The checks and merging aren't wired in yet: a command that needs them is answered with a failure at once, so the
 core never waits. A claim in Ready waits for the task's worktree, outside the queue, and
-answers with where to work. `serve` refuses to start outside a git repository, or when the
-main branch from `workflow.yml` doesn't exist.
+answers with where to work. `serve` refuses to start without git, outside a git repository,
+or when the main branch from `workflow.yml` doesn't exist.
 
 ## The daemon's socket and the client
 

@@ -7,14 +7,21 @@
 // queue. Neither the loop nor the git plugin is built for two things at
 // once, and it keeps task numbers from ever repeating.
 //
-// Worktrees go to the version control plugin. The checks and merging
+// Making and removing worktrees go to the version control plugin. The checks and merging
 // aren't wired in yet. A command that needs them is answered at once with a
 // failure, so the core never waits on something that won't happen.
 
 import { randomUUID } from "node:crypto";
 import { ProjectId, SessionId, TaskId } from "../core/ids";
-import { waitingOnYou } from "../core/task";
-import type { BlockReason, Config, Command as CoreCommand, Input, Task } from "../core/types";
+import { phaseNames, runningSession, waitingOnYou } from "../core/task";
+import type {
+  BlockReason,
+  Config,
+  Command as CoreCommand,
+  Input,
+  Task,
+  Worktree,
+} from "../core/types";
 import { Loop, type ReadableLog, type Tools } from "../loop/loop";
 import type { VersionControl } from "../plugins/version-control";
 import type { Command } from "../protocol/protocol";
@@ -87,7 +94,12 @@ export class Daemon {
   // An answer that waits for a tool's reply waits outside the queue, so
   // the reply can get in.
   async handle(command: Command): Promise<Answer> {
-    const first = await this.oneAtATime(() => this.guarded(() => this.answer(command)));
+    const first = await this.oneAtATime(() => {
+      const answered = this.guarded(() => this.answer(command));
+      // A request can settle a waiting claim too, such as a drop.
+      this.wakeWaiters();
+      return answered;
+    });
     if (!("later" in first)) return first;
     const { task, until, answer } = first.later;
     await this.settled(task, until);
@@ -268,6 +280,15 @@ export class Daemon {
   private claimed(taskId: TaskId, session: SessionId): Answer {
     const task = this.loop.task(taskId);
     if (task.blocked !== null) return { ok: false, message: describeBlock(task.blocked) };
+    if (task.phase === "dropped") {
+      return { ok: false, message: `#${taskId} was dropped before its worktree was made.` };
+    }
+    if (runningSession(task) !== session) {
+      return {
+        ok: false,
+        message: `#${taskId}'s claim didn't go through. It is in ${phaseNames[task.phase]} now.`,
+      };
+    }
     switch (task.phase) {
       case "spec":
         return { ok: true, result: { session, phase: "spec", spec: task.spec, note: task.note } };
@@ -342,6 +363,9 @@ class DaemonTools implements Tools {
   private deliver: Deliver | null = null;
   private titleOf: (taskId: TaskId) => string = (taskId) => `#${taskId}`;
   private early: [TaskId, Input, () => void][] = [];
+  // Commands that go to a plugin, held until `connect`: at start-up the
+  // loop sends out unfinished commands before titles can be looked up.
+  private held: [CoreCommand, () => void][] = [];
 
   constructor(private readonly versionControl: VersionControl | null) {}
 
@@ -350,13 +374,19 @@ class DaemonTools implements Tools {
     this.titleOf = titleOf;
     for (const [taskId, input, finished] of this.early) deliver(taskId, input, finished);
     this.early = [];
+    for (const [command, finished] of this.held.splice(0)) this.carryOut(command, finished);
   }
 
   // A command with no reply has finished as soon as it is done here. One
   // with a reply finishes when the daemon has handled that reply.
   carryOut(command: CoreCommand, finished: () => void): void {
     if (command.type === "create_worktree" && this.versionControl !== null) {
-      void this.createWorktree(this.versionControl, command, finished);
+      if (this.deliver === null) this.held.push([command, finished]);
+      else void this.createWorktree(this.versionControl, command, finished);
+      return;
+    }
+    if (command.type === "remove_worktree" && this.versionControl !== null) {
+      void this.removeWorktree(this.versionControl, command.worktree, finished);
       return;
     }
     const reply = this.replyTo(command);
@@ -371,6 +401,22 @@ class DaemonTools implements Tools {
   private send(taskId: TaskId, input: Input, finished: () => void): void {
     if (this.deliver === null) this.early.push([taskId, input, finished]);
     else this.deliver(taskId, input, finished);
+  }
+
+  // Nothing waits on a removal. A worktree that can't be removed stays, and
+  // `git worktree list` shows it. The command is finished either way, so it
+  // isn't tried again at every start.
+  private async removeWorktree(
+    versionControl: VersionControl,
+    worktree: Worktree,
+    finished: () => void,
+  ): Promise<void> {
+    try {
+      await versionControl.removeWorktree(worktree);
+    } catch {
+      // As above: it stays where it is.
+    }
+    finished();
   }
 
   // The plugin never throws, but a failure here must still reach the core,
