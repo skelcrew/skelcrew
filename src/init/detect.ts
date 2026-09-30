@@ -3,8 +3,10 @@
 // and follows fixed rules, so anyone can tell why it chose what it did:
 //
 // - package.json: its test script, then its check script if it has one,
-//   since a check script usually runs the typecheck and lint. With no
-//   check script, its test, typecheck and lint scripts, in that order.
+//   since a check script usually runs the typecheck and lint. A check
+//   script that runs the test script by name, such as `npm test`, is
+//   used alone. With no check script, its test, typecheck and lint
+//   scripts, in that order.
 //   They run with the package manager the project uses, as
 //   packageManager below finds it. A test script
 //   that does nothing, such as `exit 0` or `echo "no tests" && exit 0`,
@@ -95,12 +97,28 @@ const npmPlaceholder = 'echo "Error: no test specified" && exit 1';
 // it, such as `true # todo`, changes nothing.
 const noOp = /^(exit 0|true|:|echo\b[^&|#]*)?\s*(#.*)?$/;
 
+// The commands a script runs, split at every ;, && and ||.
+function commands(script: string): string[] {
+  return script.split(/;|&&|\|\|/);
+}
+
 // A test script made only of such commands tests nothing, however they
 // are joined. For example `echo "no tests yet" && exit 0`, `exit 0;` or
 // `echo skip; exit 0`. The script is split at every ;, && and ||. If any
 // piece does something else, such as `echo start && vitest`, it counts.
 function doesNothing(script: string): boolean {
-  return script.split(/;|&&|\|\|/).every((piece) => noOp.test(piece.trim()));
+  return commands(script).every((piece) => noOp.test(piece.trim()));
+}
+
+// Running the test script by name, such as `npm test` or `bun run test`,
+// with words after it or none. `bun test` isn't one: it is Bun's own test
+// runner. Nor is `npm run test:unit`, which is another script.
+const testScript = /^(npm|pnpm|yarn|bun) run test(\s|$)|^(npm|pnpm|yarn) test(\s|$)/;
+
+// Whether any piece of the check script runs the test script. The script
+// is split as doesNothing splits it, so `tsc && npm test` counts.
+function runsTestScript(check: string): boolean {
+  return commands(check).some((piece) => testScript.test(piece.trim()));
 }
 
 // The test runners init knows. A test script that runs none of them may
@@ -140,18 +158,26 @@ function packageChecks(dir: string): PackageChecks {
     return trimmed !== "" && script !== npmPlaceholder;
   };
   // A check script usually runs the typecheck and lint, so it stands in for
-  // them. The test script always runs when there is one, even beside a
-  // check script. A check script often runs no test: SvelteKit's is
-  // "svelte-check", which checks types only. If it does run the tests too,
-  // they run twice, which is slower but safe. Tests go first, as they do
-  // without a check script.
+  // them. The test script runs beside a check script, since a check script
+  // often runs no test: SvelteKit's is "svelte-check", which checks types
+  // only. But when the check script runs the test script by name, as in
+  // "bun run lint && bun run test", the check script alone runs both.
+  // A test runner in the check script, such as "tsc && vitest run", isn't
+  // enough. It may run only some of the tests, so the test script stays,
+  // and the tests run twice, which is slower but safe. Tests go first, as
+  // they do without a check script.
+  const check = scripts.check;
   const names = has("check")
-    ? ["test", "check"].filter(has)
+    ? check !== undefined && runsTestScript(check)
+      ? ["check"]
+      : ["test", "check"].filter(has)
     : ["test", "typecheck", "lint"].filter(has);
   const run = runner(dir);
   const warnings: string[] = [];
   const test = scripts.test;
-  if (names.includes("test") && test !== undefined && !testRunners.test(test)) {
+  // A test script runs either as a check of its own or through the check
+  // script. Either way, it gets the warning when it runs no known runner.
+  if (has("test") && test !== undefined && !testRunners.test(test)) {
     warnings.push(
       `package.json's test script is "${test}", which runs no test runner Skelcrew knows. Check that it runs your tests.`,
     );

@@ -149,6 +149,85 @@ describe("detectChecks", () => {
     expect(found).toEqual({ ok: true, checks: ["bun run test", "bun run check"], warnings: [] });
   });
 
+  // Skelcrew's own check script. Running the test script beside it would
+  // run the tests twice.
+  test("runs only the check script when it runs the test script", () => {
+    const found = detectChecks(
+      repo({
+        "package.json": packageJson({
+          check: "bun run lint && bun run typecheck && bun run test",
+          test: "bun test",
+        }),
+        "bun.lock": "",
+      }),
+    );
+    expect(found).toEqual({ ok: true, checks: ["bun run check"], warnings: [] });
+  });
+
+  test("counts the test script run by name with any package manager", () => {
+    for (const run of [
+      "npm run test",
+      "pnpm run test",
+      "yarn run test",
+      "bun run test",
+      "npm test",
+      "pnpm test",
+      "yarn test",
+    ]) {
+      for (const check of [run, `tsc; ${run}`, `tsc && ${run} || exit 1`, `${run} -- --coverage`]) {
+        const found = detectChecks(
+          repo({ "package.json": packageJson({ check, test: "vitest" }), "package-lock.json": "" }),
+        );
+        expect({ check, found }).toEqual({
+          check,
+          found: { ok: true, checks: ["npm run check"], warnings: [] },
+        });
+      }
+    }
+  });
+
+  // Only the test script itself counts. `bun test` is Bun's own test
+  // runner, and a runner may run only some of the tests.
+  test("keeps the test script when the check script doesn't run it by name", () => {
+    for (const check of [
+      "npm run test:unit",
+      "bun run tests",
+      "bun test",
+      "tsc && vitest run",
+      "npm run testing",
+      "npm testing",
+      "echo npm test",
+      "echo npm run test",
+    ]) {
+      const found = detectChecks(
+        repo({ "package.json": packageJson({ check, test: "vitest" }), "package-lock.json": "" }),
+      );
+      expect({ check, found }).toEqual({
+        check,
+        found: { ok: true, checks: ["npm run test", "npm run check"], warnings: [] },
+      });
+    }
+  });
+
+  test("still warns about a test script run only through the check script", () => {
+    const found = detectChecks(
+      repo({
+        "package.json": packageJson({ check: "npm run test", test: "./scripts/run-all.sh" }),
+      }),
+    );
+    expect(found.ok && found.checks).toEqual(["npm run check"]);
+    const warnings = found.ok ? found.warnings : [];
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("./scripts/run-all.sh");
+  });
+
+  test("gives no warning when the check script runs a test script that does nothing", () => {
+    const found = detectChecks(
+      repo({ "package.json": packageJson({ check: "npm run test", test: "exit 0" }) }),
+    );
+    expect(found).toEqual({ ok: true, checks: ["npm run check"], warnings: [] });
+  });
+
   test("ignores scripts it doesn't know, such as build and dev", () => {
     const found = detectChecks(
       repo({ "package.json": packageJson({ build: "tsc", dev: "vite", test: "vitest" }) }),
