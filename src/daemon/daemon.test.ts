@@ -393,6 +393,7 @@ describe("log", () => {
         { type: "task.spec_requested", taskId: 1 },
         { type: "task.claimed", taskId: 1, session: "you-1" },
       ],
+      leftOut: 0,
     });
   });
 

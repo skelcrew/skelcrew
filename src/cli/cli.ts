@@ -16,7 +16,7 @@ import { serveUntilSignalled } from "../daemon/server";
 import type { Command } from "../protocol/protocol";
 import { taskEvent } from "../store/schema";
 import { commandHelp, mainHelp } from "./help";
-import { logLines } from "./log";
+import { leftOutLine, logLines } from "./log";
 
 export type Context = {
   cwd: string;
@@ -116,7 +116,9 @@ const handlers: Record<string, Handler> = {
 
   log: async (args, context) =>
     withTask("log", args, {}, (task) =>
-      ask(context, { type: "log", task }, logResult, ({ events }) => said(...logLines(events))),
+      ask(context, { type: "log", task }, logResult, ({ events, leftOut }) =>
+        said(...leftOutLine(leftOut), ...logLines(events)),
+      ),
     ),
 
   claim: async (args, context) =>
@@ -519,9 +521,9 @@ function needs(task: TaskView): string {
   }
 }
 
-// What `log` answers: the task's events as saved, checked against the
-// store's own schema.
-const logResult = z.object({ events: z.array(taskEvent) });
+// What `log` answers: the task's newest events as saved, checked against
+// the store's own schema, and how many older ones didn't fit in the reply.
+const logResult = z.object({ events: z.array(taskEvent), leftOut: z.number().int().min(0) });
 
 const claimResult = z.object({
   session: SessionId,

@@ -495,6 +495,37 @@ describe("skelcrew log", () => {
     ]);
   });
 
+  // Found by review: every spec is saved whole, so a long-lived task's
+  // events passed the 1 MB limit on a reply, and log failed outright.
+  test("leaves out the oldest events when all of them don't fit in a reply", async () => {
+    const repo = await repoWithDaemon();
+    // Three specs of 400 KB each: more than 1 MB together.
+    const scope = `Add a CSV export. ${"x".repeat(400_000)}`;
+    const big = JSON.stringify({ scope, acceptance: ["It downloads."], openQuestions: [] });
+    await cli(repo, ["add", "CSV export", "--spec"]);
+    for (const session of ["you-1", "you-2", "you-3"]) {
+      await cli(repo, ["claim", "1"]);
+      await cli(repo, ["submit", "1", "--file", "-"], { session, readStdin: async () => big });
+      await cli(repo, ["approve", "1", "--send-back", "Shorter, please."]);
+    }
+
+    const outcome = await cli(repo, ["log", "1"]);
+    expect(outcome.err).toEqual([]);
+    expect(outcome.code).toBe(0);
+    // Two specs fit. The first spec, its claim, the request for a spec and
+    // the task's creation are left out.
+    expect(outcome.out[0]).toBe("4 older events are left out.");
+    expect(outcome.out.slice(1).map((line) => line.slice(18, 60))).toEqual([
+      "You sent the spec back: Shorter, please.",
+      "You claimed it, as session you-2.",
+      "The agent sent a spec: Add a CSV export. x",
+      "You sent the spec back: Shorter, please.",
+      "You claimed it, as session you-3.",
+      "The agent sent a spec: Add a CSV export. x",
+      "You sent the spec back: Shorter, please.",
+    ]);
+  });
+
   // The daemon can't take a task this far yet, so a stand-in answers.
   test("shows checks, a merge and multi-line summaries", async () => {
     const repo = throwawayRepo(dirs);
@@ -502,6 +533,7 @@ describe("skelcrew log", () => {
     const at = (minute: number) => new Date(2026, 8, 30, 10, minute).getTime();
     const stamp = (minute: number) => ({ v: 1, taskId: task, at: at(minute) });
     await fakeDaemon(repo, {
+      leftOut: 0,
       events: [
         {
           ...stamp(2),
@@ -561,6 +593,7 @@ describe("skelcrew log", () => {
     const at = new Date(2026, 8, 30, 10, 2).getTime();
     const stamp = { v: 1, taskId: 4, at };
     await fakeDaemon(repo, {
+      leftOut: 0,
       events: [
         { ...stamp, type: "task.merged", commit: "a".repeat(40) },
         { ...stamp, type: "task.revert_started", reason: "It broke the export.", request: 5 },
@@ -589,6 +622,7 @@ describe("skelcrew log", () => {
     });
     const spec = { scope: "Add a CSV export.", acceptance: ["It downloads."], openQuestions: [] };
     await fakeDaemon(repo, {
+      leftOut: 0,
       events: [
         { ...stamp(2), type: "task.specced", spec, by: "agent" },
         { ...stamp(2), type: "task.ready" },
@@ -616,6 +650,7 @@ describe("skelcrew log", () => {
       usage: { tokens, ms },
     });
     await fakeDaemon(repo, {
+      leftOut: 0,
       events: [used(800, 20_000), used(1_234_567, 60_000), used(2_500_000, 2_700_000)],
     });
     expect(await cli(repo, ["log", "4"])).toEqual(
@@ -632,6 +667,7 @@ describe("skelcrew log", () => {
     const repo = throwawayRepo(dirs);
     const at = new Date(2026, 8, 30, 10, 2).getTime();
     await fakeDaemon(repo, {
+      leftOut: 0,
       events: [
         {
           v: 1,
@@ -656,6 +692,7 @@ describe("skelcrew log", () => {
     const repo = throwawayRepo(dirs);
     const at = new Date(2026, 8, 30, 10, 2).getTime();
     await fakeDaemon(repo, {
+      leftOut: 0,
       events: [{ v: 1, taskId: 4, at, type: "task.dispatch_started", request: 1 }],
     });
     expect(await cli(repo, ["log", "4"])).toEqual(
@@ -668,6 +705,7 @@ describe("skelcrew log", () => {
     const repo = throwawayRepo(dirs);
     const stamp = { v: 1, taskId: 4, at: new Date(2026, 8, 30, 10, 2).getTime() };
     await fakeDaemon(repo, {
+      leftOut: 0,
       events: [
         { ...stamp, type: "task.gate_passed", gate: "local", next: { gate: "review", request: 3 } },
         { ...stamp, type: "task.gate_failed", failure: { step: "review", summary: "No tests." } },
@@ -685,7 +723,10 @@ describe("skelcrew log", () => {
 
   test("refuses an answer that isn't a list of events", async () => {
     const repo = throwawayRepo(dirs);
-    await fakeDaemon(repo, { events: [{ type: "task.exploded", v: 1, taskId: 1, at: 1 }] });
+    await fakeDaemon(repo, {
+      leftOut: 0,
+      events: [{ type: "task.exploded", v: 1, taskId: 1, at: 1 }],
+    });
     const outcome = await cli(repo, ["log", "1"]);
     expect(outcome.code).toBe(1);
     expect(outcome.err.join("\n")).toContain("The daemon's answer to log doesn't fit");

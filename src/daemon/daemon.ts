@@ -20,11 +20,12 @@ import type {
   Command as CoreCommand,
   Input,
   Task,
+  TaskEvent,
   Worktree,
 } from "../core/types";
 import { Loop, type ReadableLog, type Tools } from "../loop/loop";
 import type { VersionControl } from "../plugins/version-control";
-import type { Command } from "../protocol/protocol";
+import { type Command, MAX_LINE } from "../protocol/protocol";
 import type { EventStore } from "../store/store";
 
 export type Answer = { ok: true; result: unknown } | { ok: false; message: string };
@@ -242,7 +243,7 @@ export class Daemon {
             message: `Event ${loaded.seq} of the saved log couldn't be read: ${loaded.reason}`,
           };
         }
-        return { ok: true, result: { events: loaded.events } };
+        return { ok: true, result: newestThatFit(loaded.events) };
       }
 
       case "done":
@@ -354,6 +355,27 @@ function view(task: Task) {
     question: task.question?.text ?? null,
     waitingOnYou: waitingOnYou(task),
   };
+}
+
+// A reply must fit on one line of at most MAX_LINE bytes. Every spec is
+// saved whole, so a long-lived task's events can pass that. The log then
+// keeps the newest events that fit, and says how many older ones it left
+// out. The room held back is for the rest of the reply around the events.
+const LOG_ROOM = MAX_LINE - 10_000;
+
+function newestThatFit(events: TaskEvent[]): { events: TaskEvent[]; leftOut: number } {
+  let bytes = 0;
+  let first = events.length;
+  while (first > 0) {
+    const event = events[first - 1];
+    if (event === undefined) break;
+    // Each event takes its JSON and a comma.
+    const size = Buffer.byteLength(JSON.stringify(event)) + 1;
+    if (bytes + size > LOG_ROOM) break;
+    bytes += size;
+    first -= 1;
+  }
+  return { events: events.slice(first), leftOut: first };
 }
 
 export function describeBlock(reason: BlockReason): string {

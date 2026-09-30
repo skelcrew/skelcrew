@@ -9,6 +9,13 @@
 import type { GateName, TaskEvent } from "../core/types";
 import { describeBlock } from "../daemon/daemon";
 
+// The line above the events when the oldest didn't fit in the daemon's
+// reply, or none.
+export function leftOutLine(leftOut: number): string[] {
+  if (leftOut === 0) return [];
+  return [leftOut === 1 ? "1 older event is left out." : `${leftOut} older events are left out.`];
+}
+
 // "2026-09-30 10:02" and two spaces.
 const INDENT = " ".repeat(18);
 
