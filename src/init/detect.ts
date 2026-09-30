@@ -5,7 +5,8 @@
 // - package.json: its test script, then its check script if it has one,
 //   since a check script usually runs the typecheck and lint. With no
 //   check script, its test, typecheck and lint scripts, in that order.
-//   They run with the package manager its lock file shows. A test script
+//   They run with the package manager the project uses, as
+//   packageManager below finds it. A test script
 //   that does nothing, such as `exit 0` or `echo "no tests" && exit 0`,
 //   counts as no test script. A test script that runs no test runner
 //   init knows gives a warning.
@@ -69,18 +70,18 @@ export function detectChecks(dir: string): Detected {
 
 // The commands that prepare a fresh copy of the code before the checks run
 // there, for the `setup` in workflow.yml. A package.json gets its
-// dependencies installed by the package manager its lock file shows,
-// without changing the lock file where that manager has a flag for it.
-// Yarn 1 calls that flag --frozen-lockfile and later Yarn --immutable, so
-// yarn gets a plain install. Cargo and Go fetch what they need themselves.
+// dependencies installed by the package manager the project uses. With a
+// lock file, the install keeps it as it is where that manager has a flag
+// for it. Yarn 1 calls that flag --frozen-lockfile and later Yarn
+// --immutable, so yarn gets a plain install. With no lock file there is
+// nothing to keep, so every manager gets a plain install. Cargo and Go
+// fetch what they need themselves.
 export function detectSetup(dir: string): string[] {
-  const has = (file: string) => existsSync(join(dir, file));
-  if (!has("package.json")) return [];
-  if (has("bun.lock") || has("bun.lockb")) return ["bun install --frozen-lockfile"];
-  if (has("pnpm-lock.yaml")) return ["pnpm install --frozen-lockfile"];
-  if (has("yarn.lock")) return ["yarn install"];
-  if (has("package-lock.json")) return ["npm ci"];
-  return ["npm install"];
+  if (!existsSync(join(dir, "package.json"))) return [];
+  const { name, lock } = packageManager(dir);
+  if (!lock || name === "yarn") return [`${name} install`];
+  if (name === "npm") return ["npm ci"];
+  return [`${name} install --frozen-lockfile`];
 }
 
 // Only the scripts matter. Everything else in package.json is let through.
@@ -158,14 +159,72 @@ function packageChecks(dir: string): PackageChecks {
   return { ok: true, checks: names.map((name) => `${run} ${name}`), warnings };
 }
 
-// How to run a package script, from the lock file. Yarn runs a script by
-// its name alone, so `yarn test`.
+// How to run a package script with the package manager the project uses.
+// Yarn runs a script by its name alone, so `yarn test`.
 function runner(dir: string): string {
-  const has = (file: string) => existsSync(join(dir, file));
-  if (has("bun.lock") || has("bun.lockb")) return "bun run";
-  if (has("pnpm-lock.yaml")) return "pnpm run";
-  if (has("yarn.lock")) return "yarn";
+  const { name } = packageManager(dir);
+  if (name === "bun") return "bun run";
+  if (name === "pnpm") return "pnpm run";
+  if (name === "yarn") return "yarn";
   return "npm run";
+}
+
+type Manager = "bun" | "pnpm" | "yarn" | "npm";
+
+// The package manager a project uses, and whether it has a lock file.
+// The signs are read in this order, and the first one found wins:
+//
+// 1. A lock file: bun.lock or bun.lockb, pnpm-lock.yaml, yarn.lock, or
+//    package-lock.json. It shows what the project was last installed with.
+// 2. The packageManager field in package.json, such as "pnpm@9.12.0".
+//    The developer wrote it down on purpose, and Node's Corepack reads it.
+//    A name init doesn't know, such as "deno@2.0.0", is skipped.
+// 3. A bunfig.toml file. It is Bun's own settings file, and no other
+//    package manager reads it.
+// 4. A package.json script that runs bun or bunx, such as
+//    "test": "bun test". That script only works with Bun installed. A
+//    Bun project with no dependencies has no lock file, since bun install
+//    makes none, so this is often the only sign.
+// 5. Nothing else: npm, which comes with Node.
+function packageManager(dir: string): { name: Manager; lock: boolean } {
+  const has = (file: string) => existsSync(join(dir, file));
+  if (has("bun.lock") || has("bun.lockb")) return { name: "bun", lock: true };
+  if (has("pnpm-lock.yaml")) return { name: "pnpm", lock: true };
+  if (has("yarn.lock")) return { name: "yarn", lock: true };
+  if (has("package-lock.json")) return { name: "npm", lock: true };
+  const data = readPackage(dir);
+  const named = namedSchema.safeParse(data);
+  if (named.success) return { name: named.data.packageManager, lock: false };
+  if (has("bunfig.toml")) return { name: "bun", lock: false };
+  const scripts = packageSchema.safeParse(data);
+  const runs = scripts.success ? Object.values(scripts.data.scripts ?? {}) : [];
+  if (runs.some((script) => runsBun.test(script))) return { name: "bun", lock: false };
+  return { name: "npm", lock: false };
+}
+
+// The packageManager field is a name, an @ and a version, sometimes with a
+// hash after a +: "bun@1.3.0" or "pnpm@9.12.0+sha512.abc". Only the name
+// matters here.
+const namedSchema = z.object({
+  packageManager: z
+    .string()
+    .transform((field) => field.split("@")[0])
+    .pipe(z.enum(["bun", "pnpm", "yarn", "npm"])),
+});
+
+// bun or bunx as a command of its own: "bun test" or "tsc && bunx biome",
+// but not "bundle" or "./bun-setup.sh".
+const runsBun = /(^|[\s;&|(])(bun|bunx)(\s|$)/;
+
+// What package.json holds, or null when it is missing or not valid JSON.
+function readPackage(dir: string): unknown {
+  const text = readText(join(dir, "package.json"));
+  if (text === null) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 // A table header on a line of its own, such as [tool.pytest.ini_options].
