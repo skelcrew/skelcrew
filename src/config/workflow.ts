@@ -5,7 +5,8 @@
 import * as z from "zod";
 import type { Config } from "../core/types";
 
-export type Workflow = { config: Config; checks: string[] };
+// `mainBranch` is the branch tasks start from and merge into.
+export type Workflow = { config: Config; checks: string[]; mainBranch: string };
 
 export type ParsedWorkflow = { ok: true; workflow: Workflow } | { ok: false; reasons: string[] };
 
@@ -75,6 +76,10 @@ const schema = z.strictObject({
   safety_cap: z
     .strictObject({ tokens: count, minutes: count })
     .default({ tokens: 2_000_000, minutes: 120 }),
+  main_branch: z
+    .string({ error: "must be a branch name, such as main." })
+    .refine((name) => name.trim() !== "", { error: "must be a branch name, such as main." })
+    .default("main"),
   // In the spec's example. Not used until the review gate and plugins exist.
   review: z.strictObject({ model: z.string() }).optional(),
   plugins: z.record(z.string(), z.string()).optional(),
@@ -105,6 +110,7 @@ export function parseWorkflow(text: string): ParsedWorkflow {
     ok: true,
     workflow: {
       checks: file.checks,
+      mainBranch: file.main_branch,
       config: {
         gates: ["local"],
         maxAttempts: file.max_attempts,
