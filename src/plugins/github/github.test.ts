@@ -4,7 +4,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { CommitSha } from "../../core/ids";
-import { GitHub, type Ran } from "./github";
+import { GitHub, type Ran, runProgram } from "./github";
 
 const head = CommitSha.parse("0123456789abcdef0123456789abcdef01234567");
 const show = {
@@ -40,14 +40,14 @@ const recorded = {
   closed: ok(""),
 };
 
-type Call = { command: string[]; stdin: string | undefined };
+type Call = { command: string[]; stdin: string | undefined; timeoutMs: number };
 
 // Answers each command by the first entry whose words start it, such as
 // "gh pr list". A command nobody scripted fails the test.
 function scripted(answers: [string, Ran][]) {
   const calls: Call[] = [];
   const github = new GitHub("/repo", async (command, options) => {
-    calls.push({ command, stdin: options.stdin });
+    calls.push({ command, stdin: options.stdin, timeoutMs: options.timeoutMs });
     const line = command.join(" ");
     const found = answers.find(([start]) => line.startsWith(start));
     if (found === undefined) throw new Error(`Nothing scripted for: ${line}`);
@@ -331,5 +331,118 @@ describe("closing a pull request", () => {
       message: "`gh` isn't logged in to GitHub. Run `gh auth login`.",
     });
     expect(ran("git push")).toHaveLength(0);
+  });
+});
+
+// A call that never answers would stop all pull-request work until the
+// daemon restarts. So each call has a time limit, and status says which
+// one ran out.
+describe("time limits", () => {
+  test("gives each call a time limit: three minutes for a push, one for gh", async () => {
+    const { github, calls } = scripted([
+      ["git remote get-url origin", recorded.origin],
+      ["gh pr list", recorded.noOpenPullRequest],
+      ["git push", recorded.pushed],
+      ["gh pr create", recorded.created],
+    ]);
+    await github.show(show);
+    expect(calls.map((call) => [call.command.slice(0, 3).join(" "), call.timeoutMs])).toEqual([
+      ["git remote get-url", 10_000],
+      ["gh pr list", 60_000],
+      ["git push origin", 180_000],
+      ["gh pr create", 60_000],
+    ]);
+  });
+
+  test("says so when gh didn't answer in time, and pushes nothing", async () => {
+    const { github, ran } = scripted([
+      ["git remote get-url origin", recorded.origin],
+      ["gh pr list", { timedOut: true }],
+    ]);
+    expect(await github.show(show)).toEqual({
+      ok: false,
+      message: "`gh pr list` didn't answer within 1 minute, so Skelcrew stopped it.",
+    });
+    expect(ran("git push")).toHaveLength(0);
+  });
+
+  test("says so when the push didn't finish in time, and opens nothing", async () => {
+    const { github, ran } = scripted([
+      ["git remote get-url origin", recorded.origin],
+      ["gh pr list", recorded.noOpenPullRequest],
+      ["git push", { timedOut: true }],
+    ]);
+    expect(await github.show(show)).toEqual({
+      ok: false,
+      message:
+        "git couldn't push the branch: it didn't finish within 3 minutes, so Skelcrew stopped it.",
+    });
+    expect(ran("gh pr create")).toHaveLength(0);
+  });
+});
+
+// The real runner, on harmless local programs. Nothing here runs git or gh.
+describe("running a program", () => {
+  test("stops a program that runs past its time limit", async () => {
+    const started = Date.now();
+    expect(await runProgram(["sleep", "10"], { cwd: "/", timeoutMs: 100 })).toEqual({
+      timedOut: true,
+    });
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  // git starts ssh, and a hook may start more. One of them can keep the
+  // output open after the program itself is stopped.
+  test("doesn't wait for a program it started that keeps the output open", async () => {
+    const started = Date.now();
+    const ran = await runProgram(["sh", "-c", "sleep 10 & sleep 10"], {
+      cwd: "/",
+      timeoutMs: 100,
+    });
+    expect(ran).toEqual({ timedOut: true });
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  test("gives back the output of a program that finishes in time", async () => {
+    const ran = await runProgram(["sh", "-c", "echo out; echo err >&2; exit 3"], {
+      cwd: "/",
+      timeoutMs: 5_000,
+    });
+    expect(ran).toEqual({ exitCode: 3, stdout: "out\n", stderr: "err\n" });
+  });
+
+  // ssh would otherwise wait for a passphrase or a host key answer that
+  // nobody can give, since the daemon has no terminal.
+  test("tells git and ssh never to ask for anything", async () => {
+    const saved = { command: process.env.GIT_SSH_COMMAND, ssh: process.env.GIT_SSH };
+    delete process.env.GIT_SSH_COMMAND;
+    delete process.env.GIT_SSH;
+    try {
+      const ran = await runProgram(
+        ["sh", "-c", 'printf "%s|%s" "$GIT_SSH_COMMAND" "$GIT_TERMINAL_PROMPT"'],
+        { cwd: "/", timeoutMs: 5_000 },
+      );
+      expect(ran).toEqual({ exitCode: 0, stdout: "ssh -o BatchMode=yes|0", stderr: "" });
+    } finally {
+      if (saved.command !== undefined) process.env.GIT_SSH_COMMAND = saved.command;
+      if (saved.ssh !== undefined) process.env.GIT_SSH = saved.ssh;
+    }
+  });
+
+  // Your own ssh command, such as one that picks a key, is kept. The time
+  // limit still stops it if it waits for an answer.
+  test("keeps an ssh command you set yourself", async () => {
+    const saved = process.env.GIT_SSH_COMMAND;
+    process.env.GIT_SSH_COMMAND = "ssh -i ~/.ssh/work";
+    try {
+      const ran = await runProgram(["sh", "-c", 'printf "%s" "$GIT_SSH_COMMAND"'], {
+        cwd: "/",
+        timeoutMs: 5_000,
+      });
+      expect(ran).toEqual({ exitCode: 0, stdout: "ssh -i ~/.ssh/work", stderr: "" });
+    } finally {
+      if (saved === undefined) delete process.env.GIT_SSH_COMMAND;
+      else process.env.GIT_SSH_COMMAND = saved;
+    }
   });
 });

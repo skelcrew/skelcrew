@@ -63,6 +63,7 @@ class FakeGitHub implements PullRequests {
   async close(request: CloseRequest): Promise<Done<null>> {
     this.closed.push(request);
     if (this.closeHold !== null) await this.closeHold;
+    if (this.failure !== null) return { ok: false, message: this.failure };
     this.open.delete(request.branch);
     return { ok: true, value: null };
   }
@@ -81,14 +82,19 @@ async function ok(daemon: Daemon, command: Command): Promise<unknown> {
   return answer.result;
 }
 
-function open(repo: { dir: string; main: string }, github: FakeGitHub, store: EventStore) {
+function open(
+  repo: { dir: string; main: string },
+  github: FakeGitHub,
+  store: EventStore,
+  retryMs = 60_000,
+) {
   let sessions = 0;
   const opened = Daemon.open({
     config,
     log: store,
     versionControl: new Git(repo.dir, repo.main),
     runChecks: localChecks(["true"]),
-    pullRequests: { plugin: github, log: store, base: repo.main },
+    pullRequests: { plugin: github, log: store, base: repo.main, retryMs },
     newSession: () => {
       sessions += 1;
       return `you-${sessions}`;
@@ -115,10 +121,14 @@ async function workDone(daemon: Daemon, file = "export.csv"): Promise<SessionId>
 }
 
 // A daemon with task 1's merge waiting for your approval.
-async function waitingForApproval(github = new FakeGitHub(), store = EventStore.open(":memory:")) {
+async function waitingForApproval(
+  github = new FakeGitHub(),
+  store = EventStore.open(":memory:"),
+  retryMs = 60_000,
+) {
   const repo = await makeRepo();
   repos.push(repo.dir);
-  const daemon = open(repo, github, store);
+  const daemon = open(repo, github, store, retryMs);
   await ok(daemon, { type: "add", title: "CSV export", spec: true, project: null });
   const claim = z
     .object({ session: SessionId })
@@ -245,6 +255,29 @@ describe("a draft pull request for reading", () => {
     expect(await ok(daemon, { type: "approve", task: one, sendBack: null })).toMatchObject({
       merged: true,
     });
+  });
+
+  // For example, gh was logged out, and you ran `gh auth login`. The draft
+  // appears without restarting the daemon.
+  test("is tried again on a timer after it failed to open", async () => {
+    const github = new FakeGitHub();
+    github.failure = "`gh` isn't logged in to GitHub. Run `gh auth login`.";
+    const { daemon } = await waitingForApproval(github, EventStore.open(":memory:"), 50);
+    await until(async () => (await statusOf(daemon)).noPullRequest !== null);
+    github.failure = null;
+    await until(async () => (await statusOf(daemon)).pullRequest !== null);
+    expect(github.opened).toBe(1);
+  });
+
+  test("a close that failed is tried again on a timer", async () => {
+    const github = new FakeGitHub();
+    const { daemon } = await waitingForApproval(github, EventStore.open(":memory:"), 50);
+    await until(() => github.open.size === 1);
+    github.failure = "`gh pr close` didn't answer within 1 minute, so Skelcrew stopped it.";
+    await ok(daemon, { type: "drop", task: one });
+    await until(() => github.closed.length === 1);
+    github.failure = null;
+    await until(() => github.open.size === 0);
   });
 
   test("is closed after the merge, with a comment naming the commit", async () => {

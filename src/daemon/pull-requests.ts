@@ -14,7 +14,7 @@
 //
 // Nothing here can stop or fail a task. A pull request that can't be
 // opened leaves a note that `status` shows, and the merge waits as always.
-// It isn't tried again for the same work until the daemon starts again.
+// It is tried again every five minutes, and when new work arrives.
 
 import * as z from "zod";
 import { CommitSha, TaskId } from "../core/ids";
@@ -47,17 +47,25 @@ export interface PullRequestLog {
 // none while its merge waits for you.
 export type Shown = { pullRequest: string | null; noPullRequest: string | null };
 
-// Work that couldn't be shown, so it isn't tried again for the same commit.
+// Work that couldn't be shown. It isn't tried again for the same commit
+// until the retry timer next fires.
 type Failed = { branch: string; head: CommitSha; message: string };
+
+// How often work that failed is tried again, such as after you run
+// `gh auth login` or the network comes back. Five minutes keeps a GitHub
+// that is down from being asked all the time.
+export const RETRY_MS = 5 * 60_000;
 
 export class DraftPullRequests {
   private readonly open = new Map<TaskId, OpenPullRequest>();
   private readonly failed = new Map<TaskId, Failed>();
-  // Closes that failed. Tried again when the daemon next starts.
+  // Closes that failed. Tried again when the retry timer next fires.
   private readonly unclosed = new Set<TaskId>();
   private running = false;
   private again = false;
+  private retryDue = false;
   private stopped = false;
+  private readonly retryTimer: ReturnType<typeof setInterval>;
 
   constructor(
     private readonly plugin: PullRequests,
@@ -65,12 +73,20 @@ export class DraftPullRequests {
     private readonly base: string,
     private readonly gates: GateName[],
     private readonly tasks: () => Task[],
+    retryMs = RETRY_MS,
   ) {
     // A log that can't be read starts with none remembered. Showing a
     // branch gives back the pull request it already has, so none is
     // opened twice.
     const loaded = log.loadPullRequests();
     if (loaded.ok) for (const saved of loaded.pullRequests) this.open.set(saved.task, saved);
+    this.retryTimer = setInterval(() => {
+      if (this.failed.size === 0 && this.unclosed.size === 0) return;
+      this.retryDue = true;
+      this.update();
+    }, retryMs);
+    // The timer alone never keeps the daemon's process running.
+    this.retryTimer.unref();
   }
 
   shown(task: Task): Shown {
@@ -102,15 +118,18 @@ export class DraftPullRequests {
   // is found again by the next daemon, which asks GitHub for it.
   stop(): void {
     this.stopped = true;
+    clearInterval(this.retryTimer);
   }
 
   private async look(): Promise<void> {
     while (this.again && !this.stopped) {
       this.again = false;
+      const retry = this.retryDue;
+      this.retryDue = false;
       for (const task of this.tasks()) {
         if (this.stopped) return;
         try {
-          await this.keepInStep(task);
+          await this.keepInStep(task, retry);
         } catch {
           // A plugin that throws is a bug there. The task goes on as today.
         }
@@ -118,10 +137,11 @@ export class DraftPullRequests {
     }
   }
 
-  private async keepInStep(task: Task): Promise<void> {
+  // `retry` tries again work that failed before.
+  private async keepInStep(task: Task, retry: boolean): Promise<void> {
     let open = this.open.get(task.id);
     if (open !== undefined && !worksOn(task, open.branch)) {
-      if (this.unclosed.has(task.id)) return;
+      if (this.unclosed.has(task.id) && !retry) return;
       const closed = await this.plugin.close({
         number: open.number,
         branch: open.branch,
@@ -132,6 +152,7 @@ export class DraftPullRequests {
         this.unclosed.add(task.id);
         return;
       }
+      this.unclosed.delete(task.id);
       this.open.delete(task.id);
       this.log.forgetPullRequest(task.id);
       open = undefined;
@@ -142,7 +163,7 @@ export class DraftPullRequests {
     const head = task.branch.head;
     if (open?.head === head) return;
     const failed = this.failed.get(task.id);
-    if (failed?.branch === branch && failed.head === head) return;
+    if (failed?.branch === branch && failed.head === head && !retry) return;
 
     const shown = await this.plugin.show({
       branch,

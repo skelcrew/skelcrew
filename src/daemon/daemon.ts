@@ -53,8 +53,9 @@ export type DaemonOptions = {
   runChecks?: RunChecks;
   // Opens a draft pull request for you to read when a merge waits for your
   // approval, and closes it afterwards. `log` remembers the open ones, and
-  // `base` is the branch they go into. Without it, none is opened.
-  pullRequests?: { plugin: PullRequests; log: PullRequestLog; base: string };
+  // `base` is the branch they go into. Work that failed is tried again every
+  // `retryMs`, five minutes unless set. Without it, none is opened.
+  pullRequests?: { plugin: PullRequests; log: PullRequestLog; base: string; retryMs?: number };
 };
 
 // An answer that has to wait for a tool's reply, such as a claim waiting
@@ -117,6 +118,7 @@ export class Daemon {
             pullRequests.base,
             options.config.gates,
             () => this.loop.tasks(),
+            pullRequests.retryMs,
           );
   }
 

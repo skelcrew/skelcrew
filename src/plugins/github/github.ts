@@ -10,10 +10,26 @@ import * as z from "zod";
 import type { CloseRequest, PullRequest, PullRequests, ShowRequest } from "../pull-requests";
 import type { Done } from "../version-control";
 
-// What a program did: its exit code and output, or that it isn't
-// installed.
-export type Ran = { exitCode: number; stdout: string; stderr: string } | { missing: true };
-export type Runner = (command: string[], options: { cwd: string; stdin?: string }) => Promise<Ran>;
+// What a program did: its exit code and output, that it isn't installed,
+// or that it ran past its time limit and was stopped.
+export type Ran =
+  | { exitCode: number; stdout: string; stderr: string }
+  | { missing: true }
+  | { timedOut: true };
+export type RunOptions = { cwd: string; stdin?: string; timeoutMs: number };
+export type Runner = (command: string[], options: RunOptions) => Promise<Ran>;
+
+// How long each call may take before it is stopped. A call that never
+// answers, such as ssh waiting on a network that has gone, would otherwise
+// hold up every pull request until the daemon restarts.
+// - Reading origin's URL is local, so a few seconds is plenty.
+// - A gh call is one to a few requests to GitHub, usually done in seconds.
+//   A minute leaves room for a slow network.
+// - A push sends the task's commits and runs any pre-push hook, which may
+//   run tests. Three minutes leaves room for both.
+const LOCAL_MS = 10_000;
+const GH_MS = 60_000;
+const PUSH_MS = 180_000;
 
 // gh exits with 4 when it needs a login.
 const NEEDS_LOGIN = 4;
@@ -67,15 +83,12 @@ export class GitHub implements PullRequests {
     if (!found.ok) return found;
 
     // Never forced: a branch that moved on GitHub is refused, not replaced.
-    const pushed = await this.run([
-      "git",
-      "push",
-      "origin",
-      `${request.head}:refs/heads/${request.branch}`,
-    ]);
+    const pushed = await this.run(
+      ["git", "push", "origin", `${request.head}:refs/heads/${request.branch}`],
+      PUSH_MS,
+    );
     if (!pushed.ok) {
-      const why = pushed.missing ? "git isn't installed." : pushed.err;
-      return { ok: false, message: `git couldn't push the branch: ${why}` };
+      return { ok: false, message: `git couldn't push the branch: ${failed(pushed)}` };
     }
     if (found.value !== null) return { ok: true, value: found.value };
 
@@ -115,7 +128,7 @@ export class GitHub implements PullRequests {
       "gh couldn't close the pull request",
     );
     if (!closed.ok) return closed;
-    await this.run(["git", "push", "origin", "--delete", request.branch]);
+    await this.run(["git", "push", "origin", "--delete", request.branch], PUSH_MS);
     return { ok: true, value: null };
   }
 
@@ -123,45 +136,77 @@ export class GitHub implements PullRequests {
   // pushes to origin, so gh must look there too. Left to itself, gh picks
   // an `upstream` remote first, which on a fork is someone else's project.
   private async originRepo(): Promise<Done<string>> {
-    const origin = await this.run(["git", "remote", "get-url", "origin"]);
+    const origin = await this.run(["git", "remote", "get-url", "origin"], LOCAL_MS);
     if (!origin.ok) {
-      return origin.missing
-        ? { ok: false, message: "git isn't installed." }
-        : { ok: false, message: "This repository has no `origin` remote." };
+      return origin.why === "failed"
+        ? { ok: false, message: "This repository has no `origin` remote." }
+        : { ok: false, message: `git couldn't read the \`origin\` remote: ${failed(origin)}` };
     }
     const url = origin.out.trim();
     const repo = githubRepo(url);
-    if (repo === null)
+    if (repo === null) {
       return { ok: false, message: `The \`origin\` remote isn't on GitHub: ${url}` };
+    }
     return { ok: true, value: repo };
   }
 
   private async gh(args: string[], failure: string, stdin?: string): Promise<Done<string>> {
-    const ran = await this.run(["gh", ...args], stdin);
+    const ran = await this.run(["gh", ...args], GH_MS, stdin);
     if (ran.ok) return { ok: true, value: ran.out };
-    if (ran.missing) return { ok: false, message: "GitHub's `gh` command isn't installed." };
-    if (ran.exitCode === NEEDS_LOGIN) {
-      return { ok: false, message: "`gh` isn't logged in to GitHub. Run `gh auth login`." };
+    switch (ran.why) {
+      case "missing":
+        return { ok: false, message: "GitHub's `gh` command isn't installed." };
+      case "timedOut": {
+        const call = ["gh", ...args.slice(0, 2)].join(" ");
+        return {
+          ok: false,
+          message: `\`${call}\` didn't answer within ${duration(GH_MS)}, so Skelcrew stopped it.`,
+        };
+      }
+      case "failed":
+        if (ran.exitCode === NEEDS_LOGIN) {
+          return { ok: false, message: "`gh` isn't logged in to GitHub. Run `gh auth login`." };
+        }
+        return { ok: false, message: `${failure}: ${ran.err}` };
     }
-    return { ok: false, message: `${failure}: ${ran.err}` };
   }
 
-  private async run(
-    command: string[],
-    stdin?: string,
-  ): Promise<
-    | { ok: true; out: string }
-    | { ok: false; missing: true }
-    | { ok: false; missing: false; exitCode: number; err: string }
-  > {
-    const options: { cwd: string; stdin?: string } = { cwd: this.repo };
+  private async run(command: string[], timeoutMs: number, stdin?: string): Promise<Outcome> {
+    const options: RunOptions = { cwd: this.repo, timeoutMs };
     if (stdin !== undefined) options.stdin = stdin;
     const ran = await this.runner(command, options);
-    if ("missing" in ran) return { ok: false, missing: true };
+    if ("missing" in ran) return { ok: false, why: "missing" };
+    if ("timedOut" in ran) return { ok: false, why: "timedOut", timeoutMs };
     if (ran.exitCode === 0) return { ok: true, out: ran.stdout };
     const err = ran.stderr.trim() || `exit code ${ran.exitCode}`;
-    return { ok: false, missing: false, exitCode: ran.exitCode, err };
+    return { ok: false, why: "failed", exitCode: ran.exitCode, err };
   }
+}
+
+type Outcome =
+  | { ok: true; out: string }
+  | { ok: false; why: "missing" }
+  | { ok: false; why: "timedOut"; timeoutMs: number }
+  | { ok: false; why: "failed"; exitCode: number; err: string };
+
+// Why a git call failed, in words.
+function failed(outcome: Exclude<Outcome, { ok: true }>): string {
+  switch (outcome.why) {
+    case "missing":
+      return "git isn't installed.";
+    case "timedOut":
+      return `it didn't finish within ${duration(outcome.timeoutMs)}, so Skelcrew stopped it.`;
+    case "failed":
+      return outcome.err;
+  }
+}
+
+// A time limit in words, such as "1 minute" or "10 seconds".
+function duration(ms: number): string {
+  const seconds = Math.round(ms / 1000);
+  if (seconds % 60 !== 0) return `${seconds} seconds`;
+  const minutes = seconds / 60;
+  return minutes === 1 ? "1 minute" : `${minutes} minutes`;
 }
 
 // The ways a GitHub remote is written: git@github.com:owner/repo.git,
@@ -213,11 +258,12 @@ function parseCreated(out: string): Done<PullRequest> {
 }
 
 // Runs a program with no terminal to ask on. git won't ask for a
-// password, and gh won't prompt or check for updates.
-async function runProgram(
-  command: string[],
-  options: { cwd: string; stdin?: string },
-): Promise<Ran> {
+// password, ssh won't ask for a passphrase or about a new host, and gh
+// won't prompt or check for updates. A program still running at its time
+// limit is killed.
+export async function runProgram(command: string[], options: RunOptions): Promise<Ran> {
+  // Your own ssh command, such as one that picks a key, is kept.
+  const ownSsh = process.env.GIT_SSH_COMMAND !== undefined || process.env.GIT_SSH !== undefined;
   let child: ReturnType<typeof Bun.spawn<"pipe", "pipe", "pipe">>;
   try {
     child = Bun.spawn(command, {
@@ -227,6 +273,7 @@ async function runProgram(
       stderr: "pipe",
       env: {
         ...process.env,
+        ...(ownSsh ? {} : { GIT_SSH_COMMAND: "ssh -o BatchMode=yes" }),
         GIT_TERMINAL_PROMPT: "0",
         GH_PROMPT_DISABLED: "1",
         GH_NO_UPDATE_NOTIFIER: "1",
@@ -238,10 +285,24 @@ async function runProgram(
   }
   if (options.stdin !== undefined) child.stdin.write(options.stdin);
   await child.stdin.end();
-  const [stdout, stderr, exitCode] = await Promise.all([
+  const finished = Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
     child.exited,
   ]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), options.timeoutMs);
+  });
+  const done = await Promise.race([finished, late]);
+  clearTimeout(timer);
+  if (done === null) {
+    // Not waiting for the output: a program it started, such as ssh or a
+    // hook's, may keep it open after this one is killed.
+    child.kill("SIGKILL");
+    finished.catch(() => {});
+    return { timedOut: true };
+  }
+  const [stdout, stderr, exitCode] = done;
   return { exitCode, stdout, stderr };
 }
