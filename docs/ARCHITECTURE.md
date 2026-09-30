@@ -209,7 +209,9 @@ repository, and the setup commands when it finds any.
 `src/daemon/daemon.ts` is where the CLI's requests become core inputs. `Daemon.open`
 rebuilds the loop from the saved log. `handle(command)` takes one protocol command, turns
 it into inputs for the core through the loop, and answers. It hands out task numbers and
-session names, since the core never makes up IDs. Requests and the tools' replies share one
+session names, since the core never makes up IDs. A session name is short and random, like
+`session-k3x9q2mf`. The daemon checks it against every session in the saved events, so no
+name is ever handed out twice. Requests and the tools' replies share one
 queue, so everything happens one at a time. Its tools carry out the core's commands and
 send the results back as new inputs. Making and removing worktrees go to the git plugin,
 and the local gate to the checks runner. Commands for a plugin that arrive at start-up,
@@ -269,7 +271,7 @@ from the socket is checked with Zod first, and a line over 1 MB is refused.
 
 An agent's reports (`submit`, `done`, `give-up`) take the session from `SKELCREW_SESSION`.
 `claim` prints the session, with the command to report with, like
-`SKELCREW_SESSION=session-… skelcrew submit 12`. The session goes in front of each command,
+`SKELCREW_SESSION=session-k3x9q2mf skelcrew submit 12`. The session goes in front of each command,
 since each shell in a harness starts without the variable.
 
 `retry` clears a blocked task's block. The daemon doesn't start agents itself yet, so the

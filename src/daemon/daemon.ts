@@ -64,7 +64,7 @@ type Waiter = { task: TaskId; until: (task: Task) => boolean; wake: (task: Task 
 // so it must be short enough to read but hard to guess. Eight letters or
 // digits give 36^8, about 2.8 trillion names. Guessing one would take
 // trillions of tries. Two random picks match about once in 1.7 million
-// sessions.
+// sessions, and the claim picks again when they do.
 const SESSION_LENGTH = 8;
 const SESSION_LETTERS = "abcdefghijklmnopqrstuvwxyz0123456789";
 
@@ -358,10 +358,9 @@ export class Daemon {
       }
 
       case "claim": {
-        const named = SessionId.safeParse(this.newSession());
-        if (!named.success)
+        const session = this.unusedSession();
+        if (session === null)
           return { ok: false, message: "Skelcrew couldn't name a session for the claim." };
-        const session = named.data;
         const claimed = this.send(command.task, { by: "human", type: "claim", session });
         if (!claimed.ok) return claimed;
         // In Ready, the claim waits for the task's worktree, since that is
@@ -495,6 +494,24 @@ export class Daemon {
 
   // What a claim tells the session: where the task stands, and where to
   // work once it has a worktree.
+  // A session name no task has used, so a report never reaches the wrong
+  // task. Past sessions are in each task's saved events, including dropped
+  // tasks. On a clash it picks again, up to 10 times. Null if every pick
+  // was taken or invalid, or the saved events couldn't be read.
+  private unusedSession(): SessionId | null {
+    const used = new Set<string>();
+    for (const task of this.loop.tasks()) {
+      const loaded = this.log.loadTaskEvents(task.id);
+      if (!loaded.ok) return null;
+      for (const event of loaded.events) if ("session" in event) used.add(event.session);
+    }
+    for (let tries = 0; tries < 10; tries++) {
+      const named = SessionId.safeParse(this.newSession());
+      if (named.success && !used.has(named.data)) return named.data;
+    }
+    return null;
+  }
+
   private claimed(taskId: TaskId, session: SessionId): Answer {
     const task = this.loop.task(taskId);
     if (task.blocked !== null) return { ok: false, message: describeBlock(task.blocked) };
