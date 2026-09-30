@@ -116,13 +116,25 @@ export interface VersionControl {
   // with `head`, plus the request's file with exactly its text, if it has
   // one. That file replaces any version on main or on the branch, and is
   // added even if the repository's ignore files cover it. The checks see
-  // it. The task's branch is never changed. A failure leaves main as it
-  // was, and the message says why. Asked again after it succeeded, it gives back the same commit and
-  // merges nothing twice. A known limit: this proves the merge once reached
-  // main, not that main still holds it. Merge a task, revert it, then merge
-  // the same head again, and it reports success with the work not on main.
-  // The normal flow can't do this, since a rebuilt task gets a new branch
-  // and head.
+  // it. The merge is refused if it already holds a path that differs from
+  // the file's only in letter case, such as docs/specs/12-CSV-export.md,
+  // and the message names that path. The task's branch is never changed.
+  // A failure leaves main as it was, and the message says why. Asked again
+  // after it succeeded, it gives back the same commit and merges nothing
+  // twice.
+  //
+  // Known limits:
+  // - This proves the merge once reached main, not that main still holds
+  //   it. Merge a task, revert it, then merge the same head again, and it
+  //   reports success with the work not on main.
+  // - A finished merge is remembered by task and head only, not by the
+  //   file. Asked again for the same task and head with a revised spec, it
+  //   gives back the earlier commit and lands nothing new.
+  //   The normal flow can't hit either limit, since a rebuilt task gets a
+  //   new branch and head.
+  // - Attributes set on the branch, such as a .gitattributes with eol or
+  //   ident for docs/specs/*, can change the copy of the file the checks
+  //   read. What lands on main is always the file's exact text.
   merge(request: MergeRequest, runChecks: RunChecks): Promise<Done<CommitSha>>;
 
   // Undoes one commit on main by adding a new commit that reverses it, and
