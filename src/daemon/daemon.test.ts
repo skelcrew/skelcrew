@@ -631,6 +631,37 @@ describe("the daemon with git", () => {
     expect(existsSync(marker)).toBe(false);
   });
 
+  test("approving a merge merges the task into main, and says as which commit", async () => {
+    const { daemon, repo } = await readyInRepo();
+    await claimedWithWork(daemon);
+    await ok(daemon, done());
+    const answer = z
+      .object({ merged: z.literal(true), commit: z.string() })
+      .parse(await ok(daemon, { type: "approve", task: task(1), sendBack: null }));
+    expect(await git(repo.dir, "rev-parse", "main")).toBe(answer.commit);
+    expect(await git(repo.dir, "show", "main:export.csv")).toBe("a,b");
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, phase: "done" }],
+    });
+  });
+
+  test("approving a merge that fails says why, and the task goes back to its agent", async () => {
+    const { daemon, repo } = await readyInRepo();
+    await claimedWithWork(daemon);
+    await ok(daemon, done());
+    // Main gets its own export.csv meanwhile, so the two conflict.
+    writeFileSync(join(repo.dir, "export.csv"), "x,y\n");
+    await git(repo.dir, "add", "export.csv");
+    await git(repo.dir, "commit", "-q", "-m", "Theirs");
+    const answer = z
+      .object({ merged: z.literal(false), summary: z.string() })
+      .parse(await ok(daemon, { type: "approve", task: task(1), sendBack: null }));
+    expect(answer.summary).toContain("conflicts");
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, phase: "in_progress" }],
+    });
+  });
+
   test("done is refused while the worktree has uncommitted work", async () => {
     const { daemon } = await readyInRepo();
     const path = await claimedWithWork(daemon);

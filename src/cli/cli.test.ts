@@ -348,6 +348,41 @@ describe("arguments that start with a dash", () => {
 });
 
 describe("skelcrew approve", () => {
+  // Takes task 1 through its checks, so its merge waits for approval.
+  async function checked(repo: string) {
+    await specced(repo);
+    await cli(repo, ["approve", "1"]);
+    await cli(repo, ["claim", "1"]);
+    commitIn(join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export"));
+    await cli(repo, ["done", "1"], { session: "you-2" });
+  }
+
+  test("approves a merge, and says the commit it landed as on main", async () => {
+    const repo = await repoWithDaemon();
+    await checked(repo);
+    const outcome = await cli(repo, ["approve", "1"]);
+    const main = Bun.spawnSync(["git", "rev-parse", "--short", "main"], { cwd: repo })
+      .stdout.toString()
+      .trim();
+    expect(outcome).toEqual(said([`Approved #1. It merged into main as ${main}.`]));
+  });
+
+  test("says why a merge failed, and that the task went back to its agent", async () => {
+    const repo = await repoWithDaemon();
+    await checked(repo);
+    writeFileSync(join(repo, "export.csv"), "x,y\n");
+    const git = (...args: string[]) =>
+      Bun.spawnSync(["git", "-c", "user.name=T", "-c", "user.email=t@t", ...args], { cwd: repo });
+    git("add", "export.csv");
+    git("commit", "-q", "-m", "Theirs");
+    const outcome = await cli(repo, ["approve", "1"]);
+    expect(outcome.code).toBe(1);
+    expect(outcome.out[0]).toBe(
+      "Approved #1, but the merge failed, so it went back to its agent. Why:",
+    );
+    expect(outcome.out.join("\n")).toContain("conflicts");
+  });
+
   test("approves a spec", async () => {
     const repo = await repoWithDaemon();
     await specced(repo);

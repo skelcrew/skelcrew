@@ -96,8 +96,25 @@ const handlers: Record<string, Handler> = {
       if (note !== undefined && note.trim() === "") {
         return refused('Say what to change, like this: --send-back "Add totals."');
       }
-      return ask(context, { type: "approve", task, sendBack: note ?? null }, anything, () =>
-        said(note === undefined ? `Approved #${task}.` : `Sent #${task} back with your note.`),
+      return ask(
+        context,
+        { type: "approve", task, sendBack: note ?? null },
+        approveResult,
+        (result) => {
+          if (note !== undefined) return said(`Sent #${task} back with your note.`);
+          if (!("merged" in result)) return said(`Approved #${task}.`);
+          if (result.merged) {
+            return said(`Approved #${task}. It merged into main as ${result.commit.slice(0, 7)}.`);
+          }
+          return {
+            code: 1,
+            out: [
+              `Approved #${task}, but the merge failed, so it went back to its agent. Why:`,
+              ...result.summary.split("\n"),
+            ],
+            err: [],
+          };
+        },
       );
     }),
 
@@ -537,6 +554,13 @@ function claimed(task: TaskId, claim: z.infer<typeof claimResult>): string[] {
 
 // What `done` answers once the checks have run. The daemon doesn't build
 // `done` yet, so this is the shape the CLI asks of it.
+// A spec's approval answers nothing more. A merge's says whether it landed.
+const approveResult = z.union([
+  z.object({ merged: z.literal(true), commit: z.string() }),
+  z.object({ merged: z.literal(false), summary: z.string() }),
+  z.object({}),
+]);
+
 const doneResult = z.discriminatedUnion("passed", [
   z.object({ passed: z.literal(true) }),
   z.object({ passed: z.literal(false), summary: z.string() }),

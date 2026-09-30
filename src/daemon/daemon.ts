@@ -7,10 +7,11 @@
 // queue. Neither the loop nor the git plugin is built for two things at
 // once, and it keeps task numbers from ever repeating.
 //
-// Making and removing worktrees, and reading branches, go to the version
-// control plugin, and the local gate to the checks runner. Merging isn't
-// wired in yet. A command that needs it is answered at once with a failure,
-// so the core never waits on something that won't happen.
+// Making and removing worktrees, reading branches and merging go to the
+// version control plugin, and the local gate to the checks runner. Starting
+// agents and reverting aren't wired in yet. A command that needs them is
+// answered at once with a failure, so the core never waits on something
+// that won't happen.
 
 import { randomUUID } from "node:crypto";
 import { ProjectId, SessionId, TaskId } from "../core/ids";
@@ -49,7 +50,10 @@ export type DaemonOptions = {
 
 // An answer that has to wait for a tool's reply, such as a claim waiting
 // for its worktree. `until` says when the task is ready to answer.
-type Later = { later: { task: TaskId; until: (task: Task) => boolean; answer: () => Answer } };
+// `answer` gets the task as it was then, or null if it is gone.
+type Later = {
+  later: { task: TaskId; until: (task: Task) => boolean; answer: (task: Task | null) => Answer };
+};
 
 type Waiter = { task: TaskId; until: (task: Task) => boolean; wake: (task: Task | null) => void };
 
@@ -111,8 +115,8 @@ export class Daemon {
     });
     if (!("later" in first)) return first;
     const { task, until, answer } = first.later;
-    await this.settled(task, until);
-    return this.oneAtATime(() => this.guarded(answer));
+    const settled = await this.settled(task, until);
+    return this.oneAtATime(() => this.guarded(() => answer(settled)));
   }
 
   // An agent reports its work done. The daemon reads the task's branch,
@@ -278,7 +282,17 @@ export class Daemon {
         if (input === null) {
           return { ok: false, message: `#${command.task} has nothing waiting for your approval.` };
         }
-        return this.send(command.task, input);
+        const approved = this.send(command.task, input);
+        if (!approved.ok || input.type !== "approve_merge") return approved;
+        // An approved merge happens now. The answer waits for it, so you
+        // hear whether it landed.
+        return {
+          later: {
+            task: command.task,
+            until: (task) => !(task.phase === "checks" && task.step.kind === "merging"),
+            answer: (task) => this.mergedOrNot(command.task, task),
+          },
+        };
       }
 
       case "drop":
@@ -377,6 +391,19 @@ export class Daemon {
     });
   }
 
+  private mergedOrNot(taskId: TaskId, task: Task | null): Answer {
+    if (this.closed) return { ok: false, message: "The daemon is shutting down." };
+    if (task === null) return { ok: false, message: `#${taskId} doesn't exist.` };
+    if (task.blocked !== null) return { ok: false, message: describeBlock(task.blocked) };
+    if (task.phase === "done")
+      return { ok: true, result: { merged: true, commit: task.mergeCommit } };
+    if (task.phase === "in_progress") {
+      const summary = task.brief.failure?.summary ?? "The merge didn't happen.";
+      return { ok: true, result: { merged: false, summary } };
+    }
+    return { ok: false, message: `#${taskId} is now in ${phaseNames[task.phase]}.` };
+  }
+
   // What a claim tells the session: where the task stands, and where to
   // work once it has a worktree.
   private claimed(taskId: TaskId, session: SessionId): Answer {
@@ -454,9 +481,10 @@ function describeBlock(reason: BlockReason): string {
   }
 }
 
-// Carries out the core's commands. Worktrees go to the version control
-// plugin, and the local gate to the checks runner. Merging isn't built in
-// yet, so the commands that need it are answered with a failure at once. An attended session can't
+// Carries out the core's commands. Worktrees and merges go to the version
+// control plugin, and the local gate to the checks runner. Starting agents
+// and reverting aren't built in yet, so those commands are answered with a
+// failure at once. An attended session can't
 // be stopped or messaged by Skelcrew, so those commands do nothing: its
 // next report is refused instead.
 type Deliver = (taskId: TaskId, input: Input, finished: () => void) => void;
@@ -494,6 +522,11 @@ class DaemonTools implements Tools {
     if (command.type === "create_worktree" && this.versionControl !== null) {
       if (this.deliver === null) this.held.push([command, finished]);
       else void this.createWorktree(this.versionControl, command, finished);
+      return;
+    }
+    if (command.type === "merge" && this.versionControl !== null && this.runChecks !== null) {
+      if (this.deliver === null) this.held.push([command, finished]);
+      else void this.merge(this.versionControl, this.runChecks, command, finished);
       return;
     }
     if (command.type === "remove_worktree" && this.versionControl !== null) {
@@ -549,6 +582,32 @@ class DaemonTools implements Tools {
             summary: "The checks passed.",
           }
         : { by: "plugin", type: "gate_result", request, gate, ok: false, summary };
+    this.send(taskId, input, finished);
+  }
+
+  // The merge brings the work up to date with main, runs the setup and the
+  // checks on the result in a copy of its own, and only then moves main.
+  private async merge(
+    versionControl: VersionControl,
+    runChecks: RunChecks,
+    command: Extract<CoreCommand, { type: "merge" }>,
+    finished: () => void,
+  ): Promise<void> {
+    const { taskId, request, worktree, head } = command;
+    const signal = this.stopping.signal;
+    let input: Input;
+    try {
+      const merged = await versionControl.merge(
+        { taskId, title: this.titleOf(taskId), worktree, head },
+        (dir) => runChecks(dir, signal),
+      );
+      input = merged.ok
+        ? { by: "plugin", type: "merged", request, commit: merged.value }
+        : { by: "plugin", type: "merge_failed", request, summary: merged.message };
+    } catch (error) {
+      const summary = `The merge couldn't run: ${error instanceof Error ? error.message : String(error)}`;
+      input = { by: "plugin", type: "merge_failed", request, summary };
+    }
     this.send(taskId, input, finished);
   }
 

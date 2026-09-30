@@ -213,8 +213,11 @@ session names, since the core never makes up IDs. Requests and the tools' replie
 queue, so everything happens one at a time. Its tools carry out the core's commands and
 send the results back as new inputs. Making and removing worktrees go to the git plugin,
 and the local gate to the checks runner. Commands for a plugin that arrive at start-up,
-before the daemon can look up titles, wait until it can. Merging isn't wired in yet: a
-command that needs it is answered with a failure at once, so the core never waits. A claim
+before the daemon can look up titles, wait until it can. Merges go to the git plugin too:
+it brings the work up to date with main, runs the setup and the checks on the result, and
+only then moves main. Approving a merge waits for it, and answers with the new commit on
+main or why the merge failed. Starting agents and reverting aren't wired in yet: a command
+that needs them is answered with a failure at once, so the core never waits. A claim
 in Ready waits for the task's worktree, outside the queue, and answers with where to work.
 `done` reads the task's branch, reports it to the core, and waits outside the queue while
 the gate runs. It answers whether the checks passed, and why not. The gate runs the checks in a fresh
