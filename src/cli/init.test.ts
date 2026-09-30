@@ -3,7 +3,7 @@
 // check what the developer sees: the report, and where init runs.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { cleanUp } from "../daemon/testing";
@@ -121,8 +121,47 @@ describe("skelcrew init", () => {
     expect(await init(repo, ["here"])).toEqual({
       code: 1,
       out: [],
-      err: ["skelcrew init takes no arguments. Run it where your git repository starts."],
+      err: ["skelcrew init takes no arguments."],
     });
+  });
+
+  test("from a folder inside the repository, sets up the repository's top", async () => {
+    const repo = gitRepo(bunApp);
+    const inside = join(repo, "src", "reports");
+    mkdirSync(inside, { recursive: true });
+    const outcome = await init(inside);
+    expect(outcome.out[0]).toBe(`Set up Skelcrew in ${repo}.`);
+    expect(existsSync(join(repo, ".skelcrew", "workflow.yml"))).toBe(true);
+    expect(existsSync(join(repo, "src", ".skelcrew"))).toBe(false);
+    expect(existsSync(join(inside, ".skelcrew"))).toBe(false);
+  });
+
+  test("refuses a folder inside the repository that has a .skelcrew of its own", async () => {
+    // One project in a repository that holds several. Skelcrew's worktrees
+    // and merges would cover the whole repository, so it isn't supported.
+    const repo = gitRepo({ ...bunApp, "apps/web/.skelcrew/workflow.yml": 'checks:\n  - "true"\n' });
+    const web = join(repo, "apps", "web");
+    for (const from of [web, join(web, "src")]) {
+      mkdirSync(from, { recursive: true });
+      expect(await init(from)).toEqual({
+        code: 1,
+        out: [],
+        err: [
+          `${web} is inside the git repository at ${repo}. Run Skelcrew there, where the repository starts.`,
+        ],
+      });
+    }
+    expect(existsSync(join(repo, ".skelcrew"))).toBe(false);
+  });
+
+  test("refuses a folder that isn't a git repository, and writes nothing", async () => {
+    const dir = folder(bunApp);
+    expect(await init(dir)).toEqual({
+      code: 1,
+      out: [],
+      err: [`${dir} isn't a git repository. Skelcrew needs one.`],
+    });
+    expect(existsSync(join(dir, ".skelcrew"))).toBe(false);
   });
 
   test("--help says what it does", async () => {
