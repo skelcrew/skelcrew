@@ -189,7 +189,9 @@ export class DraftPullRequests {
       branch,
       head,
       base: this.base,
-      title: `#${task.id} ${task.title}`,
+      // "Task 12", not "#12": on GitHub, "#12" links to its own pull request
+      // or issue 12, a different thing.
+      title: `Task ${task.id}: ${task.title}`,
       body: body(task, this.gates),
     });
     if (this.stopped) return;

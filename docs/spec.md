@@ -208,7 +208,7 @@ Tasks merge automatically unless they touch critical paths; a task that turns ou
 
 **Merge shape.** Each task lands as one squashed commit on main, holding its work and its approved spec, so undoing a task is a single revert.
 
-**A pull request to read.** The developer reads diffs on GitHub. So when a merge waits for approval, Skelcrew pushes the task's branch and opens a draft pull request for it. For example, #12's checks pass, and a draft called "#12 CSV export" appears on GitHub. It holds the spec's scope and acceptance criteria, the checks that passed, and a line saying it is merged with `skelcrew approve 12`, not on GitHub.
+**A pull request to read.** The developer reads diffs on GitHub. So when a merge waits for approval, Skelcrew pushes the task's branch and opens a draft pull request for it. For example, #12's checks pass, and a draft called "Task 12: CSV export" appears on GitHub. It says "Task 12", not "#12", because on GitHub "#12" links to its own pull request or issue 12. It holds the spec's scope and acceptance criteria, the checks that passed, and a line saying it is merged with `skelcrew approve 12`, not on GitHub.
 
 - **Reading only.** `skelcrew approve` merges on the developer's machine, as one squashed commit. Nothing is merged on GitHub.
 - **Where the link is.** `skelcrew status` gives the link next to the merge that waits.

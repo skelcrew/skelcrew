@@ -180,7 +180,8 @@ describe("a draft pull request for reading", () => {
       branch: "task/1-csv-export",
       head,
       base: "main",
-      title: "#1 CSV export",
+      // Not "#1": on GitHub, "#1" links to its own pull request or issue 1.
+      title: "Task 1: CSV export",
     });
     expect(shown?.body).toContain(spec.scope);
     expect(shown?.body).toContain(`- ${spec.acceptance[0]}`);
