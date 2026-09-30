@@ -243,6 +243,46 @@ describe("defaultSkills", () => {
     expect(text.replaceAll(/\s+/g, " ")).toContain("run the command or read the line");
   });
 
+  // The develop skill's method, in order: understand the code, test first,
+  // review the diff against the spec in rounds, verify by running it, then
+  // report done. Skelcrew's checks run the tests, but nothing else reads
+  // the code against the spec before the developer does.
+  test("the develop skill understands, builds test first, reviews and verifies before done", () => {
+    const text = skill("develop");
+    const steps = [
+      "### Understand first",
+      "### Test first",
+      "## 3. Review your own diff",
+      "## 4. Verify by running it",
+      "## 5. Report it done",
+    ].map((heading) => text.indexOf(heading));
+    for (const step of steps) expect(step).toBeGreaterThan(-1);
+    expect(steps).toEqual([...steps].sort((a, b) => a - b));
+    expect(text.indexOf("SKELCREW_SESSION=<session> skelcrew done 12")).toBeGreaterThan(
+      steps[4] ?? -1,
+    );
+  });
+
+  test("the develop skill writes the failing test first", () => {
+    expect(skill("develop")).toContain("Write the failing test first.");
+  });
+
+  test("the develop skill reviews at most three rounds, then asks the developer", () => {
+    const text = skill("develop").replaceAll(/\s+/g, " ");
+    expect(text).toContain("At most three rounds.");
+    expect(text).toContain("don't report done. Tell the developer what remains");
+  });
+
+  test("the develop skill verifies each acceptance criterion by running something", () => {
+    const text = skill("develop").replaceAll(/\s+/g, " ");
+    expect(text).toContain("establish each acceptance criterion by running something");
+  });
+
+  test("the develop skill reports honestly", () => {
+    const text = skill("develop").replaceAll(/\s+/g, " ");
+    expect(text).toContain("Never claim a check ran, or a criterion holds, unless you saw it.");
+  });
+
   test("the develop skill names each thing it must never do", () => {
     const text = skill("develop");
     for (const never of [
