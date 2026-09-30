@@ -219,8 +219,9 @@ in Ready waits for the task's worktree, outside the queue, and answers with wher
 `done` reads the task's branch, reports it to the core, and waits outside the queue while
 the gate runs. It answers whether the checks passed, and why not. The gate runs the checks in a fresh
 copy of the reported commit, never in the agent's worktree, so edits made meanwhile and
-files the checks write change nothing. The `setup` commands run in that copy first, such as an install. `serve` refuses to start without git, outside a git repository, or
-when the main branch from `workflow.yml` doesn't exist.
+files the checks write change nothing. The `setup` commands run in that copy first, such as an install. `serve` refuses to start without git, outside a git repository, in a folder inside a
+repository rather than where it starts, or when the main branch from `workflow.yml`
+doesn't exist.
 
 ## The daemon's socket and the client
 

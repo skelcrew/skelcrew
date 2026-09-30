@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -169,6 +170,19 @@ describe("the daemon's socket", () => {
     const out = await new Response(child.stdout).text();
     await child.exited;
     expect(out.trim()).toBe(JSON.stringify("Skelcrew needs git, and couldn't find it."));
+  });
+
+  // A folder inside a git repository would get worktrees and merges of
+  // the whole repository, which nobody has tested.
+  test("refuses to start in a folder inside a git repository, not where it starts", async () => {
+    const top = throwawayRepo(dirs);
+    const web = join(top, "web");
+    mkdirSync(join(web, ".skelcrew"), { recursive: true });
+    writeFileSync(join(web, ".skelcrew", "workflow.yml"), 'checks:\n  - "true"\n');
+    expect(await serve(web)).toEqual({
+      ok: false,
+      message: `${realpathSync(web)} is inside the git repository at ${realpathSync(top)}. Run Skelcrew there, where the repository starts.`,
+    });
   });
 
   test("refuses to start outside a git repository", async () => {

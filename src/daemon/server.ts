@@ -5,7 +5,7 @@
 // Many connections can be open at once, and each may send many requests.
 // The daemon's own queue still decides them one at a time.
 
-import { chmodSync, existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import * as z from "zod";
 import { preparedChecks } from "../checks/checks";
@@ -184,6 +184,21 @@ function mainBranch(repo: string, branch: string): { ok: true } | { ok: false; m
   }
   if (git("rev-parse", "--git-dir") !== 0) {
     return { ok: false, message: `${repo} isn't a git repository. Skelcrew needs one.` };
+  }
+  // Only where the repository starts. From a folder inside it, worktrees
+  // and merges would cover the whole repository, which isn't supported.
+  const top = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"], {
+    cwd: repo,
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const here = realpathSync(repo);
+  const start = top.exitCode === 0 ? realpathSync(top.stdout.toString().trim()) : here;
+  if (start !== here) {
+    return {
+      ok: false,
+      message: `${here} is inside the git repository at ${start}. Run Skelcrew there, where the repository starts.`,
+    };
   }
   if (git("rev-parse", "--verify", "--quiet", `refs/heads/${branch}`) !== 0) {
     return {

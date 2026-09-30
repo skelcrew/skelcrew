@@ -343,6 +343,8 @@ plugins:
 
 `setup` prepares a fresh copy of a task's code before the checks run there, such as installing its dependencies. The checks never run in the agent's own worktree: each gate and each merge checks a fresh copy of the exact commit, so nothing the agent does meanwhile can change what is checked. A failed setup fails the gate, like a failed check.
 
+Skelcrew runs where a git repository starts, the folder that holds `.git`. A folder inside a repository, such as one project in a repository that holds several, isn't supported yet.
+
 `main_branch` is the branch tasks start from and merge into. It is `main` when left out. The daemon refuses to start if the branch doesn't exist.
 
 ## CLI
