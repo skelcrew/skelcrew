@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import * as z from "zod";
+import { localChecks } from "../checks/checks";
 import { SessionId, TaskId } from "../core/ids";
 import type { Config } from "../core/types";
 import { Git } from "../plugins/git/git";
@@ -185,6 +187,23 @@ describe("the daemon", () => {
     await ok(daemon, { type: "drop", task: task(1) });
     expect(await ok(daemon, { type: "status" })).toMatchObject({
       tasks: [{ task: 1, phase: "dropped" }],
+    });
+  });
+
+  test("refuses to retry a task that isn't blocked, in the core's words", async () => {
+    const { daemon } = open();
+    await ok(daemon, add("CSV export"));
+    expect(await daemon.handle({ type: "retry", task: task(1) })).toEqual({
+      ok: false,
+      message: "#1 isn't blocked.",
+    });
+  });
+
+  test("refuses to retry a task that doesn't exist", async () => {
+    const { daemon } = open();
+    expect(await daemon.handle({ type: "retry", task: task(9) })).toEqual({
+      ok: false,
+      message: "#9 doesn't exist.",
     });
   });
 
@@ -373,17 +392,20 @@ describe("the daemon with git", () => {
     return repo;
   }
 
-  // A daemon for a real repository, with task 1 approved and Ready.
+  // A daemon for a real repository, with task 1 approved and Ready. Its
+  // local gate runs `checks`, or only `true`.
   async function readyInRepo(
     repo?: Awaited<ReturnType<typeof makeRepo>>,
-    options: { versionControl?: VersionControl; store?: EventStore } = {},
+    options: { versionControl?: VersionControl; store?: EventStore; checks?: string[] } = {},
   ) {
     repo ??= await newRepo();
     let sessions = 0;
     const opened = Daemon.open({
-      config,
+      // Every path critical, as `skelcrew init` writes it.
+      config: { ...config, criticalPaths: ["**"] },
       log: options.store ?? EventStore.open(":memory:"),
       versionControl: options.versionControl ?? new Git(repo.dir, repo.main),
+      runChecks: localChecks(options.checks ?? ["true"]),
       newSession: () => {
         sessions += 1;
         return `you-${sessions}`;
@@ -427,6 +449,7 @@ describe("the daemon with git", () => {
       merge: (request, runChecks) => real.merge(request, runChecks),
       revert: (request) => real.revert(request),
       removeWorktree: (worktree) => real.removeWorktree(worktree),
+      checkCommit: (request, runChecks) => real.checkCommit(request, runChecks),
     };
     const first = await readyInRepo(repo, { versionControl: cutOff, store });
     void first.daemon.handle({ type: "claim", task: task(1) });
@@ -463,6 +486,7 @@ describe("the daemon with git", () => {
       merge: (request, runChecks) => real.merge(request, runChecks),
       revert: (request) => real.revert(request),
       removeWorktree: (worktree) => real.removeWorktree(worktree),
+      checkCommit: (request, runChecks) => real.checkCommit(request, runChecks),
     };
     const { daemon } = await readyInRepo(repo, { versionControl: held });
     const claim = daemon.handle({ type: "claim", task: task(1) });
@@ -488,6 +512,169 @@ describe("the daemon with git", () => {
     expect(existsSync(path)).toBe(false);
   });
 
+  // Claims task 1 and commits a file in its worktree, as an agent would.
+  async function claimedWithWork(daemon: Daemon): Promise<string> {
+    const claim = z
+      .object({ worktree: z.object({ path: z.string() }) })
+      .parse(await ok(daemon, { type: "claim", task: task(1) }));
+    const path = claim.worktree.path;
+    writeFileSync(join(path, "export.csv"), "a,b\n");
+    await git(path, "add", "export.csv");
+    await git(
+      path,
+      "-c",
+      "user.name=Agent",
+      "-c",
+      "user.email=a@a",
+      "commit",
+      "-q",
+      "-m",
+      "Export",
+    );
+    return path;
+  }
+
+  // Task 1's claim in Ready is the second session named.
+  const done = (session = you(2)): Command => ({ type: "done", task: task(1), session });
+
+  test("done runs the checks on your branch, and says they passed", async () => {
+    const { daemon } = await readyInRepo();
+    await claimedWithWork(daemon);
+    expect(await ok(daemon, done())).toEqual({ passed: true });
+    // Every path is critical, so the merge waits for you.
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, phase: "checks", waitingOnYou: "merge_approval" }],
+    });
+  });
+
+  test("done says why the checks failed, and the task goes back to its agent", async () => {
+    const { daemon } = await readyInRepo(undefined, {
+      checks: ["echo 'expected 1 got 2'; exit 1"],
+    });
+    await claimedWithWork(daemon);
+    const answer = z
+      .object({ passed: z.literal(false), summary: z.string() })
+      .parse(await ok(daemon, done()));
+    expect(answer.summary).toContain("expected 1 got 2");
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, phase: "in_progress", step: "running", blocked: null }],
+    });
+  });
+
+  // Found by review: the checks ran in the agent's own worktree, so an
+  // edit made while they ran was checked instead of the commit.
+  test("done checks the commit, even if the agent edits while the checks run", async () => {
+    const { daemon } = await readyInRepo(undefined, {
+      checks: ["sleep 0.5; grep -q 'a,b' export.csv"],
+    });
+    const path = await claimedWithWork(daemon);
+    const answer = daemon.handle(done());
+    await Bun.sleep(200);
+    writeFileSync(join(path, "export.csv"), "BROKEN\n");
+    expect(await answer).toEqual({ ok: true, result: { passed: true } });
+  });
+
+  // Found by review: a check that wrote a file, such as a coverage
+  // report, left "uncommitted changes" behind, so done always failed.
+  test("done passes a check that writes a file", async () => {
+    const { daemon } = await readyInRepo(undefined, { checks: ["echo 95% > coverage.txt"] });
+    const path = await claimedWithWork(daemon);
+    expect(await ok(daemon, done())).toEqual({ passed: true });
+    expect(existsSync(join(path, "coverage.txt"))).toBe(false);
+  });
+
+  // Found by review: a second done while the checks ran was refused as
+  // "isn't in In progress", though the work was being checked.
+  test("done while the checks are already running waits for their result", async () => {
+    const { daemon } = await readyInRepo(undefined, { checks: ["sleep 0.5"] });
+    await claimedWithWork(daemon);
+    const first = daemon.handle(done());
+    await Bun.sleep(100);
+    expect(await daemon.handle(done())).toEqual({ ok: true, result: { passed: true } });
+    expect(await first).toEqual({ ok: true, result: { passed: true } });
+  });
+
+  // Found by review: after a restart, the checks ran again, but the agent
+  // couldn't hear the result.
+  test("done after a restart waits for the checks that run again", async () => {
+    const repo = await newRepo();
+    const store = EventStore.open(":memory:");
+    const first = await readyInRepo(repo, { store, checks: ["sleep 5"] });
+    await claimedWithWork(first.daemon);
+    const cut = first.daemon.handle(done());
+    await Bun.sleep(300);
+    await first.daemon.close();
+    expect(await cut).toEqual({ ok: false, message: "The daemon is shutting down." });
+
+    const second = Daemon.open({
+      config: { ...config, criticalPaths: ["**"] },
+      log: store,
+      versionControl: new Git(repo.dir, repo.main),
+      runChecks: localChecks(["true"]),
+    });
+    if (!second.ok) throw new Error(second.message);
+    expect(await second.value.handle(done())).toEqual({ ok: true, result: { passed: true } });
+  });
+
+  test("done from another session is refused before anything is read", async () => {
+    const { daemon } = await readyInRepo();
+    const path = await claimedWithWork(daemon);
+    writeFileSync(join(path, "draft.txt"), "not yet\n");
+    expect(await daemon.handle(done(you(9)))).toEqual({
+      ok: false,
+      message: "#1's agent isn't you-9.",
+    });
+  });
+
+  test("done says so when the task is dropped while its checks run", async () => {
+    const { daemon } = await readyInRepo(undefined, { checks: ["sleep 1"] });
+    await claimedWithWork(daemon);
+    const answer = daemon.handle(done());
+    await Bun.sleep(200);
+    await ok(daemon, { type: "drop", task: task(1) });
+    expect(await answer).toEqual({ ok: false, message: "#1 was dropped while its checks ran." });
+  });
+
+  // Found by review: a check kept running after the daemon stopped, and
+  // could overlap with the same check run again at the next start.
+  test("closing the daemon stops a check that is running", async () => {
+    const marker = join(await newRepo().then((r) => r.dir), "finished.txt");
+    const { daemon } = await readyInRepo(undefined, { checks: [`sleep 1; touch ${marker}`] });
+    await claimedWithWork(daemon);
+    void daemon.handle(done());
+    await Bun.sleep(300);
+    await daemon.close();
+    await Bun.sleep(1_200);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  test("done is refused while the worktree has uncommitted work", async () => {
+    const { daemon } = await readyInRepo();
+    const path = await claimedWithWork(daemon);
+    writeFileSync(join(path, "draft.txt"), "not yet\n");
+    const answer = await daemon.handle(done());
+    expect(answer.ok).toBe(false);
+    expect(!answer.ok && answer.message).toContain("has uncommitted changes");
+  });
+
+  test("done is refused when the branch has no commits", async () => {
+    const { daemon } = await readyInRepo();
+    await ok(daemon, { type: "claim", task: task(1) });
+    expect(await daemon.handle(done())).toEqual({
+      ok: false,
+      message: "The branch has no commits.",
+    });
+  });
+
+  test("done is refused from a session that isn't the task's", async () => {
+    const { daemon } = await readyInRepo();
+    await claimedWithWork(daemon);
+    expect(await daemon.handle(done(you(9)))).toEqual({
+      ok: false,
+      message: "#1's agent isn't you-9.",
+    });
+  });
+
   test("refuses the claim and says why when the worktree can't be made", async () => {
     const { daemon, repo } = await readyInRepo();
     mkdirSync(join(repo.dir, ".skelcrew", "worktrees", "1-csv-export"), { recursive: true });
@@ -496,6 +683,29 @@ describe("the daemon with git", () => {
     expect(!answer.ok && answer.message).toStartWith("The worktree couldn't be made:");
     expect(await ok(daemon, { type: "status" })).toMatchObject({
       tasks: [{ task: 1, blocked: expect.stringMatching(/^The worktree couldn't be made:/) }],
+    });
+  });
+
+  // Skelcrew doesn't start agents itself yet, so after a retry the task
+  // waits in its phase until you claim it again.
+  test("retries a task whose agent gave up, and a new claim works in the same worktree", async () => {
+    const { daemon, repo } = await readyInRepo();
+    await ok(daemon, { type: "claim", task: task(1) });
+    await ok(daemon, { type: "give_up", task: task(1), session: you(2), message: "Stuck." });
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, phase: "in_progress", blocked: "The agent gave up: Stuck." }],
+    });
+
+    expect(await ok(daemon, { type: "retry", task: task(1) })).toEqual({});
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, phase: "in_progress", step: "queued", blocked: null, waitingOnYou: null }],
+    });
+
+    const path = join(repo.dir, ".skelcrew", "worktrees", "1-csv-export");
+    expect(await ok(daemon, { type: "claim", task: task(1) })).toEqual({
+      session: "you-3",
+      phase: "in_progress",
+      worktree: { path, branch: "task/1-csv-export" },
     });
   });
 });

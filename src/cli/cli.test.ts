@@ -21,16 +21,32 @@ afterEach(async () => {
 // are numbered, so tests can name them.
 async function repoWithDaemon(): Promise<string> {
   const repo = throwawayRepo(dirs);
+  await served(repo);
+  return repo;
+}
+
+// Starts a daemon for the repository, naming sessions you-1, you-2 and on.
+async function served(repo: string): Promise<void> {
   let sessions = 0;
-  const served = await serve(repo, {
+  const started = await serve(repo, {
     newSession: () => {
       sessions += 1;
       return `you-${sessions}`;
     },
   });
-  if (!served.ok) throw new Error(served.message);
-  servers.push(served.server);
-  return repo;
+  if (!started.ok) throw new Error(started.message);
+  servers.push(started.server);
+}
+
+// Commits a file in a worktree, as an agent would.
+function commitIn(worktree: string): void {
+  writeFileSync(join(worktree, "export.csv"), "a,b\n");
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", "-c", "user.name=Agent", "-c", "user.email=a@a", ...args], {
+      cwd: worktree,
+    });
+  git("add", "export.csv");
+  git("commit", "-q", "-m", "Export");
 }
 
 // Runs the CLI as a function, the way a person would from the repository.
@@ -369,6 +385,39 @@ describe("skelcrew drop", () => {
   });
 });
 
+describe("skelcrew retry", () => {
+  test("retries a blocked task, and says to claim it again", async () => {
+    const repo = await repoWithDaemon();
+    await specced(repo);
+    await cli(repo, ["approve", "1"]);
+    await cli(repo, ["claim", "1"]);
+    await cli(repo, ["give-up", "1", "Stuck."], { session: "you-2" });
+    expect(await cli(repo, ["retry", "1"])).toEqual(
+      said([
+        "Retried #1.",
+        "Skelcrew doesn't start agents itself yet, so claim it again: skelcrew claim 1",
+      ]),
+    );
+    expect((await cli(repo, ["claim", "1"])).out[0]).toBe("Claimed #1. It is in In progress.");
+  });
+
+  test("passes on the refusal for a task that isn't blocked", async () => {
+    const repo = await repoWithDaemon();
+    await cli(repo, ["add", "CSV export"]);
+    expect(await cli(repo, ["retry", "1"])).toEqual(refused("#1 isn't blocked."));
+  });
+
+  test("passes on the refusal for a task that doesn't exist", async () => {
+    const repo = await repoWithDaemon();
+    expect(await cli(repo, ["retry", "4"])).toEqual(refused("#4 doesn't exist."));
+  });
+
+  test("--help says what it does", async () => {
+    const repo = await repoWithDaemon();
+    expect((await cli(repo, ["retry", "--help"])).out[0]).toBe("Usage: skelcrew retry <task>");
+  });
+});
+
 describe("skelcrew status", () => {
   test("shows what waits on you, then tasks by phase", async () => {
     const repo = await repoWithDaemon();
@@ -449,6 +498,35 @@ describe("skelcrew done", () => {
     });
   });
 
+  // Through a real daemon: claim the task, commit in its worktree, then
+  // report done. The test repository's only check is `true`.
+  test("runs the checks on the task's branch and prints that they passed", async () => {
+    const repo = await repoWithDaemon();
+    await specced(repo);
+    await cli(repo, ["approve", "1"]);
+    await cli(repo, ["claim", "1"]);
+    commitIn(join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export"));
+    expect(await cli(repo, ["done", "1"], { session: "you-2" })).toEqual(
+      said(["The checks passed for #1."]),
+    );
+  });
+
+  test("runs the setup from workflow.yml before the checks", async () => {
+    const repo = throwawayRepo(dirs);
+    writeFileSync(
+      join(repo, ".skelcrew", "workflow.yml"),
+      'setup:\n  - "echo ready > setup.txt"\nchecks:\n  - "grep -q ready setup.txt"\n',
+    );
+    await served(repo);
+    await specced(repo);
+    await cli(repo, ["approve", "1"]);
+    await cli(repo, ["claim", "1"]);
+    commitIn(join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export"));
+    expect(await cli(repo, ["done", "1"], { session: "you-2" })).toEqual(
+      said(["The checks passed for #1."]),
+    );
+  });
+
   test("refuses without SKELCREW_SESSION", async () => {
     const repo = await repoWithDaemon();
     expect(await cli(repo, ["done", "1"])).toEqual(
@@ -462,7 +540,7 @@ describe("skelcrew done", () => {
   test("passes on the daemon's refusal", async () => {
     const repo = await repoWithDaemon();
     expect(await cli(repo, ["done", "1"], { session: "you-1" })).toEqual(
-      refused("`done` isn't built into the daemon yet."),
+      refused("#1 doesn't exist."),
     );
   });
 });
@@ -512,7 +590,7 @@ describe("other commands", () => {
   test("--help lists the commands", async () => {
     const repo = await repoWithDaemon();
     const help = (await cli(repo, ["--help"])).out.join("\n");
-    for (const command of ["add", "spec", "approve", "drop", "status", "log", "claim"]) {
+    for (const command of ["add", "spec", "approve", "drop", "retry", "status", "log", "claim"]) {
       expect(help).toContain(`skelcrew ${command}`);
     }
     for (const command of ["submit", "done", "give-up", "serve"]) {

@@ -5,8 +5,10 @@
 import * as z from "zod";
 import type { Config } from "../core/types";
 
-// `mainBranch` is the branch tasks start from and merge into.
-export type Workflow = { config: Config; checks: string[]; mainBranch: string };
+// `mainBranch` is the branch tasks start from and merge into. `setup`
+// prepares a fresh copy of a task's code, such as installing its
+// dependencies, before the checks run there.
+export type Workflow = { config: Config; checks: string[]; setup: string[]; mainBranch: string };
 
 export type ParsedWorkflow = { ok: true; workflow: Workflow } | { ok: false; reasons: string[] };
 
@@ -76,6 +78,14 @@ const schema = z.strictObject({
   safety_cap: z
     .strictObject({ tokens: count, minutes: count })
     .default({ tokens: 2_000_000, minutes: 120 }),
+  setup: z
+    .array(
+      z.string().refine((command) => command.trim() !== "", {
+        error: "each setup step must be a command.",
+      }),
+      { error: "must be a list of commands." },
+    )
+    .default([]),
   main_branch: z
     .string({ error: "must be a branch name, such as main." })
     .refine((name) => name.trim() !== "", { error: "must be a branch name, such as main." })
@@ -110,6 +120,7 @@ export function parseWorkflow(text: string): ParsedWorkflow {
     ok: true,
     workflow: {
       checks: file.checks,
+      setup: file.setup,
       mainBranch: file.main_branch,
       config: {
         gates: ["local"],

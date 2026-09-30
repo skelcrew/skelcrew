@@ -3,8 +3,11 @@
 
 import {
   appendFileSync,
+  chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -15,6 +18,7 @@ import { $ } from "bun";
 import { CommitSha } from "../../core/ids";
 import type { BranchFacts, Worktree } from "../../core/types";
 import type {
+  CheckRequest,
   Done,
   MergeRequest,
   RevertRequest,
@@ -31,6 +35,8 @@ const worktreesFolder = ".skelcrew/worktrees";
 const mergingFolder = ".skelcrew/merging";
 // And a revert here.
 const revertingFolder = ".skelcrew/reverting";
+// The gate checks a fresh copy of the reported commit here.
+const checkingFolder = ".skelcrew/checking";
 
 // How failure messages name what is being put on main. The merge and the
 // revert share their steps, so they share the messages too.
@@ -82,6 +88,32 @@ export class Git implements VersionControl {
     return this.oneAtATime(() =>
       guard(`create the worktree for #${request.taskId}`, () => this.create(request)),
     );
+  }
+
+  // Making and removing the copy wait their turn with the plugin's other
+  // calls. The checks themselves don't, since they can run for a long time
+  // and other tasks' worktrees mustn't wait on them.
+  async checkCommit(request: CheckRequest, runChecks: RunChecks): Promise<Done<null>> {
+    const copy = await this.oneAtATime(() =>
+      guard(`copy ${request.head} to check it`, () => this.copyToCheck(request)),
+    );
+    if (!copy.ok) return copy;
+    const { temp, mark } = copy.value;
+    let result: Done<null>;
+    try {
+      result = await runChecks(temp);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      result = { ok: false, message: `The checks couldn't run: ${message}` };
+    }
+    const cleared = await this.oneAtATime(() =>
+      guard(`remove ${temp}`, () => this.clearOwnWorktree(temp, mark)),
+    );
+    // A copy left behind is cleared by the next check of this task.
+    if (!cleared.ok && !result.ok) {
+      return { ok: false, message: `${result.message} ${cleared.message}` };
+    }
+    return result;
   }
 
   merge(request: MergeRequest, runChecks: RunChecks): Promise<Done<CommitSha>> {
@@ -441,6 +473,38 @@ export class Git implements VersionControl {
     return { ok: true, value: null };
   }
 
+  // A detached copy of exactly the reported commit, for the gate's checks,
+  // marked as Skelcrew's own so a leftover one can be cleared.
+  private async copyToCheck(request: CheckRequest): Promise<Done<{ temp: string; mark: string }>> {
+    const common = await this.gitFolder();
+    if (!common.ok) return common;
+    const ignored = await this.ignoreWorktrees();
+    if (!ignored.ok) return ignored;
+    const temp = join(this.repo, checkingFolder, String(request.taskId));
+    const mark = join(common.value, "skelcrew-checking", String(request.taskId));
+    const cleared = await this.clearOwnWorktree(temp, mark);
+    if (!cleared.ok) return cleared;
+    mkdirSync(dirname(mark), { recursive: true });
+    writeFileSync(mark, "");
+    const added = await run(
+      this.repo,
+      "worktree",
+      "add",
+      "--quiet",
+      "--detach",
+      temp,
+      request.head,
+    );
+    if (!added.ok) {
+      await this.clearOwnWorktree(temp, mark);
+      return {
+        ok: false,
+        message: `git couldn't make a copy of ${request.head} to check: ${added.err}`,
+      };
+    }
+    return { ok: true, value: { temp, mark } };
+  }
+
   // The merge. Main only moves at the very end, and only to the exact
   // commit the checks tested.
   private async squashMerge(request: MergeRequest, runChecks: RunChecks): Promise<Done<CommitSha>> {
@@ -759,12 +823,21 @@ export class Git implements VersionControl {
           message: `${temp} exists, but Skelcrew didn't put it there. It was left as it is.`,
         };
       }
+      // git can stop halfway, such as on a read-only folder the checks
+      // left: it forgets the worktree but leaves the folder. The mark says
+      // the folder is Skelcrew's own, so it is made writable and deleted.
       const removed = await run(this.repo, "worktree", "remove", "--force", temp);
-      if (!removed.ok) {
-        return {
-          ok: false,
-          message: `Skelcrew's own worktree ${temp} couldn't be removed: ${removed.err}`,
-        };
+      if (existsSync(temp)) {
+        try {
+          writableAll(temp);
+          rmSync(temp, { recursive: true, force: true });
+        } catch (error) {
+          const reason = removed.ok ? describeError(error) : removed.err;
+          return {
+            ok: false,
+            message: `Skelcrew's own worktree ${temp} couldn't be removed: ${reason}`,
+          };
+        }
       }
     }
     await run(this.repo, "worktree", "prune");
@@ -1133,4 +1206,17 @@ async function runRaw(dir: string, ...args: string[]): Promise<Run> {
   } catch (error) {
     return { ok: false, err: error instanceof Error ? error.message : String(error) };
   }
+}
+
+// Gives the owner write permission on a folder and every folder in it, so
+// it can be deleted. Links aren't followed.
+function writableAll(path: string): void {
+  const found = lstatSync(path);
+  if (!found.isDirectory()) return;
+  chmodSync(path, found.mode | 0o700);
+  for (const entry of readdirSync(path)) writableAll(join(path, entry));
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
