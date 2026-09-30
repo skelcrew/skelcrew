@@ -1,5 +1,5 @@
-// One daemon per repository. The daemon takes an exclusive `flock` on
-// .skelcrew/daemon.lock and keeps it for as long as it runs. The operating
+// One daemon per repository. The daemon takes an exclusive `flock` on the
+// .skelcrew folder itself and keeps it for as long as it runs. The operating
 // system keeps that lock for the daemon's process and lets go of it the
 // moment the process ends, however it ends. So:
 //
@@ -7,21 +7,22 @@
 //   `flock` either gets the lock or it doesn't, in one step;
 // - a daemon that crashed never keeps the next one out;
 // - no process id is ever trusted, so a reused one can't block a start;
-// - it works the same on a file the daemon can't write to.
+// - it works the same on a folder the daemon can't write to;
+// - deleting files in .skelcrew can't let a second daemon in. A lock on a
+//   file inside it could: the next daemon would lock a new file of the
+//   same name, and two daemons would then share one database.
 //
 // The lock is taken through the system's C library, since Bun has no
 // `flock` of its own. It is the same on macOS and Linux. Windows has no
 // `flock` (it has LockFileEx), and the rest of the daemon assumes Unix too,
 // so there the lock refuses plainly.
 //
-// The lock file is never deleted. Deleting a lock file that another process
-// may be opening is a race of its own. What it holds doesn't matter. The
-// daemon's process id is written to .skelcrew/daemon.pid, only to say who
-// runs it.
+// The daemon's process id is written to .skelcrew/daemon.pid, only to say
+// who runs it.
 
 import { dlopen, FFIType, read } from "bun:ffi";
 import { closeSync, constants, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 export type Lock = { release(): void };
 
@@ -31,34 +32,34 @@ export type Locked = { ok: true; lock: Lock } | { ok: false; message: string };
 const LOCK_EX = 2;
 const LOCK_NB = 4;
 
-export function takeLock(path: string, pid = process.pid): Locked {
+// `folder` is the repository's .skelcrew folder.
+export function takeLock(folder: string, pid = process.pid): Locked {
   const system = libc();
   if (!system.ok) return { ok: false, message: couldNot(system.reason) };
 
-  // Opened read-only, so a lock file the daemon can't write to still works.
-  // Close-on-exec, so no process the daemon starts, such as git or the
+  // Opened read-only: a folder can't be opened any other way. Close-on-exec, so no process the daemon starts, such as git or the
   // checks, is handed the file and could keep the lock after the daemon has
   // died. Bun's spawn happens to leave it out anyway on macOS; the flag
   // makes that true however a process is started.
   let fd: number;
   try {
-    fd = openSync(path, constants.O_RDONLY | constants.O_CREAT | system.value.closeOnExec, 0o644);
+    fd = openSync(folder, constants.O_RDONLY | system.value.closeOnExec);
   } catch (error) {
     return { ok: false, message: couldNot(describe(error)) };
   }
 
+  const pidFile = join(folder, "daemon.pid");
   if (system.value.flock(fd, LOCK_EX | LOCK_NB) !== 0) {
     const errno = system.value.errno();
     closeSync(fd);
     if (errno === system.value.wouldBlock) {
-      const holder = readPid(join(dirname(path), "daemon.pid"));
+      const holder = readPid(pidFile);
       const who = holder === null ? "" : `, as process ${holder}`;
       return { ok: false, message: `The daemon is already running for this repository${who}.` };
     }
     return { ok: false, message: couldNot(`the system refused it, with error ${errno}`) };
   }
 
-  const pidFile = join(dirname(path), "daemon.pid");
   try {
     writeFileSync(pidFile, `${pid}\n`);
   } catch {
@@ -175,7 +176,7 @@ function muslArch(): string {
 }
 
 function couldNot(reason: string): string {
-  return `The lock .skelcrew/daemon.lock couldn't be taken: ${reason}`;
+  return `The lock on the .skelcrew folder couldn't be taken: ${reason}`;
 }
 
 function readPid(path: string): number | null {

@@ -28,7 +28,6 @@ describe("daemonPaths", () => {
       folder: join(repo, ".skelcrew"),
       workflow: join(repo, ".skelcrew", "workflow.yml"),
       store: join(repo, ".skelcrew", "skelcrew.db"),
-      lock: join(repo, ".skelcrew", "daemon.lock"),
       socket: join(repo, ".skelcrew", "daemon.sock"),
     });
   });

@@ -10,7 +10,6 @@ export type DaemonPaths = {
   folder: string;
   workflow: string;
   store: string;
-  lock: string;
   socket: string;
 };
 
@@ -40,7 +39,6 @@ export function daemonPaths(
       folder,
       workflow: join(folder, "workflow.yml"),
       store: join(folder, "skelcrew.db"),
-      lock: join(folder, "daemon.lock"),
       socket,
     },
   };

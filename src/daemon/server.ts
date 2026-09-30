@@ -45,7 +45,7 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
   const workflow = readWorkflow(repo, paths.workflow);
   if (!workflow.ok) return workflow;
 
-  const locked = takeLock(paths.lock);
+  const locked = takeLock(paths.folder);
   if (!locked.ok) return locked;
   const lock = locked.lock;
   // Holding the lock means no other daemon runs here. So a socket file
