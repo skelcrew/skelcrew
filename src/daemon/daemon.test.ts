@@ -432,6 +432,7 @@ describe("the daemon with git", () => {
       merge: (request, runChecks) => real.merge(request, runChecks),
       revert: (request) => real.revert(request),
       removeWorktree: (worktree) => real.removeWorktree(worktree),
+      checkCommit: (request, runChecks) => real.checkCommit(request, runChecks),
     };
     const first = await readyInRepo(repo, { versionControl: cutOff, store });
     void first.daemon.handle({ type: "claim", task: task(1) });
@@ -468,6 +469,7 @@ describe("the daemon with git", () => {
       merge: (request, runChecks) => real.merge(request, runChecks),
       revert: (request) => real.revert(request),
       removeWorktree: (worktree) => real.removeWorktree(worktree),
+      checkCommit: (request, runChecks) => real.checkCommit(request, runChecks),
     };
     const { daemon } = await readyInRepo(repo, { versionControl: held });
     const claim = daemon.handle({ type: "claim", task: task(1) });
@@ -540,6 +542,28 @@ describe("the daemon with git", () => {
     expect(await ok(daemon, { type: "status" })).toMatchObject({
       tasks: [{ task: 1, phase: "in_progress", step: "running", blocked: null }],
     });
+  });
+
+  // Found by review: the checks ran in the agent's own worktree, so an
+  // edit made while they ran was checked instead of the commit.
+  test("done checks the commit, even if the agent edits while the checks run", async () => {
+    const { daemon } = await readyInRepo(undefined, {
+      checks: ["sleep 0.5; grep -q 'a,b' export.csv"],
+    });
+    const path = await claimedWithWork(daemon);
+    const answer = daemon.handle(done());
+    await Bun.sleep(200);
+    writeFileSync(join(path, "export.csv"), "BROKEN\n");
+    expect(await answer).toEqual({ ok: true, result: { passed: true } });
+  });
+
+  // Found by review: a check that wrote a file, such as a coverage
+  // report, left "uncommitted changes" behind, so done always failed.
+  test("done passes a check that writes a file", async () => {
+    const { daemon } = await readyInRepo(undefined, { checks: ["echo 95% > coverage.txt"] });
+    const path = await claimedWithWork(daemon);
+    expect(await ok(daemon, done())).toEqual({ passed: true });
+    expect(existsSync(join(path, "coverage.txt"))).toBe(false);
   });
 
   test("done is refused while the worktree has uncommitted work", async () => {

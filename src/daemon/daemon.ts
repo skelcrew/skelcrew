@@ -491,32 +491,20 @@ class DaemonTools implements Tools {
     this.send(taskId, input, finished);
   }
 
-  // The checks run on the commit the agent reported, in its worktree. If
-  // the branch has moved on, or has uncommitted work, before or after they
-  // run, they didn't check that commit, so the gate fails.
+  // The checks run in a fresh copy of the commit the agent reported, never
+  // in its worktree. So an agent editing meanwhile, or a check that writes
+  // files, can't change what is checked.
   private async runLocalGate(
     versionControl: VersionControl,
     runChecks: RunChecks,
     command: Extract<CoreCommand, { type: "run_gate" }>,
     finished: () => void,
   ): Promise<void> {
-    const { taskId, request, gate, worktree, head } = command;
-    const atHead = async (): Promise<string | null> => {
-      const read = await versionControl.readBranch(worktree);
-      if (!read.ok) return read.message;
-      if (read.value.head !== head) {
-        return "The branch changed after it was reported done. Report done again.";
-      }
-      return null;
-    };
+    const { taskId, request, gate, head } = command;
     let summary: string | null;
     try {
-      summary = await atHead();
-      if (summary === null) {
-        const checked = await runChecks(worktree.path);
-        summary = checked.ok ? null : checked.message;
-      }
-      summary ??= await atHead();
+      const checked = await versionControl.checkCommit({ taskId, head }, runChecks);
+      summary = checked.ok ? null : checked.message;
     } catch (error) {
       summary = `The checks couldn't run: ${error instanceof Error ? error.message : String(error)}`;
     }

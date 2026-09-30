@@ -15,6 +15,7 @@ import { $ } from "bun";
 import { CommitSha } from "../../core/ids";
 import type { BranchFacts, Worktree } from "../../core/types";
 import type {
+  CheckRequest,
   Done,
   MergeRequest,
   RevertRequest,
@@ -31,6 +32,8 @@ const worktreesFolder = ".skelcrew/worktrees";
 const mergingFolder = ".skelcrew/merging";
 // And a revert here.
 const revertingFolder = ".skelcrew/reverting";
+// The gate checks a fresh copy of the reported commit here.
+const checkingFolder = ".skelcrew/checking";
 
 // How failure messages name what is being put on main. The merge and the
 // revert share their steps, so they share the messages too.
@@ -82,6 +85,32 @@ export class Git implements VersionControl {
     return this.oneAtATime(() =>
       guard(`create the worktree for #${request.taskId}`, () => this.create(request)),
     );
+  }
+
+  // Making and removing the copy wait their turn with the plugin's other
+  // calls. The checks themselves don't, since they can run for a long time
+  // and other tasks' worktrees mustn't wait on them.
+  async checkCommit(request: CheckRequest, runChecks: RunChecks): Promise<Done<null>> {
+    const copy = await this.oneAtATime(() =>
+      guard(`copy ${request.head} to check it`, () => this.copyToCheck(request)),
+    );
+    if (!copy.ok) return copy;
+    const { temp, mark } = copy.value;
+    let result: Done<null>;
+    try {
+      result = await runChecks(temp);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      result = { ok: false, message: `The checks couldn't run: ${message}` };
+    }
+    const cleared = await this.oneAtATime(() =>
+      guard(`remove ${temp}`, () => this.clearOwnWorktree(temp, mark)),
+    );
+    // A copy left behind is cleared by the next check of this task.
+    if (!cleared.ok && !result.ok) {
+      return { ok: false, message: `${result.message} ${cleared.message}` };
+    }
+    return result;
   }
 
   merge(request: MergeRequest, runChecks: RunChecks): Promise<Done<CommitSha>> {
@@ -443,6 +472,36 @@ export class Git implements VersionControl {
 
   // The merge. Main only moves at the very end, and only to the exact
   // commit the checks tested.
+  private async copyToCheck(request: CheckRequest): Promise<Done<{ temp: string; mark: string }>> {
+    const common = await this.gitFolder();
+    if (!common.ok) return common;
+    const ignored = await this.ignoreWorktrees();
+    if (!ignored.ok) return ignored;
+    const temp = join(this.repo, checkingFolder, String(request.taskId));
+    const mark = join(common.value, "skelcrew-checking", String(request.taskId));
+    const cleared = await this.clearOwnWorktree(temp, mark);
+    if (!cleared.ok) return cleared;
+    mkdirSync(dirname(mark), { recursive: true });
+    writeFileSync(mark, "");
+    const added = await run(
+      this.repo,
+      "worktree",
+      "add",
+      "--quiet",
+      "--detach",
+      temp,
+      request.head,
+    );
+    if (!added.ok) {
+      await this.clearOwnWorktree(temp, mark);
+      return {
+        ok: false,
+        message: `git couldn't make a copy of ${request.head} to check: ${added.err}`,
+      };
+    }
+    return { ok: true, value: { temp, mark } };
+  }
+
   private async squashMerge(request: MergeRequest, runChecks: RunChecks): Promise<Done<CommitSha>> {
     const common = await this.gitFolder();
     if (!common.ok) return common;

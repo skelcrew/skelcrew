@@ -17,6 +17,9 @@ export type Done<T> = { ok: true; value: T } | { ok: false; message: string };
 
 // What to merge: exactly `head` from the task's worktree, even if the
 // branch has moved on since. The title names the commit on main.
+// The commit a task's agent reported done, to check.
+export type CheckRequest = { taskId: TaskId; head: CommitSha };
+
 export type MergeRequest = {
   taskId: TaskId;
   title: string;
@@ -50,6 +53,13 @@ export interface VersionControl {
   // Refused while the worktree has uncommitted work, since the gates and
   // the merge only see what is committed.
   readBranch(worktree: Worktree): Promise<Done<BranchFacts>>;
+
+  // Runs the checks in a fresh copy of exactly `head`, then removes the
+  // copy. Nothing in the task's worktree is seen or changed, so an agent
+  // editing meanwhile, or a check that writes files, can't change what is
+  // checked. Gives back the checks' own result, or why the copy couldn't be
+  // made.
+  checkCommit(request: CheckRequest, runChecks: RunChecks): Promise<Done<null>>;
 
   // Squash-merges exactly `head` onto main, as one commit. It brings the
   // work up to date with main first, then runs the checks on the result.
