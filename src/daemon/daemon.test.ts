@@ -526,6 +526,7 @@ describe("the daemon with git", () => {
       session: "you-2",
       phase: "in_progress",
       worktree: { path, branch: "task/1-csv-export" },
+      spec,
     });
     expect(await git(path, "branch", "--show-current")).toBe("task/1-csv-export");
     expect(await ok(daemon, { type: "status" })).toMatchObject({
@@ -900,6 +901,7 @@ describe("the daemon with git", () => {
       session: "you-3",
       phase: "in_progress",
       worktree: { path, branch: "task/1-csv-export" },
+      spec,
     });
   });
 });
