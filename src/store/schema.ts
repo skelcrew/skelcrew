@@ -173,7 +173,8 @@ type MissingTaskEvent = Exclude<EventBody["type"], z.output<typeof taskEventUnio
 const everyTaskEvent: [MissingTaskEvent] extends [never] ? true : MissingTaskEvent = true;
 void everyTaskEvent;
 
-const taskEvent: z.ZodType<TaskEvent> = taskEventUnion;
+// Exported for the CLI, which checks `skelcrew log`'s answer against it.
+export const taskEvent: z.ZodType<TaskEvent> = taskEventUnion;
 
 // ---------------------------------------------------------------------------
 // Project events

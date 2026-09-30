@@ -139,6 +139,27 @@ export class EventStore implements ReadableLog {
     return { ok: true, tasks };
   }
 
+  // One task's events, oldest first, for `skelcrew log`. None for a task
+  // that doesn't exist. A damaged event is reported with its position. A
+  // row that isn't JSON can't say which task it belongs to, so it is left
+  // out here. loadTasks reports it, so the daemon won't start on it.
+  loadTaskEvents(taskId: TaskId): Loaded<{ events: TaskEvent[] }> {
+    const rows = this.db
+      .query<Row, { taskId: number }>(
+        `SELECT seq, body FROM events
+         WHERE stream = 'task' AND json_valid(body) AND json_extract(body, '$.taskId') = $taskId
+         ORDER BY seq`,
+      )
+      .all({ taskId });
+    const events: TaskEvent[] = [];
+    for (const row of rows) {
+      const parsed = parseTaskEvent(readJson(row.body));
+      if (!parsed.ok) return { ok: false, seq: row.seq, reason: parsed.reason };
+      events.push(parsed.value);
+    }
+    return { ok: true, events };
+  }
+
   loadProjects(): Loaded<{ projects: Map<ProjectId, Project> }> {
     const projects = new Map<ProjectId, Project>();
     for (const row of this.rows("project")) {

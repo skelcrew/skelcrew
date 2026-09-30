@@ -22,17 +22,20 @@ import type {
   Command as CoreCommand,
   Input,
   Task,
+  TaskEvent,
   Worktree,
 } from "../core/types";
 import { Loop, type ReadableLog, type Tools } from "../loop/loop";
 import type { RunChecks, VersionControl } from "../plugins/version-control";
-import type { Command } from "../protocol/protocol";
+import { type Command, MAX_LINE } from "../protocol/protocol";
+import type { EventStore } from "../store/store";
 
 export type Answer = { ok: true; result: unknown } | { ok: false; message: string };
 
 export type DaemonOptions = {
   config: Config;
-  log: ReadableLog;
+  // `loadTaskEvents` reads a task's events back for `skelcrew log`.
+  log: ReadableLog & Pick<EventStore, "loadTaskEvents">;
   // The core never makes up IDs, so the daemon names each claimed session.
   newSession?: () => string;
   now?: () => number;
@@ -61,6 +64,7 @@ export class Daemon {
   private queue: Promise<unknown> = Promise.resolve();
   private readonly newSession: () => string;
   private readonly now: () => number;
+  private readonly log: DaemonOptions["log"];
   private readonly retryMs: number;
   private readonly maxRetryMs: number;
   private readonly versionControl: VersionControl | null;
@@ -75,6 +79,7 @@ export class Daemon {
   ) {
     this.newSession = options.newSession ?? (() => `session-${randomUUID()}`);
     this.now = options.now ?? Date.now;
+    this.log = options.log;
     this.retryMs = options.retryMs ?? 1_000;
     this.maxRetryMs = options.maxRetryMs ?? 30_000;
     this.versionControl = options.versionControl ?? null;
@@ -377,11 +382,24 @@ export class Daemon {
       case "retry":
         return this.send(command.task, { by: "human", type: "retry" });
 
+      // The task's events as saved. The CLI puts them in plain words.
+      case "log": {
+        if (this.find(command.task) === null) {
+          return { ok: false, message: `#${command.task} doesn't exist.` };
+        }
+        const loaded = this.log.loadTaskEvents(command.task);
+        if (!loaded.ok) {
+          return {
+            ok: false,
+            message: `Event ${loaded.seq} of the saved log couldn't be read: ${loaded.reason}`,
+          };
+        }
+        return { ok: true, result: newestThatFit(loaded.events) };
+      }
+
       // Answered in `handle`, since it waits outside the queue.
       case "done":
         return { ok: false, message: "`done` couldn't be handled." };
-      case "log":
-        return { ok: false, message: `\`${command.type}\` isn't built into the daemon yet.` };
     }
   }
 
@@ -517,6 +535,7 @@ function view(task: Task) {
   return {
     task: task.id,
     title: task.title,
+    project: task.project,
     phase: task.phase,
     step: "step" in task ? task.step.kind : null,
     blocked: task.blocked === null ? null : describeBlock(task.blocked),
@@ -525,7 +544,28 @@ function view(task: Task) {
   };
 }
 
-function describeBlock(reason: BlockReason): string {
+// A reply must fit on one line of at most MAX_LINE bytes. Every spec is
+// saved whole, so a long-lived task's events can pass that. The log then
+// keeps the newest events that fit, and says how many older ones it left
+// out. The room held back is for the rest of the reply around the events.
+const LOG_ROOM = MAX_LINE - 10_000;
+
+function newestThatFit(events: TaskEvent[]): { events: TaskEvent[]; leftOut: number } {
+  let bytes = 0;
+  let first = events.length;
+  while (first > 0) {
+    const event = events[first - 1];
+    if (event === undefined) break;
+    // Each event takes its JSON and a comma.
+    const size = Buffer.byteLength(JSON.stringify(event)) + 1;
+    if (bytes + size > LOG_ROOM) break;
+    bytes += size;
+    first -= 1;
+  }
+  return { events: events.slice(first), leftOut: first };
+}
+
+export function describeBlock(reason: BlockReason): string {
   switch (reason.kind) {
     case "out_of_attempts":
       return `Out of attempts. The last failure, in ${reason.failure.step}: ${reason.failure.summary}`;

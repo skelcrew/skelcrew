@@ -3,9 +3,11 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { createServer, type Server as NetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ProjectId } from "../core/ids";
 import { daemonPaths } from "../daemon/paths";
 import { type Server, serve } from "../daemon/server";
 import { cleanUp, throwawayRepo } from "../daemon/testing";
+import { EventStore } from "../store/store";
 import { type Context, run } from "./cli";
 
 const dirs: string[] = [];
@@ -18,9 +20,27 @@ afterEach(async () => {
 });
 
 // A throwaway repository with its daemon running in this process. Sessions
-// are numbered, so tests can name them.
-async function repoWithDaemon(): Promise<string> {
+// are numbered, so tests can name them. There is no project command yet, so
+// the projects are made straight in the store before the daemon starts.
+async function repoWithDaemon(projects: string[] = []): Promise<string> {
   const repo = throwawayRepo(dirs);
+  if (projects.length > 0) {
+    const found = daemonPaths(repo);
+    if (!found.ok) throw new Error(found.message);
+    const store = EventStore.open(found.paths.store);
+    const saved = store.appendProject(
+      projects.map((id) => ({
+        v: 1,
+        type: "project.created",
+        projectId: ProjectId.parse(id),
+        at: 1,
+        name: id,
+        goal: `The ${id} project.`,
+      })),
+    );
+    store.close();
+    if (!saved.ok) throw new Error(saved.reason);
+  }
   await served(repo);
   return repo;
 }
@@ -534,6 +554,26 @@ describe("skelcrew status", () => {
     ]);
   });
 
+  test("groups tasks by project first when any task has one", async () => {
+    const repo = await repoWithDaemon(["reports"]);
+    await cli(repo, ["add", "CSV export", "--project", "reports"]);
+    await cli(repo, ["add", "Totals"]);
+    await cli(repo, ["add", "PDF export", "--project", "reports", "--spec"]);
+    expect(await cli(repo, ["status"])).toEqual(
+      said([
+        "Project reports:",
+        "  Idea:",
+        "  - #1 CSV export",
+        "  Spec:",
+        "  - #3 PDF export",
+        "",
+        "No project:",
+        "  Idea:",
+        "  - #2 Totals",
+      ]),
+    );
+  });
+
   // Found by review: nothing showed a merge under way.
   test("shows a task whose merge is under way", async () => {
     const repo = throwawayRepo(dirs);
@@ -544,6 +584,7 @@ describe("skelcrew status", () => {
           title: "CSV export",
           phase: "checks",
           step: "merging",
+          project: null,
           blocked: null,
           question: null,
           waitingOnYou: null,
@@ -562,11 +603,294 @@ describe("skelcrew status", () => {
 });
 
 describe("skelcrew log", () => {
+  test("shows each event with its time, oldest first, in plain words", async () => {
+    const repo = await repoWithDaemon(["reports"]);
+    const submit = (session: string) =>
+      cli(repo, ["submit", "1", "--file", "-"], { session, readStdin: async () => specJson });
+    await cli(repo, ["add", "CSV export", "--spec", "--project", "reports"]);
+    await cli(repo, ["claim", "1"]);
+    await submit("you-1");
+    await cli(repo, ["approve", "1", "--send-back", "Add totals."]);
+    await cli(repo, ["claim", "1"]);
+    await submit("you-2");
+    await cli(repo, ["approve", "1"]);
+    // Claiming in Ready makes a worktree, and your session works in it.
+    await cli(repo, ["claim", "1"]);
+    const worktree = join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export");
+
+    const outcome = await cli(repo, ["log", "#1"]);
+    expect(outcome.code).toBe(0);
+    for (const line of outcome.out) expect(line).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2} {2}\S/);
+    expect(outcome.out.map((line) => line.slice(18))).toEqual([
+      "Added to project reports: CSV export.",
+      "A spec was asked for.",
+      "You claimed it, as you-1.",
+      "The agent sent a spec: Add a CSV export button to the reports page.",
+      "You sent the spec back: Add totals.",
+      "You claimed it, as you-2.",
+      "The agent sent a spec: Add a CSV export button to the reports page.",
+      "The task is Ready to build from this spec.",
+      "You claimed it, as you-3.",
+      `Its worktree was made on branch task/1-csv-export, at ${worktree}.`,
+      "Your session is working on it.",
+    ]);
+  });
+
+  // Found by review: every spec is saved whole, so a long-lived task's
+  // events passed the 1 MB limit on a reply, and log failed outright.
+  test("leaves out the oldest events when all of them don't fit in a reply", async () => {
+    const repo = await repoWithDaemon();
+    // Three specs of 400 KB each: more than 1 MB together.
+    const scope = `Add a CSV export. ${"x".repeat(400_000)}`;
+    const big = JSON.stringify({ scope, acceptance: ["It downloads."], openQuestions: [] });
+    await cli(repo, ["add", "CSV export", "--spec"]);
+    for (const session of ["you-1", "you-2", "you-3"]) {
+      await cli(repo, ["claim", "1"]);
+      await cli(repo, ["submit", "1", "--file", "-"], { session, readStdin: async () => big });
+      await cli(repo, ["approve", "1", "--send-back", "Shorter, please."]);
+    }
+
+    const outcome = await cli(repo, ["log", "1"]);
+    expect(outcome.err).toEqual([]);
+    expect(outcome.code).toBe(0);
+    // Two specs fit. The first spec, its claim, the request for a spec and
+    // the task's creation are left out.
+    expect(outcome.out[0]).toBe("4 older events are left out.");
+    expect(outcome.out.slice(1).map((line) => line.slice(18, 60))).toEqual([
+      "You sent the spec back: Shorter, please.",
+      "You claimed it, as you-2.",
+      "The agent sent a spec: Add a CSV export. x",
+      "You sent the spec back: Shorter, please.",
+      "You claimed it, as you-3.",
+      "The agent sent a spec: Add a CSV export. x",
+      "You sent the spec back: Shorter, please.",
+    ]);
+  });
+
+  // The daemon can't take a task this far yet, so a stand-in answers.
+  test("shows checks, a merge and multi-line summaries", async () => {
+    const repo = throwawayRepo(dirs);
+    const task = 4;
+    const at = (minute: number) => new Date(2026, 8, 30, 10, minute).getTime();
+    const stamp = (minute: number) => ({ v: 1, taskId: task, at: at(minute) });
+    await fakeDaemon(repo, {
+      leftOut: 0,
+      events: [
+        {
+          ...stamp(2),
+          type: "task.done_reported",
+          branch: { head: "a".repeat(40), commits: 3, changedFiles: ["src/export.ts"] },
+          gate: "local",
+          request: 2,
+        },
+        {
+          ...stamp(3),
+          type: "task.gate_failed",
+          failure: { step: "local", summary: "bun test failed.\n1 test failed." },
+        },
+        { ...stamp(4), type: "task.question_asked", question: question() },
+        { ...stamp(5), type: "task.question_answered", text: "Semicolons." },
+        { ...stamp(6), type: "task.gate_passed", gate: "local", next: null },
+        { ...stamp(6), type: "task.checks_passed" },
+        {
+          ...stamp(6),
+          type: "task.merge_approval_requested",
+          criticalFiles: ["src/core/decide.ts"],
+        },
+        { ...stamp(7), type: "task.merge_started", request: 3 },
+        { ...stamp(8), type: "task.merged", commit: "b".repeat(40) },
+      ],
+    });
+    expect(await cli(repo, ["log", "4"])).toEqual(
+      said([
+        "2026-09-30 10:02  The agent said it's done: 3 commits, 1 changed file. The local checks started.",
+        "2026-09-30 10:03  The local checks failed: bun test failed.",
+        "                  1 test failed.",
+        "2026-09-30 10:04  The agent asked: Commas or semicolons?",
+        "                  Options: Commas, Semicolons.",
+        "2026-09-30 10:05  You answered: Semicolons.",
+        "2026-09-30 10:06  The local checks passed.",
+        "2026-09-30 10:06  All checks passed.",
+        "2026-09-30 10:06  It waits for your approval to merge, since it changes critical files: src/core/decide.ts.",
+        "2026-09-30 10:07  Merging started.",
+        "2026-09-30 10:08  Merged as commit bbbbbbb.",
+      ]),
+    );
+
+    function question() {
+      return {
+        from: "develop",
+        text: "Commas or semicolons?",
+        options: ["Commas", "Semicolons"],
+        askedAt: at(4),
+      };
+    }
+  });
+
+  // Found by review: the log named the undone merge as the revert's own
+  // commit, "Reverted by commit ...".
+  test("names the merge a revert undid", async () => {
+    const repo = throwawayRepo(dirs);
+    const at = new Date(2026, 8, 30, 10, 2).getTime();
+    const stamp = { v: 1, taskId: 4, at };
+    await fakeDaemon(repo, {
+      leftOut: 0,
+      events: [
+        { ...stamp, type: "task.merged", commit: "a".repeat(40) },
+        { ...stamp, type: "task.revert_started", reason: "It broke the export.", request: 5 },
+        { ...stamp, type: "task.reverted", commit: "a".repeat(40), reason: "It broke the export." },
+      ],
+    });
+    expect(await cli(repo, ["log", "4"])).toEqual(
+      said([
+        "2026-09-30 10:02  Merged as commit aaaaaaa.",
+        "2026-09-30 10:02  Reverting it, because: It broke the export.",
+        "2026-09-30 10:02  The revert went through, undoing commit aaaaaaa. The task went back to Spec with your reason: It broke the export.",
+      ]),
+    );
+  });
+
+  // Found by review: the log said "The spec was approved." when nobody
+  // approved it. With spec_approval: never, or a spec you wrote yourself,
+  // the task goes to Ready on its own. The saved events can't tell your
+  // approval from spec_approval: never, so that line fits both.
+  test("says when a spec went to Ready without an approval", async () => {
+    const repo = throwawayRepo(dirs);
+    const stamp = (minute: number) => ({
+      v: 1,
+      taskId: 4,
+      at: new Date(2026, 8, 30, 10, minute).getTime(),
+    });
+    const spec = { scope: "Add a CSV export.", acceptance: ["It downloads."], openQuestions: [] };
+    await fakeDaemon(repo, {
+      leftOut: 0,
+      events: [
+        { ...stamp(2), type: "task.specced", spec, by: "agent" },
+        { ...stamp(2), type: "task.ready" },
+        { ...stamp(3), type: "task.specced", spec, by: "human" },
+        { ...stamp(3), type: "task.ready" },
+      ],
+    });
+    expect(await cli(repo, ["log", "4"])).toEqual(
+      said([
+        "2026-09-30 10:02  The agent sent a spec: Add a CSV export.",
+        "2026-09-30 10:02  The task is Ready to build from this spec.",
+        "2026-09-30 10:03  A spec was written by hand: Add a CSV export.",
+        "2026-09-30 10:03  A spec you write needs no approval, so the task is Ready.",
+      ]),
+    );
+  });
+
+  // Found by review: "Used 1234567 tokens in 0 minutes so far."
+  test("shows token use with separators, and a short run as under a minute", async () => {
+    const repo = throwawayRepo(dirs);
+    const stamp = { v: 1, taskId: 4, at: new Date(2026, 8, 30, 10, 2).getTime() };
+    const used = (tokens: number, ms: number) => ({
+      ...stamp,
+      type: "task.usage_recorded",
+      usage: { tokens, ms },
+    });
+    await fakeDaemon(repo, {
+      leftOut: 0,
+      events: [used(800, 20_000), used(1_234_567, 60_000), used(2_500_000, 2_700_000)],
+    });
+    expect(await cli(repo, ["log", "4"])).toEqual(
+      said([
+        "2026-09-30 10:02  Used 800 tokens in under a minute so far.",
+        "2026-09-30 10:02  Used 1,234,567 tokens in 1 minute so far.",
+        "2026-09-30 10:02  Used 2,500,000 tokens in 45 minutes so far.",
+      ]),
+    );
+  });
+
+  // Found by review: "The agent asked: Use Postgres Options: Yes, No."
+  test("keeps a question apart from its options", async () => {
+    const repo = throwawayRepo(dirs);
+    const at = new Date(2026, 8, 30, 10, 2).getTime();
+    await fakeDaemon(repo, {
+      leftOut: 0,
+      events: [
+        {
+          v: 1,
+          taskId: 4,
+          at,
+          type: "task.question_asked",
+          question: { from: "develop", text: "Use Postgres", options: ["Yes", "No"], askedAt: at },
+        },
+      ],
+    });
+    expect(await cli(repo, ["log", "4"])).toEqual(
+      said([
+        "2026-09-30 10:02  The agent asked: Use Postgres",
+        "                  Options: Yes, No.",
+      ]),
+    );
+  });
+
+  // A real session is named like session-ee6f38c0, so "as session
+  // session-ee6f38c0" would say "session" twice.
+  test("names a claim's session once", async () => {
+    const repo = throwawayRepo(dirs);
+    const at = new Date(2026, 8, 30, 10, 2).getTime();
+    const session = "session-ee6f38c0-ac85-46d4-909c-e59d65c0b208";
+    await fakeDaemon(repo, {
+      leftOut: 0,
+      events: [{ v: 1, taskId: 4, at, type: "task.claimed", session, request: null }],
+    });
+    expect(await cli(repo, ["log", "4"])).toEqual(
+      said([`2026-09-30 10:02  You claimed it, as ${session}.`]),
+    );
+  });
+
+  // Found by review: "Picked to start, since a slot was free." A slot means
+  // nothing to someone who hasn't read max_running's docs.
+  test("says Skelcrew picked the task to start", async () => {
+    const repo = throwawayRepo(dirs);
+    const at = new Date(2026, 8, 30, 10, 2).getTime();
+    await fakeDaemon(repo, {
+      leftOut: 0,
+      events: [{ v: 1, taskId: 4, at, type: "task.dispatch_started", request: 1 }],
+    });
+    expect(await cli(repo, ["log", "4"])).toEqual(
+      said(["2026-09-30 10:02  Skelcrew picked it to start."]),
+    );
+  });
+
+  // Found by review: "The review checks passed." The review is one step.
+  test("calls the review step the review", async () => {
+    const repo = throwawayRepo(dirs);
+    const stamp = { v: 1, taskId: 4, at: new Date(2026, 8, 30, 10, 2).getTime() };
+    await fakeDaemon(repo, {
+      leftOut: 0,
+      events: [
+        { ...stamp, type: "task.gate_passed", gate: "local", next: { gate: "review", request: 3 } },
+        { ...stamp, type: "task.gate_failed", failure: { step: "review", summary: "No tests." } },
+        { ...stamp, type: "task.gate_passed", gate: "review", next: null },
+      ],
+    });
+    expect(await cli(repo, ["log", "4"])).toEqual(
+      said([
+        "2026-09-30 10:02  The local checks passed. The review started.",
+        "2026-09-30 10:02  The review failed: No tests.",
+        "2026-09-30 10:02  The review passed.",
+      ]),
+    );
+  });
+
+  test("refuses an answer that isn't a list of events", async () => {
+    const repo = throwawayRepo(dirs);
+    await fakeDaemon(repo, {
+      leftOut: 0,
+      events: [{ type: "task.exploded", v: 1, taskId: 1, at: 1 }],
+    });
+    const outcome = await cli(repo, ["log", "1"]);
+    expect(outcome.code).toBe(1);
+    expect(outcome.err.join("\n")).toContain("The daemon's answer to log doesn't fit");
+  });
+
   test("passes on the daemon's refusal", async () => {
     const repo = await repoWithDaemon();
-    expect(await cli(repo, ["log", "1"])).toEqual(
-      refused("`log` isn't built into the daemon yet."),
-    );
+    expect(await cli(repo, ["log", "9"])).toEqual(refused("#9 doesn't exist."));
   });
 });
 

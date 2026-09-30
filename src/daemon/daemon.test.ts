@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as z from "zod";
 import { localChecks } from "../checks/checks";
-import { SessionId, TaskId } from "../core/ids";
+import { ProjectId, SessionId, TaskId } from "../core/ids";
 import type { Config } from "../core/types";
 import { Git } from "../plugins/git/git";
 import type { VersionControl } from "../plugins/version-control";
@@ -67,6 +67,7 @@ function failingReplies(options: { retryMs: number; maxRetryMs: number }) {
     loadProjects: store.loadProjects.bind(store),
     loadStarts: store.loadStarts.bind(store),
     loadCommands: store.loadCommands.bind(store),
+    loadTaskEvents: store.loadTaskEvents.bind(store),
   };
   let sessions = 0;
   const opened = Daemon.open({
@@ -248,6 +249,7 @@ describe("the daemon", () => {
       loadProjects: store.loadProjects.bind(store),
       loadStarts: store.loadStarts.bind(store),
       loadCommands: store.loadCommands.bind(store),
+      loadTaskEvents: store.loadTaskEvents.bind(store),
     };
     const opened = Daemon.open({ config, log });
     if (!opened.ok) throw new Error(opened.message);
@@ -375,6 +377,63 @@ describe("the daemon", () => {
       tasks: [
         { task: 1, title: "CSV export" },
         { task: 2, title: "PDF export" },
+      ],
+    });
+  });
+});
+
+// There is no project command yet, so a test makes its project straight in
+// the store, the way `skelcrew project add` will.
+function withProject(id: string): EventStore {
+  const store = EventStore.open(":memory:");
+  const saved = store.appendProject([
+    {
+      v: 1,
+      type: "project.created",
+      projectId: ProjectId.parse(id),
+      at: 1,
+      name: id,
+      goal: "Export reports as CSV and PDF.",
+    },
+  ]);
+  if (!saved.ok) throw new Error(saved.reason);
+  return store;
+}
+
+describe("log", () => {
+  test("answers with a task's events, oldest first", async () => {
+    const { daemon } = open();
+    await ok(daemon, add("CSV export"));
+    await ok(daemon, add("PDF export"));
+    await ok(daemon, { type: "claim", task: task(1) });
+    expect(await ok(daemon, { type: "log", task: task(1) })).toMatchObject({
+      events: [
+        { type: "task.created", taskId: 1, title: "CSV export" },
+        { type: "task.spec_requested", taskId: 1 },
+        { type: "task.claimed", taskId: 1, session: "you-1" },
+      ],
+      leftOut: 0,
+    });
+  });
+
+  test("refuses a task that doesn't exist", async () => {
+    const { daemon } = open();
+    expect(await daemon.handle({ type: "log", task: task(9) })).toEqual({
+      ok: false,
+      message: "#9 doesn't exist.",
+    });
+  });
+});
+
+describe("status", () => {
+  test("says which project each task is in, or none", async () => {
+    const { daemon } = open(withProject("reports"));
+    await ok(daemon, { type: "add", title: "CSV export", spec: false, project: "reports" });
+    await ok(daemon, add("Totals", false));
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [
+        { task: 1, title: "CSV export", project: "reports" },
+        { task: 2, title: "Totals", project: null },
       ],
     });
   });

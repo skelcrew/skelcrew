@@ -14,8 +14,10 @@ import type { Phase } from "../core/types";
 import { request, type Started } from "../daemon/client";
 import { serveUntilSignalled } from "../daemon/server";
 import type { Command } from "../protocol/protocol";
+import { taskEvent } from "../store/schema";
 import { commandHelp, mainHelp } from "./help";
 import { init } from "./init";
+import { leftOutLine, logLines } from "./log";
 
 export type Context = {
   cwd: string;
@@ -140,8 +142,8 @@ const handlers: Record<string, Handler> = {
 
   log: async (args, context) =>
     withTask("log", args, {}, (task) =>
-      ask(context, { type: "log", task }, anything, (result) =>
-        said(...JSON.stringify(result, null, 2).split("\n")),
+      ask(context, { type: "log", task }, logResult, ({ events, leftOut }) =>
+        said(...leftOutLine(leftOut), ...logLines(events)),
       ),
     ),
 
@@ -474,6 +476,7 @@ const statusResult = z.object({
     z.object({
       task: TaskId,
       title: z.string(),
+      project: z.string().nullable(),
       phase: z.enum(phases),
       // The step within the phase, such as "merging". Only some are shown.
       step: z.string().nullable(),
@@ -495,14 +498,36 @@ function status(tasks: TaskView[]): string[] {
     for (const task of waiting) lines.push(`- #${task.task} ${task.title}: ${needs(task)}`);
     lines.push("");
   }
+  // Without projects, the phases stand alone. With any, each project gets
+  // its phases, indented, and tasks in no project come last.
+  const projects = [...new Set(tasks.map((task) => task.project))].sort(byProject);
+  if (projects.length === 1 && projects[0] === null) return [...lines, ...byPhase(tasks, "")];
+  for (const [i, project] of projects.entries()) {
+    if (i > 0) lines.push("");
+    lines.push(project === null ? "No project:" : `Project ${project}:`);
+    const inProject = tasks.filter((task) => task.project === project);
+    lines.push(...byPhase(inProject, "  "));
+  }
+  return lines;
+}
+
+// Projects by name, and no project last.
+function byProject(a: string | null, b: string | null): number {
+  if (a === null) return b === null ? 0 : 1;
+  if (b === null) return -1;
+  return a.localeCompare(b);
+}
+
+function byPhase(tasks: TaskView[], indent: string): string[] {
+  const lines: string[] = [];
   for (const phase of phases) {
     const inPhase = tasks.filter((task) => task.phase === phase);
     if (inPhase.length === 0) continue;
-    lines.push(`${phaseNames[phase]}:`);
+    lines.push(`${indent}${phaseNames[phase]}:`);
     for (const task of inPhase) {
       const blocked = task.blocked === null ? "" : ` (blocked: ${task.blocked})`;
       const merging = task.step === "merging" ? " (merging)" : "";
-      lines.push(`- #${task.task} ${task.title}${merging}${blocked}`);
+      lines.push(`${indent}- #${task.task} ${task.title}${merging}${blocked}`);
     }
   }
   return lines;
@@ -524,6 +549,10 @@ function needs(task: TaskView): string {
       return "";
   }
 }
+
+// What `log` answers: the task's newest events as saved, checked against
+// the store's own schema, and how many older ones didn't fit in the reply.
+const logResult = z.object({ events: z.array(taskEvent), leftOut: z.number().int().min(0) });
 
 const claimResult = z.object({
   session: SessionId,
