@@ -321,6 +321,8 @@ Rules and record are committed and reviewed like code. The SQLite database holds
 Example `workflow.yml`:
 
 ```yaml
+setup:
+  - bun install --frozen-lockfile
 checks:
   - bun test
   - bun run typecheck
@@ -338,6 +340,8 @@ plugins:
   sessions: herdr
   work_source: github
 ```
+
+`setup` prepares a fresh copy of a task's code before the checks run there, such as installing its dependencies. The checks never run in the agent's own worktree: each gate and each merge checks a fresh copy of the exact commit, so nothing the agent does meanwhile can change what is checked. A failed setup fails the gate, like a failed check.
 
 `main_branch` is the branch tasks start from and merge into. It is `main` when left out. The daemon refuses to start if the branch doesn't exist.
 
