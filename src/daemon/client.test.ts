@@ -3,7 +3,6 @@ import {
   chmodSync,
   existsSync,
   lstatSync,
-  mkdirSync,
   mkdtempSync,
   rmdirSync,
   symlinkSync,
@@ -367,11 +366,3 @@ describe("the socket folder in /tmp", () => {
     expect(counted.starts).toBe(0);
   });
 });
-
-function isLink(path: string): boolean {
-  try {
-    return lstatSync(path).isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
