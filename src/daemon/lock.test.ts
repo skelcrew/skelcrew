@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { takeLock } from "./lock";
 import { type Server, serve } from "./server";
 import { cleanUp, daemonInAnotherProcess, openLine, throwawayRepo } from "./testing";
