@@ -483,13 +483,13 @@ describe("skelcrew log", () => {
     expect(outcome.out.map((line) => line.slice(18))).toEqual([
       "Added to project reports: CSV export.",
       "A spec was asked for.",
-      "You claimed it, as session you-1.",
+      "You claimed it, as you-1.",
       "The agent sent a spec: Add a CSV export button to the reports page.",
       "You sent the spec back: Add totals.",
-      "You claimed it, as session you-2.",
+      "You claimed it, as you-2.",
       "The agent sent a spec: Add a CSV export button to the reports page.",
       "The task is Ready to build from this spec.",
-      "You claimed it, as session you-3.",
+      "You claimed it, as you-3.",
       `Its worktree was made on branch task/1-csv-export, at ${worktree}.`,
       "Your session is working on it.",
     ]);
@@ -517,10 +517,10 @@ describe("skelcrew log", () => {
     expect(outcome.out[0]).toBe("4 older events are left out.");
     expect(outcome.out.slice(1).map((line) => line.slice(18, 60))).toEqual([
       "You sent the spec back: Shorter, please.",
-      "You claimed it, as session you-2.",
+      "You claimed it, as you-2.",
       "The agent sent a spec: Add a CSV export. x",
       "You sent the spec back: Shorter, please.",
-      "You claimed it, as session you-3.",
+      "You claimed it, as you-3.",
       "The agent sent a spec: Add a CSV export. x",
       "You sent the spec back: Shorter, please.",
     ]);
@@ -683,6 +683,21 @@ describe("skelcrew log", () => {
         "2026-09-30 10:02  The agent asked: Use Postgres",
         "                  Options: Yes, No.",
       ]),
+    );
+  });
+
+  // A real session is named like session-ee6f38c0, so "as session
+  // session-ee6f38c0" would say "session" twice.
+  test("names a claim's session once", async () => {
+    const repo = throwawayRepo(dirs);
+    const at = new Date(2026, 8, 30, 10, 2).getTime();
+    const session = "session-ee6f38c0-ac85-46d4-909c-e59d65c0b208";
+    await fakeDaemon(repo, {
+      leftOut: 0,
+      events: [{ v: 1, taskId: 4, at, type: "task.claimed", session, request: null }],
+    });
+    expect(await cli(repo, ["log", "4"])).toEqual(
+      said([`2026-09-30 10:02  You claimed it, as ${session}.`]),
     );
   });
 

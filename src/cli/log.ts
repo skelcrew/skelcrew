@@ -1,7 +1,7 @@
 // What `skelcrew log` prints: one line per event, oldest first, with its
 // time and what happened in plain words. For example:
 //
-//   2026-09-30 10:02  You claimed it, as session you-2.
+//   2026-09-30 10:02  You claimed it, as you-2.
 //
 // A text that runs over several lines, such as a failed check's output,
 // keeps its lines, indented under the first.
@@ -75,7 +75,7 @@ function happened(event: TaskEvent, before: TaskEvent[]): string {
         ? "Your session is working on it."
         : `An agent started as ${event.session}.`;
     case "task.claimed":
-      return `You claimed it, as session ${event.session}.`;
+      return `You claimed it, as ${event.session}.`;
     case "task.question_asked": {
       const { text, options } = event.question;
       return options.length === 0
