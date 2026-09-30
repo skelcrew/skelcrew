@@ -37,6 +37,11 @@ const UNKNOWN_ID = "unknown";
 
 const defaultGraceMs = 30_000;
 
+// How long the connections must stay quiet before a stopping daemon closes
+// them. Requests already on their way arrive in that time, and are
+// answered "The daemon is stopping." instead of meeting a closed door.
+const QUIET_MS = 50;
+
 export async function serve(repo: string, options: ServeOptions = {}): Promise<Served> {
   const found = daemonPaths(repo);
   if (!found.ok) return found;
@@ -193,6 +198,7 @@ class Listener {
   private readonly sockets = new Set<Socket>();
   private readonly inFlight = new Set<InFlight>();
   private stopping: Promise<void> | null = null;
+  private lastData = 0;
 
   constructor(
     private readonly daemon: Daemon,
@@ -216,7 +222,10 @@ class Listener {
   private async shutDown(): Promise<void> {
     const closed = new Promise<void>((resolve) => this.server.close(() => resolve()));
     const pending = [...this.inFlight].map((request) => request.done);
+    const deadline = Date.now() + this.graceMs;
     await Promise.race([Promise.all(pending), sleep(this.graceMs)]);
+    await sleep(QUIET_MS);
+    while (Date.now() - this.lastData < QUIET_MS && Date.now() < deadline) await sleep(QUIET_MS);
     for (const request of this.inFlight) {
       this.answer(request, { ok: false, message: "The daemon stopped before this finished." });
     }
@@ -231,6 +240,7 @@ class Listener {
     socket.on("error", () => socket.destroy());
     let buffer = Buffer.alloc(0);
     socket.on("data", (chunk: Buffer) => {
+      this.lastData = Date.now();
       buffer = Buffer.concat([buffer, chunk]);
       let end = buffer.indexOf(10);
       while (end !== -1 && !socket.writableEnded) {

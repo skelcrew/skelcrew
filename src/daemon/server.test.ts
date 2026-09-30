@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import * as z from "zod";
 import { MAX_LINE } from "../protocol/protocol";
 import { type Server, serve } from "./server";
 import { cleanUp, openLine, throwawayRepo } from "./testing";
@@ -162,6 +163,24 @@ describe("the daemon's socket", () => {
     again.send(add("r2", "PDF export"));
     expect(JSON.parse(await again.next())).toEqual({ id: "r2", ok: true, result: { task: 2 } });
     again.close();
+  });
+
+  // Found by review: requests sent just before a stop got no answer at
+  // all, so the client couldn't tell whether anything was saved.
+  test("answers every request sent just before it stops", async () => {
+    const served = await serve(throwawayRepo(dirs));
+    if (!served.ok) throw new Error(served.message);
+    const line = await openLine(served.server.socket);
+    line.send(Array.from({ length: 50 }, (_, i) => add(`r${i}`, `Task ${i}`)).join(""));
+    const stopped = served.server.stop();
+    const ids: string[] = [];
+    for (let i = 0; i < 50; i += 1) {
+      const next = await Promise.race([line.next(), line.closed.then(() => null)]);
+      if (next === null) break;
+      ids.push(z.object({ id: z.string() }).parse(JSON.parse(next)).id);
+    }
+    await stopped;
+    expect(ids).toEqual(Array.from({ length: 50 }, (_, i) => `r${i}`));
   });
 
   test("stops listening and removes its socket when stopped", async () => {
