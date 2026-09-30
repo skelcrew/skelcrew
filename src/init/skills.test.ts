@@ -163,7 +163,7 @@ describe("defaultSkills", () => {
   // front of each report instead.
   test("put the session and the task number on every report", () => {
     const reports = {
-      spec: ["SKELCREW_SESSION=<session> skelcrew submit 12 --file spec.json"],
+      spec: ["SKELCREW_SESSION=<session> skelcrew submit 12 --file -"],
       develop: [
         "SKELCREW_SESSION=<session> skelcrew done 12",
         'SKELCREW_SESSION=<session> skelcrew give-up 12 "<reason>"',

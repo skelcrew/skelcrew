@@ -125,11 +125,18 @@ The developer reads the spec and your questions. Each must make sense on the fir
 
 ## 3. Submit it
 
-First run `skelcrew submit --help`. It says what form the spec takes. Write the spec in that
-form to a file, such as `spec.json`. Then run this, with your session and task number:
+First show the developer the finished spec, and wait for them to say it can go. Submitting
+before they have read it skips their say in it. If they ask for changes, make them and show
+the spec again.
+
+Then run `skelcrew submit --help`. It says what form the spec takes. Pass the spec in that
+form on standard input, so no file is left behind in the repository. Run this, with your
+session and task number:
 
 ```
-SKELCREW_SESSION=<session> skelcrew submit 12 --file spec.json
+SKELCREW_SESSION=<session> skelcrew submit 12 --file - <<'SPEC'
+<the spec, in the form the help describes>
+SPEC
 ```
 
 If it is refused because the spec is missing something, fix what it names and submit again.
