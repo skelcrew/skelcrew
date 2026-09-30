@@ -393,6 +393,153 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
     });
   });
 
+  // The approved spec is committed on the task's branch before any work,
+  // so it lands on main with the work, and the reviewer reads it there.
+  describe(`${name}: the spec file`, () => {
+    const specPath = "docs/specs/12-csv-export.md";
+    const withSpec = (text: string, build = 1) => ({
+      ...csv,
+      build,
+      spec: { path: specPath, text },
+    });
+    const first = "# #12 CSV export\n\nThe first spec.\n";
+    const revised = "# #12 CSV export\n\nThe revised spec.\n";
+
+    // The branch's own commits beyond main, newest first.
+    const ownCommits = async (r: Repo, branch: string) =>
+      (await git(r.dir, "rev-list", `main..${branch}`)).split("\n").filter((line) => line !== "");
+
+    async function commitOnMain(r: Repo, file: string, text: string) {
+      mkdirSync(dirname(join(r.dir, file)), { recursive: true });
+      writeFileSync(join(r.dir, file), text);
+      await git(r.dir, "add", file);
+      await git(r.dir, "commit", "-q", "-m", `Add ${file} on main`);
+    }
+
+    test("commits the spec on the new branch, in one commit of its own", async () => {
+      const r = await repo();
+      const created = await make(r).createWorktree(withSpec(first));
+      if (!created.ok) throw new Error(created.message);
+      const path = created.value.path;
+      expect(await ownCommits(r, created.value.branch)).toHaveLength(1);
+      expect(readFileSync(join(path, specPath), "utf8")).toBe(first);
+      expect(await git(path, "show", "--format=", "--name-only", "HEAD")).toBe(specPath);
+      expect(await git(path, "status", "--porcelain")).toBe("");
+    });
+
+    test("asked twice, commits the spec once", async () => {
+      const r = await repo();
+      const plugin = make(r);
+      const once = await plugin.createWorktree(withSpec(first));
+      const twice = await plugin.createWorktree(withSpec(first));
+      expect(twice).toEqual(once);
+      expect(await ownCommits(r, "task/12-csv-export")).toHaveLength(1);
+    });
+
+    // As when the daemon stopped between making the worktree and
+    // committing the spec.
+    test("commits the spec in a worktree an earlier try made without it", async () => {
+      const r = await repo();
+      const plugin = make(r);
+      await plugin.createWorktree(csv);
+      const created = await plugin.createWorktree(withSpec(first));
+      if (!created.ok) throw new Error(created.message);
+      expect(await ownCommits(r, "task/12-csv-export")).toHaveLength(1);
+      expect(readFileSync(join(created.value.path, specPath), "utf8")).toBe(first);
+    });
+
+    test("gives a later build the spec it is given, and keeps the earlier one's", async () => {
+      const r = await repo();
+      const plugin = make(r);
+      await plugin.createWorktree(withSpec(first));
+      const rebuilt = await plugin.createWorktree(withSpec(revised, 2));
+      if (!rebuilt.ok) throw new Error(rebuilt.message);
+      expect(rebuilt.value.branch).toBe("task/12-csv-export-2");
+      expect(readFileSync(join(rebuilt.value.path, specPath), "utf8")).toBe(revised);
+      expect(await git(r.dir, "show", `task/12-csv-export:${specPath}`)).toBe(first.trim());
+    });
+
+    test("replaces a different file at that path on main, so the change shows", async () => {
+      const r = await repo();
+      await commitOnMain(r, specPath, "Edited by hand.\n");
+      const created = await make(r).createWorktree(withSpec(first));
+      if (!created.ok) throw new Error(created.message);
+      expect(await ownCommits(r, created.value.branch)).toHaveLength(1);
+      expect(readFileSync(join(created.value.path, specPath), "utf8")).toBe(first);
+    });
+
+    test("makes no commit when main already holds the same spec", async () => {
+      const r = await repo();
+      await commitOnMain(r, specPath, first);
+      const created = await make(r).createWorktree(withSpec(first));
+      if (!created.ok) throw new Error(created.message);
+      expect(await ownCommits(r, created.value.branch)).toHaveLength(0);
+    });
+
+    test("leaves nothing behind when the spec can't be committed, and says why", async () => {
+      const r = await repo();
+      const hook = join(r.dir, ".git", "hooks", "pre-commit");
+      writeFileSync(hook, "#!/bin/sh\necho 'no commits today' >&2\nexit 1\n");
+      chmodSync(hook, 0o755);
+
+      const created = await make(r).createWorktree(withSpec(first));
+      expect(created.ok).toBe(false);
+      expect(!created.ok && created.message).toContain("no commits today");
+      expect(existsSync(join(r.dir, ".skelcrew", "worktrees", "12-csv-export"))).toBe(false);
+      expect(await git(r.dir, "branch", "--list", "task/12-csv-export")).toBe("");
+    });
+
+    test("readBranch doesn't count the spec's commit as the agent's work", async () => {
+      const r = await repo();
+      const plugin = make(r);
+      const created = await plugin.createWorktree(withSpec(first));
+      if (!created.ok) throw new Error(created.message);
+      const worktree = created.value;
+      const before = await plugin.readBranch(worktree, specPath);
+      expect(before.ok && before.value.commits).toBe(0);
+
+      writeFileSync(join(worktree.path, "export.ts"), "export {};\n");
+      await git(worktree.path, "add", "export.ts");
+      await git(worktree.path, "commit", "-q", "-m", "Export");
+      const after = await plugin.readBranch(worktree, specPath);
+      expect(after.ok && after.value.commits).toBe(1);
+      expect(after.ok && after.value.changedFiles).toEqual([specPath, "export.ts"]);
+    });
+
+    test("readBranch doesn't count a later commit that only edits the spec", async () => {
+      const r = await repo();
+      const plugin = make(r);
+      const created = await plugin.createWorktree(withSpec(first));
+      if (!created.ok) throw new Error(created.message);
+      const worktree = created.value;
+      writeFileSync(join(worktree.path, specPath), revised);
+      await git(worktree.path, "commit", "-q", "-am", "Change the spec");
+      const read = await plugin.readBranch(worktree, specPath);
+      expect(read.ok && read.value.commits).toBe(0);
+    });
+
+    test("the merge lands the spec on main in the same commit as the work", async () => {
+      const r = await repo();
+      const plugin = make(r);
+      const created = await plugin.createWorktree(withSpec(first));
+      if (!created.ok) throw new Error(created.message);
+      const worktree = created.value;
+      writeFileSync(join(worktree.path, "export.ts"), "export {};\n");
+      await git(worktree.path, "add", "export.ts");
+      await git(worktree.path, "commit", "-q", "-m", "Export");
+      const head = CommitSha.parse(await git(worktree.path, "rev-parse", "HEAD"));
+      const before = await git(r.dir, "rev-parse", "main");
+
+      const pass: RunChecks = async () => ({ ok: true, value: null });
+      const merged = await plugin.merge({ ...csv, worktree, head }, pass);
+      if (!merged.ok) throw new Error(merged.message);
+      expect(await git(r.dir, "rev-parse", "main^")).toBe(before);
+      expect(await git(r.dir, "show", "--format=", "--name-only", "main")).toBe(
+        `${specPath}\nexport.ts`,
+      );
+    });
+  });
+
   describe(`${name}: checkCommit`, () => {
     // A worktree with export.csv committed, and its head commit.
     async function committed(r: Repo) {

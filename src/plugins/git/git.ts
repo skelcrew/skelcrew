@@ -23,6 +23,7 @@ import type {
   MergeRequest,
   RevertRequest,
   RunChecks,
+  SpecFile,
   VersionControl,
   WorktreeRequest,
 } from "../version-control";
@@ -133,8 +134,10 @@ export class Git implements VersionControl {
     return this.oneAtATime(() => guard(`revert #${request.taskId}`, () => this.undo(request)));
   }
 
-  readBranch(worktree: Worktree): Promise<Done<BranchFacts>> {
-    return this.oneAtATime(() => guard(`read ${worktree.branch}`, () => this.read(worktree)));
+  readBranch(worktree: Worktree, specFile?: string): Promise<Done<BranchFacts>> {
+    return this.oneAtATime(() =>
+      guard(`read ${worktree.branch}`, () => this.read(worktree, specFile)),
+    );
   }
 
   removeWorktree(worktree: Worktree): Promise<Done<null>> {
@@ -164,7 +167,7 @@ export class Git implements VersionControl {
       if (current !== `refs/heads/${branch}`) {
         return { ok: false, message: `${path} exists, but isn't the worktree for ${branch}.` };
       }
-      if (await isFinished(path)) return { ok: true, value: { path, branch } };
+      if (await isFinished(path)) return this.withSpec(request, { path, branch }, false);
       // Not finished. It is only made again if there is proof this plugin
       // started it and stopped, for example when the daemon died, and that
       // nothing was done in it since. Anything else is someone's work.
@@ -237,7 +240,72 @@ export class Git implements VersionControl {
       return { ok: false, message: failed };
     }
     rmSync(creating.value, { force: true });
-    return { ok: true, value: { path, branch } };
+    return this.withSpec(request, { path, branch }, !exists.ok);
+  }
+
+  // The finished worktree, once the spec is committed on its branch. If
+  // the spec can't be committed, the worktree is taken away again, and the
+  // branch too if this call made it, so a failure leaves nothing behind.
+  private async withSpec(
+    request: WorktreeRequest,
+    worktree: Worktree,
+    madeBranch: boolean,
+  ): Promise<Done<Worktree>> {
+    if (request.spec === undefined) return { ok: true, value: worktree };
+    const committed = await this.commitSpec(request, worktree, request.spec);
+    if (committed.ok) return { ok: true, value: worktree };
+    const undone = await this.undoCreate(worktree.path, worktree.branch, madeBranch);
+    if (!undone.ok) return { ok: false, message: `${committed.message} ${undone.message}` };
+    return committed;
+  }
+
+  // Commits the spec as the branch's first commit, holding only that file.
+  // A branch with commits of its own already has it, or has work in it, so
+  // it is left alone. That makes asking again safe.
+  private async commitSpec(
+    request: WorktreeRequest,
+    worktree: Worktree,
+    spec: SpecFile,
+  ): Promise<Done<null>> {
+    const failed = (why: string): Done<null> => ({
+      ok: false,
+      message: `git couldn't commit the spec for #${request.taskId} to ${worktree.branch}: ${why}`,
+    });
+    const file = resolve(worktree.path, spec.path);
+    if (isAbsolute(spec.path) || !file.startsWith(`${worktree.path}/`)) {
+      return failed(`${spec.path} isn't a path inside the repository.`);
+    }
+    const own = await run(
+      this.repo,
+      "rev-list",
+      "--count",
+      `refs/heads/${this.main}..refs/heads/${worktree.branch}`,
+    );
+    if (!own.ok) return failed(own.err);
+    if (own.out !== "0") return { ok: true, value: null };
+
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, spec.text);
+    const added = await run(worktree.path, "--literal-pathspecs", "add", "--", spec.path);
+    if (!added.ok) return failed(added.err);
+    // Main may already hold exactly this spec. Then there is nothing to add.
+    const staged = await run(worktree.path, "diff", "--cached", "--quiet", "HEAD");
+    if (staged.ok) return { ok: true, value: null };
+    // Hooks run as for any commit, and a hook that refuses stops it.
+    const committed = await run(
+      worktree.path,
+      "--literal-pathspecs",
+      "commit",
+      "--quiet",
+      "--message",
+      `Spec for #${request.taskId} ${request.title}`,
+      "--message",
+      `Skelcrew-Task: ${request.taskId}`,
+      "--",
+      spec.path,
+    );
+    if (!committed.ok) return failed(committed.err);
+    return { ok: true, value: null };
   }
 
   // Where the "creating" mark for a worktree goes: in the repository's own
@@ -410,7 +478,7 @@ export class Git implements VersionControl {
     return { ok: true, value: null };
   }
 
-  private async read(worktree: Worktree): Promise<Done<BranchFacts>> {
+  private async read(worktree: Worktree, specFile?: string): Promise<Done<BranchFacts>> {
     if (!existsSync(worktree.path)) {
       return { ok: false, message: `${worktree.path} doesn't exist.` };
     }
@@ -450,17 +518,53 @@ export class Git implements VersionControl {
     if (!diff.ok) return { ok: false, message: `git couldn't list the changed files: ${diff.err}` };
     const sha = CommitSha.safeParse(head.out);
     if (!sha.success) return { ok: false, message: `git gave "${head.out}" as the head commit.` };
+    const specOnly: Done<number> =
+      specFile === undefined ? { ok: true, value: 0 } : await this.specOnly(main, branch, specFile);
+    if (!specOnly.ok) return specOnly;
     return {
       ok: true,
       value: {
         head: sha.data,
-        commits: Number(commits.out),
+        commits: Number(commits.out) - specOnly.value,
         changedFiles: diff.out
           .split("\0")
           .filter((file) => file !== "")
           .sort(),
       },
     };
+  }
+
+  // How many of the branch's own commits change nothing but the spec file.
+  // Those are the spec's own commit, or edits to it, not the agent's work.
+  private async specOnly(main: string, branch: string, specFile: string): Promise<Done<number>> {
+    const touching = await run(
+      this.repo,
+      "--literal-pathspecs",
+      "rev-list",
+      "--full-history",
+      "--no-merges",
+      `${main}..${branch}`,
+      "--",
+      specFile,
+    );
+    if (!touching.ok) return { ok: false, message: `git couldn't read ${branch}: ${touching.err}` };
+    let count = 0;
+    for (const commit of touching.out.split("\n").filter((line) => line !== "")) {
+      const files = await runRaw(
+        this.repo,
+        "diff-tree",
+        "--no-commit-id",
+        "--name-only",
+        "--no-renames",
+        "-r",
+        "-z",
+        commit,
+      );
+      if (!files.ok) return { ok: false, message: `git couldn't read ${commit}: ${files.err}` };
+      const names = files.out.split("\0").filter((name) => name !== "");
+      if (names.length === 1 && names[0] === specFile) count += 1;
+    }
+    return { ok: true, value: count };
   }
 
   // Adds the plugin's worktree folders to .git/info/exclude, once each.

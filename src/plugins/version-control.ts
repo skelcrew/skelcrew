@@ -37,9 +37,14 @@ export type RunChecks = (dir: string, stop?: AbortSignal) => Promise<Done<null>>
 // goes in the new commit's message.
 export type RevertRequest = { taskId: TaskId; commit: CommitSha; reason: string };
 
+// A file committed on a new branch before any work, such as the task's
+// approved spec: its path in the repository, and its text.
+export type SpecFile = { path: string; text: string };
+
 // Which worktree to create. The core's create_worktree command has no
-// title, so the daemon adds the task's title for the branch name.
-export type WorktreeRequest = { taskId: TaskId; title: string; build: number };
+// title, so the daemon adds the task's title for the branch name, and the
+// task's spec to commit first.
+export type WorktreeRequest = { taskId: TaskId; title: string; build: number; spec?: SpecFile };
 
 // How many characters of the title a short name keeps, at most.
 const maxTitleLength = 40;
@@ -73,14 +78,24 @@ export interface VersionControl {
   // for build 2. Asked again, it gives back the same worktree and changes
   // nothing. A failure leaves nothing behind, since the core then records
   // no worktree to clean up later.
+  //
+  // With a spec, the new branch gets it as its first commit, holding only
+  // that file. So the spec lands on main with the work. A file already at
+  // that path is replaced, and no commit is made when main already holds
+  // the same text. The spec is only committed on a branch with no commits
+  // of its own, so asked again, it is never committed twice.
   createWorktree(request: WorktreeRequest): Promise<Done<Worktree>>;
 
   // What the task's branch holds, for when its agent reports done: the
   // commit at its tip, its own commits beyond main, and every file it
   // changed since it left main. A renamed file counts under both names.
   // Refused while the worktree has uncommitted work, since the gates and
-  // the merge only see what is committed.
-  readBranch(worktree: Worktree): Promise<Done<BranchFacts>>;
+  // the merge only see what is committed. A commit that changes nothing
+  // but `specFile` isn't the agent's work, so it isn't counted. Without
+  // that, the spec's own commit would let an agent report done with no
+  // work at all. The spec file is still listed among the changed files,
+  // since it lands with the work.
+  readBranch(worktree: Worktree, specFile?: string): Promise<Done<BranchFacts>>;
 
   // Runs the checks in a fresh copy of exactly `head`, then removes the
   // copy. Nothing in the task's worktree is seen or changed, so an agent
