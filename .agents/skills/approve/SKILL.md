@@ -15,7 +15,7 @@ The commands below use 12 as the task number. Use the number the developer gave 
 
 ## 1. Show the task
 
-Show the task the way the show skill does, in `.agents/skills/show/SKILL.md`: read
+Show the task the way the log skill does, in `.agents/skills/log/SKILL.md`: read
 `skelcrew status` and `skelcrew log 12`, then tell the developer where it stands. For a spec,
 show the spec and the decisions they might disagree with. For a merge, show where to read the
 draft pull request, what changed, the checks, each acceptance criterion with its evidence,
