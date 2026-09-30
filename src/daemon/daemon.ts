@@ -538,6 +538,8 @@ function view(task: Task) {
     project: task.project,
     phase: task.phase,
     step: "step" in task ? task.step.kind : null,
+    // The session working on it, such as yours after a claim.
+    session: runningSession(task),
     blocked: task.blocked === null ? null : describeBlock(task.blocked),
     question: task.question?.text ?? null,
     waitingOnYou: waitingOnYou(task),

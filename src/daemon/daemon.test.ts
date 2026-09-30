@@ -154,6 +154,19 @@ describe("the daemon", () => {
     });
   });
 
+  test("says in status which session is working on each task", async () => {
+    const { daemon } = open();
+    await ok(daemon, add("CSV export"));
+    await ok(daemon, add("PDF export"));
+    await ok(daemon, { type: "claim", task: task(1) });
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [
+        { task: 1, session: "you-1" },
+        { task: 2, session: null },
+      ],
+    });
+  });
+
   test("refuses an approval when nothing waits for one", async () => {
     const { daemon } = open();
     await ok(daemon, add("CSV export"));

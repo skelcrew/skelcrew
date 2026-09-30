@@ -480,6 +480,7 @@ const statusResult = z.object({
       phase: z.enum(phases),
       // The step within the phase, such as "merging". Only some are shown.
       step: z.string().nullable(),
+      session: z.string().nullable(),
       blocked: z.string().nullable(),
       question: z.string().nullable(),
       waitingOnYou: z.enum(waitingOn).nullable(),
@@ -492,10 +493,15 @@ type TaskView = z.infer<typeof statusResult>["tasks"][number];
 function status(tasks: TaskView[]): string[] {
   if (tasks.length === 0) return ['No tasks yet. Add one with: skelcrew add "<task>"'];
   const lines: string[] = [];
-  const waiting = tasks.filter((task) => task.waitingOnYou !== null);
+  const waiting = tasks.filter((task) => task.waitingOnYou !== null || needsClaim(task));
   if (waiting.length > 0) {
     lines.push("Waiting on you:");
-    for (const task of waiting) lines.push(`- #${task.task} ${task.title}: ${needs(task)}`);
+    for (const task of waiting) {
+      const need = needsClaim(task)
+        ? `nobody is working on it. Claim it to go on: skelcrew claim ${task.task}`
+        : needs(task);
+      lines.push(`- #${task.task} ${task.title}: ${need}`);
+    }
     lines.push("");
   }
   // Without projects, the phases stand alone. With any, each project gets
@@ -527,10 +533,25 @@ function byPhase(tasks: TaskView[], indent: string): string[] {
     for (const task of inPhase) {
       const blocked = task.blocked === null ? "" : ` (blocked: ${task.blocked})`;
       const merging = task.step === "merging" ? " (merging)" : "";
-      lines.push(`${indent}- #${task.task} ${task.title}${merging}${blocked}`);
+      const working = task.session === null ? "" : ` (${task.session} is working on it)`;
+      lines.push(`${indent}- #${task.task} ${task.title}${working}${merging}${blocked}`);
     }
   }
   return lines;
+}
+
+// Skelcrew doesn't start agents itself yet, so a task waiting for an agent
+// waits for someone to claim it: in Spec, Ready or In progress, with no
+// session, not blocked, and nothing else waiting on you.
+function needsClaim(task: TaskView): boolean {
+  const phases: TaskView["phase"][] = ["spec", "ready", "in_progress"];
+  return (
+    phases.includes(task.phase) &&
+    task.step === "queued" &&
+    task.session === null &&
+    task.blocked === null &&
+    task.waitingOnYou === null
+  );
 }
 
 function needs(task: TaskView): string {

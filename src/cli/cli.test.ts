@@ -561,6 +561,9 @@ describe("skelcrew status", () => {
     await cli(repo, ["add", "PDF export", "--project", "reports", "--spec"]);
     expect(await cli(repo, ["status"])).toEqual(
       said([
+        "Waiting on you:",
+        "- #3 PDF export: nobody is working on it. Claim it to go on: skelcrew claim 3",
+        "",
         "Project reports:",
         "  Idea:",
         "  - #1 CSV export",
@@ -584,6 +587,7 @@ describe("skelcrew status", () => {
           title: "CSV export",
           phase: "checks",
           step: "merging",
+          session: null,
           project: null,
           blocked: null,
           question: null,
@@ -592,6 +596,27 @@ describe("skelcrew status", () => {
       ],
     });
     expect((await cli(repo, ["status"])).out).toContain("- #1 CSV export (merging)");
+  });
+
+  // A claim cut off by a restart loses its answer, so the session shows
+  // here too. Decided with the developer.
+  test("shows the session working on a task", async () => {
+    const repo = await repoWithDaemon();
+    await cli(repo, ["add", "CSV export", "--spec"]);
+    await cli(repo, ["claim", "1"]);
+    expect((await cli(repo, ["status"])).out).toContain("- #1 CSV export (you-1 is working on it)");
+  });
+
+  // Skelcrew doesn't start agents itself yet, so a task with none working
+  // on it waits for someone to claim it, such as after a retry.
+  test("lists a task nobody is working on under what waits on you, with how to claim it", async () => {
+    const repo = await repoWithDaemon();
+    await cli(repo, ["add", "CSV export", "--spec"]);
+    const out = (await cli(repo, ["status"])).out;
+    expect(out.slice(0, 2)).toEqual([
+      "Waiting on you:",
+      "- #1 CSV export: nobody is working on it. Claim it to go on: skelcrew claim 1",
+    ]);
   });
 
   test("says so when there are no tasks", async () => {
