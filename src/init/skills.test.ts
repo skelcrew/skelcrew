@@ -3,9 +3,10 @@ import { defaultSkills } from "./skills";
 
 // Two kinds of skill. An agent uses spec and develop to work a task and
 // report on it. The developer uses the others for their own verbs: add a
-// task, see what goes on, show one task, approve, and send back.
+// task, see what goes on, show one task, and approve. Sending back has no
+// skill: the developer types `skelcrew reject` themselves.
 const agentSkills = ["spec", "develop"];
-const developerSkills = ["idea", "crew", "show", "approve", "reject"];
+const developerSkills = ["idea", "crew", "show", "approve"];
 const allSkills = [...agentSkills, ...developerSkills];
 
 // The CLI commands each skill may name. They come from the spec's CLI
@@ -22,7 +23,6 @@ const commandsFor: Record<string, string[]> = {
   crew: ["status", "retry", "drop"],
   show: ["status", "log", "approve", "reject", "retry", "drop"],
   approve: ["status", "log", "approve", "reject"],
-  reject: ["status", "log", "reject"],
 };
 
 function frontmatter(text: string): unknown {
@@ -72,7 +72,6 @@ describe("defaultSkills", () => {
       crew: "asks what is going on",
       show: "asks where task 12 stands",
       approve: "asks to approve task 12",
-      reject: "asks to send task 12 back",
     };
     expect(Object.keys(asks)).toEqual(allSkills);
     for (const [name, ask] of Object.entries(asks)) {
@@ -95,7 +94,7 @@ describe("defaultSkills", () => {
   });
 
   test("name the task the developer gave", () => {
-    for (const name of ["spec", "develop", "show", "approve", "reject"]) {
+    for (const name of ["spec", "develop", "show", "approve"]) {
       expect(flat(name)).toContain("the task the developer named, such as 12");
     }
   });
@@ -201,12 +200,12 @@ describe("defaultSkills", () => {
     expect(text).toContain("skelcrew give-up");
   });
 
-  // Only the developer starts a task, approves or sends back. Claude must
-  // not do any of these because the conversation seemed to call for it.
-  // Claude may add an idea, give an overview, or show a task by itself,
-  // since they only add a task or read.
-  test("only the developer can start the ones that start, approve or send back work", () => {
-    for (const name of ["spec", "develop", "approve", "reject"]) {
+  // Only the developer starts a task or approves. Claude must not do
+  // either because the conversation seemed to call for it. Claude may add
+  // an idea, give an overview, or show a task by itself, since they only
+  // add a task or read.
+  test("only the developer can start the ones that start or approve work", () => {
+    for (const name of ["spec", "develop", "approve"]) {
       expect(frontmatter(skill(name))).toMatchObject({ "disable-model-invocation": true });
     }
     for (const name of ["idea", "crew", "show"]) {
@@ -215,7 +214,7 @@ describe("defaultSkills", () => {
   });
 
   test("ask for a task number instead of acting on nothing", () => {
-    for (const name of ["develop", "show", "approve", "reject"]) {
+    for (const name of ["develop", "show", "approve"]) {
       expect(skill(name)).toContain(
         "If you weren't given a task number, ask the developer which task, and wait.",
       );
@@ -390,12 +389,15 @@ describe("defaultSkills", () => {
     }
   });
 
-  test("the reject skill sends it back with the developer's note, and asks for one if missing", () => {
-    const text = flat("reject");
-    expect(text).toContain('skelcrew reject 12 "<note>"');
-    expect(text).toContain(
-      "If you weren't given a note, ask the developer what to change, and wait.",
-    );
+  // The developer sends work back by typing `skelcrew reject` themselves.
+  // There is no skill for it, so no skill may point to one.
+  test("no skill points to a /reject skill", () => {
+    for (const one of defaultSkills) {
+      expect({ path: one.path, found: one.text.includes("/reject") }).toEqual({
+        path: one.path,
+        found: false,
+      });
+    }
   });
 
   // An idea waits until the developer asks for its spec. So /idea only

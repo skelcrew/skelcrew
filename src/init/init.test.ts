@@ -82,7 +82,7 @@ const developSkill = ".agents/skills/develop/SKILL.md";
 const specLink = ".claude/skills/spec";
 // Every default skill, in the order init writes them: the agents' spec and
 // develop, then the developer's own verbs.
-const skillNames = ["spec", "develop", "idea", "crew", "show", "approve", "reject"];
+const skillNames = ["spec", "develop", "idea", "crew", "show", "approve"];
 const skillFiles = skillNames.map((name) => `.agents/skills/${name}/SKILL.md`);
 const skillLinks = skillNames.map((name) => `.claude/skills/${name}`);
 // Where each link in .claude/skills leads.
@@ -884,7 +884,7 @@ describe("initRepository", () => {
       expect(limit).toContain("only in Claude Code");
       expect(limit).toContain("In another harness, set up its own guard");
       expect(limit).toContain("typing skelcrew approve yourself");
-      expect(limit).toContain("start the spec, develop, approve and reject skills");
+      expect(limit).toContain("start the spec, develop and approve skills");
     });
 
     // When init couldn't add the rules, Claude Code doesn't ask yet. The

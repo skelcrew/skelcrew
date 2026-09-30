@@ -65,8 +65,8 @@ describe("skelcrew init", () => {
         `Set up Skelcrew in ${repo}.`,
         "The checks it runs: bun run test, bun run lint.",
         "Before them, it runs: bun install --frozen-lockfile.",
-        "Created: .skelcrew/workflow.yml, .agents/skills/spec/SKILL.md, .agents/skills/develop/SKILL.md, .agents/skills/idea/SKILL.md, .agents/skills/crew/SKILL.md, .agents/skills/show/SKILL.md, .agents/skills/approve/SKILL.md, .agents/skills/reject/SKILL.md, .claude/settings.json, .gitignore.",
-        "Linked: .claude/skills/spec, .claude/skills/develop, .claude/skills/idea, .claude/skills/crew, .claude/skills/show, .claude/skills/approve, .claude/skills/reject.",
+        "Created: .skelcrew/workflow.yml, .agents/skills/spec/SKILL.md, .agents/skills/develop/SKILL.md, .agents/skills/idea/SKILL.md, .agents/skills/crew/SKILL.md, .agents/skills/show/SKILL.md, .agents/skills/approve/SKILL.md, .claude/settings.json, .gitignore.",
+        "Linked: .claude/skills/spec, .claude/skills/develop, .claude/skills/idea, .claude/skills/crew, .claude/skills/show, .claude/skills/approve.",
         "",
         approving,
         "",
@@ -86,7 +86,7 @@ describe("skelcrew init", () => {
         `Skelcrew was already set up in ${repo}. Nothing changed.`,
         "The checks it runs: bun run test, bun run lint.",
         "Before them, it runs: bun install --frozen-lockfile.",
-        "Already there, left as they were: .skelcrew/workflow.yml, .agents/skills/spec/SKILL.md, .agents/skills/develop/SKILL.md, .agents/skills/idea/SKILL.md, .agents/skills/crew/SKILL.md, .agents/skills/show/SKILL.md, .agents/skills/approve/SKILL.md, .agents/skills/reject/SKILL.md, .claude/skills/spec, .claude/skills/develop, .claude/skills/idea, .claude/skills/crew, .claude/skills/show, .claude/skills/approve, .claude/skills/reject, .claude/settings.json, .gitignore.",
+        "Already there, left as they were: .skelcrew/workflow.yml, .agents/skills/spec/SKILL.md, .agents/skills/develop/SKILL.md, .agents/skills/idea/SKILL.md, .agents/skills/crew/SKILL.md, .agents/skills/show/SKILL.md, .agents/skills/approve/SKILL.md, .claude/skills/spec, .claude/skills/develop, .claude/skills/idea, .claude/skills/crew, .claude/skills/show, .claude/skills/approve, .claude/settings.json, .gitignore.",
         "",
         approving,
         "",
@@ -102,7 +102,7 @@ describe("skelcrew init", () => {
     const outcome = await init(repo);
     expect(outcome.code).toBe(0);
     expect(outcome.out).toContain(
-      "Do by hand: .claude/skills/spec, .claude/skills/develop, .claude/skills/idea, .claude/skills/crew, .claude/skills/show, .claude/skills/approve, .claude/skills/reject.",
+      "Do by hand: .claude/skills/spec, .claude/skills/develop, .claude/skills/idea, .claude/skills/crew, .claude/skills/show, .claude/skills/approve.",
     );
     const warnings = outcome.out.slice(outcome.out.indexOf("Look at these:") + 1);
     expect(warnings[0]).toStartWith("- Init couldn't link .claude/skills/spec");

@@ -35,9 +35,10 @@ One line per task: its number and title, what it needs, and the command that doe
 example:
 
 - `#3 CSV export`: its spec waits for your approval. Read it with `/show 3`, then
-  `/approve 3` or `/reject 3 "<note>"`.
+  `/approve 3`, or send it back with the line `/show 3` ends with.
 - `#5 Login fix`: its merge waits for your approval. Read the draft pull request at the link
-  status gives, or `/show 5`. Then `/approve 5` or `/reject 5 "<note>"`.
+  status gives, or `/show 5`. Then `/approve 5`, or send it back with the line `/show 5`
+  ends with.
 - `#7 Dark mode`: nobody is working on it. In Spec, start it with `/spec 7`. In Ready or In
   progress, start it with `/develop 7`.
 - `#8 Search`: blocked, with the reason status gives. Retry it with `skelcrew retry 8`, or

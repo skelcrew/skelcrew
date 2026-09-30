@@ -87,7 +87,7 @@ number:
 
 Say that the developer types one of them. In Claude Code, a line that starts with `!` runs
 as the developer's own command. In another harness, they type it in a terminal, without
-the `!`. They can also use `/approve 12` or `/reject 12 "<note>"`.
+the `!`. They can also approve with `/approve 12`.
 
 Showing is all this skill does.
 You never run `skelcrew approve` or `skelcrew reject` yourself.
