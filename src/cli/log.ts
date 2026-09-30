@@ -100,7 +100,8 @@ function happened(event: TaskEvent, before: TaskEvent[]): string {
     case "task.revert_failed":
       return `The revert failed: ${event.summary}`;
     case "task.reverted":
-      return `Reverted by commit ${event.commit.slice(0, 7)}. It went back to Spec, because: ${event.reason}`;
+      // The commit is the merge that was undone, not the revert's own.
+      return `The revert went through, undoing commit ${event.commit.slice(0, 7)}. The task went back to Spec with your reason: ${event.reason}`;
     case "task.blocked":
       return `Blocked. ${describeBlock(event.reason)}`;
     case "task.unblocked":

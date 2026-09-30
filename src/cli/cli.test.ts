@@ -553,6 +553,28 @@ describe("skelcrew log", () => {
     }
   });
 
+  // Found by review: the log named the undone merge as the revert's own
+  // commit, "Reverted by commit ...".
+  test("names the merge a revert undid", async () => {
+    const repo = throwawayRepo(dirs);
+    const at = new Date(2026, 8, 30, 10, 2).getTime();
+    const stamp = { v: 1, taskId: 4, at };
+    await fakeDaemon(repo, {
+      events: [
+        { ...stamp, type: "task.merged", commit: "a".repeat(40) },
+        { ...stamp, type: "task.revert_started", reason: "It broke the export.", request: 5 },
+        { ...stamp, type: "task.reverted", commit: "a".repeat(40), reason: "It broke the export." },
+      ],
+    });
+    expect(await cli(repo, ["log", "4"])).toEqual(
+      said([
+        "2026-09-30 10:02  Merged as commit aaaaaaa.",
+        "2026-09-30 10:02  Reverting it, because: It broke the export.",
+        "2026-09-30 10:02  The revert went through, undoing commit aaaaaaa. The task went back to Spec with your reason: It broke the export.",
+      ]),
+    );
+  });
+
   test("refuses an answer that isn't a list of events", async () => {
     const repo = throwawayRepo(dirs);
     await fakeDaemon(repo, { events: [{ type: "task.exploded", v: 1, taskId: 1, at: 1 }] });
