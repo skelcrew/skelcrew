@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CommitSha, TaskId } from "../../core/ids";
 import { git, makeRepo, type Repo, versionControlContract } from "../version-control.contract";
@@ -162,6 +162,50 @@ describe("the merge's receipt", () => {
     if (!merged.ok) throw new Error(merged.message);
     expect(merged.value).not.toBe(head);
     expect(await git(r.dir, "show", "main:a.ts")).toBe("a");
+  });
+});
+
+// The merge works out the result it must have, spec included, in a
+// throwaway staging file in git's folder.
+describe("the merge's throwaway staging file", () => {
+  let dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+    dirs = [];
+  });
+
+  // Found in review: the file was named after the merged result, and a
+  // crash could leave its lock behind. Every later merge with that result
+  // then failed with "A hook changed what the merge holds".
+  test("isn't blocked by a lock a crash left, and leaves nothing behind", async () => {
+    const r = await makeRepo();
+    dirs.push(r.dir);
+    const plugin = new Git(r.dir, r.main);
+    const taskId = TaskId.parse(12);
+    const created = await plugin.createWorktree({ taskId, title: "CSV export", build: 1 });
+    if (!created.ok) throw new Error(created.message);
+    writeFileSync(join(created.value.path, "a.ts"), "a\n");
+    await git(created.value.path, "add", "a.ts");
+    await git(created.value.path, "commit", "-q", "-m", "A");
+    const head = CommitSha.parse(await git(created.value.path, "rev-parse", "HEAD"));
+    const tree = (await git(r.dir, "merge-tree", "--write-tree", "main", head)).split("\n")[0];
+    const stale = `skelcrew-expected-${tree}.lock`;
+    writeFileSync(join(r.dir, ".git", stale), "");
+
+    const merged = await plugin.merge(
+      {
+        taskId,
+        title: "CSV export",
+        worktree: created.value,
+        head,
+        file: { path: "docs/specs/12-csv-export.md", text: "# #12 CSV export\n" },
+      },
+      async () => ({ ok: true, value: null }),
+    );
+    if (!merged.ok) throw new Error(merged.message);
+    expect(await git(r.dir, "show", "main:docs/specs/12-csv-export.md")).toBe("# #12 CSV export");
+    const left = readdirSync(join(r.dir, ".git")).filter((f) => f.startsWith("skelcrew-expected"));
+    expect(left).toEqual([stale]);
   });
 });
 

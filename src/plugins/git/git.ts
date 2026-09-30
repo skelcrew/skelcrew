@@ -1,6 +1,7 @@
 // The built-in version-control plugin, on git worktrees. Each task's build
 // gets its own worktree and branch, so agents never share a checkout.
 
+import { randomUUID } from "node:crypto";
 import {
   appendFileSync,
   chmodSync,
@@ -950,12 +951,13 @@ export class Git implements VersionControl {
 
   // The tree `tree` with `file` set to exactly its text, or undefined if
   // git couldn't make it. It is built in a staging area of its own, which
-  // no hook sees, and removed afterwards.
+  // no hook sees, and removed afterwards with its lock. The name is new
+  // each time, so a lock a crash left, or a merge running at the same
+  // time, can't get in the way.
   private async withFile(tree: string, file: FileToAdd): Promise<string | undefined> {
     const common = await this.gitFolder();
     if (!common.ok) return undefined;
-    const index = join(common.value, `skelcrew-expected-${tree}`);
-    rmSync(index, { force: true });
+    const index = join(common.value, `skelcrew-expected-${randomUUID()}`);
     try {
       const blob = await runIn(this.repo, { input: file.text }, "hash-object", "-w", "--stdin");
       if (!blob.ok) return undefined;
@@ -974,6 +976,7 @@ export class Git implements VersionControl {
       return written.ok ? written.out : undefined;
     } finally {
       rmSync(index, { force: true });
+      rmSync(`${index}.lock`, { force: true });
     }
   }
 
