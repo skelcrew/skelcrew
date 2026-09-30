@@ -26,9 +26,11 @@ import type {
   Worktree,
 } from "../core/types";
 import { Loop, type ReadableLog, type Tools } from "../loop/loop";
+import type { PullRequests } from "../plugins/pull-requests";
 import type { RunChecks, VersionControl } from "../plugins/version-control";
 import { type Command, MAX_LINE } from "../protocol/protocol";
 import type { EventStore } from "../store/store";
+import { DraftPullRequests, type PullRequestLog } from "./pull-requests";
 
 export type Answer = { ok: true; result: unknown } | { ok: false; message: string };
 
@@ -49,6 +51,10 @@ export type DaemonOptions = {
   // The local gate: runs the repository's checks in a folder. Without it,
   // the gate fails at once.
   runChecks?: RunChecks;
+  // Opens a draft pull request for you to read when a merge waits for your
+  // approval, and closes it afterwards. `log` remembers the open ones, and
+  // `base` is the branch they go into. Without it, none is opened.
+  pullRequests?: { plugin: PullRequests; log: PullRequestLog; base: string };
 };
 
 // An answer that has to wait for a tool's reply, such as a claim waiting
@@ -85,6 +91,7 @@ export class Daemon {
   private readonly retryMs: number;
   private readonly maxRetryMs: number;
   private readonly versionControl: VersionControl | null;
+  private readonly pullRequests: DraftPullRequests | null;
   private readonly retryTimers = new Set<ReturnType<typeof setTimeout>>();
   private closed = false;
   private waiters = new Set<Waiter>();
@@ -100,6 +107,17 @@ export class Daemon {
     this.retryMs = options.retryMs ?? 1_000;
     this.maxRetryMs = options.maxRetryMs ?? 30_000;
     this.versionControl = options.versionControl ?? null;
+    const pullRequests = options.pullRequests;
+    this.pullRequests =
+      pullRequests === undefined
+        ? null
+        : new DraftPullRequests(
+            pullRequests.plugin,
+            pullRequests.log,
+            pullRequests.base,
+            options.config.gates,
+            () => this.loop.tasks(),
+          );
   }
 
   // Rebuilds every task from the saved events, and carries out any command
@@ -119,6 +137,8 @@ export class Daemon {
       (taskId, input, finished) => daemon.reply(taskId, input, finished),
       (taskId) => daemon.find(taskId)?.title ?? `#${taskId}`,
     );
+    // A merge may have started waiting, or finished, while no daemon ran.
+    daemon.pullRequests?.update();
     return { ok: true, value: daemon };
   }
 
@@ -286,7 +306,10 @@ export class Daemon {
     });
   }
 
+  // Called after every request and every tool's reply, so it is also where
+  // the pull requests hear that something may have changed.
   private wakeWaiters(): void {
+    this.pullRequests?.update();
     for (const waiter of this.waiters) {
       const task = this.find(waiter.task);
       if (task === null || waiter.until(task) || this.closed) {
@@ -354,7 +377,10 @@ export class Daemon {
         return this.send(command.task, { by: "human", type: "drop" });
 
       case "status": {
-        const tasks = [...this.loop.tasks()].sort((a, b) => a.id - b.id).map(view);
+        const none = { pullRequest: null, noPullRequest: null };
+        const tasks = [...this.loop.tasks()]
+          .sort((a, b) => a.id - b.id)
+          .map((task) => ({ ...view(task), ...(this.pullRequests?.shown(task) ?? none) }));
         return { ok: true, result: { tasks } };
       }
 
@@ -427,6 +453,7 @@ export class Daemon {
   close(): Promise<void> {
     this.closed = true;
     this.tools.stop();
+    this.pullRequests?.stop();
     for (const timer of this.retryTimers) clearTimeout(timer);
     this.retryTimers.clear();
     this.wakeWaiters();

@@ -227,6 +227,21 @@ files the checks write change nothing. The `setup` commands run in that copy fir
 repository rather than where it starts, or when the main branch from `workflow.yml`
 doesn't exist.
 
+`src/daemon/pull-requests.ts` gives you a draft pull request to read on GitHub while a
+merge waits for your approval. The core sends no command for it. Instead, after every
+request and every reply, and once at start, `DraftPullRequests` looks at each task in the
+background and compares it with the pull requests it opened. For example, #12's checks
+pass and its merge waits: it pushes `task/12-csv-export` and opens a draft titled
+"#12 CSV export". You approve, and it closes the draft with a comment naming the new
+commit on main. The open ones are remembered in the store, so a restart neither loses one
+nor opens a second. After a send-back or a failed merge the task keeps its branch, so its
+draft stays open and the next wait pushes the new work to it. A task that leaves its
+branch, by being merged, dropped or sent back to Spec, gets its draft closed. If a pull
+request can't be opened, such as with no `origin` remote or no `gh`, the task waits as
+always, and `status` says why there is none. The same work isn't tried again until the
+daemon starts again. `status` gives each task's link as `pullRequest`, or the reason as
+`noPullRequest`.
+
 ## The daemon's socket and the client
 
 These files put the daemon on a socket, one per repository, and let the CLI reach it.
