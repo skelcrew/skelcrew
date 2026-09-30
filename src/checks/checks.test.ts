@@ -165,7 +165,8 @@ describe("localChecks", () => {
   test("shows the shell's own complaint about a syntax error", async () => {
     const result = await localChecks(["echo before; if then"])(folder());
     const lines = !result.ok ? result.message.split("\n").slice(1).join("\n") : "";
-    expect(lines).toContain("syntax error");
+    // bash says "syntax error", and dash, Debian's sh, "Syntax error".
+    expect(lines.toLowerCase()).toContain("syntax error");
   });
 
   // Found by review: when the last stretch of output was all blank, the

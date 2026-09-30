@@ -91,6 +91,10 @@ const runtimeLines = [
   ".skelcrew/daemon.sock",
 ];
 const settings = ".claude/settings.json";
+
+// Root ignores file permissions, so the tests that make a file or folder
+// unreadable or read-only would test nothing. They are skipped as root.
+const asRoot = process.getuid?.() === 0;
 // The Claude Code permission rules that make it ask you before an agent
 // runs skelcrew approve. Each catches one usual way of typing it: plain,
 // through bunx, bun x or npx, or by a path to the program, such as
@@ -187,7 +191,7 @@ describe("initRepository", () => {
 
   // A folder where a file should be, or a file you may not read, must end
   // in a report, not a crash.
-  test("warns about a workflow.yml it can't open, and goes on", () => {
+  test.skipIf(asRoot)("warns about a workflow.yml it can't open, and goes on", () => {
     const folder = repo(bunApp);
     mkdirSync(join(folder, workflow), { recursive: true });
     const locked = repo({ ...bunApp, [workflow]: "checks:\n  - make ci\n" });
@@ -636,35 +640,38 @@ describe("initRepository", () => {
     // config/claude/skills, three folders below the repository. So the
     // link must be ../../../.agents/skills/spec, not ../../.agents/...
     // The command in the warning must make the link init would have made.
-    test("gives a command that makes a working link when .claude is linked inside the repository", () => {
-      const dir = repo(bunApp);
-      mkdirSync(join(dir, "config/claude/skills"), { recursive: true });
-      symlinkSync("config/claude", join(dir, ".claude"));
-      const skills = join(dir, "config/claude/skills");
-      chmodSync(skills, 0o555);
-      let result: ReturnType<typeof initRepository>;
-      try {
-        result = initRepository(dir);
-      } finally {
-        chmodSync(skills, 0o755);
-      }
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      expect(result.report.byHand).toEqual([specLink, developLink]);
-      expect(result.report.warnings).toHaveLength(2);
-      expect(result.report.warnings[0]).toContain(
-        "`ln -s ../../../.agents/skills/spec .claude/skills/spec`",
-      );
-      // Running each command, as the warning says, gives a working link.
-      for (const warning of result.report.warnings) {
-        const command = /`ln -s (\S+) (\S+)`/.exec(warning);
-        const target = command?.[1] ?? "";
-        const path = command?.[2] ?? "";
-        symlinkSync(target, join(dir, path));
-      }
-      expect(read(dir, `${specLink}/SKILL.md`)).toBe(read(dir, specSkill));
-      expect(read(dir, `${developLink}/SKILL.md`)).toBe(read(dir, developSkill));
-    });
+    test.skipIf(asRoot)(
+      "gives a command that makes a working link when .claude is linked inside the repository",
+      () => {
+        const dir = repo(bunApp);
+        mkdirSync(join(dir, "config/claude/skills"), { recursive: true });
+        symlinkSync("config/claude", join(dir, ".claude"));
+        const skills = join(dir, "config/claude/skills");
+        chmodSync(skills, 0o555);
+        let result: ReturnType<typeof initRepository>;
+        try {
+          result = initRepository(dir);
+        } finally {
+          chmodSync(skills, 0o755);
+        }
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.report.byHand).toEqual([specLink, developLink]);
+        expect(result.report.warnings).toHaveLength(2);
+        expect(result.report.warnings[0]).toContain(
+          "`ln -s ../../../.agents/skills/spec .claude/skills/spec`",
+        );
+        // Running each command, as the warning says, gives a working link.
+        for (const warning of result.report.warnings) {
+          const command = /`ln -s (\S+) (\S+)`/.exec(warning);
+          const target = command?.[1] ?? "";
+          const path = command?.[2] ?? "";
+          symlinkSync(target, join(dir, path));
+        }
+        expect(read(dir, `${specLink}/SKILL.md`)).toBe(read(dir, specSkill));
+        expect(read(dir, `${developLink}/SKILL.md`)).toBe(read(dir, developSkill));
+      },
+    );
 
     // A folder where .gitignore should be makes the last step fail.
     test("lists the links it made when a later step fails", () => {
@@ -762,7 +769,7 @@ describe("initRepository", () => {
       }
     });
 
-    test("makes no link to an AGENTS.md it can't read, and says why", () => {
+    test.skipIf(asRoot)("makes no link to an AGENTS.md it can't read, and says why", () => {
       const dir = repo({ ...bunApp, "AGENTS.md": agents });
       chmodSync(join(dir, "AGENTS.md"), 0o000);
       try {
@@ -979,7 +986,7 @@ describe("initRepository", () => {
 
     // A file or folder you may not write must end in a report, not a
     // crash. The rest of init still runs.
-    test("says what to add by hand when it can't write the settings file", () => {
+    test.skipIf(asRoot)("says what to add by hand when it can't write the settings file", () => {
       const mine = settingsJson({ model: "opus" });
       const lockedFile = repo({ ...bunApp, [settings]: mine });
       chmodSync(join(lockedFile, settings), 0o444);
