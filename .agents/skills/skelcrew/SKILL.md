@@ -23,7 +23,9 @@ text. It has two parts:
   that waits for someone to start it says `nobody is working on it`.
 - **Tasks by phase:** Idea, Spec, Ready, In progress, Checks, Done and Dropped. Each task
   line says who is working on it, such as `(session-k3x9q2mf is working on it)`, and whether
-  it is blocked. With projects, the phases come under each project.
+  it is blocked. With projects, the phases come under each project, by its name, such as
+  `Project Reports page:`. An archived project says `(archived)`: no new agents start in it.
+  A project with no tasks says `no tasks yet`.
 
 ## 2. Tell the developer
 
@@ -55,7 +57,8 @@ example, "`#4 PDF export` is In progress, with session-k3x9q2mf."
 ### The rest
 
 The other tasks, by phase, one short line each. Ideas first, then the others in the order
-status gives. Leave out dropped tasks, unless the developer asks for them. With many done
+status gives. With projects, give each project's tasks under its name, and say when a
+project is archived. Leave out dropped tasks, unless the developer asks for them. With many done
 tasks, give their count, not each one.
 
 If there are no tasks at all, say so, and that `/add <title>` adds one.

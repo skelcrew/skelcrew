@@ -45,13 +45,28 @@ export const statusResult = z.object({
       pullRequestNote: z.string().nullable().optional(),
     }),
   ),
+  // Every project, even one with no tasks, by name. A daemon from before
+  // projects leaves them out.
+  projects: z
+    .array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        goal: z.string(),
+        status: z.enum(["active", "archived"]),
+      }),
+    )
+    .optional(),
 });
 
 export type TaskView = z.infer<typeof statusResult>["tasks"][number];
+export type ProjectView = NonNullable<z.infer<typeof statusResult>["projects"]>[number];
 
 // What `skelcrew status` prints.
-export function statusLines(tasks: TaskView[]): string[] {
-  if (tasks.length === 0) return ['No tasks yet. Add one with: skelcrew add "<task>"'];
+export function statusLines(tasks: TaskView[], projects: ProjectView[] = []): string[] {
+  if (tasks.length === 0 && projects.length === 0) {
+    return ['No tasks yet. Add one with: skelcrew add "<task>"'];
+  }
   const lines: string[] = [];
   const waiting = tasks.filter((task) => task.waitingOnYou !== null || needsClaim(task));
   if (waiting.length > 0) {
@@ -65,23 +80,26 @@ export function statusLines(tasks: TaskView[]): string[] {
     lines.push("");
   }
   // Without projects, the phases stand alone. With any, each project gets
-  // its phases, indented, and tasks in no project come last.
-  const projects = [...new Set(tasks.map((task) => task.project))].sort(byProject);
-  if (projects.length === 1 && projects[0] === null) return [...lines, ...byPhase(tasks, "")];
-  for (const [i, project] of projects.entries()) {
+  // its phases, indented, by name. A project with no tasks says so, and
+  // tasks in no project come last.
+  const known = new Set(projects.map((project) => project.id));
+  // A task can name a project the answer leaves out, such as from an older
+  // daemon. It is shown by its ID.
+  const unlisted = [...new Set(tasks.map((task) => task.project))]
+    .filter((id): id is string => id !== null && !known.has(id))
+    .map((id): ProjectView => ({ id, name: id, goal: "", status: "active" }));
+  const all = [...projects, ...unlisted].sort((a, b) => a.name.localeCompare(b.name));
+  const loose = tasks.filter((task) => task.project === null);
+  if (all.length === 0) return [...lines, ...byPhase(loose, "")];
+  for (const [i, project] of all.entries()) {
     if (i > 0) lines.push("");
-    lines.push(project === null ? "No project:" : `Project ${project}:`);
-    const inProject = tasks.filter((task) => task.project === project);
-    lines.push(...byPhase(inProject, "  "));
+    const name = `Project ${project.name}${project.status === "archived" ? " (archived)" : ""}`;
+    const inProject = tasks.filter((task) => task.project === project.id);
+    if (inProject.length === 0) lines.push(`${name}: no tasks yet.`);
+    else lines.push(`${name}:`, ...byPhase(inProject, "  "));
   }
+  if (loose.length > 0) lines.push("", "No project:", ...byPhase(loose, "  "));
   return lines;
-}
-
-// Projects by name, and no project last.
-function byProject(a: string | null, b: string | null): number {
-  if (a === null) return b === null ? 0 : 1;
-  if (b === null) return -1;
-  return a.localeCompare(b);
 }
 
 function byPhase(tasks: TaskView[], indent: string): string[] {
