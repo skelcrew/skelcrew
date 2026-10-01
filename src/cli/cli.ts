@@ -19,7 +19,7 @@ import { taskEvent } from "../store/schema";
 import { commandHelp, mainHelp } from "./help";
 import { init } from "./init";
 import { leftOutLine, logLines } from "./log";
-import { phases, statusLines, statusResult, type TaskView } from "./status";
+import { type ProjectView, phases, statusLines, statusResult, type TaskView } from "./status";
 
 export type Context = {
   cwd: string;
@@ -585,9 +585,12 @@ type Answered<T> = { ok: true; value: T } | { ok: false; message: string };
 // The tasks as `skelcrew status` sees them, as data, for the TUI.
 export async function readStatus(
   context: Context,
-): Promise<{ ok: true; tasks: TaskView[] } | { ok: false; message: string }> {
+): Promise<
+  { ok: true; tasks: TaskView[]; projects: ProjectView[] } | { ok: false; message: string }
+> {
   const answer = await answered(context, { type: "status" }, statusResult);
-  return answer.ok ? { ok: true, tasks: answer.value.tasks } : answer;
+  if (!answer.ok) return answer;
+  return { ok: true, tasks: answer.value.tasks, projects: answer.value.projects ?? [] };
 }
 
 // A task's events as `skelcrew log` reads them, as data, for the TUI.

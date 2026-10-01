@@ -4,7 +4,7 @@
 import { actions } from "./actions";
 import type { Line } from "./list";
 
-const KEY_WIDTH = 11;
+const KEY_WIDTH = 13;
 
 export function keyLines(): Line[] {
   const key = (keys: string, does: string): Line => ({

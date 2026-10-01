@@ -641,6 +641,15 @@ describe("skelcrew status", () => {
     });
   });
 
+  test("readStatus gives every project too", async () => {
+    const repo = await repoWithDaemon();
+    await cli(repo, ["project", "new", "Reports page", "Export what it shows."]);
+    expect(await readStatus(contextIn(repo))).toMatchObject({
+      ok: true,
+      projects: [{ id: "reports-page", name: "Reports page", status: "active" }],
+    });
+  });
+
   // The TUI's task screen reads a task's history through the same request
   // as `skelcrew log`.
   test("readLog gives a task's events", async () => {
@@ -949,6 +958,18 @@ describe("skelcrew project", () => {
         "  Idea:",
         "  - #2 Totals",
       ]),
+    );
+  });
+
+  // The core refuses a claim in an archived project, so status mustn't ask
+  // for one.
+  test("status doesn't ask you to claim a task in an archived project", async () => {
+    const repo = await repoWithDaemon();
+    await cli(repo, ["project", "new", "Someday", "Ideas for later."]);
+    await cli(repo, ["add", "Dark mode", "--spec", "--project", "Someday"]);
+    await cli(repo, ["project", "archive", "Someday"]);
+    expect(await cli(repo, ["status"])).toEqual(
+      said(["Project Someday (archived):", "  Spec:", "  - #1 Dark mode"]),
     );
   });
 

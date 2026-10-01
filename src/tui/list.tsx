@@ -40,7 +40,7 @@ const MIN_TITLE = 20;
 // with two spaces between columns, but never less than MIN_TITLE.
 export function widthsOf(rows: Row[], columns: number): Widths {
   const number = Math.max(0, ...rows.map((row) => `#${row.task.task}`.length));
-  const project = Math.max(0, ...rows.map((row) => (row.task.project ?? "").length));
+  const project = Math.max(0, ...rows.map((row) => (row.project ?? "").length));
   const says = Math.max(0, ...rows.map((row) => row.says.length));
   const others = 1 + 2 + number + 2 + (project > 0 ? project + 2 : 0) + 2 + says;
   const room = Math.max(MIN_TITLE, columns - others);
@@ -85,7 +85,7 @@ function TaskRow({ row, widths, selected }: { row: Row; widths: Widths; selected
     selected ? "›" : " ",
     `#${task.task}`.padEnd(widths.number),
     title.padEnd(widths.title),
-    ...(widths.project > 0 ? [(task.project ?? "").padEnd(widths.project)] : []),
+    ...(widths.project > 0 ? [(row.project ?? "").padEnd(widths.project)] : []),
   ];
   const colour = row.mark === "question" ? "yellow" : row.mark === "blocked" ? "red" : undefined;
   return (

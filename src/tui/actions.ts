@@ -71,7 +71,7 @@ export const actions: Action[] = [
   },
   {
     key: "x",
-    hint: "send back",
+    hint: "reject",
     help: "send it back, with what should change",
     onTask: true,
     step: (task) =>
@@ -136,6 +136,34 @@ export const actions: Action[] = [
               args: ["drop", `${task.task}`],
               doing: `Dropping #${task.task}…`,
               task: task.task,
+            },
+          },
+  },
+  {
+    key: "p",
+    hint: null,
+    help: "put the task in a project, or take it out of its own",
+    onTask: true,
+    step: (task) =>
+      task === undefined
+        ? null
+        : {
+            kind: "type",
+            prompt: `Move #${task.task} to which project? Type none to take it out:`,
+            // The project by its name or its ID, as the CLI takes it.
+            run: (typed) => {
+              const project = typed.trim();
+              return project.toLowerCase() === "none"
+                ? {
+                    args: ["project", "remove", `${task.task}`],
+                    doing: `Taking #${task.task} out of its project…`,
+                    task: task.task,
+                  }
+                : {
+                    args: ["project", "add", `${task.task}`, "--", project],
+                    doing: `Moving #${task.task}…`,
+                    task: task.task,
+                  };
             },
           },
   },
