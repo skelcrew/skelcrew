@@ -24,6 +24,14 @@ while IFS= read -r line; do
 done
 `;
 
+// An agent that ignores the polite signals to stop, as a busy or stuck one
+// may. Only a forced stop ends it.
+const stubbornAgent = `
+trap '' TERM HUP INT
+echo start >> starts.txt
+while true; do sleep 1; done
+`;
+
 // Waits until the check passes, for at most five seconds.
 async function eventually(check: () => boolean): Promise<void> {
   for (let i = 0; i < 100; i++) {
@@ -33,23 +41,42 @@ async function eventually(check: () => boolean): Promise<void> {
   throw new Error("It didn't happen within five seconds.");
 }
 
+// Fails plainly if the promise takes longer than this, instead of letting
+// a stuck runner hang the whole test run.
+async function within<T>(ms: number, what: string, promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} took longer than ${ms} ms.`)), ms);
+  });
+  try {
+    return await Promise.race([promise, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const read = (path: string) => (existsSync(path) ? readFileSync(path, "utf8") : "");
 
 export function sessionRunnerContract(name: string, make: () => SessionRunner): void {
   let dirs: string[] = [];
   let runners: SessionRunner[] = [];
+  // Every agent a test started is stopped, even when the test failed.
   afterEach(async () => {
-    for (const runner of runners) await runner.close();
-    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+    const closing = runners.map((runner) => runner.close());
+    dirs.forEach((dir) => {
+      rmSync(dir, { recursive: true, force: true });
+    });
     dirs = [];
     runners = [];
+    await within(10_000, "Closing the runner", Promise.all(closing));
   });
 
-  // A runner, a folder with the fake agent in it, and every end it reports.
+  // A runner, a folder with the fake agents in it, and every end it reports.
   function setup() {
     const dir = mkdtempSync(join(tmpdir(), "skelcrew-runner-"));
     dirs.push(dir);
     writeFileSync(join(dir, "agent.sh"), fakeAgent);
+    writeFileSync(join(dir, "stubborn.sh"), stubbornAgent);
     const runner = make();
     runners.push(runner);
     const ends: { name: string; end: SessionEnd }[] = [];
@@ -138,6 +165,24 @@ export function sessionRunnerContract(name: string, make: () => SessionRunner): 
       expect(await runner.stop("session-9")).toEqual({ ok: true, value: null });
       await Bun.sleep(200);
       expect(ends).toHaveLength(1);
+    });
+
+    // Found when a stuck fake agent kept a whole test run waiting.
+    test("stops a session that ignores the polite signals, and reports its end", async () => {
+      const { dir, runner, ends, session } = setup();
+      await runner.start({ ...session("session-1"), command: ["sh", "stubborn.sh"] });
+      await eventually(() => read(join(dir, "starts.txt")) !== "");
+      await within(8_000, "Stopping", runner.stop("session-1"));
+      expect(ends.map((ended) => ended.name)).toEqual(["session-1"]);
+      expect(await runner.running()).toEqual({ ok: true, value: [] });
+    });
+
+    test("close returns and ends every session, even one that ignores the signals", async () => {
+      const { dir, runner, ends, session } = setup();
+      await runner.start({ ...session("session-1"), command: ["sh", "stubborn.sh"] });
+      await eventually(() => read(join(dir, "starts.txt")) !== "");
+      await within(8_000, "Closing", runner.close());
+      expect(ends.map((ended) => ended.name)).toEqual(["session-1"]);
     });
 
     test("close ends every session", async () => {

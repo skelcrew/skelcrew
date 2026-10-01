@@ -15,6 +15,10 @@ import type { Done } from "../version-control";
 // Enough output to find the last line with text on it.
 const keptOutput = 4_096;
 
+// How long a stop waits for the agent to exit after asking politely, and
+// again after forcing it.
+const graceMs = 2_000;
+
 type Running = { process: Subprocess; output: string };
 
 export class BasicRunner implements SessionRunner {
@@ -22,6 +26,7 @@ export class BasicRunner implements SessionRunner {
 
   private readonly sessions = new Map<string, Running>();
   private readonly listeners: ((name: string, end: SessionEnd) => void)[] = [];
+  private readonly stopping = new Map<string, Promise<void>>();
 
   async start(session: SessionStart): Promise<Done<null>> {
     if (this.sessions.has(session.name)) return { ok: true, value: null };
@@ -35,10 +40,7 @@ export class BasicRunner implements SessionRunner {
           rows: 40,
           data: (_terminal, data) => this.keep(session.name, data),
         },
-        onExit: (_process, exitCode, signalCode) => {
-          // A session ended by a signal, such as a stop, has no exit code.
-          this.ended(session.name, signalCode === null ? exitCode : null);
-        },
+        onExit: (exited) => this.ended(session.name, exitCode(exited)),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -57,7 +59,7 @@ export class BasicRunner implements SessionRunner {
   }
 
   async stop(name: string): Promise<Done<null>> {
-    this.sessions.get(name)?.process.kill();
+    await this.halt(name);
     return { ok: true, value: null };
   }
 
@@ -70,11 +72,30 @@ export class BasicRunner implements SessionRunner {
   }
 
   async close(): Promise<void> {
-    const ending = [...this.sessions.values()].map(({ process: running }) => {
-      running.kill();
-      return running.exited;
-    });
-    await Promise.all(ending);
+    await Promise.all([...this.sessions.keys()].map((name) => this.halt(name)));
+  }
+
+  // Asks the agent to stop, then forces it. An agent that ignores the first
+  // signal is still stopped. If its exit is never reported, the session is
+  // counted as ended anyway, so a stop never waits forever.
+  private halt(name: string): Promise<void> {
+    const session = this.sessions.get(name);
+    if (session === undefined) return Promise.resolve();
+    const already = this.stopping.get(name);
+    if (already !== undefined) return already;
+    const { pid } = session.process;
+    const halting = (async () => {
+      signal(pid, "SIGTERM");
+      if (!(await exitsWithin(session.process, graceMs))) {
+        signal(pid, "SIGKILL");
+        await exitsWithin(session.process, graceMs);
+      }
+      // Reported here as well as on exit, so the end is known when the stop
+      // returns. Only the first report counts.
+      this.ended(name, exitCode(session.process));
+    })().finally(() => this.stopping.delete(name));
+    this.stopping.set(name, halting);
+    return halting;
   }
 
   // Keeps the end of the session's output, for its last line.
@@ -91,6 +112,31 @@ export class BasicRunner implements SessionRunner {
     const end = { exitCode, lastLine: lastLine(session.output) };
     for (const listener of this.listeners) listener(name, end);
   }
+}
+
+// The agent leads its own group of processes, so the signal reaches
+// whatever it started too. A process that is already gone is left alone.
+function signal(pid: number, name: "SIGTERM" | "SIGKILL"): void {
+  try {
+    process.kill(-pid, name);
+  } catch {
+    try {
+      process.kill(pid, name);
+    } catch {
+      // Already gone.
+    }
+  }
+}
+
+// A session ended by a signal, such as a stop, has no exit code. Nor has
+// one whose exit was never reported.
+function exitCode(running: Subprocess): number | null {
+  return running.signalCode === null ? running.exitCode : null;
+}
+
+// Whether the process exits within the time given.
+async function exitsWithin(running: Subprocess, ms: number): Promise<boolean> {
+  return Promise.race([running.exited.then(() => true), Bun.sleep(ms).then(() => false)]);
 }
 
 // The last line with text on it, without the codes a terminal uses for
