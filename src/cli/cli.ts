@@ -148,10 +148,12 @@ const handlers: Record<string, Handler> = {
   status: async (args, context) => {
     const parsed = parse("status", () => parseArgs({ args, options: {} }));
     if (!parsed.ok) return parsed.outcome;
-    return ask(context, { type: "status" }, statusResult, ({ tasks }) =>
-      said(...statusLines(tasks)),
+    return ask(context, { type: "status" }, statusResult, ({ tasks, projects }) =>
+      said(...statusLines(tasks, projects)),
     );
   },
+
+  project: async (args, context) => project(args, context),
 
   log: async (args, context) =>
     withTask("log", args, {}, (task) =>
@@ -233,6 +235,103 @@ const handlers: Record<string, Handler> = {
     return said("The daemon stopped.");
   },
 };
+
+// ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+
+// A project as the daemon names it in an answer.
+const namedProject = z.object({ id: z.string(), name: z.string() });
+
+// `skelcrew project new|add|remove|archive|unarchive`. A project is named by
+// its name or its ID. A name of several words needs no quotes, except in
+// `new`, where the goal follows it.
+async function project(args: string[], context: Context): Promise<Outcome> {
+  const [command, ...rest] = args;
+  if (command === undefined) return said(...(commandHelp.project ?? []));
+  const name = `project ${command}`;
+  const parsed = parse(name, () => parseArgs({ args: rest, allowPositionals: true }), rest);
+  if (!parsed.ok) return parsed.outcome;
+  const words = parsed.value.positionals;
+
+  switch (command) {
+    case "new": {
+      const [title, goal, ...extra] = words;
+      if (
+        title === undefined ||
+        goal === undefined ||
+        title.trim() === "" ||
+        goal.trim() === "" ||
+        extra.length > 0
+      ) {
+        return refused(
+          'Give a name and a goal, like this: skelcrew project new "Reports page" "Export what the reports page shows."',
+        );
+      }
+      const made = z.object({ project: namedProject });
+      return ask(context, { type: "project_new", name: title, goal }, made, ({ project }) =>
+        said(
+          `Added project ${project.name}.`,
+          `Add tasks to it with: skelcrew add "<task>" --project ${project.id}`,
+        ),
+      );
+    }
+
+    case "add": {
+      const [written, ...named] = words;
+      if (written === undefined || named.length === 0) {
+        return refused(
+          "Say which task and which project, like this: skelcrew project add 12 reports-page",
+        );
+      }
+      const task = taskNumber(name, written);
+      if (!task.ok) return task.outcome;
+      const moved = z.object({ from: namedProject.nullable(), to: namedProject });
+      const command: Command = { type: "project_add", task: task.value, project: named.join(" ") };
+      return ask(context, command, moved, ({ from, to }) => {
+        if (from === null) return said(`Added #${task.value} to ${to.name}.`);
+        if (from.id === to.id) return said(`#${task.value} is already in ${to.name}.`);
+        return said(`Moved #${task.value} from ${from.name} to ${to.name}.`);
+      });
+    }
+
+    case "remove": {
+      const [written, ...extra] = words;
+      if (written === undefined) {
+        return refused("Say which task, like this: skelcrew project remove 12");
+      }
+      if (extra.length > 0) return refused("skelcrew project remove takes one task number.");
+      const task = taskNumber(name, written);
+      if (!task.ok) return task.outcome;
+      const left = z.object({ from: namedProject });
+      return ask(context, { type: "project_remove", task: task.value }, left, ({ from }) =>
+        said(`Took #${task.value} out of ${from.name}.`),
+      );
+    }
+
+    case "archive":
+    case "unarchive": {
+      if (words.length === 0) {
+        return refused(`Say which project, like this: skelcrew project ${command} reports-page`);
+      }
+      const type = command === "archive" ? "project_archive" : "project_unarchive";
+      const changed = z.object({ project: namedProject });
+      return ask(context, { type, project: words.join(" ") }, changed, ({ project }) =>
+        command === "archive"
+          ? said(
+              `Archived ${project.name}. No new agents start in it.`,
+              "Work already running carries on.",
+            )
+          : said(`Unarchived ${project.name}. Agents can start in it again.`),
+      );
+    }
+
+    default:
+      return refused(
+        `There is no \`skelcrew project ${command}\`. Run \`skelcrew project --help\` to see them.`,
+      );
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Arguments

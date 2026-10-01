@@ -333,7 +333,7 @@ Notes:
   workflow.yml    phases, gates, check commands, critical paths, plugins
   record/         record entries and daily digests
   skelcrew.db     events, state, board, inbox and costs (SQLite, gitignored)
-.agents/skills/   default skills (add, spec, develop, skelcrew, log, approve), linked into .claude/skills/ for Claude Code
+.agents/skills/   default skills (add, project, spec, develop, skelcrew, log, approve), linked into .claude/skills/ for Claude Code
 docs/specs/       each merged task's approved spec, such as 12-csv-export.md, written by Skelcrew at merge
 ```
 
@@ -453,7 +453,7 @@ v1 is single user, runs on one machine, and ships only the plugins its first use
 - built-in board, projects, inbox, record and event log
 - built-in plugins: git, process runner, Claude Code profile, desktop notifications
 - first party plugins: GitHub (issues, pull requests, Actions results) and Herdr
-- default skills: spec, develop and review for agents, plus skills for the developer's own verbs (add, approve, skelcrew for the status, log for one task) in the harness
+- default skills: spec, develop and review for agents, plus skills for the developer's own verbs (add, project to make one from a description, approve, skelcrew for the status, log for one task) in the harness
 - plugin interfaces defined internally, with two implementations for sessions (process runner, Herdr) and work sources (built-in board, GitHub)
 
 **Not in v1:**
