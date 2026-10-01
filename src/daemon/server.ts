@@ -334,7 +334,7 @@ class Listener {
       send(socket, { id: readableId(text), ok: false, message: parsed.message });
       return;
     }
-    const { id, command } = parsed.value;
+    const { id, command, from } = parsed.value;
     if (this.stopping !== null) {
       send(socket, { id, ok: false, message: "The daemon is stopping." });
       return;
@@ -342,7 +342,7 @@ class Listener {
     const request: InFlight = { socket, id, answered: false, done: Promise.resolve() };
     this.inFlight.add(request);
     request.done = this.daemon
-      .handle(command)
+      .handle(command, from)
       .catch(failed)
       .then((answer) => this.answer(request, answer));
   }

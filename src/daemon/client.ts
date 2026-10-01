@@ -8,6 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { Socket } from "node:net";
+import type { SessionId } from "../core/ids";
 import { type Command, encode, MAX_LINE, parseReply } from "../protocol/protocol";
 import type { Answer } from "./daemon";
 import { ALREADY_RUNNING } from "./lock";
@@ -26,6 +27,8 @@ export type ClientOptions = {
   newId?: () => string;
   // Replaces the socket folder in /tmp, for tests.
   socketFolder?: string;
+  // The agent session this call comes from, if any, from SKELCREW_SESSION.
+  from?: SessionId;
 };
 
 const defaultStartTimeoutMs = 10_000;
@@ -55,7 +58,9 @@ export async function request(
   const connect = () => (shared === null ? open(path) : openIfOwn(path));
 
   const id = (options.newId ?? randomUUID)();
-  const line = encode({ id, command });
+  const line = encode(
+    options.from === undefined ? { id, command } : { id, from: options.from, command },
+  );
   if (Buffer.byteLength(line) - 1 > MAX_LINE) {
     return {
       ok: false,

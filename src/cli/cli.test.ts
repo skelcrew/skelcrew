@@ -1415,6 +1415,94 @@ describe("skelcrew done", () => {
   });
 });
 
+// An agent's CLI has SKELCREW_SESSION set, and sends it with every call.
+describe("a call from an agent's session", () => {
+  test("is refused for the developer's commands, and says how to run them yourself", async () => {
+    const repo = await repoWithDaemon([], waitingSpec());
+    expect(await cli(repo, ["approve", "1"], { session: "agent-1" })).toEqual(
+      refused(
+        "Only the developer can approve. This call came from agent-1, an agent's session. If you are the developer, unset SKELCREW_SESSION and run it again.",
+      ),
+    );
+    expect((await cli(repo, ["status"])).out).toContain("- #1 CSV export: approve its spec.");
+  });
+
+  test("still reads the status", async () => {
+    const repo = await repoWithDaemon([], waitingSpec());
+    expect((await cli(repo, ["status"], { session: "agent-1" })).code).toBe(0);
+  });
+});
+
+describe("skelcrew ask", () => {
+  // #1's background spec agent, agent-1, is running.
+  const agentRunning = () => backgroundSpecced(TaskId.parse(1), "CSV export").slice(0, 5);
+
+  test("puts the agent's question to you, and you answer it", async () => {
+    const repo = await repoWithDaemon([], agentRunning());
+    const asked = await cli(repo, ["ask", "1", "Include deleted rows?", "Yes", "No"], {
+      session: "agent-1",
+    });
+    expect(asked).toEqual(
+      said(["Asked the developer about #1. Their answer will come to this session."]),
+    );
+    expect((await cli(repo, ["status"])).out).toContain(
+      "- #1 CSV export: answer its question: Include deleted rows?",
+    );
+    expect(await cli(repo, ["answer", "#1", "No"])).toEqual(said(["Answered #1."]));
+    expect((await cli(repo, ["status"])).out).not.toContain(
+      "- #1 CSV export: answer its question: Include deleted rows?",
+    );
+  });
+
+  test("asks for two to four options", async () => {
+    const repo = await repoWithDaemon([], agentRunning());
+    const example =
+      'Give two to four options, like this: skelcrew ask 1 "Include deleted rows?" "Yes" "No"';
+    expect(
+      await cli(repo, ["ask", "1", "Include deleted rows?", "Yes"], { session: "agent-1" }),
+    ).toEqual(refused(example));
+    const five = ["A", "B", "C", "D", "E"];
+    expect(await cli(repo, ["ask", "1", "Which?", ...five], { session: "agent-1" })).toEqual(
+      refused(example),
+    );
+  });
+
+  test("refuses without SKELCREW_SESSION", async () => {
+    const repo = await repoWithDaemon([], agentRunning());
+    expect(await cli(repo, ["ask", "1", "Include deleted rows?", "Yes", "No"])).toEqual(
+      refused(
+        "SKELCREW_SESSION isn't set. Set it to the session `skelcrew claim` printed, like this:",
+        "SKELCREW_SESSION=<session> skelcrew ask 1",
+      ),
+    );
+  });
+
+  test("is in the help", async () => {
+    const repo = await repoWithDaemon();
+    const help = (await cli(repo, ["--help"])).out.join("\n");
+    expect(help).toContain('skelcrew ask <task> "<question>" "<option>" "<option>"');
+    expect(help).toContain('skelcrew answer <task> "<answer>"');
+  });
+});
+
+describe("skelcrew answer", () => {
+  test("says what to type when the answer is missing or not in quotes", async () => {
+    const repo = await repoWithDaemon();
+    expect(await cli(repo, ["answer", "1"])).toEqual(
+      refused('Say your answer, like this: skelcrew answer 1 "No"'),
+    );
+    expect(await cli(repo, ["answer", "1", "Not", "now"])).toEqual(
+      refused('Put the answer in quotes, like this: skelcrew answer 1 "No"'),
+    );
+  });
+
+  test("passes on the refusal when no question is open", async () => {
+    const repo = await repoWithDaemon();
+    await cli(repo, ["add", "CSV export"]);
+    expect(await cli(repo, ["answer", "1", "No"])).toEqual(refused("#1 has no open question."));
+  });
+});
+
 describe("skelcrew give-up", () => {
   test("gives up with a reason", async () => {
     const repo = throwawayRepo(dirs);

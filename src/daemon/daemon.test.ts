@@ -427,6 +427,99 @@ describe("log", () => {
   });
 });
 
+// Every request from an agent's CLI carries its session, from
+// SKELCREW_SESSION. Only the developer approves, sends work back, claims or
+// changes tasks, so those are refused from an agent. Not a lock: an agent
+// that removes the variable looks like the developer (see the spec's open
+// questions).
+describe("an agent's identity", () => {
+  const agent = SessionId.parse("agent-1");
+  // #1's background spec agent, agent-1, is running.
+  const withRunningAgent = () => {
+    const store = EventStore.open(":memory:");
+    const saved = store.appendTask(
+      backgroundSpecced(task(1), "CSV export").slice(0, 5),
+      { sent: [], answered: [] },
+      [],
+    );
+    if (!saved.ok) throw new Error(saved.reason);
+    return store;
+  };
+
+  test("refuses the developer's commands from an agent, and says how to run them yourself", async () => {
+    const { daemon } = open(withBackgroundSpecs("CSV export"));
+    expect(await daemon.handle({ type: "approve", task: task(1) }, agent)).toEqual({
+      ok: false,
+      message:
+        "Only the developer can approve. This call came from agent-1, an agent's session. If you are the developer, unset SKELCREW_SESSION and run it again.",
+    });
+    const theirs: Command[] = [
+      { type: "reject", task: task(1), note: "Add totals." },
+      { type: "spec", task: task(1) },
+      { type: "drop", task: task(1) },
+      { type: "retry", task: task(1) },
+      { type: "claim", task: task(1) },
+      { type: "answer", task: task(1), text: "No" },
+      add("PDF export"),
+      { type: "project_new", name: "Reports", goal: "Export what the page shows." },
+      { type: "project_add", task: task(1), project: "reports" },
+      { type: "project_remove", task: task(1) },
+      { type: "project_archive", project: "reports" },
+      { type: "project_unarchive", project: "reports" },
+    ];
+    for (const command of theirs) {
+      const answer = await daemon.handle(command, agent);
+      expect(answer.ok).toBe(false);
+      expect(!answer.ok && answer.message).toStartWith("Only the developer can ");
+    }
+    // Nothing changed: the spec still waits for your approval.
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, waitingOnYou: "spec_approval" }],
+    });
+  });
+
+  test("lets an agent read the status and a task's log", async () => {
+    const { daemon } = open(withBackgroundSpecs("CSV export"));
+    expect((await daemon.handle({ type: "status" }, agent)).ok).toBe(true);
+    expect((await daemon.handle({ type: "log", task: task(1) }, agent)).ok).toBe(true);
+  });
+
+  test("lets an agent ask you a question, which waits for your answer", async () => {
+    const { daemon } = open(withRunningAgent());
+    const question: Command = {
+      type: "ask",
+      task: task(1),
+      session: agent,
+      text: "Include deleted rows?",
+      options: ["Yes", "No"],
+    };
+    expect(await daemon.handle(question, agent)).toEqual({ ok: true, result: {} });
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, waitingOnYou: "answer", question: "Include deleted rows?" }],
+    });
+
+    expect(await ok(daemon, { type: "answer", task: task(1), text: "No" })).toEqual({});
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, waitingOnYou: null }],
+    });
+  });
+
+  test("passes on the core's refusal of a question without two to four options", async () => {
+    const { daemon } = open(withRunningAgent());
+    const question: Command = {
+      type: "ask",
+      task: task(1),
+      session: agent,
+      text: "Include deleted rows?",
+      options: ["Yes"],
+    };
+    expect(await daemon.handle(question, agent)).toEqual({
+      ok: false,
+      message: "A question needs two to four options.",
+    });
+  });
+});
+
 describe("status", () => {
   test("says which project each task is in, or none", async () => {
     const { daemon } = open(withProject("reports"));

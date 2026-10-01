@@ -24,10 +24,44 @@ describe("parseRequest", () => {
       { type: "project_remove", task: 12 },
       { type: "project_archive", project: "Reports page" },
       { type: "project_unarchive", project: "reports-page" },
+      {
+        type: "ask",
+        task: 12,
+        session: "s1",
+        text: "Include deleted rows?",
+        options: ["Yes", "No"],
+      },
+      { type: "answer", task: 12, text: "No" },
     ];
     for (const command of commands) {
       const line = JSON.stringify({ id: "r1", command });
       expect<unknown>(parseRequest(line)).toEqual({ ok: true, value: { id: "r1", command } });
+    }
+  });
+
+  // An agent's CLI sends its session with every request, so the daemon can
+  // refuse what only the developer may do.
+  test("reads the agent session a request comes from", () => {
+    const line = JSON.stringify({ id: "r1", from: "s1", command: { type: "approve", task: 12 } });
+    expect<unknown>(parseRequest(line)).toEqual({
+      ok: true,
+      value: { id: "r1", from: "s1", command: { type: "approve", task: 12 } },
+    });
+  });
+
+  test("refuses a question with a blank option, or an answer with no text", () => {
+    for (const command of [
+      {
+        type: "ask",
+        task: 12,
+        session: "s1",
+        text: "Include deleted rows?",
+        options: ["Yes", " "],
+      },
+      { type: "ask", task: 12, session: "s1", text: " ", options: ["Yes", "No"] },
+      { type: "answer", task: 12, text: " " },
+    ]) {
+      expect(parseRequest(JSON.stringify({ id: "r1", command })).ok).toBe(false);
     }
   });
 
