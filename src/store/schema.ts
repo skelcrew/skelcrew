@@ -22,6 +22,7 @@ import type {
   Question,
   SourceRef,
   Spec,
+  SpecWorktree,
   TaskEvent,
   Usage,
   Worktree,
@@ -63,6 +64,8 @@ const blockReason: z.ZodType<BlockReason> = z.discriminatedUnion("kind", [
 
 const worktree: z.ZodType<Worktree> = z.strictObject({ path: z.string(), branch: z.string() });
 
+const specWorktree: z.ZodType<SpecWorktree> = z.strictObject({ path: z.string() });
+
 const sourceRef: z.ZodType<SourceRef> = z.strictObject({ label: z.string(), url: z.string() });
 
 const branchFacts: z.ZodType<BranchFacts> = z.strictObject({
@@ -100,6 +103,10 @@ const taskEvents = {
   "task.ready": {},
   "task.dispatch_started": { request: z.number().int().positive() },
   "task.worktree_created": { worktree, request: z.number().int().positive() },
+  "task.spec_worktree_created": {
+    worktree: specWorktree,
+    request: z.number().int().positive(),
+  },
   "task.dispatched": { session: SessionId },
   "task.claimed": { session: SessionId, request: z.number().int().positive().nullable() },
   "task.question_asked": { question },
@@ -145,6 +152,7 @@ const taskEventUnion = z.discriminatedUnion("type", [
   task("task.ready"),
   task("task.dispatch_started"),
   task("task.worktree_created"),
+  task("task.spec_worktree_created"),
   task("task.dispatched"),
   task("task.claimed"),
   task("task.question_asked"),
@@ -214,7 +222,13 @@ const projectEvent: z.ZodType<ProjectEvent> = projectEventUnion;
 const request = z.number().int().min(1);
 
 const commands = {
-  start_spec_session: { taskId: TaskId, request, note: z.string().nullable() },
+  start_spec_session: {
+    taskId: TaskId,
+    request,
+    note: z.string().nullable(),
+    worktree: specWorktree,
+  },
+  create_spec_worktree: { taskId: TaskId, request },
   create_worktree: { taskId: TaskId, request, build: z.number().int().min(1) },
   start_develop_session: { taskId: TaskId, request, worktree, spec, brief },
   send_to_session: { session: SessionId, text: z.string() },
@@ -222,6 +236,7 @@ const commands = {
   run_gate: { taskId: TaskId, request, gate: gateName, worktree, head: CommitSha },
   merge: { taskId: TaskId, request, worktree, head: CommitSha },
   remove_worktree: { worktree },
+  remove_spec_worktree: { worktree: specWorktree },
   revert: { taskId: TaskId, request, commit: CommitSha },
 } satisfies Record<Command["type"], z.ZodRawShape>;
 
@@ -231,6 +246,7 @@ function command<K extends keyof typeof commands>(type: K) {
 
 const commandUnion = z.discriminatedUnion("type", [
   command("start_spec_session"),
+  command("create_spec_worktree"),
   command("create_worktree"),
   command("start_develop_session"),
   command("send_to_session"),
@@ -238,6 +254,7 @@ const commandUnion = z.discriminatedUnion("type", [
   command("run_gate"),
   command("merge"),
   command("remove_worktree"),
+  command("remove_spec_worktree"),
   command("revert"),
 ]);
 

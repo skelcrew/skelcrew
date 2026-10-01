@@ -65,6 +65,14 @@ const claim = (session: string): Input => ({
   type: "claim",
   session: SessionId.parse(session),
 });
+// A start makes the spec worktree first, on request 1. The spec agent then
+// starts in it, on request 2.
+const specCopy: Input = {
+  by: "plugin",
+  type: "spec_worktree_created",
+  request: 1,
+  worktree: { path: "/repo/.skelcrew/spec-worktrees/1" },
+};
 const started = (request: number, session: string): Input => ({
   by: "plugin",
   type: "session_started",
@@ -81,10 +89,11 @@ describe("the loop", () => {
     loop.send(one, add());
     expect(loop.startWaiting()).toEqual([one]);
 
-    expect(loop.task(one)).toMatchObject({ phase: "spec", step: { kind: "starting", request: 1 } });
-    expect(tools.commands).toEqual([
-      { type: "start_spec_session", taskId: one, request: 1, note: null },
-    ]);
+    expect(loop.task(one)).toMatchObject({
+      phase: "spec",
+      step: { kind: "creating_worktree", request: 1, claimedBy: null },
+    });
+    expect(tools.commands).toEqual([{ type: "create_spec_worktree", taskId: one, request: 1 }]);
     const saved = store.loadTasks();
     expect(saved.ok && saved.tasks.get(one)).toEqual(loop.task(one));
   });
@@ -124,12 +133,15 @@ describe("the loop", () => {
     loop.send(one, add());
     loop.startWaiting();
     expect(loop.startsInFlight).toBe(1);
+    // The spec worktree answers the first start, and the agent's is next.
+    loop.send(one, specCopy);
+    expect(loop.startsInFlight).toBe(1);
 
     // A reply to some other request doesn't answer this start.
     loop.send(one, started(7, "stray"));
     expect(loop.startsInFlight).toBe(1);
 
-    loop.send(one, started(1, "s1"));
+    loop.send(one, started(2, "s1"));
     expect(loop.startsInFlight).toBe(0);
   });
 
@@ -139,12 +151,13 @@ describe("the loop", () => {
     loop.send(one, add());
     loop.send(two, add());
     expect(loop.startWaiting()).toEqual([one]);
+    loop.send(one, specCopy);
 
     loop.send(one, { by: "human", type: "drop" });
     expect(loop.startWaiting()).toEqual([]);
 
     // #1's agent comes up late: it's stopped, and its slot is free again.
-    loop.send(one, started(1, "late"));
+    loop.send(one, started(2, "late"));
     expect(tools.commands).toContainEqual({
       type: "stop_session",
       session: SessionId.parse("late"),
@@ -165,9 +178,10 @@ describe("the loop", () => {
     loop.send(one, add());
     loop.send(two, add());
     loop.startWaiting();
+    loop.send(one, specCopy);
 
     full = true;
-    expect(loop.send(one, started(1, "s1")).ok).toBe(false);
+    expect(loop.send(one, started(2, "s1")).ok).toBe(false);
     full = false;
 
     // #1's agent is up, but the task never recorded it. Its slot stays taken
@@ -243,6 +257,7 @@ describe("the loop", () => {
     first.send(one, add());
     first.send(two, add());
     expect(first.startWaiting()).toEqual([one]);
+    first.send(one, specCopy);
 
     // The loop restarts before #1's agent reports in.
     const reopened = Loop.open(config, new Recorded(), store);
@@ -251,7 +266,7 @@ describe("the loop", () => {
     expect(reopened.loop.startWaiting()).toEqual([]);
 
     // Its reply still clears the start after the restart.
-    reopened.loop.send(one, started(1, "s1"));
+    reopened.loop.send(one, started(2, "s1"));
     expect(reopened.loop.startsInFlight).toBe(0);
   });
 
@@ -265,9 +280,7 @@ describe("the loop", () => {
     const tools = new Recorded();
     const reopened = Loop.open(config, tools, store);
     if (!reopened.ok) throw new Error(reopened.reason);
-    expect(tools.commands).toEqual([
-      { type: "start_spec_session", taskId: one, request: 1, note: null },
-    ]);
+    expect(tools.commands).toEqual([{ type: "create_spec_worktree", taskId: one, request: 1 }]);
   });
 
   test("stops a late agent after a crash, so it can't run past the limit", () => {
@@ -276,13 +289,14 @@ describe("the loop", () => {
     first.send(one, add());
     first.send(two, add());
     first.startWaiting();
+    first.send(one, specCopy);
     first.send(one, { by: "human", type: "drop" });
 
     // #1's agent comes up late. The loop saves that, then dies before it
     // can stop the agent.
     const dying = Loop.open(config, new Dying(), store);
     if (!dying.ok) throw new Error(dying.reason);
-    expect(() => dying.loop.send(one, started(1, "late"))).toThrow("The daemon died.");
+    expect(() => dying.loop.send(one, started(2, "late"))).toThrow("The daemon died.");
 
     const tools = new Recorded();
     const reopened = Loop.open(config, tools, store);
@@ -301,9 +315,7 @@ describe("the loop", () => {
     const tools = new Recorded();
     const reopened = Loop.open(config, tools, store);
     if (!reopened.ok) throw new Error(reopened.reason);
-    expect(tools.commands).toEqual([
-      { type: "start_spec_session", taskId: one, request: 1, note: null },
-    ]);
+    expect(tools.commands).toEqual([{ type: "create_spec_worktree", taskId: one, request: 1 }]);
   });
 
   // Found by review: each stop still in progress freed a slot, so with a
@@ -314,7 +326,8 @@ describe("the loop", () => {
     loop.send(one, add());
     loop.send(two, add());
     expect(loop.startWaiting()).toEqual([one]);
-    loop.send(one, started(1, "s1"));
+    loop.send(one, specCopy);
+    loop.send(one, started(2, "s1"));
     loop.send(one, { by: "human", type: "drop" });
 
     // #1's agent is still being stopped, so its slot stays taken.
@@ -329,7 +342,8 @@ describe("the loop", () => {
     first.send(one, add());
     first.send(two, add());
     first.startWaiting();
-    first.send(one, started(1, "s1"));
+    first.send(one, specCopy);
+    first.send(one, started(2, "s1"));
     first.send(one, { by: "human", type: "drop" });
 
     const tools = new SlowStops();
@@ -353,7 +367,8 @@ describe("the loop", () => {
     loop.send(one, add());
     loop.send(two, add());
     loop.startWaiting();
-    loop.send(one, started(1, "s1"));
+    loop.send(one, specCopy);
+    loop.send(one, started(2, "s1"));
     expect(() => loop.send(one, { by: "human", type: "drop" })).toThrow("kill: EPERM");
     expect(loop.startWaiting()).toEqual([two]);
   });
@@ -365,11 +380,12 @@ describe("the loop", () => {
     const loop = new Loop({ ...config, maxRunning: 2 }, tools, EventStore.open(":memory:"));
     loop.send(one, add());
     loop.startWaiting();
+    loop.send(one, specCopy);
     loop.send(one, { by: "human", type: "drop" });
     // #1's agent comes up late, and its start reply arrives twice: each
     // brings a stop for the same agent.
-    loop.send(one, started(1, "s1"));
-    loop.send(one, started(1, "s1"));
+    loop.send(one, started(2, "s1"));
+    loop.send(one, started(2, "s1"));
     loop.send(two, add());
     loop.send(TaskId.parse(3), add());
     expect(loop.startWaiting()).toEqual([two]);
@@ -419,12 +435,13 @@ describe("the loop", () => {
     const first = new Loop(config, new Unfinished(), store);
     first.send(one, add());
     first.startWaiting();
-    first.send(one, started(1, "s1"));
+    first.send(one, specCopy);
+    first.send(one, started(2, "s1"));
 
     const tools = new Recorded();
     const reopened = Loop.open(config, tools, store);
     if (!reopened.ok) throw new Error(reopened.reason);
-    reopened.loop.send(one, started(1, "s1-again"));
+    reopened.loop.send(one, started(2, "s1-again"));
     expect(tools.commands).toContainEqual({
       type: "stop_session",
       session: SessionId.parse("s1-again"),

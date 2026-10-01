@@ -9,7 +9,17 @@
 // `bun test --update-snapshots`, and say why in the commit.
 
 import { describe, expect, test } from "bun:test";
-import { agentOf, awaited, commit, config, head, id, spec, worktree } from "../test/fixtures";
+import {
+  agentOf,
+  awaited,
+  commit,
+  config,
+  head,
+  id,
+  spec,
+  specWorktree,
+  worktree,
+} from "../test/fixtures";
 import { decideTask } from "./decide";
 import { evolveTask } from "./evolve";
 import { CommitSha, type ProjectId, SessionId, TaskId } from "./ids";
@@ -49,6 +59,12 @@ const started =
   (t) => ({ by: "plugin", type: "session_started", request: awaited(t), session });
 const submitSpec: Step = (t) => ({ by: "agent", type: "submit_spec", session: agentOf(t), spec });
 const approveSpec: Input = { by: "human", type: "approve_spec" };
+const specWorktreeCreated: Step = (t) => ({
+  by: "plugin",
+  type: "spec_worktree_created",
+  request: awaited(t),
+  worktree: specWorktree,
+});
 const worktreeCreated: Step = (t) => ({
   by: "plugin",
   type: "worktree_created",
@@ -79,6 +95,7 @@ const toInProgress: Step[] = [
   add,
   requestSpec,
   start,
+  specWorktreeCreated,
   started(specAgent),
   submitSpec,
   approveSpec,
@@ -90,9 +107,10 @@ const toInProgress: Step[] = [
 const toInProgressLines = [
   'human add "CSV export" → task.created',
   "human request_spec → task.spec_requested",
-  "system start → task.dispatch_started | start_spec_session",
+  "system start → task.dispatch_started | create_spec_worktree",
+  "plugin spec_worktree_created → task.spec_worktree_created | start_spec_session",
   "plugin session_started → task.spec_session_started",
-  "agent submit_spec → task.specced | stop_session",
+  "agent submit_spec → task.specced | stop_session, remove_spec_worktree",
   "human approve_spec → task.ready",
   "system start → task.dispatch_started | create_worktree",
   "plugin worktree_created → task.worktree_created | start_develop_session",
@@ -250,7 +268,7 @@ describe("golden stories", () => {
       "plugin merged → task.merged | remove_worktree",
       "human revert → task.revert_started | revert",
       "plugin reverted → task.reverted",
-      "system start → task.dispatch_started | start_spec_session",
+      "system start → task.dispatch_started | create_spec_worktree",
     ]);
     expect(told.task).toMatchObject({
       phase: "spec",

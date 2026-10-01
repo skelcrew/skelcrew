@@ -15,12 +15,14 @@ import { attemptsLeft, criticalFiles, specComplete, withinSafetyCap } from "./co
 import {
   agentUnderWay,
   awaitedRequest,
+  heldSpecWorktree,
   heldWorktree,
   inputNames,
   phaseNames,
   runningSession,
   type TaskIn,
   waitingForAgent,
+  waitingForSpecWorktree,
   waitingForWorktree,
 } from "./task";
 import type {
@@ -38,6 +40,7 @@ import type {
   Question,
   SessionId,
   Spec,
+  SpecWorktree,
   Task,
   Timestamp,
   Usage,
@@ -142,6 +145,10 @@ function lateReply(task: Task, input: Input, ctx: Context): Decision | null {
   if (input.type === "worktree_created" && !waitingForWorktree(task, input.request)) {
     if (heldWorktree(task) === input.worktree.path) return ctx.accept([]);
     return ctx.accept([], [removeWorktree(input.worktree)]);
+  }
+  if (input.type === "spec_worktree_created" && !waitingForSpecWorktree(task, input.request)) {
+    if (heldSpecWorktree(task)?.path === input.worktree.path) return ctx.accept([]);
+    return ctx.accept([], [removeSpecWorktree(input.worktree)]);
   }
   if (input.type === "session_started" && !waitingForAgent(task, input.request)) {
     if (runningSession(task) === input.session) return ctx.accept([]);
@@ -273,7 +280,7 @@ function inAnyPhase(task: Task, input: AnyPhaseInput, ctx: Context): Decision {
     // counts as a failed start. The late start reply is then cleaned up.
     case "session_crashed":
       if (runningSession(task) === input.session) {
-        return accept([blocked("session_failed", input.message)]);
+        return accept([blocked("session_failed", input.message)], removeHeldSpecWorktree(task));
       }
       if (waitingForAgent(task, input.request)) {
         return accept([blocked("session_failed", input.message)], stopForBlock(task));
@@ -292,7 +299,7 @@ function inIdea(task: TaskIn<"idea">, input: Input, ctx: Context): Decision {
       return acceptSpec(input.spec, "human", ctx, [{ type: "task.spec_requested" }]);
 
     case "claim":
-      return claimAgent(task, ctx, input.session);
+      return claimSpec(task, ctx, input.session);
 
     default:
       return wrongPhase(task, input, ctx);
@@ -304,28 +311,57 @@ function inSpec(task: TaskIn<"spec">, input: Input, ctx: Context): Decision {
   const { step } = task;
 
   switch (input.type) {
-    case "start": {
-      return startAgent(task, ctx, {
-        type: "start_spec_session",
-        taskId: task.id,
-        request: next(task),
-        note: task.note,
-      });
+    // The spec agent's spec worktree is made first.
+    case "start":
+      return startAgent(task, ctx, createSpecWorktree(task));
+
+    // Your session writes the spec, so no agent is started. It still gets
+    // a spec worktree first.
+    case "claim":
+      return claimSpec(task, ctx, input.session);
+
+    // For your claim, your session works in it now, and no agent is
+    // started. Otherwise the spec agent starts in it.
+    case "spec_worktree_created": {
+      const claimedBy = step.kind === "creating_worktree" ? step.claimedBy : null;
+      if (claimedBy !== null) {
+        return accept([
+          { type: "task.spec_worktree_created", worktree: input.worktree, request: input.request },
+        ]);
+      }
+      return accept(
+        [{ type: "task.spec_worktree_created", worktree: input.worktree, request: next(task) }],
+        [
+          {
+            type: "start_spec_session",
+            taskId: task.id,
+            request: next(task),
+            note: task.note,
+            worktree: input.worktree,
+          },
+        ],
+      );
     }
 
-    // Your session writes the spec, so no agent is started.
-    case "claim":
-      return claimAgent(task, ctx, input.session);
+    case "spec_worktree_failed":
+      if (!waitingForSpecWorktree(task, input.request)) {
+        return reject(notWaitingFor(task, input.request));
+      }
+      return accept([blocked("worktree_failed", input.message)]);
 
     case "session_started":
       return accept([{ type: "task.spec_session_started", session: input.session }]);
 
-    // The agent didn't start. A crash of a running agent is session_crashed.
+    // The agent didn't start. Its spec worktree is removed, since nothing
+    // in it is kept. A crash of a running agent is session_crashed.
     case "session_failed":
       if (step.kind !== "starting" || step.request !== input.request) {
         return reject(notWaitingFor(task, input.request));
       }
-      return accept([blocked("session_failed", input.message)]);
+      return accept(
+        [blocked("session_failed", input.message)],
+        [removeSpecWorktree(step.worktree)],
+      );
 
     // A spec submitted before your answer would ignore it.
     case "submit_spec":
@@ -337,14 +373,14 @@ function inSpec(task: TaskIn<"spec">, input: Input, ctx: Context): Decision {
         step.kind === "claimed" ? "your session" : "agent",
         ctx,
         [],
-        [stopSession(input.session)],
+        [stopSession(input.session), ...removeHeldSpecWorktree(task)],
       );
 
     // Your spec replaces the agent's work, so a running agent is stopped.
     case "provide_spec": {
       const session = runningSession(task);
       const stop = session !== null ? [stopSession(session)] : [];
-      return acceptSpec(input.spec, "human", ctx, [], stop);
+      return acceptSpec(input.spec, "human", ctx, [], [...stop, ...removeHeldSpecWorktree(task)]);
     }
 
     case "approve_spec":
@@ -681,25 +717,34 @@ function startAgent(
   );
 }
 
-// Your session takes the task where it needs no worktree first: in Spec,
-// or in In progress after a retry. It is the agent from now on.
+// Your session takes the task in In progress after a retry, in the
+// worktree the task kept. It is the agent from now on.
+function claimAgent(task: TaskIn<"in_progress">, ctx: Context, session: SessionId): Decision {
+  return refusedStart(task, ctx) ?? ctx.accept([{ type: "task.claimed", session, request: null }]);
+}
+
+// Your session takes the spec. It gets a spec worktree first, and is the
+// spec agent once that exists.
 //
 // Claiming an Idea asks for its spec too, in the same decision. Two
 // separate inputs would let the scheduler start an agent in between. The
 // spec request comes first even when the claim blocks the task instead,
 // since only a task past Idea can be blocked.
-function claimAgent(
-  task: TaskIn<"idea" | "spec" | "in_progress">,
-  ctx: Context,
-  session: SessionId,
-): Decision {
+function claimSpec(task: TaskIn<"idea" | "spec">, ctx: Context, session: SessionId): Decision {
   const asked: EventBody[] = task.phase === "idea" ? [{ type: "task.spec_requested" }] : [];
   const refused = refusedStart(task, ctx);
   if (refused === null) {
-    return ctx.accept([...asked, { type: "task.claimed", session, request: null }]);
+    return ctx.accept(
+      [...asked, { type: "task.claimed", session, request: next(task) }],
+      [createSpecWorktree(task)],
+    );
   }
   if (!refused.ok) return refused;
   return ctx.accept([...asked, ...refused.events], refused.commands);
+}
+
+function createSpecWorktree(task: Task): Command {
+  return { type: "create_spec_worktree", taskId: task.id, request: next(task) };
 }
 
 // The decision for a start or a claim that can't go ahead, or null if it
@@ -735,17 +780,26 @@ function safetyCapBlock(task: Task, usage: Usage, ctx: Context): EventBody | nul
   return { type: "task.blocked", reason: { kind: "safety_cap", usage: used } };
 }
 
-// What blocking stops: a running agent, and in Ready, the worktree made for
-// an agent that is still starting, since a blocked task there can't hold
-// one. Anything still being created is cleaned up by its late reply.
+// What blocking stops: a running agent, its spec worktree in Spec, and in
+// Ready, the worktree made for an agent that is still starting, since a
+// blocked task there can't hold one. Anything still being created is
+// cleaned up by its late reply.
 function stopForBlock(task: Task): Command[] {
   const commands: Command[] = [];
   const session = runningSession(task);
   if (session !== null) commands.push(stopSession(session));
+  commands.push(...removeHeldSpecWorktree(task));
   if (task.phase === "ready" && task.step.kind === "starting_session") {
     commands.push(removeWorktree(task.step.worktree));
   }
   return commands;
+}
+
+// Removes the spec worktree the task holds, if any. Nothing in it is kept,
+// so this goes wherever the spec agent or your claim goes.
+function removeHeldSpecWorktree(task: Task): Command[] {
+  const held = heldSpecWorktree(task);
+  return held === null ? [] : [removeSpecWorktree(held)];
 }
 
 // A failed gate or merge. While attempts remain, a failed gate goes to the
@@ -831,6 +885,10 @@ function stopSession(session: SessionId): Command {
 
 function removeWorktree(worktree: Worktree): Command {
   return { type: "remove_worktree", worktree };
+}
+
+function removeSpecWorktree(worktree: SpecWorktree): Command {
+  return { type: "remove_spec_worktree", worktree };
 }
 
 function startDevelop(

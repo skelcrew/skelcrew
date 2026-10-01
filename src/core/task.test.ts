@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { commit, head, id, session, spec, worktree } from "../test/fixtures";
+import { commit, head, id, session, spec, specWorktree, worktree } from "../test/fixtures";
 import { evolveTask } from "./evolve";
 import { CommitSha, SessionId, TaskId } from "./ids";
 import { waitingOnYou } from "./task";
@@ -26,27 +26,28 @@ const specRunning: EventBody[] = [
   created,
   { type: "task.spec_requested" },
   { type: "task.dispatch_started", request: 1 },
+  { type: "task.spec_worktree_created", worktree: specWorktree, request: 2 },
   { type: "task.spec_session_started", session },
 ];
 const specced: EventBody[] = [...specRunning, { type: "task.specced", spec, by: "agent" }];
 const inChecks: EventBody[] = [
   ...specced,
   { type: "task.ready" },
-  { type: "task.dispatch_started", request: 2 },
-  { type: "task.worktree_created", worktree, request: 3 },
+  { type: "task.dispatch_started", request: 3 },
+  { type: "task.worktree_created", worktree, request: 4 },
   { type: "task.dispatched", session },
   {
     type: "task.done_reported",
     branch: { head, commits: 1, changedFiles: ["src/auth/a.ts"] },
     gate: "local",
-    request: 4,
+    request: 5,
   },
   { type: "task.gate_passed", gate: "local", next: null },
   { type: "task.checks_passed" },
 ];
 const done: EventBody[] = [
   ...inChecks,
-  { type: "task.merge_started", request: 5 },
+  { type: "task.merge_started", request: 6 },
   { type: "task.merged", commit },
 ];
 
@@ -87,7 +88,7 @@ describe("waitingOnYou", () => {
   test("is a failed revert", () => {
     const task = replay(
       ...done,
-      { type: "task.revert_started", reason: "Broken.", request: 6 },
+      { type: "task.revert_started", reason: "Broken.", request: 7 },
       { type: "task.revert_failed", summary: "Conflicts in export.ts" },
     );
     expect(waitingOnYou(task)).toBe("revert_failed");

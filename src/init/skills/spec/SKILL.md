@@ -45,22 +45,18 @@ here on.
 
 **Then claim it.** Run `skelcrew claim` with the task number the developer gave, or the one
 `skelcrew add` printed, such as `skelcrew claim 12`. This makes this session the one working
-on the task.
+on the task. Claiming a task still in Idea asks for its spec too.
 
-If the claim is refused because the task is in Idea, ask for its spec yourself, then claim
-again:
+If the claim is refused, tell the developer why, in one sentence, and stop. For example, the
+task may already have a spec, or too many agents may be working already.
 
-```
-skelcrew spec 12
-skelcrew claim 12
-```
+The claim prints a folder to work in: a fresh copy of main, made for this spec. Read the
+code there, and run commands there, such as `cd <folder> && git log`. Your own checkout
+may be on another branch, or hold work that isn't on main, and the spec is for main.
+Anything you change in the folder is thrown away once the spec is submitted.
 
-If the claim is refused for any other reason, tell the developer why, in one sentence, and
-stop. For example, the task may already have a spec, or too many agents may be working
-already.
-
-The claim prints your session. Submitting the spec needs it. Your harness may start each
-shell command fresh, so setting it once may not last. Put
+The claim also prints your session. Submitting the spec needs it. Your harness may start
+each shell command fresh, so setting it once may not last. Put
 `SKELCREW_SESSION=<the session it printed>` in front of the submit command, as shown below.
 
 ## 2. Work out the spec with the developer

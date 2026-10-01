@@ -313,7 +313,13 @@ export class Loop {
 
 type Start = Extract<
   Command,
-  { type: "start_spec_session" | "start_develop_session" | "create_worktree" }
+  {
+    type:
+      | "start_spec_session"
+      | "start_develop_session"
+      | "create_worktree"
+      | "create_spec_worktree";
+  }
 >;
 // A crash names the request that started the agent, so it answers the start
 // too: the agent may crash before its start reply arrives, or instead of it.
@@ -325,7 +331,9 @@ type StartReply = Extract<
       | "session_failed"
       | "session_crashed"
       | "worktree_created"
-      | "worktree_failed";
+      | "worktree_failed"
+      | "spec_worktree_created"
+      | "spec_worktree_failed";
   }
 >;
 
@@ -333,7 +341,8 @@ function startsSomething(command: Command): command is Start {
   return (
     command.type === "start_spec_session" ||
     command.type === "start_develop_session" ||
-    command.type === "create_worktree"
+    command.type === "create_worktree" ||
+    command.type === "create_spec_worktree"
   );
 }
 
@@ -343,7 +352,9 @@ function answersStart(input: Input): input is StartReply {
     input.type === "session_failed" ||
     input.type === "session_crashed" ||
     input.type === "worktree_created" ||
-    input.type === "worktree_failed"
+    input.type === "worktree_failed" ||
+    input.type === "spec_worktree_created" ||
+    input.type === "spec_worktree_failed"
   );
 }
 

@@ -211,7 +211,9 @@ describe("defaultSkills", () => {
       "It is a task number when it is only digits, with or without a # in front, such as 12 or #12.",
     );
     expect(text).toContain("skelcrew add '<title>' --spec");
-    expect(text).toContain("skelcrew spec 12");
+    // A claim on an Idea asks for its spec itself, so the skill needs no
+    // `skelcrew spec 12` first.
+    expect(text).toContain("Claiming a task still in Idea asks for its spec too.");
     expect(text).toContain("Don't ask the developer to confirm first.");
   });
 

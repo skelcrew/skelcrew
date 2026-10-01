@@ -205,12 +205,14 @@ describe("skelcrew spec", () => {
 });
 
 describe("skelcrew claim", () => {
-  test("prints the session, and how to report with it", async () => {
+  test("prints where to work, the session, and how to report with it", async () => {
     const repo = await repoWithDaemon();
     await cli(repo, ["add", "CSV export", "--spec"]);
+    const copy = join(realpathSync(repo), ".skelcrew", "spec-worktrees", "1-csv-export");
     expect(await cli(repo, ["claim", "1"])).toEqual(
       said([
         "Claimed #1. It is in Spec.",
+        `Work in ${copy}, a fresh copy of main.`,
         "Your session is you-1.",
         "Set SKELCREW_SESSION to it for each report, like this:",
         "SKELCREW_SESSION=you-1 skelcrew submit 1",
@@ -838,6 +840,7 @@ describe("skelcrew log", () => {
     // Claiming in Ready makes a worktree, and your session works in it.
     await cli(repo, ["claim", "1"]);
     const worktree = join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export");
+    const specCopy = join(realpathSync(repo), ".skelcrew", "spec-worktrees", "1-csv-export");
 
     const outcome = await cli(repo, ["log", "#1"]);
     expect(outcome.code).toBe(0);
@@ -850,12 +853,14 @@ describe("skelcrew log", () => {
       "Added to project reports: CSV export.",
       "A spec was asked for.",
       "Skelcrew picked it to start.",
+      "A copy of main was made for its spec, at /repo/.skelcrew/spec-worktrees/1.",
       "A spec agent started as agent-1.",
       "The agent sent a spec: Add a CSV export button to the reports page.",
       "Acceptance criteria:",
       "- Clicking Export downloads a CSV of the visible rows.",
       "You sent the spec back: Add totals.",
       "You claimed it, as you-1.",
+      `A copy of main was made for its spec, at ${specCopy}.`,
       "The agent sent a spec: Add a CSV export button to the reports page.",
       "Acceptance criteria:",
       "- Clicking Export downloads a CSV of the visible rows.",
@@ -874,8 +879,15 @@ describe("skelcrew log", () => {
     const scope = `Add a CSV export. ${"x".repeat(400_000)}`;
     const big = { scope, acceptance: ["It downloads."], openQuestions: [] };
     const stamp = { v: 1 as const, taskId: TaskId.parse(1), at: 1 };
+    // Each round makes a spec worktree, then starts its agent in it.
     const rounds = [1, 2, 3].flatMap((n): TaskEvent[] => [
-      { ...stamp, type: "task.dispatch_started", request: n },
+      { ...stamp, type: "task.dispatch_started", request: 2 * n - 1 },
+      {
+        ...stamp,
+        type: "task.spec_worktree_created",
+        worktree: { path: `/s/${n}` },
+        request: 2 * n,
+      },
       { ...stamp, type: "task.spec_session_started", session: SessionId.parse(`agent-${n}`) },
       { ...stamp, type: "task.specced", spec: big, by: "agent" },
       { ...stamp, type: "task.spec_sent_back", note: "Shorter, please." },
@@ -892,18 +904,20 @@ describe("skelcrew log", () => {
     const outcome = await cli(repo, ["log", "1"]);
     expect(outcome.err).toEqual([]);
     expect(outcome.code).toBe(0);
-    // Two specs fit. The first spec, its agent's start, the request for a
-    // spec and the task's creation are left out.
-    expect(outcome.out[0]).toBe("5 older events are left out.");
+    // Two specs fit. The first spec, its agent's start and spec worktree,
+    // the request for a spec and the task's creation are left out.
+    expect(outcome.out[0]).toBe("6 older events are left out.");
     expect(outcome.out.slice(1).map((line) => line.slice(18, 60))).toEqual([
       "You sent the spec back: Shorter, please.",
       "Skelcrew picked it to start.",
+      "A copy of main was made for its spec, at /",
       "A spec agent started as agent-2.",
       "The agent sent a spec: Add a CSV export. x",
       "Acceptance criteria:",
       "- It downloads.",
       "You sent the spec back: Shorter, please.",
       "Skelcrew picked it to start.",
+      "A copy of main was made for its spec, at /",
       "A spec agent started as agent-3.",
       "The agent sent a spec: Add a CSV export. x",
       "Acceptance criteria:",

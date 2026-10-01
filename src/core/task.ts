@@ -2,7 +2,7 @@
 // decide, the scheduler, the simulator and the tests all read tasks through
 // these, so a question about a task has one answer.
 
-import type { Input, Phase, SessionId, Task } from "./types";
+import type { Input, Phase, SessionId, SpecWorktree, Task } from "./types";
 
 // A task in one phase, for example TaskIn<"checks">.
 export type TaskIn<P extends Phase> = Extract<Task, { phase: P }>;
@@ -43,6 +43,8 @@ export const inputNames: Record<Input["type"], string> = {
   external_move: "a move in another tool",
   worktree_created: "a new worktree",
   worktree_failed: "a failed worktree",
+  spec_worktree_created: "a new spec worktree",
+  spec_worktree_failed: "a failed spec worktree",
   session_started: "a started agent",
   session_failed: "an agent that didn't start",
   gate_result: "a gate result",
@@ -78,6 +80,7 @@ export function agentUnderWay(task: Task): boolean {
   if (runningSession(task) !== null) return true;
   switch (task.phase) {
     case "spec":
+      return task.step.kind === "starting" || task.step.kind === "creating_worktree";
     case "in_progress":
       return task.step.kind === "starting";
     case "ready":
@@ -109,6 +112,20 @@ export function heldWorktree(task: Task): string | null {
   return null;
 }
 
+// The spec worktree the task holds, or null if it holds none: while its
+// spec agent starts or runs, or while your claimed session works in it.
+export function heldSpecWorktree(task: Task): SpecWorktree | null {
+  if (task.phase !== "spec") return null;
+  switch (task.step.kind) {
+    case "starting":
+    case "running":
+    case "claimed":
+      return task.step.worktree;
+    default:
+      return null;
+  }
+}
+
 // Waiting for the worktree of this request. A reply to an earlier request
 // is late, even while the task waits for a newer one.
 export function waitingForWorktree(task: Task, request: number): boolean {
@@ -116,6 +133,13 @@ export function waitingForWorktree(task: Task, request: number): boolean {
     task.phase === "ready" &&
     task.step.kind === "creating_worktree" &&
     task.step.request === request
+  );
+}
+
+// Waiting for the spec worktree of this request, as above.
+export function waitingForSpecWorktree(task: Task, request: number): boolean {
+  return (
+    task.phase === "spec" && task.step.kind === "creating_worktree" && task.step.request === request
   );
 }
 

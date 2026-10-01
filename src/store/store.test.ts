@@ -248,7 +248,13 @@ describe("commands not yet carried out", () => {
     taskId: id,
     at: 1,
   };
-  const start: Command = { type: "start_spec_session", taskId: id, request: 1, note: null };
+  const start: Command = {
+    type: "start_spec_session",
+    taskId: id,
+    request: 1,
+    note: null,
+    worktree: { path: "/repo/.skelcrew/spec-worktrees/1" },
+  };
   const none = { sent: [], answered: [] };
 
   test("are kept across closing and reopening the file, until carried out", () => {

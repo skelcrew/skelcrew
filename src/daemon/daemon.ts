@@ -15,13 +15,14 @@
 
 import { randomInt } from "node:crypto";
 import { ProjectId, SessionId, TaskId } from "../core/ids";
-import { phaseNames, runningSession, waitingOnYou } from "../core/task";
+import { heldSpecWorktree, phaseNames, runningSession, waitingOnYou } from "../core/task";
 import type {
   BlockReason,
   Config,
   Command as CoreCommand,
   Input,
   Spec,
+  SpecWorktree,
   Task,
   TaskEvent,
   Worktree,
@@ -412,10 +413,11 @@ export class Daemon {
         const session = named.data;
         const claimed = this.send(command.task, { by: "human", type: "claim", session });
         if (!claimed.ok) return claimed;
-        // In Ready, the claim waits for the task's worktree, since that is
-        // where the session works.
+        // The claim waits for the task's worktree, since that is where the
+        // session works: a spec worktree in Spec, the build's in Ready.
         const making = (task: Task) =>
-          task.phase === "ready" && task.step.kind === "creating_worktree";
+          (task.phase === "spec" || task.phase === "ready") &&
+          task.step.kind === "creating_worktree";
         return {
           later: {
             task: command.task,
@@ -557,8 +559,13 @@ export class Daemon {
       };
     }
     switch (task.phase) {
-      case "spec":
-        return { ok: true, result: { session, phase: "spec", spec: task.spec, note: task.note } };
+      case "spec": {
+        const worktree = heldSpecWorktree(task);
+        return {
+          ok: true,
+          result: { session, phase: "spec", worktree, spec: task.spec, note: task.note },
+        };
+      }
       case "in_progress": {
         // Why the task is back, if a gate or a merge failed.
         const failure = task.brief.failure?.summary;
@@ -717,6 +724,15 @@ class DaemonTools implements Tools {
       void this.removeWorktree(this.versionControl, command.worktree, finished);
       return;
     }
+    if (command.type === "create_spec_worktree" && this.versionControl !== null) {
+      if (this.deliver === null) this.held.push([command, finished]);
+      else void this.createSpecWorktree(this.versionControl, command, finished);
+      return;
+    }
+    if (command.type === "remove_spec_worktree" && this.versionControl !== null) {
+      void this.removeSpecWorktree(this.versionControl, command.worktree, finished);
+      return;
+    }
     if (
       command.type === "run_gate" &&
       command.gate === "local" &&
@@ -822,6 +838,42 @@ class DaemonTools implements Tools {
     finished();
   }
 
+  private async removeSpecWorktree(
+    versionControl: VersionControl,
+    worktree: SpecWorktree,
+    finished: () => void,
+  ): Promise<void> {
+    try {
+      await versionControl.removeSpecWorktree(worktree);
+    } catch {
+      // As above: it stays where it is.
+    }
+    finished();
+  }
+
+  // As below, for the copy of main a spec is written in.
+  private async createSpecWorktree(
+    versionControl: VersionControl,
+    command: Extract<CoreCommand, { type: "create_spec_worktree" }>,
+    finished: () => void,
+  ): Promise<void> {
+    const { taskId, request } = command;
+    let input: Input;
+    try {
+      const made = await versionControl.createSpecWorktree({
+        taskId,
+        title: this.titleOf(taskId),
+      });
+      input = made.ok
+        ? { by: "plugin", type: "spec_worktree_created", request, worktree: made.value }
+        : { by: "plugin", type: "spec_worktree_failed", request, message: made.message };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      input = { by: "plugin", type: "spec_worktree_failed", request, message };
+    }
+    this.send(taskId, input, finished);
+  }
+
   // The plugin never throws, but a failure here must still reach the core,
   // which would otherwise wait for the worktree for ever.
   private async createWorktree(
@@ -858,6 +910,16 @@ class DaemonTools implements Tools {
             type: "worktree_failed",
             request: command.request,
             message: `Making worktrees ${notYet}.`,
+          },
+        ];
+      case "create_spec_worktree":
+        return [
+          command.taskId,
+          {
+            by: "plugin",
+            type: "spec_worktree_failed",
+            request: command.request,
+            message: `Making spec worktrees ${notYet}.`,
           },
         ];
       case "start_spec_session":
@@ -906,6 +968,7 @@ class DaemonTools implements Tools {
       case "stop_session":
       case "send_to_session":
       case "remove_worktree":
+      case "remove_spec_worktree":
         return null;
     }
   }
