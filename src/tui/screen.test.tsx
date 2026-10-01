@@ -128,6 +128,22 @@ test("groups with no tasks are left out, and so is the count of none done", asyn
 });
 
 // The test screen is 100 columns wide.
+test("a title uses the room the screen has", async () => {
+  const title = "Open a normal pull request, and close it after merge";
+  const { lastFrame } = open(loaded([task(9, title, "idea")]));
+  await tick();
+  expect(lines(lastFrame())).toContain(`› #9 ${title} Idea`);
+});
+
+test("a title too long for the screen is cut, so what the task needs still shows", async () => {
+  const title = "A very long title ".repeat(8).trim();
+  const { lastFrame } = open(loaded([task(9, title, "spec", { waitingOnYou: "spec_approval" })]));
+  await tick();
+  const row = (lastFrame() ?? "").split("\n").find((line) => line.startsWith("›")) ?? "";
+  expect(row.trimEnd().endsWith("…  approve its spec")).toBe(true);
+  expect(row.length).toBeLessThanOrEqual(100);
+});
+
 test("a long repository path is cut from the left, so the header stays one line", async () => {
   const repo = `/tmp/${"deep/".repeat(30)}app`;
   const one = [task(14, "CSV export", "spec", { waitingOnYou: "spec_approval" })];

@@ -1,7 +1,7 @@
 // The TUI: one row per task, grouped by what you need to do. It asks the
 // daemon for the status every second, so the list stays current.
 
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput, useStdout } from "ink";
 import { useEffect, useState } from "react";
 import type { TaskView } from "../cli/status";
 import type { TaskId } from "../core/ids";
@@ -16,7 +16,7 @@ type Props = {
   refreshMs?: number;
 };
 
-const TITLE_WIDTH = 32;
+const MIN_TITLE = 20;
 
 export function Screen({ repo, quit, load, refreshMs = 1000 }: Props) {
   // null until the first answer.
@@ -25,6 +25,7 @@ export function Screen({ repo, quit, load, refreshMs = 1000 }: Props) {
   const [problem, setProblem] = useState<string | null>(null);
   // The task the cursor is on, so it stays there when tasks move.
   const [cursor, setCursor] = useState<TaskId | null>(null);
+  const { stdout } = useStdout();
 
   useEffect(() => {
     let busy = false;
@@ -72,10 +73,17 @@ export function Screen({ repo, quit, load, refreshMs = 1000 }: Props) {
   });
 
   const all = groups.flatMap((group) => group.rows);
+  const number = Math.max(0, ...all.map((row) => `#${row.task.task}`.length));
+  const project = Math.max(0, ...all.map((row) => (row.task.project ?? "").length));
+  const says = Math.max(0, ...all.map((row) => row.says.length));
+  // Titles get the room the other columns leave, with two spaces between
+  // columns, but never less than MIN_TITLE.
+  const others = 1 + 2 + number + 2 + (project > 0 ? project + 2 : 0) + 2 + says;
+  const room = Math.max(MIN_TITLE, (stdout.columns ?? 80) - others);
   const widths = {
-    number: Math.max(0, ...all.map((row) => `#${row.task.task}`.length)),
-    title: Math.min(TITLE_WIDTH, Math.max(0, ...all.map((row) => row.task.title.length))),
-    project: Math.max(0, ...all.map((row) => (row.task.project ?? "").length)),
+    number,
+    title: Math.min(room, Math.max(0, ...all.map((row) => row.task.title.length))),
+    project,
   };
   const done = finished(tasks ?? []);
 

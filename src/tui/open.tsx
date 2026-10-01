@@ -19,8 +19,18 @@ export async function open(repo: string): Promise<void> {
   const home = homedir();
   const shown = repo.startsWith(`${home}/`) ? `~${repo.slice(home.length)}` : repo;
   // The screen draws over the terminal, like vim, and leaves it as it was.
-  const app = render(<Screen repo={shown} quit={() => app.unmount()} load={load} />, {
-    alternateScreen: true,
-  });
-  await app.waitUntilExit();
+  // Ink's own alternateScreen keeps the cursor where the prompt was, so the
+  // screen started halfway down. This clears it and starts at the top.
+  process.stdout.write(`${ALTERNATE_SCREEN}${CLEAR}${TOP_LEFT}`);
+  try {
+    const app = render(<Screen repo={shown} quit={() => app.unmount()} load={load} />);
+    await app.waitUntilExit();
+  } finally {
+    process.stdout.write(MAIN_SCREEN);
+  }
 }
+
+const ALTERNATE_SCREEN = "\u001B[?1049h";
+const MAIN_SCREEN = "\u001B[?1049l";
+const CLEAR = "\u001B[2J";
+const TOP_LEFT = "\u001B[H";
