@@ -16,11 +16,13 @@ export type Step =
   | { kind: "confirm"; question: string; run: Run }
   | { kind: "type"; prompt: string; run: (text: string) => Run };
 
-// `hint` is the word in the keys line. A key without one isn't listed.
-// `onTask` keys act on one task, so they work on the task screen too.
+// `hint` is the word in the keys line, which shows the keys used most. A
+// key without one is only in the list ? shows, with its `help`. `onTask`
+// keys act on one task, so they work on the task screen too.
 type Action = {
   key: string;
   hint: string | null;
+  help: string;
   onTask: boolean;
   // The step for the task under the cursor. null when the key needs a
   // task and there is none.
@@ -35,16 +37,24 @@ const adding = (prompt: string, flags: string[]): Step => ({
 });
 
 export const actions: Action[] = [
-  { key: "a", hint: "add", onTask: false, step: () => adding("Add an idea:", []) },
+  {
+    key: "a",
+    hint: "add",
+    help: "add an idea",
+    onTask: false,
+    step: () => adding("Add an idea:", []),
+  },
   {
     key: "A",
     hint: null,
+    help: "add an idea and ask for its spec",
     onTask: false,
     step: () => adding("Add an idea and ask for its spec:", ["--spec"]),
   },
   {
     key: "y",
     hint: "approve",
+    help: "approve a spec, or a merge once you confirm",
     onTask: true,
     step: (task) => {
       if (task === undefined) return null;
@@ -62,6 +72,7 @@ export const actions: Action[] = [
   {
     key: "x",
     hint: "send back",
+    help: "send it back, with what should change",
     onTask: true,
     step: (task) =>
       task === undefined
@@ -78,7 +89,8 @@ export const actions: Action[] = [
   },
   {
     key: "s",
-    hint: "spec",
+    hint: null,
+    help: "ask for a spec",
     onTask: true,
     step: (task) =>
       task === undefined
@@ -94,7 +106,8 @@ export const actions: Action[] = [
   },
   {
     key: "r",
-    hint: "retry",
+    hint: null,
+    help: "retry a blocked task",
     onTask: true,
     step: (task) =>
       task === undefined
@@ -110,7 +123,8 @@ export const actions: Action[] = [
   },
   {
     key: "D",
-    hint: "drop",
+    hint: null,
+    help: "drop the task, once you confirm",
     onTask: true,
     step: (task) =>
       task === undefined

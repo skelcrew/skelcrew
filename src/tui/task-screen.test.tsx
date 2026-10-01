@@ -7,7 +7,7 @@ import { TaskId } from "../core/ids";
 import type { TaskEvent } from "../core/types";
 import { taskEvent } from "../store/schema";
 import type { LoadedLog } from "./task-screen";
-import { KEYS, lines, loaded, open, task, tick } from "./testing";
+import { KEYS, lines, loaded, open, TASK_KEYS, task, tick } from "./testing";
 
 const ENTER = "\r";
 const ESC = "\u001B";
@@ -52,9 +52,6 @@ const blocked = task(9, "Dark mode", "in_progress", {
 const logOf =
   (events: TaskEvent[], leftOut = 0) =>
   async (): Promise<LoadedLog> => ({ ok: true, events, leftOut });
-
-const TASK_KEYS =
-  "j k scroll · y approve · x send back · s spec · r retry · D drop · esc back · q quit";
 
 test("enter opens the task: what it needs, its spec, and its history, newest first", async () => {
   const { lastFrame, stdin } = open({ load: loaded([specToApprove]), loadLog: logOf(history) });
@@ -136,7 +133,7 @@ test("a merge links its pull request, and o opens it in the browser", async () =
   const shown = lines(lastFrame());
   expect(shown).toContain("Read it on GitHub: https://github.com/o/r/pull/71");
   expect(shown.at(-1)).toBe(
-    "j k scroll · y approve · x send back · s spec · r retry · D drop · o open PR · esc back · q quit",
+    "j k scroll · y approve · x send back · o open PR · esc back · ? keys · q quit",
   );
   stdin.write("o");
   await tick();

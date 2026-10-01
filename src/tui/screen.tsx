@@ -10,6 +10,7 @@ import type { Outcome } from "../cli/cli";
 import type { TaskView } from "../cli/status";
 import type { TaskId } from "../core/ids";
 import { actions, hints, type Run } from "./actions";
+import { keyLines } from "./keys";
 import { type Line, ListLine, listLines, widthsOf } from "./list";
 import { counts, groupsOf } from "./rows";
 import { firstShown } from "./scroll";
@@ -56,6 +57,8 @@ export function Screen(props: Props) {
   const [open, setOpen] = useState<TaskId | null>(null);
   const [log, setLog] = useState<LoadedLog | null>(null);
   const [taskTop, setTaskTop] = useState(0);
+  // Whether ? has opened the list of keys, over the list or a task.
+  const [showKeys, setShowKeys] = useState(false);
   const [mode, setMode] = useState<Mode>({ kind: "list" });
   // The command running now, and what the last one said.
   const [running, setRunning] = useState<Run | null>(null);
@@ -162,6 +165,14 @@ export function Screen(props: Props) {
       quit();
       return;
     }
+    if (showKeys) {
+      if (key.escape || input === "?") setShowKeys(false);
+      return;
+    }
+    if (input === "?") {
+      setShowKeys(true);
+      return;
+    }
 
     if (opened !== undefined) {
       const scroll = (to: (top: number) => number) =>
@@ -203,8 +214,11 @@ export function Screen(props: Props) {
     groups.flatMap((group) => group.rows),
     columns,
   );
-  const body: Line[] =
-    opened === undefined ? listLines(tasks, groups) : taskLines(opened, log, columns);
+  const body: Line[] = showKeys
+    ? keyLines()
+    : opened === undefined
+      ? listLines(tasks, groups)
+      : taskLines(opened, log, columns);
 
   // What sits under the body, each part after a blank line, keys last.
   const problemLines = problem === null ? [] : problem.split("\n");
@@ -217,7 +231,7 @@ export function Screen(props: Props) {
 
   // A body taller than its room scrolls. Its first and last lines then say
   // what is hidden above and below: tasks on the list, such as "↓ 25 more",
-  // and lines on a task's screen.
+  // and lines on a task's screen or the list of keys.
   const room = height === undefined ? body.length : height - 1 - below;
   let shown = body;
   let above: string | null = null;
@@ -228,7 +242,11 @@ export function Screen(props: Props) {
     let first: number;
     let hiddenAbove: string;
     let hiddenBelow: string;
-    if (opened === undefined) {
+    if (showKeys) {
+      first = 0;
+      hiddenAbove = "";
+      hiddenBelow = more(body.length - fits, "line");
+    } else if (opened === undefined) {
       const cursorLine = Math.max(
         0,
         body.findIndex((line) => line.kind === "row" && line.row.task.task === selected),
@@ -251,14 +269,19 @@ export function Screen(props: Props) {
     under = hiddenBelow === "" ? "" : `↓ ${hiddenBelow}`;
   }
 
-  const keys =
-    opened === undefined
-      ? `j k move · enter open · ${hints("list")} · q quit`
-      : `j k scroll · ${hints("task")}${typeof opened.pullRequest === "string" ? " · o open PR" : ""} · esc back · q quit`;
+  // The keys used most. ? shows the rest.
+  const pullRequest = typeof opened?.pullRequest === "string" ? " · o open PR" : "";
+  const keys = showKeys
+    ? "esc close · q quit"
+    : opened === undefined
+      ? `j k move · enter open · ${hints("list")} · ? keys · q quit`
+      : `j k scroll · ${hints("task")}${pullRequest} · esc back · ? keys · q quit`;
 
   return (
     <Box flexDirection="column" {...(height === undefined ? {} : { height })}>
-      {opened === undefined ? (
+      {showKeys ? (
+        <Text bold>Keys</Text>
+      ) : opened === undefined ? (
         // A long path is cut from the left, so its last folders show.
         <Box flexShrink={0}>
           <Box flexShrink={0} marginRight={2}>

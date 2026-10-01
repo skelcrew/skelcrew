@@ -69,8 +69,12 @@ export function lines(frame: string | undefined): string[] {
 }
 
 // The keys line at the bottom of the screen.
-export const KEYS =
-  "j k move · enter open · a add · y approve · x send back · s spec · r retry · D drop · q quit";
+// The keys line at the bottom of the list: the keys used most, and ? for
+// the rest.
+export const KEYS = "j k move · enter open · a add · y approve · x send back · ? keys · q quit";
+
+// The keys line on a task's own screen.
+export const TASK_KEYS = "j k scroll · y approve · x send back · esc back · ? keys · q quit";
 
 type Options = {
   repo?: string;
