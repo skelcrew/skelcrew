@@ -33,7 +33,7 @@ do, lose work, or leave the developer looking at a wrong picture.
 ## Limits hold
 
 8. **Never more than `max_running` agents at once**, counting spec and develop sessions.
-9. **The scheduler never starts a blocked task, or a task in a parked project.**
+9. **The scheduler never starts a blocked task, or a task in an archived project.**
 10. **A task never gets more failed rounds than `max_attempts`** without being blocked.
 11. **A task over its safety cap is blocked.** The cap counts from the last retry.
 12. **At most one open question per task.**
