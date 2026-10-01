@@ -6,6 +6,7 @@ import type { Outcome } from "../cli/cli";
 import type { TaskView } from "../cli/status";
 import { TaskId } from "../core/ids";
 import { type Loaded, Screen } from "./screen";
+import type { LoadedLog } from "./task-screen";
 
 // Ink reads keys and runs effects on a later tick, so a test waits for it.
 export const tick = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -69,7 +70,7 @@ export function lines(frame: string | undefined): string[] {
 
 // The keys line at the bottom of the screen.
 export const KEYS =
-  "j k move · a add · y approve · x send back · s spec · r retry · D drop · q quit";
+  "j k move · enter open · a add · y approve · x send back · s spec · r retry · D drop · q quit";
 
 type Options = {
   repo?: string;
@@ -77,6 +78,8 @@ type Options = {
   quit?: () => void;
   refreshMs?: number;
   send?: (args: string[]) => Promise<Outcome>;
+  loadLog?: (task: TaskId) => Promise<LoadedLog>;
+  browse?: (url: string) => void;
   // The terminal's height in lines. Without it, the screen is as tall as
   // what it shows.
   height?: number;
@@ -91,6 +94,8 @@ export function open(options: Options = {}) {
       load={options.load ?? loaded(tasks)}
       refreshMs={options.refreshMs ?? 1000}
       send={send}
+      loadLog={options.loadLog ?? (async () => ({ ok: true, events: [], leftOut: 0 }))}
+      browse={options.browse ?? (() => {})}
       {...(options.height === undefined ? {} : { height: options.height })}
     />,
   );
