@@ -11,12 +11,14 @@ import type { Done } from "./version-control";
 export type AgentKind = "spec" | "develop";
 
 // One agent to start: its task, what it does, Skelcrew's name for its
-// session, and the worktree it works in.
+// session, the worktree it works in, and the repository's check commands
+// from workflow.yml, which a develop agent may run before it reports done.
 export type AgentToStart = {
   taskId: TaskId;
   kind: AgentKind;
   session: SessionId;
   cwd: string;
+  checks: string[];
 };
 
 // How to start it: the command for the session runner, the environment it

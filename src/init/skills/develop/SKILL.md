@@ -25,6 +25,10 @@ conversation, and these steps change:
 - Run `skelcrew log 12` to read the spec you build from. It also shows why the task is back,
   if it is, such as a failed check or the developer's note.
 - `SKELCREW_SESSION` is already set, so leave it out in front of commands.
+- You may edit files in your worktree, commit, and run the checks in `.skelcrew/workflow.yml`.
+  Anything else follows the developer's settings, and is refused if they don't allow it.
+  Commit with `git add` and `git commit`, written just like that. A form such as
+  `git -c … commit` is refused.
 - Ask the developer with `skelcrew ask`, not in the conversation. Ask one question at a time,
   with two to four options, the one you recommend first:
 

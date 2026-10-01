@@ -46,10 +46,6 @@ export class ClaudeCode implements Harness {
 
   launch(agent: AgentToStart): Launch {
     const id = this.newId();
-    // Every agent may run skelcrew, to report. A develop agent may also edit
-    // in its worktree. "//" starts an absolute path in a permission rule.
-    const allow = ["Bash(skelcrew *)"];
-    if (agent.kind === "develop") allow.push(`Edit(/${agent.cwd}/**)`);
     return {
       command: [
         "claude",
@@ -58,7 +54,7 @@ export class ClaudeCode implements Harness {
         "--permission-mode",
         "dontAsk",
         "--settings",
-        JSON.stringify({ permissions: { allow } }),
+        JSON.stringify({ permissions: permissionsFor(agent) }),
         // "--background" tells the skill nobody is watching, before it does
         // anything else.
         `/${agent.kind} ${agent.taskId} --background`,
@@ -92,6 +88,34 @@ export class ClaudeCode implements Harness {
     }
     return null;
   }
+}
+
+// What the profile adds to the developer's settings. Every agent may run
+// skelcrew, to report. A develop agent may also build: edit in its
+// worktree, commit to its branch, and run the repository's checks.
+//
+// Deny rules come first in Claude Code, so a commit that skips the hooks
+// stays refused: --no-verify anywhere, or -n on its own. A -n inside
+// combined short flags, such as -nm, isn't caught. The develop skill
+// forbids skipping hooks, and Skelcrew's own gates run the checks anyway.
+function permissionsFor(agent: AgentToStart): { allow: string[]; deny?: string[] } {
+  if (agent.kind === "spec") return { allow: ["Bash(skelcrew *)"] };
+  return {
+    allow: [
+      "Bash(skelcrew *)",
+      // "//" starts an absolute path in a permission rule.
+      `Edit(/${agent.cwd}/**)`,
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      ...agent.checks.map((check) => `Bash(${check})`),
+    ],
+    deny: [
+      "Bash(git commit *--no-verify*)",
+      "Bash(git commit -n *)",
+      "Bash(git commit * -n *)",
+      "Bash(git commit * -n)",
+    ],
+  };
 }
 
 // The parts of a transcript line that matter here. Anything else in a line

@@ -213,6 +213,11 @@ describe("defaultSkills", () => {
       expect(text).toContain("skelcrew ask 12");
       expect(text).toContain("Then end your turn and wait.");
     }
+    // Its permissions match commands as written, so git -c … commit is
+    // refused where git commit is allowed.
+    expect(flat("develop")).toContain(
+      "Commit with `git add` and `git commit`, written just like that.",
+    );
   });
 
   test("the spec skill claims the task and submits the spec", () => {

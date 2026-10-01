@@ -25,12 +25,16 @@ function configFolder(): string {
 const claude = (configDir = "/nowhere") => new ClaudeCode({ configDir, newId: () => uuid });
 
 describe("launch", () => {
-  test("starts a develop agent on its task, refusing what would ask, with edits in its worktree", () => {
+  // Building means editing in its worktree, committing to its branch, and
+  // running the repository's checks, which come from workflow.yml on main.
+  // Skipping the hooks with --no-verify, or -n, stays refused.
+  test("starts a develop agent that may edit, commit and run the checks, and refuses the rest", () => {
     const launch = claude().launch({
       taskId: TaskId.parse(12),
       kind: "develop",
       session: SessionId.parse("session-k3x9q2mf"),
       cwd: worktree,
+      checks: ["bun run check"],
     });
     expect(launch).toEqual({
       command: [
@@ -40,7 +44,23 @@ describe("launch", () => {
         "--permission-mode",
         "dontAsk",
         "--settings",
-        JSON.stringify({ permissions: { allow: ["Bash(skelcrew *)", `Edit(/${worktree}/**)`] } }),
+        JSON.stringify({
+          permissions: {
+            allow: [
+              "Bash(skelcrew *)",
+              `Edit(/${worktree}/**)`,
+              "Bash(git add *)",
+              "Bash(git commit *)",
+              "Bash(bun run check)",
+            ],
+            deny: [
+              "Bash(git commit *--no-verify*)",
+              "Bash(git commit -n *)",
+              "Bash(git commit * -n *)",
+              "Bash(git commit * -n)",
+            ],
+          },
+        }),
         "/develop 12 --background",
       ],
       env: { SKELCREW_TASK: "12", SKELCREW_SESSION: "session-k3x9q2mf" },
@@ -51,12 +71,13 @@ describe("launch", () => {
   // A spec agent shouldn't change code, so it gets no edits. Every agent
   // may run skelcrew, to report: the daemon refuses your commands from an
   // agent, and the ask rules for approve and reject refuse them here.
-  test("starts a spec agent that may run skelcrew, with no edits added", () => {
+  test("starts a spec agent that may run skelcrew, with no edits, commits or checks added", () => {
     const launch = claude().launch({
       taskId: TaskId.parse(12),
       kind: "spec",
       session: SessionId.parse("session-k3x9q2mf"),
       cwd: specCopy,
+      checks: ["bun run check"],
     });
     expect(launch.command).toEqual([
       "claude",
