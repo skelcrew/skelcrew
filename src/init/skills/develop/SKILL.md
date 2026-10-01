@@ -14,6 +14,30 @@ If you weren't given a task number, ask the developer which task, and wait. Don'
 
 The commands below use 12 as the task number. Use the number the developer gave instead.
 
+## If Skelcrew started you
+
+Skelcrew starts a develop agent in the background with `--background` after the task number,
+such as `/develop 12 --background`. If that's how you were started, nobody is watching this
+conversation, and these steps change:
+
+- Don't claim the task. You already hold it. Skip step 1. You work in the folder you started
+  in: the task's worktree, on its branch.
+- Run `skelcrew log 12` to read the spec you build from. It also shows why the task is back,
+  if it is, such as a failed check or the developer's note.
+- `SKELCREW_SESSION` is already set, so leave it out in front of commands.
+- Ask the developer with `skelcrew ask`, not in the conversation. Ask one question at a time,
+  with two to four options, the one you recommend first:
+
+  ```
+  skelcrew ask 12 'Keep the old export too?' 'No, replace it (recommended)' 'Yes'
+  ```
+
+  Then end your turn and wait. The developer's answer arrives as your next message.
+- Write your report as your last message. The developer reads it when they step into this
+  session, or in the task's log.
+
+Everything else in this skill holds.
+
 ## 1. Claim the task
 
 First check that the task's spec is approved. Run:
