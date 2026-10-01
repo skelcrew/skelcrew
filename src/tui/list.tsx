@@ -19,12 +19,14 @@ export type ProjectWidths = { name: number; open: number };
 
 // The list's lines: each group after a blank line, then the count of done
 // and dropped tasks. tasks is null until the first answer.
-export function listLines(tasks: TaskView[] | null, groups: Group[]): Line[] {
+// `project` names the project shown, when the list shows only one.
+export function listLines(tasks: TaskView[] | null, groups: Group[], project?: string): Line[] {
   const lines: Line[] = [];
   if (tasks !== null && tasks.length === 0) {
+    const where = project === undefined ? "" : ` in ${project}`;
     lines.push(
       { kind: "blank" },
-      { kind: "text", text: "No tasks yet. Press a to add one.", dim: false },
+      { kind: "text", text: `No tasks${where} yet. Press a to add one.`, dim: false },
     );
   }
   for (const group of groups) {

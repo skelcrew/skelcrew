@@ -27,15 +27,28 @@ type Action = {
   onTask: boolean;
   // The step for the task under the cursor. null when the key needs a
   // task and there is none.
-  step: (task: TaskView | undefined) => Step | null;
+  step: (task: TaskView | undefined, where: Where) => Step | null;
 };
 
-const adding = (prompt: string, flags: string[]): Step => ({
-  kind: "type",
-  prompt,
-  // After --, a title that starts with a dash is still a title.
-  run: (title) => ({ args: ["add", ...flags, "--", title], doing: "Adding…", task: null }),
-});
+// Where the screen is: the project whose tasks it shows, or null for all
+// tasks, or for the tasks in no project.
+export type Where = { project: { id: string; name: string } | null };
+
+// An idea goes into the project the screen shows, if any.
+const adding = (spec: boolean, where: Where): Step => {
+  const project = where.project;
+  const into = project === null ? "" : ` to ${project.name}`;
+  const flags = [
+    ...(spec ? ["--spec"] : []),
+    ...(project === null ? [] : ["--project", project.id]),
+  ];
+  return {
+    kind: "type",
+    prompt: `Add an idea${into}${spec ? " and ask for its spec" : ""}:`,
+    // After --, a title that starts with a dash is still a title.
+    run: (title) => ({ args: ["add", ...flags, "--", title], doing: "Adding…", task: null }),
+  };
+};
 
 export const actions: Action[] = [
   {
@@ -43,14 +56,14 @@ export const actions: Action[] = [
     hint: "add",
     help: "add an idea",
     onTask: false,
-    step: () => adding("Add an idea:", []),
+    step: (_, where) => adding(false, where),
   },
   {
     key: "A",
     hint: null,
     help: "add an idea and ask for its spec",
     onTask: false,
-    step: () => adding("Add an idea and ask for its spec:", ["--spec"]),
+    step: (_, where) => adding(true, where),
   },
   {
     key: "y",
