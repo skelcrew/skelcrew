@@ -296,7 +296,7 @@ from the socket is checked with Zod first, and a line over 1 MB is refused.
 | File | What it holds |
 | --- | --- |
 | `cli.ts` | `run(args, context)`: one command line in, the lines to print and the exit code out. Tests call it as a function. It checks every argument with Zod, finds the repository's main folder through git, so from inside a task's worktree, which holds its own copy of `.skelcrew/`, it still reaches the main folder's daemon, and sends the command through the client. It checks each answer against the shape that command expects. `reject` says where the work went back to, such as "Sent #3 back to Spec with your note." |
-| `status.ts` | What `skelcrew status` answers and prints. The TUI reads the same answer, so both say the same thing about a task. It lists what waits on you first, including a task nobody is working on, with the command to claim it, since Skelcrew doesn't start agents itself yet. A merge that waits for you comes with the link to its draft pull request, or the reason there is none. If the draft shows older work, the line says so and why. Then it lists tasks by project and phase, each with the session working on it, if any. |
+| `status.ts` | What `skelcrew status` answers and prints. The TUI reads the same answer, so both say the same thing about a task. It lists what waits on you first, including a task nobody is working on, with the command to claim it, since Skelcrew doesn't start agents itself yet. A merge that waits for you comes with the link to its draft pull request, or the reason there is none. If the draft shows older work, the line says so and why. Then it lists tasks by project and phase, each with the session working on it, if any. Projects come by name. An archived one says `(archived)`, and one with no tasks says `no tasks yet`, so every project shows. |
 | `log.ts` | What `skelcrew log` prints: one line per event, oldest first, with its time and what happened in plain words, like `2026-09-30 10:02  You claimed it, as you-2.` A submitted spec shows its scope, then its acceptance criteria as a list under it. The daemon answers with the task's saved events, and the CLI checks them against the store's event schema before it words them. A reply must stay under 1 MB, and every spec is saved whole. So for a long-lived task, the daemon sends only the newest events that fit and says how many older ones it left out. The CLI prints that count first, like `4 older events are left out.` |
 | `init.ts` | `skelcrew init`: finds the top of the git repository, runs `initRepository` there, and prints its report in a few lines. The report says which checks and setup commands it chose, what init created, linked, updated and left alone, what to do by hand, the warnings, whether Claude Code will ask before `skelcrew approve`, and the next step. A failed init prints its reason and exits 1. |
 | `help.ts` | What `--help` prints, for the program and each command. `skelcrew submit --help` shows the spec's JSON form, since the spec skill sends agents there. |
@@ -307,6 +307,12 @@ An agent's reports (`submit`, `done`, `give-up`) take the session from `SKELCREW
 `claim` prints the session, with the command to report with, like
 `SKELCREW_SESSION=session-k3x9q2mf skelcrew submit 12`. The session goes in front of each command,
 since each shell in a harness starts without the variable.
+
+`project` has five commands of its own: `new`, `add`, `remove`, `archive` and `unarchive`.
+A project is named by its name or its ID, and a name of several words needs no quotes, as
+in `skelcrew project archive Reports page`. `new` is the exception, since its goal follows
+the name. `project add` says whether it added the task, moved it from another project, or
+found it there already. Bare `skelcrew project` prints its help.
 
 `retry` clears a blocked task's block. The daemon doesn't start agents itself yet, so the
 task then waits in its phase until it is claimed again. The CLI says so.

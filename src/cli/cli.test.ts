@@ -822,6 +822,154 @@ describe("skelcrew status", () => {
   });
 });
 
+describe("skelcrew project", () => {
+  const reports = ["project", "new", "Reports page", "Export what the reports page shows."];
+
+  test("new makes a project, and says how to add tasks to it", async () => {
+    const repo = await repoWithDaemon();
+    expect(await cli(repo, reports)).toEqual(
+      said([
+        "Added project Reports page.",
+        'Add tasks to it with: skelcrew add "<task>" --project reports-page',
+      ]),
+    );
+  });
+
+  test("new needs a name and a goal", async () => {
+    const repo = await repoWithDaemon();
+    expect(await cli(repo, ["project", "new", "Reports page"])).toEqual(
+      refused(
+        'Give a name and a goal, like this: skelcrew project new "Reports page" "Export what the reports page shows."',
+      ),
+    );
+  });
+
+  test("add puts a task in a project, moves it to another, and says when it is there already", async () => {
+    const repo = await repoWithDaemon();
+    await cli(repo, reports);
+    await cli(repo, ["project", "new", "Search", "Find any task."]);
+    await cli(repo, ["add", "CSV export"]);
+    expect(await cli(repo, ["project", "add", "1", "reports-page"])).toEqual(
+      said(["Added #1 to Reports page."]),
+    );
+    expect(await cli(repo, ["project", "add", "#1", "Search"])).toEqual(
+      said(["Moved #1 from Reports page to Search."]),
+    );
+    expect(await cli(repo, ["project", "add", "1", "search"])).toEqual(
+      said(["#1 is already in Search."]),
+    );
+  });
+
+  // A name of several words works without quotes too.
+  test("a project can be named without quotes", async () => {
+    const repo = await repoWithDaemon();
+    await cli(repo, reports);
+    await cli(repo, ["add", "CSV export"]);
+    expect(await cli(repo, ["project", "add", "1", "Reports", "page"])).toEqual(
+      said(["Added #1 to Reports page."]),
+    );
+    expect(await cli(repo, ["project", "archive", "Reports", "page"])).toEqual(
+      said([
+        "Archived Reports page. No new agents start in it.",
+        "Work already running carries on.",
+      ]),
+    );
+  });
+
+  test("remove takes a task out of its project", async () => {
+    const repo = await repoWithDaemon();
+    await cli(repo, reports);
+    await cli(repo, ["add", "CSV export", "--project", "Reports page"]);
+    expect(await cli(repo, ["project", "remove", "1"])).toEqual(
+      said(["Took #1 out of Reports page."]),
+    );
+    expect(await cli(repo, ["project", "remove", "1"])).toEqual(refused("#1 isn't in a project."));
+  });
+
+  test("archive and unarchive say what changes", async () => {
+    const repo = await repoWithDaemon();
+    await cli(repo, reports);
+    expect(await cli(repo, ["project", "archive", "reports-page"])).toEqual(
+      said([
+        "Archived Reports page. No new agents start in it.",
+        "Work already running carries on.",
+      ]),
+    );
+    expect(await cli(repo, ["project", "unarchive", "reports-page"])).toEqual(
+      said(["Unarchived Reports page. Agents can start in it again."]),
+    );
+  });
+
+  test("a project that doesn't exist is refused", async () => {
+    const repo = await repoWithDaemon();
+    expect(await cli(repo, ["project", "archive", "search"])).toEqual(
+      refused("There is no project called search."),
+    );
+  });
+
+  test("each command needs what it acts on", async () => {
+    const repo = await repoWithDaemon();
+    expect(await cli(repo, ["project", "add", "1"])).toEqual(
+      refused("Say which task and which project, like this: skelcrew project add 12 reports-page"),
+    );
+    expect(await cli(repo, ["project", "remove"])).toEqual(
+      refused("Say which task, like this: skelcrew project remove 12"),
+    );
+    expect(await cli(repo, ["project", "archive"])).toEqual(
+      refused("Say which project, like this: skelcrew project archive reports-page"),
+    );
+  });
+
+  test("an unknown project command is refused, and bare project shows the help", async () => {
+    const repo = await repoWithDaemon();
+    expect(await cli(repo, ["project", "park", "reports"])).toEqual(
+      refused("There is no `skelcrew project park`. Run `skelcrew project --help` to see them."),
+    );
+    const help = await cli(repo, ["project"]);
+    expect(help.code).toBe(0);
+    expect(help.out[0]).toBe("Usage: skelcrew project <command>");
+  });
+
+  test("status shows projects by name, marks archived ones, and lists empty ones", async () => {
+    const repo = await repoWithDaemon();
+    await cli(repo, reports);
+    await cli(repo, ["project", "new", "Search", "Find any task."]);
+    await cli(repo, ["project", "archive", "Search"]);
+    await cli(repo, ["add", "CSV export", "--project", "Reports page"]);
+    await cli(repo, ["add", "Totals"]);
+    expect(await cli(repo, ["status"])).toEqual(
+      said([
+        "Project Reports page:",
+        "  Idea:",
+        "  - #1 CSV export",
+        "",
+        "Project Search (archived): no tasks yet.",
+        "",
+        "No project:",
+        "  Idea:",
+        "  - #2 Totals",
+      ]),
+    );
+  });
+
+  test("status lists a project even when no task is in one", async () => {
+    const repo = await repoWithDaemon();
+    await cli(repo, reports);
+    await cli(repo, ["add", "Totals"]);
+    expect(await cli(repo, ["status"])).toEqual(
+      said(["Project Reports page: no tasks yet.", "", "No project:", "  Idea:", "  - #1 Totals"]),
+    );
+  });
+
+  test("--help lists the project commands", async () => {
+    const repo = await repoWithDaemon();
+    const help = (await cli(repo, ["--help"])).out.join("\n");
+    for (const command of ["new", "add", "remove", "archive", "unarchive"]) {
+      expect(help).toContain(`skelcrew project ${command}`);
+    }
+  });
+});
+
 describe("skelcrew log", () => {
   test("shows each event with its time, oldest first, in plain words", async () => {
     // A background agent wrote the first spec. You send it back, then write
