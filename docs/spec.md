@@ -62,7 +62,7 @@ Typing `skelcrew` opens the TUI. Any `skelcrew` command starts the daemon in the
 - **The developer's harness**, through skills that call the CLI. The developer can do anything the TUI does from a conversation. For example, they brainstorm a feature with Claude, then have it create a project and its tasks: `skelcrew project add`, then `skelcrew add --project` for each task.
 - **Agents**, which report progress, ask questions and propose transitions with the same CLI.
 
-Every CLI call carries who made it. The daemon gives each agent it starts an identity, and the core refuses anything only the developer may do from an agent, such as approving a spec. In the harness, the developer's own session calls the CLI as the developer. The default skills guard approvals there: only the developer can start the approve skill, and the harness asks before `skelcrew approve` runs. That guard lives in the harness's settings, not in the core, so it is weaker than approving in the TUI.
+Every CLI call carries who made it. The daemon gives each agent it starts an identity, and the core refuses anything only the developer may do from an agent, such as approving a spec. In the harness, the developer's own session calls the CLI as the developer. The default skills guard approvals there: only the developer can start the approve skill, and the harness asks before `skelcrew approve` or `skelcrew reject` runs. That guard lives in the harness's settings, not in the core, so it is weaker than approving in the TUI.
 
 Agents use the CLI rather than an MCP server. Every agent already has a shell, and a second door that only agents use would have to be kept in step with the CLI by hand.
 
@@ -439,7 +439,7 @@ v1 is single user, runs on one machine, and ships only the plugins its first use
 - built-in board, projects, inbox, record and event log
 - built-in plugins: git, process runner, Claude Code profile, desktop notifications
 - first party plugins: GitHub (issues, pull requests, Actions results) and Herdr
-- default skills: spec, develop and review for agents, plus skills for the developer's own verbs (add, approve, status) in the harness
+- default skills: spec, develop and review for agents, plus skills for the developer's own verbs (add, approve, skelcrew for the status, log for one task) in the harness
 - plugin interfaces defined internally, with two implementations for sessions (process runner, Herdr) and work sources (built-in board, GitHub)
 
 **Not in v1:**
