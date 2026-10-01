@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Outcome } from "../cli/cli";
 import type { ProjectView, TaskView } from "../cli/status";
 import type { TaskId } from "../core/ids";
-import { actions, hints, type Run, type Step } from "./actions";
+import { actions, hints, type Run, type Step, type Where } from "./actions";
 import { keyLines } from "./keys";
 import { type Line, ListLine, listLines, widthsOf } from "./list";
 import {
@@ -74,6 +74,9 @@ export function Screen(props: Props) {
   // Whether P has opened the projects screen, and the row its cursor is on.
   const [showProjects, setShowProjects] = useState(false);
   const [projectAt, setProjectAt] = useState(0);
+  // The project whose tasks the list shows, or null for every task. An
+  // id of null shows the tasks in no project.
+  const [only, setOnly] = useState<{ id: string | null; name: string } | null>(null);
   const [mode, setMode] = useState<Mode>({ kind: "list" });
   // The command running now, and what the last one said.
   const [running, setRunning] = useState<Run | null>(null);
@@ -118,7 +121,19 @@ export function Screen(props: Props) {
     };
   }, [load, loadLog, refreshMs]);
 
-  const groups = groupsOf(tasks ?? [], projects);
+  // The tasks the list shows: all, or one project's. A task whose project
+  // the status leaves out counts as in no project, as on the projects screen.
+  const known = new Set(projects.map((project) => project.id));
+  const inView = (task: TaskView) =>
+    only === null ||
+    (only.id === null
+      ? task.project === null || !known.has(task.project)
+      : task.project === only.id);
+  const shownTasks = tasks === null ? null : tasks.filter(inView);
+  const groups = groupsOf(shownTasks ?? [], projects);
+  const where: Where = {
+    project: only === null || only.id === null ? null : { id: only.id, name: only.name },
+  };
   const order = groups.flatMap((group) => group.rows.map((row) => row.task.task));
   // A task that is gone, or none yet, puts the cursor on the first task.
   const at = (task: TaskId | null) => (task !== null && order.includes(task) ? task : order[0]);
@@ -163,7 +178,7 @@ export function Screen(props: Props) {
   const act = (input: string, task: TaskView | undefined, onTaskScreen: boolean) => {
     const action = actions.find((one) => one.key === input);
     if (action === undefined || (onTaskScreen && !action.onTask)) return;
-    const step = action.step(task);
+    const step = action.step(task, where);
     if (step !== null) begin(step);
   };
 
@@ -209,7 +224,10 @@ export function Screen(props: Props) {
       else if (input === "k" || key.upArrow) move((index) => index - 1);
       else if (input === "g") move(() => 0);
       else if (input === "G") move(() => rows.length - 1);
-      else {
+      else if ((key.return || input === "l") && projectRow !== undefined) {
+        setOnly({ id: projectRow.id, name: projectRow.name });
+        setShowProjects(false);
+      } else {
         const step = projectStep(input, projectRow);
         if (step !== null) begin(step);
       }
@@ -245,6 +263,8 @@ export function Screen(props: Props) {
       openTask(selected);
     } else if (input === "P") {
       setShowProjects(true);
+    } else if ((key.escape || input === "h") && only !== null) {
+      setOnly(null);
     } else
       act(
         input,
@@ -263,7 +283,7 @@ export function Screen(props: Props) {
     : showProjects
       ? projectLines(rows, Math.min(projectAt, rows.length - 1), projects.length === 0)
       : opened === undefined
-        ? listLines(tasks, groups)
+        ? listLines(shownTasks, groups, only?.name)
         : taskLines(
             opened,
             log,
@@ -327,7 +347,7 @@ export function Screen(props: Props) {
     : showProjects
       ? projectKeys(projectRow)
       : opened === undefined
-        ? `j k move · enter open · ${hints("list")} · ? keys · q quit`
+        ? `j k move · enter open · ${hints("list")}${only === null ? "" : " · esc all"} · ? keys · q quit`
         : `j k scroll · ${hints("task")}${pullRequest} · esc back · ? keys · q quit`;
 
   return (
@@ -350,6 +370,11 @@ export function Screen(props: Props) {
           <Box flexGrow={1} flexShrink={1}>
             <Text wrap="truncate-start">{repo}</Text>
           </Box>
+          {only !== null && (
+            <Box flexShrink={0} marginLeft={2}>
+              <Text bold>{`·  ${only.name}`}</Text>
+            </Box>
+          )}
           <Box flexShrink={0} marginLeft={2}>
             <Text>{counts(groups)}</Text>
           </Box>
