@@ -120,7 +120,7 @@ const outcomeOf = (taskId: TaskId, input: Input): [string, string] | null => {
 };
 // A crash only follows an agent that started, or overtakes its start reply.
 const allowed = (outcomes: Outcomes, taskId: TaskId, input: Input): boolean => {
-  if (input.type === "session_crashed") {
+  if (input.type === "session_ended") {
     return outcomes.get(`${taskId}:${input.request}`) !== "session_failed";
   }
   const outcome = outcomeOf(taskId, input);
@@ -146,7 +146,17 @@ function messages(
         out.push(
           [taskId, { by: "plugin", type: "session_started", request, session }],
           [taskId, { by: "plugin", type: "session_failed", request, message: "No." }],
-          [taskId, { by: "plugin", type: "session_crashed", request, session, message: "Boom." }],
+          [
+            taskId,
+            {
+              by: "plugin",
+              type: "session_ended",
+              request,
+              session,
+              exitCode: 1,
+              message: "Boom.",
+            },
+          ],
         );
         break;
       }
@@ -232,7 +242,7 @@ function runningAgents(commands: Command[], delivered: Input[]): Set<SessionId> 
   for (const input of delivered) {
     if (input.type === "session_started") up.add(input.session);
     // A crashed agent stays down, even if its start reply arrives after.
-    if (input.type === "session_crashed") gone.add(input.session);
+    if (input.type === "session_ended") gone.add(input.session);
   }
   for (const command of commands) if (command.type === "stop_session") gone.add(command.session);
   return new Set([...up].filter((session) => !gone.has(session)));
@@ -255,7 +265,7 @@ function startsOut(commands: Command[], delivered: [TaskId, Input][]): Set<strin
     switch (input.type) {
       case "session_started":
       case "session_failed":
-      case "session_crashed":
+      case "session_ended":
       case "worktree_created":
       case "worktree_failed":
       case "spec_worktree_created":

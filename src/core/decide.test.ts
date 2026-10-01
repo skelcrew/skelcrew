@@ -1259,13 +1259,20 @@ describe("a usage report older than the last one", () => {
 
 const drop: Input = { by: "human", type: "drop" };
 const sendBackToSpec = (note: string): Input => ({ by: "human", type: "back_to_spec", note });
-// A crash report names the agent, and the request that started it.
-const crashed = (s: SessionId, request: number): Input => ({
+// An agent's session has ended. The report names the agent, the request
+// that started it, and the exit code, or null when the runner doesn't know.
+const ended = (s: SessionId, request: number, exitCode: number | null = 1): Input => ({
   by: "plugin",
-  type: "session_crashed",
+  type: "session_ended",
   request,
   session: s,
-  message: "herdr crashed",
+  exitCode,
+  message: "Out of memory.",
+});
+const agentStopped = (exitCode: number | null = 1): BlockReason => ({
+  kind: "agent_stopped",
+  exitCode,
+  message: "Out of memory.",
 });
 
 describe("drop", () => {
@@ -1355,42 +1362,56 @@ describe("back_to_spec", () => {
   });
 });
 
-describe("a running agent crashing", () => {
+// An agent waits inside its open session, for an answer or for its checks.
+// So a session that ends before the agent reports means it crashed or quit,
+// and the task is blocked, always (invariant 17).
+describe("an agent whose session ends before it reports", () => {
   test("blocks the task in In progress, keeping the worktree", () => {
-    expect(send(run(...inProgress), crashed(developSession, 4))).toEqual({
+    expect(send(run(...inProgress), ended(developSession, 4))).toEqual({
       ok: true,
-      events: [
-        stamped({
-          type: "task.blocked",
-          reason: { kind: "session_failed", message: "herdr crashed" },
-        }),
-      ],
+      events: [stamped({ type: "task.blocked", reason: agentStopped() })],
       commands: [],
     });
   });
 
+  test("blocks the task even while it waits for your answer, which can't reach it now", () => {
+    const task = run(...inProgress, ask());
+    const decision = send(task, ended(developSession, 4));
+    expect(decision.ok && decision.events).toEqual([
+      stamped({ type: "task.blocked", reason: agentStopped() }),
+    ]);
+    expect(run(...inProgress, ask(), ended(developSession, 4)).question).toBeNull();
+  });
+
+  test("keeps the exit code unknown when the runner doesn't know it", () => {
+    const decision = send(run(...inProgress), ended(developSession, 4, null));
+    expect(decision.ok && decision.events).toEqual([
+      stamped({ type: "task.blocked", reason: agentStopped(null) }),
+    ]);
+  });
+
   test("blocks the task in Spec", () => {
-    const decision = send(run(...specRunning), crashed(session, 2));
+    const decision = send(run(...specRunning), ended(session, 2));
     expect(decision.ok && decision.events.map((e) => e.type)).toEqual(["task.blocked"]);
   });
 
   test("blocks the task in Checks while a gate runs", () => {
-    const decision = send(run(...inChecks), crashed(developSession, 4));
+    const decision = send(run(...inChecks), ended(developSession, 4));
     expect(decision.ok && decision.events.map((e) => e.type)).toEqual(["task.blocked"]);
   });
 
   test("is rejected once the gates have passed, since the agent was already stopped", () => {
-    expect(send(run(...merging), crashed(developSession, 4))).toEqual({
+    expect(send(run(...merging), ended(developSession, 4))).toEqual({
       ok: false,
-      rejection: { input: "session_crashed", reason: "#12's agent isn't session-2." },
+      rejection: { input: "session_ended", reason: "#12's agent isn't session-2." },
     });
   });
 });
 
-describe("a crash reported before the agent's start reply", () => {
-  // The spec agent (request 2) starts and crashes at once, and the crash
-  // report overtakes the start reply.
-  const early = crashed(SessionId.parse("gone"), 2);
+describe("an end reported before the agent's start reply", () => {
+  // The spec agent (request 2) starts and crashes at once, and the report
+  // of its end overtakes the start reply.
+  const early = ended(SessionId.parse("gone"), 2);
   const lateStart: Input = {
     by: "plugin",
     type: "session_started",
@@ -1402,12 +1423,7 @@ describe("a crash reported before the agent's start reply", () => {
   test("counts as a failed start, blocks the task, and removes its spec worktree", () => {
     expect(send(run(...agentStarting), early)).toEqual({
       ok: true,
-      events: [
-        stamped({
-          type: "task.blocked",
-          reason: { kind: "session_failed", message: "herdr crashed" },
-        }),
-      ],
+      events: [stamped({ type: "task.blocked", reason: agentStopped() })],
       commands: [removeSpecWorktree],
     });
   });
@@ -1421,10 +1437,10 @@ describe("a crash reported before the agent's start reply", () => {
   });
 
   test("is refused for a request the task isn't waiting on", () => {
-    const stale = crashed(SessionId.parse("gone"), 7);
+    const stale = ended(SessionId.parse("gone"), 7);
     expect(send(run(...inSpec, start), stale)).toEqual({
       ok: false,
-      rejection: { input: "session_crashed", reason: "#12's agent isn't gone." },
+      rejection: { input: "session_ended", reason: "#12's agent isn't gone." },
     });
   });
 });
@@ -1748,13 +1764,7 @@ describe("a spec worktree reply the task isn't waiting for", () => {
 describe("leaving Spec with a spec worktree", () => {
   // A drop and the safety cap are covered under "drop" and "usage".
   test("a crash of the spec agent blocks the task and removes its spec worktree", () => {
-    const crashed: Step = (t) => ({
-      by: "plugin",
-      type: "session_crashed",
-      request: 2,
-      session: agentOf(t),
-      message: "Out of memory.",
-    });
+    const crashed: Step = (t) => ended(agentOf(t), 2);
     const decision = send(run(...specRunning), crashed);
     expect(decision.ok && decision.commands).toEqual([removeSpecWorktree]);
   });
@@ -1957,7 +1967,7 @@ describe("a gate result from an earlier run of the checks", () => {
   const reviewingAgain: Step[] = [
     ...inChecks,
     gatePass("local"),
-    crashed(developSession, 4),
+    ended(developSession, 4),
     retry,
     start,
     (t) => ({
@@ -2055,7 +2065,7 @@ describe("a crash report for an earlier agent", () => {
   test("can't block the task or make it forget the agent it has now", () => {
     const replaced: Step[] = [
       ...inProgress,
-      crashed(developSession, 4),
+      ended(developSession, 4),
       retry,
       start,
       (t) => ({
@@ -2065,9 +2075,9 @@ describe("a crash report for an earlier agent", () => {
         session: SessionId.parse("session-3"),
       }),
     ];
-    expect(send(run(...replaced), crashed(developSession, 4))).toEqual({
+    expect(send(run(...replaced), ended(developSession, 4))).toEqual({
       ok: false,
-      rejection: { input: "session_crashed", reason: "#12's agent isn't session-2." },
+      rejection: { input: "session_ended", reason: "#12's agent isn't session-2." },
     });
   });
 });

@@ -167,7 +167,7 @@ const anyPhaseInputs = [
   "ask",
   "answer",
   "usage",
-  "session_crashed",
+  "session_ended",
 ] as const;
 
 type AnyPhaseInput = Extract<Input, { type: (typeof anyPhaseInputs)[number] }>;
@@ -270,22 +270,34 @@ function inAnyPhase(task: Task, input: AnyPhaseInput, ctx: Context): Decision {
       return accept([recorded, block], stopForBlock(task));
     }
 
-    // An agent stopped. The report names it, so one about an agent the task
-    // no longer has, such as an earlier one after a retry, can't block the
-    // task or make it forget the agent it has now. A merge under way has no
-    // agent, since it was stopped when the gates passed.
+    // An agent's session ended before it reported, so the task is blocked
+    // ("An agent that stops before it reports blocks its task" in
+    // docs/invariants.md). An agent waits for an answer or its checks inside
+    // its open session, so an end is never just waiting, even with a
+    // question open. Blocking clears that question, since no answer could
+    // reach the agent now.
     //
-    // A crash can overtake the agent's start reply. It names the request
-    // that started the agent, so if the task still waits on it, the crash
-    // counts as a failed start. The late start reply is then cleaned up.
-    case "session_crashed":
+    // The report names the agent, so one about an agent the task no longer
+    // has, such as an earlier one after a retry, can't block the task or
+    // make it forget the agent it has now. A merge under way has no agent,
+    // since it was stopped when the gates passed.
+    //
+    // An end can overtake the agent's start reply. It names the request that
+    // started the agent, so if the task still waits on it, it counts too. The
+    // late start reply is then cleaned up.
+    case "session_ended": {
+      const stopped: EventBody = {
+        type: "task.blocked",
+        reason: { kind: "agent_stopped", exitCode: input.exitCode, message: input.message },
+      };
       if (runningSession(task) === input.session) {
-        return accept([blocked("session_failed", input.message)], removeHeldSpecWorktree(task));
+        return accept([stopped], removeHeldSpecWorktree(task));
       }
       if (waitingForAgent(task, input.request)) {
-        return accept([blocked("session_failed", input.message)], stopForBlock(task));
+        return accept([stopped], stopForBlock(task));
       }
       return reject(`#${task.id}'s agent isn't ${input.session}.`);
+    }
   }
 }
 
@@ -353,7 +365,7 @@ function inSpec(task: TaskIn<"spec">, input: Input, ctx: Context): Decision {
       return accept([{ type: "task.spec_session_started", session: input.session }]);
 
     // The agent didn't start. Its spec worktree is removed, since nothing
-    // in it is kept. A crash of a running agent is session_crashed.
+    // in it is kept. An agent that ends while running is session_ended.
     case "session_failed":
       if (step.kind !== "starting" || step.request !== input.request) {
         return reject(notWaitingFor(task, input.request));
@@ -495,7 +507,7 @@ function inProgress(task: TaskIn<"in_progress">, input: Input, ctx: Context): De
       return accept([{ type: "task.dispatched", session: input.session }]);
 
     // The agent didn't start. The worktree stays, so a retry carries on with
-    // the same code. A crash of a running agent is session_crashed.
+    // the same code. An agent that ends while running is session_ended.
     case "session_failed":
       if (step.kind !== "starting" || step.request !== input.request) {
         return reject(notWaitingFor(task, input.request));

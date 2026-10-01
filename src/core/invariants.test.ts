@@ -105,7 +105,7 @@ const unguided = new Set<Input["type"]>([
   "change_project",
   "give_up",
   "session_failed",
-  "session_crashed",
+  "session_ended",
   "worktree_failed",
   "spec_worktree_failed",
   "back_to_spec",
@@ -247,7 +247,14 @@ class Checker {
           out.push(
             { by: "plugin", type: "session_started", request, session },
             { by: "plugin", type: "session_failed", request, message: "Didn't start." },
-            { by: "plugin", type: "session_crashed", request, session, message: "Crashed." },
+            {
+              by: "plugin",
+              type: "session_ended",
+              request,
+              session,
+              exitCode: 1,
+              message: "Crashed.",
+            },
           );
           break;
         }
@@ -333,7 +340,7 @@ class Checker {
     if (
       input.type === "session_started" ||
       input.type === "session_failed" ||
-      input.type === "session_crashed" ||
+      input.type === "session_ended" ||
       input.type === "worktree_created" ||
       input.type === "worktree_failed" ||
       input.type === "spec_worktree_created" ||
@@ -341,7 +348,7 @@ class Checker {
     ) {
       this.startsPending.delete(input.request);
     }
-    if (input.type === "session_crashed") this.liveSessions.delete(input.session);
+    if (input.type === "session_ended") this.liveSessions.delete(input.session);
 
     if (!decision.ok) return;
     const { events, commands } = decision;
@@ -350,6 +357,17 @@ class Checker {
     // task has replaced never counts. (Proposed as a new invariant.)
     if (input.by === "agent") {
       expect<Session | null>(input.session).toBe(before === null ? null : runningSession(before));
+    }
+
+    // 17. An agent whose session ends before it reports blocks its task.
+    // Its report is the only way out of its step, so an end the task still
+    // hears means it hadn't reported.
+    if (
+      input.type === "session_ended" &&
+      before !== null &&
+      runningSession(before) === input.session
+    ) {
+      expect(events.map((e) => e.type)).toContain("task.blocked");
     }
 
     for (const event of events) {
