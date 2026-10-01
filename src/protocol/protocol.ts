@@ -14,10 +14,11 @@ import { spec } from "../store/schema";
 // make the daemon read without end.
 export const MAX_LINE = 1_000_000;
 
-// Your commands carry no identity: the protocol can't prove a call comes
-// from you (see the spec's "Architecture"). An agent's reports carry the
-// session its claim handed out, and only the task's current session is
-// heard.
+// The protocol can't prove a call comes from you (see the spec's
+// "Architecture"). An agent's CLI sends its session as `from`, so the daemon
+// refuses your commands from it. An agent's reports carry its session too,
+// and only the task's current session is heard.
+
 // Text that isn't only spaces.
 const text = z.string().refine((value) => value.trim() !== "", { error: "Say something." });
 
@@ -60,9 +61,28 @@ const command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("project_remove"), task: TaskId }),
   z.strictObject({ type: z.literal("project_archive"), project: text }),
   z.strictObject({ type: z.literal("project_unarchive"), project: text }),
+  // An agent's question for the developer, with the options to pick from.
+  // The core checks there are two to four.
+  z.strictObject({
+    type: z.literal("ask"),
+    task: TaskId,
+    session: SessionId,
+    text,
+    options: z.array(text),
+  }),
+  // The developer's answer to a task's open question.
+  z.strictObject({ type: z.literal("answer"), task: TaskId, text }),
 ]);
 
-const request = z.strictObject({ id: z.string().min(1), command });
+// `from` is the agent session an agent's CLI runs in, from SKELCREW_SESSION.
+// The daemon refuses the developer's commands from it. A call without one
+// counts as the developer's, so this guards against mistakes, not against
+// an agent that removes the variable.
+const request = z.strictObject({
+  id: z.string().min(1),
+  from: SessionId.optional(),
+  command,
+});
 
 // What each command answers with is decided by the daemon. It is checked
 // here as JSON, and against each command's own shape where the CLI reads it.

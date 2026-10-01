@@ -282,11 +282,14 @@ with its process. The next daemon takes the lock and removes the old socket file
 ## The protocol
 
 `src/protocol/protocol.ts` is how the CLI and the daemon talk: one JSON message per line,
-over the daemon's local socket. A request is `{ id, command }`, with one command for each
-CLI command. A reply is `{ id, ok: true, result }` or `{ id, ok: false, message }`. An
-agent's reports (`submit`, `done`, `give_up`) carry the session its claim handed out.
-Your commands carry no identity, since the protocol can't prove who calls. Everything read
-from the socket is checked with Zod first, and a line over 1 MB is refused.
+over the daemon's local socket. A request is `{ id, from?, command }`, with one command for
+each CLI command. A reply is `{ id, ok: true, result }` or `{ id, ok: false, message }`. An
+agent's reports (`submit`, `done`, `give_up`, `ask`) carry its session. An agent's CLI has
+`SKELCREW_SESSION` set, and sends it as `from` with every call. The daemon then refuses
+your commands, such as approve, claim or answer, and allows only reading and the agent's
+own reports. A call without `from` counts as yours: the protocol can't prove who calls,
+so this stops mistakes, not an agent that removes the variable. Everything read from the
+socket is checked with Zod first, and a line over 1 MB is refused.
 
 ## The CLI
 

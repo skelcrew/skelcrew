@@ -223,6 +223,60 @@ const handlers: Record<string, Handler> = {
     return ask(context, command, anything, () => said(`Gave up on #${task.value}.`));
   },
 
+  // An agent asks the developer, with two to four options to pick from.
+  // The answer reaches the agent's session.
+  ask: async (args, context) => {
+    const parsed = parse(
+      "ask",
+      () => parseArgs({ args, allowPositionals: true, options: {} }),
+      args,
+    );
+    if (!parsed.ok) return parsed.outcome;
+    const [written, text, ...options] = parsed.value.positionals;
+    const task = taskNumber("ask", written);
+    if (!task.ok) return task.outcome;
+    const example = `skelcrew ask ${task.value} "Include deleted rows?" "Yes" "No"`;
+    if (text === undefined || text.trim() === "") {
+      return refused(`Say the question, like this: ${example}`);
+    }
+    if (options.length < 2 || options.length > 4) {
+      return refused(`Give two to four options, like this: ${example}`);
+    }
+    const session = sessionOf(context, `ask ${task.value}`);
+    if (!session.ok) return session.outcome;
+    const command: Command = {
+      type: "ask",
+      task: task.value,
+      session: session.value,
+      text,
+      options,
+    };
+    return ask(context, command, anything, () =>
+      said(`Asked the developer about #${task.value}. Their answer will come to this session.`),
+    );
+  },
+
+  // You answer a task's open question.
+  answer: async (args, context) => {
+    const parsed = parse(
+      "answer",
+      () => parseArgs({ args, allowPositionals: true, options: {} }),
+      args,
+    );
+    if (!parsed.ok) return parsed.outcome;
+    const [written, text, ...extra] = parsed.value.positionals;
+    const task = taskNumber("answer", written);
+    if (!task.ok) return task.outcome;
+    const example = `skelcrew answer ${task.value} "No"`;
+    if (text === undefined || text.trim() === "") {
+      return refused(`Say your answer, like this: ${example}`);
+    }
+    if (extra.length > 0) return refused(`Put the answer in quotes, like this: ${example}`);
+    return ask(context, { type: "answer", task: task.value, text }, anything, () =>
+      said(`Answered #${task.value}.`),
+    );
+  },
+
   serve: async (args, context) => {
     const parsed = parse("serve", () => parseArgs({ args, options: {} }));
     if (!parsed.ok) return parsed.outcome;
@@ -565,6 +619,10 @@ async function answered<T>(
   if (repo === null) return { ok: false, message: noRepoMessage };
   const options: Parameters<typeof request>[2] = { start: () => context.start(repo) };
   if (context.startTimeoutMs !== undefined) options.startTimeoutMs = context.startTimeoutMs;
+  // An agent's CLI has SKELCREW_SESSION set. Every call carries it, so the
+  // daemon can refuse what only the developer may do.
+  const from = SessionId.safeParse(context.session);
+  if (from.success) options.from = from.data;
   const answer = await request(repo, command, options);
   if (!answer.ok) return answer;
   const result = expected.safeParse(answer.result);

@@ -71,6 +71,32 @@ type Later = {
 
 type Waiter = { task: TaskId; until: (task: Task) => boolean; wake: (task: Task | null) => void };
 
+// What only the developer may do, in words for the refusal, such as "Only
+// the developer can approve." Null for what an agent may do too: read, and
+// report on its own task. Every command is listed, so a new one has to be
+// placed on one side.
+const developersOnly: Record<Command["type"], string | null> = {
+  add: "add a task",
+  spec: "ask for a spec",
+  approve: "approve",
+  reject: "send work back",
+  drop: "drop a task",
+  retry: "retry a task",
+  claim: "claim a task",
+  answer: "answer a question",
+  project_new: "change projects",
+  project_add: "change projects",
+  project_remove: "change projects",
+  project_archive: "change projects",
+  project_unarchive: "change projects",
+  status: null,
+  log: null,
+  submit: null,
+  done: null,
+  give_up: null,
+  ask: null,
+};
+
 // A session name such as "session-k3x9q2mf". An agent's reports carry it,
 // so it must be short enough to read but hard to guess. Eight letters or
 // digits give 36^8, about 2.8 trillion names. Guessing one would take
@@ -154,7 +180,17 @@ export class Daemon {
   // a refusal that says what happened.
   // An answer that waits for a tool's reply waits outside the queue, so
   // the reply can get in.
-  async handle(command: Command): Promise<Answer> {
+  //
+  // `from` is the agent session the call came from, if any. The developer's
+  // commands are refused from it.
+  async handle(command: Command, from?: SessionId): Promise<Answer> {
+    const yours = developersOnly[command.type];
+    if (from !== undefined && yours !== null) {
+      return {
+        ok: false,
+        message: `Only the developer can ${yours}. This call came from ${from}, an agent's session. If you are the developer, unset SKELCREW_SESSION and run it again.`,
+      };
+    }
     if (command.type === "done") return this.done(command.task, command.session);
     if (command.type === "approve") {
       const refused = await this.beforeMerge(command.task);
@@ -497,6 +533,20 @@ export class Daemon {
           session: command.session,
           message: command.message,
         });
+
+      // An agent's question waits for your answer.
+      case "ask":
+        return this.send(command.task, {
+          by: "agent",
+          type: "ask",
+          session: command.session,
+          text: command.text,
+          options: command.options,
+        });
+
+      // Your answer goes to the agent that asked, through its session.
+      case "answer":
+        return this.send(command.task, { by: "human", type: "answer", text: command.text });
 
       // Clears the block. The daemon doesn't start agents yet, so the task
       // waits in its phase until you claim it again.
