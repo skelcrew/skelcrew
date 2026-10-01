@@ -59,7 +59,7 @@ Typing `skelcrew` opens the TUI. Any `skelcrew` command starts the daemon in the
 **Ways in.** Everything goes through the CLI, so there are three equal ways to drive Skelcrew:
 
 - **The TUI**, for managing tasks with a few keys: add, approve, send back, and see what is running and what waits on the developer.
-- **The developer's harness**, through skills that call the CLI. The developer can do anything the TUI does from a conversation. For example, they brainstorm a feature with Claude, then have it create a project and its tasks: `skelcrew project add`, then `skelcrew add --project` for each task.
+- **The developer's harness**, through skills that call the CLI. The developer can do anything the TUI does from a conversation. For example, they brainstorm a feature with Claude, then have it create a project and its tasks: `skelcrew project new`, then `skelcrew add --project` for each task.
 - **Agents**, which report progress, ask questions and propose transitions with the same CLI.
 
 Every CLI call carries who made it. The daemon gives each agent it starts a session name, in an environment variable the CLI sends with every call. The daemon refuses anything only the developer may do from that name, such as approving a spec or claiming a task. A call with no session name comes from the developer. This is not a lock. An agent runs as the same user as the developer, so an agent that removes the variable looks like the developer. The harness's own permission settings are a second guard (see Plugins). In the harness, the developer's own session calls the CLI as the developer. The default skills guard approvals there: only the developer can start the approve skill, and the harness asks before `skelcrew approve` or `skelcrew reject` runs. That guard lives in the harness's settings, not in the core, so it is weaker than approving in the TUI.
@@ -116,7 +116,7 @@ decide(state, input, config):
 
 Inputs are everything that can happen to a task: an agent proposing done, a check result, a human answer, a work source signal, a clock tick. Phase transitions are one kind of outcome; many inputs change something without moving phase, and some are rejected (an agent proposing a merge, an issue dragged to Done by hand).
 
-**Scheduler.** A second pure function over all tasks decides what to start next. At most `max_running` agents work at once, counting both spec and develop sessions, so new work is paced by how many questions the developer can handle. Agents still starting count too: the daemon tells the scheduler how many starts it has sent out and not yet had answered, so a task dropped while its agent was starting keeps its slot until that agent reports in and is stopped. Once a task's checks pass, its agent is stopped, so a merge that waits for the developer's approval, or is running, holds no slot once its agent has stopped. An agent being stopped keeps its slot until the stop has finished, so `max_running` holds even while a stop is slow. A send-back or a failed merge queues the task for a new agent in the same worktree, with the note or the failure as its brief. It only starts tasks in active projects, or tasks with no project, and never starts a blocked task. It starts the task closest to done first: In progress, then Ready, then Spec, oldest first within a phase. Quota awareness comes later.
+**Scheduler.** A second pure function over all tasks decides what to start next. At most `max_running` agents work at once, counting both spec and develop sessions, so new work is paced by how many questions the developer can handle. Agents still starting count too: the daemon tells the scheduler how many starts it has sent out and not yet had answered, so a task dropped while its agent was starting keeps its slot until that agent reports in and is stopped. Once a task's checks pass, its agent is stopped, so a merge that waits for the developer's approval, or is running, holds no slot once its agent has stopped. An agent being stopped keeps its slot until the stop has finished, so `max_running` holds even while a stop is slow. A send-back or a failed merge queues the task for a new agent in the same worktree, with the note or the failure as its brief. It only starts tasks in active projects, or tasks with no project. It never starts a task in an archived project, or a blocked task. It starts the task closest to done first: In progress, then Ready, then Spec, oldest first within a phase. Quota awareness comes later.
 
 **Contracts and policies.** Small pure predicates called by decide: spec completeness, critical path match, attempts left. Each returns pass or fail with reasons, which become inbox text and record entries.
 
@@ -177,10 +177,11 @@ Projects group tasks, so the developer keeps an overview and chooses which work 
 
 - A project has a name and a one-line goal, such as "Inbox: answer every decision from the CLI in under a minute".
 - A task belongs to one project or to none. Projects do not nest.
-- A project is active or parked. New projects start active.
-- The scheduler only starts agents for tasks in active projects, and for tasks with no project. Parking a project stops new agents from starting in it; work already running carries on.
-- Ideas can be captured into a parked project at any time. They wait there without using agents or adding inbox items.
-- `skelcrew status` groups tasks by project.
+- A project's name gives it a short ID for commands: "Reports page" becomes `reports-page`. Commands take either. A name with no letters or digits can't make an ID, so it is refused.
+- A project is active or archived. New projects start active.
+- The scheduler only starts agents for tasks in active projects, and for tasks with no project. Archiving a project stops new agents from starting in it. Work already running carries on. Unarchiving it lets agents start again.
+- An archived project's tasks still show. Ideas can be added to it at any time. They wait there without using agents or adding inbox items.
+- `skelcrew status` groups tasks by project. It lists a project with no tasks too, so every project shows somewhere.
 
 Work sources with their own grouping, such as GitHub milestones or Linear projects, map to Skelcrew projects in their plugins.
 
@@ -405,9 +406,11 @@ Skelcrew runs where a git repository starts, the folder that holds `.git`. A fol
 | `skelcrew init` | Set up `.skelcrew/` and default skills in a repository |
 | `skelcrew serve` | Run the daemon alone, for a server or a headless machine |
 | `skelcrew add "<task>"` | Capture a task as an Idea; `--spec` also starts speccing, `--project <name>` puts it in a project |
-| `skelcrew project add "<name>" "<goal>"` | Create a project |
-| `skelcrew project park <name>` | Stop new agents from starting in a project; `activate` undoes it |
-| `skelcrew project set <task> <project>` | Put a task in a project, or take it out with `none` |
+| `skelcrew project new "<name>" "<goal>"` | Create a project |
+| `skelcrew project add <task> <project>` | Put a task in a project, or move it from the one it is in |
+| `skelcrew project remove <task>` | Take a task out of its project |
+| `skelcrew project archive <project>` | Stop new agents from starting in a project; work already running carries on |
+| `skelcrew project unarchive <project>` | Let agents start in an archived project again |
 | `skelcrew spec <task>` | Ask for an Idea to be specced |
 | `skelcrew approve <task>` | Approve a spec or a critical merge; `reject` sends it back |
 | `skelcrew reject <task> "<note>"` | Send a spec back to Spec, or a critical merge back to In progress, with a note saying what to change |
