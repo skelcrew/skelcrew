@@ -2,7 +2,7 @@
 // history, newest first. Enter opens it from the list.
 
 import { leftOutLine, logLines } from "../cli/log";
-import type { TaskView } from "../cli/status";
+import type { ProjectView, TaskView } from "../cli/status";
 import { phaseNames } from "../core/task";
 import type { TaskEvent } from "../core/types";
 import type { Line } from "./list";
@@ -23,7 +23,13 @@ export function taskState(task: TaskView, row: Row | undefined): string {
 
 // The screen's lines under the header, wrapped to `width`. log is null
 // until it is read.
-export function taskLines(task: TaskView, log: LoadedLog | null, width: number): Line[] {
+// `project` is the task's project, when the status names it.
+export function taskLines(
+  task: TaskView,
+  log: LoadedLog | null,
+  width: number,
+  project?: ProjectView,
+): Line[] {
   const text = (line: string, dim = false): Line => ({ kind: "text", text: line, dim });
   const wrapped = (words: string, first = "", rest = first) =>
     wrap(words, width - first.length).map((line, i) => text(`${i === 0 ? first : rest}${line}`));
@@ -31,7 +37,10 @@ export function taskLines(task: TaskView, log: LoadedLog | null, width: number):
 
   // What the task needs from you, and anything to read first.
   const facts: Line[] = [];
-  if (task.project !== null) facts.push(text(`Project: ${task.project}`));
+  if (task.project !== null) {
+    const archived = project?.status === "archived" ? " (archived)" : "";
+    facts.push(text(`Project: ${project?.name ?? task.project}${archived}`));
+  }
   if (typeof task.pullRequest === "string") {
     facts.push(text(`Read it on GitHub: ${task.pullRequest}`));
     if (typeof task.pullRequestNote === "string") facts.push(...wrapped(task.pullRequestNote));

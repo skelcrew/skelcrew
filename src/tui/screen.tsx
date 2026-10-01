@@ -7,7 +7,7 @@ import { Box, Text, useInput, useStdout } from "ink";
 import TextInput from "ink-text-input";
 import { useEffect, useRef, useState } from "react";
 import type { Outcome } from "../cli/cli";
-import type { TaskView } from "../cli/status";
+import type { ProjectView, TaskView } from "../cli/status";
 import type { TaskId } from "../core/ids";
 import { actions, hints, type Run } from "./actions";
 import { keyLines } from "./keys";
@@ -16,7 +16,11 @@ import { counts, groupsOf } from "./rows";
 import { firstShown } from "./scroll";
 import { type LoadedLog, taskLines, taskState } from "./task-screen";
 
-export type Loaded = { ok: true; tasks: TaskView[] } | { ok: false; message: string };
+// The status: tasks, and every project. A daemon from before projects
+// leaves them out.
+export type Loaded =
+  | { ok: true; tasks: TaskView[]; projects?: ProjectView[] }
+  | { ok: false; message: string };
 
 type Props = {
   repo: string;
@@ -48,6 +52,7 @@ export function Screen(props: Props) {
   const { repo, quit, load, send, loadLog, browse, refreshMs = 1000, height } = props;
   // null until the first answer.
   const [tasks, setTasks] = useState<TaskView[] | null>(null);
+  const [projects, setProjects] = useState<ProjectView[]>([]);
   // Why the last refresh failed. The last list stays on screen.
   const [problem, setProblem] = useState<string | null>(null);
   // The task the cursor is on, so it stays there when tasks move.
@@ -87,6 +92,7 @@ export function Screen(props: Props) {
       if (closed) return;
       if (loaded.ok) {
         setTasks(loaded.tasks);
+        setProjects(loaded.projects ?? []);
         setProblem(null);
       } else {
         setProblem(loaded.message);
@@ -102,7 +108,7 @@ export function Screen(props: Props) {
     };
   }, [load, loadLog, refreshMs]);
 
-  const groups = groupsOf(tasks ?? []);
+  const groups = groupsOf(tasks ?? [], projects);
   const order = groups.flatMap((group) => group.rows.map((row) => row.task.task));
   // A task that is gone, or none yet, puts the cursor on the first task.
   const at = (task: TaskId | null) => (task !== null && order.includes(task) ? task : order[0]);
@@ -218,7 +224,12 @@ export function Screen(props: Props) {
     ? keyLines()
     : opened === undefined
       ? listLines(tasks, groups)
-      : taskLines(opened, log, columns);
+      : taskLines(
+          opened,
+          log,
+          columns,
+          projects.find((project) => project.id === opened.project),
+        );
 
   // What sits under the body, each part after a blank line, keys last.
   const problemLines = problem === null ? [] : problem.split("\n");

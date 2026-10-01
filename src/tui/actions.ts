@@ -139,6 +139,34 @@ export const actions: Action[] = [
             },
           },
   },
+  {
+    key: "m",
+    hint: null,
+    help: "move the task to another project, or out of its own",
+    onTask: true,
+    step: (task) =>
+      task === undefined
+        ? null
+        : {
+            kind: "type",
+            prompt: `Move #${task.task} to which project? Type none to take it out:`,
+            // The project by its name or its ID, as the CLI takes it.
+            run: (typed) => {
+              const project = typed.trim();
+              return project.toLowerCase() === "none"
+                ? {
+                    args: ["project", "remove", `${task.task}`],
+                    doing: `Taking #${task.task} out of its project…`,
+                    task: task.task,
+                  }
+                : {
+                    args: ["project", "add", `${task.task}`, "--", project],
+                    doing: `Moving #${task.task}…`,
+                    task: task.task,
+                  };
+            },
+          },
+  },
 ];
 
 // The keys line's words: "a add · y approve · …" on the list, and only
