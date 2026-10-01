@@ -19,7 +19,8 @@ const commandsFor: Record<string, string[]> = {
   spec: ["add", "spec", "claim", "submit", "log", "approve", "reject"],
   // Develop reads status to check the spec is approved before it claims.
   develop: ["status", "claim", "done", "give-up", "log", "approve", "reject"],
-  add: ["add"],
+  // Add can make a project for the tasks it adds, once the developer agrees.
+  add: ["add", "project"],
   // Blocked tasks: /skelcrew gives the developer the retry and drop commands.
   skelcrew: ["status", "retry", "drop"],
   log: ["status", "log", "approve", "reject", "retry", "drop"],
@@ -427,6 +428,21 @@ describe("defaultSkills", () => {
     expect(flat("skelcrew")).toContain(
       "Leave out dropped tasks, unless the developer asks for them.",
     );
+  });
+
+  // The spec's example: brainstorm a feature, then have the harness make a
+  // project and add its tasks to it.
+  test("the add skill puts a task in the project the developer names, and can make one", () => {
+    const text = flat("add");
+    expect(text).toContain("--project");
+    expect(text).toContain("skelcrew project new");
+    expect(text).toContain("Ask the developer before you make a project");
+  });
+
+  test("the skelcrew skill says how status shows projects, archived ones too", () => {
+    const text = flat("skelcrew");
+    expect(text).toContain("(archived)");
+    expect(text).toContain("no tasks yet");
   });
 
   test("the log skill reads the task's line in status and its log", () => {

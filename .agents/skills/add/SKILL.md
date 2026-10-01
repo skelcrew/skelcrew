@@ -28,6 +28,22 @@ quote, write that quote as `'\''`. For example, `Don't cache` becomes `'Don'\''t
 
 It prints the new task's number, such as "Added #12: CSV export."
 
+### In a project
+
+If the developer names a project, add the task to it:
+
+```
+skelcrew add '<title>' --project '<project>'
+```
+
+The project can be its name, such as `Reports page`, or its ID, such as `reports-page`. If
+Skelcrew says there is no project by that name, ask the developer before you make a project.
+Once they agree, make it with the name and a one-line goal they give, then add the task:
+
+```
+skelcrew project new '<name>' '<goal>'
+```
+
 Skelcrew keeps only the title. Anything more the developer said about the task stays here,
 in this conversation, as context. Don't try to store it anywhere else.
 
@@ -43,4 +59,8 @@ Then say how to go on: `/spec 12` specs it, with the developer, when they are re
 Add a task only once the developer has agreed to keep it. Never add one because it seemed
 like a good idea to you. Suggest it first, and wait.
 
-Adding is all you do here. You never ask for a spec, start work, or change a task.
+A feature may want its tasks in a project of their own. Suggest one. Ask the developer
+before you make a project. Then add each task they keep with `--project`.
+
+Adding tasks, and making a project the developer agreed to, is all you do here. You never
+ask for a spec, start work, or change a task.
