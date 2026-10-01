@@ -9,8 +9,9 @@ do, lose work, or leave the developer looking at a wrong picture.
 
 ## Only the core decides
 
-1. **An agent never approves a spec.** With `spec_approval: always`, every
-   `task.ready` comes from an approval sent by the developer.
+1. **An agent Skelcrew started never gets its spec approved without the developer.**
+   With `spec_approval: always`, every `task.ready` comes from the developer: their
+   approval, a spec they wrote, or a spec sent from a session they claimed.
 2. **Agents and plugins never take the developer's decisions.** No agent, plugin or
    scheduler input ever produces a spec approval, a merge approval, a retry, a drop, a
    revert or a project change.
@@ -40,7 +41,9 @@ do, lose work, or leave the developer looking at a wrong picture.
 ## Nothing gets lost
 
 13. **Every agent the core started is either stopped or still stored on its task.** The
-    same goes for every worktree. A transition that forgets to clean up breaks this.
+    same goes for every worktree, and for every spec worktree. A spec worktree is the
+    copy of main a background spec agent reads, and it exists only while its agent
+    does. A transition that forgets to clean up breaks this.
 14. **Each build gets its own branch.** A build number is never reused, so a new build
     never lands on code written for an old spec.
 
@@ -49,18 +52,21 @@ do, lose work, or leave the developer looking at a wrong picture.
 15. **No leftover flags.** A question from the spec agent only exists while the task is in
     Spec. A question from the develop agent only exists in In progress or Checks.
 16. **A blocked task has no agent running.**
-17. **Dropped is final.** A dropped task records no more events. A late worktree or
+17. **An agent that stops before it reports blocks its task.** The exceptions are an
+    agent waiting for the developer's answer, and an agent whose checks are running.
+    Each of those is woken again with the answer or the failure.
+18. **Dropped is final.** A dropped task records no more events. A late worktree or
     agent is only removed or stopped. A Done task only accepts a revert, the answer
     to it, and a late usage report so the record keeps the true cost.
-18. **Usage totals never go down.** The record keeps a task's true cost, and the safety
+19. **Usage totals never go down.** The record keeps a task's true cost, and the safety
     cap counts from it. A delayed report with lower totals could otherwise hide cost, and
     let an agent stuck in a loop run past its cap.
 
 ## Replay
 
-19. **The same input always gives the same result.** Same task, same input, same config:
+20. **The same input always gives the same result.** Same task, same input, same config:
     the same decision.
-20. **Replaying the log rebuilds the task exactly.** Folding a task's events through
+21. **Replaying the log rebuilds the task exactly.** Folding a task's events through
     `evolveTask` from nothing gives the same task the core had before.
-21. **Every event belongs to its task and its moment.** Its task ID and time match the
+22. **Every event belongs to its task and its moment.** Its task ID and time match the
     input that caused it.
