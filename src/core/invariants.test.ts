@@ -169,6 +169,8 @@ class Checker {
   // by request number, since each reply names the request it answers.
   startsPending = new Set<number>();
   lastUsage = { tokens: 0, ms: 0 };
+  // Sessions you claimed the task with. A spec from one needs no approval.
+  claimedSessions = new Set<Session>();
 
   get startsInFlight(): number {
     return this.startsPending.size;
@@ -307,7 +309,7 @@ class Checker {
     const envelope = { taskId: this.id, at, input };
     const decision = decideTask(before, envelope, this.config, projects);
 
-    // 19. The same input always gives the same result.
+    // 20. The same input always gives the same result.
     expect(decideTask(before, envelope, this.config, projects)).toEqual(decision);
 
     // 3. A move in another tool is never obeyed.
@@ -336,7 +338,7 @@ class Checker {
     }
 
     for (const event of events) {
-      // 21. Every event belongs to its task and its moment.
+      // 22. Every event belongs to its task and its moment.
       expect(event.taskId).toBe(this.id);
       expect(event.at).toBe(at);
       this.checkEvent(event, input);
@@ -346,7 +348,7 @@ class Checker {
       this.log.push(event);
     }
 
-    // 17. Dropped is final. Done only takes a revert or a late usage report.
+    // 18. Dropped is final. Done only takes a revert or a late usage report.
     if (before?.phase === "dropped") expect(events).toEqual([]);
     if (before?.phase === "done") {
       for (const event of events) {
@@ -375,9 +377,22 @@ class Checker {
   private checkEvent(event: TaskEvent, input: Input): void {
     const task = this.task;
     switch (event.type) {
-      // 1, 2. Only you make a task Ready while approval is required.
+      // 1, 2. Only you make a task Ready while approval is required: by
+      // approving, by writing the spec, or through a session you claimed.
+      // An agent Skelcrew started never does.
       case "task.ready":
-        if (this.config.specApproval === "always") expect(input.by).toBe("human");
+        if (this.config.specApproval === "always") {
+          const fromYourSession =
+            input.by === "agent" &&
+            input.type === "submit_spec" &&
+            this.claimedSessions.has(input.session);
+          expect(input.by === "human" || fromYourSession).toBe(true);
+        }
+        break;
+
+      case "task.claimed":
+        expect(input.by).toBe("human");
+        if (input.type === "claim") this.claimedSessions.add(input.session);
         break;
 
       // 2. Only you retry, drop, revert or change a task's project. The
@@ -537,13 +552,13 @@ class Checker {
     // Each phase carries exactly its own fields, and nothing left over.
     expect(Object.keys(task).sort()).toEqual([...everyTask, ...phaseFields[task.phase]].sort());
 
-    // 18. Usage totals never go down: the record keeps the true cost, and
+    // 19. Usage totals never go down: the record keeps the true cost, and
     // the safety cap counts from them.
     expect(task.usage.tokens).toBeGreaterThanOrEqual(this.lastUsage.tokens);
     expect(task.usage.ms).toBeGreaterThanOrEqual(this.lastUsage.ms);
     this.lastUsage = task.usage;
 
-    // 20. Replaying the log rebuilds the task exactly.
+    // 21. Replaying the log rebuilds the task exactly.
     let replayed: Task | null = null;
     for (const event of this.log) {
       const result = evolveTask(replayed, event);

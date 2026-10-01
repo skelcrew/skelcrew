@@ -92,7 +92,9 @@ task. That's how "prompts propose, the core decides" is enforced.
   agent. A `claim` makes your own harness session the agent, attended: the core records
   your session and starts nothing. In Ready it still creates the worktree first. From
   then on, only that session is heard. Only the loop sees every task, so it checks for a
-  free slot before either goes through.
+  free slot before either goes through. Claiming an Idea asks for its spec in the same
+  step. A spec from your claimed session needs no approval, so it makes the task Ready
+  at once. A spec from an agent Skelcrew started waits for your approval.
 - **Errors are values.** Functions return `{ ok: true, … }` or `{ ok: false, reason }`.
   Nothing in the core throws.
 - **Phases and flags.** A task is always in one phase: Idea, Spec, Ready, In progress,

@@ -918,9 +918,21 @@ describe("leaving Checks", () => {
 describe("task.claimed", () => {
   const you = SessionId.parse("you-1");
 
-  test("makes your session the spec agent", () => {
+  // A separate step from an agent Skelcrew started, because a spec from
+  // your session needs no approval.
+  test("makes your session the spec agent, as a claimed step", () => {
     const task = replay(...inSpec, { type: "task.claimed", session: you, request: null });
-    expect(task).toMatchObject({ phase: "spec", step: { kind: "running", session: you } });
+    expect(task).toMatchObject({ phase: "spec", step: { kind: "claimed", session: you } });
+  });
+
+  test("lets a spec from your session make the task Ready", () => {
+    const task = replay(
+      ...inSpec,
+      { type: "task.claimed", session: you, request: null },
+      { type: "task.specced", spec, by: "agent" },
+      { type: "task.ready" },
+    );
+    expect(task).toMatchObject({ phase: "ready", step: { kind: "queued" } });
   });
 
   test("in Ready, creates a worktree for your session and counts a new build", () => {

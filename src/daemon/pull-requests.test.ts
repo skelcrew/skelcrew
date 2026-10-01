@@ -135,7 +135,6 @@ async function waitingForApproval(
     .object({ session: SessionId })
     .parse(await ok(daemon, { type: "claim", task: one }));
   await ok(daemon, { type: "submit", task: one, session: claim.session, spec: taskSpec });
-  await ok(daemon, { type: "approve", task: one });
   await workDone(daemon);
   return { daemon, repo, github, store };
 }

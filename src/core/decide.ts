@@ -291,6 +291,9 @@ function inIdea(task: TaskIn<"idea">, input: Input, ctx: Context): Decision {
     case "provide_spec":
       return acceptSpec(input.spec, "human", ctx, [{ type: "task.spec_requested" }]);
 
+    case "claim":
+      return claimAgent(task, ctx, input.session);
+
     default:
       return wrongPhase(task, input, ctx);
   }
@@ -329,11 +332,18 @@ function inSpec(task: TaskIn<"spec">, input: Input, ctx: Context): Decision {
       if (task.question !== null) {
         return reject(`#${task.id} has an open question. Wait for the answer.`);
       }
-      return acceptSpec(input.spec, "agent", ctx, [], [stopSession(input.session)]);
+      return acceptSpec(
+        input.spec,
+        step.kind === "claimed" ? "your session" : "agent",
+        ctx,
+        [],
+        [stopSession(input.session)],
+      );
 
     // Your spec replaces the agent's work, so a running agent is stopped.
     case "provide_spec": {
-      const stop = step.kind === "running" ? [stopSession(step.session)] : [];
+      const session = runningSession(task);
+      const stop = session !== null ? [stopSession(session)] : [];
       return acceptSpec(input.spec, "human", ctx, [], stop);
     }
 
@@ -634,17 +644,23 @@ function inDone(task: TaskIn<"done">, input: Input, ctx: Context): Decision {
 
 // A spec must pass the spec contract to be stored. An agent's spec then
 // waits for your approval, unless spec_approval is never. A spec you wrote
-// yourself counts as approved, since you are the one who approves.
+// yourself counts as approved, since you are the one who approves. So does
+// a spec from your claimed session, since you worked it out with it.
+//
+// `writer` says who wrote it: an agent Skelcrew started, your claimed
+// session, or you by hand. The record only says agent or human, so a spec
+// from your session is recorded as the agent's.
 function acceptSpec(
   spec: Spec,
-  by: "agent" | "human",
+  writer: "agent" | "your session" | "human",
   ctx: Context,
   before: EventBody[],
   commands: Command[] = [],
 ): Decision {
   const check = specComplete(spec);
   if (!check.ok) return ctx.reject(check.reasons.join(" "));
-  const approved = by === "human" || ctx.config.specApproval === "never";
+  const approved = writer !== "agent" || ctx.config.specApproval === "never";
+  const by = writer === "human" ? "human" : "agent";
   const specced: EventBody = { type: "task.specced", spec, by };
   return ctx.accept(
     approved ? [...before, specced, { type: "task.ready" }] : [...before, specced],
@@ -667,28 +683,42 @@ function startAgent(
 
 // Your session takes the task where it needs no worktree first: in Spec,
 // or in In progress after a retry. It is the agent from now on.
+//
+// Claiming an Idea asks for its spec too, in the same decision. Two
+// separate inputs would let the scheduler start an agent in between. The
+// spec request comes first even when the claim blocks the task instead,
+// since only a task past Idea can be blocked.
 function claimAgent(
-  task: TaskIn<"spec" | "in_progress">,
+  task: TaskIn<"idea" | "spec" | "in_progress">,
   ctx: Context,
   session: SessionId,
 ): Decision {
-  return refusedStart(task, ctx) ?? ctx.accept([{ type: "task.claimed", session, request: null }]);
+  const asked: EventBody[] = task.phase === "idea" ? [{ type: "task.spec_requested" }] : [];
+  const refused = refusedStart(task, ctx);
+  if (refused === null) {
+    return ctx.accept([...asked, { type: "task.claimed", session, request: null }]);
+  }
+  if (!refused.ok) return refused;
+  return ctx.accept([...asked, ...refused.events], refused.commands);
 }
 
 // The decision for a start or a claim that can't go ahead, or null if it
 // can. It is refused if the task can't take a slot, and the task is blocked
 // if it is over its safety cap. The scheduler never picks such a task, but
 // decide keeps the final say. Only the loop knows whether a slot is free,
-// so it checks that before sending either.
+// so it checks that before sending either. An Idea has nothing under way
+// yet, so it is always waiting.
 function refusedStart(
-  task: TaskIn<"spec" | "ready" | "in_progress">,
+  task: TaskIn<"idea" | "spec" | "ready" | "in_progress">,
   ctx: Context,
 ): Decision | null {
   if (task.blocked !== null) return ctx.reject(`#${task.id} is blocked.`);
   if (task.project !== null && ctx.projects.get(task.project)?.status === "parked") {
     return ctx.reject(`#${task.id} is in a parked project.`);
   }
-  if (task.step.kind !== "queued") return ctx.reject(`#${task.id} isn't waiting for a slot.`);
+  if (task.phase !== "idea" && task.step.kind !== "queued") {
+    return ctx.reject(`#${task.id} isn't waiting for a slot.`);
+  }
   const capped = safetyCapBlock(task, task.usage, ctx);
   if (capped !== null) return ctx.accept([capped]);
   return null;

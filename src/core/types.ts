@@ -163,7 +163,10 @@ export type Brief = {
 export type SpecStep =
   | { kind: "queued" } // waiting for a slot (maxRunning)
   | { kind: "starting"; request: number } // start_spec_session sent, no reply yet
-  | { kind: "running"; session: SessionId } // stored so drop can stop it
+  | { kind: "running"; session: SessionId } // an agent Skelcrew started; stored so drop can stop it
+  // Your session, after a claim. You worked the spec out with it, so its
+  // spec needs no approval. It takes a slot like any agent.
+  | { kind: "claimed"; session: SessionId }
   | { kind: "awaiting_approval" }; // no agent running, so no slot used
 
 // The spec contract says a task only reaches In progress once the worktree
