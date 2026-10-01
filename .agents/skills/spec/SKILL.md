@@ -18,6 +18,29 @@ first.
 
 The commands below use 12 as the task number. Use the task's own number instead.
 
+## If Skelcrew started you
+
+Skelcrew starts a spec agent in the background with `--background` after the task number,
+such as `/spec 12 --background`. If that's how you were started, nobody is watching this
+conversation, and these steps change:
+
+- Don't claim the task. You already hold it. Skip step 1. You work in the folder you started
+  in: a fresh copy of main, made for this spec.
+- `SKELCREW_SESSION` is already set, so leave it out in front of commands.
+- Ask the developer with `skelcrew ask`, not in the conversation. Ask one question at a time,
+  with two to four options, the one you recommend first:
+
+  ```
+  skelcrew ask 12 'Include deleted rows?' 'No, leave them out (recommended)' 'Yes'
+  ```
+
+  Then end your turn and wait. The developer's answer arrives as your next message.
+- Don't wait for the developer to read the spec before you submit it. Submit it once it has
+  the shape below. It then waits for their approval.
+- Your edits are refused here, since a spec agent doesn't change code.
+
+Everything else in this skill holds.
+
 ## 1. Claim the task
 
 First tell a number from a title. It is a task number when it is only digits, with or without a # in front, such as 12 or #12.

@@ -16,9 +16,10 @@ const allSkills = [...agentSkills, ...developerSkills];
 // the developer runs them. The spec skill also adds a task, or asks for its spec, when the
 // developer starts it with a title or with an Idea's number.
 const commandsFor: Record<string, string[]> = {
-  spec: ["add", "spec", "claim", "submit", "log", "approve", "reject"],
+  // Started in the background, spec and develop ask the developer with ask.
+  spec: ["add", "spec", "claim", "submit", "log", "ask", "approve", "reject"],
   // Develop reads status to check the spec is approved before it claims.
-  develop: ["status", "claim", "done", "give-up", "log", "approve", "reject"],
+  develop: ["status", "claim", "done", "give-up", "log", "ask", "approve", "reject"],
   // Add can make a project for the tasks it adds, once the developer agrees.
   add: ["add", "project"],
   // Project reads status to see which projects exist, then makes one.
@@ -198,6 +199,25 @@ describe("defaultSkills", () => {
         found: [],
       });
     }
+  });
+
+  // Skelcrew starts a background agent with "--background" after the task
+  // number, such as "/develop 12 --background". Nobody watches it, and it
+  // already holds the task, so each skill checks for that first.
+  test("the spec and develop skills say what changes when Skelcrew started them", () => {
+    for (const name of ["spec", "develop"]) {
+      const text = flat(name);
+      expect(text).toContain("## If Skelcrew started you");
+      expect(text).toContain(`such as \`/${name} 12 --background\``);
+      expect(text).toContain("Don't claim the task. You already hold it.");
+      expect(text).toContain("skelcrew ask 12");
+      expect(text).toContain("Then end your turn and wait.");
+    }
+    // Its permissions match commands as written, so git -c … commit is
+    // refused where git commit is allowed.
+    expect(flat("develop")).toContain(
+      "Commit with `git add` and `git commit`, written just like that.",
+    );
   });
 
   test("the spec skill claims the task and submits the spec", () => {
