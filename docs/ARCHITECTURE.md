@@ -315,8 +315,9 @@ command as the CLI, so the TUI can do nothing the CLI can't.
 
 | File | What it holds |
 | --- | --- |
-| `open.tsx` | `open(repo)`: draws the screen over the terminal, like vim does, and returns once it is closed. The terminal is left as it was. |
-| `screen.tsx` | `Screen`: the whole screen. For now it names the repository and closes on `q`. Its tests type keys into it with `ink-testing-library`. |
+| `open.tsx` | `open(repo)`: draws the screen over the terminal, like vim does, and returns once it is closed. The terminal is left as it was. It gives the screen `readStatus` from `cli.ts`, which sends the same request as `skelcrew status` and starts the daemon if it isn't running. |
+| `screen.tsx` | `Screen`: the whole screen. It asks for the status every second and shows one row per task. `j`/`k` or the arrow keys move the cursor, and `g`/`G` jump to the first or last task. The cursor follows its task when the task moves to another group. If the daemon can't answer, the last list stays, with the reason under it. `q` closes it. Its tests type keys into it with `ink-testing-library`, and give it tasks without a daemon. |
+| `rows.ts` | What the list shows, as plain data: which group each task is in, and what its row says. The groups are Waiting on you, Working, Waiting for an agent, and Ideas. Done and dropped tasks are only counted. A question is marked to show in yellow, and a block in red, in the terminal's own colours. |
 
 ## The local checks
 

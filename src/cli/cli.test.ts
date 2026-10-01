@@ -8,7 +8,7 @@ import { daemonPaths } from "../daemon/paths";
 import { type Server, serve } from "../daemon/server";
 import { cleanUp, throwawayRepo } from "../daemon/testing";
 import { EventStore } from "../store/store";
-import { type Context, run } from "./cli";
+import { type Context, readStatus, run } from "./cli";
 
 const dirs: string[] = [];
 const servers: Server[] = [];
@@ -72,13 +72,17 @@ function commitIn(worktree: string): void {
 // Runs the CLI as a function, the way a person would from the repository.
 // It never starts a daemon: the tests start their own.
 function cli(repo: string, args: string[], context: Partial<Context> = {}) {
-  return run(args, {
+  return run(args, contextIn(repo, context));
+}
+
+function contextIn(repo: string, context: Partial<Context> = {}): Context {
+  return {
     cwd: repo,
     session: undefined,
     readStdin: async () => "",
     start: () => ({ ok: false, message: "The test starts no daemon." }),
     ...context,
-  });
+  };
 }
 
 const said = (out: string[]) => ({ code: 0, out, err: [] });
@@ -625,6 +629,25 @@ describe("skelcrew status", () => {
     const repo = await repoWithDaemon();
     await cli(repo, ["add", "Totals"]);
     expect(await cli(repo, [])).toEqual(await cli(repo, ["status"]));
+  });
+
+  // The TUI reads the status as data, through the same request.
+  test("readStatus gives the tasks that status shows", async () => {
+    const repo = await repoWithDaemon();
+    await cli(repo, ["add", "Totals"]);
+    expect(await readStatus(contextIn(repo))).toMatchObject({
+      ok: true,
+      tasks: [{ task: 1, title: "Totals", phase: "idea", waitingOnYou: null }],
+    });
+  });
+
+  test("readStatus says why when there is no repository", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "sk-"));
+    dirs.push(outside);
+    expect(await readStatus(contextIn(outside))).toEqual({
+      ok: false,
+      message: "No Skelcrew repository here. Run `skelcrew init` in your repository first.",
+    });
   });
 
   test("shows a blocked task with its reason", async () => {
