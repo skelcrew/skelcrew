@@ -62,7 +62,7 @@ describe("the daemon's socket", () => {
     await send(socket, { type: "add", title: "CSV export", spec: true, project: null });
     await send(socket, { type: "claim", task: 1 });
     await send(socket, { type: "submit", task: 1, session: "you-1", spec });
-    await send(socket, { type: "approve", task: 1, sendBack: null });
+    await send(socket, { type: "approve", task: 1 });
     await send(socket, { type: "claim", task: 1 });
     const worktree = join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export");
     writeFileSync(join(worktree, "export.csv"), "a,b\n");

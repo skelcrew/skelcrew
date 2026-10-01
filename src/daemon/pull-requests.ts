@@ -242,7 +242,7 @@ function body(task: Extract<Task, { phase: "checks" }>, gates: GateName[]): stri
     "",
     "## Approving",
     "",
-    `Merge it with \`${approve}\`. Send it back with \`${approve} --send-back "<what to change>"\`.`,
+    `Merge it with \`${approve}\`. Send it back with \`skelcrew reject ${task.id} "<what to change>"\`.`,
     "",
     "The diff here is against main on GitHub. If you haven't pushed main lately, it also shows commits that are only on your machine.",
   ].join("\n");

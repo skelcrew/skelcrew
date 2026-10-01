@@ -51,10 +51,15 @@ function happened(event: TaskEvent, before: TaskEvent[]): string {
       return "A spec was asked for.";
     case "task.spec_session_started":
       return `A spec agent started as ${event.session}.`;
-    case "task.specced":
-      return event.by === "agent"
-        ? `The agent sent a spec: ${event.spec.scope}`
-        : `A spec was written by hand: ${event.spec.scope}`;
+    case "task.specced": {
+      const who = event.by === "agent" ? "The agent sent a spec" : "A spec was written by hand";
+      const { scope, acceptance } = event.spec;
+      const criteria =
+        acceptance.length === 0
+          ? []
+          : ["Acceptance criteria:", ...acceptance.map((line) => `- ${line}`)];
+      return [`${who}: ${scope}`, ...criteria].join("\n");
+    }
     case "task.spec_sent_back":
       return `You sent the spec back: ${event.note}`;
     // The saved events don't say whether you approved an agent's spec, or

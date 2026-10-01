@@ -327,7 +327,7 @@ Notes:
   workflow.yml    phases, gates, check commands, critical paths, plugins
   record/         record entries and daily digests
   skelcrew.db     events, state, board, inbox and costs (SQLite, gitignored)
-.agents/skills/   default skills (spec, develop, review), linked into .claude/skills/ for Claude Code
+.agents/skills/   default skills (add, spec, develop, skelcrew, log, approve), linked into .claude/skills/ for Claude Code
 docs/specs/       each merged task's approved spec, such as 12-csv-export.md, written by Skelcrew at merge
 ```
 
@@ -372,7 +372,7 @@ Add a CSV export button to the reports page.
 - Clicking Export downloads a CSV of the visible rows.
 ```
 
-- The developer reads the spec before approving the merge. A build claim prints it whole, and `skelcrew log` shows its scope. Once merges wait in a draft pull request, it will show there too.
+- The developer reads the spec before approving the merge. A build claim prints it whole, and `skelcrew log` shows its scope and acceptance criteria. Once merges wait in a draft pull request, it will show there too.
 - The merge's checks run with the file in place. Nothing a hook does can change it: main gets exactly the work plus the approved text, or nothing.
 - A repository whose `.gitignore` covers `docs/` still gets the file.
 - The file isn't among the files a task changed, since its branch never holds it. So a critical path like `docs/**` doesn't make every task critical.
@@ -399,7 +399,8 @@ Skelcrew runs where a git repository starts, the folder that holds `.git`. A fol
 | `skelcrew project park <name>` | Stop new agents from starting in a project; `activate` undoes it |
 | `skelcrew project set <task> <project>` | Put a task in a project, or take it out with `none` |
 | `skelcrew spec <task>` | Ask for an Idea to be specced |
-| `skelcrew approve <task>` | Approve a spec or a critical merge; `--send-back` returns it |
+| `skelcrew approve <task>` | Approve a spec or a critical merge; `reject` sends it back |
+| `skelcrew reject <task> "<note>"` | Send a spec back to Spec, or a critical merge back to In progress, with a note saying what to change |
 | `skelcrew retry <task>` | Retry a blocked task; it waits for a claim until Skelcrew starts agents itself |
 | `skelcrew drop <task>` | Drop a task that is not done; stops its session and removes its worktree if it has them |
 | `skelcrew inbox` | List open decisions and answer them |

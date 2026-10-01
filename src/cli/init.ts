@@ -58,16 +58,17 @@ function report(repo: string, report: InitReport): string[] {
   ];
 }
 
-// Whether Claude Code will ask before skelcrew approve runs, in one line.
+// Whether Claude Code will ask before skelcrew approve or skelcrew reject
+// runs, in one line.
 // What the rules can't stop, such as `bash -c 'skelcrew approve 12'`, is in
 // the report's askBeforeApproveLimit and in src/init/settings.ts. When the
 // rules couldn't be added, a warning above says why and what to do.
 function approving(report: InitReport): string[] {
   if (report.askBeforeApprove !== "add by hand") {
-    return ["Approving: Claude Code will ask you before skelcrew approve runs."];
+    return ["Approving: Claude Code will ask you before skelcrew approve or skelcrew reject runs."];
   }
   return [
-    "Approving: Claude Code won't ask you before skelcrew approve runs, because init couldn't add the rules.",
+    "Approving: Claude Code won't ask you before skelcrew approve or skelcrew reject runs, because init couldn't add the rules.",
     'To add them, see the note about .claude/settings.json under "Look at these".',
   ];
 }

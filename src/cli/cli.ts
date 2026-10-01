@@ -93,30 +93,39 @@ const handlers: Record<string, Handler> = {
     ),
 
   approve: async (args, context) =>
-    withTask("approve", args, { "send-back": { type: "string" } }, (task, values) => {
-      const note = values["send-back"];
-      if (note !== undefined && typeof note !== "string") return usage("approve");
-      if (note !== undefined && note.trim() === "") {
-        return refused('Say what to change, like this: --send-back "Add totals."');
-      }
-      return ask(
-        context,
-        { type: "approve", task, sendBack: note ?? null },
-        approveResult,
-        (result) => {
-          if (note !== undefined) return said(`Sent #${task} back with your note.`);
-          if (!("merged" in result)) return said(`Approved #${task}.`);
-          if (result.merged) {
-            return said(`Approved #${task}. It merged into main as ${result.commit.slice(0, 7)}.`);
-          }
-          // Nothing starts an agent in step 2, so the task waits for a claim.
-          const next = result.outOfAttempts
-            ? `Approved #${task}, but the merge failed, and #${task} is out of attempts. Retry it with skelcrew retry ${task}, or drop it.`
-            : `Approved #${task}, but the merge failed. #${task} is back in In progress. Claim it to fix it: skelcrew claim ${task}`;
-          return { code: 1, out: [next, "Why:", ...result.summary.split("\n")], err: [] };
-        },
-      );
-    }),
+    withTask("approve", args, {}, (task) =>
+      ask(context, { type: "approve", task }, approveResult, (result) => {
+        if (!("merged" in result)) return said(`Approved #${task}.`);
+        if (result.merged) {
+          return said(`Approved #${task}. It merged into main as ${result.commit.slice(0, 7)}.`);
+        }
+        // Nothing starts an agent in step 2, so the task waits for a claim.
+        const next = result.outOfAttempts
+          ? `Approved #${task}, but the merge failed, and #${task} is out of attempts. Retry it with skelcrew retry ${task}, or drop it.`
+          : `Approved #${task}, but the merge failed. #${task} is back in In progress. Claim it to fix it: skelcrew claim ${task}`;
+        return { code: 1, out: [next, "Why:", ...result.summary.split("\n")], err: [] };
+      }),
+    ),
+
+  reject: async (args, context) => {
+    const parsed = parse(
+      "reject",
+      () => parseArgs({ args, allowPositionals: true, options: {} }),
+      args,
+    );
+    if (!parsed.ok) return parsed.outcome;
+    const [written, note, ...extra] = parsed.value.positionals;
+    const task = taskNumber("reject", written);
+    if (!task.ok) return task.outcome;
+    const example = `skelcrew reject ${task.value} "Add totals."`;
+    if (note === undefined || note.trim() === "") {
+      return refused(`Say what to change, like this: ${example}`);
+    }
+    if (extra.length > 0) return refused(`Put the note in quotes, like this: ${example}`);
+    return ask(context, { type: "reject", task: task.value, note }, rejectResult, ({ phase }) =>
+      said(`Sent #${task.value} back to ${phaseNames[phase]} with your note.`),
+    );
+  },
 
   drop: async (args, context) =>
     withTask("drop", args, {}, (task) =>
@@ -639,6 +648,9 @@ const approveResult = z.union([
   z.object({ merged: z.literal(false), outOfAttempts: z.boolean(), summary: z.string() }),
   z.strictObject({}),
 ]);
+
+// Where a rejected spec or merge went: Spec or In progress.
+const rejectResult = z.object({ phase: z.enum(phases) });
 
 // What `done` answers once the checks have run.
 

@@ -135,7 +135,7 @@ async function waitingForApproval(
     .object({ session: SessionId })
     .parse(await ok(daemon, { type: "claim", task: one }));
   await ok(daemon, { type: "submit", task: one, session: claim.session, spec: taskSpec });
-  await ok(daemon, { type: "approve", task: one, sendBack: null });
+  await ok(daemon, { type: "approve", task: one });
   await workDone(daemon);
   return { daemon, repo, github, store };
 }
@@ -187,6 +187,9 @@ describe("a draft pull request for reading", () => {
     expect(shown?.body).toContain(`- ${spec.acceptance[0]}`);
     expect(shown?.body).toContain(`passed on commit ${head.slice(0, 7)}`);
     expect(shown?.body).toContain("`skelcrew approve 1`");
+    // Sending it back is its own command now.
+    expect(shown?.body).toContain('`skelcrew reject 1 "<what to change>"`');
+    expect(shown?.body).not.toContain("--send-back");
   });
 
   test("opens only one, however often the daemon looks again", async () => {
@@ -243,7 +246,7 @@ describe("a draft pull request for reading", () => {
     });
     const merged = z
       .object({ merged: z.literal(true), commit: z.string() })
-      .parse(await ok(daemon, { type: "approve", task: one, sendBack: null }));
+      .parse(await ok(daemon, { type: "approve", task: one }));
     expect(await git(repo.dir, "rev-parse", "main")).toBe(merged.commit);
   });
 
@@ -255,7 +258,7 @@ describe("a draft pull request for reading", () => {
     for (let i = 0; i < 3; i++) await ok(daemon, { type: "status" });
     await Bun.sleep(100);
     expect(github.shown).toHaveLength(1);
-    expect(await ok(daemon, { type: "approve", task: one, sendBack: null })).toMatchObject({
+    expect(await ok(daemon, { type: "approve", task: one })).toMatchObject({
       merged: true,
     });
   });
@@ -288,7 +291,7 @@ describe("a draft pull request for reading", () => {
     await until(() => github.open.size === 1);
     const merged = z
       .object({ merged: z.literal(true), commit: z.string() })
-      .parse(await ok(daemon, { type: "approve", task: one, sendBack: null }));
+      .parse(await ok(daemon, { type: "approve", task: one }));
     await until(() => github.closed.length === 1);
     expect(github.closed[0]).toMatchObject({ number: 41, branch: "task/1-csv-export" });
     expect(github.closed[0]?.comment).toContain(merged.commit.slice(0, 7));
@@ -304,7 +307,7 @@ describe("a draft pull request for reading", () => {
     await until(() => github.open.size === 1);
     await Bun.sleep(50);
     github.closeHold = new Promise(() => {});
-    await ok(first.daemon, { type: "approve", task: one, sendBack: null });
+    await ok(first.daemon, { type: "approve", task: one });
     await until(() => github.closed.length === 1);
     await first.daemon.close();
     github.closeHold = null;
@@ -318,7 +321,7 @@ describe("a draft pull request for reading", () => {
   test("stays open after a send-back, and the next wait pushes the new work to it", async () => {
     const { daemon, repo, github } = await waitingForApproval();
     await until(() => github.open.size === 1);
-    await ok(daemon, { type: "approve", task: one, sendBack: "Add totals." });
+    await ok(daemon, { type: "reject", task: one, note: "Add totals." });
     await Bun.sleep(100);
     expect(github.closed).toHaveLength(0);
     expect((await statusOf(daemon)).pullRequest).toBe("https://github.com/owner/repo/pull/41");
@@ -336,7 +339,7 @@ describe("a draft pull request for reading", () => {
     const { daemon, repo, github } = await waitingForApproval();
     await until(() => github.open.size === 1);
     const old = await git(repo.dir, "rev-parse", "task/1-csv-export");
-    await ok(daemon, { type: "approve", task: one, sendBack: "Add totals." });
+    await ok(daemon, { type: "reject", task: one, note: "Add totals." });
     github.failure = "git couldn't push the branch: ! [rejected] (non-fast-forward)";
     await workDone(daemon, "totals.csv");
     await until(() => github.shown.length === 2);
@@ -353,7 +356,7 @@ describe("a draft pull request for reading", () => {
     const { daemon, github } = await waitingForApproval();
     await until(async () => (await statusOf(daemon)).pullRequest !== null);
     expect((await statusOf(daemon)).pullRequestNote).toBeNull();
-    await ok(daemon, { type: "approve", task: one, sendBack: "Add totals." });
+    await ok(daemon, { type: "reject", task: one, note: "Add totals." });
     await workDone(daemon, "totals.csv");
     await until(() => github.shown.length === 2);
     await Bun.sleep(50);

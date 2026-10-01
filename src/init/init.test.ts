@@ -80,7 +80,15 @@ const developSkill = ".agents/skills/develop/SKILL.md";
 // Claude Code looks for skills in .claude/skills, so init links each one
 // there.
 const specLink = ".claude/skills/spec";
-const developLink = ".claude/skills/develop";
+// Every default skill, in the order init writes them: the agents' spec and
+// develop, then the developer's own verbs.
+const skillNames = ["spec", "develop", "add", "skelcrew", "log", "approve"];
+const skillFiles = skillNames.map((name) => `.agents/skills/${name}/SKILL.md`);
+const skillLinks = skillNames.map((name) => `.claude/skills/${name}`);
+// Where each link in .claude/skills leads.
+const linkTargets = Object.fromEntries(
+  skillNames.map((name) => [`.claude/skills/${name}`, `../../.agents/skills/${name}`]),
+);
 const dbLine = ".skelcrew/skelcrew.db*";
 // The files the daemon keeps while it runs: its log, the file naming its
 // process, and the socket the CLI talks to it through.
@@ -96,16 +104,22 @@ const settings = ".claude/settings.json";
 // unreadable or read-only would test nothing. They are skipped as root.
 const asRoot = process.getuid?.() === 0;
 // The Claude Code permission rules that make it ask you before an agent
-// runs skelcrew approve. Each catches one usual way of typing it: plain,
-// through bunx, bun x or npx, or by a path to the program, such as
-// ./node_modules/.bin/skelcrew. The docs say a rule matches only the way
-// it is written, and a leading * stands in for any text.
+// runs skelcrew approve or skelcrew reject. Each catches one usual way of
+// typing it: plain, through bunx, bun x or npx, or by a path to the
+// program, such as ./node_modules/.bin/skelcrew. The docs say a rule
+// matches only the way it is written, and a leading * stands in for any
+// text.
 const askRules = [
   "Bash(skelcrew approve *)",
   "Bash(bunx skelcrew approve *)",
   "Bash(bun x skelcrew approve *)",
   "Bash(npx skelcrew approve *)",
   "Bash(*/skelcrew approve *)",
+  "Bash(skelcrew reject *)",
+  "Bash(bunx skelcrew reject *)",
+  "Bash(bun x skelcrew reject *)",
+  "Bash(npx skelcrew reject *)",
+  "Bash(*/skelcrew reject *)",
 ];
 // The report must say plainly that the rules can be got round.
 const saysItCanBeBypassed = expect.stringContaining("bash -c");
@@ -119,8 +133,8 @@ describe("initRepository", () => {
       report: {
         checks: ["bun run test", "bun run lint"],
         setup: ["bun install --frozen-lockfile"],
-        created: [workflow, specSkill, developSkill, settings, ".gitignore"],
-        linked: [specLink, developLink],
+        created: [workflow, ...skillFiles, settings, ".gitignore"],
+        linked: skillLinks,
         updated: [],
         unchanged: [],
         byHand: [],
@@ -159,7 +173,7 @@ describe("initRepository", () => {
     const dir = repo(bunApp);
     initRepository(dir);
     for (const skill of defaultSkills) expect(read(dir, skill.path)).toBe(skill.text);
-    expect(defaultSkills.map((skill) => skill.path)).toEqual([specSkill, developSkill]);
+    expect(defaultSkills.map((skill) => skill.path)).toEqual(skillFiles);
   });
 
   // The database, the files SQLite keeps beside it, and the daemon's own
@@ -250,11 +264,11 @@ describe("initRepository", () => {
       expect(everything(home)).toEqual(before);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      expect(result.report.byHand).toEqual([specLink, developLink, settings]);
-      expect(result.report.created).toEqual([workflow, specSkill, developSkill, ".gitignore"]);
+      expect(result.report.byHand).toEqual([...skillLinks, settings]);
+      expect(result.report.created).toEqual([workflow, ...skillFiles, ".gitignore"]);
       expect(result.report.linked).toEqual([]);
       expect(result.report.askBeforeApprove).toBe("add by hand");
-      expect(result.report.warnings).toHaveLength(3);
+      expect(result.report.warnings).toHaveLength(skillLinks.length + 1);
       for (const warning of result.report.warnings) {
         expect(warning).toContain(".claude");
         expect(warning).toContain("outside the repository");
@@ -272,11 +286,11 @@ describe("initRepository", () => {
       expect(everything(home)).toEqual(before);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      expect(result.report.byHand).toEqual([specSkill, developSkill, specLink, developLink]);
+      expect(result.report.byHand).toEqual([...skillFiles, ...skillLinks]);
       expect(result.report.created).toEqual([workflow, settings, ".gitignore"]);
       expect(result.report.linked).toEqual([]);
       expect(links(dir)).toEqual({ ".agents": join(home, ".agents") });
-      expect(result.report.warnings).toHaveLength(4);
+      expect(result.report.warnings).toHaveLength(skillFiles.length + skillLinks.length);
       for (const warning of result.report.warnings) {
         expect(warning).toContain(".agents");
         expect(warning).toContain("outside the repository");
@@ -293,12 +307,7 @@ describe("initRepository", () => {
       symlinkSync(join(home, ".agents/skills"), join(dir, ".agents/skills"));
       const result = initRepository(dir);
       expect(everything(home)).toEqual(before);
-      expect(result.ok && result.report.byHand).toEqual([
-        specSkill,
-        developSkill,
-        specLink,
-        developLink,
-      ]);
+      expect(result.ok && result.report.byHand).toEqual([...skillFiles, ...skillLinks]);
       expect(result.ok && result.report.created).toContain(settings);
       expect(existsSync(join(dir, specLink))).toBe(false);
     });
@@ -312,7 +321,7 @@ describe("initRepository", () => {
       const result = initRepository(dir);
       expect(everything(home)).toEqual(before);
       expect(links(home)).toEqual({});
-      expect(result.ok && result.report.byHand).toEqual([specLink, developLink]);
+      expect(result.ok && result.report.byHand).toEqual(skillLinks);
       expect(result.ok && result.report.created).toContain(specSkill);
     });
 
@@ -336,7 +345,7 @@ describe("initRepository", () => {
       expect(result.ok && result.report.byHand).toEqual([]);
       expect(existsSync(join(dir, "config/claude/settings.json"))).toBe(true);
       expect(existsSync(join(dir, "config/agents/skills/spec/SKILL.md"))).toBe(true);
-      expect(result.ok && result.report.linked).toEqual([specLink, developLink]);
+      expect(result.ok && result.report.linked).toEqual(skillLinks);
       expect(read(dir, `${specLink}/SKILL.md`)).toBe(read(dir, specSkill));
     });
   });
@@ -471,8 +480,7 @@ describe("initRepository", () => {
         const warnings = warningsFor(`${line}\n`);
         expect(warnings).toHaveLength(1);
         expect(warnings[0]).toContain(line);
-        expect(warnings[0]).toContain(specLink);
-        expect(warnings[0]).toContain(developLink);
+        for (const link of skillLinks) expect(warnings[0]).toContain(link);
         expect(warnings[0]).toContain(settings);
         expect(warnings[0]).toContain("clone");
       }
@@ -495,8 +503,7 @@ describe("initRepository", () => {
       for (const line of [".agents/", ".agents/*", "skills/"]) {
         const warnings = warningsFor(`${line}\n`);
         expect(warnings).toHaveLength(1);
-        expect(warnings[0]).toContain(specSkill);
-        expect(warnings[0]).toContain(developSkill);
+        for (const file of skillFiles) expect(warnings[0]).toContain(file);
       }
     });
 
@@ -530,7 +537,7 @@ describe("initRepository", () => {
     const second = initRepository(dir);
     expect(everything(dir)).toEqual(before);
     expect(links(dir)).toEqual(linksBefore);
-    expect(Object.keys(linksBefore).sort()).toEqual([developLink, specLink]);
+    expect(Object.keys(linksBefore).sort()).toEqual([...skillLinks].sort());
     expect(second).toEqual({
       ok: true,
       report: {
@@ -539,15 +546,7 @@ describe("initRepository", () => {
         created: [],
         linked: [],
         updated: [],
-        unchanged: [
-          workflow,
-          specSkill,
-          developSkill,
-          specLink,
-          developLink,
-          settings,
-          ".gitignore",
-        ],
+        unchanged: [workflow, ...skillFiles, ...skillLinks, settings, ".gitignore"],
         byHand: [],
         warnings: [],
         askBeforeApprove: "already there",
@@ -569,8 +568,9 @@ describe("initRepository", () => {
     test("links each skill into .claude/skills, with a relative link", () => {
       const dir = repo(bunApp);
       initRepository(dir);
-      expect(readlinkSync(join(dir, specLink))).toBe("../../.agents/skills/spec");
-      expect(readlinkSync(join(dir, developLink))).toBe("../../.agents/skills/develop");
+      for (const [link, target] of Object.entries(linkTargets)) {
+        expect(readlinkSync(join(dir, link))).toBe(target);
+      }
       for (const skill of defaultSkills) {
         const name = skill.path.split("/")[2] ?? "";
         expect(read(dir, `.claude/skills/${name}/SKILL.md`)).toBe(skill.text);
@@ -594,8 +594,7 @@ describe("initRepository", () => {
       expect(read(dir, ".claude/skills/mine/SKILL.md")).toBe("my own skill\n");
       expect(links(dir)).toEqual({
         ".claude/skills/theirs": "../../elsewhere/theirs",
-        [specLink]: "../../.agents/skills/spec",
-        [developLink]: "../../.agents/skills/develop",
+        ...linkTargets,
       });
     });
 
@@ -618,14 +617,14 @@ describe("initRepository", () => {
         expect(result.ok).toBe(true);
         if (!result.ok) continue;
         expect(result.report.unchanged).toContain(specLink);
-        expect(result.report.linked).toEqual([developLink]);
+        expect(result.report.linked).toEqual(skillLinks.slice(1));
         expect(result.report.warnings).toHaveLength(1);
         expect(result.report.warnings[0]).toContain(specLink);
         expect(result.report.warnings[0]).toContain(".agents/skills/spec");
         for (const [path, text] of Object.entries(before)) expect(read(dir, path)).toBe(text);
         expect(links(dir)).toEqual({
           ...linksBefore,
-          [developLink]: "../../.agents/skills/develop",
+          ...Object.fromEntries(Object.entries(linkTargets).filter(([link]) => link !== specLink)),
         });
       }
     });
@@ -639,11 +638,12 @@ describe("initRepository", () => {
       if (!result.ok) return;
       expect(read(dir, ".claude/skills")).toBe("not a folder\n");
       expect(result.report.linked).toEqual([]);
-      expect(result.report.byHand).toEqual([specLink, developLink]);
+      expect(result.report.byHand).toEqual(skillLinks);
       expect(result.report.created).toContain(settings);
-      expect(result.report.warnings).toHaveLength(2);
-      expect(result.report.warnings[0]).toContain(specLink);
-      expect(result.report.warnings[1]).toContain(developLink);
+      expect(result.report.warnings).toHaveLength(skillLinks.length);
+      for (const [i, link] of skillLinks.entries()) {
+        expect(result.report.warnings[i]).toContain(link);
+      }
     });
 
     // With .claude a link to config/claude, the real skills folder is
@@ -666,8 +666,8 @@ describe("initRepository", () => {
         }
         expect(result.ok).toBe(true);
         if (!result.ok) return;
-        expect(result.report.byHand).toEqual([specLink, developLink]);
-        expect(result.report.warnings).toHaveLength(2);
+        expect(result.report.byHand).toEqual(skillLinks);
+        expect(result.report.warnings).toHaveLength(skillLinks.length);
         expect(result.report.warnings[0]).toContain(
           "`ln -s ../../../.agents/skills/spec .claude/skills/spec`",
         );
@@ -678,8 +678,9 @@ describe("initRepository", () => {
           const path = command?.[2] ?? "";
           symlinkSync(target, join(dir, path));
         }
-        expect(read(dir, `${specLink}/SKILL.md`)).toBe(read(dir, specSkill));
-        expect(read(dir, `${developLink}/SKILL.md`)).toBe(read(dir, developSkill));
+        for (const [i, link] of skillLinks.entries()) {
+          expect(read(dir, `${link}/SKILL.md`)).toBe(read(dir, skillFiles[i] ?? ""));
+        }
       },
     );
 
@@ -690,9 +691,8 @@ describe("initRepository", () => {
       const result = initRepository(dir);
       expect(result.ok).toBe(false);
       if (result.ok) return;
-      expect(result.linked).toEqual([specLink, developLink]);
-      expect(result.reason).toContain(specLink);
-      expect(result.reason).toContain(developLink);
+      expect(result.linked).toEqual(skillLinks);
+      for (const link of skillLinks) expect(result.reason).toContain(link);
     });
   });
 
@@ -708,7 +708,7 @@ describe("initRepository", () => {
       expect(readlinkSync(join(dir, "CLAUDE.md"))).toBe("AGENTS.md");
       expect(read(dir, "CLAUDE.md")).toBe(agents);
       expect(read(dir, "AGENTS.md")).toBe(agents);
-      expect(result.ok && result.report.linked).toEqual([specLink, developLink, "CLAUDE.md"]);
+      expect(result.ok && result.report.linked).toEqual([...skillLinks, "CLAUDE.md"]);
       expect(result.ok && result.report.warnings).toEqual([]);
     });
 
@@ -725,11 +725,10 @@ describe("initRepository", () => {
         for (const [path, text] of Object.entries(before)) expect(read(dir, path)).toBe(text);
         expect(links(dir)).toEqual({
           ...linksBefore,
-          [specLink]: "../../.agents/skills/spec",
-          [developLink]: "../../.agents/skills/develop",
+          ...linkTargets,
         });
         expect(result.ok && result.report.unchanged).toContain("CLAUDE.md");
-        expect(result.ok && result.report.linked).toEqual([specLink, developLink]);
+        expect(result.ok && result.report.linked).toEqual(skillLinks);
         expect(result.ok && result.report.warnings).toEqual([]);
       }
     });
@@ -744,7 +743,7 @@ describe("initRepository", () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.report.unchanged).toContain("CLAUDE.md");
-      expect(result.report.linked).toEqual([specLink, developLink]);
+      expect(result.report.linked).toEqual(skillLinks);
       expect(result.report.warnings).toHaveLength(1);
       expect(result.report.warnings[0]).toContain("move it to AGENTS.md");
       expect(result.report.warnings[0]).toContain("make CLAUDE.md a link to it");
@@ -772,7 +771,7 @@ describe("initRepository", () => {
         expect(isThere(join(dir, "CLAUDE.md"))).toBe(false);
         expect(result.ok).toBe(true);
         if (!result.ok) return;
-        expect(result.report.linked).toEqual([specLink, developLink]);
+        expect(result.report.linked).toEqual(skillLinks);
         expect(result.report.warnings).toHaveLength(1);
         expect(result.report.warnings[0]).toContain("CLAUDE.md");
         expect(result.report.warnings[0]).toContain(why);
@@ -807,7 +806,7 @@ describe("initRepository", () => {
       const result = initRepository(dir);
       expect(existsSync(join(dir, "CLAUDE.md"))).toBe(false);
       expect(existsSync(join(dir, "AGENTS.md"))).toBe(false);
-      expect(result.ok && result.report.linked).toEqual([specLink, developLink]);
+      expect(result.ok && result.report.linked).toEqual(skillLinks);
       expect(result.ok && result.report.unchanged).toEqual([]);
     });
 
@@ -824,7 +823,7 @@ describe("initRepository", () => {
     });
   });
 
-  describe("the rules that make Claude Code ask before skelcrew approve", () => {
+  describe("the rules that make Claude Code ask before skelcrew approve or reject", () => {
     const settingsJson = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 
     test("writes a settings file with the rules when there is none", () => {
@@ -850,6 +849,24 @@ describe("initRepository", () => {
       }
     });
 
+    // An agent that sent a task back unasked would put words in the
+    // developer's mouth: the next claim prints its note as "The developer's
+    // note". So reject gets the same rules as approve.
+    test("asks before the usual ways of typing skelcrew reject", () => {
+      const dir = repo(bunApp);
+      initRepository(dir);
+      const rules = JSON.parse(read(dir, settings)).permissions.ask;
+      for (const rule of [
+        "Bash(skelcrew reject *)",
+        "Bash(bunx skelcrew reject *)",
+        "Bash(bun x skelcrew reject *)",
+        "Bash(npx skelcrew reject *)",
+        "Bash(*/skelcrew reject *)",
+      ]) {
+        expect(rules).toContain(rule);
+      }
+    });
+
     // Written another way, such as bash -c 'skelcrew approve 12', the
     // command still runs without a question. The report says so.
     test("says plainly that the rules can be got round", () => {
@@ -867,7 +884,7 @@ describe("initRepository", () => {
       expect(limit).toContain("only in Claude Code");
       expect(limit).toContain("In another harness, set up its own guard");
       expect(limit).toContain("typing skelcrew approve yourself");
-      expect(limit).toContain("start the spec and develop skills");
+      expect(limit).toContain("start the spec, develop and approve skills");
     });
 
     // When init couldn't add the rules, Claude Code doesn't ask yet. The
@@ -896,6 +913,7 @@ describe("initRepository", () => {
       for (const result of [added, already]) {
         const limit = result.ok ? result.report.askBeforeApproveLimit : "";
         expect(limit).toContain("Claude Code asks before");
+        expect(limit).toContain("skelcrew approve or skelcrew reject");
         expect(limit).not.toContain("not in place yet");
       }
     });
@@ -909,6 +927,11 @@ describe("initRepository", () => {
         "Bash(bunx skelcrew approve *)",
         "Bash(bun x skelcrew approve *)",
         "Bash(*/skelcrew approve *)",
+        "Bash(skelcrew reject *)",
+        "Bash(bunx skelcrew reject *)",
+        "Bash(bun x skelcrew reject *)",
+        "Bash(npx skelcrew reject *)",
+        "Bash(*/skelcrew reject *)",
       ]);
       expect(result.ok && result.report.updated).toContain(settings);
       expect(result.ok && result.report.askBeforeApprove).toBe("added");

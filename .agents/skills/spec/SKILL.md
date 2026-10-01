@@ -1,26 +1,63 @@
 ---
 name: spec
-description: Write the spec for a Skelcrew task together with the developer, then submit it for their approval. Use when the developer asks to spec a task, such as when the developer asks to spec task 12, or types "/spec 12".
+description: Write the spec for a Skelcrew task together with the developer, then submit it for their approval. Use when the developer asks to spec a task, such as when the developer asks to spec task 12, or to spec a new task called "CSV export", or types "/spec 12".
 disable-model-invocation: true
 ---
 
 # Spec a Skelcrew task
 
 You write the spec for the task the developer named, such as 12, with the developer, here in
-this conversation.
+this conversation. The developer may name a new task by its title instead, such as
+`CSV export`.
 
-If you weren't given a task number, ask the developer which task, and wait. Don't run any
-`skelcrew` command until you have one.
+If you weren't given a task number or a title, ask the developer which task, and wait. Don't
+run any `skelcrew` command until you have one.
 
-The commands below use 12 as the task number. Use the number the developer gave instead.
+Starting this skill is the developer's ask for a spec. Don't ask the developer to confirm
+first.
+
+The commands below use 12 as the task number. Use the task's own number instead.
 
 ## 1. Claim the task
 
-Run `skelcrew claim` with the task number the developer gave, such as `skelcrew claim 12`.
-This makes this session the one working on the task.
+First tell a number from a title. It is a task number when it is only digits, with or without a # in front, such as 12 or #12.
+Anything else is a title, such as `CSV export` or `Fix the 404 on login`. So `404` alone is a
+number. To start a task with a title of only digits, the developer adds a word.
 
-If the claim is refused, tell the developer why, in one sentence, and stop. For example, the
-task may not be waiting for a spec, or too many agents may be working already.
+**A number and then more words**, such as `12 focus on the API`, is a title by that rule. But
+the developer may have meant task 12, with a note on what to focus on. So first run
+`skelcrew log 12`, with that first number. If it says the task doesn't exist, go on with the
+whole text as a title. If the task exists, ask the developer whether they meant #12, and
+wait. Add nothing until they answer. If they meant #12, spec #12, and take the rest of the
+text as their guidance for the spec.
+
+**With a title**, add the task and ask for its spec in one step:
+
+```
+skelcrew add '<title>' --spec
+```
+
+Put the developer's title where `<title>` is, in single quotes. Single quotes keep it as it
+is. Inside double quotes, the shell would still run anything in backticks and replace words
+that start with `$`. If the title holds a single quote, write that quote as `'\''`. For
+example, `Don't cache` becomes `'Don'\''t cache'`. The command prints the new number, such as "Added #12: CSV export." Tell the developer that number, and use it from
+here on.
+
+**Then claim it.** Run `skelcrew claim` with the task number the developer gave, or the one
+`skelcrew add` printed, such as `skelcrew claim 12`. This makes this session the one working
+on the task.
+
+If the claim is refused because the task is in Idea, ask for its spec yourself, then claim
+again:
+
+```
+skelcrew spec 12
+skelcrew claim 12
+```
+
+If the claim is refused for any other reason, tell the developer why, in one sentence, and
+stop. For example, the task may already have a spec, or too many agents may be working
+already.
 
 The claim prints your session. Submitting the spec needs it. Your harness may start each
 shell command fresh, so setting it once may not last. Put
@@ -141,12 +178,13 @@ SPEC
 
 If it is refused because the spec is missing something, fix what it names and submit again.
 
-Submitting is where your part ends. You never approve a spec. Only the developer does, by
-running `skelcrew approve` themselves. You never run it.
+Submitting is where your part ends. You never approve a spec, and you never send one back.
+Only the developer does either.
 
 ## What you never do
 
-- Never approve anything. Never run `skelcrew approve`. Only the developer runs it.
+- Never approve anything, and never send work back. Never run `skelcrew approve`, and never
+  run `skelcrew reject`. Only the developer runs them.
 - Never edit `.skelcrew/workflow.yml`, `.claude/settings.json`, or the skills in
   `.agents/skills/`. They set the rules you work under, such as whether a spec needs the
   developer's approval. If one looks wrong, tell the developer.

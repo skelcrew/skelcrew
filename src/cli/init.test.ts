@@ -53,7 +53,8 @@ function init(cwd: string, args: string[] = []) {
   });
 }
 
-const approving = "Approving: Claude Code will ask you before skelcrew approve runs.";
+const approving =
+  "Approving: Claude Code will ask you before skelcrew approve or skelcrew reject runs.";
 
 describe("skelcrew init", () => {
   test("sets up a fresh repository and says what it did", async () => {
@@ -64,8 +65,8 @@ describe("skelcrew init", () => {
         `Set up Skelcrew in ${repo}.`,
         "The checks it runs: bun run test, bun run lint.",
         "Before them, it runs: bun install --frozen-lockfile.",
-        "Created: .skelcrew/workflow.yml, .agents/skills/spec/SKILL.md, .agents/skills/develop/SKILL.md, .claude/settings.json, .gitignore.",
-        "Linked: .claude/skills/spec, .claude/skills/develop.",
+        "Created: .skelcrew/workflow.yml, .agents/skills/spec/SKILL.md, .agents/skills/develop/SKILL.md, .agents/skills/add/SKILL.md, .agents/skills/skelcrew/SKILL.md, .agents/skills/log/SKILL.md, .agents/skills/approve/SKILL.md, .claude/settings.json, .gitignore.",
+        "Linked: .claude/skills/spec, .claude/skills/develop, .claude/skills/add, .claude/skills/skelcrew, .claude/skills/log, .claude/skills/approve.",
         "",
         approving,
         "",
@@ -85,7 +86,7 @@ describe("skelcrew init", () => {
         `Skelcrew was already set up in ${repo}. Nothing changed.`,
         "The checks it runs: bun run test, bun run lint.",
         "Before them, it runs: bun install --frozen-lockfile.",
-        "Already there, left as they were: .skelcrew/workflow.yml, .agents/skills/spec/SKILL.md, .agents/skills/develop/SKILL.md, .claude/skills/spec, .claude/skills/develop, .claude/settings.json, .gitignore.",
+        "Already there, left as they were: .skelcrew/workflow.yml, .agents/skills/spec/SKILL.md, .agents/skills/develop/SKILL.md, .agents/skills/add/SKILL.md, .agents/skills/skelcrew/SKILL.md, .agents/skills/log/SKILL.md, .agents/skills/approve/SKILL.md, .claude/skills/spec, .claude/skills/develop, .claude/skills/add, .claude/skills/skelcrew, .claude/skills/log, .claude/skills/approve, .claude/settings.json, .gitignore.",
         "",
         approving,
         "",
@@ -100,7 +101,9 @@ describe("skelcrew init", () => {
     const repo = gitRepo({ ...bunApp, ".claude/skills": "" });
     const outcome = await init(repo);
     expect(outcome.code).toBe(0);
-    expect(outcome.out).toContain("Do by hand: .claude/skills/spec, .claude/skills/develop.");
+    expect(outcome.out).toContain(
+      "Do by hand: .claude/skills/spec, .claude/skills/develop, .claude/skills/add, .claude/skills/skelcrew, .claude/skills/log, .claude/skills/approve.",
+    );
     const warnings = outcome.out.slice(outcome.out.indexOf("Look at these:") + 1);
     expect(warnings[0]).toStartWith("- Init couldn't link .claude/skills/spec");
     expect(warnings[1]).toStartWith("- Init couldn't link .claude/skills/develop");
@@ -116,7 +119,7 @@ describe("skelcrew init", () => {
       "Init couldn't add the rules for that, because .claude/settings.json isn't valid JSON",
     );
     expect(outcome.out).toContain(
-      "Approving: Claude Code won't ask you before skelcrew approve runs, because init couldn't add the rules.",
+      "Approving: Claude Code won't ask you before skelcrew approve or skelcrew reject runs, because init couldn't add the rules.",
     );
     expect(outcome.out).toContain(
       'To add them, see the note about .claude/settings.json under "Look at these".',

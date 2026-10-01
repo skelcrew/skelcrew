@@ -94,7 +94,7 @@ async function readyToClaim(daemon: Daemon) {
   await ok(daemon, add("CSV export"));
   await ok(daemon, { type: "claim", task: task(1) });
   await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
-  await ok(daemon, { type: "approve", task: task(1), sendBack: null });
+  await ok(daemon, { type: "approve", task: task(1) });
 }
 
 describe("the daemon", () => {
@@ -147,16 +147,45 @@ describe("the daemon", () => {
     }
     await ok(daemon, { type: "claim", task: task(1) });
     await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
-    await ok(daemon, { type: "approve", task: task(1), sendBack: null });
+    await ok(daemon, { type: "approve", task: task(1) });
     expect(await ok(daemon, { type: "status" })).toMatchObject({
       tasks: [{ task: 1, phase: "ready" }, { task: 2 }],
     });
 
     await ok(daemon, { type: "claim", task: task(2) });
     await ok(daemon, { type: "submit", task: task(2), session: you(2), spec });
-    await ok(daemon, { type: "approve", task: task(2), sendBack: "Add totals." });
+    await ok(daemon, { type: "reject", task: task(2), note: "Add totals." });
     expect(await ok(daemon, { type: "status" })).toMatchObject({
       tasks: [{ task: 1 }, { task: 2, phase: "spec", waitingOnYou: null }],
+    });
+  });
+
+  test("reject sends a spec back to Spec with your note", async () => {
+    const { daemon } = open();
+    await ok(daemon, add("CSV export"));
+    await ok(daemon, { type: "claim", task: task(1) });
+    await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
+    expect(await ok(daemon, { type: "reject", task: task(1), note: "Add totals." })).toEqual({
+      phase: "spec",
+    });
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, phase: "spec", waitingOnYou: null }],
+    });
+    expect(await ok(daemon, { type: "claim", task: task(1) })).toMatchObject({
+      note: "Add totals.",
+    });
+  });
+
+  test("reject refuses when nothing waits for your approval", async () => {
+    const { daemon } = open();
+    await ok(daemon, add("CSV export"));
+    expect(await daemon.handle({ type: "reject", task: task(1), note: "Add totals." })).toEqual({
+      ok: false,
+      message: "#1 has nothing waiting for your approval.",
+    });
+    expect(await daemon.handle({ type: "reject", task: task(9), note: "Add totals." })).toEqual({
+      ok: false,
+      message: "#9 doesn't exist.",
     });
   });
 
@@ -176,7 +205,7 @@ describe("the daemon", () => {
   test("refuses an approval when nothing waits for one", async () => {
     const { daemon } = open();
     await ok(daemon, add("CSV export"));
-    expect(await daemon.handle({ type: "approve", task: task(1), sendBack: null })).toEqual({
+    expect(await daemon.handle({ type: "approve", task: task(1) })).toEqual({
       ok: false,
       message: "#1 has nothing waiting for your approval.",
     });
@@ -234,7 +263,7 @@ describe("the daemon", () => {
     await ok(daemon, add("CSV export"));
     await ok(daemon, { type: "claim", task: task(1) });
     await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
-    await ok(daemon, { type: "approve", task: task(1), sendBack: null });
+    await ok(daemon, { type: "approve", task: task(1) });
     // The claim waits for the worktree, so it hears why there is none.
     expect(await daemon.handle({ type: "claim", task: task(1) })).toEqual({
       ok: false,
@@ -369,7 +398,7 @@ describe("the daemon", () => {
     await ok(daemon, add("CSV export"));
     await ok(daemon, { type: "claim", task: task(1) });
     await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
-    await ok(daemon, { type: "approve", task: task(1), sendBack: null });
+    await ok(daemon, { type: "approve", task: task(1) });
     // Without git, the claim's worktree fails, and that reply is handled.
     expect((await daemon.handle({ type: "claim", task: task(1) })).ok).toBe(false);
     expect(store.loadCommands()).toEqual({ ok: true, commands: [] });
@@ -758,11 +787,25 @@ describe("the daemon with git", () => {
     await ok(daemon, done());
     const answer = z
       .object({ merged: z.literal(true), commit: z.string() })
-      .parse(await ok(daemon, { type: "approve", task: task(1), sendBack: null }));
+      .parse(await ok(daemon, { type: "approve", task: task(1) }));
     expect(await git(repo.dir, "rev-parse", "main")).toBe(answer.commit);
     expect(await git(repo.dir, "show", "main:export.csv")).toBe("a,b");
     expect(await ok(daemon, { type: "status" })).toMatchObject({
       tasks: [{ task: 1, phase: "done" }],
+    });
+  });
+
+  test("reject sends a merge back to In progress with your note, and merges nothing", async () => {
+    const { daemon, repo } = await readyInRepo();
+    await claimedWithWork(daemon);
+    await ok(daemon, done());
+    const main = await git(repo.dir, "rev-parse", "main");
+    expect(await ok(daemon, { type: "reject", task: task(1), note: "Add totals." })).toEqual({
+      phase: "in_progress",
+    });
+    expect(await git(repo.dir, "rev-parse", "main")).toBe(main);
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, phase: "in_progress", waitingOnYou: null }],
     });
   });
 
@@ -791,7 +834,7 @@ describe("the daemon with git", () => {
     await ok(daemon, done());
     const answer = z
       .object({ merged: z.literal(true), commit: z.string() })
-      .parse(await ok(daemon, { type: "approve", task: task(1), sendBack: null }));
+      .parse(await ok(daemon, { type: "approve", task: task(1) }));
     expect(await git(repo.dir, "rev-parse", "main")).toBe(answer.commit);
     expect(await git(repo.dir, "show", `main:${specPath}`)).toBe(specText.trim());
     expect(await git(repo.dir, "show", "main:export.csv")).toBe("a,b");
@@ -808,7 +851,7 @@ describe("the daemon with git", () => {
     await git(repo.dir, "commit", "-q", "-m", "An earlier build");
     await claimedWithWork(daemon);
     await ok(daemon, done());
-    await ok(daemon, { type: "approve", task: task(1), sendBack: null });
+    await ok(daemon, { type: "approve", task: task(1) });
     expect(await git(repo.dir, "show", `main:${specPath}`)).toBe(specText.trim());
   });
 
@@ -820,7 +863,7 @@ describe("the daemon with git", () => {
     await git(repo.dir, "commit", "-q", "-m", "The same spec");
     await claimedWithWork(daemon);
     await ok(daemon, done());
-    await ok(daemon, { type: "approve", task: task(1), sendBack: null });
+    await ok(daemon, { type: "approve", task: task(1) });
     expect(await git(repo.dir, "diff", "--name-only", "main^", "main")).toBe("export.csv");
   });
 
@@ -831,7 +874,7 @@ describe("the daemon with git", () => {
     await conflictOnMain(repo.dir);
     const answer = z
       .object({ merged: z.literal(false), summary: z.string() })
-      .parse(await ok(daemon, { type: "approve", task: task(1), sendBack: null }));
+      .parse(await ok(daemon, { type: "approve", task: task(1) }));
     expect(answer.summary).toContain("conflicts");
     expect(await ok(daemon, { type: "status" })).toMatchObject({
       tasks: [{ task: 1, phase: "in_progress" }],
@@ -853,7 +896,7 @@ describe("the daemon with git", () => {
     await claimedWithWork(daemon);
     await ok(daemon, done());
     writeFileSync(join(repo.dir, "README.md"), "# Mine, not committed\n");
-    expect(await daemon.handle({ type: "approve", task: task(1), sendBack: null })).toEqual({
+    expect(await daemon.handle({ type: "approve", task: task(1) })).toEqual({
       ok: false,
       message:
         "Your checkout of main has uncommitted changes in README.md. Commit or stash them, then approve again. Nothing was merged.",
@@ -870,7 +913,7 @@ describe("the daemon with git", () => {
     await claimedWithWork(daemon);
     await ok(daemon, done());
     await conflictOnMain(repo.dir);
-    await ok(daemon, { type: "approve", task: task(1), sendBack: null });
+    await ok(daemon, { type: "approve", task: task(1) });
     const claim = z
       .object({ failure: z.string() })
       .parse(await ok(daemon, { type: "claim", task: task(1) }));
@@ -883,9 +926,9 @@ describe("the daemon with git", () => {
     const { daemon } = await readyInRepo(undefined, { checks: ["sleep 0.5"] });
     await claimedWithWork(daemon);
     await ok(daemon, done());
-    const first = daemon.handle({ type: "approve", task: task(1), sendBack: null });
+    const first = daemon.handle({ type: "approve", task: task(1) });
     await Bun.sleep(150);
-    const second = await daemon.handle({ type: "approve", task: task(1), sendBack: null });
+    const second = await daemon.handle({ type: "approve", task: task(1) });
     expect(second).toEqual(await first);
     expect(second).toMatchObject({ ok: true, result: { merged: true } });
   });
@@ -897,7 +940,7 @@ describe("the daemon with git", () => {
     await conflictOnMain(repo.dir);
     const answer = z
       .object({ merged: z.literal(false), outOfAttempts: z.literal(true), summary: z.string() })
-      .parse(await ok(daemon, { type: "approve", task: task(1), sendBack: null }));
+      .parse(await ok(daemon, { type: "approve", task: task(1) }));
     expect(answer.summary).toContain("conflicts");
   });
 

@@ -227,7 +227,7 @@ describe("skelcrew claim", () => {
   test("shows the developer's note when a spec was sent back", async () => {
     const repo = await repoWithDaemon();
     await specced(repo);
-    await cli(repo, ["approve", "1", "--send-back", "Add totals."]);
+    await cli(repo, ["reject", "1", "Add totals."]);
     const outcome = await cli(repo, ["claim", "1"]);
     expect(outcome.out).toContain("The developer's note: Add totals.");
     expect(outcome.out).toContain("Scope: Add a CSV export button to the reports page.");
@@ -371,16 +371,16 @@ describe("arguments that start with a dash", () => {
   });
 });
 
-describe("skelcrew approve", () => {
-  // Takes task 1 through its checks, so its merge waits for approval.
-  async function checked(repo: string) {
-    await specced(repo);
-    await cli(repo, ["approve", "1"]);
-    await cli(repo, ["claim", "1"]);
-    commitIn(join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export"));
-    await cli(repo, ["done", "1"], { session: "you-2" });
-  }
+// Takes task 1 through its checks, so its merge waits for approval.
+async function checked(repo: string) {
+  await specced(repo);
+  await cli(repo, ["approve", "1"]);
+  await cli(repo, ["claim", "1"]);
+  commitIn(join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export"));
+  await cli(repo, ["done", "1"], { session: "you-2" });
+}
 
+describe("skelcrew approve", () => {
   test("approves a merge, and says the commit it landed as on main", async () => {
     const repo = await repoWithDaemon();
     await checked(repo);
@@ -465,12 +465,19 @@ describe("skelcrew approve", () => {
     expect((await cli(repo, ["status"])).out).toContain("Ready:");
   });
 
-  test("with --send-back, returns it with a note", async () => {
+  // Sending back is `skelcrew reject` now. The old flag is refused, and
+  // nothing is approved or sent back.
+  test("no longer takes --send-back", async () => {
     const repo = await repoWithDaemon();
     await specced(repo);
-    expect(await cli(repo, ["approve", "1", "--send-back", "Add totals."])).toEqual(
-      said(["Sent #1 back with your note."]),
+    const outcome = await cli(repo, ["approve", "1", "--send-back", "Add totals."]);
+    expect(outcome.code).toBe(1);
+    expect(outcome.err[0]).toBe(
+      "--send-back isn't an option of `skelcrew approve`. Run `skelcrew approve --help` to see its options.",
     );
+    expect((await cli(repo, ["status"])).out).toContain("- #1 CSV export: approve its spec.");
+    expect((await cli(repo, ["approve", "--help"])).out.join("\n")).not.toContain("--send-back");
+    expect((await cli(repo, ["--help"])).out.join("\n")).not.toContain("--send-back");
   });
 
   test("passes on the refusal when nothing waits for approval", async () => {
@@ -478,6 +485,63 @@ describe("skelcrew approve", () => {
     await cli(repo, ["add", "CSV export"]);
     expect(await cli(repo, ["approve", "1"])).toEqual(
       refused("#1 has nothing waiting for your approval."),
+    );
+  });
+});
+
+describe("skelcrew reject", () => {
+  test("sends a spec back to Spec with your note", async () => {
+    const repo = await repoWithDaemon();
+    await specced(repo);
+    expect(await cli(repo, ["reject", "#1", "Add totals."])).toEqual(
+      said(["Sent #1 back to Spec with your note."]),
+    );
+    const claim = await cli(repo, ["claim", "1"]);
+    expect(claim.out).toContain("The developer's note: Add totals.");
+  });
+
+  test("sends a merge back to In progress with your note", async () => {
+    const repo = await repoWithDaemon();
+    await checked(repo);
+    expect(await cli(repo, ["reject", "1", "Add totals."])).toEqual(
+      said(["Sent #1 back to In progress with your note."]),
+    );
+    expect((await cli(repo, ["status"])).out).toContain("In progress:");
+  });
+
+  test("refuses without a note, or with a blank one", async () => {
+    const repo = await repoWithDaemon();
+    await specced(repo);
+    const example = 'Say what to change, like this: skelcrew reject 1 "Add totals."';
+    expect(await cli(repo, ["reject", "1"])).toEqual(refused(example));
+    expect(await cli(repo, ["reject", "1", "  "])).toEqual(refused(example));
+    // Nothing was sent back.
+    expect((await cli(repo, ["status"])).out).toContain("- #1 CSV export: approve its spec.");
+  });
+
+  test("asks for the note in quotes when it is several words", async () => {
+    const repo = await repoWithDaemon();
+    await specced(repo);
+    expect(await cli(repo, ["reject", "1", "Add", "totals."])).toEqual(
+      refused('Put the note in quotes, like this: skelcrew reject 1 "Add totals."'),
+    );
+  });
+
+  test("passes on the refusal when nothing waits for approval", async () => {
+    const repo = await repoWithDaemon();
+    await cli(repo, ["add", "CSV export"]);
+    expect(await cli(repo, ["reject", "1", "Add totals."])).toEqual(
+      refused("#1 has nothing waiting for your approval."),
+    );
+  });
+
+  test("is in the help", async () => {
+    const repo = await repoWithDaemon();
+    expect((await cli(repo, ["--help"])).out.join("\n")).toContain(
+      'skelcrew reject <task> "<note>"',
+    );
+    expect((await cli(repo, ["reject", "--help"])).out[0]).toBe(
+      'Usage: skelcrew reject <task> "<note>"',
     );
   });
 });
@@ -718,7 +782,7 @@ describe("skelcrew log", () => {
     await cli(repo, ["add", "CSV export", "--spec", "--project", "reports"]);
     await cli(repo, ["claim", "1"]);
     await submit("you-1");
-    await cli(repo, ["approve", "1", "--send-back", "Add totals."]);
+    await cli(repo, ["reject", "1", "Add totals."]);
     await cli(repo, ["claim", "1"]);
     await submit("you-2");
     await cli(repo, ["approve", "1"]);
@@ -728,15 +792,23 @@ describe("skelcrew log", () => {
 
     const outcome = await cli(repo, ["log", "#1"]);
     expect(outcome.code).toBe(0);
-    for (const line of outcome.out) expect(line).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2} {2}\S/);
+    // Each event's first line starts with its time. A text over several
+    // lines, such as a spec, keeps its other lines indented under it.
+    for (const line of outcome.out) {
+      expect(line).toMatch(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}| {16}) {2}\S/);
+    }
     expect(outcome.out.map((line) => line.slice(18))).toEqual([
       "Added to project reports: CSV export.",
       "A spec was asked for.",
       "You claimed it, as you-1.",
       "The agent sent a spec: Add a CSV export button to the reports page.",
+      "Acceptance criteria:",
+      "- Clicking Export downloads a CSV of the visible rows.",
       "You sent the spec back: Add totals.",
       "You claimed it, as you-2.",
       "The agent sent a spec: Add a CSV export button to the reports page.",
+      "Acceptance criteria:",
+      "- Clicking Export downloads a CSV of the visible rows.",
       "The task is Ready to build from this spec.",
       "You claimed it, as you-3.",
       `Its worktree was made on branch task/1-csv-export, at ${worktree}.`,
@@ -755,7 +827,7 @@ describe("skelcrew log", () => {
     for (const session of ["you-1", "you-2", "you-3"]) {
       await cli(repo, ["claim", "1"]);
       await cli(repo, ["submit", "1", "--file", "-"], { session, readStdin: async () => big });
-      await cli(repo, ["approve", "1", "--send-back", "Shorter, please."]);
+      await cli(repo, ["reject", "1", "Shorter, please."]);
     }
 
     const outcome = await cli(repo, ["log", "1"]);
@@ -768,9 +840,13 @@ describe("skelcrew log", () => {
       "You sent the spec back: Shorter, please.",
       "You claimed it, as you-2.",
       "The agent sent a spec: Add a CSV export. x",
+      "Acceptance criteria:",
+      "- It downloads.",
       "You sent the spec back: Shorter, please.",
       "You claimed it, as you-3.",
       "The agent sent a spec: Add a CSV export. x",
+      "Acceptance criteria:",
+      "- It downloads.",
       "You sent the spec back: Shorter, please.",
     ]);
   });
@@ -882,9 +958,37 @@ describe("skelcrew log", () => {
     expect(await cli(repo, ["log", "4"])).toEqual(
       said([
         "2026-09-30 10:02  The agent sent a spec: Add a CSV export.",
+        "                  Acceptance criteria:",
+        "                  - It downloads.",
         "2026-09-30 10:02  The task is Ready to build from this spec.",
         "2026-09-30 10:03  A spec was written by hand: Add a CSV export.",
+        "                  Acceptance criteria:",
+        "                  - It downloads.",
         "2026-09-30 10:03  A spec you write needs no approval, so the task is Ready.",
+      ]),
+    );
+  });
+
+  // The /show skill reads the whole spec from the log, not only its scope.
+  test("shows a spec's acceptance criteria under its scope", async () => {
+    const repo = throwawayRepo(dirs);
+    const at = new Date(2026, 8, 30, 10, 2).getTime();
+    const spec = {
+      scope: "Goal: export the report.\nToday: there is no export.",
+      acceptance: ["Clicking Export downloads a CSV.", "The CSV has a header row."],
+      openQuestions: [],
+    };
+    await fakeDaemon(repo, {
+      leftOut: 0,
+      events: [{ v: 1, taskId: 4, at, type: "task.specced", spec, by: "agent" }],
+    });
+    expect(await cli(repo, ["log", "4"])).toEqual(
+      said([
+        "2026-09-30 10:02  The agent sent a spec: Goal: export the report.",
+        "                  Today: there is no export.",
+        "                  Acceptance criteria:",
+        "                  - Clicking Export downloads a CSV.",
+        "                  - The CSV has a header row.",
       ]),
     );
   });
