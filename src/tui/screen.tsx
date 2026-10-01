@@ -4,12 +4,12 @@
 // the cursor, or on the task that is open.
 
 import { Box, Text, useInput, useStdout } from "ink";
-import TextInput from "ink-text-input";
 import { useEffect, useRef, useState } from "react";
 import type { Outcome } from "../cli/cli";
 import type { ProjectView, TaskView } from "../cli/status";
 import type { TaskId } from "../core/ids";
 import { actions, hints, type Run, type Step, type Where } from "./actions";
+import { Bottom, bottomHeight, ListHeader, type Mode, TitleHeader } from "./frame";
 import { keyLines } from "./keys";
 import { type Line, ListLine, listLines, widthsOf } from "./list";
 import {
@@ -20,7 +20,7 @@ import {
   projectStep,
 } from "./projects-screen";
 import { counts, groupsOf } from "./rows";
-import { firstShown } from "./scroll";
+import { type Scrolling, scrollWindow } from "./scroll";
 import { type LoadedLog, taskLines, taskState } from "./task-screen";
 
 // The status: tasks, and every project. A daemon from before projects
@@ -45,12 +45,6 @@ type Props = {
   // screen is as tall as what it shows.
   height?: number;
 };
-
-// The list, a y/n question, or a line being typed.
-type Mode =
-  | { kind: "list" }
-  | { kind: "confirm"; question: string; run: Run }
-  | { kind: "type"; prompt: string; run: (text: string) => Run | Step; text: string };
 
 // A longer answer, such as a failed merge's check output, is cut to this.
 const MAX_SAID = 4;
@@ -291,54 +285,19 @@ export function Screen(props: Props) {
             projects.find((project) => project.id === opened.project),
           );
 
-  // What sits under the body, each part after a blank line, keys last.
   const problemLines = problem === null ? [] : problem.split("\n");
   const saidLines = [...(running === null ? [] : [running.doing]), ...said];
-  const below =
-    (problemLines.length > 0 ? 1 + problemLines.length : 0) +
-    (saidLines.length > 0 ? 1 + saidLines.length : 0) +
-    (mode.kind === "list" ? 0 : 2) +
-    2;
-
-  // A body taller than its room scrolls. Its first and last lines then say
-  // what is hidden above and below: tasks on the list, such as "↓ 25 more",
-  // and lines on a task's screen or the list of keys.
-  const room = height === undefined ? body.length : height - 1 - below;
-  let shown = body;
-  let above: string | null = null;
-  let under: string | null = null;
-  lastTop.current = 0;
-  if (body.length > room) {
-    const fits = Math.max(1, room - 2);
-    let first: number;
-    let hiddenAbove: string;
-    let hiddenBelow: string;
-    if (showKeys || showProjects) {
-      first = 0;
-      hiddenAbove = "";
-      hiddenBelow = more(body.length - fits, "line");
-    } else if (opened === undefined) {
-      const cursorLine = Math.max(
-        0,
-        body.findIndex((line) => line.kind === "row" && line.row.task.task === selected),
-      );
-      // A group's first task shows with the blank line and heading above it.
-      const top = body[cursorLine - 1]?.kind === "heading" ? cursorLine - 2 : cursorLine;
-      first = firstShown(scrolled.current, top, cursorLine, fits, body.length);
-      scrolled.current = first;
-      const rows = (lines: Line[]) => lines.filter((line) => line.kind === "row").length;
-      hiddenAbove = more(rows(body.slice(0, first)), "");
-      hiddenBelow = more(rows(body.slice(first + fits)), "");
-    } else {
-      lastTop.current = body.length - fits;
-      first = Math.min(taskTop, lastTop.current);
-      hiddenAbove = more(first, "line");
-      hiddenBelow = more(body.length - fits - first, "line");
-    }
-    shown = body.slice(first, first + fits);
-    above = hiddenAbove === "" ? "" : `↑ ${hiddenAbove}`;
-    under = hiddenBelow === "" ? "" : `↓ ${hiddenBelow}`;
-  }
+  const room =
+    height === undefined ? body.length : height - 1 - bottomHeight(problemLines, saidLines, mode);
+  const scrolling: Scrolling =
+    showKeys || showProjects
+      ? { kind: "top" }
+      : opened === undefined
+        ? { kind: "cursor", selected, previous: scrolled.current }
+        : { kind: "lines", top: taskTop };
+  const { shown, above, under, first, lastTop: last } = scrollWindow(body, room, scrolling);
+  if (scrolling.kind === "cursor" && body.length > room) scrolled.current = first;
+  lastTop.current = last;
 
   // The keys used most. ? shows the rest.
   const pullRequest = typeof opened?.pullRequest === "string" ? " · o open PR" : "";
@@ -350,49 +309,34 @@ export function Screen(props: Props) {
         ? `j k move · enter open · ${hints("list")}${only === null ? "" : " · esc all"} · ? keys · q quit`
         : `j k scroll · ${hints("task")}${pullRequest} · esc back · ? keys · q quit`;
 
+  // What enter does in the text box: run the command, or ask the next
+  // line, such as a project's goal after its name.
+  const submit = (text: string) => {
+    if (mode.kind !== "type" || text.trim() === "") return;
+    const next = mode.run(text);
+    if ("kind" in next) begin(next);
+    else {
+      setMode({ kind: "list" });
+      void execute(next);
+    }
+  };
+
   return (
     <Box flexDirection="column" {...(height === undefined ? {} : { height })}>
       {showKeys ? (
-        <Text bold>Keys</Text>
+        <TitleHeader title="Keys" />
       ) : showProjects ? (
-        <Box flexShrink={0}>
-          <Box flexGrow={1}>
-            <Text bold>Projects</Text>
-          </Box>
-          <Text>{projectCounts(projects)}</Text>
-        </Box>
+        <TitleHeader title="Projects" right={projectCounts(projects)} />
       ) : opened === undefined ? (
-        // A long path is cut from the left, so its last folders show.
-        <Box flexShrink={0}>
-          <Box flexShrink={0} marginRight={2}>
-            <Text>skelcrew</Text>
-          </Box>
-          <Box flexGrow={1} flexShrink={1}>
-            <Text wrap="truncate-start">{repo}</Text>
-          </Box>
-          {only !== null && (
-            <Box flexShrink={0} marginLeft={2}>
-              <Text bold>{`·  ${only.name}`}</Text>
-            </Box>
-          )}
-          <Box flexShrink={0} marginLeft={2}>
-            <Text>{counts(groups)}</Text>
-          </Box>
-        </Box>
+        <ListHeader repo={repo} project={only?.name ?? null} counts={counts(groups)} />
       ) : (
-        <Box flexShrink={0}>
-          <Box flexGrow={1} flexShrink={1}>
-            <Text bold wrap="truncate-end">{`#${opened.task} ${opened.title}`}</Text>
-          </Box>
-          <Box flexShrink={0} marginLeft={2}>
-            <Text>
-              {taskState(
-                opened,
-                groups.flatMap((group) => group.rows).find((row) => row.task.task === open),
-              )}
-            </Text>
-          </Box>
-        </Box>
+        <TitleHeader
+          title={`#${opened.task} ${opened.title}`}
+          right={taskState(
+            opened,
+            groups.flatMap((group) => group.rows).find((row) => row.task.task === open),
+          )}
+        />
       )}
       {above !== null && <Text dimColor>{above || " "}</Text>}
       {shown.map((line, index) => (
@@ -400,65 +344,20 @@ export function Screen(props: Props) {
         <ListLine key={index} line={line} widths={widths} selected={selected} />
       ))}
       {under !== null && <Text dimColor>{under || " "}</Text>}
-      {/* Takes the room left, so what follows sits at the bottom. */}
+      {/* Takes the room left, so the bottom sits on the last lines. */}
       <Box flexGrow={1} />
-      {problemLines.length > 0 && (
-        <Box marginTop={1} flexDirection="column" flexShrink={0}>
-          {problemLines.map((line, index) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: the lines never move.
-            <Text key={index} wrap="truncate-end">
-              {line}
-            </Text>
-          ))}
-        </Box>
-      )}
-      {saidLines.length > 0 && (
-        <Box marginTop={1} flexDirection="column" flexShrink={0}>
-          {saidLines.map((line, index) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: the lines never move.
-            <Text key={index} wrap="truncate-end">
-              {line}
-            </Text>
-          ))}
-        </Box>
-      )}
-      {mode.kind === "confirm" && (
-        <Box marginTop={1} flexShrink={0}>
-          <Text wrap="truncate-end">{mode.question}</Text>
-        </Box>
-      )}
-      {mode.kind === "type" && (
-        <Box marginTop={1} flexShrink={0}>
-          <Text>{`${mode.prompt} `}</Text>
-          <TextInput
-            value={mode.text}
-            onChange={(text) => setMode({ ...mode, text })}
-            onSubmit={(text) => {
-              if (text.trim() === "") return;
-              const next = mode.run(text);
-              if ("kind" in next) begin(next);
-              else {
-                setMode({ kind: "list" });
-                void execute(next);
-              }
-            }}
-          />
-        </Box>
-      )}
-      <Box marginTop={1} flexShrink={0}>
-        <Text dimColor wrap="truncate-end">
-          {keys}
-        </Text>
-      </Box>
+      <Bottom
+        problem={problemLines}
+        said={saidLines}
+        mode={mode}
+        type={(text) => {
+          if (mode.kind === "type") setMode({ ...mode, text });
+        }}
+        submit={submit}
+        keys={keys}
+      />
     </Box>
   );
-}
-
-// "25 more", or "3 more lines" when `unit` is "line". "" when none.
-function more(count: number, unit: "" | "line"): string {
-  if (count === 0) return "";
-  if (unit === "") return `${count} more`;
-  return `${count} more ${count === 1 ? "line" : "lines"}`;
 }
 
 // The CLI's lines, cut to MAX_SAID, with where to read the rest.
