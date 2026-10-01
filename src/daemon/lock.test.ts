@@ -46,8 +46,10 @@ async function deadPid(): Promise<number> {
 }
 
 // Starts `count` processes at once that each try to take the lock on
-// `repo` and hold it a moment. Returns how many got it. The script goes in
-// a folder of its own, since `repo` may be read-only.
+// `repo`. Returns how many got it. Each says GOT or NO, then holds on until
+// every one of them has said, so the one that got it still holds it while
+// the others try, however slowly they start. The script goes in a folder
+// of its own, since `repo` may be read-only.
 async function raceFor(repo: string, count: number): Promise<number> {
   const scripts = mkdtempSync(join(tmpdir(), "sk-race-"));
   dirs.push(scripts);
@@ -57,14 +59,30 @@ async function raceFor(repo: string, count: number): Promise<number> {
     `import { takeLock } from ${JSON.stringify(join(import.meta.dir, "lock.ts"))};\n` +
       "const taken = takeLock(process.argv[2] ?? '');\n" +
       "console.log(taken.ok ? 'GOT' : 'NO');\n" +
-      "await Bun.sleep(800);\n",
+      // Holds on until the test closes standard input.
+      "await Bun.stdin.text();\n",
   );
   const children = Array.from({ length: count }, () =>
-    Bun.spawn([process.execPath, script, repo], { stdout: "pipe" }),
+    Bun.spawn([process.execPath, script, repo], { stdin: "pipe", stdout: "pipe" }),
   );
-  const said = await Promise.all(children.map((child) => new Response(child.stdout).text()));
+  const said = await Promise.all(children.map((child) => firstLine(child.stdout)));
+  for (const child of children) await child.stdin.end();
   await Promise.all(children.map((child) => child.exited));
-  return said.filter((out) => out.trim() === "GOT").length;
+  return said.filter((line) => line === "GOT").length;
+}
+
+// The first line a process writes, without waiting for it to end.
+async function firstLine(stream: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  while (!text.includes("\n")) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
+  }
+  reader.releaseLock();
+  return text.split("\n")[0]?.trim() ?? "";
 }
 
 describe("one daemon per repository", () => {
@@ -251,26 +269,10 @@ describe("one daemon per repository", () => {
   test("lets exactly one of many daemons starting at once take the lock", async () => {
     const repo = throwawayRepo(dirs);
     const folder = join(repo, ".skelcrew");
-    const script = join(repo, "take.ts");
-    writeFileSync(
-      script,
-      `import { takeLock } from ${JSON.stringify(join(import.meta.dir, "lock.ts"))};\n` +
-        "const taken = takeLock(process.argv[2] ?? '');\n" +
-        "console.log(taken.ok ? 'GOT' : 'NO');\n" +
-        "await Bun.sleep(800);\n",
-    );
     for (let round = 0; round < 15; round += 1) {
       // A daemon that died left its pid file behind.
       writeFileSync(join(folder, "daemon.pid"), `${await deadPid()}\n`);
-      const children = Array.from({ length: 12 }, () =>
-        Bun.spawn([process.execPath, script, repo], { stdout: "pipe" }),
-      );
-      const said = await Promise.all(children.map((child) => new Response(child.stdout).text()));
-      await Promise.all(children.map((child) => child.exited));
-      expect({ round, holders: said.filter((out) => out.trim() === "GOT").length }).toEqual({
-        round,
-        holders: 1,
-      });
+      expect({ round, holders: await raceFor(repo, 12) }).toEqual({ round, holders: 1 });
     }
   }, 60_000);
 
