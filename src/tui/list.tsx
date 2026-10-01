@@ -4,14 +4,18 @@
 import { Text } from "ink";
 import type { TaskView } from "../cli/status";
 import type { TaskId } from "../core/ids";
+import type { ProjectRow } from "./projects-screen";
 import { finished, type Group, type Row } from "./rows";
 
-// One line of the list.
+// One line of the list, or of the projects screen.
 export type Line =
   | { kind: "blank" }
   | { kind: "heading"; text: string }
   | { kind: "row"; row: Row }
-  | { kind: "text"; text: string; dim: boolean };
+  | { kind: "text"; text: string; dim: boolean }
+  | { kind: "project"; row: ProjectRow; selected: boolean; widths: ProjectWidths };
+
+export type ProjectWidths = { name: number; open: number };
 
 // The list's lines: each group after a blank line, then the count of done
 // and dropped tasks. tasks is null until the first answer.
@@ -73,7 +77,33 @@ export function ListLine({
           {line.text}
         </Text>
       );
+    case "project":
+      return <ProjectLine row={line.row} selected={line.selected} widths={line.widths} />;
   }
+}
+
+// "› Reports page  active    1 open  Export what the reports page shows."
+function ProjectLine({
+  row,
+  selected,
+  widths,
+}: {
+  row: ProjectRow;
+  selected: boolean;
+  widths: ProjectWidths;
+}) {
+  const columns = [
+    selected ? "›" : " ",
+    row.name.padEnd(widths.name),
+    (row.status ?? "").padEnd("archived".length),
+    `${row.open} open`.padEnd(widths.open),
+    row.goal,
+  ];
+  return (
+    <Text wrap="truncate-end" bold={selected}>
+      {columns.join("  ")}
+    </Text>
+  );
 }
 
 // "› #14  CSV export   reports  approve its spec", cut to the screen's width.

@@ -9,9 +9,16 @@ import { useEffect, useRef, useState } from "react";
 import type { Outcome } from "../cli/cli";
 import type { ProjectView, TaskView } from "../cli/status";
 import type { TaskId } from "../core/ids";
-import { actions, hints, type Run } from "./actions";
+import { actions, hints, type Run, type Step } from "./actions";
 import { keyLines } from "./keys";
 import { type Line, ListLine, listLines, widthsOf } from "./list";
+import {
+  projectCounts,
+  projectKeys,
+  projectLines,
+  projectRows,
+  projectStep,
+} from "./projects-screen";
 import { counts, groupsOf } from "./rows";
 import { firstShown } from "./scroll";
 import { type LoadedLog, taskLines, taskState } from "./task-screen";
@@ -43,7 +50,7 @@ type Props = {
 type Mode =
   | { kind: "list" }
   | { kind: "confirm"; question: string; run: Run }
-  | { kind: "type"; prompt: string; run: (text: string) => Run; text: string };
+  | { kind: "type"; prompt: string; run: (text: string) => Run | Step; text: string };
 
 // A longer answer, such as a failed merge's check output, is cut to this.
 const MAX_SAID = 4;
@@ -64,6 +71,9 @@ export function Screen(props: Props) {
   const [taskTop, setTaskTop] = useState(0);
   // Whether ? has opened the list of keys, over the list or a task.
   const [showKeys, setShowKeys] = useState(false);
+  // Whether P has opened the projects screen, and the row its cursor is on.
+  const [showProjects, setShowProjects] = useState(false);
+  const [projectAt, setProjectAt] = useState(0);
   const [mode, setMode] = useState<Mode>({ kind: "list" });
   // The command running now, and what the last one said.
   const [running, setRunning] = useState<Run | null>(null);
@@ -140,16 +150,25 @@ export function Screen(props: Props) {
     });
   };
 
+  // Runs a command, or asks its question, or opens its text box.
+  const begin = (step: Step) => {
+    if (step.kind === "run") {
+      setMode({ kind: "list" });
+      void execute(step.run);
+    } else if (step.kind === "confirm") setMode(step);
+    else setMode({ ...step, text: "" });
+  };
+
   // An action's key, on the task it is about.
   const act = (input: string, task: TaskView | undefined, onTaskScreen: boolean) => {
     const action = actions.find((one) => one.key === input);
     if (action === undefined || (onTaskScreen && !action.onTask)) return;
     const step = action.step(task);
-    if (step === null) return;
-    if (step.kind === "run") void execute(step.run);
-    else if (step.kind === "confirm") setMode(step);
-    else setMode({ ...step, text: "" });
+    if (step !== null) begin(step);
   };
+
+  const rows = projectRows(projects, tasks ?? []);
+  const projectRow = rows[Math.min(projectAt, rows.length - 1)];
 
   useInput((input, key) => {
     if (mode.kind === "type") {
@@ -180,6 +199,23 @@ export function Screen(props: Props) {
       return;
     }
 
+    if (showProjects) {
+      const move = (to: (index: number) => number) =>
+        setProjectAt((at) =>
+          Math.min(Math.max(to(Math.min(at, rows.length - 1)), 0), rows.length - 1),
+        );
+      if (key.escape || input === "h") setShowProjects(false);
+      else if (input === "j" || key.downArrow) move((index) => index + 1);
+      else if (input === "k" || key.upArrow) move((index) => index - 1);
+      else if (input === "g") move(() => 0);
+      else if (input === "G") move(() => rows.length - 1);
+      else {
+        const step = projectStep(input, projectRow);
+        if (step !== null) begin(step);
+      }
+      return;
+    }
+
     if (opened !== undefined) {
       const scroll = (to: (top: number) => number) =>
         setTaskTop((top) => Math.min(Math.max(to(top), 0), lastTop.current));
@@ -207,6 +243,8 @@ export function Screen(props: Props) {
     else if ((key.return || input === "l") && selected !== undefined) {
       setCursor(selected);
       openTask(selected);
+    } else if (input === "P") {
+      setShowProjects(true);
     } else
       act(
         input,
@@ -222,14 +260,16 @@ export function Screen(props: Props) {
   );
   const body: Line[] = showKeys
     ? keyLines()
-    : opened === undefined
-      ? listLines(tasks, groups)
-      : taskLines(
-          opened,
-          log,
-          columns,
-          projects.find((project) => project.id === opened.project),
-        );
+    : showProjects
+      ? projectLines(rows, Math.min(projectAt, rows.length - 1), projects.length === 0)
+      : opened === undefined
+        ? listLines(tasks, groups)
+        : taskLines(
+            opened,
+            log,
+            columns,
+            projects.find((project) => project.id === opened.project),
+          );
 
   // What sits under the body, each part after a blank line, keys last.
   const problemLines = problem === null ? [] : problem.split("\n");
@@ -253,7 +293,7 @@ export function Screen(props: Props) {
     let first: number;
     let hiddenAbove: string;
     let hiddenBelow: string;
-    if (showKeys) {
+    if (showKeys || showProjects) {
       first = 0;
       hiddenAbove = "";
       hiddenBelow = more(body.length - fits, "line");
@@ -284,14 +324,23 @@ export function Screen(props: Props) {
   const pullRequest = typeof opened?.pullRequest === "string" ? " · o open PR" : "";
   const keys = showKeys
     ? "esc close · q quit"
-    : opened === undefined
-      ? `j k move · enter open · ${hints("list")} · ? keys · q quit`
-      : `j k scroll · ${hints("task")}${pullRequest} · esc back · ? keys · q quit`;
+    : showProjects
+      ? projectKeys(projectRow)
+      : opened === undefined
+        ? `j k move · enter open · ${hints("list")} · ? keys · q quit`
+        : `j k scroll · ${hints("task")}${pullRequest} · esc back · ? keys · q quit`;
 
   return (
     <Box flexDirection="column" {...(height === undefined ? {} : { height })}>
       {showKeys ? (
         <Text bold>Keys</Text>
+      ) : showProjects ? (
+        <Box flexShrink={0}>
+          <Box flexGrow={1}>
+            <Text bold>Projects</Text>
+          </Box>
+          <Text>{projectCounts(projects)}</Text>
+        </Box>
       ) : opened === undefined ? (
         // A long path is cut from the left, so its last folders show.
         <Box flexShrink={0}>
@@ -361,8 +410,12 @@ export function Screen(props: Props) {
             onChange={(text) => setMode({ ...mode, text })}
             onSubmit={(text) => {
               if (text.trim() === "") return;
-              setMode({ kind: "list" });
-              void execute(mode.run(text));
+              const next = mode.run(text);
+              if ("kind" in next) begin(next);
+              else {
+                setMode({ kind: "list" });
+                void execute(next);
+              }
             }}
           />
         </Box>
