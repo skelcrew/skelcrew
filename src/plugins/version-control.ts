@@ -11,7 +11,7 @@
 // started it and nothing was done in it since. Anything else at its path
 // is someone's work: it is refused and left as it is.
 
-import type { BranchFacts, CommitSha, TaskId, Worktree } from "../core/types";
+import type { BranchFacts, CommitSha, SpecWorktree, TaskId, Worktree } from "../core/types";
 
 export type Done<T> = { ok: true; value: T } | { ok: false; message: string };
 
@@ -48,6 +48,10 @@ export type RevertRequest = { taskId: TaskId; commit: CommitSha; reason: string 
 // Which worktree to create. The core's create_worktree command has no
 // title, so the daemon adds the task's title for the branch name.
 export type WorktreeRequest = { taskId: TaskId; title: string; build: number };
+
+// Which spec worktree to create. The title names its folder, like a
+// build's.
+export type SpecWorktreeRequest = { taskId: TaskId; title: string };
 
 // How many characters of the title a short name keeps, at most.
 const maxTitleLength = 40;
@@ -156,4 +160,17 @@ export interface VersionControl {
   // branch first, so no work is lost, and the branch is kept. Removing one
   // that is already gone does nothing.
   removeWorktree(worktree: Worktree): Promise<Done<null>>;
+
+  // A copy of main to write the task's spec in, on no branch, apart from
+  // your checkout and every other worktree. Asked again, it gives back the
+  // same copy and changes nothing in it, since a spec agent may already be
+  // reading it. Anything at its path that the plugin didn't make is someone
+  // else's, so it is refused and left as it is.
+  createSpecWorktree(request: SpecWorktreeRequest): Promise<Done<SpecWorktree>>;
+
+  // Removes a spec worktree, with anything changed in it. Nothing is saved:
+  // the spec itself goes to Skelcrew, never into a file there. Removing one
+  // that is already gone does nothing. Anything at its path that the plugin
+  // didn't make is left as it is.
+  removeSpecWorktree(worktree: SpecWorktree): Promise<Done<null>>;
 }

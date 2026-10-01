@@ -17,7 +17,7 @@ import {
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { $ } from "bun";
 import { CommitSha } from "../../core/ids";
-import type { BranchFacts, Worktree } from "../../core/types";
+import type { BranchFacts, SpecWorktree, Worktree } from "../../core/types";
 import type {
   CheckRequest,
   Done,
@@ -25,6 +25,7 @@ import type {
   MergeRequest,
   RevertRequest,
   RunChecks,
+  SpecWorktreeRequest,
   VersionControl,
   WorktreeRequest,
 } from "../version-control";
@@ -34,6 +35,8 @@ import { shortName } from "../version-control";
 // is listed in the repository's local ignore file, so they never show up
 // as changes in your own checkout.
 const worktreesFolder = ".skelcrew/worktrees";
+// Each spec is written in a copy of main of its own here.
+const specWorktreesFolder = ".skelcrew/spec-worktrees";
 // A merge is built in a worktree of its own here, never in yours.
 const mergingFolder = ".skelcrew/merging";
 // And a revert here.
@@ -143,6 +146,24 @@ export class Git implements VersionControl {
     return this.oneAtATime(() => guard(`remove ${worktree.path}`, () => this.remove(worktree)));
   }
 
+  createSpecWorktree(request: SpecWorktreeRequest): Promise<Done<SpecWorktree>> {
+    return this.oneAtATime(() =>
+      guard(`create the spec worktree for #${request.taskId}`, () => this.createSpec(request)),
+    );
+  }
+
+  // A spec worktree holds nothing to keep, so it is removed with whatever
+  // was changed in it. The mark still has to say Skelcrew put it there.
+  removeSpecWorktree(worktree: SpecWorktree): Promise<Done<null>> {
+    return this.oneAtATime(() =>
+      guard(`remove ${worktree.path}`, async () => {
+        const mark = await this.specMark(worktree.path);
+        if (!mark.ok) return mark;
+        return this.clearOwnWorktree(worktree.path, mark.value);
+      }),
+    );
+  }
+
   private oneAtATime<T>(work: () => Promise<T>): Promise<T> {
     const next = this.last.then(work, work);
     this.last = next.catch(() => undefined);
@@ -240,6 +261,67 @@ export class Git implements VersionControl {
     }
     rmSync(creating.value, { force: true });
     return { ok: true, value: { path, branch } };
+  }
+
+  // A copy of main on no branch. Its mark says "creating" until git has
+  // made it, then "made". A made one is given back as it is, since a spec
+  // agent may be reading it. One left at "creating" was never given out, so
+  // nobody has worked in it, and it is made again.
+  private async createSpec(request: SpecWorktreeRequest): Promise<Done<SpecWorktree>> {
+    if (!existsSync(this.repo))
+      return { ok: false, message: `There is no repository at ${this.repo}.` };
+    const path = join(this.repo, specWorktreesFolder, shortName(request.taskId, request.title));
+    const mark = await this.specMark(path);
+    if (!mark.ok) return mark;
+
+    if (existsSync(path)) {
+      if (!existsSync(mark.value)) {
+        return {
+          ok: false,
+          message: `${path} exists, but Skelcrew didn't put it there. It was left as it is.`,
+        };
+      }
+      if (readFileSync(mark.value, "utf8") === "made") {
+        const ours = await this.isWorktree(path);
+        if (!ours.ok) return ours;
+        if (!ours.value)
+          return { ok: false, message: `${path} exists, but isn't a worktree of ${this.repo}.` };
+        return { ok: true, value: { path } };
+      }
+    }
+
+    const main = await this.mainExists();
+    if (!main.ok) return main;
+    const ignored = await this.ignoreWorktrees();
+    if (!ignored.ok) return ignored;
+    const cleared = await this.clearOwnWorktree(path, mark.value);
+    if (!cleared.ok) return cleared;
+    mkdirSync(dirname(mark.value), { recursive: true });
+    writeFileSync(mark.value, "creating");
+    const added = await run(
+      this.repo,
+      "worktree",
+      "add",
+      "--quiet",
+      "--detach",
+      path,
+      `refs/heads/${this.main}`,
+    );
+    if (!added.ok) {
+      const failed = `git couldn't make a copy of ${this.main} for #${request.taskId}'s spec: ${added.err}`;
+      const undone = await this.clearOwnWorktree(path, mark.value);
+      return { ok: false, message: undone.ok ? failed : `${failed} ${undone.message}` };
+    }
+    writeFileSync(mark.value, "made");
+    return { ok: true, value: { path } };
+  }
+
+  // Where a spec worktree's mark goes: in git's own folder, which outlives
+  // the worktree's.
+  private async specMark(path: string): Promise<Done<string>> {
+    const common = await this.gitFolder();
+    if (!common.ok) return common;
+    return { ok: true, value: join(common.value, "skelcrew-spec", basename(path)) };
   }
 
   // Where the "creating" mark for a worktree goes: in the repository's own
@@ -470,7 +552,13 @@ export class Git implements VersionControl {
     const found = await run(this.repo, "rev-parse", "--git-path", "info/exclude");
     if (!found.ok) return { ok: false, message: `git couldn't find its ignore file: ${found.err}` };
     const file = isAbsolute(found.out) ? found.out : join(this.repo, found.out);
-    for (const folder of [worktreesFolder, mergingFolder, revertingFolder, checkingFolder]) {
+    for (const folder of [
+      worktreesFolder,
+      specWorktreesFolder,
+      mergingFolder,
+      revertingFolder,
+      checkingFolder,
+    ]) {
       const line = `/${folder}/`;
       const current = existsSync(file) ? readFileSync(file, "utf8") : "";
       if (!current.split("\n").includes(line)) {
