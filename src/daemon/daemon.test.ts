@@ -10,7 +10,7 @@ import type { VersionControl } from "../plugins/version-control";
 import { git, makeRepo } from "../plugins/version-control.contract";
 import type { Command } from "../protocol/protocol";
 import { EventStore } from "../store/store";
-import { config as base, spec } from "../test/fixtures";
+import { backgroundSpecced, config as base, spec } from "../test/fixtures";
 import { Daemon } from "./daemon";
 
 const config: Config = { ...base, gates: ["local"], maxRunning: 1, specApproval: "always" };
@@ -89,12 +89,30 @@ function failingReplies(options: { retryMs: number; maxRetryMs: number }) {
   return { daemon: opened.value, store, broken };
 }
 
-// Takes task 1 through Spec, so the next claim asks for a worktree.
+// Takes task 1 through Spec, so the next claim asks for a worktree. A spec
+// from your claimed session needs no approval, so it is Ready at once.
 async function readyToClaim(daemon: Daemon) {
   await ok(daemon, add("CSV export"));
   await ok(daemon, { type: "claim", task: task(1) });
   await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
-  await ok(daemon, { type: "approve", task: task(1) });
+}
+
+// Specs written by agents Skelcrew started, waiting for your approval, one
+// task per title, numbered from 1.
+function withBackgroundSpecs(...titles: string[]): EventStore {
+  const store = EventStore.open(":memory:");
+  titles.forEach((title, i) => {
+    const saved = store.appendTask(
+      backgroundSpecced(task(i + 1), title),
+      {
+        sent: [],
+        answered: [],
+      },
+      [],
+    );
+    if (!saved.ok) throw new Error(saved.reason);
+  });
+  return store;
 }
 
 describe("the daemon", () => {
@@ -135,25 +153,19 @@ describe("the daemon", () => {
     });
     expect(stranger.ok).toBe(false);
     await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
+    // A spec from your claimed session needs no approval.
     expect(await ok(daemon, { type: "status" })).toMatchObject({
-      tasks: [{ task: 1, title: "CSV export", phase: "spec", waitingOnYou: "spec_approval" }],
+      tasks: [{ task: 1, title: "CSV export", phase: "ready", waitingOnYou: null }],
     });
   });
 
   test("approves a spec, or sends it back with your note", async () => {
-    const { daemon } = open();
-    for (const title of ["one", "two"]) {
-      await ok(daemon, add(title));
-    }
-    await ok(daemon, { type: "claim", task: task(1) });
-    await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
+    const { daemon } = open(withBackgroundSpecs("one", "two"));
     await ok(daemon, { type: "approve", task: task(1) });
     expect(await ok(daemon, { type: "status" })).toMatchObject({
       tasks: [{ task: 1, phase: "ready" }, { task: 2 }],
     });
 
-    await ok(daemon, { type: "claim", task: task(2) });
-    await ok(daemon, { type: "submit", task: task(2), session: you(2), spec });
     await ok(daemon, { type: "reject", task: task(2), note: "Add totals." });
     expect(await ok(daemon, { type: "status" })).toMatchObject({
       tasks: [{ task: 1 }, { task: 2, phase: "spec", waitingOnYou: null }],
@@ -161,10 +173,7 @@ describe("the daemon", () => {
   });
 
   test("reject sends a spec back to Spec with your note", async () => {
-    const { daemon } = open();
-    await ok(daemon, add("CSV export"));
-    await ok(daemon, { type: "claim", task: task(1) });
-    await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
+    const { daemon } = open(withBackgroundSpecs("CSV export"));
     expect(await ok(daemon, { type: "reject", task: task(1), note: "Add totals." })).toEqual({
       phase: "spec",
     });
@@ -263,7 +272,6 @@ describe("the daemon", () => {
     await ok(daemon, add("CSV export"));
     await ok(daemon, { type: "claim", task: task(1) });
     await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
-    await ok(daemon, { type: "approve", task: task(1) });
     // The claim waits for the worktree, so it hears why there is none.
     expect(await daemon.handle({ type: "claim", task: task(1) })).toEqual({
       ok: false,
@@ -398,7 +406,6 @@ describe("the daemon", () => {
     await ok(daemon, add("CSV export"));
     await ok(daemon, { type: "claim", task: task(1) });
     await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
-    await ok(daemon, { type: "approve", task: task(1) });
     // Without git, the claim's worktree fails, and that reply is handled.
     expect((await daemon.handle({ type: "claim", task: task(1) })).ok).toBe(false);
     expect(store.loadCommands()).toEqual({ ok: true, commands: [] });
@@ -517,7 +524,7 @@ describe("the daemon with git", () => {
     return repo;
   }
 
-  // A daemon for a real repository, with task 1 approved and Ready. Its
+  // A daemon for a real repository, with task 1 Ready. Its
   // local gate runs `checks`, or only `true`.
   async function readyInRepo(
     repo?: Awaited<ReturnType<typeof makeRepo>>,

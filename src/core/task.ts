@@ -56,10 +56,14 @@ export const inputNames: Record<Input["type"], string> = {
 };
 
 // The session of the task's running agent, or null if none is running. In
-// Checks the develop agent stays open, so it counts as running.
+// Checks the develop agent stays open, so it counts as running. Your
+// claimed session counts too.
 export function runningSession(task: Task): SessionId | null {
   switch (task.phase) {
     case "spec":
+      return task.step.kind === "running" || task.step.kind === "claimed"
+        ? task.step.session
+        : null;
     case "in_progress":
       return task.step.kind === "running" ? task.step.session : null;
     case "checks":

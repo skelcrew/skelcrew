@@ -2,9 +2,9 @@
 // spreads this one and changes only what it's about, so the difference is
 // what you read.
 
-import { CommitSha, SessionId, TaskId } from "../core/ids";
+import { CommitSha, type ProjectId, SessionId, TaskId } from "../core/ids";
 import { awaitedRequest, runningSession } from "../core/task";
-import type { Config, Spec, Task } from "../core/types";
+import type { Config, Spec, Task, TaskEvent } from "../core/types";
 
 export const config: Config = {
   gates: ["local", "review"],
@@ -39,4 +39,23 @@ export function agentOf(task: Task | null): SessionId {
 // can answer it the way the daemon matches replies.
 export function awaited(task: Task | null): number {
   return (task && awaitedRequest(task)) ?? 0;
+}
+
+// The events of a task whose spec an agent Skelcrew started has written,
+// now waiting for your approval. The daemon can't start agents yet, so
+// tests write these straight into the store. The agent is named after the
+// task, such as agent-1.
+export function backgroundSpecced(
+  taskId: TaskId,
+  title: string,
+  project: ProjectId | null = null,
+): TaskEvent[] {
+  const stamp = { v: 1 as const, taskId, at: 1 };
+  return [
+    { ...stamp, type: "task.created", title, project, source: null },
+    { ...stamp, type: "task.spec_requested" },
+    { ...stamp, type: "task.dispatch_started", request: 1 },
+    { ...stamp, type: "task.spec_session_started", session: SessionId.parse(`agent-${taskId}`) },
+    { ...stamp, type: "task.specced", spec, by: "agent" },
+  ];
 }

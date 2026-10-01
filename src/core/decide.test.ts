@@ -1540,6 +1540,85 @@ describe("claim in Spec", () => {
   });
 });
 
+// One step, so the scheduler can't start a background agent between
+// your spec request and your claim.
+describe("claim in Idea", () => {
+  test("asks for the spec and makes your session the spec agent at once", () => {
+    expect(send(run(add), claim)).toEqual({
+      ok: true,
+      events: [
+        stamped({ type: "task.spec_requested" }),
+        stamped({ type: "task.claimed", session: you, request: null }),
+      ],
+      commands: [],
+    });
+  });
+
+  // An Idea has had no agent, so this needs a stray report. decide must
+  // still give an answer that fits: Spec, blocked, like a start there.
+  test("for an Idea over its safety cap, asks for the spec and blocks it instead", () => {
+    expect(send(run(add, usage(250_000)), claim)).toEqual({
+      ok: true,
+      events: [
+        stamped({ type: "task.spec_requested" }),
+        stamped({
+          type: "task.blocked",
+          reason: { kind: "safety_cap", usage: { tokens: 250_000, ms: 0 } },
+        }),
+      ],
+      commands: [],
+    });
+  });
+});
+
+// You worked the spec out with your session, so it needs no second
+// approval. A spec from an agent Skelcrew started still does.
+describe("submit_spec from your claimed session", () => {
+  test("makes the task Ready without an approval, even when spec_approval is always", () => {
+    expect(send(run(...inSpec, claim), fromYou({ type: "submit_spec", spec }))).toEqual({
+      ok: true,
+      events: [
+        stamped({ type: "task.specced", spec, by: "agent" }),
+        stamped({ type: "task.ready" }),
+      ],
+      commands: [{ type: "stop_session", session: you }],
+    });
+  });
+
+  test("does the same after claiming an Idea", () => {
+    const task = run(add, claim, fromYou({ type: "submit_spec", spec }));
+    expect(task.phase).toBe("ready");
+  });
+
+  test("still has to meet the spec contract", () => {
+    const incomplete = { ...spec, acceptance: [] };
+    expect(send(run(...inSpec, claim), fromYou({ type: "submit_spec", spec: incomplete }))).toEqual(
+      {
+        ok: false,
+        rejection: { input: "submit_spec", reason: "The spec has no acceptance criteria." },
+      },
+    );
+  });
+
+  // The rule follows the session that submits, not an earlier claim.
+  test("doesn't carry over to a background agent after the task is sent back", () => {
+    const backToSpec: Input = { by: "human", type: "back_to_spec", note: "Split it." };
+    const task = run(
+      ...inSpec,
+      claim,
+      fromYou({ type: "submit_spec", spec }),
+      backToSpec,
+      start,
+      sessionStarted,
+    );
+    expect(send(task, submit)).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.specced", spec, by: "agent" })],
+      commands: [{ type: "stop_session", session }],
+    });
+  });
+});
+
 describe("claim in Ready", () => {
   test("creates a worktree for your session, and starts no agent", () => {
     expect(send(run(...inReady), claim)).toEqual({
@@ -1594,9 +1673,17 @@ describe("claim, refused", () => {
   });
 
   test("in a phase with no agent to replace", () => {
-    expect(send(run(add), claim)).toEqual({
+    expect(send(run(...inChecks), claim)).toEqual({
       ok: false,
-      rejection: { input: "claim", reason: "#12 is in Idea, so it can't take a claim." },
+      rejection: { input: "claim", reason: "#12 is in Checks, so it can't take a claim." },
+    });
+  });
+
+  test("for an Idea in a parked project", () => {
+    const parked: Input = { ...add, project: archive };
+    expect(send(run(parked), claim)).toEqual({
+      ok: false,
+      rejection: { input: "claim", reason: "#12 is in a parked project." },
     });
   });
 

@@ -117,8 +117,10 @@ function inSpec(task: TaskIn<"spec">, event: TaskEvent): EvolvedTask {
       return ok(withRequest(task, event.request, { kind: "starting", request: event.request }));
 
     case "task.spec_session_started":
-    case "task.claimed":
       return ok({ ...task, step: { kind: "running", session: event.session } });
+
+    case "task.claimed":
+      return ok({ ...task, step: { kind: "claimed", session: event.session } });
 
     // The spec agent is stopped once a spec is stored, so a question it
     // left open could never be answered.

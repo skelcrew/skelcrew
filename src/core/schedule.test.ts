@@ -93,6 +93,16 @@ describe("schedule", () => {
     expect(schedule(tasks, projects, config, 0)).toEqual(ids(2));
   });
 
+  test("counts a spec session you claimed against the limit", () => {
+    const you = SessionId.parse("you-1");
+    const tasks = [
+      task(1, null, ...specQueued, { type: "task.claimed", session: you, request: null }),
+      task(2, null, ...specQueued),
+      task(3, null, ...specQueued),
+    ];
+    expect(schedule(tasks, projects, config, 0)).toEqual(ids(2));
+  });
+
   test("counts starts still in flight, which the daemon reports", () => {
     const tasks = [
       task(1, null, ...creatingWorktree),

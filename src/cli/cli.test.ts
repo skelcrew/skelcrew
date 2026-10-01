@@ -3,11 +3,13 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 
 import { createServer, type Server as NetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ProjectId } from "../core/ids";
+import { ProjectId, SessionId, TaskId } from "../core/ids";
+import type { TaskEvent } from "../core/types";
 import { daemonPaths } from "../daemon/paths";
 import { type Server, serve } from "../daemon/server";
 import { cleanUp, throwawayRepo } from "../daemon/testing";
 import { EventStore } from "../store/store";
+import { backgroundSpecced } from "../test/fixtures";
 import { type Context, readStatus, run } from "./cli";
 
 const dirs: string[] = [];
@@ -22,13 +24,15 @@ afterEach(async () => {
 // A throwaway repository with its daemon running in this process. Sessions
 // are numbered, so tests can name them. There is no project command yet, so
 // the projects are made straight in the store before the daemon starts.
-async function repoWithDaemon(projects: string[] = []): Promise<string> {
+// The daemon can't start agents yet either, so a task's events from a
+// background agent are written there too.
+async function repoWithDaemon(projects: string[] = [], tasks: TaskEvent[] = []): Promise<string> {
   const repo = throwawayRepo(dirs);
-  if (projects.length > 0) {
+  if (projects.length > 0 || tasks.length > 0) {
     const found = daemonPaths(repo);
     if (!found.ok) throw new Error(found.message);
     const store = EventStore.open(found.paths.store);
-    const saved = store.appendProject(
+    const savedProjects = store.appendProject(
       projects.map((id) => ({
         v: 1,
         type: "project.created",
@@ -38,12 +42,17 @@ async function repoWithDaemon(projects: string[] = []): Promise<string> {
         goal: `The ${id} project.`,
       })),
     );
+    const savedTasks = store.appendTask(tasks, { sent: [], answered: [] }, []);
     store.close();
-    if (!saved.ok) throw new Error(saved.reason);
+    if (!savedProjects.ok) throw new Error(savedProjects.reason);
+    if (!savedTasks.ok) throw new Error(savedTasks.reason);
   }
   await served(repo);
   return repo;
 }
+
+// #1, with a spec from an agent Skelcrew started, waiting for your approval.
+const waitingSpec = (): TaskEvent[] => backgroundSpecced(TaskId.parse(1), "CSV export");
 
 // Starts a daemon for the repository, naming sessions you-1, you-2 and on.
 async function served(repo: string): Promise<void> {
@@ -94,7 +103,8 @@ const specJson = JSON.stringify({
   openQuestions: [],
 });
 
-// A task in Spec, claimed as session you-1, with its spec submitted.
+// A task claimed as session you-1, with its spec submitted. A spec from
+// your claimed session needs no approval, so the task is Ready.
 async function specced(repo: string) {
   await cli(repo, ["add", "CSV export", "--spec"]);
   await cli(repo, ["claim", "1"]);
@@ -211,7 +221,6 @@ describe("skelcrew claim", () => {
   test("in Ready, says where to work once the worktree is made", async () => {
     const repo = await repoWithDaemon();
     await specced(repo);
-    await cli(repo, ["approve", "1"]);
     const worktree = join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export");
     expect(await cli(repo, ["claim", "1"])).toEqual(
       said([
@@ -229,8 +238,7 @@ describe("skelcrew claim", () => {
   });
 
   test("shows the developer's note when a spec was sent back", async () => {
-    const repo = await repoWithDaemon();
-    await specced(repo);
+    const repo = await repoWithDaemon([], waitingSpec());
     await cli(repo, ["reject", "1", "Add totals."]);
     const outcome = await cli(repo, ["claim", "1"]);
     expect(outcome.out).toContain("The developer's note: Add totals.");
@@ -254,7 +262,10 @@ describe("skelcrew submit", () => {
       readStdin: async () => specJson,
     });
     expect(outcome).toEqual(said(["Submitted the spec for #1."]));
-    expect((await cli(repo, ["status"])).out).toContain("- #1 CSV export: approve its spec.");
+    // A spec from your claimed session needs no approval.
+    const status = (await cli(repo, ["status"])).out;
+    expect(status).toContain("Ready:");
+    expect(status).not.toContain("- #1 CSV export: approve its spec.");
   });
 
   test("submits a spec read from --file", async () => {
@@ -378,7 +389,6 @@ describe("arguments that start with a dash", () => {
 // Takes task 1 through its checks, so its merge waits for approval.
 async function checked(repo: string) {
   await specced(repo);
-  await cli(repo, ["approve", "1"]);
   await cli(repo, ["claim", "1"]);
   commitIn(join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export"));
   await cli(repo, ["done", "1"], { session: "you-2" });
@@ -463,8 +473,7 @@ describe("skelcrew approve", () => {
   });
 
   test("approves a spec", async () => {
-    const repo = await repoWithDaemon();
-    await specced(repo);
+    const repo = await repoWithDaemon([], waitingSpec());
     expect(await cli(repo, ["approve", "#1"])).toEqual(said(["Approved #1."]));
     expect((await cli(repo, ["status"])).out).toContain("Ready:");
   });
@@ -472,8 +481,7 @@ describe("skelcrew approve", () => {
   // Sending back is `skelcrew reject` now. The old flag is refused, and
   // nothing is approved or sent back.
   test("no longer takes --send-back", async () => {
-    const repo = await repoWithDaemon();
-    await specced(repo);
+    const repo = await repoWithDaemon([], waitingSpec());
     const outcome = await cli(repo, ["approve", "1", "--send-back", "Add totals."]);
     expect(outcome.code).toBe(1);
     expect(outcome.err[0]).toBe(
@@ -495,8 +503,7 @@ describe("skelcrew approve", () => {
 
 describe("skelcrew reject", () => {
   test("sends a spec back to Spec with your note", async () => {
-    const repo = await repoWithDaemon();
-    await specced(repo);
+    const repo = await repoWithDaemon([], waitingSpec());
     expect(await cli(repo, ["reject", "#1", "Add totals."])).toEqual(
       said(["Sent #1 back to Spec with your note."]),
     );
@@ -514,8 +521,7 @@ describe("skelcrew reject", () => {
   });
 
   test("refuses without a note, or with a blank one", async () => {
-    const repo = await repoWithDaemon();
-    await specced(repo);
+    const repo = await repoWithDaemon([], waitingSpec());
     const example = 'Say what to change, like this: skelcrew reject 1 "Add totals."';
     expect(await cli(repo, ["reject", "1"])).toEqual(refused(example));
     expect(await cli(repo, ["reject", "1", "  "])).toEqual(refused(example));
@@ -524,8 +530,7 @@ describe("skelcrew reject", () => {
   });
 
   test("asks for the note in quotes when it is several words", async () => {
-    const repo = await repoWithDaemon();
-    await specced(repo);
+    const repo = await repoWithDaemon([], waitingSpec());
     expect(await cli(repo, ["reject", "1", "Add", "totals."])).toEqual(
       refused('Put the note in quotes, like this: skelcrew reject 1 "Add totals."'),
     );
@@ -567,7 +572,6 @@ describe("skelcrew retry", () => {
   test("retries a blocked task, and says to claim it again", async () => {
     const repo = await repoWithDaemon();
     await specced(repo);
-    await cli(repo, ["approve", "1"]);
     await cli(repo, ["claim", "1"]);
     await cli(repo, ["give-up", "1", "Stuck."], { session: "you-2" });
     expect(await cli(repo, ["retry", "1"])).toEqual(
@@ -598,25 +602,19 @@ describe("skelcrew retry", () => {
 
 describe("skelcrew status", () => {
   test("shows what waits on you, then tasks by phase", async () => {
-    const repo = await repoWithDaemon();
+    const repo = await repoWithDaemon([], waitingSpec());
     await cli(repo, ["add", "Totals"]);
-    await cli(repo, ["add", "CSV export", "--spec"]);
-    await cli(repo, ["claim", "2"]);
-    await cli(repo, ["submit", "2", "--file", "-"], {
-      session: "you-1",
-      readStdin: async () => specJson,
-    });
     await cli(repo, ["add", "PDF export"]);
     await cli(repo, ["drop", "3"]);
     expect(await cli(repo, ["status"])).toEqual(
       said([
         "Waiting on you:",
-        "- #2 CSV export: approve its spec.",
+        "- #1 CSV export: approve its spec.",
         "",
         "Idea:",
-        "- #1 Totals",
+        "- #2 Totals",
         "Spec:",
-        "- #2 CSV export",
+        "- #1 CSV export",
         "Dropped:",
         "- #3 PDF export",
       ]),
@@ -653,7 +651,6 @@ describe("skelcrew status", () => {
   test("shows a blocked task with its reason", async () => {
     const repo = await repoWithDaemon();
     await specced(repo);
-    await cli(repo, ["approve", "1"]);
     // A folder where the worktree should go, so it can't be made.
     const worktree = join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export");
     mkdirSync(worktree, { recursive: true });
@@ -807,16 +804,19 @@ describe("skelcrew status", () => {
 
 describe("skelcrew log", () => {
   test("shows each event with its time, oldest first, in plain words", async () => {
-    const repo = await repoWithDaemon(["reports"]);
-    const submit = (session: string) =>
-      cli(repo, ["submit", "1", "--file", "-"], { session, readStdin: async () => specJson });
-    await cli(repo, ["add", "CSV export", "--spec", "--project", "reports"]);
-    await cli(repo, ["claim", "1"]);
-    await submit("you-1");
+    // A background agent wrote the first spec. You send it back, then write
+    // the next one in your own session, which needs no approval.
+    const reports = ProjectId.parse("reports");
+    const repo = await repoWithDaemon(
+      ["reports"],
+      backgroundSpecced(TaskId.parse(1), "CSV export", reports),
+    );
     await cli(repo, ["reject", "1", "Add totals."]);
     await cli(repo, ["claim", "1"]);
-    await submit("you-2");
-    await cli(repo, ["approve", "1"]);
+    await cli(repo, ["submit", "1", "--file", "-"], {
+      session: "you-1",
+      readStdin: async () => specJson,
+    });
     // Claiming in Ready makes a worktree, and your session works in it.
     await cli(repo, ["claim", "1"]);
     const worktree = join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export");
@@ -831,17 +831,18 @@ describe("skelcrew log", () => {
     expect(outcome.out.map((line) => line.slice(18))).toEqual([
       "Added to project reports: CSV export.",
       "A spec was asked for.",
-      "You claimed it, as you-1.",
+      "Skelcrew picked it to start.",
+      "A spec agent started as agent-1.",
       "The agent sent a spec: Add a CSV export button to the reports page.",
       "Acceptance criteria:",
       "- Clicking Export downloads a CSV of the visible rows.",
       "You sent the spec back: Add totals.",
-      "You claimed it, as you-2.",
+      "You claimed it, as you-1.",
       "The agent sent a spec: Add a CSV export button to the reports page.",
       "Acceptance criteria:",
       "- Clicking Export downloads a CSV of the visible rows.",
       "The task is Ready to build from this spec.",
-      "You claimed it, as you-3.",
+      "You claimed it, as you-2.",
       `Its worktree was made on branch task/1-csv-export, at ${worktree}.`,
       "Your session is working on it.",
     ]);
@@ -850,31 +851,42 @@ describe("skelcrew log", () => {
   // Found by review: every spec is saved whole, so a long-lived task's
   // events passed the 1 MB limit on a reply, and log failed outright.
   test("leaves out the oldest events when all of them don't fit in a reply", async () => {
-    const repo = await repoWithDaemon();
-    // Three specs of 400 KB each: more than 1 MB together.
+    // Three specs of 400 KB each, from background agents, each sent back:
+    // more than 1 MB together.
     const scope = `Add a CSV export. ${"x".repeat(400_000)}`;
-    const big = JSON.stringify({ scope, acceptance: ["It downloads."], openQuestions: [] });
-    await cli(repo, ["add", "CSV export", "--spec"]);
-    for (const session of ["you-1", "you-2", "you-3"]) {
-      await cli(repo, ["claim", "1"]);
-      await cli(repo, ["submit", "1", "--file", "-"], { session, readStdin: async () => big });
-      await cli(repo, ["reject", "1", "Shorter, please."]);
-    }
+    const big = { scope, acceptance: ["It downloads."], openQuestions: [] };
+    const stamp = { v: 1 as const, taskId: TaskId.parse(1), at: 1 };
+    const rounds = [1, 2, 3].flatMap((n): TaskEvent[] => [
+      { ...stamp, type: "task.dispatch_started", request: n },
+      { ...stamp, type: "task.spec_session_started", session: SessionId.parse(`agent-${n}`) },
+      { ...stamp, type: "task.specced", spec: big, by: "agent" },
+      { ...stamp, type: "task.spec_sent_back", note: "Shorter, please." },
+    ]);
+    const repo = await repoWithDaemon(
+      [],
+      [
+        { ...stamp, type: "task.created", title: "CSV export", project: null, source: null },
+        { ...stamp, type: "task.spec_requested" },
+        ...rounds,
+      ],
+    );
 
     const outcome = await cli(repo, ["log", "1"]);
     expect(outcome.err).toEqual([]);
     expect(outcome.code).toBe(0);
-    // Two specs fit. The first spec, its claim, the request for a spec and
-    // the task's creation are left out.
-    expect(outcome.out[0]).toBe("4 older events are left out.");
+    // Two specs fit. The first spec, its agent's start, the request for a
+    // spec and the task's creation are left out.
+    expect(outcome.out[0]).toBe("5 older events are left out.");
     expect(outcome.out.slice(1).map((line) => line.slice(18, 60))).toEqual([
       "You sent the spec back: Shorter, please.",
-      "You claimed it, as you-2.",
+      "Skelcrew picked it to start.",
+      "A spec agent started as agent-2.",
       "The agent sent a spec: Add a CSV export. x",
       "Acceptance criteria:",
       "- It downloads.",
       "You sent the spec back: Shorter, please.",
-      "You claimed it, as you-3.",
+      "Skelcrew picked it to start.",
+      "A spec agent started as agent-3.",
       "The agent sent a spec: Add a CSV export. x",
       "Acceptance criteria:",
       "- It downloads.",
@@ -1149,7 +1161,6 @@ describe("inside a task's worktree", () => {
     git("add", ".skelcrew/workflow.yml");
     git("commit", "-q", "-m", "Set up Skelcrew");
     await specced(repo);
-    await cli(repo, ["approve", "1"]);
     await cli(repo, ["claim", "1"]);
     const worktree = join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export");
     expect(existsSync(join(worktree, ".skelcrew", "workflow.yml"))).toBe(true);
@@ -1184,7 +1195,6 @@ describe("skelcrew done", () => {
   test("runs the checks on the task's branch and prints that they passed", async () => {
     const repo = await repoWithDaemon();
     await specced(repo);
-    await cli(repo, ["approve", "1"]);
     await cli(repo, ["claim", "1"]);
     commitIn(join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export"));
     expect(await cli(repo, ["done", "1"], { session: "you-2" })).toEqual(
@@ -1200,7 +1210,6 @@ describe("skelcrew done", () => {
     );
     await served(repo);
     await specced(repo);
-    await cli(repo, ["approve", "1"]);
     await cli(repo, ["claim", "1"]);
     commitIn(join(realpathSync(repo), ".skelcrew", "worktrees", "1-csv-export"));
     expect(await cli(repo, ["done", "1"], { session: "you-2" })).toEqual(
