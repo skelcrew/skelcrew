@@ -83,6 +83,7 @@ export function Screen(props: Props) {
   // The first line of the list shown, when it is taller than the screen,
   // and how far a task's screen can scroll.
   const scrolled = useRef(0);
+  const projectsScrolled = useRef(0);
   const lastTop = useRef(0);
   const { stdout } = useStdout();
 
@@ -289,14 +290,25 @@ export function Screen(props: Props) {
   const saidLines = [...(running === null ? [] : [running.doing]), ...said];
   const room =
     height === undefined ? body.length : height - 1 - bottomHeight(problemLines, saidLines, mode);
-  const scrolling: Scrolling =
-    showKeys || showProjects
-      ? { kind: "top" }
+  // The list and the projects screen each remember where they scrolled to.
+  const memory = showProjects ? projectsScrolled : scrolled;
+  const scrolling: Scrolling = showKeys
+    ? { kind: "top" }
+    : showProjects
+      ? {
+          kind: "cursor",
+          isCursor: (line) => line.kind === "project" && line.selected,
+          previous: memory.current,
+        }
       : opened === undefined
-        ? { kind: "cursor", selected, previous: scrolled.current }
+        ? {
+            kind: "cursor",
+            isCursor: (line) => line.kind === "row" && line.row.task.task === selected,
+            previous: memory.current,
+          }
         : { kind: "lines", top: taskTop };
   const { shown, above, under, first, lastTop: last } = scrollWindow(body, room, scrolling);
-  if (scrolling.kind === "cursor" && body.length > room) scrolled.current = first;
+  if (scrolling.kind === "cursor" && body.length > room) memory.current = first;
   lastTop.current = last;
 
   // The keys used most. ? shows the rest.

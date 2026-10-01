@@ -1,22 +1,22 @@
 // Which part of a body taller than the screen shows.
 
-import type { TaskId } from "../core/ids";
 import type { Line } from "./list";
 
 // How a body scrolls:
-// - the list keeps the task under the cursor in view, moving as little
-//   as it can from where it was, `previous`;
+// - the list and the projects screen keep the cursor's line in view,
+//   moving as little as they can from where they were, `previous`;
 // - a task's screen shows from the line `top` that j and k move;
-// - the list of keys and the projects screen show their top.
+// - the list of keys shows its top.
 export type Scrolling =
-  | { kind: "cursor"; selected: TaskId | undefined; previous: number }
+  | { kind: "cursor"; isCursor: (line: Line) => boolean; previous: number }
   | { kind: "lines"; top: number }
   | { kind: "top" };
 
 // What shows of a body in `room` lines. A body that fits shows whole, with
 // no lines above or below it. One taller keeps its first and last lines to
-// say what is hidden: tasks on the list, such as "↓ 25 more", and lines
-// elsewhere, such as "↑ 3 more lines". A line with nothing to say is "".
+// say what is hidden: tasks or projects where a cursor moves, such as
+// "↓ 25 more", and lines elsewhere, such as "↑ 3 more lines". A line with
+// nothing to say is "".
 // `first` is the first line shown, and `lastTop` how far `top` can go.
 export function scrollWindow(
   body: Line[],
@@ -34,14 +34,12 @@ export function scrollWindow(
   if (scrolling.kind === "top") {
     hiddenBelow = more(body.length - fits, "line");
   } else if (scrolling.kind === "cursor") {
-    const cursorLine = Math.max(
-      0,
-      body.findIndex((line) => line.kind === "row" && line.row.task.task === scrolling.selected),
-    );
+    const cursorLine = Math.max(0, body.findIndex(scrolling.isCursor));
     // A group's first task shows with the blank line and heading above it.
     const top = body[cursorLine - 1]?.kind === "heading" ? cursorLine - 2 : cursorLine;
     first = firstShown(scrolling.previous, top, cursorLine, fits, body.length);
-    const rows = (lines: Line[]) => lines.filter((line) => line.kind === "row").length;
+    const rows = (lines: Line[]) =>
+      lines.filter((line) => line.kind === "row" || line.kind === "project").length;
     hiddenAbove = more(rows(body.slice(0, first)), "");
     hiddenBelow = more(rows(body.slice(first + fits)), "");
   } else {
