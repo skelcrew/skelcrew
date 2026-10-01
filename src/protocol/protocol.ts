@@ -18,6 +18,9 @@ export const MAX_LINE = 1_000_000;
 // from you (see the spec's "Architecture"). An agent's reports carry the
 // session its claim handed out, and only the task's current session is
 // heard.
+// Text that isn't only spaces.
+const text = z.string().refine((value) => value.trim() !== "", { error: "Say something." });
+
 const command = z.discriminatedUnion("type", [
   // `skelcrew add "<task>"`, with `--spec` and `--project <name>`.
   z.strictObject({
@@ -50,6 +53,13 @@ const command = z.discriminatedUnion("type", [
     session: SessionId,
     message: z.string().min(1),
   }),
+  // `skelcrew project new|add|remove|archive|unarchive`. A project is named
+  // by its name or its ID, such as "Reports page" or reports-page.
+  z.strictObject({ type: z.literal("project_new"), name: text, goal: text }),
+  z.strictObject({ type: z.literal("project_add"), task: TaskId, project: text }),
+  z.strictObject({ type: z.literal("project_remove"), task: TaskId }),
+  z.strictObject({ type: z.literal("project_archive"), project: text }),
+  z.strictObject({ type: z.literal("project_unarchive"), project: text }),
 ]);
 
 const request = z.strictObject({ id: z.string().min(1), command });

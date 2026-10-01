@@ -232,6 +232,15 @@ files the checks write change nothing. The `setup` commands run in that copy fir
 repository rather than where it starts, or when the main branch from `workflow.yml`
 doesn't exist.
 
+Projects come in through five requests: `project_new`, `project_add`, `project_remove`,
+`project_archive` and `project_unarchive`. A project is named by its name or its ID. The
+daemon makes the ID from the name, since the core never makes IDs: "Reports page" gives
+`reports-page`, and "Søg på café" gives `sog-pa-cafe`. A name with no letters or digits is
+refused. `add --project` takes the name or the ID too. Adding a task to the project it is
+already in records nothing. The answers say the project's ID and name, and where a task
+came from, so the CLI can say "moved". `status` answers with every project as well, even
+one with no tasks: its ID, name, goal, and whether it is active or archived.
+
 `src/daemon/pull-requests.ts` gives you a draft pull request to read on GitHub while a
 merge waits for your approval. The core sends no command for it. Instead, after every
 request and every reply, and once at start, `DraftPullRequests` looks at each task in the
