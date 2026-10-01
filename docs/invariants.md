@@ -52,9 +52,9 @@ do, lose work, or leave the developer looking at a wrong picture.
 15. **No leftover flags.** A question from the spec agent only exists while the task is in
     Spec. A question from the develop agent only exists in In progress or Checks.
 16. **A blocked task has no agent running.**
-17. **An agent that stops before it reports blocks its task.** The exceptions are an
-    agent waiting for the developer's answer, and an agent whose checks are running.
-    Each of those is woken again with the answer or the failure.
+17. **An agent that stops before it reports blocks its task.** An agent waits for an
+    answer or for its checks inside its open session, so an agent whose session ends
+    before it reports has crashed or quit.
 18. **Dropped is final.** A dropped task records no more events. A late worktree or
     agent is only removed or stopped. A Done task only accepts a revert, the answer
     to it, and a late usage report so the record keeps the true cost.
