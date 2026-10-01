@@ -11,6 +11,7 @@ import { evolveTask } from "../core/evolve";
 import { TaskId } from "../core/ids";
 import { evolveProject } from "../core/projects";
 import type { Command, Project, ProjectEvent, ProjectId, Task, TaskEvent } from "../core/types";
+import { type AgentLog, type AgentRecord, agentRecord } from "../daemon/agents";
 import { OpenPullRequest, type PullRequestLog } from "../daemon/pull-requests";
 import type {
   Loaded,
@@ -51,11 +52,18 @@ const migrations = [
      task_id INTEGER PRIMARY KEY,
      body    TEXT NOT NULL
    );`,
+  // The agents Skelcrew started itself, by session name. Not events: the
+  // core only hears that an agent started or ended. The daemon needs them
+  // to tell its agents from your sessions, and after a restart.
+  `CREATE TABLE agents (
+     session TEXT PRIMARY KEY,
+     body    TEXT NOT NULL
+   );`,
 ];
 
 type Row = { seq: number; body: string };
 
-export class EventStore implements ReadableLog, PullRequestLog {
+export class EventStore implements ReadableLog, PullRequestLog, AgentLog {
   private constructor(private readonly db: Database) {}
 
   // Opens the file, creating it and its table when it's new. ":memory:" gives
@@ -146,6 +154,30 @@ export class EventStore implements ReadableLog, PullRequestLog {
 
   forgetPullRequest(task: TaskId): Saved {
     this.db.query("DELETE FROM pull_requests WHERE task_id = $task").run({ task });
+    return { ok: true };
+  }
+
+  // The agents Skelcrew started, in the order it started them. A damaged
+  // one is reported by its place in that order.
+  loadAgents(): Loaded<{ agents: AgentRecord[] }> {
+    const rows = this.db
+      .query<{ body: string }, []>("SELECT body FROM agents ORDER BY rowid")
+      .all();
+    const agents: AgentRecord[] = [];
+    for (const [i, row] of rows.entries()) {
+      const parsed = agentRecord.safeParse(readJson(row.body));
+      if (!parsed.success) return { ok: false, seq: i + 1, reason: parsed.error.message };
+      agents.push(parsed.data);
+    }
+    return { ok: true, agents };
+  }
+
+  saveAgent(agent: AgentRecord): Saved {
+    this.db
+      .query(
+        "INSERT INTO agents (session, body) VALUES ($session, $body) ON CONFLICT (session) DO UPDATE SET body = $body",
+      )
+      .run({ session: agent.session, body: JSON.stringify(agent) });
     return { ok: true };
   }
 

@@ -571,7 +571,8 @@ describe("skelcrew drop", () => {
 });
 
 describe("skelcrew retry", () => {
-  test("retries a blocked task, and says to claim it again", async () => {
+  // The CLI can't tell whether background runs are on, so it says both.
+  test("retries a blocked task, and says how it goes on", async () => {
     const repo = await repoWithDaemon();
     await specced(repo);
     await cli(repo, ["claim", "1"]);
@@ -579,7 +580,7 @@ describe("skelcrew retry", () => {
     expect(await cli(repo, ["retry", "1"])).toEqual(
       said([
         "Retried #1.",
-        "Skelcrew doesn't start agents itself yet, so claim it again: skelcrew claim 1",
+        "With background runs on, an agent starts when a slot is free. Otherwise claim it: skelcrew claim 1",
       ]),
     );
     expect((await cli(repo, ["claim", "1"])).out[0]).toBe("Claimed #1. It is in In progress.");

@@ -45,6 +45,36 @@ describe("parseWorkflow", () => {
     });
   });
 
+  // Skelcrew starts agents itself unless told not to, in the runner that
+  // needs nothing installed.
+  test("starts agents in the background, with the basic runner, when the file doesn't say", () => {
+    const parsed = parseWorkflow("checks:\n  - bun test\n");
+    expect(parsed.ok && parsed.workflow.background).toBe(true);
+    expect(parsed.ok && parsed.workflow.sessions).toBe("basic");
+  });
+
+  test("reads background: false, which starts no agents", () => {
+    const parsed = parseWorkflow("checks:\n  - bun test\nbackground: false\n");
+    if (!parsed.ok) throw new Error(parsed.reasons.join(" "));
+    expect(parsed.workflow.background).toBe(false);
+  });
+
+  test("reads the session runner from plugins.sessions", () => {
+    const parsed = parseWorkflow(specExample);
+    expect(parsed.ok && parsed.workflow.sessions).toBe("herdr");
+  });
+
+  test("refuses a session runner it doesn't know, and a background that isn't true or false", () => {
+    expect(parseWorkflow("checks:\n  - bun test\nplugins:\n  sessions: screen\n")).toEqual({
+      ok: false,
+      reasons: ["plugins.sessions: must be basic, tmux or herdr."],
+    });
+    expect(parseWorkflow("checks:\n  - bun test\nbackground: sometimes\n")).toEqual({
+      ok: false,
+      reasons: ["background: must be true or false."],
+    });
+  });
+
   test("runs no setup when the file doesn't say", () => {
     const parsed = parseWorkflow("checks:\n  - bun test\n");
     expect(parsed.ok && parsed.workflow.setup).toEqual([]);

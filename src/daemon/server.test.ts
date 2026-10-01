@@ -15,7 +15,7 @@ import * as z from "zod";
 import { MAX_LINE } from "../protocol/protocol";
 import { spec } from "../test/fixtures";
 import { type Server, serve } from "./server";
-import { cleanUp, openLine, throwawayRepo } from "./testing";
+import { cleanUp, FakeHarness, FakeRunner, openLine, throwawayRepo } from "./testing";
 
 const dirs: string[] = [];
 const servers: Server[] = [];
@@ -367,3 +367,40 @@ async function served(repo: string): Promise<Server> {
   if (!result.ok) throw new Error(result.message);
   return result.server;
 }
+
+// serve() starts agents only when its caller hands it a runner and a
+// harness. `skelcrew serve` does, with the real ones. A test never does,
+// so it can't start a real agent by accident.
+describe("background runs", () => {
+  const withSpec = { type: "add", title: "CSV export", spec: true, project: null };
+
+  async function waitFor(check: () => boolean): Promise<boolean> {
+    for (let i = 0; i < 60; i++) {
+      if (check()) return true;
+      await Bun.sleep(50);
+    }
+    return false;
+  }
+
+  test("start agents through the runner it is given, when workflow.yml leaves them on", async () => {
+    const repo = throwawayRepo(dirs);
+    writeFileSync(join(repo, ".skelcrew", "workflow.yml"), 'checks:\n  - "true"\n');
+    const runner = new FakeRunner();
+    const served = await serve(repo, { agents: () => ({ runner, harness: new FakeHarness() }) });
+    if (!served.ok) throw new Error(served.message);
+    servers.push(served.server);
+    await send(served.server.socket, withSpec);
+    expect(await waitFor(() => runner.started.length === 1)).toBe(true);
+    expect(runner.started[0]?.command).toEqual(["fake-agent", "spec", "1"]);
+  });
+
+  test("start nothing with background: false", async () => {
+    const repo = throwawayRepo(dirs);
+    const runner = new FakeRunner();
+    const served = await serve(repo, { agents: () => ({ runner, harness: new FakeHarness() }) });
+    if (!served.ok) throw new Error(served.message);
+    servers.push(served.server);
+    await send(served.server.socket, withSpec);
+    expect(await waitFor(() => runner.started.length > 0)).toBe(false);
+  });
+});

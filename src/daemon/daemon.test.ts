@@ -12,6 +12,7 @@ import type { Command } from "../protocol/protocol";
 import { EventStore } from "../store/store";
 import { backgroundSpecced, config as base, spec } from "../test/fixtures";
 import { Daemon } from "./daemon";
+import { FakeHarness, FakeRunner } from "./testing";
 
 const config: Config = { ...base, gates: ["local"], maxRunning: 1, specApproval: "always" };
 
@@ -31,8 +32,8 @@ function open(store = EventStore.open(":memory:")) {
   return { daemon: opened.value, store };
 }
 
-async function ok(daemon: Daemon, command: Command): Promise<unknown> {
-  const answer = await daemon.handle(command);
+async function ok(daemon: Daemon, command: Command, from?: SessionId): Promise<unknown> {
+  const answer = await daemon.handle(command, from);
   if (!answer.ok) throw new Error(answer.message);
   return answer.result;
 }
@@ -734,10 +735,13 @@ describe("the daemon with git", () => {
     maxAttempts?: number;
     maxRunning?: number;
     namedSessions?: boolean;
+    // Starts agents itself, through this runner and a fake harness.
+    runner?: FakeRunner;
   };
 
   async function inRepo(repo?: Awaited<ReturnType<typeof makeRepo>>, options: InRepo = {}) {
     repo ??= await newRepo();
+    const store = options.store ?? EventStore.open(":memory:");
     let sessions = 0;
     const numbered = () => {
       sessions += 1;
@@ -751,13 +755,23 @@ describe("the daemon with git", () => {
         maxAttempts: options.maxAttempts ?? 3,
         maxRunning: options.maxRunning ?? config.maxRunning,
       },
-      log: options.store ?? EventStore.open(":memory:"),
+      log: store,
       versionControl: options.versionControl ?? new Git(repo.dir, repo.main),
       runChecks: localChecks(options.checks ?? ["true"]),
       ...(options.namedSessions === true ? {} : { newSession: numbered }),
+      ...(options.runner === undefined
+        ? {}
+        : {
+            agents: {
+              runner: options.runner,
+              harness: new FakeHarness(),
+              log: store,
+              checks: options.checks ?? ["true"],
+            },
+          }),
     });
     if (!opened.ok) throw new Error(opened.message);
-    return { daemon: opened.value, repo };
+    return { daemon: opened.value, repo, store };
   }
 
   // The same, with task 1 Ready.
@@ -769,6 +783,84 @@ describe("the daemon with git", () => {
 
   // Every spec is written in a copy of main of its own, so two specs never
   // see each other's files.
+  // Waits until the check passes, for at most five seconds.
+  async function eventually(check: () => boolean | Promise<boolean>): Promise<void> {
+    for (let i = 0; i < 100; i++) {
+      if (await check()) return;
+      await Bun.sleep(50);
+    }
+    throw new Error("It didn't happen within five seconds.");
+  }
+
+  // Background runs: the daemon starts agents itself, through a runner and
+  // a harness. Here both are fakes, so no real agent ever starts.
+  async function withAgent() {
+    const runner = new FakeRunner();
+    const opened = await inRepo(undefined, { runner });
+    await ok(opened.daemon, add("CSV export"));
+    await eventually(() => runner.started.length === 1);
+    const started = runner.started[0];
+    if (started === undefined) throw new Error("No agent started.");
+    return { ...opened, runner, agent: SessionId.parse(started.name) };
+  }
+
+  const statusOf = async (daemon: Daemon) =>
+    z
+      .object({ tasks: z.array(z.object({ session: z.string().nullable() }).passthrough()) })
+      .parse(await ok(daemon, { type: "status" }));
+
+  test("starts a spec agent in its spec worktree for a task that waits for a spec", async () => {
+    const { daemon, repo, runner, agent } = await withAgent();
+    expect(runner.started[0]).toMatchObject({
+      command: ["fake-agent", "spec", "1"],
+      cwd: join(repo.dir, ".skelcrew", "spec-worktrees", "1-csv-export"),
+      env: { SKELCREW_SESSION: agent },
+    });
+    expect((await statusOf(daemon)).tasks[0]).toMatchObject({ session: agent, phase: "spec" });
+  });
+
+  test("types your answer into the agent's session", async () => {
+    const { daemon, runner, agent } = await withAgent();
+    const question: Command = {
+      type: "ask",
+      task: task(1),
+      session: agent,
+      text: "Include deleted rows?",
+      options: ["Yes", "No"],
+    };
+    await ok(daemon, question);
+    await ok(daemon, { type: "answer", task: task(1), text: "No" });
+    await eventually(() => runner.typed.length === 1);
+    expect(runner.typed).toEqual([{ name: agent, text: "No" }]);
+  });
+
+  test("blocks the task when its agent's session ends before it reports", async () => {
+    const { daemon, runner, agent } = await withAgent();
+    runner.end(agent, { exitCode: 1, lastLine: "Out of memory." });
+    const blocked = "The agent stopped before it finished (exit code 1): Out of memory.";
+    await eventually(async () => (await statusOf(daemon)).tasks[0]?.blocked === blocked);
+  });
+
+  test("stops the agent, and removes its spec worktree, once it submits the spec", async () => {
+    const { daemon, repo, runner, agent } = await withAgent();
+    await ok(daemon, { type: "submit", task: task(1), session: agent, spec }, agent);
+    await eventually(() => runner.stopped.includes(agent));
+    const copy = join(repo.dir, ".skelcrew", "spec-worktrees", "1-csv-export");
+    await eventually(() => !existsSync(copy));
+    expect((await statusOf(daemon)).tasks[0]).toMatchObject({ waitingOnYou: "spec_approval" });
+  });
+
+  // The basic runner's sessions end with the daemon. After a restart, the
+  // core must hear that its agents are gone.
+  test("after a restart, says an agent the runner lost has stopped", async () => {
+    const { daemon, repo, store } = await withAgent();
+    await daemon.close();
+    const after = await inRepo(repo, { store, runner: new FakeRunner() });
+    const blocked =
+      "The agent stopped before it finished: Skelcrew restarted, and the agent's session ended with it.";
+    await eventually(async () => (await statusOf(after.daemon)).tasks[0]?.blocked === blocked);
+  });
+
   test("makes a spec worktree when you claim a task in Spec, and says where to work", async () => {
     const { daemon, repo } = await inRepo();
     await ok(daemon, add("CSV export"));

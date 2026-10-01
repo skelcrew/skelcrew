@@ -13,6 +13,8 @@ import { phaseNames } from "../core/task";
 import type { TaskEvent } from "../core/types";
 import { request, type Started } from "../daemon/client";
 import { serveUntilSignalled } from "../daemon/server";
+import { BasicRunner } from "../plugins/basic-runner/basic-runner";
+import { ClaudeCode } from "../plugins/claude-code/claude-code";
 import { mainRepository } from "../plugins/git/top";
 import type { Command } from "../protocol/protocol";
 import { taskEvent } from "../store/schema";
@@ -133,14 +135,15 @@ const handlers: Record<string, Handler> = {
       ask(context, { type: "drop", task }, anything, () => said(`Dropped #${task}.`)),
     ),
 
-  // The daemon doesn't start agents yet, so a retried task waits in its
-  // phase until it is claimed again.
+  // A retried task waits for a slot. With background runs on, the daemon
+  // starts its agent. Otherwise it waits until it is claimed again. The CLI
+  // can't tell which, so it says both.
   retry: async (args, context) =>
     withTask("retry", args, {}, (task) =>
       ask(context, { type: "retry", task }, anything, () =>
         said(
           `Retried #${task}.`,
-          `Skelcrew doesn't start agents itself yet, so claim it again: skelcrew claim ${task}`,
+          `With background runs on, an agent starts when a slot is free. Otherwise claim it: skelcrew claim ${task}`,
         ),
       ),
     ),
@@ -282,7 +285,11 @@ const handlers: Record<string, Handler> = {
     if (!parsed.ok) return parsed.outcome;
     const repo = findRepo(context.cwd);
     if (repo === null) return noRepo();
-    const running = await serveUntilSignalled(repo);
+    // The real runner and agent, so the daemon starts agents itself when
+    // workflow.yml leaves background runs on.
+    const running = await serveUntilSignalled(repo, {
+      agents: () => ({ runner: new BasicRunner(), harness: new ClaudeCode() }),
+    });
     if (!running.ok) return refused(...running.message.split("\n"));
     context.announce?.(`The daemon for ${repo} is running. Stop it with Ctrl-C.`);
     await running.stopped;

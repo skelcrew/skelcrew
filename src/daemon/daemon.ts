@@ -29,10 +29,13 @@ import type {
   Worktree,
 } from "../core/types";
 import { Loop, type ReadableLog, type Tools } from "../loop/loop";
+import type { Harness } from "../plugins/harness";
 import type { PullRequests } from "../plugins/pull-requests";
+import type { SessionEnd, SessionRunner } from "../plugins/session-runner";
 import type { RunChecks, VersionControl } from "../plugins/version-control";
 import { type Command, MAX_LINE } from "../protocol/protocol";
 import type { EventStore } from "../store/store";
+import { type AgentLog, type AgentRecord, Agents } from "./agents";
 import { DraftPullRequests, type PullRequestLog } from "./pull-requests";
 import { specFile } from "./spec-file";
 
@@ -60,6 +63,11 @@ export type DaemonOptions = {
   // `base` is the branch they go into. Work that failed is tried again every
   // `retryMs`, five minutes unless set. Without it, none is opened.
   pullRequests?: { plugin: PullRequests; log: PullRequestLog; base: string; retryMs?: number };
+  // Starts agents itself, when background runs are on: through the session
+  // runner, with the harness's command. `checks` are the repository's check
+  // commands, which a develop agent may run. Without this, nothing starts
+  // until you claim a task, and a start is answered with a failure.
+  agents?: { runner: SessionRunner; harness: Harness; log: AgentLog; checks: string[] };
 };
 
 // An answer that has to wait for a tool's reply, such as a claim waiting
@@ -131,6 +139,7 @@ export class Daemon {
     private readonly loop: Loop,
     private readonly tools: DaemonTools,
     options: DaemonOptions,
+    private readonly agents: Agents | null,
   ) {
     this.newSession = options.newSession ?? shortSession;
     this.now = options.now ?? Date.now;
@@ -160,11 +169,19 @@ export class Daemon {
   static open(
     options: DaemonOptions,
   ): { ok: true; value: Daemon } | { ok: false; message: string } {
-    const tools = new DaemonTools(options.versionControl ?? null, options.runChecks ?? null);
+    const agents =
+      options.agents === undefined
+        ? null
+        : new Agents({ ...options.agents, newSession: options.newSession ?? shortSession });
+    const tools = new DaemonTools(
+      options.versionControl ?? null,
+      options.runChecks ?? null,
+      agents,
+    );
     const opened = Loop.open(options.config, tools, options.log);
     if (!opened.ok)
       return { ok: false, message: `The saved log couldn't be read. ${opened.reason}` };
-    const daemon = new Daemon(opened.loop, tools, options);
+    const daemon = new Daemon(opened.loop, tools, options, agents);
     tools.connect(
       (taskId, input, finished) => daemon.reply(taskId, input, finished),
       (taskId) => daemon.find(taskId)?.title ?? `#${taskId}`,
@@ -172,7 +189,31 @@ export class Daemon {
     );
     // A merge may have started waiting, or finished, while no daemon ran.
     daemon.pullRequests?.update();
+    if (agents !== null) daemon.startAgents(agents);
     return { ok: true, value: daemon };
+  }
+
+  // Hears each agent's end, tells the core about agents lost while no
+  // daemon ran, then starts what waits for a free slot.
+  private startAgents(agents: Agents): void {
+    agents.onEnd((agent, end) => this.reply(agent.task, ended(agent, end), () => {}));
+    void agents.lost().then((lost) => {
+      for (const agent of lost) {
+        const end = {
+          exitCode: null,
+          lastLine: "Skelcrew restarted, and the agent's session ended with it.",
+        };
+        this.reply(agent.task, ended(agent, end), () => {});
+      }
+      void this.oneAtATime(() => this.startWaiting());
+    });
+  }
+
+  // Starts the agents the scheduler picks, within max_running. Only with
+  // background runs on.
+  private startWaiting(): void {
+    if (this.agents === null || this.closed) return;
+    this.loop.startWaiting(this.now());
   }
 
   // One request from the CLI, answered once everything before it is done.
@@ -200,6 +241,8 @@ export class Daemon {
       const answered = this.guarded(() => this.answer(command));
       // A request can settle a waiting claim too, such as a drop.
       this.wakeWaiters();
+      // And free a slot, or make a task wait for one.
+      this.startWaiting();
       return answered;
     });
     if (!("later" in first)) return first;
@@ -581,6 +624,8 @@ export class Daemon {
   close(): Promise<void> {
     this.closed = true;
     this.tools.stop();
+    // An agent that ends from here on is found lost at the next start.
+    this.agents?.detach();
     this.pullRequests?.stop();
     for (const timer of this.retryTimers) clearTimeout(timer);
     this.retryTimers.clear();
@@ -608,6 +653,7 @@ export class Daemon {
       if (handled) {
         finished();
         this.wakeWaiters();
+        this.startWaiting();
         return;
       }
       const wait = Math.min(this.retryMs * 2 ** attempt, this.maxRetryMs);
@@ -794,6 +840,19 @@ function named(project: Project): { id: ProjectId; name: string } {
   return { id: project.id, name: project.name };
 }
 
+// The core's input for an agent's end. Its last line says what it was
+// doing. An agent that said nothing still gets a message.
+function ended(agent: AgentRecord, end: SessionEnd): Input {
+  return {
+    by: "plugin",
+    type: "session_ended",
+    request: agent.request,
+    session: agent.session,
+    exitCode: end.exitCode,
+    message: end.lastLine === "" ? "It printed nothing." : end.lastLine,
+  };
+}
+
 export function describeBlock(reason: BlockReason): string {
   switch (reason.kind) {
     case "out_of_attempts":
@@ -839,6 +898,7 @@ class DaemonTools implements Tools {
   constructor(
     private readonly versionControl: VersionControl | null,
     private readonly runChecks: RunChecks | null,
+    private readonly agents: Agents | null,
   ) {}
 
   connect(
@@ -869,6 +929,24 @@ class DaemonTools implements Tools {
     }
     if (command.type === "remove_worktree" && this.versionControl !== null) {
       void this.removeWorktree(this.versionControl, command.worktree, finished);
+      return;
+    }
+    if (
+      (command.type === "start_spec_session" || command.type === "start_develop_session") &&
+      this.agents !== null
+    ) {
+      if (this.deliver === null) this.held.push([command, finished]);
+      else void this.startAgent(this.agents, command, finished);
+      return;
+    }
+    // Only a session Skelcrew started is stopped or typed into. Yours is
+    // left alone: its next report is refused instead.
+    if (command.type === "stop_session" && this.agents !== null) {
+      void this.agents.stop(command.session).then(finished, finished);
+      return;
+    }
+    if (command.type === "send_to_session" && this.agents !== null) {
+      void this.agents.type(command.session, command.text).then(finished, finished);
       return;
     }
     if (command.type === "create_spec_worktree" && this.versionControl !== null) {
@@ -967,6 +1045,28 @@ class DaemonTools implements Tools {
   private send(taskId: TaskId, input: Input, finished: () => void): void {
     if (this.deliver === null) this.early.push([taskId, input, finished]);
     else this.deliver(taskId, input, finished);
+  }
+
+  // Starts an agent, and tells the core it started or why it couldn't.
+  // Agents never throws, but a failure here must still reach the core,
+  // which would otherwise wait for the agent for ever.
+  private async startAgent(
+    agents: Agents,
+    command: Extract<CoreCommand, { type: "start_spec_session" | "start_develop_session" }>,
+    finished: () => void,
+  ): Promise<void> {
+    const { taskId, request } = command;
+    let input: Input;
+    try {
+      const started = await agents.start(command);
+      input = started.ok
+        ? { by: "plugin", type: "session_started", request, session: started.value }
+        : { by: "plugin", type: "session_failed", request, message: started.message };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      input = { by: "plugin", type: "session_failed", request, message };
+    }
+    this.send(taskId, input, finished);
   }
 
   // Nothing waits on a removal. A worktree that can't be removed stays, and
@@ -1077,7 +1177,8 @@ class DaemonTools implements Tools {
             by: "plugin",
             type: "session_failed",
             request: command.request,
-            message: "Skelcrew doesn't start agents itself yet. Claim the task instead.",
+            message:
+              "Skelcrew starts no agents here: background runs are off, or their runner isn't built yet. Claim the task instead.",
           },
         ];
       case "run_gate":

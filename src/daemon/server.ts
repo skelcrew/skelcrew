@@ -9,10 +9,12 @@ import { chmodSync, existsSync, lstatSync, readFileSync, realpathSync, rmSync } 
 import { createServer, type Socket } from "node:net";
 import * as z from "zod";
 import { preparedChecks } from "../checks/checks";
-import { parseWorkflow } from "../config/workflow";
+import { parseWorkflow, type Workflow } from "../config/workflow";
 import { Git } from "../plugins/git/git";
 import { mainRepository } from "../plugins/git/top";
 import { GitHub } from "../plugins/github/github";
+import type { Harness } from "../plugins/harness";
+import type { SessionRunner } from "../plugins/session-runner";
 import { encode, MAX_LINE, parseRequest, type Reply } from "../protocol/protocol";
 import { EventStore } from "../store/store";
 import { type Answer, Daemon, type DaemonOptions } from "./daemon";
@@ -26,6 +28,11 @@ export type ServeOptions = {
   newSession?: () => string;
   // Replaces the socket folder in /tmp, for tests.
   socketFolder?: string;
+  // Makes the session runner and the harness, so the daemon starts agents
+  // itself when workflow.yml leaves background runs on. `skelcrew serve`
+  // passes the real ones. Without this, nothing starts: a test can't start
+  // a real agent by accident.
+  agents?: () => { runner: SessionRunner; harness: Harness };
 };
 
 export type Server = {
@@ -99,6 +106,11 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
     pullRequests: { plugin: new GitHub(paths.repo), log: store, base: workflow.mainBranch },
   };
   if (options.newSession !== undefined) daemonOptions.newSession = options.newSession;
+  // Only the basic runner is built so far. With tmux or Herdr picked,
+  // nothing starts in the background yet.
+  if (options.agents !== undefined && workflow.background && workflow.sessions === "basic") {
+    daemonOptions.agents = { ...options.agents(), log: store, checks: workflow.checks };
+  }
   const opened = Daemon.open(daemonOptions);
   if (!opened.ok) {
     store.close();
@@ -229,15 +241,7 @@ function mainBranch(repo: string, branch: string): { ok: true } | { ok: false; m
 function readWorkflow(
   repo: string,
   path: string,
-):
-  | {
-      ok: true;
-      config: DaemonOptions["config"];
-      mainBranch: string;
-      checks: string[];
-      setup: string[];
-    }
-  | { ok: false; message: string } {
+): ({ ok: true } & Workflow) | { ok: false; message: string } {
   if (!existsSync(path)) {
     return {
       ok: false,
@@ -255,8 +259,7 @@ function readWorkflow(
     const reasons = parsed.reasons.map((reason) => `- ${reason}`);
     return { ok: false, message: [".skelcrew/workflow.yml doesn't fit:", ...reasons].join("\n") };
   }
-  const { config, mainBranch, checks, setup } = parsed.workflow;
-  return { ok: true, config, mainBranch, checks, setup };
+  return { ok: true, ...parsed.workflow };
 }
 
 // A request being answered, so stopping can wait for it or refuse it.
