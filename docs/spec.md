@@ -420,14 +420,14 @@ Skelcrew should build itself as early as possible, and trust in auto-merge is ea
 
 1. **Core in close collaboration.** State machine, contracts, event log and scheduler, with the full test approach and the simulator. Built interactively with Claude rather than delegated: the types, contracts and invariants come first and the developer approves them, Claude implements against them, and every change to the core is read before it lands.
 2. **Smallest real loop, attended.** Daemon, CLI, built-in board, git plugin, local checks, and the default skills (spec, develop) used from the developer's harness. The developer starts each agent in their own session. Every merge waits for the developer's approval, as do specs, with `skelcrew approve` until the inbox exists. Skelcrew then carries out the merge. One task goes from `skelcrew add` to a merged commit. A merge that waits also gets a draft pull request on GitHub, for reading only. This brings a small part of step 8's GitHub plugin forward.
-3. **Dogfood day.** Skelcrew runs on its own repository; every change from here is a Skelcrew task.
-4. **Background runs and the TUI.** The process runner and Claude Code profile, so the scheduler starts agents itself. The TUI, for adding tasks, approving them, and seeing what is running and what waits on the developer.
+3. **Background runs and the TUI.** The process runner and Claude Code profile, so the scheduler starts agents itself. The TUI, for adding tasks, approving them, and seeing what is running and what waits on the developer.
+4. **Dogfood day.** Skelcrew runs on its own repository; every change from here is a Skelcrew task. It comes after background runs and the TUI, because Skelcrew needs both before it is pleasant to use on itself.
 5. **Inbox and intake.** Questions with options, the spec skill wired into intake, desktop notifications.
 6. **Auto-merge, gradually.** Start with every path critical, so all merges arrive as inbox summaries and the workflow stops at approval, like a pull request. Then loosen critical paths based on which approvals were rubber-stamped.
 7. **Record and digest.** A projection of the event log.
 8. **Second implementations.** GitHub next to the built-in board, Herdr next to the process runner, to validate the plugin interfaces. The draft pull requests for reading already exist from step 2. This step adds GitHub as a work source.
 
-Metrics tracked from step 3: inbox items per day, minutes spent on decisions, automatic versus approved merges, reverts and cost per task. They guide the design and are the evidence for users and funders.
+Metrics tracked from step 4: inbox items per day, minutes spent on decisions, automatic versus approved merges, reverts and cost per task. They guide the design and are the evidence for users and funders.
 
 ## v1 scope and non-goals
 
