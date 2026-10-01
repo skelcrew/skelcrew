@@ -441,6 +441,147 @@ describe("status", () => {
   });
 });
 
+describe("projects", () => {
+  const reports: Command = {
+    type: "project_new",
+    name: "Reports page",
+    goal: "Export what the reports page shows.",
+  };
+
+  test("a new project gets an ID made from its name, and starts active", async () => {
+    const { daemon } = open();
+    expect(await ok(daemon, reports)).toEqual({
+      project: { id: "reports-page", name: "Reports page" },
+    });
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      projects: [
+        {
+          id: "reports-page",
+          name: "Reports page",
+          goal: "Export what the reports page shows.",
+          status: "active",
+        },
+      ],
+    });
+  });
+
+  test("a name with accents gets an ID without them", async () => {
+    const { daemon } = open();
+    expect(await ok(daemon, { ...reports, name: "Søg på café" })).toEqual({
+      project: { id: "sog-pa-cafe", name: "Søg på café" },
+    });
+  });
+
+  test("a name with no letters or digits is refused", async () => {
+    const { daemon } = open();
+    expect(await daemon.handle({ ...reports, name: "!!!" })).toEqual({
+      ok: false,
+      message: '"!!!" has no letters or digits, so it can\'t name a project.',
+    });
+  });
+
+  test("a second project with the same ID is refused", async () => {
+    const { daemon } = open();
+    await ok(daemon, reports);
+    expect(await daemon.handle({ ...reports, name: "reports PAGE" })).toEqual({
+      ok: false,
+      message: "There is already a project called reports-page.",
+    });
+  });
+
+  test("archive and unarchive take the name or the ID, and status says which it is", async () => {
+    const { daemon } = open();
+    await ok(daemon, reports);
+    expect(await ok(daemon, { type: "project_archive", project: "Reports Page" })).toEqual({
+      project: { id: "reports-page", name: "Reports page" },
+    });
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      projects: [{ id: "reports-page", status: "archived" }],
+    });
+    await ok(daemon, { type: "project_unarchive", project: "reports-page" });
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      projects: [{ id: "reports-page", status: "active" }],
+    });
+  });
+
+  test("a project that doesn't exist is refused", async () => {
+    const { daemon } = open();
+    expect(await daemon.handle({ type: "project_archive", project: "Search" })).toEqual({
+      ok: false,
+      message: "There is no project called Search.",
+    });
+    await ok(daemon, add("CSV export"));
+    expect(await daemon.handle({ type: "project_add", task: task(1), project: "!!!" })).toEqual({
+      ok: false,
+      message: "There is no project called !!!.",
+    });
+  });
+
+  test("add puts a task in a project, and says which one it came from", async () => {
+    const { daemon } = open();
+    await ok(daemon, reports);
+    await ok(daemon, { type: "project_new", name: "Search", goal: "Find any task." });
+    await ok(daemon, add("CSV export"));
+    expect(
+      await ok(daemon, { type: "project_add", task: task(1), project: "Reports page" }),
+    ).toEqual({ from: null, to: { id: "reports-page", name: "Reports page" } });
+    expect(await ok(daemon, { type: "project_add", task: task(1), project: "search" })).toEqual({
+      from: { id: "reports-page", name: "Reports page" },
+      to: { id: "search", name: "Search" },
+    });
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, project: "search" }],
+    });
+  });
+
+  test("adding a task to the project it is in records nothing", async () => {
+    const { daemon } = open();
+    await ok(daemon, reports);
+    await ok(daemon, add("CSV export"));
+    await ok(daemon, { type: "project_add", task: task(1), project: "reports-page" });
+    const same = { from: { id: "reports-page", name: "Reports page" } };
+    expect(
+      await ok(daemon, { type: "project_add", task: task(1), project: "reports-page" }),
+    ).toEqual({ ...same, to: same.from });
+    const log = z
+      .object({ events: z.array(z.object({ type: z.string() })) })
+      .parse(await ok(daemon, { type: "log", task: task(1) }));
+    expect(log.events.filter((event) => event.type === "task.project_changed")).toHaveLength(1);
+  });
+
+  test("remove takes a task out of its project, and refuses a task in none", async () => {
+    const { daemon } = open();
+    await ok(daemon, reports);
+    await ok(daemon, add("CSV export"));
+    await ok(daemon, { type: "project_add", task: task(1), project: "reports-page" });
+    expect(await ok(daemon, { type: "project_remove", task: task(1) })).toEqual({
+      from: { id: "reports-page", name: "Reports page" },
+    });
+    expect(await daemon.handle({ type: "project_remove", task: task(1) })).toEqual({
+      ok: false,
+      message: "#1 isn't in a project.",
+    });
+  });
+
+  test("a new task can be added to a project by its name", async () => {
+    const { daemon } = open();
+    await ok(daemon, reports);
+    await ok(daemon, { type: "add", title: "CSV export", spec: false, project: "Reports page" });
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, project: "reports-page" }],
+    });
+  });
+
+  test("status lists every project by name, even one with no tasks", async () => {
+    const { daemon } = open();
+    await ok(daemon, reports);
+    await ok(daemon, { type: "project_new", name: "Archive search", goal: "Find old work." });
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      projects: [{ name: "Archive search" }, { name: "Reports page" }],
+    });
+  });
+});
+
 describe("the daemon with git", () => {
   const repos: string[] = [];
   afterEach(() => {

@@ -19,10 +19,27 @@ describe("parseRequest", () => {
       { type: "submit", task: 12, session: "you-1", spec },
       { type: "done", task: 12, session: "you-1" },
       { type: "give_up", task: 12, session: "you-1", message: "Stuck." },
+      { type: "project_new", name: "Reports page", goal: "Export what it shows." },
+      { type: "project_add", task: 12, project: "reports-page" },
+      { type: "project_remove", task: 12 },
+      { type: "project_archive", project: "Reports page" },
+      { type: "project_unarchive", project: "reports-page" },
     ];
     for (const command of commands) {
       const line = JSON.stringify({ id: "r1", command });
       expect<unknown>(parseRequest(line)).toEqual({ ok: true, value: { id: "r1", command } });
+    }
+  });
+
+  // A project always has a name and a goal, and is named in each command.
+  test("refuses a project with no name or goal, or a command that names none", () => {
+    for (const command of [
+      { type: "project_new", name: " ", goal: "Export what it shows." },
+      { type: "project_new", name: "Reports page", goal: "" },
+      { type: "project_add", task: 12, project: "" },
+      { type: "project_archive", project: " " },
+    ]) {
+      expect(parseRequest(JSON.stringify({ id: "r1", command })).ok).toBe(false);
     }
   });
 

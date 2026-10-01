@@ -21,6 +21,7 @@ import type {
   Config,
   Command as CoreCommand,
   Input,
+  Project,
   Spec,
   SpecWorktree,
   Task,
@@ -330,11 +331,9 @@ export class Daemon {
       case "add": {
         let project: ProjectId | null = null;
         if (command.project !== null) {
-          const parsed = ProjectId.safeParse(command.project);
-          if (!parsed.success) {
-            return { ok: false, message: `"${command.project}" isn't a project name.` };
-          }
-          project = parsed.data;
+          const found = this.project(command.project);
+          if (!found.ok) return found;
+          project = found.project.id;
         }
         const task = this.nextTaskId();
         const added = this.send(task, {
@@ -403,7 +402,63 @@ export class Daemon {
         const tasks = [...this.loop.tasks()]
           .sort((a, b) => a.id - b.id)
           .map((task) => ({ ...view(task), ...(this.pullRequests?.shown(task) ?? none) }));
-        return { ok: true, result: { tasks } };
+        const projects = [...this.loop.projects().values()]
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map(({ id, name, goal, status }) => ({ id, name, goal, status }));
+        return { ok: true, result: { tasks, projects } };
+      }
+
+      // The project's ID comes from its name: "Reports page" is
+      // reports-page. The core never makes IDs, so the daemon does.
+      case "project_new": {
+        const id = projectIdFrom(command.name);
+        if (id === null) {
+          return {
+            ok: false,
+            message: `"${command.name}" has no letters or digits, so it can't name a project.`,
+          };
+        }
+        const input = { type: "create" as const, name: command.name, goal: command.goal };
+        const made = this.loop.sendProject(id, input, this.now());
+        if (!made.ok) return { ok: false, message: made.rejection.reason };
+        return { ok: true, result: { project: { id, name: command.name } } };
+      }
+
+      case "project_archive":
+      case "project_unarchive": {
+        const found = this.project(command.project);
+        if (!found.ok) return found;
+        const type = command.type === "project_archive" ? "archive" : "unarchive";
+        const sent = this.loop.sendProject(found.project.id, { type }, this.now());
+        if (!sent.ok) return { ok: false, message: sent.rejection.reason };
+        return { ok: true, result: { project: named(found.project) } };
+      }
+
+      // The answer says where the task was, so the CLI can say "moved".
+      // A task already in the project records nothing.
+      case "project_add": {
+        const task = this.find(command.task);
+        if (task === null) return { ok: false, message: `#${command.task} doesn't exist.` };
+        const found = this.project(command.project);
+        if (!found.ok) return found;
+        const result = { from: this.projectOf(task), to: named(found.project) };
+        if (task.project === found.project.id) return { ok: true, result };
+        const input: Input = { by: "human", type: "change_project", project: found.project.id };
+        const moved = this.send(command.task, input);
+        return moved.ok ? { ok: true, result } : moved;
+      }
+
+      case "project_remove": {
+        const task = this.find(command.task);
+        if (task === null) return { ok: false, message: `#${command.task} doesn't exist.` };
+        const from = this.projectOf(task);
+        if (from === null) return { ok: false, message: `#${command.task} isn't in a project.` };
+        const removed = this.send(command.task, {
+          by: "human",
+          type: "change_project",
+          project: null,
+        });
+        return removed.ok ? { ok: true, result: { from } } : removed;
       }
 
       case "claim": {
@@ -594,6 +649,22 @@ export class Daemon {
     return this.loop.tasks().find((task) => task.id === taskId) ?? null;
   }
 
+  // The project a command names, by its name or its ID.
+  private project(named: string): { ok: true; project: Project } | { ok: false; message: string } {
+    const id = projectIdFrom(named);
+    const project = id === null ? undefined : this.loop.projects().get(id);
+    if (project === undefined)
+      return { ok: false, message: `There is no project called ${named}.` };
+    return { ok: true, project };
+  }
+
+  // The project a task is in, as the CLI shows it.
+  private projectOf(task: Task): { id: ProjectId; name: string } | null {
+    if (task.project === null) return null;
+    const project = this.loop.projects().get(task.project);
+    return { id: task.project, name: project?.name ?? task.project };
+  }
+
   // One more than the highest number so far. The queue keeps two adds from
   // ever getting the same one.
   private nextTaskId(): TaskId {
@@ -649,6 +720,28 @@ function newestThatFit(events: TaskEvent[]): { events: TaskEvent[]; leftOut: num
     first -= 1;
   }
   return { events: events.slice(first), leftOut: first };
+}
+
+// A project's ID from its name or its ID: lowercase letters and digits,
+// with dashes between words. "Reports page" and reports-page give the same
+// ID. Accents are dropped, so "Café" gives cafe. Null when nothing is left,
+// such as for "!!!".
+export function projectIdFrom(name: string): ProjectId | null {
+  const id = name
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/æ/g, "ae")
+    .replace(/ø/g, "o")
+    .replace(/ß/g, "ss")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const parsed = ProjectId.safeParse(id);
+  return parsed.success ? parsed.data : null;
+}
+
+function named(project: Project): { id: ProjectId; name: string } {
+  return { id: project.id, name: project.name };
 }
 
 export function describeBlock(reason: BlockReason): string {

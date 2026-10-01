@@ -188,7 +188,7 @@ describe("the client", () => {
         startTimeoutMs: 5_000,
       },
     );
-    expect(answer).toEqual({ ok: true, result: { tasks: [] } });
+    expect(answer).toEqual({ ok: true, result: { tasks: [], projects: [] } });
     expect(starts).toBe(2);
   });
 
