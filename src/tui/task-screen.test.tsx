@@ -133,7 +133,7 @@ test("a merge links its pull request, and o opens it in the browser", async () =
   const shown = lines(lastFrame());
   expect(shown).toContain("Read it on GitHub: https://github.com/o/r/pull/71");
   expect(shown.at(-1)).toBe(
-    "j k scroll · y approve · x send back · o open PR · esc back · ? keys · q quit",
+    "j k scroll · y approve · x reject · o open PR · esc back · ? keys · q quit",
   );
   stdin.write("o");
   await tick();

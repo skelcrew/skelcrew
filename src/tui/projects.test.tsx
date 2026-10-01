@@ -1,5 +1,5 @@
 // Projects in the TUI: rows name their project, a task waiting to start in
-// an archived project says it won't start, and m moves a task.
+// an archived project says it won't start, and p puts a task in a project.
 
 import { expect, test } from "bun:test";
 import type { Outcome } from "../cli/cli";
@@ -77,12 +77,12 @@ function cli() {
   };
 }
 
-test("m moves the task to the project typed, by its name", async () => {
+test("p puts the task in the project typed, by its name", async () => {
   const { sent, send } = cli();
   const load = withProjects([[14, "CSV export", "idea", {}]], [reports]);
   const { lastFrame, stdin } = open({ load, send });
   await tick();
-  stdin.write("m");
+  stdin.write("p");
   await tick();
   expect(lines(lastFrame())).toContain("Move #14 to which project? Type none to take it out:");
   stdin.write("Reports page");
@@ -92,12 +92,12 @@ test("m moves the task to the project typed, by its name", async () => {
   expect(sent).toEqual([["project", "add", "14", "--", "Reports page"]]);
 });
 
-test("m, then none, takes the task out of its project", async () => {
+test("p, then none, takes the task out of its project", async () => {
   const { sent, send } = cli();
   const load = withProjects([[14, "CSV export", "idea", { project: "reports-page" }]], [reports]);
   const { stdin } = open({ load, send });
   await tick();
-  stdin.write("m");
+  stdin.write("p");
   await tick();
   stdin.write("none");
   await tick();
@@ -106,14 +106,14 @@ test("m, then none, takes the task out of its project", async () => {
   expect(sent).toEqual([["project", "remove", "14"]]);
 });
 
-test("m works on a task's own screen too", async () => {
+test("p works on a task's own screen too", async () => {
   const { sent, send } = cli();
   const load = withProjects([[14, "CSV export", "idea", {}]], [reports]);
   const { stdin } = open({ load, send });
   await tick();
   stdin.write(ENTER);
   await tick();
-  stdin.write("m");
+  stdin.write("p");
   await tick();
   stdin.write("reports-page");
   await tick();

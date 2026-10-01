@@ -71,7 +71,7 @@ export const actions: Action[] = [
   },
   {
     key: "x",
-    hint: "send back",
+    hint: "reject",
     help: "send it back, with what should change",
     onTask: true,
     step: (task) =>
@@ -140,9 +140,9 @@ export const actions: Action[] = [
           },
   },
   {
-    key: "m",
+    key: "p",
     hint: null,
-    help: "move the task to another project, or out of its own",
+    help: "put the task in a project, or take it out of its own",
     onTask: true,
     step: (task) =>
       task === undefined
