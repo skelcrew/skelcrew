@@ -239,14 +239,18 @@ describe("the loop", () => {
     loop.send(one, add());
     loop.send(two, add());
     expect(loop.startWaiting()).toEqual([one]);
+    loop.send(one, specCopy);
 
-    loop.send(one, {
+    // The agent starting on request 2 crashes before its start reply.
+    const decision = loop.send(one, {
       by: "plugin",
-      type: "session_crashed",
-      request: 1,
+      type: "session_ended",
+      request: 2,
       session: SessionId.parse("gone"),
-      message: "herdr crashed",
+      exitCode: 1,
+      message: "Out of memory.",
     });
+    expect(decision.ok).toBe(true);
     expect(loop.startsInFlight).toBe(0);
     expect(loop.startWaiting()).toEqual([two]);
   });

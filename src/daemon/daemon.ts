@@ -756,6 +756,10 @@ export function describeBlock(reason: BlockReason): string {
       return `The worktree couldn't be made: ${reason.message}`;
     case "session_failed":
       return `The agent couldn't start: ${reason.message}`;
+    case "agent_stopped": {
+      const code = reason.exitCode === null ? "" : ` (exit code ${reason.exitCode})`;
+      return `The agent stopped before it finished${code}: ${reason.message}`;
+    }
   }
 }
 

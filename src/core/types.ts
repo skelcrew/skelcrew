@@ -62,7 +62,11 @@ export type BlockReason =
   | { kind: "safety_cap"; usage: Usage }
   | { kind: "agent_gave_up"; message: string }
   | { kind: "worktree_failed"; message: string }
-  | { kind: "session_failed"; message: string };
+  | { kind: "session_failed"; message: string }
+  // The agent's session ended before it reported: it crashed or quit. It
+  // waits for an answer or its checks inside its open session, so an end is
+  // never just waiting. The message is its last line of output.
+  | { kind: "agent_stopped"; exitCode: number | null; message: string };
 
 // A failed gate, or a failed merge: the branch no longer passes the local
 // checks once brought up to date with main, or it conflicts with main.
@@ -364,11 +368,18 @@ export type PluginInput =
   | { type: "merge_failed"; request: number; summary: string }
   | { type: "reverted"; request: number }
   | { type: "revert_failed"; request: number; summary: string }
-  // An agent has stopped. It names the session, so a report about an agent
-  // the task no longer has is refused, and the request that started it, so a
-  // crash that overtakes the agent's start reply still counts as a failed
-  // start.
-  | { type: "session_crashed"; request: number; session: SessionId; message: string };
+  // An agent's session has ended. It names the session, so a report about
+  // an agent the task no longer has is refused, and the request that started
+  // it, so an end that overtakes the agent's start reply still counts. The
+  // exit code is null when the runner doesn't know it, such as after a
+  // daemon restart.
+  | {
+      type: "session_ended";
+      request: number;
+      session: SessionId;
+      exitCode: number | null;
+      message: string;
+    };
 
 // Inputs the daemon makes itself. The scheduler's pick is an input, not a
 // direct change, so decide keeps the final say on every transition.

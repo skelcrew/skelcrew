@@ -52,7 +52,7 @@ export const inputNames: Record<Input["type"], string> = {
   merge_failed: "a failed merge",
   reverted: "a finished revert",
   revert_failed: "a failed revert",
-  session_crashed: "an agent crash",
+  session_ended: "an agent's end",
   start: "a start",
   usage: "a usage report",
 };

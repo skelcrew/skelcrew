@@ -329,7 +329,7 @@ type StartReply = Extract<
     type:
       | "session_started"
       | "session_failed"
-      | "session_crashed"
+      | "session_ended"
       | "worktree_created"
       | "worktree_failed"
       | "spec_worktree_created"
@@ -350,7 +350,7 @@ function answersStart(input: Input): input is StartReply {
   return (
     input.type === "session_started" ||
     input.type === "session_failed" ||
-    input.type === "session_crashed" ||
+    input.type === "session_ended" ||
     input.type === "worktree_created" ||
     input.type === "worktree_failed" ||
     input.type === "spec_worktree_created" ||

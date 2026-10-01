@@ -439,6 +439,43 @@ describe("status", () => {
       ],
     });
   });
+
+  // The daemon can't start agents yet, so the agent's end is written into
+  // the store, the way a runner's report will block the task.
+  test("says when an agent stopped before it finished, with its exit code if known", async () => {
+    const store = EventStore.open(":memory:");
+    for (const [n, exitCode] of [
+      [1, 137],
+      [2, null],
+    ] as const) {
+      const id = task(n);
+      const stamp = { v: 1 as const, taskId: id, at: 1 };
+      const saved = store.appendTask(
+        [
+          // Up to its running spec agent.
+          ...backgroundSpecced(id, `Task ${n}`).slice(0, 5),
+          {
+            ...stamp,
+            type: "task.blocked",
+            reason: { kind: "agent_stopped", exitCode, message: "Out of memory." },
+          },
+        ],
+        { sent: [], answered: [] },
+        [],
+      );
+      if (!saved.ok) throw new Error(saved.reason);
+    }
+    const { daemon } = open(store);
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [
+        {
+          task: 1,
+          blocked: "The agent stopped before it finished (exit code 137): Out of memory.",
+        },
+        { task: 2, blocked: "The agent stopped before it finished: Out of memory." },
+      ],
+    });
+  });
 });
 
 describe("projects", () => {

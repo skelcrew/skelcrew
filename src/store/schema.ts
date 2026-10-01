@@ -60,6 +60,11 @@ const blockReason: z.ZodType<BlockReason> = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("agent_gave_up"), message: z.string() }),
   z.strictObject({ kind: z.literal("worktree_failed"), message: z.string() }),
   z.strictObject({ kind: z.literal("session_failed"), message: z.string() }),
+  z.strictObject({
+    kind: z.literal("agent_stopped"),
+    exitCode: z.number().int().nullable(),
+    message: z.string(),
+  }),
 ]);
 
 const worktree: z.ZodType<Worktree> = z.strictObject({ path: z.string(), branch: z.string() });
