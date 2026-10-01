@@ -124,6 +124,9 @@ task. That's how "prompts propose, the core decides" is enforced.
 Tests sit next to the code: `decide.ts` and `decide.test.ts`. Values they share, such
 as the base config, a spec and a worktree, live in `src/test/fixtures.ts`. A test that
 needs a different config spreads the base one and changes only the fields it is about.
+`src/test/colour.ts` runs before every test file, as `bunfig.toml` says. It makes Ink draw
+in colour, as it does in a terminal, so the TUI's tests behave the same in a terminal and
+out of one. Only Ink sees the setting: the `skelcrew` processes the CLI's tests start don't.
 
 - **One test per rule**, allowed and rejected. The tests build a task in any phase by
   sending it real inputs, through a helper called `run` (or `replay` in the `evolveTask`
@@ -345,7 +348,7 @@ command as the CLI, so the TUI can do nothing the CLI can't.
 | `actions.ts` | The keys that act on tasks, one entry each: `a` and `A` add, `y` approves, `x` rejects, sending the task back with a note, `s` asks for a spec, `r` retries, `D` drops, and `p` puts the task in a project, or takes it out of its own with `none`. Each ends in the `skelcrew` command you would type, run through `run()` in `cli.ts`, so the TUI can do nothing the CLI can't. Approving a merge and dropping a task ask y/n first. The rules stay in the daemon: the screen sends what you ask for and shows the refusal word for word. The keys line at the bottom is made from the same list. It shows only the keys used most, `a`, `y` and `x`, so it fits an 80-column window. Each key also has a description for the list `?` shows. |
 | `projects-screen.tsx` | The projects screen, which `P` opens from the list. One row per project, by name: whether it is archived, how many open tasks it has, and its goal. Tasks in no project get a last row. `n` asks for a name, then a goal, and runs `skelcrew project new`. `e` runs `skelcrew project archive` on the project under the cursor, or `unarchive` on an archived one, and the keys line says which. `esc` or `h` go back to the list. Enter on a project goes back to the list showing only that project's tasks, and enter on the last row shows the tasks in no project. The header then names the project, `a` and `A` add the idea into it, and `esc` shows every task again. |
 | `keys.ts` | What `?` shows: every key and what it does, on the list, on a task, and anywhere. The keys that act on tasks come from the action table, so the list can't drift from what they do. `esc` or `?` close it. |
-| `testing.tsx` | What the TUI's tests share: a task of each kind, and the screen opened on them with a stand-in for the daemon and the CLI. The tests type keys with `ink-testing-library` and read what the screen draws. |
+| `testing.tsx` | What the TUI's tests share: a task of each kind, and the screen opened on them with a stand-in for the daemon and the CLI. The tests type keys with `ink-testing-library` and read what the screen draws, without its colour codes, so a test reads only the words. |
 | `rows.ts` | What the list shows, as plain data: which group each task is in, and what its row says. The groups are Waiting on you, Working, Waiting for an agent, and Ideas. Done and dropped tasks are only counted. Each row names its task's project by name. A task waiting to start in an archived project says "its project is archived" instead of how to start it. A question is marked to show in yellow, and a block in red, in the terminal's own colours. |
 
 ## The local checks

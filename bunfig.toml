@@ -1,0 +1,3 @@
+[test]
+# Colour on for every test, as in a terminal. See src/test/colour.ts.
+preload = ["./src/test/colour.ts"]

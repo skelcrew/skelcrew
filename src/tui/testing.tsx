@@ -1,6 +1,7 @@
 // What the TUI's tests share: tasks to show, and the screen opened on them
 // without a daemon.
 
+import { stripVTControlCharacters } from "node:util";
 import { render } from "ink-testing-library";
 import type { Outcome } from "../cli/cli";
 import type { TaskView } from "../cli/status";
@@ -89,7 +90,22 @@ type Options = {
   height?: number;
 };
 
+// The screen opened with a stand-in for the daemon and the CLI. Its
+// `lastFrame` is the text the screen drew, without colour codes. In a
+// terminal, Ink adds them for bold, dim and coloured words, and a test
+// reads only the words.
 export function open(options: Options = {}) {
+  const screen = draw(options);
+  return {
+    ...screen,
+    lastFrame: () => {
+      const frame = screen.lastFrame();
+      return frame === undefined ? undefined : stripVTControlCharacters(frame);
+    },
+  };
+}
+
+function draw(options: Options) {
   const send = options.send ?? (async () => ({ code: 0, out: [], err: [] }));
   return render(
     <Screen
