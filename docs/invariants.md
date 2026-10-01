@@ -42,8 +42,8 @@ do, lose work, or leave the developer looking at a wrong picture.
 
 13. **Every agent the core started is either stopped or still stored on its task.** The
     same goes for every worktree, and for every spec worktree. A spec worktree is the
-    copy of main a background spec agent reads, and it exists only while its agent
-    does. A transition that forgets to clean up breaks this.
+    copy of main a spec is written in. It exists only while its spec agent, or the
+    developer's claim, does. A transition that forgets to clean up breaks this.
 14. **Each build gets its own branch.** A build number is never reused, so a new build
     never lands on code written for an old spec.
 
