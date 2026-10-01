@@ -5,6 +5,7 @@ export const mainHelp = [
   "Skelcrew moves coding tasks from idea to merged code.",
   "",
   "Your commands:",
+  "  skelcrew                    Open the TUI. Without a terminal, show the status.",
   "  skelcrew init               Set up Skelcrew where your git repository starts.",
   '  skelcrew add "<task>"       Capture a task as an Idea. --spec also asks for a spec.',
   "  skelcrew spec <task>        Ask for an Idea to be specced.",

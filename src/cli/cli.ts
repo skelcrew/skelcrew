@@ -41,9 +41,9 @@ type Handler = (args: string[], context: Context) => Promise<Outcome>;
 
 export async function run(args: string[], context: Context): Promise<Outcome> {
   const [name, ...rest] = args;
-  if (name === undefined) {
-    return { code: 1, out: mainHelp, err: ["The TUI isn't built yet. Use the commands above."] };
-  }
+  // In a terminal, main.ts opens the TUI instead. Without one, such as when
+  // an agent runs bare `skelcrew`, it gets the status.
+  if (name === undefined) return run(["status"], context);
   if (name === "--help" || name === "-h" || name === "help") return said(...mainHelp);
   const handler = handlers[name];
   if (handler === undefined) {
@@ -446,7 +446,7 @@ async function ask<T>(
 // The repository's main folder, if Skelcrew is set up there. It comes
 // from git, so from inside a task's worktree, which holds its own copy of
 // .skelcrew/, it is still the main folder, and its daemon.
-function findRepo(from: string): string | null {
+export function findRepo(from: string): string | null {
   const main = mainRepository(resolve(from));
   if (!main.ok) return null;
   const folder = join(main.top, ".skelcrew");
