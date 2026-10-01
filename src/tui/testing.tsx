@@ -77,6 +77,9 @@ type Options = {
   quit?: () => void;
   refreshMs?: number;
   send?: (args: string[]) => Promise<Outcome>;
+  // The terminal's height in lines. Without it, the screen is as tall as
+  // what it shows.
+  height?: number;
 };
 
 export function open(options: Options = {}) {
@@ -88,6 +91,7 @@ export function open(options: Options = {}) {
       load={options.load ?? loaded(tasks)}
       refreshMs={options.refreshMs ?? 1000}
       send={send}
+      {...(options.height === undefined ? {} : { height: options.height })}
     />,
   );
 }

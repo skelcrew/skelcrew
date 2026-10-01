@@ -10,6 +10,7 @@ import type { TaskView } from "../cli/status";
 import type { TaskId } from "../core/ids";
 import { actionHints, actions, type Run } from "./actions";
 import { counts, finished, groupsOf, type Row } from "./rows";
+import { firstShown } from "./scroll";
 
 export type Loaded = { ok: true; tasks: TaskView[] } | { ok: false; message: string };
 
@@ -20,7 +21,18 @@ type Props = {
   // Runs a `skelcrew` command, as the CLI would, and returns what it says.
   send: (args: string[]) => Promise<Outcome>;
   refreshMs?: number;
+  // The terminal's height in lines. With it, the screen fills the terminal:
+  // the keys sit on the last line, and the list scrolls. Without it, the
+  // screen is as tall as what it shows.
+  height?: number;
 };
+
+// One line of the list.
+type Line =
+  | { kind: "blank" }
+  | { kind: "heading"; text: string }
+  | { kind: "row"; row: Row }
+  | { kind: "text"; text: string; dim: boolean };
 
 // The list, a y/n question, or a line being typed.
 type Mode =
@@ -33,7 +45,7 @@ const MIN_TITLE = 20;
 // A longer answer, such as a failed merge's check output, is cut to this.
 const MAX_SAID = 4;
 
-export function Screen({ repo, quit, load, send, refreshMs = 1000 }: Props) {
+export function Screen({ repo, quit, load, send, refreshMs = 1000, height }: Props) {
   // null until the first answer.
   const [tasks, setTasks] = useState<TaskView[] | null>(null);
   // Why the last refresh failed. The last list stays on screen.
@@ -46,6 +58,8 @@ export function Screen({ repo, quit, load, send, refreshMs = 1000 }: Props) {
   const [said, setSaid] = useState<string[]>([]);
   // Loads the list now, rather than at the next second.
   const refreshNow = useRef(() => {});
+  // The first line of the list shown, when it is taller than the screen.
+  const scrolled = useRef(0);
   const { stdout } = useStdout();
 
   useEffect(() => {
@@ -147,10 +161,56 @@ export function Screen({ repo, quit, load, send, refreshMs = 1000 }: Props) {
   };
   const done = finished(tasks ?? []);
 
+  const list: Line[] = [];
+  if (tasks !== null && tasks.length === 0) {
+    list.push(
+      { kind: "blank" },
+      { kind: "text", text: "No tasks yet. Press a to add one.", dim: false },
+    );
+  }
+  for (const group of groups) {
+    list.push({ kind: "blank" }, { kind: "heading", text: group.heading });
+    for (const row of group.rows) list.push({ kind: "row", row });
+  }
+  if (done !== "") list.push({ kind: "blank" }, { kind: "text", text: done, dim: true });
+
+  // What sits under the list, each part after a blank line, keys last.
+  const problemLines = problem === null ? [] : problem.split("\n");
+  const saidLines = [...(running === null ? [] : [running.doing]), ...said];
+  const below =
+    (problemLines.length > 0 ? 1 + problemLines.length : 0) +
+    (saidLines.length > 0 ? 1 + saidLines.length : 0) +
+    (mode.kind === "list" ? 0 : 2) +
+    2;
+
+  // A list taller than its room scrolls. Its first and last lines then say
+  // how many tasks are hidden above and below, such as "↓ 25 more".
+  const listRoom = height === undefined ? list.length : height - 1 - below;
+  let shown = list;
+  let above: string | null = null;
+  let under: string | null = null;
+  if (list.length > listRoom) {
+    const fits = Math.max(1, listRoom - 2);
+    const cursorLine = Math.max(
+      0,
+      list.findIndex((line) => line.kind === "row" && line.row.task.task === selected),
+    );
+    // A group's first task shows with the blank line and heading above it.
+    const top = list[cursorLine - 1]?.kind === "heading" ? cursorLine - 2 : cursorLine;
+    const first = firstShown(scrolled.current, top, cursorLine, fits, list.length);
+    scrolled.current = first;
+    shown = list.slice(first, first + fits);
+    const rows = (lines: Line[]) => lines.filter((line) => line.kind === "row").length;
+    const hiddenAbove = rows(list.slice(0, first));
+    const hiddenBelow = rows(list.slice(first + fits));
+    above = hiddenAbove > 0 ? `↑ ${hiddenAbove} more` : "";
+    under = hiddenBelow > 0 ? `↓ ${hiddenBelow} more` : "";
+  }
+
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" {...(height === undefined ? {} : { height })}>
       {/* A long path is cut from the left, so its last folders show. */}
-      <Box>
+      <Box flexShrink={0}>
         <Box flexShrink={0} marginRight={2}>
           <Text>skelcrew</Text>
         </Box>
@@ -161,50 +221,41 @@ export function Screen({ repo, quit, load, send, refreshMs = 1000 }: Props) {
           <Text>{counts(groups)}</Text>
         </Box>
       </Box>
-      {tasks !== null && tasks.length === 0 && (
-        <Box marginTop={1}>
-          <Text>No tasks yet. Press a to add one.</Text>
-        </Box>
-      )}
-      {groups.map((group) => (
-        <Box key={group.heading} flexDirection="column" marginTop={1}>
-          <Text bold>{group.heading}</Text>
-          {group.rows.map((row) => (
-            <TaskRow
-              key={row.task.task}
-              row={row}
-              widths={widths}
-              selected={row.task.task === selected}
-            />
+      {above !== null && <Text dimColor>{above || " "}</Text>}
+      {shown.map((line, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: a line is drawn where it is; it holds no state.
+        <ListLine key={index} line={line} widths={widths} selected={selected} />
+      ))}
+      {under !== null && <Text dimColor>{under || " "}</Text>}
+      {/* Takes the room left, so what follows sits at the bottom. */}
+      <Box flexGrow={1} />
+      {problemLines.length > 0 && (
+        <Box marginTop={1} flexDirection="column" flexShrink={0}>
+          {problemLines.map((line, index) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: the lines never move.
+            <Text key={index} wrap="truncate-end">
+              {line}
+            </Text>
           ))}
         </Box>
-      ))}
-      {done !== "" && (
-        <Box marginTop={1}>
-          <Text dimColor>{done}</Text>
-        </Box>
       )}
-      {problem !== null && (
-        <Box marginTop={1}>
-          <Text>{problem}</Text>
-        </Box>
-      )}
-      {(running !== null || said.length > 0) && (
-        <Box marginTop={1} flexDirection="column">
-          {running !== null && <Text>{running.doing}</Text>}
-          {said.map((line, index) => (
+      {saidLines.length > 0 && (
+        <Box marginTop={1} flexDirection="column" flexShrink={0}>
+          {saidLines.map((line, index) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: the lines never move.
-            <Text key={index}>{line}</Text>
+            <Text key={index} wrap="truncate-end">
+              {line}
+            </Text>
           ))}
         </Box>
       )}
       {mode.kind === "confirm" && (
-        <Box marginTop={1}>
-          <Text>{mode.question}</Text>
+        <Box marginTop={1} flexShrink={0}>
+          <Text wrap="truncate-end">{mode.question}</Text>
         </Box>
       )}
       {mode.kind === "type" && (
-        <Box marginTop={1}>
+        <Box marginTop={1} flexShrink={0}>
           <Text>{`${mode.prompt} `}</Text>
           <TextInput
             value={mode.text}
@@ -217,14 +268,35 @@ export function Screen({ repo, quit, load, send, refreshMs = 1000 }: Props) {
           />
         </Box>
       )}
-      <Box marginTop={1}>
-        <Text dimColor>{`j k move · ${actionHints} · q quit`}</Text>
+      <Box marginTop={1} flexShrink={0}>
+        <Text dimColor wrap="truncate-end">{`j k move · ${actionHints} · q quit`}</Text>
       </Box>
     </Box>
   );
 }
 
 type Widths = { number: number; title: number; project: number };
+
+function ListLine({
+  line,
+  widths,
+  selected,
+}: {
+  line: Line;
+  widths: Widths;
+  selected: TaskId | undefined;
+}) {
+  switch (line.kind) {
+    case "blank":
+      return <Text> </Text>;
+    case "heading":
+      return <Text bold>{line.text}</Text>;
+    case "row":
+      return <TaskRow row={line.row} widths={widths} selected={line.row.task.task === selected} />;
+    case "text":
+      return <Text dimColor={line.dim}>{line.text}</Text>;
+  }
+}
 
 // "› #14  CSV export   reports  approve its spec", cut to the screen's width.
 function TaskRow({ row, widths, selected }: { row: Row; widths: Widths; selected: boolean }) {
