@@ -289,7 +289,7 @@ from the socket is checked with Zod first, and a line over 1 MB is refused.
 | `init.ts` | `skelcrew init`: finds the top of the git repository, runs `initRepository` there, and prints its report in a few lines. The report says which checks and setup commands it chose, what init created, linked, updated and left alone, what to do by hand, the warnings, whether Claude Code will ask before `skelcrew approve`, and the next step. A failed init prints its reason and exits 1. |
 | `help.ts` | What `--help` prints, for the program and each command. `skelcrew submit --help` shows the spec's JSON form, since the spec skill sends agents there. |
 | `start.ts` | `startDaemon`: runs `skelcrew serve` in the background, in its own process group, so Ctrl-C in the terminal doesn't stop it. Its output goes to `.skelcrew/daemon.log`. If it exits before it answers, the command prints what it wrote there. |
-| `main.ts` | The program: runs one command, prints its lines, and exits. A refusal goes to standard error, with exit code 1. |
+| `main.ts` | The program: runs one command, prints its lines, and exits. A refusal goes to standard error, with exit code 1. Bare `skelcrew` in a terminal opens the TUI instead. It imports the TUI only then, so Ink never slows the other commands. A test checks that `main.ts` doesn't load Ink or React as it starts. |
 
 An agent's reports (`submit`, `done`, `give-up`) take the session from `SKELCREW_SESSION`.
 `claim` prints the session, with the command to report with, like
@@ -303,7 +303,20 @@ task then waits in its phase until it is claimed again. The CLI says so.
 that folder, even when run from a subfolder such as `src/`. A subfolder with a `.skelcrew`
 of its own is refused, since Skelcrew doesn't run on part of a repository.
 
-Bare `skelcrew` will open the TUI. Until then, it only says so.
+Bare `skelcrew` opens the TUI in a terminal. Without a terminal, such as when an agent runs
+it, it prints the status instead, so nothing waits for keys that never come.
+
+## The TUI
+
+`src/tui/` is the screen that bare `skelcrew` opens. It is built with Ink, which draws the
+terminal screen from React components. Ink takes about 100 ms to load, so only `main.ts`
+imports it, and only when it opens the screen. Every action on the screen runs the same
+command as the CLI, so the TUI can do nothing the CLI can't.
+
+| File | What it holds |
+| --- | --- |
+| `open.tsx` | `open(repo)`: draws the screen over the terminal, like vim does, and returns once it is closed. The terminal is left as it was. |
+| `screen.tsx` | `Screen`: the whole screen. For now it names the repository and closes on `q`. Its tests type keys into it with `ink-testing-library`. |
 
 ## The local checks
 
@@ -364,8 +377,6 @@ build step 2 onwards.
 - **The daemon** (`skelcrew serve`) holds all state. It owns the SQLite database, calls the
   core, carries out commands, and runs the local checks. The checks are part of the
   daemon, not a plugin, because running them is enforcing the gates.
-- **The TUI.** Typing `skelcrew` will open it. It is built on the same commands as the
-  CLI, so neither can do what the other cannot.
 - **Two ways to work:** the TUI, and your own harness through skills that call the CLI.
   Agents run in the background, started by the daemon, or attended, started by you in
   your harness. The spec's "Who does the work" section describes both.

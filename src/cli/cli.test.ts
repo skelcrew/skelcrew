@@ -619,6 +619,14 @@ describe("skelcrew status", () => {
     );
   });
 
+  // Bare `skelcrew` opens the screen only in a terminal. An agent that runs
+  // it gets the status, rather than a screen that waits for keys for ever.
+  test("bare skelcrew, without a terminal, shows the status", async () => {
+    const repo = await repoWithDaemon();
+    await cli(repo, ["add", "Totals"]);
+    expect(await cli(repo, [])).toEqual(await cli(repo, ["status"]));
+  });
+
   test("shows a blocked task with its reason", async () => {
     const repo = await repoWithDaemon();
     await specced(repo);
