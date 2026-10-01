@@ -18,7 +18,7 @@ import { taskEvent } from "../store/schema";
 import { commandHelp, mainHelp } from "./help";
 import { init } from "./init";
 import { leftOutLine, logLines } from "./log";
-import { phases, statusLines, statusResult } from "./status";
+import { phases, statusLines, statusResult, type TaskView } from "./status";
 
 export type Context = {
   cwd: string;
@@ -426,23 +426,46 @@ async function readSpec(
 
 const anything = z.unknown();
 
+type Answered<T> = { ok: true; value: T } | { ok: false; message: string };
+
+// The tasks as `skelcrew status` sees them, as data, for the TUI.
+export async function readStatus(
+  context: Context,
+): Promise<{ ok: true; tasks: TaskView[] } | { ok: false; message: string }> {
+  const answer = await answered(context, { type: "status" }, statusResult);
+  return answer.ok ? { ok: true, tasks: answer.value.tasks } : answer;
+}
+
 async function ask<T>(
   context: Context,
   command: Command,
   expected: z.ZodType<T>,
   show: (result: T) => Outcome,
 ): Promise<Outcome> {
+  const answer = await answered(context, command, expected);
+  return answer.ok ? show(answer.value) : refused(...answer.message.split("\n"));
+}
+
+// Sends the command to the repository's daemon, and checks its answer.
+async function answered<T>(
+  context: Context,
+  command: Command,
+  expected: z.ZodType<T>,
+): Promise<Answered<T>> {
   const repo = findRepo(context.cwd);
-  if (repo === null) return noRepo();
+  if (repo === null) return { ok: false, message: noRepoMessage };
   const options: Parameters<typeof request>[2] = { start: () => context.start(repo) };
   if (context.startTimeoutMs !== undefined) options.startTimeoutMs = context.startTimeoutMs;
   const answer = await request(repo, command, options);
-  if (!answer.ok) return refused(...answer.message.split("\n"));
+  if (!answer.ok) return answer;
   const result = expected.safeParse(answer.result);
   if (!result.success) {
-    return refused(`The daemon's answer to ${command.type} doesn't fit: ${result.error.message}`);
+    return {
+      ok: false,
+      message: `The daemon's answer to ${command.type} doesn't fit: ${result.error.message}`,
+    };
   }
-  return show(result.data);
+  return { ok: true, value: result.data };
 }
 
 // The repository's main folder, if Skelcrew is set up there. It comes
@@ -455,8 +478,10 @@ export function findRepo(from: string): string | null {
   return existsSync(folder) && statSync(folder).isDirectory() ? main.top : null;
 }
 
+const noRepoMessage = "No Skelcrew repository here. Run `skelcrew init` in your repository first.";
+
 function noRepo(): Outcome {
-  return refused("No Skelcrew repository here. Run `skelcrew init` in your repository first.");
+  return refused(noRepoMessage);
 }
 
 // ---------------------------------------------------------------------------
