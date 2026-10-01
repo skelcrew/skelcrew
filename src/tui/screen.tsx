@@ -1,10 +1,14 @@
 // The TUI: one row per task, grouped by what you need to do. It asks the
-// daemon for the status every second, so the list stays current.
+// daemon for the status every second, so the list stays current. The keys
+// in actions.ts act on the task under the cursor.
 
 import { Box, Text, useInput, useStdout } from "ink";
-import { useEffect, useState } from "react";
+import TextInput from "ink-text-input";
+import { useEffect, useRef, useState } from "react";
+import type { Outcome } from "../cli/cli";
 import type { TaskView } from "../cli/status";
 import type { TaskId } from "../core/ids";
+import { actionHints, actions, type Run } from "./actions";
 import { counts, finished, groupsOf, type Row } from "./rows";
 
 export type Loaded = { ok: true; tasks: TaskView[] } | { ok: false; message: string };
@@ -13,18 +17,35 @@ type Props = {
   repo: string;
   quit: () => void;
   load: () => Promise<Loaded>;
+  // Runs a `skelcrew` command, as the CLI would, and returns what it says.
+  send: (args: string[]) => Promise<Outcome>;
   refreshMs?: number;
 };
 
+// The list, a y/n question, or a line being typed.
+type Mode =
+  | { kind: "list" }
+  | { kind: "confirm"; question: string; run: Run }
+  | { kind: "type"; prompt: string; run: (text: string) => Run; text: string };
+
 const MIN_TITLE = 20;
 
-export function Screen({ repo, quit, load, refreshMs = 1000 }: Props) {
+// A longer answer, such as a failed merge's check output, is cut to this.
+const MAX_SAID = 4;
+
+export function Screen({ repo, quit, load, send, refreshMs = 1000 }: Props) {
   // null until the first answer.
   const [tasks, setTasks] = useState<TaskView[] | null>(null);
   // Why the last refresh failed. The last list stays on screen.
   const [problem, setProblem] = useState<string | null>(null);
   // The task the cursor is on, so it stays there when tasks move.
   const [cursor, setCursor] = useState<TaskId | null>(null);
+  const [mode, setMode] = useState<Mode>({ kind: "list" });
+  // The command running now, and what the last one said.
+  const [running, setRunning] = useState<Run | null>(null);
+  const [said, setSaid] = useState<string[]>([]);
+  // Loads the list now, rather than at the next second.
+  const refreshNow = useRef(() => {});
   const { stdout } = useStdout();
 
   useEffect(() => {
@@ -43,6 +64,7 @@ export function Screen({ repo, quit, load, refreshMs = 1000 }: Props) {
         setProblem(loaded.message);
       }
     };
+    refreshNow.current = () => void refresh();
     void refresh();
     const timer = setInterval(refresh, refreshMs);
     return () => {
@@ -57,7 +79,37 @@ export function Screen({ repo, quit, load, refreshMs = 1000 }: Props) {
   const at = (task: TaskId | null) => (task !== null && order.includes(task) ? task : order[0]);
   const selected = at(cursor);
 
+  const execute = async (run: Run) => {
+    if (running !== null) {
+      setSaid([
+        `Wait for ${running.task === null ? "the last command" : `#${running.task}`} first.`,
+      ]);
+      return;
+    }
+    setRunning(run);
+    setSaid([]);
+    const outcome = await send(run.args);
+    setRunning(null);
+    setSaid(shorten([...outcome.out, ...outcome.err], run));
+    refreshNow.current();
+  };
+
   useInput((input, key) => {
+    if (mode.kind === "type") {
+      // The text box takes every other key.
+      if (key.escape) setMode({ kind: "list" });
+      return;
+    }
+    if (mode.kind === "confirm") {
+      if (input === "y") {
+        setMode({ kind: "list" });
+        void execute(mode.run);
+      } else if (input === "n" || key.escape) {
+        setMode({ kind: "list" });
+      }
+      return;
+    }
+    setSaid([]);
     const move = (to: (index: number) => number) =>
       setCursor((previous) => {
         const current = at(previous);
@@ -70,6 +122,14 @@ export function Screen({ repo, quit, load, refreshMs = 1000 }: Props) {
     else if (input === "k" || key.upArrow) move((index) => index - 1);
     else if (input === "g") move(() => 0);
     else if (input === "G") move(() => order.length - 1);
+    else {
+      const action = actions.find((one) => one.key === input);
+      const step = action?.step(tasks?.find((task) => task.task === selected));
+      if (step === undefined || step === null) return;
+      if (step.kind === "run") void execute(step.run);
+      else if (step.kind === "confirm") setMode(step);
+      else setMode({ ...step, text: "" });
+    }
   });
 
   const all = groups.flatMap((group) => group.rows);
@@ -103,7 +163,7 @@ export function Screen({ repo, quit, load, refreshMs = 1000 }: Props) {
       </Box>
       {tasks !== null && tasks.length === 0 && (
         <Box marginTop={1}>
-          <Text>No tasks yet. Add one with: skelcrew add "&lt;task&gt;"</Text>
+          <Text>No tasks yet. Press a to add one.</Text>
         </Box>
       )}
       {groups.map((group) => (
@@ -129,8 +189,36 @@ export function Screen({ repo, quit, load, refreshMs = 1000 }: Props) {
           <Text>{problem}</Text>
         </Box>
       )}
+      {(running !== null || said.length > 0) && (
+        <Box marginTop={1} flexDirection="column">
+          {running !== null && <Text>{running.doing}</Text>}
+          {said.map((line, index) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: the lines never move.
+            <Text key={index}>{line}</Text>
+          ))}
+        </Box>
+      )}
+      {mode.kind === "confirm" && (
+        <Box marginTop={1}>
+          <Text>{mode.question}</Text>
+        </Box>
+      )}
+      {mode.kind === "type" && (
+        <Box marginTop={1}>
+          <Text>{`${mode.prompt} `}</Text>
+          <TextInput
+            value={mode.text}
+            onChange={(text) => setMode({ ...mode, text })}
+            onSubmit={(text) => {
+              if (text.trim() === "") return;
+              setMode({ kind: "list" });
+              void execute(mode.run(text));
+            }}
+          />
+        </Box>
+      )}
       <Box marginTop={1}>
-        <Text dimColor>j k move · q quit</Text>
+        <Text dimColor>{`j k move · ${actionHints} · q quit`}</Text>
       </Box>
     </Box>
   );
@@ -156,4 +244,11 @@ function TaskRow({ row, widths, selected }: { row: Row; widths: Widths; selected
       <Text {...(colour === undefined ? {} : { color: colour })}>{row.says}</Text>
     </Text>
   );
+}
+
+// The CLI's lines, cut to MAX_SAID, with where to read the rest.
+function shorten(lines: string[], run: Run): string[] {
+  if (lines.length <= MAX_SAID) return lines;
+  const rest = run.task === null ? "…" : `See the rest with: skelcrew log ${run.task}`;
+  return [...lines.slice(0, MAX_SAID), rest];
 }

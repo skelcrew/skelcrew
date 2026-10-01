@@ -3,7 +3,7 @@
 
 import { homedir } from "node:os";
 import { render } from "ink";
-import { type Context, readStatus } from "../cli/cli";
+import { type Context, readStatus, run } from "../cli/cli";
 import { startDaemon } from "../cli/start";
 import { Screen } from "./screen";
 
@@ -16,6 +16,8 @@ export async function open(repo: string): Promise<void> {
     start: startDaemon,
   };
   const load = () => readStatus(context);
+  // Every action runs the same command you would type after `skelcrew`.
+  const send = (args: string[]) => run(args, context);
   const home = homedir();
   const shown = repo.startsWith(`${home}/`) ? `~${repo.slice(home.length)}` : repo;
   // The screen draws over the terminal, like vim, and leaves it as it was.
@@ -23,7 +25,7 @@ export async function open(repo: string): Promise<void> {
   // screen started halfway down. This clears it and starts at the top.
   process.stdout.write(`${ALTERNATE_SCREEN}${CLEAR}${TOP_LEFT}`);
   try {
-    const app = render(<Screen repo={shown} quit={() => app.unmount()} load={load} />);
+    const app = render(<Screen repo={shown} quit={() => app.unmount()} load={load} send={send} />);
     await app.waitUntilExit();
   } finally {
     process.stdout.write(MAIN_SCREEN);
