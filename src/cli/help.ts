@@ -16,7 +16,7 @@ export const mainHelp = [
   '  skelcrew answer <task> "<answer>"   Answer a question an agent asked you.',
   "  skelcrew status             Show what waits on you, and tasks by phase.",
   "  skelcrew log <task>         Show a task's events.",
-  "  skelcrew serve              Run the daemon in this terminal.",
+  "  skelcrew serve              Run the daemon in this terminal, for a server with no screen.",
   "",
   "Projects group tasks:",
   '  skelcrew project new "<name>" "<goal>"   Make a project.',
@@ -166,6 +166,8 @@ export const commandHelp: Record<string, string[]> = {
     "Usage: skelcrew serve",
     "",
     "Runs this repository's daemon in this terminal, until Ctrl-C.",
-    "Other commands start it in the background when it isn't running.",
+    "Use it on a server with no screen, or to watch what the daemon does.",
+    "You don't need it otherwise. Other commands, and the TUI, start the daemon",
+    "in the background when it isn't running.",
   ],
 };
