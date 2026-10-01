@@ -20,9 +20,9 @@ Skelcrew does not replace harnesses, terminals or issue trackers. It works along
 - **Rules are core, everything else is a plugin.** Anything that decides whether work may move lives in the core. Anything that connects to another tool is a plugin, even when it ships built in.
 - **Plain files for what people read.** Rules, skills, specs and the record are Markdown and YAML in the repository, readable by humans and agents, versioned in git. Runtime state lives in SQLite.
 - **Personal where it should be.** Skills are the developer's craft and are swappable. Skelcrew ships good defaults but never requires them.
-- **Works with zero setup.** The full loop runs on one machine with git, Claude Code and a terminal.
+- **Works with zero setup.** The full loop runs attended on one machine with git, Claude Code and a terminal. Background runs add one tool to hold the agents' sessions, such as tmux.
 - **Fixed rules, open ways of working.** Features, rewrites and bug fixes each want a different process, and the developer picks one per task. The rules stay the same whoever does the work: a spec is approved before it is built, checks pass before a merge, and only the developer makes the developer's decisions.
-- **Meet the developer where they work.** The TUI is home for managing tasks: adding them, approving them, and seeing what waits on the developer. The harness is a full alternative, never a lesser one, so the developer is never forced out of it.
+- **Meet the developer where they work.** The TUI is home for managing tasks: adding them, approving them, and seeing what waits on the developer. The harness is a full alternative, never a lesser one, so the developer is never forced out of it. The developer also chooses where Skelcrew runs and how they reach their agents: a laptop or a server, tmux or Herdr. Skelcrew fits into that setup and never requires one. A feature that would only work one way, such as through a hosted service or one terminal tool, belongs in a plugin.
 
 ## Layer model
 
@@ -160,7 +160,7 @@ A task moves through six phases: Idea, Spec, Ready, In progress, Checks, Done. A
 
 **Who does the work.** Every phase with an agent in it can run two ways:
 
-- **In the background.** The scheduler starts an agent when a slot is free. Nobody watches it, and its questions go to the inbox. This is the default. `background: false` in `workflow.yml` switches it off, so nothing starts until the developer claims it.
+- **In the background.** The scheduler starts an agent when a slot is free. It runs as a live session in a session runner (see Plugins), and its questions go to the inbox. The developer can step into its session at any time, from the TUI, to watch it or talk to it, and step out again. The agent carries on either way. This is the default. `background: false` in `workflow.yml` switches it off, so nothing starts until the developer claims it.
 - **Attended.** The developer starts the skill in their own harness, such as `/develop 12`. The skill claims the task through the CLI, and the core accepts only if the task is waiting to start and a slot is free. Claiming an Idea asks for its spec and claims it in one step, so the scheduler can't start a background agent in between. The claim answers once the task's worktree exists, with the folder to work in: a spec worktree for a spec, the build's worktree for a build. The developer watches it work and answers its questions in the conversation.
 
 Both take a slot under `max_running`, report through the CLI, and follow the same rules. The differences are who pressed start, where questions go, and whether a spec waits for the developer's approval. A task can mix them: the developer works out a rewrite's spec attended, and a background agent builds it.
@@ -169,7 +169,9 @@ Skelcrew cannot stop a session it did not start. When the core lets go of an att
 
 With background runs on, a task starts building as soon as it is Ready. To build a task attended, the developer switches background runs off first.
 
-**When a background agent stops.** A background agent may end its turn and wait, for the developer's answer to its question or for its checks. It keeps its slot while it waits. The answer, or a failed check, wakes it again where it left off. If it stops any other way before it reports, such as by crashing, the core blocks the task with the reason "agent stopped". The inbox shows the agent's last line of output. The harness must be able to wake an agent, so a harness that can't is only used attended.
+**When a background agent stops.** A background agent's session stays open while it waits, for the developer's answer to its question or for its checks. It keeps its slot while it waits. So an agent whose session ends before it reports has crashed or quit, and the core blocks the task with the reason "agent stopped". The inbox shows the exit code, if the runner knows it, and the agent's last line of output. For example, #12's develop agent crashes halfway, and #12 is blocked with "agent stopped (exit code 1)". An agent Skelcrew stopped itself, such as after its checks passed, is no longer the task's agent, so its end changes nothing.
+
+**Stepping into a session doesn't change the rules.** A spec from an agent Skelcrew started still waits for the developer's approval, even if the developer stepped into its session and shaped the spec there. The core can't tell whether the developer agreed with the final spec, and approving is one key. Anything typed into an agent's session runs as that agent, so an approval asked for there is refused.
 
 ## Projects
 
@@ -309,16 +311,19 @@ A plugin connects Skelcrew to another tool. Plugins bring information in and car
 | --- | --- | --- | --- | --- | --- |
 | Work source | Coordination | Pull tasks, write back specs, sync status | Built-in board (core) | GitHub Issues | Linear, Jira |
 | Harness | Execution | Start an agent, pass prompts, load skills | Claude Code profile |  | Codex, Pi |
-| Session runner | Execution | Run and watch agent sessions | Process runner | Herdr | Remote machines |
+| Session runner | Execution | Hold agent sessions, and let the developer step in and out | tmux | Herdr | Remote machines |
 | Version control | Execution | Worktrees, merge, revert, changed files | Git |  | Jujutsu |
 | Delivery signal | Delivery | Report breakage after merge |  |  | GitHub Actions, Sentry, deploy platforms |
 | Inbox surface | Oversight | Show decisions, return answers | Desktop notifications | Phone push (ntfy) | Slack, Linear agent sessions |
 
 Notes:
 
-- **Harnesses** are profiles. A profile says how to start its agent on a task with nobody watching, how to wake an agent that ended its turn with a message, and how to read the tokens it used. The core, the daemon and the process runner never assume which agent they run. Everything specific to one agent, such as Claude Code's flags, lives in its profile.
+- **Harnesses** are profiles. A profile says how to start its agent as an interactive session on a task, such as `claude "/develop 12"`, and how to read the tokens it used from the session's transcript. The core, the daemon and the session runner never assume which agent they run. Everything specific to one agent, such as Claude Code's flags, lives in its profile.
 - **Permissions follow the harness's own settings.** A background agent may do what the developer's settings for that harness allow. Anything that would ask the developer is refused, since nobody is there to answer. For example, the rules `skelcrew init` adds to ask before approve and reject become refusals in the background.
-- **Process runner** runs the profile's command as a child process in the task's worktree, logging output per task. It notices when the process ends, and finds running agents again after the daemon restarts. State comes from the agent's reports through the CLI.
+- **Session runners** hold agent sessions in terminals that stay open whether or not the developer is in them. Every runner meets one contract, checked by shared tests: start a session from the profile's command in the task's worktree, type a message into it, stop it, report when it ends and with what exit code, find its sessions again after the daemon restarts, and let the developer step in and back out. State comes from the agent's reports through the CLI.
+- **tmux** is the built-in runner. Skelcrew runs its own tmux server with its own settings, so the developer's own tmux setup is never touched. Enter on a task in the TUI opens its window, and one key comes back. It works for any harness. Background runs need tmux or another runner installed. Without one, attended work still runs on git, Claude Code and a terminal, and `skelcrew status` says in one line why nothing starts in the background.
+- **Herdr** is a runner the developer selects with `sessions: herdr` in `workflow.yml`. It ships inside Skelcrew, so the developer installs Herdr, not a plugin. With it, the TUI runs as one Herdr pane beside the agents' panes.
+- **A harness's own sessions** can be a runner too, when they meet the contract. Claude Code has background sessions it can start, step into and list, with nothing else installed.
 - **Version control plugins** assume a git repository, for now, to keep things simple. A plugin changes how git is used, as Jujutsu would, not whether. The aim is to not assume git later, but the core stores commits as git hashes, so a repository like SVN would need changes to the core as well as a plugin.
 - **Work source plugins** translate Skelcrew's phases into the tool's states and turn manual changes (an issue dragged to Done) into signals the core validates.
 - **Linear** delegation uses its agent API, which requires a public webhook, so it arrives with a hosted relay. Polling for tagged issues works without one.
@@ -417,9 +422,9 @@ Skelcrew runs where a git repository starts, the folder that holds `.git`. A fol
 | `skelcrew retry <task>` | Retry a blocked task; a new agent starts when a slot is free, or the developer claims it |
 | `skelcrew drop <task>` | Drop a task that is not done; stops its session and removes its worktree if it has them |
 | `skelcrew inbox` | List open decisions and answer them |
-| `skelcrew answer <task> "<text>"` | Answer a background agent's question; the answer wakes the agent |
+| `skelcrew answer <task> "<text>"` | Answer a background agent's question; the runner types the answer into its session |
 | `skelcrew status` | Show tasks by project and phase, and running sessions; a merge that waits gets its pull request's link |
-| `skelcrew attach <task>` | Follow a task's session or log |
+| `skelcrew attach <task>` | Step into a background agent's live session; one key steps back out |
 | `skelcrew log <task>` | Show a task's events and record entry |
 | `skelcrew check` | Decide whether a diff is safe to auto-merge; runs standalone in CI |
 | `skelcrew revert <task> "<reason>"` | Undo a merged task and return it to Spec with the reason |
@@ -434,12 +439,12 @@ Skelcrew should build itself as early as possible, and trust in auto-merge is ea
 
 1. **Core in close collaboration.** State machine, contracts, event log and scheduler, with the full test approach and the simulator. Built interactively with Claude rather than delegated: the types, contracts and invariants come first and the developer approves them, Claude implements against them, and every change to the core is read before it lands.
 2. **Smallest real loop, attended.** Daemon, CLI, built-in board, git plugin, local checks, and the default skills (spec, develop) used from the developer's harness. The developer starts each agent in their own session. Every merge waits for the developer's approval, as do specs, with `skelcrew approve` until the inbox exists. Skelcrew then carries out the merge. One task goes from `skelcrew add` to a merged commit. A merge that waits also gets a draft pull request on GitHub, for reading only. This brings a small part of step 8's GitHub plugin forward.
-3. **Background runs and the TUI.** The process runner and Claude Code profile, so the scheduler starts agents itself. The TUI, for adding tasks, approving them, and seeing what is running and what waits on the developer.
+3. **Background runs and the TUI.** The tmux runner and the Claude Code profile, so the scheduler starts agents itself as live sessions. The TUI, for adding tasks, approving them, seeing what is running and what waits on the developer, and stepping into an agent's session.
 4. **Dogfood day.** Skelcrew runs on its own repository; every change from here is a Skelcrew task. It comes after background runs and the TUI, because Skelcrew needs both before it is pleasant to use on itself.
 5. **Inbox and intake.** Questions with options, the spec skill wired into intake, desktop notifications.
 6. **Auto-merge, gradually.** Start with every path critical, so all merges arrive as inbox summaries and the workflow stops at approval, like a pull request. Then loosen critical paths based on which approvals were rubber-stamped.
 7. **Record and digest.** A projection of the event log.
-8. **Second implementations.** GitHub next to the built-in board, Herdr next to the process runner, to validate the plugin interfaces. The draft pull requests for reading already exist from step 2. This step adds GitHub as a work source.
+8. **Second implementations.** GitHub next to the built-in board, Herdr next to tmux, to validate the plugin interfaces. The draft pull requests for reading already exist from step 2. This step adds GitHub as a work source.
 
 Metrics tracked from step 4: inbox items per day, minutes spent on decisions, automatic versus approved merges, reverts and cost per task. They guide the design and are the evidence for users and funders.
 
@@ -451,10 +456,10 @@ v1 is single user, runs on one machine, and ships only the plugins its first use
 
 - daemon, CLI, TUI and the full lifecycle, attended and in the background, with manual revert
 - built-in board, projects, inbox, record and event log
-- built-in plugins: git, process runner, Claude Code profile, desktop notifications
+- built-in plugins: git, the tmux runner, Claude Code profile, desktop notifications
 - first party plugins: GitHub (issues, pull requests, Actions results) and Herdr
 - default skills: spec, develop and review for agents, plus skills for the developer's own verbs (add, approve, skelcrew for the status, log for one task) in the harness
-- plugin interfaces defined internally, with two implementations for sessions (process runner, Herdr) and work sources (built-in board, GitHub)
+- plugin interfaces defined internally, with two implementations for sessions (tmux, Herdr) and work sources (built-in board, GitHub)
 
 **Not in v1:**
 
@@ -469,7 +474,8 @@ v1 is single user, runs on one machine, and ships only the plugins its first use
 ## Open questions
 
 - [ ] Who does the review gate: a fresh Claude session, a different model, or both depending on risk?
-- [ ] How is billing handled if programmatic use of subscriptions changes? The Claude Code profile runs `claude -p`, with nobody watching, so a fallback to API keys may be needed.
+- [ ] How is billing handled if programmatic use of subscriptions changes? Agents run as interactive sessions, which makes this less likely to matter, but a fallback to API keys may still be needed.
+- [ ] Should Claude Code's own background sessions be its default runner, so it needs nothing installed? Two things to check first: whether an answer from the inbox can reach a session that is running, and whether its background sessions make a worktree of their own beside Skelcrew's.
 - [ ] How can the daemon tell an agent's call from the developer's for certain? An agent runs as the same user, so it can remove its session name and look like the developer. The harness's settings make this harder, not impossible. It matters most for claims, since a spec from a claimed session needs no approval.
 - [ ] Should the built-in board and GitHub Issues coexist in one repository, or is it one work source per project?
 - [ ] Which critical paths should `skelcrew init` suggest by default?
