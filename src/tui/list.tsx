@@ -68,7 +68,11 @@ export function ListLine({
     case "row":
       return <TaskRow row={line.row} widths={widths} selected={line.row.task.task === selected} />;
     case "text":
-      return <Text dimColor={line.dim}>{line.text}</Text>;
+      return (
+        <Text dimColor={line.dim} wrap="truncate-end">
+          {line.text}
+        </Text>
+      );
   }
 }
 

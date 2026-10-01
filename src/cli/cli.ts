@@ -10,6 +10,7 @@ import { parseArgs } from "node:util";
 import * as z from "zod";
 import { SessionId, TaskId } from "../core/ids";
 import { phaseNames } from "../core/task";
+import type { TaskEvent } from "../core/types";
 import { request, type Started } from "../daemon/client";
 import { serveUntilSignalled } from "../daemon/server";
 import { mainRepository } from "../plugins/git/top";
@@ -434,6 +435,15 @@ export async function readStatus(
 ): Promise<{ ok: true; tasks: TaskView[] } | { ok: false; message: string }> {
   const answer = await answered(context, { type: "status" }, statusResult);
   return answer.ok ? { ok: true, tasks: answer.value.tasks } : answer;
+}
+
+// A task's events as `skelcrew log` reads them, as data, for the TUI.
+export async function readLog(
+  context: Context,
+  task: TaskId,
+): Promise<{ ok: true; events: TaskEvent[]; leftOut: number } | { ok: false; message: string }> {
+  const answer = await answered(context, { type: "log", task }, logResult);
+  return answer.ok ? { ok: true, ...answer.value } : answer;
 }
 
 async function ask<T>(

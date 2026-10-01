@@ -17,9 +17,11 @@ export type Step =
   | { kind: "type"; prompt: string; run: (text: string) => Run };
 
 // `hint` is the word in the keys line. A key without one isn't listed.
+// `onTask` keys act on one task, so they work on the task screen too.
 type Action = {
   key: string;
   hint: string | null;
+  onTask: boolean;
   // The step for the task under the cursor. null when the key needs a
   // task and there is none.
   step: (task: TaskView | undefined) => Step | null;
@@ -33,11 +35,17 @@ const adding = (prompt: string, flags: string[]): Step => ({
 });
 
 export const actions: Action[] = [
-  { key: "a", hint: "add", step: () => adding("Add an idea:", []) },
-  { key: "A", hint: null, step: () => adding("Add an idea and ask for its spec:", ["--spec"]) },
+  { key: "a", hint: "add", onTask: false, step: () => adding("Add an idea:", []) },
+  {
+    key: "A",
+    hint: null,
+    onTask: false,
+    step: () => adding("Add an idea and ask for its spec:", ["--spec"]),
+  },
   {
     key: "y",
     hint: "approve",
+    onTask: true,
     step: (task) => {
       if (task === undefined) return null;
       const run = {
@@ -54,6 +62,7 @@ export const actions: Action[] = [
   {
     key: "x",
     hint: "send back",
+    onTask: true,
     step: (task) =>
       task === undefined
         ? null
@@ -70,6 +79,7 @@ export const actions: Action[] = [
   {
     key: "s",
     hint: "spec",
+    onTask: true,
     step: (task) =>
       task === undefined
         ? null
@@ -85,6 +95,7 @@ export const actions: Action[] = [
   {
     key: "r",
     hint: "retry",
+    onTask: true,
     step: (task) =>
       task === undefined
         ? null
@@ -100,6 +111,7 @@ export const actions: Action[] = [
   {
     key: "D",
     hint: "drop",
+    onTask: true,
     step: (task) =>
       task === undefined
         ? null
@@ -115,7 +127,11 @@ export const actions: Action[] = [
   },
 ];
 
-// "a add · y approve · …", for the keys line.
-export const actionHints = actions
-  .flatMap((action) => (action.hint === null ? [] : [`${action.key} ${action.hint}`]))
-  .join(" · ");
+// The keys line's words: "a add · y approve · …" on the list, and only
+// the keys that act on one task on the task screen.
+export function hints(screen: "list" | "task"): string {
+  return actions
+    .filter((action) => screen === "list" || action.onTask)
+    .flatMap((action) => (action.hint === null ? [] : [`${action.key} ${action.hint}`]))
+    .join(" · ");
+}
