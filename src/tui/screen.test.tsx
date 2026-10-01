@@ -1,72 +1,6 @@
 import { expect, test } from "bun:test";
-import { render } from "ink-testing-library";
-import type { TaskView } from "../cli/status";
-import { TaskId } from "../core/ids";
-import { type Loaded, Screen } from "./screen";
-
-// Ink reads keys and runs effects on a later tick, so a test waits for it.
-const tick = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function task(
-  number: number,
-  title: string,
-  phase: TaskView["phase"],
-  fields: Partial<Omit<TaskView, "task" | "title" | "phase">> = {},
-): TaskView {
-  return {
-    task: TaskId.parse(number),
-    title,
-    phase,
-    project: null,
-    step: null,
-    session: null,
-    blocked: null,
-    question: null,
-    waitingOnYou: null,
-    ...fields,
-  };
-}
-
-// One of each kind of row, as in the sketch the developer approved.
-const tasks: TaskView[] = [
-  task(7, "Old idea", "dropped"),
-  task(8, "Totals", "done"),
-  task(9, "Dark mode", "in_progress", {
-    project: "ui",
-    step: "queued",
-    blocked: "Out of attempts. The last failure, in local: bun test\n2 tests failed.",
-    waitingOnYou: "retry",
-  }),
-  task(11, "Retry on 429", "checks", {
-    waitingOnYou: "merge_approval",
-    pullRequest: "https://github.com/o/r/pull/71",
-  }),
-  task(12, "Settings page", "in_progress", { project: "ui", session: "you-2", step: "working" }),
-  task(13, "Linear import", "spec", { session: "you-3", step: "working" }),
-  task(14, "CSV export", "spec", { project: "reports", waitingOnYou: "spec_approval" }),
-  task(15, "Rate limit", "ready", { step: "queued" }),
-  task(16, "Keyboard help", "idea"),
-  task(17, "Spec me", "spec", { step: "queued" }),
-  task(18, "Pick a format", "spec", {
-    session: "you-4",
-    question: "CSV or Markdown?",
-    waitingOnYou: "answer",
-  }),
-];
-
-const loaded = (list: TaskView[]): (() => Promise<Loaded>) => {
-  return async () => ({ ok: true, tasks: list });
-};
-
-// The screen's lines, with runs of spaces made one, so a test reads the
-// words and not the column widths.
-function lines(frame: string | undefined): string[] {
-  return (frame ?? "").split("\n").map((line) => line.replace(/\s+/g, " ").trim());
-}
-
-function open(load = loaded(tasks), quit = () => {}, refreshMs = 1000) {
-  return render(<Screen repo="~/code/app" quit={quit} load={load} refreshMs={refreshMs} />);
-}
+import type { Loaded } from "./screen";
+import { KEYS, lines, loaded, open, task, tick } from "./testing";
 
 test("tasks are grouped by what you need to do, with what each one needs", async () => {
   const { lastFrame } = open();
@@ -93,7 +27,7 @@ test("tasks are grouped by what you need to do, with what each one needs", async
     "",
     "1 done · 1 dropped",
     "",
-    "j k move · q quit",
+    KEYS,
   ]);
 });
 
@@ -102,20 +36,20 @@ test("the header says one task in the singular", async () => {
     task(14, "CSV export", "spec", { waitingOnYou: "spec_approval" }),
     task(12, "Settings page", "in_progress", { session: "you-2", step: "working" }),
   ];
-  const { lastFrame } = open(loaded(one));
+  const { lastFrame } = open({ load: loaded(one) });
   await tick();
   expect(lines(lastFrame())[0]).toBe("skelcrew ~/code/app 1 waits on you · 1 working");
 });
 
 test("a merge that is merging says so", async () => {
   const merging = task(11, "Retry on 429", "checks", { step: "merging" });
-  const { lastFrame } = open(loaded([merging]));
+  const { lastFrame } = open({ load: loaded([merging]) });
   await tick();
   expect(lines(lastFrame())).toContain("› #11 Retry on 429 Checks · merging");
 });
 
 test("groups with no tasks are left out, and so is the count of none done", async () => {
-  const { lastFrame } = open(loaded([task(16, "Keyboard help", "idea")]));
+  const { lastFrame } = open({ load: loaded([task(16, "Keyboard help", "idea")]) });
   await tick();
   expect(lines(lastFrame())).toEqual([
     "skelcrew ~/code/app",
@@ -123,21 +57,23 @@ test("groups with no tasks are left out, and so is the count of none done", asyn
     "Ideas",
     "› #16 Keyboard help Idea",
     "",
-    "j k move · q quit",
+    KEYS,
   ]);
 });
 
 // The test screen is 100 columns wide.
 test("a title uses the room the screen has", async () => {
   const title = "Open a normal pull request, and close it after merge";
-  const { lastFrame } = open(loaded([task(9, title, "idea")]));
+  const { lastFrame } = open({ load: loaded([task(9, title, "idea")]) });
   await tick();
   expect(lines(lastFrame())).toContain(`› #9 ${title} Idea`);
 });
 
 test("a title too long for the screen is cut, so what the task needs still shows", async () => {
   const title = "A very long title ".repeat(8).trim();
-  const { lastFrame } = open(loaded([task(9, title, "spec", { waitingOnYou: "spec_approval" })]));
+  const { lastFrame } = open({
+    load: loaded([task(9, title, "spec", { waitingOnYou: "spec_approval" })]),
+  });
   await tick();
   const row = (lastFrame() ?? "").split("\n").find((line) => line.startsWith("›")) ?? "";
   expect(row.trimEnd().endsWith("…  approve its spec")).toBe(true);
@@ -147,9 +83,7 @@ test("a title too long for the screen is cut, so what the task needs still shows
 test("a long repository path is cut from the left, so the header stays one line", async () => {
   const repo = `/tmp/${"deep/".repeat(30)}app`;
   const one = [task(14, "CSV export", "spec", { waitingOnYou: "spec_approval" })];
-  const { lastFrame } = render(
-    <Screen repo={repo} quit={() => {}} load={loaded(one)} refreshMs={1000} />,
-  );
+  const { lastFrame } = open({ repo, load: loaded(one) });
   await tick();
   const [header = "", next] = (lastFrame() ?? "").split("\n");
   expect(header.startsWith("skelcrew  …")).toBe(true);
@@ -157,10 +91,10 @@ test("a long repository path is cut from the left, so the header stays one line"
   expect(next).toBe("");
 });
 
-test("with no tasks, it says how to add one", async () => {
-  const { lastFrame } = open(loaded([]));
+test("with no tasks, it says which key adds one", async () => {
+  const { lastFrame } = open({ load: loaded([]) });
   await tick();
-  expect(lines(lastFrame())).toContain('No tasks yet. Add one with: skelcrew add "<task>"');
+  expect(lines(lastFrame())).toContain("No tasks yet. Press a to add one.");
 });
 
 test("j and k move the cursor between tasks, skipping headings", async () => {
@@ -212,11 +146,10 @@ test("the list refreshes, and the cursor stays on its task when the task moves",
     task(15, "Rate limit", "ready", { step: "queued" }),
     task(16, "Keyboard help", "idea"),
   ];
-  const { lastFrame, stdin } = open(
-    async () => ({ ok: true, tasks: list }),
-    () => {},
-    10,
-  );
+  const { lastFrame, stdin } = open({
+    load: async () => ({ ok: true, tasks: list }),
+    refreshMs: 10,
+  });
   await tick();
   stdin.write("j");
   await tick();
@@ -235,11 +168,10 @@ test("when the cursor's task is gone, the cursor goes to the first task", async 
     task(15, "Rate limit", "ready", { step: "queued" }),
     task(16, "Keyboard help", "idea"),
   ];
-  const { lastFrame, stdin } = open(
-    async () => ({ ok: true, tasks: list }),
-    () => {},
-    10,
-  );
+  const { lastFrame, stdin } = open({
+    load: async () => ({ ok: true, tasks: list }),
+    refreshMs: 10,
+  });
   await tick();
   stdin.write("j");
   await tick();
@@ -250,11 +182,7 @@ test("when the cursor's task is gone, the cursor goes to the first task", async 
 
 test("when the daemon can't answer, the screen says why and keeps the last list", async () => {
   let answer: Loaded = { ok: true, tasks: [task(16, "Keyboard help", "idea")] };
-  const { lastFrame } = open(
-    async () => answer,
-    () => {},
-    10,
-  );
+  const { lastFrame } = open({ load: async () => answer, refreshMs: 10 });
   await tick();
   answer = { ok: false, message: "The daemon stopped." };
   await tick(50);
@@ -265,7 +193,7 @@ test("when the daemon can't answer, the screen says why and keeps the last list"
 
 test("q closes the screen", async () => {
   let quit = 0;
-  const { stdin } = open(loaded(tasks), () => quit++);
+  const { stdin } = open({ quit: () => quit++ });
   await tick();
   stdin.write("q");
   await tick();
@@ -274,7 +202,7 @@ test("q closes the screen", async () => {
 
 test("other keys don't close it", async () => {
   let quit = 0;
-  const { stdin } = open(loaded(tasks), () => quit++);
+  const { stdin } = open({ quit: () => quit++ });
   await tick();
   stdin.write("x");
   await tick();
