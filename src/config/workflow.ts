@@ -8,7 +8,15 @@ import type { Config } from "../core/types";
 // `mainBranch` is the branch tasks start from and merge into. `setup`
 // prepares a fresh copy of a task's code, such as installing its
 // dependencies, before the checks run there.
-export type Workflow = { config: Config; checks: string[]; setup: string[]; mainBranch: string };
+export type Workflow = {
+  config: Config;
+  checks: string[];
+  setup: string[];
+  mainBranch: string;
+  // Whether Skelcrew starts agents itself, and the runner that holds them.
+  background: boolean;
+  sessions: "basic" | "tmux" | "herdr";
+};
 
 export type ParsedWorkflow = { ok: true; workflow: Workflow } | { ok: false; reasons: string[] };
 
@@ -100,9 +108,20 @@ const schema = z.strictObject({
     .string({ error: "must be a branch name, such as main." })
     .refine((name) => name.trim() !== "", { error: "must be a branch name, such as main." })
     .default("main"),
-  // In the spec's example. Not used until the review gate and plugins exist.
+  // Whether Skelcrew starts agents itself. With false, a task waits until
+  // the developer claims it.
+  background: z.boolean({ error: "must be true or false." }).default(true),
+  // In the spec's example. Not used until the review gate exists.
   review: z.strictObject({ model: z.string() }).optional(),
-  plugins: z.record(z.string(), z.string()).optional(),
+  // `sessions` picks the session runner. Others, such as `work_source`,
+  // are read but not used until their plugins exist.
+  plugins: z
+    .looseObject({
+      sessions: z
+        .enum(["basic", "tmux", "herdr"], { error: "must be basic, tmux or herdr." })
+        .default("basic"),
+    })
+    .default({ sessions: "basic" }),
 });
 
 export function parseWorkflow(text: string): ParsedWorkflow {
@@ -132,6 +151,8 @@ export function parseWorkflow(text: string): ParsedWorkflow {
       checks: file.checks,
       setup: file.setup,
       mainBranch: file.main_branch,
+      background: file.background,
+      sessions: file.plugins.sessions,
       config: {
         gates: ["local"],
         maxAttempts: file.max_attempts,
