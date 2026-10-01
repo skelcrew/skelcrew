@@ -10,7 +10,7 @@ import { type Server, serve } from "../daemon/server";
 import { cleanUp, throwawayRepo } from "../daemon/testing";
 import { EventStore } from "../store/store";
 import { backgroundSpecced } from "../test/fixtures";
-import { type Context, readStatus, run } from "./cli";
+import { type Context, readLog, readStatus, run } from "./cli";
 
 const dirs: string[] = [];
 const servers: Server[] = [];
@@ -637,6 +637,24 @@ describe("skelcrew status", () => {
       ok: true,
       tasks: [{ task: 1, title: "Totals", phase: "idea", waitingOnYou: null }],
     });
+  });
+
+  // The TUI's task screen reads a task's history through the same request
+  // as `skelcrew log`.
+  test("readLog gives a task's events", async () => {
+    const repo = await repoWithDaemon();
+    await cli(repo, ["add", "Totals"]);
+    expect(await readLog(contextIn(repo), TaskId.parse(1))).toMatchObject({
+      ok: true,
+      events: [{ type: "task.created", taskId: 1, title: "Totals" }],
+      leftOut: 0,
+    });
+  });
+
+  test("readLog says why it can't read a task", async () => {
+    const repo = await repoWithDaemon();
+    const read = await readLog(contextIn(repo), TaskId.parse(9));
+    expect(read.ok).toBe(false);
   });
 
   test("readStatus says why when there is no repository", async () => {

@@ -1,6 +1,7 @@
 // The TUI: one row per task, grouped by what you need to do. It asks the
-// daemon for the status every second, so the list stays current. The keys
-// in actions.ts act on the task under the cursor.
+// daemon for the status every second, so the list stays current. Enter
+// opens a task's own screen. The keys in actions.ts act on the task under
+// the cursor, or on the task that is open.
 
 import { Box, Text, useInput, useStdout } from "ink";
 import TextInput from "ink-text-input";
@@ -8,8 +9,11 @@ import { useEffect, useRef, useState } from "react";
 import type { Outcome } from "../cli/cli";
 import type { TaskView } from "../cli/status";
 import type { TaskId } from "../core/ids";
-import { actionHints, actions, type Run } from "./actions";
-import { counts, finished, groupsOf, type Row } from "./rows";
+import { actions, hints, type Run } from "./actions";
+import { type Line, ListLine, listLines, widthsOf } from "./list";
+import { counts, groupsOf } from "./rows";
+import { firstShown } from "./scroll";
+import { type LoadedLog, taskLines, taskState } from "./task-screen";
 
 export type Loaded = { ok: true; tasks: TaskView[] } | { ok: false; message: string };
 
@@ -19,7 +23,15 @@ type Props = {
   load: () => Promise<Loaded>;
   // Runs a `skelcrew` command, as the CLI would, and returns what it says.
   send: (args: string[]) => Promise<Outcome>;
+  // Reads a task's history, as `skelcrew log` does.
+  loadLog: (task: TaskId) => Promise<LoadedLog>;
+  // Opens a link in the browser.
+  browse: (url: string) => void;
   refreshMs?: number;
+  // The terminal's height in lines. With it, the screen fills the terminal:
+  // the keys sit on the last line, and the list scrolls. Without it, the
+  // screen is as tall as what it shows.
+  height?: number;
 };
 
 // The list, a y/n question, or a line being typed.
@@ -28,24 +40,35 @@ type Mode =
   | { kind: "confirm"; question: string; run: Run }
   | { kind: "type"; prompt: string; run: (text: string) => Run; text: string };
 
-const MIN_TITLE = 20;
-
 // A longer answer, such as a failed merge's check output, is cut to this.
 const MAX_SAID = 4;
 
-export function Screen({ repo, quit, load, send, refreshMs = 1000 }: Props) {
+export function Screen(props: Props) {
+  const { repo, quit, load, send, loadLog, browse, refreshMs = 1000, height } = props;
   // null until the first answer.
   const [tasks, setTasks] = useState<TaskView[] | null>(null);
   // Why the last refresh failed. The last list stays on screen.
   const [problem, setProblem] = useState<string | null>(null);
   // The task the cursor is on, so it stays there when tasks move.
   const [cursor, setCursor] = useState<TaskId | null>(null);
+  // The task whose own screen is open, its history, and how far down its
+  // screen is scrolled.
+  const [open, setOpen] = useState<TaskId | null>(null);
+  const [log, setLog] = useState<LoadedLog | null>(null);
+  const [taskTop, setTaskTop] = useState(0);
   const [mode, setMode] = useState<Mode>({ kind: "list" });
   // The command running now, and what the last one said.
   const [running, setRunning] = useState<Run | null>(null);
   const [said, setSaid] = useState<string[]>([]);
-  // Loads the list now, rather than at the next second.
+  // Loads the list, and the open task's history, now rather than at the
+  // next second.
   const refreshNow = useRef(() => {});
+  const openNow = useRef<TaskId | null>(null);
+  openNow.current = open;
+  // The first line of the list shown, when it is taller than the screen,
+  // and how far a task's screen can scroll.
+  const scrolled = useRef(0);
+  const lastTop = useRef(0);
   const { stdout } = useStdout();
 
   useEffect(() => {
@@ -55,6 +78,8 @@ export function Screen({ repo, quit, load, send, refreshMs = 1000 }: Props) {
       if (busy) return;
       busy = true;
       const loaded = await load();
+      const showing = openNow.current;
+      const read = showing === null ? null : await loadLog(showing);
       busy = false;
       if (closed) return;
       if (loaded.ok) {
@@ -63,6 +88,7 @@ export function Screen({ repo, quit, load, send, refreshMs = 1000 }: Props) {
       } else {
         setProblem(loaded.message);
       }
+      if (read !== null && openNow.current === showing) setLog(read);
     };
     refreshNow.current = () => void refresh();
     void refresh();
@@ -71,13 +97,14 @@ export function Screen({ repo, quit, load, send, refreshMs = 1000 }: Props) {
       closed = true;
       clearInterval(timer);
     };
-  }, [load, refreshMs]);
+  }, [load, loadLog, refreshMs]);
 
   const groups = groupsOf(tasks ?? []);
   const order = groups.flatMap((group) => group.rows.map((row) => row.task.task));
   // A task that is gone, or none yet, puts the cursor on the first task.
   const at = (task: TaskId | null) => (task !== null && order.includes(task) ? task : order[0]);
   const selected = at(cursor);
+  const opened = open === null ? undefined : tasks?.find((task) => task.task === open);
 
   const execute = async (run: Run) => {
     if (running !== null) {
@@ -92,6 +119,27 @@ export function Screen({ repo, quit, load, send, refreshMs = 1000 }: Props) {
     setRunning(null);
     setSaid(shorten([...outcome.out, ...outcome.err], run));
     refreshNow.current();
+  };
+
+  const openTask = (task: TaskId) => {
+    setOpen(task);
+    openNow.current = task;
+    setLog(null);
+    setTaskTop(0);
+    void loadLog(task).then((read) => {
+      if (openNow.current === task) setLog(read);
+    });
+  };
+
+  // An action's key, on the task it is about.
+  const act = (input: string, task: TaskView | undefined, onTaskScreen: boolean) => {
+    const action = actions.find((one) => one.key === input);
+    if (action === undefined || (onTaskScreen && !action.onTask)) return;
+    const step = action.step(task);
+    if (step === null) return;
+    if (step.kind === "run") void execute(step.run);
+    else if (step.kind === "confirm") setMode(step);
+    else setMode({ ...step, text: "" });
   };
 
   useInput((input, key) => {
@@ -110,6 +158,24 @@ export function Screen({ repo, quit, load, send, refreshMs = 1000 }: Props) {
       return;
     }
     setSaid([]);
+    if (input === "q") {
+      quit();
+      return;
+    }
+
+    if (opened !== undefined) {
+      const scroll = (to: (top: number) => number) =>
+        setTaskTop((top) => Math.min(Math.max(to(top), 0), lastTop.current));
+      if (key.escape || input === "h") setOpen(null);
+      else if (input === "j" || key.downArrow) scroll((top) => top + 1);
+      else if (input === "k" || key.upArrow) scroll((top) => top - 1);
+      else if (input === "g") scroll(() => 0);
+      else if (input === "G") scroll(() => lastTop.current);
+      else if (input === "o" && typeof opened.pullRequest === "string") browse(opened.pullRequest);
+      else act(input, opened, true);
+      return;
+    }
+
     const move = (to: (index: number) => number) =>
       setCursor((previous) => {
         const current = at(previous);
@@ -117,94 +183,144 @@ export function Screen({ repo, quit, load, send, refreshMs = 1000 }: Props) {
         const index = Math.min(Math.max(to(from), 0), order.length - 1);
         return order[index] ?? null;
       });
-    if (input === "q") quit();
-    else if (input === "j" || key.downArrow) move((index) => index + 1);
+    if (input === "j" || key.downArrow) move((index) => index + 1);
     else if (input === "k" || key.upArrow) move((index) => index - 1);
     else if (input === "g") move(() => 0);
     else if (input === "G") move(() => order.length - 1);
-    else {
-      const action = actions.find((one) => one.key === input);
-      const step = action?.step(tasks?.find((task) => task.task === selected));
-      if (step === undefined || step === null) return;
-      if (step.kind === "run") void execute(step.run);
-      else if (step.kind === "confirm") setMode(step);
-      else setMode({ ...step, text: "" });
-    }
+    else if ((key.return || input === "l") && selected !== undefined) {
+      setCursor(selected);
+      openTask(selected);
+    } else
+      act(
+        input,
+        tasks?.find((task) => task.task === selected),
+        false,
+      );
   });
 
-  const all = groups.flatMap((group) => group.rows);
-  const number = Math.max(0, ...all.map((row) => `#${row.task.task}`.length));
-  const project = Math.max(0, ...all.map((row) => (row.task.project ?? "").length));
-  const says = Math.max(0, ...all.map((row) => row.says.length));
-  // Titles get the room the other columns leave, with two spaces between
-  // columns, but never less than MIN_TITLE.
-  const others = 1 + 2 + number + 2 + (project > 0 ? project + 2 : 0) + 2 + says;
-  const room = Math.max(MIN_TITLE, (stdout.columns ?? 80) - others);
-  const widths = {
-    number,
-    title: Math.min(room, Math.max(0, ...all.map((row) => row.task.title.length))),
-    project,
-  };
-  const done = finished(tasks ?? []);
+  const columns = stdout.columns ?? 80;
+  const widths = widthsOf(
+    groups.flatMap((group) => group.rows),
+    columns,
+  );
+  const body: Line[] =
+    opened === undefined ? listLines(tasks, groups) : taskLines(opened, log, columns);
+
+  // What sits under the body, each part after a blank line, keys last.
+  const problemLines = problem === null ? [] : problem.split("\n");
+  const saidLines = [...(running === null ? [] : [running.doing]), ...said];
+  const below =
+    (problemLines.length > 0 ? 1 + problemLines.length : 0) +
+    (saidLines.length > 0 ? 1 + saidLines.length : 0) +
+    (mode.kind === "list" ? 0 : 2) +
+    2;
+
+  // A body taller than its room scrolls. Its first and last lines then say
+  // what is hidden above and below: tasks on the list, such as "↓ 25 more",
+  // and lines on a task's screen.
+  const room = height === undefined ? body.length : height - 1 - below;
+  let shown = body;
+  let above: string | null = null;
+  let under: string | null = null;
+  lastTop.current = 0;
+  if (body.length > room) {
+    const fits = Math.max(1, room - 2);
+    let first: number;
+    let hiddenAbove: string;
+    let hiddenBelow: string;
+    if (opened === undefined) {
+      const cursorLine = Math.max(
+        0,
+        body.findIndex((line) => line.kind === "row" && line.row.task.task === selected),
+      );
+      // A group's first task shows with the blank line and heading above it.
+      const top = body[cursorLine - 1]?.kind === "heading" ? cursorLine - 2 : cursorLine;
+      first = firstShown(scrolled.current, top, cursorLine, fits, body.length);
+      scrolled.current = first;
+      const rows = (lines: Line[]) => lines.filter((line) => line.kind === "row").length;
+      hiddenAbove = more(rows(body.slice(0, first)), "");
+      hiddenBelow = more(rows(body.slice(first + fits)), "");
+    } else {
+      lastTop.current = body.length - fits;
+      first = Math.min(taskTop, lastTop.current);
+      hiddenAbove = more(first, "line");
+      hiddenBelow = more(body.length - fits - first, "line");
+    }
+    shown = body.slice(first, first + fits);
+    above = hiddenAbove === "" ? "" : `↑ ${hiddenAbove}`;
+    under = hiddenBelow === "" ? "" : `↓ ${hiddenBelow}`;
+  }
+
+  const keys =
+    opened === undefined
+      ? `j k move · enter open · ${hints("list")} · q quit`
+      : `j k scroll · ${hints("task")}${typeof opened.pullRequest === "string" ? " · o open PR" : ""} · esc back · q quit`;
 
   return (
-    <Box flexDirection="column">
-      {/* A long path is cut from the left, so its last folders show. */}
-      <Box>
-        <Box flexShrink={0} marginRight={2}>
-          <Text>skelcrew</Text>
+    <Box flexDirection="column" {...(height === undefined ? {} : { height })}>
+      {opened === undefined ? (
+        // A long path is cut from the left, so its last folders show.
+        <Box flexShrink={0}>
+          <Box flexShrink={0} marginRight={2}>
+            <Text>skelcrew</Text>
+          </Box>
+          <Box flexGrow={1} flexShrink={1}>
+            <Text wrap="truncate-start">{repo}</Text>
+          </Box>
+          <Box flexShrink={0} marginLeft={2}>
+            <Text>{counts(groups)}</Text>
+          </Box>
         </Box>
-        <Box flexGrow={1} flexShrink={1}>
-          <Text wrap="truncate-start">{repo}</Text>
-        </Box>
-        <Box flexShrink={0} marginLeft={2}>
-          <Text>{counts(groups)}</Text>
-        </Box>
-      </Box>
-      {tasks !== null && tasks.length === 0 && (
-        <Box marginTop={1}>
-          <Text>No tasks yet. Press a to add one.</Text>
+      ) : (
+        <Box flexShrink={0}>
+          <Box flexGrow={1} flexShrink={1}>
+            <Text bold wrap="truncate-end">{`#${opened.task} ${opened.title}`}</Text>
+          </Box>
+          <Box flexShrink={0} marginLeft={2}>
+            <Text>
+              {taskState(
+                opened,
+                groups.flatMap((group) => group.rows).find((row) => row.task.task === open),
+              )}
+            </Text>
+          </Box>
         </Box>
       )}
-      {groups.map((group) => (
-        <Box key={group.heading} flexDirection="column" marginTop={1}>
-          <Text bold>{group.heading}</Text>
-          {group.rows.map((row) => (
-            <TaskRow
-              key={row.task.task}
-              row={row}
-              widths={widths}
-              selected={row.task.task === selected}
-            />
+      {above !== null && <Text dimColor>{above || " "}</Text>}
+      {shown.map((line, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: a line is drawn where it is; it holds no state.
+        <ListLine key={index} line={line} widths={widths} selected={selected} />
+      ))}
+      {under !== null && <Text dimColor>{under || " "}</Text>}
+      {/* Takes the room left, so what follows sits at the bottom. */}
+      <Box flexGrow={1} />
+      {problemLines.length > 0 && (
+        <Box marginTop={1} flexDirection="column" flexShrink={0}>
+          {problemLines.map((line, index) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: the lines never move.
+            <Text key={index} wrap="truncate-end">
+              {line}
+            </Text>
           ))}
         </Box>
-      ))}
-      {done !== "" && (
-        <Box marginTop={1}>
-          <Text dimColor>{done}</Text>
-        </Box>
       )}
-      {problem !== null && (
-        <Box marginTop={1}>
-          <Text>{problem}</Text>
-        </Box>
-      )}
-      {(running !== null || said.length > 0) && (
-        <Box marginTop={1} flexDirection="column">
-          {running !== null && <Text>{running.doing}</Text>}
-          {said.map((line, index) => (
+      {saidLines.length > 0 && (
+        <Box marginTop={1} flexDirection="column" flexShrink={0}>
+          {saidLines.map((line, index) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: the lines never move.
-            <Text key={index}>{line}</Text>
+            <Text key={index} wrap="truncate-end">
+              {line}
+            </Text>
           ))}
         </Box>
       )}
       {mode.kind === "confirm" && (
-        <Box marginTop={1}>
-          <Text>{mode.question}</Text>
+        <Box marginTop={1} flexShrink={0}>
+          <Text wrap="truncate-end">{mode.question}</Text>
         </Box>
       )}
       {mode.kind === "type" && (
-        <Box marginTop={1}>
+        <Box marginTop={1} flexShrink={0}>
           <Text>{`${mode.prompt} `}</Text>
           <TextInput
             value={mode.text}
@@ -217,33 +333,20 @@ export function Screen({ repo, quit, load, send, refreshMs = 1000 }: Props) {
           />
         </Box>
       )}
-      <Box marginTop={1}>
-        <Text dimColor>{`j k move · ${actionHints} · q quit`}</Text>
+      <Box marginTop={1} flexShrink={0}>
+        <Text dimColor wrap="truncate-end">
+          {keys}
+        </Text>
       </Box>
     </Box>
   );
 }
 
-type Widths = { number: number; title: number; project: number };
-
-// "› #14  CSV export   reports  approve its spec", cut to the screen's width.
-function TaskRow({ row, widths, selected }: { row: Row; widths: Widths; selected: boolean }) {
-  const { task } = row;
-  const title =
-    task.title.length > widths.title ? `${task.title.slice(0, widths.title - 1)}…` : task.title;
-  const columns = [
-    selected ? "›" : " ",
-    `#${task.task}`.padEnd(widths.number),
-    title.padEnd(widths.title),
-    ...(widths.project > 0 ? [(task.project ?? "").padEnd(widths.project)] : []),
-  ];
-  const colour = row.mark === "question" ? "yellow" : row.mark === "blocked" ? "red" : undefined;
-  return (
-    <Text wrap="truncate-end" bold={selected}>
-      {`${columns.join("  ")}  `}
-      <Text {...(colour === undefined ? {} : { color: colour })}>{row.says}</Text>
-    </Text>
-  );
+// "25 more", or "3 more lines" when `unit` is "line". "" when none.
+function more(count: number, unit: "" | "line"): string {
+  if (count === 0) return "";
+  if (unit === "") return `${count} more`;
+  return `${count} more ${count === 1 ? "line" : "lines"}`;
 }
 
 // The CLI's lines, cut to MAX_SAID, with where to read the rest.
