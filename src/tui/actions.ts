@@ -10,11 +10,12 @@ import type { TaskView } from "../cli/status";
 export type Run = { args: string[]; doing: string; task: number | null };
 
 // What a key leads to: a command at once, a y/n question first, or a line
-// to type first.
+// to type first. A typed line can lead to another, such as a project's
+// name, then its goal.
 export type Step =
   | { kind: "run"; run: Run }
   | { kind: "confirm"; question: string; run: Run }
-  | { kind: "type"; prompt: string; run: (text: string) => Run };
+  | { kind: "type"; prompt: string; run: (text: string) => Run | Step };
 
 // `hint` is the word in the keys line, which shows the keys used most. A
 // key without one is only in the list ? shows, with its `help`. `onTask`
