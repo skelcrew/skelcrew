@@ -6,7 +6,7 @@ import { defaultSkills } from "./skills";
 // task, see what goes on, show one task, and approve. Sending back has no
 // skill: the developer types `skelcrew reject` themselves.
 const agentSkills = ["spec", "develop"];
-const developerSkills = ["add", "skelcrew", "log", "approve"];
+const developerSkills = ["add", "project", "skelcrew", "log", "approve"];
 const allSkills = [...agentSkills, ...developerSkills];
 
 // The CLI commands each skill may name. They come from the spec's CLI
@@ -21,6 +21,8 @@ const commandsFor: Record<string, string[]> = {
   develop: ["status", "claim", "done", "give-up", "log", "approve", "reject"],
   // Add can make a project for the tasks it adds, once the developer agrees.
   add: ["add", "project"],
+  // Project reads status to see which projects exist, then makes one.
+  project: ["status", "project"],
   // Blocked tasks: /skelcrew gives the developer the retry and drop commands.
   skelcrew: ["status", "retry", "drop"],
   log: ["status", "log", "approve", "reject", "retry", "drop"],
@@ -82,6 +84,7 @@ describe("defaultSkills", () => {
       spec: "asks to spec task 12",
       develop: "asks to build task 12",
       add: "asks to add a task",
+      project: "asks to make a project",
       skelcrew: "asks what is going on",
       log: "asks where task 12 stands",
       approve: "asks to approve task 12",
@@ -437,6 +440,22 @@ describe("defaultSkills", () => {
     expect(text).toContain("--project");
     expect(text).toContain("skelcrew project new");
     expect(text).toContain("Ask the developer before you make a project");
+  });
+
+  // The CLI needs a name and a goal. The developer gives a description, and
+  // the skill proposes both, then asks.
+  test("the project skill turns a description into a name and a goal, and asks first", () => {
+    const text = flat("project");
+    expect(text).toContain("skelcrew project new");
+    expect(text).toContain("propose a name and a goal");
+    expect(text).toContain("Wait for the developer to agree");
+    expect(text.indexOf("Wait for the developer to agree")).toBeLessThan(
+      text.indexOf("skelcrew project new"),
+    );
+  });
+
+  test("the project skill checks the name isn't taken before it proposes it", () => {
+    expect(flat("project")).toContain("skelcrew status");
   });
 
   test("the skelcrew skill says how status shows projects, archived ones too", () => {
