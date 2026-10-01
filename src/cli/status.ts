@@ -68,11 +68,17 @@ export function statusLines(tasks: TaskView[], projects: ProjectView[] = []): st
     return ['No tasks yet. Add one with: skelcrew add "<task>"'];
   }
   const lines: string[] = [];
-  const waiting = tasks.filter((task) => task.waitingOnYou !== null || needsClaim(task));
+  // A task in an archived project can't be claimed, so it waits on nobody.
+  const archived = new Set(
+    projects.filter((project) => project.status === "archived").map((project) => project.id),
+  );
+  const toClaim = (task: TaskView) =>
+    needsClaim(task) && (task.project === null || !archived.has(task.project));
+  const waiting = tasks.filter((task) => task.waitingOnYou !== null || toClaim(task));
   if (waiting.length > 0) {
     lines.push("Waiting on you:");
     for (const task of waiting) {
-      const need = needsClaim(task)
+      const need = toClaim(task)
         ? `nobody is working on it. Claim it to go on: skelcrew claim ${task.task}`
         : needs(task);
       lines.push(`- #${task.task} ${task.title}: ${need}`);
