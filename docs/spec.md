@@ -62,7 +62,7 @@ Typing `skelcrew` opens the TUI. Any `skelcrew` command starts the daemon in the
 - **The developer's harness**, through skills that call the CLI. The developer can do anything the TUI does from a conversation. For example, they brainstorm a feature with Claude, then have it create a project and its tasks: `skelcrew project add`, then `skelcrew add --project` for each task.
 - **Agents**, which report progress, ask questions and propose transitions with the same CLI.
 
-Every CLI call carries who made it. The daemon gives each agent it starts an identity, and the core refuses anything only the developer may do from an agent, such as approving a spec. In the harness, the developer's own session calls the CLI as the developer. The default skills guard approvals there: only the developer can start the approve skill, and the harness asks before `skelcrew approve` or `skelcrew reject` runs. That guard lives in the harness's settings, not in the core, so it is weaker than approving in the TUI.
+Every CLI call carries who made it. The daemon gives each agent it starts a session name, in an environment variable the CLI sends with every call. The daemon refuses anything only the developer may do from that name, such as approving a spec or claiming a task. A call with no session name comes from the developer. This is not a lock. An agent runs as the same user as the developer, so an agent that removes the variable looks like the developer. The harness's own permission settings are a second guard (see Plugins). In the harness, the developer's own session calls the CLI as the developer. The default skills guard approvals there: only the developer can start the approve skill, and the harness asks before `skelcrew approve` or `skelcrew reject` runs. That guard lives in the harness's settings, not in the core, so it is weaker than approving in the TUI.
 
 Agents use the CLI rather than an MCP server. Every agent already has a shell, and a second door that only agents use would have to be kept in step with the CLI by hand.
 
@@ -147,8 +147,8 @@ This resembles the Elm architecture and the decider pattern from event sourcing.
 A task moves through six phases: Idea, Spec, Ready, In progress, Checks, Done. A task can also end as Dropped, when the developer decides not to do it. Blocked is a side state.
 
 1. **Define.** The developer adds a task: `skelcrew add`, a task on the built-in board, or an issue delegated to Skelcrew in a work source plugin. A captured task waits in Idea until the developer asks for a spec; delegating an issue counts as asking. Each task gets the next number in the repository, shown as `#12`, and commands take that number. A delegated issue keeps its own number as a link, shown as `#12 CSV export (GitHub #40)`. Event: `task.created`.
-2. **Spec.** A spec agent writes the spec with the spec skill, started by the daemon or by the developer in their harness (see Who does the work, below). Anything it cannot decide becomes a question. A spec can also be written by hand; the core only cares whether the result meets the spec contract. Event: `task.specced`.
-3. **Ready.** The core checks the spec against the contract, then asks the developer to approve it in the inbox. When spec\_approval is always, only that approval moves the task to Ready; agents and plugins can never do it. A delegated issue never skips this step. Event: `task.ready`.
+2. **Spec.** A spec agent writes the spec with the spec skill, started by the daemon or by the developer in their harness (see Who does the work, below). Anything it cannot decide becomes a question. A spec can also be written by hand; the core only cares whether the result meets the spec contract. A background spec agent works in a spec worktree: a copy of main with no branch, made when the agent starts and removed when it stops. The agent commits nothing, and anything it changes there is thrown away. So it never touches the developer's own checkout. Event: `task.specced`.
+3. **Ready.** The core checks the spec against the contract. A spec from an agent Skelcrew started then waits for the developer's approval in the inbox. A spec from a session the developer claimed needs no approval, because the developer worked it out with the agent. A spec the developer wrote by hand needs none either. When spec\_approval is always, only the developer moves a task to Ready, in one of those three ways. Agents and plugins can never do it. A delegated issue follows the same rules. Event: `task.ready`.
 4. **Dispatch.** The core asks the version control plugin for a worktree on a branch named after the task, such as `task/12-csv-export`. Then either the session plugin starts the harness in it with the develop skill, or the developer starts the develop skill in their own harness. Each build of a task starts fresh from main on its own branch. If the task is sent back to spec and built again, the new branch is `task/12-csv-export-2`, and the old one is kept for reference. Before any worktree is removed, its uncommitted changes are committed to its branch, so no work is lost. Event: `task.dispatched`.
 5. **Develop.** The agent works and reports through the CLI. If it needs information, it raises one clear question and the task stays In progress. If it cannot continue at all, it reports giving up; only the core moves a task to Blocked. Event when blocked: `task.blocked`.
 6. **Checks and review.** The core runs the gates: local check commands, remote check results from plugins, then a review by a fresh agent session. Failures return to the developing agent; repeated failures block the task with a reason. Event: `task.checks_passed`.
@@ -160,12 +160,16 @@ A task moves through six phases: Idea, Spec, Ready, In progress, Checks, Done. A
 
 **Who does the work.** Every phase with an agent in it can run two ways:
 
-- **In the background.** The scheduler starts an agent when a slot is free. Nobody watches it, and its questions go to the inbox. This is the default.
-- **Attended.** The developer starts the skill in their own harness, such as `/develop 12`. The skill claims the task through the CLI, and the core accepts only if the task is waiting to start and a slot is free. The developer watches it work and answers its questions in the conversation.
+- **In the background.** The scheduler starts an agent when a slot is free. Nobody watches it, and its questions go to the inbox. This is the default. `background: false` in `workflow.yml` switches it off, so nothing starts until the developer claims it.
+- **Attended.** The developer starts the skill in their own harness, such as `/develop 12`. The skill claims the task through the CLI, and the core accepts only if the task is waiting to start and a slot is free. Claiming an Idea asks for its spec and claims it in one step, so the scheduler can't start a background agent in between. The developer watches it work and answers its questions in the conversation.
 
 Both take a slot under `max_running`, report through the CLI, and follow the same rules. The only differences are who pressed start and where questions go. A task can mix them: the developer works out a rewrite's spec attended, and a background agent builds it.
 
 Skelcrew cannot stop a session it did not start. When the core lets go of an attended session, because its task was blocked or dropped, the session's next CLI call is refused, and the skill stops there. Nothing it reports after that counts.
+
+With background runs on, a task starts building as soon as it is Ready. To build a task attended, the developer switches background runs off first.
+
+**When a background agent stops.** A background agent may end its turn and wait, for the developer's answer to its question or for its checks. It keeps its slot while it waits. The answer, or a failed check, wakes it again where it left off. If it stops any other way before it reports, such as by crashing, the core blocks the task with the reason "agent stopped". The inbox shows the agent's last line of output. The harness must be able to wake an agent, so a harness that can't is only used attended.
 
 ## Projects
 
@@ -230,7 +234,7 @@ Item types:
 
 - **Question:** from a background agent, in spec or development, with two to four options plus free text. An attended agent asks in the conversation instead.
 - **Approval:** a finished spec, or a merge touching critical paths, shown as a summary with approve or send back. A merge also links to its draft pull request, when there is one, for reading the diff. A spec sent back returns to the spec agent with the developer's note. A merge sent back returns to In progress with the note.
-- **Blocked:** a task the core stopped, with its reason (ran out of attempts, safety cap reached, agent gave up, worktree or session failed) and options that fit it: retry, send back to spec, or drop. Retry resets the attempt count and the safety cap; the record keeps the totals. Only the core blocks tasks; agents ask questions or report giving up.
+- **Blocked:** a task the core stopped, with its reason (ran out of attempts, safety cap reached, agent gave up, agent stopped, worktree or session failed) and options that fit it: retry, send back to spec, or drop. Retry resets the attempt count and the safety cap; the record keeps the totals. Only the core blocks tasks; agents ask questions or report giving up.
 
   A blocked task keeps its phase and its worktree, but its agent is stopped, so it does not hold a slot while it waits. A task blocked during checks goes back to In progress. Retry puts the task back in the queue. When a slot is free, a new agent starts in the same worktree, with the last failure as its brief.
 - **Revert failed:** version control couldn't revert a merged task, for example on a conflict. The task stays Done, and the item says why, so the developer can revert it by hand or try again.
@@ -252,7 +256,7 @@ Each task entry contains:
 - what shipped, and the task it came from
 - decisions the developer made along the way
 - gate results and whether it merged automatically or was approved
-- cost and time spent
+- tokens and time spent
 - any later revert and its reason
 
 Entries roll up into a daily digest. Because the record is a projection of the event log, it can be rebuilt or audited at any time. Because it is plain files in git, it outlives Skelcrew and stays readable anywhere.
@@ -264,15 +268,15 @@ Skelcrew traces tasks itself and links to the harness for agent-level detail; it
 **Tracing:**
 
 - Task level: the event log is the trace, owned by Skelcrew.
-- Agent level: prompts, tool calls and outputs stay in the harness's own session transcripts. Skelcrew passes the task ID into each session as an environment variable and stores the session ID on the task, linking rather than copying.
+- Agent level: prompts, tool calls and outputs stay in the harness's own session transcripts. Skelcrew passes the task number and its own session name into each agent as environment variables. It stores the harness's own session ID next to that name, linking rather than copying.
 - An optional tracing plugin can export to a tool like Langfuse. Traces may contain code, paths and secrets and are treated as sensitive.
 
 **Costs:**
 
-- Token usage per task and per phase, read from session transcripts and shown as an estimated cost at API prices, even on a subscription.
+- Tokens and time per task and per phase, read from the agent's output by its harness profile. Skelcrew reports tokens and minutes, never money. Each harness counts tokens its own way, so numbers compare well within one harness, not across two. Claude Code's count leaves out cache reads, which are tokens the model reads again from earlier in the conversation. They would otherwise swamp the rest, so they are shown on their own line.
 - A safety cap per task: one default limit on tokens and wall-clock time, catching agents stuck in a loop within a session. A task that reaches it moves to Blocked with the reason safety cap reached. Configurable per-task budgets come later, once the cap shows what the right numbers are.
 - Later: quota-aware scheduling, so dispatch slows or pauses near the plan's limits instead of starting tasks that will stall halfway.
-- Cost appears in every record entry and is one of the metrics evals compare.
+- Tokens and time appear in every record entry and are among the metrics evals compare.
 
 ## Retrieval and learnings
 
@@ -311,8 +315,9 @@ A plugin connects Skelcrew to another tool. Plugins bring information in and car
 
 Notes:
 
-- **Harnesses** are likely profiles rather than code: a command template, skills folder and flags. A code plugin only when a harness does something unusual.
-- **Process runner** runs the agent in a pseudo terminal, detached, logging output per task. State comes from the agent's reports through the CLI.
+- **Harnesses** are profiles. A profile says how to start its agent on a task with nobody watching, how to wake an agent that ended its turn with a message, and how to read the tokens it used. The core, the daemon and the process runner never assume which agent they run. Everything specific to one agent, such as Claude Code's flags, lives in its profile.
+- **Permissions follow the harness's own settings.** A background agent may do what the developer's settings for that harness allow. Anything that would ask the developer is refused, since nobody is there to answer. For example, the rules `skelcrew init` adds to ask before approve and reject become refusals in the background.
+- **Process runner** runs the profile's command as a child process in the task's worktree, logging output per task. It notices when the process ends, and finds running agents again after the daemon restarts. State comes from the agent's reports through the CLI.
 - **Version control plugins** assume a git repository, for now, to keep things simple. A plugin changes how git is used, as Jujutsu would, not whether. The aim is to not assume git later, but the core stores commits as git hashes, so a repository like SVN would need changes to the core as well as a plugin.
 - **Work source plugins** translate Skelcrew's phases into the tool's states and turn manual changes (an issue dragged to Done) into signals the core validates.
 - **Linear** delegation uses its agent API, which requires a public webhook, so it arrives with a hosted relay. Polling for tagged issues works without one.
@@ -345,6 +350,7 @@ checks:
 main_branch: main
 max_attempts: 3
 max_running: 2
+background: true
 spec_approval: always
 review:
   model: different
@@ -385,6 +391,10 @@ Add a CSV export button to the reports page.
 
 Skelcrew runs where a git repository starts, the folder that holds `.git`. A folder inside a repository, such as one project in a repository that holds several, isn't supported yet.
 
+`background` lets the scheduler start agents itself. It is `true` when left out. With `false`, a task waits until the developer claims it.
+
+`spec_approval: always` makes a spec from an agent Skelcrew started wait for the developer's approval. A spec from a session the developer claimed, or written by hand, needs none. `never` makes every complete spec Ready at once.
+
 `main_branch` is the branch tasks start from and merge into. It is `main` when left out. The daemon refuses to start if the branch doesn't exist.
 
 ## CLI
@@ -401,15 +411,16 @@ Skelcrew runs where a git repository starts, the folder that holds `.git`. A fol
 | `skelcrew spec <task>` | Ask for an Idea to be specced |
 | `skelcrew approve <task>` | Approve a spec or a critical merge; `reject` sends it back |
 | `skelcrew reject <task> "<note>"` | Send a spec back to Spec, or a critical merge back to In progress, with a note saying what to change |
-| `skelcrew retry <task>` | Retry a blocked task; it waits for a claim until Skelcrew starts agents itself |
+| `skelcrew retry <task>` | Retry a blocked task; a new agent starts when a slot is free, or the developer claims it |
 | `skelcrew drop <task>` | Drop a task that is not done; stops its session and removes its worktree if it has them |
 | `skelcrew inbox` | List open decisions and answer them |
+| `skelcrew answer <task> "<text>"` | Answer a background agent's question; the answer wakes the agent |
 | `skelcrew status` | Show tasks by project and phase, and running sessions; a merge that waits gets its pull request's link |
 | `skelcrew attach <task>` | Follow a task's session or log |
 | `skelcrew log <task>` | Show a task's events and record entry |
 | `skelcrew check` | Decide whether a diff is safe to auto-merge; runs standalone in CI |
 | `skelcrew revert <task> "<reason>"` | Undo a merged task and return it to Spec with the reason |
-| `skelcrew claim <task>` | Start work on a task in this harness session, attended; used by the skills |
+| `skelcrew claim <task>` | Start work on a task in this harness session, attended; claiming an Idea asks for its spec too; used by the skills |
 | `skelcrew submit`, `done`, `ask`, `give-up` | How agents report: a finished spec, work done, a question, giving up; used by the skills. `done` waits until the local checks finish and prints the result, so an attended agent hears about a failed gate. Skelcrew can't send anything into a harness session it didn't start. |
 
 The TUI and the skills are both built on these commands, so neither can do what the other cannot.
@@ -455,7 +466,8 @@ v1 is single user, runs on one machine, and ships only the plugins its first use
 ## Open questions
 
 - [ ] Who does the review gate: a fresh Claude session, a different model, or both depending on risk?
-- [ ] How is billing handled if programmatic use of subscriptions changes? The process runner keeps sessions interactive, but a fallback to API keys may be needed.
+- [ ] How is billing handled if programmatic use of subscriptions changes? The Claude Code profile runs `claude -p`, with nobody watching, so a fallback to API keys may be needed.
+- [ ] How can the daemon tell an agent's call from the developer's for certain? An agent runs as the same user, so it can remove its session name and look like the developer. The harness's settings make this harder, not impossible. It matters most for claims, since a spec from a claimed session needs no approval.
 - [ ] Should the built-in board and GitHub Issues coexist in one repository, or is it one work source per project?
 - [ ] Which critical paths should `skelcrew init` suggest by default?
 - [ ] Should every learning proposal count as critical, or only changes to `AGENTS.md`?
