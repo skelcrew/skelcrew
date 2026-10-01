@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { config as base, head } from "../test/fixtures";
+import { config as base, head, specWorktree } from "../test/fixtures";
 import { evolveTask } from "./evolve";
 import { ProjectId, SessionId, TaskId } from "./ids";
 import { schedule } from "./schedule";
@@ -36,22 +36,24 @@ function task(n: number, project: ProjectId | null, ...bodies: EventBody[]): Tas
 
 // The events that bring a task to each state.
 const specQueued: EventBody[] = [{ type: "task.spec_requested" }];
-// Request numbers follow the lifecycle: 1 starts the spec agent, 2 creates
-// the worktree, 3 starts the develop agent, 4 runs the gate, 5 merges.
+// Request numbers follow the lifecycle: 1 creates the spec worktree, 2
+// starts the spec agent, 3 creates the worktree, 4 starts the develop
+// agent, 5 runs the gate, 6 merges.
 const specRunning: EventBody[] = [
   ...specQueued,
   { type: "task.dispatch_started", request: 1 },
+  { type: "task.spec_worktree_created", worktree: specWorktree, request: 2 },
   { type: "task.spec_session_started", session },
 ];
 const awaitingApproval: EventBody[] = [...specRunning, { type: "task.specced", spec, by: "agent" }];
 const readyQueued: EventBody[] = [...awaitingApproval, { type: "task.ready" }];
 const creatingWorktree: EventBody[] = [
   ...readyQueued,
-  { type: "task.dispatch_started", request: 2 },
+  { type: "task.dispatch_started", request: 3 },
 ];
 const developRunning: EventBody[] = [
   ...creatingWorktree,
-  { type: "task.worktree_created", worktree, request: 3 },
+  { type: "task.worktree_created", worktree, request: 4 },
   { type: "task.dispatched", session },
 ];
 const blocked: EventBody[] = [
@@ -65,7 +67,7 @@ const awaitingMerge: EventBody[] = [
     type: "task.done_reported",
     branch: { head, commits: 1, changedFiles: ["a.ts"] },
     gate: "local",
-    request: 4,
+    request: 5,
   },
   { type: "task.gate_passed", gate: "local", next: null },
   { type: "task.checks_passed" },
@@ -96,7 +98,13 @@ describe("schedule", () => {
   test("counts a spec session you claimed against the limit", () => {
     const you = SessionId.parse("you-1");
     const tasks = [
-      task(1, null, ...specQueued, { type: "task.claimed", session: you, request: null }),
+      task(
+        1,
+        null,
+        ...specQueued,
+        { type: "task.claimed", session: you, request: 1 },
+        { type: "task.spec_worktree_created", worktree: specWorktree, request: 1 },
+      ),
       task(2, null, ...specQueued),
       task(3, null, ...specQueued),
     ];
@@ -109,7 +117,7 @@ describe("schedule", () => {
       task(2, null, ...specQueued, { type: "task.dispatch_started", request: 1 }),
       task(3, null, ...specQueued),
     ];
-    // Two starts are out: #1's worktree and #2's spec agent.
+    // Two starts are out: #1's worktree and #2's spec worktree.
     expect(schedule(tasks, projects, config, 2)).toEqual([]);
   });
 
@@ -135,11 +143,11 @@ describe("schedule", () => {
         type: "task.done_reported",
         branch: { head, commits: 1, changedFiles: ["a.ts"] },
         gate: "local",
-        request: 4,
+        request: 5,
       },
       { type: "task.gate_passed", gate: "local", next: null },
       { type: "task.checks_passed" },
-      { type: "task.merge_started", request: 5 },
+      { type: "task.merge_started", request: 6 },
     ];
     const tasks = [
       task(1, null, ...merging),

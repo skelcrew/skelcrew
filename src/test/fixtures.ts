@@ -25,6 +25,8 @@ export const spec: Spec = {
 
 export const session = SessionId.parse("session-1");
 export const worktree = { path: "/repo/.worktrees/12", branch: "task/12-csv-export" };
+// The copy of main #12's spec is written in.
+export const specWorktree = { path: "/repo/.skelcrew/spec-worktrees/12-csv-export" };
 export const commit = CommitSha.parse("a".repeat(40));
 // The commit at a branch's tip when its agent reports done.
 export const head = CommitSha.parse("d".repeat(40));
@@ -55,6 +57,12 @@ export function backgroundSpecced(
     { ...stamp, type: "task.created", title, project, source: null },
     { ...stamp, type: "task.spec_requested" },
     { ...stamp, type: "task.dispatch_started", request: 1 },
+    {
+      ...stamp,
+      type: "task.spec_worktree_created",
+      worktree: { path: `/repo/.skelcrew/spec-worktrees/${taskId}` },
+      request: 2,
+    },
     { ...stamp, type: "task.spec_session_started", session: SessionId.parse(`agent-${taskId}`) },
     { ...stamp, type: "task.specced", spec, by: "agent" },
   ];

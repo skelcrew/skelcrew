@@ -1,11 +1,11 @@
 // Old logs must stay readable. v1-events.jsonl holds real events, written
 // by the simulator in the version 1 shape, one per line.
 //
-// Until Skelcrew first runs on a real repo, no real log exists, so an
-// event's shape may still change. The fixture is then regenerated in the
-// same commit, and the commit says so. From the first real run on, it is
-// never edited or regenerated: a change that breaks this test needs a way to
-// read old events, not a new fixture.
+// Until dogfooding starts, no log has to last, so an event's shape may
+// still change. The fixture is then regenerated in the same commit, and the
+// commit says so. Once dogfooding starts, it is never edited or
+// regenerated: a change that breaks this test needs a way to read old
+// events, not a new fixture.
 
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -19,7 +19,7 @@ const lines = readFileSync(join(import.meta.dir, "fixtures", "v1-events.jsonl"),
   .filter((line) => line !== "");
 
 test("every version 1 event still reads back", () => {
-  expect(lines.length).toBe(56);
+  expect(lines.length).toBe(59);
   for (const line of lines) {
     const parsed = parseTaskEvent(JSON.parse(line));
     expect(parsed.ok ? "ok" : parsed.reason).toBe("ok");

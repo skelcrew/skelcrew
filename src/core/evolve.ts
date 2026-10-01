@@ -113,14 +113,60 @@ function inIdea(task: TaskIn<"idea">, event: TaskEvent): EvolvedTask {
 
 function inSpec(task: TaskIn<"spec">, event: TaskEvent): EvolvedTask {
   switch (event.type) {
+    // A spec worktree is made first, for the spec agent or for your claim.
     case "task.dispatch_started":
-      return ok(withRequest(task, event.request, { kind: "starting", request: event.request }));
-
-    case "task.spec_session_started":
-      return ok({ ...task, step: { kind: "running", session: event.session } });
+      return ok(
+        withRequest(task, event.request, {
+          kind: "creating_worktree",
+          request: event.request,
+          claimedBy: null,
+        }),
+      );
 
     case "task.claimed":
-      return ok({ ...task, step: { kind: "claimed", session: event.session } });
+      if (event.request === null) {
+        return refuse(event, `#${task.id} needs a spec worktree before your session can work`);
+      }
+      return ok(
+        withRequest(task, event.request, {
+          kind: "creating_worktree",
+          request: event.request,
+          claimedBy: event.session,
+        }),
+      );
+
+    // For your claim, your session works in it now. Otherwise the spec
+    // agent starts in it, on the event's request.
+    case "task.spec_worktree_created": {
+      const { step } = task;
+      if (step.kind !== "creating_worktree") {
+        return refuse(event, `#${task.id} isn't making a spec worktree`);
+      }
+      if (step.claimedBy !== null) {
+        return ok({
+          ...task,
+          step: { kind: "claimed", session: step.claimedBy, worktree: event.worktree },
+        });
+      }
+      return ok(
+        withRequest(task, event.request, {
+          kind: "starting",
+          request: event.request,
+          worktree: event.worktree,
+        }),
+      );
+    }
+
+    case "task.spec_session_started": {
+      const { step } = task;
+      if (step.kind !== "starting") {
+        return refuse(event, `#${task.id} has no spec worktree yet`);
+      }
+      return ok({
+        ...task,
+        step: { kind: "running", session: event.session, worktree: step.worktree },
+      });
+    }
 
     // The spec agent is stopped once a spec is stored, so a question it
     // left open could never be answered.

@@ -26,13 +26,23 @@ exports[`golden stories happy path: from an idea to a merged commit 1`] = `
   },
   {
     "at": 4000,
+    "request": 2,
+    "taskId": 12,
+    "type": "task.spec_worktree_created",
+    "v": 1,
+    "worktree": {
+      "path": "/repo/.skelcrew/spec-worktrees/12-csv-export",
+    },
+  },
+  {
+    "at": 5000,
     "session": "spec-1",
     "taskId": 12,
     "type": "task.spec_session_started",
     "v": 1,
   },
   {
-    "at": 5000,
+    "at": 6000,
     "by": "agent",
     "spec": {
       "acceptance": [
@@ -46,21 +56,21 @@ exports[`golden stories happy path: from an idea to a merged commit 1`] = `
     "v": 1,
   },
   {
-    "at": 6000,
+    "at": 7000,
     "taskId": 12,
     "type": "task.ready",
     "v": 1,
   },
   {
-    "at": 7000,
-    "request": 2,
+    "at": 8000,
+    "request": 3,
     "taskId": 12,
     "type": "task.dispatch_started",
     "v": 1,
   },
   {
-    "at": 8000,
-    "request": 3,
+    "at": 9000,
+    "request": 4,
     "taskId": 12,
     "type": "task.worktree_created",
     "v": 1,
@@ -70,14 +80,14 @@ exports[`golden stories happy path: from an idea to a merged commit 1`] = `
     },
   },
   {
-    "at": 9000,
+    "at": 10000,
     "session": "develop-1",
     "taskId": 12,
     "type": "task.dispatched",
     "v": 1,
   },
   {
-    "at": 10000,
+    "at": 11000,
     "branch": {
       "changedFiles": [
         "src/reports/export.ts",
@@ -86,24 +96,24 @@ exports[`golden stories happy path: from an idea to a merged commit 1`] = `
       "head": "dddddddddddddddddddddddddddddddddddddddd",
     },
     "gate": "local",
-    "request": 4,
+    "request": 5,
     "taskId": 12,
     "type": "task.done_reported",
     "v": 1,
   },
   {
-    "at": 11000,
+    "at": 12000,
     "gate": "local",
     "next": {
       "gate": "review",
-      "request": 5,
+      "request": 6,
     },
     "taskId": 12,
     "type": "task.gate_passed",
     "v": 1,
   },
   {
-    "at": 12000,
+    "at": 13000,
     "gate": "review",
     "next": null,
     "taskId": 12,
@@ -111,20 +121,20 @@ exports[`golden stories happy path: from an idea to a merged commit 1`] = `
     "v": 1,
   },
   {
-    "at": 12000,
+    "at": 13000,
     "taskId": 12,
     "type": "task.checks_passed",
     "v": 1,
   },
   {
-    "at": 12000,
-    "request": 6,
+    "at": 13000,
+    "request": 7,
     "taskId": 12,
     "type": "task.merge_started",
     "v": 1,
   },
   {
-    "at": 13000,
+    "at": 14000,
     "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "taskId": 12,
     "type": "task.merged",
@@ -159,13 +169,23 @@ exports[`golden stories blocked: the local gate fails three times, you retry, an
   },
   {
     "at": 4000,
+    "request": 2,
+    "taskId": 12,
+    "type": "task.spec_worktree_created",
+    "v": 1,
+    "worktree": {
+      "path": "/repo/.skelcrew/spec-worktrees/12-csv-export",
+    },
+  },
+  {
+    "at": 5000,
     "session": "spec-1",
     "taskId": 12,
     "type": "task.spec_session_started",
     "v": 1,
   },
   {
-    "at": 5000,
+    "at": 6000,
     "by": "agent",
     "spec": {
       "acceptance": [
@@ -179,21 +199,21 @@ exports[`golden stories blocked: the local gate fails three times, you retry, an
     "v": 1,
   },
   {
-    "at": 6000,
+    "at": 7000,
     "taskId": 12,
     "type": "task.ready",
     "v": 1,
   },
   {
-    "at": 7000,
-    "request": 2,
+    "at": 8000,
+    "request": 3,
     "taskId": 12,
     "type": "task.dispatch_started",
     "v": 1,
   },
   {
-    "at": 8000,
-    "request": 3,
+    "at": 9000,
+    "request": 4,
     "taskId": 12,
     "type": "task.worktree_created",
     "v": 1,
@@ -203,39 +223,14 @@ exports[`golden stories blocked: the local gate fails three times, you retry, an
     },
   },
   {
-    "at": 9000,
+    "at": 10000,
     "session": "develop-1",
     "taskId": 12,
     "type": "task.dispatched",
     "v": 1,
   },
   {
-    "at": 10000,
-    "branch": {
-      "changedFiles": [
-        "src/reports/export.ts",
-      ],
-      "commits": 3,
-      "head": "dddddddddddddddddddddddddddddddddddddddd",
-    },
-    "gate": "local",
-    "request": 4,
-    "taskId": 12,
-    "type": "task.done_reported",
-    "v": 1,
-  },
-  {
     "at": 11000,
-    "failure": {
-      "step": "local",
-      "summary": "2 tests failed in export.test.ts",
-    },
-    "taskId": 12,
-    "type": "task.gate_failed",
-    "v": 1,
-  },
-  {
-    "at": 12000,
     "branch": {
       "changedFiles": [
         "src/reports/export.ts",
@@ -250,7 +245,7 @@ exports[`golden stories blocked: the local gate fails three times, you retry, an
     "v": 1,
   },
   {
-    "at": 13000,
+    "at": 12000,
     "failure": {
       "step": "local",
       "summary": "2 tests failed in export.test.ts",
@@ -260,7 +255,7 @@ exports[`golden stories blocked: the local gate fails three times, you retry, an
     "v": 1,
   },
   {
-    "at": 14000,
+    "at": 13000,
     "branch": {
       "changedFiles": [
         "src/reports/export.ts",
@@ -275,7 +270,7 @@ exports[`golden stories blocked: the local gate fails three times, you retry, an
     "v": 1,
   },
   {
-    "at": 15000,
+    "at": 14000,
     "failure": {
       "step": "local",
       "summary": "2 tests failed in export.test.ts",
@@ -286,6 +281,31 @@ exports[`golden stories blocked: the local gate fails three times, you retry, an
   },
   {
     "at": 15000,
+    "branch": {
+      "changedFiles": [
+        "src/reports/export.ts",
+      ],
+      "commits": 3,
+      "head": "dddddddddddddddddddddddddddddddddddddddd",
+    },
+    "gate": "local",
+    "request": 7,
+    "taskId": 12,
+    "type": "task.done_reported",
+    "v": 1,
+  },
+  {
+    "at": 16000,
+    "failure": {
+      "step": "local",
+      "summary": "2 tests failed in export.test.ts",
+    },
+    "taskId": 12,
+    "type": "task.gate_failed",
+    "v": 1,
+  },
+  {
+    "at": 16000,
     "reason": {
       "failure": {
         "step": "local",
@@ -298,27 +318,27 @@ exports[`golden stories blocked: the local gate fails three times, you retry, an
     "v": 1,
   },
   {
-    "at": 17000,
+    "at": 18000,
     "taskId": 12,
     "type": "task.unblocked",
     "v": 1,
   },
   {
-    "at": 18000,
-    "request": 7,
+    "at": 19000,
+    "request": 8,
     "taskId": 12,
     "type": "task.dispatch_started",
     "v": 1,
   },
   {
-    "at": 19000,
+    "at": 20000,
     "session": "develop-1",
     "taskId": 12,
     "type": "task.dispatched",
     "v": 1,
   },
   {
-    "at": 20000,
+    "at": 21000,
     "branch": {
       "changedFiles": [
         "src/reports/export.ts",
@@ -327,24 +347,24 @@ exports[`golden stories blocked: the local gate fails three times, you retry, an
       "head": "dddddddddddddddddddddddddddddddddddddddd",
     },
     "gate": "local",
-    "request": 8,
+    "request": 9,
     "taskId": 12,
     "type": "task.done_reported",
     "v": 1,
   },
   {
-    "at": 21000,
+    "at": 22000,
     "gate": "local",
     "next": {
       "gate": "review",
-      "request": 9,
+      "request": 10,
     },
     "taskId": 12,
     "type": "task.gate_passed",
     "v": 1,
   },
   {
-    "at": 22000,
+    "at": 23000,
     "gate": "review",
     "next": null,
     "taskId": 12,
@@ -352,20 +372,20 @@ exports[`golden stories blocked: the local gate fails three times, you retry, an
     "v": 1,
   },
   {
-    "at": 22000,
+    "at": 23000,
     "taskId": 12,
     "type": "task.checks_passed",
     "v": 1,
   },
   {
-    "at": 22000,
-    "request": 10,
+    "at": 23000,
+    "request": 11,
     "taskId": 12,
     "type": "task.merge_started",
     "v": 1,
   },
   {
-    "at": 23000,
+    "at": 24000,
     "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "taskId": 12,
     "type": "task.merged",
@@ -400,13 +420,23 @@ exports[`golden stories escalated: a critical file waits for your approval, then
   },
   {
     "at": 4000,
+    "request": 2,
+    "taskId": 12,
+    "type": "task.spec_worktree_created",
+    "v": 1,
+    "worktree": {
+      "path": "/repo/.skelcrew/spec-worktrees/12-csv-export",
+    },
+  },
+  {
+    "at": 5000,
     "session": "spec-1",
     "taskId": 12,
     "type": "task.spec_session_started",
     "v": 1,
   },
   {
-    "at": 5000,
+    "at": 6000,
     "by": "agent",
     "spec": {
       "acceptance": [
@@ -420,21 +450,21 @@ exports[`golden stories escalated: a critical file waits for your approval, then
     "v": 1,
   },
   {
-    "at": 6000,
+    "at": 7000,
     "taskId": 12,
     "type": "task.ready",
     "v": 1,
   },
   {
-    "at": 7000,
-    "request": 2,
+    "at": 8000,
+    "request": 3,
     "taskId": 12,
     "type": "task.dispatch_started",
     "v": 1,
   },
   {
-    "at": 8000,
-    "request": 3,
+    "at": 9000,
+    "request": 4,
     "taskId": 12,
     "type": "task.worktree_created",
     "v": 1,
@@ -444,14 +474,14 @@ exports[`golden stories escalated: a critical file waits for your approval, then
     },
   },
   {
-    "at": 9000,
+    "at": 10000,
     "session": "develop-1",
     "taskId": 12,
     "type": "task.dispatched",
     "v": 1,
   },
   {
-    "at": 10000,
+    "at": 11000,
     "branch": {
       "changedFiles": [
         "src/reports/export.ts",
@@ -461,24 +491,24 @@ exports[`golden stories escalated: a critical file waits for your approval, then
       "head": "dddddddddddddddddddddddddddddddddddddddd",
     },
     "gate": "local",
-    "request": 4,
+    "request": 5,
     "taskId": 12,
     "type": "task.done_reported",
     "v": 1,
   },
   {
-    "at": 11000,
+    "at": 12000,
     "gate": "local",
     "next": {
       "gate": "review",
-      "request": 5,
+      "request": 6,
     },
     "taskId": 12,
     "type": "task.gate_passed",
     "v": 1,
   },
   {
-    "at": 12000,
+    "at": 13000,
     "gate": "review",
     "next": null,
     "taskId": 12,
@@ -486,13 +516,13 @@ exports[`golden stories escalated: a critical file waits for your approval, then
     "v": 1,
   },
   {
-    "at": 12000,
+    "at": 13000,
     "taskId": 12,
     "type": "task.checks_passed",
     "v": 1,
   },
   {
-    "at": 12000,
+    "at": 13000,
     "criticalFiles": [
       "src/auth/login.ts",
     ],
@@ -501,14 +531,14 @@ exports[`golden stories escalated: a critical file waits for your approval, then
     "v": 1,
   },
   {
-    "at": 13000,
-    "request": 6,
+    "at": 14000,
+    "request": 7,
     "taskId": 12,
     "type": "task.merge_started",
     "v": 1,
   },
   {
-    "at": 14000,
+    "at": 15000,
     "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "taskId": 12,
     "type": "task.merged",
@@ -543,13 +573,23 @@ exports[`golden stories reverted: a merged task is undone and goes back to Spec 
   },
   {
     "at": 4000,
+    "request": 2,
+    "taskId": 12,
+    "type": "task.spec_worktree_created",
+    "v": 1,
+    "worktree": {
+      "path": "/repo/.skelcrew/spec-worktrees/12-csv-export",
+    },
+  },
+  {
+    "at": 5000,
     "session": "spec-1",
     "taskId": 12,
     "type": "task.spec_session_started",
     "v": 1,
   },
   {
-    "at": 5000,
+    "at": 6000,
     "by": "agent",
     "spec": {
       "acceptance": [
@@ -563,21 +603,21 @@ exports[`golden stories reverted: a merged task is undone and goes back to Spec 
     "v": 1,
   },
   {
-    "at": 6000,
+    "at": 7000,
     "taskId": 12,
     "type": "task.ready",
     "v": 1,
   },
   {
-    "at": 7000,
-    "request": 2,
+    "at": 8000,
+    "request": 3,
     "taskId": 12,
     "type": "task.dispatch_started",
     "v": 1,
   },
   {
-    "at": 8000,
-    "request": 3,
+    "at": 9000,
+    "request": 4,
     "taskId": 12,
     "type": "task.worktree_created",
     "v": 1,
@@ -587,14 +627,14 @@ exports[`golden stories reverted: a merged task is undone and goes back to Spec 
     },
   },
   {
-    "at": 9000,
+    "at": 10000,
     "session": "develop-1",
     "taskId": 12,
     "type": "task.dispatched",
     "v": 1,
   },
   {
-    "at": 10000,
+    "at": 11000,
     "branch": {
       "changedFiles": [
         "src/reports/export.ts",
@@ -603,24 +643,24 @@ exports[`golden stories reverted: a merged task is undone and goes back to Spec 
       "head": "dddddddddddddddddddddddddddddddddddddddd",
     },
     "gate": "local",
-    "request": 4,
+    "request": 5,
     "taskId": 12,
     "type": "task.done_reported",
     "v": 1,
   },
   {
-    "at": 11000,
+    "at": 12000,
     "gate": "local",
     "next": {
       "gate": "review",
-      "request": 5,
+      "request": 6,
     },
     "taskId": 12,
     "type": "task.gate_passed",
     "v": 1,
   },
   {
-    "at": 12000,
+    "at": 13000,
     "gate": "review",
     "next": null,
     "taskId": 12,
@@ -628,35 +668,35 @@ exports[`golden stories reverted: a merged task is undone and goes back to Spec 
     "v": 1,
   },
   {
-    "at": 12000,
+    "at": 13000,
     "taskId": 12,
     "type": "task.checks_passed",
     "v": 1,
   },
   {
-    "at": 12000,
-    "request": 6,
+    "at": 13000,
+    "request": 7,
     "taskId": 12,
     "type": "task.merge_started",
     "v": 1,
   },
   {
-    "at": 13000,
+    "at": 14000,
     "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "taskId": 12,
     "type": "task.merged",
     "v": 1,
   },
   {
-    "at": 14000,
+    "at": 15000,
     "reason": "Export breaks on empty reports.",
-    "request": 7,
+    "request": 8,
     "taskId": 12,
     "type": "task.revert_started",
     "v": 1,
   },
   {
-    "at": 15000,
+    "at": 16000,
     "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "reason": "Export breaks on empty reports.",
     "taskId": 12,
@@ -664,8 +704,8 @@ exports[`golden stories reverted: a merged task is undone and goes back to Spec 
     "v": 1,
   },
   {
-    "at": 16000,
-    "request": 8,
+    "at": 17000,
+    "request": 9,
     "taskId": 12,
     "type": "task.dispatch_started",
     "v": 1,

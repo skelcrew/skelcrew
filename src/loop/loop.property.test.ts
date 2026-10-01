@@ -108,6 +108,8 @@ const outcomeOf = (taskId: TaskId, input: Input): [string, string] | null => {
       return [`${taskId}:${input.request}`, input.type];
     case "worktree_created":
     case "worktree_failed":
+    case "spec_worktree_created":
+    case "spec_worktree_failed":
       return [`${taskId}:${input.request}`, input.type];
     case "merged":
     case "merge_failed":
@@ -154,6 +156,15 @@ function messages(
         out.push(
           [taskId, { by: "plugin", type: "worktree_created", request, worktree }],
           [taskId, { by: "plugin", type: "worktree_failed", request, message: "No." }],
+        );
+        break;
+      }
+      case "create_spec_worktree": {
+        const { taskId, request } = command;
+        const worktree = { path: `/spec/${taskId}-${request}` };
+        out.push(
+          [taskId, { by: "plugin", type: "spec_worktree_created", request, worktree }],
+          [taskId, { by: "plugin", type: "spec_worktree_failed", request, message: "No." }],
         );
         break;
       }
@@ -234,7 +245,8 @@ function startsOut(commands: Command[], delivered: [TaskId, Input][]): Set<strin
     if (
       command.type === "start_spec_session" ||
       command.type === "start_develop_session" ||
-      command.type === "create_worktree"
+      command.type === "create_worktree" ||
+      command.type === "create_spec_worktree"
     ) {
       out.add(`${command.taskId}:${command.request}`);
     }
@@ -246,6 +258,8 @@ function startsOut(commands: Command[], delivered: [TaskId, Input][]): Set<strin
       case "session_crashed":
       case "worktree_created":
       case "worktree_failed":
+      case "spec_worktree_created":
+      case "spec_worktree_failed":
         out.delete(`${taskId}:${input.request}`);
         break;
       default:

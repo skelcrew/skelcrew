@@ -223,6 +223,24 @@ export class Simulator implements Tools {
         this.worktrees.delete(command.worktree.path);
         return;
 
+      // Spec worktrees count among the worktrees, so a test sees one left
+      // behind the same way.
+      case "create_spec_worktree": {
+        const path = `/sim/spec-worktrees/${command.taskId}-${command.request}`;
+        this.worktrees.add(path);
+        this.reply(command.taskId, {
+          by: "plugin",
+          type: "spec_worktree_created",
+          worktree: { path },
+          request: command.request,
+        });
+        return;
+      }
+
+      case "remove_spec_worktree":
+        this.worktrees.delete(command.worktree.path);
+        return;
+
       case "run_gate": {
         const key = `${command.taskId}:${command.gate}`;
         const run = this.gateRuns.get(key) ?? 0;

@@ -514,17 +514,23 @@ const claimResult = z.object({
     .nullable()
     .optional(),
   note: z.string().nullable().optional(),
-  worktree: z.object({ path: z.string(), branch: z.string() }).optional(),
+  // A build's worktree has a branch. A spec's copy of main has none.
+  worktree: z
+    .union([z.object({ path: z.string(), branch: z.string() }), z.object({ path: z.string() })])
+    .optional(),
   failure: z.string().optional(),
 });
 
 function claimed(task: TaskId, claim: z.infer<typeof claimResult>): string[] {
   const report = claim.phase === "spec" ? "submit" : "done";
+  const { worktree } = claim;
   const lines = [
     `Claimed #${task}. It is in ${phaseNames[claim.phase]}.`,
-    ...(claim.worktree === undefined
+    ...(worktree === undefined
       ? []
-      : [`Work in ${claim.worktree.path}, on the branch ${claim.worktree.branch}.`]),
+      : "branch" in worktree
+        ? [`Work in ${worktree.path}, on the branch ${worktree.branch}.`]
+        : [`Work in ${worktree.path}, a fresh copy of main.`]),
     `Your session is ${claim.session}.`,
     "Set SKELCREW_SESSION to it for each report, like this:",
     `SKELCREW_SESSION=${claim.session} skelcrew ${report} ${task}`,

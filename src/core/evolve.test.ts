@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { commit, head, id, session, spec, worktree } from "../test/fixtures";
+import { commit, head, id, session, spec, specWorktree, worktree } from "../test/fixtures";
 import { evolveTask } from "./evolve";
 import { CommitSha, ProjectId, SessionId, TaskId } from "./ids";
 import type { EventBody, Spec, Task, TaskEvent } from "./types";
@@ -147,20 +147,58 @@ describe("every other field", () => {
 const inSpec: Body[] = [created, { type: "task.spec_requested" }];
 const specced: Body[] = [...inSpec, { type: "task.specced", spec, by: "agent" }];
 
+// The spec worktree is made, then the agent starts in it. Each waits on
+// its own request.
+const specWorktreeMade: Body = (t) => ({
+  type: "task.spec_worktree_created",
+  worktree: specWorktree,
+  request: next(t),
+});
+
 describe("task.dispatch_started in Spec", () => {
-  test("marks the spec session as starting", () => {
+  test("waits for the spec worktree the agent will work in", () => {
     expect(replay(...inSpec, dispatch)).toMatchObject({
       phase: "spec",
-      step: { kind: "starting" },
+      step: { kind: "creating_worktree", request: 1, claimedBy: null },
+      requests: 1,
+    });
+  });
+});
+
+describe("task.spec_worktree_created", () => {
+  test("after a start, waits for the agent to start in it", () => {
+    expect(replay(...inSpec, dispatch, specWorktreeMade)).toMatchObject({
+      phase: "spec",
+      step: { kind: "starting", request: 2, worktree: specWorktree },
+      requests: 2,
+    });
+  });
+
+  test("is refused when no spec worktree is being made", () => {
+    expect(evolveTask(replay(...inSpec), event(specWorktreeMade(null)))).toEqual({
+      ok: false,
+      reason: "task.spec_worktree_created can't apply: #12 isn't making a spec worktree.",
     });
   });
 });
 
 describe("task.spec_session_started", () => {
-  test("stores the session, so a drop can stop it", () => {
+  test("stores the session and its spec worktree, so a drop can stop and remove them", () => {
     expect(
-      replay(...inSpec, dispatch, { type: "task.spec_session_started", session }),
-    ).toMatchObject({ phase: "spec", step: { kind: "running", session } });
+      replay(...inSpec, dispatch, specWorktreeMade, { type: "task.spec_session_started", session }),
+    ).toMatchObject({ phase: "spec", step: { kind: "running", session, worktree: specWorktree } });
+  });
+
+  test("is refused before the spec worktree exists", () => {
+    expect(
+      evolveTask(
+        replay(...inSpec, dispatch),
+        event({ type: "task.spec_session_started", session }),
+      ),
+    ).toEqual({
+      ok: false,
+      reason: "task.spec_session_started can't apply: #12 has no spec worktree yet.",
+    });
   });
 
   test("is refused outside Spec", () => {
@@ -553,7 +591,12 @@ const specQuestion = {
   askedAt: at,
 };
 const developQuestion = { ...specQuestion, from: "develop" as const };
-const specRunning: Body[] = [...inSpec, dispatch, { type: "task.spec_session_started", session }];
+const specRunning: Body[] = [
+  ...inSpec,
+  dispatch,
+  specWorktreeMade,
+  { type: "task.spec_session_started", session },
+];
 const capReached = { kind: "safety_cap" as const, usage: { tokens: 200_000, ms: 0 } };
 const outOfAttempts = { kind: "out_of_attempts" as const, failure: localFailed };
 
@@ -918,17 +961,46 @@ describe("leaving Checks", () => {
 describe("task.claimed", () => {
   const you = SessionId.parse("you-1");
 
+  const claimedSpec: Body = (t) => ({ type: "task.claimed", session: you, request: next(t) });
+  // Your session's spec worktree keeps the claim's request: no agent starts.
+  const yourSpecWorktree: Body = (t) => ({
+    type: "task.spec_worktree_created",
+    worktree: specWorktree,
+    request: t?.requests ?? 0,
+  });
+
+  test("in Spec, waits for a spec worktree for your session", () => {
+    expect(replay(...inSpec, claimedSpec)).toMatchObject({
+      phase: "spec",
+      step: { kind: "creating_worktree", request: 1, claimedBy: you },
+      requests: 1,
+    });
+  });
+
   // A separate step from an agent Skelcrew started, because a spec from
   // your session needs no approval.
-  test("makes your session the spec agent, as a claimed step", () => {
-    const task = replay(...inSpec, { type: "task.claimed", session: you, request: null });
-    expect(task).toMatchObject({ phase: "spec", step: { kind: "claimed", session: you } });
+  test("makes your session the spec agent once its spec worktree exists, as a claimed step", () => {
+    expect(replay(...inSpec, claimedSpec, yourSpecWorktree)).toMatchObject({
+      phase: "spec",
+      step: { kind: "claimed", session: you, worktree: specWorktree },
+      requests: 1,
+    });
+  });
+
+  test("is refused in Spec without a request for the spec worktree", () => {
+    expect(
+      evolveTask(replay(...inSpec), event({ type: "task.claimed", session: you, request: null })),
+    ).toEqual({
+      ok: false,
+      reason: "task.claimed can't apply: #12 needs a spec worktree before your session can work.",
+    });
   });
 
   test("lets a spec from your session make the task Ready", () => {
     const task = replay(
       ...inSpec,
-      { type: "task.claimed", session: you, request: null },
+      claimedSpec,
+      yourSpecWorktree,
       { type: "task.specced", spec, by: "agent" },
       { type: "task.ready" },
     );

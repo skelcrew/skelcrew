@@ -166,13 +166,21 @@ export type Brief = {
 // Spec, Ready and In progress all wait for a free slot before an agent
 // starts. The steps are separate states because each waits on a different
 // reply from the shell, and a crash in between must replay to the right place.
+//
+// Every spec is written in a spec worktree of its own, whoever writes it.
+// It is made first, and removed whenever the spec agent or your claim
+// goes. `claimedBy` remembers your session while yours is being made, so
+// once it exists, your session is the spec agent and no agent is started.
 export type SpecStep =
   | { kind: "queued" } // waiting for a slot (maxRunning)
-  | { kind: "starting"; request: number } // start_spec_session sent, no reply yet
-  | { kind: "running"; session: SessionId } // an agent Skelcrew started; stored so drop can stop it
+  | { kind: "creating_worktree"; request: number; claimedBy: SessionId | null }
+  | { kind: "starting"; request: number; worktree: SpecWorktree } // start_spec_session sent
+  // An agent Skelcrew started. Stored so a drop can stop it and remove its
+  // spec worktree.
+  | { kind: "running"; session: SessionId; worktree: SpecWorktree }
   // Your session, after a claim. You worked the spec out with it, so its
   // spec needs no approval. It takes a slot like any agent.
-  | { kind: "claimed"; session: SessionId }
+  | { kind: "claimed"; session: SessionId; worktree: SpecWorktree }
   | { kind: "awaiting_approval" }; // no agent running, so no slot used
 
 // The spec contract says a task only reaches In progress once the worktree
@@ -347,6 +355,8 @@ export type PluginInput =
   // a late or repeated reply can never answer the current request.
   | { type: "worktree_created"; request: number; worktree: Worktree }
   | { type: "worktree_failed"; request: number; message: string }
+  | { type: "spec_worktree_created"; request: number; worktree: SpecWorktree }
+  | { type: "spec_worktree_failed"; request: number; message: string }
   | { type: "session_started"; request: number; session: SessionId }
   | { type: "session_failed"; request: number; message: string } // the agent didn't start
   | { type: "gate_result"; request: number; gate: GateName; ok: boolean; summary: string }
@@ -419,6 +429,9 @@ export type EventBody =
   // answers which event.
   | { type: "task.dispatch_started"; request: number }
   | { type: "task.worktree_created"; worktree: Worktree; request: number } // starts the develop agent
+  // After a start, the spec agent starts in it with this request. After
+  // your claim, your session works in it, and the request stays the claim's.
+  | { type: "task.spec_worktree_created"; worktree: SpecWorktree; request: number }
   | { type: "task.dispatched"; session: SessionId }
   // Your session took the task. `request` is set only in Ready, where a
   // worktree is created first.
@@ -472,7 +485,14 @@ export type Event = TaskEvent | ProjectEvent;
 export type Command =
   // Every command that expects a reply carries a request number, from the
   // task's `requests` counter. The reply must bring it back.
-  | { type: "start_spec_session"; taskId: TaskId; request: number; note: string | null }
+  | {
+      type: "start_spec_session";
+      taskId: TaskId;
+      request: number;
+      note: string | null;
+      worktree: SpecWorktree;
+    }
+  | { type: "create_spec_worktree"; taskId: TaskId; request: number }
   | { type: "create_worktree"; taskId: TaskId; request: number; build: number } // build names the branch
   | {
       type: "start_develop_session";
@@ -503,6 +523,8 @@ export type Command =
   // The shell first commits any uncommitted changes to the worktree's
   // branch, so removing a worktree never loses work.
   | { type: "remove_worktree"; worktree: Worktree }
+  // Nothing in a spec worktree is kept, so nothing is committed first.
+  | { type: "remove_spec_worktree"; worktree: SpecWorktree }
   | { type: "revert"; taskId: TaskId; request: number; commit: CommitSha };
 
 // ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@ import { decideTask } from "./decide";
 import { evolveTask } from "./evolve";
 import { CommitSha, ProjectId, SessionId, TaskId } from "./ids";
 import { schedule } from "./schedule";
-import { awaitedRequest, heldWorktree, runningSession } from "./task";
+import { awaitedRequest, heldSpecWorktree, heldWorktree, runningSession } from "./task";
 import type {
   Command,
   Config,
@@ -107,13 +107,14 @@ const unguided = new Set<Input["type"]>([
   "session_failed",
   "session_crashed",
   "worktree_failed",
+  "spec_worktree_failed",
   "back_to_spec",
 ]);
 
 // A request the task sent, as the daemon remembers it, so replies can be
 // built for it: on time, repeated, or long after the task moved on.
 type Sent =
-  | { request: number; kind: "agent" | "worktree" | "merge" | "revert" }
+  | { request: number; kind: "agent" | "worktree" | "spec_worktree" | "merge" | "revert" }
   | { request: number; kind: "gate"; gate: GateName };
 const choice = fc.record({ guided: fc.integer({ min: 0, max: 9 }).map((x) => x < 8), n: fc.nat() });
 const choices = fc.array(choice, { minLength: 1, maxLength: 300, size: "max" });
@@ -176,6 +177,7 @@ class Checker {
     return this.startsPending.size;
   }
   liveWorktrees = new Set<string>();
+  liveSpecWorktrees = new Set<string>();
   lastBuild = 0;
   // Since the last report of done: which gates passed, and whether the
   // checks passed and the merge started.
@@ -260,6 +262,17 @@ class Checker {
             { by: "plugin", type: "worktree_failed", request, message: "Disk full." },
           );
           break;
+        case "spec_worktree":
+          out.push(
+            {
+              by: "plugin",
+              type: "spec_worktree_created",
+              request,
+              worktree: { path: `/spec/${id}-${request}` },
+            },
+            { by: "plugin", type: "spec_worktree_failed", request, message: "Disk full." },
+          );
+          break;
         case "gate":
           out.push(
             { by: "plugin", type: "gate_result", request, gate: sent.gate, ok: true, summary: "." },
@@ -322,7 +335,9 @@ class Checker {
       input.type === "session_failed" ||
       input.type === "session_crashed" ||
       input.type === "worktree_created" ||
-      input.type === "worktree_failed"
+      input.type === "worktree_failed" ||
+      input.type === "spec_worktree_created" ||
+      input.type === "spec_worktree_failed"
     ) {
       this.startsPending.delete(input.request);
     }
@@ -478,6 +493,10 @@ class Checker {
           this.sent.push({ request: command.request, kind: "worktree" });
           this.startsPending.add(command.request);
           break;
+        case "create_spec_worktree":
+          this.sent.push({ request: command.request, kind: "spec_worktree" });
+          this.startsPending.add(command.request);
+          break;
         case "run_gate":
           this.sent.push({ request: command.request, kind: "gate", gate: command.gate });
           break;
@@ -495,17 +514,21 @@ class Checker {
       this.liveSessions.add(input.session);
       if (!this.started.includes(input.session)) this.started.push(input.session);
     }
-    // A claimed session starts working without a start reply: in Spec or
-    // In progress at once, in Ready once its worktree exists.
+    // A claimed session starts working without a start reply: in In
+    // progress at once, in Spec and Ready once its worktree exists.
     const running = this.task === null ? null : runningSession(this.task);
     if (running !== null && !this.started.includes(running)) {
       this.liveSessions.add(running);
       this.started.push(running);
     }
     if (input.type === "worktree_created") this.liveWorktrees.add(input.worktree.path);
+    if (input.type === "spec_worktree_created") this.liveSpecWorktrees.add(input.worktree.path);
     for (const command of commands) {
       if (command.type === "stop_session") this.liveSessions.delete(command.session);
       if (command.type === "remove_worktree") this.liveWorktrees.delete(command.worktree.path);
+      if (command.type === "remove_spec_worktree") {
+        this.liveSpecWorktrees.delete(command.worktree.path);
+      }
       if (command.type === "create_worktree") {
         // 14. Each build gets a new number, so a new branch.
         expect(command.build).toBeGreaterThan(this.lastBuild);
@@ -528,6 +551,11 @@ class Checker {
     if (session !== null) expect(this.liveSessions.has(session)).toBe(true);
     const worktree = heldWorktree(task);
     if (worktree !== null) expect(this.liveWorktrees.has(worktree)).toBe(true);
+    // The same for spec worktrees: one exists only while the task holds it,
+    // for its spec agent or your claim.
+    const specWorktree = heldSpecWorktree(task)?.path ?? null;
+    for (const live of this.liveSpecWorktrees) expect<string | null>(live).toBe(specWorktree);
+    if (specWorktree !== null) expect(this.liveSpecWorktrees.has(specWorktree)).toBe(true);
 
     // 10. No more failed rounds than max_attempts without a block.
     if (task.phase === "in_progress" || task.phase === "checks") {

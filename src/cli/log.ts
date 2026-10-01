@@ -75,6 +75,8 @@ function happened(event: TaskEvent, before: TaskEvent[]): string {
       return "Skelcrew picked it to start.";
     case "task.worktree_created":
       return `Its worktree was made on branch ${event.worktree.branch}, at ${event.worktree.path}.`;
+    case "task.spec_worktree_created":
+      return `A copy of main was made for its spec, at ${event.worktree.path}.`;
     case "task.dispatched":
       return claimedBy(before) === event.session
         ? "Your session is working on it."

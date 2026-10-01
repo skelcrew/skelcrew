@@ -55,8 +55,10 @@ const you = (n: number) => SessionId.parse(`you-${n}`);
 // A daemon whose store throws when saving a tool's reply, while
 // `broken.replies` is on. Here the only reply is the failure that blocks
 // a task. `broken.tries` counts the saves it refused.
-function failingReplies(options: { retryMs: number; maxRetryMs: number }) {
-  const store = EventStore.open(":memory:");
+function failingReplies(
+  options: { retryMs: number; maxRetryMs: number },
+  store = EventStore.open(":memory:"),
+) {
   const broken = { replies: false, tries: 0 };
   const log = {
     appendTask: (...args: Parameters<EventStore["appendTask"]>) => {
@@ -89,8 +91,10 @@ function failingReplies(options: { retryMs: number; maxRetryMs: number }) {
   return { daemon: opened.value, store, broken };
 }
 
-// Takes task 1 through Spec, so the next claim asks for a worktree. A spec
-// from your claimed session needs no approval, so it is Ready at once.
+// Takes task 1 through Spec in your own session, so the next claim asks
+// for a worktree. A spec from your claimed session needs no approval, so
+// it is Ready at once. A claim in Spec needs a spec worktree, so this needs
+// a daemon with git.
 async function readyToClaim(daemon: Daemon) {
   await ok(daemon, add("CSV export"));
   await ok(daemon, { type: "claim", task: task(1) });
@@ -115,6 +119,13 @@ function withBackgroundSpecs(...titles: string[]): EventStore {
   return store;
 }
 
+// Task 1 Ready without git: a background agent's spec, which you approve.
+async function openReady<T extends { daemon: Daemon }>(open: (store: EventStore) => T): Promise<T> {
+  const opened = open(withBackgroundSpecs("CSV export"));
+  await ok(opened.daemon, { type: "approve", task: task(1) });
+  return opened;
+}
+
 describe("the daemon", () => {
   test("gives each new task the next number", async () => {
     const { daemon } = open();
@@ -136,26 +147,14 @@ describe("the daemon", () => {
     ]);
   });
 
-  test("lets you claim a task in Spec, and hears only your session", async () => {
+  // A spec is written in a copy of main, which only git can make.
+  test("refuses a claim in Spec without git, and says why", async () => {
     const { daemon } = open();
     await ok(daemon, add("CSV export"));
-    expect(await ok(daemon, { type: "claim", task: task(1) })).toEqual({
-      session: "you-1",
-      phase: "spec",
-      spec: null,
-      note: null,
-    });
-    const stranger = await daemon.handle({
-      type: "submit",
-      task: task(1),
-      session: SessionId.parse("someone"),
-      spec,
-    });
-    expect(stranger.ok).toBe(false);
-    await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
-    // A spec from your claimed session needs no approval.
-    expect(await ok(daemon, { type: "status" })).toMatchObject({
-      tasks: [{ task: 1, title: "CSV export", phase: "ready", waitingOnYou: null }],
+    expect(await daemon.handle({ type: "claim", task: task(1) })).toEqual({
+      ok: false,
+      message:
+        "The worktree couldn't be made: Making spec worktrees isn't built into the daemon yet.",
     });
   });
 
@@ -172,19 +171,6 @@ describe("the daemon", () => {
     });
   });
 
-  test("reject sends a spec back to Spec with your note", async () => {
-    const { daemon } = open(withBackgroundSpecs("CSV export"));
-    expect(await ok(daemon, { type: "reject", task: task(1), note: "Add totals." })).toEqual({
-      phase: "spec",
-    });
-    expect(await ok(daemon, { type: "status" })).toMatchObject({
-      tasks: [{ task: 1, phase: "spec", waitingOnYou: null }],
-    });
-    expect(await ok(daemon, { type: "claim", task: task(1) })).toMatchObject({
-      note: "Add totals.",
-    });
-  });
-
   test("reject refuses when nothing waits for your approval", async () => {
     const { daemon } = open();
     await ok(daemon, add("CSV export"));
@@ -198,19 +184,6 @@ describe("the daemon", () => {
     });
   });
 
-  test("says in status which session is working on each task", async () => {
-    const { daemon } = open();
-    await ok(daemon, add("CSV export"));
-    await ok(daemon, add("PDF export"));
-    await ok(daemon, { type: "claim", task: task(1) });
-    expect(await ok(daemon, { type: "status" })).toMatchObject({
-      tasks: [
-        { task: 1, session: "you-1" },
-        { task: 2, session: null },
-      ],
-    });
-  });
-
   test("refuses an approval when nothing waits for one", async () => {
     const { daemon } = open();
     await ok(daemon, add("CSV export"));
@@ -218,15 +191,6 @@ describe("the daemon", () => {
       ok: false,
       message: "#1 has nothing waiting for your approval.",
     });
-  });
-
-  test("refuses a claim when no slot is free", async () => {
-    const { daemon } = open();
-    await ok(daemon, add("one"));
-    await ok(daemon, add("two"));
-    await ok(daemon, { type: "claim", task: task(1) });
-    const second = await daemon.handle({ type: "claim", task: task(2) });
-    expect(second.ok).toBe(false);
   });
 
   test("passes on the core's refusals in plain words", async () => {
@@ -268,10 +232,7 @@ describe("the daemon", () => {
   // Without git, a claim in Ready can't get its worktree. The core must
   // hear that at once, rather than wait for a worktree that never comes.
   test("answers a command it can't carry out yet with a failure, at once", async () => {
-    const { daemon } = open();
-    await ok(daemon, add("CSV export"));
-    await ok(daemon, { type: "claim", task: task(1) });
-    await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
+    const { daemon } = await openReady(open);
     // The claim waits for the worktree, so it hears why there is none.
     expect(await daemon.handle({ type: "claim", task: task(1) })).toEqual({
       ok: false,
@@ -321,8 +282,9 @@ describe("the daemon", () => {
   // review found that giving up after a few tries kept the task's slot
   // taken until the next restart, even once the database was fine again.
   test("keeps sending a reply until it is saved, then the command finishes", async () => {
-    const { daemon, store, broken } = failingReplies({ retryMs: 1, maxRetryMs: 5 });
-    await readyToClaim(daemon);
+    const { daemon, store, broken } = await openReady((seeded) =>
+      failingReplies({ retryMs: 1, maxRetryMs: 5 }, seeded),
+    );
 
     // Claiming in Ready asks for a worktree. Without git its reply is a
     // failure that blocks the task, and saving that reply now throws. The
@@ -351,8 +313,9 @@ describe("the daemon", () => {
   });
 
   test("once closed, sends no more replies and refuses requests", async () => {
-    const { daemon, broken } = failingReplies({ retryMs: 1, maxRetryMs: 5 });
-    await readyToClaim(daemon);
+    const { daemon, broken } = await openReady((seeded) =>
+      failingReplies({ retryMs: 1, maxRetryMs: 5 }, seeded),
+    );
     broken.replies = true;
     const claim = daemon.handle({ type: "claim", task: task(1) });
     await Bun.sleep(20);
@@ -379,33 +342,11 @@ describe("the daemon", () => {
     expect(answer.ok).toBe(false);
   });
 
-  // Found in the first real run: "session-e41c254c-3354-4fa3-b176-ad7aba45064c
-  // is working on it" was too long to read.
-  test("names each claimed session short and different", async () => {
-    const opened = Daemon.open({
-      config: { ...config, maxRunning: 2 },
-      log: EventStore.open(":memory:"),
-    });
-    if (!opened.ok) throw new Error(opened.message);
-    const daemon = opened.value;
-    await ok(daemon, add("CSV export"));
-    await ok(daemon, add("PDF export"));
-    const first = await claimedSession(daemon, 1);
-    const second = await claimedSession(daemon, 2);
-    expect(first).toMatch(/^session-[a-z0-9]{8}$/);
-    expect(second).toMatch(/^session-[a-z0-9]{8}$/);
-    expect(second).not.toBe(first);
-  });
-
   // The loop keeps a command until its tool says it has finished, which for
   // a command with a reply means once the reply is handled. Otherwise every
   // command would go out again at each start.
   test("leaves no command pending once its reply is handled", async () => {
-    const store = EventStore.open(":memory:");
-    const { daemon } = open(store);
-    await ok(daemon, add("CSV export"));
-    await ok(daemon, { type: "claim", task: task(1) });
-    await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
+    const { daemon, store } = await openReady(open);
     // Without git, the claim's worktree fails, and that reply is handled.
     expect((await daemon.handle({ type: "claim", task: task(1) })).ok).toBe(false);
     expect(store.loadCommands()).toEqual({ ok: true, commands: [] });
@@ -414,8 +355,11 @@ describe("the daemon", () => {
   // A reply still unsaved when the daemon closes is left behind. Its
   // command then stays, and goes out again when the daemon next starts.
   test("keeps a command whose reply wasn't saved before closing, for the next start", async () => {
-    const { daemon: first, store, broken } = failingReplies({ retryMs: 1, maxRetryMs: 5 });
-    await readyToClaim(first);
+    const {
+      daemon: first,
+      store,
+      broken,
+    } = await openReady((seeded) => failingReplies({ retryMs: 1, maxRetryMs: 5 }, seeded));
     broken.replies = true;
     const claim = first.handle({ type: "claim", task: task(1) });
     await Bun.sleep(20);
@@ -474,21 +418,6 @@ function withProject(id: string): EventStore {
 }
 
 describe("log", () => {
-  test("answers with a task's events, oldest first", async () => {
-    const { daemon } = open();
-    await ok(daemon, add("CSV export"));
-    await ok(daemon, add("PDF export"));
-    await ok(daemon, { type: "claim", task: task(1) });
-    expect(await ok(daemon, { type: "log", task: task(1) })).toMatchObject({
-      events: [
-        { type: "task.created", taskId: 1, title: "CSV export" },
-        { type: "task.spec_requested", taskId: 1 },
-        { type: "task.claimed", taskId: 1, session: "you-1" },
-      ],
-      leftOut: 0,
-    });
-  });
-
   test("refuses a task that doesn't exist", async () => {
     const { daemon } = open();
     expect(await daemon.handle({ type: "log", task: task(9) })).toEqual({
@@ -524,35 +453,156 @@ describe("the daemon with git", () => {
     return repo;
   }
 
-  // A daemon for a real repository, with task 1 Ready. Its
-  // local gate runs `checks`, or only `true`.
-  async function readyInRepo(
-    repo?: Awaited<ReturnType<typeof makeRepo>>,
-    options: {
-      versionControl?: VersionControl;
-      store?: EventStore;
-      checks?: string[];
-      maxAttempts?: number;
-    } = {},
-  ) {
+  // A daemon for a real repository. Its local gate runs `checks`, or only
+  // `true`. Sessions are numbered, unless `namedSessions` asks for the
+  // daemon's own names.
+  type InRepo = {
+    versionControl?: VersionControl;
+    store?: EventStore;
+    checks?: string[];
+    maxAttempts?: number;
+    maxRunning?: number;
+    namedSessions?: boolean;
+  };
+
+  async function inRepo(repo?: Awaited<ReturnType<typeof makeRepo>>, options: InRepo = {}) {
     repo ??= await newRepo();
     let sessions = 0;
+    const numbered = () => {
+      sessions += 1;
+      return `you-${sessions}`;
+    };
     const opened = Daemon.open({
       // Every path critical, as `skelcrew init` writes it.
-      config: { ...config, criticalPaths: ["**"], maxAttempts: options.maxAttempts ?? 3 },
+      config: {
+        ...config,
+        criticalPaths: ["**"],
+        maxAttempts: options.maxAttempts ?? 3,
+        maxRunning: options.maxRunning ?? config.maxRunning,
+      },
       log: options.store ?? EventStore.open(":memory:"),
       versionControl: options.versionControl ?? new Git(repo.dir, repo.main),
       runChecks: localChecks(options.checks ?? ["true"]),
-      newSession: () => {
-        sessions += 1;
-        return `you-${sessions}`;
-      },
+      ...(options.namedSessions === true ? {} : { newSession: numbered }),
     });
     if (!opened.ok) throw new Error(opened.message);
-    const daemon = opened.value;
-    await readyToClaim(daemon);
-    return { daemon, repo };
+    return { daemon: opened.value, repo };
   }
+
+  // The same, with task 1 Ready.
+  async function readyInRepo(repo?: Awaited<ReturnType<typeof makeRepo>>, options: InRepo = {}) {
+    const opened = await inRepo(repo, options);
+    await readyToClaim(opened.daemon);
+    return opened;
+  }
+
+  // Every spec is written in a copy of main of its own, so two specs never
+  // see each other's files.
+  test("makes a spec worktree when you claim a task in Spec, and says where to work", async () => {
+    const { daemon, repo } = await inRepo();
+    await ok(daemon, add("CSV export"));
+    const path = join(repo.dir, ".skelcrew", "spec-worktrees", "1-csv-export");
+    expect(await ok(daemon, { type: "claim", task: task(1) })).toEqual({
+      session: "you-1",
+      phase: "spec",
+      worktree: { path },
+      spec: null,
+      note: null,
+    });
+    expect(existsSync(join(path, "README.md"))).toBe(true);
+  });
+
+  test("hears only your session in Spec, and your spec is Ready at once", async () => {
+    const { daemon } = await inRepo();
+    await ok(daemon, add("CSV export"));
+    await ok(daemon, { type: "claim", task: task(1) });
+    const stranger = await daemon.handle({
+      type: "submit",
+      task: task(1),
+      session: SessionId.parse("someone"),
+      spec,
+    });
+    expect(stranger.ok).toBe(false);
+    await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
+    // A spec from your claimed session needs no approval.
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, title: "CSV export", phase: "ready", waitingOnYou: null }],
+    });
+  });
+
+  test("removes the spec worktree once your spec is submitted", async () => {
+    const { daemon, repo } = await inRepo();
+    await ok(daemon, add("CSV export"));
+    await ok(daemon, { type: "claim", task: task(1) });
+    await ok(daemon, { type: "submit", task: task(1), session: you(1), spec });
+    await Bun.sleep(100);
+    expect(existsSync(join(repo.dir, ".skelcrew", "spec-worktrees", "1-csv-export"))).toBe(false);
+  });
+
+  test("reject sends a spec back to Spec with your note", async () => {
+    const { daemon } = await inRepo(undefined, { store: withBackgroundSpecs("CSV export") });
+    expect(await ok(daemon, { type: "reject", task: task(1), note: "Add totals." })).toEqual({
+      phase: "spec",
+    });
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [{ task: 1, phase: "spec", waitingOnYou: null }],
+    });
+    expect(await ok(daemon, { type: "claim", task: task(1) })).toMatchObject({
+      note: "Add totals.",
+    });
+  });
+
+  test("says in status which session is working on each task", async () => {
+    const { daemon } = await inRepo();
+    await ok(daemon, add("CSV export"));
+    await ok(daemon, add("PDF export"));
+    await ok(daemon, { type: "claim", task: task(1) });
+    expect(await ok(daemon, { type: "status" })).toMatchObject({
+      tasks: [
+        { task: 1, session: "you-1" },
+        { task: 2, session: null },
+      ],
+    });
+  });
+
+  test("refuses a claim when no slot is free", async () => {
+    const { daemon } = await inRepo();
+    await ok(daemon, add("one"));
+    await ok(daemon, add("two"));
+    await ok(daemon, { type: "claim", task: task(1) });
+    const second = await daemon.handle({ type: "claim", task: task(2) });
+    expect(second.ok).toBe(false);
+  });
+
+  // Found in the first real run: "session-e41c254c-3354-4fa3-b176-ad7aba45064c
+  // is working on it" was too long to read.
+  test("names each claimed session short and different", async () => {
+    const { daemon } = await inRepo(undefined, { maxRunning: 2, namedSessions: true });
+    await ok(daemon, add("CSV export"));
+    await ok(daemon, add("PDF export"));
+    const first = await claimedSession(daemon, 1);
+    const second = await claimedSession(daemon, 2);
+    expect(first).toMatch(/^session-[a-z0-9]{8}$/);
+    expect(second).toMatch(/^session-[a-z0-9]{8}$/);
+    expect(second).not.toBe(first);
+  });
+
+  test("log answers with a task's events, oldest first", async () => {
+    const { daemon, repo } = await inRepo();
+    await ok(daemon, add("CSV export"));
+    await ok(daemon, add("PDF export"));
+    await ok(daemon, { type: "claim", task: task(1) });
+    const path = join(repo.dir, ".skelcrew", "spec-worktrees", "1-csv-export");
+    expect(await ok(daemon, { type: "log", task: task(1) })).toMatchObject({
+      events: [
+        { type: "task.created", taskId: 1, title: "CSV export" },
+        { type: "task.spec_requested", taskId: 1 },
+        { type: "task.claimed", taskId: 1, session: "you-1" },
+        { type: "task.spec_worktree_created", taskId: 1, worktree: { path } },
+      ],
+      leftOut: 0,
+    });
+  });
 
   test("makes a worktree when you claim a task in Ready, and says where to work", async () => {
     const { daemon, repo } = await readyInRepo();
