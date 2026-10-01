@@ -296,6 +296,144 @@ export function versionControlContract(name: string, make: (repo: Repo) => Versi
     });
   });
 
+  describe(`${name}: createSpecWorktree`, () => {
+    const spec = { taskId: TaskId.parse(12), title: "CSV export" };
+
+    test("makes a copy of main to write the spec in, on no branch", async () => {
+      const r = await repo();
+      const branches = await git(r.dir, "branch", "--list");
+      const created = await make(r).createSpecWorktree(spec);
+      if (!created.ok) throw new Error(created.message);
+      expect(existsSync(join(created.value.path, "README.md"))).toBe(true);
+      expect(await git(created.value.path, "rev-parse", "HEAD")).toBe(
+        await git(r.dir, "rev-parse", "main"),
+      );
+      expect(await git(created.value.path, "rev-parse", "--abbrev-ref", "HEAD")).toBe("HEAD");
+      expect(await git(r.dir, "branch", "--list")).toBe(branches);
+    });
+
+    test("starts from main, whatever the repository has checked out", async () => {
+      const r = await repo();
+      await git(r.dir, "checkout", "-q", "-b", "elsewhere");
+      writeFileSync(join(r.dir, "other.txt"), "not on main\n");
+      await git(r.dir, "add", "other.txt");
+      await git(r.dir, "commit", "-q", "-m", "Elsewhere");
+
+      const created = await make(r).createSpecWorktree(spec);
+      if (!created.ok) throw new Error(created.message);
+      expect(existsSync(join(created.value.path, "other.txt"))).toBe(false);
+    });
+
+    // A spec agent may already be reading it when the request comes again,
+    // such as after a restart.
+    test("asked twice, gives back the same copy and changes nothing in it", async () => {
+      const r = await repo();
+      const plugin = make(r);
+      const first = await plugin.createSpecWorktree(spec);
+      if (!first.ok) throw new Error(first.message);
+      writeFileSync(join(first.value.path, "notes.txt"), "the agent's notes\n");
+      expect(await plugin.createSpecWorktree(spec)).toEqual(first);
+      expect(readFileSync(join(first.value.path, "notes.txt"), "utf8")).toBe("the agent's notes\n");
+    });
+
+    test("gives two calls at once the same answer", async () => {
+      const r = await repo();
+      const plugin = make(r);
+      const [first, second] = await Promise.all([
+        plugin.createSpecWorktree(spec),
+        plugin.createSpecWorktree(spec),
+      ]);
+      if (!first.ok) throw new Error(first.message);
+      expect(second).toEqual(first);
+    });
+
+    test("sits beside the build's worktree for the same task", async () => {
+      const r = await repo();
+      const plugin = make(r);
+      const specced = await plugin.createSpecWorktree(spec);
+      const built = await plugin.createWorktree(csv);
+      if (!specced.ok) throw new Error(specced.message);
+      if (!built.ok) throw new Error(built.message);
+      expect(specced.value.path).not.toBe(built.value.path);
+      expect(existsSync(join(specced.value.path, "README.md"))).toBe(true);
+    });
+
+    test("keeps the repository's own checkout clean", async () => {
+      const r = await repo();
+      const created = await make(r).createSpecWorktree(spec);
+      if (!created.ok) throw new Error(created.message);
+      expect(await git(r.dir, "status", "--porcelain")).toBe("");
+    });
+
+    test("refuses a folder at its path that it didn't make, and keeps the work in it", async () => {
+      const r = await repo();
+      const plugin = make(r);
+      const created = await plugin.createSpecWorktree(spec);
+      if (!created.ok) throw new Error(created.message);
+      const { path } = created.value;
+      expect(await plugin.removeSpecWorktree(created.value)).toEqual({ ok: true, value: null });
+      await git(r.dir, "worktree", "add", "-q", "--detach", path, "main");
+      writeFileSync(join(path, "mine.txt"), "someone's work\n");
+
+      expect((await plugin.createSpecWorktree(spec)).ok).toBe(false);
+      expect(readFileSync(join(path, "mine.txt"), "utf8")).toBe("someone's work\n");
+    });
+
+    test("fails with a message, not a throw, when main doesn't exist", async () => {
+      const r = await repo();
+      const created = await make({ ...r, main: "trunk" }).createSpecWorktree(spec);
+      expect(created.ok).toBe(false);
+      expect(!created.ok && created.message).toContain("trunk");
+    });
+  });
+
+  describe(`${name}: removeSpecWorktree`, () => {
+    const spec = { taskId: TaskId.parse(12), title: "CSV export" };
+
+    // Nothing written while speccing is kept: the spec itself goes to
+    // Skelcrew, not into a file.
+    test("removes the copy and anything changed in it, and saves nothing", async () => {
+      const r = await repo();
+      const plugin = make(r);
+      const created = await plugin.createSpecWorktree(spec);
+      if (!created.ok) throw new Error(created.message);
+      writeFileSync(join(created.value.path, "README.md"), "# Edited\n");
+      writeFileSync(join(created.value.path, "notes.txt"), "notes\n");
+      const main = await git(r.dir, "rev-parse", "main");
+      const branches = await git(r.dir, "branch", "--list");
+
+      expect(await plugin.removeSpecWorktree(created.value)).toEqual({ ok: true, value: null });
+      expect(existsSync(created.value.path)).toBe(false);
+      expect(await git(r.dir, "worktree", "list", "--porcelain")).not.toContain(created.value.path);
+      expect(await git(r.dir, "rev-parse", "main")).toBe(main);
+      expect(await git(r.dir, "branch", "--list")).toBe(branches);
+      expect(await git(r.dir, "status", "--porcelain")).toBe("");
+    });
+
+    test("removing one that is already gone does nothing", async () => {
+      const r = await repo();
+      const plugin = make(r);
+      const created = await plugin.createSpecWorktree(spec);
+      if (!created.ok) throw new Error(created.message);
+      await plugin.removeSpecWorktree(created.value);
+      expect(await plugin.removeSpecWorktree(created.value)).toEqual({ ok: true, value: null });
+    });
+
+    test("leaves a folder at its path that it didn't make, and the work in it", async () => {
+      const r = await repo();
+      const plugin = make(r);
+      const created = await plugin.createSpecWorktree(spec);
+      if (!created.ok) throw new Error(created.message);
+      const { path } = created.value;
+      await plugin.removeSpecWorktree(created.value);
+      await git(r.dir, "worktree", "add", "-q", "--detach", path, "main");
+      writeFileSync(join(path, "mine.txt"), "someone's work\n");
+
+      expect((await plugin.removeSpecWorktree(created.value)).ok).toBe(false);
+      expect(readFileSync(join(path, "mine.txt"), "utf8")).toBe("someone's work\n");
+    });
+  });
+
   describe(`${name}: readBranch`, () => {
     // A worktree with the given files committed, one commit each.
     async function worked(r: Repo, files: Record<string, string>) {

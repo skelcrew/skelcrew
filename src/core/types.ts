@@ -86,6 +86,12 @@ export type Worktree = {
   branch: string; // e.g. "task/12-csv-export": the number keeps it unique
 };
 
+// A copy of main to write a task's spec in, whoever writes it. No branch:
+// a spec is never committed, so anything changed there is thrown away.
+// Each spec gets its own, so two specs written at once never see each
+// other's files.
+export type SpecWorktree = { path: string };
+
 // Where a task came from, when it came from another tool. The task keeps
 // its own number; this is only a link, shown as "#12 CSV export (GitHub #40)".
 export type SourceRef = {

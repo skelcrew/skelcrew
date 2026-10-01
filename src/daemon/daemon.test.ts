@@ -589,6 +589,8 @@ describe("the daemon with git", () => {
       removeWorktree: (worktree) => real.removeWorktree(worktree),
       checkCommit: (request, runChecks) => real.checkCommit(request, runChecks),
       uncommittedOnMain: () => real.uncommittedOnMain(),
+      createSpecWorktree: (request) => real.createSpecWorktree(request),
+      removeSpecWorktree: (worktree) => real.removeSpecWorktree(worktree),
     };
     const first = await readyInRepo(repo, { versionControl: cutOff, store });
     void first.daemon.handle({ type: "claim", task: task(1) });
@@ -627,6 +629,8 @@ describe("the daemon with git", () => {
       removeWorktree: (worktree) => real.removeWorktree(worktree),
       checkCommit: (request, runChecks) => real.checkCommit(request, runChecks),
       uncommittedOnMain: () => real.uncommittedOnMain(),
+      createSpecWorktree: (request) => real.createSpecWorktree(request),
+      removeSpecWorktree: (worktree) => real.removeSpecWorktree(worktree),
     };
     const { daemon } = await readyInRepo(repo, { versionControl: held });
     const claim = daemon.handle({ type: "claim", task: task(1) });
