@@ -178,6 +178,36 @@ test("? on the projects screen goes back to it when closed", async () => {
   expect(lines(lastFrame()).at(-1)).toBe(PROJECT_KEYS);
 });
 
+// 12 lines: the header, 9 for the projects, and 2 for the keys. The first
+// and last of the 9 say how many projects are hidden.
+test("more projects than fit scroll to keep the cursor in view", async () => {
+  const many = Array.from({ length: 30 }, (_, i) => {
+    const n = String(i + 1).padStart(2, "0");
+    return project(`project-${n}`, `Project ${n}`, `Goal ${n}.`);
+  });
+  const { lastFrame, stdin } = await projectsScreen({
+    load: async () => ({ ok: true, tasks: [], projects: many }),
+    height: 12,
+  });
+  let shown = lines(lastFrame());
+  expect(shown).toHaveLength(12);
+  expect(shown[9]).toBe("↓ 24 more");
+  for (let i = 0; i < 7; i++) {
+    stdin.write("j");
+    await tick();
+  }
+  shown = lines(lastFrame());
+  expect(shown).toContain("› Project 08 active 0 open Goal 08.");
+  stdin.write("G");
+  await tick();
+  shown = lines(lastFrame());
+  expect(shown[1]).toBe("↑ 23 more");
+  expect(shown).toContain("› Project 30 active 0 open Goal 30.");
+  stdin.write("g");
+  await tick();
+  expect(lines(lastFrame())).toContain("› Project 01 active 0 open Goal 01.");
+});
+
 test("with no projects, it says how to make one", async () => {
   const { lastFrame } = await projectsScreen({ load: load([]) });
   const shown = lines(lastFrame());
