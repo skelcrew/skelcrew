@@ -472,12 +472,12 @@ describe("the loop", () => {
     expect(loop.startWaiting()).toEqual([]);
   });
 
-  test("creates and parks projects, and won't start a task in a parked one", () => {
+  test("creates and archives projects, and won't start a task in an archived one", () => {
     const loop = new Loop(config, new Recorded(), null);
-    const archive = ProjectId.parse("archive");
-    loop.sendProject(archive, { type: "create", name: "Archive", goal: "Old ideas" });
-    loop.sendProject(archive, { type: "park" });
-    loop.send(one, add(true, archive));
+    const someday = ProjectId.parse("someday");
+    loop.sendProject(someday, { type: "create", name: "Someday", goal: "Old ideas" });
+    loop.sendProject(someday, { type: "archive" });
+    loop.send(one, add(true, someday));
     expect(loop.startWaiting()).toEqual([]);
   });
 });

@@ -38,8 +38,8 @@ function run(...inputs: ProjectInput[]): Project {
 }
 
 const create: ProjectInput = { type: "create", name: "Reports", goal: "Better reports" };
-const park: ProjectInput = { type: "park" };
-const activate: ProjectInput = { type: "activate" };
+const archive: ProjectInput = { type: "archive" };
+const unarchive: ProjectInput = { type: "unarchive" };
 
 describe("create", () => {
   test("creates an active project", () => {
@@ -75,54 +75,54 @@ describe("create", () => {
   });
 });
 
-describe("park", () => {
-  test("parks an active project", () => {
-    expect(send(run(create), park)).toEqual({
+describe("archive", () => {
+  test("archives an active project", () => {
+    expect(send(run(create), archive)).toEqual({
       ok: true,
-      events: [stamped({ type: "project.parked" })],
+      events: [stamped({ type: "project.archived" })],
     });
-    expect(run(create, park).status).toBe("parked");
+    expect(run(create, archive).status).toBe("archived");
   });
 
-  test("is rejected for a project that is already parked", () => {
-    expect(send(run(create, park), park)).toEqual({
+  test("is rejected for a project that is already archived", () => {
+    expect(send(run(create, archive), archive)).toEqual({
       ok: false,
-      rejection: { input: "park", reason: "reports is already parked." },
+      rejection: { input: "archive", reason: "reports is already archived." },
     });
   });
 });
 
-describe("activate", () => {
-  test("activates a parked project", () => {
-    expect(send(run(create, park), activate)).toEqual({
+describe("unarchive", () => {
+  test("unarchives an archived project", () => {
+    expect(send(run(create, archive), unarchive)).toEqual({
       ok: true,
-      events: [stamped({ type: "project.activated" })],
+      events: [stamped({ type: "project.unarchived" })],
     });
-    expect(run(create, park, activate).status).toBe("active");
+    expect(run(create, archive, unarchive).status).toBe("active");
   });
 
-  test("is rejected for a project that is already active", () => {
-    expect(send(run(create), activate)).toEqual({
+  test("is rejected for a project that isn't archived", () => {
+    expect(send(run(create), unarchive)).toEqual({
       ok: false,
-      rejection: { input: "activate", reason: "reports is already active." },
+      rejection: { input: "unarchive", reason: "reports isn't archived." },
     });
   });
 });
 
 describe("any input but create", () => {
   test("is rejected for a project that doesn't exist", () => {
-    expect(send(null, park)).toEqual({
+    expect(send(null, archive)).toEqual({
       ok: false,
-      rejection: { input: "park", reason: "There is no project called reports." },
+      rejection: { input: "archive", reason: "There is no project called reports." },
     });
   });
 });
 
 describe("evolveProject", () => {
   test("refuses an event for a project that doesn't exist", () => {
-    expect(evolveProject(null, stamped({ type: "project.parked" }))).toEqual({
+    expect(evolveProject(null, stamped({ type: "project.archived" }))).toEqual({
       ok: false,
-      reason: "project.parked can't apply: reports doesn't exist.",
+      reason: "project.archived can't apply: reports doesn't exist.",
     });
   });
 

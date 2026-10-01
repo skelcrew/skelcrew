@@ -52,5 +52,5 @@ function waitingForSlot(task: Task): boolean {
 
 // Tasks with no project count as active.
 function inActiveProject(task: Task, projects: ReadonlyMap<ProjectId, Project>): boolean {
-  return task.project === null || projects.get(task.project)?.status !== "parked";
+  return task.project === null || projects.get(task.project)?.status !== "archived";
 }

@@ -147,11 +147,11 @@ describe("the event store", () => {
         projectId: reports,
         at: 1,
       },
-      { type: "project.parked", v: 1, projectId: reports, at: 2 },
+      { type: "project.archived", v: 1, projectId: reports, at: 2 },
     ];
     expect(store.appendProject(events).ok).toBe(true);
     const loaded = store.loadProjects();
-    expect(loaded.ok && loaded.projects.get(reports)?.status).toBe("parked");
+    expect(loaded.ok && loaded.projects.get(reports)?.status).toBe("archived");
   });
 
   test("reads back one task's events, oldest first", () => {

@@ -8,13 +8,13 @@ import type { Config, EventBody, Project, Spec, Task } from "./types";
 const config: Config = { ...base, gates: ["local"], criticalPaths: [] };
 
 const reports = ProjectId.parse("reports");
-const archive = ProjectId.parse("archive");
+const someday = ProjectId.parse("someday");
 const projects = new Map<ProjectId, Project>([
   [
     reports,
     { id: reports, name: "Reports", goal: "Better reports", status: "active", createdAt: 0 },
   ],
-  [archive, { id: archive, name: "Archive", goal: "Old ideas", status: "parked", createdAt: 0 }],
+  [someday, { id: someday, name: "Someday", goal: "Old ideas", status: "archived", createdAt: 0 }],
 ]);
 
 const spec: Spec = { scope: "Do it.", acceptance: ["It is done."], openQuestions: [] };
@@ -163,9 +163,9 @@ describe("schedule", () => {
     expect(schedule(tasks, projects, config, 0)).toEqual(ids(2));
   });
 
-  test("skips tasks in a parked project, but starts tasks in active projects or none", () => {
+  test("skips tasks in an archived project, but starts tasks in active projects or none", () => {
     const tasks = [
-      task(1, archive, ...specQueued),
+      task(1, someday, ...specQueued),
       task(2, reports, ...specQueued),
       task(3, null, ...specQueued),
     ];

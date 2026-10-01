@@ -66,7 +66,7 @@ task. That's how "prompts propose, the core decides" is enforced.
 | `contracts.ts` | Small checks that return pass, or fail with reasons: is the spec complete, which files are critical, are attempts left, is the task within its safety cap. |
 | `decide.ts` | `decideTask`: the rules for tasks. It takes one input and returns events and commands, or a rejection. |
 | `evolve.ts` | `evolveTask`: applies one event to a task. It holds no rules. It only applies what `decideTask` accepted. |
-| `projects.ts` | `decideProject` and `evolveProject`: the same pair for projects. Create, park, activate. |
+| `projects.ts` | `decideProject` and `evolveProject`: the same pair for projects. Create, archive, unarchive. |
 | `schedule.ts` | `schedule`: picks which waiting tasks start when a slot is free. Each pick becomes a `start` input, so `decideTask` still has the final say. |
 
 ### Ideas that run through the core

@@ -79,8 +79,8 @@ describe("parseProjectEvent", () => {
         projectId: "reports",
         at: 1,
       },
-      { type: "project.parked", v: 1, projectId: "reports", at: 2 },
-      { type: "project.activated", v: 1, projectId: "reports", at: 3 },
+      { type: "project.archived", v: 1, projectId: "reports", at: 2 },
+      { type: "project.unarchived", v: 1, projectId: "reports", at: 3 },
     ];
     for (const event of events) {
       expect<unknown>(parseProjectEvent(event)).toEqual({ ok: true, value: event });
@@ -89,7 +89,7 @@ describe("parseProjectEvent", () => {
 
   test("refuses a project ID that isn't a slug", () => {
     const result = parseProjectEvent({
-      type: "project.parked",
+      type: "project.archived",
       v: 1,
       projectId: "My Reports",
       at: 1,
