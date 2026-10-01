@@ -9,7 +9,8 @@ import type { Outcome } from "../cli/cli";
 import type { TaskView } from "../cli/status";
 import type { TaskId } from "../core/ids";
 import { actionHints, actions, type Run } from "./actions";
-import { counts, finished, groupsOf, type Row } from "./rows";
+import { type Line, ListLine, listLines, widthsOf } from "./list";
+import { counts, groupsOf } from "./rows";
 import { firstShown } from "./scroll";
 
 export type Loaded = { ok: true; tasks: TaskView[] } | { ok: false; message: string };
@@ -27,20 +28,11 @@ type Props = {
   height?: number;
 };
 
-// One line of the list.
-type Line =
-  | { kind: "blank" }
-  | { kind: "heading"; text: string }
-  | { kind: "row"; row: Row }
-  | { kind: "text"; text: string; dim: boolean };
-
 // The list, a y/n question, or a line being typed.
 type Mode =
   | { kind: "list" }
   | { kind: "confirm"; question: string; run: Run }
   | { kind: "type"; prompt: string; run: (text: string) => Run; text: string };
-
-const MIN_TITLE = 20;
 
 // A longer answer, such as a failed merge's check output, is cut to this.
 const MAX_SAID = 4;
@@ -146,33 +138,11 @@ export function Screen({ repo, quit, load, send, refreshMs = 1000, height }: Pro
     }
   });
 
-  const all = groups.flatMap((group) => group.rows);
-  const number = Math.max(0, ...all.map((row) => `#${row.task.task}`.length));
-  const project = Math.max(0, ...all.map((row) => (row.task.project ?? "").length));
-  const says = Math.max(0, ...all.map((row) => row.says.length));
-  // Titles get the room the other columns leave, with two spaces between
-  // columns, but never less than MIN_TITLE.
-  const others = 1 + 2 + number + 2 + (project > 0 ? project + 2 : 0) + 2 + says;
-  const room = Math.max(MIN_TITLE, (stdout.columns ?? 80) - others);
-  const widths = {
-    number,
-    title: Math.min(room, Math.max(0, ...all.map((row) => row.task.title.length))),
-    project,
-  };
-  const done = finished(tasks ?? []);
-
-  const list: Line[] = [];
-  if (tasks !== null && tasks.length === 0) {
-    list.push(
-      { kind: "blank" },
-      { kind: "text", text: "No tasks yet. Press a to add one.", dim: false },
-    );
-  }
-  for (const group of groups) {
-    list.push({ kind: "blank" }, { kind: "heading", text: group.heading });
-    for (const row of group.rows) list.push({ kind: "row", row });
-  }
-  if (done !== "") list.push({ kind: "blank" }, { kind: "text", text: done, dim: true });
+  const widths = widthsOf(
+    groups.flatMap((group) => group.rows),
+    stdout.columns ?? 80,
+  );
+  const list = listLines(tasks, groups);
 
   // What sits under the list, each part after a blank line, keys last.
   const problemLines = problem === null ? [] : problem.split("\n");
@@ -272,49 +242,6 @@ export function Screen({ repo, quit, load, send, refreshMs = 1000, height }: Pro
         <Text dimColor wrap="truncate-end">{`j k move · ${actionHints} · q quit`}</Text>
       </Box>
     </Box>
-  );
-}
-
-type Widths = { number: number; title: number; project: number };
-
-function ListLine({
-  line,
-  widths,
-  selected,
-}: {
-  line: Line;
-  widths: Widths;
-  selected: TaskId | undefined;
-}) {
-  switch (line.kind) {
-    case "blank":
-      return <Text> </Text>;
-    case "heading":
-      return <Text bold>{line.text}</Text>;
-    case "row":
-      return <TaskRow row={line.row} widths={widths} selected={line.row.task.task === selected} />;
-    case "text":
-      return <Text dimColor={line.dim}>{line.text}</Text>;
-  }
-}
-
-// "› #14  CSV export   reports  approve its spec", cut to the screen's width.
-function TaskRow({ row, widths, selected }: { row: Row; widths: Widths; selected: boolean }) {
-  const { task } = row;
-  const title =
-    task.title.length > widths.title ? `${task.title.slice(0, widths.title - 1)}…` : task.title;
-  const columns = [
-    selected ? "›" : " ",
-    `#${task.task}`.padEnd(widths.number),
-    title.padEnd(widths.title),
-    ...(widths.project > 0 ? [(task.project ?? "").padEnd(widths.project)] : []),
-  ];
-  const colour = row.mark === "question" ? "yellow" : row.mark === "blocked" ? "red" : undefined;
-  return (
-    <Text wrap="truncate-end" bold={selected}>
-      {`${columns.join("  ")}  `}
-      <Text {...(colour === undefined ? {} : { color: colour })}>{row.says}</Text>
-    </Text>
   );
 }
 
