@@ -184,8 +184,8 @@ const projectStamp = { v: z.literal(1), projectId: ProjectId, at: z.number() };
 
 const projectEvents = {
   "project.created": { name: z.string(), goal: z.string() },
-  "project.parked": {},
-  "project.activated": {},
+  "project.archived": {},
+  "project.unarchived": {},
 } satisfies Record<ProjectEventBody["type"], z.ZodRawShape>;
 
 function project<K extends keyof typeof projectEvents>(type: K) {
@@ -194,8 +194,8 @@ function project<K extends keyof typeof projectEvents>(type: K) {
 
 const projectEventUnion = z.discriminatedUnion("type", [
   project("project.created"),
-  project("project.parked"),
-  project("project.activated"),
+  project("project.archived"),
+  project("project.unarchived"),
 ]);
 
 type MissingProjectEvent = Exclude<

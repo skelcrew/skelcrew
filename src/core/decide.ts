@@ -713,8 +713,8 @@ function refusedStart(
   ctx: Context,
 ): Decision | null {
   if (task.blocked !== null) return ctx.reject(`#${task.id} is blocked.`);
-  if (task.project !== null && ctx.projects.get(task.project)?.status === "parked") {
-    return ctx.reject(`#${task.id} is in a parked project.`);
+  if (task.project !== null && ctx.projects.get(task.project)?.status === "archived") {
+    return ctx.reject(`#${task.id} is in an archived project.`);
   }
   if (task.phase !== "idea" && task.step.kind !== "queued") {
     return ctx.reject(`#${task.id} isn't waiting for a slot.`);

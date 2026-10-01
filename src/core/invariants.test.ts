@@ -30,13 +30,13 @@ import type {
 // ---------------------------------------------------------------------------
 
 const reports = ProjectId.parse("reports");
-const archive = ProjectId.parse("archive");
+const someday = ProjectId.parse("someday");
 const projects = new Map<ProjectId, Project>([
   [
     reports,
     { id: reports, name: "Reports", goal: "Better reports", status: "active", createdAt: 0 },
   ],
-  [archive, { id: archive, name: "Archive", goal: "Old ideas", status: "parked", createdAt: 0 }],
+  [someday, { id: someday, name: "Someday", goal: "Old ideas", status: "archived", createdAt: 0 }],
 ]);
 
 const base: Config = {
@@ -76,7 +76,7 @@ const inputPool: Input[] = [
   { by: "human", type: "drop" },
   { by: "human", type: "revert", reason: "Broke exports." },
   { by: "human", type: "change_project", project: reports },
-  { by: "human", type: "change_project", project: archive },
+  { by: "human", type: "change_project", project: someday },
   { by: "human", type: "change_project", project: null },
   { by: "plugin", type: "external_move", to: "Done" },
   { by: "system", type: "start" },
@@ -86,7 +86,7 @@ const inputPool: Input[] = [
 ];
 
 const addInputs = fc.constantFrom<Input>(
-  ...[null, reports, archive].flatMap((project): Input[] => [
+  ...[null, reports, someday].flatMap((project): Input[] => [
     { by: "human", type: "add", title: "CSV export", project, requestSpec: false },
     { by: "human", type: "add", title: "CSV export", project, requestSpec: true },
   ]),
@@ -587,7 +587,7 @@ describe("the invariants", () => {
     );
   });
 
-  test("8, 9: max_running holds and parked or blocked tasks never start", () => {
+  test("8, 9: max_running holds and archived or blocked tasks never start", () => {
     const steps = fc.array(
       fc.oneof(
         fc.record({ task: fc.integer({ min: 0, max: 3 }), choice }),
@@ -615,11 +615,11 @@ describe("the invariants", () => {
               const picks = schedule(tasks(), projects, config, inFlight);
               for (const id of picks) {
                 const task = tasks().find((t) => t.id === id);
-                // 9. The scheduler never picks a blocked task or one in a parked project.
+                // 9. The scheduler never picks a blocked task or one in an archived project.
                 expect(task?.blocked ?? null).toBeNull();
                 const project = task?.project ?? null;
                 expect(project === null ? "active" : projects.get(project)?.status).not.toBe(
-                  "parked",
+                  "archived",
                 );
                 checkers.find((c) => c.id === id)?.send({ by: "system", type: "start" }, i + 1);
               }

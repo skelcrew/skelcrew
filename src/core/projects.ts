@@ -1,4 +1,4 @@
-// Projects: named groups of tasks, active or parked. They have their own
+// Projects: named groups of tasks, active or archived. They have their own
 // small decide and evolve, because their rules never depend on a task.
 // Only the developer sends project inputs; agents have no way to.
 
@@ -31,14 +31,14 @@ export const decideProject: DecideProject = (project, envelope) => {
   if (project === null) return reject(`There is no project called ${projectId}.`);
 
   switch (input.type) {
-    // Parking stops new agents from starting. Work already running carries on.
-    case "park":
-      if (project.status === "parked") return reject(`${projectId} is already parked.`);
-      return accept({ type: "project.parked" });
+    // Archiving stops new agents from starting. Work already running carries on.
+    case "archive":
+      if (project.status === "archived") return reject(`${projectId} is already archived.`);
+      return accept({ type: "project.archived" });
 
-    case "activate":
-      if (project.status === "active") return reject(`${projectId} is already active.`);
-      return accept({ type: "project.activated" });
+    case "unarchive":
+      if (project.status === "active") return reject(`${projectId} isn't archived.`);
+      return accept({ type: "project.unarchived" });
   }
 };
 
@@ -59,9 +59,9 @@ export const evolveProject: EvolveProject = (project, event) => {
   if (project === null) return refuse(event, `${event.projectId} doesn't exist`);
 
   switch (event.type) {
-    case "project.parked":
-      return { ok: true, project: { ...project, status: "parked" } };
-    case "project.activated":
+    case "project.archived":
+      return { ok: true, project: { ...project, status: "archived" } };
+    case "project.unarchived":
       return { ok: true, project: { ...project, status: "active" } };
   }
 };

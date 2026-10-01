@@ -21,13 +21,13 @@ import type {
 const at = 5_000;
 
 const reports = ProjectId.parse("reports");
-const archive = ProjectId.parse("archive");
+const someday = ProjectId.parse("someday");
 const projects = new Map<ProjectId, Project>([
   [
     reports,
     { id: reports, name: "Reports", goal: "Better reports", status: "active", createdAt: 0 },
   ],
-  [archive, { id: archive, name: "Archive", goal: "Old ideas", status: "parked", createdAt: 0 }],
+  [someday, { id: someday, name: "Someday", goal: "Old ideas", status: "archived", createdAt: 0 }],
 ]);
 
 // A step is an input, or a reply built from the task as it stands: replies
@@ -96,8 +96,8 @@ describe("add", () => {
     expect(run({ ...add, project: reports }).project).toBe(reports);
   });
 
-  test("accepts a parked project, where the idea waits without using agents", () => {
-    expect(run({ ...add, project: archive }).project).toBe(archive);
+  test("accepts an archived project, where the idea waits without using agents", () => {
+    expect(run({ ...add, project: someday }).project).toBe(someday);
   });
 
   test("is rejected for a project that doesn't exist", () => {
@@ -253,11 +253,11 @@ describe("start in Spec", () => {
     });
   });
 
-  test("is rejected for a task in a parked project", () => {
-    const task = run({ ...add, project: archive }, requestSpec);
+  test("is rejected for a task in an archived project", () => {
+    const task = run({ ...add, project: someday }, requestSpec);
     expect(send(task, start)).toEqual({
       ok: false,
-      rejection: { input: "start", reason: "#12 is in a parked project." },
+      rejection: { input: "start", reason: "#12 is in an archived project." },
     });
   });
 
@@ -1658,10 +1658,10 @@ describe("claim, refused", () => {
     });
   });
 
-  test("for a task in a parked project", () => {
-    expect(send(run(...inSpec, changeProject(archive)), claim)).toEqual({
+  test("for a task in an archived project", () => {
+    expect(send(run(...inSpec, changeProject(someday)), claim)).toEqual({
       ok: false,
-      rejection: { input: "claim", reason: "#12 is in a parked project." },
+      rejection: { input: "claim", reason: "#12 is in an archived project." },
     });
   });
 
@@ -1679,11 +1679,11 @@ describe("claim, refused", () => {
     });
   });
 
-  test("for an Idea in a parked project", () => {
-    const parked: Input = { ...add, project: archive };
-    expect(send(run(parked), claim)).toEqual({
+  test("for an Idea in an archived project", () => {
+    const archived: Input = { ...add, project: someday };
+    expect(send(run(archived), claim)).toEqual({
       ok: false,
-      rejection: { input: "claim", reason: "#12 is in a parked project." },
+      rejection: { input: "claim", reason: "#12 is in an archived project." },
     });
   });
 

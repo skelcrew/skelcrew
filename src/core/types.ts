@@ -246,26 +246,26 @@ export type Task = PhaseState & {
 // Projects
 // ---------------------------------------------------------------------------
 
-// A named group of tasks, one level deep. Parked projects keep their tasks
-// but the scheduler starts no new agents for them.
+// A named group of tasks, one level deep. Archived projects keep their
+// tasks but the scheduler starts no new agents for them.
 //
-// Why a core type and not a label: the active/parked rule changes which
+// Why a core type and not a label: the active/archived rule changes which
 // work may start, and rules live in the core. Grouping alone could have
 // been a tag.
 export type Project = {
   id: ProjectId;
   name: string;
   goal: string; // one line, so the developer remembers why it exists
-  status: "active" | "parked";
+  status: "active" | "archived";
   createdAt: Timestamp;
 };
 
 // Only the developer changes projects. There is no agent or plugin input,
-// so an agent cannot activate a parked project to give itself work.
+// so an agent cannot unarchive a project to give itself work.
 export type ProjectInput =
   | { type: "create"; name: string; goal: string }
-  | { type: "park" }
-  | { type: "activate" };
+  | { type: "archive" }
+  | { type: "unarchive" };
 
 export type ProjectEnvelope = {
   projectId: ProjectId;
@@ -275,8 +275,8 @@ export type ProjectEnvelope = {
 
 export type ProjectEventBody =
   | { type: "project.created"; name: string; goal: string }
-  | { type: "project.parked" }
-  | { type: "project.activated" };
+  | { type: "project.archived" }
+  | { type: "project.unarchived" };
 
 export type ProjectEvent = ProjectEventBody & {
   v: 1;
@@ -585,7 +585,7 @@ export type EvolvedProject = { ok: true; project: Project } | { ok: false; reaso
 
 // Picks which queued tasks in Spec, Ready or In progress to start next. It
 // keeps agents at or below maxRunning: those running, and those still
-// starting. It skips blocked tasks and tasks in parked projects. It only
+// starting. It skips blocked tasks and tasks in archived projects. It only
 // proposes: each pick becomes a "start" input that decide can reject.
 //
 // `startsInFlight` comes from the daemon: the starts it has sent out
