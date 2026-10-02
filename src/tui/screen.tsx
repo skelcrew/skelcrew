@@ -351,14 +351,31 @@ export function Screen(props: Props) {
   lastTop.current = last;
 
   // The keys used most. ? shows the rest.
-  const pullRequest = typeof opened?.pullRequest === "string" ? " · o open PR" : "";
+  // The task keys name only what works on the task under the cursor, or
+  // the open one, so a part may be empty and is then left out.
+  const keyLine = (parts: string[]) => parts.filter((part) => part !== "").join(" · ");
+  const underCursor = tasks?.find((task) => task.task === selected);
   const keys = showKeys
     ? "esc close · q quit"
     : showProjects
       ? projectKeys(projectRow)
       : opened === undefined
-        ? `j k move · enter open · ${hints("list")}${only === null ? "" : " · esc all"} · ? keys · q quit`
-        : `j k scroll · ${hints("task")}${pullRequest} · esc back · ? keys · q quit`;
+        ? keyLine([
+            "j k move",
+            "enter open",
+            hints("list", underCursor),
+            only === null ? "" : "esc all",
+            "? keys",
+            "q quit",
+          ])
+        : keyLine([
+            "j k scroll",
+            hints("task", opened),
+            typeof opened.pullRequest === "string" ? "o open PR" : "",
+            "esc back",
+            "? keys",
+            "q quit",
+          ]);
 
   // What enter does in the text box: run the command, or ask the next
   // line, such as a project's goal after its name.

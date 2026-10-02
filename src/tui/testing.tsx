@@ -69,13 +69,18 @@ export function lines(frame: string | undefined): string[] {
   return (frame ?? "").split("\n").map((line) => line.replace(/\s+/g, " ").trim());
 }
 
-// The keys line at the bottom of the screen.
 // The keys line at the bottom of the list: the keys used most, and ? for
-// the rest.
+// the rest. y and x show only when they would work on the task under the
+// cursor: KEYS on a spec or merge that waits for approval, IDEA_KEYS on
+// an Idea, and PLAIN_KEYS on any other task, or none.
 export const KEYS = "j k move · enter open · a add · y approve · x reject · ? keys · q quit";
+export const IDEA_KEYS = "j k move · enter open · a add · y spec it · ? keys · q quit";
+export const PLAIN_KEYS = "j k move · enter open · a add · ? keys · q quit";
 
-// The keys line on a task's own screen.
+// The keys line on a task's own screen, the same way.
 export const TASK_KEYS = "j k scroll · y approve · x reject · esc back · ? keys · q quit";
+export const IDEA_TASK_KEYS = "j k scroll · y spec it · esc back · ? keys · q quit";
+export const PLAIN_TASK_KEYS = "j k scroll · esc back · ? keys · q quit";
 
 type Options = {
   repo?: string;

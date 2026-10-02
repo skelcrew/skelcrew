@@ -5,7 +5,7 @@ import { expect, test } from "bun:test";
 import type { Outcome } from "../cli/cli";
 import type { ProjectView } from "../cli/status";
 import type { Loaded } from "./screen";
-import { KEYS, lines, open, task, tick } from "./testing";
+import { lines, open, PLAIN_KEYS, task, tick } from "./testing";
 
 const ESC = "\u001B";
 const ENTER = "\r";
@@ -160,12 +160,13 @@ test("esc goes back to the list, and so does h", async () => {
   const { lastFrame, stdin } = await projectsScreen();
   stdin.write(ESC);
   await tick();
-  expect(lines(lastFrame()).at(-1)).toBe(KEYS);
+  // The cursor is on #2, which waits for an agent, so y and x are left out.
+  expect(lines(lastFrame()).at(-1)).toBe(PLAIN_KEYS);
   stdin.write("P");
   await tick();
   stdin.write("h");
   await tick();
-  expect(lines(lastFrame()).at(-1)).toBe(KEYS);
+  expect(lines(lastFrame()).at(-1)).toBe(PLAIN_KEYS);
 });
 
 test("? on the projects screen goes back to it when closed", async () => {

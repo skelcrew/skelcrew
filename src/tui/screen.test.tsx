@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Loaded } from "./screen";
-import { KEYS, lines, loaded, open, task, tick } from "./testing";
+import { IDEA_KEYS, lines, loaded, open, PLAIN_KEYS, task, tick } from "./testing";
 
 test("tasks are grouped by what you need to do, with what each one needs", async () => {
   const { lastFrame } = open();
@@ -27,7 +27,8 @@ test("tasks are grouped by what you need to do, with what each one needs", async
     "",
     "1 done · 1 dropped",
     "",
-    KEYS,
+    // The cursor is on #9, a blocked task, which y and x can't act on.
+    PLAIN_KEYS,
   ]);
 });
 
@@ -57,7 +58,7 @@ test("groups with no tasks are left out, and so is the count of none done", asyn
     "Ideas",
     "› #16 Keyboard help Idea",
     "",
-    KEYS,
+    IDEA_KEYS,
   ]);
 });
 
