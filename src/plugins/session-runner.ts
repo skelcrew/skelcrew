@@ -11,12 +11,15 @@
 import type { Done } from "./version-control";
 
 // One agent's session: its name, the profile's command, the folder it
-// works in, and the environment it adds, such as SKELCREW_SESSION.
+// works in, and the environment it adds, such as SKELCREW_SESSION. The
+// agent gets the daemon's environment otherwise, less the variables in
+// `unset`.
 export type SessionStart = {
   name: string;
   command: string[];
   cwd: string;
   env: Record<string, string>;
+  unset: string[];
 };
 
 // How a session ended. The exit code is null when the runner doesn't know

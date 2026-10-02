@@ -22,11 +22,13 @@ export type AgentToStart = {
 };
 
 // How to start it: the command for the session runner, the environment it
-// adds, and the harness's own ID for the session. Skelcrew keeps that ID
-// next to its own session name, as the link to the harness's transcript.
+// adds and the variables it removes, and the harness's own ID for the
+// session. Skelcrew keeps that ID next to its own session name, as the link
+// to the harness's transcript.
 export type Launch = {
   command: string[];
   env: Record<string, string>;
+  unset: string[];
   harnessSession: string;
 };
 

@@ -164,6 +164,7 @@ export class FakeHarness implements Harness {
     return {
       command: ["fake-agent", agent.kind, String(agent.taskId)],
       env: { SKELCREW_SESSION: agent.session },
+      unset: ["FAKE_PARENT_SESSION"],
       harnessSession: `fake-${agent.session}`,
     };
   }
