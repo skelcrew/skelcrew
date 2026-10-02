@@ -82,6 +82,7 @@ type Options = {
   load?: () => Promise<Loaded>;
   quit?: () => void;
   refreshMs?: number;
+  spinMs?: number;
   send?: (args: string[]) => Promise<Outcome>;
   loadLog?: (task: TaskId) => Promise<LoadedLog>;
   browse?: (url: string) => void;
@@ -113,6 +114,7 @@ function draw(options: Options) {
       quit={options.quit ?? (() => {})}
       load={options.load ?? loaded(tasks)}
       refreshMs={options.refreshMs ?? 1000}
+      {...(options.spinMs === undefined ? {} : { spinMs: options.spinMs })}
       send={send}
       loadLog={options.loadLog ?? (async () => ({ ok: true, events: [], leftOut: 0 }))}
       browse={options.browse ?? (() => {})}
