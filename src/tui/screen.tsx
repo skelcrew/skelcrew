@@ -9,7 +9,16 @@ import type { Outcome } from "../cli/cli";
 import type { ProjectView, TaskView } from "../cli/status";
 import type { TaskId } from "../core/ids";
 import { actions, hints, type Run, type Step, type Where } from "./actions";
-import { Bottom, bottomHeight, ListHeader, type Mode, TitleHeader } from "./frame";
+import {
+  Bottom,
+  bottomHeight,
+  ListHeader,
+  LOGO,
+  LOGO_MIN_HEIGHT,
+  Logo,
+  type Mode,
+  TitleHeader,
+} from "./frame";
 import { keyLines } from "./keys";
 import { type Line, ListLine, listLines, widthsOf } from "./list";
 import {
@@ -288,8 +297,18 @@ export function Screen(props: Props) {
 
   const problemLines = problem === null ? [] : problem.split("\n");
   const saidLines = [...(running === null ? [] : [running.doing]), ...said];
+  // The logo tops the list in a window with room for it.
+  const logo =
+    height !== undefined &&
+    height >= LOGO_MIN_HEIGHT &&
+    !showKeys &&
+    !showProjects &&
+    opened === undefined;
+  const headerHeight = logo ? LOGO.length + 1 : 1;
   const room =
-    height === undefined ? body.length : height - 1 - bottomHeight(problemLines, saidLines, mode);
+    height === undefined
+      ? body.length
+      : height - headerHeight - bottomHeight(problemLines, saidLines, mode);
   // The list and the projects screen each remember where they scrolled to.
   const memory = showProjects ? projectsScrolled : scrolled;
   const scrolling: Scrolling = showKeys
@@ -340,7 +359,15 @@ export function Screen(props: Props) {
       ) : showProjects ? (
         <TitleHeader title="Projects" right={projectCounts(projects)} />
       ) : opened === undefined ? (
-        <ListHeader repo={repo} project={only?.name ?? null} counts={counts(groups)} />
+        <>
+          {logo && <Logo />}
+          <ListHeader
+            repo={repo}
+            project={only?.name ?? null}
+            counts={counts(groups)}
+            named={!logo}
+          />
+        </>
       ) : (
         <TitleHeader
           title={`#${opened.task} ${opened.title}`}
