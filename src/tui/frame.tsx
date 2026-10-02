@@ -12,14 +12,45 @@ export type Mode =
   | { kind: "confirm"; question: string; run: Run }
   | { kind: "type"; prompt: string; run: (text: string) => Run | Step; text: string };
 
+// A small copy of the logo on skelcrew.dev, drawn with half blocks.
+export const LOGO = [
+  "▄▄▄▄ █  ▄ ▄▄▄▄ █ ▄▄▄▄ ▄▄▄▄ ▄▄▄▄ ▄    ▄",
+  "█▄▄▄ █▄▀  █▄▄█ █ █    █  ▀ █▄▄█ █ ▄▄ █",
+  "▄▄▄█ █ ▀▄ █▄▄▄ █ █▄▄▄ █    █▄▄▄ █▄██▄█",
+];
+
+// The logo shows on the list only in a window at least this tall, so a
+// short window keeps its room for tasks.
+export const LOGO_MIN_HEIGHT = 24;
+
+export function Logo() {
+  return (
+    <Box flexDirection="column" flexShrink={0} marginBottom={1}>
+      {LOGO.map((line) => (
+        <Text key={line} wrap="truncate-end">
+          {line}
+        </Text>
+      ))}
+    </Box>
+  );
+}
+
 // "skelcrew  ~/code/app  ·  Reports page          1 waits on you". A long
-// path is cut from the left, so its last folders show.
-export function ListHeader(props: { repo: string; project: string | null; counts: string }) {
+// path is cut from the left, so its last folders show. Under the logo, the
+// header leaves out the name, which the logo already says.
+export function ListHeader(props: {
+  repo: string;
+  project: string | null;
+  counts: string;
+  named: boolean;
+}) {
   return (
     <Box flexShrink={0}>
-      <Box flexShrink={0} marginRight={2}>
-        <Text>skelcrew</Text>
-      </Box>
+      {props.named && (
+        <Box flexShrink={0} marginRight={2}>
+          <Text>skelcrew</Text>
+        </Box>
+      )}
       <Box flexGrow={1} flexShrink={1}>
         <Text wrap="truncate-start">{props.repo}</Text>
       </Box>

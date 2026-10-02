@@ -9,7 +9,16 @@ import type { Outcome } from "../cli/cli";
 import type { ProjectView, TaskView } from "../cli/status";
 import type { TaskId } from "../core/ids";
 import { actions, hints, type Run, type Step, type Where } from "./actions";
-import { Bottom, bottomHeight, ListHeader, type Mode, TitleHeader } from "./frame";
+import {
+  Bottom,
+  bottomHeight,
+  ListHeader,
+  LOGO,
+  LOGO_MIN_HEIGHT,
+  Logo,
+  type Mode,
+  TitleHeader,
+} from "./frame";
 import { keyLines } from "./keys";
 import { type Line, ListLine, listLines, widthsOf } from "./list";
 import {
@@ -48,6 +57,10 @@ type Props = {
 
 // A longer answer, such as a failed merge's check output, is cut to this.
 const MAX_SAID = 4;
+
+// The room around a full screen: columns on each side, lines above and below.
+const PAD_X = 2;
+const PAD_Y = 1;
 
 export function Screen(props: Props) {
   const { repo, quit, load, send, loadLog, browse, refreshMs = 1000, height } = props;
@@ -268,7 +281,10 @@ export function Screen(props: Props) {
       );
   });
 
-  const columns = stdout.columns ?? 80;
+  // A full screen keeps a blank line above and below, and two spaces on
+  // each side, so nothing touches the window's edges.
+  const padded = height !== undefined;
+  const columns = (stdout.columns ?? 80) - (padded ? 2 * PAD_X : 0);
   const widths = widthsOf(
     groups.flatMap((group) => group.rows),
     columns,
@@ -288,8 +304,19 @@ export function Screen(props: Props) {
 
   const problemLines = problem === null ? [] : problem.split("\n");
   const saidLines = [...(running === null ? [] : [running.doing]), ...said];
+  // The logo tops the list in a window with room for it.
+  const logo =
+    height !== undefined &&
+    height >= LOGO_MIN_HEIGHT &&
+    !showKeys &&
+    !showProjects &&
+    opened === undefined;
+  // The logo, a blank line, then the header.
+  const headerHeight = logo ? LOGO.length + 2 : 1;
   const room =
-    height === undefined ? body.length : height - 1 - bottomHeight(problemLines, saidLines, mode);
+    height === undefined
+      ? body.length
+      : height - 2 * PAD_Y - headerHeight - bottomHeight(problemLines, saidLines, mode);
   // The list and the projects screen each remember where they scrolled to.
   const memory = showProjects ? projectsScrolled : scrolled;
   const scrolling: Scrolling = showKeys
@@ -334,13 +361,24 @@ export function Screen(props: Props) {
   };
 
   return (
-    <Box flexDirection="column" {...(height === undefined ? {} : { height })}>
+    <Box
+      flexDirection="column"
+      {...(height === undefined ? {} : { height, paddingX: PAD_X, paddingY: PAD_Y })}
+    >
       {showKeys ? (
         <TitleHeader title="Keys" />
       ) : showProjects ? (
         <TitleHeader title="Projects" right={projectCounts(projects)} />
       ) : opened === undefined ? (
-        <ListHeader repo={repo} project={only?.name ?? null} counts={counts(groups)} />
+        <>
+          {logo && <Logo />}
+          <ListHeader
+            repo={repo}
+            project={only?.name ?? null}
+            counts={counts(groups)}
+            named={!logo}
+          />
+        </>
       ) : (
         <TitleHeader
           title={`#${opened.task} ${opened.title}`}
