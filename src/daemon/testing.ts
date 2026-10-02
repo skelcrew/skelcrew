@@ -110,6 +110,7 @@ export function openLine(path: string): Promise<Line> {
 // test ends a session with `end`, as a crash or an exit would.
 export class FakeRunner implements SessionRunner {
   readonly canStepIn = false;
+  readonly keepsSessions = false;
   readonly started: SessionStart[] = [];
   readonly typed: { name: string; text: string }[] = [];
   readonly stopped: string[] = [];
