@@ -19,6 +19,10 @@ while IFS= read -r line; do
   echo "$line" >> typed.txt
   if [ "$line" = quit ]; then
     printf '\\033[1mbye\\033[0m\\n'
+    # What Claude Code sent last when it stopped, in the first real run:
+    # codes that query the terminal, set the keyboard, pick a character
+    # set, and save and restore the cursor. Only text counts as a line.
+    printf '\\033[>0q\\033[>4m\\033[<u\\033(B\\0337\\0338\\n'
     exit 3
   fi
 done
