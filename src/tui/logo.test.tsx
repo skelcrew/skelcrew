@@ -2,7 +2,7 @@
 // when the window has room for it.
 
 import { expect, test } from "bun:test";
-import { KEYS, lines, loaded, open, task, tick } from "./testing";
+import { IDEA_KEYS, lines, loaded, open, task, tick } from "./testing";
 
 const LOGO = [
   "▄▄▄▄ █  ▄ ▄▄▄▄ █ ▄▄▄▄ ▄▄▄▄ ▄▄▄▄ ▄    ▄",
@@ -26,7 +26,7 @@ test("a window 24 lines tall shows the logo above the list, and the header names
   expect(shown).toHaveLength(24);
   // A blank line between the logo and the header.
   expect(shown.slice(4, 9)).toEqual(["", "~/code/app", "", "Ideas", "› #16 Keyboard help Idea"]);
-  expect(shown.slice(21)).toEqual(["", KEYS, ""]);
+  expect(shown.slice(21)).toEqual(["", IDEA_KEYS, ""]);
 });
 
 test("a window 23 lines tall keeps the one-line header", async () => {
@@ -59,7 +59,7 @@ test("the logo takes room from the list, so the keys stay on the last line", asy
   expect(shown.slice(6, 10)).toEqual(["", "", "Ideas", "› #1 Idea 1 Idea"]);
   expect(shown[19]).toBe("#11 Idea 11 Idea");
   expect(shown[20]).toBe("↓ 19 more");
-  expect(shown.slice(21)).toEqual(["", KEYS, ""]);
+  expect(shown.slice(21)).toEqual(["", IDEA_KEYS, ""]);
 });
 
 test("a task's own screen, the keys and the projects screen show no logo", async () => {

@@ -21,6 +21,20 @@ export function taskState(task: TaskView, row: Row | undefined): string {
   return task.waitingOnYou === null ? row.says : `${phase} · ${row.says}`;
 }
 
+// The spinner's frames, one after another, while an agent works.
+export const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+// Whether an agent is working on the task now: writing its spec or
+// building it. An agent that waits for your answer, or for the checks,
+// isn't working.
+export function agentWorking(task: TaskView): boolean {
+  return (
+    task.session !== null &&
+    task.waitingOnYou === null &&
+    (task.phase === "spec" || task.phase === "in_progress")
+  );
+}
+
 // The screen's lines under the header, wrapped to `width`. log is null
 // until it is read.
 // `project` is the task's project, when the status names it.

@@ -30,7 +30,7 @@ import {
 } from "./projects-screen";
 import { counts, groupsOf } from "./rows";
 import { type Scrolling, scrollWindow } from "./scroll";
-import { type LoadedLog, taskLines, taskState } from "./task-screen";
+import { agentWorking, type LoadedLog, SPINNER, taskLines, taskState } from "./task-screen";
 
 // The status: tasks, and every project. A daemon from before projects
 // leaves them out.
@@ -49,6 +49,8 @@ type Props = {
   // Opens a link in the browser.
   browse: (url: string) => void;
   refreshMs?: number;
+  // How often the spinner turns, while an agent works on the open task.
+  spinMs?: number;
   // The terminal's height in lines. With it, the screen fills the terminal:
   // the keys sit on the last line, and the list scrolls. Without it, the
   // screen is as tall as what it shows.
@@ -63,7 +65,7 @@ const PAD_X = 2;
 const PAD_Y = 1;
 
 export function Screen(props: Props) {
-  const { repo, quit, load, send, loadLog, browse, refreshMs = 1000, height } = props;
+  const { repo, quit, load, send, loadLog, browse, refreshMs = 1000, spinMs = 100, height } = props;
   // null until the first answer.
   const [tasks, setTasks] = useState<TaskView[] | null>(null);
   const [projects, setProjects] = useState<ProjectView[]>([]);
@@ -147,6 +149,16 @@ export function Screen(props: Props) {
   const at = (task: TaskId | null) => (task !== null && order.includes(task) ? task : order[0]);
   const selected = at(cursor);
   const opened = open === null ? undefined : tasks?.find((task) => task.task === open);
+
+  // The spinner turns only while an agent works on the open task, so the
+  // screen redraws no more than it must.
+  const working = opened !== undefined && agentWorking(opened) && !showKeys && !showProjects;
+  const [spin, setSpin] = useState(0);
+  useEffect(() => {
+    if (!working) return;
+    const timer = setInterval(() => setSpin((at) => (at + 1) % SPINNER.length), spinMs);
+    return () => clearInterval(timer);
+  }, [working, spinMs]);
 
   const execute = async (run: Run) => {
     if (running !== null) {
@@ -339,14 +351,31 @@ export function Screen(props: Props) {
   lastTop.current = last;
 
   // The keys used most. ? shows the rest.
-  const pullRequest = typeof opened?.pullRequest === "string" ? " · o open PR" : "";
+  // The task keys name only what works on the task under the cursor, or
+  // the open one, so a part may be empty and is then left out.
+  const keyLine = (parts: string[]) => parts.filter((part) => part !== "").join(" · ");
+  const underCursor = tasks?.find((task) => task.task === selected);
   const keys = showKeys
     ? "esc close · q quit"
     : showProjects
       ? projectKeys(projectRow)
       : opened === undefined
-        ? `j k move · enter open · ${hints("list")}${only === null ? "" : " · esc all"} · ? keys · q quit`
-        : `j k scroll · ${hints("task")}${pullRequest} · esc back · ? keys · q quit`;
+        ? keyLine([
+            "j k move",
+            "enter open",
+            hints("list", underCursor),
+            only === null ? "" : "esc all",
+            "? keys",
+            "q quit",
+          ])
+        : keyLine([
+            "j k scroll",
+            hints("task", opened),
+            typeof opened.pullRequest === "string" ? "o open PR" : "",
+            "esc back",
+            "? keys",
+            "q quit",
+          ]);
 
   // What enter does in the text box: run the command, or ask the next
   // line, such as a project's goal after its name.
@@ -382,10 +411,10 @@ export function Screen(props: Props) {
       ) : (
         <TitleHeader
           title={`#${opened.task} ${opened.title}`}
-          right={taskState(
+          right={`${working ? `${SPINNER[spin]} ` : ""}${taskState(
             opened,
             groups.flatMap((group) => group.rows).find((row) => row.task.task === open),
-          )}
+          )}`}
         />
       )}
       {above !== null && <Text dimColor>{above || " "}</Text>}

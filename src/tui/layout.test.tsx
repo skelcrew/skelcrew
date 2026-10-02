@@ -3,7 +3,7 @@
 // them, scrolled to keep the cursor in view.
 
 import { expect, test } from "bun:test";
-import { KEYS, lines, loaded, open, task, tick } from "./testing";
+import { IDEA_KEYS, KEYS, lines, loaded, open, task, tick } from "./testing";
 
 const idea = task(16, "Keyboard help", "idea");
 const specToApprove = task(14, "CSV export", "spec", { waitingOnYou: "spec_approval" });
@@ -20,7 +20,7 @@ test("the screen is as tall as the terminal, with the keys on the last line", as
   expect(shown[1]).toBe("skelcrew ~/code/app");
   expect(shown.slice(2, 5)).toEqual(["", "Ideas", "› #16 Keyboard help Idea"]);
   expect(shown.slice(5, 17).every((line) => line === "")).toBe(true);
-  expect(shown.slice(17)).toEqual(["", KEYS, ""]);
+  expect(shown.slice(17)).toEqual(["", IDEA_KEYS, ""]);
 });
 
 test("the text box sits just above the keys", async () => {
@@ -30,7 +30,7 @@ test("the text box sits just above the keys", async () => {
   await tick();
   const shown = lines(lastFrame());
   expect(shown).toHaveLength(20);
-  expect(shown.slice(15)).toEqual(["", "Add an idea:", "", KEYS, ""]);
+  expect(shown.slice(15)).toEqual(["", "Add an idea:", "", IDEA_KEYS, ""]);
 });
 
 test("what a command said sits just above the keys", async () => {
@@ -63,7 +63,7 @@ test("a list taller than the screen shows its top, and how many tasks are below"
     "#5 Idea 5 Idea",
     "↓ 25 more",
     "",
-    KEYS,
+    IDEA_KEYS,
     "",
   ]);
 });
@@ -127,7 +127,7 @@ test("a full screen has a blank line above and below, and two spaces on each sid
   expect(drawn).toHaveLength(20);
   expect(drawn[0]?.trim()).toBe("");
   expect(drawn[1]).toStartWith("  skelcrew  ~/code/app");
-  expect(drawn[18]).toStartWith(`  ${KEYS}`);
+  expect(drawn[18]).toStartWith(`  ${IDEA_KEYS}`);
   expect(drawn[19]?.trim()).toBe("");
   // The test screen is 100 columns wide, so nothing reaches past column 98.
   expect(drawn.every((line) => line.trimEnd().length <= 98)).toBe(true);
