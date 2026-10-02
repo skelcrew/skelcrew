@@ -41,6 +41,12 @@ export type AgentUsage = { tokens: number; cacheReads: number; workingMs: number
 export interface Harness {
   readonly name: string;
 
+  // Whether its agents can start in this repository without stopping at a
+  // question only the developer may answer, such as whether to trust the
+  // folder. `repo` is the main checkout's top folder. A no says what the
+  // developer must do. Skelcrew never answers such a question itself.
+  canStart(repo: string): Promise<Done<null>>;
+
   // The command that starts the agent as an interactive session, with
   // nobody watching. It must never stop at a question nobody can answer.
   launch(agent: AgentToStart): Launch;

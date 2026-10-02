@@ -16,6 +16,7 @@ import { serveUntilSignalled } from "../daemon/server";
 import { BasicRunner } from "../plugins/basic-runner/basic-runner";
 import { ClaudeCode } from "../plugins/claude-code/claude-code";
 import { mainRepository } from "../plugins/git/top";
+import type { Harness } from "../plugins/harness";
 import type { Command } from "../protocol/protocol";
 import { taskEvent } from "../store/schema";
 import { commandHelp, mainHelp } from "./help";
@@ -33,6 +34,9 @@ export type Context = {
   startTimeoutMs?: number;
   // Prints a line at once, for `serve`, which runs until it is stopped.
   announce?: (line: string) => void;
+  // The agent Skelcrew runs, so init can say if its agents can't start in
+  // the repository yet. Without it, init doesn't check.
+  harness?: Harness;
 };
 
 export type Outcome = { code: number; out: string[]; err: string[] };
@@ -61,7 +65,7 @@ export async function run(args: string[], context: Context): Promise<Outcome> {
 }
 
 const handlers: Record<string, Handler> = {
-  init: async (args, context) => init(args, context.cwd),
+  init: async (args, context) => init(args, context.cwd, context.harness),
 
   add: async (args, context) => {
     const parsed = parse(

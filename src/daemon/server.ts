@@ -109,7 +109,12 @@ export async function serve(repo: string, options: ServeOptions = {}): Promise<S
   // Only the basic runner is built so far. With tmux or Herdr picked,
   // nothing starts in the background yet.
   if (options.agents !== undefined && workflow.background && workflow.sessions === "basic") {
-    daemonOptions.agents = { ...options.agents(), log: store, checks: workflow.checks };
+    daemonOptions.agents = {
+      ...options.agents(),
+      log: store,
+      repo: paths.repo,
+      checks: workflow.checks,
+    };
   }
   const opened = Daemon.open(daemonOptions);
   if (!opened.ok) {

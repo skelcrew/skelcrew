@@ -48,6 +48,9 @@ export type AgentsOptions = {
   runner: SessionRunner;
   harness: Harness;
   log: AgentLog;
+  // The main checkout's top folder, where the harness is asked whether its
+  // agents can start.
+  repo: string;
   // The repository's check commands, which a develop agent may run.
   checks: string[];
   // Names each session, such as "session-k3x9q2mf".
@@ -59,6 +62,7 @@ export class Agents {
   private readonly harness: Harness;
   private readonly log: AgentLog;
   private readonly checks: string[];
+  private readonly repo: string;
   private readonly newSession: () => string;
   private readonly records = new Map<string, AgentRecord>();
   private readonly listeners: ((agent: AgentRecord, end: SessionEnd) => void)[] = [];
@@ -69,6 +73,7 @@ export class Agents {
     this.harness = options.harness;
     this.log = options.log;
     this.checks = options.checks;
+    this.repo = options.repo;
     this.newSession = options.newSession;
     const loaded = this.log.loadAgents();
     if (loaded.ok) for (const agent of loaded.agents) this.records.set(agent.session, agent);
@@ -93,6 +98,10 @@ export class Agents {
       (agent) => agent.task === command.taskId && agent.request === command.request && !agent.ended,
     );
     if (running !== undefined) return { ok: true, value: running.session };
+    // An agent that would wait at a question only you may answer, such as
+    // whether to trust the folder, is never started.
+    const can = await this.harness.canStart(this.repo);
+    if (!can.ok) return can;
 
     const named = SessionId.safeParse(this.newSession());
     if (!named.success)

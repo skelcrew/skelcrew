@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionId, TaskId } from "../../core/ids";
+import type { Done } from "../version-control";
 import { ClaudeCode } from "./claude-code";
 
 const uuid = "11111111-2222-3333-4444-555555555555";
@@ -216,5 +217,61 @@ describe("usage", () => {
       ok: true,
       value: { tokens: 6, cacheReads: 4, workingMs: 2000 },
     });
+  });
+});
+
+// Claude Code asks whether to trust a repository the first time it opens
+// it, and an agent nobody watches would wait at that question for ever.
+// Claude Code keeps the answer in .claude.json, under the repository's top
+// folder. Skelcrew only reads it. Trusting a folder is the developer's call.
+describe("canStart", () => {
+  const repo = "/Users/sam/code/jottit";
+
+  function withTrust(projects: unknown): ClaudeCode {
+    const path = join(configFolder(), ".claude.json");
+    writeFileSync(path, JSON.stringify({ numStartups: 3, projects }));
+    return new ClaudeCode({ globalConfig: path, home: "/Users/sam" });
+  }
+
+  test("says yes for a repository Claude Code trusts", async () => {
+    const profile = withTrust({ [repo]: { hasTrustDialogAccepted: true, allowedTools: [] } });
+    expect(await profile.canStart(repo)).toEqual({ ok: true, value: null });
+  });
+
+  test("says no, and how to fix it, for a repository Claude Code doesn't trust yet", async () => {
+    const refused: Done<null> = {
+      ok: false,
+      message:
+        "Claude Code doesn't trust ~/code/jottit yet, so Skelcrew can't start agents there. Open it once with claude there, and accept the question.",
+    };
+    expect(await withTrust({}).canStart(repo)).toEqual(refused);
+    expect(await withTrust({ [repo]: { hasTrustDialogAccepted: false } }).canStart(repo)).toEqual(
+      refused,
+    );
+  });
+
+  // Claude Code doesn't count a trusted parent folder for a repository
+  // inside it.
+  test("doesn't count a trusted parent folder", async () => {
+    const profile = withTrust({ "/Users/sam/code": { hasTrustDialogAccepted: true } });
+    expect((await profile.canStart(repo)).ok).toBe(false);
+  });
+
+  test("says no when Claude Code has never run, so there is no .claude.json", async () => {
+    const profile = new ClaudeCode({
+      globalConfig: join(configFolder(), ".claude.json"),
+      home: "/Users/sam",
+    });
+    expect((await profile.canStart(repo)).ok).toBe(false);
+  });
+
+  test("says no, and why, when .claude.json can't be read", async () => {
+    const path = join(configFolder(), ".claude.json");
+    writeFileSync(path, "{");
+    const profile = new ClaudeCode({ globalConfig: path, home: "/Users/sam" });
+    const answer = await profile.canStart(repo);
+    expect(answer.ok ? "" : answer.message).toStartWith(
+      `Skelcrew couldn't read ${path}, so it can't tell whether Claude Code trusts ~/code/jottit.`,
+    );
   });
 });

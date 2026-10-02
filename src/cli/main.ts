@@ -2,6 +2,7 @@
 // The `skelcrew` program: runs one command and prints what it says.
 // Refusals go to standard error, with exit code 1.
 
+import { ClaudeCode } from "../plugins/claude-code/claude-code";
 import { findRepo, run } from "./cli";
 import { startDaemon } from "./start";
 
@@ -25,6 +26,7 @@ const outcome = await run(args, {
   readStdin: async () => (process.stdin.isTTY ? "" : await Bun.stdin.text()),
   start: startDaemon,
   announce: (line) => console.log(line),
+  harness: new ClaudeCode(),
 });
 for (const line of outcome.out) console.log(line);
 for (const line of outcome.err) console.error(line);

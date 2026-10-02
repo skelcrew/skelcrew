@@ -6,7 +6,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { cleanUp } from "../daemon/testing";
+import { cleanUp, FakeHarness } from "../daemon/testing";
 import { run } from "./cli";
 
 const dirs: string[] = [];
@@ -44,12 +44,14 @@ const bunApp = {
   "bun.lock": "",
 };
 
-function init(cwd: string, args: string[] = []) {
+// The harness trusts every folder, unless a test passes one that doesn't.
+function init(cwd: string, args: string[] = [], harness = new FakeHarness()) {
   return run(["init", ...args], {
     cwd,
     session: undefined,
     readStdin: async () => "",
     start: () => ({ ok: false, message: "The test starts no daemon." }),
+    harness,
   });
 }
 
@@ -107,6 +109,19 @@ describe("skelcrew init", () => {
     const warnings = outcome.out.slice(outcome.out.indexOf("Look at these:") + 1);
     expect(warnings[0]).toStartWith("- Init couldn't link .claude/skills/spec");
     expect(warnings[1]).toStartWith("- Init couldn't link .claude/skills/develop");
+  });
+
+  // Found in the first real run: an agent in a folder Claude Code hadn't
+  // trusted waited at that question, with nobody there to answer it.
+  test("warns when the harness can't start agents in the repository yet", async () => {
+    const repo = gitRepo(bunApp);
+    const harness = new FakeHarness();
+    harness.refuse = "Claude Code doesn't trust ~/code/app yet.";
+    const outcome = await init(repo, [], harness);
+    expect(outcome.code).toBe(0);
+    expect(harness.asked).toEqual([realpathSync(repo)]);
+    const warnings = outcome.out.slice(outcome.out.indexOf("Look at these:") + 1);
+    expect(warnings[0]).toBe("- Claude Code doesn't trust ~/code/app yet.");
   });
 
   test("when it can't add the approve rules, says Claude Code won't ask, and where to look", async () => {
