@@ -125,6 +125,7 @@ export class Agents {
       command: launch.command,
       cwd,
       env: launch.env,
+      unset: launch.unset,
     });
     if (!started.ok) {
       this.ended(agent);

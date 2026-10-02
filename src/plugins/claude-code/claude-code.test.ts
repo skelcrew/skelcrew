@@ -22,6 +22,20 @@ function configFolder(): string {
   return dir;
 }
 
+// What Claude Code sets for the programs it starts.
+const fromYourSession = [
+  "CLAUDECODE",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_CODE_EXECPATH",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_CODE_SESSION_ATTENDED",
+  "CLAUDE_CODE_MESSAGING_SOCKET",
+  "CLAUDE_CODE_MESSAGING_TOKEN",
+  "CLAUDE_PID",
+  "CLAUDE_EFFORT",
+];
+
 const claude = (configDir = "/nowhere") => new ClaudeCode({ configDir, newId: () => uuid });
 
 describe("launch", () => {
@@ -64,6 +78,7 @@ describe("launch", () => {
         "/develop 12 --background",
       ],
       env: { SKELCREW_TASK: "12", SKELCREW_SESSION: "session-k3x9q2mf" },
+      unset: fromYourSession,
       harnessSession: uuid,
     });
   });
@@ -89,6 +104,23 @@ describe("launch", () => {
       JSON.stringify({ permissions: { allow: ["Bash(skelcrew *)"] } }),
       "/spec 12 --background",
     ]);
+  });
+
+  // Found in the first real run: a daemon started from your Claude Code
+  // session passed CLAUDE_CODE_CHILD_SESSION to its agents, and an agent
+  // with it wrote no transcript, so its usage read as nothing.
+  test("removes the variables that tie an agent to the Claude Code session that started Skelcrew", () => {
+    const launch = claude().launch({
+      taskId: TaskId.parse(12),
+      kind: "spec",
+      session: SessionId.parse("session-k3x9q2mf"),
+      cwd: specCopy,
+      checks: [],
+    });
+    expect(launch.unset).toContain("CLAUDE_CODE_CHILD_SESSION");
+    expect(launch.unset).toContain("CLAUDE_CODE_MESSAGING_TOKEN");
+    // Your own settings still reach the agent.
+    expect(launch.unset).not.toContain("CLAUDE_CONFIG_DIR");
   });
 
   test("names the harness", () => {

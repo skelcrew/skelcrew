@@ -55,6 +55,7 @@ describe("starting an agent", () => {
         command: ["fake-agent", "develop", "12"],
         cwd: worktree.path,
         env: { SKELCREW_SESSION: "session-a1" },
+        unset: ["FAKE_PARENT_SESSION"],
       },
     ]);
     expect(store.loadAgents()).toEqual({

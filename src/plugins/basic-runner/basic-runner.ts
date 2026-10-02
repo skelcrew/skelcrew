@@ -34,7 +34,7 @@ export class BasicRunner implements SessionRunner {
     try {
       started = Bun.spawn(session.command, {
         cwd: session.cwd,
-        env: { ...process.env, ...session.env },
+        env: { ...without(process.env, session.unset), ...session.env },
         terminal: {
           cols: 120,
           rows: 40,
@@ -151,4 +151,11 @@ export function lastLine(output: string): string {
     .replace(/\u001b[@-_]/g, "");
   const lines = plain.split(/\r?\n|\r/).map((line) => line.trim());
   return lines.filter((line) => line !== "").at(-1) ?? "";
+}
+
+// The environment less the named variables.
+function without(env: NodeJS.ProcessEnv, names: string[]): NodeJS.ProcessEnv {
+  const kept = { ...env };
+  for (const name of names) delete kept[name];
+  return kept;
 }

@@ -12,7 +12,7 @@ import { join } from "node:path";
 import type { SessionEnd, SessionRunner, SessionStart } from "./session-runner";
 
 const fakeAgent = `
-echo "$PWD $SKELCREW_SESSION" > started.txt
+echo "$PWD $SKELCREW_SESSION \${SKELCREW_FROM_PARENT:-none}" > started.txt
 echo start >> starts.txt
 echo ready
 while IFS= read -r line; do
@@ -86,6 +86,7 @@ export function sessionRunnerContract(name: string, make: () => SessionRunner): 
       command: ["sh", "agent.sh"],
       cwd: dir,
       env: { SKELCREW_SESSION: sessionName },
+      unset: [],
     });
     return { dir, runner, ends, session };
   }
@@ -98,6 +99,20 @@ export function sessionRunnerContract(name: string, make: () => SessionRunner): 
       const [folder, sessionName] = read(join(dir, "started.txt")).trim().split(" ");
       expect(folder !== undefined && existsSync(join(folder, "agent.sh"))).toBe(true);
       expect(sessionName).toBe("session-1");
+    });
+
+    // The daemon may run inside another agent's session, such as Claude
+    // Code's, and the agent must not take that session's variables.
+    test("leaves out the variables it is told to remove", async () => {
+      const { dir, runner, session } = setup();
+      process.env.SKELCREW_FROM_PARENT = "parent";
+      try {
+        await runner.start({ ...session("session-1"), unset: ["SKELCREW_FROM_PARENT"] });
+        await eventually(() => read(join(dir, "started.txt")) !== "");
+      } finally {
+        delete process.env.SKELCREW_FROM_PARENT;
+      }
+      expect(read(join(dir, "started.txt")).trim().split(" ")[2]).toBe("none");
     });
 
     test("starts nothing when asked again while the session runs", async () => {

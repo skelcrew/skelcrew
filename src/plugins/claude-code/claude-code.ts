@@ -33,6 +33,25 @@ export type ClaudeCodeOptions = {
   newId?: () => string;
 };
 
+// What Claude Code sets for the programs it starts. They tie a program to
+// the session that started it, such as yours when you run skelcrew from
+// Claude Code, and the daemon would pass them on. An agent is a session of
+// its own, so it gets none of them. With CLAUDE_CODE_CHILD_SESSION, Claude
+// Code writes no transcript, so the agent's usage would read as nothing.
+// Your own settings, such as CLAUDE_CONFIG_DIR, still reach the agent.
+const fromYourSession = [
+  "CLAUDECODE",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_CODE_EXECPATH",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_CODE_SESSION_ATTENDED",
+  "CLAUDE_CODE_MESSAGING_SOCKET",
+  "CLAUDE_CODE_MESSAGING_TOKEN",
+  "CLAUDE_PID",
+  "CLAUDE_EFFORT",
+];
+
 export class ClaudeCode implements Harness {
   readonly name = "claude-code";
   private readonly configDir: string;
@@ -60,6 +79,7 @@ export class ClaudeCode implements Harness {
         `/${agent.kind} ${agent.taskId} --background`,
       ],
       env: { SKELCREW_TASK: String(agent.taskId), SKELCREW_SESSION: agent.session },
+      unset: fromYourSession,
       harnessSession: id,
     };
   }
