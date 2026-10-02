@@ -737,6 +737,9 @@ describe("the daemon with git", () => {
     namedSessions?: boolean;
     // Starts agents itself, through this runner and a fake harness.
     runner?: FakeRunner;
+    harness?: FakeHarness;
+    // How often it reads the agents' usage. Five minutes unless set.
+    usageEveryMs?: number;
   };
 
   async function inRepo(repo?: Awaited<ReturnType<typeof makeRepo>>, options: InRepo = {}) {
@@ -764,9 +767,10 @@ describe("the daemon with git", () => {
         : {
             agents: {
               runner: options.runner,
-              harness: new FakeHarness(),
+              harness: options.harness ?? new FakeHarness(),
               log: store,
               checks: options.checks ?? ["true"],
+              ...(options.usageEveryMs === undefined ? {} : { usageEveryMs: options.usageEveryMs }),
             },
           }),
     });
@@ -794,14 +798,15 @@ describe("the daemon with git", () => {
 
   // Background runs: the daemon starts agents itself, through a runner and
   // a harness. Here both are fakes, so no real agent ever starts.
-  async function withAgent() {
+  async function withAgent(options: InRepo = {}) {
     const runner = new FakeRunner();
-    const opened = await inRepo(undefined, { runner });
+    const harness = options.harness ?? new FakeHarness();
+    const opened = await inRepo(undefined, { ...options, runner, harness });
     await ok(opened.daemon, add("CSV export"));
     await eventually(() => runner.started.length === 1);
     const started = runner.started[0];
     if (started === undefined) throw new Error("No agent started.");
-    return { ...opened, runner, agent: SessionId.parse(started.name) };
+    return { ...opened, runner, harness, agent: SessionId.parse(started.name) };
   }
 
   const statusOf = async (daemon: Daemon) =>
@@ -848,6 +853,46 @@ describe("the daemon with git", () => {
     const copy = join(repo.dir, ".skelcrew", "spec-worktrees", "1-csv-export");
     await eventually(() => !existsSync(copy));
     expect((await statusOf(daemon)).tasks[0]).toMatchObject({ waitingOnYou: "spec_approval" });
+  });
+
+  const usageEvents = async (daemon: Daemon) =>
+    z
+      .object({ events: z.array(z.object({ type: z.string() }).passthrough()) })
+      .parse(await ok(daemon, { type: "log", task: task(1) }))
+      .events.filter((event) => event.type === "task.usage_recorded");
+
+  test("records what its agents used, every few minutes, per phase", async () => {
+    const { daemon, harness, agent } = await withAgent({ usageEveryMs: 20 });
+    harness.used.set(agent, { tokens: 30_000, cacheReads: 400_000, workingMs: 5 * 60_000 });
+    await eventually(async () => (await usageEvents(daemon)).length > 0);
+    expect((await usageEvents(daemon))[0]).toMatchObject({
+      usage: {
+        spec: { tokens: 30_000, cacheReads: 400_000, ms: 5 * 60_000 },
+        develop: { tokens: 0, cacheReads: 0, ms: 0 },
+      },
+    });
+  });
+
+  test("records nothing new while the totals stay the same", async () => {
+    const { daemon, harness, agent } = await withAgent({ usageEveryMs: 20 });
+    harness.used.set(agent, { tokens: 1_000, cacheReads: 0, workingMs: 60_000 });
+    await eventually(async () => (await usageEvents(daemon)).length > 0);
+    const reads = harness.reads.length;
+    await eventually(() => harness.reads.length >= reads + 3);
+    expect(await usageEvents(daemon)).toHaveLength(1);
+  });
+
+  test("records an agent's last reading before its end", async () => {
+    const { daemon, runner, harness, agent } = await withAgent();
+    harness.used.set(agent, { tokens: 12_000, cacheReads: 0, workingMs: 60_000 });
+    runner.end(agent, { exitCode: 1, lastLine: "Out of memory." });
+    await eventually(async () => (await statusOf(daemon)).tasks[0]?.blocked !== null);
+    const log = z
+      .object({ events: z.array(z.object({ type: z.string() }).passthrough()) })
+      .parse(await ok(daemon, { type: "log", task: task(1) }));
+    const types = log.events.map((event) => event.type);
+    expect(types.indexOf("task.usage_recorded")).toBeGreaterThan(-1);
+    expect(types.indexOf("task.usage_recorded")).toBeLessThan(types.indexOf("task.blocked"));
   });
 
   // The basic runner's sessions end with the daemon. After a restart, the

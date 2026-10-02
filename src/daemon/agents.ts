@@ -6,10 +6,14 @@
 // it only stops or types into sessions it started. It also links each agent
 // to its task, its request, and the harness's own session ID, so its end
 // can be reported and its transcript found, after a restart too.
+//
+// It also keeps each agent's last usage reading. A running agent is read
+// when the daemon asks, and every agent once more when it ends. After that
+// its transcript is never read again.
 
 import * as z from "zod";
 import { SessionId, TaskId } from "../core/ids";
-import type { Command } from "../core/types";
+import type { Command, TaskUsage } from "../core/types";
 import type { Loaded, Saved } from "../loop/loop";
 import type { Harness } from "../plugins/harness";
 import type { SessionEnd, SessionRunner } from "../plugins/session-runner";
@@ -24,6 +28,12 @@ export const agentRecord = z.strictObject({
   harnessSession: z.string(),
   cwd: z.string(),
   ended: z.boolean(),
+  // The last reading from the harness, or null before the first. Records
+  // saved before readings existed have none.
+  usage: z
+    .strictObject({ tokens: z.number(), cacheReads: z.number(), workingMs: z.number() })
+    .nullable()
+    .default(null),
 });
 export type AgentRecord = z.infer<typeof agentRecord>;
 
@@ -65,8 +75,14 @@ export class Agents {
     this.runner.onEnd((name, end) => {
       const agent = this.records.get(name);
       if (this.detached || agent === undefined || agent.ended) return;
-      this.ended(agent);
-      for (const listener of this.listeners) listener(agent, end);
+      // Read once more first, so the last reading is saved before the end
+      // is reported. If the daemon stops meanwhile, the agent stays
+      // recorded as running, and the next start finds it lost.
+      void this.read(agent).then((read) => {
+        if (this.detached) return;
+        const done = this.ended(read);
+        for (const listener of this.listeners) listener(done, end);
+      });
     });
   }
 
@@ -99,6 +115,7 @@ export class Agents {
       harnessSession: launch.harnessSession,
       cwd,
       ended: false,
+      usage: null,
     };
     // Recorded before it starts, so a restart in between still knows it.
     this.records.set(session, agent);
@@ -128,6 +145,28 @@ export class Agents {
     await this.runner.stop(session);
   }
 
+  // Reads what each running agent has used so far, and saves it. Gives
+  // back the tasks whose agents were read.
+  async readRunning(): Promise<TaskId[]> {
+    const running = [...this.records.values()].filter((agent) => !agent.ended);
+    await Promise.all(running.map((agent) => this.read(agent)));
+    return [...new Set(running.map((agent) => agent.task))];
+  }
+
+  // What a task's agents have used, from their last readings, added up by
+  // phase. A task with no agents, such as one you claimed, has used nothing.
+  usageOf(task: TaskId): TaskUsage {
+    const usage = { spec: { ...nothing }, develop: { ...nothing } };
+    for (const agent of this.records.values()) {
+      if (agent.task !== task || agent.usage === null) continue;
+      const phase = usage[agent.kind];
+      phase.tokens += agent.usage.tokens;
+      phase.cacheReads += agent.usage.cacheReads;
+      phase.ms += agent.usage.workingMs;
+    }
+    return usage;
+  }
+
   // Called with the agent and how it ended, for each agent that ends.
   onEnd(listener: (agent: AgentRecord, end: SessionEnd) => void): void {
     this.listeners.push(listener);
@@ -141,8 +180,8 @@ export class Agents {
     const lost = [...this.records.values()].filter(
       (agent) => !agent.ended && !still.has(agent.session),
     );
-    for (const agent of lost) this.ended(agent);
-    return lost;
+    const read = await Promise.all(lost.map((agent) => this.read(agent)));
+    return read.map((agent) => this.ended(agent));
   }
 
   // Stops hearing about ends, when the daemon stops. An agent that ends
@@ -157,9 +196,35 @@ export class Agents {
     return agent !== undefined && !agent.ended;
   }
 
-  private ended(agent: AgentRecord): void {
-    const done = { ...agent, ended: true };
+  private ended(agent: AgentRecord): AgentRecord {
+    const done = { ...this.latest(agent), ended: true };
     this.records.set(agent.session, done);
     this.log.saveAgent(done);
+    return done;
+  }
+
+  // Reads what the agent has used and saves it, never lowering a number.
+  // A reading that fails keeps the last one.
+  private async read(agent: AgentRecord): Promise<AgentRecord> {
+    const read = await this.harness.usage(agent.cwd, agent.harnessSession);
+    const current = this.latest(agent);
+    if (!read.ok) return current;
+    const last = current.usage ?? { tokens: 0, cacheReads: 0, workingMs: 0 };
+    const usage = {
+      tokens: Math.max(last.tokens, read.value.tokens),
+      cacheReads: Math.max(last.cacheReads, read.value.cacheReads),
+      workingMs: Math.max(last.workingMs, read.value.workingMs),
+    };
+    const updated = { ...current, usage };
+    this.records.set(agent.session, updated);
+    this.log.saveAgent(updated);
+    return updated;
+  }
+
+  // The agent as last recorded, since a reading may have saved it since.
+  private latest(agent: AgentRecord): AgentRecord {
+    return this.records.get(agent.session) ?? agent;
   }
 }
+
+const nothing = { tokens: 0, cacheReads: 0, ms: 0 };
