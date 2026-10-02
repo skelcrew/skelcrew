@@ -32,6 +32,11 @@ export interface SessionRunner {
   // Whether the developer can step into a session and back out.
   readonly canStepIn: boolean;
 
+  // Whether its sessions keep running when the daemon stops, for the next
+  // daemon to find. tmux keeps them. The basic runner can't, since its
+  // sessions live inside the daemon.
+  readonly keepsSessions: boolean;
+
   // Starts the command as an interactive session. Asked again for a name
   // that is still running, it starts nothing, so a repeated start never
   // makes a second agent.
@@ -52,6 +57,7 @@ export interface SessionRunner {
   // was stopped.
   onEnd(listener: (name: string, end: SessionEnd) => void): void;
 
-  // Ends every session, when the daemon stops.
+  // Lets go of every session, when the daemon stops. A runner that keeps
+  // its sessions leaves them running. One that can't ends them.
   close(): Promise<void>;
 }

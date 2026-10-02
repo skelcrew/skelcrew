@@ -11,7 +11,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SessionEnd, SessionRunner, SessionStart } from "./session-runner";
 
+// Like a real full-screen agent, it doesn't echo what it reads. So a
+// terminal's answer to a question it asked, such as tmux's answer to
+// "which terminal is this?", never shows on its screen.
 const fakeAgent = `
+stty -echo 2>/dev/null
 echo "$PWD $SKELCREW_SESSION \${SKELCREW_FROM_PARENT:-none}" > started.txt
 echo start >> starts.txt
 echo ready
@@ -26,6 +30,14 @@ while IFS= read -r line; do
     exit 3
   fi
 done
+`;
+
+// An agent that finishes on its own after a second, with exit code 4.
+const finishingAgent = `
+echo start >> starts.txt
+sleep 1
+echo done
+exit 4
 `;
 
 // An agent that ignores the polite signals to stop, as a busy or stuck one
@@ -61,18 +73,32 @@ async function within<T>(ms: number, what: string, promise: Promise<T>): Promise
 
 const read = (path: string) => (existsSync(path) ? readFileSync(path, "utf8") : "");
 
-export function sessionRunnerContract(name: string, make: () => SessionRunner): void {
+// `make` gives a runner for one test's folder. Asked again for the same
+// folder, it gives a runner over the same sessions, as a daemon restarted
+// in that repository would get. `keepsSessions` says whether the runner
+// keeps its sessions running when it closes.
+export function sessionRunnerContract(
+  name: string,
+  make: (place: string) => SessionRunner,
+  keepsSessions: boolean,
+): void {
   let dirs: string[] = [];
   let runners: SessionRunner[] = [];
-  // Every agent a test started is stopped, even when the test failed.
+  // Every agent a test started is stopped, even when the test failed. A
+  // runner that keeps its sessions would leave them running on close, so
+  // each is stopped first.
   afterEach(async () => {
-    const closing = runners.map((runner) => runner.close());
+    const stopping = runners.map(async (runner) => {
+      const open = await runner.running();
+      for (const session of open.ok ? open.value : []) await runner.stop(session);
+      await runner.close();
+    });
+    await within(10_000, "Closing the runner", Promise.all(stopping));
     dirs.forEach((dir) => {
       rmSync(dir, { recursive: true, force: true });
     });
     dirs = [];
     runners = [];
-    await within(10_000, "Closing the runner", Promise.all(closing));
   });
 
   // A runner, a folder with the fake agents in it, and every end it reports.
@@ -81,10 +107,19 @@ export function sessionRunnerContract(name: string, make: () => SessionRunner): 
     dirs.push(dir);
     writeFileSync(join(dir, "agent.sh"), fakeAgent);
     writeFileSync(join(dir, "stubborn.sh"), stubbornAgent);
-    const runner = make();
+    writeFileSync(join(dir, "finishing.sh"), finishingAgent);
+    const runner = make(dir);
     runners.push(runner);
     const ends: { name: string; end: SessionEnd }[] = [];
     runner.onEnd((ended, end) => ends.push({ name: ended, end }));
+    // A new runner over the same sessions, as after a daemon restart.
+    const again = () => {
+      const next = make(dir);
+      runners.push(next);
+      const nextEnds: { name: string; end: SessionEnd }[] = [];
+      next.onEnd((ended, end) => nextEnds.push({ name: ended, end }));
+      return { runner: next, ends: nextEnds };
+    };
     const session = (sessionName: string): SessionStart => ({
       name: sessionName,
       command: ["sh", "agent.sh"],
@@ -92,7 +127,7 @@ export function sessionRunnerContract(name: string, make: () => SessionRunner): 
       env: { SKELCREW_SESSION: sessionName },
       unset: [],
     });
-    return { dir, runner, ends, session };
+    return { dir, runner, ends, session, again };
   }
 
   describe(`${name}: start`, () => {
@@ -195,7 +230,47 @@ export function sessionRunnerContract(name: string, make: () => SessionRunner): 
       expect(ends.map((ended) => ended.name)).toEqual(["session-1"]);
       expect(await runner.running()).toEqual({ ok: true, value: [] });
     });
+  });
 
+  describe(`${name}: close`, () => {
+    test(keepsSessions ? "says it keeps its sessions" : "says it can't keep its sessions", () => {
+      expect(setup().runner.keepsSessions).toBe(keepsSessions);
+    });
+  });
+
+  if (keepsSessions) {
+    describe(`${name}: after close`, () => {
+      test("the session keeps running, and a new runner finds it and reports its end", async () => {
+        const { dir, runner, ends, session, again } = setup();
+        await runner.start(session("session-1"));
+        await eventually(() => read(join(dir, "started.txt")) !== "");
+        await runner.close();
+        const next = again();
+        expect(await next.runner.running()).toEqual({ ok: true, value: ["session-1"] });
+        expect(await next.runner.type("session-1", "quit")).toEqual({ ok: true, value: null });
+        await eventually(() => next.ends.length === 1);
+        expect(next.ends).toEqual([{ name: "session-1", end: { exitCode: 3, lastLine: "bye" } }]);
+        expect(ends).toEqual([]);
+      });
+
+      // An agent can finish while no daemon runs. The next one must still
+      // hear how it ended.
+      test("a session that ended while no runner watched is reported by the next one", async () => {
+        const { dir, runner, session, again } = setup();
+        await runner.start({ ...session("session-1"), command: ["sh", "finishing.sh"] });
+        await eventually(() => read(join(dir, "starts.txt")) !== "");
+        await runner.close();
+        await Bun.sleep(1_500);
+        const next = again();
+        await eventually(() => next.ends.length === 1);
+        expect(next.ends).toEqual([{ name: "session-1", end: { exitCode: 4, lastLine: "done" } }]);
+        expect(await next.runner.running()).toEqual({ ok: true, value: [] });
+      });
+    });
+    return;
+  }
+
+  describe(`${name}: close, for a runner that can't keep its sessions`, () => {
     test("close returns and ends every session, even one that ignores the signals", async () => {
       const { dir, runner, ends, session } = setup();
       await runner.start({ ...session("session-1"), command: ["sh", "stubborn.sh"] });
