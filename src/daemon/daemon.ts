@@ -67,8 +67,18 @@ export type DaemonOptions = {
   // runner, with the harness's command. `checks` are the repository's check
   // commands, which a develop agent may run. Without this, nothing starts
   // until you claim a task, and a start is answered with a failure.
-  agents?: { runner: SessionRunner; harness: Harness; log: AgentLog; checks: string[] };
+  // `usageEveryMs` is how often it reads what its agents have used, five
+  // minutes unless set. It also reads each agent once more when it ends.
+  agents?: {
+    runner: SessionRunner;
+    harness: Harness;
+    log: AgentLog;
+    checks: string[];
+    usageEveryMs?: number;
+  };
 };
+
+const USAGE_EVERY_MS = 5 * 60_000;
 
 // An answer that has to wait for a tool's reply, such as a claim waiting
 // for its worktree. `until` says when the task is ready to answer.
@@ -132,6 +142,7 @@ export class Daemon {
   private readonly versionControl: VersionControl | null;
   private readonly pullRequests: DraftPullRequests | null;
   private readonly retryTimers = new Set<ReturnType<typeof setTimeout>>();
+  private usageTimer: ReturnType<typeof setInterval> | null = null;
   private closed = false;
   private waiters = new Set<Waiter>();
 
@@ -172,7 +183,13 @@ export class Daemon {
     const agents =
       options.agents === undefined
         ? null
-        : new Agents({ ...options.agents, newSession: options.newSession ?? shortSession });
+        : new Agents({
+            runner: options.agents.runner,
+            harness: options.agents.harness,
+            log: options.agents.log,
+            checks: options.agents.checks,
+            newSession: options.newSession ?? shortSession,
+          });
     const tools = new DaemonTools(
       options.versionControl ?? null,
       options.runChecks ?? null,
@@ -189,24 +206,51 @@ export class Daemon {
     );
     // A merge may have started waiting, or finished, while no daemon ran.
     daemon.pullRequests?.update();
-    if (agents !== null) daemon.startAgents(agents);
+    if (agents !== null) {
+      daemon.startAgents(agents);
+      daemon.readUsage(agents, options.agents?.usageEveryMs ?? USAGE_EVERY_MS);
+    }
     return { ok: true, value: daemon };
   }
 
   // Hears each agent's end, tells the core about agents lost while no
-  // daemon ran, then starts what waits for a free slot.
+  // daemon ran, then starts what waits for a free slot. Each end comes
+  // after the agent's last usage reading, so the record keeps it.
   private startAgents(agents: Agents): void {
-    agents.onEnd((agent, end) => this.reply(agent.task, ended(agent, end), () => {}));
+    agents.onEnd((agent, end) => {
+      this.sendUsage(agents, agent.task);
+      this.reply(agent.task, ended(agent, end), () => {});
+    });
     void agents.lost().then((lost) => {
       for (const agent of lost) {
         const end = {
           exitCode: null,
           lastLine: "Skelcrew restarted, and the agent's session ended with it.",
         };
+        this.sendUsage(agents, agent.task);
         this.reply(agent.task, ended(agent, end), () => {});
       }
       void this.oneAtATime(() => this.startWaiting());
     });
+  }
+
+  // Reads what the running agents have used, every `everyMs`, and tells
+  // the core each task's new totals.
+  private readUsage(agents: Agents, everyMs: number): void {
+    this.usageTimer = setInterval(() => {
+      void agents.readRunning().then((tasks) => {
+        for (const task of tasks) this.sendUsage(agents, task);
+      });
+    }, everyMs);
+  }
+
+  // Tells the core a task's usage totals, unless they haven't changed.
+  private sendUsage(agents: Agents, taskId: TaskId): void {
+    if (this.closed) return;
+    const usage = agents.usageOf(taskId);
+    const task = this.find(taskId);
+    if (task === null || Bun.deepEquals(task.usage, usage)) return;
+    this.reply(taskId, { by: "system", type: "usage", usage }, () => {});
   }
 
   // Starts the agents the scheduler picks, within max_running. Only with
@@ -627,6 +671,7 @@ export class Daemon {
     // An agent that ends from here on is found lost at the next start.
     this.agents?.detach();
     this.pullRequests?.stop();
+    if (this.usageTimer !== null) clearInterval(this.usageTimer);
     for (const timer of this.retryTimers) clearTimeout(timer);
     this.retryTimers.clear();
     this.wakeWaiters();

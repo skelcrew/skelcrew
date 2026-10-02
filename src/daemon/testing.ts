@@ -152,9 +152,13 @@ export class FakeRunner implements SessionRunner {
   }
 }
 
-// A harness whose command is only a description, for the fake runner.
+// A harness whose command is only a description, for the fake runner. A
+// test sets what each agent has used in `used`, by Skelcrew's session name.
+// `reads` lists each session whose usage was read, in order.
 export class FakeHarness implements Harness {
   readonly name = "fake";
+  readonly used = new Map<string, AgentUsage>();
+  readonly reads: string[] = [];
 
   launch(agent: AgentToStart): Launch {
     return {
@@ -164,7 +168,12 @@ export class FakeHarness implements Harness {
     };
   }
 
-  async usage(): Promise<Done<AgentUsage>> {
-    return { ok: true, value: { tokens: 0, cacheReads: 0, workingMs: 0 } };
+  async usage(_cwd: string, harnessSession: string): Promise<Done<AgentUsage>> {
+    const session = harnessSession.replace(/^fake-/, "");
+    this.reads.push(session);
+    return {
+      ok: true,
+      value: this.used.get(session) ?? { tokens: 0, cacheReads: 0, workingMs: 0 },
+    };
   }
 }
