@@ -769,6 +769,7 @@ describe("the daemon with git", () => {
               runner: options.runner,
               harness: options.harness ?? new FakeHarness(),
               log: store,
+              repo: repo.dir,
               checks: options.checks ?? ["true"],
               ...(options.usageEveryMs === undefined ? {} : { usageEveryMs: options.usageEveryMs }),
             },
@@ -890,6 +891,17 @@ describe("the daemon with git", () => {
       usage: { tokens: 30_000, ms: 5 * 60_000 },
       yours: false,
     });
+  });
+
+  test("blocks the task, saying why, when the harness says its agent can't start here", async () => {
+    const runner = new FakeRunner();
+    const harness = new FakeHarness();
+    harness.refuse = "Claude Code doesn't trust ~/code/app yet.";
+    const { daemon } = await inRepo(undefined, { runner, harness });
+    await ok(daemon, add("CSV export"));
+    const blocked = "The agent couldn't start: Claude Code doesn't trust ~/code/app yet.";
+    await eventually(async () => (await statusOf(daemon)).tasks[0]?.blocked === blocked);
+    expect(runner.started).toEqual([]);
   });
 
   test("records an agent's last reading before its end", async () => {

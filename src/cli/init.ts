@@ -13,9 +13,10 @@ import { existsSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { type InitReport, initRepository } from "../init/init";
 import { insideRepository, repositoryTop } from "../plugins/git/top";
+import type { Harness } from "../plugins/harness";
 import type { Outcome } from "./cli";
 
-export async function init(args: string[], cwd: string): Promise<Outcome> {
+export async function init(args: string[], cwd: string, harness?: Harness): Promise<Outcome> {
   if (args.length > 0) return refused("skelcrew init takes no arguments.");
   const here = realpathSync(resolve(cwd));
   const found = repositoryTop(here);
@@ -26,6 +27,10 @@ export async function init(args: string[], cwd: string): Promise<Outcome> {
   const result = initRepository(repo);
   // A failed run's reason already names what it wrote before it stopped.
   if (!result.ok) return refused(result.reason);
+  // An agent can't answer a question only you may answer, such as whether
+  // to trust the folder. Better to hear it now than at the first task.
+  const can = await harness?.canStart(repo);
+  if (can !== undefined && !can.ok) result.report.warnings.push(can.message);
   return { code: 0, out: report(repo, result.report), err: [] };
 }
 

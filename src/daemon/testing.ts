@@ -154,11 +154,19 @@ export class FakeRunner implements SessionRunner {
 
 // A harness whose command is only a description, for the fake runner. A
 // test sets what each agent has used in `used`, by Skelcrew's session name.
-// `reads` lists each session whose usage was read, in order.
+// `reads` lists each session whose usage was read, in order. A test sets
+// `refuse` to make it say its agents can't start, and why.
 export class FakeHarness implements Harness {
   readonly name = "fake";
   readonly used = new Map<string, AgentUsage>();
   readonly reads: string[] = [];
+  refuse: string | null = null;
+  readonly asked: string[] = [];
+
+  async canStart(repo: string): Promise<Done<null>> {
+    this.asked.push(repo);
+    return this.refuse === null ? { ok: true, value: null } : { ok: false, message: this.refuse };
+  }
 
   launch(agent: AgentToStart): Launch {
     return {

@@ -36,6 +36,7 @@ function setup(
     runner,
     harness,
     log: store,
+    repo: "/repo",
     checks: ["bun run check"],
     newSession: () => {
       made += 1;
@@ -109,6 +110,23 @@ describe("starting an agent", () => {
     });
     const loaded = store.loadAgents();
     expect(loaded.ok && loaded.agents.map((agent) => agent.ended)).toEqual([true]);
+  });
+});
+
+// An agent that would stop at a question only you may answer, such as
+// whether to trust the folder, is never started.
+describe("an agent the harness says can't start here", () => {
+  test("isn't started or recorded, and the start says why", async () => {
+    const harness = new FakeHarness();
+    harness.refuse = "Claude Code doesn't trust /repo yet.";
+    const { agents, runner, store } = setup(EventStore.open(":memory:"), new FakeRunner(), harness);
+    expect(await agents.start(develop)).toEqual({
+      ok: false,
+      message: "Claude Code doesn't trust /repo yet.",
+    });
+    expect(harness.asked).toEqual(["/repo"]);
+    expect(runner.started).toEqual([]);
+    expect(store.loadAgents()).toEqual({ ok: true, agents: [] });
   });
 });
 

@@ -31,6 +31,11 @@ export type ClaudeCodeOptions = {
   configDir?: string;
   // Makes Claude Code's session ID, a UUID.
   newId?: () => string;
+  // Claude Code's .claude.json, where it keeps which folders you trust.
+  // ~/.claude.json, or inside CLAUDE_CONFIG_DIR when that is set.
+  globalConfig?: string;
+  // Your home folder, shown as ~ in messages.
+  home?: string;
 };
 
 // What Claude Code sets for the programs it starts. They tie a program to
@@ -52,15 +57,54 @@ const fromYourSession = [
   "CLAUDE_EFFORT",
 ];
 
+// The part of .claude.json that says which folders you trust. The rest of
+// the file is Claude Code's own, and left unread.
+const trustRecord = z.looseObject({
+  projects: z
+    .record(z.string(), z.looseObject({ hasTrustDialogAccepted: z.boolean().optional() }))
+    .optional(),
+});
+
 export class ClaudeCode implements Harness {
   readonly name = "claude-code";
   private readonly configDir: string;
   private readonly newId: () => string;
+  private readonly globalConfig: string;
+  private readonly home: string;
 
   constructor(options: ClaudeCodeOptions = {}) {
-    this.configDir =
-      options.configDir ?? process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
+    const moved = process.env.CLAUDE_CONFIG_DIR;
+    this.configDir = options.configDir ?? moved ?? join(homedir(), ".claude");
     this.newId = options.newId ?? randomUUID;
+    this.globalConfig = options.globalConfig ?? join(moved ?? homedir(), ".claude.json");
+    this.home = options.home ?? homedir();
+  }
+
+  // Claude Code asks whether to trust a repository the first time it opens
+  // it, and keeps the answer in .claude.json under the repository's top
+  // folder. A worktree counts as its main checkout, and a trusted parent
+  // folder doesn't count. Skelcrew only reads the answer, never writes it.
+  async canStart(repo: string): Promise<Done<null>> {
+    const shown =
+      repo === this.home || repo.startsWith(`${this.home}/`)
+        ? `~${repo.slice(this.home.length)}`
+        : repo;
+    let projects: z.infer<typeof trustRecord>["projects"];
+    try {
+      const text = existsSync(this.globalConfig) ? readFileSync(this.globalConfig, "utf8") : "{}";
+      projects = trustRecord.parse(JSON.parse(text)).projects;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ok: false,
+        message: `Skelcrew couldn't read ${this.globalConfig}, so it can't tell whether Claude Code trusts ${shown}. ${message}`,
+      };
+    }
+    if (projects?.[repo]?.hasTrustDialogAccepted === true) return { ok: true, value: null };
+    return {
+      ok: false,
+      message: `Claude Code doesn't trust ${shown} yet, so Skelcrew can't start agents there. Open it once with claude there, and accept the question.`,
+    };
   }
 
   launch(agent: AgentToStart): Launch {

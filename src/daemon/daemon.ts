@@ -79,6 +79,7 @@ export type DaemonOptions = {
     runner: SessionRunner;
     harness: Harness;
     log: AgentLog;
+    repo: string;
     checks: string[];
     usageEveryMs?: number;
   };
@@ -193,6 +194,7 @@ export class Daemon {
             runner: options.agents.runner,
             harness: options.agents.harness,
             log: options.agents.log,
+            repo: options.agents.repo,
             checks: options.agents.checks,
             newSession: options.newSession ?? shortSession,
           });
