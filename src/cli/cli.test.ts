@@ -809,7 +809,59 @@ describe("skelcrew status", () => {
     const repo = await repoWithDaemon();
     await cli(repo, ["add", "CSV export", "--spec"]);
     await cli(repo, ["claim", "1"]);
-    expect((await cli(repo, ["status"])).out).toContain("- #1 CSV export (you-1 is working on it)");
+    expect((await cli(repo, ["status"])).out).toContain(
+      "- #1 CSV export (you are working on it in you-1, so it isn't counted)",
+    );
+  });
+
+  // Tokens leave out cache reads. `skelcrew log` shows those, per phase.
+  test("shows what each task's agents have used, after its title", async () => {
+    const repo = throwawayRepo(dirs);
+    const shown = {
+      project: null,
+      step: null,
+      blocked: null,
+      question: null,
+      waitingOnYou: null,
+      yours: false,
+    };
+    await fakeDaemon(repo, {
+      tasks: [
+        {
+          ...shown,
+          task: 1,
+          title: "CSV export",
+          phase: "in_progress",
+          step: "running",
+          session: "session-k3x9q2mf",
+          usage: { tokens: 48_210, ms: 23 * 60_000 },
+        },
+        {
+          ...shown,
+          task: 2,
+          title: "Totals",
+          phase: "done",
+          session: null,
+          usage: { tokens: 800, ms: 20_000 },
+        },
+        {
+          ...shown,
+          task: 3,
+          title: "PDF export",
+          phase: "idea",
+          session: null,
+          usage: { tokens: 0, ms: 0 },
+        },
+      ],
+    });
+    expect((await cli(repo, ["status"])).out).toEqual([
+      "Idea:",
+      "- #3 PDF export",
+      "In progress:",
+      "- #1 CSV export · 48,210 tokens · 23 min (session-k3x9q2mf is working on it)",
+      "Done:",
+      "- #2 Totals · 800 tokens · under 1 min",
+    ]);
   });
 
   // Skelcrew doesn't start agents itself yet, so a task with none working
@@ -1253,9 +1305,41 @@ describe("skelcrew log", () => {
     });
     expect(await cli(repo, ["log", "4"])).toEqual(
       said([
-        "2026-09-30 10:02  Used 800 tokens in under a minute so far.",
-        "2026-09-30 10:02  Used 1,234,567 tokens in 1 minute so far.",
-        "2026-09-30 10:02  Used 2,500,000 tokens in 45 minutes so far.",
+        "2026-09-30 10:02  Used so far: 800 tokens in under a minute.",
+        "                  Develop: 800 tokens in under a minute.",
+        "2026-09-30 10:02  Used so far: 1,234,567 tokens in 1 minute.",
+        "                  Develop: 1,234,567 tokens in 1 minute.",
+        "2026-09-30 10:02  Used so far: 2,500,000 tokens in 45 minutes.",
+        "                  Develop: 2,500,000 tokens in 45 minutes.",
+      ]),
+    );
+  });
+
+  // The spec asks for tokens per phase, and cache reads on their own line,
+  // since they would swamp the rest.
+  test("shows token use per phase, with cache reads on their own line", async () => {
+    const repo = throwawayRepo(dirs);
+    await fakeDaemon(repo, {
+      leftOut: 0,
+      events: [
+        {
+          v: 1,
+          taskId: 4,
+          at: new Date(2026, 8, 30, 10, 2).getTime(),
+          type: "task.usage_recorded",
+          usage: {
+            spec: { tokens: 12_000, cacheReads: 300_000, ms: 5 * 60_000 },
+            develop: { tokens: 36_210, cacheReads: 1_000_000, ms: 18 * 60_000 },
+          },
+        },
+      ],
+    });
+    expect(await cli(repo, ["log", "4"])).toEqual(
+      said([
+        "2026-09-30 10:02  Used so far: 48,210 tokens in 23 minutes.",
+        "                  Spec: 12,000 tokens in 5 minutes.",
+        "                  Develop: 36,210 tokens in 18 minutes.",
+        "                  Cache reads, not in the total: 1,300,000 tokens.",
       ]),
     );
   });

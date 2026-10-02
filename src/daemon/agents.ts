@@ -167,6 +167,12 @@ export class Agents {
     return usage;
   }
 
+  // Whether Skelcrew started this session, running or not. Any other
+  // session is yours, such as one you claimed a task with.
+  started(session: SessionId): boolean {
+    return this.records.has(session);
+  }
+
   // Called with the agent and how it ended, for each agent that ends.
   onEnd(listener: (agent: AgentRecord, end: SessionEnd) => void): void {
     this.listeners.push(listener);

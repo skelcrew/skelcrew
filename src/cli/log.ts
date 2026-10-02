@@ -7,7 +7,7 @@
 // keeps its lines, indented under the first.
 
 import { usageTotal } from "../core/task";
-import type { GateName, TaskEvent } from "../core/types";
+import type { GateName, TaskEvent, TaskUsage } from "../core/types";
 import { describeBlock } from "../daemon/daemon";
 
 // The line above the events when the oldest didn't fit in the daemon's
@@ -130,10 +130,8 @@ function happened(event: TaskEvent, before: TaskEvent[]): string {
       return "Unblocked, to try again.";
     case "task.dropped":
       return "Dropped.";
-    case "task.usage_recorded": {
-      const total = usageTotal(event.usage);
-      return `Used ${total.tokens.toLocaleString("en-US")} tokens in ${duration(total.ms)} so far.`;
-    }
+    case "task.usage_recorded":
+      return usageLines(event.usage);
   }
 }
 
@@ -145,6 +143,28 @@ function claimedBy(before: TaskEvent[]): string | null {
     (event) => event.type === "task.claimed" || event.type === "task.dispatch_started",
   );
   return start?.type === "task.claimed" ? start.session : null;
+}
+
+// The total, then one line per phase that used anything, then cache reads
+// on their own line, since they would swamp the rest.
+function usageLines(usage: TaskUsage): string {
+  const total = usageTotal(usage);
+  const lines = [`Used so far: ${tokens(total.tokens)} in ${duration(total.ms)}.`];
+  const phases = [
+    ["Spec", usage.spec],
+    ["Develop", usage.develop],
+  ] as const;
+  for (const [name, phase] of phases) {
+    if (phase.tokens === 0 && phase.ms === 0) continue;
+    lines.push(`${name}: ${tokens(phase.tokens)} in ${duration(phase.ms)}.`);
+  }
+  const cacheReads = usage.spec.cacheReads + usage.develop.cacheReads;
+  if (cacheReads > 0) lines.push(`Cache reads, not in the total: ${tokens(cacheReads)}.`);
+  return lines.join("\n");
+}
+
+function tokens(n: number): string {
+  return `${n.toLocaleString("en-US")} tokens`;
 }
 
 // The local and remote gates run several checks. The review is one step.

@@ -34,6 +34,11 @@ export const statusResult = z.object({
       // The step within the phase, such as "merging". Only some are shown.
       step: z.string().nullable(),
       session: z.string().nullable(),
+      // Whether that session is yours, so its use isn't counted, and what
+      // the task's agents have used. A daemon from before usage leaves
+      // them out.
+      yours: z.boolean().optional(),
+      usage: z.object({ tokens: z.number(), ms: z.number() }).optional(),
       blocked: z.string().nullable(),
       question: z.string().nullable(),
       waitingOnYou: z.enum(waitingOn).nullable(),
@@ -117,11 +122,26 @@ function byPhase(tasks: TaskView[], indent: string): string[] {
     for (const task of inPhase) {
       const blocked = task.blocked === null ? "" : ` (blocked: ${task.blocked})`;
       const merging = task.step === "merging" ? " (merging)" : "";
-      const working = task.session === null ? "" : ` (${task.session} is working on it)`;
-      lines.push(`${indent}- #${task.task} ${task.title}${working}${merging}${blocked}`);
+      const working =
+        task.session === null
+          ? ""
+          : task.yours === true
+            ? ` (you are working on it in ${task.session}, so it isn't counted)`
+            : ` (${task.session} is working on it)`;
+      lines.push(
+        `${indent}- #${task.task} ${task.title}${used(task)}${working}${merging}${blocked}`,
+      );
     }
   }
   return lines;
+}
+
+// " · 48,210 tokens · 23 min", or "" while nothing has been used.
+function used(task: TaskView): string {
+  const usage = task.usage;
+  if (usage === undefined || (usage.tokens === 0 && usage.ms === 0)) return "";
+  const minutes = usage.ms < 60_000 ? "under 1 min" : `${Math.round(usage.ms / 60_000)} min`;
+  return ` · ${usage.tokens.toLocaleString("en-US")} tokens · ${minutes}`;
 }
 
 // Skelcrew doesn't start agents itself yet, so a task waiting for an agent

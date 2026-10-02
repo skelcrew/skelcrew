@@ -15,7 +15,13 @@
 
 import { randomInt } from "node:crypto";
 import { ProjectId, SessionId, TaskId } from "../core/ids";
-import { heldSpecWorktree, phaseNames, runningSession, waitingOnYou } from "../core/task";
+import {
+  heldSpecWorktree,
+  phaseNames,
+  runningSession,
+  usageTotal,
+  waitingOnYou,
+} from "../core/task";
 import type {
   BlockReason,
   Config,
@@ -524,7 +530,10 @@ export class Daemon {
         const none = { pullRequest: null, noPullRequest: null, pullRequestNote: null };
         const tasks = [...this.loop.tasks()]
           .sort((a, b) => a.id - b.id)
-          .map((task) => ({ ...view(task), ...(this.pullRequests?.shown(task) ?? none) }));
+          .map((task) => ({
+            ...view(task, this.agents),
+            ...(this.pullRequests?.shown(task) ?? none),
+          }));
         const projects = [...this.loop.projects().values()]
           .sort((a, b) => a.name.localeCompare(b.name))
           .map(({ id, name, goal, status }) => ({ id, name, goal, status }));
@@ -826,8 +835,11 @@ function specOf(task: Task | null): Spec | null {
   return task.spec;
 }
 
-// What `status` shows of a task.
-function view(task: Task) {
+// What `status` shows of a task. `usage` adds both phases, leaving out
+// cache reads. A session Skelcrew didn't start is yours, and what it uses
+// isn't counted.
+function view(task: Task, agents: Agents | null) {
+  const session = runningSession(task);
   return {
     task: task.id,
     title: task.title,
@@ -835,7 +847,9 @@ function view(task: Task) {
     phase: task.phase,
     step: "step" in task ? task.step.kind : null,
     // The session working on it, such as yours after a claim.
-    session: runningSession(task),
+    session,
+    yours: session !== null && !(agents?.started(session) ?? false),
+    usage: usageTotal(task.usage),
     blocked: task.blocked === null ? null : describeBlock(task.blocked),
     question: task.question?.text ?? null,
     waitingOnYou: waitingOnYou(task),

@@ -882,6 +882,16 @@ describe("the daemon with git", () => {
     expect(await usageEvents(daemon)).toHaveLength(1);
   });
 
+  test("says in status what a task's agents have used, and that the agent isn't yours", async () => {
+    const { daemon, harness, agent } = await withAgent({ usageEveryMs: 20 });
+    harness.used.set(agent, { tokens: 30_000, cacheReads: 400_000, workingMs: 5 * 60_000 });
+    await eventually(async () => (await usageEvents(daemon)).length > 0);
+    expect((await statusOf(daemon)).tasks[0]).toMatchObject({
+      usage: { tokens: 30_000, ms: 5 * 60_000 },
+      yours: false,
+    });
+  });
+
   test("records an agent's last reading before its end", async () => {
     const { daemon, runner, harness, agent } = await withAgent();
     harness.used.set(agent, { tokens: 12_000, cacheReads: 0, workingMs: 60_000 });
@@ -967,8 +977,8 @@ describe("the daemon with git", () => {
     await ok(daemon, { type: "claim", task: task(1) });
     expect(await ok(daemon, { type: "status" })).toMatchObject({
       tasks: [
-        { task: 1, session: "you-1" },
-        { task: 2, session: null },
+        { task: 1, session: "you-1", yours: true, usage: { tokens: 0, ms: 0 } },
+        { task: 2, session: null, yours: false },
       ],
     });
   });
