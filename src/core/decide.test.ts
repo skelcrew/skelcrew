@@ -23,10 +23,12 @@ import type {
   EventBody,
   Failure,
   Input,
+  PhaseUsage,
   Project,
   Spec,
   Task,
   TaskEvent,
+  TaskUsage,
 } from "./types";
 
 const at = 5_000;
@@ -1139,17 +1141,27 @@ describe("an open spec question", () => {
 // ---------------------------------------------------------------------------
 
 // The test config's cap is 200,000 tokens and 60 minutes.
-const usage = (tokens: number, minutes = 0): Input => ({
-  by: "system",
-  type: "usage",
-  usage: { tokens, ms: minutes * 60_000 },
+const phase = (tokens: number, minutes = 0, cacheReads = 0): PhaseUsage => ({
+  tokens,
+  cacheReads,
+  ms: minutes * 60_000,
 });
+const none = phase(0);
+const report = (usage: TaskUsage): Input => ({ by: "system", type: "usage", usage });
+// Most tests need only one agent's totals. The cap doesn't care which phase.
+const usage = (tokens: number, minutes = 0): Input =>
+  report({ spec: none, develop: phase(tokens, minutes) });
 
 describe("usage", () => {
   test("records the totals while under the cap", () => {
     expect(send(run(...inProgress), usage(50_000, 10))).toEqual({
       ok: true,
-      events: [stamped({ type: "task.usage_recorded", usage: { tokens: 50_000, ms: 600_000 } })],
+      events: [
+        stamped({
+          type: "task.usage_recorded",
+          usage: { spec: none, develop: phase(50_000, 10) },
+        }),
+      ],
       commands: [],
     });
   });
@@ -1158,7 +1170,10 @@ describe("usage", () => {
     expect(send(run(...inProgress), usage(200_000, 10))).toEqual({
       ok: true,
       events: [
-        stamped({ type: "task.usage_recorded", usage: { tokens: 200_000, ms: 600_000 } }),
+        stamped({
+          type: "task.usage_recorded",
+          usage: { spec: none, develop: phase(200_000, 10) },
+        }),
         stamped({
           type: "task.blocked",
           reason: { kind: "safety_cap", usage: { tokens: 200_000, ms: 600_000 } },
@@ -1182,6 +1197,32 @@ describe("usage", () => {
     expect(decision.ok && decision.events.map((e) => e.type)).toEqual(["task.usage_recorded"]);
   });
 
+  test("keeps each phase's totals apart, with cache reads on their own", () => {
+    const both = { spec: phase(30_000, 5, 400_000), develop: phase(20_000, 4, 900_000) };
+    expect(send(run(...inProgress), report(both))).toEqual({
+      ok: true,
+      events: [stamped({ type: "task.usage_recorded", usage: both })],
+      commands: [],
+    });
+  });
+
+  test("counts both phases together toward the cap", () => {
+    const both = { spec: phase(120_000, 20), develop: phase(80_000, 15) };
+    const decision = send(run(...inProgress), report(both));
+    expect(decision.ok && decision.events[1]).toEqual(
+      stamped({
+        type: "task.blocked",
+        reason: { kind: "safety_cap", usage: { tokens: 200_000, ms: 35 * 60_000 } },
+      }),
+    );
+  });
+
+  test("never counts cache reads toward the cap", () => {
+    const cached = { spec: none, develop: phase(10_000, 5, 5_000_000) };
+    const decision = send(run(...inProgress), report(cached));
+    expect(decision.ok && decision.events.map((e) => e.type)).toEqual(["task.usage_recorded"]);
+  });
+
   test("only records the totals when no agent is running", () => {
     for (const inputs of [awaitingApproval, [...inProgress, giveUp]]) {
       const decision = send(run(...inputs), usage(300_000));
@@ -1197,7 +1238,10 @@ describe("the safety cap while an agent is starting", () => {
     expect(send(run(...inSpec, start), usage(250_000))).toEqual({
       ok: true,
       events: [
-        stamped({ type: "task.usage_recorded", usage: { tokens: 250_000, ms: 0 } }),
+        stamped({
+          type: "task.usage_recorded",
+          usage: { spec: none, develop: phase(250_000) },
+        }),
         stamped({ type: "task.blocked", reason: capped }),
       ],
       commands: [],
@@ -1216,7 +1260,10 @@ describe("the safety cap while an agent is starting", () => {
     expect(send(run(...startingDevelop), usage(250_000))).toEqual({
       ok: true,
       events: [
-        stamped({ type: "task.usage_recorded", usage: { tokens: 250_000, ms: 0 } }),
+        stamped({
+          type: "task.usage_recorded",
+          usage: { spec: none, develop: phase(250_000) },
+        }),
         stamped({ type: "task.blocked", reason: capped }),
       ],
       commands: [{ type: "remove_worktree", worktree }],
@@ -1250,6 +1297,19 @@ describe("a usage report older than the last one", () => {
         reason: "This usage report for #12 is older than the last one.",
       },
     });
+  });
+
+  test("is refused if any one of its numbers went down", () => {
+    const last = { spec: phase(30_000, 5, 1_000), develop: phase(50_000, 10, 2_000) };
+    const lower = [
+      { ...last, spec: phase(29_000, 5, 1_000) },
+      { ...last, spec: phase(30_000, 4, 1_000) },
+      { ...last, spec: phase(30_000, 5, 900) },
+      { spec: phase(90_000, 9, 9_000), develop: phase(50_000, 10, 1_999) },
+    ];
+    for (const usage of lower) {
+      expect(send(run(...inProgress, report(last)), report(usage)).ok).toBe(false);
+    }
   });
 });
 

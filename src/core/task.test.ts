@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { commit, head, id, session, spec, specWorktree, worktree } from "../test/fixtures";
 import { evolveTask } from "./evolve";
 import { CommitSha, SessionId, TaskId } from "./ids";
-import { waitingOnYou } from "./task";
+import { usageTotal, waitingOnYou } from "./task";
 import type { EventBody, Spec, Task } from "./types";
 
 function replay(...bodies: EventBody[]): Task {
@@ -96,5 +96,15 @@ describe("waitingOnYou", () => {
 
   test("is nothing for a task that's merged", () => {
     expect(waitingOnYou(replay(...done))).toBeNull();
+  });
+});
+
+describe("usageTotal", () => {
+  test("adds both phases, leaving out cache reads", () => {
+    const usage = {
+      spec: { tokens: 30_000, cacheReads: 400_000, ms: 5 * 60_000 },
+      develop: { tokens: 20_000, cacheReads: 900_000, ms: 4 * 60_000 },
+    };
+    expect(usageTotal(usage)).toEqual({ tokens: 50_000, ms: 9 * 60_000 });
   });
 });

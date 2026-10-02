@@ -59,7 +59,10 @@ describe("task.created", () => {
         blocked: null,
         builds: 0,
         requests: 0,
-        usage: { tokens: 0, ms: 0 },
+        usage: {
+          spec: { tokens: 0, cacheReads: 0, ms: 0 },
+          develop: { tokens: 0, cacheReads: 0, ms: 0 },
+        },
         usageAtRetry: { tokens: 0, ms: 0 },
       },
     });
@@ -713,7 +716,10 @@ describe("task.blocked", () => {
 });
 
 describe("task.unblocked", () => {
-  const usage = { tokens: 250_000, ms: 30 * 60_000 };
+  const usage = {
+    spec: { tokens: 100_000, cacheReads: 700_000, ms: 10 * 60_000 },
+    develop: { tokens: 150_000, cacheReads: 900_000, ms: 20 * 60_000 },
+  };
   const blockedAfterFailures: Body[] = [
     ...inChecks,
     { type: "task.gate_failed", failure: localFailed },
@@ -727,7 +733,8 @@ describe("task.unblocked", () => {
       blocked: null,
       attempts: 0,
       usage,
-      usageAtRetry: usage,
+      // The cap counts both phases together, and never cache reads.
+      usageAtRetry: { tokens: 250_000, ms: 30 * 60_000 },
       step: { kind: "queued" },
     });
   });
@@ -742,7 +749,10 @@ describe("task.unblocked", () => {
 
 describe("task.usage_recorded", () => {
   test("replaces the running totals", () => {
-    const usage = { tokens: 12_000, ms: 90_000 };
+    const usage = {
+      spec: { tokens: 3_000, cacheReads: 40_000, ms: 30_000 },
+      develop: { tokens: 12_000, cacheReads: 90_000, ms: 90_000 },
+    };
     expect(replay(...inProgress, { type: "task.usage_recorded", usage })).toMatchObject({
       usage,
       usageAtRetry: { tokens: 0, ms: 0 },

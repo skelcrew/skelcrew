@@ -6,6 +6,7 @@
 // A text that runs over several lines, such as a failed check's output,
 // keeps its lines, indented under the first.
 
+import { usageTotal } from "../core/task";
 import type { GateName, TaskEvent } from "../core/types";
 import { describeBlock } from "../daemon/daemon";
 
@@ -129,8 +130,10 @@ function happened(event: TaskEvent, before: TaskEvent[]): string {
       return "Unblocked, to try again.";
     case "task.dropped":
       return "Dropped.";
-    case "task.usage_recorded":
-      return `Used ${event.usage.tokens.toLocaleString("en-US")} tokens in ${duration(event.usage.ms)} so far.`;
+    case "task.usage_recorded": {
+      const total = usageTotal(event.usage);
+      return `Used ${total.tokens.toLocaleString("en-US")} tokens in ${duration(total.ms)} so far.`;
+    }
   }
 }
 

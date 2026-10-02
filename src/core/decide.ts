@@ -21,6 +21,7 @@ import {
   phaseNames,
   runningSession,
   type TaskIn,
+  usageTotal,
   waitingForAgent,
   waitingForSpecWorktree,
   waitingForWorktree,
@@ -42,8 +43,8 @@ import type {
   Spec,
   SpecWorktree,
   Task,
+  TaskUsage,
   Timestamp,
-  Usage,
   Worktree,
 } from "./types";
 
@@ -260,7 +261,7 @@ function inAnyPhase(task: Task, input: AnyPhaseInput, ctx: Context): Decision {
     // recorded, and start checks the cap before the next agent runs. Totals
     // only grow, so a report lower than the last one is older, and refused.
     case "usage": {
-      if (input.usage.tokens < task.usage.tokens || input.usage.ms < task.usage.ms) {
+      if (!neverLower(input.usage, task.usage)) {
         return reject(`This usage report for #${task.id} is older than the last one.`);
       }
       const recorded: EventBody = { type: "task.usage_recorded", usage: input.usage };
@@ -783,11 +784,12 @@ function refusedStart(
 
 // The block for a task at or over its safety cap since the last retry, or
 // null if it is within it.
-function safetyCapBlock(task: Task, usage: Usage, ctx: Context): EventBody | null {
-  if (withinSafetyCap(usage, task.usageAtRetry, ctx.config.safetyCap).ok) return null;
+function safetyCapBlock(task: Task, usage: TaskUsage, ctx: Context): EventBody | null {
+  const total = usageTotal(usage);
+  if (withinSafetyCap(total, task.usageAtRetry, ctx.config.safetyCap).ok) return null;
   const used = {
-    tokens: usage.tokens - task.usageAtRetry.tokens,
-    ms: usage.ms - task.usageAtRetry.ms,
+    tokens: total.tokens - task.usageAtRetry.tokens,
+    ms: total.ms - task.usageAtRetry.ms,
   };
   return { type: "task.blocked", reason: { kind: "safety_cap", usage: used } };
 }
@@ -941,5 +943,16 @@ function isBlank(text: string): boolean {
 function wrongPhase(task: Task, input: Input, ctx: Context): Decision {
   return ctx.reject(
     `#${task.id} is in ${phaseNames[task.phase]}, so it can't take ${inputNames[input.type]}.`,
+  );
+}
+
+// Whether every number in a usage report is at least the last one's. Each
+// number is a running total, so one that went down means an older report.
+function neverLower(next: TaskUsage, last: TaskUsage): boolean {
+  return (["spec", "develop"] as const).every(
+    (phase) =>
+      next[phase].tokens >= last[phase].tokens &&
+      next[phase].cacheReads >= last[phase].cacheReads &&
+      next[phase].ms >= last[phase].ms,
   );
 }

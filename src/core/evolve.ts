@@ -5,10 +5,10 @@
 // Events that can happen in any phase come first. The rest are grouped by
 // the phase they apply in, one function per phase, in lifecycle order.
 
-import { phaseNames, type TaskIn } from "./task";
+import { phaseNames, type TaskIn, usageTotal } from "./task";
 import type { Brief, EvolvedTask, EvolveTask, Failure, Spec, Task, TaskEvent } from "./types";
 
-const noUsage = { tokens: 0, ms: 0 };
+const nothingUsed = { tokens: 0, cacheReads: 0, ms: 0 };
 const noBrief: Brief = { failure: null, note: null, blocked: null };
 
 export const evolveTask: EvolveTask = (task, event) => {
@@ -25,8 +25,8 @@ export const evolveTask: EvolveTask = (task, event) => {
       blocked: null,
       builds: 0,
       requests: 0,
-      usage: noUsage,
-      usageAtRetry: noUsage,
+      usage: { spec: nothingUsed, develop: nothingUsed },
+      usageAtRetry: { tokens: 0, ms: 0 },
     });
   }
   if (task === null) return refuse(event, `#${event.taskId} doesn't exist`);
@@ -66,7 +66,7 @@ export const evolveTask: EvolveTask = (task, event) => {
     // develop agent knows why the last one stopped.
     case "task.unblocked": {
       if (task.blocked === null) return refuse(event, `#${task.id} isn't blocked`);
-      const cleared = { ...task, blocked: null, usageAtRetry: task.usage };
+      const cleared = { ...task, blocked: null, usageAtRetry: usageTotal(task.usage) };
       return ok(
         cleared.phase === "in_progress"
           ? { ...cleared, attempts: 0, brief: { ...cleared.brief, blocked: task.blocked } }

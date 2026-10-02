@@ -83,6 +83,26 @@ export type Usage = {
   ms: number;
 };
 
+// What one phase's agents have used. Tokens leave out cache reads: tokens
+// the model reads again from earlier in the conversation. They would swamp
+// the rest, so they are counted on their own and never count toward the
+// safety cap. `ms` is working time, not counting time spent waiting for
+// the developer's answer.
+export type PhaseUsage = {
+  tokens: number;
+  cacheReads: number;
+  ms: number;
+};
+
+// A task's usage, per phase. Only agents Skelcrew started are counted. A
+// spec you write in your own session adds nothing. Per phase, because a
+// spec agent's last reading can land after its task has left Spec, so the
+// phase can't be worked out from when a report arrived.
+export type TaskUsage = {
+  spec: PhaseUsage;
+  develop: PhaseUsage;
+};
+
 // Each task works in its own worktree, so parallel agents never touch each
 // other's files.
 export type Worktree = {
@@ -249,8 +269,9 @@ export type Task = PhaseState & {
   requests: number;
   // Two usage counters. `usage` never resets, so the record shows the true
   // cost. The safety cap counts from `usageAtRetry`, so a retried task gets
-  // a fresh allowance instead of being blocked again at once.
-  usage: Usage;
+  // a fresh allowance instead of being blocked again at once. The cap
+  // counts both phases together, so `usageAtRetry` is one total.
+  usage: TaskUsage;
   usageAtRetry: Usage;
 };
 
@@ -385,7 +406,7 @@ export type PluginInput =
 // direct change, so decide keeps the final say on every transition.
 export type SystemInput =
   | { type: "start" } // proposed by the scheduler when a slot is free
-  | { type: "usage"; usage: Usage }; // running totals, read from transcripts
+  | { type: "usage"; usage: TaskUsage }; // running totals, read from transcripts
 
 // `by` is set by the boundary that received the input (the CLI, from the
 // caller's identity, or the plugin host), never by the sender. An agent
@@ -472,7 +493,7 @@ export type EventBody =
   | { type: "task.blocked"; reason: BlockReason }
   | { type: "task.unblocked" } // resets attempts and the safety cap
   | { type: "task.dropped" }
-  | { type: "task.usage_recorded"; usage: Usage };
+  | { type: "task.usage_recorded"; usage: TaskUsage };
 
 export type TaskEvent = EventBody & {
   // The log is kept forever, so old events must stay readable after their
