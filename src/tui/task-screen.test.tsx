@@ -268,24 +268,24 @@ test("j and k scroll a task taller than the screen", async () => {
   const { lastFrame, stdin } = open({
     load: loaded([specToApprove]),
     loadLog: logOf(history),
-    height: 12,
+    height: 14,
   });
   await tick();
   stdin.write(ENTER);
   await tick();
   let shown = lines(lastFrame());
-  expect(shown).toHaveLength(12);
-  expect(shown[1]).toBe("");
-  expect(shown[9]).toMatch(/^↓ \d+ more lines?$/);
+  expect(shown).toHaveLength(14);
+  expect(shown[2]).toBe("");
+  expect(shown[10]).toMatch(/^↓ \d+ more lines?$/);
   stdin.write("G");
   await tick();
   shown = lines(lastFrame());
-  expect(shown[1]).toMatch(/^↑ \d+ more lines?$/);
+  expect(shown[2]).toMatch(/^↑ \d+ more lines?$/);
   expect(shown).toContain("See it all with: skelcrew log 14");
   stdin.write("k");
   await tick();
   expect(lines(lastFrame())).not.toContain("See it all with: skelcrew log 14");
   stdin.write("g");
   await tick();
-  expect(lines(lastFrame())[3]).toBe("Project: reports");
+  expect(lines(lastFrame())[4]).toBe("Project: reports");
 });

@@ -58,6 +58,10 @@ type Props = {
 // A longer answer, such as a failed merge's check output, is cut to this.
 const MAX_SAID = 4;
 
+// The room around a full screen: columns on each side, lines above and below.
+const PAD_X = 2;
+const PAD_Y = 1;
+
 export function Screen(props: Props) {
   const { repo, quit, load, send, loadLog, browse, refreshMs = 1000, height } = props;
   // null until the first answer.
@@ -277,7 +281,10 @@ export function Screen(props: Props) {
       );
   });
 
-  const columns = stdout.columns ?? 80;
+  // A full screen keeps a blank line above and below, and two spaces on
+  // each side, so nothing touches the window's edges.
+  const padded = height !== undefined;
+  const columns = (stdout.columns ?? 80) - (padded ? 2 * PAD_X : 0);
   const widths = widthsOf(
     groups.flatMap((group) => group.rows),
     columns,
@@ -304,11 +311,12 @@ export function Screen(props: Props) {
     !showKeys &&
     !showProjects &&
     opened === undefined;
-  const headerHeight = logo ? LOGO.length + 1 : 1;
+  // The logo, a blank line, then the header.
+  const headerHeight = logo ? LOGO.length + 2 : 1;
   const room =
     height === undefined
       ? body.length
-      : height - headerHeight - bottomHeight(problemLines, saidLines, mode);
+      : height - 2 * PAD_Y - headerHeight - bottomHeight(problemLines, saidLines, mode);
   // The list and the projects screen each remember where they scrolled to.
   const memory = showProjects ? projectsScrolled : scrolled;
   const scrolling: Scrolling = showKeys
@@ -353,7 +361,10 @@ export function Screen(props: Props) {
   };
 
   return (
-    <Box flexDirection="column" {...(height === undefined ? {} : { height })}>
+    <Box
+      flexDirection="column"
+      {...(height === undefined ? {} : { height, paddingX: PAD_X, paddingY: PAD_Y })}
+    >
       {showKeys ? (
         <TitleHeader title="Keys" />
       ) : showProjects ? (

@@ -25,7 +25,7 @@ export const LOGO_MIN_HEIGHT = 24;
 
 export function Logo() {
   return (
-    <Box flexDirection="column" flexShrink={0}>
+    <Box flexDirection="column" flexShrink={0} marginBottom={1}>
       {LOGO.map((line) => (
         <Text key={line} wrap="truncate-end">
           {line}

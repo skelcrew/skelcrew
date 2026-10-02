@@ -187,11 +187,11 @@ test("more projects than fit scroll to keep the cursor in view", async () => {
   });
   const { lastFrame, stdin } = await projectsScreen({
     load: async () => ({ ok: true, tasks: [], projects: many }),
-    height: 12,
+    height: 14,
   });
   let shown = lines(lastFrame());
-  expect(shown).toHaveLength(12);
-  expect(shown[9]).toBe("↓ 24 more");
+  expect(shown).toHaveLength(14);
+  expect(shown[10]).toBe("↓ 24 more");
   for (let i = 0; i < 7; i++) {
     stdin.write("j");
     await tick();
@@ -201,7 +201,7 @@ test("more projects than fit scroll to keep the cursor in view", async () => {
   stdin.write("G");
   await tick();
   shown = lines(lastFrame());
-  expect(shown[1]).toBe("↑ 23 more");
+  expect(shown[2]).toBe("↑ 23 more");
   expect(shown).toContain("› Project 30 active 0 open Goal 30.");
   stdin.write("g");
   await tick();
