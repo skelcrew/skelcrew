@@ -1245,7 +1245,7 @@ describe("skelcrew log", () => {
     const used = (tokens: number, ms: number) => ({
       ...stamp,
       type: "task.usage_recorded",
-      usage: { tokens, ms },
+      usage: { spec: { tokens: 0, cacheReads: 0, ms: 0 }, develop: { tokens, cacheReads: 0, ms } },
     });
     await fakeDaemon(repo, {
       leftOut: 0,

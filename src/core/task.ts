@@ -2,7 +2,7 @@
 // decide, the scheduler, the simulator and the tests all read tasks through
 // these, so a question about a task has one answer.
 
-import type { Input, Phase, SessionId, SpecWorktree, Task } from "./types";
+import type { Input, Phase, SessionId, SpecWorktree, Task, TaskUsage, Usage } from "./types";
 
 // A task in one phase, for example TaskIn<"checks">.
 export type TaskIn<P extends Phase> = Extract<Task, { phase: P }>;
@@ -170,4 +170,13 @@ export function waitingOnYou(task: Task): WaitingOn | null {
   }
   if (task.phase === "done" && task.step.kind === "revert_failed") return "revert_failed";
   return null;
+}
+
+// A task's usage over both phases, as the safety cap counts it: tokens and
+// working time, never cache reads.
+export function usageTotal(usage: TaskUsage): Usage {
+  return {
+    tokens: usage.spec.tokens + usage.develop.tokens,
+    ms: usage.spec.ms + usage.develop.ms,
+  };
 }

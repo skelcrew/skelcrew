@@ -17,6 +17,7 @@ import type {
   EventBody,
   Failure,
   GateName,
+  PhaseUsage,
   ProjectEvent,
   ProjectEventBody,
   Question,
@@ -24,6 +25,7 @@ import type {
   Spec,
   SpecWorktree,
   TaskEvent,
+  TaskUsage,
   Usage,
   Worktree,
 } from "../core/types";
@@ -53,6 +55,17 @@ const failure: z.ZodType<Failure> = z.strictObject({
 });
 
 const usage: z.ZodType<Usage> = z.strictObject({ tokens: z.number(), ms: z.number() });
+
+const phaseUsage: z.ZodType<PhaseUsage> = z.strictObject({
+  tokens: z.number(),
+  cacheReads: z.number(),
+  ms: z.number(),
+});
+
+const taskUsage: z.ZodType<TaskUsage> = z.strictObject({
+  spec: phaseUsage,
+  develop: phaseUsage,
+});
 
 const blockReason: z.ZodType<BlockReason> = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("out_of_attempts"), failure }),
@@ -138,7 +151,7 @@ const taskEvents = {
   "task.blocked": { reason: blockReason },
   "task.unblocked": {},
   "task.dropped": {},
-  "task.usage_recorded": { usage },
+  "task.usage_recorded": { usage: taskUsage },
 } satisfies Record<EventBody["type"], z.ZodRawShape>;
 
 // One strict object per event type: its own fields, the stamp, and a

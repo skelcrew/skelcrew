@@ -12,7 +12,7 @@ import { decideTask } from "./decide";
 import { evolveTask } from "./evolve";
 import { CommitSha, ProjectId, SessionId, TaskId } from "./ids";
 import { schedule } from "./schedule";
-import { awaitedRequest, heldSpecWorktree, heldWorktree, runningSession } from "./task";
+import { awaitedRequest, heldSpecWorktree, heldWorktree, runningSession, usageTotal } from "./task";
 import type {
   Command,
   Config,
@@ -23,6 +23,7 @@ import type {
   Spec,
   Task,
   TaskEvent,
+  TaskUsage,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -81,7 +82,14 @@ const inputPool: Input[] = [
   { by: "plugin", type: "external_move", to: "Done" },
   { by: "system", type: "start" },
   ...[1_000, 150_000, 250_000].map(
-    (tokens): Input => ({ by: "system", type: "usage", usage: { tokens, ms: 60_000 } }),
+    (tokens): Input => ({
+      by: "system",
+      type: "usage",
+      usage: {
+        spec: { tokens: tokens / 2, cacheReads: tokens * 10, ms: 30_000 },
+        develop: { tokens: tokens / 2, cacheReads: tokens * 10, ms: 30_000 },
+      },
+    }),
   ),
 ];
 
@@ -169,7 +177,10 @@ class Checker {
   // Starts sent out and not yet answered, the way the daemon counts them:
   // by request number, since each reply names the request it answers.
   startsPending = new Set<number>();
-  lastUsage = { tokens: 0, ms: 0 };
+  lastUsage: TaskUsage = {
+    spec: { tokens: 0, cacheReads: 0, ms: 0 },
+    develop: { tokens: 0, cacheReads: 0, ms: 0 },
+  };
   // Sessions you claimed the task with. A spec from one needs no approval.
   claimedSessions = new Set<Session>();
 
@@ -583,8 +594,9 @@ class Checker {
     // 11. A task running over its safety cap is blocked.
     if (session !== null) {
       const cap = this.config.safetyCap;
-      const tokens = task.usage.tokens - task.usageAtRetry.tokens;
-      const ms = task.usage.ms - task.usageAtRetry.ms;
+      const total = usageTotal(task.usage);
+      const tokens = total.tokens - task.usageAtRetry.tokens;
+      const ms = total.ms - task.usageAtRetry.ms;
       expect(tokens < cap.tokens && ms < cap.ms).toBe(true);
     }
 
@@ -600,8 +612,11 @@ class Checker {
 
     // 19. Usage totals never go down: the record keeps the true cost, and
     // the safety cap counts from them.
-    expect(task.usage.tokens).toBeGreaterThanOrEqual(this.lastUsage.tokens);
-    expect(task.usage.ms).toBeGreaterThanOrEqual(this.lastUsage.ms);
+    for (const phase of ["spec", "develop"] as const) {
+      for (const field of ["tokens", "cacheReads", "ms"] as const) {
+        expect(task.usage[phase][field]).toBeGreaterThanOrEqual(this.lastUsage[phase][field]);
+      }
+    }
     this.lastUsage = task.usage;
 
     // 21. Replaying the log rebuilds the task exactly.
