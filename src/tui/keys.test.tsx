@@ -31,7 +31,7 @@ const KEY_LIST = [
   "enter open the task, or press l",
   "a add an idea",
   "A add an idea and ask for its spec",
-  "y ask for an idea's spec, or approve a spec, or a merge once you confirm",
+  "y approve a spec, or a merge once you confirm",
   "x send it back, with what should change",
   "s ask for a spec",
   "r retry a blocked task",
@@ -130,7 +130,7 @@ test("the keys lines fit an 80-column window", () => {
   expect(TASK_KEYS.length).toBeLessThanOrEqual(80);
 });
 
-// The keys line names y and x only when they would work.
+// The keys line names y, x and s only when they would work.
 const idea = task(16, "Keyboard help", "idea");
 const mergeToApprove = task(11, "Retry on 429", "checks", { waitingOnYou: "merge_approval" });
 const building = task(12, "Settings page", "in_progress", { session: "you-2", step: "running" });
@@ -143,7 +143,7 @@ test("the keys line names approve and reject on a spec or merge that waits for a
   }
 });
 
-test("on an Idea, the keys line says y specs it, and leaves out reject", async () => {
+test("on an Idea, the keys line names s to ask for its spec, and leaves out y and x", async () => {
   const { lastFrame } = open({ load: loaded([idea]) });
   await tick();
   expect(lines(lastFrame()).at(-1)).toBe(IDEA_KEYS);
@@ -184,15 +184,16 @@ test("a task's own screen names y and x only when they would work", async () => 
   }
 });
 
-test("y on an Idea asks for its spec", async () => {
+test("y on an Idea still asks to approve it, and shows the refusal", async () => {
   const sent: string[][] = [];
   const send = async (args: string[]): Promise<Outcome> => {
     sent.push(args);
-    return { code: 0, out: ["Asked for a spec for #16."], err: [] };
+    return { code: 1, out: [], err: ["#16 has nothing waiting for your approval."] };
   };
-  const { stdin } = open({ load: loaded([idea]), send });
+  const { lastFrame, stdin } = open({ load: loaded([idea]), send });
   await tick();
   stdin.write("y");
   await tick();
-  expect(sent).toEqual([["spec", "16"]]);
+  expect(sent).toEqual([["approve", "16"]]);
+  expect(lines(lastFrame())).toContain("#16 has nothing waiting for your approval.");
 });

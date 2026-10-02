@@ -42,12 +42,6 @@ export type Where = { project: { id: string; name: string } | null };
 const awaitsApproval = (task: TaskView | undefined) =>
   task?.waitingOnYou === "spec_approval" || task?.waitingOnYou === "merge_approval";
 
-const askForSpec = (task: TaskView): Run => ({
-  args: ["spec", `${task.task}`],
-  doing: `Asking for a spec for #${task.task}…`,
-  task: task.task,
-});
-
 // An idea goes into the project the screen shows, if any.
 const adding = (spec: boolean, where: Where): Step => {
   const project = where.project;
@@ -82,14 +76,11 @@ export const actions: Action[] = [
   {
     key: "y",
     hint: "approve",
-    help: "ask for an idea's spec, or approve a spec, or a merge once you confirm",
+    help: "approve a spec, or a merge once you confirm",
     onTask: true,
-    // y moves the task on: an Idea to Spec, or an approval through.
-    hintFor: (task) =>
-      task?.phase === "idea" ? "spec it" : awaitsApproval(task) ? "approve" : null,
+    hintFor: (task) => (awaitsApproval(task) ? "approve" : null),
     step: (task) => {
       if (task === undefined) return null;
-      if (task.phase === "idea") return { kind: "run", run: askForSpec(task) };
       const run = {
         args: ["approve", `${task.task}`],
         doing: `Approving #${task.task}…`,
@@ -125,7 +116,19 @@ export const actions: Action[] = [
     hint: null,
     help: "ask for a spec",
     onTask: true,
-    step: (task) => (task === undefined ? null : { kind: "run", run: askForSpec(task) }),
+    // Only an Idea can be sent to Spec.
+    hintFor: (task) => (task?.phase === "idea" ? "spec" : null),
+    step: (task) =>
+      task === undefined
+        ? null
+        : {
+            kind: "run",
+            run: {
+              args: ["spec", `${task.task}`],
+              doing: `Asking for a spec for #${task.task}…`,
+              task: task.task,
+            },
+          },
   },
   {
     key: "r",
