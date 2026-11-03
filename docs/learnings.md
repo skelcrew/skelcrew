@@ -62,15 +62,25 @@ that covers the code you are about to write.
   your rights, and git follows a `commondir` file in `.git` or any worktree's folder to a
   config that can run commands. So give the builder a throwaway `.git` top level and bring
   back only `objects`, `refs` and its own worktree folder writable, with `commondir`,
-  `gitdir`, `config.worktree` and `objects/info/alternates` read-only. Cover a missing one
-  with an empty file, not `/dev/null`, which a `nodev` mount refuses to open.
+  `gitdir`, `config.worktree` and the whole `objects/info` folder read-only. A read-only
+  file in a writable folder can be renamed away, a mounted folder can't. Cover a missing
+  file with an empty one, not `/dev/null`, which a `nodev` mount refuses to open.
 - **Keep reflogs out of reach.** Git outside appends to a reflog by following whatever is
   there, so a link planted in `logs` makes a push write into any file of yours.
 - **The daemon never runs git in a worktree.** `git status` or `git diff` there runs a
   planted submodule's `core.fsmonitor`. It runs git in the main repository only, and pushes
   the commit it recorded (`git -C repo push origin <sha>:refs/heads/skel/<n>`), since a
   builder can move any ref, including `main` and other threads' branches.
-- **Agents read `.git/config`.** A remote URL with a token in it would be visible to them.
+- **Check `.git` before running git in a repository.** A builder can leave a folder link in
+  `refs` or `objects`, which a fetch or gc outside follows to write into any folder of
+  yours, or a stray lock that stops it. The daemon calls `checkGitDir` first.
+- **Remove a worktree without running git in it.** `git worktree remove` runs `git status`
+  there, which runs a planted `core.fsmonitor`. Check nothing needs saving, then use
+  `--force`, or delete the folder and run `git worktree prune`.
+- **Never use a session's config folder outside the sandbox.** The agent can put commands
+  in its `settings.json`, so `claude auth status` run there with your rights would run them.
+- **Agents read `.git/config`.** A remote URL with a token in it, or an `extraheader`, would
+  be visible to them, so skel refuses to start agents for such a repository.
 - **Agents share the network.** They can reach ports on localhost and abstract sockets.
 - **Hide other threads.** `.skel/` holds every thread's worktree and socket, and a socket
   answers whoever connects. Hide the folder, then bring back only the agent's own. Create
