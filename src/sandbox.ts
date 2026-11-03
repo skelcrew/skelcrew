@@ -1,7 +1,14 @@
 // The sandbox every agent runs in, and how Claude Code starts inside it. bubblewrap draws
 // the boundary: the agent's folder is writable, the rest of the system read-only, and your
 // home folder and credentials hidden.
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 
@@ -22,11 +29,12 @@ export function sandboxArgs(given: {
   home: string;
   path: string;
   mounts: string[];
+  env?: Record<string, string>;
   socket: string;
   cwd: string;
   command: string[];
 }): string[] {
-  const { home, path, mounts, socket, cwd, command } = given;
+  const { home, path, mounts, env = {}, socket, cwd, command } = given;
   // Its own process list, so your other processes can't be seen or signalled. No
   // --new-session: it moves Claude Code out of the terminal's process group, so it misses
   // resize signals and draws at the wrong width. The network stays shared for the model's API.
@@ -57,12 +65,15 @@ export function sandboxArgs(given: {
   args.push(...mounts);
   args.push("--bind", socket, socketInside);
   args.push("--setenv", "SKEL_SANDBOX", "1", "--setenv", "SKEL_SOCKET", socketInside);
+  for (const [key, value] of Object.entries(env)) args.push("--setenv", key, value);
   args.push("--chdir", cwd, "--", ...command);
   return args;
 }
 
+type Seen = { mounts: string[]; env: Record<string, string>; cwd: string };
+
 // What each kind of agent sees beyond the read-only system, and the folder it starts in.
-export function agentMounts(agent: Agent, home: string): { mounts: string[]; cwd: string } {
+export function agentMounts(agent: Agent, home: string): Seen {
   if (agent.kind === "lead") {
     const lead = join(home, ".local", "share", "skel", "lead");
     mkdirSync(lead, { recursive: true });
@@ -73,22 +84,52 @@ export function agentMounts(agent: Agent, home: string): { mounts: string[]; cwd
       // connects, even through a read-only mount.
       if (existsSync(join(repo, ".skel"))) mounts.push(...hide(join(repo, ".skel")));
     }
-    return { mounts, cwd: lead };
+    return { mounts, env: {}, cwd: lead };
   }
   const { repository, worktree } = agent;
   const mounts = [...ro(repository), ...hide(join(repository, ".skel"))];
-  if (agent.kind === "reviewer") return { mounts: [...mounts, ...ro(worktree)], cwd: worktree };
-  // A worktree commits into the repository's .git: objects, refs and a rebase's locks live
-  // there. But the daemon's push runs git outside the sandbox with your rights, so whatever
-  // changes what git does stays read-only.
+  if (agent.kind === "reviewer")
+    return { mounts: [...mounts, ...ro(worktree)], env: {}, cwd: worktree };
+  // A worktree commits into the repository's .git: objects, refs and logs live there. But
+  // the daemon's push runs git outside the sandbox with your rights, and git follows a
+  // commondir file in .git, or in any worktree's folder, to a config that runs commands.
+  // So the builder gets a .git of its own whose top level is thrown away: what a commit,
+  // rebase or merge must keep comes back from the real one, and nothing else does.
   const git = join(repository, ".git");
-  const own = readFileSync(join(worktree, ".git"), "utf8")
+  const link = readFileSync(join(worktree, ".git"), "utf8")
     .replace(/^gitdir: /, "")
     .trim();
-  mounts.push(...rw(worktree), ...ro(join(worktree, ".git")), ...rw(git));
-  for (const p of ["config", "hooks", "info"]) mounts.push(...fixed(join(git, p)));
+  const own = resolve(worktree, link);
+  mounts.push(...rw(worktree), ...ro(join(worktree, ".git")), ...hide(git));
+  for (const entry of readdirSync(git)) {
+    const p = join(git, entry);
+    if (["objects", "refs", "logs"].includes(entry)) mounts.push(...rw(p));
+    // Git locks packed-refs on every deletion, as a rebase makes. The lock lands in the
+    // thrown-away top level, so only deleting a packed branch fails.
+    else if (entry !== "worktrees") mounts.push(...ro(p));
+  }
+  // Only this worktree's folder comes back, which holds its HEAD, index and a rebase's state.
+  mounts.push(...rw(own));
   for (const p of ["commondir", "gitdir", "config.worktree"]) mounts.push(...fixed(join(own, p)));
-  return { mounts, cwd: worktree };
+  return { mounts, env: identity(repository, home), cwd: worktree };
+}
+
+// Commits are authored by you, but your ~/.gitconfig is hidden with the rest of your home.
+// Only your name and email go in, read as git outside would read them.
+function identity(repository: string, home: string): Record<string, string> {
+  const read = (key: string) =>
+    Bun.spawnSync(["git", "-C", repository, "config", key], {
+      env: { ...process.env, HOME: home },
+      stdout: "pipe",
+    })
+      .stdout.toString()
+      .trim();
+  const env: Record<string, string> = {};
+  const name = read("user.name");
+  const email = read("user.email");
+  if (name) Object.assign(env, { GIT_AUTHOR_NAME: name, GIT_COMMITTER_NAME: name });
+  if (email) Object.assign(env, { GIT_AUTHOR_EMAIL: email, GIT_COMMITTER_EMAIL: email });
+  return env;
 }
 
 const ClaudeJson = z.looseObject({
@@ -124,7 +165,7 @@ export function agentCommand(given: {
   const { agent, name, socket, model, prompt, resume, env = process.env } = given;
   const home = env.HOME;
   if (!home) throw new Error("HOME isn't set, so skel can't find Claude Code's login");
-  const { mounts, cwd } = agentMounts(agent, home);
+  const { mounts, env: seenEnv, cwd } = agentMounts(agent, home);
 
   // The login and transcripts are shared, not copied: a copied login goes stale when either
   // side refreshes its token, and --resume looks for transcripts here.
@@ -161,6 +202,14 @@ export function agentCommand(given: {
   for (const [key, value] of Object.entries(env)) {
     if (value !== undefined && (passed.includes(key) || key.startsWith("LC_"))) kept[key] = value;
   }
-  const argv = sandboxArgs({ home, path: env.PATH ?? "", mounts, socket, cwd, command });
+  const argv = sandboxArgs({
+    home,
+    path: env.PATH ?? "",
+    mounts,
+    env: seenEnv,
+    socket,
+    cwd,
+    command,
+  });
   return { argv, env: kept };
 }

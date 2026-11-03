@@ -20,6 +20,7 @@ let socketPath = "";
 
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-sandbox-test-")));
+  writeFileSync(join(home, ".gitconfig"), "[user]\n  name = Simon\n  email = simon@example.com\n");
   socketPath = join(home, "agent.sock");
   socket = Bun.listen({ unix: socketPath, socket: { data() {} } });
 });
@@ -42,21 +43,28 @@ async function run(argv: string[], env: Record<string, string | undefined> = pro
 
 // Runs a shell script inside the sandbox an agent of this kind gets.
 function inside(agent: Agent, script: string) {
-  const { mounts, cwd } = agentMounts(agent, home);
+  const { mounts, env, cwd } = agentMounts(agent, home);
   return run(
     sandboxArgs({
       home,
       path: path(),
       mounts,
+      env,
       socket: socketPath,
       cwd,
       command: ["sh", "-c", script],
     }),
+    { ...process.env, HOME: home },
   );
 }
 
+// Git as you run it outside, with your name in the test home's ~/.gitconfig.
 function git(cwd: string, ...args: string[]) {
-  const done = Bun.spawnSync(["git", "-C", cwd, ...args], { stdout: "pipe", stderr: "pipe" });
+  const done = Bun.spawnSync(["git", "-C", cwd, ...args], {
+    env: { ...process.env, HOME: home, GIT_CONFIG_NOSYSTEM: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   if (!done.success) throw new Error(done.stderr.toString());
   return done.stdout.toString().trim();
 }
@@ -66,8 +74,6 @@ function repository(issue: number) {
   const repo = join(home, "code", "app");
   mkdirSync(repo, { recursive: true });
   git(repo, "init", "-q", "-b", "main");
-  git(repo, "config", "user.email", "t@example.com");
-  git(repo, "config", "user.name", "T");
   writeFileSync(join(repo, "README"), "app\n");
   git(repo, "add", ".");
   git(repo, "commit", "-qm", "start");
@@ -102,24 +108,69 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
     expect(done.out).toBe("hidden\nskel.sock\nsystemd\nresolve\nsocket\n1\n");
   });
 
-  test("a builder commits in its worktree but can't change git's settings or hooks", async () => {
+  test("a builder commits, amends, rebases and merges in its worktree, as you", async () => {
     const { repo, worktree } = repository(12);
-    const other = join(repo, ".skel", "worktrees", "13");
-    git(repo, "worktree", "add", "-q", "-b", "skel/13", other);
+    writeFileSync(join(repo, "MAIN"), "main\n");
+    git(repo, "add", "MAIN");
+    git(repo, "commit", "-qm", "main moved");
     const done = await inside(
       { kind: "builder", repository: repo, worktree },
       [
-        "echo fix > fix && git add fix && git -c user.email=a@b -c user.name=A commit -qm fix && echo committed",
+        "set -e",
+        "echo fix > fix && git add fix && git commit -qm fix",
+        "git commit -q --amend -m 'fix it'",
+        "git rebase -q main",
+        "git checkout -q -b side && echo s > side && git add side && git commit -qm side",
+        "git checkout -q skel/12 && git merge -q --no-edit side",
+        "echo done",
+      ].join("\n"),
+    );
+    expect(done.err).toBe("");
+    expect(done.out).toBe("done\n");
+    expect(git(worktree, "log", "-3", "--format=%s %an %cn")).toBe(
+      "side Simon Simon\nfix it Simon Simon\nmain moved Simon Simon",
+    );
+  });
+
+  test("a builder can't change git's settings or hooks, nor point git at its own", async () => {
+    const { repo, worktree } = repository(12);
+    const other = join(repo, ".skel", "worktrees", "13");
+    git(repo, "worktree", "add", "-q", "-b", "skel/13", other);
+    const pwned = join(home, "pwned");
+    const admin = join(repo, ".git", "worktrees");
+    // Each route points git at a folder whose config runs a command whenever git runs.
+    const done = await inside(
+      { kind: "builder", repository: repo, worktree },
+      [
+        `mkdir -p evil && cp -r ${repo}/.git/refs ${repo}/.git/HEAD evil/ 2>/dev/null`,
+        `printf '[core]\\n  fsmonitor = touch ${pwned}\\n' > evil/config`,
         `echo x >> ${repo}/.git/config || echo config-fixed`,
         `echo x > ${repo}/.git/hooks/pre-push || echo hooks-fixed`,
-        `echo x > ${repo}/.git/worktrees/12/config.worktree || echo worktree-config-fixed`,
+        `echo $PWD/evil > ${repo}/.git/commondir`,
+        `echo $PWD/evil > ${admin}/13/commondir || echo other-fixed`,
+        `echo $PWD/evil > ${admin}/12/commondir || echo own-fixed`,
+        `echo x > ${admin}/12/config.worktree || echo worktree-config-fixed`,
+        `mv ${admin}/12 ${admin}/12x || echo rename-fixed`,
         `ls -A ${repo}/.skel/worktrees`,
       ].join("; "),
     );
-    expect(done.out).toBe("committed\nconfig-fixed\nhooks-fixed\nworktree-config-fixed\n12\n");
-    expect(git(worktree, "log", "-1", "--format=%s")).toBe("fix");
-    expect(readFileSync(join(repo, ".git", "config"), "utf8")).not.toContain("x\n");
+    expect(done.out).toBe(
+      "config-fixed\nhooks-fixed\nother-fixed\nown-fixed\nworktree-config-fixed\nrename-fixed\n12\n",
+    );
+    for (const at of [repo, worktree, other]) git(at, "status");
+    expect(existsSync(pwned)).toBe(false);
+    expect(existsSync(join(repo, ".git", "commondir"))).toBe(false);
     expect(existsSync(join(repo, ".git", "hooks", "pre-push"))).toBe(false);
+  });
+
+  test("finds a worktree's git folder when git wrote it as a relative path", async () => {
+    const { repo, worktree } = repository(12);
+    writeFileSync(join(worktree, ".git"), "gitdir: ../../../.git/worktrees/12\n");
+    const done = await inside(
+      { kind: "builder", repository: repo, worktree },
+      "echo f > f && git add f && git commit -qm f && echo committed",
+    );
+    expect(done.out).toBe("committed\n");
   });
 
   test("a reviewer can't write in the worktree", async () => {
