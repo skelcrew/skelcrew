@@ -240,3 +240,11 @@ test("refuses a config.yaml it can't read", async () => {
   expect(run.code).toBe(1);
   expect(run.err).toContain("config.yaml");
 });
+
+test("Enter at the harness question picks Claude Code", async () => {
+  writeFileSync(join(home, "gh-login"), "");
+  const run = await skel("\nsk-ant-oat01-good\n");
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(readFileSync(config(), "utf8")).toContain("harness: claude");
+});
