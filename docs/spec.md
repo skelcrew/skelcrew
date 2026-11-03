@@ -41,7 +41,7 @@ The demo repositories are small real apps with fast CI and real issues, not skel
 | Word | Meaning |
 | --- | --- |
 | Lead | Your Claude Code session on the server. One per machine, always running, across all your repositories. You talk to it; it writes issues and starts threads. |
-| Repository | A GitHub repository you added with `skel repo add`. It has a short name, such as `app`. |
+| Repository | A GitHub repository you added with `skel init`. It has a short name, such as `app`. |
 | Issue | An open GitHub issue in a repository. It states the intent: what you want, in words. skel lists every one; nothing happens until it is started. |
 | Thread | The work on one issue: its branch, worktree, sandbox, builder session and history. One thread per issue at a time. Named by repository and issue, such as `app#12`. |
 | Builder | The thread's agent. A Claude Code session that stays alive from start until the PR merges or closes. |
@@ -55,15 +55,14 @@ A thread's status is one of `working`, `waiting` (on review, CI or you), `failed
 
 skel runs on a Linux server. `skel`, from any folder, attaches your terminal to the lead, and starts the daemon and the lead first if they are not running. Ctrl-\] detaches; the lead keeps running.
 
-**The first run.** The first `skel` on a machine takes three steps before the lead starts:
+**The first run.** The first `skel` on a machine takes two steps before the lead starts:
 
 1. **Connect to GitHub.** If `gh auth status` fails, skel runs `gh auth login` in your terminal. skel uses that login for everything it does on GitHub, outside the sandbox.
-2. **Add your first repository.** You give its path, and skel adds it as with `skel repo add`, checking that its remote is on GitHub and that your login can reach it. It then asks whether you trust the folder: agents will run its setup and test commands, and read its AGENTS.md and settings as instructions. The answer is remembered in \~/.config/skel/, never in the repository, so a clone can't bring its own yes.
-3. **Pick a harness.** skel checks that the harness is installed and logged in, and saves the choice in `~/.config/skel/config.yaml`. In this version Claude Code is the only harness offered, but the question is asked so the choice is visible and stored.
+2. **Pick a harness.** skel checks that the harness is installed and logged in, and saves the choice in `~/.config/skel/config.yaml`. In this version Claude Code is the only harness offered, but the question is asked so the choice is visible and stored.
 
 Before the first step, skel checks that `tmux`, `bwrap`, `gh` and the harness are installed, and if one is missing, says exactly what to install instead of failing halfway. After the last step, it installs the daemon as a systemd user service and turns on lingering (`loginctl enable-linger`), so the daemon keeps running after you log out and starts again after a reboot.
 
-Each step is skipped when it is already done, so running `skel` again goes straight to the lead.
+Each step is skipped when it is already done, so running `skel` again goes straight to the lead. While no repository is added, `skel` says so and how to add one, with `skel init` in its folder, and starts the lead anyway.
 
 For now, `skel` only wraps the harness: it sets up the lead and puts you in it, full screen. Later, issues and threads show next to the harness, in a sidebar beside the lead.
 
@@ -71,7 +70,7 @@ From a laptop, `skel --remote simon@workbox` runs `ssh -t simon@workbox skel`. A
 
 Everything must work over a plain `ssh -t`: no local display, no browser on the same machine, no clipboard. Logins that need a browser, such as GitHub's and Claude's, use a code and a link you open on your laptop.
 
-`skel repo add ~/code/app` adds a repository. It asks once whether you trust it, takes its folder name as the short name (`--name` to choose another), and adds `.skel/` to its `.git/info/exclude`. `skel repo ls` lists them and `skel repo rm app` removes one. A repository's `skel.yaml` is optional.
+`skel init`, in a repository's folder, adds that repository (`skel init <path>` adds another). It checks that its `origin` remote is on GitHub and that your login can reach it, and takes its folder name as the short name (`--name` to choose another). It asks whether you trust the folder: agents will run its setup and test commands, and read its AGENTS.md and settings as instructions. The answer is remembered in \~/.config/skel/, never in the repository, so a clone can't bring its own yes. Then it guesses the setup and test commands it can, such as `bun install` and `bun test` for a repository with a `bun.lock`, asks you to confirm or change them, and writes them to the repository's `skel.yaml` for you to commit. With no commands, it writes no file. It also adds `.skel/` to `.git/info/exclude`. `skel repo ls` lists repositories and `skel repo rm app` removes one.
 
 ## The daemon
 
@@ -127,7 +126,7 @@ For you, and for the lead:
 | `skel` | Attaches to the lead, starting the daemon and the lead if needed. |
 | `skel --remote <host> [command]` | Runs any skel command on the server, over `ssh -t`. |
 | `skel serve` | Runs the daemon in the foreground, for systemd. One per machine. |
-| `skel repo add <path> [--name <name>]` | Adds a repository. `skel repo ls` and `skel repo rm <name>` list and remove. |
+| `skel init [<path>] [--name <name>]` | Adds a repository and its setup and test commands. `skel repo ls` and `skel repo rm <name>` list and remove. |
 | `skel ls [<repo>]` | Open issues and threads, with status and needs you, newest first. `--json` for tools. |
 | `skel issue <repo> "<title>" "<body>"` | Creates a GitHub issue and prints its number. |
 | `skel start <repo>#<issue> [--from <branch>]` | Starts a thread on an issue. |
@@ -208,11 +207,11 @@ If something seems missing, ask instead of adding it.
 
 Each one is something you use every day from the day it lands, and lands as small pull requests that pass `bun run check`. From milestone 2 on, skel builds skel.
 
-1. **skel on the server.** You `ssh workbox` yourself and run `skel`. The first run, the daemon as a systemd user service, `skel serve`, `skel repo`. The lead runs in bubblewrap inside tmux and sees your repositories. Ctrl-\] detaches, and logging out leaves everything running. This replaces herdr plus Claude.
+1. **skel on the server.** You `ssh workbox` yourself and run `skel`. The first run, the daemon as a systemd user service, `skel serve`, `skel init`, `skel repo`. The lead runs in bubblewrap inside tmux and sees your repositories. Ctrl-\] detaches, and logging out leaves everything running. This replaces herdr plus Claude.
 2. **One thread to a reviewed PR.** `skel issue`, `skel start`, `skel ls`, `skel attach`, `skel done`, `skel review`. Builder and reviewer loop, skel pushes and opens the PR, the `skel/review` check, the round limit, needs you when approved.
 3. **Parallel and needs you.** Several threads at once across repositories, the note in the lead's session, `notify`, questions marked needs you, `skel say`.
 4. **Follow-through.** Polling for failed checks, PR comments, conflicts and merges. Cleanup on merge or close. Surviving a restart with `--resume`. `skel stop`, `skel resume`.
-5. **Remote.** `skel --remote <host>` from the laptop. When skel is missing on the server, it offers to copy its binary there with `scp`. The first run also accepts `owner/repo` and clones it into `~/code/` with `gh repo clone`. From an empty server to a running lead with one command.
+5. **Remote.** `skel --remote <host>` from the laptop. When skel is missing on the server, it offers to copy its binary there with `scp`. `skel init` also accepts `owner/repo` and clones it into `~/code/` with `gh repo clone`. From an empty server to a running lead with one command.
 6. **The demo.** Pick the demo repositories and their issues, run the script for real, record it.
 
 ## Done when
