@@ -12,7 +12,6 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
-import { openDb } from "./db.ts";
 import { configDir } from "./paths.ts";
 
 const tools = [
@@ -227,6 +226,4 @@ export function firstRun(): void {
   }
   installService();
   if (!done) console.log("Setup is done.");
-  if (!openDb().query("SELECT 1 FROM repositories LIMIT 1").get())
-    console.log("No repository is added yet. Add one by running skel init in its folder.");
 }
