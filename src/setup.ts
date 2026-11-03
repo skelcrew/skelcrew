@@ -1,6 +1,7 @@
 // The first run: what a plain skel sets up on a new machine, skipping each step already done.
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
 import { openDb } from "./db.ts";
@@ -122,15 +123,64 @@ function pickHarness(): void {
   writeFileSync(configFile(), config.toString());
 }
 
-// The last two steps save the harness and the token, so having both means every step ran.
-// Once set up, skel checks nothing again: a tool or login that goes missing later shows up
-// where it is used, and checking each time would put a call to GitHub before every attach.
+const unitFile = () => join(homedir(), ".config", "systemd", "user", "skel.service");
+
+function systemd(command: string[]): void {
+  const run = Bun.spawnSync(command, { stdio: ["inherit", "inherit", "inherit"] });
+  if (!run.success) throw new Error(`${command.join(" ")} failed, so the daemon isn't installed`);
+}
+
+function installService(): void {
+  const file = unitFile();
+  if (existsSync(file)) return;
+  const skel = resolve(import.meta.dir, "..", "bin", "skel");
+  // systemd starts services with a bare PATH, which misses bun, claude and gh where they
+  // usually live, so the daemon gets the PATH you set up skel with.
+  // Stopping the service would otherwise end the tmux server it started, and every agent
+  // with it. Agents keep working through a restart or an upgrade.
+  const unit = `[Unit]
+Description=skel daemon
+
+[Service]
+ExecStart="${skel}" serve
+Environment="PATH=${process.env.PATH ?? ""}"
+Restart=on-failure
+KillMode=process
+
+[Install]
+WantedBy=default.target
+`;
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, unit);
+  try {
+    systemd(["systemctl", "--user", "daemon-reload"]);
+    systemd(["systemctl", "--user", "enable", "--now", "skel"]);
+    console.log(
+      "Turning on lingering, so the daemon keeps running after you log out and starts after a reboot.",
+    );
+    systemd(["loginctl", "enable-linger"]);
+  } catch (error) {
+    // The unit file marks the service installed, so it goes, and the next skel tries again.
+    rmSync(file);
+    throw error;
+  }
+}
+
+// The steps save the harness, the token and the service in order, so having all three means
+// every step ran. Once set up, skel checks nothing again: a tool or login that goes missing
+// later shows up where it is used, and checking each time would put a call to GitHub before
+// every attach.
+export function setupDone(): boolean {
+  return Boolean(readConfig().harness) && existsSync(tokenFile()) && existsSync(unitFile());
+}
+
 export function firstRun(): void {
-  if (!readConfig().harness || !existsSync(tokenFile())) {
+  if (!setupDone()) {
     checkTools();
     connectGitHub();
     pickHarness();
     saveClaudeToken();
+    installService();
     console.log("Setup is done.");
   }
   if (!openDb().query("SELECT 1 FROM repositories LIMIT 1").get())

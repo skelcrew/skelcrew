@@ -43,6 +43,8 @@ beforeEach(() => {
 esac`,
   );
   fake("claude", `test "$1" = setup-token && echo 'Your token: sk-ant-oat01-good'`);
+  fake("systemctl", "exit 0");
+  fake("loginctl", "exit 0");
 });
 afterEach(() => rmSync(home, { recursive: true, force: true }));
 
@@ -61,6 +63,7 @@ function calls(): string {
 
 const config = () => join(home, ".config", "skel", "config.yaml");
 const token = () => join(home, ".config", "skel", "claude-token");
+const unit = () => join(home, ".config", "systemd", "user", "skel.service");
 
 async function skel(typed = "") {
   const run = Bun.spawn([process.execPath, main], {
@@ -97,6 +100,47 @@ test("takes every step on the first run, and none on the second", async () => {
   expect(second.out).not.toContain("Setup is done.");
   // Once set up, skel checks no tools and asks GitHub nothing, so it starts fast.
   expect(calls()).toBe("");
+});
+
+test("installs the daemon as a systemd user service with lingering, once", async () => {
+  const first = await skel("1\nsk-ant-oat01-good\n");
+  expect(first.code).toBe(0);
+  const skelBin = join(import.meta.dir, "..", "bin", "skel");
+  const written = readFileSync(unit(), "utf8");
+  expect(written).toContain(`ExecStart="${skelBin}" serve`);
+  expect(written).toContain("Restart=on-failure");
+  // systemd would otherwise end the tmux server, and every agent, with the daemon.
+  expect(written).toContain("KillMode=process");
+  expect(written).toContain(`Environment="PATH=${bin}"`);
+  expect(calls()).toContain(
+    "systemctl --user daemon-reload\nsystemctl --user enable --now skel\nloginctl enable-linger\n",
+  );
+  expect(first.out).toContain("log out");
+
+  writeFileSync(join(home, "calls"), "");
+  await skel();
+  expect(calls()).not.toContain("systemctl --user enable");
+  expect(calls()).not.toContain("loginctl");
+});
+
+test("installs the service on a machine set up before skel had one", async () => {
+  mkdirSync(join(home, ".config", "skel"), { recursive: true });
+  writeFileSync(config(), "harness: claude\n");
+  writeFileSync(token(), "sk-ant-oat01-good\n");
+  writeFileSync(join(home, "gh-login"), "");
+  const run = await skel();
+  expect(run.code).toBe(0);
+  expect(existsSync(unit())).toBe(true);
+  expect(calls()).toContain("systemctl --user enable --now skel");
+  expect(calls()).not.toContain("claude setup-token");
+});
+
+test("installs no service when systemctl fails, so the next skel tries again", async () => {
+  fake("systemctl", "exit 1");
+  const run = await skel("1\nsk-ant-oat01-good\n");
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("systemctl");
+  expect(existsSync(unit())).toBe(false);
 });
 
 test("still says how to add a repository after setup, while none is added", async () => {
