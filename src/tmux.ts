@@ -106,11 +106,10 @@ export async function attach(socket: string, name: string): Promise<void> {
   const env = cleanEnv();
   // tmux refuses to attach to a terminal this machine has no description of, such as
   // Ghostty's xterm-ghostty over ssh. xterm-256color draws Claude Code well enough.
-  if (
-    env.TERM &&
-    !Bun.spawnSync(["infocmp", env.TERM], { stdout: "ignore", stderr: "ignore" }).success
-  )
-    env.TERM = "xterm-256color";
+  const known = (term: string) =>
+    !Bun.which("infocmp") ||
+    Bun.spawnSync(["infocmp", term], { stdout: "ignore", stderr: "ignore" }).success;
+  if (env.TERM && !known(env.TERM)) env.TERM = "xterm-256color";
   const code = await Bun.spawn(["tmux", "-L", socket, "attach", "-t", `=${name}`], {
     env,
     stdio: ["inherit", "inherit", "inherit"],
