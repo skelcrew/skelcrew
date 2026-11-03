@@ -64,7 +64,7 @@ The repository you attach from is the lead's default, as the folder is for `clau
 
 Before the first step, skel checks that `tmux`, `bwrap`, `gh` and the harness are installed, and if one is missing, says exactly what to install instead of failing halfway. After the last step, it installs the daemon as a systemd user service and turns on lingering (`loginctl enable-linger`), so the daemon keeps running after you log out and starts again after a reboot.
 
-Each step is skipped when it is already done, so running `skel` again goes straight to the lead. While no repository is added, `skel` says so and how to add one, with `skel init` in its folder, and starts the lead anyway.
+Each step is skipped when it is already done. Once the first run has finished, `skel` skips it entirely and goes straight to the lead: a tool or login that goes missing later shows up where it is used. While no repository is added, `skel` says so and how to add one, with `skel init` in its folder, and starts the lead anyway.
 
 For now, `skel` only wraps the harness: it sets up the lead and puts you in it, full screen. Later, issues and threads show next to the harness, in a sidebar beside the lead.
 

@@ -71,7 +71,7 @@ function promptHidden(question: string): string | null {
 // Agents log in with a token from claude setup-token, which never renews, so they never
 // race your own Claude Code for a refresh.
 function saveClaudeToken(): void {
-  const file = join(configDir(), "claude-token");
+  const file = tokenFile();
   if (existsSync(file)) return;
   const setup = Bun.spawnSync(["claude", "setup-token"], {
     stdio: ["inherit", "inherit", "inherit"],
@@ -98,28 +98,41 @@ function connectGitHub(): void {
   if (!login.success) throw new Error("gh auth login didn't finish, so skel can't reach GitHub");
 }
 
-function pickHarness(): void {
-  const file = join(configDir(), "config.yaml");
+const configFile = () => join(configDir(), "config.yaml");
+const tokenFile = () => join(configDir(), "claude-token");
+
+function readConfig() {
+  const file = configFile();
   const config = parseDocument(existsSync(file) ? readFileSync(file, "utf8") : "");
   const [broken] = config.errors;
   if (broken) throw new Error(`${file} isn't valid YAML: ${broken.message}`);
   const read = Config.safeParse(config.toJS() ?? {});
   if (!read.success) throw new Error(`${file} isn't valid: ${z.prettifyError(read.error)}`);
-  if (read.data.harness) return;
+  return { config, harness: read.data.harness };
+}
+
+function pickHarness(): void {
+  const { config, harness } = readConfig();
+  if (harness) return;
   console.log("Harnesses:\n  1) Claude Code");
   const answer = prompt("Pick a harness [1]:")?.trim();
   if (answer !== "" && answer !== "1") throw new Error("Claude Code is the only harness for now");
   config.set("harness", "claude");
   mkdirSync(configDir(), { recursive: true });
-  writeFileSync(file, config.toString());
+  writeFileSync(configFile(), config.toString());
 }
 
+// The last two steps save the harness and the token, so having both means every step ran.
+// Once set up, skel checks nothing again: a tool or login that goes missing later shows up
+// where it is used, and checking each time would put a call to GitHub before every attach.
 export function firstRun(): void {
-  checkTools();
-  connectGitHub();
-  pickHarness();
-  saveClaudeToken();
+  if (!readConfig().harness || !existsSync(tokenFile())) {
+    checkTools();
+    connectGitHub();
+    pickHarness();
+    saveClaudeToken();
+    console.log("Setup is done.");
+  }
   if (!openDb().query("SELECT 1 FROM repositories LIMIT 1").get())
     console.log("No repository is added yet. Add one by running skel init in its folder.");
-  console.log("Setup is done.");
 }

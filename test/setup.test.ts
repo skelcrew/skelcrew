@@ -94,9 +94,16 @@ test("takes every step on the first run, and none on the second", async () => {
   expect(second.err).toBe("");
   expect(second.code).toBe(0);
   expect(second.out).not.toContain("Claude Code");
-  expect(second.out).toContain("done");
-  expect(calls()).not.toContain("gh auth login");
-  expect(calls()).not.toContain("claude");
+  expect(second.out).not.toContain("Setup is done.");
+  // Once set up, skel checks no tools and asks GitHub nothing, so it starts fast.
+  expect(calls()).toBe("");
+});
+
+test("still says how to add a repository after setup, while none is added", async () => {
+  await skel("1\nsk-ant-oat01-good\n");
+  const again = await skel();
+  expect(again.code).toBe(0);
+  expect(again.out).toContain("skel init");
 });
 
 test("says how to add a repository while none is added", async () => {
