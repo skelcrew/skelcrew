@@ -11,6 +11,9 @@ that covers the code you are about to write.
 - **Send text as a bracketed paste, then Enter on its own a moment later.** Without the
   paste marks, Claude Code treats the Enter after a long message as a new line, and the
   message is never sent. `tmux paste-buffer -p` adds the marks.
+- **Idle means more than a quiet pane.** Claude Code is idle when "esc to interrupt" is
+  gone, a line holding only the `❯` prompt is on screen, and nothing has changed for a
+  moment. A bell or a changing window title doesn't mean a turn ended.
 - **Pass the first message on the command line, not by typing it.** Typed into the input, a
   long message collapses to "[Pasted text]" and can miss its Enter.
 
@@ -22,8 +25,18 @@ that covers the code you are about to write.
 - **Mark the folder trusted, or the session waits forever.** Claude Code asks whether to
   trust a folder even in bypass mode, and nobody is watching to answer. Set
   `hasTrustDialogAccepted` for the folder in the session's copy of `~/.claude.json`.
+- **Share `~/.claude` writable, but not your setup in it.** A copied login breaks: when
+  Claude Code refreshes its token, the old refresh token stops working, so the original
+  or the copy goes stale. `claude --resume` also needs the transcripts where it looks for
+  them. Keep `settings.json`, `CLAUDE.md`, hooks, plugins, commands, agents and skills
+  read-only, since your own Claude Code runs code from them.
 - **Give each session a throwaway copy of `~/.claude.json`.** Claude Code writes to it as it
   runs, and it lists the MCP servers your own runs start.
+- **Check the login with `claude auth status --json`.** `~/.claude.json` exists after any
+  launch, logged in or not, so finding it proves nothing.
+- **`AskUserQuestion` waits on a screen nobody watches.** A builder that asks with it
+  stops until someone answers, and nothing tells you. skel must notice the question and
+  mark the thread needs you.
 - **Turn off Claude Code's own sandbox and permission prompts.** A prompt stalls a session
   nobody watches. Its sandbox fails inside skel's, so keep it off even if your own settings
   turn it on. Skip the warning bypass mode shows first, in the session's settings.
@@ -57,6 +70,5 @@ that covers the code you are about to write.
 ## The agent's shell commands
 
 - **A shell command can't block for long.** After 2 minutes Claude Code moves a running
-  command to the background and ends the agent's turn. So `skel done`, `skel ask` and
-  `skel review` must answer quickly, and leave slow work, such as starting a review or
-  waiting for your answer, to the daemon.
+  command to the background and ends the agent's turn. So `skel done` and `skel review`
+  must answer quickly, and leave slow work, such as starting a review, to the daemon.

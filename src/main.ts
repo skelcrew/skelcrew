@@ -1,0 +1,38 @@
+// skel's command line: reads the command and hands it to the file that does it.
+import { addRepo, listRepos, removeRepo } from "./repo.ts";
+
+const usage = `Usage:
+  skel repo add <path> [--name <name>]
+  skel repo ls
+  skel repo rm <name>`;
+
+function run(args: string[]): void {
+  const [command, sub, ...rest] = args;
+  if (command === "repo" && sub === "add") {
+    const at = rest.indexOf("--name");
+    const name = at === -1 ? undefined : rest[at + 1];
+    const paths = at === -1 ? rest : rest.filter((_, i) => i !== at && i !== at + 1);
+    const [path] = paths;
+    if (path && paths.length === 1 && (at === -1 || name)) {
+      addRepo(path, name);
+      return;
+    }
+  }
+  if (command === "repo" && sub === "ls" && rest.length === 0) {
+    listRepos();
+    return;
+  }
+  if (command === "repo" && sub === "rm" && rest[0] && rest.length === 1) {
+    removeRepo(rest[0]);
+    return;
+  }
+  console.error(usage);
+  process.exit(1);
+}
+
+try {
+  run(process.argv.slice(2));
+} catch (error) {
+  console.error(`skel: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+}
