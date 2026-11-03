@@ -231,9 +231,13 @@ export function agentCommand(given: {
   model: string;
   prompt?: string;
   resume?: string;
+  sessionId?: string;
   env?: Record<string, string | undefined>;
 }): { argv: string[]; env: Record<string, string> } {
-  const { agent, name, socket, model, prompt, resume, env = process.env } = given;
+  const { agent, name, socket, model, prompt, resume, sessionId, env = process.env } = given;
+  if (sessionId && resume) throw new Error("a session can't be both new and resumed");
+  if (sessionId && !z.uuid().safeParse(sessionId).success)
+    throw new Error(`Claude Code needs a UUID as a session ID, not "${sessionId}"`);
   const home = env.HOME;
   if (!home) throw new Error("HOME isn't set, so skel can't find its own folders");
   // The name becomes a folder, so it must not climb out of skel's.
@@ -288,6 +292,7 @@ export function agentCommand(given: {
   const command = ["claude", "--model", model, "--permission-mode", "bypassPermissions"];
   command.push("--settings", settings);
   if (resume) command.push("--resume", resume);
+  if (sessionId) command.push("--session-id", sessionId);
   if (prompt) command.push(prompt);
 
   const kept: Record<string, string> = {};

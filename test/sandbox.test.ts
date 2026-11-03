@@ -483,6 +483,28 @@ agentCommand({ agent: { kind: "builder", repository: ${JSON.stringify(repo)}, wo
     ).toThrow("isn't a plain file");
   });
 
+  test("starts a new session under the ID it is given, which must be a UUID", () => {
+    const { repo, worktree } = repository(12);
+    saveToken();
+    const id = "6f1c2a7e-0b4d-4c3e-9a51-2d8e7f6a9b10";
+    const start = (more: { sessionId?: string; resume?: string }) =>
+      agentCommand({
+        agent: { kind: "builder", repository: repo, worktree },
+        name: "app-12",
+        socket: socketPath,
+        model: "opus",
+        env: outside(),
+        ...more,
+      });
+    const { argv } = start({ sessionId: id });
+    expect(argv.slice(argv.indexOf("--session-id"), argv.indexOf("--session-id") + 2)).toEqual([
+      "--session-id",
+      id,
+    ]);
+    expect(() => start({ sessionId: "not-a-uuid" })).toThrow("UUID");
+    expect(() => start({ sessionId: id, resume: id })).toThrow("both");
+  });
+
   test("says to run skel first when there is no token", () => {
     const { repo, worktree } = repository(12);
     expect(() =>
