@@ -275,11 +275,10 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with the lead", () => {
   test("starts skel's tmux server in a systemd scope of its own", async () => {
     setUp();
     serve();
-    await untilAnswers();
+    await until(hasLead);
     expect(calls()).toContain(
       `systemd-run --user --scope --quiet --unit=skel-tmux-${socket} -- tmux -L ${socket} `,
     );
-    expect(hasLead()).toBe(true);
   });
 
   test("of two daemons started together, exactly one keeps running", async () => {
@@ -329,7 +328,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with the lead", () => {
     setUp();
     const repo = addRepository("app");
     fakeClaude(
-      `ls ${repo} > seen; test -S /run/skel.sock && echo socket >> seen; test -e ${home}/.config/skel/claude-token || echo token-hidden >> seen; exec sleep 300`,
+      `ls ${repo} > seen; test -S "$SKEL_SOCKET" && echo socket >> seen; test -e ${home}/.config/skel/claude-token || echo token-hidden >> seen; exec sleep 300`,
     );
     serve();
     await until(() => existsSync(join(leadFolder(), "seen")));
@@ -365,4 +364,26 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with the lead", () => {
     expect(both.filter((run) => run.exitCode === null)).toHaveLength(1);
     expect(await answers()).toBe(true);
   });
+
+  // The lead outlives the daemon, so it must reach the next one on the socket it was given.
+  test("the lead reaches the daemon again after it restarts", async () => {
+    setUp();
+    const asker = `const c = require("node:net").createConnection(process.env.SKEL_SOCKET);
+c.on("connect", () => c.write('{"command":"status"}\\n'));
+c.on("data", (d) => process.stdout.write(d));
+c.on("error", () => process.exit(1));`;
+    writeFileSync(join(home, "bin", "ask.js"), asker);
+    fakeClaude(
+      `while true; do bun ${join(home, "bin", "ask.js")} > reply.new 2>/dev/null; mv reply.new reply; sleep 0.2; done`,
+    );
+    const reply = () =>
+      existsSync(join(leadFolder(), "reply"))
+        ? readFileSync(join(leadFolder(), "reply"), "utf8")
+        : "";
+    const first = serve();
+    await until(() => reply().includes(`"pid":${first.pid}`));
+    await stop(first);
+    const second = serve();
+    await until(() => reply().includes(`"pid":${second.pid}`));
+  }, 15_000);
 });

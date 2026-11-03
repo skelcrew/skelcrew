@@ -1,12 +1,13 @@
 // The daemon, run by skel serve: keeps the lead running and answers the CLI on its socket.
 // Plain skel makes sure it runs, then attaches to the lead.
 import { dlopen, FFIType } from "bun:ffi";
-import { openSync, rmSync } from "node:fs";
-import { createConnection, createServer, type Server } from "node:net";
+import { mkdirSync, openSync, rmSync } from "node:fs";
+import { createConnection, createServer, type Server, type Socket } from "node:net";
+import { dirname } from "node:path";
 import { z } from "zod";
 import { openDb } from "./db.ts";
 import { startLead } from "./lead.ts";
-import { cliSocket } from "./paths.ts";
+import { cliSocket, leadSocket } from "./paths.ts";
 import { setupDone } from "./setup.ts";
 import { attach } from "./tmux.ts";
 
@@ -75,7 +76,7 @@ export async function serve(tmux: string): Promise<void> {
     starting = starting.catch(() => {}).then(() => startLead(db, tmux));
     return starting;
   };
-  const server = createServer((connection) => {
+  const answer = (connection: Socket) => {
     let request = "";
     const reply = (answer: object) => connection.end(`${JSON.stringify(answer)}\n`);
     connection.on("data", (data) => {
@@ -92,18 +93,23 @@ export async function serve(tmux: string): Promise<void> {
         );
     });
     connection.on("error", () => {});
-  });
+  };
   // The lock decides which of two daemons started together runs. The socket can't: both
   // could find one left by a daemon that was killed, and each remove the other's new one.
   const path = cliSocket();
   if (!lock(`${path}.lock`))
     throw new Error("skel's daemon is already running. Run skel to attach to the lead.");
-  rmSync(path, { force: true });
-  await listen(server, path);
+  // The lead runs the same commands you do, so its socket answers the same requests.
+  const sockets = [path, leadSocket()];
+  for (const socket of sockets) {
+    mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
+    rmSync(socket, { force: true });
+    await listen(createServer(answer), socket);
+  }
   // The tmux sessions are left running: agents keep working while the daemon is down.
   for (const signal of ["SIGTERM", "SIGINT"])
     process.on(signal, () => {
-      rmSync(path, { force: true });
+      for (const socket of sockets) rmSync(socket, { force: true });
       process.exit(0);
     });
   console.log(`Listening on ${path}.`);

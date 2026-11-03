@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { cliSocket, dataDir } from "./paths.ts";
+import { dataDir, leadSocket } from "./paths.ts";
 import { agentCommand } from "./sandbox.ts";
 import { endSession, failedScreen, hasSession, startServer, startSession } from "./tmux.ts";
 
@@ -43,8 +43,7 @@ export async function startLead(db: Database, tmux: string): Promise<void> {
   const { argv, env } = agentCommand({
     repositories,
     name: "lead",
-    // The lead runs the same commands you do, so it talks to the daemon where the CLI does.
-    socket: cliSocket(),
+    socket: leadSocket(),
     model: "opus",
     ...(resume ? { resume: session } : { sessionId: session }),
   });
