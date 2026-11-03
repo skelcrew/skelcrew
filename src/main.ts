@@ -13,7 +13,7 @@ const usage = `Usage:
 async function run(args: string[]): Promise<void> {
   if (args.length === 0) {
     firstRun();
-    await attachToLead("skel");
+    await attachToLead("skel", false);
     return;
   }
   const [command, sub, ...rest] = args;
