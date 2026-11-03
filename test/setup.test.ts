@@ -235,9 +235,11 @@ test("refuses a PATH that systemd would read differently", async () => {
   expect(existsSync(unit())).toBe(false);
 });
 
+// A git worktree has a .git file pointing back at its repository, where a checkout has a folder.
 test("refuses to install a service that runs skel from a worktree", async () => {
-  const worktree = join(home, "code", "skel", ".claude", "worktrees", "daemon");
+  const worktree = join(home, "code", "skel", ".skel", "worktrees", "12");
   copySkel(worktree);
+  writeFileSync(join(worktree, ".git"), "gitdir: ../../../.git/worktrees/12\n");
   const run = await skel("1\nsk-ant-oat01-good\n", bin, join(worktree, "src", "main.ts"));
   expect(run.code).toBe(1);
   expect(run.err).toContain("main checkout");

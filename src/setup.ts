@@ -1,5 +1,13 @@
 // The first run: what a plain skel sets up on a new machine, skipping each step already done.
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
@@ -170,9 +178,11 @@ WantedBy=default.target
 function installService(): void {
   const file = unitFile();
   const before = existsSync(file) ? readFileSync(file, "utf8") : null;
-  const skel = resolve(import.meta.dir, "..", "bin", "skel");
-  // A worktree goes away once its work merges, and the daemon with it.
-  if (skel.includes("/.claude/worktrees/")) {
+  const checkout = resolve(import.meta.dir, "..");
+  const skel = join(checkout, "bin", "skel");
+  // A worktree goes away once its work merges, and the daemon with it. Its .git is a file
+  // pointing back at the repository, wherever the worktree lives.
+  if (statSync(join(checkout, ".git"), { throwIfNoEntry: false })?.isFile()) {
     if (before !== null) return;
     throw new Error(
       `skel is running from a worktree (${skel}): run skel from the main checkout to install its daemon`,
