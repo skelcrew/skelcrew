@@ -1,6 +1,14 @@
 // skel repo add, ls and rm, run as you would run them, against a fake gh.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -17,16 +25,23 @@ function repository(folder: string, github: string | null): string {
   const path = join(home, "code", folder);
   mkdirSync(path, { recursive: true });
   Bun.spawnSync(["git", "init", "-q", path]);
+  Bun.spawnSync([
+    "git",
+    "-C",
+    path,
+    "remote",
+    "add",
+    "origin",
+    `https://github.com/${github ?? "x/y"}`,
+  ]);
   const bin = join(home, "bin");
   mkdirSync(bin, { recursive: true });
   const [owner, name] = (github ?? "/").split("/");
   const answer = github
     ? `echo '{"name":"${name}","owner":{"login":"${owner}"}}'`
     : `echo 'none of the git remotes point to a known GitHub host' >&2; exit 1`;
-  const gh = join(bin, "gh");
   // The fake answers for every repository; tests that need two use the same GitHub name.
-  Bun.write(gh, `#!/bin/sh\n${answer}\n`);
-  chmodSync(gh, 0o755);
+  writeFileSync(join(bin, "gh"), `#!/bin/sh\n${answer}\n`, { mode: 0o755 });
   return path;
 }
 
@@ -35,8 +50,6 @@ async function skel(args: string[], typed = "") {
     env: {
       PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
       HOME: home,
-      XDG_CONFIG_HOME: join(home, ".config"),
-      XDG_DATA_HOME: join(home, ".local", "share"),
     },
     stdin: new Blob([typed]),
     stdout: "pipe",
@@ -85,6 +98,9 @@ test("asks about trust only once per folder", async () => {
   const again = await skel(["repo", "add", path]);
   expect(again.code).toBe(0);
   expect(again.out).not.toContain("trust");
+  // The answer lives with your settings, so a clone of the repository can't bring it.
+  expect(readFileSync(join(home, ".config", "skel", "trusted"), "utf8")).toContain(path);
+  expect(existsSync(join(path, ".skel"))).toBe(false);
 });
 
 test("refuses a folder that isn't on GitHub, before asking about trust", async () => {
@@ -110,7 +126,32 @@ test("takes another short name with --name, and refuses one already taken", asyn
   const clash = await skel(["repo", "add", second, "--name", "web"], "y\n");
   expect(clash.code).toBe(1);
   expect(clash.err).toContain("web");
-  expect((await skel(["repo", "ls"])).out).toContain("web");
+  const listed = (await skel(["repo", "ls"])).out;
+  expect(listed).toContain("web");
+  expect(listed).not.toContain(second);
+});
+
+test("refuses a folder already added under another name", async () => {
+  const path = repository("app", "simon/app");
+  await skel(["repo", "add", path], "y\n");
+  const again = await skel(["repo", "add", path, "--name", "web"], "y\n");
+  expect(again.code).toBe(1);
+  expect(again.err).toContain("app");
+});
+
+test("refuses a short name that would read as a flag", async () => {
+  const path = repository("app", "simon/app");
+  const added = await skel(["repo", "add", path, "--name", "-app"], "y\n");
+  expect(added.code).toBe(1);
+  expect(added.err).toContain("-app");
+});
+
+test("refuses a folder with no origin remote", async () => {
+  const path = repository("app", "simon/app");
+  Bun.spawnSync(["git", "-C", path, "remote", "remove", "origin"]);
+  const added = await skel(["repo", "add", path], "y\n");
+  expect(added.code).toBe(1);
+  expect(added.err).toContain("origin");
 });
 
 test("removes a repository, and says so when there is none by that name", async () => {

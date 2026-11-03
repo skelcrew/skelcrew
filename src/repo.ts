@@ -47,8 +47,10 @@ export function addRepo(given: string, name?: string): void {
   if (!existsSync(join(path, ".git"))) throw new Error(`${path} isn't the top of a git repository`);
   const short = name ?? basename(path);
   // Threads are named like app#12, so a name must survive being typed in that form.
-  if (!/^[\w.-]+$/.test(short))
-    throw new Error(`"${short}" can't be a short name: use letters, digits, ".", "_" or "-"`);
+  if (!/^[a-zA-Z0-9][\w.-]*$/.test(short))
+    throw new Error(
+      `"${short}" can't be a short name: start with a letter or digit, then use letters, digits, ".", "_" or "-"`,
+    );
   const db = openDb();
   for (const known of repositories(db)) {
     if (known.name === short)

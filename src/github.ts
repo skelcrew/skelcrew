@@ -4,9 +4,17 @@ import { z } from "zod";
 
 const View = z.object({ name: z.string(), owner: z.object({ login: z.string() }) });
 
+// Asks about origin by name: in a fork with an upstream remote, gh on its own would
+// answer for the upstream, where skel can't push.
 export function githubRepoAt(path: string): { owner: string; repo: string } {
-  const run = Bun.spawnSync(["gh", "repo", "view", "--json", "name,owner"], {
+  const origin = Bun.spawnSync(["git", "remote", "get-url", "origin"], {
     cwd: path,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (!origin.success) throw new Error(`${path} has no origin remote on GitHub`);
+  const url = origin.stdout.toString().trim();
+  const run = Bun.spawnSync(["gh", "repo", "view", url, "--json", "name,owner"], {
     stdout: "pipe",
     stderr: "pipe",
   });
