@@ -38,6 +38,8 @@ beforeEach(() => {
   // serve has no reason to call these, but if it did, the real ones must never run.
   fake("systemctl", "exit 0");
   fake("loginctl", "exit 0");
+  // Runs what it is given in place, so the test sees the call without touching your systemd.
+  fake("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
 });
 afterEach(async () => {
   for (const serve of running.splice(0)) {
@@ -93,19 +95,31 @@ const hasLead = () =>
   Bun.spawnSync(["tmux", "-L", socket, "has-session", "-t", "=lead"], { stderr: "pipe" }).success;
 const calls = () =>
   existsSync(join(home, "calls")) ? readFileSync(join(home, "calls"), "utf8") : "";
+const claudeCalls = () =>
+  calls()
+    .split("\n")
+    .filter((line) => line.startsWith("claude"))
+    .map((line) => `${line}\n`)
+    .join("");
 const cliSocket = () => join(home, "run", "skel.sock");
 
-// Whether a daemon answers a status request on the CLI socket.
-function answers(): Promise<boolean> {
+// What the daemon replies on the CLI socket, or null when nothing answers.
+function ask(request: object): Promise<unknown> {
   return new Promise((done) => {
     const connection = createConnection(cliSocket());
-    connection.on("connect", () => connection.write('{"command":"status"}\n'));
+    let reply = "";
+    connection.on("connect", () => connection.write(`${JSON.stringify(request)}\n`));
     connection.on("data", (data) => {
-      connection.end();
-      done(JSON.parse(data.toString()).running === true);
+      reply += data.toString();
     });
-    connection.on("error", () => done(false));
+    connection.on("close", () => done(reply ? JSON.parse(reply) : null));
+    connection.on("error", () => {});
   });
+}
+
+async function answers(): Promise<boolean> {
+  const reply = await ask({ command: "status" });
+  return Boolean(reply && typeof reply === "object" && "running" in reply && reply.running);
 }
 
 async function untilAnswers() {
@@ -126,6 +140,21 @@ function storedSession(): string {
   }
 }
 
+// Claude Code saves a conversation once it has a message, which a fake can't send.
+function saveTranscript(id: string): void {
+  const folder = join(home, ".claude", "projects", "-some-folder");
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, `${id}.jsonl`), "{}\n");
+}
+
+async function output(run: Subprocess<"ignore", "pipe", "pipe">) {
+  const [out, err] = await Promise.all([
+    new Response(run.stdout).text(),
+    new Response(run.stderr).text(),
+  ]);
+  return out + err;
+}
+
 async function ended(run: Subprocess<"ignore", "pipe", "pipe">) {
   const [err, code] = await Promise.all([new Response(run.stderr).text(), run.exited]);
   return { err, code };
@@ -144,7 +173,7 @@ test("starts the lead in its folder with a session id it stores", async () => {
   await until(() => calls().includes("claude"));
   const id = storedSession();
   expect(id).toMatch(/^[0-9a-f-]{36}$/);
-  expect(calls()).toBe(`claude --session-id ${id}\n`);
+  expect(claudeCalls()).toBe(`claude --session-id ${id}\n`);
   expect(existsSync(join(home, ".local", "share", "skel", "lead"))).toBe(true);
 });
 
@@ -161,12 +190,69 @@ test("brings back a lead whose session is gone with --resume on its stored id", 
   const first = serve();
   await until(() => calls().includes("claude"));
   const id = storedSession();
+  saveTranscript(id);
   await stop(first);
   Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=lead"]);
   serve();
   await until(() => calls().includes("--resume"));
-  expect(calls()).toBe(`claude --session-id ${id}\nclaude --resume ${id}\n`);
+  expect(claudeCalls()).toBe(`claude --session-id ${id}\nclaude --resume ${id}\n`);
   expect(storedSession()).toBe(id);
+});
+
+// Claude Code can't resume a conversation it never saved, nor start a new one under its id.
+test("starts a lead nobody talked to afresh, with a new session id", async () => {
+  setUp();
+  const first = serve();
+  await until(() => calls().includes("claude"));
+  const id = storedSession();
+  await stop(first);
+  Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=lead"]);
+  serve();
+  await until(() => claudeCalls().split("\n").length > 2);
+  const fresh = storedSession();
+  expect(fresh).not.toBe(id);
+  expect(claudeCalls()).toBe(`claude --session-id ${id}\nclaude --session-id ${fresh}\n`);
+});
+
+test("brings back a lead that exited while the daemon runs, when skel asks", async () => {
+  setUp();
+  serve();
+  await untilAnswers();
+  Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=lead"]);
+  expect(await ask({ command: "lead" })).toEqual({ lead: true });
+  expect(hasLead()).toBe(true);
+});
+
+test("says why when the lead exits as soon as it starts", async () => {
+  setUp();
+  fake("claude", "echo 'claude: something broke'; exit 1");
+  const run = serve();
+  await untilAnswers();
+  const reply = await ask({ command: "lead" });
+  expect(JSON.stringify(reply)).toContain("something broke");
+  await stop(run);
+  expect(await output(run)).toContain("something broke");
+});
+
+// Its own scope keeps tmux out of skel.service's cgroup, so stopping or OOM-killing the
+// service can't take the agents down.
+test("starts skel's tmux server in a systemd scope of its own", async () => {
+  setUp();
+  serve();
+  await untilAnswers();
+  expect(calls()).toContain(
+    `systemd-run --user --scope --quiet --unit=skel-tmux-${socket} -- tmux -L ${socket} `,
+  );
+  expect(hasLead()).toBe(true);
+});
+
+test("of two daemons started together, exactly one keeps running", async () => {
+  setUp();
+  const both = [serve(), serve()];
+  await untilAnswers();
+  await Bun.sleep(1000);
+  expect(both.filter((run) => run.exitCode === null)).toHaveLength(1);
+  expect(claudeCalls().split("\n")).toHaveLength(2);
 });
 
 test("leaves a lead that is still running alone", async () => {
@@ -178,7 +264,7 @@ test("leaves a lead that is still running alone", async () => {
   const second = serve();
   await untilAnswers();
   await stop(second);
-  expect(calls()).toBe(`claude --session-id ${storedSession()}\n`);
+  expect(claudeCalls()).toBe(`claude --session-id ${storedSession()}\n`);
 });
 
 test("refuses a second daemon and points to skel", async () => {

@@ -1,6 +1,6 @@
 // The first run: what a plain skel sets up on a new machine, skipping each step already done.
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
@@ -133,38 +133,68 @@ function systemd(command: string[]): void {
   if (!run.success) throw new Error(`${command.join(" ")} failed, so the daemon isn't installed`);
 }
 
-function installService(): void {
-  const file = unitFile();
-  if (existsSync(file)) return;
-  const skel = resolve(import.meta.dir, "..", "bin", "skel");
+// systemd reads " and \ in a unit as quoting, and % as the start of a name it fills in.
+function unitValue(value: string): string {
+  if (/["\\]/.test(value)) throw new Error(`systemd can't be given ${value}, which holds " or \\`);
+  return value.replaceAll("%", "%%");
+}
+
+function unitText(skel: string): string {
   // systemd starts services with a bare PATH, which misses bun, claude and gh where they
-  // usually live, so the daemon gets the PATH you set up skel with.
-  // Stopping the service would otherwise end the tmux server it started, and every agent
-  // with it. Agents keep working through a restart or an upgrade.
-  const unit = `[Unit]
+  // usually live, so the daemon gets yours. Folders a tool runner or a temporary folder
+  // added are left out: they are gone by the time the daemon starts.
+  const temporary = tmpdir();
+  const path = (process.env.PATH ?? "")
+    .split(":")
+    .filter((p) => p && !p.includes("/node_modules/.bin") && !p.startsWith(`${temporary}/`))
+    .map(unitValue)
+    .join(":");
+  // Where tmux couldn't get a scope of its own, stopping the service would otherwise end
+  // the tmux server, and every agent with it.
+  return `[Unit]
 Description=skel daemon
 
 [Service]
-ExecStart="${skel}" serve
-Environment="PATH=${process.env.PATH ?? ""}"
+ExecStart="${unitValue(skel)}" serve
+Environment="PATH=${path}"
 Restart=on-failure
 KillMode=process
 
 [Install]
 WantedBy=default.target
 `;
+}
+
+// Checked on every plain skel, but only by comparing files, so a moved bun, claude or
+// checkout reaches the daemon at its next start without a systemctl call each time.
+function installService(): void {
+  const file = unitFile();
+  const before = existsSync(file) ? readFileSync(file, "utf8") : null;
+  const skel = resolve(import.meta.dir, "..", "bin", "skel");
+  // A worktree goes away once its work merges, and the daemon with it.
+  if (skel.includes("/.claude/worktrees/")) {
+    if (before !== null) return;
+    throw new Error(
+      `skel is running from a worktree (${skel}): run skel from the main checkout to install its daemon`,
+    );
+  }
+  const unit = unitText(skel);
+  if (before === unit) return;
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, unit);
   try {
     systemd(["systemctl", "--user", "daemon-reload"]);
+    if (before !== null) return;
     systemd(["systemctl", "--user", "enable", "--now", "skel"]);
     console.log(
       "Turning on lingering, so the daemon keeps running after you log out and starts after a reboot.",
     );
     systemd(["loginctl", "enable-linger"]);
   } catch (error) {
-    // The unit file marks the service installed, so it goes, and the next skel tries again.
-    rmSync(file);
+    // The unit file marks the service installed, so the old one comes back, or none, and the
+    // next skel tries again.
+    if (before === null) rmSync(file);
+    else writeFileSync(file, before);
     throw error;
   }
 }
@@ -178,14 +208,15 @@ export function setupDone(): boolean {
 }
 
 export function firstRun(): void {
-  if (!setupDone()) {
+  const done = setupDone();
+  if (!done) {
     checkTools();
     connectGitHub();
     pickHarness();
     saveClaudeToken();
-    installService();
-    console.log("Setup is done.");
   }
+  installService();
+  if (!done) console.log("Setup is done.");
   if (!openDb().query("SELECT 1 FROM repositories LIMIT 1").get())
     console.log("No repository is added yet. Add one by running skel init in its folder.");
 }
