@@ -1,0 +1,3 @@
+#!/bin/sh
+# Runs skel from this checkout. Put this folder on your PATH.
+exec bun "$(dirname "$0")/../src/main.ts" "$@"

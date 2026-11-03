@@ -183,7 +183,7 @@ test: [bun test]
 These are the parts that need care. `docs/learnings.md` explains the traps behind each one.
 
 - **Typing into a session.** Wait until the pane is quiet (compare `tmux capture-pane` a moment apart), load the text with `tmux load-buffer`, paste it with `tmux paste-buffer -p` so it arrives as a bracketed paste, then send Enter on its own a moment later.
-- **The sandbox.** bubblewrap with the agent's folder writable, the rest of the system read-only, and the home folder and credentials hidden. Claude Code gets a throwaway copy of its login and settings. Its own permission prompts and sandbox are turned off, since skel's sandbox draws the boundary.
+- **The sandbox.** bubblewrap with the agent's folder writable, the rest of the system read-only, and the home folder and credentials hidden. Claude Code shares your login and transcripts in `~/.claude`, sees your settings, hooks, plugins and skills there read-only, and gets a throwaway copy of `~/.claude.json`. Its own permission prompts and sandbox are turned off, since skel's sandbox draws the boundary.
 - **Starting Claude Code.** Remove inherited `CLAUDE_CODE_*` variables. Mark the folder as trusted in the session's copy of its settings, or it waits at a question nobody sees. Pass the first message on the command line.
 - **Agent commands.** Every command an agent can run answers quickly: Claude Code moves a shell command to the background after 2 minutes.
 - **Detaching.** skel's tmux config binds Ctrl-\] to detach with no prefix and hides the status bar, so attaching feels like being inside Claude Code.
