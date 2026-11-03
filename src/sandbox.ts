@@ -2,16 +2,23 @@
 // the boundary: the agent's folder is writable, the rest of the system read-only, and your
 // home folder and credentials hidden.
 import {
-  chmodSync,
+  closeSync,
+  constants,
   existsSync,
+  lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
+
+const { O_NOFOLLOW, O_RDONLY } = constants;
 
 export type Agent =
   | { kind: "lead"; repositories: string[] }
@@ -24,7 +31,9 @@ const ro = (p: string) => ["--ro-bind", p, p];
 const rw = (p: string) => ["--bind", p, p];
 const hide = (p: string) => ["--tmpfs", p];
 // A missing path is covered with an empty read-only file, or the agent could create it.
-const fixed = (p: string) => (existsSync(p) ? ro(p) : ["--ro-bind", "/dev/null", p]);
+// Not /dev/null: on a folder mounted nodev, such as /tmp, opening it is refused, and git
+// then warns on every command.
+const fixed = (p: string, empty: string) => (existsSync(p) ? ro(p) : ["--ro-bind", empty, p]);
 
 export function sandboxArgs(given: {
   home: string;
@@ -80,10 +89,11 @@ export function agentMounts(agent: Agent, home: string): Seen {
     mkdirSync(lead, { recursive: true });
     const mounts = rw(lead);
     for (const repo of agent.repositories) {
-      mounts.push(...ro(repo));
       // .skel holds every thread's worktree and socket, and a socket answers whoever
-      // connects, even through a read-only mount.
-      if (existsSync(join(repo, ".skel"))) mounts.push(...hide(join(repo, ".skel")));
+      // connects, even through a read-only mount. It is made now, so threads started
+      // after the lead land under the hidden folder too.
+      mkdirSync(join(repo, ".skel"), { recursive: true });
+      mounts.push(...ro(repo), ...hide(join(repo, ".skel")));
     }
     return { mounts, env: {}, cwd: lead };
   }
@@ -91,7 +101,7 @@ export function agentMounts(agent: Agent, home: string): Seen {
   const mounts = [...ro(repository), ...hide(join(repository, ".skel"))];
   if (agent.kind === "reviewer")
     return { mounts: [...mounts, ...ro(worktree)], env: {}, cwd: worktree };
-  // A worktree commits into the repository's .git: objects, refs and logs live there. But
+  // A worktree commits into the repository's .git: objects and refs live there. But
   // the daemon's push runs git outside the sandbox with your rights, and git follows a
   // commondir file in .git, or in any worktree's folder, to a config that runs commands.
   // So the builder gets a .git of its own whose top level is thrown away: what a commit,
@@ -101,17 +111,28 @@ export function agentMounts(agent: Agent, home: string): Seen {
     .replace(/^gitdir: /, "")
     .trim();
   const own = resolve(worktree, link);
+  const empty = join(home, ".local", "share", "skel", "empty");
+  if (!existsSync(empty)) {
+    mkdirSync(dirname(empty), { recursive: true });
+    writeFileSync(empty, "", { mode: 0o444 });
+  }
   mounts.push(...rw(worktree), ...ro(join(worktree, ".git")), ...hide(git));
   for (const entry of readdirSync(git)) {
     const p = join(git, entry);
-    if (["objects", "refs", "logs"].includes(entry)) mounts.push(...rw(p));
+    if (["objects", "refs"].includes(entry)) mounts.push(...rw(p));
+    // Git outside appends to a reflog by following whatever is there, so a link planted in
+    // logs would let a push write into any file of yours. Reflogs stay thrown away.
     // Git locks packed-refs on every deletion, as a rebase makes. The lock lands in the
     // thrown-away top level, so only deleting a packed branch fails.
-    else if (entry !== "worktrees") mounts.push(...ro(p));
+    else if (!["logs", "worktrees"].includes(entry)) mounts.push(...ro(p));
   }
+  // Alternates send git to other object stores, and a repack outside would trust them.
+  for (const p of ["alternates", "http-alternates"])
+    mounts.push(...fixed(join(git, "objects", "info", p), empty));
   // Only this worktree's folder comes back, which holds its HEAD, index and a rebase's state.
-  mounts.push(...rw(own));
-  for (const p of ["commondir", "gitdir", "config.worktree"]) mounts.push(...fixed(join(own, p)));
+  mounts.push(...rw(own), ...hide(join(own, "logs")));
+  for (const p of ["commondir", "gitdir", "config.worktree"])
+    mounts.push(...fixed(join(own, p), empty));
   return { mounts, env: identity(repository, home), cwd: worktree };
 }
 
@@ -177,7 +198,13 @@ export function agentCommand(given: {
   // A folder of its own per session, never your ~/.claude: an agent could write memory or
   // settings that another session loads as instructions. It stays, so --resume finds the
   // transcripts.
-  const config = join(home, ".local", "share", "skel", "claude", name);
+  const configs = join(home, ".local", "share", "skel", "claude");
+  const config = join(configs, name);
+  // skel writes here with your rights, and the agent can change what is in its folder. A
+  // link it left would send that write to any file of yours.
+  for (const p of [configs, config, join(config, ".claude.json")])
+    if (lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink())
+      throw new Error(`${p} is a link, so skel won't write through it`);
   mkdirSync(config, { recursive: true });
   const { mounts, env: seenEnv, cwd } = agentMounts(agent, home);
   mounts.push(...rw(config));
@@ -185,11 +212,23 @@ export function agentCommand(given: {
   // Claude Code asks whether to trust the folder even in bypass mode, and would wait there
   // with nobody to answer.
   const file = join(config, ".claude.json");
-  const json = existsSync(file) ? ClaudeJson.parse(JSON.parse(readFileSync(file, "utf8"))) : {};
+  let json: z.infer<typeof ClaudeJson> = {};
+  if (existsSync(file)) {
+    const fd = openSync(file, O_RDONLY | O_NOFOLLOW);
+    try {
+      json = ClaudeJson.parse(JSON.parse(readFileSync(fd, "utf8")));
+    } finally {
+      closeSync(fd);
+    }
+  }
   const projects = json.projects ?? {};
   projects[cwd] = { ...projects[cwd], hasTrustDialogAccepted: true };
-  writeFileSync(file, JSON.stringify({ ...json, projects }), { mode: 0o600 });
-  chmodSync(file, 0o600);
+  // Written beside it and renamed over it, so even a link made since the check is replaced,
+  // never followed. "wx" refuses a link already at the new name.
+  const fresh = join(config, `.claude.json.${process.pid}`);
+  rmSync(fresh, { force: true });
+  writeFileSync(fresh, JSON.stringify({ ...json, projects }), { mode: 0o600, flag: "wx" });
+  renameSync(fresh, file);
 
   const command = ["claude", "--model", model, "--permission-mode", "bypassPermissions"];
   command.push("--settings", settings);

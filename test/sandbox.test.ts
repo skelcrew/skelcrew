@@ -3,12 +3,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -164,6 +167,46 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
     expect(existsSync(join(repo, ".git", "hooks", "pre-push"))).toBe(false);
   });
 
+  test("a builder can't make git outside write through its links, or borrow objects", async () => {
+    const { repo, worktree } = repository(12);
+    git(home, "init", "-q", "--bare", "remote.git");
+    git(repo, "remote", "add", "origin", join(home, "remote.git"));
+    const victim = join(home, "victim");
+    writeFileSync(victim, "safe\n");
+    const dotgit = join(repo, ".git");
+    const done = await inside(
+      { kind: "builder", repository: repo, worktree },
+      [
+        "echo f > f && git add f && git commit -qm f",
+        `mkdir -p ${dotgit}/logs/refs/remotes/origin/skel`,
+        `ln -s ${victim} ${dotgit}/logs/refs/remotes/origin/skel/12`,
+        `mkdir -p ${dotgit}/refs/remotes/origin/skel`,
+        `ln -s ${victim} ${dotgit}/refs/remotes/origin/skel/13`,
+        `ln -sf ${victim} ${dotgit}/worktrees/12/logs/HEAD`,
+        `echo /etc > ${dotgit}/objects/info/alternates || echo alternates-fixed`,
+        `echo /etc > ${dotgit}/objects/info/http-alternates || echo http-alternates-fixed`,
+      ].join("; "),
+    );
+    expect(done.out).toBe("alternates-fixed\nhttp-alternates-fixed\n");
+    // As the daemon pushes: in the main repository, by the commit it recorded.
+    const sha = git(repo, "rev-parse", "skel/12");
+    git(repo, "push", "-q", "origin", `${sha}:refs/heads/skel/12`);
+    Bun.spawnSync(["git", "-C", repo, "push", "-q", "origin", `${sha}:refs/heads/skel/13`]);
+    expect(readFileSync(victim, "utf8")).toBe("safe\n");
+    expect(lstatSync(join(dotgit, "worktrees", "12", "logs", "HEAD")).isSymbolicLink()).toBe(false);
+    expect(readFileSync(join(dotgit, "objects", "info", "alternates"), "utf8")).toBe("");
+  });
+
+  test("the lead can't see threads that start after it", async () => {
+    const site = join(home, "code", "site");
+    mkdirSync(site, { recursive: true });
+    git(site, "init", "-q");
+    const seen = inside({ kind: "lead", repositories: [site] }, `sleep 1; ls -A ${site}/.skel`);
+    await Bun.sleep(300);
+    mkdirSync(join(site, ".skel", "worktrees", "9"), { recursive: true });
+    expect((await seen).out).toBe("");
+  });
+
   test("finds a worktree's git folder when git wrote it as a relative path", async () => {
     const { repo, worktree } = repository(12);
     writeFileSync(join(worktree, ".git"), "gitdir: ../../../.git/worktrees/12\n");
@@ -226,12 +269,14 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
       snapshot(join(home, ".claude")) + readFileSync(join(home, ".claude.json"), "utf8");
     const before = yours();
     saveToken();
+    mkdirSync(join(home, ".local", "share", "skel", "claude", "other"), { recursive: true });
     fakeClaude([
       'printf "%s\\n" "$@"',
       "env | grep -E '^(CLAUDE_|SKEL_|GH_TOKEN|TERM)' | sort",
       "test -e ~/.claude || echo no-claude",
       "test -e ~/.claude.json || echo no-claude-json",
       "test -e ~/.config/skel/claude-token || echo no-token-file",
+      "test -e ~/.local/share/skel/claude/other || echo no-other-session",
       "echo m > $CLAUDE_CONFIG_DIR/note && echo kept",
       "mkdir -p ~/.claude && echo x > ~/.claude/settings.json",
     ]);
@@ -266,6 +311,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
         "no-claude",
         "no-claude-json",
         "no-token-file",
+        "no-other-session",
         "kept",
         "",
       ].join("\n"),
@@ -299,6 +345,36 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
     });
     expect(builder.env.CLAUDE_CONFIG_DIR).not.toBe(reviewer.env.CLAUDE_CONFIG_DIR);
     expect((await run(reviewer.argv, reviewer.env)).out).toBe("app-12-review-1\n");
+  });
+
+  test("won't write a session's settings through a link the agent left", () => {
+    const { repo, worktree } = repository(12);
+    saveToken();
+    const start = () =>
+      agentCommand({
+        agent: { kind: "builder", repository: repo, worktree },
+        name: "app-12",
+        socket: socketPath,
+        model: "opus",
+        env: outside(),
+      });
+    start();
+    const config = join(home, ".local", "share", "skel", "claude", "app-12");
+    const yours = join(home, ".claude.json");
+    writeFileSync(yours, '{"projects":{}}\n');
+    rmSync(join(config, ".claude.json"));
+    symlinkSync(yours, join(config, ".claude.json"));
+    expect(start).toThrow("link");
+    expect(readFileSync(yours, "utf8")).toBe('{"projects":{}}\n');
+    rmSync(join(config, ".claude.json"));
+    symlinkSync(join(home, "made"), join(config, ".claude.json"));
+    expect(start).toThrow("link");
+    expect(existsSync(join(home, "made"))).toBe(false);
+    rmSync(config, { recursive: true });
+    mkdirSync(join(home, "elsewhere"));
+    symlinkSync(join(home, "elsewhere"), config);
+    expect(start).toThrow("link");
+    expect(readdirSync(join(home, "elsewhere"))).toEqual([]);
   });
 
   test("says to run skel first when there is no token", () => {
