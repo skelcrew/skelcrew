@@ -24,15 +24,15 @@ that covers the code you are about to write.
   misbehaves, for example by writing no transcript.
 - **Mark the folder trusted, or the session waits forever.** Claude Code asks whether to
   trust a folder even in bypass mode, and nobody is watching to answer. Set
-  `hasTrustDialogAccepted` for the folder in the session's copy of `~/.claude.json`.
-- **Share `~/.claude` writable, but not your setup in it.** A copied login breaks: when
-  Claude Code refreshes its token, the old refresh token stops working, so the original
-  or the copy goes stale. `claude --resume` also needs the transcripts where it looks for
-  them. Keep `settings.json`, `CLAUDE.md`, hooks, plugins, commands, agents and skills
-  read-only, since your own Claude Code runs code from them.
-- **Give each session a throwaway copy of `~/.claude.json`.** Claude Code writes to it as it
-  runs, and it lists the MCP servers your own runs start.
-- **Check the login with `claude auth status --json`.** `~/.claude.json` exists after any
+  `hasTrustDialogAccepted` for the folder in the session's `.claude.json`.
+- **Don't share your `~/.claude` with agents, and don't copy your login.** A copied login
+  breaks: when Claude Code renews it, the old refresh token stops working, so the original
+  or the copy goes stale. A shared, writable `~/.claude` lets an agent write memory files
+  or settings your own sessions load as instructions. Renewal takes a lock folder Claude
+  Code creates and deletes, so a throwaway layer over `~/.claude` can't share it either.
+  Give each session its own config folder and a token from `claude setup-token`, which
+  never renews.
+- **Check a login with `claude auth status --json`.** `.claude.json` exists after any
   launch, logged in or not, so finding it proves nothing.
 - **`AskUserQuestion` waits on a screen nobody watches.** A builder that asks with it
   stops until someone answers, and nothing tells you. skel must notice the question and
