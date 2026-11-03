@@ -20,9 +20,14 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(home, { recursive: true, force: true }));
 
-// A git repository whose GitHub name and your permission on it the fake gh reports, or
-// refuses to know.
-function repository(folder: string, github: string | null, permission = "READ"): string {
+// A git repository whose GitHub name, your permission on it and whether it is a fork the
+// fake gh reports, or refuses to know.
+function repository(
+  folder: string,
+  github: string | null,
+  permission = "READ",
+  fork = false,
+): string {
   const path = join(home, "code", folder);
   mkdirSync(path, { recursive: true });
   Bun.spawnSync(["git", "init", "-q", path]);
@@ -39,7 +44,7 @@ function repository(folder: string, github: string | null, permission = "READ"):
   mkdirSync(bin, { recursive: true });
   const [owner, name] = (github ?? "/").split("/");
   const answer = github
-    ? `echo '{"name":"${name}","owner":{"login":"${owner}"},"viewerPermission":"${permission}"}'`
+    ? `echo '{"name":"${name}","owner":{"login":"${owner}"},"viewerPermission":"${permission}","isFork":${fork}}'`
     : `echo 'none of the git remotes point to a known GitHub host' >&2; exit 1`;
   // The fake answers for every repository; tests that need two use the same GitHub name.
   writeFileSync(join(bin, "gh"), `#!/bin/sh\n${answer}\n`, { mode: 0o755 });
@@ -215,7 +220,7 @@ test("guesses bun's commands, and writes them for you to commit", async () => {
   expect(added.out).toContain("Setup command [bun install]");
   expect(added.out).toContain("Test command [bun test]");
   expect(added.out).toContain("Commit it");
-  expect(skelYaml(path)).toBe("setup: [ bun install ]\ntest: [ bun test ]\n");
+  expect(skelYaml(path)).toBe("setup: [bun install]\ntest: [bun test]\n");
 });
 
 test("guesses npm's commands, with a test command only when package.json has one", async () => {
@@ -225,7 +230,7 @@ test("guesses npm's commands, with a test command only when package.json has one
   const added = await skel(["init", path], "\n\n");
   expect(added.out).toContain("Setup command [npm ci]");
   expect(added.out).toContain("Test command []");
-  expect(skelYaml(path)).toBe("setup: [ npm ci ]\n");
+  expect(skelYaml(path)).toBe("setup: [npm ci]\n");
   await skel(["repo", "rm", "app"]);
   writeFileSync(join(path, "package.json"), JSON.stringify({ scripts: { test: "jest" } }));
   rmSync(join(path, "skel.yaml"));
@@ -246,7 +251,7 @@ test("typed text replaces a command and - means none", async () => {
   const path = repository("app", "simon/app", "WRITE");
   writeFileSync(join(path, "bun.lock"), "");
   await skel(["init", path], "bun install --frozen-lockfile\n-\n");
-  expect(skelYaml(path)).toBe("setup: [ bun install --frozen-lockfile ]\n");
+  expect(skelYaml(path)).toBe("setup: [bun install --frozen-lockfile]\n");
 });
 
 test("shows an existing skel.yaml's commands, and keeps its other settings", async () => {
@@ -260,17 +265,34 @@ test("shows an existing skel.yaml's commands, and keeps its other settings", asy
   expect(added.out).toContain("Setup command [make deps && make tools]");
   expect(added.out).toContain("Test command [make test]");
   expect(skelYaml(path)).toBe(
-    "# for skel\nmax_rounds: 2\nsetup: [ make deps, make tools ]\ntest: [ make check ]\n",
+    "# for skel\nmax_rounds: 2\nsetup: [make deps, make tools]\ntest: [make check]\n",
   );
 });
 
-test("leaves an existing skel.yaml alone when both commands are emptied", async () => {
+test("- for both commands removes them from an existing skel.yaml", async () => {
   const path = repository("app", "simon/app", "WRITE");
-  const before = "max_rounds: 2\nsetup: [make deps]\n";
-  writeFileSync(join(path, "skel.yaml"), before);
+  writeFileSync(join(path, "skel.yaml"), "max_rounds: 2\nsetup: [make deps]\n");
   const added = await skel(["init", path], "-\n-\n");
   expect(added.code).toBe(0);
+  expect(skelYaml(path)).toBe("max_rounds: 2\n");
+});
+
+test("removes a skel.yaml left with nothing in it", async () => {
+  const path = repository("app", "simon/app", "WRITE");
+  writeFileSync(join(path, "skel.yaml"), "setup: [make deps]\n");
+  const added = await skel(["init", path], "-\n-\n");
+  expect(added.code).toBe(0);
+  expect(existsSync(join(path, "skel.yaml"))).toBe(false);
+});
+
+test("leaves skel.yaml byte for byte as it was when the commands are kept", async () => {
+  const path = repository("app", "simon/app", "WRITE");
+  const before = "# what agents run\nsetup:\n  - bun install # first\ntest:\n  - bun test\n";
+  writeFileSync(join(path, "skel.yaml"), before);
+  const added = await skel(["init", path], "\n\n");
+  expect(added.code).toBe(0);
   expect(skelYaml(path)).toBe(before);
+  expect(added.out).not.toContain("Commit it");
 });
 
 test("refuses a skel.yaml that isn't valid", async () => {
@@ -324,4 +346,61 @@ test("refuses a package.json that isn't valid, naming it", async () => {
   expect(added.code).toBe(1);
   expect(added.err).toContain("package.json");
   expect((await skel(["repo", "ls"])).out).not.toContain(path);
+});
+
+test("asks about trust for a fork, even one you can push to", async () => {
+  const path = repository("app", "simon/app", "ADMIN", true);
+  const added = await skel(["init", path], trustAndKeep);
+  expect(added.code).toBe(0);
+  expect(added.out).toContain("Do you trust");
+});
+
+test("asks about trust again when a trusted folder's origin points elsewhere", async () => {
+  const path = repository("app", "simon/app");
+  await skel(["init", path], trustAndKeep);
+  await skel(["repo", "rm", "app"]);
+  repository("app", "stranger/app");
+  Bun.spawnSync([
+    "git",
+    "-C",
+    path,
+    "remote",
+    "set-url",
+    "origin",
+    "https://github.com/stranger/app",
+  ]);
+  const again = await skel(["init", path], trustAndKeep);
+  expect(again.code).toBe(0);
+  expect(again.out).toContain("Do you trust");
+});
+
+test("says how to answer the command questions", async () => {
+  const path = repository("app", "simon/app", "WRITE");
+  const added = await skel(["init", path], "\n\n");
+  expect(added.out).toContain("Enter keeps the suggestion, - means none");
+  expect(added.out).toContain("one command");
+});
+
+test("Ctrl-D at a command question after a yes saves no trust", async () => {
+  const path = repository("app", "simon/app");
+  const stopped = await skel(["init", path], "y\n");
+  expect(stopped.code).toBe(1);
+  expect(existsSync(join(home, ".config", "skel", "trusted"))).toBe(false);
+});
+
+test("says there is no folder for a relative path that doesn't exist", async () => {
+  for (const given of ["./app", "../app", "code/app/src"]) {
+    const added = await skel(["init", given]);
+    expect(added.code).toBe(1);
+    expect(added.err).toContain("no folder");
+  }
+});
+
+test("refuses a submodule, naming it as one", async () => {
+  const path = join(home, "code", "sub");
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, ".git"), "gitdir: ../.git/modules/sub\n");
+  const added = await skel(["init", path]);
+  expect(added.code).toBe(1);
+  expect(added.err).toContain("submodule");
 });

@@ -39,7 +39,7 @@ beforeEach(() => {
     `case "$1 $2" in
   "auth status") test -f "$HOME/gh-login" ;;
   "auth login") : > "$HOME/gh-login" ;;
-  "repo view") echo '{"name":"app","owner":{"login":"simon"},"viewerPermission":"READ"}' ;;
+  "repo view") echo '{"name":"app","owner":{"login":"simon"},"viewerPermission":"READ","isFork":false}' ;;
 esac`,
   );
   fake("claude", `test "$1" = setup-token && echo 'Your token: sk-ant-oat01-good'`);

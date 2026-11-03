@@ -7,27 +7,30 @@ import {
   mkdirSync,
   readFileSync,
   realpathSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { parseDocument } from "yaml";
+import { isMap, parseDocument } from "yaml";
 import { z } from "zod";
 import { openDb, Repository } from "./db.ts";
 import { githubRepoAt } from "./github.ts";
 import { configDir } from "./paths.ts";
 
 // Kept with your settings, never in the repository, so a clone can't bring its own yes.
+// Each yes names the GitHub repository too, so a folder whose origin is pointed elsewhere
+// is asked about again.
 const trustFile = () => join(configDir(), "trusted");
 
-function trusted(path: string): boolean {
+function trusted(entry: string): boolean {
   if (!existsSync(trustFile())) return false;
-  return readFileSync(trustFile(), "utf8").split("\n").includes(path);
+  return readFileSync(trustFile(), "utf8").split("\n").includes(entry);
 }
 
-function trust(path: string): void {
+function trust(entry: string): void {
   mkdirSync(configDir(), { recursive: true });
-  appendFileSync(trustFile(), `${path}\n`);
+  appendFileSync(trustFile(), `${entry}\n`);
 }
 
 function excludeSkelFolder(path: string): void {
@@ -98,18 +101,20 @@ function askCommands(question: string, given: string[], short: string): string[]
 
 export function initRepo(given: string, name?: string): void {
   const full = resolve(given);
-  if (!existsSync(full) && /^[\w.-]+\/[\w.-]+$/.test(given))
+  if (!existsSync(full) && /^[\w-][\w.-]*\/[\w.-]+$/.test(given))
     throw new Error(
       `cloning ${given} comes later. Clone it yourself, then run skel init in its folder`,
     );
   if (!existsSync(full)) throw new Error(`there is no folder at ${full}`);
   const path = realpathSync(full);
   if (!existsSync(join(path, ".git"))) throw new Error(`${path} isn't the top of a git repository`);
-  // A linked worktree's .git is a file pointing elsewhere, and the sandbox needs the real
-  // .git folder to give agents their own worktrees.
+  // A linked worktree's or a submodule's .git is a file pointing elsewhere, and the sandbox
+  // needs the repository's own .git folder to give agents their own worktrees.
   if (!statSync(join(path, ".git")).isDirectory())
-    throw new Error(`${path} is a linked worktree. Run skel init in the main clone instead`);
-  const { owner, repo, canPush } = githubRepoAt(path);
+    throw new Error(
+      `${path} is a linked worktree or a submodule. Run skel init in the main clone instead`,
+    );
+  const { owner, repo, canPush, isFork } = githubRepoAt(path);
   const short = name ?? basename(path);
   // Threads are named like app#12, so a name must survive being typed in that form.
   if (!/^[a-zA-Z0-9][\w.-]*$/.test(short))
@@ -122,26 +127,47 @@ export function initRepo(given: string, name?: string): void {
       throw new Error(`${short} is already ${known.path}. Choose another with --name`);
     if (known.path === path) throw new Error(`${path} is already added, as ${known.name}`);
   }
+  const trustEntry = `${path} ${owner}/${repo}`;
+  let newTrust = false;
   // You vouch for what is in a repository you can push to, so asking would only add a step.
-  if (canPush) console.log(`Trusting ${short}, since you can push to ${owner}/${repo}.`);
-  else if (!trusted(path)) {
+  // A fork you own holds someone else's code, so it is asked about. Push access is judged
+  // from origin, which anyone who can edit .git/config controls, so it is worked out again
+  // on each init and never saved.
+  if (canPush && !isFork) console.log(`Trusting ${short}, since you can push to ${owner}/${repo}.`);
+  else if (!trusted(trustEntry)) {
     console.log(`Agents will run ${short}'s setup and test commands, and follow its AGENTS.md`);
     console.log("and settings as instructions.");
     const answer = prompt(`Do you trust ${path}? [y/N]`);
     if (answer?.trim().toLowerCase() !== "y")
       throw new Error(`${short} wasn't added, since you don't trust it`);
-    trust(path);
+    newTrust = true;
   }
   const saved = readSkelYaml(path);
   const guess = guessCommands(path);
+  console.log("Enter keeps the suggestion, - means none, and a typed line is one command.");
   const setup = askCommands("Setup command", saved.setup ?? guess.setup, short);
   const test = askCommands("Test command", saved.test ?? guess.test, short);
-  if (setup.length > 0 || test.length > 0) {
-    for (const [key, commands] of Object.entries({ setup, test })) {
-      if (commands.length > 0) saved.yaml.set(key, saved.yaml.createNode(commands, { flow: true }));
-      else saved.yaml.delete(key);
-    }
-    writeFileSync(saved.file, saved.yaml.toString());
+  // Every question is answered before anything is saved, so stopping at one leaves nothing
+  // half added.
+  if (newTrust) trust(trustEntry);
+  let changed = false;
+  for (const [key, commands, before] of [
+    ["setup", setup, saved.setup],
+    ["test", test, saved.test],
+  ] satisfies [string, string[], string[] | undefined][]) {
+    const same =
+      before === undefined ? commands.length === 0 : before.join("\n") === commands.join("\n");
+    // A key left as it was keeps its comments and style.
+    if (same) continue;
+    if (commands.length > 0) saved.yaml.set(key, saved.yaml.createNode(commands, { flow: true }));
+    else saved.yaml.delete(key);
+    changed = true;
+  }
+  if (changed && isMap(saved.yaml.contents) && saved.yaml.contents.items.length === 0) {
+    rmSync(saved.file, { force: true });
+    console.log(`Removed ${saved.file}, as nothing is left in it. Commit that.`);
+  } else if (changed) {
+    writeFileSync(saved.file, saved.yaml.toString({ flowCollectionPadding: false }));
     console.log(`Wrote the commands to ${saved.file}. Commit it, so every clone has them.`);
   }
   excludeSkelFolder(path);
