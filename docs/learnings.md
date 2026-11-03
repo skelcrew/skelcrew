@@ -73,7 +73,8 @@ that covers the code you are about to write.
   builder can move any ref, including `main` and other threads' branches.
 - **Check `.git` before running git in a repository.** A builder can leave a folder link in
   `refs` or `objects`, which a fetch or gc outside follows to write into any folder of
-  yours, or a stray lock that stops it. The daemon calls `checkGitDir` first.
+  yours, or a stray lock that stops it. A check can't help while the builder still runs,
+  since it can change `.git` right after the check passes.
 - **Remove a worktree without running git in it.** `git worktree remove` runs `git status`
   there, which runs a planted `core.fsmonitor`. Check nothing needs saving, then use
   `--force`, or delete the folder and run `git worktree prune`.
@@ -82,9 +83,9 @@ that covers the code you are about to write.
 - **Agents read `.git/config`.** A remote URL with a token in it, or an `extraheader`, would
   be visible to them, so skel refuses to start agents for such a repository.
 - **Agents share the network.** They can reach ports on localhost and abstract sockets.
-- **Hide other threads.** `.skel/` holds every thread's worktree and socket, and a socket
-  answers whoever connects. Hide the folder, then bring back only the agent's own. Create
-  it first, or threads started after the lead show up in its sandbox.
+- **Hide other threads.** `.skel/` holds every thread's worktree. Hide the folder, then
+  bring back only the agent's own. Create it first, or threads started after the lead show
+  up in its sandbox.
 - **Don't pass `--new-session`.** It moves Claude Code out of the terminal's process group,
   so it misses resize signals and draws at the wrong width.
 
