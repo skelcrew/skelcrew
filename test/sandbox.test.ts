@@ -8,6 +8,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -188,7 +189,11 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
     const claude = join(home, ".claude");
     mkdirSync(join(claude, "hooks"), { recursive: true });
     writeFileSync(join(claude, "settings.json"), "{}\n");
-    const original = `${JSON.stringify({ projects: { "/x": { hasTrustDialogAccepted: false } } })}\n`;
+    const original = `${JSON.stringify({
+      primaryApiKey: "sk-secret",
+      mcpServers: { mine: { command: "my-server" } },
+      projects: { "/x": { hasTrustDialogAccepted: false, mcpServers: { other: {} } } },
+    })}\n`;
     writeFileSync(join(home, ".claude.json"), original);
     mkdirSync(join(home, "bin"));
     // Stands in for Claude Code: reports what it was given and what it may change.
@@ -244,6 +249,10 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
       ].join("\n"),
     );
     expect(JSON.parse(json).projects[worktree].hasTrustDialogAccepted).toBe(true);
+    expect(json).not.toContain("sk-secret");
+    expect(json).not.toContain("mcpServers");
+    const copy = join(home, ".local", "share", "skel", "sessions", "app-12.claude.json");
+    expect(statSync(copy).mode & 0o777).toBe(0o600);
     expect(done.out).toEndWith("shared\nsettings-fixed\nhooks-fixed\nclaude-md-fixed\n");
     expect(readFileSync(join(home, ".claude.json"), "utf8")).toBe(original);
     expect(readFileSync(join(claude, "projects-note"), "utf8")).toBe("t\n");

@@ -2,6 +2,7 @@
 // the boundary: the agent's folder is writable, the rest of the system read-only, and your
 // home folder and credentials hidden.
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -188,9 +189,16 @@ export function agentCommand(given: {
   const json = existsSync(original)
     ? ClaudeJson.parse(JSON.parse(readFileSync(original, "utf8")))
     : {};
-  const projects = json.projects ?? {};
-  projects[cwd] = { ...projects[cwd], hasTrustDialogAccepted: true };
-  writeFileSync(copy, JSON.stringify({ ...json, projects }));
+  // Your MCP servers would start inside with your settings, and an API key is yours.
+  const { mcpServers: _servers, primaryApiKey: _key, projects = {}, ...rest } = json;
+  const trimmed: Record<string, Record<string, unknown>> = {};
+  for (const [folder, project] of Object.entries(projects)) {
+    const { mcpServers: _projectServers, ...settings } = project;
+    trimmed[folder] = settings;
+  }
+  trimmed[cwd] = { ...trimmed[cwd], hasTrustDialogAccepted: true };
+  writeFileSync(copy, JSON.stringify({ ...rest, projects: trimmed }), { mode: 0o600 });
+  chmodSync(copy, 0o600);
   mounts.push("--bind", copy, original);
 
   const command = ["claude", "--model", model, "--permission-mode", "bypassPermissions"];
