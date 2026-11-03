@@ -34,8 +34,9 @@ that covers the code you are about to write.
   runs, and it lists the MCP servers your own runs start.
 - **Check the login with `claude auth status --json`.** `~/.claude.json` exists after any
   launch, logged in or not, so finding it proves nothing.
-- **Turn off `AskUserQuestion` for builders and reviewers** with `--disallowed-tools`. It
-  waits for an answer on a screen nobody watches. Questions go through `skel ask`.
+- **`AskUserQuestion` waits on a screen nobody watches.** A builder that asks with it
+  stops until someone answers, and nothing tells you. skel must notice the question and
+  mark the thread needs you.
 - **Turn off Claude Code's own sandbox and permission prompts.** A prompt stalls a session
   nobody watches. Its sandbox fails inside skel's, so keep it off even if your own settings
   turn it on. Skip the warning bypass mode shows first, in the session's settings.
