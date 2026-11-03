@@ -2,6 +2,7 @@
 // test's own so nothing touches your real ~/.claude.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -53,6 +54,7 @@ function repository() {
   const repo = join(home, "code", "app");
   mkdirSync(repo, { recursive: true });
   writeFileSync(join(repo, "README"), "app\n");
+  git(repo, "init", "-q");
   return repo;
 }
 
@@ -303,7 +305,6 @@ agentCommand({ repositories: [${JSON.stringify(repo)}], name: "app-12", socket: 
 
   test("refuses a repository whose git config holds a credential", () => {
     const repo = repository();
-    git(repo, "init", "-q");
     saveToken();
     const start = () =>
       agentCommand({
@@ -323,6 +324,25 @@ agentCommand({ repositories: [${JSON.stringify(repo)}], name: "app-12", socket: 
       git(repo, "config", "--unset", key);
     }
     expect(start).not.toThrow();
+  });
+
+  test("refuses a repository whose git config can't be read", () => {
+    const repo = repository();
+    saveToken();
+    // A config git can't parse hides whatever credential it holds from the check.
+    appendFileSync(
+      join(repo, ".git", "config"),
+      '[remote "origin"\n\turl = https://x:ghp_secret@github.com/a/b\n',
+    );
+    expect(() =>
+      agentCommand({
+        repositories: [repo],
+        name: "lead",
+        socket: socketPath,
+        model: "opus",
+        env: outside(),
+      }),
+    ).toThrow("config");
   });
 
   test("says to run skel first when there is no token", () => {

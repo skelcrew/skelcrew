@@ -72,13 +72,17 @@ function sandboxArgs(given: {
 
 // The lead reads each repository's .git/config, so a credential in it would be the lead's.
 function refuseCredentials(repository: string): void {
-  const config = Bun.spawnSync(
-    ["git", "-C", repository, "config", "--local", "--get-regexp", "."],
-    {
-      stdout: "pipe",
-    },
-  ).stdout.toString();
-  for (const line of config.split("\n")) {
+  const read = Bun.spawnSync(["git", "-C", repository, "config", "--local", "--get-regexp", "."], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  // Exit 1 means an empty config. Any other failure, such as a line git can't parse, would
+  // hide what the file holds, while the lead can still read it.
+  if (read.exitCode !== 0 && read.exitCode !== 1)
+    throw new Error(
+      `git can't read ${repository}/.git/config, so skel can't check it for credentials: ${read.stderr.toString().trim()}`,
+    );
+  for (const line of read.stdout.toString().split("\n")) {
     const key = line.split(" ")[0] ?? "";
     if (/^http\..*extraheader$/i.test(key) || /https?:\/\/[^/\s]*@/i.test(line))
       throw new Error(
