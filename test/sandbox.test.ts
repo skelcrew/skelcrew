@@ -109,6 +109,20 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
     expect(existsSync(join(repo, "new"))).toBe(false);
   });
 
+  test("hides threads' folders", async () => {
+    const repo = repository();
+    mkdirSync(join(repo, ".skel", "threads", "12"), { recursive: true });
+    writeFileSync(join(repo, ".skel", "threads", "12", "work"), "draft\n");
+    const done = await asLead([repo], `ls -A ${repo}/.skel; cat ${repo}/README`);
+    expect(done.out).toBe("app\n");
+  });
+
+  test("makes the threads' folder before the lead starts, so later threads stay hidden", async () => {
+    const repo = repository();
+    await asLead([repo], "true");
+    expect(existsSync(join(repo, ".skel"))).toBe(true);
+  });
+
   test("hides the home folder's secrets and the other sockets in /run", async () => {
     const repo = repository();
     mkdirSync(join(home, ".config", "gh"), { recursive: true });
@@ -318,6 +332,14 @@ agentCommand({ repositories: [${JSON.stringify(repo)}], name: "app-12", socket: 
       ["remote.origin.url", "https://simon:ghp_secret@github.com/simon/app"],
       ["http.https://github.com/.extraheader", "AUTHORIZATION: basic c2VjcmV0"],
     ];
+    // A config can pull in another file, which the lead can read as well.
+    writeFileSync(
+      join(repo, "extra.config"),
+      '[remote "origin"]\n\turl = https://x:ghp_secret@github.com/a/b\n',
+    );
+    git(repo, "config", "include.path", "../extra.config");
+    expect(start).toThrow("gh");
+    git(repo, "config", "--unset", "include.path");
     for (const [key, value] of credentials) {
       git(repo, "config", key, value);
       expect(start).toThrow("gh");

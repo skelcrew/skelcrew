@@ -72,10 +72,13 @@ function sandboxArgs(given: {
 
 // The lead reads each repository's .git/config, so a credential in it would be the lead's.
 function refuseCredentials(repository: string): void {
-  const read = Bun.spawnSync(["git", "-C", repository, "config", "--local", "--get-regexp", "."], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  const read = Bun.spawnSync(
+    ["git", "-C", repository, "config", "--local", "--includes", "--get-regexp", "."],
+    {
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
   // Exit 1 means an empty config. Any other failure, such as a line git can't parse, would
   // hide what the file holds, while the lead can still read it.
   if (read.exitCode !== 0 && read.exitCode !== 1)
@@ -148,10 +151,20 @@ export function agentCommand(given: {
       throw new Error(`${p} is a link, so skel won't write through it`);
   mkdirSync(config, { recursive: true });
   // The lead sees its repositories read-only and works in a folder of its own.
-  for (const repo of repositories) refuseCredentials(repo);
+  for (const repo of repositories) {
+    refuseCredentials(repo);
+    // Made before the sandbox starts, since a folder hidden only once it exists would let
+    // threads started after the lead show up in its sandbox.
+    mkdirSync(join(repo, ".skel"), { recursive: true });
+  }
   const cwd = join(home, ".local", "share", "skel", "lead");
   mkdirSync(cwd, { recursive: true });
-  const mounts = [...rw(cwd), ...repositories.flatMap(ro), ...rw(config)];
+  // Each repository's .skel holds the threads' work, which isn't the lead's to read.
+  const mounts = [
+    ...rw(cwd),
+    ...repositories.flatMap((repo) => [...ro(repo), ...hide(join(repo, ".skel"))]),
+    ...rw(config),
+  ];
 
   // Claude Code asks whether to trust the folder even in bypass mode, and would wait there
   // with nobody to answer.
