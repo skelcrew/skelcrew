@@ -213,8 +213,16 @@ export function offerRepo(): boolean {
   if (!statSync(join(path, ".git")).isDirectory()) return false;
   if (repositories(db).some((known) => known.path === path)) return false;
   if (listed(notAddedFile(), path)) return false;
+  let github: { owner: string; repo: string };
   try {
-    const { owner, repo } = githubRepoAt(path);
+    github = githubRepoAt(path);
+  } catch {
+    // Not on GitHub, so skel can't add it. A folder such as your dotfiles shouldn't get a
+    // complaint on every skel.
+    return false;
+  }
+  const { owner, repo } = github;
+  try {
     // Bun shows a default in brackets after the question, so the hint is the default, and
     // Enter answers with it. Only Ctrl-D gives null, which adds nothing and asks again later.
     const answer = prompt(`Add ${owner}/${repo} to skel?`, "Y/n");

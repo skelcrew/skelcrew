@@ -488,12 +488,15 @@ test("says why it couldn't add the repository, attaches anyway, and asks again n
   expect(again.out).toContain("Add simon/app to skel?");
 });
 
-test("says why when the repository isn't on GitHub, and attaches anyway", async () => {
+test("asks nothing and says nothing in a repository that isn't on GitHub", async () => {
+  // skel can't add it anyway, and a folder such as your dotfiles shouldn't get a complaint
+  // on every skel.
   setUpDone();
   const path = repository();
   Bun.spawnSync(["git", "-C", path, "remote", "remove", "origin"]);
   const run = await skelIn(path);
   expect(run.code).toBe(0);
-  expect(run.err).toContain("no origin remote");
+  expect(run.err).toBe("");
+  expect(run.out).not.toContain("Add");
   expect(calls()).toContain("daemon lead\ntmux -L skel attach -t =lead\n");
 });
