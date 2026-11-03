@@ -1,7 +1,17 @@
-// The repositories skel works in: adding one you trust, listing them and removing one.
+// The repositories skel works in: adding one with its setup and test commands, listing them
+// and removing one.
 import type { Database } from "bun:sqlite";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { parseDocument } from "yaml";
+import { z } from "zod";
 import { openDb, Repository } from "./db.ts";
 import { githubRepoAt } from "./github.ts";
 import { configDir } from "./paths.ts";
@@ -40,11 +50,54 @@ function repositories(db: Database): Repository[] {
     .map((row) => Repository.parse(row));
 }
 
-export function addRepo(given: string, name?: string): void {
+const SkelYaml = z.looseObject({
+  setup: z.array(z.string()).optional(),
+  test: z.array(z.string()).optional(),
+});
+
+const PackageJson = z.looseObject({ scripts: z.record(z.string(), z.string()).optional() });
+
+function readSkelYaml(path: string) {
+  const file = join(path, "skel.yaml");
+  const yaml = parseDocument(existsSync(file) ? readFileSync(file, "utf8") : "");
+  const [broken] = yaml.errors;
+  if (broken) throw new Error(`${file} isn't valid YAML: ${broken.message}`);
+  const read = SkelYaml.safeParse(yaml.toJS() ?? {});
+  if (!read.success) throw new Error(`${file} isn't valid: ${z.prettifyError(read.error)}`);
+  return { file, yaml, setup: read.data.setup, test: read.data.test };
+}
+
+function guessCommands(path: string): { setup: string[]; test: string[] } {
+  if (existsSync(join(path, "bun.lock")) || existsSync(join(path, "bun.lockb")))
+    return { setup: ["bun install"], test: ["bun test"] };
+  if (!existsSync(join(path, "package-lock.json"))) return { setup: [], test: [] };
+  const packageFile = join(path, "package.json");
+  const found = existsSync(packageFile) ? JSON.parse(readFileSync(packageFile, "utf8")) : {};
+  const scripts = PackageJson.parse(found).scripts ?? {};
+  return { setup: ["npm ci"], test: scripts.test ? ["npm test"] : [] };
+}
+
+// Bun's prompt answers null both for Ctrl-D and for a bare Enter, unless it has a default:
+// then Enter gives the default and only Ctrl-D gives null.
+function askCommands(question: string, given: string[], short: string): string[] {
+  const shown = given.join(" && ");
+  const answer = prompt(question, shown);
+  if (answer === null) throw new Error(`${short} wasn't added`);
+  const typed = answer.trim();
+  if (typed === "" || typed === shown) return given;
+  return typed === "-" ? [] : [typed];
+}
+
+export function initRepo(given: string, name?: string): void {
   const full = resolve(given);
+  if (!existsSync(full) && /^[\w.-]+\/[\w.-]+$/.test(given))
+    throw new Error(
+      `cloning ${given} comes later. Clone it yourself, then run skel init in its folder`,
+    );
   if (!existsSync(full)) throw new Error(`there is no folder at ${full}`);
   const path = realpathSync(full);
   if (!existsSync(join(path, ".git"))) throw new Error(`${path} isn't the top of a git repository`);
+  const { owner, repo, canPush } = githubRepoAt(path);
   const short = name ?? basename(path);
   // Threads are named like app#12, so a name must survive being typed in that form.
   if (!/^[a-zA-Z0-9][\w.-]*$/.test(short))
@@ -57,14 +110,27 @@ export function addRepo(given: string, name?: string): void {
       throw new Error(`${short} is already ${known.path}. Choose another with --name`);
     if (known.path === path) throw new Error(`${path} is already added, as ${known.name}`);
   }
-  const { owner, repo } = githubRepoAt(path);
-  if (!trusted(path)) {
+  // You vouch for what is in a repository you can push to, so asking would only add a step.
+  if (canPush) console.log(`Trusting ${short}, since you can push to ${owner}/${repo}.`);
+  else if (!trusted(path)) {
     console.log(`Agents will run ${short}'s setup and test commands, and follow its AGENTS.md`);
     console.log("and settings as instructions.");
     const answer = prompt(`Do you trust ${path}? [y/N]`);
     if (answer?.trim().toLowerCase() !== "y")
       throw new Error(`${short} wasn't added, since you don't trust it`);
     trust(path);
+  }
+  const saved = readSkelYaml(path);
+  const guess = guessCommands(path);
+  const setup = askCommands("Setup command", saved.setup ?? guess.setup, short);
+  const test = askCommands("Test command", saved.test ?? guess.test, short);
+  if (setup.length > 0 || test.length > 0) {
+    for (const [key, commands] of Object.entries({ setup, test })) {
+      if (commands.length > 0) saved.yaml.set(key, saved.yaml.createNode(commands, { flow: true }));
+      else saved.yaml.delete(key);
+    }
+    writeFileSync(saved.file, saved.yaml.toString());
+    console.log(`Wrote the commands to ${saved.file}. Commit it, so every clone has them.`);
   }
   excludeSkelFolder(path);
   db.query("INSERT INTO repositories (name, path, owner, repo) VALUES (?, ?, ?, ?)").run(
@@ -79,7 +145,7 @@ export function addRepo(given: string, name?: string): void {
 export function listRepos(): void {
   const all = repositories(openDb());
   if (all.length === 0) {
-    console.log("No repositories yet. Add one with skel repo add <path>.");
+    console.log("No repositories yet. Add one by running skel init in its folder.");
     return;
   }
   const width = Math.max(...all.map((r) => r.name.length));
