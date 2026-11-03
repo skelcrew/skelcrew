@@ -1,7 +1,9 @@
-// The sandbox every agent runs in. bubblewrap draws the boundary: the agent's folder is
-// writable, the rest of the system read-only, and your home folder and credentials hidden.
-import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+// The sandbox every agent runs in, and how Claude Code starts inside it. bubblewrap draws
+// the boundary: the agent's folder is writable, the rest of the system read-only, and your
+// home folder and credentials hidden.
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { z } from "zod";
 
 export type Agent =
   | { kind: "lead"; repositories: string[] }
@@ -87,4 +89,78 @@ export function agentMounts(agent: Agent, home: string): { mounts: string[]; cwd
   for (const p of ["config", "hooks", "info"]) mounts.push(...fixed(join(git, p)));
   for (const p of ["commondir", "gitdir", "config.worktree"]) mounts.push(...fixed(join(own, p)));
   return { mounts, cwd: worktree };
+}
+
+const ClaudeJson = z.looseObject({
+  projects: z.record(z.string(), z.looseObject({})).optional(),
+});
+
+// Your own Claude Code runs code from these, so agents only read them.
+const yourSetup = ["settings.json", "CLAUDE.md"];
+const yourSetupFolders = ["hooks", "plugins", "commands", "agents", "skills"];
+
+// Bypass mode shows a warning first, which nobody is there to accept. Claude Code's own
+// sandbox fails inside skel's, so it stays off even if your settings turn it on.
+const settings = '{"skipDangerousModePermissionPrompt":true,"sandbox":{"enabled":false}}';
+
+// Only what a shell and Claude Code need gets in. Tokens and keys in your environment stay
+// out, and so do CLAUDE_CODE_* variables inherited from a Claude Code session, which make
+// the agent misbehave, for example by writing no transcript.
+// ANTHROPIC_API_KEY is for those who use a key rather than a login.
+const passed = [
+  ...["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "COLORTERM", "LANG", "TZ"],
+  "ANTHROPIC_API_KEY",
+];
+
+export function agentCommand(given: {
+  agent: Agent;
+  name: string;
+  socket: string;
+  model: string;
+  prompt?: string;
+  resume?: string;
+  env?: Record<string, string | undefined>;
+}): { argv: string[]; env: Record<string, string> } {
+  const { agent, name, socket, model, prompt, resume, env = process.env } = given;
+  const home = env.HOME;
+  if (!home) throw new Error("HOME isn't set, so skel can't find Claude Code's login");
+  const { mounts, cwd } = agentMounts(agent, home);
+
+  // The login and transcripts are shared, not copied: a copied login goes stale when either
+  // side refreshes its token, and --resume looks for transcripts here.
+  const claude = join(home, ".claude");
+  mkdirSync(claude, { recursive: true });
+  mounts.push(...rw(claude));
+  for (const file of yourSetup) mounts.push(...fixed(join(claude, file)));
+  for (const folder of yourSetupFolders) {
+    // Made empty when missing, or the agent could create it and put code in it.
+    mkdirSync(join(claude, folder), { recursive: true });
+    mounts.push(...ro(join(claude, folder)));
+  }
+
+  // Claude Code writes to ~/.claude.json as it runs, and it lists the MCP servers your own
+  // runs start, so each session gets a throwaway copy. It asks whether to trust the folder
+  // even in bypass mode, and would wait there with nobody to answer.
+  const original = join(home, ".claude.json");
+  const copy = join(home, ".local", "share", "skel", "sessions", `${name}.claude.json`);
+  mkdirSync(dirname(copy), { recursive: true });
+  const json = existsSync(original)
+    ? ClaudeJson.parse(JSON.parse(readFileSync(original, "utf8")))
+    : {};
+  const projects = json.projects ?? {};
+  projects[cwd] = { ...projects[cwd], hasTrustDialogAccepted: true };
+  writeFileSync(copy, JSON.stringify({ ...json, projects }));
+  mounts.push("--bind", copy, original);
+
+  const command = ["claude", "--model", model, "--permission-mode", "bypassPermissions"];
+  command.push("--settings", settings);
+  if (resume) command.push("--resume", resume);
+  if (prompt) command.push(prompt);
+
+  const kept: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== undefined && (passed.includes(key) || key.startsWith("LC_"))) kept[key] = value;
+  }
+  const argv = sandboxArgs({ home, path: env.PATH ?? "", mounts, socket, cwd, command });
+  return { argv, env: kept };
 }

@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Agent, agentMounts, sandboxArgs } from "../src/sandbox.ts";
+import { type Agent, agentCommand, agentMounts, sandboxArgs } from "../src/sandbox.ts";
 
 let home = "";
 let socket: ReturnType<typeof Bun.listen> | undefined;
@@ -130,5 +130,72 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
     );
     expect(done.out).toBe("app\nrefused\n");
     expect(existsSync(join(worktree, "new"))).toBe(false);
+  });
+
+  test("Claude Code starts trusted, with your setup read-only and its own sandbox off", async () => {
+    const { repo, worktree } = repository(12);
+    const claude = join(home, ".claude");
+    mkdirSync(join(claude, "hooks"), { recursive: true });
+    writeFileSync(join(claude, "settings.json"), "{}\n");
+    const original = `${JSON.stringify({ projects: { "/x": { hasTrustDialogAccepted: false } } })}\n`;
+    writeFileSync(join(home, ".claude.json"), original);
+    mkdirSync(join(home, "bin"));
+    // Stands in for Claude Code: reports what it was given and what it may change.
+    writeFileSync(
+      join(home, "bin", "claude"),
+      [
+        "#!/bin/sh",
+        'printf "%s\\n" "$@"',
+        "env | grep -E '^(CLAUDE_CODE_|SKEL_|GH_TOKEN|TERM)' | sort",
+        "cat ~/.claude.json; echo",
+        "echo t > ~/.claude/projects-note && echo shared",
+        "echo x > ~/.claude/settings.json || echo settings-fixed",
+        "echo x > ~/.claude/hooks/new || echo hooks-fixed",
+        "echo x > ~/.claude/CLAUDE.md || echo claude-md-fixed",
+        "true",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const { argv, env } = agentCommand({
+      agent: { kind: "builder", repository: repo, worktree },
+      name: "app-12",
+      socket: socketPath,
+      model: "opus",
+      prompt: "Fix the bug",
+      resume: "abc-123",
+      env: {
+        HOME: home,
+        PATH: path(),
+        TERM: "xterm",
+        CLAUDE_CODE_CHILD_SESSION: "1",
+        GH_TOKEN: "secret",
+        SKEL_GITHUB_APP_KEY: "secret",
+      },
+    });
+    const done = await run(argv, env);
+    expect(done.code).toBe(0);
+    const json = done.out.split("\n").find((line) => line.startsWith('{"projects"')) ?? "";
+    expect(done.out.split(json)[0]).toBe(
+      [
+        "--model",
+        "opus",
+        "--permission-mode",
+        "bypassPermissions",
+        "--settings",
+        '{"skipDangerousModePermissionPrompt":true,"sandbox":{"enabled":false}}',
+        "--resume",
+        "abc-123",
+        "Fix the bug",
+        "SKEL_SANDBOX=1",
+        "SKEL_SOCKET=/run/skel.sock",
+        "TERM=xterm",
+        "",
+      ].join("\n"),
+    );
+    expect(JSON.parse(json).projects[worktree].hasTrustDialogAccepted).toBe(true);
+    expect(done.out).toEndWith("shared\nsettings-fixed\nhooks-fixed\nclaude-md-fixed\n");
+    expect(readFileSync(join(home, ".claude.json"), "utf8")).toBe(original);
+    expect(readFileSync(join(claude, "projects-note"), "utf8")).toBe("t\n");
+    expect(readFileSync(join(claude, "settings.json"), "utf8")).toBe("{}\n");
   });
 });
