@@ -1,14 +1,5 @@
 // The first run: what a plain skel sets up on a new machine, skipping each step already done.
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
@@ -24,8 +15,6 @@ const tools = [
 
 // Unknown keys pass through, so settings this version doesn't know survive a save.
 const Config = z.looseObject({ harness: z.enum(["claude"]).optional() });
-
-const ClaudeLogin = z.object({ loggedIn: z.boolean() });
 
 function checkTools(): void {
   const bwrap = Bun.which("bwrap");
@@ -65,25 +54,17 @@ function apparmorAdvice(bwrap: string): string {
   sudo apparmor_parser -r /etc/apparmor.d/skel-bwrap`;
 }
 
-// Run as agents will run it: with the token and a config folder of its own, so your own
-// login can't make the answer yes. Claude Code only checks a token is there, not that it
-// works, so this catches a token it can't read, not one that was revoked.
-function tokenLoggedIn(token: string): boolean {
-  const folder = mkdtempSync(join(tmpdir(), "skel-claude-"));
-  const env: Record<string, string | undefined> = {};
-  for (const [key, value] of Object.entries(process.env))
-    if (!key.startsWith("CLAUDE_CODE_") && key !== "ANTHROPIC_API_KEY") env[key] = value;
+// Your typing at a terminal shows on screen, and a token on screen can end up in a
+// scrollback or a screenshot. Piped input has no echo to hide.
+function promptHidden(question: string): string | null {
+  if (!process.stdin.isTTY) return prompt(question);
+  const stdio: ["inherit", "inherit", "inherit"] = ["inherit", "inherit", "inherit"];
+  Bun.spawnSync(["stty", "-echo"], { stdio });
   try {
-    const status = Bun.spawnSync(["claude", "auth", "status", "--json"], {
-      env: { ...env, CLAUDE_CODE_OAUTH_TOKEN: token, CLAUDE_CONFIG_DIR: folder },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    return ClaudeLogin.parse(JSON.parse(status.stdout.toString())).loggedIn;
-  } catch {
-    return false;
+    return prompt(question);
   } finally {
-    rmSync(folder, { recursive: true, force: true });
+    Bun.spawnSync(["stty", "echo"], { stdio });
+    console.log();
   }
 }
 
@@ -96,10 +77,14 @@ function saveClaudeToken(): void {
     stdio: ["inherit", "inherit", "inherit"],
   });
   if (!setup.success) throw new Error("claude setup-token didn't finish, so no token is saved");
-  const token = prompt("Paste the token it printed:")?.trim();
+  const token = promptHidden("Paste the token it printed (it won't show):")?.trim();
   if (!token) throw new Error("no token was pasted, so none is saved");
-  if (!tokenLoggedIn(token))
-    throw new Error("Claude Code isn't logged in with that token, so it isn't saved");
+  // Claude Code itself tells its login tokens apart by this prefix. It reports any token as
+  // logged in without asking the server, so the form is all skel can check here.
+  if (!token.startsWith("sk-ant-oat") || /\s/.test(token))
+    throw new Error(
+      "that isn't a token from claude setup-token, which is one word starting with sk-ant-oat, so it isn't saved",
+    );
   mkdirSync(configDir(), { recursive: true });
   // Created readable only by you, so the token is never in a file others can read.
   writeFileSync(file, `${token}\n`, { mode: 0o600, flag: "wx" });

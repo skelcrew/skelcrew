@@ -42,20 +42,7 @@ beforeEach(() => {
   "repo view") echo '{"name":"app","owner":{"login":"simon"}}' ;;
 esac`,
   );
-  // Logged in only with the good token and a config folder that isn't yours, as agents run.
-  fake(
-    "claude",
-    `case "$1 $2" in
-  "setup-token ") echo 'Your token: good-token' ;;
-  "auth status")
-    echo "$CLAUDE_CONFIG_DIR" > "$HOME/claude-config-dir"
-    if [ "$CLAUDE_CODE_OAUTH_TOKEN" = good-token ] && [ -n "$CLAUDE_CONFIG_DIR" ]; then
-      echo '{"loggedIn":true,"authMethod":"oauth_token"}'
-    else
-      echo '{"loggedIn":false,"authMethod":"none"}'; exit 1
-    fi ;;
-esac`,
-  );
+  fake("claude", `test "$1" = setup-token && echo 'Your token: sk-ant-oat01-good'`);
 });
 afterEach(() => rmSync(home, { recursive: true, force: true }));
 
@@ -91,7 +78,7 @@ async function skel(typed = "") {
 }
 
 test("takes every step on the first run, and none on the second", async () => {
-  const first = await skel("1\ngood-token\n");
+  const first = await skel("1\nsk-ant-oat01-good\n");
   expect(first.err).toBe("");
   expect(first.code).toBe(0);
   expect(calls()).toContain("gh auth login");
@@ -99,7 +86,7 @@ test("takes every step on the first run, and none on the second", async () => {
   expect(first.out).toContain("done");
   expect(readFileSync(config(), "utf8")).toContain("harness: claude");
   expect(calls()).toContain("claude setup-token");
-  expect(readFileSync(token(), "utf8").trim()).toBe("good-token");
+  expect(readFileSync(token(), "utf8").trim()).toBe("sk-ant-oat01-good");
   expect(statSync(token()).mode & 0o777).toBe(0o600);
 
   writeFileSync(join(home, "calls"), "");
@@ -113,7 +100,7 @@ test("takes every step on the first run, and none on the second", async () => {
 });
 
 test("says how to add a repository while none is added", async () => {
-  const run = await skel("1\ngood-token\n");
+  const run = await skel("1\nsk-ant-oat01-good\n");
   expect(run.code).toBe(0);
   expect(run.out).toContain("skel init");
   expect(run.out).toContain("Setup is done.");
@@ -127,7 +114,7 @@ test("says nothing about adding a repository once one is added", async () => {
     stdin: new Blob(["y\n"]),
   });
   expect(added.exitCode).toBe(0);
-  const run = await skel("1\ngood-token\n");
+  const run = await skel("1\nsk-ant-oat01-good\n");
   expect(run.code).toBe(0);
   expect(run.out).not.toContain("trust");
   expect(run.out).not.toContain("skel init");
@@ -136,7 +123,7 @@ test("says nothing about adding a repository once one is added", async () => {
 
 test("skips the GitHub login when gh is logged in already", async () => {
   writeFileSync(join(home, "gh-login"), "");
-  const run = await skel("1\ngood-token\n");
+  const run = await skel("1\nsk-ant-oat01-good\n");
   expect(run.code).toBe(0);
   expect(calls()).toContain("gh auth status");
   expect(calls()).not.toContain("gh auth login");
@@ -180,23 +167,20 @@ test("gives the AppArmor advice when bwrap can't run", async () => {
 test("asks for a token when the harness is saved but no token is", async () => {
   mkdirSync(join(home, ".config", "skel"), { recursive: true });
   writeFileSync(config(), "harness: claude\n");
-  const run = await skel("good-token\n");
+  const run = await skel("sk-ant-oat01-good\n");
   expect(run.code).toBe(0);
   expect(calls()).toContain("claude setup-token");
-  expect(readFileSync(token(), "utf8").trim()).toBe("good-token");
+  expect(readFileSync(token(), "utf8").trim()).toBe("sk-ant-oat01-good");
 });
 
-test("doesn't save a token Claude Code isn't logged in with", async () => {
-  const run = await skel("1\nbad-token\n");
-  expect(run.code).toBe(1);
-  expect(run.err).toContain("token");
-  expect(existsSync(token())).toBe(false);
-  // The check ran in a config folder of its own, which is gone afterwards.
-  const used = readFileSync(join(home, "claude-config-dir"), "utf8").trim();
-  expect(used).not.toBe("");
-  expect(used.startsWith(join(home, ".claude"))).toBe(false);
-  expect(existsSync(used)).toBe(false);
-});
+for (const pasted of ["sk-ant-api03-key", "sk-ant-oat01-good sk-ant-oat01-again"]) {
+  test(`doesn't save a token that isn't one from setup-token: ${pasted}`, async () => {
+    const run = await skel(`1\n${pasted}\n`);
+    expect(run.code).toBe(1);
+    expect(run.err).toContain("sk-ant-oat");
+    expect(existsSync(token())).toBe(false);
+  });
+}
 
 test("saves no token after Ctrl-D at the token question", async () => {
   const run = await skel("1\n");
@@ -208,7 +192,7 @@ test("saves no token after Ctrl-D at the token question", async () => {
 test("keeps the other settings in config.yaml", async () => {
   mkdirSync(join(home, ".config", "skel"), { recursive: true });
   writeFileSync(config(), "# mine\ncolor: blue\n");
-  const run = await skel("1\ngood-token\n");
+  const run = await skel("1\nsk-ant-oat01-good\n");
   expect(run.code).toBe(0);
   const saved = readFileSync(config(), "utf8");
   expect(saved).toContain("# mine");
@@ -221,7 +205,7 @@ for (const broken of ["a: b: c\n", "harness: claude\n  - x: [\n"]) {
     mkdirSync(join(home, ".config", "skel"), { recursive: true });
     writeFileSync(config(), broken);
     writeFileSync(join(home, "gh-login"), "");
-    const run = await skel("1\ngood-token\n");
+    const run = await skel("1\nsk-ant-oat01-good\n");
     expect(run.code).toBe(1);
     expect(run.err).toContain("config.yaml");
     expect(readFileSync(config(), "utf8")).toBe(broken);
@@ -245,7 +229,7 @@ test("refuses a config.yaml it can't read", async () => {
   mkdirSync(join(home, ".config", "skel"), { recursive: true });
   writeFileSync(config(), "harness: [1, 2]\n");
   writeFileSync(join(home, "gh-login"), "");
-  const run = await skel("1\ngood-token\n");
+  const run = await skel("1\nsk-ant-oat01-good\n");
   expect(run.code).toBe(1);
   expect(run.err).toContain("config.yaml");
 });
