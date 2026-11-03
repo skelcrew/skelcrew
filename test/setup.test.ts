@@ -89,6 +89,10 @@ test("takes every step on the first run, and none on the second", async () => {
   expect(first.out).toContain("Claude Code");
   expect(first.out).toContain("done");
   expect(readFileSync(config(), "utf8")).toContain("harness: claude");
+  const listed = Bun.spawnSync([process.execPath, main, "repo", "ls"], {
+    env: { PATH: bin, HOME: home },
+  });
+  expect(listed.stdout.toString()).toContain(path);
 
   writeFileSync(join(home, "calls"), "");
   const second = await skel();
@@ -98,15 +102,6 @@ test("takes every step on the first run, and none on the second", async () => {
   expect(second.out).not.toContain("Claude Code");
   expect(second.out).toContain("done");
   expect(calls()).not.toContain("gh auth login");
-});
-
-test("lists the repository added on the first run", async () => {
-  const path = repository();
-  await skel(`${path}\ny\n1\n`);
-  const run = Bun.spawnSync([process.execPath, main, "repo", "ls"], {
-    env: { PATH: bin, HOME: home },
-  });
-  expect(run.stdout.toString()).toContain(path);
 });
 
 test("skips the GitHub login when gh is logged in already", async () => {
@@ -130,11 +125,26 @@ test("names each missing tool with what to install, and runs nothing else", asyn
 });
 
 test("gives the AppArmor advice when bwrap can't run", async () => {
-  fake("bwrap", "echo 'bwrap: setting up uid map: Permission denied' >&2; exit 1");
+  // AppArmor matches the file a link points to, so the advice must name that file.
+  const real = join(home, "opt", "bwrap");
+  mkdirSync(join(home, "opt"));
+  writeFileSync(
+    real,
+    "#!/bin/sh\necho 'bwrap: setting up uid map: Permission denied' >&2\nexit 1\n",
+    {
+      mode: 0o755,
+    },
+  );
+  unlinkSync(join(bin, "bwrap"));
+  symlinkSync(real, join(bin, "bwrap"));
   const run = await skel();
   expect(run.code).toBe(1);
   expect(run.err).toContain("Permission denied");
   expect(run.err).toContain("AppArmor");
+  expect(run.err).toContain(`profile skel-bwrap ${real} `);
+  expect(run.err).toContain("include if exists <local/skel-bwrap>");
+  expect(run.err).toContain("/etc/apparmor.d/skel-bwrap");
+  expect(run.err).not.toContain("/etc/apparmor.d/bwrap ");
   expect(calls()).not.toContain("gh");
 });
 
@@ -158,6 +168,33 @@ test("keeps the other settings in config.yaml", async () => {
   expect(saved).toContain("color: blue");
   expect(saved).toContain("harness: claude");
 });
+
+for (const broken of ["a: b: c\n", "harness: claude\n  - x: [\n"]) {
+  test(`refuses a config.yaml that isn't YAML: ${JSON.stringify(broken)}`, async () => {
+    mkdirSync(join(home, ".config", "skel"), { recursive: true });
+    writeFileSync(config(), broken);
+    writeFileSync(join(home, "gh-login"), "");
+    const path = repository();
+    const run = await skel(`${path}\ny\n1\n`);
+    expect(run.code).toBe(1);
+    expect(run.err).toContain("config.yaml");
+    expect(readFileSync(config(), "utf8")).toBe(broken);
+  });
+}
+
+for (const [what, typed] of [
+  ["Ctrl-D", ""],
+  ["another harness", "2\n"],
+]) {
+  test(`saves no harness after ${what} at the harness question`, async () => {
+    writeFileSync(join(home, "gh-login"), "");
+    const path = repository();
+    const run = await skel(`${path}\ny\n${typed}`);
+    expect(run.code).toBe(1);
+    expect(run.out).toContain("Claude Code");
+    expect(existsSync(config())).toBe(false);
+  });
+}
 
 test("refuses a config.yaml it can't read", async () => {
   mkdirSync(join(home, ".config", "skel"), { recursive: true });
