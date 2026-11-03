@@ -210,7 +210,8 @@ export function offerRepo(): boolean {
   }
   const path = realpathSync(top.stdout.toString().trim());
   // A linked worktree is most often one of an added repository's, and skel init refuses it.
-  if (!statSync(join(path, ".git")).isDirectory()) return false;
+  // A folder whose git directory lives elsewhere, through GIT_DIR, has no .git at all.
+  if (!statSync(join(path, ".git"), { throwIfNoEntry: false })?.isDirectory()) return false;
   if (repositories(db).some((known) => known.path === path)) return false;
   if (listed(notAddedFile(), path)) return false;
   let github: { owner: string; repo: string };
