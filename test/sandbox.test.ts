@@ -214,7 +214,10 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
     expect(first.env.CLAUDE_CONFIG_DIR).not.toBe(second.env.CLAUDE_CONFIG_DIR);
     expect((await run(second.argv, second.env)).out).toBe("app-12-review-1\n");
   });
+});
 
+// These never start bubblewrap, so they run inside skel's sandbox too.
+describe("starting Claude Code", () => {
   test("won't write a session's settings through a link the agent left", () => {
     const repo = repository();
     saveToken();
