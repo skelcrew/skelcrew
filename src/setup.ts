@@ -1,6 +1,15 @@
 // The first run: what a plain skel sets up on a new machine, skipping each step already done.
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
 import { openDb } from "./db.ts";
@@ -125,17 +134,99 @@ function pickHarness(): void {
   writeFileSync(configFile(), config.toString());
 }
 
-// The last two steps save the harness and the token, so having both means every step ran.
-// Once set up, skel checks nothing again: a tool or login that goes missing later shows up
-// where it is used, and checking each time would put a call to GitHub before every attach.
+const unitFile = () => join(homedir(), ".config", "systemd", "user", "skel.service");
+
+function systemd(command: string[]): void {
+  const run = Bun.spawnSync(command, { stdio: ["inherit", "inherit", "inherit"] });
+  if (!run.success) throw new Error(`${command.join(" ")} failed, so the daemon isn't installed`);
+}
+
+// systemd reads " and \ in a unit as quoting, and % as the start of a name it fills in.
+function unitValue(value: string): string {
+  if (/["\\]/.test(value)) throw new Error(`systemd can't be given ${value}, which holds " or \\`);
+  return value.replaceAll("%", "%%");
+}
+
+function unitText(skel: string): string {
+  // systemd starts services with a bare PATH, which misses bun, claude and gh where they
+  // usually live, so the daemon gets yours. Folders a tool runner or a temporary folder
+  // added are left out: they are gone by the time the daemon starts.
+  const temporary = tmpdir();
+  const path = (process.env.PATH ?? "")
+    .split(":")
+    .filter((p) => p && !p.includes("/node_modules/.bin") && !p.startsWith(`${temporary}/`))
+    .map(unitValue)
+    .join(":");
+  // Where tmux couldn't get a scope of its own, stopping the service would otherwise end
+  // the tmux server, and every agent with it.
+  return `[Unit]
+Description=skel daemon
+
+[Service]
+ExecStart="${unitValue(skel)}" serve
+Environment="PATH=${path}"
+Restart=on-failure
+KillMode=process
+
+[Install]
+WantedBy=default.target
+`;
+}
+
+// Checked on every plain skel, but only by comparing files, so a moved bun, claude or
+// checkout reaches the daemon at its next start without a systemctl call each time.
+function installService(): void {
+  const file = unitFile();
+  const before = existsSync(file) ? readFileSync(file, "utf8") : null;
+  const checkout = resolve(import.meta.dir, "..");
+  const skel = join(checkout, "bin", "skel");
+  // A worktree goes away once its work merges, and the daemon with it. Its .git is a file
+  // pointing back at the repository, wherever the worktree lives.
+  if (statSync(join(checkout, ".git"), { throwIfNoEntry: false })?.isFile()) {
+    if (before !== null) return;
+    throw new Error(
+      `skel is running from a worktree (${skel}): run skel from the main checkout to install its daemon`,
+    );
+  }
+  const unit = unitText(skel);
+  if (before === unit) return;
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, unit);
+  try {
+    systemd(["systemctl", "--user", "daemon-reload"]);
+    if (before !== null) return;
+    systemd(["systemctl", "--user", "enable", "--now", "skel"]);
+    console.log(
+      "Turning on lingering, so the daemon keeps running after you log out and starts after a reboot.",
+    );
+    systemd(["loginctl", "enable-linger"]);
+  } catch (error) {
+    // The unit file marks the service installed, so the old one comes back, or none, and the
+    // next skel tries again.
+    if (before === null) rmSync(file);
+    else writeFileSync(file, before);
+    throw error;
+  }
+}
+
+// The steps save the harness, the token and the service in order, so having all three means
+// every step ran. Once set up, skel checks nothing again: a tool or login that goes missing
+// later shows up where it is used, and checking each time would put a call to GitHub before
+// every attach.
+export function setupDone(): boolean {
+  return Boolean(readConfig().harness) && existsSync(tokenFile()) && existsSync(unitFile());
+}
+
 export function firstRun(): void {
-  if (!readConfig().harness || !existsSync(tokenFile())) {
+  const done = setupDone();
+  if (!done) {
     checkTools();
     connectGitHub();
     pickHarness();
     saveClaudeToken();
-    console.log("Setup is done.");
   }
+  installService();
+  if (!done) console.log("Setup is done.");
   if (!openDb().query("SELECT 1 FROM repositories LIMIT 1").get())
     console.log("No repository is added yet. Add one by running skel init in its folder.");
 }

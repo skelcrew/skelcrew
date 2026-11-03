@@ -24,7 +24,9 @@ let socketPath = "";
 
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-sandbox-test-")));
-  socketPath = join(home, "agent.sock");
+  // Alone in a folder of its own, as the sandbox mounts the folder.
+  mkdirSync(join(home, "socket"));
+  socketPath = join(home, "socket", "skel.sock");
   socket = Bun.listen({ unix: socketPath, socket: { data() {} } });
 });
 afterEach(() => {
@@ -129,11 +131,11 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
     writeFileSync(join(home, ".config", "gh", "hosts.yml"), "oauth_token: secret\n");
     const done = await asLead(
       [repo],
-      `test -e ${home}/.config/gh/hosts.yml || echo hidden; ls /run; ls /run/systemd 2>/dev/null; test -S /run/skel.sock && echo socket; echo $SKEL_SANDBOX`,
+      `test -e ${home}/.config/gh/hosts.yml || echo hidden; ls /run; ls /run/systemd 2>/dev/null; ls /run/skel; test -S "$SKEL_SOCKET" && echo socket; echo $SKEL_SANDBOX`,
     );
     // Only the DNS resolver comes back into /run, on machines that have one there.
     const resolver = existsSync("/run/systemd/resolve") ? "systemd\nresolve\n" : "";
-    expect(done.out).toBe(`hidden\nskel.sock\n${resolver}socket\n1\n`);
+    expect(done.out).toBe(`hidden\nskel\n${resolver}skel.sock\nsocket\n1\n`);
   });
 
   // Every file under a folder with its contents, to show nothing in it changed.
@@ -193,7 +195,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
         "CLAUDE_CODE_OAUTH_TOKEN=tok-123",
         `CLAUDE_CONFIG_DIR=${config}`,
         "SKEL_SANDBOX=1",
-        "SKEL_SOCKET=/run/skel.sock",
+        "SKEL_SOCKET=/run/skel/skel.sock",
         "TERM=xterm",
         "no-claude",
         "no-claude-json",

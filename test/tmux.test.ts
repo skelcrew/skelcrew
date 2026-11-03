@@ -125,25 +125,31 @@ test("a first message and an environment value ending in ; arrive as given", asy
   expect(read("seen.txt")).toBe("fix it;|a;");
 });
 
-test("a session doesn't inherit Claude Code's variables from whoever started it", async () => {
+// The tmux server hands its own environment to every session, so a token in the daemon's
+// environment would reach every agent.
+test("a session gets only the environment it is given, and tmux's TERM", async () => {
   const tmux = join(import.meta.dir, "..", "src", "tmux.ts");
   const script = `import { startSession } from ${JSON.stringify(tmux)};
 startSession(${JSON.stringify(socket)}, "builder", {
   folder: ${JSON.stringify(home)},
   command: ["sh", "-c", "env > env.txt; sleep 30"],
-  env: {},
+  env: { PATH: process.env.PATH, KEPT: "yes", TERM: "dumb" },
 });`;
   const run = Bun.spawnSync(["bun", "-e", script], {
-    env: { ...process.env, CLAUDE_CODE_CHILD_SESSION: "1", CLAUDECODE: "1" },
+    env: { ...process.env, GH_TOKEN: "secret", CLAUDE_CODE_CHILD_SESSION: "1", CLAUDECODE: "1" },
     stderr: "pipe",
   });
   expect(run.stderr.toString()).toBe("");
-  await until(() => read("env.txt").includes("PATH="));
-  // Only the matching lines are compared, so a failure doesn't print the whole environment.
-  const leaked = read("env.txt")
+  await until(() => read("env.txt").includes("KEPT="));
+  const names = read("env.txt")
     .split("\n")
-    .filter((line) => /^(CLAUDE_CODE_|CLAUDECODE=)/.test(line));
-  expect(leaked).toEqual([]);
+    .flatMap((line) => (/^[A-Z_]+=/.test(line) ? [line.slice(0, line.indexOf("="))] : []));
+  expect(names.filter((name) => !["PWD", "SHLVL", "_"].includes(name)).sort()).toEqual([
+    "KEPT",
+    "PATH",
+    "TERM",
+  ]);
+  expect(read("env.txt")).not.toContain("TERM=dumb");
 });
 
 test("a name tmux would change is refused", () => {

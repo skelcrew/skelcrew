@@ -22,5 +22,10 @@ export function openDb(): Database {
     owner TEXT NOT NULL,
     repo TEXT NOT NULL
   )`);
+  // One row at most: there is one lead per machine.
+  db.run(`CREATE TABLE IF NOT EXISTS lead (
+    one INTEGER PRIMARY KEY CHECK (one = 1),
+    session TEXT NOT NULL
+  )`);
   return db;
 }

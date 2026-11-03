@@ -15,13 +15,13 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { z } from "zod";
 
 const { O_NONBLOCK, O_NOFOLLOW, O_RDONLY } = constants;
 
-// Where the agent's socket appears inside, whatever its path outside.
-const socketInside = "/run/skel.sock";
+// Where the folder of the agent's socket appears inside, whatever its path outside.
+const socketsInside = "/run/skel";
 
 const ro = (p: string) => ["--ro-bind", p, p];
 const rw = (p: string) => ["--bind", p, p];
@@ -64,8 +64,12 @@ function sandboxArgs(given: {
   for (const part of ["bin", "src", "node_modules", "package.json"])
     args.push(...ro(join(skel, part)));
   args.push(...mounts);
-  args.push("--bind", socket, socketInside);
-  args.push("--setenv", "SKEL_SANDBOX", "1", "--setenv", "SKEL_SOCKET", socketInside);
+  // Its folder rather than the socket itself: the daemon makes the socket anew each time it
+  // starts, and a mounted file would stay the old one, which nothing answers on. Read-only,
+  // so the agent can't replace it. The folder must hold nothing else.
+  args.push(...["--ro-bind", dirname(socket), socketsInside]);
+  const inside = join(socketsInside, basename(socket));
+  args.push("--setenv", "SKEL_SANDBOX", "1", "--setenv", "SKEL_SOCKET", inside);
   args.push("--chdir", cwd, "--", ...command);
   return args;
 }
