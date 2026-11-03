@@ -1,35 +1,23 @@
 // The lead: your Claude Code session on this machine, in its own folder, kept alive in tmux.
 import type { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { dataDir } from "./paths.ts";
+import { cliSocket, dataDir } from "./paths.ts";
+import { agentCommand } from "./sandbox.ts";
 import { endSession, failedScreen, hasSession, startServer, startSession } from "./tmux.ts";
 
 const Lead = z.object({ session: z.string() }).nullable();
-
-// Once the sandbox lands, each session has its own config folder, and this becomes
-// join(dataDir(), "claude", "lead").
-const leadConfig = () => process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
+const Path = z.object({ path: z.string() });
 
 // Claude Code saves a conversation only once it has a message, so a lead nobody talked to
-// has nothing to resume, and its id can't start a new one either. The file sits in a folder
-// under projects/ named after the session's folder; looking in each one avoids depending on
-// how Claude Code spells that name.
-function hasTranscript(config: string, session: string): boolean {
-  const projects = join(config, "projects");
-  if (!existsSync(projects)) return false;
-  return readdirSync(projects).some((folder) =>
-    existsSync(join(projects, folder, `${session}.jsonl`)),
-  );
-}
-
-// Once the sandbox lands, this returns agentCommand from sandbox.ts for the lead, which
-// already gives an argv and env in this shape. Until then Claude Code runs directly, and
-// tmux.ts keeps inherited CLAUDE_CODE_* variables out of the session.
-function leadCommand(session: string, resume: boolean) {
-  return { argv: ["claude", resume ? "--resume" : "--session-id", session], env: {} };
+// has nothing to resume, and its id can't start a new one either. It saves it in the
+// session's own config folder, under a folder named after the folder it runs in, with every
+// character but letters and digits made a dash. Names over 200 characters get a hash
+// instead, which the lead's folder never comes near.
+function hasTranscript(folder: string, session: string): boolean {
+  const project = folder.replace(/[^a-zA-Z0-9]/g, "-");
+  return existsSync(join(dataDir(), "claude", "lead", "projects", project, `${session}.jsonl`));
 }
 
 // skel picks the session id rather than Claude Code, so it is stored before the lead starts
@@ -43,12 +31,23 @@ export async function startLead(db: Database, tmux: string): Promise<void> {
   }
   startServer(tmux);
   const folder = join(dataDir(), "lead");
-  mkdirSync(folder, { recursive: true });
   const stored = Lead.parse(db.query("SELECT session FROM lead").get());
-  const resume = stored !== null && hasTranscript(leadConfig(), stored.session);
+  const resume = stored !== null && hasTranscript(folder, stored.session);
   const session = resume ? stored.session : crypto.randomUUID();
   db.run("INSERT OR REPLACE INTO lead (one, session) VALUES (1, ?)", [session]);
-  const { argv, env } = leadCommand(session, resume);
+  // Repositories added after this aren't in its sandbox until the lead starts again.
+  const repositories = db
+    .query("SELECT path FROM repositories ORDER BY name")
+    .all()
+    .map((row) => Path.parse(row).path);
+  const { argv, env } = agentCommand({
+    repositories,
+    name: "lead",
+    // The lead runs the same commands you do, so it talks to the daemon where the CLI does.
+    socket: cliSocket(),
+    model: "opus",
+    ...(resume ? { resume: session } : { sessionId: session }),
+  });
   startSession(tmux, "lead", { folder, command: argv, env });
   console.log(`${resume ? "Brought back" : "Started"} the lead, session ${session}.`);
   // A lead that can't start, such as one whose login is gone, ends within moments, and

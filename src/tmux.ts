@@ -13,14 +13,10 @@ set -g remain-on-exit failed
 
 type Waits = { moment?: number; timeout?: number };
 
-// The tmux server passes its own environment to every session, and -e can't remove a
-// variable. So no tmux command may start the server with these: a Claude Code session left
-// with CLAUDE_CODE_* misbehaves, and TMUX makes tmux refuse to attach from inside another tmux.
+// TMUX makes tmux refuse to attach from inside another tmux.
 function cleanEnv(): Record<string, string> {
   const kept = Object.entries(process.env).flatMap(([key, value]) =>
-    value === undefined || key.startsWith("CLAUDE_CODE_") || key === "CLAUDECODE" || key === "TMUX"
-      ? []
-      : [[key, value]],
+    value === undefined || key === "TMUX" ? [] : [[key, value]],
   );
   return Object.fromEntries(kept);
 }
@@ -75,10 +71,16 @@ export function startSession(
 ): void {
   // tmux would quietly rename the session, and then never find it under the name asked for.
   if (/[.:]/.test(name)) throw new Error(`a session can't be named ${name}: tmux changes . and :`);
-  const env = Object.entries(session.env).flatMap(([key, value]) => ["-e", `${key}=${value}`]);
-  // With a single word, tmux would run the command through a shell, so env always goes first.
-  const start = ["new-session", "-d", "-s", name, "-c", session.folder, ...env];
-  mustTmux(socket, [...start, "--", "env", "--", ...session.command]);
+  // The server hands its own environment to every session and -e only adds to it, so a token
+  // the daemon has would reach the agent. env -i starts from nothing. TERM is the one value
+  // the pane's own must win for: tmux sets it to what it draws.
+  const env = Object.entries(session.env).flatMap(([key, value]) =>
+    key === "TERM" ? [] : [`${key}=${value}`],
+  );
+  const clean = ["sh", "-c", 'exec env -i TERM="$TERM" "$@"', "sh", ...env];
+  // With a single word, tmux would run the command through a shell, so sh always goes first.
+  const start = ["new-session", "-d", "-s", name, "-c", session.folder];
+  mustTmux(socket, [...start, "--", ...clean, ...session.command]);
   mustTmux(socket, ["source-file", "-"], config);
 }
 

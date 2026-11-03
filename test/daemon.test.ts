@@ -1,6 +1,6 @@
 // skel serve and the lead it keeps, against a fake Claude Code on a tmux server of the test's own.
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   existsSync,
   mkdirSync,
@@ -28,13 +28,25 @@ function fake(name: string, body: string): void {
   );
 }
 
+const leadFolder = () => join(home, ".local", "share", "skel", "lead");
+
+// Stands in for Claude Code, staying up like the real one until its session ends. It runs in
+// the lead's sandbox, where the home folder is hidden, so it notes its calls in the lead's
+// folder.
+function fakeClaude(body: string): void {
+  writeFileSync(
+    join(home, "bin", "claude"),
+    `#!/bin/sh\necho "claude $*" >> "${leadFolder()}/calls"\n${body}\n`,
+    { mode: 0o755 },
+  );
+}
+
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-daemon-test-")));
   socket = `skel-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
   mkdirSync(join(home, "bin"));
   mkdirSync(join(home, "run"), { mode: 0o700 });
-  // Stands in for Claude Code, staying up like the real one until its session ends.
-  fake("claude", "exec sleep 300");
+  fakeClaude("exec sleep 300");
   // serve has no reason to call these, but if it did, the real ones must never run.
   fake("systemctl", "exit 0");
   fake("loginctl", "exit 0");
@@ -95,11 +107,14 @@ const hasLead = () =>
   Bun.spawnSync(["tmux", "-L", socket, "has-session", "-t", "=lead"], { stderr: "pipe" }).success;
 const calls = () =>
   existsSync(join(home, "calls")) ? readFileSync(join(home, "calls"), "utf8") : "";
+const claudeLines = () =>
+  existsSync(join(leadFolder(), "calls"))
+    ? readFileSync(join(leadFolder(), "calls"), "utf8").split("\n").filter(Boolean)
+    : [];
+// Only how each start picks its session, which is what these tests are about.
 const claudeCalls = () =>
-  calls()
-    .split("\n")
-    .filter((line) => line.startsWith("claude"))
-    .map((line) => `${line}\n`)
+  claudeLines()
+    .map((line) => `${line.match(/--(session-id|resume) \S+/)?.[0] ?? line}\n`)
     .join("");
 const cliSocket = () => join(home, "run", "skel.sock");
 
@@ -140,9 +155,28 @@ function storedSession(): string {
   }
 }
 
-// Claude Code saves a conversation once it has a message, which a fake can't send.
-function saveTranscript(id: string): void {
-  const folder = join(home, ".claude", "projects", "-some-folder");
+// Adds a repository as skel init would leave it, with one file in it.
+function addRepository(name: string): string {
+  const repo = join(home, "code", name);
+  mkdirSync(repo, { recursive: true });
+  writeFileSync(join(repo, "README"), `${name}\n`);
+  Bun.spawnSync(["git", "-C", repo, "init", "-q"]);
+  const db = join(import.meta.dir, "..", "src", "db.ts");
+  const script = `import { openDb } from ${JSON.stringify(db)};
+openDb().run("INSERT INTO repositories (name, path, owner, repo) VALUES (?, ?, 'simon', ?)", [${JSON.stringify(name)}, ${JSON.stringify(repo)}, ${JSON.stringify(name)}]);`;
+  const added = Bun.spawnSync([process.execPath, "-e", script], {
+    env: { HOME: home },
+    stderr: "pipe",
+  });
+  if (!added.success) throw new Error(added.stderr.toString());
+  return repo;
+}
+
+// Claude Code saves a conversation once it has a message, which a fake can't send. It keeps
+// it in the session's own config folder, under projects/, in a folder named after the
+// session's folder with every character but letters and digits made a dash.
+function saveTranscript(id: string, folderName = leadFolder().replace(/[^a-zA-Z0-9]/g, "-")): void {
+  const folder = join(home, ".local", "share", "skel", "claude", "lead", "projects", folderName);
   mkdirSync(folder, { recursive: true });
   writeFileSync(join(folder, `${id}.jsonl`), "{}\n");
 }
@@ -167,124 +201,154 @@ test("refuses to start before the first run, and says to run skel", async () => 
   expect(hasLead()).toBe(false);
 });
 
-test("starts the lead in its folder with a session id it stores", async () => {
-  setUp();
-  serve();
-  await until(() => calls().includes("claude"));
-  const id = storedSession();
-  expect(id).toMatch(/^[0-9a-f-]{36}$/);
-  expect(claudeCalls()).toBe(`claude --session-id ${id}\n`);
-  expect(existsSync(join(home, ".local", "share", "skel", "lead"))).toBe(true);
-});
+// bubblewrap can't start inside skel's own sandbox, so only there the lead can't start.
+describe.skipIf(process.env.SKEL_SANDBOX === "1")("with the lead", () => {
+  test("starts the lead in its folder with a session id it stores", async () => {
+    setUp();
+    serve();
+    await until(() => claudeLines().length > 0);
+    const id = storedSession();
+    expect(id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(claudeCalls()).toBe(`--session-id ${id}\n`);
+    expect(existsSync(join(home, ".local", "share", "skel", "lead"))).toBe(true);
+  });
 
-test("stopping the daemon leaves the lead running", async () => {
-  setUp();
-  const first = serve();
-  await until(hasLead);
-  await stop(first);
-  expect(hasLead()).toBe(true);
-});
+  test("stopping the daemon leaves the lead running", async () => {
+    setUp();
+    const first = serve();
+    await until(hasLead);
+    await stop(first);
+    expect(hasLead()).toBe(true);
+  });
 
-test("brings back a lead whose session is gone with --resume on its stored id", async () => {
-  setUp();
-  const first = serve();
-  await until(() => calls().includes("claude"));
-  const id = storedSession();
-  saveTranscript(id);
-  await stop(first);
-  Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=lead"]);
-  serve();
-  await until(() => calls().includes("--resume"));
-  expect(claudeCalls()).toBe(`claude --session-id ${id}\nclaude --resume ${id}\n`);
-  expect(storedSession()).toBe(id);
-});
+  test("brings back a lead whose session is gone with --resume on its stored id", async () => {
+    setUp();
+    const first = serve();
+    await until(() => claudeLines().length > 0);
+    const id = storedSession();
+    saveTranscript(id);
+    await stop(first);
+    Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=lead"]);
+    serve();
+    await until(() => claudeCalls().includes("--resume"));
+    expect(claudeCalls()).toBe(`--session-id ${id}\n--resume ${id}\n`);
+    expect(storedSession()).toBe(id);
+  });
 
-// Claude Code can't resume a conversation it never saved, nor start a new one under its id.
-test("starts a lead nobody talked to afresh, with a new session id", async () => {
-  setUp();
-  const first = serve();
-  await until(() => calls().includes("claude"));
-  const id = storedSession();
-  await stop(first);
-  Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=lead"]);
-  serve();
-  await until(() => claudeCalls().split("\n").length > 2);
-  const fresh = storedSession();
-  expect(fresh).not.toBe(id);
-  expect(claudeCalls()).toBe(`claude --session-id ${id}\nclaude --session-id ${fresh}\n`);
-});
+  // Claude Code can't resume a conversation it never saved, nor start a new one under its id.
+  test("starts a lead nobody talked to afresh, with a new session id", async () => {
+    setUp();
+    const first = serve();
+    await until(() => claudeLines().length > 0);
+    const id = storedSession();
+    await stop(first);
+    Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=lead"]);
+    serve();
+    await until(() => claudeLines().length > 1);
+    const fresh = storedSession();
+    expect(fresh).not.toBe(id);
+    expect(claudeCalls()).toBe(`--session-id ${id}\n--session-id ${fresh}\n`);
+  });
 
-test("brings back a lead that exited while the daemon runs, when skel asks", async () => {
-  setUp();
-  serve();
-  await untilAnswers();
-  Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=lead"]);
-  expect(await ask({ command: "lead" })).toEqual({ lead: true });
-  expect(hasLead()).toBe(true);
-});
+  test("brings back a lead that exited while the daemon runs, when skel asks", async () => {
+    setUp();
+    serve();
+    await untilAnswers();
+    Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=lead"]);
+    expect(await ask({ command: "lead" })).toEqual({ lead: true });
+    expect(hasLead()).toBe(true);
+  });
 
-test("says why when the lead exits as soon as it starts", async () => {
-  setUp();
-  fake("claude", "echo 'claude: something broke'; exit 1");
-  const run = serve();
-  await untilAnswers();
-  const reply = await ask({ command: "lead" });
-  expect(JSON.stringify(reply)).toContain("something broke");
-  await stop(run);
-  expect(await output(run)).toContain("something broke");
-});
+  test("says why when the lead exits as soon as it starts", async () => {
+    setUp();
+    fakeClaude("echo 'claude: something broke'; exit 1");
+    const run = serve();
+    await untilAnswers();
+    const reply = await ask({ command: "lead" });
+    expect(JSON.stringify(reply)).toContain("something broke");
+    await stop(run);
+    expect(await output(run)).toContain("something broke");
+  });
 
-// Its own scope keeps tmux out of skel.service's cgroup, so stopping or OOM-killing the
-// service can't take the agents down.
-test("starts skel's tmux server in a systemd scope of its own", async () => {
-  setUp();
-  serve();
-  await untilAnswers();
-  expect(calls()).toContain(
-    `systemd-run --user --scope --quiet --unit=skel-tmux-${socket} -- tmux -L ${socket} `,
-  );
-  expect(hasLead()).toBe(true);
-});
+  // Its own scope keeps tmux out of skel.service's cgroup, so stopping or OOM-killing the
+  // service can't take the agents down.
+  test("starts skel's tmux server in a systemd scope of its own", async () => {
+    setUp();
+    serve();
+    await untilAnswers();
+    expect(calls()).toContain(
+      `systemd-run --user --scope --quiet --unit=skel-tmux-${socket} -- tmux -L ${socket} `,
+    );
+    expect(hasLead()).toBe(true);
+  });
 
-test("of two daemons started together, exactly one keeps running", async () => {
-  setUp();
-  const both = [serve(), serve()];
-  await untilAnswers();
-  await Bun.sleep(1000);
-  expect(both.filter((run) => run.exitCode === null)).toHaveLength(1);
-  expect(claudeCalls().split("\n")).toHaveLength(2);
-});
+  test("of two daemons started together, exactly one keeps running", async () => {
+    setUp();
+    const both = [serve(), serve()];
+    await untilAnswers();
+    await Bun.sleep(1000);
+    expect(both.filter((run) => run.exitCode === null)).toHaveLength(1);
+    expect(claudeLines()).toHaveLength(1);
+  });
 
-test("leaves a lead that is still running alone", async () => {
-  setUp();
-  const first = serve();
-  await untilAnswers();
-  await stop(first);
-  expect(existsSync(cliSocket())).toBe(false);
-  const second = serve();
-  await untilAnswers();
-  await stop(second);
-  expect(claudeCalls()).toBe(`claude --session-id ${storedSession()}\n`);
-});
+  test("leaves a lead that is still running alone", async () => {
+    setUp();
+    const first = serve();
+    await until(() => claudeLines().length > 0);
+    await stop(first);
+    expect(existsSync(cliSocket())).toBe(false);
+    const second = serve();
+    await untilAnswers();
+    await stop(second);
+    expect(claudeCalls()).toBe(`--session-id ${storedSession()}\n`);
+  });
 
-test("refuses a second daemon and points to skel", async () => {
-  setUp();
-  serve();
-  await untilAnswers();
-  const second = await ended(serve());
-  expect(second.code).not.toBe(0);
-  expect(second.err).toContain("already running");
-  expect(second.err).toContain("skel");
-  expect(await answers()).toBe(true);
-});
+  test("refuses a second daemon and points to skel", async () => {
+    setUp();
+    serve();
+    await untilAnswers();
+    const second = await ended(serve());
+    expect(second.code).not.toBe(0);
+    expect(second.err).toContain("already running");
+    expect(second.err).toContain("skel");
+    expect(await answers()).toBe(true);
+  });
 
-test("starts after a daemon that was killed left its socket behind", async () => {
-  setUp();
-  const first = serve();
-  await untilAnswers();
-  first.kill("SIGKILL");
-  await first.exited;
-  expect(await answers()).toBe(false);
-  serve();
-  await untilAnswers();
+  test("starts after a daemon that was killed left its socket behind", async () => {
+    setUp();
+    const first = serve();
+    await untilAnswers();
+    first.kill("SIGKILL");
+    await first.exited;
+    expect(await answers()).toBe(false);
+    serve();
+    await untilAnswers();
+  });
+
+  test("starts the lead in its sandbox, with opus, seeing every added repository", async () => {
+    setUp();
+    const repo = addRepository("app");
+    fakeClaude(
+      `ls ${repo} > seen; test -S /run/skel.sock && echo socket >> seen; test -e ${home}/.config/skel/claude-token || echo token-hidden >> seen; exec sleep 300`,
+    );
+    serve();
+    await until(() => existsSync(join(leadFolder(), "seen")));
+    await until(() => readFileSync(join(leadFolder(), "seen"), "utf8").includes("hidden"));
+    expect(readFileSync(join(leadFolder(), "seen"), "utf8")).toBe("README\nsocket\ntoken-hidden\n");
+    expect(claudeLines()[0]).toContain("--model opus");
+  });
+
+  test("a transcript in your own ~/.claude doesn't bring the lead back", async () => {
+    setUp();
+    const first = serve();
+    await until(() => claudeLines().length > 0);
+    const id = storedSession();
+    mkdirSync(join(home, ".claude", "projects", "-some-folder"), { recursive: true });
+    writeFileSync(join(home, ".claude", "projects", "-some-folder", `${id}.jsonl`), "{}\n");
+    await stop(first);
+    Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=lead"]);
+    serve();
+    await until(() => claudeLines().length > 1);
+    expect(claudeCalls()).not.toContain("--resume");
+  });
 });
