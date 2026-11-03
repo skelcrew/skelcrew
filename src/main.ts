@@ -1,12 +1,12 @@
 // skel's command line: reads the command and hands it to the file that does it.
 import { attachToLead, serve } from "./daemon.ts";
-import { addRepo, listRepos, removeRepo } from "./repo.ts";
+import { initRepo, listRepos, removeRepo } from "./repo.ts";
 import { firstRun } from "./setup.ts";
 
 const usage = `Usage:
   skel
   skel serve
-  skel repo add <path> [--name <name>]
+  skel init [<path>] [--name <name>]
   skel repo ls
   skel repo rm <name>`;
 
@@ -21,13 +21,13 @@ async function run(args: string[]): Promise<void> {
     await serve("skel");
     return;
   }
-  if (command === "repo" && sub === "add") {
-    const at = rest.indexOf("--name");
-    const name = at === -1 ? undefined : rest[at + 1];
-    const paths = at === -1 ? rest : rest.filter((_, i) => i !== at && i !== at + 1);
-    const [path] = paths;
-    if (path && paths.length === 1 && (at === -1 || name)) {
-      addRepo(path, name);
+  if (command === "init") {
+    const given = args.slice(1);
+    const at = given.indexOf("--name");
+    const name = at === -1 ? undefined : given[at + 1];
+    const paths = at === -1 ? given : given.filter((_, i) => i !== at && i !== at + 1);
+    if (paths.length <= 1 && (at === -1 || name)) {
+      initRepo(paths[0] ?? ".", name);
       return;
     }
   }

@@ -116,8 +116,11 @@ function pickHarness(): void {
   const { config, harness } = readConfig();
   if (harness) return;
   console.log("Harnesses:\n  1) Claude Code");
-  const answer = prompt("Pick a harness [1]:")?.trim();
-  if (answer !== "" && answer !== "1") throw new Error("Claude Code is the only harness for now");
+  // Bun's prompt answers null both for Ctrl-D and for a bare Enter, unless it has a default:
+  // then Enter gives the default and only Ctrl-D gives null.
+  const answer = prompt("Pick a harness", "1");
+  if (answer === null) throw new Error("no harness was picked, so none is saved");
+  if (answer.trim() !== "1") throw new Error("Claude Code is the only harness for now");
   config.set("harness", "claude");
   mkdirSync(configDir(), { recursive: true });
   writeFileSync(configFile(), config.toString());
