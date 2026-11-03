@@ -40,8 +40,9 @@ function fakeDaemon(): Promise<Server> {
   const server = createServer((connection) =>
     connection.on("data", (data) => {
       if (!existsSync(join(home, "started"))) return connection.destroy();
-      const asked = String(JSON.parse(data.toString()).command);
-      appendFileSync(join(home, "calls"), `daemon ${asked}\n`);
+      const request = JSON.parse(data.toString());
+      const asked = String(request.command);
+      appendFileSync(join(home, "calls"), `daemon ${asked}${request.restart ? " restart" : ""}\n`);
       connection.end(asked === "lead" ? '{"lead":true}\n' : '{"running":true,"pid":1}\n');
     }),
   );
@@ -108,8 +109,9 @@ const config = () => join(home, ".config", "skel", "config.yaml");
 const token = () => join(home, ".config", "skel", "claude-token");
 const unit = () => join(home, ".config", "systemd", "user", "skel.service");
 
-async function skel(typed = "", path = bin, program = main()) {
+async function skel(typed = "", path = bin, program = main(), cwd = home) {
   const run = Bun.spawn([process.execPath, program], {
+    cwd,
     env: { PATH: path, HOME: home, XDG_RUNTIME_DIR: join(home, "run"), TMPDIR: join(home, "tmp") },
     stdin: new Blob([typed]),
     stdout: "pipe",
@@ -256,7 +258,7 @@ test("still says how to add a repository after setup, while none is added", asyn
 test("says how to add a repository while none is added", async () => {
   const run = await skel("1\nsk-ant-oat01-good\n");
   expect(run.code).toBe(0);
-  expect(run.out).toContain("skel init");
+  expect(run.out).toContain("Add one by running skel or skel init in its folder.");
   expect(run.out).toContain("Setup is done.");
 });
 
@@ -394,4 +396,107 @@ test("Enter at the harness question picks Claude Code", async () => {
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(readFileSync(config(), "utf8")).toContain("harness: claude");
+});
+
+// As the first run leaves a machine, so plain skel goes straight to the repository question.
+function setUpDone(): void {
+  mkdirSync(join(home, ".config", "skel"), { recursive: true });
+  writeFileSync(config(), "harness: claude\n");
+  writeFileSync(token(), "sk-ant-oat01-good\n");
+  writeFileSync(join(home, "gh-login"), "");
+}
+
+const skelIn = (cwd: string, typed = "") => skel(typed, bin, main(), cwd);
+const repoList = () =>
+  Bun.spawnSync([process.execPath, main(), "repo", "ls"], {
+    env: { PATH: bin, HOME: home },
+  }).stdout.toString();
+
+test("offers to add the repository you run it in, adds it on Enter, and restarts the lead", async () => {
+  setUpDone();
+  const path = repository();
+  const run = await skelIn(path, "\ny\n\n\n");
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("Add simon/app to skel?");
+  expect(run.out).not.toContain("Add one by running");
+  expect(repoList()).toContain(`app  simon/app  ${path}`);
+  // The lead sees only the repositories added when it started.
+  expect(calls()).toContain("daemon lead restart\ntmux -L skel attach -t =lead\n");
+});
+
+test("offers to add it from a folder inside the repository too", async () => {
+  setUpDone();
+  const path = repository();
+  mkdirSync(join(path, "src"));
+  const run = await skelIn(join(path, "src"), "\ny\n\n\n");
+  expect(run.code).toBe(0);
+  expect(repoList()).toContain(`app  simon/app  ${path}`);
+});
+
+test("remembers a no for that folder, attaches anyway, and never asks there again", async () => {
+  setUpDone();
+  const path = repository();
+  const first = await skelIn(path, "n\n");
+  expect(first.code).toBe(0);
+  expect(first.out).toContain("Add simon/app to skel?");
+  expect(repoList()).not.toContain("simon/app");
+  expect(calls()).toContain("daemon lead\ntmux -L skel attach -t =lead\n");
+  expect(readFileSync(join(home, ".config", "skel", "not-added"), "utf8")).toBe(`${path}\n`);
+
+  writeFileSync(join(home, "calls"), "");
+  const second = await skelIn(path);
+  expect(second.code).toBe(0);
+  expect(second.out).not.toContain("Add simon/app");
+  expect(second.out).not.toContain("Add one by running");
+  expect(calls()).not.toContain("gh");
+  expect(calls()).toContain("daemon lead\ntmux -L skel attach -t =lead\n");
+});
+
+test("adds nothing after Ctrl-D at the question, and asks again next time", async () => {
+  setUpDone();
+  const path = repository();
+  const first = await skelIn(path);
+  expect(first.code).toBe(0);
+  expect(calls()).toContain("tmux -L skel attach -t =lead");
+  expect(repoList()).not.toContain("simon/app");
+  const second = await skelIn(path);
+  expect(second.out).toContain("Add simon/app to skel?");
+});
+
+test("asks nothing in a repository already added", async () => {
+  setUpDone();
+  const path = repository();
+  await skelIn(path, "\ny\n\n\n");
+  writeFileSync(join(home, "calls"), "");
+  const run = await skelIn(path);
+  expect(run.code).toBe(0);
+  expect(run.out).not.toContain("Add simon/app");
+  expect(run.out).not.toContain("Add one by running");
+  expect(calls()).toBe("daemon lead\ntmux -L skel attach -t =lead\n");
+});
+
+test("says why it couldn't add the repository, attaches anyway, and asks again next time", async () => {
+  setUpDone();
+  const path = repository();
+  const refused = await skelIn(path, "\nn\n");
+  expect(refused.code).toBe(0);
+  expect(refused.err).toContain("don't trust it");
+  expect(calls()).toContain("daemon lead\ntmux -L skel attach -t =lead\n");
+  expect(existsSync(join(home, ".config", "skel", "not-added"))).toBe(false);
+  const again = await skelIn(path, "n\n");
+  expect(again.out).toContain("Add simon/app to skel?");
+});
+
+test("asks nothing and says nothing in a repository that isn't on GitHub", async () => {
+  // skel can't add it anyway, and a folder such as your dotfiles shouldn't get a complaint
+  // on every skel.
+  setUpDone();
+  const path = repository();
+  Bun.spawnSync(["git", "-C", path, "remote", "remove", "origin"]);
+  const run = await skelIn(path);
+  expect(run.code).toBe(0);
+  expect(run.err).toBe("");
+  expect(run.out).not.toContain("Add");
+  expect(calls()).toContain("daemon lead\ntmux -L skel attach -t =lead\n");
 });

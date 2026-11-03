@@ -365,6 +365,21 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with the lead", () => {
     expect(await answers()).toBe(true);
   });
 
+  test("restarts the lead with --resume when asked, so it sees a repository added since", async () => {
+    setUp();
+    const repo = join(home, "code", "app");
+    fakeClaude(`ls ${repo} > seen 2>/dev/null; exec sleep 300`);
+    serve();
+    await until(() => claudeLines().length > 0);
+    const id = storedSession();
+    saveTranscript(id);
+    addRepository("app");
+    expect(await ask({ command: "lead", restart: true })).toEqual({ lead: true });
+    expect(claudeCalls()).toBe(`--session-id ${id}\n--resume ${id}\n`);
+    expect(readFileSync(join(leadFolder(), "seen"), "utf8")).toBe("README\n");
+    expect(hasLead()).toBe(true);
+  });
+
   // The lead outlives the daemon, so it must reach the next one on the socket it was given.
   test("the lead reaches the daemon again after it restarts", async () => {
     setUp();

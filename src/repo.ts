@@ -22,15 +22,17 @@ import { configDir } from "./paths.ts";
 // Each yes names the GitHub repository too, so a folder whose origin is pointed elsewhere
 // is asked about again.
 const trustFile = () => join(configDir(), "trusted");
+// The folders where you said no to adding the repository, so plain skel doesn't ask again.
+const notAddedFile = () => join(configDir(), "not-added");
 
-function trusted(entry: string): boolean {
-  if (!existsSync(trustFile())) return false;
-  return readFileSync(trustFile(), "utf8").split("\n").includes(entry);
+function listed(file: string, line: string): boolean {
+  if (!existsSync(file)) return false;
+  return readFileSync(file, "utf8").split("\n").includes(line);
 }
 
-function trust(entry: string): void {
+function addLine(file: string, line: string): void {
   mkdirSync(configDir(), { recursive: true });
-  appendFileSync(trustFile(), `${entry}\n`);
+  appendFileSync(file, `${line}\n`);
 }
 
 function excludeSkelFolder(path: string): void {
@@ -134,7 +136,7 @@ export function initRepo(given: string, name?: string): void {
   // from origin, which anyone who can edit .git/config controls, so it is worked out again
   // on each init and never saved.
   if (canPush && !isFork) console.log(`Trusting ${short}, since you can push to ${owner}/${repo}.`);
-  else if (!trusted(trustEntry)) {
+  else if (!listed(trustFile(), trustEntry)) {
     console.log(`Agents will run ${short}'s setup and test commands, and follow its AGENTS.md`);
     console.log("and settings as instructions.");
     const answer = prompt(`Do you trust ${path}? [y/N]`);
@@ -173,7 +175,7 @@ export function initRepo(given: string, name?: string): void {
   }
   // Every question is answered and skel.yaml is ready before anything is saved, so stopping
   // at any point leaves nothing half added.
-  if (newTrust) trust(trustEntry);
+  if (newTrust) addLine(trustFile(), trustEntry);
   if (changed && empty) {
     rmSync(saved.file, { force: true });
     console.log(`Removed ${saved.file}, as nothing is left in it. Commit that.`);
@@ -189,6 +191,53 @@ export function initRepo(given: string, name?: string): void {
     repo,
   );
   console.log(`Added ${short}: ${owner}/${repo} at ${path}`);
+}
+
+// Plain skel offers to add the repository it runs in. Returns whether it added it, since
+// the lead only sees the repositories added when it started.
+export function offerRepo(): boolean {
+  const db = openDb();
+  const top = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (!top.success) {
+    if (!db.query("SELECT 1 FROM repositories LIMIT 1").get())
+      console.log(
+        "No repository is added yet. Add one by running skel or skel init in its folder.",
+      );
+    return false;
+  }
+  const path = realpathSync(top.stdout.toString().trim());
+  // A linked worktree is most often one of an added repository's, and skel init refuses it.
+  // A folder whose git directory lives elsewhere, through GIT_DIR, has no .git at all.
+  if (!statSync(join(path, ".git"), { throwIfNoEntry: false })?.isDirectory()) return false;
+  if (repositories(db).some((known) => known.path === path)) return false;
+  if (listed(notAddedFile(), path)) return false;
+  let github: { owner: string; repo: string };
+  try {
+    github = githubRepoAt(path);
+  } catch {
+    // Not on GitHub, so skel can't add it. A folder such as your dotfiles shouldn't get a
+    // complaint on every skel.
+    return false;
+  }
+  const { owner, repo } = github;
+  try {
+    // Bun shows a default in brackets after the question, so the hint is the default, and
+    // Enter answers with it. Only Ctrl-D gives null, which adds nothing and asks again later.
+    const answer = prompt(`Add ${owner}/${repo} to skel?`, "Y/n");
+    if (answer === null) return false;
+    if (!["y/n", "y", "yes"].includes(answer.trim().toLowerCase())) {
+      addLine(notAddedFile(), path);
+      return false;
+    }
+    initRepo(path);
+    return true;
+  } catch (error) {
+    console.error(`skel: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
 }
 
 export function listRepos(): void {
