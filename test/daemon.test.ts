@@ -351,4 +351,18 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with the lead", () => {
     await until(() => claudeLines().length > 1);
     expect(claudeCalls()).not.toContain("--resume");
   });
+
+  test("of two daemons started together over a stale socket, exactly one keeps running", async () => {
+    setUp();
+    const first = serve();
+    await untilAnswers();
+    first.kill("SIGKILL");
+    await first.exited;
+    Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=lead"]);
+    const both = [serve(), serve()];
+    await untilAnswers();
+    await Bun.sleep(1000);
+    expect(both.filter((run) => run.exitCode === null)).toHaveLength(1);
+    expect(await answers()).toBe(true);
+  });
 });

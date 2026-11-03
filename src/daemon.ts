@@ -1,6 +1,7 @@
 // The daemon, run by skel serve: keeps the lead running and answers the CLI on its socket.
 // Plain skel makes sure it runs, then attaches to the lead.
-import { rmSync } from "node:fs";
+import { dlopen, FFIType } from "bun:ffi";
+import { openSync, rmSync } from "node:fs";
 import { createConnection, createServer, type Server } from "node:net";
 import { z } from "zod";
 import { openDb } from "./db.ts";
@@ -10,7 +11,6 @@ import { setupDone } from "./setup.ts";
 import { attach } from "./tmux.ts";
 
 const Request = z.object({ command: z.enum(["status", "lead"]) });
-const Status = z.object({ running: z.literal(true), pid: z.number() });
 const LeadReply = z.union([z.object({ lead: z.literal(true) }), z.object({ error: z.string() })]);
 
 function parseJson(text: string): unknown {
@@ -41,18 +41,26 @@ function ask(request: z.infer<typeof Request>, timeout: number): Promise<unknown
   });
 }
 
-export async function daemonRunning(): Promise<boolean> {
-  return Status.safeParse(await ask({ command: "status" }, 1000)).success;
+// Whether this process now owns the lock. The kernel lets go of it when the process ends,
+// however it ends, so a daemon that was killed never leaves it held. Node has no flock, so
+// it comes from libc.
+function lock(path: string): boolean {
+  const libc = dlopen("libc.so.6", {
+    flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+  });
+  const LOCK_EX = 2;
+  const LOCK_NB = 4;
+  // Never closed: closing it would let go of the lock.
+  const fd = openSync(path, "a", 0o600);
+  return libc.symbols.flock(fd, LOCK_EX | LOCK_NB) === 0;
 }
 
-function listen(server: Server, path: string): Promise<boolean> {
+function listen(server: Server, path: string): Promise<void> {
   return new Promise((done, failed) => {
-    const refused = (error: Error) =>
-      "code" in error && error.code === "EADDRINUSE" ? done(false) : failed(error);
-    server.once("error", refused);
+    server.once("error", failed);
     server.listen(path, () => {
-      server.off("error", refused);
-      done(true);
+      server.off("error", failed);
+      done();
     });
   });
 }
@@ -85,15 +93,13 @@ export async function serve(tmux: string): Promise<void> {
     });
     connection.on("error", () => {});
   });
-  // Listening first decides which of two daemons started together runs: only one can hold
-  // the socket. A socket nobody answers on is left from a daemon that was killed.
+  // The lock decides which of two daemons started together runs. The socket can't: both
+  // could find one left by a daemon that was killed, and each remove the other's new one.
   const path = cliSocket();
-  const running = "skel's daemon is already running. Run skel to attach to the lead.";
-  if (!(await listen(server, path))) {
-    if (await daemonRunning()) throw new Error(running);
-    rmSync(path, { force: true });
-    if (!(await listen(server, path))) throw new Error(running);
-  }
+  if (!lock(`${path}.lock`))
+    throw new Error("skel's daemon is already running. Run skel to attach to the lead.");
+  rmSync(path, { force: true });
+  await listen(server, path);
   // The tmux sessions are left running: agents keep working while the daemon is down.
   for (const signal of ["SIGTERM", "SIGINT"])
     process.on(signal, () => {
