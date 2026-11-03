@@ -1,12 +1,10 @@
 // The first run: what a plain skel sets up on a new machine, skipping each step already done.
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
 import { openDb } from "./db.ts";
 import { configDir } from "./paths.ts";
-import { addRepo } from "./repo.ts";
 
 const tools = [
   { command: "tmux", install: "sudo apt install tmux" },
@@ -79,14 +77,6 @@ function connectGitHub(): void {
   if (!login.success) throw new Error("gh auth login didn't finish, so skel can't reach GitHub");
 }
 
-function addFirstRepository(): void {
-  if (openDb().query("SELECT 1 FROM repositories LIMIT 1").get()) return;
-  const given = prompt("Path to your first repository:")?.trim();
-  if (!given) throw new Error("skel needs a repository to work in");
-  // A path typed at a prompt doesn't pass through the shell, which would expand ~.
-  addRepo(given.replace(/^~(?=\/|$)/, homedir()));
-}
-
 function pickHarness(): void {
   const file = join(configDir(), "config.yaml");
   const config = parseDocument(existsSync(file) ? readFileSync(file, "utf8") : "");
@@ -108,7 +98,8 @@ function pickHarness(): void {
 export function firstRun(): void {
   checkTools();
   connectGitHub();
-  addFirstRepository();
   pickHarness();
+  if (!openDb().query("SELECT 1 FROM repositories LIMIT 1").get())
+    console.log("No repository is added yet. Add one by running skel init in its folder.");
   console.log("Setup is done.");
 }

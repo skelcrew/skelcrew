@@ -80,34 +80,48 @@ async function skel(typed = "") {
 }
 
 test("takes every step on the first run, and none on the second", async () => {
-  const path = repository();
-  const first = await skel(`${path}\ny\n1\n`);
+  const first = await skel("1\n");
   expect(first.err).toBe("");
   expect(first.code).toBe(0);
   expect(calls()).toContain("gh auth login");
-  expect(first.out).toContain("trust");
   expect(first.out).toContain("Claude Code");
   expect(first.out).toContain("done");
   expect(readFileSync(config(), "utf8")).toContain("harness: claude");
-  const listed = Bun.spawnSync([process.execPath, main, "repo", "ls"], {
-    env: { PATH: bin, HOME: home },
-  });
-  expect(listed.stdout.toString()).toContain(path);
 
   writeFileSync(join(home, "calls"), "");
   const second = await skel();
   expect(second.err).toBe("");
   expect(second.code).toBe(0);
-  expect(second.out).not.toContain("trust");
   expect(second.out).not.toContain("Claude Code");
   expect(second.out).toContain("done");
   expect(calls()).not.toContain("gh auth login");
 });
 
-test("skips the GitHub login when gh is logged in already", async () => {
+test("says how to add a repository while none is added", async () => {
+  const run = await skel("1\n");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("skel init");
+  expect(run.out).toContain("Setup is done.");
+});
+
+test("says nothing about adding a repository once one is added", async () => {
   writeFileSync(join(home, "gh-login"), "");
   const path = repository();
-  const run = await skel(`${path}\ny\n1\n`);
+  const added = Bun.spawnSync([process.execPath, main, "repo", "add", path], {
+    env: { PATH: bin, HOME: home },
+    stdin: new Blob(["y\n"]),
+  });
+  expect(added.exitCode).toBe(0);
+  const run = await skel("1\n");
+  expect(run.code).toBe(0);
+  expect(run.out).not.toContain("trust");
+  expect(run.out).not.toContain("skel init");
+  expect(run.out).toContain("Setup is done.");
+});
+
+test("skips the GitHub login when gh is logged in already", async () => {
+  writeFileSync(join(home, "gh-login"), "");
+  const run = await skel("1\n");
   expect(run.code).toBe(0);
   expect(calls()).toContain("gh auth status");
   expect(calls()).not.toContain("gh auth login");
@@ -150,8 +164,7 @@ test("gives the AppArmor advice when bwrap can't run", async () => {
 
 test("doesn't save a harness while Claude Code is logged out", async () => {
   loggedOutOfClaude();
-  const path = repository();
-  const run = await skel(`${path}\ny\n1\n`);
+  const run = await skel("1\n");
   expect(run.code).toBe(1);
   expect(run.err).toContain("run claude");
   expect(existsSync(config())).toBe(false);
@@ -160,8 +173,7 @@ test("doesn't save a harness while Claude Code is logged out", async () => {
 test("keeps the other settings in config.yaml", async () => {
   mkdirSync(join(home, ".config", "skel"), { recursive: true });
   writeFileSync(config(), "# mine\ncolor: blue\n");
-  const path = repository();
-  const run = await skel(`${path}\ny\n1\n`);
+  const run = await skel("1\n");
   expect(run.code).toBe(0);
   const saved = readFileSync(config(), "utf8");
   expect(saved).toContain("# mine");
@@ -174,8 +186,7 @@ for (const broken of ["a: b: c\n", "harness: claude\n  - x: [\n"]) {
     mkdirSync(join(home, ".config", "skel"), { recursive: true });
     writeFileSync(config(), broken);
     writeFileSync(join(home, "gh-login"), "");
-    const path = repository();
-    const run = await skel(`${path}\ny\n1\n`);
+    const run = await skel("1\n");
     expect(run.code).toBe(1);
     expect(run.err).toContain("config.yaml");
     expect(readFileSync(config(), "utf8")).toBe(broken);
@@ -188,8 +199,7 @@ for (const [what, typed] of [
 ]) {
   test(`saves no harness after ${what} at the harness question`, async () => {
     writeFileSync(join(home, "gh-login"), "");
-    const path = repository();
-    const run = await skel(`${path}\ny\n${typed}`);
+    const run = await skel(typed);
     expect(run.code).toBe(1);
     expect(run.out).toContain("Claude Code");
     expect(existsSync(config())).toBe(false);
@@ -200,8 +210,7 @@ test("refuses a config.yaml it can't read", async () => {
   mkdirSync(join(home, ".config", "skel"), { recursive: true });
   writeFileSync(config(), "harness: [1, 2]\n");
   writeFileSync(join(home, "gh-login"), "");
-  const path = repository();
-  const run = await skel(`${path}\ny\n1\n`);
+  const run = await skel("1\n");
   expect(run.code).toBe(1);
   expect(run.err).toContain("config.yaml");
 });
