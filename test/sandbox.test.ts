@@ -43,6 +43,11 @@ async function run(argv: string[], env: Record<string, string | undefined> = pro
   return { out, err, code };
 }
 
+function git(cwd: string, ...args: string[]) {
+  const done = Bun.spawnSync(["git", "-C", cwd, ...args], { stdout: "pipe", stderr: "pipe" });
+  if (!done.success) throw new Error(done.stderr.toString());
+}
+
 // A repository the lead looks after, with one file in it.
 function repository() {
   const repo = join(home, "code", "app");
@@ -291,6 +296,30 @@ agentCommand({ repositories: [${JSON.stringify(repo)}], name: "app-12", socket: 
     ]);
     expect(() => start({ sessionId: "not-a-uuid" })).toThrow("UUID");
     expect(() => start({ sessionId: id, resume: id })).toThrow("both");
+  });
+
+  test("refuses a repository whose git config holds a credential", () => {
+    const repo = repository();
+    git(repo, "init", "-q");
+    saveToken();
+    const start = () =>
+      agentCommand({
+        repositories: [repo],
+        name: "lead",
+        socket: socketPath,
+        model: "opus",
+        env: outside(),
+      });
+    const credentials: [string, string][] = [
+      ["remote.origin.url", "https://simon:ghp_secret@github.com/simon/app"],
+      ["http.https://github.com/.extraheader", "AUTHORIZATION: basic c2VjcmV0"],
+    ];
+    for (const [key, value] of credentials) {
+      git(repo, "config", key, value);
+      expect(start).toThrow("gh");
+      git(repo, "config", "--unset", key);
+    }
+    expect(start).not.toThrow();
   });
 
   test("says to run skel first when there is no token", () => {

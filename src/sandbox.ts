@@ -70,6 +70,23 @@ function sandboxArgs(given: {
   return args;
 }
 
+// The lead reads each repository's .git/config, so a credential in it would be the lead's.
+function refuseCredentials(repository: string): void {
+  const config = Bun.spawnSync(
+    ["git", "-C", repository, "config", "--local", "--get-regexp", "."],
+    {
+      stdout: "pipe",
+    },
+  ).stdout.toString();
+  for (const line of config.split("\n")) {
+    const key = line.split(" ")[0] ?? "";
+    if (/^http\..*extraheader$/i.test(key) || /https?:\/\/[^/\s]*@/i.test(line))
+      throw new Error(
+        `${repository}/.git/config holds a credential (${key}), which agents could read. Remove it from the remote URL and leave GitHub to gh`,
+      );
+  }
+}
+
 const ClaudeJson = z.looseObject({
   projects: z.record(z.string(), z.looseObject({})).optional(),
 });
@@ -127,6 +144,7 @@ export function agentCommand(given: {
       throw new Error(`${p} is a link, so skel won't write through it`);
   mkdirSync(config, { recursive: true });
   // The lead sees its repositories read-only and works in a folder of its own.
+  for (const repo of repositories) refuseCredentials(repo);
   const cwd = join(home, ".local", "share", "skel", "lead");
   mkdirSync(cwd, { recursive: true });
   const mounts = [...rw(cwd), ...repositories.flatMap(ro), ...rw(config)];
