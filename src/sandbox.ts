@@ -9,7 +9,6 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
-  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -21,31 +20,22 @@ import { z } from "zod";
 
 const { O_NONBLOCK, O_NOFOLLOW, O_RDONLY } = constants;
 
-export type Agent =
-  | { kind: "lead"; repositories: string[] }
-  | { kind: "builder" | "reviewer"; repository: string; worktree: string };
-
 // Where the agent's socket appears inside, whatever its path outside.
 const socketInside = "/run/skel.sock";
 
 const ro = (p: string) => ["--ro-bind", p, p];
 const rw = (p: string) => ["--bind", p, p];
 const hide = (p: string) => ["--tmpfs", p];
-// A missing path is covered with an empty read-only file, or the agent could create it.
-// Not /dev/null: on a folder mounted nodev, such as /tmp, opening it is refused, and git
-// then warns on every command.
-const fixed = (p: string, empty: string) => (existsSync(p) ? ro(p) : ["--ro-bind", empty, p]);
 
-export function sandboxArgs(given: {
+function sandboxArgs(given: {
   home: string;
   path: string;
   mounts: string[];
-  env?: Record<string, string>;
   socket: string;
   cwd: string;
   command: string[];
 }): string[] {
-  const { home, path, mounts, env = {}, socket, cwd, command } = given;
+  const { home, path, mounts, socket, cwd, command } = given;
   // Its own process list, so your other processes can't be seen or signalled. No
   // --new-session: it moves Claude Code out of the terminal's process group, so it misses
   // resize signals and draws at the wrong width. The network stays shared for the model's API.
@@ -69,140 +59,15 @@ export function sandboxArgs(given: {
   }
   for (const p of programs) args.push(...ro(p));
   // Only the parts skel runs from: its folder can be a checkout, whose .git and .skel hold
-  // other threads' work and sockets.
+  // other threads' work.
   const skel = resolve(import.meta.dir, "..");
   for (const part of ["bin", "src", "node_modules", "package.json"])
     args.push(...ro(join(skel, part)));
   args.push(...mounts);
   args.push("--bind", socket, socketInside);
   args.push("--setenv", "SKEL_SANDBOX", "1", "--setenv", "SKEL_SOCKET", socketInside);
-  for (const [key, value] of Object.entries(env)) args.push("--setenv", key, value);
   args.push("--chdir", cwd, "--", ...command);
   return args;
-}
-
-type Seen = { mounts: string[]; env: Record<string, string>; cwd: string };
-
-// What each kind of agent sees beyond the read-only system, and the folder it starts in.
-export function agentMounts(agent: Agent, home: string): Seen {
-  for (const repo of agent.kind === "lead" ? agent.repositories : [agent.repository])
-    refuseCredentials(repo);
-  if (agent.kind === "lead") {
-    const lead = join(home, ".local", "share", "skel", "lead");
-    mkdirSync(lead, { recursive: true });
-    const mounts = rw(lead);
-    for (const repo of agent.repositories) {
-      // .skel holds every thread's worktree and socket, and a socket answers whoever
-      // connects, even through a read-only mount. It is made now, so threads started
-      // after the lead land under the hidden folder too.
-      mkdirSync(join(repo, ".skel"), { recursive: true });
-      mounts.push(...ro(repo), ...hide(join(repo, ".skel")));
-    }
-    return { mounts, env: {}, cwd: lead };
-  }
-  const { repository, worktree } = agent;
-  const mounts = [...ro(repository), ...hide(join(repository, ".skel"))];
-  if (agent.kind === "reviewer")
-    return { mounts: [...mounts, ...ro(worktree)], env: {}, cwd: worktree };
-  // A worktree commits into the repository's .git: objects and refs live there. But
-  // the daemon's push runs git outside the sandbox with your rights, and git follows a
-  // commondir file in .git, or in any worktree's folder, to a config that runs commands.
-  // So the builder gets a .git of its own whose top level is thrown away: what a commit,
-  // rebase or merge must keep comes back from the real one, and nothing else does.
-  const git = join(repository, ".git");
-  const link = readFileSync(join(worktree, ".git"), "utf8")
-    .replace(/^gitdir: /, "")
-    .trim();
-  const own = resolve(worktree, link);
-  const empty = join(home, ".local", "share", "skel", "empty");
-  if (!existsSync(empty)) {
-    mkdirSync(dirname(empty), { recursive: true });
-    writeFileSync(empty, "", { mode: 0o444 });
-  }
-  mounts.push(...rw(worktree), ...ro(join(worktree, ".git")), ...hide(git));
-  for (const entry of readdirSync(git)) {
-    const p = join(git, entry);
-    if (["objects", "refs"].includes(entry)) mounts.push(...rw(p));
-    // Git outside appends to a reflog by following whatever is there, so a link planted in
-    // logs would let a push write into any file of yours. Reflogs stay thrown away.
-    // Git locks packed-refs on every deletion, as a rebase makes. The lock lands in the
-    // thrown-away top level, so only deleting a packed branch fails.
-    else if (!["logs", "worktrees"].includes(entry)) mounts.push(...ro(p));
-  }
-  // Alternates send git to other object stores, and a push or repack outside would trust
-  // them. The whole folder is read-only, since a file in it could be renamed away.
-  mkdirSync(join(git, "objects", "info"), { recursive: true });
-  mounts.push(...ro(join(git, "objects", "info")));
-  // Only this worktree's folder comes back, which holds its HEAD, index and a rebase's state.
-  mounts.push(...rw(own), ...hide(join(own, "logs")));
-  for (const p of ["commondir", "gitdir", "config.worktree"])
-    mounts.push(...fixed(join(own, p), empty));
-  return { mounts, env: identity(repository, home), cwd: worktree };
-}
-
-// Every agent reads the repository's .git/config, so a credential in it would be theirs.
-function refuseCredentials(repository: string): void {
-  const config = Bun.spawnSync(
-    ["git", "-C", repository, "config", "--local", "--get-regexp", "."],
-    {
-      stdout: "pipe",
-    },
-  ).stdout.toString();
-  for (const line of config.split("\n")) {
-    const key = line.split(" ")[0] ?? "";
-    if (/^http\..*extraheader$/i.test(key) || /https?:\/\/[^/\s]*@/i.test(line))
-      throw new Error(
-        `${repository}/.git/config holds a credential (${key}), which agents could read. Remove it from the remote URL and leave GitHub to gh`,
-      );
-  }
-}
-
-// What the daemon checks before it runs git in a repository. A builder can leave links in
-// refs and objects, which git outside would follow to write into any folder of yours, and
-// stray locks that stop it. Alternates would make it trust other object stores.
-export function checkGitDir(repository: string): void {
-  const git = join(repository, ".git");
-  const refuse = (p: string, why: string) => {
-    throw new Error(`${p} ${why}, so skel won't run git in ${repository}`);
-  };
-  const walk = (folder: string) => {
-    for (const entry of readdirSync(folder, { withFileTypes: true })) {
-      const p = join(folder, entry.name);
-      if (entry.isSymbolicLink()) refuse(p, "is a link");
-      if (entry.name.endsWith(".lock")) refuse(p, "is a stray lock");
-      if (entry.isDirectory()) walk(p);
-    }
-  };
-  for (const folder of ["refs", "objects"])
-    if (existsSync(join(git, folder))) walk(join(git, folder));
-  for (const name of ["packed-refs", "packed-refs.lock"]) {
-    const stat = lstatSync(join(git, name), { throwIfNoEntry: false });
-    if (stat?.isSymbolicLink()) refuse(join(git, name), "is a link");
-    if (stat && name.endsWith(".lock")) refuse(join(git, name), "is a stray lock");
-  }
-  for (const name of ["alternates", "http-alternates"]) {
-    const p = join(git, "objects", "info", name);
-    if (existsSync(p) && readFileSync(p, "utf8").trim() !== "")
-      refuse(p, "names other object stores");
-  }
-}
-
-// Commits are authored by you, but your ~/.gitconfig is hidden with the rest of your home.
-// Only your name and email go in, read as git outside would read them.
-function identity(repository: string, home: string): Record<string, string> {
-  const read = (key: string) =>
-    Bun.spawnSync(["git", "-C", repository, "config", key], {
-      env: { ...process.env, HOME: home },
-      stdout: "pipe",
-    })
-      .stdout.toString()
-      .trim();
-  const env: Record<string, string> = {};
-  const name = read("user.name");
-  const email = read("user.email");
-  if (name) Object.assign(env, { GIT_AUTHOR_NAME: name, GIT_COMMITTER_NAME: name });
-  if (email) Object.assign(env, { GIT_AUTHOR_EMAIL: email, GIT_COMMITTER_EMAIL: email });
-  return env;
 }
 
 const ClaudeJson = z.looseObject({
@@ -225,7 +90,7 @@ const passed = [
 const Token = z.string().trim().min(1);
 
 export function agentCommand(given: {
-  agent: Agent;
+  repositories: string[];
   name: string;
   socket: string;
   model: string;
@@ -234,7 +99,7 @@ export function agentCommand(given: {
   sessionId?: string;
   env?: Record<string, string | undefined>;
 }): { argv: string[]; env: Record<string, string> } {
-  const { agent, name, socket, model, prompt, resume, sessionId, env = process.env } = given;
+  const { repositories, name, socket, model, prompt, resume, sessionId, env = process.env } = given;
   if (sessionId && resume) throw new Error("a session can't be both new and resumed");
   if (sessionId && !z.uuid().safeParse(sessionId).success)
     throw new Error(`Claude Code needs a UUID as a session ID, not "${sessionId}"`);
@@ -261,8 +126,10 @@ export function agentCommand(given: {
     if (lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink())
       throw new Error(`${p} is a link, so skel won't write through it`);
   mkdirSync(config, { recursive: true });
-  const { mounts, env: seenEnv, cwd } = agentMounts(agent, home);
-  mounts.push(...rw(config));
+  // The lead sees its repositories read-only and works in a folder of its own.
+  const cwd = join(home, ".local", "share", "skel", "lead");
+  mkdirSync(cwd, { recursive: true });
+  const mounts = [...rw(cwd), ...repositories.flatMap(ro), ...rw(config)];
 
   // Claude Code asks whether to trust the folder even in bypass mode, and would wait there
   // with nobody to answer.
@@ -305,7 +172,6 @@ export function agentCommand(given: {
     home,
     path: env.PATH ?? "",
     mounts,
-    env: seenEnv,
     socket,
     cwd,
     command,
