@@ -57,13 +57,35 @@ that covers the code you are about to write.
 - **Hide `/run`.** The ssh agent, keyring, D-Bus, systemd and docker listen there, and some
   run commands for whoever connects. Bring back only the DNS resolver,
   `/run/systemd/resolve`.
-- **A worktree commits into the repository's `.git`, not its own folder.** Objects, refs and
-  the locks a rebase takes all live there, so `.git` must be writable. But the daemon's
-  push runs git outside the sandbox with your rights, so `.git/config`, `hooks` and `info`
-  stay read-only, as do the worktree's `commondir`, `gitdir` and `config.worktree`. Cover a
-  missing one with `/dev/null`, or the agent could create it.
-- **Hide other threads.** `.skel/` holds every thread's worktree and socket, and a socket
-  answers whoever connects. Hide the folder, then bring back only the agent's own.
+- **A worktree commits into the repository's `.git`, not its own folder.** Objects and refs
+  live there, so they must be writable. But the daemon runs git outside the sandbox with
+  your rights, and git follows a `commondir` file in `.git` or any worktree's folder to a
+  config that can run commands. So give the builder a throwaway `.git` top level and bring
+  back only `objects`, `refs` and its own worktree folder writable, with `commondir`,
+  `gitdir`, `config.worktree` and the whole `objects/info` folder read-only. A read-only
+  file in a writable folder can be renamed away, a mounted folder can't. Cover a missing
+  file with an empty one, not `/dev/null`, which a `nodev` mount refuses to open.
+- **Keep reflogs out of reach.** Git outside appends to a reflog by following whatever is
+  there, so a link planted in `logs` makes a push write into any file of yours.
+- **The daemon never runs git in a worktree.** `git status` or `git diff` there runs a
+  planted submodule's `core.fsmonitor`. It runs git in the main repository only, and pushes
+  the commit it recorded (`git -C repo push origin <sha>:refs/heads/skel/<n>`), since a
+  builder can move any ref, including `main` and other threads' branches.
+- **Check `.git` before running git in a repository.** A builder can leave a folder link in
+  `refs` or `objects`, which a fetch or gc outside follows to write into any folder of
+  yours, or a stray lock that stops it. A check can't help while the builder still runs,
+  since it can change `.git` right after the check passes.
+- **Remove a worktree without running git in it.** `git worktree remove` runs `git status`
+  there, which runs a planted `core.fsmonitor`. Check nothing needs saving, then use
+  `--force`, or delete the folder and run `git worktree prune`.
+- **Never use a session's config folder outside the sandbox.** The agent can put commands
+  in its `settings.json`, so `claude auth status` run there with your rights would run them.
+- **Agents read `.git/config`.** A remote URL with a token in it, or an `extraheader`, would
+  be visible to them, so skel refuses to start agents for such a repository.
+- **Agents share the network.** They can reach ports on localhost and abstract sockets.
+- **Hide other threads.** `.skel/` holds every thread's worktree. Hide the folder, then
+  bring back only the agent's own. Create it first, or threads started after the lead show
+  up in its sandbox.
 - **Don't pass `--new-session`.** It moves Claude Code out of the terminal's process group,
   so it misses resize signals and draws at the wrong width.
 
