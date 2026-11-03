@@ -5,6 +5,7 @@ import {
   closeSync,
   constants,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -18,7 +19,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 
-const { O_NOFOLLOW, O_RDONLY } = constants;
+const { O_NONBLOCK, O_NOFOLLOW, O_RDONLY } = constants;
 
 export type Agent =
   | { kind: "lead"; repositories: string[] }
@@ -84,6 +85,8 @@ type Seen = { mounts: string[]; env: Record<string, string>; cwd: string };
 
 // What each kind of agent sees beyond the read-only system, and the folder it starts in.
 export function agentMounts(agent: Agent, home: string): Seen {
+  for (const repo of agent.kind === "lead" ? agent.repositories : [agent.repository])
+    refuseCredentials(repo);
   if (agent.kind === "lead") {
     const lead = join(home, ".local", "share", "skel", "lead");
     mkdirSync(lead, { recursive: true });
@@ -126,14 +129,62 @@ export function agentMounts(agent: Agent, home: string): Seen {
     // thrown-away top level, so only deleting a packed branch fails.
     else if (!["logs", "worktrees"].includes(entry)) mounts.push(...ro(p));
   }
-  // Alternates send git to other object stores, and a repack outside would trust them.
-  for (const p of ["alternates", "http-alternates"])
-    mounts.push(...fixed(join(git, "objects", "info", p), empty));
+  // Alternates send git to other object stores, and a push or repack outside would trust
+  // them. The whole folder is read-only, since a file in it could be renamed away.
+  mkdirSync(join(git, "objects", "info"), { recursive: true });
+  mounts.push(...ro(join(git, "objects", "info")));
   // Only this worktree's folder comes back, which holds its HEAD, index and a rebase's state.
   mounts.push(...rw(own), ...hide(join(own, "logs")));
   for (const p of ["commondir", "gitdir", "config.worktree"])
     mounts.push(...fixed(join(own, p), empty));
   return { mounts, env: identity(repository, home), cwd: worktree };
+}
+
+// Every agent reads the repository's .git/config, so a credential in it would be theirs.
+function refuseCredentials(repository: string): void {
+  const config = Bun.spawnSync(
+    ["git", "-C", repository, "config", "--local", "--get-regexp", "."],
+    {
+      stdout: "pipe",
+    },
+  ).stdout.toString();
+  for (const line of config.split("\n")) {
+    const key = line.split(" ")[0] ?? "";
+    if (/^http\..*extraheader$/i.test(key) || /https?:\/\/[^/\s]*@/i.test(line))
+      throw new Error(
+        `${repository}/.git/config holds a credential (${key}), which agents could read. Remove it from the remote URL and leave GitHub to gh`,
+      );
+  }
+}
+
+// What the daemon checks before it runs git in a repository. A builder can leave links in
+// refs and objects, which git outside would follow to write into any folder of yours, and
+// stray locks that stop it. Alternates would make it trust other object stores.
+export function checkGitDir(repository: string): void {
+  const git = join(repository, ".git");
+  const refuse = (p: string, why: string) => {
+    throw new Error(`${p} ${why}, so skel won't run git in ${repository}`);
+  };
+  const walk = (folder: string) => {
+    for (const entry of readdirSync(folder, { withFileTypes: true })) {
+      const p = join(folder, entry.name);
+      if (entry.isSymbolicLink()) refuse(p, "is a link");
+      if (entry.name.endsWith(".lock")) refuse(p, "is a stray lock");
+      if (entry.isDirectory()) walk(p);
+    }
+  };
+  for (const folder of ["refs", "objects"])
+    if (existsSync(join(git, folder))) walk(join(git, folder));
+  for (const name of ["packed-refs", "packed-refs.lock"]) {
+    const stat = lstatSync(join(git, name), { throwIfNoEntry: false });
+    if (stat?.isSymbolicLink()) refuse(join(git, name), "is a link");
+    if (stat && name.endsWith(".lock")) refuse(join(git, name), "is a stray lock");
+  }
+  for (const name of ["alternates", "http-alternates"]) {
+    const p = join(git, "objects", "info", name);
+    if (existsSync(p) && readFileSync(p, "utf8").trim() !== "")
+      refuse(p, "names other object stores");
+  }
 }
 
 // Commits are authored by you, but your ~/.gitconfig is hidden with the rest of your home.
@@ -214,8 +265,12 @@ export function agentCommand(given: {
   const file = join(config, ".claude.json");
   let json: z.infer<typeof ClaudeJson> = {};
   if (existsSync(file)) {
-    const fd = openSync(file, O_RDONLY | O_NOFOLLOW);
+    // Non-blocking, since the agent could leave a pipe there, and opening one waits forever.
+    const fd = openSync(file, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
     try {
+      const stat = fstatSync(fd);
+      if (!stat.isFile() || stat.size > 64 * 1024 * 1024)
+        throw new Error(`${file} isn't a plain file, so skel won't use it`);
       json = ClaudeJson.parse(JSON.parse(readFileSync(fd, "utf8")));
     } finally {
       closeSync(fd);

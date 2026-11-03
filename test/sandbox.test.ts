@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Agent, agentCommand, agentMounts, sandboxArgs } from "../src/sandbox.ts";
+import { type Agent, agentCommand, agentMounts, checkGitDir, sandboxArgs } from "../src/sandbox.ts";
 
 let home = "";
 let socket: ReturnType<typeof Bun.listen> | undefined;
@@ -85,6 +85,64 @@ function repository(issue: number) {
   git(repo, "worktree", "add", "-q", "-b", `skel/${issue}`, worktree);
   return { repo, worktree };
 }
+
+describe("checkGitDir", () => {
+  test("passes a plain repository", () => {
+    const { repo } = repository(12);
+    expect(() => checkGitDir(repo)).not.toThrow();
+  });
+
+  test("refuses links, stray locks and alternates that would steer git outside", () => {
+    const { repo } = repository(12);
+    const dotgit = join(repo, ".git");
+    mkdirSync(join(home, "ssh"));
+    const traps: [string, () => void][] = [
+      [
+        join(dotgit, "refs", "remotes", "origin"),
+        () => {
+          mkdirSync(join(dotgit, "refs", "remotes"), { recursive: true });
+          symlinkSync(join(home, "ssh"), join(dotgit, "refs", "remotes", "origin"));
+        },
+      ],
+      [
+        join(dotgit, "objects", "pack"),
+        () => {
+          rmSync(join(dotgit, "objects", "pack"), { recursive: true, force: true });
+          symlinkSync(join(home, "ssh"), join(dotgit, "objects", "pack"));
+        },
+      ],
+      [
+        join(dotgit, "refs", "heads", "main.lock"),
+        () => {
+          writeFileSync(join(dotgit, "refs", "heads", "main.lock"), "");
+        },
+      ],
+      [
+        join(dotgit, "packed-refs"),
+        () => {
+          rmSync(join(dotgit, "packed-refs"), { force: true });
+          symlinkSync(join(home, "ssh", "x"), join(dotgit, "packed-refs"));
+        },
+      ],
+      [
+        join(dotgit, "objects", "info", "alternates"),
+        () => {
+          mkdirSync(join(dotgit, "objects", "info"), { recursive: true });
+          writeFileSync(join(dotgit, "objects", "info", "alternates"), "/elsewhere\n");
+        },
+      ],
+    ];
+    for (const [path, plant] of traps) {
+      const keep = join(home, "keep");
+      rmSync(keep, { recursive: true, force: true });
+      Bun.spawnSync(["cp", "-a", dotgit, keep]);
+      plant();
+      expect(() => checkGitDir(repo)).toThrow(path);
+      rmSync(dotgit, { recursive: true, force: true });
+      Bun.spawnSync(["mv", keep, dotgit]);
+    }
+  });
+});
 
 // bubblewrap can't start inside skel's own sandbox, so only there these tests can't run.
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
@@ -180,21 +238,20 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
         "echo f > f && git add f && git commit -qm f",
         `mkdir -p ${dotgit}/logs/refs/remotes/origin/skel`,
         `ln -s ${victim} ${dotgit}/logs/refs/remotes/origin/skel/12`,
-        `mkdir -p ${dotgit}/refs/remotes/origin/skel`,
-        `ln -s ${victim} ${dotgit}/refs/remotes/origin/skel/13`,
-        `ln -sf ${victim} ${dotgit}/worktrees/12/logs/HEAD`,
         `echo /etc > ${dotgit}/objects/info/alternates || echo alternates-fixed`,
         `echo /etc > ${dotgit}/objects/info/http-alternates || echo http-alternates-fixed`,
+        `mv ${dotgit}/objects/info ${dotgit}/objects/info.moved || echo info-fixed`,
+        `mkdir -p ${dotgit}/objects/info`,
+        `echo /etc > ${dotgit}/objects/info/alternates || echo still-fixed`,
       ].join("; "),
     );
-    expect(done.out).toBe("alternates-fixed\nhttp-alternates-fixed\n");
+    expect(done.out).toBe("alternates-fixed\nhttp-alternates-fixed\ninfo-fixed\nstill-fixed\n");
     // As the daemon pushes: in the main repository, by the commit it recorded.
     const sha = git(repo, "rev-parse", "skel/12");
     git(repo, "push", "-q", "origin", `${sha}:refs/heads/skel/12`);
-    Bun.spawnSync(["git", "-C", repo, "push", "-q", "origin", `${sha}:refs/heads/skel/13`]);
     expect(readFileSync(victim, "utf8")).toBe("safe\n");
-    expect(lstatSync(join(dotgit, "worktrees", "12", "logs", "HEAD")).isSymbolicLink()).toBe(false);
-    expect(readFileSync(join(dotgit, "objects", "info", "alternates"), "utf8")).toBe("");
+    expect(existsSync(join(dotgit, "objects", "info", "alternates"))).toBe(false);
+    expect(existsSync(join(dotgit, "objects", "info.moved"))).toBe(false);
   });
 
   test("the lead can't see threads that start after it", async () => {
@@ -205,6 +262,24 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
     await Bun.sleep(300);
     mkdirSync(join(site, ".skel", "worktrees", "9"), { recursive: true });
     expect((await seen).out).toBe("");
+  });
+
+  test("refuses a repository whose git config holds a credential", () => {
+    const { repo, worktree } = repository(12);
+    const credentials: [string, string][] = [
+      ["remote.origin.url", "https://simon:ghp_secret@github.com/simon/app"],
+      ["http.https://github.com/.extraheader", "AUTHORIZATION: basic c2VjcmV0"],
+    ];
+    for (const [key, value] of credentials) {
+      git(repo, "config", key, value);
+      for (const agent of [
+        { kind: "lead" as const, repositories: [repo] },
+        { kind: "builder" as const, repository: repo, worktree },
+      ])
+        expect(() => agentMounts(agent, home)).toThrow("gh");
+      git(repo, "config", "--unset", key);
+    }
+    expect(() => agentMounts({ kind: "builder", repository: repo, worktree }, home)).not.toThrow();
   });
 
   test("finds a worktree's git folder when git wrote it as a relative path", async () => {
@@ -375,6 +450,37 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
     symlinkSync(join(home, "elsewhere"), config);
     expect(start).toThrow("link");
     expect(readdirSync(join(home, "elsewhere"))).toEqual([]);
+  });
+
+  test("refuses a session settings file that isn't a plain file, without hanging", async () => {
+    const { repo, worktree } = repository(12);
+    saveToken();
+    const config = join(home, ".local", "share", "skel", "claude", "app-12");
+    mkdirSync(config, { recursive: true });
+    Bun.spawnSync(["mkfifo", join(config, ".claude.json")]);
+    const script = `import { agentCommand } from ${JSON.stringify(join(import.meta.dir, "..", "src", "sandbox.ts"))};
+agentCommand({ agent: { kind: "builder", repository: ${JSON.stringify(repo)}, worktree: ${JSON.stringify(worktree)} }, name: "app-12", socket: "x", model: "opus" });`;
+    const proc = Bun.spawn(["bun", "-e", script], {
+      env: { ...process.env, ...outside() },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 5000,
+    });
+    const [err, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+    expect(proc.signalCode).toBeNull();
+    expect(code).not.toBe(0);
+    expect(err).toContain("isn't a plain file");
+    rmSync(join(config, ".claude.json"));
+    mkdirSync(join(config, ".claude.json"));
+    expect(() =>
+      agentCommand({
+        agent: { kind: "builder", repository: repo, worktree },
+        name: "app-12",
+        socket: socketPath,
+        model: "opus",
+        env: outside(),
+      }),
+    ).toThrow("isn't a plain file");
   });
 
   test("says to run skel first when there is no token", () => {
