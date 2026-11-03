@@ -57,13 +57,24 @@ that covers the code you are about to write.
 - **Hide `/run`.** The ssh agent, keyring, D-Bus, systemd and docker listen there, and some
   run commands for whoever connects. Bring back only the DNS resolver,
   `/run/systemd/resolve`.
-- **A worktree commits into the repository's `.git`, not its own folder.** Objects, refs and
-  the locks a rebase takes all live there, so `.git` must be writable. But the daemon's
-  push runs git outside the sandbox with your rights, so `.git/config`, `hooks` and `info`
-  stay read-only, as do the worktree's `commondir`, `gitdir` and `config.worktree`. Cover a
-  missing one with `/dev/null`, or the agent could create it.
+- **A worktree commits into the repository's `.git`, not its own folder.** Objects and refs
+  live there, so they must be writable. But the daemon runs git outside the sandbox with
+  your rights, and git follows a `commondir` file in `.git` or any worktree's folder to a
+  config that can run commands. So give the builder a throwaway `.git` top level and bring
+  back only `objects`, `refs` and its own worktree folder writable, with `commondir`,
+  `gitdir`, `config.worktree` and `objects/info/alternates` read-only. Cover a missing one
+  with an empty file, not `/dev/null`, which a `nodev` mount refuses to open.
+- **Keep reflogs out of reach.** Git outside appends to a reflog by following whatever is
+  there, so a link planted in `logs` makes a push write into any file of yours.
+- **The daemon never runs git in a worktree.** `git status` or `git diff` there runs a
+  planted submodule's `core.fsmonitor`. It runs git in the main repository only, and pushes
+  the commit it recorded (`git -C repo push origin <sha>:refs/heads/skel/<n>`), since a
+  builder can move any ref, including `main` and other threads' branches.
+- **Agents read `.git/config`.** A remote URL with a token in it would be visible to them.
+- **Agents share the network.** They can reach ports on localhost and abstract sockets.
 - **Hide other threads.** `.skel/` holds every thread's worktree and socket, and a socket
-  answers whoever connects. Hide the folder, then bring back only the agent's own.
+  answers whoever connects. Hide the folder, then bring back only the agent's own. Create
+  it first, or threads started after the lead show up in its sandbox.
 - **Don't pass `--new-session`.** It moves Claude Code out of the terminal's process group,
   so it misses resize signals and draws at the wrong width.
 
