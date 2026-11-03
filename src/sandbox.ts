@@ -137,10 +137,6 @@ const ClaudeJson = z.looseObject({
   projects: z.record(z.string(), z.looseObject({})).optional(),
 });
 
-// Your own Claude Code runs code from these, so agents only read them.
-const yourSetup = ["settings.json", "CLAUDE.md"];
-const yourSetupFolders = ["hooks", "plugins", "commands", "agents", "skills"];
-
 // Bypass mode shows a warning first, which nobody is there to accept. Claude Code's own
 // sandbox fails inside skel's, so it stays off even if your settings turn it on.
 const settings = '{"skipDangerousModePermissionPrompt":true,"sandbox":{"enabled":false}}';
@@ -154,6 +150,8 @@ const passed = [
   "ANTHROPIC_API_KEY",
 ];
 
+const Token = z.string().trim().min(1);
+
 export function agentCommand(given: {
   agent: Agent;
   name: string;
@@ -165,41 +163,33 @@ export function agentCommand(given: {
 }): { argv: string[]; env: Record<string, string> } {
   const { agent, name, socket, model, prompt, resume, env = process.env } = given;
   const home = env.HOME;
-  if (!home) throw new Error("HOME isn't set, so skel can't find Claude Code's login");
+  if (!home) throw new Error("HOME isn't set, so skel can't find its own folders");
+  // The name becomes a folder, so it must not climb out of skel's.
+  if (!/^[a-zA-Z0-9][\w.-]*$/.test(name)) throw new Error(`"${name}" can't name a session`);
+
+  // A token from claude setup-token never renews. A shared login would: renewing makes the
+  // old refresh token stop working, so your own login or the agent's would go stale.
+  const tokenFile = join(home, ".config", "skel", "claude-token");
+  if (!existsSync(tokenFile))
+    throw new Error("Claude Code's login token for agents isn't saved yet: run skel to set it up");
+  const token = Token.parse(readFileSync(tokenFile, "utf8"));
+
+  // A folder of its own per session, never your ~/.claude: an agent could write memory or
+  // settings that another session loads as instructions. It stays, so --resume finds the
+  // transcripts.
+  const config = join(home, ".local", "share", "skel", "claude", name);
+  mkdirSync(config, { recursive: true });
   const { mounts, env: seenEnv, cwd } = agentMounts(agent, home);
+  mounts.push(...rw(config));
 
-  // The login and transcripts are shared, not copied: a copied login goes stale when either
-  // side refreshes its token, and --resume looks for transcripts here.
-  const claude = join(home, ".claude");
-  mkdirSync(claude, { recursive: true });
-  mounts.push(...rw(claude));
-  for (const file of yourSetup) mounts.push(...fixed(join(claude, file)));
-  for (const folder of yourSetupFolders) {
-    // Made empty when missing, or the agent could create it and put code in it.
-    mkdirSync(join(claude, folder), { recursive: true });
-    mounts.push(...ro(join(claude, folder)));
-  }
-
-  // Claude Code writes to ~/.claude.json as it runs, and it lists the MCP servers your own
-  // runs start, so each session gets a throwaway copy. It asks whether to trust the folder
-  // even in bypass mode, and would wait there with nobody to answer.
-  const original = join(home, ".claude.json");
-  const copy = join(home, ".local", "share", "skel", "sessions", `${name}.claude.json`);
-  mkdirSync(dirname(copy), { recursive: true });
-  const json = existsSync(original)
-    ? ClaudeJson.parse(JSON.parse(readFileSync(original, "utf8")))
-    : {};
-  // Your MCP servers would start inside with your settings, and an API key is yours.
-  const { mcpServers: _servers, primaryApiKey: _key, projects = {}, ...rest } = json;
-  const trimmed: Record<string, Record<string, unknown>> = {};
-  for (const [folder, project] of Object.entries(projects)) {
-    const { mcpServers: _projectServers, ...settings } = project;
-    trimmed[folder] = settings;
-  }
-  trimmed[cwd] = { ...trimmed[cwd], hasTrustDialogAccepted: true };
-  writeFileSync(copy, JSON.stringify({ ...rest, projects: trimmed }), { mode: 0o600 });
-  chmodSync(copy, 0o600);
-  mounts.push("--bind", copy, original);
+  // Claude Code asks whether to trust the folder even in bypass mode, and would wait there
+  // with nobody to answer.
+  const file = join(config, ".claude.json");
+  const json = existsSync(file) ? ClaudeJson.parse(JSON.parse(readFileSync(file, "utf8"))) : {};
+  const projects = json.projects ?? {};
+  projects[cwd] = { ...projects[cwd], hasTrustDialogAccepted: true };
+  writeFileSync(file, JSON.stringify({ ...json, projects }), { mode: 0o600 });
+  chmodSync(file, 0o600);
 
   const command = ["claude", "--model", model, "--permission-mode", "bypassPermissions"];
   command.push("--settings", settings);
@@ -210,6 +200,8 @@ export function agentCommand(given: {
   for (const [key, value] of Object.entries(env)) {
     if (value !== undefined && (passed.includes(key) || key.startsWith("LC_"))) kept[key] = value;
   }
+  kept.CLAUDE_CONFIG_DIR = config;
+  kept.CLAUDE_CODE_OAUTH_TOKEN = token;
   const argv = sandboxArgs({
     home,
     path: env.PATH ?? "",

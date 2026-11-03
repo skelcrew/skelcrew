@@ -184,34 +184,57 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
     expect(existsSync(join(worktree, "new"))).toBe(false);
   });
 
-  test("Claude Code starts trusted, with your setup read-only and its own sandbox off", async () => {
+  // Every file under a folder with its contents, to show nothing in it changed.
+  function snapshot(folder: string): string {
+    const listed = Bun.spawnSync([
+      "sh",
+      "-c",
+      `cd ${folder} && find . -type f | sort | xargs -r cat`,
+    ]);
+    const names = Bun.spawnSync(["sh", "-c", `cd ${folder} && find . | sort`]);
+    return names.stdout.toString() + listed.stdout.toString();
+  }
+
+  // Stands in for Claude Code: reports what it was given, sees and may change.
+  function fakeClaude(script: string[]) {
+    mkdirSync(join(home, "bin"), { recursive: true });
+    writeFileSync(join(home, "bin", "claude"), ["#!/bin/sh", ...script].join("\n"), {
+      mode: 0o755,
+    });
+  }
+
+  function saveToken() {
+    mkdirSync(join(home, ".config", "skel"), { recursive: true });
+    writeFileSync(join(home, ".config", "skel", "claude-token"), "tok-123\n", { mode: 0o600 });
+  }
+
+  const outside = () => ({
+    HOME: home,
+    PATH: path(),
+    TERM: "xterm",
+    CLAUDE_CODE_CHILD_SESSION: "1",
+    GH_TOKEN: "secret",
+    SKEL_GITHUB_APP_KEY: "secret",
+  });
+
+  test("Claude Code starts in its own config folder, trusted, with skel's token", async () => {
     const { repo, worktree } = repository(12);
-    const claude = join(home, ".claude");
-    mkdirSync(join(claude, "hooks"), { recursive: true });
-    writeFileSync(join(claude, "settings.json"), "{}\n");
-    const original = `${JSON.stringify({
-      primaryApiKey: "sk-secret",
-      mcpServers: { mine: { command: "my-server" } },
-      projects: { "/x": { hasTrustDialogAccepted: false, mcpServers: { other: {} } } },
-    })}\n`;
-    writeFileSync(join(home, ".claude.json"), original);
-    mkdirSync(join(home, "bin"));
-    // Stands in for Claude Code: reports what it was given and what it may change.
-    writeFileSync(
-      join(home, "bin", "claude"),
-      [
-        "#!/bin/sh",
-        'printf "%s\\n" "$@"',
-        "env | grep -E '^(CLAUDE_CODE_|SKEL_|GH_TOKEN|TERM)' | sort",
-        "cat ~/.claude.json; echo",
-        "echo t > ~/.claude/projects-note && echo shared",
-        "echo x > ~/.claude/settings.json || echo settings-fixed",
-        "echo x > ~/.claude/hooks/new || echo hooks-fixed",
-        "echo x > ~/.claude/CLAUDE.md || echo claude-md-fixed",
-        "true",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
+    mkdirSync(join(home, ".claude", "projects"), { recursive: true });
+    writeFileSync(join(home, ".claude", "settings.json"), "{}\n");
+    writeFileSync(join(home, ".claude.json"), '{"projects":{}}\n');
+    const yours = () =>
+      snapshot(join(home, ".claude")) + readFileSync(join(home, ".claude.json"), "utf8");
+    const before = yours();
+    saveToken();
+    fakeClaude([
+      'printf "%s\\n" "$@"',
+      "env | grep -E '^(CLAUDE_|SKEL_|GH_TOKEN|TERM)' | sort",
+      "test -e ~/.claude || echo no-claude",
+      "test -e ~/.claude.json || echo no-claude-json",
+      "test -e ~/.config/skel/claude-token || echo no-token-file",
+      "echo m > $CLAUDE_CONFIG_DIR/note && echo kept",
+      "mkdir -p ~/.claude && echo x > ~/.claude/settings.json",
+    ]);
     const { argv, env } = agentCommand({
       agent: { kind: "builder", repository: repo, worktree },
       name: "app-12",
@@ -219,19 +242,12 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
       model: "opus",
       prompt: "Fix the bug",
       resume: "abc-123",
-      env: {
-        HOME: home,
-        PATH: path(),
-        TERM: "xterm",
-        CLAUDE_CODE_CHILD_SESSION: "1",
-        GH_TOKEN: "secret",
-        SKEL_GITHUB_APP_KEY: "secret",
-      },
+      env: outside(),
     });
+    const config = join(home, ".local", "share", "skel", "claude", "app-12");
     const done = await run(argv, env);
-    expect(done.code).toBe(0);
-    const json = done.out.split("\n").find((line) => line.startsWith('{"projects"')) ?? "";
-    expect(done.out.split(json)[0]).toBe(
+    expect(done.err).toBe("");
+    expect(done.out).toBe(
       [
         "--model",
         "opus",
@@ -242,20 +258,59 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
         "--resume",
         "abc-123",
         "Fix the bug",
+        "CLAUDE_CODE_OAUTH_TOKEN=tok-123",
+        `CLAUDE_CONFIG_DIR=${config}`,
         "SKEL_SANDBOX=1",
         "SKEL_SOCKET=/run/skel.sock",
         "TERM=xterm",
+        "no-claude",
+        "no-claude-json",
+        "no-token-file",
+        "kept",
         "",
       ].join("\n"),
     );
-    expect(JSON.parse(json).projects[worktree].hasTrustDialogAccepted).toBe(true);
-    expect(json).not.toContain("sk-secret");
-    expect(json).not.toContain("mcpServers");
-    const copy = join(home, ".local", "share", "skel", "sessions", "app-12.claude.json");
-    expect(statSync(copy).mode & 0o777).toBe(0o600);
-    expect(done.out).toEndWith("shared\nsettings-fixed\nhooks-fixed\nclaude-md-fixed\n");
-    expect(readFileSync(join(home, ".claude.json"), "utf8")).toBe(original);
-    expect(readFileSync(join(claude, "projects-note"), "utf8")).toBe("t\n");
-    expect(readFileSync(join(claude, "settings.json"), "utf8")).toBe("{}\n");
+    const json = join(config, ".claude.json");
+    expect(JSON.parse(readFileSync(json, "utf8")).projects[worktree].hasTrustDialogAccepted).toBe(
+      true,
+    );
+    expect(statSync(json).mode & 0o777).toBe(0o600);
+    expect(readFileSync(join(config, "note"), "utf8")).toBe("m\n");
+    expect(yours()).toBe(before);
+  });
+
+  test("each session gets a config folder of its own", async () => {
+    const { repo, worktree } = repository(12);
+    saveToken();
+    fakeClaude(["ls -A ~/.local/share/skel/claude"]);
+    const builder = agentCommand({
+      agent: { kind: "builder", repository: repo, worktree },
+      name: "app-12",
+      socket: socketPath,
+      model: "opus",
+      env: outside(),
+    });
+    const reviewer = agentCommand({
+      agent: { kind: "reviewer", repository: repo, worktree },
+      name: "app-12-review-1",
+      socket: socketPath,
+      model: "opus",
+      env: outside(),
+    });
+    expect(builder.env.CLAUDE_CONFIG_DIR).not.toBe(reviewer.env.CLAUDE_CONFIG_DIR);
+    expect((await run(reviewer.argv, reviewer.env)).out).toBe("app-12-review-1\n");
+  });
+
+  test("says to run skel first when there is no token", () => {
+    const { repo, worktree } = repository(12);
+    expect(() =>
+      agentCommand({
+        agent: { kind: "builder", repository: repo, worktree },
+        name: "app-12",
+        socket: socketPath,
+        model: "opus",
+        env: outside(),
+      }),
+    ).toThrow("run skel");
   });
 });
