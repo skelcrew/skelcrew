@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import { endSession, hasSession, isIdle, startSession, typeInto } from "../src/tmux.ts";
+import { attach, endSession, hasSession, isIdle, startSession, typeInto } from "../src/tmux.ts";
 
 const moment = 100;
 let home = "";
@@ -30,9 +30,10 @@ afterEach(() => {
 
 // A stand-in for Claude Code: busy for a while (losing what is typed then, as the real one
 // can), then a ❯ prompt that logs every byte it receives. It turns on bracketed paste mode,
-// since tmux only sends the paste marks to an app that asked for them.
+// since tmux only sends the paste marks to an app that asked for them. The space in its name
+// would break it if tmux ran it through a shell.
 function harness(busySeconds = 0): string[] {
-  const script = join(home, `harness-${busySeconds}.sh`);
+  const script = join(home, `fake harness ${busySeconds}.sh`);
   writeFileSync(
     script,
     `#!/bin/sh
@@ -42,6 +43,8 @@ if [ ${busySeconds} -gt 0 ]; then
   clear
 fi
 printf '\\033[?2004h'
+# Like Claude Code, it draws its own screen, which may not change at once when text arrives.
+stty -echo
 echo "❯"
 cat > received.txt
 `,
@@ -65,7 +68,7 @@ async function until(done: () => boolean) {
 const read = (file: string) =>
   existsSync(join(home, file)) ? readFileSync(join(home, file), "utf8") : "";
 
-test("a typed message with several lines arrives whole and is sent once", async () => {
+test("a typed message with several lines arrives whole, as one paste and one Enter", async () => {
   start("lead", harness());
   await typeInto(socket, "lead", "fix the bug\nthen run the tests", { moment });
   // The terminal turns the Enter tmux sends into a newline, so one newline means one Enter.
@@ -85,8 +88,24 @@ test("typing waits while the harness is busy, then goes through", async () => {
 test("typing gives up when the harness stays busy", async () => {
   start("lead", harness(30));
   const typing = typeInto(socket, "lead", "hello", { moment, timeout: 500 });
-  await expect(typing).rejects.toThrow("busy");
+  await expect(typing).rejects.toThrow("esc to interrupt");
   expect(read("lost.txt")).toBe("");
+});
+
+test("typing says so when it gives up because there is no prompt", async () => {
+  start("lead", ["sh", "-c", "echo starting; sleep 30"]);
+  const typing = typeInto(socket, "lead", "hello", { moment, timeout: 300 });
+  await expect(typing).rejects.toThrow("prompt");
+});
+
+test("two messages typed at once both arrive whole, in order, each sent", async () => {
+  start("lead", harness());
+  await Promise.all([
+    typeInto(socket, "lead", "first\nmessage", { moment }),
+    typeInto(socket, "lead", "second", { moment }),
+  ]);
+  await until(() => read("received.txt").endsWith("second\x1b[201~\n"));
+  expect(read("received.txt")).toBe("\x1b[200~first\nmessage\x1b[201~\n\x1b[200~second\x1b[201~\n");
 });
 
 test("a session runs its command in its folder, with its environment", async () => {
@@ -95,6 +114,47 @@ test("a session runs its command in its folder, with its environment", async () 
   });
   await until(() => read("seen.txt") !== "");
   expect(read("seen.txt")).toBe(`app#12 ${home}\n`);
+});
+
+// tmux reads a word ending in ";" as the end of a command.
+test("a first message and an environment value ending in ; arrive as given", async () => {
+  start("builder", ["sh", "-c", 'printf "%s|%s" "$1" "$X" > seen.txt; sleep 30', "sh", "fix it;"], {
+    X: "a;",
+  });
+  await until(() => read("seen.txt") !== "");
+  expect(read("seen.txt")).toBe("fix it;|a;");
+});
+
+test("a session doesn't inherit Claude Code's variables from whoever started it", async () => {
+  const tmux = join(import.meta.dir, "..", "src", "tmux.ts");
+  const script = `import { startSession } from ${JSON.stringify(tmux)};
+startSession(${JSON.stringify(socket)}, "builder", {
+  folder: ${JSON.stringify(home)},
+  command: ["sh", "-c", "env > env.txt; sleep 30"],
+  env: {},
+});`;
+  const run = Bun.spawnSync(["bun", "-e", script], {
+    env: { ...process.env, CLAUDE_CODE_CHILD_SESSION: "1", CLAUDECODE: "1" },
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  await until(() => read("env.txt").includes("PATH="));
+  // Only the matching lines are compared, so a failure doesn't print the whole environment.
+  const leaked = read("env.txt")
+    .split("\n")
+    .filter((line) => /^(CLAUDE_CODE_|CLAUDECODE=)/.test(line));
+  expect(leaked).toEqual([]);
+});
+
+test("a name tmux would change is refused", () => {
+  expect(() => start("app.1", ["sleep", "30"])).toThrow("app.1");
+  expect(() => start("app:1", ["sleep", "30"])).toThrow("app:1");
+  expect(hasSession(socket, "app_1")).toBe(false);
+});
+
+test("attaching to a session that doesn't exist fails", async () => {
+  start("lead", ["sleep", "30"]);
+  await expect(attach(socket, "nobody")).rejects.toThrow("nobody");
 });
 
 test("ending a session ends its process", async () => {

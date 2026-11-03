@@ -11,8 +11,25 @@ bind -n C-] detach-client
 
 type Waits = { moment?: number; timeout?: number };
 
+// The tmux server passes its own environment to every session, and -e can't remove a
+// variable. So no tmux command may start the server with these: a Claude Code session left
+// with CLAUDE_CODE_* misbehaves, and TMUX makes tmux refuse to attach from inside another tmux.
+function cleanEnv(): Record<string, string> {
+  const kept = Object.entries(process.env).flatMap(([key, value]) =>
+    value === undefined || key.startsWith("CLAUDE_CODE_") || key === "CLAUDECODE" || key === "TMUX"
+      ? []
+      : [[key, value]],
+  );
+  return Object.fromEntries(kept);
+}
+
+// tmux reads any word ending in ";" as the end of a command, even a message or a folder,
+// unless that ";" has a backslash before it.
+const literal = (word: string) => (word.endsWith(";") ? `${word.slice(0, -1)}\\;` : word);
+
 function tmux(socket: string, args: string[], input = "") {
-  const run = Bun.spawnSync(["tmux", "-L", socket, "-f", "/dev/null", ...args], {
+  const run = Bun.spawnSync(["tmux", "-L", socket, "-f", "/dev/null", ...args.map(literal)], {
+    env: cleanEnv(),
     stdin: new Blob([input]),
     stdout: "pipe",
     stderr: "pipe",
@@ -31,9 +48,13 @@ export function startSession(
   name: string,
   session: { folder: string; command: string[]; env: Record<string, string> },
 ): void {
+  // tmux would quietly rename the session, and then never find it under the name asked for.
+  if (/[.:]/.test(name)) throw new Error(`a session can't be named ${name}: tmux changes . and :`);
   const env = Object.entries(session.env).flatMap(([key, value]) => ["-e", `${key}=${value}`]);
+  // With a single word, tmux would run the command through a shell, so env always goes first.
   const start = ["new-session", "-d", "-s", name, "-c", session.folder, ...env];
-  mustTmux(socket, [...start, "--", ...session.command, ";", "source-file", "-"], config);
+  mustTmux(socket, [...start, "--", "env", "--", ...session.command]);
+  mustTmux(socket, ["source-file", "-"], config);
 }
 
 export function hasSession(socket: string, name: string): boolean {
@@ -47,46 +68,73 @@ export function endSession(socket: string, name: string): void {
 
 // Returns when you detach with Ctrl-].
 export async function attach(socket: string, name: string): Promise<void> {
-  await Bun.spawn(["tmux", "-L", socket, "attach", "-t", `=${name}`], {
+  const code = await Bun.spawn(["tmux", "-L", socket, "attach", "-t", `=${name}`], {
+    env: cleanEnv(),
     stdio: ["inherit", "inherit", "inherit"],
   }).exited;
+  if (code !== 0) throw new Error(`couldn't attach to ${name}: tmux exited with ${code}`);
 }
 
 const screen = (socket: string, name: string) =>
   mustTmux(socket, ["capture-pane", "-p", "-t", `=${name}:`]);
 
-// A quiet pane alone isn't enough: Claude Code can sit still mid-turn while a tool runs.
-export async function isIdle(socket: string, name: string, waits: Waits = {}): Promise<boolean> {
+// Why the session isn't idle, or "" when it is. A quiet pane alone isn't enough: Claude Code
+// can sit still mid-turn while a tool runs.
+async function notIdle(socket: string, name: string, moment: number): Promise<string> {
   const before = screen(socket, name);
-  await Bun.sleep(waits.moment ?? 500);
+  await Bun.sleep(moment);
   const after = screen(socket, name);
-  return (
-    before === after &&
-    !after.includes("esc to interrupt") &&
-    after.split("\n").some((line) => line.trim() === "❯")
-  );
+  if (after.includes("esc to interrupt")) return "it shows esc to interrupt";
+  if (before !== after) return "its screen kept changing";
+  if (!after.split("\n").some((line) => line.trim() === "❯")) return "it shows no ❯ prompt";
+  return "";
 }
 
-export async function typeInto(
-  socket: string,
-  name: string,
-  text: string,
-  waits: Waits = {},
-): Promise<void> {
+export async function isIdle(socket: string, name: string, waits: Waits = {}): Promise<boolean> {
+  return (await notIdle(socket, name, waits.moment ?? 500)) === "";
+}
+
+// One message at a time per session, so two pastes can't land before either's Enter.
+const typing = new Map<string, Promise<void>>();
+
+export function typeInto(socket: string, name: string, text: string, waits: Waits = {}) {
+  const key = `${socket}/${name}`;
+  const earlier = typing.get(key) ?? Promise.resolve();
+  const turn = earlier.then(() => typeNow(socket, name, text, waits));
+  // The next message waits for this one whether or not it got through.
+  const settled = turn.then(
+    () => {},
+    () => {},
+  );
+  typing.set(key, settled);
+  settled.then(() => {
+    if (typing.get(key) === settled) typing.delete(key);
+  });
+  return turn;
+}
+
+let buffers = 0;
+
+async function typeNow(socket: string, name: string, text: string, waits: Waits) {
   const moment = waits.moment ?? 500;
   const timeout = waits.timeout ?? 60_000;
   const deadline = Date.now() + timeout;
   // Text typed while Claude Code is starting or busy can be lost.
-  while (!(await isIdle(socket, name, { moment }))) {
+  for (;;) {
+    const why = await notIdle(socket, name, moment);
+    if (why === "") break;
     if (Date.now() > deadline)
-      throw new Error(`${name} stayed busy for ${timeout / 1000}s, so nothing was typed`);
+      throw new Error(`${name} wasn't idle for ${timeout / 1000}s (${why}), so nothing was typed`);
   }
-  // A buffer per session, so two messages typed into different sessions at once don't mix.
-  const buffer = `skel-${name}`;
-  mustTmux(socket, ["load-buffer", "-b", buffer, "-"], text);
-  // Without the paste marks, Claude Code reads the Enter after a long message as a new line,
-  // and the message is never sent. So the Enter goes on its own, a moment after the paste.
-  mustTmux(socket, ["paste-buffer", "-p", "-d", "-b", buffer, "-t", `=${name}:`]);
-  await Bun.sleep(moment);
-  mustTmux(socket, ["send-keys", "-t", `=${name}:`, "Enter"]);
+  const buffer = `skel-${process.pid}-${buffers++}`;
+  try {
+    mustTmux(socket, ["load-buffer", "-b", buffer, "-"], text);
+    // Without the paste marks, Claude Code reads the Enter after a long message as a new line,
+    // and the message is never sent. So the Enter goes on its own, a moment after the paste.
+    mustTmux(socket, ["paste-buffer", "-p", "-b", buffer, "-t", `=${name}:`]);
+    await Bun.sleep(moment);
+    mustTmux(socket, ["send-keys", "-t", `=${name}:`, "Enter"]);
+  } finally {
+    tmux(socket, ["delete-buffer", "-b", buffer]);
+  }
 }
