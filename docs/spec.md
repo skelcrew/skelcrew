@@ -55,7 +55,7 @@ A thread's status is one of `working`, `waiting` (on review, CI or you), `failed
 
 skel runs on a Linux server. `skel`, from any folder, attaches your terminal to the lead, and starts the daemon and the lead first if they are not running. Ctrl-\] detaches; the lead keeps running.
 
-The repository you attach from is the lead's default, as the folder is for `claude` in a terminal. skel matches it by its GitHub name, and when it differs from last time, types a one line note into the lead, such as "you attached from app". "Fix the flaky test" then means app's, and every other repository stays in reach. Outside any repository there is no default. Inside one that isn't added, skel suggests `skel init` first.
+The repository you attach from is the lead's default, as the folder is for `claude` in a terminal. skel matches it by its GitHub name, and when it differs from last time, types a one line note into the lead, such as "you attached from app". "Fix the flaky test" then means app's, and every other repository stays in reach. Outside any repository there is no default. Inside one that isn't added, `skel` asks whether to add it, and a yes runs `skel init` before attaching. A no is remembered in \~/.config/skel/ for that folder, so `skel` doesn't ask again there, and it attaches anyway.
 
 **The first run.** The first `skel` on a machine takes two steps before the lead starts:
 
@@ -64,7 +64,7 @@ The repository you attach from is the lead's default, as the folder is for `clau
 
 Before the first step, skel checks that `tmux`, `bwrap`, `gh` and the harness are installed, and if one is missing, says exactly what to install instead of failing halfway. After the last step, it installs the daemon as a systemd user service and turns on lingering (`loginctl enable-linger`), so the daemon keeps running after you log out and starts again after a reboot.
 
-Each step is skipped when it is already done. Once the first run has finished, `skel` skips it entirely and goes straight to the lead: a tool or login that goes missing later shows up where it is used. While no repository is added, `skel` says so and how to add one, with `skel init` in its folder, and starts the lead anyway.
+Each step is skipped when it is already done. Once the first run has finished, `skel` skips it entirely and goes straight to the lead: a tool or login that goes missing later shows up where it is used. Run in a repository, the first run ends by asking whether to add it. Run outside one while no repository is added, `skel` says how to add one, with `skel` or `skel init` in its folder, and starts the lead anyway.
 
 For now, `skel` only wraps the harness: it sets up the lead and puts you in it, full screen. Later, issues and threads show next to the harness, in a sidebar beside the lead.
 
@@ -127,7 +127,7 @@ For you, and for the lead:
 
 | Command | What it does |
 | --- | --- |
-| `skel [--from <owner/repo>]` | Attaches to the lead, starting the daemon and the lead if needed, and tells it which repository you are in. `--remote` passes `--from` for you. |
+| `skel [--from <owner/repo>]` | Attaches to the lead, starting the daemon and the lead if needed, and tells it which repository you are in. In a repository that isn't added, it first asks whether to add it. `--remote` passes `--from` for you. |
 | `skel --remote <host> [command]` | Runs any skel command on the server, over `ssh -t`. |
 | `skel serve` | Runs the daemon in the foreground, for systemd. One per machine. |
 | `skel init [<path> \| <owner/repo>] [--name <name>]` | Adds a repository and its setup and test commands. `skel repo ls` and `skel repo rm <name>` list and remove. |
@@ -212,7 +212,7 @@ If something seems missing, ask instead of adding it.
 
 Each one is something you use every day from the day it lands, and lands as small pull requests that pass `bun run check`. From milestone 2 on, skel builds skel.
 
-1. **skel on the server.** You `ssh workbox` yourself and run `skel`. The first run, the daemon as a systemd user service, `skel serve`, `skel init`, `skel repo`. The lead runs in bubblewrap inside tmux and sees your repositories. Ctrl-\] detaches, and logging out leaves everything running. This replaces herdr plus Claude.
+1. **skel on the server.** You `ssh workbox` yourself and run `skel`. The first run, the daemon as a systemd user service, `skel serve`, `skel init`, `skel repo`, and `skel` offering to add the repository you run it in. The lead runs in bubblewrap inside tmux and sees your repositories. Ctrl-\] detaches, and logging out leaves everything running. This replaces herdr plus Claude.
 2. **One thread to a reviewed PR.** `skel issue`, `skel start`, `skel ls`, `skel attach`, `skel done`, `skel review`. Builder and reviewer loop, skel pushes and opens the PR, the `skel/review` check, the round limit, needs you when approved.
 3. **Parallel and needs you.** Several threads at once across repositories, the note in the lead's session, `notify`, questions marked needs you, `skel say`, the lead knowing which repository you attached from.
 4. **Follow-through.** Polling for failed checks, PR comments, conflicts and merges. Cleanup on merge or close. Surviving a restart with `--resume`. `skel stop`, `skel resume`.
