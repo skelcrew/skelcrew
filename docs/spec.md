@@ -60,7 +60,7 @@ The repository you attach from is the lead's default, as the folder is for `clau
 **The first run.** The first `skel` on a machine takes two steps before the lead starts:
 
 1. **Connect to GitHub.** If `gh auth status` fails, skel runs `gh auth login` in your terminal. skel uses that login for everything it does on GitHub, outside the sandbox.
-2. **Pick a harness.** skel checks that the harness is installed and logged in, and saves the choice in `~/.config/skel/config.yaml`. In this version Claude Code is the only harness offered, but the question is asked so the choice is visible and stored.
+2. **Pick a harness.** skel checks that the harness is installed, and saves the choice in `~/.config/skel/config.yaml`. For Claude Code it then runs `claude setup-token`, which gives a long-lived login token for agents, and saves the token you paste in `~/.config/skel/`, readable only by you. In this version Claude Code is the only harness offered, but the question is asked so the choice is visible and stored.
 
 Before the first step, skel checks that `tmux`, `bwrap`, `gh` and the harness are installed, and if one is missing, says exactly what to install instead of failing halfway. After the last step, it installs the daemon as a systemd user service and turns on lingering (`loginctl enable-linger`), so the daemon keeps running after you log out and starts again after a reboot.
 
@@ -186,7 +186,7 @@ test: [bun test]
 These are the parts that need care. `docs/learnings.md` explains the traps behind each one.
 
 - **Typing into a session.** Wait until the pane is quiet (compare `tmux capture-pane` a moment apart), load the text with `tmux load-buffer`, paste it with `tmux paste-buffer -p` so it arrives as a bracketed paste, then send Enter on its own a moment later.
-- **The sandbox.** bubblewrap with the agent's folder writable, the rest of the system read-only, and the home folder and credentials hidden. Claude Code shares your login and transcripts in `~/.claude`, sees your settings, hooks, plugins and skills there read-only, and gets a throwaway copy of `~/.claude.json`. Its own permission prompts and sandbox are turned off, since skel's sandbox draws the boundary.
+- **The sandbox.** bubblewrap with the agent's folder writable, the rest of the system read-only, and the home folder and credentials hidden. Each Claude Code session gets its own config folder in `~/.local/share/skel/claude/`, where its transcripts stay for `claude --resume`, and logs in with the token from the first run. Nothing renews the token, so your own login is never touched, and your `~/.claude` stays hidden like the rest of the home folder. Its own permission prompts and sandbox are turned off, since skel's sandbox draws the boundary.
 - **Starting Claude Code.** Remove inherited `CLAUDE_CODE_*` variables. Mark the folder as trusted in the session's copy of its settings, or it waits at a question nobody sees. Pass the first message on the command line.
 - **Agent commands.** Every command an agent can run answers quickly: Claude Code moves a shell command to the background after 2 minutes.
 - **Detaching.** skel's tmux config binds Ctrl-\] to detach with no prefix and hides the status bar, so attaching feels like being inside Claude Code.
