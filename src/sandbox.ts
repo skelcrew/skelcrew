@@ -59,10 +59,11 @@ function sandboxArgs(given: {
   }
   for (const p of programs) args.push(...ro(p));
   // Only the parts skel runs from: its folder can be a checkout, whose .git and .skel hold
-  // other threads' work.
+  // other threads' work. bun runs skel without node_modules by fetching its packages itself,
+  // and bwrap refuses to start when a folder it should mount is missing.
   const skel = resolve(import.meta.dir, "..");
   for (const part of ["bin", "src", "node_modules", "package.json"])
-    args.push(...ro(join(skel, part)));
+    if (existsSync(join(skel, part))) args.push(...ro(join(skel, part)));
   args.push(...mounts);
   // Its folder rather than the socket itself: the daemon makes the socket anew each time it
   // starts, and a mounted file would stay the old one, which nothing answers on. Read-only,
