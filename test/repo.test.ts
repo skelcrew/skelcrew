@@ -303,3 +303,25 @@ test("skel repo add is gone", async () => {
   expect(added.err).toContain("skel init");
   expect(added.err).not.toContain("repo add");
 });
+
+test("refuses a linked worktree, and points to the main clone", async () => {
+  const path = repository("app", "simon/app", "WRITE");
+  const git = ["git", "-C", path, "-c", "user.name=t", "-c", "user.email=t@t"];
+  Bun.spawnSync([...git, "commit", "-q", "--allow-empty", "-m", "start"]);
+  const linked = join(home, "code", "app-linked");
+  Bun.spawnSync([...git, "worktree", "add", "-q", linked]);
+  const added = await skel(["init", linked], "\n\n");
+  expect(added.code).toBe(1);
+  expect(added.err).toContain("main clone");
+  expect((await skel(["repo", "ls"])).out).not.toContain(linked);
+});
+
+test("refuses a package.json that isn't valid, naming it", async () => {
+  const path = repository("app", "simon/app", "WRITE");
+  writeFileSync(join(path, "package-lock.json"), "{}");
+  writeFileSync(join(path, "package.json"), "{ not json");
+  const added = await skel(["init", path], "\n\n");
+  expect(added.code).toBe(1);
+  expect(added.err).toContain("package.json");
+  expect((await skel(["repo", "ls"])).out).not.toContain(path);
+});

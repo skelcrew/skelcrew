@@ -7,6 +7,7 @@ import {
   mkdirSync,
   readFileSync,
   realpathSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -72,9 +73,16 @@ function guessCommands(path: string): { setup: string[]; test: string[] } {
     return { setup: ["bun install"], test: ["bun test"] };
   if (!existsSync(join(path, "package-lock.json"))) return { setup: [], test: [] };
   const packageFile = join(path, "package.json");
-  const found = existsSync(packageFile) ? JSON.parse(readFileSync(packageFile, "utf8")) : {};
-  const scripts = PackageJson.parse(found).scripts ?? {};
-  return { setup: ["npm ci"], test: scripts.test ? ["npm test"] : [] };
+  if (!existsSync(packageFile)) return { setup: ["npm ci"], test: [] };
+  let found: unknown;
+  try {
+    found = JSON.parse(readFileSync(packageFile, "utf8"));
+  } catch (error) {
+    throw new Error(`${packageFile} isn't valid JSON: ${String(error)}`);
+  }
+  const read = PackageJson.safeParse(found);
+  if (!read.success) throw new Error(`${packageFile} isn't valid: ${z.prettifyError(read.error)}`);
+  return { setup: ["npm ci"], test: read.data.scripts?.test ? ["npm test"] : [] };
 }
 
 // Bun's prompt answers null both for Ctrl-D and for a bare Enter, unless it has a default:
@@ -97,6 +105,10 @@ export function initRepo(given: string, name?: string): void {
   if (!existsSync(full)) throw new Error(`there is no folder at ${full}`);
   const path = realpathSync(full);
   if (!existsSync(join(path, ".git"))) throw new Error(`${path} isn't the top of a git repository`);
+  // A linked worktree's .git is a file pointing elsewhere, and the sandbox needs the real
+  // .git folder to give agents their own worktrees.
+  if (!statSync(join(path, ".git")).isDirectory())
+    throw new Error(`${path} is a linked worktree. Run skel init in the main clone instead`);
   const { owner, repo, canPush } = githubRepoAt(path);
   const short = name ?? basename(path);
   // Threads are named like app#12, so a name must survive being typed in that form.
