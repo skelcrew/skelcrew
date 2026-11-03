@@ -404,3 +404,16 @@ test("refuses a submodule, naming it as one", async () => {
   expect(added.code).toBe(1);
   expect(added.err).toContain("submodule");
 });
+
+test("stops before saving anything when skel.yaml's commands use anchors", async () => {
+  const path = repository("app", "simon/app");
+  const before = "setup: &commands [make check]\ntest: *commands\n";
+  writeFileSync(join(path, "skel.yaml"), before);
+  const added = await skel(["init", path], "y\nmake deps\n\n");
+  expect(added.code).toBe(1);
+  expect(added.err).toContain("skel.yaml");
+  expect(added.err).toContain("by hand");
+  expect(skelYaml(path)).toBe(before);
+  expect(existsSync(join(home, ".config", "skel", "trusted"))).toBe(false);
+  expect((await skel(["repo", "ls"])).out).not.toContain(path);
+});

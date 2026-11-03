@@ -147,9 +147,6 @@ export function initRepo(given: string, name?: string): void {
   console.log("Enter keeps the suggestion, - means none, and a typed line is one command.");
   const setup = askCommands("Setup command", saved.setup ?? guess.setup, short);
   const test = askCommands("Test command", saved.test ?? guess.test, short);
-  // Every question is answered before anything is saved, so stopping at one leaves nothing
-  // half added.
-  if (newTrust) trust(trustEntry);
   let changed = false;
   for (const [key, commands, before] of [
     ["setup", setup, saved.setup],
@@ -163,11 +160,25 @@ export function initRepo(given: string, name?: string): void {
     else saved.yaml.delete(key);
     changed = true;
   }
-  if (changed && isMap(saved.yaml.contents) && saved.yaml.contents.items.length === 0) {
+  const empty = isMap(saved.yaml.contents) && saved.yaml.contents.items.length === 0;
+  let text = "";
+  // Replacing a command that carries an anchor leaves its aliases pointing at nothing, and
+  // the yaml library can't write that. Finding out here means nothing is saved yet.
+  try {
+    if (changed && !empty) text = saved.yaml.toString({ flowCollectionPadding: false });
+  } catch (error) {
+    throw new Error(
+      `can't write the commands to ${saved.file} (${String(error)}). Edit its commands by hand, then run skel init again`,
+    );
+  }
+  // Every question is answered and skel.yaml is ready before anything is saved, so stopping
+  // at any point leaves nothing half added.
+  if (newTrust) trust(trustEntry);
+  if (changed && empty) {
     rmSync(saved.file, { force: true });
     console.log(`Removed ${saved.file}, as nothing is left in it. Commit that.`);
   } else if (changed) {
-    writeFileSync(saved.file, saved.yaml.toString({ flowCollectionPadding: false }));
+    writeFileSync(saved.file, text);
     console.log(`Wrote the commands to ${saved.file}. Commit it, so every clone has them.`);
   }
   excludeSkelFolder(path);
