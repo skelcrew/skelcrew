@@ -129,9 +129,11 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
     writeFileSync(join(home, ".config", "gh", "hosts.yml"), "oauth_token: secret\n");
     const done = await asLead(
       [repo],
-      `test -e ${home}/.config/gh/hosts.yml || echo hidden; ls /run; ls /run/systemd; test -S /run/skel.sock && echo socket; echo $SKEL_SANDBOX`,
+      `test -e ${home}/.config/gh/hosts.yml || echo hidden; ls /run; ls /run/systemd 2>/dev/null; test -S /run/skel.sock && echo socket; echo $SKEL_SANDBOX`,
     );
-    expect(done.out).toBe("hidden\nskel.sock\nsystemd\nresolve\nsocket\n1\n");
+    // Only the DNS resolver comes back into /run, on machines that have one there.
+    const resolver = existsSync("/run/systemd/resolve") ? "systemd\nresolve\n" : "";
+    expect(done.out).toBe(`hidden\nskel.sock\n${resolver}socket\n1\n`);
   });
 
   // Every file under a folder with its contents, to show nothing in it changed.
