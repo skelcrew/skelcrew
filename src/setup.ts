@@ -1,5 +1,14 @@
 // The first run: what a plain skel sets up on a new machine, skipping each step already done.
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
@@ -56,17 +65,44 @@ function apparmorAdvice(bwrap: string): string {
   sudo apparmor_parser -r /etc/apparmor.d/skel-bwrap`;
 }
 
-// Logged out, it can print other JSON or none at all, and either way means no login.
-function claudeLoggedIn(): boolean {
-  const status = Bun.spawnSync(["claude", "auth", "status", "--json"], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+// Run as agents will run it: with the token and a config folder of its own, so your own
+// login can't make the answer yes. Claude Code only checks a token is there, not that it
+// works, so this catches a token it can't read, not one that was revoked.
+function tokenLoggedIn(token: string): boolean {
+  const folder = mkdtempSync(join(tmpdir(), "skel-claude-"));
+  const env: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(process.env))
+    if (!key.startsWith("CLAUDE_CODE_") && key !== "ANTHROPIC_API_KEY") env[key] = value;
   try {
+    const status = Bun.spawnSync(["claude", "auth", "status", "--json"], {
+      env: { ...env, CLAUDE_CODE_OAUTH_TOKEN: token, CLAUDE_CONFIG_DIR: folder },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     return ClaudeLogin.parse(JSON.parse(status.stdout.toString())).loggedIn;
   } catch {
     return false;
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
   }
+}
+
+// Agents log in with a token from claude setup-token, which never renews, so they never
+// race your own Claude Code for a refresh.
+function saveClaudeToken(): void {
+  const file = join(configDir(), "claude-token");
+  if (existsSync(file)) return;
+  const setup = Bun.spawnSync(["claude", "setup-token"], {
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  if (!setup.success) throw new Error("claude setup-token didn't finish, so no token is saved");
+  const token = prompt("Paste the token it printed:")?.trim();
+  if (!token) throw new Error("no token was pasted, so none is saved");
+  if (!tokenLoggedIn(token))
+    throw new Error("Claude Code isn't logged in with that token, so it isn't saved");
+  mkdirSync(configDir(), { recursive: true });
+  // Created readable only by you, so the token is never in a file others can read.
+  writeFileSync(file, `${token}\n`, { mode: 0o600, flag: "wx" });
 }
 
 function connectGitHub(): void {
@@ -88,8 +124,6 @@ function pickHarness(): void {
   console.log("Harnesses:\n  1) Claude Code");
   const answer = prompt("Pick a harness [1]:")?.trim();
   if (answer !== "" && answer !== "1") throw new Error("Claude Code is the only harness for now");
-  if (!claudeLoggedIn())
-    throw new Error("Claude Code isn't logged in: run claude to log in, then run skel again");
   config.set("harness", "claude");
   mkdirSync(configDir(), { recursive: true });
   writeFileSync(file, config.toString());
@@ -99,6 +133,7 @@ export function firstRun(): void {
   checkTools();
   connectGitHub();
   pickHarness();
+  saveClaudeToken();
   if (!openDb().query("SELECT 1 FROM repositories LIMIT 1").get())
     console.log("No repository is added yet. Add one by running skel init in its folder.");
   console.log("Setup is done.");
