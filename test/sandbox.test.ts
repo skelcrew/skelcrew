@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   appendFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -109,6 +110,31 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
     expect(done.err).toContain("Read-only file system");
     expect(readFileSync(join(lead, "note"), "utf8")).toBe("hi\n");
     expect(existsSync(join(repo, "new"))).toBe(false);
+  });
+
+  test("starts from a checkout of skel with no node_modules", async () => {
+    // bun runs skel without node_modules by fetching its packages itself, so a fresh clone
+    // works until the sandbox asks for the folder.
+    const copy = join(home, "skel");
+    mkdirSync(copy);
+    for (const part of ["bin", "src", "package.json"])
+      cpSync(join(import.meta.dir, "..", part), join(copy, part), { recursive: true });
+    const repo = repository();
+    saveToken();
+    fakeClaude(["echo started"]);
+    const script = join(home, "start.ts");
+    writeFileSync(
+      script,
+      `import { agentCommand } from ${JSON.stringify(join(copy, "src", "sandbox.ts"))};
+console.log(JSON.stringify(agentCommand({ repositories: [${JSON.stringify(repo)}], name: "lead",
+  socket: ${JSON.stringify(socketPath)}, model: "opus", env: ${JSON.stringify(outside())} })));`,
+    );
+    const made = await run([process.execPath, script]);
+    expect(made.err).toBe("");
+    const { argv, env } = JSON.parse(made.out);
+    const done = await run(argv, env);
+    expect(done.err).toBe("");
+    expect(done.out).toBe("started\n");
   });
 
   test("hides threads' folders", async () => {
