@@ -103,8 +103,16 @@ export function endSession(socket: string, name: string): void {
 
 // Returns when you detach with Ctrl-].
 export async function attach(socket: string, name: string): Promise<void> {
+  const env = cleanEnv();
+  // tmux refuses to attach to a terminal this machine has no description of, such as
+  // Ghostty's xterm-ghostty over ssh. xterm-256color draws Claude Code well enough.
+  if (
+    env.TERM &&
+    !Bun.spawnSync(["infocmp", env.TERM], { stdout: "ignore", stderr: "ignore" }).success
+  )
+    env.TERM = "xterm-256color";
   const code = await Bun.spawn(["tmux", "-L", socket, "attach", "-t", `=${name}`], {
-    env: cleanEnv(),
+    env,
     stdio: ["inherit", "inherit", "inherit"],
   }).exited;
   if (code !== 0) throw new Error(`couldn't attach to ${name}: tmux exited with ${code}`);
