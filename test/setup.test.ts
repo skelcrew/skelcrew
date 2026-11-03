@@ -12,6 +12,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -30,6 +31,7 @@ beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-setup-test-")));
   bin = join(home, "bin");
   mkdirSync(bin);
+  mkdirSync(join(home, "run"), { mode: 0o700 });
   // PATH holds only this folder, so a test can take a tool away.
   symlinkSync(Bun.which("git") ?? "git", join(bin, "git"));
   fake("tmux", "exit 0");
@@ -67,7 +69,7 @@ const unit = () => join(home, ".config", "systemd", "user", "skel.service");
 
 async function skel(typed = "") {
   const run = Bun.spawn([process.execPath, main], {
-    env: { PATH: bin, HOME: home },
+    env: { PATH: bin, HOME: home, XDG_RUNTIME_DIR: join(home, "run") },
     stdin: new Blob([typed]),
     stdout: "pipe",
     stderr: "pipe",
@@ -99,7 +101,9 @@ test("takes every step on the first run, and none on the second", async () => {
   expect(second.out).not.toContain("Claude Code");
   expect(second.out).not.toContain("Setup is done.");
   // Once set up, skel checks no tools and asks GitHub nothing, so it starts fast.
-  expect(calls()).toBe("");
+  expect(calls()).not.toContain("gh ");
+  expect(calls()).not.toContain("bwrap");
+  expect(calls()).not.toContain("claude");
 });
 
 test("installs the daemon as a systemd user service with lingering, once", async () => {
@@ -143,6 +147,30 @@ test("installs no service when systemctl fails, so the next skel tries again", a
   expect(existsSync(unit())).toBe(false);
 });
 
+test("starts the daemon through systemd when it doesn't answer, then attaches to the lead", async () => {
+  const run = await skel("1\nsk-ant-oat01-good\n");
+  expect(run.code).toBe(0);
+  expect(calls()).toContain("systemctl --user start skel\n");
+  expect(calls()).toMatch(/tmux -L skel attach -t =lead\n$/);
+});
+
+test("attaches to the lead without starting the daemon when it answers", async () => {
+  await skel("1\nsk-ant-oat01-good\n");
+  writeFileSync(join(home, "calls"), "");
+  const server = createServer((connection) =>
+    connection.on("data", () => connection.end('{"running":true,"pid":1}\n')),
+  );
+  await new Promise<void>((listening) => server.listen(join(home, "run", "skel.sock"), listening));
+  try {
+    const run = await skel();
+    expect(run.code).toBe(0);
+    expect(calls()).not.toContain("systemctl");
+    expect(calls()).toContain("tmux -L skel attach -t =lead");
+  } finally {
+    server.close();
+  }
+});
+
 test("still says how to add a repository after setup, while none is added", async () => {
   await skel("1\nsk-ant-oat01-good\n");
   const again = await skel();
@@ -161,7 +189,7 @@ test("says nothing about adding a repository once one is added", async () => {
   writeFileSync(join(home, "gh-login"), "");
   const path = repository();
   const added = Bun.spawnSync([process.execPath, main, "repo", "add", path], {
-    env: { PATH: bin, HOME: home },
+    env: { PATH: bin, HOME: home, XDG_RUNTIME_DIR: join(home, "run") },
     stdin: new Blob(["y\n"]),
   });
   expect(added.exitCode).toBe(0);

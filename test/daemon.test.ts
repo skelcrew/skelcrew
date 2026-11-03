@@ -172,7 +172,7 @@ test("brings back a lead whose session is gone with --resume on its stored id", 
 test("leaves a lead that is still running alone", async () => {
   setUp();
   const first = serve();
-  await until(hasLead);
+  await untilAnswers();
   await stop(first);
   expect(existsSync(cliSocket())).toBe(false);
   const second = serve();

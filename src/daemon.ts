@@ -1,4 +1,5 @@
 // The daemon, run by skel serve: keeps the lead running and answers the CLI on its socket.
+// Plain skel makes sure it runs, then attaches to the lead.
 import { rmSync } from "node:fs";
 import { createConnection, createServer } from "node:net";
 import { z } from "zod";
@@ -6,6 +7,7 @@ import { openDb } from "./db.ts";
 import { startLead } from "./lead.ts";
 import { cliSocket } from "./paths.ts";
 import { setupDone } from "./setup.ts";
+import { attach, hasSession } from "./tmux.ts";
 
 const Request = z.object({ command: z.literal("status") });
 const Status = z.object({ running: z.literal(true), pid: z.number() });
@@ -51,6 +53,12 @@ export async function serve(tmux: string): Promise<void> {
   startLead(openDb(), tmux);
   const path = cliSocket();
   rmSync(path, { force: true });
+  // The tmux sessions are left running: agents keep working while the daemon is down.
+  for (const signal of ["SIGTERM", "SIGINT"])
+    process.on(signal, () => {
+      rmSync(path, { force: true });
+      process.exit(0);
+    });
   const server = createServer((connection) => {
     let request = "";
     connection.on("data", (data) => {
@@ -65,10 +73,23 @@ export async function serve(tmux: string): Promise<void> {
     server.listen(path, listening);
   });
   console.log(`Listening on ${path}.`);
-  // The tmux sessions are left running: agents keep working while the daemon is down.
-  for (const signal of ["SIGTERM", "SIGINT"])
-    process.on(signal, () => {
-      rmSync(path, { force: true });
-      process.exit(0);
+}
+
+// Returns when you detach with Ctrl-].
+export async function attachToLead(tmux: string): Promise<void> {
+  if (!(await daemonRunning())) {
+    const start = Bun.spawnSync(["systemctl", "--user", "start", "skel"], {
+      stdio: ["inherit", "inherit", "inherit"],
     });
+    if (!start.success) throw new Error("systemctl couldn't start skel's daemon");
+  }
+  const deadline = Date.now() + 10_000;
+  while (!hasSession(tmux, "lead")) {
+    if (Date.now() > deadline)
+      throw new Error(
+        "the lead didn't start within 10 seconds. journalctl --user -u skel shows why",
+      );
+    await Bun.sleep(100);
+  }
+  await attach(tmux, "lead");
 }
