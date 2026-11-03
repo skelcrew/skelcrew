@@ -39,7 +39,7 @@ beforeEach(() => {
     `case "$1 $2" in
   "auth status") test -f "$HOME/gh-login" ;;
   "auth login") : > "$HOME/gh-login" ;;
-  "repo view") echo '{"name":"app","owner":{"login":"simon"}}' ;;
+  "repo view") echo '{"name":"app","owner":{"login":"simon"},"viewerPermission":"READ","isFork":false}' ;;
 esac`,
   );
   fake("claude", `test "$1" = setup-token && echo 'Your token: sk-ant-oat01-good'`);
@@ -116,9 +116,9 @@ test("says how to add a repository while none is added", async () => {
 test("says nothing about adding a repository once one is added", async () => {
   writeFileSync(join(home, "gh-login"), "");
   const path = repository();
-  const added = Bun.spawnSync([process.execPath, main, "repo", "add", path], {
+  const added = Bun.spawnSync([process.execPath, main, "init", path], {
     env: { PATH: bin, HOME: home },
-    stdin: new Blob(["y\n"]),
+    stdin: new Blob(["y\n\n\n"]),
   });
   expect(added.exitCode).toBe(0);
   const run = await skel("1\nsk-ant-oat01-good\n");
@@ -239,4 +239,12 @@ test("refuses a config.yaml it can't read", async () => {
   const run = await skel("1\nsk-ant-oat01-good\n");
   expect(run.code).toBe(1);
   expect(run.err).toContain("config.yaml");
+});
+
+test("Enter at the harness question picks Claude Code", async () => {
+  writeFileSync(join(home, "gh-login"), "");
+  const run = await skel("\nsk-ant-oat01-good\n");
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(readFileSync(config(), "utf8")).toContain("harness: claude");
 });

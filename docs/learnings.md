@@ -93,3 +93,9 @@ that covers the code you are about to write.
 - **A shell command can't block for long.** After 2 minutes Claude Code moves a running
   command to the background and ends the agent's turn. So `skel done` and `skel review`
   must answer quickly, and leave slow work, such as starting a review, to the daemon.
+
+## Adding a repository
+
+- **Push access says nothing about what is in the folder.** skel judges it from `origin`,
+  and whoever can edit `.git/config` controls `origin`. When the lead runs `skel init`, it
+  must not trust a repository from `origin` alone.
