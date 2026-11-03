@@ -70,6 +70,5 @@ that covers the code you are about to write.
 ## The agent's shell commands
 
 - **A shell command can't block for long.** After 2 minutes Claude Code moves a running
-  command to the background and ends the agent's turn. So `skel done`, `skel ask` and
-  `skel review` must answer quickly, and leave slow work, such as starting a review or
-  waiting for your answer, to the daemon.
+  command to the background and ends the agent's turn. So `skel done` and `skel review`
+  must answer quickly, and leave slow work, such as starting a review, to the daemon.

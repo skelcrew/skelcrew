@@ -32,7 +32,7 @@ Everything in this version serves this two minute demo, recorded for real with a
 2. "Make issues for these two bugs in app and this one in site, and start them." The lead creates three GitHub issues in two repositories and starts three threads.
 3. Close the laptop.
 4. Open it later and run the same command. The lead says what happened: two PRs are reviewed and green, one of them after the builder fixed a failing check on its own. The third thread needs you: its builder has a question.
-5. Answer the question through the lead. Merge the two PRs on GitHub. skel cleans up.
+5. Attach to the third thread and answer its question. Merge the two PRs on GitHub. skel cleans up.
 
 The demo repositories are small real apps with fast CI and real issues, not skel itself.
 
@@ -99,9 +99,9 @@ One thread, from start to merge.
 8. **Approved and CI green: the thread needs you.** Its status is `waiting`, on you.
 9. **You merge on GitHub.** skel ends the builder session, removes the worktree and the local branch, and marks the thread `done`. A PR closed without merging does the same.
 
-At any point the builder can run `skel ask "<question>"`. The thread needs you until you answer, and your answer is typed into its session.
+At any point the builder can ask you a question with Claude Code's own `AskUserQuestion`. skel notices, and the thread needs you until you attach with `skel attach` and answer it.
 
-**Telling you.** When a thread starts needing you, skel types a one line note into the lead's session (when the lead is idle), so you hear it where you already are. You answer through the lead, which runs `skel say`. An optional `notify` command (for example a curl to ntfy) reaches your phone.
+**Telling you.** When a thread starts needing you, skel types a one line note into the lead's session (when the lead is idle), so you hear it where you already are. An optional `notify` command (for example a curl to ntfy) reaches your phone.
 
 ## Events
 
@@ -132,7 +132,7 @@ For you, and for the lead:
 | `skel issue <repo> "<title>" "<body>"` | Creates a GitHub issue and prints its number. |
 | `skel start <repo>#<issue> [--from <branch>]` | Starts a thread on an issue. |
 | `skel attach <repo>#<issue>` | Attaches your terminal to the builder's session. Ctrl-\] detaches. |
-| `skel say <repo>#<issue> "<text>"` | Types a message into the builder's session without attaching. Also answers a question. |
+| `skel say <repo>#<issue> "<text>"` | Types a message into the builder's session without attaching. |
 | `skel stop <repo>#<issue>` | Ends the session and keeps the worktree, branch and PR. |
 | `skel resume <repo>#<issue>` | Starts the builder again with `--resume` on its last session. |
 
@@ -141,7 +141,6 @@ For agents inside a thread:
 | Command | Who | What it does |
 | --- | --- | --- |
 | `skel done "<summary>"` | Builder | Ends a round: skel pushes, opens the PR if needed, starts a review |
-| `skel ask "<question>"` | Builder | Flags needs you and waits for your answer |
 | `skel review approve "<body>"` | Reviewer | Posts an approving review and passes the check |
 | `skel review changes "<body>"` | Reviewer | Posts a review requesting changes and fails the check |
 
@@ -211,7 +210,7 @@ Each one is something you use every day from the day it lands, and lands as smal
 
 1. **skel on the server.** You `ssh workbox` yourself and run `skel`. The first run, the daemon as a systemd user service, `skel serve`, `skel repo`. The lead runs in bubblewrap inside tmux and sees your repositories. Ctrl-\] detaches, and logging out leaves everything running. This replaces herdr plus Claude.
 2. **One thread to a reviewed PR.** `skel issue`, `skel start`, `skel ls`, `skel attach`, `skel done`, `skel review`. Builder and reviewer loop, skel pushes and opens the PR, the `skel/review` check, the round limit, needs you when approved.
-3. **Parallel and needs you.** Several threads at once across repositories, the note in the lead's session, `notify`, `skel ask`, `skel say`.
+3. **Parallel and needs you.** Several threads at once across repositories, the note in the lead's session, `notify`, questions marked needs you, `skel say`.
 4. **Follow-through.** Polling for failed checks, PR comments, conflicts and merges. Cleanup on merge or close. Surviving a restart with `--resume`. `skel stop`, `skel resume`.
 5. **Remote.** `skel --remote <host>` from the laptop. When skel is missing on the server, it offers to copy its binary there with `scp`. The first run also accepts `owner/repo` and clones it into `~/code/` with `gh repo clone`. From an empty server to a running lead with one command.
 6. **The demo.** Pick the demo repositories and their issues, run the script for real, record it.
