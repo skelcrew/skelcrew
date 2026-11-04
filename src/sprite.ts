@@ -82,6 +82,71 @@ export function startTmuxService(socket: string): void {
   throw new Error(`skel's tmux service didn't start: /.sprite/logs/services/${name}.log shows why`);
 }
 
+// How long a hold keeps the Sprite awake after its last renewal, in seconds. A few minutes,
+// so a daemon that dies lets the Sprite sleep soon after, and a renewal that comes late or
+// fails once never lets it sleep mid-work.
+const holdFor = 300;
+
+// Asks the Sprite's control socket to hold the Sprite awake for holdFor seconds, or to let
+// go of the hold. The hold is a task, as the Sprite calls it, named skel. Throws when the
+// socket doesn't answer or answers with an error.
+async function holdTask(socket: string, method: "PUT" | "DELETE"): Promise<void> {
+  const answer = await fetch("http://sprite/v1/tasks/skel", {
+    unix: socket,
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: method === "PUT" ? JSON.stringify({ expire: holdFor }) : undefined,
+    signal: AbortSignal.timeout(5_000),
+  }).catch(() => {
+    throw new Error("the Sprite's control socket didn't answer");
+  });
+  // A hold that expired meanwhile is gone already, which is what letting go wants.
+  if (!answer.ok && !(method === "DELETE" && answer.status === 404))
+    throw new Error(
+      `the Sprite's control socket answered ${answer.status}: ${await answer.text()}`,
+    );
+}
+
+// Keeps the Sprite awake while `work` says there is work, and lets it sleep once there is
+// none. A Sprite sleeps about 30 seconds after the last activity, and agents working in
+// detached tmux sessions don't count, so without a hold a builder stops as soon as you
+// detach. It checks every 10 seconds, so new work is held before the Sprite sleeps, and
+// renews the hold once a minute. A daemon that dies stops renewing, so the hold expires a
+// few minutes later. Returns a function that stops the checks.
+export function keepAwake(
+  work: () => boolean,
+  { socket = controlSocket, every = 10_000, renew = 60_000 } = {},
+): () => void {
+  // When the hold was last renewed, or null once let go. It starts unknown, so a hold an
+  // earlier daemon left is let go when there is no work.
+  let held: number | "unknown" | null = "unknown";
+  let checking = false;
+  const check = async () => {
+    if (checking) return;
+    checking = true;
+    try {
+      if (work()) {
+        if (typeof held !== "number" || Date.now() - held >= renew) {
+          await holdTask(socket, "PUT");
+          held = Date.now();
+        }
+      } else if (held !== null) {
+        await holdTask(socket, "DELETE");
+        held = null;
+      }
+    } catch (error) {
+      console.log(
+        `couldn't hold the Sprite awake or let it sleep: ${error instanceof Error ? error.message : error}`,
+      );
+    } finally {
+      checking = false;
+    }
+  };
+  check();
+  const timer = setInterval(check, every);
+  return () => clearInterval(timer);
+}
+
 const Listed = z.object({ sprites: z.array(z.object({ name: z.string() })) });
 
 // Returns the names of your Sprites. Before that, checks that sprite is installed and logged
