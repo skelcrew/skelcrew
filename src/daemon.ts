@@ -1,6 +1,6 @@
 // The daemon, run by skel serve: keeps the lead and the threads' builders running, and
 // answers the CLI and the agents on their sockets. Plain skel makes sure it runs, then
-// attaches to the lead; skel issue and skel start ask it.
+// attaches to the lead; skel task create and skel start ask it.
 import { dlopen, FFIType } from "bun:ffi";
 import { mkdirSync, openSync, rmSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
@@ -32,7 +32,7 @@ const Request = z.discriminatedUnion("command", [
   z.object({ command: z.literal("status") }),
   z.object({ command: z.literal("lead") }),
   z.object({
-    command: z.literal("issue"),
+    command: z.literal("task create"),
     repo: z.string(),
     title: z.string().min(1),
     body: z.string(),
@@ -40,7 +40,7 @@ const Request = z.discriminatedUnion("command", [
   z.object({
     command: z.literal("start"),
     repo: z.string(),
-    issue: z.number().int().positive(),
+    task: z.number().int().positive(),
     from: Branch.optional(),
   }),
 ]);
@@ -52,8 +52,8 @@ const LeadReply = z.union([z.object({ lead: z.literal(true) }), z.object({ error
 // in your own terminal.
 type Caller = "you" | "lead" | Thread;
 const allowed = {
-  you: ["status", "lead", "issue", "start"],
-  lead: ["status", "issue", "start"],
+  you: ["status", "lead", "task create", "start"],
+  lead: ["status", "task create", "start"],
   builder: ["status"],
 };
 
@@ -169,9 +169,10 @@ export async function serve(tmux: string): Promise<void> {
       refreshClones(db).catch((error) => console.log(String(error)));
       return { lead: true };
     }
-    if (request.command === "issue") {
-      const { owner, repo } = findRepository(db, request.repo);
-      return { number: await createIssue(`${owner}/${repo}`, request.title, request.body) };
+    if (request.command === "task create") {
+      const { owner, repo, name } = findRepository(db, request.repo);
+      const number = await createIssue(`${owner}/${repo}`, request.title, request.body);
+      return { task: `${name}-${number}` };
     }
     const thread = await startThread(db, request);
     // Not waited on: an agent's command must answer quickly, and setup can take minutes.
@@ -225,7 +226,7 @@ export async function serve(tmux: string): Promise<void> {
   }
 }
 
-// Asks the daemon on behalf of skel issue and skel start, and returns its answer. Throws
+// Asks the daemon on behalf of skel task create and skel start, and returns its answer. Throws
 // with the daemon's error, or when nothing answers.
 async function request(asked: Request): Promise<unknown> {
   const reply = await ask(asked, 60_000);
@@ -244,17 +245,18 @@ const understood = <T>(schema: z.ZodType<T>, reply: unknown): T => {
   return read.data;
 };
 
-// Has the daemon create a GitHub issue, for skel issue, and returns its number. The daemon
-// makes the call, since agents never hold a GitHub login.
-export async function fileIssue(repo: string, title: string, body: string): Promise<number> {
-  const reply = await request({ command: "issue", repo, title, body });
-  return understood(z.object({ number: z.number() }), reply).number;
+// Has the daemon create a task, as a GitHub issue, for skel task create, and returns the
+// task's name, such as app-13. The daemon makes the call, since agents never hold a GitHub
+// login.
+export async function createTask(repo: string, title: string, body: string): Promise<string> {
+  const reply = await request({ command: "task create", repo, title, body });
+  return understood(z.object({ task: z.string() }), reply).task;
 }
 
-// Has the daemon start a thread on an issue, for skel start, and returns the thread's name.
+// Has the daemon start a thread on a task, for skel start, and returns the thread's name.
 // The daemon answers once the thread is recorded; its setup and builder come after.
-export async function startOn(repo: string, issue: number, from?: string): Promise<string> {
-  const reply = await request({ command: "start", repo, issue, ...(from ? { from } : {}) });
+export async function startOn(repo: string, task: number, from?: string): Promise<string> {
+  const reply = await request({ command: "start", repo, task, ...(from ? { from } : {}) });
   return understood(z.object({ thread: z.string() }), reply).thread;
 }
 

@@ -1,4 +1,4 @@
-// skel issue and skel start, run as you or the lead would run them, against a running daemon,
+// skel task create and skel start, run as you or the lead would run them, against a running daemon,
 // a fake gh, a fake Claude Code and a folder of bare repositories standing in for GitHub.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -198,13 +198,13 @@ const hasSession = (name: string) =>
 
 const clone = () => join(data(), "threads", "app-12");
 
-test("skel issue creates the issue on GitHub and prints its number", async () => {
+test("skel task create creates a GitHub issue and prints the task's name", async () => {
   addApp();
   serve();
   await untilAnswers();
-  const made = await skel("issue", "app", "Add import", "From CSV");
+  const made = await skel("task", "create", "app", "Add import", "From CSV");
   expect(made.err).toBe("");
-  expect(made.out).toBe("13\n");
+  expect(made.out).toBe("app-13\n");
   expect(JSON.parse(read(join(home, "issues", "sent")))).toEqual({
     title: "Add import",
     body: "From CSV",
@@ -223,7 +223,7 @@ test("more data on a connection doesn't run its request again", async () => {
   await new Promise<void>((done) => {
     const connection = createConnection(join(home, "run", "skel.sock"));
     connection.on("connect", () => {
-      connection.write('{"command":"issue","repo":"app","title":"t","body":"b"}\n');
+      connection.write('{"command":"task create","repo":"app","title":"t","body":"b"}\n');
       setTimeout(() => connection.write("more\n"), 200);
     });
     connection.on("data", () => {});
@@ -232,7 +232,7 @@ test("more data on a connection doesn't run its request again", async () => {
   expect(read(join(home, "calls")).match(/--method POST/g)).toHaveLength(1);
 });
 
-test("skel start refuses a repository skel doesn't have, and an issue GitHub doesn't", async () => {
+test("skel start refuses a repository skel doesn't have, and a task GitHub doesn't have", async () => {
   addApp();
   serve();
   await untilAnswers();
@@ -245,8 +245,8 @@ test("skel start refuses a repository skel doesn't have, and an issue GitHub doe
   expect(existsSync(join(data(), "threads", "app-99"))).toBe(false);
 });
 
-test("skel issue and skel start say when the daemon isn't running", async () => {
-  const made = await skel("issue", "app", "Add import", "From CSV");
+test("skel task create and skel start say when the daemon isn't running", async () => {
+  const made = await skel("task", "create", "app", "Add import", "From CSV");
   expect(made.code).not.toBe(0);
   expect(made.err).toContain("run skel");
 });
@@ -280,7 +280,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a builder", () => {
     expect(env).toContain("SKEL_SANDBOX=1\n");
     expect(hasSession("app-12")).toBe(true);
     const row = thread();
-    expect(row).toMatchObject({ owner: "simon", repo: "app", issue: 12, status: "working" });
+    expect(row).toMatchObject({ owner: "simon", repo: "app", task: 12, status: "working" });
     expect(String(row.session)).toMatch(/^[0-9a-f-]{36}$/);
     expect(args).toContain(`--session-id\n${row.session}\n`);
     const log = read(join(data(), "threads", "app-12.log"))
@@ -319,7 +319,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     const ask = (request: string) => `bun ${join(home, "bin", "ask.js")} '${request}'`;
     fakeClaude(
       "",
-      `{ ${ask('{"command":"status"}')}; ${ask('{"command":"issue","repo":"app","title":"t","body":"b"}')}; ${ask('{"command":"lead"}')}; } > "$CLAUDE_CONFIG_DIR/replies.new"; mv "$CLAUDE_CONFIG_DIR/replies.new" "$CLAUDE_CONFIG_DIR/replies"`,
+      `{ ${ask('{"command":"status"}')}; ${ask('{"command":"task create","repo":"app","title":"t","body":"b"}')}; ${ask('{"command":"lead"}')}; } > "$CLAUDE_CONFIG_DIR/replies.new"; mv "$CLAUDE_CONFIG_DIR/replies.new" "$CLAUDE_CONFIG_DIR/replies"`,
     );
     serve();
     await untilCloned();
@@ -336,7 +336,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(existsSync(join(home, "issues", "sent"))).toBe(false);
   }, 20_000);
 
-  test("the lead runs skel issue and skel start from its sandbox, but can't trust", async () => {
+  test("the lead runs skel task create and skel start from its sandbox, but can't trust", async () => {
     addApp();
     const asker = `const c = require("node:net").createConnection(process.env.SKEL_SOCKET);
 c.on("connect", () => c.write('{"command":"lead"}\\n'));
@@ -344,14 +344,14 @@ c.on("data", (d) => process.stdout.write(d));`;
     writeFileSync(join(home, "bin", "ask.js"), asker);
     fakeClaude(
       `while ! test -e ${data()}/repos/simon/app/README; do sleep 0.1; done
-{ skel issue app "Add import" "From CSV"; skel start app-12; skel trust simon/other; bun ${join(home, "bin", "ask.js")}; } > out.new 2>&1; mv out.new out`,
+{ skel task create app "Add import" "From CSV"; skel start app-12; skel trust simon/other; bun ${join(home, "bin", "ask.js")}; } > out.new 2>&1; mv out.new out`,
       "",
     );
     serve();
     const out = join(data(), "lead", "out");
     await until(() => read(out) !== "");
     expect(read(out)).toBe(
-      `13\nStarted app-12.\nskel: only you can trust a repository, from your own terminal\n{"error":"skel's daemon doesn't know that request"}\n`,
+      `app-13\nStarted app-12.\nskel: only you can trust a repository, from your own terminal\n{"error":"skel's daemon doesn't know that request"}\n`,
     );
     await until(() => read(join(config("app-12"), "args")) !== "");
   }, 20_000);
@@ -373,7 +373,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(thread().status).toBe("working");
   }, 20_000);
 
-  test("refuses a second thread on an issue that has one", async () => {
+  test("refuses a second thread on a task that has one", async () => {
     addApp();
     serve();
     await untilCloned();
@@ -413,7 +413,7 @@ nameRepositories(db);`;
     );
   }, 30_000);
 
-  test("a builder that never saved a conversation starts again from the issue", async () => {
+  test("a builder that never saved a conversation starts again from the task", async () => {
     addApp();
     const first = serve();
     await untilCloned();

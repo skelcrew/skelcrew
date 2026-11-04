@@ -51,13 +51,13 @@ export function openDb(): Database {
   db.run(`CREATE TABLE IF NOT EXISTS threads (
     owner TEXT NOT NULL,
     repo TEXT NOT NULL,
-    issue INTEGER NOT NULL,
+    task INTEGER NOT NULL,
     folder TEXT NOT NULL UNIQUE,
     branch TEXT NOT NULL,
     base TEXT,
     status TEXT NOT NULL,
     session TEXT,
-    PRIMARY KEY (owner, repo, issue)
+    PRIMARY KEY (owner, repo, task)
   )`);
   return db;
 }

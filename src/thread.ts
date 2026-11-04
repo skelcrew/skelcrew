@@ -1,4 +1,4 @@
-// Threads: the work on one issue, in a clone and branch of its own, with a builder working in
+// Threads: the work on one task, in a clone and branch of its own, with a builder working in
 // it. Starting one, setting up its clone, starting or bringing back its builder.
 import type { Database } from "bun:sqlite";
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync } from "node:fs";
@@ -14,7 +14,7 @@ import { endSession, failedScreen, hasSession, startServer, startSession } from 
 export const Thread = z.object({
   owner: z.string(),
   repo: z.string(),
-  issue: z.number(),
+  task: z.number(),
   folder: z.string(),
   branch: z.string(),
   base: z.string().nullable(),
@@ -62,7 +62,7 @@ export function threadName(db: Database, thread: Thread): string {
     .query("SELECT name FROM repositories WHERE owner = ? AND repo = ?")
     .get(thread.owner, thread.repo);
   const name = z.object({ name: z.string() }).nullable().parse(row)?.name ?? github(thread);
-  return `${name}-${thread.issue}`;
+  return `${name}-${thread.task}`;
 }
 
 // Returns the threads that are working or waiting, whose builders the daemon brings back
@@ -74,17 +74,17 @@ export function liveThreads(db: Database): Thread[] {
     .map((row) => Thread.parse(row));
 }
 
-// Records a new thread on an issue, with its folder and branch, and returns it. Refuses an
-// issue that has a thread already, unless that one failed: then it starts over in the same
+// Records a new thread on a task, with its folder and branch, and returns it. Refuses a
+// task that has a thread already, unless that one failed: then it starts over in the same
 // folder. Only records it, since the lead waits on the answer. Setting up its clone and
 // starting its builder come after, and can take minutes.
 export async function startThread(
   db: Database,
-  given: { repo: string; issue: number; from?: string | undefined },
+  given: { repo: string; task: number; from?: string | undefined },
 ): Promise<Thread> {
   const { owner, repo, name } = findRepository(db, given.repo);
-  const { issue } = given;
-  const { title } = await readIssue(`${owner}/${repo}`, issue);
+  const { task } = given;
+  const { title } = await readIssue(`${owner}/${repo}`, task);
   const slug = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -100,29 +100,29 @@ export async function startThread(
     return free;
   };
   return db.transaction(() => {
-    const where = "WHERE owner = ? AND repo = ? AND issue = ?";
+    const where = "WHERE owner = ? AND repo = ? AND task = ?";
     const before = Thread.nullable().parse(
-      db.query(`SELECT * FROM threads ${where}`).get(owner, repo, issue),
+      db.query(`SELECT * FROM threads ${where}`).get(owner, repo, task),
     );
     if (before && before.status !== "failed")
-      throw new Error(`${name}-${issue} has a thread already`);
+      throw new Error(`${name}-${task} has a thread already`);
     const thread: Thread = {
       owner,
       repo,
-      issue,
+      task,
       // A thread that failed starts over in its folder, named when it first started. tmux
       // changes . and : in a session's name, and / would make a folder.
-      folder: before?.folder ?? freeFolder(`${name}-${issue}`.replace(/[^\w-]/g, "-")),
-      branch: slug ? `skel/${issue}-${slug}` : `skel/${issue}`,
+      folder: before?.folder ?? freeFolder(`${name}-${task}`.replace(/[^\w-]/g, "-")),
+      branch: slug ? `skel/${task}-${slug}` : `skel/${task}`,
       base: given.from ?? null,
       status: "working",
       session: null,
     };
-    db.run(`DELETE FROM threads ${where}`, [owner, repo, issue]);
+    db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run(
-      `INSERT INTO threads (owner, repo, issue, folder, branch, base, status, session)
+      `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [owner, repo, issue, thread.folder, thread.branch, thread.base, thread.status, null],
+      [owner, repo, task, thread.folder, thread.branch, thread.base, thread.status, null],
     );
     log(thread);
     return thread;
@@ -212,7 +212,7 @@ function builderModel(): string {
 }
 
 // Starts the thread's builder in tmux, in the sandbox in its clone: with --resume when it
-// saved a conversation, or else afresh with the issue as its first message. Throws when it
+// saved a conversation, or else afresh with the task's title and body as its first message. Throws when it
 // exits as soon as it starts. skel picks the session id rather than Claude Code, so it is
 // stored before the builder starts and the builder can be brought back with --resume after
 // its session is gone.
@@ -223,7 +223,7 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
   const session = resume ?? crypto.randomUUID();
   let start: { resume: string } | { sessionId: string; prompt: string } = { resume: session };
   if (!resume) {
-    const { title, body } = await readIssue(github(thread), thread.issue);
+    const { title, body } = await readIssue(github(thread), thread.task);
     start = { sessionId: session, prompt: body ? `${title}\n\n${body}` : title };
   }
   record(db, thread.folder, { session });
