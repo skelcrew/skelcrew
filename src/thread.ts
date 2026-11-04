@@ -8,6 +8,7 @@ import { z } from "zod";
 import { openDb } from "./db.ts";
 import { fetchBranch, readIssue } from "./github.ts";
 import { cloneDir, configDir, threadSocket, threadsDir } from "./paths.ts";
+import instructions from "./prompts/builder.md" with { type: "text" };
 import { findRepository, refreshClones } from "./repo.ts";
 import { agentCommand, hasTranscript, refuseCredentials, setupCommand } from "./sandbox.ts";
 import { attach, endSession, failedScreen, hasSession, startServer, startSession } from "./tmux.ts";
@@ -21,15 +22,24 @@ export const Thread = z.object({
   base: z.string().nullable(),
   status: z.enum(["working", "waiting", "failed", "done"]),
   session: z.string().nullable(),
+  // Rounds whose review asked for changes, counted against max_rounds.
+  rounds: z.number(),
+  pr: z.number().nullable(),
   needs_you: z.coerce.boolean(),
+  // The summary of a submit not yet pushed and reviewed.
+  submitting: z.string().nullable(),
+  // The commit whose skel/review check is pending, while its review waits or runs.
+  reviewing: z.string().nullable(),
+  // A posted review's changes, until they are typed into the builder.
+  telling: z.string().nullable(),
 });
 export type Thread = z.infer<typeof Thread>;
 
 // Returns the thread's repository as owner/name, as GitHub calls want it.
-const github = (thread: Thread) => `${thread.owner}/${thread.repo}`;
+export const github = (thread: Thread) => `${thread.owner}/${thread.repo}`;
 // Returns the thread's clone folder. It comes from the folder name chosen at start, so it
 // stays put when the repository's name changes.
-const cloneOf = (thread: Thread) => join(threadsDir(), thread.folder);
+export const cloneOf = (thread: Thread) => join(threadsDir(), thread.folder);
 
 // Appends the whole thread as it now is, with the reason when there is one, as a line to
 // its log. Every change goes there too, so the thread's history can be read and replayed.
@@ -39,19 +49,32 @@ function log(thread: Thread, why?: string): void {
   appendFileSync(join(threadsDir(), `${thread.folder}.log`), `${JSON.stringify(line)}\n`);
 }
 
-// Saves a change to the thread's status or session, logs the thread as it now is, and
-// returns it. `why` goes in the log, so a failure says what went wrong.
-function record(
+// Returns the thread in the given folder as it is now in the database.
+export const readThread = (db: Database, folder: string) =>
+  Thread.parse(db.query("SELECT * FROM threads WHERE folder = ?").get(folder));
+
+// Saves a change to the thread, logs the thread as it now is, and returns it. `why` goes in
+// the log, so a failure says what went wrong.
+export function record(
   db: Database,
   folder: string,
-  change: { status?: Thread["status"]; session?: string },
+  change: Partial<
+    Pick<
+      Thread,
+      "status" | "session" | "rounds" | "pr" | "needs_you" | "submitting" | "reviewing" | "telling"
+    >
+  >,
   why?: string,
 ): Thread {
-  if (change.status)
-    db.run("UPDATE threads SET status = ? WHERE folder = ?", [change.status, folder]);
-  if (change.session)
-    db.run("UPDATE threads SET session = ? WHERE folder = ?", [change.session, folder]);
-  const thread = Thread.parse(db.query("SELECT * FROM threads WHERE folder = ?").get(folder));
+  // The column names come from the keys of Thread above, never from outside. One statement,
+  // so a change is saved whole or not at all.
+  const set = Object.entries(change).filter(([, value]) => value !== undefined);
+  if (set.length > 0)
+    db.run(
+      `UPDATE threads SET ${set.map(([column]) => `${column} = ?`).join(", ")} WHERE folder = ?`,
+      [...set.map(([, value]) => value), folder],
+    );
+  const thread = readThread(db, folder);
   log(thread, why);
   return thread;
 }
@@ -151,7 +174,12 @@ export async function startThread(
       base: given.from ?? null,
       status: "working",
       session: null,
+      rounds: 0,
+      pr: null,
       needs_you: false,
+      submitting: null,
+      reviewing: null,
+      telling: null,
     };
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run(
@@ -196,6 +224,18 @@ function setupCommands(clone: string): string[] {
   return read.data?.setup ?? [];
 }
 
+// Returns the branch the thread's PR goes into: the one it started from with --from, or else
+// the default branch, which skel's clone is on.
+export function baseOf(thread: Thread): string {
+  if (thread.base) return thread.base;
+  const head = Bun.spawnSync(
+    ["git", "-C", cloneDir(thread.owner, thread.repo), "symbolic-ref", "--short", "HEAD"],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  if (!head.success) throw new Error(`git symbolic-ref failed: ${head.stderr.toString().trim()}`);
+  return head.stdout.toString().trim();
+}
+
 // Makes the thread's clone afresh: cloned from skel's clone, on the thread's branch from the
 // default branch or the one given with --from, with your name for commits, and the setup
 // commands run once in the sandbox. The daemon runs git in the thread's clone only here,
@@ -218,6 +258,17 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   ]);
   await fetchBranch(clone, github(thread), thread.base);
   await run(["git", "-C", clone, "checkout", "--quiet", "-b", thread.branch, "FETCH_HEAD"]);
+  // The reviewer reads the diff against origin/<base>, which must be where the branch
+  // started. Cloned from skel's clone, the thread's clone has only the default branch there,
+  // and as skel's clone last saw it, which can be older.
+  await run([
+    "git",
+    "-C",
+    clone,
+    "update-ref",
+    `refs/remotes/origin/${baseOf(thread)}`,
+    "FETCH_HEAD",
+  ]);
   // Your git config is hidden from the builder, and its commits are authored by you. Only
   // your global config, since the folder the daemon started in makes no difference.
   for (const key of ["user.name", "user.email"]) {
@@ -234,16 +285,28 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
 
 const Config = z.looseObject({
   builder: z.looseObject({ model: z.string().min(1).optional() }).optional(),
+  reviewer: z.looseObject({ harness: z.enum(["codex", "claude"]).optional() }).optional(),
+  max_rounds: z.number().int().positive().optional(),
 });
 
-// Returns the builder's model from your config's builder.model, or opus when it names none.
-// Throws when the config isn't valid, rather than start a builder on a model you didn't pick.
-function builderModel(): string {
+// Returns what your config sets for threads: the builder's model (opus when it names none),
+// the reviewer's harness (none when it names none, so the reviewer picks), and the round
+// limit (3 when it names none). Throws when the config isn't valid, rather than run a thread
+// on settings you didn't pick.
+export function threadConfig(): {
+  model: string;
+  reviewer: "codex" | "claude" | undefined;
+  maxRounds: number;
+} {
   const file = join(configDir(), "config.yaml");
-  if (!existsSync(file)) return "opus";
-  const read = Config.safeParse(parse(readFileSync(file, "utf8")) ?? {});
+  const read = Config.safeParse(existsSync(file) ? (parse(readFileSync(file, "utf8")) ?? {}) : {});
   if (!read.success) throw new Error(`${file} isn't valid: ${z.prettifyError(read.error)}`);
-  return read.data.builder?.model ?? "opus";
+  const { builder, reviewer, max_rounds } = read.data;
+  return {
+    model: builder?.model ?? "opus",
+    reviewer: reviewer?.harness,
+    maxRounds: max_rounds ?? 3,
+  };
 }
 
 // Starts the thread's builder in tmux, in the sandbox in its clone: with --resume when it
@@ -265,8 +328,13 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
   const { argv, env } = agentCommand({
     name: thread.folder,
     socket: threadSocket(thread.folder),
-    model: builderModel(),
+    model: threadConfig().model,
     thread: clone,
+    // In the system prompt rather than the first message, so the first message stays the
+    // task in its own words, and the builder still has it after a long conversation is
+    // compacted. It asks the builder to ask you only when it must: its question waits on a
+    // screen nobody watches.
+    system: instructions,
     ...start,
   });
   startServer(tmux);

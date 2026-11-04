@@ -11,7 +11,7 @@ bind -n C-] detach-client
 set -g remain-on-exit failed
 `;
 
-type Waits = { moment?: number; timeout?: number };
+type Waits = { moment?: number; timeout?: number; signal?: AbortSignal };
 
 // Returns the inherited environment without TMUX, which otherwise prevents attaching from
 // inside tmux.
@@ -182,14 +182,16 @@ let buffers = 0;
 
 // Waits for Claude Code to be ready, then pastes and submits the message without losing
 // long text. Throws if it stays busy too long, and removes the temporary paste buffer after
-// the attempt.
+// the attempt. Types nothing once the signal is aborted, however long it waited.
 async function typeNow(socket: string, name: string, text: string, waits: Waits) {
   const moment = waits.moment ?? 500;
   const timeout = waits.timeout ?? 60_000;
   const deadline = Date.now() + timeout;
   // Text typed while Claude Code is starting or busy can be lost.
   for (;;) {
+    if (waits.signal?.aborted) return;
     const why = await notIdle(socket, name, moment);
+    if (waits.signal?.aborted) return;
     if (why === "") break;
     if (Date.now() > deadline)
       throw new Error(`${name} wasn't idle for ${timeout / 1000}s (${why}), so nothing was typed`);

@@ -12,6 +12,7 @@ import { startLead, tellAttachedFrom } from "./lead.ts";
 import { listTasks, listThreads, TaskRow, ThreadRow } from "./list.ts";
 import { cliSocket, daemonSocket, leadSocket, threadSocket } from "./paths.ts";
 import { findRepository, refreshClones } from "./repo.ts";
+import { resumeRound, submitRound } from "./round.ts";
 import { setupDone } from "./setup.ts";
 import {
   bringBack,
@@ -46,6 +47,7 @@ const Request = z.discriminatedUnion("command", [
     task: z.number().int().positive(),
     from: Branch.optional(),
   }),
+  z.object({ command: z.literal("submit"), summary: z.string().min(1) }),
 ]);
 type Request = z.infer<typeof Request>;
 const LeadReply = z.union([z.object({ lead: z.literal(true) }), z.object({ error: z.string() })]);
@@ -57,7 +59,7 @@ type Caller = "you" | "lead" | Thread;
 const allowed = {
   you: ["status", "lead", "ps", "task ls", "task create", "start"],
   lead: ["status", "ps", "task ls", "task create", "start"],
-  builder: ["status"],
+  builder: ["status", "submit"],
 };
 
 // Returns a decoded socket message, or undefined so invalid JSON can be rejected without
@@ -180,6 +182,11 @@ export async function serve(tmux: string): Promise<void> {
       const number = await createIssue(`${owner}/${repo}`, request.title, request.body);
       return { task: `${name}-${number}` };
     }
+    if (request.command === "submit" && typeof caller === "object") {
+      submitRound(db, tmux, caller.folder, request.summary);
+      return { submitted: threadName(db, caller) };
+    }
+    if (request.command !== "start") throw new Error("only a builder can submit, from its thread");
     const thread = await startThread(db, request);
     // Not waited on: an agent's command must answer quickly, and setup can take minutes.
     begin(thread);
@@ -228,7 +235,11 @@ export async function serve(tmux: string): Promise<void> {
   await lead().catch((error) => console.log(message(error)));
   for (const thread of before) {
     await listenFor(thread);
-    bringBack(db, tmux, thread).catch((error) => failThread(db, thread, error));
+    // After the builder is back, since the round may type into its session.
+    bringBack(db, tmux, thread).then(
+      () => resumeRound(db, tmux, thread.folder),
+      (error) => failThread(db, thread, error),
+    );
   }
 }
 
@@ -278,6 +289,14 @@ export async function createTask(repo: string, title: string, body: string): Pro
 export async function startOn(repo: string, task: number, from?: string): Promise<string> {
   const reply = await request({ command: "start", repo, task, ...(from ? { from } : {}) });
   return understood(z.object({ thread: z.string() }), reply).thread;
+}
+
+// Has the daemon start a round for skel submit, run by a builder in its sandbox, and returns
+// the thread's name. The builder's own socket tells the daemon which thread it is. The
+// daemon answers at once, and pushes and starts the review after.
+export async function submitForReview(summary: string): Promise<string> {
+  const reply = await request({ command: "submit", summary });
+  return understood(z.object({ submitted: z.string() }), reply).submitted;
 }
 
 // Ensures the daemon and lead are running, then attaches your terminal until you detach
