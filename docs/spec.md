@@ -192,6 +192,8 @@ test: [bun test]
 
 **One seam for GitHub.** All GitHub calls live in one module, so Linear, local issues or another forge can be added later without touching the flow.
 
+**One seam for Sprites.** Creating a Sprite, running commands on it and keeping it awake live in one module, so other machines that skel creates or that sleep can be added later without touching the flow.
+
 ## Building blocks
 
 These are the parts that need care. `docs/learnings.md` explains the traps behind each one.
