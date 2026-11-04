@@ -65,10 +65,14 @@ export function record(
   >,
   why?: string,
 ): Thread {
-  // The column names come from the keys of Thread above, never from outside.
-  for (const [column, value] of Object.entries(change))
-    if (value !== undefined)
-      db.run(`UPDATE threads SET ${column} = ? WHERE folder = ?`, [value, folder]);
+  // The column names come from the keys of Thread above, never from outside. One statement,
+  // so a change is saved whole or not at all.
+  const set = Object.entries(change).filter(([, value]) => value !== undefined);
+  if (set.length > 0)
+    db.run(
+      `UPDATE threads SET ${set.map(([column]) => `${column} = ?`).join(", ")} WHERE folder = ?`,
+      [...set.map(([, value]) => value), folder],
+    );
   const thread = readThread(db, folder);
   log(thread, why);
   return thread;

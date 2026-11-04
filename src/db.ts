@@ -28,6 +28,9 @@ const createRepositories = `CREATE TABLE IF NOT EXISTS repositories (
 export function openDb(): Database {
   mkdirSync(dataDir(), { recursive: true });
   const db = new Database(join(dataDir(), "skel.db"), { strict: true });
+  // The daemon and skel run in your terminal can use the file at once. Without a wait, a
+  // write that meets another one fails with "database is locked" at once.
+  db.run("PRAGMA busy_timeout = 5000");
   // Repositories once had a path to your checkout, and a name you chose. They keep their
   // GitHub names, and the lead clones them when it next starts.
   if (db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = 'path'").get())

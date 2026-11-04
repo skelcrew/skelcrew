@@ -45,3 +45,28 @@ console.log(JSON.stringify(liveThreads(openDb())));`;
     }),
   ]);
 });
+
+// The daemon writes while skel run in your terminal, or a test, reads or writes too.
+test("a write waits for another process's write instead of failing", async () => {
+  const db = JSON.stringify(join(import.meta.dir, "..", "src", "db.ts"));
+  const env = { ...process.env, HOME: home };
+  const run = (code: string) =>
+    Bun.spawn([process.execPath, "-e", code], { env, stdout: "pipe", stderr: "pipe" });
+  await run(`import { openDb } from ${db}; openDb();`).exited;
+  const file = JSON.stringify(join(home, ".local", "share", "skel", "skel.db"));
+  const held = JSON.stringify(join(home, "held"));
+  const holder = run(`import { Database } from "bun:sqlite";
+const db = new Database(${file});
+db.run("BEGIN IMMEDIATE");
+db.run("INSERT INTO repositories (owner, repo, name) VALUES ('simon', 'app', 'app')");
+await Bun.write(${held}, "");
+await Bun.sleep(1000);
+db.run("COMMIT");`);
+  while (!(await Bun.file(join(home, "held")).exists())) await Bun.sleep(20);
+  const writer = run(`import { openDb } from ${db};
+openDb().run("INSERT INTO repositories (owner, repo, name) VALUES ('simon', 'site', 'site')");`);
+  const [err, code] = await Promise.all([new Response(writer.stderr).text(), writer.exited]);
+  await holder.exited;
+  expect(err).toBe("");
+  expect(code).toBe(0);
+});
