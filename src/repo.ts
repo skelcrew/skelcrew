@@ -139,20 +139,29 @@ export async function bringIn(db: Database, github: GitHubRepo, ask: boolean): P
 }
 
 // Brings in the repository you attached from, reporting failures without blocking the lead.
-// Plain skel must stay fast, so a repository skel has costs no call to GitHub: the daemon
-// keeps its clone current. A folder that isn't on GitHub, such as your dotfiles, gets no
-// complaint.
-export async function bringInFrom(from: string | undefined): Promise<void> {
+// Returns its owner/repo once skel has it, so the lead takes it as the default; one waiting
+// for trust isn't a default yet. Plain skel must stay fast, so a repository skel has costs
+// no call to GitHub: the daemon keeps its clone current. A folder that isn't on GitHub,
+// such as your dotfiles, gets no complaint.
+export async function bringInFrom(from: string | undefined): Promise<string | undefined> {
   const db = openDb();
-  const named = from === undefined ? originHere() : (onGitHub(from) ?? from);
+  let named = from === undefined ? originHere() : (onGitHub(from) ?? from);
   // Matches the attached repository despite differences in GitHub name capitalization.
   const known = (r: Repository) => `${r.owner}/${r.repo}`.toLowerCase() === named?.toLowerCase();
   try {
-    if (named && !repositories(db).some(known)) await bringIn(db, githubRepo(named), true);
+    if (named && !repositories(db).some(known)) {
+      const github = githubRepo(named);
+      // A checkout can still use a name the repository had before it was renamed or moved on
+      // GitHub. skel keeps it under the name GitHub gives now, and the lead must hear that one.
+      named = `${github.owner}/${github.repo}`;
+      await bringIn(db, github, true);
+    }
   } catch (error) {
     console.error(`skel: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (repositories(db).length === 0) console.log(noRepositories);
+  const found = repositories(db).find(known);
+  return found && `${found.owner}/${found.repo}`;
 }
 
 // Returns owner/repo from a GitHub remote URL, or null so other hosts are quietly skipped.

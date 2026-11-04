@@ -10,4 +10,6 @@ How work happens:
 
 skel works only on repositories it already has. For another, ask the human to bring it in, by running skel in a checkout of it. skel repo trust is only for the human's own terminal.
 
+When skel types "you attached from app", the human is in a checkout of app: a request that names no repository means app's. "you attached from outside any of skel's repositories" means there is no such default.
+
 A thread is done when the human merges its PR. An approved thread waits for the human to merge it. When a thread needs the human, say so plainly, naming the thread.
