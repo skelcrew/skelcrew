@@ -79,6 +79,13 @@ export async function startThread(
     .replace(/[^a-z0-9]+/g, "-")
     .slice(0, 40)
     .replace(/^-|-$/g, "");
+  // Different names can make the same folder, such as simon/app and simon-app.
+  const freeFolder = (folder: string) => {
+    const taken = (f: string) => db.query("SELECT 1 FROM threads WHERE folder = ?").get(f);
+    let free = folder;
+    for (let n = 2; taken(free); n++) free = `${folder}-${n}`;
+    return free;
+  };
   return db.transaction(() => {
     const where = "WHERE owner = ? AND repo = ? AND issue = ?";
     const before = Thread.nullable().parse(
@@ -92,7 +99,7 @@ export async function startThread(
       issue,
       // A thread that failed starts over in its folder, named when it first started. tmux
       // changes . and : in a session's name, and / would make a folder.
-      folder: before?.folder ?? `${name}-${issue}`.replace(/[^\w-]/g, "-"),
+      folder: before?.folder ?? freeFolder(`${name}-${issue}`.replace(/[^\w-]/g, "-")),
       branch: slug ? `skel/${issue}-${slug}` : `skel/${issue}`,
       base: given.from ?? null,
       status: "working",

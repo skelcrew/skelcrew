@@ -184,6 +184,9 @@ export async function serve(tmux: string): Promise<void> {
   const path = daemonSocket();
   if (!lock(`${path}.lock`))
     throw new Error("skel's daemon is already running. Run skel to attach to the lead.");
+  // Taken before any request comes in, so a thread started meanwhile, still setting up,
+  // isn't taken for one whose setup the daemon's stop cut short.
+  const before = liveThreads(db);
   await open(path, "you");
   await open(leadSocket(), "lead");
   // The tmux sessions are left running: agents keep working while the daemon is down.
@@ -194,7 +197,7 @@ export async function serve(tmux: string): Promise<void> {
     });
   console.log(`Listening on ${path}.`);
   await lead().catch((error) => console.log(message(error)));
-  for (const thread of liveThreads(db)) {
+  for (const thread of before) {
     await listenFor(thread);
     bringBack(db, tmux, thread).catch((error) => failThread(db, thread, error));
   }

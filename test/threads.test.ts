@@ -68,7 +68,7 @@ beforeEach(() => {
     "gh",
     `case "$*" in
 "api repos/simon/app/issues --method POST --input -") cat > "$HOME/issues/sent"; echo '{"number":13}' ;;
-"api repos/simon/app/issues/"*) cat "$HOME/issues/\${2##*/}" 2>/dev/null || { echo "Not Found" >&2; exit 1; } ;;
+"api repos/"*"/issues/"*) cat "$HOME/issues/\${2##*/}" 2>/dev/null || { echo "Not Found" >&2; exit 1; } ;;
 *) exit 1 ;;
 esac`,
   );
@@ -421,5 +421,32 @@ nameRepositories(db);`;
     await until(() => thread().status === "failed");
     expect(read(join(data(), "threads", "app-12.log"))).toContain("run skel start again");
     expect(hasSession("app-12")).toBe(false);
+  }, 30_000);
+
+  // The daemon brings back threads once the lead has started, which takes a moment.
+  test("a thread started while the daemon starts the lead isn't taken for one cut short", async () => {
+    addApp({ "skel.yaml": "setup: [sleep 3]\n" });
+    serve();
+    await untilAnswers();
+    expect((await skel("start", "app#12")).out).toBe("Started app#12.\n");
+    await until(() => read(join(config("app-12"), "args")) !== "");
+    expect(thread().status).toBe("working");
+  }, 30_000);
+
+  test("gives two threads whose names would make the same folder a folder each", async () => {
+    addApp();
+    const script = `import { nameRepositories, openDb } from ${JSON.stringify(join(import.meta.dir, "..", "src", "db.ts"))};
+const db = openDb();
+db.run("INSERT INTO repositories (name, owner, repo) VALUES ('x', 'bob', 'app'), ('y', 'bob', 'simon-app')");
+nameRepositories(db);`;
+    expect(Bun.spawnSync([process.execPath, "-e", script], { env: env() }).success).toBe(true);
+    serve();
+    await untilAnswers();
+    expect((await skel("start", "simon/app#12")).err).toBe("");
+    expect((await skel("start", "simon-app#12")).err).toBe("");
+    const db = new Database(join(data(), "skel.db"));
+    const folders = db.query("SELECT folder FROM threads ORDER BY owner DESC").values();
+    db.close();
+    expect(folders).toEqual([["simon-app-12"], ["simon-app-12-2"]]);
   }, 30_000);
 });
