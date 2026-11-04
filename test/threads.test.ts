@@ -487,4 +487,24 @@ nameRepositories(db);`;
     await until(() => read(join(config("app-12"), "args")) !== "");
     expect(thread().status).toBe("working");
   }, 30_000);
+
+  // Programs often live under the home folder, which the sandbox hides, as npm does under nvm.
+  test("a setup command finds its program under your home folder", async () => {
+    addApp({ "skel.yaml": "setup: [tool --flag]\n" });
+    mkdirSync(join(home, "tools"));
+    writeFileSync(join(home, "tools", "tool"), '#!/bin/sh\necho "ran $1" > ran\n', { mode: 0o755 });
+    const script = `import { serve } from ${JSON.stringify(daemon)};
+await serve(${JSON.stringify(socket)});`;
+    running.push(
+      Bun.spawn([process.execPath, "-e", script], {
+        env: { ...env(), PATH: `${join(home, "tools")}:${env().PATH}` },
+        stdout: "ignore",
+        stderr: "ignore",
+      }),
+    );
+    await untilCloned();
+    await skel("start", "app-12");
+    await until(() => read(join(config("app-12"), "args")) !== "" || thread().status === "failed");
+    expect(read(join(clone(), "ran"))).toBe("ran --flag\n");
+  }, 30_000);
 });

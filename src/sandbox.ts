@@ -52,8 +52,9 @@ export function sandboxArgs(given: {
   socket?: string;
   cwd: string;
   command: string[];
+  program?: string | undefined;
 }): string[] {
-  const { home, path, mounts, socket, cwd, command } = given;
+  const { home, path, mounts, socket, cwd, command, program = command[0] } = given;
   // Its own process list, so your other processes can't be seen or signalled. No
   // --new-session: it moves Claude Code out of the terminal's process group, so it misses
   // resize signals and draws at the wrong width. The network stays shared for the model's
@@ -66,10 +67,11 @@ export function sandboxArgs(given: {
   if (existsSync("/run/systemd/resolve")) args.push(...ro("/run/systemd/resolve"));
   args.push(...hide(home));
   // Programs often live under the home folder: Claude Code under nvm keeps node beside it,
-  // and its package where its link points. So the command's folder and the package its link
-  // resolves into come back, as does bun, which skel's own commands run on.
+  // and its package where its link points. So the program's folder and the package its link
+  // resolves into come back, as does bun, which skel's own commands run on. The program is
+  // the command's first word unless given, as for a shell running a setup command.
   const programs = new Set<string>();
-  for (const name of [command[0], "bun"]) {
+  for (const name of [program, "bun"]) {
     const found = name && Bun.which(name, { PATH: path });
     if (found) {
       programs.add(dirname(found));
@@ -167,6 +169,9 @@ export function setupCommand(
     mounts: rw(folder),
     cwd: folder,
     command: ["sh", "-c", command],
+    // sh lives outside the home folder, but the program a setup command runs, such as npm
+    // under nvm, often doesn't.
+    program: command.trim().split(/\s+/)[0],
   });
   return { argv, env: keptEnv(env) };
 }
