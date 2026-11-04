@@ -76,10 +76,12 @@ function setUp(): void {
   writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
 }
 
-// Runs the daemon as skel serve would, but on the test's own tmux server.
-function serve(runtime = join(home, "run")): Subprocess<"ignore", "pipe", "pipe"> {
+// Runs the daemon as skel serve would, but on the test's own tmux server. Given a port, a
+// daemon on a Sprite listens there for GitHub's webhooks, in place of the Sprite's own.
+function serve(runtime = join(home, "run"), port?: number): Subprocess<"ignore", "pipe", "pipe"> {
+  const more = port === undefined ? "" : `, 30_000, ${port}`;
   const script = `import { serve } from ${JSON.stringify(daemon)};
-await serve(${JSON.stringify(socket)});`;
+await serve(${JSON.stringify(socket)}${more});`;
   const run = Bun.spawn([process.execPath, "-e", script], {
     env: {
       HOME: home,
@@ -271,6 +273,7 @@ function onSprite(): void {
     "sprite-env",
     `case "$*" in
   "services get skel") exit 0 ;;
+  info) echo '{"sprite_name":"demo","sprite_url":"https://demo-simon.sprites.app"}'; exit 0 ;;
   "services create skel-tmux-${socket} --cmd tmux --args -L,${socket},-f,/dev/null,-D --no-stream")
     test -f "$HOME/tmux-service" && exit 0
     : > "$HOME/tmux-service"
@@ -316,6 +319,145 @@ test("on a Sprite, starts skel's tmux server as a Sprite service of its own", as
   expect(calls()).toContain(
     `sprite-env services create skel-tmux-${socket} --cmd tmux --args -L,${socket},-f,/dev/null,-D --no-stream\n`,
   );
+});
+
+// A port nothing listens on, for the daemon's webhook listener.
+function freePort(): number {
+  const probe = Bun.serve({ port: 0, fetch: () => new Response() });
+  const { port } = probe;
+  probe.stop(true);
+  if (port === undefined) throw new Error("no free port");
+  return port;
+}
+
+// The fake GitHub notes each call and fails every poll, which still counts as one. It has no
+// webhooks yet, and notes the one skel sets.
+function fakeGitHub(): void {
+  fake(
+    "gh",
+    `case "$*" in
+  "api graphql --input -") cat > /dev/null; echo "HTTP 502: Bad Gateway" >&2; exit 1 ;;
+  "api repos/simon/app/hooks?per_page=100") echo '[]' ;;
+  "api repos/simon/app/hooks --method POST --input -") cat > "$HOME/hook"; echo '{"id":1}' ;;
+  "repo view simon/site --json name,owner,viewerPermission,isFork")
+    echo '{"name":"site","owner":{"login":"simon"},"viewerPermission":"WRITE","isFork":false}' ;;
+  "issue list --repo simon/site "*) echo '[]' ;;
+  "api repos/simon/site/hooks?per_page=100") echo '[]' ;;
+  "api repos/simon/site/hooks --method POST --input -") cat > "$HOME/site-hook"; echo '{"id":2}' ;;
+  *) exit 1 ;;
+esac`,
+  );
+}
+
+const polls = () => calls().split("gh api graphql").length - 1;
+
+const sign = (body: string, secret: string) =>
+  `sha256=${new Bun.CryptoHasher("sha256", secret).update(body).digest("hex")}`;
+
+// Sends a delivery for simon/app to the daemon's listener, signed with the given secret.
+function deliver(port: number, secret: string): Promise<Response> {
+  const body = JSON.stringify({ action: "labeled", repository: { full_name: "simon/app" } });
+  return fetch(`http://127.0.0.1:${port}/`, {
+    method: "POST",
+    headers: { "X-GitHub-Event": "issues", "X-Hub-Signature-256": sign(body, secret) },
+    body,
+  });
+}
+
+// Returns whether anything answers on the port.
+const listening = (port: number) =>
+  fetch(`http://127.0.0.1:${port}/`).then(
+    () => true,
+    () => false,
+  );
+
+async function untilListening(port: number) {
+  const deadline = Date.now() + 5000;
+  while (!(await listening(port))) {
+    if (Date.now() > deadline) throw new Error("nothing listened");
+    await Bun.sleep(20);
+  }
+}
+
+// GitHub can't wake a sleeping Sprite's daemon any other way, and polling is what reads it.
+test("on a Sprite, a delivery GitHub signed has the daemon poll its repository at once", async () => {
+  setUp();
+  onSprite();
+  fakeGitHub();
+  addRepository("app");
+  const port = freePort();
+  serve(undefined, port);
+  await until(() => polls() === 1);
+  await untilListening(port);
+  const secret = readFileSync(join(home, ".config", "skel", "webhook-secret"), "utf8");
+  expect((await deliver(port, secret)).status).toBe(202);
+  await until(() => polls() === 2);
+});
+
+test("on a Sprite, a delivery with another secret polls nothing", async () => {
+  setUp();
+  onSprite();
+  fakeGitHub();
+  addRepository("app");
+  const port = freePort();
+  serve(undefined, port);
+  await until(() => polls() === 1);
+  await untilListening(port);
+  expect((await deliver(port, "b".repeat(64))).status).toBe(401);
+  await Bun.sleep(500);
+  expect(polls()).toBe(1);
+});
+
+test("on a Sprite, sets the webhook to the Sprite on each repository it has", async () => {
+  setUp();
+  onSprite();
+  fakeGitHub();
+  addRepository("app");
+  serve(undefined, freePort());
+  await until(
+    () => existsSync(join(home, "hook")) && readFileSync(join(home, "hook"), "utf8") !== "",
+  );
+  const hook = JSON.parse(readFileSync(join(home, "hook"), "utf8"));
+  const secret = readFileSync(join(home, ".config", "skel", "webhook-secret"), "utf8");
+  expect(hook.config).toEqual({
+    url: "https://demo-simon.sprites.app",
+    content_type: "json",
+    secret,
+    insecure_ssl: "0",
+  });
+});
+
+// The lead brings in a repository by naming it, and its events must wake the Sprite too.
+test("on a Sprite, sets the webhook on a repository a command brings in by its name", async () => {
+  setUp();
+  onSprite();
+  fakeGitHub();
+  addRepository("app");
+  serve(undefined, freePort());
+  // Once the daemon has set the webhooks of the repositories it started with.
+  await until(() => existsSync(join(home, "hook")));
+  expect(await ask({ command: "task ls", repo: "simon/site" })).toMatchObject({ tasks: [] });
+  await until(
+    () =>
+      existsSync(join(home, "site-hook")) && readFileSync(join(home, "site-hook"), "utf8") !== "",
+  );
+  expect(JSON.parse(readFileSync(join(home, "site-hook"), "utf8")).config.url).toBe(
+    "https://demo-simon.sprites.app",
+  );
+});
+
+// A server stays awake, so polling alone sees every event soon enough.
+test("on a server, neither listens for webhooks nor sets them", async () => {
+  setUp();
+  fakeGitHub();
+  addRepository("app");
+  const port = freePort();
+  serve(undefined, port);
+  await until(() => polls() === 1);
+  await Bun.sleep(500);
+  expect(await listening(port)).toBe(false);
+  expect(calls()).not.toContain("hooks");
+  expect(existsSync(join(home, ".config", "skel", "webhook-secret"))).toBe(false);
 });
 
 // bubblewrap can't start inside skel's own sandbox, so only there the lead can't start.

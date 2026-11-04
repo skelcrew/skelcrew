@@ -395,20 +395,44 @@ async function pollRepository(
 // up what happened while the daemon was down. A failed poll, such as GitHub answering with an
 // error, is logged and tried again at the next one. Polls run in the background, so they never hold up the daemon. `begin` sets up a
 // thread started from a label and starts its builder, as the daemon does for skel start.
+// Returns a function that polls one repository at once, named by its full GitHub name, for
+// a webhook delivery about it.
 export function pollGitHub(
   db: Database,
   tmux: string,
   every: number,
   begin: (thread: Thread) => Promise<void>,
-): void {
+): (full: string) => void {
   const skipped = new Map<string, number>();
   const polling = new Set<string>();
-  const tick = () => {
-    const live = db
+  // A delivery that comes in while its repository is being polled may be about an event the
+  // poll's query was too early to see, so the repository is polled again once it is done.
+  const again = new Set<string>();
+  // The threads whose PRs a poll reads. A stopped thread's PR still merges or closes.
+  const polled = () =>
+    db
       .query("SELECT * FROM threads WHERE status IN ('working', 'waiting', 'stopped')")
       .all()
       .map((row) => Thread.parse(row))
       .filter((t) => t.pr !== null);
+  const poll = (owner: string, name: string) => {
+    const repo = `${owner}/${name}`;
+    skipped.set(repo, 0);
+    if (polling.has(repo)) {
+      again.add(repo);
+      return;
+    }
+    polling.add(repo);
+    const threads = polled().filter((t) => t.owner === owner && t.repo === name);
+    pollRepository(db, tmux, repo, threads, begin)
+      .catch((error) => console.log(`couldn't poll ${repo}: ${message(error)}`))
+      .finally(() => {
+        polling.delete(repo);
+        if (again.delete(repo)) poll(owner, name);
+      });
+  };
+  const tick = () => {
+    const live = polled();
     for (const { owner, repo: name } of repositories(db)) {
       const repo = `${owner}/${name}`;
       const threads = live.filter((t) => t.owner === owner && t.repo === name);
@@ -420,13 +444,15 @@ export function pollGitHub(
         skipped.set(repo, waited + 1);
         continue;
       }
-      skipped.set(repo, 0);
-      polling.add(repo);
-      pollRepository(db, tmux, repo, threads, begin)
-        .catch((error) => console.log(`couldn't poll ${repo}: ${message(error)}`))
-        .finally(() => polling.delete(repo));
+      poll(owner, name);
     }
   };
   tick();
   setInterval(tick, every);
+  return (full) => {
+    const found = repositories(db).find(
+      (r) => `${r.owner}/${r.repo}`.toLowerCase() === full.toLowerCase(),
+    );
+    if (found) poll(found.owner, found.repo);
+  };
 }

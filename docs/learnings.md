@@ -149,6 +149,19 @@ that covers the code you are about to write.
 - **`sprite exec --tty` forwards your keyboard**, including what was typed ahead. An
   answer meant for skel on the laptop is lost if a command on the Sprite runs first.
 - **`sprite file push` writes through a link**, like scp. Remove what is there first.
+- **A Sprite's URL wants a Fly.io login unless it is public.** Without one, it answers a
+  redirect to a login page, which GitHub's webhooks can't follow. Only `sprite` on the
+  laptop can change that, with `sprite config update --url-auth public -s <name>`: the
+  Sprite's own `sprite` has no login.
+- **The URL reaches port 8080 on the Sprite**, unless a service claims another with
+  `--http-port`. `sprite-env info` prints the URL, as `sprite_url` in JSON. Agents share the
+  Sprite's network, so once the URL is public, whatever listens on 8080 is on the internet.
+  The daemon holds the port.
+- **A request to the URL wakes a sleeping Sprite in well under a second, and only for as
+  long as the request is open.** After five minutes asleep, a webhook delivery got its answer
+  in 0.17 seconds, and the Sprite slept again at once: the poll the daemon started after
+  answering ran only 20 seconds later, when `sprite exec` woke it. With a hold of a minute
+  taken before answering, the poll ran 0.2 seconds after the delivery was sent.
 - **There is no command that says whether `sprite` is logged in.** `sprite list` fails,
   telling you to run `sprite login`, when it isn't.
 
@@ -175,3 +188,6 @@ that covers the code you are about to write.
   comments, 11,700 characters, on one issue, restating the same summary three times. A
   reaction, the PR's `Closes #N` and the PR's description already show progress where
   people look.
+- **A webhook says only "look now".** Anyone can reach a Sprite's public URL, and deliveries
+  are lost while the daemon is down. So a delivery, even a signed one, only brings the next
+  poll forward, and skel acts on what the poll reads.

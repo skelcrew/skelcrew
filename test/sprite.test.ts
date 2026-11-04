@@ -244,8 +244,10 @@ test("creates the Sprite, sets it up, and runs the first run there", async () =>
   expect(lines[9]).toBe(
     "sprite exec -s demo --no-stdin -- sh -c mv -f .local/bin/skel.new .local/bin/skel",
   );
+  // GitHub's webhooks wake the Sprite through its URL, and GitHub has no Fly.io login.
+  expect(lines[10]).toBe("sprite config update --url-auth public -s demo");
   // A fresh copy is the laptop's build, so it runs without the check.
-  expect(lines[10]).toBe(`${exec("demo", null)} --from simon/app`);
+  expect(lines[11]).toBe(`${exec("demo", null)} --from simon/app`);
   expect(readFileSync(join(home, "sprites", "demo", ".local", "bin", "skel"), "utf8")).toBe(
     spriteSkel(laptop.commit),
   );
@@ -322,12 +324,15 @@ test("offers to update an out-of-date skel on the Sprite, updates it, then runs 
   expect(lines).toContain(
     "sprite exec -s demo --no-stdin -- sh -c mv -f .local/bin/skel.new .local/bin/skel",
   );
-  // The daemon restarts only once the new skel is in place, so it runs the new build, and
-  // the command runs after that.
-  expect(lines.at(-3)).toBe(
+  // The daemon restarts only once the new skel is in place, so it runs the new build. A
+  // Sprite an older skel set up still wants a Fly.io login at its URL, which GitHub's
+  // webhooks can't give, so the URL goes public then, once the new daemon holds its port.
+  // The command runs after that.
+  expect(lines.at(-4)).toBe(
     "sprite exec -s demo --no-stdin -- sh -c sprite-env services restart skel",
   );
-  expect(lines.at(-2)).toBe("sprite-env services restart skel");
+  expect(lines.at(-3)).toBe("sprite-env services restart skel");
+  expect(lines.at(-2)).toBe("sprite config update --url-auth public -s demo");
   expect(lines.at(-1)).toBe(`${exec("demo", null)} ps`);
   expect(calls()).not.toContain("apt-get");
   expect(readdirSync(join(home, "tmp"))).toEqual([]);
@@ -351,6 +356,8 @@ test("the update keeps the old skel on the Sprite when the copy fails", async ()
   const sprite = join(home, "sprites", "demo", ".local", "bin", "skel");
   expect(readFileSync(sprite, "utf8")).toBe(spriteSkel("0000000"));
   expect(calls()).not.toContain("services restart");
+  // Until the new daemon holds port 8080, whatever else listens there would become public.
+  expect(calls()).not.toContain("--url-auth");
 });
 
 // A Sprite service keeps the skel it was made with. Made from a checkout, a copy left in

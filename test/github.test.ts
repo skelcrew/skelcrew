@@ -13,7 +13,9 @@ import {
   reactToIssue,
   readIssue,
   readRepository,
+  removeWebhook,
   setReviewStatus,
+  setWebhook,
 } from "../src/github.ts";
 
 let home = "";
@@ -214,4 +216,54 @@ test("asks for the labeled issues updated last", async () => {
   const read = await readRepository("simon/app", []);
   expect(read.labeled).toEqual([{ number: 12, title: "Add export" }]);
   expect(JSON.stringify(sent().input)).toContain("orderBy: { field: UPDATED_AT, direction: DESC }");
+});
+
+const hookUrl = "https://demo-simon.sprites.app";
+const hook = {
+  config: { url: hookUrl, content_type: "json", secret: "s3cret", insecure_ssl: "0" },
+  events: [
+    "issues",
+    "issue_comment",
+    "pull_request",
+    "pull_request_review",
+    "pull_request_review_comment",
+    "check_suite",
+    "status",
+  ],
+  active: true,
+};
+
+test("creates the webhook to the Sprite when the repository has none", async () => {
+  gh('[{"id":3,"config":{"url":"https://ci.example.com/hook"}}]');
+  await setWebhook("simon/app", hookUrl, "s3cret");
+  expect(sent()).toEqual({
+    args: ["api", "repos/simon/app/hooks", "--method", "POST", "--input", "-"],
+    input: { name: "web", ...hook },
+  });
+});
+
+// A second webhook to the same URL would wake the Sprite twice for every event.
+test("updates the webhook to the Sprite rather than adding a second one", async () => {
+  gh(
+    `[{"id":3,"config":{"url":"https://ci.example.com/hook"}},{"id":5,"config":{"url":"${hookUrl}"}}]`,
+  );
+  await setWebhook("simon/app", hookUrl, "s3cret");
+  expect(sent()).toEqual({
+    args: ["api", "repos/simon/app/hooks/5", "--method", "PATCH", "--input", "-"],
+    input: hook,
+  });
+});
+
+test("removes only the webhook to the Sprite", async () => {
+  gh(
+    `[{"id":3,"config":{"url":"https://ci.example.com/hook"}},{"id":5,"config":{"url":"${hookUrl}"}}]`,
+  );
+  await removeWebhook("simon/app", hookUrl);
+  expect(sent().args).toEqual(["api", "repos/simon/app/hooks/5", "--method", "DELETE"]);
+});
+
+test("removing a webhook the repository doesn't have deletes nothing", async () => {
+  gh('[{"id":3,"config":{"url":"https://ci.example.com/hook"}}]');
+  await removeWebhook("simon/app", hookUrl);
+  expect(sent().args).toEqual(["api", "repos/simon/app/hooks?per_page=100"]);
 });

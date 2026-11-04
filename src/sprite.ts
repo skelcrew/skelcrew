@@ -85,20 +85,43 @@ export function startTmuxService(socket: string): void {
   );
 }
 
+// The port the Sprite's URL sends requests to, where the daemon listens for GitHub's
+// webhooks. A request to the URL wakes a Sprite that sleeps.
+export const urlPort = 8080;
+
+const Info = z.object({ sprite_url: z.string().url() });
+
+// Returns the Sprite's URL, for GitHub's webhooks to wake it with, as sprite-env, the
+// Sprite's own tool, says it.
+export function spriteUrl(): string {
+  const info = Bun.spawnSync(["sprite-env", "info"], { stdout: "pipe", stderr: "pipe" });
+  if (!info.success)
+    throw new Error(`sprite-env couldn't say the Sprite's URL: ${info.stderr.toString().trim()}`);
+  try {
+    return Info.parse(JSON.parse(info.stdout.toString())).sprite_url;
+  } catch {
+    throw new Error("sprite-env described the Sprite in a way this skel doesn't understand");
+  }
+}
+
 // How long a hold keeps the Sprite awake after its last renewal, in seconds. A few minutes,
 // so a daemon that dies lets the Sprite sleep soon after, and a renewal that comes late or
 // fails once never lets it sleep mid-work.
 const holdFor = 300;
 
-// Asks the Sprite's control socket to hold the Sprite awake for holdFor seconds, or to let
-// go of the hold. The hold is a task, as the Sprite calls it, named skel. Throws when the
-// socket doesn't answer or answers with an error.
-async function holdTask(socket: string, method: "PUT" | "DELETE"): Promise<void> {
-  const answer = await fetch("http://sprite/v1/tasks/skel", {
+// Asks the Sprite's control socket to hold the Sprite awake for some seconds, or to let go
+// of the hold. A hold is a task, as the Sprite calls it, named skel unless named otherwise.
+// Throws when the socket doesn't answer or answers with an error.
+async function holdTask(
+  socket: string,
+  method: "PUT" | "DELETE",
+  { task = "skel", expire = holdFor } = {},
+): Promise<void> {
+  const answer = await fetch(`http://sprite/v1/tasks/${task}`, {
     unix: socket,
     method,
     headers: { "Content-Type": "application/json" },
-    body: method === "PUT" ? JSON.stringify({ expire: holdFor }) : undefined,
+    body: method === "PUT" ? JSON.stringify({ expire }) : undefined,
     signal: AbortSignal.timeout(5_000),
   }).catch(() => {
     throw new Error("the Sprite's control socket didn't answer");
@@ -149,6 +172,13 @@ export function keepAwake(
   const timer = setInterval(check, every);
   return () => clearInterval(timer);
 }
+
+// Holds the Sprite awake for some seconds after a webhook delivery. A Sprite goes back to
+// sleep as soon as the delivery is answered, before the poll it asked for has run, and
+// before keepAwake's next check sees any work the poll started. The hold has a name of its
+// own, so keepAwake never lets go of it, and it simply expires.
+export const holdAwhile = (seconds: number, socket = controlSocket) =>
+  holdTask(socket, "PUT", { task: "skel-webhook", expire: seconds });
 
 const Service = z.object({ cmd: z.string() });
 
@@ -215,6 +245,21 @@ async function setUp(name: string): Promise<void> {
     stderr: "ignore",
   }).exited;
   await withLinuxSkel(onTheSprite(name).copy);
+  await makeUrlPublic(name);
+}
+
+// Lets anyone reach the Sprite's URL without a Fly.io login, so GitHub's webhooks can wake
+// it. The URL only reaches the port where the daemon listens, which acts on nothing but a
+// delivery signed with skel's secret, and then only polls GitHub.
+// It is quiet, as sprite says "Updated" with the Sprite's name.
+async function makeUrlPublic(name: string): Promise<void> {
+  const update = ["sprite", "config", "update", "--url-auth", "public", "-s", name];
+  const made = Bun.spawn(update, { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const [said, code] = await Promise.all([new Response(made.stderr).text(), made.exited]);
+  if (code !== 0)
+    throw new Error(
+      `sprite couldn't make sprite:${name}'s URL public, so GitHub's webhooks can't wake it: ${said.trim()}`,
+    );
 }
 
 // How updating and setting up reach a Sprite: sprite exec for shell lines, sprite file push
@@ -264,6 +309,10 @@ function onTheSprite(name: string): Machine {
       }
     },
     restart: "sprite-env services restart skel",
+    // A Sprite an older skel set up still asks for a login at its URL. Made public only once
+    // the new daemon runs and holds the URL's port: until then, whatever else listens there
+    // would be on the internet.
+    updated: () => makeUrlPublic(name),
   };
 }
 

@@ -46,6 +46,12 @@ beforeEach(async () => {
   full=\${2#repos/}; full=\${full%/labels}
   test -e "$HOME/github/$full.nolabel" && { echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1; }
   cat > /dev/null; echo '{"name":"skel"}'; exit 0 ;;
+# Webhooks are kept in one file, which holds the Sprite's once skel sets it.
+"api repos/simon/app/hooks?per_page=100") cat "$HOME/github/hooks" 2>/dev/null || echo '[]'; exit 0 ;;
+"api repos/simon/app/hooks --method POST --input -")
+  cat > /dev/null; echo '[{"id":5,"config":{"url":"https://demo-simon.sprites.app"}}]' > "$HOME/github/hooks"
+  echo '{"id":5}'; exit 0 ;;
+"api repos/simon/app/hooks/5 --method DELETE") echo '[]' > "$HOME/github/hooks"; exit 0 ;;
 esac
 test "$1 $2" = "repo view" || exit 1
 full=$3
@@ -153,6 +159,8 @@ test("brings in a repository you can push to from its checkout, without asking",
   expect(git(checkout, "status", "--porcelain")).toBe("");
   expect((await skel(["repo", "ls"])).out).toBe(`app  simon/app  ${clone("simon/app")}\n`);
   expect(calls()).toContain("gh api repos/simon/app/labels --method POST");
+  // A server stays awake, so it needs no webhook to wake it.
+  expect(calls()).not.toContain("hooks");
 });
 
 test("brings it in from a folder inside the checkout too", async () => {
@@ -313,6 +321,38 @@ test("repo rm removes skel's clone and forgets the trust", async () => {
   const missing = await skel(["repo", "rm", "app"]);
   expect(missing.code).toBe(1);
   expect(missing.err).toContain("app");
+});
+
+// skel takes a machine with sprite-env, the Sprite's own tool, on its PATH for a Sprite. This
+// one has the daemon's service, as the first run leaves it, and says the Sprite's URL.
+function onSprite(): void {
+  fake(
+    "sprite-env",
+    `case "$*" in
+  "services get skel") exit 0 ;;
+  info) echo '{"sprite_name":"demo","sprite_url":"https://demo-simon.sprites.app"}' ;;
+  *) exit 1 ;;
+esac`,
+  );
+}
+
+test("on a Sprite, brings in a repository with the webhook that wakes the Sprite", async () => {
+  onSprite();
+  const run = await skel([], "", onGitHub("simon/app", "WRITE"));
+  expect(run.err).toBe("");
+  expect(readFileSync(join(home, "github", "hooks"), "utf8")).toContain(
+    "https://demo-simon.sprites.app",
+  );
+});
+
+// A webhook left behind would wake the Sprite for a repository skel no longer polls.
+test("on a Sprite, repo rm removes the webhook that wakes the Sprite", async () => {
+  onSprite();
+  await skel([], "", onGitHub("simon/app", "WRITE"));
+  const removed = await skel(["repo", "rm", "app"]);
+  expect(removed.err).toBe("");
+  expect(calls()).toContain("gh api repos/simon/app/hooks/5 --method DELETE\n");
+  expect(readFileSync(join(home, "github", "hooks"), "utf8")).toBe("[]\n");
 });
 
 test("repo rm refuses while the repository has live threads, and names them", async () => {

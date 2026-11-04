@@ -140,16 +140,19 @@ const server = (host: string): Machine => ({
   },
   copy: (file) => copySkel(host, file),
   restart: "systemctl --user restart skel",
+  updated: async () => {},
 });
 
 // How update reaches a server or a Sprite: the command that runs a shell line there, the
 // skel the daemon's service starts there, or null without a service, how a built skel is
-// copied there, and the line that restarts the daemon's service there.
+// copied there, the line that restarts the daemon's service there, and what else the
+// machine needs once its new daemon runs.
 export type Machine = {
   shell: (script: string) => string[];
   daemonSkel: () => Promise<string | null>;
   copy: (file: string) => Promise<void>;
   restart: string;
+  updated: () => Promise<void>;
 };
 
 // Runs a shell line on the machine and returns what it printed, quietly: the service
@@ -215,6 +218,7 @@ else echo "elsewhere $f"; fi`;
     throw new Error(
       `the new skel is on ${where}, but its daemon didn't restart, so it still runs the old one:\n${restarted.said}`,
     );
+  await machine.updated();
   console.log(
     skelLine(
       `updated ${where} to the skel in ${folder} (commit ${commit}) and restarted its daemon. The lead and builders keep running, and the lead picks up new instructions when it's next started.`,

@@ -81,7 +81,7 @@ async function run(args: string[]): Promise<void> {
     return;
   }
   if (command === "repo" && sub === "rm" && rest[0] && rest.length === 1) {
-    removeRepo(rest[0]);
+    await removeRepo(rest[0]);
     return;
   }
   if (command === "submit" && sub && rest.length === 0) {
