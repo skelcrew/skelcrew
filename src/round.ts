@@ -307,7 +307,15 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
   const { maxRounds } = threadConfig();
   // Past the round limit the thread still needs you, whatever the review says.
   const needs_you = thread.rounds > maxRounds;
-  record(db, folder, { status: "waiting", needs_you, telling: null }, "asked to review again");
+  // The commit is saved as under review at once, so a second skel review asked before the
+  // check is pending again is refused rather than cancelling this one.
+  const change = {
+    status: "waiting",
+    needs_you,
+    telling: null,
+    reviewing: sha,
+  } satisfies Partial<Thread>;
+  record(db, folder, change, "asked to review again");
   earlier?.cancel.abort();
   if (submitting !== null) pushAndReview(db, tmux, folder, submitting, earlier);
   else if (sha !== null) {

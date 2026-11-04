@@ -113,7 +113,7 @@ case "$*" in
 "api repos/simon/app/pulls --method POST --input -") touch "$HOME/gh/opening"; while test -e "$HOME/gh/hold"; do sleep 0.1; done; cat > "$HOME/gh/pr"; echo '{"number":7}' ;;
 "api repos/simon/app/pulls/7/reviews --method POST --input -") touch "$HOME/gh/posting"; while test -e "$HOME/gh/hold-review"; do sleep 0.1; done; cat >> "$HOME/gh/reviews"; echo >> "$HOME/gh/reviews"; echo '{"id":1}' ;;
 "api repos/simon/app/statuses/"*) body=$(cat)
-  case "$body" in *pending*) ;; *) touch "$HOME/gh/finishing"; while test -e "$HOME/gh/hold-status"; do sleep 0.1; done ;; esac
+  case "$body" in *pending*) while test -e "$HOME/gh/hold-pending"; do sleep 0.1; done ;; *) touch "$HOME/gh/finishing"; while test -e "$HOME/gh/hold-status"; do sleep 0.1; done ;; esac
   echo "\${2##*/} $body" >> "$HOME/gh/statuses"; echo '{"state":"set"}' ;;
 *) echo "the fake gh doesn't know $*" >&2; exit 1 ;;
 esac`,
@@ -693,7 +693,12 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel review", () => {
     await startApp12();
     await until(() => thread().needs_you === 1, 30_000);
     const older = pushed();
+    // Held so the second ask comes before the check is pending again.
+    writeFileSync(join(home, "gh", "hold-pending"), "");
     expect((await skel(["review", "app-12"], { SKEL_SOCKET: leadSocketPath() })).err).toBe("");
+    const twice = await skel(["review", "app-12"]);
+    expect(twice.err).toContain("a review of app-12's last commit is already waiting or running");
+    rmSync(join(home, "gh", "hold-pending"));
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 30_000);
     writeFileSync(join(clone(), "change"), "newer\n");
     git(clone(), "commit", "-qam", "newer");
