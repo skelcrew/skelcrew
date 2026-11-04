@@ -274,8 +274,8 @@ test("update warns about uncommitted changes and another branch, and still copie
 });
 
 // Returns a skel checkout on the server, with its launcher and sources.
-function serverCheckout(): string {
-  const checkout = join(home, "server", "skel");
+function serverCheckout(name = "skel"): string {
+  const checkout = join(home, "server", name);
   mkdirSync(join(checkout, "bin"), { recursive: true });
   mkdirSync(join(checkout, "src"));
   writeFileSync(join(checkout, "bin", "skel"), "#!/bin/sh\n", { mode: 0o755 });
@@ -298,6 +298,18 @@ test("update goes by what the daemon's service runs, not by ~/.local/bin", async
   expect(run.code).toBe(0);
   expect(run.out).toContain(`skel on simon@workbox runs from a checkout at ${checkout}`);
   expect(calls()).not.toContain("scp");
+});
+
+// systemd reads % in a unit as the start of a name it fills in, so the service doubles it.
+test("update finds a checkout whose path holds a percent sign", async () => {
+  const checkout = serverCheckout("100%skel");
+  const units = join(home, "server", ".config", "systemd", "user");
+  mkdirSync(units, { recursive: true });
+  const launcher = join(checkout, "bin", "skel").replaceAll("%", "%%");
+  writeFileSync(join(units, "skel.service"), `[Service]\nExecStart="${launcher}" serve\n`);
+  const run = await update(laptopSkel());
+  expect(run.code).toBe(0);
+  expect(run.out).toContain(`skel on simon@workbox runs from a checkout at ${checkout}`);
 });
 
 // A server where ~/.local/bin/skel links into a checkout updates with git pull there, and a
