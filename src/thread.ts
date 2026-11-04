@@ -32,6 +32,12 @@ export const Thread = z.object({
   reviewing: z.string().nullable(),
   // A posted review's changes, until they are typed into the builder.
   telling: z.string().nullable(),
+  // The ID of the last review, PR comment and check run handled, so each event is handled
+  // once, across restarts too. Null until the PR is first polled, for threads an older skel
+  // started: that poll starts after the PR's history rather than replaying it.
+  last_review: z.number().nullable(),
+  last_comment: z.number().nullable(),
+  last_check: z.number().nullable(),
   // Whether the builder is asking you a question with AskUserQuestion. Kept apart from
   // needs_you, so answering it leaves the thread needing you for any other reason.
   asking: z.coerce.boolean(),
@@ -80,6 +86,9 @@ export function record(
       | "submitting"
       | "reviewing"
       | "telling"
+      | "last_review"
+      | "last_comment"
+      | "last_check"
       | "asking"
       | "noting"
     >
@@ -203,13 +212,17 @@ export async function startThread(
       submitting: null,
       reviewing: null,
       telling: null,
+      // A new thread has no PR yet, so everything on the one it opens is new.
+      last_review: 0,
+      last_comment: 0,
+      last_check: 0,
       asking: false,
       noting: null,
     };
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run(
-      `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session,
+        last_review, last_comment, last_check) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0)`,
       [owner, repo, task, thread.folder, thread.branch, thread.base, thread.status, null],
     );
     log(thread);
@@ -355,6 +368,10 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
     socket: threadSocket(thread.folder),
     model: threadConfig().model,
     thread: clone,
+    // Gone once you remove the repository from skel, and bwrap can't mount what is missing.
+    ...(existsSync(cloneDir(thread.owner, thread.repo))
+      ? { origin: cloneDir(thread.owner, thread.repo) }
+      : {}),
     // In the system prompt rather than the first message, so the first message stays the
     // task in its own words, and the builder still has it after a long conversation is
     // compacted. It asks the builder to ask you only when it must: its question waits on a

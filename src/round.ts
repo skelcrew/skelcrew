@@ -29,8 +29,9 @@ export type Outcome = {
 // Decides what a finished review means for a thread that has had `rounds` rounds of changes:
 // the skel/review check to set, the thread's new state, and what to type into the builder,
 // if anything. The builder gets max_rounds rounds of changes to fix. A review asking for
-// changes after those is posted but not typed in, and, like an approval or a failed review,
-// the thread then needs you.
+// changes after those is posted but not typed in, and, like a failed review, the thread then
+// needs you. An approved thread waits on CI: polling GitHub marks it needs you once every
+// check is green.
 export function afterReview(rounds: number, given: Review, maxRounds: number): Outcome {
   if (given.verdict === "failed")
     return {
@@ -47,10 +48,10 @@ export function afterReview(rounds: number, given: Review, maxRounds: number): O
       check: "success",
       description: "skel's reviewer approved",
       rounds,
-      needsYou: true,
+      needsYou: false,
       status: "waiting",
       tell: null,
-      why: "approved by skel's reviewer",
+      why: "approved by skel's reviewer, so it waits on CI",
     };
   const counted = rounds + 1;
   const changes: Pick<Outcome, "check" | "description" | "rounds"> = {
@@ -160,7 +161,10 @@ async function reviewRound(
   });
   if (signal.aborted) return;
   const outcome = afterReview(readThread(db, folder).rounds, verdict, maxRounds);
-  if (verdict.verdict !== "failed") await postReview(repo, pr, sha, verdict.verdict, verdict.body);
+  if (verdict.verdict !== "failed") {
+    const id = await postReview(repo, pr, sha, verdict.verdict, verdict.body);
+    db.run("INSERT OR IGNORE INTO posted (id) VALUES (?)", [id]);
+  }
   // A newer round may be reviewing the same commit, and its check must stay pending.
   if (signal.aborted) return;
   await setReviewStatus(repo, sha, outcome.check, outcome.description);
@@ -268,4 +272,11 @@ export function resumeRound(db: Database, tmux: string, folder: string): void {
     follow(db, tmux, folder, cancel, none, reviewRound(db, tmux, folder, reviewing, cancel.signal));
   else if (telling !== null)
     follow(db, tmux, folder, cancel, none, deliver(db, tmux, folder, telling, cancel.signal));
+}
+
+// Cancels the thread's round, once its PR is merged or closed, so a review still running
+// never changes a thread that is done.
+export function endRound(folder: string): void {
+  latest.get(folder)?.cancel.abort();
+  latest.delete(folder);
 }

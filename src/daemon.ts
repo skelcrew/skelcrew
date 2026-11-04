@@ -7,6 +7,7 @@ import { createConnection, createServer, type Server, type Socket } from "node:n
 import { dirname } from "node:path";
 import { z } from "zod";
 import { openDb } from "./db.ts";
+import { pollGitHub } from "./events.ts";
 import { createIssue } from "./github.ts";
 import { startLead, tellAttachedFrom, tellLead } from "./lead.ts";
 import {
@@ -136,8 +137,9 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 // Opens the daemon's sockets, starts the lead, and brings back the builders of threads that
 // were running, so commands and agents can reach it. Leaves the sockets listening after
 // returning, and removes them when stopped, leaving every tmux session running. It never
-// asks questions: systemd has nobody to answer.
-export async function serve(tmux: string): Promise<void> {
+// asks questions: systemd has nobody to answer. Polls GitHub every `every` milliseconds while
+// a thread is active.
+export async function serve(tmux: string, every = 30_000): Promise<void> {
   if (!setupDone()) throw new Error("the first run isn't done on this machine: run skel first");
   const db = openDb();
   let starting: Promise<void> = Promise.resolve();
@@ -271,6 +273,7 @@ export async function serve(tmux: string): Promise<void> {
       (error) => failThread(db, thread, error),
     );
   }
+  pollGitHub(db, tmux, every);
 }
 
 // Asks the daemon on behalf of skel task create and skel start, and returns its answer. Throws

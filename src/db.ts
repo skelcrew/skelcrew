@@ -73,6 +73,9 @@ export function openDb(): Database {
     reviewing TEXT,
     submitting TEXT,
     telling TEXT,
+    last_review INTEGER,
+    last_comment INTEGER,
+    last_check INTEGER,
     asking INTEGER NOT NULL DEFAULT 0,
     noting TEXT,
     PRIMARY KEY (owner, repo, task)
@@ -87,11 +90,17 @@ export function openDb(): Database {
     reviewing: "TEXT",
     submitting: "TEXT",
     telling: "TEXT",
+    last_review: "INTEGER",
+    last_comment: "INTEGER",
+    last_check: "INTEGER",
     asking: "INTEGER NOT NULL DEFAULT 0",
     noting: "TEXT",
   };
   for (const [column, type] of Object.entries(added))
     if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))
       db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
+  // The reviews skel posted. They go out with your gh login, so on GitHub they look like
+  // reviews of yours, and polling must not type them back into the builder.
+  db.run("CREATE TABLE IF NOT EXISTS posted (id INTEGER PRIMARY KEY)");
   return db;
 }

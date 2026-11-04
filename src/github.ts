@@ -75,6 +75,21 @@ export async function fetchBranch(
   ]);
 }
 
+// Brings a branch of a GitHub repository into skel's clone in the folder, as a branch of its
+// own, so a builder whose clone has skel's as origin can fetch it. Never the branch skel's
+// clone has checked out, which updateClone keeps current with its files.
+export async function fetchIntoClone(folder: string, repo: string, branch: string): Promise<void> {
+  await git([
+    "-C",
+    folder,
+    "fetch",
+    "--quiet",
+    "--no-write-fetch-head",
+    `https://github.com/${repo}.git`,
+    `+refs/heads/${branch}:refs/heads/${branch}`,
+  ]);
+}
+
 // Pushes a commit from skel's clone in the folder to a branch of a GitHub repository. Never
 // forced, so a push can only add to what the branch already holds.
 export async function pushCommit(
@@ -93,9 +108,9 @@ export async function pushCommit(
   ]);
 }
 
-// Returns JSON from GitHub through gh, sending a body when supplied. Failures name what
-// skel was trying, so you can tell which GitHub operation failed.
-async function gh(args: string[], doing: string, input?: object): Promise<unknown> {
+// Returns what gh printed, sending a body when supplied. Failures name what skel was trying,
+// so you can tell which GitHub operation failed.
+async function ghText(args: string[], doing: string, input?: object): Promise<string> {
   // Bun finds gh on the PATH skel started with unless given the env, so a PATH changed
   // since would be ignored.
   const run = Bun.spawn(["gh", ...args], {
@@ -110,8 +125,12 @@ async function gh(args: string[], doing: string, input?: object): Promise<unknow
     run.exited,
   ]);
   if (code !== 0) throw new Error(`Couldn't ${doing}: ${err.trim()}`);
-  return JSON.parse(out);
+  return out;
 }
+
+// Returns JSON from GitHub through gh, sending a body when supplied.
+const gh = async (args: string[], doing: string, input?: object): Promise<unknown> =>
+  JSON.parse(await ghText(args, doing, input));
 
 // Returns JSON from GitHub's REST API, posting the body when supplied.
 const api = (endpoint: string, doing: string, input?: object) =>
@@ -192,21 +211,23 @@ export async function openPullRequest(
 // GitHub refuses to let you approve or request changes on your own pull request, and skel
 // opens and reviews it with the same gh login. So the verdict goes in a comment review, and
 // the skel/review check is what branch protection can require. The review names the commit
-// it covers, since a newer one can reach the PR while it is posted.
+// it covers, since a newer one can reach the PR while it is posted. Returns the review's ID:
+// posted with your login, it looks like your own review on GitHub, and skel must know it
+// wrote it.
 export async function postReview(
   repo: string,
   pr: number,
   commit: string,
   verdict: "approve" | "changes",
   body: string,
-): Promise<void> {
+): Promise<number> {
   const said = verdict === "approve" ? "**Approved.**" : "**Changes requested.**";
   const posted = await api(`repos/${repo}/pulls/${pr}/reviews`, `post a review on #${pr}`, {
     event: "COMMENT",
     commit_id: commit,
     body: `${said}\n\n${body}`,
   });
-  z.object({ id: z.number() }).parse(posted);
+  return z.object({ id: z.number() }).parse(posted).id;
 }
 
 // Sets the commit's skel/review check so branch protection can require the reviewer's
@@ -223,4 +244,178 @@ export async function setReviewStatus(
     description: description.slice(0, 140),
   });
   z.object({ state: z.string() }).parse(set);
+}
+
+const Author = z
+  .object({ __typename: z.string(), login: z.string() })
+  .nullable()
+  .transform((a) => a && { login: a.login, bot: a.__typename === "Bot" });
+
+export type Check =
+  | {
+      kind: "run";
+      id: number;
+      name: string;
+      status: string;
+      conclusion: string | null;
+      url: string | null;
+    }
+  | { kind: "status"; name: string; state: string; url: string | null };
+
+const Context = z.discriminatedUnion("__typename", [
+  z
+    .object({
+      __typename: z.literal("CheckRun"),
+      databaseId: z.number(),
+      name: z.string(),
+      status: z.string(),
+      conclusion: z.string().nullable(),
+      detailsUrl: z.string().nullable(),
+    })
+    .transform(
+      (c): Check => ({
+        kind: "run",
+        id: c.databaseId,
+        name: c.name,
+        status: c.status,
+        conclusion: c.conclusion,
+        url: c.detailsUrl,
+      }),
+    ),
+  z
+    .object({
+      __typename: z.literal("StatusContext"),
+      context: z.string(),
+      state: z.string(),
+      targetUrl: z.string().nullable(),
+    })
+    .transform(
+      (c): Check => ({
+        kind: "status",
+        name: c.context,
+        state: c.state,
+        url: c.targetUrl,
+      }),
+    ),
+]);
+
+const nodes = <T extends z.ZodType>(item: T) =>
+  z.object({ nodes: z.array(item) }).transform((list) => list.nodes);
+
+const Pull = z
+  .object({
+    state: z.enum(["OPEN", "CLOSED", "MERGED"]),
+    mergeable: z.enum(["MERGEABLE", "CONFLICTING", "UNKNOWN"]),
+    baseRefName: z.string(),
+    reviews: nodes(
+      z
+        .object({
+          databaseId: z.number(),
+          state: z.string(),
+          body: z.string(),
+          author: Author,
+          comments: nodes(
+            z.object({ path: z.string(), line: z.number().nullable(), body: z.string() }),
+          ),
+        })
+        .transform(({ databaseId, ...review }) => ({ id: databaseId, ...review })),
+    ),
+    comments: nodes(
+      z
+        .object({ databaseId: z.number(), body: z.string(), author: Author })
+        .transform(({ databaseId, ...comment }) => ({ id: databaseId, ...comment })),
+    ),
+    commits: nodes(
+      z.object({
+        commit: z.object({
+          statusCheckRollup: z.object({ contexts: nodes(Context) }).nullable(),
+        }),
+      }),
+    ),
+  })
+  .transform((p) => ({
+    state: p.state,
+    mergeable: p.mergeable,
+    base: p.baseRefName,
+    reviews: p.reviews,
+    comments: p.comments,
+    // Only the head commit is asked for, and only its checks count.
+    checks: p.commits[0]?.commit.statusCheckRollup?.contexts ?? [],
+  }));
+export type PullRequest = z.infer<typeof Pull>;
+
+// Enough of each list for what can happen between two polls. Only the newest are asked for,
+// as events older than the last one skel handled mean nothing to it.
+const pullFields = `state mergeable baseRefName
+  reviews(last: 50) { nodes { databaseId state body author { __typename login }
+    comments(first: 50) { nodes { path line body } } } }
+  comments(last: 50) { nodes { databaseId body author { __typename login } } }
+  commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
+    __typename
+    ... on CheckRun { databaseId name status conclusion detailsUrl }
+    ... on StatusContext { context state targetUrl } } } } } } }`;
+
+// Returns your gh login and each of the repository's given PRs, with their reviews, comments,
+// head checks and merge state, in one GraphQL query, so the number of requests doesn't grow
+// with the number of threads. A PR GitHub doesn't find is left out.
+export async function readPullRequests(
+  repo: string,
+  numbers: number[],
+): Promise<{ you: string; prs: Map<number, PullRequest> }> {
+  const [owner, name] = repo.split("/");
+  const pulls = numbers.map((n) => `pr${n}: pullRequest(number: ${n}) { ${pullFields} }`);
+  const query = `query($owner: String!, $name: String!) { viewer { login }
+    repository(owner: $owner, name: $name) { ${pulls.join("\n")} } }`;
+  const got = await gh(["api", "graphql", "--input", "-"], `read the pull requests of ${repo}`, {
+    query,
+    variables: { owner, name },
+  });
+  const { data } = z
+    .object({
+      data: z.object({
+        viewer: z.object({ login: z.string() }),
+        repository: z.record(z.string(), Pull.nullable()),
+      }),
+    })
+    .parse(got);
+  const prs = new Map<number, PullRequest>();
+  for (const n of numbers) {
+    const pr = data.repository[`pr${n}`];
+    if (pr) prs.set(n, pr);
+  }
+  return { you: data.viewer.login, prs };
+}
+
+// Returns whether someone can push to the repository: write, maintain or admin access, which
+// GitHub reports as write or admin. Throws when GitHub can't be asked, so a failure is never
+// taken for a no.
+export async function canPush(repo: string, login: string): Promise<boolean> {
+  let got: unknown;
+  try {
+    got = await api(
+      `repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`,
+      `check ${login}'s access to ${repo}`,
+    );
+  } catch (error) {
+    // GitHub answers 404 for a login that is no user, such as a deleted account's.
+    if (error instanceof Error && error.message.includes("(HTTP 404)")) return false;
+    throw error;
+  }
+  const { permission } = z.object({ permission: z.string() }).parse(got);
+  return ["admin", "write"].includes(permission);
+}
+
+// Returns the end of a failed GitHub Actions job's log: the failed steps only, without the
+// job and step names and the time gh puts before each line. Kept short, as it is typed into
+// the builder, which can ask for more by running the tests itself.
+export async function failedLog(repo: string, job: number): Promise<string> {
+  const log = await ghText(
+    ["run", "view", "--job", String(job), "--log-failed", "--repo", repo],
+    `read the log of job ${job} in ${repo}`,
+  );
+  const lines = log
+    .trimEnd()
+    .split("\n")
+    .map((line) => line.replace(/^[^\t]*\t[^\t]*\t(\S+Z )?/, ""));
+  return lines.slice(-30).join("\n").slice(-3000);
 }
