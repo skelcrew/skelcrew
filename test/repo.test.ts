@@ -255,6 +255,33 @@ test("repo ls says how to bring a repository in while there is none", async () =
   expect((await skel(["repo", "ls"])).out).toBe(`${hint}\n`);
 });
 
+// The daemon writes skel's database while you run commands that read or write it too.
+test("repo ls waits while another process writes skel's database", async () => {
+  expect((await skel(["repo", "ls"])).out).toBe(`${hint}\n`);
+  const held = join(home, "held");
+  const script = `import { Database } from "bun:sqlite";
+import { writeFileSync } from "node:fs";
+const db = new Database(${JSON.stringify(join(home, ".local", "share", "skel", "skel.db"))});
+db.run("BEGIN EXCLUSIVE");
+writeFileSync(${JSON.stringify(held)}, "");
+await Bun.sleep(1000);
+db.run("COMMIT");`;
+  const writer = Bun.spawn([process.execPath, "-e", script], { stderr: "pipe" });
+  try {
+    const deadline = Date.now() + 10_000;
+    while (!existsSync(held)) {
+      if (Date.now() > deadline) throw new Error(await new Response(writer.stderr).text());
+      await Bun.sleep(20);
+    }
+    const listed = await skel(["repo", "ls"]);
+    expect(listed.err).toBe("");
+    expect(listed.out).toBe(`${hint}\n`);
+  } finally {
+    writer.kill();
+    await writer.exited;
+  }
+});
+
 test("repo rm removes skel's clone and forgets the trust", async () => {
   const checkout = onGitHub("simon/app");
   await skel([], "y\n", checkout);
