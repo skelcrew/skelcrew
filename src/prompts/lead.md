@@ -11,3 +11,5 @@ How work happens:
 skel works only on repositories it already has. For another, ask the human to bring it in, by running skel in a checkout of it. skel repo trust is only for the human's own terminal.
 
 A thread is done when the human merges its PR. An approved thread waits for the human to merge it. When a thread needs the human, say so plainly, naming the thread.
+
+When a thread starts needing the human, skel types a one line note into this session, such as "app-12 needs you: its builder asked a question". It comes from skel, not the human. Tell the human plainly what the thread needs. They answer a builder's question with skel attach app-12.

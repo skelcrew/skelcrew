@@ -130,7 +130,24 @@ const ClaudeJson = z.looseObject({
 
 // Bypass mode shows a warning first, which nobody is there to accept. Claude Code's own
 // sandbox fails inside skel's, so it stays off even if your settings turn it on.
-export const settings = '{"skipDangerousModePermissionPrompt":true,"sandbox":{"enabled":false}}';
+const base = { skipDangerousModePermissionPrompt: true, sandbox: { enabled: false } };
+export const settings = JSON.stringify(base);
+
+// A builder's AskUserQuestion waits on a screen nobody watches, so Claude Code's hooks tell
+// skel when the builder asks, and the thread needs you until the question is over. Answering
+// runs PostToolUse, but setting it aside with Esc or "Chat about this" runs no hook at all, so
+// whatever is typed into the builder next also ends it. The commands answer at once, and
+// print nothing, since UserPromptSubmit adds what a hook prints to the message.
+const asked = { type: "command", command: "skel question asked", timeout: 10 };
+const answered = { ...asked, command: "skel question answered" };
+const builderSettings = JSON.stringify({
+  ...base,
+  hooks: {
+    PreToolUse: [{ matcher: "AskUserQuestion", hooks: [asked] }],
+    PostToolUse: [{ matcher: "AskUserQuestion", hooks: [answered] }],
+    UserPromptSubmit: [{ hooks: [answered] }],
+  },
+});
 
 // Only what a shell and Claude Code need gets in. Tokens and keys in your environment stay
 // out, and so do CLAUDE_CODE_* variables inherited from a Claude Code session, which make
@@ -284,7 +301,7 @@ export function agentCommand(given: {
   renameSync(fresh, file);
 
   const command = ["claude", "--model", model, "--permission-mode", "bypassPermissions"];
-  command.push("--settings", settings);
+  command.push("--settings", thread ? builderSettings : settings);
   if (resume) command.push("--resume", resume);
   if (sessionId) command.push("--session-id", sessionId);
   if (system) command.push("--append-system-prompt", system);

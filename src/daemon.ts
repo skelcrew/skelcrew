@@ -8,7 +8,7 @@ import { dirname } from "node:path";
 import { z } from "zod";
 import { openDb } from "./db.ts";
 import { createIssue } from "./github.ts";
-import { startLead } from "./lead.ts";
+import { startLead, tellLead } from "./lead.ts";
 import { listTasks, listThreads, TaskRow, ThreadRow } from "./list.ts";
 import { cliSocket, daemonSocket, leadSocket, threadSocket } from "./paths.ts";
 import { findRepository, refreshClones } from "./repo.ts";
@@ -18,6 +18,8 @@ import {
   bringBack,
   failThread,
   liveThreads,
+  readThread,
+  record,
   setUpThread,
   startBuilder,
   startThread,
@@ -48,6 +50,8 @@ const Request = z.discriminatedUnion("command", [
     from: Branch.optional(),
   }),
   z.object({ command: z.literal("submit"), summary: z.string().min(1) }),
+  z.object({ command: z.literal("question asked") }),
+  z.object({ command: z.literal("question answered") }),
 ]);
 type Request = z.infer<typeof Request>;
 const LeadReply = z.union([z.object({ lead: z.literal(true) }), z.object({ error: z.string() })]);
@@ -59,7 +63,7 @@ type Caller = "you" | "lead" | Thread;
 const allowed = {
   you: ["status", "lead", "ps", "task ls", "task create", "start"],
   lead: ["status", "ps", "task ls", "task create", "start"],
-  builder: ["status", "submit"],
+  builder: ["status", "submit", "question asked", "question answered"],
 };
 
 // Returns a decoded socket message, or undefined so invalid JSON can be rejected without
@@ -170,6 +174,8 @@ export async function serve(tmux: string): Promise<void> {
     }
     if (request.command === "lead") {
       await lead();
+      // A lead that wasn't running kept its notes until now.
+      tellLead(db, tmux);
       // Not waited on, so attaching never waits on GitHub.
       refreshClones(db).catch((error) => console.log(String(error)));
       return { lead: true };
@@ -185,7 +191,20 @@ export async function serve(tmux: string): Promise<void> {
       submitRound(db, tmux, caller.folder, request.summary);
       return { submitted: threadName(db, caller) };
     }
-    if (request.command !== "start") throw new Error("only a builder can submit, from its thread");
+    if (request.command === "question asked" && typeof caller === "object") {
+      record(db, caller.folder, { asking: true }, "its builder asked a question");
+      tellLead(db, tmux);
+      return { asking: true };
+    }
+    if (request.command === "question answered" && typeof caller === "object") {
+      // Run before every message typed into the builder, so only a question that was open
+      // is logged.
+      if (readThread(db, caller.folder).asking)
+        record(db, caller.folder, { asking: false }, "its builder's question is over");
+      return { asking: false };
+    }
+    if (request.command !== "start")
+      throw new Error("only a builder can ask that, from its thread");
     const thread = await startThread(db, request);
     // Not waited on: an agent's command must answer quickly, and setup can take minutes.
     begin(thread);
@@ -232,6 +251,8 @@ export async function serve(tmux: string): Promise<void> {
     });
   console.log(`Listening on ${path}.`);
   await lead().catch((error) => console.log(message(error)));
+  // Notes the daemon's stop kept from the lead.
+  tellLead(db, tmux);
   for (const thread of before) {
     await listenFor(thread);
     // After the builder is back, since the round may type into its session.
@@ -296,6 +317,13 @@ export async function startOn(repo: string, task: number, from?: string): Promis
 export async function submitForReview(summary: string): Promise<string> {
   const reply = await request({ command: "submit", summary });
   return understood(z.object({ submitted: z.string() }), reply).submitted;
+}
+
+// Tells the daemon, for a builder's hook, that its builder is asking you a question, so the
+// thread needs you, or that the question is over. The builder's own socket tells the daemon
+// which thread it is. The daemon answers at once, as Claude Code waits on its hooks.
+export async function question(asking: boolean): Promise<void> {
+  await request({ command: asking ? "question asked" : "question answered" });
 }
 
 // Ensures the daemon and lead are running, then attaches your terminal until you detach

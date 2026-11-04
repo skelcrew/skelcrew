@@ -11,7 +11,16 @@ import { dataDir, leadSocket } from "./paths.ts";
 import instructions from "./prompts/lead.md" with { type: "text" };
 import { refreshClones } from "./repo.ts";
 import { agentCommand, hasTranscript } from "./sandbox.ts";
-import { endSession, failedScreen, hasSession, startServer, startSession } from "./tmux.ts";
+import { readThread, record, Thread, threadName } from "./thread.ts";
+import {
+  endSession,
+  failedScreen,
+  hasSession,
+  isIdle,
+  startServer,
+  startSession,
+  typeInto,
+} from "./tmux.ts";
 
 const Lead = z.object({ session: z.string() }).nullable();
 
@@ -50,4 +59,39 @@ export async function startLead(db: Database, tmux: string): Promise<void> {
   if (failed !== null) endSession(tmux, "lead");
   if (failed !== null || !hasSession(tmux, "lead"))
     throw new Error(`the lead exited as soon as it started:\n${failed ?? ""}`);
+}
+
+// Types each saved note into the lead, one at a time, such as "app-12 needs you: its builder
+// asked a question", and forgets it once typed. It waits as long as the lead is busy,
+// checking again each time whether the note is still wanted, so a question you answered
+// meanwhile is never announced. A lead that isn't running gets nothing: its notes stay saved
+// until it starts again.
+async function typeNotes(db: Database, tmux: string): Promise<void> {
+  for (;;) {
+    const row = db.query("SELECT * FROM threads WHERE noting IS NOT NULL ORDER BY rowid").get();
+    const thread = Thread.nullable().parse(row);
+    if (thread === null || thread.noting === null) return;
+    if (!hasSession(tmux, "lead") || failedScreen(tmux, "lead") !== null) return;
+    if (!(await isIdle(tmux, "lead"))) continue;
+    await typeInto(tmux, "lead", `${threadName(db, thread)} needs you: ${thread.noting}`);
+    // The thread may have stopped needing you and started again while this was typed.
+    if (readThread(db, thread.folder).noting === thread.noting)
+      record(db, thread.folder, { noting: null }, "told the lead it needs you");
+  }
+}
+
+let telling: Promise<void> = Promise.resolve();
+
+// Has the daemon type the saved notes into the lead, after any it is typing already, and
+// returns at once, so the round or request that saved a note never waits on the lead. A
+// note that fails to be typed stays saved, and the next call, at the next note, the next
+// skel attach or the daemon's next start, tries it again.
+export function tellLead(db: Database, tmux: string): void {
+  telling = telling
+    .then(() => typeNotes(db, tmux))
+    .catch((error) =>
+      console.log(
+        `couldn't tell the lead: ${error instanceof Error ? error.message : String(error)}`,
+      ),
+    );
 }
