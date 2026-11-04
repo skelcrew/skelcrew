@@ -36,6 +36,7 @@ test("the help names every command", () => {
     "task show",
     "task create",
     "start",
+    "stop",
     "attach",
     "review",
   ])
