@@ -24,6 +24,7 @@ import {
 
 const Lead = z.object({ session: z.string() }).nullable();
 const Told = z.object({ session: z.string(), note: z.string() }).nullable();
+const Note = z.object({ id: z.number(), text: z.string() }).nullable();
 const AttachedFrom = z.object({ repo: z.string().nullable() }).nullable();
 
 // Keeps a running lead or starts one, resuming its saved conversation when available. skel
@@ -63,18 +64,26 @@ export async function startLead(db: Database, tmux: string): Promise<void> {
     throw new Error(`the lead exited as soon as it started:\n${failed ?? ""}`);
 }
 
-// Types each saved note into the lead, one at a time, such as "app-12 needs you: its builder
-// asked a question", and forgets it once typed. It waits as long as the lead is busy,
-// checking again each time whether the note is still wanted, so a question you answered
-// meanwhile is never announced. A lead that isn't running gets nothing: its notes stay saved
+// Types each saved note into the lead, one at a time, such as "started app-12 from GitHub:
+// Fix the login redirect" or "app-12 needs you: its builder asked a question", and forgets it
+// once typed. It waits as long as the lead is busy, checking again each time whether a note
+// about a thread needing you is still wanted, so a question you answered meanwhile is never
+// announced. A lead that isn't running gets nothing: its notes stay saved
 // until it starts again.
 async function typeNotes(db: Database, tmux: string): Promise<void> {
   for (;;) {
+    const note = Note.parse(db.query("SELECT id, text FROM notes ORDER BY id").get());
     const row = db.query("SELECT * FROM threads WHERE noting IS NOT NULL ORDER BY rowid").get();
     const thread = Thread.nullable().parse(row);
-    if (thread === null || thread.noting === null) return;
+    if (note === null && (thread === null || thread.noting === null)) return;
     if (!hasSession(tmux, "lead") || failedScreen(tmux, "lead") !== null) return;
     if (!(await isIdle(tmux, "lead"))) continue;
+    if (note !== null) {
+      await typeInto(tmux, "lead", note.text);
+      db.run("DELETE FROM notes WHERE id = ?", [note.id]);
+      continue;
+    }
+    if (thread === null || thread.noting === null) return;
     await typeInto(tmux, "lead", `${threadName(db, thread)} needs you: ${thread.noting}`);
     // The thread may have stopped needing you and started again while this was typed.
     if (readThread(db, thread.folder).noting === thread.noting)

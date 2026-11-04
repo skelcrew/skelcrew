@@ -318,7 +318,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
       (error) => failThread(db, thread, error),
     );
   }
-  pollGitHub(db, tmux, every);
+  pollGitHub(db, tmux, every, begin);
   if (onSprite()) keepAwake(() => hasWork(liveThreads(db)));
 }
 

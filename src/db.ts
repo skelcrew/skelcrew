@@ -43,6 +43,10 @@ export function openDb(): Database {
       nameRepositories(db);
     })();
   db.run(createRepositories);
+  // Whether skel made sure the repository has the skel label. Repositories an older skel
+  // brought in get it once, when the daemon next refreshes their clones.
+  if (!db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = 'labeled'").get())
+    db.run("ALTER TABLE repositories ADD COLUMN labeled INTEGER NOT NULL DEFAULT 0");
   // One row at most: there is one lead per machine.
   db.run(`CREATE TABLE IF NOT EXISTS lead (
     one INTEGER PRIMARY KEY CHECK (one = 1),
@@ -105,6 +109,9 @@ export function openDb(): Database {
   for (const [column, type] of Object.entries(added))
     if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))
       db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
+  // Notes for the lead that aren't about a thread needing you, such as a thread started from
+  // GitHub, kept until they are typed in, since the lead may not be running.
+  db.run("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)");
   // The reviews skel posted. They go out with your gh login, so on GitHub they look like
   // reviews of yours, and polling must not type them back into the builder.
   db.run("CREATE TABLE IF NOT EXISTS posted (id INTEGER PRIMARY KEY)");
