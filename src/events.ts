@@ -18,7 +18,6 @@ import {
 import { failedScreen, hasSession, stopSession, typeInto } from "./tmux.ts";
 
 type Change = Partial<Pick<Thread, "status" | "needs_you">>;
-type CheckRun = Extract<Check, { kind: "run" }>;
 type Author = PullRequest["comments"][number]["author"];
 
 export type Decision =
@@ -28,7 +27,7 @@ export type Decision =
       handled: { last_review: number; last_comment: number; last_check: number };
       // What to type into the builder, besides the failed checks, whose logs come from GitHub.
       tell: string[];
-      failed: CheckRun[];
+      failed: Check[];
       change: Change;
       why: string;
     };
@@ -94,18 +93,27 @@ export function decide(
   const comments = pr.comments.filter((c) => c.id > last_comment).sort((a, b) => a.id - b.id);
   for (const c of comments)
     if (wakes(c.author)) tell.push(`${who(c.author)} commented on the PR:\n\n${c.body}`);
-  // While a newer round is still being pushed, the checks GitHub shows are an older commit's.
-  const failed =
-    thread.submitting === null
-      ? runs.filter(
-          (r) =>
-            r.id > last_check && r.status === "COMPLETED" && failing.includes(r.conclusion ?? ""),
-        )
-      : [];
-  // Only once nothing is under way, so the conflict is told once: the builder then works on
-  // it until it submits again.
+  // Only once nothing is under way, so a conflict or a failed commit status is told once: the
+  // builder then works on it until it submits again.
   const quiet =
     thread.status === "waiting" && thread.submitting === null && thread.reviewing === null;
+  // CI's checks, without skel's own review check, which its rounds look after.
+  const ci = pr.checks.filter((c) => c.name !== "skel/review");
+  // While a newer round is still being pushed, the checks GitHub shows are an older commit's.
+  // Parallel jobs finish out of order, and one that fails later must not fall behind the last
+  // handled ID, so failures wait until every check has finished. A commit status has no ID.
+  const finished =
+    thread.submitting === null &&
+    ci.every((c) =>
+      c.kind === "run" ? c.status === "COMPLETED" : !["PENDING", "EXPECTED"].includes(c.state),
+    );
+  const failed = finished
+    ? ci.filter((c) =>
+        c.kind === "run"
+          ? c.id > last_check && failing.includes(c.conclusion ?? "")
+          : quiet && ["FAILURE", "ERROR"].includes(c.state),
+      )
+    : [];
   if (quiet && pr.mergeable === "CONFLICTING")
     tell.push(
       `The PR conflicts with ${pr.base}. Merge ${pr.base} into your branch and fix the conflict, then commit and run skel submit "<summary>" again.`,
@@ -113,7 +121,7 @@ export function decide(
   const handled = {
     last_review: Math.max(last_review, ...reviews.map((r) => r.id)),
     last_comment: Math.max(last_comment, ...comments.map((c) => c.id)),
-    last_check: Math.max(last_check, ...failed.map((r) => r.id)),
+    last_check: finished ? Math.max(last_check, ...runs.map((r) => r.id)) : last_check,
   };
   if (tell.length > 0 || failed.length > 0) {
     const told = [...failed.map((r) => `${r.name} failed`), ...tell.map((t) => t.split("\n")[0])];
@@ -139,15 +147,17 @@ export function decide(
 
 // The message about failed checks, with the end of each one's log. A check that isn't a
 // GitHub Actions job has no log gh can read, so it gets its link instead.
-async function aboutChecks(repo: string, failed: CheckRun[]): Promise<string[]> {
+async function aboutChecks(repo: string, failed: Check[]): Promise<string[]> {
   return Promise.all(
-    failed.map(async (r) => {
-      const log = await failedLog(repo, r.id).catch(
+    failed.map(async (c) => {
+      const link = c.url ? ` (${c.url})` : "";
+      const fix = 'Fix it, commit, and run skel submit "<summary>" again.';
+      if (c.kind === "status") return `The check ${c.name} failed${link}. ${fix}`;
+      const log = await failedLog(repo, c.id).catch(
         (error) =>
           `(skel couldn't read its log: ${error instanceof Error ? error.message : error})`,
       );
-      const link = r.url ? ` (${r.url})` : "";
-      return `The check ${r.name} failed${link}. The end of its log:\n\n${log}\n\nFix it, commit, and run skel submit "<summary>" again.`;
+      return `The check ${c.name} failed${link}. The end of its log:\n\n${log}\n\n${fix}`;
     }),
   );
 }
@@ -189,7 +199,17 @@ async function tellBuilder(
       throw new Error("its builder isn't running");
     // A builder can work long after an event, but one busy this long has likely hung.
     await typeInto(tmux, thread.folder, text, { timeout: 30 * 60_000, signal: cancel.signal });
-    if (!cancel.signal.aborted) record(db, thread.folder, { ...handled, ...change }, why);
+    if (cancel.signal.aborted) return;
+    // Typing can wait a long time, and a newer round may have moved the thread on meanwhile,
+    // such as to approved. Its state then stands, and only the events count as handled.
+    const now = readThread(db, thread.folder);
+    const moved =
+      now.status !== thread.status ||
+      now.needs_you !== thread.needs_you ||
+      now.rounds !== thread.rounds ||
+      now.submitting !== thread.submitting ||
+      now.reviewing !== thread.reviewing;
+    record(db, thread.folder, moved ? handled : { ...handled, ...change }, why);
   } catch (error) {
     const said = error instanceof Error ? error.message : String(error);
     record(db, thread.folder, { ...handled, needs_you: true }, `couldn't tell: ${said}. ${why}`);

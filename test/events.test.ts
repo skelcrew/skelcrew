@@ -102,6 +102,44 @@ test("a check still running, or cancelled, tells the builder nothing", () => {
   expect(decision.change).toEqual({});
 });
 
+// Parallel jobs finish out of order, and one that fails later must not fall behind the last
+// handled ID, so failures wait until every check on the commit has finished.
+test("failed checks are told once every check has finished, whatever order they finish in", () => {
+  const early = run(31, "lint", "COMPLETED", "FAILURE");
+  const running = acted(thread(), pr({ checks: [run(30, "test", "IN_PROGRESS", null), early] }));
+  expect(running.failed).toEqual([]);
+  expect(running.handled.last_check).toBe(0);
+  const late = run(30, "test", "COMPLETED", "FAILURE");
+  const done = acted(thread(), pr({ checks: [late, early] }));
+  expect(done.failed).toEqual([late, early]);
+  expect(done.handled.last_check).toBe(31);
+});
+
+test("skel's own review check doesn't hold back failed checks", () => {
+  const failing = run(30, "test", "COMPLETED", "FAILURE");
+  const pending: Check = { kind: "status", name: "skel/review", state: "PENDING", url: null };
+  expect(acted(thread(), pr({ checks: [pending, failing] })).failed).toEqual([failing]);
+});
+
+test("a failed commit status is told while the thread waits, then not again", () => {
+  const status: Check = {
+    kind: "status",
+    name: "ci/circleci",
+    state: "FAILURE",
+    url: "https://circleci.com/1",
+  };
+  const decision = acted(thread(), pr({ checks: [status] }));
+  expect(decision.failed).toEqual([status]);
+  expect(decision.change).toEqual({ status: "working", needs_you: false });
+  // Told, the builder works on it until it submits, as for a conflict.
+  expect(acted(thread({ status: "working" }), pr({ checks: [status] })).failed).toEqual([]);
+});
+
+test("skel's reviewer asking for changes isn't a failed check for polling to tell", () => {
+  const changes: Check = { kind: "status", name: "skel/review", state: "FAILURE", url: null };
+  expect(acted(thread(), pr({ checks: [changes] })).failed).toEqual([]);
+});
+
 test("a failed check already handled isn't told again", () => {
   const checks = [run(30, "test", "COMPLETED", "FAILURE")];
   const decision = acted(thread({ last_check: 30 }), pr({ checks }));

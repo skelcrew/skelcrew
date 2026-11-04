@@ -41,7 +41,8 @@ function script(name: string, body: string): void {
 }
 
 // Stands in for Claude Code. As the builder, it commits a round and runs skel submit, then
-// waits at a ❯ prompt, keeping what is typed into it.
+// waits at a ❯ prompt, keeping what is typed into it. While the file busy is in its config
+// folder, it looks busy, as Claude Code does mid-turn.
 function fakeClaude(): void {
   script(
     "claude",
@@ -49,6 +50,8 @@ function fakeClaude(): void {
 echo 1 > change
 git add -A && git commit -qm "round 1"
 skel submit "Round 1" >> "$CLAUDE_CONFIG_DIR/submitted" 2>&1
+while test -e "$CLAUDE_CONFIG_DIR/busy"; do echo "esc to interrupt"; sleep 0.2; done
+clear
 printf '\\033[?2004h'
 stty -echo
 echo "❯"
@@ -292,6 +295,23 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     serve();
     await morePolls();
     expect(typed().split("The check test failed").length - 1).toBe(1);
+  }, 60_000);
+
+  test("an event typed into a busy builder doesn't undo what a newer round saved meanwhile", async () => {
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "busy"), "");
+    await approvedApp12();
+    pr({ reviews: [skelReview], comments: [{ id: 50, author: you, body: "Also CSV." }] });
+    await morePolls();
+    // As a newer round would leave it, approved and ready, while the comment waits.
+    const db = new Database(join(data(), "skel.db"));
+    db.run("PRAGMA busy_timeout = 5000");
+    db.run("UPDATE threads SET rounds = 1, needs_you = 1");
+    db.close();
+    rmSync(join(builder(), "busy"));
+    await until(() => typed().includes("Also CSV."));
+    await until(() => thread().last_comment === 50);
+    expect(thread()).toMatchObject({ status: "waiting", needs_you: 1, rounds: 1 });
   }, 60_000);
 
   test("approved with every check green needs you, and skel's own review is not typed back", async () => {
