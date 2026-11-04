@@ -103,3 +103,35 @@ export async function openPullRequest(
   });
   return Numbered.parse(opened).number;
 }
+
+// GitHub refuses to let you approve or request changes on your own pull request, and skel
+// opens and reviews it with the same gh login. So the verdict goes in a comment review, and
+// the skel/review check is what branch protection can require.
+export async function postReview(
+  repo: string,
+  pr: number,
+  verdict: "approve" | "changes",
+  body: string,
+): Promise<void> {
+  const said = verdict === "approve" ? "**Approved.**" : "**Changes requested.**";
+  const posted = await api(`repos/${repo}/pulls/${pr}/reviews`, `post a review on #${pr}`, {
+    event: "COMMENT",
+    body: `${said}\n\n${body}`,
+  });
+  z.object({ id: z.number() }).parse(posted);
+}
+
+// GitHub rejects a status whose description is longer than 140 characters.
+export async function setReviewStatus(
+  repo: string,
+  sha: string,
+  state: "pending" | "success" | "failure",
+  description: string,
+): Promise<void> {
+  const set = await api(`repos/${repo}/statuses/${sha}`, `set the skel/review check on ${sha}`, {
+    state,
+    context: "skel/review",
+    description: description.slice(0, 140),
+  });
+  z.object({ state: z.string() }).parse(set);
+}

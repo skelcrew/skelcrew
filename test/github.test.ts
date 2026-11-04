@@ -7,7 +7,9 @@ import {
   createIssue,
   findPullRequest,
   openPullRequest,
+  postReview,
   readIssue,
+  setReviewStatus,
 } from "../src/github.ts";
 
 let home = "";
@@ -94,6 +96,42 @@ test("opens a pull request that closes the issue", async () => {
       body: "Exports as JSON.\n\nCloses #12",
     },
   });
+});
+
+test("posts an approving review as a comment that states the verdict", async () => {
+  gh('{"id":7}');
+  await postReview("simon/app", 40, "approve", "Looks right.");
+  expect(sent()).toEqual({
+    args: ["api", "repos/simon/app/pulls/40/reviews", "--method", "POST", "--input", "-"],
+    input: { event: "COMMENT", body: "**Approved.**\n\nLooks right." },
+  });
+});
+
+test("posts a review asking for changes as a comment that states the verdict", async () => {
+  gh('{"id":7}');
+  await postReview("simon/app", 40, "changes", "The test is missing.");
+  expect(sent().input).toEqual({
+    event: "COMMENT",
+    body: "**Changes requested.**\n\nThe test is missing.",
+  });
+});
+
+test("sets the skel/review check on a commit", async () => {
+  gh('{"id":3,"state":"pending"}');
+  await setReviewStatus("simon/app", "abc123", "pending", "Reviewing");
+  expect(sent()).toEqual({
+    args: ["api", "repos/simon/app/statuses/abc123", "--method", "POST", "--input", "-"],
+    input: { state: "pending", context: "skel/review", description: "Reviewing" },
+  });
+});
+
+test("cuts a long check description to what GitHub accepts", async () => {
+  gh('{"id":3,"state":"failure"}');
+  await setReviewStatus("simon/app", "abc123", "failure", "x".repeat(200));
+  const input = sent().input;
+  expect(input).toMatchObject({ state: "failure", context: "skel/review" });
+  expect(JSON.stringify(input)).toContain(`"description":"${"x".repeat(140)}"`);
+  expect(JSON.stringify(input)).not.toContain("x".repeat(141));
 });
 
 test("says what it tried and what gh said when gh fails", async () => {
