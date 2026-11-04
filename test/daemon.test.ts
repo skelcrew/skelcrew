@@ -618,6 +618,8 @@ c.on("error", () => process.exit(1));`;
     await ask({ command: "lead", from: "simon/app" });
     await until(() => heard().length === 1);
     const db = new Database(join(home, ".local", "share", "skel", "skel.db"));
+    // The daemon may be writing; without a wait, this write fails with "database is locked".
+    db.run("PRAGMA busy_timeout = 5000");
     db.run("INSERT INTO repositories (name, owner, repo) VALUES ('other/app', 'other', 'app')");
     db.run("UPDATE repositories SET name = 'simon/app' WHERE owner = 'simon'");
     db.close();
@@ -643,6 +645,8 @@ c.on("error", () => process.exit(1));`;
     setUp();
     addRepository("app");
     const db = new Database(join(home, ".local", "share", "skel", "skel.db"));
+    // The daemon may be writing; without a wait, this write fails with "database is locked".
+    db.run("PRAGMA busy_timeout = 5000");
     db.run("INSERT INTO repositories (name, owner, repo) VALUES ('other/app', 'other', 'app')");
     db.run("UPDATE repositories SET name = 'simon/app' WHERE owner = 'simon'");
     db.close();
