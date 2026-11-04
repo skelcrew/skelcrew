@@ -444,6 +444,51 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     expect(read(join(home, "gh", "query"))).not.toContain("pullRequest");
   }, 60_000);
 
+  test("a stopped thread holds your comment until it starts again, and its merge still ends it", async () => {
+    await approvedApp12();
+    const stopped = Bun.spawnSync([process.execPath, main, "stop", "app-12"], {
+      env: env(),
+      stderr: "pipe",
+    });
+    expect(stopped.stderr.toString()).toBe("");
+    expect(thread().status).toBe("stopped");
+    expect(fakeBuilders()).toEqual([]);
+    pr({ reviews: [skelReview], comments: [{ id: 50, author: you, body: "Also CSV." }] });
+    await morePolls();
+    expect(typed()).not.toContain("Also CSV.");
+    expect(thread()).toMatchObject({ status: "stopped", last_comment: 0 });
+
+    const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
+      env: env(),
+      stderr: "pipe",
+    });
+    expect(started.stderr.toString()).toBe("");
+    await until(() => typed().includes("Also CSV."), 30_000);
+
+    Bun.spawnSync([process.execPath, main, "stop", "app-12"], { env: env() });
+    expect(thread().status).toBe("stopped");
+    pr({ state: "MERGED", reviews: [skelReview], checks: [approved] });
+    await until(() => thread().status === "done");
+    expect(existsSync(clone())).toBe(false);
+  }, 60_000);
+
+  test("a comment still waiting for a busy builder when it is stopped stays unhandled", async () => {
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "busy"), "");
+    await approvedApp12();
+    pr({ reviews: [skelReview], comments: [{ id: 50, author: you, body: "Also CSV." }] });
+    await morePolls();
+    const stopped = Bun.spawnSync([process.execPath, main, "stop", "app-12"], {
+      env: env(),
+      stderr: "pipe",
+    });
+    expect(stopped.stderr.toString()).toBe("");
+    await morePolls();
+    // Typing gives up within a moment of the session ending.
+    await Bun.sleep(1500);
+    expect(thread()).toMatchObject({ status: "stopped", needs_you: 0, last_comment: 0 });
+  }, 60_000);
+
   test("an issue labeled skel starts a thread once, and one that failed isn't started again", async () => {
     // A builder that can't start, so the thread fails.
     script(

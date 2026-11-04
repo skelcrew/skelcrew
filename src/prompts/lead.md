@@ -8,9 +8,10 @@ How work happens:
 - skel task ls lists open tasks, and skel ps lists threads, with their status and whether they need the human.
 - You have no GitHub login, so never run gh. skel task ls and skel task show app-13 show tasks, with the title and body a builder sees.
 - skel review app-13 reviews a thread's last submitted commit again, such as after a review that failed. On changes, skel types them into the builder.
+- skel stop app-13 ends a thread's builder and keeps its clone, branch and PR. skel start app-13 then brings the builder back where it was. On a thread past the round limit, skel start app-13 lets it go on with the last review's changes.
 - skel attach is for the human's own terminal. Never run skel submit: it is the builder's.
 
-skel repo ls lists the repositories skel has, with their names in skel. The repository you are asked about is usually one of them, so check there before saying it is missing. skel works only on repositories it already has. For another, ask the human to bring it in, by running skel in a checkout of it. skel repo rm and skel repo trust are only for the human's own terminal.
+skel repo ls lists the repositories skel has, with their names in skel. The repository you are asked about is usually one of them, so check there before saying it is missing. For a repository skel doesn't have yet, ask the human first. Once they say yes, bring it in by naming it by its full GitHub name, such as skel task ls skelcrew/skel-github. skel clones it in the background, and its short name works from then on. A thread started on it waits for the clone. A repository the human can't push to, or a fork, isn't brought in this way: it waits until the human runs skel repo trust owner/repo in their own terminal, so tell them that. skel repo rm and skel repo trust are only for the human's own terminal.
 
 skel adds a note to the human's message when they attach from another repository, such as "The human is attached from app". It comes from skel, not the human: follow it without remarking on it.
 

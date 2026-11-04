@@ -32,15 +32,17 @@ export type Outcome = {
   needsYou: boolean;
   status: "working" | "waiting";
   tell: string | null;
+  // Changes past the round limit, kept rather than typed in.
+  held: string | null;
   why: string;
 };
 
 // Decides what a finished review means for a thread that has had `rounds` rounds of changes:
 // the skel/review check to set, the thread's new state, and what to type into the builder,
 // if anything. The builder gets max_rounds rounds of changes to fix. A review asking for
-// changes after those is posted but not typed in, and, like a failed review, the thread then
-// needs you. An approved thread waits on CI: polling GitHub marks it needs you once every
-// check is green.
+// changes after those is posted but not typed in, only held for skel start to let the thread
+// go on, and, like a failed review, the thread then needs you. An approved thread waits on
+// CI: polling GitHub marks it needs you once every check is green.
 export function afterReview(rounds: number, given: Review, maxRounds: number): Outcome {
   if (given.verdict === "failed")
     return {
@@ -50,6 +52,7 @@ export function afterReview(rounds: number, given: Review, maxRounds: number): O
       needsYou: true,
       status: "waiting",
       tell: null,
+      held: null,
       why: `review failed: ${given.body}`,
     };
   if (given.verdict === "approve")
@@ -60,6 +63,7 @@ export function afterReview(rounds: number, given: Review, maxRounds: number): O
       needsYou: false,
       status: "waiting",
       tell: null,
+      held: null,
       why: "approved by skel's reviewer, so it waits on CI",
     };
   const counted = rounds + 1;
@@ -68,19 +72,22 @@ export function afterReview(rounds: number, given: Review, maxRounds: number): O
     description: "skel's reviewer asked for changes",
     rounds: counted,
   };
+  const tell = `skel's reviewer asked for changes:\n\n${given.body}\n\nFix what it asks, commit, and run skel submit "<summary>" again.`;
   if (counted > maxRounds)
     return {
       ...changes,
       needsYou: true,
       status: "waiting",
       tell: null,
+      held: tell,
       why: `changes asked for after ${maxRounds} rounds of changes, so the round limit is reached`,
     };
   return {
     ...changes,
     needsYou: false,
     status: "working",
-    tell: `skel's reviewer asked for changes:\n\n${given.body}\n\nFix what it asks, commit, and run skel submit "<summary>" again.`,
+    tell,
+    held: null,
     why: `changes asked for in round ${counted} of ${maxRounds}`,
   };
 }
@@ -178,8 +185,8 @@ async function reviewRound(
   if (signal.aborted) return;
   await setReviewStatus(repo, sha, outcome.check, outcome.description);
   if (signal.aborted) return;
-  const { rounds, needsYou, status, tell } = outcome;
-  const change = { reviewing: null, rounds, needs_you: needsYou, status, telling: tell };
+  const { rounds, needsYou, status, tell, held } = outcome;
+  const change = { reviewing: null, rounds, needs_you: needsYou, status, telling: tell, held };
   record(db, folder, change, outcome.why);
   tellLead(db, tmux);
   if (tell) await deliver(db, tmux, folder, tell, signal);
@@ -258,17 +265,20 @@ function pushAndReview(
 // Starts a round for skel submit, cancelling the thread's older round if one is still under
 // way, and returns at once: a shell command can't block long, so pushing and the review go on
 // in the background. The submit is saved first, so a stop of the daemon can't lose it. A
-// review still waiting to be typed in is dropped, as it is about an older commit. Throws when
-// your config isn't valid, so the builder hears why.
+// review still waiting to be typed in, or held past the round limit, is dropped, as it is
+// about an older commit. Throws when your config isn't valid, so the builder hears why, and
+// for a thread skel stop is ending, whose builder may submit while it exits.
 export function submitRound(db: Database, tmux: string, folder: string, summary: string): void {
   const { maxRounds } = threadConfig();
   const thread = readThread(db, folder);
+  if (thread.status === "stopped")
+    throw new Error("this thread was stopped, so skel won't push it");
   // Past the round limit the thread still needs you, whatever the builder does.
   const needs_you = thread.rounds > maxRounds;
   record(
     db,
     folder,
-    { status: "waiting", needs_you, submitting: summary, telling: null },
+    { status: "waiting", needs_you, submitting: summary, telling: null, held: null },
     `submitted: ${summary}`,
   );
   const before = latest.get(folder);
@@ -291,12 +301,15 @@ function lastPushed(thread: Thread): string | null {
 // Reviews the thread's last submitted commit again, for skel review, such as after a review
 // that failed, and returns at once, as skel submit does. The review runs like any round's,
 // so changes count toward the round limit and a newer skel submit cancels it. A submit whose
-// push failed is pushed first. Refuses a thread that is done, one with nothing submitted, and
-// one whose review is still waiting or running, since that review answers already.
+// push failed is pushed first. Refuses a thread that is done or stopped, one with nothing
+// submitted, and one whose review is still waiting or running, since that review answers
+// already.
 export function rerunReview(db: Database, tmux: string, folder: string): void {
   const thread = readThread(db, folder);
   const name = threadName(db, thread);
   if (thread.status === "done") throw new Error(`${name} is done, so there is nothing to review`);
+  if (thread.status === "stopped")
+    throw new Error(`${name} is stopped: run skel start ${name} first`);
   const earlier = latest.get(folder);
   const { submitting, reviewing } = thread;
   if ((submitting !== null || reviewing !== null) && earlier && !earlier.ended)
@@ -313,6 +326,7 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
     status: "waiting",
     needs_you,
     telling: null,
+    held: null,
     reviewing: sha,
   } satisfies Partial<Thread>;
   record(db, folder, change, "asked to review again");
@@ -343,8 +357,32 @@ export function resumeRound(db: Database, tmux: string, folder: string): void {
     follow(db, tmux, folder, cancel, none, deliver(db, tmux, folder, telling, cancel.signal));
 }
 
-// Cancels the thread's round, once its PR is merged or closed, so a review still running
-// never changes a thread that is done.
+// Lets a thread past the round limit go on, for skel start: counts its rounds of changes from
+// zero again, so it no longer needs you for them, and types the changes of the review that
+// reached the limit into the builder, as a round within the limit would have.
+export function goOn(db: Database, tmux: string, folder: string): void {
+  const { held } = readThread(db, folder);
+  const change = { rounds: 0, needs_you: false, held: null, telling: held };
+  record(
+    db,
+    folder,
+    held === null ? change : { ...change, status: "working" },
+    "you let it go on past the round limit",
+  );
+  if (held === null) return;
+  const cancel = new AbortController();
+  follow(
+    db,
+    tmux,
+    folder,
+    cancel,
+    Promise.resolve(),
+    deliver(db, tmux, folder, held, cancel.signal),
+  );
+}
+
+// Cancels the thread's round, once its PR is merged or closed or skel stop ends its builder,
+// so a review still running never changes a thread that is done or stopped.
 export function endRound(folder: string): void {
   latest.get(folder)?.cancel.abort();
   latest.delete(folder);

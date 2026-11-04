@@ -7,7 +7,7 @@ import { createConnection, createServer, type Server, type Socket } from "node:n
 import { dirname } from "node:path";
 import { z } from "zod";
 import { openDb } from "./db.ts";
-import { pollGitHub } from "./events.ts";
+import { pollGitHub, stopThread } from "./events.ts";
 import { createIssue } from "./github.ts";
 import { attachedNote, recordAttachedFrom, startLead, tellLead } from "./lead.ts";
 import {
@@ -21,8 +21,8 @@ import {
   ThreadRow,
 } from "./list.ts";
 import { cliSocket, daemonSocket, leadSocket, threadSocket } from "./paths.ts";
-import { findRepository, refreshClones, repositories } from "./repo.ts";
-import { rerunReview, resumeRound, submitRound } from "./round.ts";
+import { bringInNamed, findRepository, refreshClones, repositories } from "./repo.ts";
+import { goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
 import { setupDone } from "./setup.ts";
 import {
   holdAwhile,
@@ -44,7 +44,9 @@ import {
   startBuilder,
   startThread,
   type Thread,
+  threadConfig,
   threadName,
+  threadOn,
 } from "./thread.ts";
 import { attach } from "./tmux.ts";
 import { hookRepository, listenForWebhooks, webhookSecret } from "./webhook.ts";
@@ -81,6 +83,11 @@ const Request = z.discriminatedUnion("command", [
     repo: z.string(),
     task: z.number().int().positive(),
   }),
+  z.object({
+    command: z.literal("stop"),
+    repo: z.string(),
+    task: z.number().int().positive(),
+  }),
   z.object({ command: z.literal("submit"), summary: z.string().min(1) }),
   z.object({ command: z.literal("question asked") }),
   z.object({ command: z.literal("question answered") }),
@@ -104,6 +111,7 @@ const allowed = {
     "task create",
     "start",
     "review",
+    "stop",
   ],
   lead: [
     "status",
@@ -114,6 +122,7 @@ const allowed = {
     "task create",
     "start",
     "review",
+    "stop",
     "attached",
   ],
   builder: ["status", "submit", "question asked", "question answered"],
@@ -221,6 +230,30 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       failThread(db, thread, error);
     }
   };
+  // Brings back a stopped thread's builder for skel start, with --resume on its last session
+  // in the same clone, then carries on the round its stop cut short, as after a restart.
+  // Marks the thread failed, with the reason, when the builder can't start.
+  const resume = async (stopped: Thread) => {
+    // Its builder sits at its prompt once back, as its turn ended with the stop. It waits when
+    // a round or its PR will wake it: a submit or review under way, or the PR's checks,
+    // reviews and comments. It works when it has a review's changes to be typed in, or no PR
+    // yet.
+    const { pr, submitting, reviewing, telling } = stopped;
+    const handed = telling === null && (pr !== null || submitting !== null || reviewing !== null);
+    const thread = record(
+      db,
+      stopped.folder,
+      { status: handed ? "waiting" : "working" },
+      "started again",
+    );
+    try {
+      await listenFor(thread);
+      await bringBack(db, tmux, thread);
+      resumeRound(db, tmux, thread.folder);
+    } catch (error) {
+      failThread(db, thread, error);
+    }
+  };
   // Carries out a request the caller may make, and returns the reply to send.
   const handle = async (request: Request, caller: Caller): Promise<object> => {
     if (request.command === "status") {
@@ -252,6 +285,18 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       rerunReview(db, tmux, thread.folder);
       return { reviewing: threadName(db, thread) };
     }
+    if (request.command === "stop") {
+      const thread = findThread(db, request.repo, request.task);
+      const name = threadName(db, thread);
+      if (thread.status === "stopped") throw new Error(`${name} is stopped already`);
+      if (thread.status !== "working" && thread.status !== "waiting")
+        throw new Error(`${name} is ${thread.status}, so it has no builder to stop`);
+      // Its setup would go on to start the builder after the stop.
+      if (thread.session === null)
+        throw new Error(`${name} is still setting up: stop it once its builder has started`);
+      await stopThread(db, tmux, thread);
+      return { stopped: name };
+    }
     if (request.command === "submit" && typeof caller === "object") {
       submitRound(db, tmux, caller.folder, request.summary);
       return { submitted: threadName(db, caller) };
@@ -270,10 +315,37 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
     }
     if (request.command !== "start")
       throw new Error("only a builder can ask that, from its thread");
+    const before = threadOn(db, request.repo, request.task);
+    if (before?.status === "stopped") {
+      const name = threadName(db, before);
+      resume(before);
+      return { started: `Started ${name} again: its builder is back where it was.` };
+    }
+    const live = before?.status === "working" || before?.status === "waiting";
+    if (before && live && before.rounds > threadConfig().maxRounds) {
+      goOn(db, tmux, before.folder);
+      return { started: `${threadName(db, before)} goes on past the round limit.` };
+    }
     const thread = await startThread(db, request);
     // Not waited on: an agent's command must answer quickly, and setup can take minutes.
     begin(thread);
-    return { thread: threadName(db, thread) };
+    return { started: `Started ${threadName(db, thread)}.` };
+  };
+  // Brings in a repository that task ls, task show, task create or start names by its full
+  // GitHub name, when skel doesn't have it, then carries out the command. The reply says so,
+  // so whoever asked learns its short name, and that its clone comes after.
+  const bringInFirst = async (request: Request, caller: Caller): Promise<object> => {
+    const naming = ["task ls", "task show", "task create", "start"].includes(request.command);
+    if (!naming || !("repo" in request) || !request.repo) return handle(request, caller);
+    const brought = await bringInNamed(db, request.repo);
+    if (!brought) return handle(request, caller);
+    // GitHub can answer an old name with the repository's new one, which is the name skel
+    // now has it by.
+    const reply = await handle({ ...request, repo: brought.name }, caller);
+    return {
+      ...reply,
+      broughtIn: { github: `${brought.owner}/${brought.repo}`, name: brought.name },
+    };
   };
   // Returns a handler for connections from the given caller: it reads one request, refuses
   // what that caller may not ask, and answers the rest.
@@ -293,7 +365,8 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       const kind = typeof caller === "object" ? "builder" : caller;
       if (!asked.success || !allowed[kind].includes(asked.data.command))
         reply({ error: "the daemon doesn't know that request" });
-      else handle(asked.data, caller).then(reply, (error) => reply({ error: message(error) }));
+      else
+        bringInFirst(asked.data, caller).then(reply, (error) => reply({ error: message(error) }));
     };
     connection.on("data", read);
     connection.on("error", () => {});
@@ -358,6 +431,16 @@ async function request(asked: Request): Promise<unknown> {
   if (reply === null) throw new Error("the daemon didn't answer: run skel to start it");
   const failed = z.object({ error: z.string() }).safeParse(reply);
   if (failed.success) throw new Error(failed.data.error);
+  // On stderr, so a tool reading --json from stdout still gets only JSON.
+  const brought = z
+    .object({ broughtIn: z.object({ github: z.string(), name: z.string() }) })
+    .safeParse(reply);
+  if (brought.success) {
+    const { github, name } = brought.data.broughtIn;
+    console.error(
+      `skel brought in ${github}, as ${name}. It clones it in the background, and a thread started on it waits for the clone.`,
+    );
+  }
   return reply;
 }
 
@@ -405,11 +488,20 @@ export async function createTask(repo: string, title: string, body: string): Pro
   return understood(z.object({ task: z.string() }), reply).task;
 }
 
-// Has the daemon start a thread on a task, for skel start, and returns the thread's name.
-// The daemon answers once the thread is recorded; its setup and builder come after.
+// Has the daemon start a thread on a task, for skel start, and returns what it did, in a
+// sentence: started a new thread, brought back a stopped one's builder, or let one past the
+// round limit go on. The daemon answers once the thread is recorded; its setup and builder
+// come after.
 export async function startOn(repo: string, task: number, from?: string): Promise<string> {
   const reply = await request({ command: "start", repo, task, ...(from ? { from } : {}) });
-  return understood(z.object({ thread: z.string() }), reply).thread;
+  return understood(z.object({ started: z.string() }), reply).started;
+}
+
+// Has the daemon stop a thread, for skel stop, and returns the thread's name. The daemon
+// answers once the builder has exited.
+export async function stopOn(repo: string, task: number): Promise<string> {
+  const reply = await request({ command: "stop", repo, task });
+  return understood(z.object({ stopped: z.string() }), reply).stopped;
 }
 
 // Has the daemon start a round for skel submit, run by a builder in its sandbox, and returns

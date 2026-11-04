@@ -1,5 +1,7 @@
 // Events on a thread's PR: the daemon polls GitHub for each repository's PRs, decides what
 // each new review, comment, check, conflict or merge means for its thread, and acts on it.
+// Ending a thread's builder lives here too, for a merge and for skel stop, as both must
+// cancel the events still being typed in.
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 import { z } from "zod";
@@ -21,7 +23,6 @@ import {
   baseOf,
   cloneOf,
   github,
-  liveThreads,
   needsYou,
   readThread,
   record,
@@ -209,15 +210,30 @@ async function freshBase(db: Database, thread: Thread, base: string): Promise<vo
 // so they are never typed twice, and a merge cancels the typing.
 const typing = new Map<string, AbortController>();
 
-// Ends the thread once its PR is merged or closed: cancels what is under way, ends the
-// builder's session, waits for it to exit, and removes its clone by deleting the folder,
-// never running git in it.
-async function endThread(db: Database, tmux: string, thread: Thread, why: string): Promise<void> {
-  typing.get(thread.folder)?.abort();
-  endRound(thread.folder);
+// Cancels the round and the typing under way for the thread, ends its builder's session, and
+// waits for the builder to exit, so nothing types into it or changes the thread afterwards.
+async function endBuilder(tmux: string, folder: string): Promise<void> {
+  typing.get(folder)?.abort();
+  endRound(folder);
   // Claude Code can outlive the end of its session for a few seconds, still writing in the
   // clone.
-  await stopSession(tmux, thread.folder);
+  await stopSession(tmux, folder);
+}
+
+// Stops the thread for skel stop: marks it stopped, then ends its builder as a merge would,
+// but keeps its clone, branch and PR, so skel start can bring the builder back where it was.
+// A submit, review or review's changes under way stay saved and carry on once it starts
+// again. It no longer needs you: you stopped it, and its builder's question ended with it.
+// Marked first, so a builder that submits while it exits is refused.
+export async function stopThread(db: Database, tmux: string, thread: Thread): Promise<void> {
+  record(db, thread.folder, { status: "stopped", needs_you: false, asking: false }, "stopped");
+  await endBuilder(tmux, thread.folder);
+}
+
+// Ends the thread once its PR is merged or closed: ends its builder, and removes its clone by
+// deleting the folder, never running git in it.
+async function endThread(db: Database, tmux: string, thread: Thread, why: string): Promise<void> {
+  await endBuilder(tmux, thread.folder);
   rmSync(cloneOf(thread), { recursive: true, force: true });
   record(db, thread.folder, { status: "done", needs_you: false }, `${why}: ended the thread`);
 }
@@ -255,6 +271,9 @@ async function tellBuilder(
       now.reviewing !== thread.reviewing;
     record(db, thread.folder, moved ? handled : { ...handled, ...change }, why);
   } catch (error) {
+    // Ending the session for a stop or a merge can make typing fail, and a stopped thread's
+    // events must stay unhandled for its builder to hear once it starts again.
+    if (cancel.signal.aborted) return;
     const said = error instanceof Error ? error.message : String(error);
     record(db, thread.folder, { ...handled, needs_you: true }, `couldn't tell: ${said}. ${why}`);
     tellLead(db, tmux);
@@ -320,7 +339,7 @@ async function pollRepository(
   // Asked once per poll, and only about authors of what is new.
   const authors = new Set<string>();
   for (const t of threads) {
-    const pr = t.pr === null ? undefined : prs.get(t.pr);
+    const pr = t.pr === null || t.status === "stopped" ? undefined : prs.get(t.pr);
     for (const item of [
       ...(pr?.reviews.filter((r) => r.id > (t.last_review ?? Number.POSITIVE_INFINITY)) ?? []),
       ...(pr?.comments.filter((c) => c.id > (t.last_comment ?? Number.POSITIVE_INFINITY)) ?? []),
@@ -340,7 +359,7 @@ async function pollRepository(
       .all()
       .map((row) => z.object({ id: z.number() }).parse(row).id);
     const pr = thread.pr === null ? undefined : prs.get(thread.pr);
-    if (!pr || (thread.status !== "working" && thread.status !== "waiting")) continue;
+    if (!pr || !["working", "waiting", "stopped"].includes(thread.status)) continue;
     const decision = decide(thread, pr, { you, maxRounds, posted, pushers });
     // A round that moved on while GitHub answered may have pushed a newer commit, and what
     // GitHub said about the checks would be the older one's. The next poll sees the new one.
@@ -349,7 +368,8 @@ async function pollRepository(
       thread.reviewing !== before.reviewing ||
       thread.rounds !== before.rounds;
     if ("end" in decision) await endThread(db, tmux, thread, decision.end);
-    else if (typing.has(folder) || stale) continue;
+    // Left unhandled, so a stopped thread's events reach its builder once it starts again.
+    else if (thread.status === "stopped" || typing.has(folder) || stale) continue;
     else if (decision.tell.length > 0 || decision.failed.length > 0)
       // Not waited on, so a busy builder holds up neither the other threads nor the next poll.
       tellBuilder(db, tmux, thread, decision);
@@ -368,12 +388,12 @@ async function pollRepository(
   }
 }
 
-// Polls GitHub for each repository's issues labeled skel and the PRs of its live threads,
-// one query per repository: every `every` milliseconds while any of its threads is working or
-// waits on review or CI, and half as often otherwise, so a label or your comment is seen
-// within a minute. Starts at once, to pick up what happened while the daemon was down. A
-// failed poll, such as GitHub answering with an error, is logged and tried again at the next
-// one. Polls run in the background, so they never hold up the daemon. `begin` sets up a
+// Polls GitHub for each repository's issues labeled skel and the PRs of its live and stopped
+// threads, one query per repository, so a stopped thread's merge still ends it: every `every`
+// milliseconds while any of its threads is working or waits on review or CI, and half as
+// often otherwise, so a label or your comment is seen within a minute. Starts at once, to pick
+// up what happened while the daemon was down. A failed poll, such as GitHub answering with an
+// error, is logged and tried again at the next one. Polls run in the background, so they never hold up the daemon. `begin` sets up a
 // thread started from a label and starts its builder, as the daemon does for skel start.
 // Returns a function that polls one repository at once, named by its full GitHub name, for
 // a webhook delivery about it.
@@ -388,6 +408,13 @@ export function pollGitHub(
   // A delivery that comes in while its repository is being polled may be about an event the
   // poll's query was too early to see, so the repository is polled again once it is done.
   const again = new Set<string>();
+  // The threads whose PRs a poll reads. A stopped thread's PR still merges or closes.
+  const polled = () =>
+    db
+      .query("SELECT * FROM threads WHERE status IN ('working', 'waiting', 'stopped')")
+      .all()
+      .map((row) => Thread.parse(row))
+      .filter((t) => t.pr !== null);
   const poll = (owner: string, name: string) => {
     const repo = `${owner}/${name}`;
     skipped.set(repo, 0);
@@ -396,9 +423,7 @@ export function pollGitHub(
       return;
     }
     polling.add(repo);
-    const threads = liveThreads(db).filter(
-      (t) => t.pr !== null && t.owner === owner && t.repo === name,
-    );
+    const threads = polled().filter((t) => t.owner === owner && t.repo === name);
     pollRepository(db, tmux, repo, threads, begin)
       .catch((error) => console.log(`couldn't poll ${repo}: ${message(error)}`))
       .finally(() => {
@@ -407,11 +432,13 @@ export function pollGitHub(
       });
   };
   const tick = () => {
-    const live = liveThreads(db).filter((t) => t.pr !== null);
+    const live = polled();
     for (const { owner, repo: name } of repositories(db)) {
       const repo = `${owner}/${name}`;
       const threads = live.filter((t) => t.owner === owner && t.repo === name);
-      const active = threads.some((t) => t.status === "working" || !needsYou(t));
+      const active = threads.some(
+        (t) => t.status === "working" || (t.status === "waiting" && !needsYou(t)),
+      );
       const waited = skipped.get(repo) ?? Number.POSITIVE_INFINITY;
       if (polling.has(repo) || (!active && waited < 1)) {
         skipped.set(repo, waited + 1);

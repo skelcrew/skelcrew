@@ -16,17 +16,21 @@ export type GitHubRepo = { owner: string; repo: string; canPush: boolean; isFork
 
 // Returns the repository's GitHub name, push access and fork status so skel can judge
 // trust. Takes owner/repo, as skel names it from a checkout's origin: in a fork with an
-// upstream remote, gh on its own would answer for the upstream.
-export function githubRepo(given: string): GitHubRepo {
-  const run = Bun.spawnSync(
+// upstream remote, gh on its own would answer for the upstream. The daemon asks while it
+// answers other commands, so it must not wait on gh.
+export async function githubRepo(given: string): Promise<GitHubRepo> {
+  const run = Bun.spawn(
     ["gh", "repo", "view", given, "--json", "name,owner,viewerPermission,isFork"],
     { stdout: "pipe", stderr: "pipe" },
   );
-  if (!run.success) {
-    const said = run.stderr.toString().trim();
-    throw new Error(`${given} isn't on GitHub, or your gh login can't reach it: ${said}`);
-  }
-  const view = View.parse(JSON.parse(run.stdout.toString()));
+  const [out, err, code] = await Promise.all([
+    new Response(run.stdout).text(),
+    new Response(run.stderr).text(),
+    run.exited,
+  ]);
+  if (code !== 0)
+    throw new Error(`${given} isn't on GitHub, or your gh login can't reach it: ${err.trim()}`);
+  const view = View.parse(JSON.parse(out));
   const canPush = ["ADMIN", "MAINTAIN", "WRITE"].includes(view.viewerPermission);
   return { owner: view.owner.login, repo: view.name, canPush, isFork: view.isFork };
 }

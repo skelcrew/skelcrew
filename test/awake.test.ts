@@ -24,6 +24,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     submitting: null,
     reviewing: null,
     telling: null,
+    held: null,
     last_review: 0,
     last_comment: 0,
     last_check: 0,
@@ -56,12 +57,13 @@ test("a PR waiting on CI is work", () => {
   expect(hasWork([thread({ status: "waiting" })])).toBe(true);
 });
 
-test("threads that wait on you, failed or are done are no work", () => {
+test("threads that wait on you, failed, were stopped or are done are no work", () => {
   expect(hasWork([])).toBe(false);
   expect(hasWork([thread({ status: "waiting", needs_you: true })])).toBe(false);
   expect(hasWork([thread({ asking: true })])).toBe(false);
   expect(hasWork([thread({ status: "failed" })])).toBe(false);
   expect(hasWork([thread({ status: "done" })])).toBe(false);
+  expect(hasWork([thread({ status: "stopped" })])).toBe(false);
 });
 
 test("one thread with work is enough", () => {

@@ -184,7 +184,7 @@ test("copies nothing when you say no", async () => {
 
 test("needs a host", async () => {
   const run = await skel(["--remote"]);
-  expect(run.err).toContain("skel --remote <host> [command]");
+  expect(run.err).toContain("--remote needs a host");
   expect(run.code).toBe(1);
   expect(calls()).toBe("");
 });

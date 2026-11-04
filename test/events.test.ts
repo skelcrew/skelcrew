@@ -21,6 +21,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     submitting: null,
     reviewing: null,
     telling: null,
+    held: null,
     last_review: 0,
     last_comment: 0,
     last_check: 0,

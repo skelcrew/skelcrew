@@ -339,6 +339,11 @@ function fakeGitHub(): void {
   "api graphql --input -") cat > /dev/null; echo "HTTP 502: Bad Gateway" >&2; exit 1 ;;
   "api repos/simon/app/hooks?per_page=100") echo '[]' ;;
   "api repos/simon/app/hooks --method POST --input -") cat > "$HOME/hook"; echo '{"id":1}' ;;
+  "repo view simon/site --json name,owner,viewerPermission,isFork")
+    echo '{"name":"site","owner":{"login":"simon"},"viewerPermission":"WRITE","isFork":false}' ;;
+  "issue list --repo simon/site "*) echo '[]' ;;
+  "api repos/simon/site/hooks?per_page=100") echo '[]' ;;
+  "api repos/simon/site/hooks --method POST --input -") cat > "$HOME/site-hook"; echo '{"id":2}' ;;
   *) exit 1 ;;
 esac`,
   );
@@ -420,6 +425,25 @@ test("on a Sprite, sets the webhook to the Sprite on each repository it has", as
     secret,
     insecure_ssl: "0",
   });
+});
+
+// The lead brings in a repository by naming it, and its events must wake the Sprite too.
+test("on a Sprite, sets the webhook on a repository a command brings in by its name", async () => {
+  setUp();
+  onSprite();
+  fakeGitHub();
+  addRepository("app");
+  serve(undefined, freePort());
+  // Once the daemon has set the webhooks of the repositories it started with.
+  await until(() => existsSync(join(home, "hook")));
+  expect(await ask({ command: "task ls", repo: "simon/site" })).toMatchObject({ tasks: [] });
+  await until(
+    () =>
+      existsSync(join(home, "site-hook")) && readFileSync(join(home, "site-hook"), "utf8") !== "",
+  );
+  expect(JSON.parse(readFileSync(join(home, "site-hook"), "utf8")).config.url).toBe(
+    "https://demo-simon.sprites.app",
+  );
 });
 
 // A server stays awake, so polling alone sees every event soon enough.

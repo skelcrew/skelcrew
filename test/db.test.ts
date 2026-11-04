@@ -42,6 +42,7 @@ console.log(JSON.stringify(liveThreads(openDb())));`;
       reviewing: null,
       submitting: null,
       telling: null,
+      held: null,
       last_review: null,
       last_comment: null,
       last_check: null,

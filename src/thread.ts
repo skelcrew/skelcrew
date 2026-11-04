@@ -20,7 +20,7 @@ export const Thread = z.object({
   folder: z.string(),
   branch: z.string(),
   base: z.string().nullable(),
-  status: z.enum(["working", "waiting", "failed", "done"]),
+  status: z.enum(["working", "waiting", "failed", "stopped", "done"]),
   session: z.string().nullable(),
   // Rounds whose review asked for changes, counted against max_rounds.
   rounds: z.number(),
@@ -32,6 +32,9 @@ export const Thread = z.object({
   reviewing: z.string().nullable(),
   // A posted review's changes, until they are typed into the builder.
   telling: z.string().nullable(),
+  // The changes of a review past the round limit, which aren't typed in, kept for when you
+  // let the thread go on with skel start.
+  held: z.string().nullable(),
   // The ID of the last review, PR comment and check run handled, so each event is handled
   // once, across restarts too. Null until the PR is first polled, for threads an older skel
   // started: that poll starts after the PR's history rather than replaying it.
@@ -96,6 +99,7 @@ export function record(
       | "submitting"
       | "reviewing"
       | "telling"
+      | "held"
       | "last_review"
       | "last_comment"
       | "last_check"
@@ -134,14 +138,20 @@ export function threadName(db: Database, thread: Thread): string {
   return `${name}-${thread.task}`;
 }
 
-// Returns the thread named repo-task, such as app-12, and throws when there is none.
-export function findThread(db: Database, repo: string, task: number): Thread {
+// Returns the thread named repo-task, such as app-12, or null when the task has none. Throws
+// when skel doesn't have the repository.
+export function threadOn(db: Database, repo: string, task: number): Thread | null {
   const { owner, repo: name } = findRepository(db, repo);
-  const thread = Thread.nullable().parse(
+  return Thread.nullable().parse(
     db
       .query("SELECT * FROM threads WHERE owner = ? AND repo = ? AND task = ?")
       .get(owner, name, task),
   );
+}
+
+// Returns the thread named repo-task, such as app-12, and throws when there is none.
+export function findThread(db: Database, repo: string, task: number): Thread {
+  const thread = threadOn(db, repo, task);
   if (!thread) throw new Error(`there is no thread ${repo}-${task}`);
   return thread;
 }
@@ -227,6 +237,7 @@ export async function startThread(
       submitting: null,
       reviewing: null,
       telling: null,
+      held: null,
       // A new thread has no PR yet, so everything on the one it opens is new.
       last_review: 0,
       last_comment: 0,
@@ -405,9 +416,10 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
     throw new Error(`the builder exited as soon as it started:\n${failed ?? ""}`);
 }
 
-// Brings back a thread's builder after the daemon restarts: leaves one that runs alone, and
-// starts again one whose session is gone or ended. Throws for a thread with no session,
-// which never got past its setup because the daemon stopped, so it can be started again.
+// Brings back a thread's builder after the daemon restarts, or after skel stop for skel
+// start: leaves one that runs alone, and starts again one whose session is gone or ended.
+// Throws for a thread with no session, which never got past its setup because the daemon
+// stopped, so it can be started again.
 export async function bringBack(db: Database, tmux: string, thread: Thread): Promise<void> {
   if (thread.session === null)
     throw new Error("the daemon stopped while setting up the thread: run skel start again");
@@ -419,9 +431,14 @@ export async function bringBack(db: Database, tmux: string, thread: Thread): Pro
 }
 
 // Marks the thread failed and logs why, in its log and the daemon's, so you can see what
-// stopped it and start it again.
+// stopped it and start it again. A thread skel stop stopped meanwhile stays stopped: its
+// builder ended because of the stop, such as within the moment skel watches it start.
 export function failThread(db: Database, thread: Thread, error: unknown): void {
   const why = error instanceof Error ? error.message : String(error);
+  if (readThread(db, thread.folder).status === "stopped") {
+    console.log(`${thread.folder} stays stopped: ${why}`);
+    return;
+  }
   record(db, thread.folder, { status: "failed" }, why);
   console.log(`${thread.folder} failed: ${why}`);
 }
