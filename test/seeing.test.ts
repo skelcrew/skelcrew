@@ -2,7 +2,15 @@
 // running daemon, a fake gh, a fake Claude Code and a fake tmux for attaching.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
@@ -15,6 +23,7 @@ let socket = "";
 const running: Subprocess[] = [];
 
 const data = () => join(home, ".local", "share", "skel");
+const read = (file: string) => (existsSync(file) ? readFileSync(file, "utf8") : "");
 
 function fake(name: string, body: string): void {
   writeFileSync(
@@ -176,5 +185,62 @@ describe("skel ps", () => {
     const listed = await skel(["ps"]);
     expect(listed.code).not.toBe(0);
     expect(listed.err).toContain("run skel");
+  });
+});
+
+// Puts open issues on the fake GitHub, as gh issue list answers: newest first.
+function issues(full: string, list: { number: number; title: string; createdAt: string }[]) {
+  mkdirSync(join(home, "issues", full.split("/")[0] ?? ""), { recursive: true });
+  writeFileSync(join(home, "issues", `${full}.json`), JSON.stringify(list));
+}
+
+describe("skel task ls", () => {
+  beforeEach(() => {
+    threads();
+    issues("simon/app", [
+      { number: 12, title: "Add export", createdAt: "2026-11-03T12:00:00Z" },
+      { number: 10, title: "Fix login", createdAt: "2026-11-01T12:00:00Z" },
+    ]);
+    issues("simon/site", [
+      { number: 7, title: "New landing page", createdAt: "2026-11-02T12:00:00Z" },
+    ]);
+  });
+
+  test("lists every repository's open tasks newest first, with the thread on each", async () => {
+    serve();
+    await untilAnswers();
+    const listed = await skel(["task", "ls"]);
+    expect(listed.err).toBe("");
+    expect(listed.out).toBe(
+      "TASK    THREAD              TITLE\n" +
+        "app-12  working             Add export\n" +
+        "site-7  waiting, needs you  New landing page\n" +
+        "app-10                      Fix login\n",
+    );
+    expect(read(join(home, "calls"))).toContain(
+      "gh issue list --repo simon/app --state open --limit 1000 --json number,title,createdAt",
+    );
+  });
+
+  test("lists one repository's open tasks, as JSON for tools", async () => {
+    serve();
+    await untilAnswers();
+    const listed = await skel(["task", "ls", "app", "--json"]);
+    expect(listed.err).toBe("");
+    expect(JSON.parse(listed.out)).toEqual([
+      { task: "app-12", title: "Add export", thread: { status: "working", needsYou: false } },
+      { task: "app-10", title: "Fix login", thread: null },
+    ]);
+  });
+
+  test("says when there are no open tasks, and why GitHub couldn't list them", async () => {
+    issues("simon/app", []);
+    serve();
+    await untilAnswers();
+    expect((await skel(["task", "ls", "app"])).out).toBe("There are no open tasks.\n");
+    rmSync(join(home, "issues", "simon", "site.json"));
+    const failed = await skel(["task", "ls"]);
+    expect(failed.code).not.toBe(0);
+    expect(failed.err).toContain("Could not resolve to a Repository");
   });
 });
