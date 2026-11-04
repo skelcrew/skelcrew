@@ -4,7 +4,7 @@
 // be a Mac, so this file loads nothing made only for Linux.
 import { z } from "zod";
 import { originHere } from "./origin.ts";
-import { quoted, run, withLinuxSkel } from "./remote.ts";
+import { type Machine, quoted, run, update, withLinuxSkel } from "./remote.ts";
 import { skelLine } from "./say.ts";
 
 // Reports whether skel runs on a Sprite. It goes by sprite-env, the Sprite's own tool for
@@ -150,6 +150,8 @@ export function keepAwake(
   return () => clearInterval(timer);
 }
 
+const Service = z.object({ cmd: z.string() });
+
 const Listed = z.object({ sprites: z.array(z.object({ name: z.string() })) });
 
 // Returns the names of your Sprites. Before that, checks that sprite is installed and logged
@@ -203,22 +205,88 @@ async function setUp(name: string): Promise<void> {
   ]);
   if (code !== 0)
     throw new Error(`couldn't install bubblewrap on sprite:${name}:\n${`${out}${err}`.trim()}`);
-  await withLinuxSkel(async (file) => {
-    // sprite file push writes through a link, as scp does, so a link left there would have
-    // the file it points to overwritten. Removing it first leaves that file alone.
-    if ((await run(on(["sh", "-c", "mkdir -p .local/bin && rm -f .local/bin/skel"]))) !== 0)
-      throw new Error(`couldn't make ~/.local/bin on sprite:${name}, so skel wasn't copied`);
-    if ((await run(["sprite", "file", "push", "-s", name, file, ".local/bin/skel"])) !== 0)
-      throw new Error(`sprite couldn't copy skel to sprite:${name}`);
-  });
+  // A new Sprite's node is a script that writes to /etc/profile.d the first time it runs,
+  // and /etc is read-only in the sandbox, so node, biome and tsc would fail for every
+  // builder. One run out here does that write, quietly. A Sprite without node has nothing to
+  // fix, so a failure stops nothing.
+  await Bun.spawn(on(["node", "--version"]), {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  }).exited;
+  await withLinuxSkel(onTheSprite(name).copy);
+}
+
+// How update and setting up reach a Sprite: sprite exec for shell lines, sprite file push
+// for skel, and the daemon's Sprite service. --no-stdin, since sprite can't reconnect a
+// command whose input it forwards.
+function onTheSprite(name: string): Machine {
+  const shell = (script: string) => [
+    "sprite",
+    "exec",
+    "-s",
+    name,
+    "--no-stdin",
+    "--",
+    "sh",
+    "-c",
+    script,
+  ];
+  return {
+    shell,
+    copy: async (file) => {
+      // The copy goes to a file beside skel and is renamed over it once complete, so a
+      // transfer that breaks off leaves the skel that works. sprite file push writes
+      // through a link, as scp does, so whatever is at the new file's name is removed first.
+      // A rename replaces a link at skel itself without touching the file it points to.
+      if ((await run(shell("mkdir -p .local/bin && rm -f .local/bin/skel.new"))) !== 0)
+        throw new Error(`couldn't make ~/.local/bin on sprite:${name}, so skel wasn't copied`);
+      if ((await run(["sprite", "file", "push", "-s", name, file, ".local/bin/skel.new"])) !== 0)
+        throw new Error(`sprite couldn't copy skel to sprite:${name}`);
+      if ((await run(shell("mv -f .local/bin/skel.new .local/bin/skel"))) !== 0)
+        throw new Error(`couldn't put the new skel in place on sprite:${name}`);
+    },
+    // A Sprite service keeps the command it was made with, even after skel moves.
+    daemonSkel: async () => {
+      const get = Bun.spawn(shell("sprite-env services get skel"), {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      const [out, code] = await Promise.all([new Response(get.stdout).text(), get.exited]);
+      if (code !== 0) return null;
+      try {
+        return Service.parse(JSON.parse(out)).cmd;
+      } catch {
+        throw new Error(
+          `sprite-env on sprite:${name} described skel's service in a way this skel doesn't understand`,
+        );
+      }
+    },
+    restart: "sprite-env services restart skel",
+  };
+}
+
+// Stops at a name that can't be a Sprite's. A name starting with a dash would reach sprite
+// as one of its options.
+function checkName(name: string): void {
+  if (!/^\w[\w-]*$/.test(name)) throw new Error(`"${name}" can't name a Sprite`);
+}
+
+// Updates skel on an existing Sprite, whose daemon runs as a Sprite service. It never
+// creates one: a mistyped name would otherwise make a second Sprite you pay for.
+export async function updateSprite(name: string): Promise<number> {
+  checkName(name);
+  if (!spriteNames(`skel update --remote sprite:${name}`).includes(name))
+    throw new Error(`No Sprite named ${name}: skel --remote sprite:${name} creates it`);
+  return update(`sprite:${name}`, onTheSprite(name));
 }
 
 // Runs a skel command on the Sprite and returns its exit code. Plain skel passes the
 // repository you are in on the laptop, so the lead knows it too. A Sprite that doesn't exist
 // is created after asking, then set up, and one without skel is set up after asking.
 export async function remoteSprite(name: string, args: string[]): Promise<number> {
-  // A name starting with a dash would reach sprite as one of its options.
-  if (!/^\w[\w-]*$/.test(name)) throw new Error(`"${name}" can't name a Sprite`);
+  checkName(name);
   const again = ["skel", "--remote", `sprite:${name}`, ...args].map(quoted).join(" ");
   const names = spriteNames(again);
   const from = args.length === 0 ? originHere() : null;
