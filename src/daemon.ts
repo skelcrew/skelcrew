@@ -21,7 +21,7 @@ import {
   ThreadRow,
 } from "./list.ts";
 import { cliSocket, daemonSocket, leadSocket, threadSocket } from "./paths.ts";
-import { findRepository, refreshClones } from "./repo.ts";
+import { bringInNamed, findRepository, refreshClones } from "./repo.ts";
 import { rerunReview, resumeRound, submitRound } from "./round.ts";
 import { setupDone } from "./setup.ts";
 import { keepAwake, onSprite, serviceLog, startSpriteService } from "./sprite.ts";
@@ -266,6 +266,22 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
     begin(thread);
     return { thread: threadName(db, thread) };
   };
+  // Brings in a repository that task ls, task show, task create or start names by its full
+  // GitHub name, when skel doesn't have it, then carries out the command. The reply says so,
+  // so whoever asked learns its short name, and that its clone comes after.
+  const bringInFirst = async (request: Request, caller: Caller): Promise<object> => {
+    const naming = ["task ls", "task show", "task create", "start"].includes(request.command);
+    if (!naming || !("repo" in request) || !request.repo) return handle(request, caller);
+    const brought = await bringInNamed(db, request.repo);
+    if (!brought) return handle(request, caller);
+    // GitHub can answer an old name with the repository's new one, which is the name skel
+    // now has it by.
+    const reply = await handle({ ...request, repo: brought.name }, caller);
+    return {
+      ...reply,
+      broughtIn: { github: `${brought.owner}/${brought.repo}`, name: brought.name },
+    };
+  };
   // Returns a handler for connections from the given caller: it reads one request, refuses
   // what that caller may not ask, and answers the rest.
   const answer = (caller: Caller) => (connection: Socket) => {
@@ -284,7 +300,8 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
       const kind = typeof caller === "object" ? "builder" : caller;
       if (!asked.success || !allowed[kind].includes(asked.data.command))
         reply({ error: "the daemon doesn't know that request" });
-      else handle(asked.data, caller).then(reply, (error) => reply({ error: message(error) }));
+      else
+        bringInFirst(asked.data, caller).then(reply, (error) => reply({ error: message(error) }));
     };
     connection.on("data", read);
     connection.on("error", () => {});
@@ -329,6 +346,16 @@ async function request(asked: Request): Promise<unknown> {
   if (reply === null) throw new Error("the daemon didn't answer: run skel to start it");
   const failed = z.object({ error: z.string() }).safeParse(reply);
   if (failed.success) throw new Error(failed.data.error);
+  // On stderr, so a tool reading --json from stdout still gets only JSON.
+  const brought = z
+    .object({ broughtIn: z.object({ github: z.string(), name: z.string() }) })
+    .safeParse(reply);
+  if (brought.success) {
+    const { github, name } = brought.data.broughtIn;
+    console.error(
+      `skel brought in ${github}, as ${name}. It clones it in the background, and a thread started on it waits for the clone.`,
+    );
+  }
   return reply;
 }
 
