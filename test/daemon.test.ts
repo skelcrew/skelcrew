@@ -604,107 +604,132 @@ c.on("error", () => process.exit(1));`;
     }
   }, 25_000);
 
-  // A Claude Code at its prompt, noting each message it is sent.
-  const listening = `echo "❯"; while IFS= read -r line; do echo "$line" >> heard; echo "❯"; done`;
-  const heard = () =>
-    existsSync(join(leadFolder(), "heard"))
-      ? readFileSync(join(leadFolder(), "heard"), "utf8").split("\n").filter(Boolean)
-      : [];
-  const outside = "you attached from outside any of skel's repositories";
+  // A Claude Code at its prompt. It keeps what is typed into it in typed. When the test
+  // leaves a file named talk in its folder, it runs its UserPromptSubmit hooks, as Claude
+  // Code does with each message you send, and keeps what they printed in said.
+  const talking = `for a; do [ "$prev" = --settings ] && settings=$a; prev=$a; done
+exec 3<&0
+while IFS= read -r line; do echo "$line" >> typed; done <&3 &
+echo "❯"
+while :; do
+  if test -e talk; then
+    rm talk
+    bun -e 'for (const group of JSON.parse(process.argv[1]).hooks?.UserPromptSubmit ?? [])
+  for (const hook of group.hooks) console.log(hook.command);' "$settings" |
+    while IFS= read -r command; do echo '{}' | sh -c "$command" 2>&1 || echo "exited $?"; done > saying
+    mv saying said
+  fi
+  sleep 0.05
+done`;
+  const typed = () =>
+    existsSync(join(leadFolder(), "typed"))
+      ? readFileSync(join(leadFolder(), "typed"), "utf8")
+      : "";
+  // Sends the lead a message as you would, and returns what its hooks added to it.
+  async function talk(): Promise<string> {
+    const said = join(leadFolder(), "said");
+    rmSync(said, { force: true });
+    writeFileSync(join(leadFolder(), "talk"), "");
+    await until(() => existsSync(said));
+    return readFileSync(said, "utf8").trim();
+  }
+  const from = (name: string) =>
+    `The human is attached from ${name}. Unless they name another repository, they mean this one.`;
+  const outside =
+    "The human is attached from outside skel's repositories, so no repository is the default.";
 
-  // The notes are typed in order, so a note that came when the repository stayed the same
-  // would show up before the next one.
-  test("tells the lead the repository you attached from, only when it changes", async () => {
+  test("tells the lead the repository you attached from with your next message, only when it changes", async () => {
     setUp();
     addRepository("app");
     addRepository("web");
-    fakeClaude(listening);
+    fakeClaude(talking);
     serve();
     await untilAnswers();
     expect(await ask({ command: "lead" })).toEqual({ lead: true });
+    expect(await talk()).toBe("");
     expect(await ask({ command: "lead", from: "simon/app" })).toEqual({ lead: true });
-    expect(await ask({ command: "lead", from: "Simon/App" })).toEqual({ lead: true });
-    expect(await ask({ command: "lead", from: "simon/web" })).toEqual({ lead: true });
-    expect(await ask({ command: "lead", from: "simon/web" })).toEqual({ lead: true });
-    expect(await ask({ command: "lead" })).toEqual({ lead: true });
-    expect(await ask({ command: "lead" })).toEqual({ lead: true });
-    expect(await ask({ command: "lead", from: "simon/app" })).toEqual({ lead: true });
-    await until(() => heard().length === 4);
-    await Bun.sleep(1500);
-    expect(heard()).toEqual([
-      "you attached from app",
-      "you attached from web",
-      outside,
-      "you attached from app",
-    ]);
-  }, 15_000);
+    expect(await talk()).toBe(from("app"));
+    expect(await talk()).toBe("");
+    await ask({ command: "lead", from: "Simon/App" });
+    expect(await talk()).toBe("");
+    await ask({ command: "lead", from: "simon/web" });
+    expect(await talk()).toBe(from("web"));
+    await ask({ command: "lead", from: "simon/web" });
+    expect(await talk()).toBe("");
+    await ask({ command: "lead" });
+    expect(await talk()).toBe(outside);
+    await ask({ command: "lead" });
+    expect(await talk()).toBe("");
+    // Only where you attached from last counts by the time you talk.
+    await ask({ command: "lead", from: "simon/web" });
+    await ask({ command: "lead", from: "simon/app" });
+    expect(await talk()).toBe(from("app"));
+    expect(typed()).toBe("");
+  }, 30_000);
 
   test("remembers the repository you attached from when the daemon restarts", async () => {
     setUp();
     addRepository("app");
-    fakeClaude(listening);
+    fakeClaude(talking);
     const first = serve();
     await untilAnswers();
     await ask({ command: "lead", from: "simon/app" });
-    await until(() => heard().length === 1);
+    expect(await talk()).toBe(from("app"));
     await stop(first);
     serve();
     await untilAnswers();
     await ask({ command: "lead", from: "simon/app" });
+    expect(await talk()).toBe("");
     await ask({ command: "lead" });
-    await until(() => heard().length === 2);
-    expect(heard()).toEqual(["you attached from app", outside]);
+    expect(await talk()).toBe(outside);
   }, 15_000);
 
   // A lead started afresh never saw the note the one before it got.
   test("tells a lead that started a new conversation again", async () => {
     setUp();
     addRepository("app");
-    fakeClaude(listening);
+    fakeClaude(talking);
     const first = serve();
     await untilAnswers();
     await ask({ command: "lead", from: "simon/app" });
-    await until(() => heard().length === 1);
+    expect(await talk()).toBe(from("app"));
     await stop(first);
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=lead"]);
     serve();
     await untilAnswers();
     await ask({ command: "lead", from: "simon/app" });
-    await until(() => heard().length === 2);
-    expect(heard()).toEqual(["you attached from app", "you attached from app"]);
+    expect(await talk()).toBe(from("app"));
   }, 15_000);
 
   // Otherwise the lead would keep a name that no longer finds the repository.
   test("tells the lead again when the repository's name in skel changed", async () => {
     setUp();
     addRepository("app");
-    fakeClaude(listening);
+    fakeClaude(talking);
     serve();
     await untilAnswers();
     await ask({ command: "lead", from: "simon/app" });
-    await until(() => heard().length === 1);
+    expect(await talk()).toBe(from("app"));
     const db = new Database(join(home, ".local", "share", "skel", "skel.db"));
     // The daemon may be writing; without a wait, this write fails with "database is locked".
     db.run("PRAGMA busy_timeout = 5000");
     db.run("INSERT INTO repositories (name, owner, repo) VALUES ('other/app', 'other', 'app')");
     db.run("UPDATE repositories SET name = 'simon/app' WHERE owner = 'simon'");
     db.close();
-    await ask({ command: "lead", from: "simon/app" });
-    await until(() => heard().length === 2);
-    expect(heard()).toEqual(["you attached from app", "you attached from simon/app"]);
+    expect(await talk()).toBe(from("simon/app"));
   }, 15_000);
 
   // A repository waiting for skel repo trust isn't in yet, so the lead couldn't work on it.
   test("a repository skel doesn't have is no default", async () => {
     setUp();
     addRepository("app");
-    fakeClaude(listening);
+    fakeClaude(talking);
     serve();
     await untilAnswers();
     await ask({ command: "lead", from: "simon/app" });
+    expect(await talk()).toBe(from("app"));
     await ask({ command: "lead", from: "other/tool" });
-    await until(() => heard().length === 2);
-    expect(heard()).toEqual(["you attached from app", outside]);
+    expect(await talk()).toBe(outside);
   }, 15_000);
 
   test("names the repository with its owner while two share a name", async () => {
@@ -716,33 +741,25 @@ c.on("error", () => process.exit(1));`;
     db.run("INSERT INTO repositories (name, owner, repo) VALUES ('other/app', 'other', 'app')");
     db.run("UPDATE repositories SET name = 'simon/app' WHERE owner = 'simon'");
     db.close();
-    fakeClaude(listening);
+    fakeClaude(talking);
     serve();
     await untilAnswers();
     await ask({ command: "lead", from: "simon/app" });
-    await until(() => heard().length === 1);
-    expect(heard()).toEqual(["you attached from simon/app"]);
+    expect(await talk()).toBe(from("simon/app"));
   });
 
-  // You land in the lead at once, and the note waits until the lead is ready for it.
-  test("attaching doesn't wait for the note, which comes once the lead is idle", async () => {
+  // Your message must still go through, and at once.
+  test("adds nothing to your message while the daemon is down", async () => {
     setUp();
     addRepository("app");
-    fakeClaude(
-      `echo "working (esc to interrupt)"; while ! test -e done; do sleep 0.1; done; printf '\\033[2J\\033[H'; ${listening}`,
-    );
-    serve();
+    fakeClaude(talking);
+    const first = serve();
     await untilAnswers();
-    // Once the lead has started, so the timing is the note's alone.
-    await ask({ command: "lead" });
+    await ask({ command: "lead", from: "simon/app" });
+    await stop(first);
     const asked = Date.now();
-    expect(await ask({ command: "lead", from: "simon/app" })).toEqual({ lead: true });
-    expect(Date.now() - asked).toBeLessThan(1000);
-    await Bun.sleep(1500);
-    expect(heard()).toEqual([]);
-    writeFileSync(join(leadFolder(), "done"), "");
-    await until(() => heard().length === 1);
-    expect(heard()).toEqual(["you attached from app"]);
+    expect(await talk()).toBe("");
+    expect(Date.now() - asked).toBeLessThan(3000);
   }, 15_000);
 
   test("a repository removed while it is being cloned stays removed", async () => {

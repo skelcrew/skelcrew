@@ -291,21 +291,19 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("needs you", () => {
     expect(notes()).toBe(1);
   }, 60_000);
 
-  test("a needs-you note and a where-you-attached-from note both arrive whole, one after the other", async () => {
+  // A needs-you note must reach you when you haven't typed anything. Where you attached from
+  // waits for your next message instead.
+  test("a needs-you note is typed into the lead, and where you attached from is not", async () => {
     addApp();
-    mkdirSync(lead(), { recursive: true });
-    writeFileSync(join(lead(), "busy"), "");
     await startApp12();
+    expect(await askForLead("simon/app")).toContain('"lead":true');
     await hook("ask");
     await untilNeedsYou(true);
-    expect(await askForLead("simon/app")).toContain('"lead":true');
-    await Bun.sleep(500);
-    rmSync(join(lead(), "busy"));
-    await until(() => notes() === 2);
-    const pastes = read(join(lead(), "typed")).split("\x1b[201~");
-    expect(pastes[0]).toContain("app-12 needs you: its builder asked a question");
-    expect(pastes[0]).not.toContain("attached");
-    expect(pastes[1]).toContain("you attached from app");
+    await until(() => notes() === 1);
+    await Bun.sleep(1000);
+    expect(notes()).toBe(1);
+    expect(read(join(lead(), "typed"))).toContain("app-12 needs you: its builder asked a question");
+    expect(read(join(lead(), "typed"))).not.toContain("attached");
   }, 60_000);
 
   test("a note for a lead that isn't running is typed once the lead starts again", async () => {

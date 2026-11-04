@@ -48,6 +48,12 @@ export function openDb(): Database {
     one INTEGER PRIMARY KEY CHECK (one = 1),
     session TEXT NOT NULL
   )`);
+  // Where you last attached from, as owner/repo, or null outside any repository on GitHub.
+  // The lead hears of it with your next message, which can come after a restart.
+  db.run(`CREATE TABLE IF NOT EXISTS attached_from (
+    one INTEGER PRIMARY KEY CHECK (one = 1),
+    repo TEXT
+  )`);
   // The last note telling the lead where you attached from, and the lead's conversation it
   // went to. Kept so the note comes only when it changes, even after a restart.
   db.run(`CREATE TABLE IF NOT EXISTS attached (
