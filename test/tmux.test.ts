@@ -10,7 +10,15 @@ import {
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import { attach, endSession, hasSession, isIdle, startSession, typeInto } from "../src/tmux.ts";
+import {
+  attach,
+  endSession,
+  hasSession,
+  isIdle,
+  startSession,
+  stopSession,
+  typeInto,
+} from "../src/tmux.ts";
 
 const moment = 100;
 let home = "";
@@ -205,6 +213,32 @@ test("ending a session ends its process", async () => {
   expect(hasSession(socket, "builder")).toBe(false);
   const pid = Number(read("pid.txt").trim());
   await until(() => !alive(pid));
+});
+
+// Claude Code can outlive its session for a few seconds, still writing in its folder.
+test("stopping a session waits until what it started has exited", async () => {
+  const slow = `trap 'sleep 1; echo out > gone.txt; exit' HUP TERM; echo $$ > pid.txt; sleep 30 & wait`;
+  start("builder", ["sh", "-c", slow]);
+  await until(() => read("pid.txt") !== "");
+  await stopSession(socket, "builder");
+  expect(hasSession(socket, "builder")).toBe(false);
+  expect(read("gone.txt")).toBe("out\n");
+  expect(alive(Number(read("pid.txt").trim()))).toBe(false);
+});
+
+test("stopping a session that doesn't run does nothing", async () => {
+  await stopSession(socket, "nobody");
+});
+
+test("stopping a session kills what won't exit", async () => {
+  start("builder", [
+    "sh",
+    "-c",
+    "trap '' HUP TERM; echo $$ > pid.txt; while :; do sleep 0.1; done",
+  ]);
+  await until(() => read("pid.txt") !== "");
+  await stopSession(socket, "builder", 500);
+  expect(alive(Number(read("pid.txt").trim()))).toBe(false);
 });
 
 function alive(pid: number): boolean {

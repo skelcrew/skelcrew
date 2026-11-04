@@ -1,5 +1,6 @@
 // skel's tmux sessions: one each for the lead, builders and reviewers, on skel's own tmux
 // server (`tmux -L skel`; tests pass a socket of their own).
+import { readdirSync, readFileSync } from "node:fs";
 import { onSprite, startTmuxService } from "./sprite.ts";
 
 // Sent on stdin with each new session instead of kept in a file, so there is no file to
@@ -116,6 +117,57 @@ export function failedScreen(socket: string, name: string): string | null {
 // Ends the named session so skel can replace an agent that has stopped working.
 export function endSession(socket: string, name: string): void {
   mustTmux(socket, ["kill-session", "-t", `=${name}`]);
+}
+
+// Returns the state letter of a process from /proc, or null once it is gone. A process that
+// exited but wasn't yet reaped shows Z.
+function processState(pid: number): string | null {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    // The command's name, in parentheses, can hold spaces, so fields count from its end.
+    return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Returns a process and every process under it, so stopping a session can wait for all of
+// them: an agent in its sandbox runs a few levels down from the pane's own process.
+function processTree(root: number): number[] {
+  const children = new Map<number, number[]>();
+  for (const entry of readdirSync("/proc")) {
+    if (!/^\d+$/.test(entry)) continue;
+    try {
+      const stat = readFileSync(`/proc/${entry}/stat`, "utf8");
+      const parent = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+      children.set(parent, [...(children.get(parent) ?? []), Number(entry)]);
+    } catch {}
+  }
+  const tree = [root];
+  for (let i = 0; i < tree.length; i++) tree.push(...(children.get(tree[i] ?? 0) ?? []));
+  return tree;
+}
+
+// Ends the named session and returns once every process it ran has exited, so what it was
+// using, such as a thread's clone, can be removed. Claude Code can outlive the end of its
+// session for a few seconds, so it gets `timeout` milliseconds before being killed.
+export async function stopSession(socket: string, name: string, timeout = 10_000): Promise<void> {
+  const pane = Number(
+    tmux(socket, ["display-message", "-p", "-t", `=${name}:`, "#{pane_pid}"]).out,
+  );
+  if (!pane) return;
+  const tree = processTree(pane);
+  tmux(socket, ["kill-session", "-t", `=${name}`]);
+  const running = () => tree.filter((pid) => ![null, "Z"].includes(processState(pid)));
+  const deadline = Date.now() + timeout;
+  while (running().length > 0) {
+    if (Date.now() > deadline)
+      for (const pid of running())
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {}
+    await Bun.sleep(100);
+  }
 }
 
 // Attaches your terminal to the named agent session and returns when you detach with

@@ -223,14 +223,15 @@ export function hasTranscript(name: string, folder: string, session: string): bo
 
 // Prepares an agent's own config folder and trusted Claude Code settings, then returns its
 // sandbox command and environment. A builder, given its thread's clone, works there and sees
-// nothing else; the lead works in its own folder and sees skel's clone of every repository.
-// Each session keeps its own transcripts and logs in with skel's agent token, while your
-// other credentials stay hidden.
+// nothing else but its origin, read-only; the lead works in its own folder and sees skel's
+// clone of every repository. Each session keeps its own transcripts and logs in with skel's
+// agent token, while your other credentials stay hidden.
 export function agentCommand(given: {
   name: string;
   socket: string;
   model: string;
   thread?: string;
+  origin?: string;
   prompt?: string;
   system?: string;
   resume?: string;
@@ -242,6 +243,7 @@ export function agentCommand(given: {
     socket,
     model,
     thread,
+    origin,
     prompt,
     system,
     resume,
@@ -276,6 +278,12 @@ export function agentCommand(given: {
   mkdirSync(config, { recursive: true });
   const cwd = thread ?? join(home, ".local", "share", "skel", "lead");
   const mounts = [...rw(cwd), ...rw(config)];
+  // A thread's clone has skel's clone of the repository as origin. Read-only at the same path,
+  // it lets the builder fetch the base branch and merge it to fix a conflict, with no token.
+  if (thread && origin) {
+    refuseCredentials(origin);
+    mounts.push(...ro(origin));
+  }
   if (!thread) {
     // The whole folder of clones is mounted, made first if need be, so a repository brought
     // in while the lead runs shows up in its sandbox too.

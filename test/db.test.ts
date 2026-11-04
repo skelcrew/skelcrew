@@ -42,6 +42,9 @@ console.log(JSON.stringify(liveThreads(openDb())));`;
       reviewing: null,
       submitting: null,
       telling: null,
+      last_review: null,
+      last_comment: null,
+      last_check: null,
     }),
   ]);
 });

@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  canPush,
   createIssue,
   findPullRequest,
   openPullRequest,
@@ -145,4 +146,30 @@ test("says what it tried and what gh said when gh fails", async () => {
 test("refuses an answer from gh that isn't what GitHub sends", async () => {
   gh('{"title":"no number"}');
   await expect(createIssue("simon/app", "Add export", "As JSON")).rejects.toThrow();
+});
+
+test("someone with write, maintain or admin access can push", async () => {
+  gh('{"permission":"write","role_name":"maintain"}');
+  expect(await canPush("simon/app", "ana")).toBe(true);
+  expect(sent().args).toEqual(["api", "repos/simon/app/collaborators/ana/permission"]);
+  gh('{"permission":"admin","role_name":"admin"}');
+  expect(await canPush("simon/app", "ana")).toBe(true);
+});
+
+test("someone with read or triage access, or none, can't push", async () => {
+  for (const permission of ["read", "none"]) {
+    gh(`{"permission":"${permission}","role_name":"triage"}`);
+    expect(await canPush("simon/app", "mallory")).toBe(false);
+  }
+});
+
+test("someone GitHub doesn't know as a user can't push", async () => {
+  gh("gh: Not Found (HTTP 404)", 1);
+  expect(await canPush("simon/app", "mallory")).toBe(false);
+});
+
+// Taken for a no, a comment skel failed to check would be skipped for good.
+test("a failure to ask GitHub is an error, not a no", async () => {
+  gh("gh: Bad Gateway (HTTP 502)", 1);
+  await expect(canPush("simon/app", "ana")).rejects.toThrow("HTTP 502");
 });
