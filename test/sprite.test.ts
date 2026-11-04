@@ -65,7 +65,14 @@ case "$1" in
   file) cp "$5" "$HOME/sprites/$4/$6" ;;
 esac`,
   );
-  fake("sudo", "exit 0");
+  // Like apt over sprite exec, which has no terminal for debconf's dialogs: it prints
+  // warnings that look like errors even when the install works.
+  fake(
+    "sudo",
+    `echo "debconf: unable to initialize frontend: Dialog"
+test -f "${join(home, "apt-fails")}" && { echo "E: Unable to locate package bubblewrap" >&2; exit 100; }
+exit 0`,
+  );
   fake(
     "bun",
     `while [ $# -gt 1 ]; do test "$1" = --outfile && out=$2; shift; done
@@ -157,8 +164,8 @@ test("says to log in when sprite isn't logged in", async () => {
 
 test("asks before creating a Sprite, and creates none when you say no", async () => {
   const run = await skel(["--remote", "sprite:demo"], "n\n");
-  expect(run.out).toContain("No Sprite named demo. Create it? [y/N]");
-  expect(run.out).toContain("No Sprite was created");
+  expect(run.out).toContain("skel · No Sprite named demo. Create it? [y/N]");
+  expect(run.out).toContain("no Sprite was created");
   expect(run.code).toBe(1);
   expect(calls()).toBe("sprite list --json\n");
   expect(readdirSync(join(home, "sprites"))).toEqual([]);
@@ -170,8 +177,14 @@ test("creates the Sprite, sets it up, and runs the first run there", async () =>
   const lines = calls().split("\n");
   expect(lines[0]).toBe("sprite list --json");
   expect(lines[1]).toBe("sprite create --skip-console demo");
-  expect(lines[2]).toBe("sprite exec -s demo --no-stdin -- sudo apt-get install -y bubblewrap");
-  expect(lines[3]).toBe("sudo apt-get install -y bubblewrap");
+  const install = "sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq bubblewrap";
+  expect(lines[2]).toBe(`sprite exec -s demo --no-stdin -- ${install}`);
+  expect(lines[3]).toBe(install);
+  // "the Sprite demo" would read as a demo of Sprites, so skel names it as you typed it.
+  expect(run.out).toContain(
+    "skel · setting up sprite:demo: installing bubblewrap and copying skel there.\n",
+  );
+  expect(run.out).not.toContain("debconf");
   // Built for the Sprite, which is Linux on x64, whatever the laptop runs.
   expect(lines[4]).toMatch(
     new RegExp(
@@ -195,15 +208,25 @@ test("creates the Sprite, sets it up, and runs the first run there", async () =>
 test("offers to set up a Sprite that has no skel, then runs the command", async () => {
   mkdirSync(join(home, "sprites", "demo"));
   const run = await skel(["--remote", "sprite:demo", "ps"], "y\n");
-  expect(run.out).toContain("skel isn't installed on the Sprite demo.");
+  expect(run.out).toContain("skel · sprite:demo doesn't have skel installed.");
   expect(run.out).toEndWith("skel on the Sprite got 1 arguments\n[ps]\n");
   expect(calls()).toContain("sprite file push -s demo");
+});
+
+test("shows apt's output only when installing bubblewrap fails", async () => {
+  writeFileSync(join(home, "apt-fails"), "");
+  const run = await skel(["--remote", "sprite:demo"], "y\n");
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("skel: couldn't install bubblewrap on sprite:demo:\n");
+  expect(run.err).toContain("debconf: unable to initialize frontend: Dialog\n");
+  expect(run.err).toContain("E: Unable to locate package bubblewrap");
+  expect(calls()).not.toContain("sprite file push");
 });
 
 test("sets up nothing on a Sprite without skel when you say no", async () => {
   mkdirSync(join(home, "sprites", "demo"));
   const run = await skel(["--remote", "sprite:demo", "ps"], "n\n");
-  expect(run.out).toContain("skel isn't on the Sprite demo, so the command didn't run.");
+  expect(run.out).toContain("skel isn't on sprite:demo, so the command didn't run.");
   expect(run.code).toBe(1);
   expect(calls()).not.toContain("apt-get");
 });

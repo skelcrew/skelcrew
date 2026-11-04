@@ -5,6 +5,7 @@
 import { z } from "zod";
 import { originHere } from "./origin.ts";
 import { quoted, run, withLinuxSkel } from "./remote.ts";
+import { skelLine } from "./say.ts";
 
 // Reports whether skel runs on a Sprite. It goes by sprite-env, the Sprite's own tool for
 // its services: every Sprite has it in /.sprite/bin, on the PATH its commands and services
@@ -115,20 +116,35 @@ const yes = (question: string) =>
   ["y", "yes"].includes(prompt(question)?.trim().toLowerCase() ?? "");
 
 // Installs bubblewrap on the Sprite and copies skel there, built for it, to ~/.local/bin,
-// which is on the PATH a Sprite gives its commands.
+// which is on the PATH a Sprite gives its commands. The Sprite is named as you typed it,
+// sprite:demo, since "the Sprite demo" reads as a demo of Sprites.
 async function setUp(name: string): Promise<void> {
   // --no-stdin, since sprite can't reconnect a command whose input it forwards.
   const on = (command: string[]) => ["sprite", "exec", "-s", name, "--no-stdin", "--", ...command];
-  console.log(`Setting up the Sprite ${name}.`);
-  if ((await run(on(["sudo", "apt-get", "install", "-y", "bubblewrap"]))) !== 0)
-    throw new Error(`couldn't install bubblewrap on the Sprite ${name}`);
+  console.log(skelLine(`setting up sprite:${name}: installing bubblewrap and copying skel there.`));
+  // apt over sprite exec has no terminal for its dialogs, and says so in lines that look
+  // like errors though the install works. So its output shows only when it fails. sudo
+  // drops the environment, hence env after it.
+  const apt = ["sudo", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "-qq"];
+  const install = Bun.spawn(on([...apt, "bubblewrap"]), {
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, code] = await Promise.all([
+    new Response(install.stdout).text(),
+    new Response(install.stderr).text(),
+    install.exited,
+  ]);
+  if (code !== 0)
+    throw new Error(`couldn't install bubblewrap on sprite:${name}:\n${`${out}${err}`.trim()}`);
   await withLinuxSkel(async (file) => {
     // sprite file push writes through a link, as scp does, so a link left there would have
     // the file it points to overwritten. Removing it first leaves that file alone.
     if ((await run(on(["sh", "-c", "mkdir -p .local/bin && rm -f .local/bin/skel"]))) !== 0)
-      throw new Error(`couldn't make ~/.local/bin on the Sprite ${name}, so skel wasn't copied`);
+      throw new Error(`couldn't make ~/.local/bin on sprite:${name}, so skel wasn't copied`);
     if ((await run(["sprite", "file", "push", "-s", name, file, ".local/bin/skel"])) !== 0)
-      throw new Error(`sprite couldn't copy skel to the Sprite ${name}`);
+      throw new Error(`sprite couldn't copy skel to sprite:${name}`);
   });
 }
 
@@ -148,20 +164,20 @@ export async function remoteSprite(name: string, args: string[]): Promise<number
   const skel = ["sprite", "exec", "-s", name, "--tty", "--", ...line];
   if (!names.includes(name)) {
     // A mistyped name would otherwise make a second Sprite you pay for.
-    if (!yes(`No Sprite named ${name}. Create it? [y/N]`)) {
-      console.log("No Sprite was created, so the command didn't run.");
+    if (!yes(skelLine(`No Sprite named ${name}. Create it? [y/N]`))) {
+      console.log(skelLine("no Sprite was created, so the command didn't run."));
       return 1;
     }
     if ((await run(["sprite", "create", "--skip-console", name])) !== 0)
-      throw new Error(`sprite couldn't create the Sprite ${name}`);
+      throw new Error(`sprite couldn't create sprite:${name}`);
     await setUp(name);
     return run(skel);
   }
   const code = await run(skel);
   if (code !== 127) return code;
-  console.log(`skel isn't installed on the Sprite ${name}.`);
-  if (!yes("Install bubblewrap there and copy skel to ~/.local/bin? [y/N]")) {
-    console.log(`skel isn't on the Sprite ${name}, so the command didn't run.`);
+  console.log(skelLine(`sprite:${name} doesn't have skel installed.`));
+  if (!yes(skelLine("install bubblewrap there and copy skel to ~/.local/bin? [y/N]"))) {
+    console.log(skelLine(`skel isn't on sprite:${name}, so the command didn't run.`));
     return 1;
   }
   await setUp(name);

@@ -14,6 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
 import { codexHome, configDir } from "./paths.ts";
+import { skelLine } from "./say.ts";
 import { promptSecret } from "./secret.ts";
 import {
   dropCapabilities,
@@ -75,14 +76,6 @@ function apparmorAdvice(bwrap: string): string {
   return `${intro} This adds a profile for ${bwrap}:
   printf 'abi <abi/4.0>,\\ninclude <tunables/global>\\nprofile skel-bwrap ${bwrap} flags=(unconfined) {\\n  userns,\\n  include if exists <local/skel-bwrap>\\n}\\n' | sudo tee /etc/apparmor.d/skel-bwrap
   sudo apparmor_parser -r /etc/apparmor.d/skel-bwrap`;
-}
-
-// Returns a line that says skel is speaking, bold when the terminal can show it. gh, claude
-// and codex print into the same terminal, and without a mark skel's lines read as theirs.
-function skelLine(text: string): string {
-  const line = `skel · ${text}`;
-  const bold = process.stdout.isTTY && process.env.TERM !== "dumb";
-  return bold ? `\x1b[1m${line}\x1b[22m` : line;
 }
 
 // Returns what is wrong with a pasted token, or null when it looks like one. Claude Code
