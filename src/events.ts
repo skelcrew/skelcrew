@@ -271,6 +271,9 @@ async function tellBuilder(
       now.reviewing !== thread.reviewing;
     record(db, thread.folder, moved ? handled : { ...handled, ...change }, why);
   } catch (error) {
+    // Ending the session for a stop or a merge can make typing fail, and a stopped thread's
+    // events must stay unhandled for its builder to hear once it starts again.
+    if (cancel.signal.aborted) return;
     const said = error instanceof Error ? error.message : String(error);
     record(db, thread.folder, { ...handled, needs_you: true }, `couldn't tell: ${said}. ${why}`);
     tellLead(db, tmux);

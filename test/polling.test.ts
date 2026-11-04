@@ -472,6 +472,23 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     expect(existsSync(clone())).toBe(false);
   }, 60_000);
 
+  test("a comment still waiting for a busy builder when it is stopped stays unhandled", async () => {
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "busy"), "");
+    await approvedApp12();
+    pr({ reviews: [skelReview], comments: [{ id: 50, author: you, body: "Also CSV." }] });
+    await morePolls();
+    const stopped = Bun.spawnSync([process.execPath, main, "stop", "app-12"], {
+      env: env(),
+      stderr: "pipe",
+    });
+    expect(stopped.stderr.toString()).toBe("");
+    await morePolls();
+    // Typing gives up within a moment of the session ending.
+    await Bun.sleep(1500);
+    expect(thread()).toMatchObject({ status: "stopped", needs_you: 0, last_comment: 0 });
+  }, 60_000);
+
   test("an issue labeled skel starts a thread once, and one that failed isn't started again", async () => {
     // A builder that can't start, so the thread fails.
     script(
