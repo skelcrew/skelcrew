@@ -44,6 +44,8 @@ beforeEach(async () => {
     "gh",
     `test "$1 $2" = "repo view" || exit 1
 full=$3
+# A repository renamed or moved on GitHub answers to its old name with its new one.
+test -e "$HOME/github/$full.moved" && full=$(cat "$HOME/github/$full.moved")
 test -d "$HOME/github/$full.git" || { echo "Could not resolve to a Repository" >&2; exit 1; }
 permission=$(cat "$HOME/github/$full.permission")
 fork=$(test -e "$HOME/github/$full.fork" && echo true || echo false)
@@ -271,6 +273,19 @@ test("tells the daemon the repository you attached from, once skel has it", asyn
   git(app, "remote", "set-url", "origin", "https://gitlab.com/simon/app");
   await skel([], "", app);
   expect(asked()).toEqual({ command: "lead" });
+});
+
+test("tells the daemon a repository's new GitHub name when your checkout uses its old one", async () => {
+  const app = onGitHub("simon/app", "WRITE");
+  mkdirSync(join(home, "github", "simon"), { recursive: true });
+  writeFileSync(join(home, "github", "simon", "old.moved"), "simon/app");
+  git(app, "remote", "set-url", "origin", "https://github.com/simon/old");
+  await skel([], "", app);
+  expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
+  expect(JSON.parse(readFileSync(join(home, "asked"), "utf8"))).toEqual({
+    command: "lead",
+    from: "simon/app",
+  });
 });
 
 test("repo ls says how to bring a repository in while there is none", async () => {
