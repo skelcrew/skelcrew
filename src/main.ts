@@ -10,7 +10,7 @@ const usage = `Usage:
   skel repo ls
   skel repo rm <name>
   skel repo trust <name>
-  skel ps [<repo>] [--json]
+  skel ps [<repo>] [--all] [--json]
   skel task ls [<repo>] [--json]
   skel task show <repo>-<task> [--json]
   skel task create <repo> "<title>" "<body>"
@@ -119,9 +119,15 @@ async function run(args: string[]): Promise<void> {
   // --json can go anywhere, as tools add it last and people type it where they like.
   const json = args.includes("--json");
   const words = args.filter((arg) => arg !== "--json");
-  if (command === "ps" && words.length <= 2) {
-    printThreads(await threads(words[1]), json);
-    return;
+  if (command === "ps") {
+    // Done threads pile up forever and would bury the live ones, so only --all shows them.
+    const all = words.includes("--all");
+    const rest = words.filter((word) => word !== "--all");
+    if (rest.length <= 2) {
+      const rows = await threads(rest[1]);
+      printThreads(all ? rows : rows.filter((row) => row.status !== "done"), json);
+      return;
+    }
   }
   if (command === "task" && sub === "ls" && words.length <= 3) {
     printTasks(await tasks(words[2]), json);
