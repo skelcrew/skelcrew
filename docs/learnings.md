@@ -41,7 +41,7 @@ that covers the code you are about to write.
   nobody watches. Its sandbox fails inside skel's, so keep it off even if your own settings
   turn it on. Skip the warning bypass mode shows first, in the session's settings.
 - **Claude Code can outlive SIGTERM for a few seconds.** Wait for it to exit before
-  removing the worktree or anything else it uses.
+  removing the thread's clone or anything else it uses.
 
 ## The sandbox
 
@@ -57,35 +57,20 @@ that covers the code you are about to write.
 - **Hide `/run`.** The ssh agent, keyring, D-Bus, systemd and docker listen there, and some
   run commands for whoever connects. Bring back only the DNS resolver,
   `/run/systemd/resolve`.
-- **A worktree commits into the repository's `.git`, not its own folder.** Objects and refs
-  live there, so they must be writable. But the daemon runs git outside the sandbox with
-  your rights, and git follows a `commondir` file in `.git` or any worktree's folder to a
-  config that can run commands. So give the builder a throwaway `.git` top level and bring
-  back only `objects`, `refs` and its own worktree folder writable, with `commondir`,
-  `gitdir`, `config.worktree` and the whole `objects/info` folder read-only. A read-only
-  file in a writable folder can be renamed away, a mounted folder can't. Cover a missing
-  file with an empty one, not `/dev/null`, which a `nodev` mount refuses to open.
-- **Keep reflogs out of reach.** Git outside appends to a reflog by following whatever is
-  there, so a link planted in `logs` makes a push write into any file of yours.
-- **The daemon never runs git in a worktree.** `git status` or `git diff` there runs a
-  planted submodule's `core.fsmonitor`. It runs git in the main repository only, and pushes
-  the commit it recorded (`git -C repo push origin <sha>:refs/heads/skel/<n>`), since a
-  builder can move any ref, including `main` and other threads' branches.
-- **Check `.git` before running git in a repository.** A builder can leave a folder link in
-  `refs` or `objects`, which a fetch or gc outside follows to write into any folder of
-  yours, or a stray lock that stops it. A check can't help while the builder still runs,
-  since it can change `.git` right after the check passes.
-- **Remove a worktree without running git in it.** `git worktree remove` runs `git status`
-  there, which runs a planted `core.fsmonitor`. Check nothing needs saving, then use
-  `--force`, or delete the folder and run `git worktree prune`.
+- **The daemon never runs git in a thread's clone.** The builder controls everything in
+  it, `.git` included: `git status` or `git diff` there runs a planted `core.fsmonitor`,
+  and a link left in `refs` or `objects` sends a write anywhere. Fetch the branch from the
+  clone into skel's own clone, and push from there the commit it recorded, to the thread's
+  branch only. Remove the clone by deleting its folder.
 - **Never use a session's config folder outside the sandbox.** The agent can put commands
   in its `settings.json`, so `claude auth status` run there with your rights would run them.
 - **Agents read `.git/config`.** A remote URL with a token in it, or an `extraheader`, would
-  be visible to them, so skel refuses to start agents for such a repository.
+  be visible to them, so skel refuses to start the lead while a clone holds one. Hand git
+  your gh login for each command, as a credential helper, rather than saving it.
 - **Agents share the network.** They can reach ports on localhost and abstract sockets.
-- **Hide other threads.** `.skel/` holds every thread's worktree. Hide the folder, then
-  bring back only the agent's own. Create it first, or threads started after the lead show
-  up in its sandbox.
+- **Mount the folder of clones, not each clone.** A mount per clone, made when the sandbox
+  starts, misses repositories brought in later. Mount their parent folder, and create it
+  first: bwrap refuses to mount a folder that doesn't exist.
 - **Don't pass `--new-session`.** It moves Claude Code out of the terminal's process group,
   so it misses resize signals and draws at the wrong width.
 
@@ -95,8 +80,13 @@ that covers the code you are about to write.
   command to the background and ends the agent's turn. So `skel done` and `skel review`
   must answer quickly, and leave slow work, such as starting a review, to the daemon.
 
-## Adding a repository
+## Bringing in a repository
 
-- **Push access says nothing about what is in the folder.** skel judges it from `origin`,
-  and whoever can edit `.git/config` controls `origin`. When the lead runs `skel init`, it
-  must not trust a repository from `origin` alone.
+- **Trust what skel clones, not the folder.** Whoever can edit `.git/config` controls
+  `origin`, and anyone can put files in a checkout. skel judges push access on the GitHub
+  repository `origin` names and clones from GitHub, never from the folder, so the trust
+  covers exactly what agents will read.
+- **A yes from the lead proves nothing.** It could come from an injected instruction, so a
+  repository you can't push to is trusted only from your own terminal.
+- **A clone stopped halfway must not look like one.** Clone outside the folder the lead
+  sees, then move it in.
