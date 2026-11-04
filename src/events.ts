@@ -3,7 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 import { z } from "zod";
-import { type Check, failedLog, type PullRequest, readPullRequests } from "./github.ts";
+import { type Check, canPush, failedLog, type PullRequest, readPullRequests } from "./github.ts";
 import { tellLead } from "./lead.ts";
 import { endRound } from "./round.ts";
 import {
@@ -56,12 +56,14 @@ function newReviews(reviews: PullRequest["reviews"], after: number): PullRequest
 // ended, what to type into the builder, and how the thread changes. Events are handled once:
 // only reviews, comments and check runs after the last ones handled count. You are `you`, the
 // gh login skel uses, and `posted` holds the reviews skel posted with it, which are never
-// typed back as yours. Your comments wake the builder even past the round limit; another
-// person's don't, and a bot's never do.
+// typed back as yours. Your comments wake the builder even past the round limit. Those of
+// `pushers`, who can push to the repository, wake it within the limit. Anyone else's, a bot's
+// included, never do: on a public repository anyone can comment, and what is typed in steers
+// the builder.
 export function decide(
   thread: Thread,
   pr: PullRequest,
-  given: { you: string; maxRounds: number; posted: number[] },
+  given: { you: string; maxRounds: number; posted: number[]; pushers: string[] },
 ): Decision {
   if (pr.state === "MERGED") return { end: `PR #${thread.pr} was merged` };
   if (pr.state === "CLOSED") return { end: `PR #${thread.pr} was closed without merging` };
@@ -78,7 +80,10 @@ export function decide(
   }
   const past = thread.rounds > given.maxRounds;
   // Whether what this author wrote is typed into the builder.
-  const wakes = (author: Author) => !author?.bot && (author?.login === given.you || !past);
+  const wakes = (author: Author) =>
+    author !== null &&
+    !author.bot &&
+    (author.login === given.you || (!past && given.pushers.includes(author.login)));
   const who = (author: Author) => author?.login ?? "someone";
   const tell: string[] = [];
   // While skel's reviewer reviews, the review it posts can reach GitHub before skel has
@@ -230,6 +235,19 @@ async function pollRepository(db: Database, tmux: string, threads: Thread[]): Pr
     threads.flatMap((t) => (t.pr === null ? [] : [t.pr])),
   );
   const { maxRounds } = threadConfig();
+  // Asked once per poll, and only about authors of what is new.
+  const authors = new Set<string>();
+  for (const t of threads) {
+    const pr = t.pr === null ? undefined : prs.get(t.pr);
+    for (const item of [
+      ...(pr?.reviews.filter((r) => r.id > (t.last_review ?? Number.POSITIVE_INFINITY)) ?? []),
+      ...(pr?.comments.filter((c) => c.id > (t.last_comment ?? Number.POSITIVE_INFINITY)) ?? []),
+    ])
+      if (item.author && !item.author.bot && item.author.login !== you)
+        authors.add(item.author.login);
+  }
+  const pushers: string[] = [];
+  for (const login of authors) if (await canPush(repo, login)) pushers.push(login);
   for (const { folder } of threads) {
     // Read together, with no wait between, so a review the thread's round has finished is
     // always among those skel posted.
@@ -240,7 +258,7 @@ async function pollRepository(db: Database, tmux: string, threads: Thread[]): Pr
       .map((row) => z.object({ id: z.number() }).parse(row).id);
     const pr = thread.pr === null ? undefined : prs.get(thread.pr);
     if (!pr || (thread.status !== "working" && thread.status !== "waiting")) continue;
-    const decision = decide(thread, pr, { you, maxRounds, posted });
+    const decision = decide(thread, pr, { you, maxRounds, posted, pushers });
     if ("end" in decision) await endThread(db, tmux, thread, decision.end);
     else if (typing.has(folder)) continue;
     else if (decision.tell.length > 0 || decision.failed.length > 0)

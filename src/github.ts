@@ -371,6 +371,25 @@ export async function readPullRequests(
   return { you: data.viewer.login, prs };
 }
 
+// Returns whether someone can push to the repository: write, maintain or admin access, which
+// GitHub reports as write or admin. Throws when GitHub can't be asked, so a failure is never
+// taken for a no.
+export async function canPush(repo: string, login: string): Promise<boolean> {
+  let got: unknown;
+  try {
+    got = await api(
+      `repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`,
+      `check ${login}'s access to ${repo}`,
+    );
+  } catch (error) {
+    // GitHub answers 404 for a login that is no user, such as a deleted account's.
+    if (error instanceof Error && error.message.includes("(HTTP 404)")) return false;
+    throw error;
+  }
+  const { permission } = z.object({ permission: z.string() }).parse(got);
+  return ["admin", "write"].includes(permission);
+}
+
 // Returns the end of a failed GitHub Actions job's log: the failed steps only, without the
 // job and step names and the time gh puts before each line. Kept short, as it is typed into
 // the builder, which can ask for more by running the tests itself.
