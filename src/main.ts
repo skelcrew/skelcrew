@@ -1,5 +1,5 @@
 // skel's command line: reads the command and hands it to the file that does it.
-import { attachToLead, createTask, serve, startOn } from "./daemon.ts";
+import { attachToLead, createTask, serve, startOn, submitForReview } from "./daemon.ts";
 import { bringInFrom, listRepos, removeRepo, trustRepo } from "./repo.ts";
 import { firstRun } from "./setup.ts";
 
@@ -10,7 +10,8 @@ const usage = `Usage:
   skel repo rm <name>
   skel trust <name>
   skel task create <repo> "<title>" "<body>"
-  skel start <repo>-<task> [--from <branch>]`;
+  skel start <repo>-<task> [--from <branch>]
+  skel submit "<summary>"`;
 
 // Runs the requested CLI command, or prints usage and exits when its arguments are invalid.
 // With no command, sets up skel and attaches you to the lead.
@@ -32,6 +33,13 @@ async function run(args: string[]): Promise<void> {
   }
   if (command === "repo" && sub === "rm" && rest[0] && rest.length === 1) {
     removeRepo(rest[0]);
+    return;
+  }
+  if (command === "submit" && sub && rest.length === 0) {
+    const thread = await submitForReview(sub);
+    console.log(
+      `Submitted ${thread} for review. skel pushes it and opens or updates the pull request. If the reviewer asks for changes, skel types them in here.`,
+    );
     return;
   }
   if (command === "trust" && sub && rest.length === 0) {

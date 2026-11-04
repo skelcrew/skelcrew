@@ -75,6 +75,24 @@ export async function fetchBranch(
   ]);
 }
 
+// Pushes a commit from skel's clone in the folder to a branch of a GitHub repository. Never
+// forced, so a push can only add to what the branch already holds.
+export async function pushCommit(
+  folder: string,
+  repo: string,
+  sha: string,
+  branch: string,
+): Promise<void> {
+  await git([
+    "-C",
+    folder,
+    "push",
+    "--quiet",
+    `https://github.com/${repo}.git`,
+    `${sha}:refs/heads/${branch}`,
+  ]);
+}
+
 // Returns JSON from GitHub through gh, sending a body when supplied. Failures name what
 // skel was trying, so you can tell which GitHub operation failed.
 async function api(endpoint: string, doing: string, input?: object): Promise<unknown> {

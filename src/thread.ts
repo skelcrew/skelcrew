@@ -20,14 +20,20 @@ export const Thread = z.object({
   base: z.string().nullable(),
   status: z.enum(["working", "waiting", "failed", "done"]),
   session: z.string().nullable(),
+  // Rounds whose review asked for changes, counted against max_rounds.
+  rounds: z.number(),
+  pr: z.number().nullable(),
+  needs_you: z.number().transform((flag) => flag !== 0),
+  // The commit whose skel/review check is pending, while its review waits or runs.
+  reviewing: z.string().nullable(),
 });
 export type Thread = z.infer<typeof Thread>;
 
 // Returns the thread's repository as owner/name, as GitHub calls want it.
-const github = (thread: Thread) => `${thread.owner}/${thread.repo}`;
+export const github = (thread: Thread) => `${thread.owner}/${thread.repo}`;
 // Returns the thread's clone folder. It comes from the folder name chosen at start, so it
 // stays put when the repository's name changes.
-const cloneOf = (thread: Thread) => join(threadsDir(), thread.folder);
+export const cloneOf = (thread: Thread) => join(threadsDir(), thread.folder);
 
 // Appends the whole thread as it now is, with the reason when there is one, as a line to
 // its log. Every change goes there too, so the thread's history can be read and replayed.
@@ -37,19 +43,23 @@ function log(thread: Thread, why?: string): void {
   appendFileSync(join(threadsDir(), `${thread.folder}.log`), `${JSON.stringify(line)}\n`);
 }
 
-// Saves a change to the thread's status or session, logs the thread as it now is, and
-// returns it. `why` goes in the log, so a failure says what went wrong.
-function record(
+// Returns the thread in the given folder as it is now in the database.
+export const readThread = (db: Database, folder: string) =>
+  Thread.parse(db.query("SELECT * FROM threads WHERE folder = ?").get(folder));
+
+// Saves a change to the thread, logs the thread as it now is, and returns it. `why` goes in
+// the log, so a failure says what went wrong.
+export function record(
   db: Database,
   folder: string,
-  change: { status?: Thread["status"]; session?: string },
+  change: Partial<Pick<Thread, "status" | "session" | "rounds" | "pr" | "needs_you" | "reviewing">>,
   why?: string,
 ): Thread {
-  if (change.status)
-    db.run("UPDATE threads SET status = ? WHERE folder = ?", [change.status, folder]);
-  if (change.session)
-    db.run("UPDATE threads SET session = ? WHERE folder = ?", [change.session, folder]);
-  const thread = Thread.parse(db.query("SELECT * FROM threads WHERE folder = ?").get(folder));
+  // The column names come from the keys of Thread above, never from outside.
+  for (const [column, value] of Object.entries(change))
+    if (value !== undefined)
+      db.run(`UPDATE threads SET ${column} = ? WHERE folder = ?`, [value, folder]);
+  const thread = readThread(db, folder);
   log(thread, why);
   return thread;
 }
@@ -129,6 +139,10 @@ export async function startThread(
       base: given.from ?? null,
       status: "working",
       session: null,
+      rounds: 0,
+      pr: null,
+      needs_you: false,
+      reviewing: null,
     };
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run(
@@ -195,6 +209,17 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   ]);
   await fetchBranch(clone, github(thread), thread.base);
   await run(["git", "-C", clone, "checkout", "--quiet", "-b", thread.branch, "FETCH_HEAD"]);
+  // The reviewer reads the diff against origin/<base>. Cloned from skel's clone, the thread's
+  // clone has only the default branch there, so a branch given with --from is added.
+  if (thread.base)
+    await run([
+      "git",
+      "-C",
+      clone,
+      "update-ref",
+      `refs/remotes/origin/${thread.base}`,
+      "FETCH_HEAD",
+    ]);
   // Your git config is hidden from the builder, and its commits are authored by you. Only
   // your global config, since the folder the daemon started in makes no difference.
   for (const key of ["user.name", "user.email"]) {
@@ -211,17 +236,34 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
 
 const Config = z.looseObject({
   builder: z.looseObject({ model: z.string().min(1).optional() }).optional(),
+  reviewer: z.looseObject({ harness: z.enum(["codex", "claude"]).optional() }).optional(),
+  max_rounds: z.number().int().positive().optional(),
 });
 
-// Returns the builder's model from your config's builder.model, or opus when it names none.
-// Throws when the config isn't valid, rather than start a builder on a model you didn't pick.
-function builderModel(): string {
+// Returns what your config sets for threads: the builder's model (opus when it names none),
+// the reviewer's harness (none when it names none, so the reviewer picks), and the round
+// limit (3 when it names none). Throws when the config isn't valid, rather than run a thread
+// on settings you didn't pick.
+export function threadConfig(): {
+  model: string;
+  reviewer: "codex" | "claude" | undefined;
+  maxRounds: number;
+} {
   const file = join(configDir(), "config.yaml");
-  if (!existsSync(file)) return "opus";
-  const read = Config.safeParse(parse(readFileSync(file, "utf8")) ?? {});
+  const read = Config.safeParse(existsSync(file) ? (parse(readFileSync(file, "utf8")) ?? {}) : {});
   if (!read.success) throw new Error(`${file} isn't valid: ${z.prettifyError(read.error)}`);
-  return read.data.builder?.model ?? "opus";
+  const { builder, reviewer, max_rounds } = read.data;
+  return {
+    model: builder?.model ?? "opus",
+    reviewer: reviewer?.harness,
+    maxRounds: max_rounds ?? 3,
+  };
 }
+
+// Tells the builder how a round ends. It goes in the system prompt rather than the first
+// message, so the first message stays the task in its own words, and the builder still has
+// it after a long conversation is compacted.
+const howToSubmit = `You are the builder in a skel thread, working on the task in your first message, in your own clone and branch. When a round of work is ready for review, commit it and run skel submit "<summary>", with a summary of the change for the pull request. skel then pushes your branch, opens the pull request if there is none yet, and has a fresh reviewer review it. You can't push or call GitHub yourself from here, so don't try. If the reviewer asks for changes, skel types the review into this session: fix what it asks, commit, and run skel submit again.`;
 
 // Starts the thread's builder in tmux, in the sandbox in its clone: with --resume when it
 // saved a conversation, or else afresh with the task's title and body as its first message. Throws when it
@@ -242,8 +284,9 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
   const { argv, env } = agentCommand({
     name: thread.folder,
     socket: threadSocket(thread.folder),
-    model: builderModel(),
+    model: threadConfig().model,
     thread: clone,
+    system: howToSubmit,
     ...start,
   });
   startServer(tmux);
