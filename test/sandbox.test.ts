@@ -205,7 +205,7 @@ console.log(JSON.stringify(agentCommand({ name: "lead",
     mkdirSync(join(home, ".local", "share", "skel", "claude", "other"), { recursive: true });
     fakeClaude([
       'printf "%s\\n" "$@"',
-      "env | grep -E '^(CLAUDE_|SKEL_|GH_TOKEN|TERM)' | sort",
+      "env | grep -E '^(CLAUDE_|DISABLE_AUTOUPDATER|SKEL_|GH_TOKEN|TERM)' | sort",
       "test -e ~/.claude || echo no-claude",
       "test -e ~/.claude.json || echo no-claude-json",
       "test -e ~/.config/skel/claude-token || echo no-token-file",
@@ -231,13 +231,14 @@ console.log(JSON.stringify(agentCommand({ name: "lead",
         "--permission-mode",
         "bypassPermissions",
         "--settings",
-        '{"skipDangerousModePermissionPrompt":true,"sandbox":{"enabled":false}}',
+        '{"skipDangerousModePermissionPrompt":true,"sandbox":{"enabled":false},"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"skel attached","timeout":10}]}]}}',
         "--resume",
         "abc-123",
         "Fix the bug",
         "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false",
         "CLAUDE_CODE_OAUTH_TOKEN=tok-123",
         `CLAUDE_CONFIG_DIR=${config}`,
+        "DISABLE_AUTOUPDATER=1",
         "SKEL_SANDBOX=1",
         "SKEL_SOCKET=/run/skel/skel.sock",
         "TERM=xterm",
@@ -252,6 +253,8 @@ console.log(JSON.stringify(agentCommand({ name: "lead",
     const json = join(config, ".claude.json");
     const lead = join(home, ".local", "share", "skel", "lead");
     expect(JSON.parse(readFileSync(json, "utf8")).projects[lead].hasTrustDialogAccepted).toBe(true);
+    // Its first-launch questions, such as the theme, would wait with nobody to answer.
+    expect(JSON.parse(readFileSync(json, "utf8")).hasCompletedOnboarding).toBe(true);
     expect(statSync(json).mode & 0o777).toBe(0o600);
     expect(readFileSync(join(config, "note"), "utf8")).toBe("m\n");
     expect(yours()).toBe(before);

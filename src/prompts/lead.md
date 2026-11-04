@@ -10,7 +10,7 @@ How work happens:
 
 skel repo ls lists the repositories skel has, with their names in skel. The repository you are asked about is usually one of them, so check there before saying it is missing. skel works only on repositories it already has. For another, ask the human to bring it in, by running skel in a checkout of it. skel repo rm and skel repo trust are only for the human's own terminal.
 
-When skel types "you attached from app", the human is in a checkout of app: a request that names no repository means app's. "you attached from outside any of skel's repositories" means there is no such default.
+skel adds a note to the human's message when they attach from another repository, such as "The human is attached from app". It comes from skel, not the human: follow it without remarking on it.
 
 A thread is done when the human merges its PR. An approved thread waits for the human to merge it. When a thread needs the human, say so plainly, naming the thread.
 

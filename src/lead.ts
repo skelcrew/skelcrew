@@ -24,6 +24,7 @@ import {
 
 const Lead = z.object({ session: z.string() }).nullable();
 const Told = z.object({ session: z.string(), note: z.string() }).nullable();
+const AttachedFrom = z.object({ repo: z.string().nullable() }).nullable();
 
 // Keeps a running lead or starts one, resuming its saved conversation when available. skel
 // picks the session id rather than Claude Code, so it is stored before the lead starts and
@@ -83,56 +84,52 @@ async function typeNotes(db: Database, tmux: string): Promise<void> {
 
 let telling: Promise<void> = Promise.resolve();
 
-// Runs one piece of typing into the lead after every one queued before it, and returns at
-// once, so nothing waits on the lead. Both kinds of note go through here, so two can never
-// be pasted before either's Enter, and each sees what the one before it typed.
-function inTurn(work: () => Promise<void>, failed: string): void {
-  telling = telling
-    .then(work)
-    .catch((error) =>
-      console.log(`${failed}: ${error instanceof Error ? error.message : String(error)}`),
-    );
-}
-
 // Has the daemon type the saved notes into the lead, and returns at once, so the round or
-// request that saved a note never waits on the lead. A note that fails to be typed stays
+// request that saved a note never waits on the lead. Calls go one after another, so a note
+// is never pasted twice, nor two before either's Enter. A note that fails to be typed stays
 // saved, and the next call, at the next note, the next skel attach or the daemon's next
 // start, tries it again.
 export function tellLead(db: Database, tmux: string): void {
-  inTurn(() => typeNotes(db, tmux), "couldn't tell the lead");
+  telling = telling
+    .then(() => typeNotes(db, tmux))
+    .catch((error) =>
+      console.log(
+        `couldn't tell the lead: ${error instanceof Error ? error.message : String(error)}`,
+      ),
+    );
 }
 
-// Tells the lead which repository you attached from when it differs from what it was last
-// told, so "fix the flaky test" means that repository's. Returns at once: you land in the
-// lead while the note waits for it to be idle. Notes go one after another, so each compares
-// with what the one before it told the lead.
-export function tellAttachedFrom(db: Database, tmux: string, from: string | undefined): void {
-  inTurn(() => tellIfChanged(db, tmux, from), "The lead wasn't told where you attached from");
+// Keeps where you attached from, as owner/repo, or that there is none, for the lead to hear
+// with your next message. Typed in, it would be a message of its own, and the lead would
+// answer it before you said anything.
+export function recordAttachedFrom(db: Database, from: string | undefined): void {
+  db.run("INSERT OR REPLACE INTO attached_from (one, repo) VALUES (1, ?)", [from ?? null]);
 }
 
-// Types the note when it differs from the last one this lead conversation got, and
-// remembers it only once typed, so a note that never got through comes again on the next
-// attach. The note, not the repository, is compared: a repository whose name in skel gained
-// its owner is told again, under the name that now finds it.
-async function tellIfChanged(db: Database, tmux: string, from: string | undefined) {
+// Returns the note telling the lead where you attached from, for the lead's hook to add to
+// your message, or nothing when this lead conversation already has it. It counts as told
+// once returned: the hook's output reaches the lead with the message it runs for. The note,
+// not the repository, is compared, so a repository whose name in skel gained its owner is
+// told again, under the name that now finds it.
+export function attachedNote(db: Database): string {
+  const attached = AttachedFrom.parse(db.query("SELECT repo FROM attached_from").get());
+  const lead = Lead.parse(db.query("SELECT session FROM lead").get());
+  if (attached === null || lead === null) return "";
   // One skel doesn't have yet, such as one waiting for skel repo trust, is no default.
   const found = repositories(db).find(
-    (r) => `${r.owner}/${r.repo}`.toLowerCase() === from?.toLowerCase(),
+    (r) => `${r.owner}/${r.repo}`.toLowerCase() === attached.repo?.toLowerCase(),
   );
   const note = found
-    ? `you attached from ${found.name}`
-    : "you attached from outside any of skel's repositories";
-  const lead = Lead.parse(db.query("SELECT session FROM lead").get());
-  if (lead === null) return;
+    ? `The human is attached from ${found.name}. Unless they name another repository, they mean this one.`
+    : "The human is attached from outside skel's repositories, so no repository is the default.";
   // A lead started afresh never saw what the one before it was told.
   const last = Told.parse(db.query("SELECT session, note FROM attached").get());
   const told = last?.session === lead.session ? last.note : null;
   // A lead never told of a repository has none to forget.
-  if (told === null ? !found : told === note) return;
-  // The lead can be busy with a long turn when you attach, and the note can wait for it.
-  await typeInto(tmux, "lead", note, { timeout: 15 * 60_000 });
+  if (told === null ? !found : told === note) return "";
   db.run("INSERT OR REPLACE INTO attached (one, session, note) VALUES (1, ?, ?)", [
     lead.session,
     note,
   ]);
+  return note;
 }
