@@ -21,10 +21,10 @@ import {
   ThreadRow,
 } from "./list.ts";
 import { cliSocket, daemonSocket, leadSocket, threadSocket } from "./paths.ts";
-import { findRepository, refreshClones } from "./repo.ts";
+import { findRepository, refreshClones, repositories } from "./repo.ts";
 import { rerunReview, resumeRound, submitRound } from "./round.ts";
 import { setupDone } from "./setup.ts";
-import { keepAwake, onSprite, serviceLog, startSpriteService } from "./sprite.ts";
+import { keepAwake, onSprite, serviceLog, startSpriteService, urlPort } from "./sprite.ts";
 import {
   bringBack,
   failThread,
@@ -40,6 +40,7 @@ import {
   threadName,
 } from "./thread.ts";
 import { attach } from "./tmux.ts";
+import { hookRepository, listenForWebhooks, webhookSecret } from "./webhook.ts";
 
 // Only what a branch name holds: it goes into what git fetches, where a : or * would ask
 // for something else.
@@ -174,8 +175,9 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 // were running, so commands and agents can reach it. Leaves the sockets listening after
 // returning, and removes them when stopped, leaving every tmux session running. It never
 // asks questions: systemd has nobody to answer. Polls GitHub every `every` milliseconds while
-// a thread is active, and on a Sprite keeps the Sprite awake while there is work.
-export async function serve(tmux: string, every = 30_000): Promise<void> {
+// a thread is active. On a Sprite, keeps the Sprite awake while there is work, and listens on
+// `port` for GitHub's webhooks, which wake it while it sleeps.
+export async function serve(tmux: string, every = 30_000, port = urlPort): Promise<void> {
   if (!setupDone()) throw new Error("the first run isn't done on this machine: run skel first");
   const db = openDb();
   let starting: Promise<void> = Promise.resolve();
@@ -318,8 +320,20 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
       (error) => failThread(db, thread, error),
     );
   }
-  pollGitHub(db, tmux, every, begin);
-  if (onSprite()) keepAwake(() => hasWork(liveThreads(db)));
+  const poll = pollGitHub(db, tmux, every, begin);
+  if (!onSprite()) return;
+  keepAwake(() => hasWork(liveThreads(db)));
+  // Without the listener, events wait until something else wakes the Sprite, and polling
+  // still sees them then.
+  try {
+    listenForWebhooks(port, webhookSecret(), poll);
+  } catch (error) {
+    console.log(`couldn't listen for GitHub's webhooks on port ${port}: ${message(error)}`);
+  }
+  // Set again at each start, so a webhook deleted on GitHub, or one an older skel set with
+  // other events, is put right.
+  for (const { owner, repo } of repositories(db))
+    hookRepository(`${owner}/${repo}`).catch((error) => console.log(message(error)));
 }
 
 // Asks the daemon on behalf of skel task create and skel start, and returns its answer. Throws

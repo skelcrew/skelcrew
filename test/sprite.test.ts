@@ -213,7 +213,9 @@ test("creates the Sprite, sets it up, and runs the first run there", async () =>
   expect(lines[9]).toBe(
     "sprite exec -s demo --no-stdin -- sh -c mv -f .local/bin/skel.new .local/bin/skel",
   );
-  expect(lines[10]).toBe(`${exec("demo")} --from simon/app`);
+  // GitHub's webhooks wake the Sprite through its URL, and GitHub has no Fly.io login.
+  expect(lines[10]).toBe("sprite config update --url-auth public -s demo");
+  expect(lines[11]).toBe(`${exec("demo")} --from simon/app`);
   expect(readFileSync(join(home, "sprites", "demo", ".local", "bin", "skel"), "utf8")).toBe(
     spriteSkel,
   );
@@ -327,6 +329,15 @@ test("update replaces skel on the Sprite and restarts its daemon's service", asy
   expect(run.out).toContain("the lead picks up new instructions when it's next started");
   expect(calls()).not.toContain("apt-get");
   expect(readdirSync(join(home, "tmp"))).toEqual([]);
+});
+
+// A Sprite set up by an older skel still asks for a Fly.io login at its URL, which GitHub's
+// webhooks can't give.
+test("update makes the Sprite's URL public, so GitHub's webhooks can wake it", async () => {
+  existing("demo");
+  const run = await update(laptopSkel());
+  expect(run.code).toBe(0);
+  expect(calls()).toContain("sprite config update --url-auth public -s demo\n");
 });
 
 // A transfer that breaks off must leave the skel that works in place, or the daemon has

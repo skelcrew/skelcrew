@@ -6,7 +6,9 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { linkSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { setWebhook } from "./github.ts";
 import { configDir } from "./paths.ts";
+import { spriteUrl } from "./sprite.ts";
 
 const secretFile = () => join(configDir(), "webhook-secret");
 
@@ -76,4 +78,10 @@ export function listenForWebhooks(
       return new Response("Polling\n", { status: 202 });
     },
   });
+}
+
+// Sets the webhook that wakes this Sprite on a repository, owner/name, so a label, your
+// comment or your merge there reaches skel while the Sprite sleeps.
+export async function hookRepository(full: string): Promise<void> {
+  await setWebhook(full, spriteUrl(), webhookSecret());
 }

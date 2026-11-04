@@ -85,6 +85,25 @@ export function startTmuxService(socket: string): void {
   );
 }
 
+// The port the Sprite's URL sends requests to, where the daemon listens for GitHub's
+// webhooks. A request to the URL wakes a Sprite that sleeps.
+export const urlPort = 8080;
+
+const Info = z.object({ sprite_url: z.string().url() });
+
+// Returns the Sprite's URL, for GitHub's webhooks to wake it with, as sprite-env, the
+// Sprite's own tool, says it.
+export function spriteUrl(): string {
+  const info = Bun.spawnSync(["sprite-env", "info"], { stdout: "pipe", stderr: "pipe" });
+  if (!info.success)
+    throw new Error(`sprite-env couldn't say the Sprite's URL: ${info.stderr.toString().trim()}`);
+  try {
+    return Info.parse(JSON.parse(info.stdout.toString())).sprite_url;
+  } catch {
+    throw new Error("sprite-env described the Sprite in a way this skel doesn't understand");
+  }
+}
+
 // How long a hold keeps the Sprite awake after its last renewal, in seconds. A few minutes,
 // so a daemon that dies lets the Sprite sleep soon after, and a renewal that comes late or
 // fails once never lets it sleep mid-work.
@@ -215,6 +234,21 @@ async function setUp(name: string): Promise<void> {
     stderr: "ignore",
   }).exited;
   await withLinuxSkel(onTheSprite(name).copy);
+  await makeUrlPublic(name);
+}
+
+// Lets anyone reach the Sprite's URL without a Fly.io login, so GitHub's webhooks can wake
+// it. The URL only reaches the port where the daemon listens, which acts on nothing but a
+// delivery signed with skel's secret, and then only polls GitHub.
+// It is quiet, as sprite says "Updated" with the Sprite's name.
+async function makeUrlPublic(name: string): Promise<void> {
+  const update = ["sprite", "config", "update", "--url-auth", "public", "-s", name];
+  const made = Bun.spawn(update, { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const [said, code] = await Promise.all([new Response(made.stderr).text(), made.exited]);
+  if (code !== 0)
+    throw new Error(
+      `sprite couldn't make sprite:${name}'s URL public, so GitHub's webhooks can't wake it: ${said.trim()}`,
+    );
 }
 
 // How update and setting up reach a Sprite: sprite exec for shell lines, sprite file push
@@ -279,6 +313,8 @@ export async function updateSprite(name: string): Promise<number> {
   checkName(name);
   if (!spriteNames(`skel update --remote sprite:${name}`).includes(name))
     throw new Error(`No Sprite named ${name}: skel --remote sprite:${name} creates it`);
+  // A Sprite an older skel set up still asks for a login at its URL.
+  await makeUrlPublic(name);
   return update(`sprite:${name}`, onTheSprite(name));
 }
 
