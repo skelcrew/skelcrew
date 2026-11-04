@@ -45,11 +45,12 @@ export function openDb(): Database {
     one INTEGER PRIMARY KEY CHECK (one = 1),
     session TEXT NOT NULL
   )`);
-  // The repository the lead was last told you attached from, as owner/repo, or empty for
-  // none. Kept so the note comes only when it changes, even after a restart.
+  // The last note telling the lead where you attached from, and the lead's conversation it
+  // went to. Kept so the note comes only when it changes, even after a restart.
   db.run(`CREATE TABLE IF NOT EXISTS attached (
     one INTEGER PRIMARY KEY CHECK (one = 1),
-    repo TEXT NOT NULL
+    session TEXT NOT NULL,
+    note TEXT NOT NULL
   )`);
   // A thread names its repository by GitHub owner and name, which never change, and is named
   // once, at start, for its folder: its clone, log, config folder, session and socket all

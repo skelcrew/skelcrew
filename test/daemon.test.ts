@@ -570,6 +570,42 @@ c.on("error", () => process.exit(1));`;
     expect(heard()).toEqual(["you attached from app", outside]);
   }, 15_000);
 
+  // A lead started afresh never saw the note the one before it got.
+  test("tells a lead that started a new conversation again", async () => {
+    setUp();
+    addRepository("app");
+    fakeClaude(listening);
+    const first = serve();
+    await untilAnswers();
+    await ask({ command: "lead", from: "simon/app" });
+    await until(() => heard().length === 1);
+    await stop(first);
+    Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=lead"]);
+    serve();
+    await untilAnswers();
+    await ask({ command: "lead", from: "simon/app" });
+    await until(() => heard().length === 2);
+    expect(heard()).toEqual(["you attached from app", "you attached from app"]);
+  }, 15_000);
+
+  // Otherwise the lead would keep a name that no longer finds the repository.
+  test("tells the lead again when the repository's name in skel changed", async () => {
+    setUp();
+    addRepository("app");
+    fakeClaude(listening);
+    serve();
+    await untilAnswers();
+    await ask({ command: "lead", from: "simon/app" });
+    await until(() => heard().length === 1);
+    const db = new Database(join(home, ".local", "share", "skel", "skel.db"));
+    db.run("INSERT INTO repositories (name, owner, repo) VALUES ('other/app', 'other', 'app')");
+    db.run("UPDATE repositories SET name = 'simon/app' WHERE owner = 'simon'");
+    db.close();
+    await ask({ command: "lead", from: "simon/app" });
+    await until(() => heard().length === 2);
+    expect(heard()).toEqual(["you attached from app", "you attached from simon/app"]);
+  }, 15_000);
+
   // A repository waiting for skel repo trust isn't in yet, so the lead couldn't work on it.
   test("a repository skel doesn't have is no default", async () => {
     setUp();

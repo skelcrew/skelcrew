@@ -21,7 +21,7 @@ import {
 } from "./tmux.ts";
 
 const Lead = z.object({ session: z.string() }).nullable();
-const Attached = z.object({ repo: z.string() }).nullable();
+const Told = z.object({ session: z.string(), note: z.string() }).nullable();
 
 // Keeps a running lead or starts one, resuming its saved conversation when available. skel
 // picks the session id rather than Claude Code, so it is stored before the lead starts and
@@ -72,20 +72,29 @@ export function tellAttachedFrom(db: Database, tmux: string, from: string | unde
     .catch((error) => console.log(`The lead wasn't told where you attached from: ${error}`));
 }
 
-// Types the note when the repository changed, and remembers it only once typed, so a note
-// that never got through comes again on the next attach.
+// Types the note when it differs from the last one this lead conversation got, and
+// remembers it only once typed, so a note that never got through comes again on the next
+// attach. The note, not the repository, is compared: a repository whose name in skel gained
+// its owner is told again, under the name that now finds it.
 async function tellIfChanged(db: Database, tmux: string, from: string | undefined) {
-  const full = (r: { owner: string; repo: string }) => `${r.owner}/${r.repo}`;
   // One skel doesn't have yet, such as one waiting for skel repo trust, is no default.
-  const found = repositories(db).find((r) => full(r).toLowerCase() === from?.toLowerCase());
-  const now = found ? full(found) : "";
-  const told = Attached.parse(db.query("SELECT repo FROM attached").get());
-  // A lead never told of a repository has none to forget.
-  if ((told?.repo ?? "") === now) return;
+  const found = repositories(db).find(
+    (r) => `${r.owner}/${r.repo}`.toLowerCase() === from?.toLowerCase(),
+  );
   const note = found
     ? `you attached from ${found.name}`
     : "you attached from outside any of skel's repositories";
+  const lead = Lead.parse(db.query("SELECT session FROM lead").get());
+  if (lead === null) return;
+  // A lead started afresh never saw what the one before it was told.
+  const last = Told.parse(db.query("SELECT session, note FROM attached").get());
+  const told = last?.session === lead.session ? last.note : null;
+  // A lead never told of a repository has none to forget.
+  if (told === null ? !found : told === note) return;
   // The lead can be busy with a long turn when you attach, and the note can wait for it.
   await typeInto(tmux, "lead", note, { timeout: 15 * 60_000 });
-  db.run("INSERT OR REPLACE INTO attached (one, repo) VALUES (1, ?)", [now]);
+  db.run("INSERT OR REPLACE INTO attached (one, session, note) VALUES (1, ?, ?)", [
+    lead.session,
+    note,
+  ]);
 }
