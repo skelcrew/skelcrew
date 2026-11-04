@@ -100,6 +100,32 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
     expect(existsSync(join(clone, "made"))).toBe(false);
   });
 
+  test("reviews the commit it is given, whatever the builder changed since", async () => {
+    const git = (...args: string[]) =>
+      Bun.spawnSync(["git", "-C", clone, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+        stdout: "pipe",
+      })
+        .stdout.toString()
+        .trim();
+    git("init", "-q");
+    git("add", ".");
+    git("commit", "-qm", "submitted");
+    const commit = git("rev-parse", "HEAD");
+    writeFileSync(join(clone, "README"), "later\n");
+    git("commit", "-qam", "later");
+    writeFileSync(join(clone, "README"), "unsaved\n");
+    writeFileSync(join(clone, "new"), "untracked\n");
+    fakeCodex(approve, [
+      '{ git rev-parse HEAD; cat README; test -e new || echo no-new; } > "$CODEX_HOME/sessions/seen"',
+    ]);
+    expect(await review({ ...given(), commit })).toEqual({
+      verdict: "approve",
+      body: "Looks right.",
+    });
+    expect(kept("seen")).toBe(`${commit}\napp\nno-new\n`);
+    expect(readFileSync(join(clone, "README"), "utf8")).toBe("unsaved\n");
+  });
+
   test("keeps Codex's instructions as they were, and its login and sessions writable", async () => {
     mkdirSync(join(codexHome(), "rules"), { recursive: true });
     for (const file of ["config.toml", "AGENTS.md", "rules/default.rules", "auth.json"])

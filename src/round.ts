@@ -13,7 +13,7 @@ import {
 import { cloneDir } from "./paths.ts";
 import { type Review, review } from "./reviewer.ts";
 import { cloneOf, github, readThread, record, type Thread, threadConfig } from "./thread.ts";
-import { isIdle, typeInto } from "./tmux.ts";
+import { typeInto } from "./tmux.ts";
 
 export type Outcome = {
   check: "success" | "failure";
@@ -134,19 +134,6 @@ async function push(db: Database, folder: string, summary: string): Promise<stri
   return sha;
 }
 
-// Waits until the builder is idle, then types the text into its session. Gives up when a
-// newer round starts meanwhile: the review is about a commit the builder has moved past.
-async function tell(tmux: string, folder: string, text: string, signal: AbortSignal) {
-  // A builder can work long after it submits, but one busy this long has likely hung.
-  const deadline = Date.now() + 30 * 60_000;
-  while (!(await isIdle(tmux, folder))) {
-    if (signal.aborted) return;
-    if (Date.now() > deadline)
-      throw new Error("the builder wasn't idle for 30 minutes, so the review wasn't typed in");
-  }
-  if (!signal.aborted) await typeInto(tmux, folder, text);
-}
-
 // Reviews the commit and acts on the verdict: posts it on the PR, sets the skel/review
 // check, saves what it means for the thread, and types changes into the builder. Stops
 // without a word once a newer round cancels it, since that round now owns the thread.
@@ -170,6 +157,7 @@ async function reviewRound(
     issue: await readIssue(repo, thread.task),
     // The thread's clone has the base branch under origin/, from skel's clone.
     base: `origin/${await baseOf(thread)}`,
+    commit: sha,
     model,
     harness: reviewer,
     signal,
@@ -181,7 +169,9 @@ async function reviewRound(
   if (signal.aborted) return;
   const { rounds, needsYou, status } = outcome;
   record(db, folder, { reviewing: null, rounds, needs_you: needsYou, status }, outcome.why);
-  if (outcome.tell) await tell(tmux, folder, outcome.tell, signal);
+  // A builder can work long after it submits, but one busy this long has likely hung. A
+  // newer round makes the review stale, so it is never typed once one starts.
+  if (outcome.tell) await typeInto(tmux, folder, outcome.tell, { timeout: 30 * 60_000, signal });
 }
 
 // The latest round of each thread: cancelling it cancels its review, and its push is what

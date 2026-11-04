@@ -102,6 +102,7 @@ async function reviewNow(given: {
   clone: string;
   issue: { title: string; body: string };
   base: string;
+  commit?: string;
   model: string;
   harness?: "codex" | "claude" | undefined;
   signal?: AbortSignal;
@@ -130,12 +131,21 @@ async function reviewNow(given: {
       if (value !== undefined && (passed.includes(key) || key.startsWith("LC_"))) kept[key] = value;
     // Tests and builds write in the clone, so it is seen through a throwaway layer too.
     const mounts = ["--overlay-src", clone, "--tmp-overlay", clone, "--bind", folder, folder];
+    // The builder can go on changing its clone after it submits, so the reviewer sees the
+    // submitted commit, with what the builder changed since put aside. Ignored files, such
+    // as installed packages, stay for the tests. git runs in the sandbox, as the clone's
+    // .git is the builder's to plant settings in.
+    const checkout = 'git checkout -q -f --detach "$0" && git clean -q -fd && exec "$@"';
+    const command = given.commit
+      ? ["sh", "-c", checkout, given.commit, ...run.command]
+      : run.command;
     const argv = sandboxArgs({
       home,
       path,
       mounts: [...mounts, ...run.mounts],
       cwd: clone,
-      command: run.command,
+      command,
+      programs: run.command.slice(0, 1),
     });
     const timeout = AbortSignal.timeout(limit);
     const signal = given.signal ? AbortSignal.any([given.signal, timeout]) : timeout;
