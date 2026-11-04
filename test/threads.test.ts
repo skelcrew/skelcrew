@@ -182,8 +182,16 @@ openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?
 // skel's own clone, which the daemon makes when the lead starts.
 const untilCloned = () => until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
 
-function thread(): Record<string, unknown> {
+// Opens skel's database as the daemon writes it. Without a wait, a read that lands during
+// one of its writes fails with "database is locked".
+function skelDb(): Database {
   const db = new Database(join(data(), "skel.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  return db;
+}
+
+function thread(): Record<string, unknown> {
+  const db = skelDb();
   try {
     const row = db.query("SELECT * FROM threads").get();
     return row && typeof row === "object" ? { ...row } : {};
@@ -220,8 +228,11 @@ test("more data on a connection doesn't run its request again", async () => {
     join(home, "bin", "gh"),
     real.replace('"$HOME/calls"\n', '"$HOME/calls"\nsleep 1\n'),
   );
-  await new Promise<void>((done) => {
+  // An error with nobody listening would be thrown outside the test, failing a run without
+  // saying which test it came from.
+  await new Promise<void>((done, failed) => {
     const connection = createConnection(join(home, "run", "skel.sock"));
+    connection.on("error", failed);
     connection.on("connect", () => {
       connection.write('{"command":"task create","repo":"app","title":"t","body":"b"}\n');
       setTimeout(() => connection.write("more\n"), 200);
@@ -466,7 +477,7 @@ nameRepositories(db);`;
     await untilAnswers();
     expect((await skel("start", "simon/app-12")).err).toBe("");
     expect((await skel("start", "simon-app-12")).err).toBe("");
-    const db = new Database(join(data(), "skel.db"));
+    const db = skelDb();
     const folders = db.query("SELECT folder FROM threads ORDER BY owner DESC").values();
     db.close();
     expect(folders).toEqual([["simon-app-12"], ["simon-app-12-2"]]);
