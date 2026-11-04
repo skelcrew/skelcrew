@@ -29,7 +29,15 @@ const ro = (p: string) => ["--ro-bind", p, p];
 const rw = (p: string) => ["--bind", p, p];
 const hide = (p: string) => ["--tmpfs", p];
 
-function sandboxArgs(given: {
+// Codex from npm links to bin/codex.js in its package, and runs a program from another
+// folder of it. Never the home folder itself, nor above it, which would bring back too much.
+function packageOf(folder: string, home: string): string {
+  for (let at = folder; at !== home && at !== dirname(at); at = dirname(at))
+    if (existsSync(join(at, "package.json"))) return at;
+  return folder;
+}
+
+export function sandboxArgs(given: {
   home: string;
   path: string;
   mounts: string[];
@@ -49,14 +57,14 @@ function sandboxArgs(given: {
   if (existsSync("/run/systemd/resolve")) args.push(...ro("/run/systemd/resolve"));
   args.push(...hide(home));
   // Programs often live under the home folder: Claude Code under nvm keeps node beside it,
-  // and its package where its link points. So the command's folder and the folder its link
+  // and its package where its link points. So the command's folder and the package its link
   // resolves into come back, as does bun, which skel's own commands run on.
   const programs = new Set<string>();
   for (const name of [command[0], "bun"]) {
     const found = name && Bun.which(name, { PATH: path });
     if (found) {
       programs.add(dirname(found));
-      programs.add(dirname(realpathSync(found)));
+      programs.add(packageOf(dirname(realpathSync(found)), home));
     }
   }
   for (const p of programs) args.push(...ro(p));
@@ -109,7 +117,7 @@ const ClaudeJson = z.looseObject({
 
 // Bypass mode shows a warning first, which nobody is there to accept. Claude Code's own
 // sandbox fails inside skel's, so it stays off even if your settings turn it on.
-const settings = '{"skipDangerousModePermissionPrompt":true,"sandbox":{"enabled":false}}';
+export const settings = '{"skipDangerousModePermissionPrompt":true,"sandbox":{"enabled":false}}';
 
 // Only what a shell and Claude Code need gets in. Tokens and keys in your environment stay
 // out, and so do CLAUDE_CODE_* variables inherited from a Claude Code session, which make

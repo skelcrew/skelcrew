@@ -22,6 +22,8 @@ export const threadSocket = (folder: string) => {
 };
 // skel's own clone of each repository, which the lead sees whole.
 export const reposDir = () => join(dataDir(), "repos");
+// skel's own Codex login and sessions, for reviews.
+export const codexHome = () => join(dataDir(), "codex");
 export const cloneDir = (owner: string, repo: string) => join(reposDir(), owner, repo);
 // Each thread's clone, and the log of its changes beside it.
 export const threadsDir = () => join(dataDir(), "threads");

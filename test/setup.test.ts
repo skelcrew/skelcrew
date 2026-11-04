@@ -360,3 +360,64 @@ test("Enter at the harness question picks Claude Code", async () => {
   expect(run.code).toBe(0);
   expect(readFileSync(config(), "utf8")).toContain("harness: claude");
 });
+
+const codexHome = () => join(home, ".local", "share", "skel", "codex");
+
+// A login counts once Codex saved one in skel's own folder, never yours in ~/.codex.
+function fakeCodex(login = ': > "$CODEX_HOME/auth.json"'): void {
+  fake(
+    "codex",
+    `echo "CODEX_HOME=$CODEX_HOME" >> "$HOME/calls"
+case "$1 $2" in
+  "login status") test -f "$CODEX_HOME/auth.json" ;;
+  "login --device-auth") ${login} ;;
+esac`,
+  );
+}
+
+test("logs the reviewer in to Codex with a login of skel's own", async () => {
+  fakeCodex();
+  const run = await skel("1\nsk-ant-oat01-good\n");
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(calls()).toContain(`codex login --device-auth\nCODEX_HOME=${codexHome()}\n`);
+  expect(existsSync(join(codexHome(), "auth.json"))).toBe(true);
+  expect(statSync(codexHome()).mode & 0o777).toBe(0o700);
+  // The token comes before the reviewer's login, and the service after it.
+  const order = ["claude setup-token", "codex login --device-auth", "systemctl"];
+  const at = order.map((call) => calls().indexOf(call));
+  expect(at).toEqual([...at].sort((a, b) => a - b));
+});
+
+test("skips the reviewer's login when skel's Codex login works already", async () => {
+  fakeCodex();
+  mkdirSync(codexHome(), { recursive: true });
+  writeFileSync(join(codexHome(), "auth.json"), "{}");
+  const run = await skel("1\nsk-ant-oat01-good\n");
+  expect(run.code).toBe(0);
+  expect(calls()).toContain("codex login status");
+  expect(calls()).not.toContain("codex login --device-auth");
+});
+
+test("says reviews run on Claude Code when Codex isn't installed", async () => {
+  const run = await skel("1\nsk-ant-oat01-good\n");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("reviews will run on Claude Code, on the builder's own model");
+  expect(run.out).toContain("second view");
+});
+
+test("finishes no setup when the reviewer's login fails, so the next skel tries again", async () => {
+  fakeCodex("exit 1");
+  const run = await skel("1\nsk-ant-oat01-good\n");
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("codex login");
+  expect(existsSync(unit())).toBe(false);
+
+  fakeCodex();
+  writeFileSync(join(home, "calls"), "");
+  const again = await skel();
+  expect(again.code).toBe(0);
+  expect(calls()).not.toContain("claude setup-token");
+  expect(calls()).toContain("codex login --device-auth");
+  expect(existsSync(unit())).toBe(true);
+});

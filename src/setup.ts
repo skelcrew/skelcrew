@@ -12,7 +12,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
-import { configDir } from "./paths.ts";
+import { codexHome, configDir } from "./paths.ts";
 
 const tools = [
   { command: "tmux", install: "sudo apt install tmux" },
@@ -96,6 +96,29 @@ function saveClaudeToken(): void {
   mkdirSync(configDir(), { recursive: true });
   // Created readable only by you, so the token is never in a file others can read.
   writeFileSync(file, `${token}\n`, { mode: 0o600, flag: "wx" });
+}
+
+// A login of skel's own, apart from yours in ~/.codex, so a renewal on either side never
+// breaks the other.
+function loginReviewer(): void {
+  if (!Bun.which("codex")) {
+    console.log(
+      "Codex isn't installed, so reviews will run on Claude Code, on the builder's own model, and lose the second view.",
+    );
+    return;
+  }
+  // Reviews can change only the login and session files in this folder, so running codex
+  // on it with your rights runs nothing a reviewer left there. codex login status reads only
+  // the saved login: a key in your environment doesn't count.
+  const env = { ...process.env, CODEX_HOME: codexHome() };
+  if (Bun.spawnSync(["codex", "login", "status"], { env, stdout: "pipe", stderr: "pipe" }).success)
+    return;
+  mkdirSync(codexHome(), { recursive: true, mode: 0o700 });
+  const login = Bun.spawnSync(["codex", "login", "--device-auth"], {
+    env,
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  if (!login.success) throw new Error("codex login didn't finish, so reviews have no login");
 }
 
 function connectGitHub(): void {
@@ -208,8 +231,8 @@ function installService(): void {
   }
 }
 
-// The steps save the harness, the token and the service in order, so having all three means
-// every step ran. Once set up, skel checks nothing again: a tool or login that goes missing
+// The steps run in order and the service is saved last, so the harness, the token and the
+// service mean every step ran, the reviewer's login included. Once set up, skel checks nothing again: a tool or login that goes missing
 // later shows up where it is used, and checking each time would put a call to GitHub before
 // every attach.
 export function setupDone(): boolean {
@@ -223,6 +246,7 @@ export function firstRun(): void {
     connectGitHub();
     pickHarness();
     saveClaudeToken();
+    loginReviewer();
   }
   installService();
   if (!done) console.log("Setup is done.");
