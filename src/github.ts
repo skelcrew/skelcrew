@@ -204,6 +204,60 @@ export async function createLabel(repo: string): Promise<void> {
   }
 }
 
+const Hook = z.object({ id: z.number(), config: z.object({ url: z.string().optional() }) });
+
+// Returns the IDs of the repository's webhooks to the URL. A repository with more than 100
+// webhooks is not one skel expects.
+async function hooksTo(repo: string, url: string): Promise<number[]> {
+  const listed = await api(`repos/${repo}/hooks?per_page=100`, `list the webhooks of ${repo}`);
+  return z
+    .array(Hook)
+    .parse(listed)
+    .filter((hook) => hook.config.url === url)
+    .map((hook) => hook.id);
+}
+
+// Makes the repository send GitHub's deliveries for the events a thread's poll reads to the
+// URL, signed with the secret. A webhook to the URL already there is updated, not added
+// again, which would send each delivery twice.
+export async function setWebhook(repo: string, url: string, secret: string): Promise<void> {
+  const hook = {
+    config: { url, content_type: "json", secret, insecure_ssl: "0" },
+    events: [
+      "issues",
+      "issue_comment",
+      "pull_request",
+      "pull_request_review",
+      "pull_request_review_comment",
+      "check_suite",
+      "status",
+    ],
+    active: true,
+  };
+  const [id] = await hooksTo(repo, url);
+  const doing = `set the webhook that wakes skel in ${repo}`;
+  if (id === undefined)
+    await ghText(["api", `repos/${repo}/hooks`, "--method", "POST", "--input", "-"], doing, {
+      name: "web",
+      ...hook,
+    });
+  else
+    await ghText(
+      ["api", `repos/${repo}/hooks/${id}`, "--method", "PATCH", "--input", "-"],
+      doing,
+      hook,
+    );
+}
+
+// Removes the repository's webhooks to the URL, for skel repo rm.
+export async function removeWebhook(repo: string, url: string): Promise<void> {
+  for (const id of await hooksTo(repo, url))
+    await ghText(
+      ["api", `repos/${repo}/hooks/${id}`, "--method", "DELETE"],
+      `remove the webhook that wakes skel from ${repo}`,
+    );
+}
+
 // Reacts to an issue with 👀, so you can see on GitHub that skel took it, without a comment.
 export async function reactToIssue(repo: string, issue: number): Promise<void> {
   const reacted = await api(`repos/${repo}/issues/${issue}/reactions`, `react to #${issue}`, {
