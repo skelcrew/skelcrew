@@ -134,11 +134,8 @@ export function threadName(db: Database, thread: Thread): string {
   return `${name}-${thread.task}`;
 }
 
-// Attaches your terminal to the builder's session of the thread named repo-task, and returns
-// when you detach with Ctrl-]. Only from your own terminal: it takes over the screen, which
-// the lead can't hand to you.
-export async function attachToThread(tmux: string, repo: string, task: number): Promise<void> {
-  const db = openDb();
+// Returns the thread named repo-task, such as app-12, and throws when there is none.
+export function findThread(db: Database, repo: string, task: number): Thread {
   const { owner, repo: name } = findRepository(db, repo);
   const thread = Thread.nullable().parse(
     db
@@ -146,6 +143,14 @@ export async function attachToThread(tmux: string, repo: string, task: number): 
       .get(owner, name, task),
   );
   if (!thread) throw new Error(`there is no thread ${repo}-${task}`);
+  return thread;
+}
+
+// Attaches your terminal to the builder's session of the thread named repo-task, and returns
+// when you detach with Ctrl-]. Only from your own terminal: it takes over the screen, which
+// the lead can't hand to you.
+export async function attachToThread(tmux: string, repo: string, task: number): Promise<void> {
+  const thread = findThread(openDb(), repo, task);
   // A builder that exited leaves its last screen behind, which would look like it still runs.
   if (!hasSession(tmux, thread.folder) || failedScreen(tmux, thread.folder) !== null)
     throw new Error(`${repo}-${task}'s builder isn't running: the thread is ${thread.status}`);

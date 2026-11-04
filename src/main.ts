@@ -16,6 +16,7 @@ const usage = `Usage:
   skel task create <repo> "<title>" "<body>"
   skel start <repo>-<task> [--from <branch>]
   skel attach <repo>-<task>
+  skel review <repo>-<task>
   skel submit "<summary>"`;
 
 // What an agent may not run, in its words. Its sandbox hides skel's database, your settings
@@ -57,6 +58,7 @@ async function run(args: string[]): Promise<void> {
     createTask,
     question,
     repos,
+    reviewAgain,
     serve,
     startOn,
     submitForReview,
@@ -154,6 +156,13 @@ async function run(args: string[]): Promise<void> {
   const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
   if (command === "start" && thread && (rest.length === 0 || from)) {
     console.log(`Started ${await startOn(...thread, from)}.`);
+    return;
+  }
+  if (command === "review" && thread && rest.length === 0) {
+    const name = await reviewAgain(...thread);
+    console.log(
+      `Reviewing ${name}'s last commit again. skel posts the review on its pull request, and types any changes into its builder.`,
+    );
     return;
   }
   if (command === "attach" && thread && rest.length === 0) {

@@ -113,7 +113,7 @@ case "$*" in
 "api repos/simon/app/pulls --method POST --input -") touch "$HOME/gh/opening"; while test -e "$HOME/gh/hold"; do sleep 0.1; done; cat > "$HOME/gh/pr"; echo '{"number":7}' ;;
 "api repos/simon/app/pulls/7/reviews --method POST --input -") touch "$HOME/gh/posting"; while test -e "$HOME/gh/hold-review"; do sleep 0.1; done; cat >> "$HOME/gh/reviews"; echo >> "$HOME/gh/reviews"; echo '{"id":1}' ;;
 "api repos/simon/app/statuses/"*) body=$(cat)
-  case "$body" in *pending*) ;; *) touch "$HOME/gh/finishing"; while test -e "$HOME/gh/hold-status"; do sleep 0.1; done ;; esac
+  case "$body" in *pending*) while test -e "$HOME/gh/hold-pending"; do sleep 0.1; done ;; *) touch "$HOME/gh/finishing"; while test -e "$HOME/gh/hold-status"; do sleep 0.1; done ;; esac
   echo "\${2##*/} $body" >> "$HOME/gh/statuses"; echo '{"state":"set"}' ;;
 *) echo "the fake gh doesn't know $*" >&2; exit 1 ;;
 esac`,
@@ -604,6 +604,113 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     expect(JSON.parse(read(join(home, "gh", "pr"))).base).toBe("next");
     expect(read(join(codexHome(), "sessions", "prompt-1"))).toContain("origin/next...HEAD");
     expect(read(join(codexHome(), "sessions", "branches-1"))).toContain("origin/next");
+  }, 60_000);
+});
+
+// Lets a test change a thread as merging its PR would, without polling GitHub.
+function setThread(change: string): void {
+  const db = new Database(join(data(), "skel.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  try {
+    db.run(`UPDATE threads SET ${change}`);
+  } finally {
+    db.close();
+  }
+}
+
+const leadSocketPath = () => join(home, "run", "skel", "lead", "skel.sock");
+
+describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel review", () => {
+  test("reviews a failed review's commit again: posts the verdict, sets the check, and types changes in as a round", async () => {
+    addApp();
+    verdict(2, "changes", "The export has no test.");
+    verdict(3, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => thread().needs_you === 1, 30_000);
+    const first = pushed();
+    const again = await skel(["review", "app-12"]);
+    expect(again.err).toBe("");
+    expect(again.code).toBe(0);
+    expect(again.out).toContain("app-12");
+    await until(() => finished("success").length === 1, 45_000);
+    expect(
+      statuses()
+        .filter((s) => s.sha === first)
+        .map((s) => [s.state, s.description]),
+    ).toEqual([
+      ["pending", "skel's reviewer is reviewing"],
+      ["failure", "review failed"],
+      ["pending", "skel's reviewer is reviewing"],
+      ["failure", "skel's reviewer asked for changes"],
+    ]);
+    expect(reviews()[0]).toEqual({
+      event: "COMMENT",
+      commit_id: first,
+      body: "**Changes requested.**\n\nThe export has no test.",
+    });
+    expect(read(join(builder(), "typed"))).toContain("The export has no test.");
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
+    expect(thread()).toMatchObject({ status: "waiting", needs_you: 0, rounds: 1 });
+  }, 90_000);
+
+  test("refuses a thread with nothing submitted yet, and a thread that is done", async () => {
+    addApp();
+    fakeClaude(false);
+    await startApp12();
+    await until(() => read(join(builder(), "args")) !== "");
+    const early = await skel(["review", "app-12"]);
+    expect(early.code).not.toBe(0);
+    expect(early.err).toContain("app-12 has no submitted commit to review yet");
+    setThread("status = 'done'");
+    const done = await skel(["review", "app-12"]);
+    expect(done.code).not.toBe(0);
+    expect(done.err).toContain("app-12 is done");
+    expect(statuses()).toEqual([]);
+  }, 30_000);
+
+  test("the lead can ask, a builder can't, and a review already running is refused", async () => {
+    addApp();
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "slow-1"), "");
+    await startApp12();
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    const fromLead = await skel(["review", "app-12"], { SKEL_SOCKET: leadSocketPath() });
+    expect(fromLead.code).not.toBe(0);
+    expect(fromLead.err).toContain(
+      "a review of app-12's last commit is already waiting or running",
+    );
+    const fromBuilder = await skel(["review", "app-12"], { SKEL_SOCKET: builderSocket() });
+    expect(fromBuilder.code).not.toBe(0);
+    expect(fromBuilder.err).toContain("doesn't know that request");
+  }, 60_000);
+
+  test("a newer skel submit cancels a review asked for again", async () => {
+    addApp();
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "slow-2"), "");
+    verdict(2, "approve", "Stale.");
+    verdict(3, "approve", "Fresh.");
+    await startApp12();
+    await until(() => thread().needs_you === 1, 30_000);
+    const older = pushed();
+    // Held so the second ask comes before the check is pending again.
+    writeFileSync(join(home, "gh", "hold-pending"), "");
+    expect((await skel(["review", "app-12"], { SKEL_SOCKET: leadSocketPath() })).err).toBe("");
+    const twice = await skel(["review", "app-12"]);
+    expect(twice.err).toContain("a review of app-12's last commit is already waiting or running");
+    rmSync(join(home, "gh", "hold-pending"));
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 30_000);
+    writeFileSync(join(clone(), "change"), "newer\n");
+    git(clone(), "commit", "-qam", "newer");
+    expect((await skel(["submit", "Newer"], { SKEL_SOCKET: builderSocket() })).err).toBe("");
+    await until(() => finished("success").length === 1, 30_000);
+    expect(finished("success")[0]?.sha).toBe(git(clone(), "rev-parse", "HEAD"));
+    expect(
+      statuses()
+        .filter((s) => s.sha === older)
+        .map((s) => s.state),
+    ).toEqual(["pending", "failure", "pending"]);
+    expect(reviews().map((r) => r.body)).toEqual(["**Approved.**\n\nFresh."]);
   }, 60_000);
 });
 
