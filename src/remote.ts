@@ -118,13 +118,15 @@ function describeCheckout(): { folder: string; commit: string } {
 export async function update(where: string, machine: Machine): Promise<number> {
   // update only ever writes ~/.local/bin/skel, so it goes by the skel the daemon's service
   // starts, which can be elsewhere: a checkout skel once ran from, or a copy put somewhere
-  // else. A checkout's launcher, linked or not, is bin/skel beside its sources.
+  // else. A checkout's launcher, linked or not, is bin/skel beside its sources. The rename
+  // replaces ~/.local/bin/skel itself, so a service starting the file a link there points
+  // to counts as elsewhere.
   const daemon = await machine.daemonSkel();
   const script = `f=${quoted(daemon ?? ".local/bin/skel")}
 d=$(dirname "$(readlink -f "$f")")/..
 if [ -f "$d/src/main.ts" ]; then echo "checkout $(cd "$d" && pwd)"
 elif [ ! -e "$f" ]; then echo missing
-elif [ "$(readlink -f "$f")" = "$(readlink -f .local/bin/skel)" ]; then echo copied
+elif [ "$f" = .local/bin/skel ] || [ "$f" = "$HOME/.local/bin/skel" ]; then echo copied
 else echo "elsewhere $f"; fi`;
   const asked = await quietly(machine.shell(script));
   const found = asked.said.match(/^(checkout (.+)|copied|missing|elsewhere (.+))$/m);

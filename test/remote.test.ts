@@ -330,6 +330,24 @@ test("update replaces nothing when the service runs a skel outside ~/.local/bin"
   expect(readFileSync(other, "utf8")).toBe("old skel");
 });
 
+// update renames over ~/.local/bin/skel itself, so a service that starts the file a link
+// there points to would keep running the old one.
+test("update replaces nothing when the service starts the file ~/.local/bin/skel links to", async () => {
+  const other = join(home, "server", "opt", "skel");
+  mkdirSync(join(home, "server", "opt"));
+  writeFileSync(other, "old skel", { mode: 0o755 });
+  mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });
+  symlinkSync(other, join(home, "server", ".local", "bin", "skel"));
+  const units = join(home, "server", ".config", "systemd", "user");
+  mkdirSync(units, { recursive: true });
+  writeFileSync(join(units, "skel.service"), `[Service]\nExecStart="${other}" serve\n`);
+  const run = await update(laptopSkel());
+  expect(run.code).toBe(1);
+  expect(run.err).toContain(`the daemon on simon@workbox runs skel from ${other}`);
+  expect(calls()).not.toContain("scp");
+  expect(readFileSync(other, "utf8")).toBe("old skel");
+});
+
 // A server where ~/.local/bin/skel links into a checkout updates with git pull there, and a
 // copy would leave the checkout behind while the daemon kept running it.
 test("update leaves skel run from a checkout on the server alone, and says how to update it", async () => {
