@@ -1,0 +1,88 @@
+// skel's help page: what skel --help shows, laid out in sections with skel.run's amber for
+// the headings, so it reads as help and not as an error.
+
+const sections: [string, [string, string][]][] = [
+  [
+    "COMMANDS",
+    [
+      ["(no command)", "Attach to the lead"],
+      ["ps [<repo>]", "Threads and whether they need you"],
+      ["task ls [<repo>]", "Open tasks, with the thread on each"],
+      ["task show <task>", "A task's title and body"],
+      ['task create <repo> "<title>" "<body>"', "Create a task, as a GitHub issue"],
+      ["start <task> [--from <branch>]", "Start a thread on a task"],
+      ["attach <task>", "Attach to the builder's session"],
+      ["review <task>", "Run the thread's last review again"],
+    ],
+  ],
+  [
+    "REPOSITORIES",
+    [
+      ["repo ls", "Repositories skel works on"],
+      ["repo rm <name>", "Remove skel's clone of one"],
+      ["repo trust <name>", "Trust one your login can't push to"],
+    ],
+  ],
+  [
+    "ELSEWHERE",
+    [
+      ["--remote <host> [command]", "Run skel on a server, over ssh"],
+      ["--remote sprite:<name> [command]", "Run skel on a Sprite"],
+      ["update --remote <host>", "Copy this skel there and restart it"],
+      ["serve", "Run the daemon, for systemd"],
+    ],
+  ],
+  ["IN A THREAD", [['submit "<summary>"', "Hand in a round for review"]]],
+  [
+    "OPTIONS",
+    [
+      ["--json", "Output for tools"],
+      ["--all", "Done threads too, on ps"],
+      ["--from <owner/repo>", "The repository you're in"],
+    ],
+  ],
+];
+
+const examples = [
+  "skel",
+  'skel task create app "Fix the login redirect" "Sign-in lands on a 404."',
+  "skel start app-12",
+  "skel ps",
+  "skel --remote sprite:demo",
+];
+
+// Returns the help page, in color only for a terminal that shows it: piped into a file or
+// a program, the codes would be noise.
+export function help(color = colorful()): string {
+  const paint = (codes: string) => (text: string) =>
+    color ? `\x1b[${codes}m${text}\x1b[0m` : text;
+  const heading = paint("1;38;2;240;166;58");
+  const strong = paint("1");
+  const dim = paint("2");
+  const rows = sections.flatMap(([, list]) => list);
+  const width = Math.max(...rows.map(([command]) => command.length)) + 3;
+  const lines = [
+    "",
+    "  Claude Code, but always on, in parallel, isolated, and seeing each task",
+    "  through to the merge.",
+    "",
+    heading("USAGE"),
+    `  ${dim("%")} skel ${dim("[command] [options]")}`,
+  ];
+  for (const [title, list] of sections) {
+    lines.push("", heading(title));
+    for (const [command, what] of list) lines.push(`  ${strong(command.padEnd(width))}${what}`);
+  }
+  lines.push("", heading("EXAMPLES"), ...examples.map((example) => `  ${dim("%")} ${example}`));
+  lines.push(
+    "",
+    dim("  A task is named by its repository and number, such as app-12. See skel.run."),
+    "",
+  );
+  return lines.join("\n");
+}
+
+// Returns whether stdout is a terminal that shows color, honoring NO_COLOR.
+function colorful(): boolean {
+  return Boolean(process.stdout.isTTY) && !process.env.NO_COLOR && process.env.TERM !== "dumb";
+}
