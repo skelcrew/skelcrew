@@ -305,6 +305,7 @@ test("names each missing tool with what to install, and runs nothing else", asyn
   unlinkSync(join(bin, "claude"));
   const run = await skel();
   expect(run.code).toBe(1);
+  expect(run.err).toStartWith("skel: install these first:\n");
   expect(run.err).toContain("sudo apt install tmux");
   expect(run.err).toContain("curl -fsSL https://claude.ai/install.sh | bash");
   expect(run.err).not.toContain("bubblewrap");

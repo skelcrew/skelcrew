@@ -139,6 +139,7 @@ test("a command reaches the Sprite exactly as typed", async () => {
 
 test("lists what the laptop is missing, with the command to run again, and creates nothing", async () => {
   const run = await skel(["--remote", "sprite:demo", "ps"], "", home, join(home, "none"));
+  expect(run.err).toStartWith("skel: install sprite, Fly.io's command for Sprites,");
   expect(run.err).toContain("curl -fsSL https://sprites.dev/install.sh | sh");
   expect(run.err).toContain("Then run skel --remote sprite:demo ps again.");
   expect(run.code).toBe(1);

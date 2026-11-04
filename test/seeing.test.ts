@@ -274,7 +274,7 @@ describe("skel repo ls", () => {
     await until(() => existsSync(builder));
     const refused = await asAgent(["repo", "ls"], builder);
     expect(refused.code).not.toBe(0);
-    expect(refused.err).toBe("skel: skel's daemon doesn't know that request\n");
+    expect(refused.err).toBe("skel: the daemon doesn't know that request\n");
   });
 });
 

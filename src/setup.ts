@@ -41,7 +41,7 @@ function checkTools(env: Env): void {
   const missing = tools.filter((tool) => !Bun.which(tool.command, { PATH }));
   if (missing.length > 0 || !bwrap) {
     const lines = missing.map((tool) => `  ${tool.command}: ${tool.install}`);
-    throw new Error(`skel needs these installed first:\n${lines.join("\n")}`);
+    throw new Error(`install these first:\n${lines.join("\n")}`);
   }
   // Being installed isn't being allowed: on Ubuntu 24.04 and later, AppArmor stops bwrap
   // making the namespaces it needs, and every agent would fail to start.
@@ -275,7 +275,7 @@ function installService(): void {
   if (!single && statSync(join(checkout, ".git"), { throwIfNoEntry: false })?.isFile()) {
     if (before !== null) return;
     throw new Error(
-      `skel is running from a worktree (${skel}): run skel from the main checkout to install its daemon`,
+      `this skel runs from a worktree (${skel}): run skel from the main checkout to install its daemon`,
     );
   }
   if (onSprite()) {

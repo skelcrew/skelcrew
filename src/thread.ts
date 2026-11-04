@@ -395,7 +395,7 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
 // which never got past its setup because the daemon stopped, so it can be started again.
 export async function bringBack(db: Database, tmux: string, thread: Thread): Promise<void> {
   if (thread.session === null)
-    throw new Error("skel's daemon stopped while setting up the thread: run skel start again");
+    throw new Error("the daemon stopped while setting up the thread: run skel start again");
   if (hasSession(tmux, thread.folder)) {
     if (failedScreen(tmux, thread.folder) === null) return;
     endSession(tmux, thread.folder);

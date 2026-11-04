@@ -79,7 +79,9 @@ export function startTmuxService(socket: string): void {
   // Creating a service that exists does nothing, even when it has stopped.
   Bun.spawnSync(["sprite-env", "services", "start", name], quiet);
   if (answers(50)) return;
-  throw new Error(`skel's tmux service didn't start: /.sprite/logs/services/${name}.log shows why`);
+  throw new Error(
+    `the tmux service for agents didn't start: /.sprite/logs/services/${name}.log shows why`,
+  );
 }
 
 const Listed = z.object({ sprites: z.array(z.object({ name: z.string() })) });
@@ -93,7 +95,7 @@ function spriteNames(again: string): string[] {
     new Error(`${what} on this laptop first:\n  ${fix}\nThen run ${again} again.`);
   if (!Bun.which("sprite"))
     throw missing(
-      "skel needs sprite, Fly.io's command for Sprites,",
+      "install sprite, Fly.io's command for Sprites,",
       "curl -fsSL https://sprites.dev/install.sh | sh",
     );
   const listed = Bun.spawnSync(["sprite", "list", "--json"], { stdout: "pipe", stderr: "pipe" });

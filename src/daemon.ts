@@ -240,7 +240,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
       const asked = Request.safeParse(parseJson(request.slice(0, end)));
       const kind = typeof caller === "object" ? "builder" : caller;
       if (!asked.success || !allowed[kind].includes(asked.data.command))
-        reply({ error: "skel's daemon doesn't know that request" });
+        reply({ error: "the daemon doesn't know that request" });
       else handle(asked.data, caller).then(reply, (error) => reply({ error: message(error) }));
     };
     connection.on("data", read);
@@ -251,7 +251,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
   const path = daemonSocket();
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   if (!lock(`${path}.lock`))
-    throw new Error("skel's daemon is already running. Run skel to attach to the lead.");
+    throw new Error("the daemon is already running. Run skel to attach to the lead.");
   // Taken before any request comes in, so a thread started meanwhile, still setting up,
   // isn't taken for one whose setup the daemon's stop cut short.
   const before = liveThreads(db);
@@ -282,7 +282,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
 // with the daemon's error, or when nothing answers.
 async function request(asked: Request): Promise<unknown> {
   const reply = await ask(asked, 60_000);
-  if (reply === null) throw new Error("skel's daemon didn't answer: run skel to start it");
+  if (reply === null) throw new Error("the daemon didn't answer: run skel to start it");
   const failed = z.object({ error: z.string() }).safeParse(reply);
   if (failed.success) throw new Error(failed.data.error);
   return reply;
@@ -292,8 +292,7 @@ async function request(asked: Request): Promise<unknown> {
 // another version fails with a clear message.
 const understood = <T>(schema: z.ZodType<T>, reply: unknown): T => {
   const read = schema.safeParse(reply);
-  if (!read.success)
-    throw new Error("skel's daemon answered in a way this skel doesn't understand");
+  if (!read.success) throw new Error("the daemon answered in a way this skel doesn't understand");
   return read.data;
 };
 
@@ -375,8 +374,7 @@ export async function attachToLead(tmux: string, from?: string): Promise<void> {
     }
   }
   const lead = LeadReply.safeParse(reply);
-  if (!lead.success)
-    throw new Error("skel's daemon answered in a way this skel doesn't understand");
+  if (!lead.success) throw new Error("the daemon answered in a way this skel doesn't understand");
   if ("error" in lead.data) throw new Error(lead.data.error);
   await attach(tmux, "lead");
 }

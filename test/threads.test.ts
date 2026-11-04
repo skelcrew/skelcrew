@@ -341,8 +341,8 @@ c.on("data", (d) => process.stdout.write(d));`;
       .split("\n");
     expect(JSON.parse(replies[0] ?? "")).toMatchObject({ running: true, thread: "app-12" });
     expect(replies.slice(1).map((reply) => JSON.parse(reply))).toEqual([
-      { error: "skel's daemon doesn't know that request" },
-      { error: "skel's daemon doesn't know that request" },
+      { error: "the daemon doesn't know that request" },
+      { error: "the daemon doesn't know that request" },
     ]);
     expect(existsSync(join(home, "issues", "sent"))).toBe(false);
   }, 20_000);
@@ -362,7 +362,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     const out = join(data(), "lead", "out");
     await until(() => read(out) !== "");
     expect(read(out)).toBe(
-      `app-13\nStarted app-12.\nskel: trusting a repository is only for your own terminal, not for agents\n{"error":"skel's daemon doesn't know that request"}\n`,
+      `app-13\nStarted app-12.\nskel: trusting a repository is only for your own terminal, not for agents\n{"error":"the daemon doesn't know that request"}\n`,
     );
     await until(() => read(join(config("app-12"), "args")) !== "");
   }, 20_000);
