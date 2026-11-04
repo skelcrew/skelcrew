@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -101,10 +102,22 @@ const config = () => join(home, ".config", "skel", "config.yaml");
 const token = () => join(home, ".config", "skel", "claude-token");
 const unit = () => join(home, ".config", "systemd", "user", "skel.service");
 
-async function skel(typed = "", path = bin, program = main(), cwd = home) {
+async function skel(
+  typed = "",
+  path = bin,
+  program = main(),
+  cwd = home,
+  more: Record<string, string> = {},
+) {
   const run = Bun.spawn([process.execPath, program], {
     cwd,
-    env: { PATH: path, HOME: home, XDG_RUNTIME_DIR: join(home, "run"), TMPDIR: join(home, "tmp") },
+    env: {
+      PATH: path,
+      HOME: home,
+      XDG_RUNTIME_DIR: join(home, "run"),
+      TMPDIR: join(home, "tmp"),
+      ...more,
+    },
     stdin: new Blob([typed]),
     stdout: "pipe",
     stderr: "pipe",
@@ -420,4 +433,47 @@ test("finishes no setup when the reviewer's login fails, so the next skel tries 
   expect(calls()).not.toContain("claude setup-token");
   expect(calls()).toContain("codex login --device-auth");
   expect(existsSync(unit())).toBe(true);
+});
+
+// Ubuntu's ~/.bashrc stops early in a shell nobody types into, so a folder it adds, such as
+// nvm's, is known to your terminal but not to a command run over ssh, as skel --remote runs.
+function onlyLoginShellKnows(tools: string[]): string {
+  const folder = join(home, "nvm", "bin");
+  mkdirSync(folder, { recursive: true });
+  for (const tool of tools) renameSync(join(bin, tool), join(folder, tool));
+  writeFileSync(join(home, ".profile"), '. "$HOME/.bashrc"\n');
+  writeFileSync(
+    join(home, ".bashrc"),
+    `case $- in *i*) ;; *) return;; esac\nexport PATH="${folder}:$PATH"\n`,
+  );
+  return folder;
+}
+
+const servicePath = () =>
+  readFileSync(unit(), "utf8")
+    .match(/PATH=(.*)"/)?.[1]
+    ?.split(":");
+
+test("finds the tools your login shell finds, on a first run over ssh", async () => {
+  fakeCodex();
+  const nvm = onlyLoginShellKnows(["claude", "codex"]);
+  const run = await skel("1\nsk-ant-oat01-good\n", bin, main(), home, { SHELL: "/bin/bash" });
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(calls()).toContain("claude setup-token");
+  // Without it, reviews would quietly run on Claude Code.
+  expect(calls()).toContain("codex login --device-auth");
+  expect(servicePath()).toContain(nvm);
+  expect(servicePath()).toContain(bin);
+});
+
+test("keeps the login shell's folders in the service when skel runs over ssh again", async () => {
+  fakeCodex();
+  const nvm = onlyLoginShellKnows(["claude", "codex"]);
+  await skel("1\nsk-ant-oat01-good\n", bin, main(), home, { SHELL: "/bin/bash" });
+  writeFileSync(join(home, "calls"), "");
+  const run = await skel("", bin, main(), home, { SHELL: "/bin/bash" });
+  expect(run.code).toBe(0);
+  expect(servicePath()).toContain(nvm);
+  expect(calls()).toBe("daemon lead\ntmux -L skel attach -t =lead\n");
 });

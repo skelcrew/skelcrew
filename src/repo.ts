@@ -13,6 +13,7 @@ import {
 import { dirname, join } from "node:path";
 import { nameRepositories, openDb, Repository } from "./db.ts";
 import { cloneRepo, type GitHubRepo, githubRepo, updateClone } from "./github.ts";
+import { onGitHub, originHere } from "./origin.ts";
 import { cloneDir, configDir, dataDir } from "./paths.ts";
 import { refuseCredentials } from "./sandbox.ts";
 
@@ -162,26 +163,6 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
   if (repositories(db).length === 0) console.log(noRepositories);
   const found = repositories(db).find(known);
   return found && `${found.owner}/${found.repo}`;
-}
-
-// Returns owner/repo from a GitHub remote URL, or null so other hosts are quietly skipped.
-function onGitHub(url: string): string | null {
-  const found = url.match(
-    /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/i,
-  );
-  return found?.[1] ?? null;
-}
-
-// Returns this checkout's GitHub name, or null when its origin cannot name a GitHub
-// repository. Reading origin is the only git skel runs in your checkout: the folder only
-// names the repository. It is read as written, before any insteadOf in your git config
-// rewrites it.
-function originHere(): string | null {
-  const origin = Bun.spawnSync(["git", "config", "--get", "remote.origin.url"], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  return origin.success ? onGitHub(origin.stdout.toString().trim()) : null;
 }
 
 // Records your trust from outside the sandbox and brings in the repository for the lead.

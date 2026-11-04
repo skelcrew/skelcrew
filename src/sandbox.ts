@@ -79,12 +79,17 @@ export function sandboxArgs(given: {
     }
   }
   for (const p of programs) args.push(...ro(p));
-  // Only the parts skel runs from: its folder can be your checkout, whose .git and other
-  // files aren't the agent's to read. bun runs skel without node_modules by fetching its
-  // packages itself, and bwrap refuses to start when a folder it should mount is missing.
+  // skel built as one file runs its modules from a folder only it sees, and needs nothing
+  // but itself. From a checkout, only the parts skel runs from: the checkout's .git and
+  // other files aren't the agent's to read. bun runs skel without node_modules by fetching
+  // its packages itself, and bwrap refuses to start when a folder it should mount is missing.
   const skel = resolve(import.meta.dir, "..");
-  for (const part of ["bin", "src", "node_modules", "package.json"])
-    if (existsSync(join(skel, part))) args.push(...ro(join(skel, part)));
+  const single = import.meta.dir.startsWith("/$bunfs");
+  const bin = single ? dirname(process.execPath) : join(skel, "bin");
+  if (single) args.push(...ro(process.execPath));
+  else
+    for (const part of ["bin", "src", "node_modules", "package.json"])
+      if (existsSync(join(skel, part))) args.push(...ro(join(skel, part)));
   args.push(...mounts);
   // Its folder rather than the socket itself: the daemon makes the socket anew each time it
   // starts, and a mounted file would stay the old one, which nothing answers on. Read-only,
@@ -93,7 +98,7 @@ export function sandboxArgs(given: {
     args.push(...["--ro-bind", dirname(socket), socketsInside]);
     args.push("--setenv", "SKEL_SOCKET", join(socketsInside, basename(socket)));
   }
-  args.push("--setenv", "SKEL_SANDBOX", "1", "--setenv", "PATH", `${join(skel, "bin")}:${path}`);
+  args.push("--setenv", "SKEL_SANDBOX", "1", "--setenv", "PATH", `${bin}:${path}`);
   args.push("--chdir", cwd, "--", ...command);
   return args;
 }
