@@ -11,6 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { z } from "zod";
 import { nameRepositories, openDb, Repository } from "./db.ts";
 import { cloneRepo, type GitHubRepo, githubRepo, updateClone } from "./github.ts";
 import { onGitHub, originHere } from "./origin.ts";
@@ -177,11 +178,21 @@ export async function trustRepo(given: string): Promise<void> {
 }
 
 // Deletes skel's clone, registration and saved trust, then updates names that no longer
-// clash.
+// clash. Refuses while the repository has live threads, naming them.
 export function removeRepo(name: string): void {
   const db = openDb();
   const found = repositories(db).find((r) => r.name === name);
   if (!found) throw new Error(`there is no repository named ${name}`);
+  // Builders of live threads would keep running with no repository behind them, which
+  // breaks polling, skel ps and cleanup after merge.
+  const live = db
+    .query(
+      "SELECT task FROM threads WHERE owner = ? AND repo = ? AND status IN ('working', 'waiting') ORDER BY task",
+    )
+    .all(found.owner, found.repo)
+    .map((row) => `${name}-${z.object({ task: z.number() }).parse(row).task}`);
+  if (live.length > 0)
+    throw new Error(`${name} has live threads: ${live.join(", ")}. Stop them first.`);
   const full = `${found.owner}/${found.repo}`;
   rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });
   db.run("DELETE FROM repositories WHERE owner = ? AND repo = ?", [found.owner, found.repo]);
