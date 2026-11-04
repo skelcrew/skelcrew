@@ -13,7 +13,7 @@ import {
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { nameRepositories, openDb, Repository } from "./db.ts";
-import { cloneRepo, type GitHubRepo, githubRepo, updateClone } from "./github.ts";
+import { cloneRepo, createLabel, type GitHubRepo, githubRepo, updateClone } from "./github.ts";
 import { onGitHub, originHere } from "./origin.ts";
 import { cloneDir, configDir, dataDir } from "./paths.ts";
 import { refuseCredentials } from "./sandbox.ts";
@@ -88,15 +88,22 @@ function checkOrDelete(clone: string): void {
 
 let refreshing: Promise<void> | null = null;
 
-// Refreshes every registered clone so the lead reads current repositories. A second call
-// joins the refresh running, so two git commands never fight over a clone. A clone that
-// can't be refreshed only gets a line in the log, since an old clone still lets the lead
-// read the repository.
+// Refreshes every registered clone so the lead reads current repositories, and creates the
+// skel label in a repository skel hasn't made it in yet, so you can start threads from
+// GitHub. A second call joins the refresh running, so two git commands never fight over a
+// clone. A clone or label that fails only gets a line in the log and is tried again at the
+// next refresh, since an old clone still lets the lead read the repository.
 export function refreshClones(db: Database): Promise<void> {
   refreshing ??= (async () => {
     for (const { owner, repo } of repositories(db)) {
       try {
         await refreshClone(owner, repo);
+        // Once per repository, so a label you deleted stays deleted.
+        const where = "WHERE owner = ? AND repo = ? AND labeled = 0";
+        if (db.query(`SELECT 1 FROM repositories ${where}`).get(owner, repo)) {
+          await createLabel(`${owner}/${repo}`);
+          db.run(`UPDATE repositories SET labeled = 1 ${where}`, [owner, repo]);
+        }
         // skel repo rm can run while a clone is still being made, and the clone would then
         // land after the removal, where the lead could still read it.
         if (!repositories(db).some((r) => r.owner === owner && r.repo === repo))
