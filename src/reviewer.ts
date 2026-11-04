@@ -1,5 +1,5 @@
-// The reviewer: a fresh agent that reads a thread's PR adversarially, once, in the sandbox,
-// and answers with a verdict. Codex by default, Claude Code on the builder's model without it.
+// Runs a fresh adversarial reviewer in the sandbox for each thread's PR. Uses Codex by
+// default, or Claude Code on the builder's model when Codex is unavailable.
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,13 +23,15 @@ const schema = JSON.stringify({
 });
 
 // Only what a shell, the tests and the harness need gets in. The keys are for those who use
-// one rather than a login. codex exec reads CODEX_API_KEY: given only OPENAI_API_KEY, it sent
-// no key at all.
+// one rather than a login. codex exec reads CODEX_API_KEY: given only OPENAI_API_KEY, it
+// sent no key at all.
 const passed = [
   ...["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "LANG", "TZ"],
   ...["OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY"],
 ];
 
+// Builds the reviewer's instructions from the issue and base branch, asking for actionable
+// findings.
 function prompt(issue: { title: string; body: string }, base: string): string {
   return `Review this pull request as an adversarial reviewer. Another agent wrote it. Assume it is wrong until you have checked it yourself.
 
@@ -46,10 +48,12 @@ Check that it does what the issue asks and nothing else, and look for bugs, edge
 Answer "approve" only if it is ready to merge. Otherwise answer "changes", and in the body name each problem, where it is and why it matters, so the builder can fix it.`;
 }
 
-// skel's Codex folder holds what Codex reads as instructions, and every review shares it.
-// So the reviewer sees it through a throwaway layer, and only its login and sessions reach
-// the real folder. Codex saves its login by rewriting auth.json in place, not by renaming a
-// new file over it, so the file itself can be mounted and a renewal still reaches skel's.
+// Returns Codex's review command, mounts and environment, protecting instructions shared by
+// reviews. skel's Codex folder holds what Codex reads as instructions, and every review
+// shares it. So the reviewer sees it through a throwaway layer, and only its login and
+// sessions reach the real folder. Codex saves its login by rewriting auth.json in place,
+// not by renaming a new file over it, so the file itself can be mounted and a renewal still
+// reaches skel's.
 function codexCommand(home: string, folder: string) {
   const codexHome = join(home, ".local", "share", "skel", "codex");
   mkdirSync(join(codexHome, "sessions"), { recursive: true, mode: 0o700 });
@@ -65,6 +69,8 @@ function codexCommand(home: string, folder: string) {
   return { command, mounts, env: { CODEX_HOME: codexHome } };
 }
 
+// Returns Claude Code's review command and isolated login settings when Codex is
+// unavailable.
 function claudeCommand(home: string, folder: string, model: string) {
   const tokenFile = join(home, ".config", "skel", "claude-token");
   if (!existsSync(tokenFile))
@@ -77,7 +83,8 @@ function claudeCommand(home: string, folder: string, model: string) {
   return { command, mounts: [], env };
 }
 
-// What the reviewer answered, read once it has ended, so nothing changes the file meanwhile.
+// Returns the reviewer's JSON answer for validation, from Claude Code output or Codex's
+// answer file. Read only after the reviewer ends, so it cannot change the file meanwhile.
 function answer(harness: "codex" | "claude", folder: string, out: string): unknown {
   if (harness === "claude")
     return z.looseObject({ structured_output: z.unknown() }).parse(JSON.parse(out))
@@ -87,6 +94,9 @@ function answer(harness: "codex" | "claude", folder: string, out: string): unkno
   return JSON.parse(readFileSync(file, "utf8"));
 }
 
+// Runs a fresh reviewer against a throwaway clone layer and returns its verdict or failure
+// reason. Enforces cancellation and a time limit, then removes the review's temporary
+// files.
 async function reviewNow(given: {
   clone: string;
   issue: { title: string; body: string };
@@ -165,9 +175,10 @@ async function reviewNow(given: {
 
 let queue: Promise<unknown> = Promise.resolve();
 
-// One review at a time across the daemon: reviews share skel's Codex login, and a renewal by
-// one could leave the others with a token that no longer works. A review never rejects, so
-// one that throws can't stop the reviews queued after it.
+// Queues a review and returns its verdict, turning errors into failed verdicts for the
+// caller. One review at a time across the daemon: reviews share skel's Codex login, and a
+// renewal by one could leave the others with a token that no longer works. A review never
+// rejects, so one that throws can't stop the reviews queued after it.
 export function review(given: Parameters<typeof reviewNow>[0]): Promise<Review> {
   const turn = queue
     .then(() => reviewNow(given))

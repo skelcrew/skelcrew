@@ -10,6 +10,8 @@ const usage = `Usage:
   skel repo rm <name>
   skel trust <name>`;
 
+// Runs the requested CLI command, or prints usage and exits when its arguments are invalid.
+// With no command, sets up skel and attaches you to the lead.
 async function run(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
   if (args.length === 0 || (command === "--from" && sub && rest.length === 0)) {

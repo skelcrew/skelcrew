@@ -8,7 +8,7 @@ import { dataDir } from "./paths.ts";
 export const Repository = z.object({ name: z.string(), owner: z.string(), repo: z.string() });
 export type Repository = z.infer<typeof Repository>;
 
-// A repository is named by its GitHub name, with the owner only while another shares it.
+// Updates repository names, adding the owner only when repositories share a GitHub name.
 // Names are unique in the end, and no row ever takes a name another row still holds.
 export function nameRepositories(db: Database): void {
   db.run(`UPDATE repositories SET name = CASE
@@ -23,6 +23,8 @@ const createRepositories = `CREATE TABLE IF NOT EXISTS repositories (
   PRIMARY KEY (owner, repo)
 )`;
 
+// Opens skel's database and prepares its tables so repositories and the lead survive
+// restarts.
 export function openDb(): Database {
   mkdirSync(dataDir(), { recursive: true });
   const db = new Database(join(dataDir(), "skel.db"), { strict: true });
