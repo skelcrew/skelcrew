@@ -1,11 +1,20 @@
 // Runs a fresh adversarial reviewer in the sandbox for each thread's PR. Uses the harness
 // your config names, or else Codex when it is installed and Claude Code on the builder's
 // model when it isn't.
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { sandboxArgs, settings } from "./sandbox.ts";
+import { onSprite } from "./sprite.ts";
 
 export type Review = { verdict: "approve" | "changes" | "failed"; body: string };
 
@@ -49,17 +58,54 @@ Check that it does what the issue asks and nothing else, and look for bugs, edge
 Answer "approve" only if it is ready to merge. Otherwise answer "changes", and in the body name each problem, where it is and why it matters, so the builder can fix it.`;
 }
 
+// Returns the mounts that show the reviewer a folder whose changes are thrown away after the
+// review. A copy leaves out the entries named in `kept`, which the caller mounts writable
+// over it, and bwrap makes their places in the copy.
+// bwrap's throwaway overlay does it, but on a Sprite an overlay can't be made on the
+// Sprite's own disk, which is an overlay already: bwrap fails with "Invalid argument". There
+// the reviewer gets a copy instead, made in the review's own folder so it goes with it.
+async function throwaway(given: {
+  source: string;
+  copy: string;
+  sprite: boolean;
+  signal: AbortSignal;
+  kept?: string[];
+}): Promise<string[]> {
+  const { source, copy, sprite, signal, kept = [] } = given;
+  if (!sprite) return ["--overlay-src", source, "--tmp-overlay", source];
+  mkdirSync(copy);
+  const entries = readdirSync(source).filter((entry) => !kept.includes(entry));
+  if (entries.length > 0) {
+    // A copy of a clone with its installed packages is large, and cp shares the blocks
+    // where the disk allows it.
+    const cp = ["cp", "-a", "--reflink=auto", ...entries.map((entry) => join(source, entry))];
+    const copying = Bun.spawn([...cp, copy], { stdout: "ignore", stderr: "pipe", signal });
+    const [err, code] = await Promise.all([new Response(copying.stderr).text(), copying.exited]);
+    // A copy cut short by a cancel is reported as the cancel, after the copy is removed.
+    if (code !== 0 && !signal.aborted)
+      throw new Error(`couldn't copy ${source} for the reviewer: ${err.trim()}`);
+  }
+  return ["--bind", copy, source];
+}
+
 // Returns Codex's review command, mounts and environment, protecting instructions shared by
 // reviews. skel's Codex folder holds what Codex reads as instructions, and every review
-// shares it. So the reviewer sees it through a throwaway layer, and only its login and
-// sessions reach the real folder. Codex saves its login by rewriting auth.json in place,
-// not by renaming a new file over it, so the file itself can be mounted and a renewal still
-// reaches skel's.
-function codexCommand(home: string, folder: string) {
+// shares it. So the reviewer sees it as a throwaway folder, and only its login and sessions
+// reach the real one. Codex saves its login by rewriting auth.json in place, not by renaming
+// a new file over it, so the file itself can be mounted and a renewal still reaches skel's.
+async function codexCommand(home: string, folder: string, sprite: boolean, signal: AbortSignal) {
   const codexHome = join(home, ".local", "share", "skel", "codex");
-  mkdirSync(join(codexHome, "sessions"), { recursive: true, mode: 0o700 });
-  const mounts = ["--overlay-src", codexHome, "--tmp-overlay", codexHome];
-  mounts.push("--bind", join(codexHome, "sessions"), join(codexHome, "sessions"));
+  const sessions = join(codexHome, "sessions");
+  mkdirSync(sessions, { recursive: true, mode: 0o700 });
+  const copy = join(folder, "codex");
+  const mounts = await throwaway({
+    source: codexHome,
+    copy,
+    sprite,
+    signal,
+    kept: ["sessions", "auth.json"],
+  });
+  mounts.push("--bind", sessions, sessions);
   const auth = join(codexHome, "auth.json");
   if (existsSync(auth)) mounts.push("--bind", auth, auth);
   // --no-daemon belongs to codex itself, not to exec: without it Codex may start a
@@ -95,7 +141,7 @@ function answer(harness: "codex" | "claude", folder: string, out: string): unkno
   return JSON.parse(readFileSync(file, "utf8"));
 }
 
-// Runs a fresh reviewer against a throwaway clone layer and returns its verdict or failure
+// Runs a fresh reviewer against a throwaway view of the clone and returns its verdict or failure
 // reason. Enforces cancellation and a time limit, then removes the review's temporary
 // files.
 async function reviewNow(given: {
@@ -122,15 +168,30 @@ async function reviewNow(given: {
       body: `${harness} isn't installed, and your config picks it for reviews`,
     };
   const folder = mkdtempSync(join(tmpdir(), "skel-review-"));
+  const timeout = AbortSignal.timeout(limit);
+  const signal = given.signal ? AbortSignal.any([given.signal, timeout]) : timeout;
+  const sprite = onSprite(path);
+  // A review can be cancelled or run out of time while its folders are copied, as well as
+  // while the reviewer runs.
+  const stopped = (): Review | null => {
+    if (given.signal?.aborted) return { verdict: "failed", body: "the review was cancelled" };
+    if (timeout.aborted)
+      return { verdict: "failed", body: `the reviewer ran past ${limit / 60_000} minutes` };
+    return null;
+  };
   try {
     await Bun.write(join(folder, "schema.json"), schema);
     const run =
-      harness === "codex" ? codexCommand(home, folder) : claudeCommand(home, folder, model);
+      harness === "codex"
+        ? await codexCommand(home, folder, sprite, signal)
+        : claudeCommand(home, folder, model);
     const kept: Record<string, string> = { ...run.env };
     for (const [key, value] of Object.entries(env))
       if (value !== undefined && (passed.includes(key) || key.startsWith("LC_"))) kept[key] = value;
-    // Tests and builds write in the clone, so it is seen through a throwaway layer too.
-    const mounts = ["--overlay-src", clone, "--tmp-overlay", clone, "--bind", folder, folder];
+    // Tests and builds write in the clone, so it is seen as a throwaway folder too.
+    const copy = join(folder, "clone");
+    const mounts = await throwaway({ source: clone, copy, sprite, signal });
+    mounts.push("--bind", folder, folder);
     // The builder can go on changing its clone after it submits, so the reviewer sees the
     // submitted commit, with what the builder changed since put aside. Ignored files, such
     // as installed packages, stay for the tests. git runs in the sandbox, as the clone's
@@ -147,25 +208,26 @@ async function reviewNow(given: {
       command,
       programs: run.command.slice(0, 1),
     });
-    const timeout = AbortSignal.timeout(limit);
-    const signal = given.signal ? AbortSignal.any([given.signal, timeout]) : timeout;
+    const before = stopped();
+    if (before) return before;
     // Ending bwrap ends everything inside: the reviewer runs as the first process of a
-    // process list of its own, which the kernel empties when that process dies.
+    // process list of its own, which the kernel empties when that process dies. On a
+    // Sprite, unshare comes first and ignores SIGTERM, so the review is ended with SIGKILL.
     const proc = Bun.spawn(argv, {
       env: kept,
       stdin: new Blob([prompt(issue, base)]),
       stdout: "pipe",
       stderr: "pipe",
       signal,
+      killSignal: "SIGKILL",
     });
     const [out, err, code] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
       proc.exited,
     ]);
-    if (given.signal?.aborted) return { verdict: "failed", body: "the review was cancelled" };
-    if (timeout.aborted)
-      return { verdict: "failed", body: `the reviewer ran past ${limit / 60_000} minutes` };
+    const after = stopped();
+    if (after) return after;
     if (code !== 0)
       return {
         verdict: "failed",
