@@ -6,10 +6,13 @@ import { join } from "node:path";
 import {
   canPush,
   createIssue,
+  createLabel,
   findPullRequest,
   openPullRequest,
   postReview,
+  reactToIssue,
   readIssue,
+  readRepository,
   setReviewStatus,
 } from "../src/github.ts";
 
@@ -172,4 +175,43 @@ test("someone GitHub doesn't know as a user can't push", async () => {
 test("a failure to ask GitHub is an error, not a no", async () => {
   gh("gh: Bad Gateway (HTTP 502)", 1);
   await expect(canPush("simon/app", "ana")).rejects.toThrow("HTTP 502");
+});
+
+test("creates the skel label in a repository", async () => {
+  gh('{"name":"skel"}');
+  await createLabel("simon/app");
+  expect(sent()).toMatchObject({
+    args: ["api", "repos/simon/app/labels", "--method", "POST", "--input", "-"],
+    input: { name: "skel" },
+  });
+});
+
+test("a skel label the repository already has is fine", async () => {
+  gh("gh: Validation Failed (HTTP 422)", 1);
+  await createLabel("simon/app");
+});
+
+test("a label skel couldn't create is an error", async () => {
+  gh("gh: Resource not accessible by integration (HTTP 403)", 1);
+  await expect(createLabel("simon/app")).rejects.toThrow("HTTP 403");
+});
+
+test("reacts to an issue with eyes", async () => {
+  gh('{"id":1,"content":"eyes"}');
+  await reactToIssue("simon/app", 12);
+  expect(sent()).toEqual({
+    args: ["api", "repos/simon/app/issues/12/reactions", "--method", "POST", "--input", "-"],
+    input: { content: "eyes" },
+  });
+});
+
+// Issues with threads keep their label, so the oldest labeled issues could fill every answer.
+// Adding a label updates an issue, so one just labeled is always among the newest.
+test("asks for the labeled issues updated last", async () => {
+  gh(
+    '{"data":{"viewer":{"login":"simon"},"repository":{"labeled":{"nodes":[{"number":12,"title":"Add export"}]}}}}',
+  );
+  const read = await readRepository("simon/app", []);
+  expect(read.labeled).toEqual([{ number: 12, title: "Add export" }]);
+  expect(JSON.stringify(sent().input)).toContain("orderBy: { field: UPDATED_AT, direction: DESC }");
 });

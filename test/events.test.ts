@@ -1,7 +1,7 @@
 // What each event on a thread's PR means for the thread, decided from plain data: the
 // thread's row and what GitHub returned, with no clock, files or network.
 import { expect, test } from "bun:test";
-import { decide } from "../src/events.ts";
+import { decide, labeledToStart } from "../src/events.ts";
 import type { Check, PullRequest } from "../src/github.ts";
 import type { Thread } from "../src/thread.ts";
 
@@ -329,4 +329,25 @@ test("events that come together are told together", () => {
   expect(decision.tell).toHaveLength(2);
   expect(decision.failed).toHaveLength(1);
   expect(decision.handled).toEqual({ last_review: 0, last_comment: 51, last_check: 30 });
+});
+
+test("a labeled issue with no thread gets one", () => {
+  const issues = [
+    { number: 12, title: "Add export" },
+    { number: 13, title: "Fix the login redirect" },
+  ];
+  expect(labeledToStart([thread({ task: 12, status: "working" })], issues)).toEqual([
+    { number: 13, title: "Fix the login redirect" },
+  ]);
+});
+
+// Only skel start brings back a thread that failed, was stopped or is done: a label left on
+// the issue must not start it over and over.
+test("a labeled issue whose thread failed or is done gets no new thread", () => {
+  const threads = [thread({ task: 12, status: "failed" }), thread({ task: 13, status: "done" })];
+  const issues = [
+    { number: 12, title: "Add export" },
+    { number: 13, title: "Fix the login redirect" },
+  ];
+  expect(labeledToStart(threads, issues)).toEqual([]);
 });
