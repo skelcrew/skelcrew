@@ -79,6 +79,10 @@ export function refreshClones(db: Database): Promise<void> {
     for (const { owner, repo } of repositories(db)) {
       try {
         await refreshClone(owner, repo);
+        // skel repo rm can run while a clone is still being made, and the clone would then
+        // land after the removal, where the lead could still read it.
+        if (!repositories(db).some((r) => r.owner === owner && r.repo === repo))
+          rmSync(cloneDir(owner, repo), { recursive: true, force: true });
       } catch (error) {
         console.log(error instanceof Error ? error.message : String(error));
       }

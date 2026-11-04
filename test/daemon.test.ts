@@ -16,6 +16,7 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 
+const main = join(import.meta.dir, "..", "src", "main.ts");
 const daemon = join(import.meta.dir, "..", "src", "daemon.ts");
 let home = "";
 let socket = "";
@@ -499,4 +500,26 @@ c.on("error", () => process.exit(1));`;
       await Bun.sleep(50);
     }
   }, 25_000);
+
+  test("a repository removed while it is being cloned stays removed", async () => {
+    setUp();
+    const clone = addRepository("app");
+    const real = Bun.which("git") ?? "git";
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh\ncase " $* " in *" clone "*) sleep 2 ;; esac\nexec ${real} "$@"\n`,
+      { mode: 0o755 },
+    );
+    serve();
+    await untilAnswers();
+    expect(await ask({ command: "lead" })).toEqual({ lead: true });
+    const removed = Bun.spawnSync([process.execPath, main, "repo", "rm", "app"], {
+      env: { HOME: home, PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}` },
+      stderr: "pipe",
+    });
+    expect(removed.stderr.toString()).toBe("");
+    // Long enough for the slow clone to finish and be moved in, had nothing stopped it.
+    await Bun.sleep(4000);
+    expect(existsSync(clone)).toBe(false);
+  }, 15_000);
 });
