@@ -8,12 +8,13 @@ import { join } from "node:path";
 let home = "";
 let skel = "";
 
-// Builds a program as one file, the way skel --remote does.
+// Builds a program as one file, as skel --remote does, but for this machine, so the test can
+// run it.
 function compile(entry: string, file: string): void {
-  const built = Bun.spawnSync(
-    [process.execPath, "build", "--compile", "--target=bun-linux-x64", entry, "--outfile", file],
-    { stdout: "pipe", stderr: "pipe" },
-  );
+  const built = Bun.spawnSync([process.execPath, "build", "--compile", entry, "--outfile", file], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   if (!built.success) throw new Error(built.stderr.toString());
 }
 
