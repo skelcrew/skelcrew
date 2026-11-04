@@ -276,7 +276,8 @@ async function pollRepository(db: Database, tmux: string, threads: Thread[]): Pr
   }
   const pushers: string[] = [];
   for (const login of authors) if (await canPush(repo, login)) pushers.push(login);
-  for (const { folder } of threads) {
+  for (const before of threads) {
+    const { folder } = before;
     // Read together, with no wait between, so a review the thread's round has finished is
     // always among those skel posted.
     const thread = readThread(db, folder);
@@ -287,8 +288,14 @@ async function pollRepository(db: Database, tmux: string, threads: Thread[]): Pr
     const pr = thread.pr === null ? undefined : prs.get(thread.pr);
     if (!pr || (thread.status !== "working" && thread.status !== "waiting")) continue;
     const decision = decide(thread, pr, { you, maxRounds, posted, pushers });
+    // A round that moved on while GitHub answered may have pushed a newer commit, and what
+    // GitHub said about the checks would be the older one's. The next poll sees the new one.
+    const stale =
+      thread.submitting !== before.submitting ||
+      thread.reviewing !== before.reviewing ||
+      thread.rounds !== before.rounds;
     if ("end" in decision) await endThread(db, tmux, thread, decision.end);
-    else if (typing.has(folder)) continue;
+    else if (typing.has(folder) || stale) continue;
     else if (decision.tell.length > 0 || decision.failed.length > 0)
       // Not waited on, so a busy builder holds up neither the other threads nor the next poll.
       tellBuilder(db, tmux, thread, decision);

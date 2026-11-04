@@ -89,7 +89,8 @@ beforeEach(() => {
   fakeCodex();
   script("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
   // The fake GitHub: issue 12, PR 7 once opened, reviews numbered from 1001, the poll
-  // answered from the file graphql, failing as GitHub does today while it is missing, and
+  // answered from the file graphql, failing as GitHub does today while it is missing, and slow
+  // to answer, with what the file held when asked, while hold-graphql is there, and
   // ana, who can push, and mallory, who can't.
   script(
     "gh",
@@ -103,7 +104,11 @@ beforeEach(() => {
 "api repos/simon/app/statuses/"*) cat > /dev/null; echo '{"state":"set"}' ;;
 "api graphql --input -") cat > "$HOME/gh/query"; echo >> "$HOME/gh/polls"
   test -e "$HOME/gh/graphql" || { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
-  cat "$HOME/gh/graphql" ;;
+  cp "$HOME/gh/graphql" "$HOME/gh/answer.$$"
+  if test -e "$HOME/gh/hold-graphql"; then
+    touch "$HOME/gh/graphql-held"; while test -e "$HOME/gh/hold-graphql"; do sleep 0.1; done
+  fi
+  cat "$HOME/gh/answer.$$"; rm "$HOME/gh/answer.$$" ;;
 "api repos/simon/app/collaborators/ana/permission") echo '{"permission":"write"}' ;;
 "api repos/simon/app/collaborators/mallory/permission") echo '{"permission":"read"}' ;;
 "run view --job 900 --log-failed --repo simon/app")
@@ -335,6 +340,30 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     await until(() => typed().includes("Also CSV."));
     await until(() => thread().last_comment === 50);
     expect(thread()).toMatchObject({ status: "waiting", needs_you: 1, rounds: 1 });
+  }, 60_000);
+
+  test("a poll GitHub answered slowly, while a newer round was pushed, isn't acted on", async () => {
+    await approvedApp12();
+    const db = (sql: string) => {
+      const opened = new Database(join(data(), "skel.db"));
+      opened.run("PRAGMA busy_timeout = 5000");
+      opened.run(sql);
+      opened.close();
+    };
+    // A newer round is being pushed, so the failure GitHub shows is the older commit's.
+    db("UPDATE threads SET submitting = 'Round 2'");
+    pr({ reviews: [skelReview], checks: [approved, check(900, "FAILURE")] });
+    await morePolls();
+    writeFileSync(join(home, "gh", "hold-graphql"), "");
+    await until(() => existsSync(join(home, "gh", "graphql-held")));
+    // The push lands and the review starts before GitHub answers; the new commit's CI runs.
+    db("UPDATE threads SET submitting = NULL, reviewing = 'abc'");
+    pr({ reviews: [skelReview], checks: [check(901, null)] });
+    rmSync(join(home, "gh", "hold-graphql"));
+    await morePolls();
+    // Typing waits for the builder's screen to stay quiet a moment.
+    await Bun.sleep(2000);
+    expect(typed()).not.toContain("The check test failed");
   }, 60_000);
 
   test("approved with every check green needs you, and skel's own review is not typed back", async () => {
