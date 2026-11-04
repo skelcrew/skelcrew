@@ -3,12 +3,14 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -137,12 +139,28 @@ test("offers to copy skel to a server without it, then runs the command", async 
       `^bun build --compile --target=bun-linux-x64 ${main} --outfile ${home}/tmp/\\S+/skel$`,
     ),
   );
-  expect(lines[2]).toBe("ssh simon@workbox mkdir -p .local/bin");
+  expect(lines[2]).toBe("ssh simon@workbox mkdir -p .local/bin && rm -f .local/bin/skel");
   expect(lines[3]).toMatch(new RegExp(`^scp ${home}/tmp/\\S+/skel simon@workbox:.local/bin/skel$`));
   expect(lines[4]).toBe(lines[0]);
   expect(readFileSync(join(home, "server", ".local", "bin", "skel"), "utf8")).toBe(serverSkel);
   // The build is removed once copied.
   expect(readdirSync(join(home, "tmp"))).toEqual([]);
+});
+
+// A link left at ~/.local/bin/skel, such as one to a checkout's launcher that can't find bun
+// over ssh, must be replaced, not written through: a copy through it would overwrite the
+// checkout's own file.
+test("replaces a link at ~/.local/bin/skel instead of writing through it", async () => {
+  const launcher = join(home, "server", "checkout", "bin", "skel");
+  mkdirSync(join(home, "server", "checkout", "bin"), { recursive: true });
+  const original = "#!/bin/sh\nexec no-such-bun main.ts\n";
+  writeFileSync(launcher, original, { mode: 0o755 });
+  mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });
+  symlinkSync(launcher, join(home, "server", ".local", "bin", "skel"));
+  const run = await skel(["--remote", "simon@workbox", "ps"], "y\n");
+  expect(run.out).toEndWith("skel on the server got 1 arguments\n[ps]\n");
+  expect(readFileSync(launcher, "utf8")).toBe(original);
+  expect(lstatSync(join(home, "server", ".local", "bin", "skel")).isSymbolicLink()).toBe(false);
 });
 
 test("copies nothing when you say no", async () => {
@@ -158,4 +176,19 @@ test("needs a host", async () => {
   expect(run.err).toContain("skel --remote <host> [command]");
   expect(run.code).toBe(1);
   expect(calls()).toBe("");
+});
+
+// A command over ssh gets a bare PATH without ~/.bun/bin, where Bun's installer puts bun, so a
+// link to the checkout's launcher in ~/.local/bin must still find it.
+test("the checkout's launcher finds bun in ~/.bun/bin when it isn't on the PATH", () => {
+  mkdirSync(join(home, ".bun", "bin"), { recursive: true });
+  writeFileSync(join(home, ".bun", "bin", "bun"), '#!/bin/sh\necho "bun got $*"\n', {
+    mode: 0o755,
+  });
+  const launcher = join(import.meta.dir, "..", "bin", "skel");
+  const run = Bun.spawnSync(["/bin/sh", launcher, "ps"], {
+    env: { PATH: "/usr/bin:/bin", HOME: home },
+  });
+  const script = `${realpathSync(join(import.meta.dir, "..", "bin"))}/../src/main.ts`;
+  expect(run.stdout.toString()).toBe(`bun got ${script} ps\n`);
 });

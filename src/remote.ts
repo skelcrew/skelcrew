@@ -58,7 +58,10 @@ async function copySkel(host: string): Promise<void> {
     const target = "--target=bun-linux-x64";
     if ((await run(["bun", "build", "--compile", target, main, "--outfile", file])) !== 0)
       throw new Error("bun build failed, so skel wasn't copied");
-    if ((await run(["ssh", host, "mkdir -p .local/bin"])) !== 0)
+    // scp writes through a link, so a link left there, such as one to a checkout's launcher
+    // that can't find bun over ssh, would have the checkout's own file overwritten. Removing
+    // it first leaves the file it points to alone.
+    if ((await run(["ssh", host, "mkdir -p .local/bin && rm -f .local/bin/skel"])) !== 0)
       throw new Error(`couldn't make ~/.local/bin on ${host}, so skel wasn't copied`);
     if ((await run(["scp", file, `${host}:.local/bin/skel`])) !== 0)
       throw new Error(`scp couldn't copy skel to ${host}`);
