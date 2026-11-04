@@ -128,8 +128,6 @@ export function threadName(db: Database, thread: Thread): string {
 // when you detach with Ctrl-]. Only from your own terminal: it takes over the screen, which
 // the lead can't hand to you.
 export async function attachToThread(tmux: string, repo: string, task: number): Promise<void> {
-  if (process.env.SKEL_SANDBOX === "1")
-    throw new Error("skel attach is only for your own terminal, not for agents");
   const db = openDb();
   const { owner, repo: name } = findRepository(db, repo);
   const thread = Thread.nullable().parse(

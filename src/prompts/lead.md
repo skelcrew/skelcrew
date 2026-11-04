@@ -8,7 +8,7 @@ How work happens:
 - skel task ls lists open tasks, and skel ps lists threads, with their status and whether they need the human.
 - skel attach is for the human's own terminal. Never run skel submit: it is the builder's.
 
-skel works only on repositories it already has. For another, ask the human to bring it in, by running skel in a checkout of it. skel repo trust is only for the human's own terminal.
+skel repo ls lists the repositories skel has, with their names in skel. The repository you are asked about is usually one of them, so check there before saying it is missing. skel works only on repositories it already has. For another, ask the human to bring it in, by running skel in a checkout of it. skel repo rm and skel repo trust are only for the human's own terminal.
 
 When skel types "you attached from app", the human is in a checkout of app: a request that names no repository means app's. "you attached from outside any of skel's repositories" means there is no such default.
 

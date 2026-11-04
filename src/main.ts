@@ -15,18 +15,46 @@ const usage = `Usage:
   skel attach <repo>-<task>
   skel submit "<summary>"`;
 
+// What an agent may not run, in its words. Its sandbox hides skel's database, your settings
+// and your logins, so these would act on an empty database or ask what nobody can answer.
+// Trusting a repository is yours alone even with the database at hand: a yes passed on by
+// the lead could come from an injected instruction.
+const yoursOnly: Record<string, string> = {
+  "": "attaching to the lead",
+  serve: "running the daemon",
+  "repo rm": "removing a repository",
+  "repo trust": "trusting a repository",
+  attach: "attaching to a thread",
+};
+
 // Runs the requested CLI command, or prints usage and exits when its arguments are invalid.
 // With no command, sets up skel and attaches you to the lead.
 async function run(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
   if (command === "--remote" && sub) process.exit(await remote(sub, rest));
+  const named = command === undefined || command === "--from" ? "" : command;
+  const refused = yoursOnly[command === "repo" ? `repo ${sub}` : named];
+  if (process.env.SKEL_SANDBOX === "1" && refused)
+    throw new Error(`${refused} is only for your own terminal, not for agents`);
   // Loaded only for commands that run here, so skel --remote never loads the parts made for
   // the Linux server, such as the sandbox and the daemon's lock, on a laptop that can be a
   // Mac.
-  const { attachToLead, createTask, question, serve, startOn, submitForReview, tasks, threads } =
-    await import("./daemon.ts");
-  const { printTasks, printThreads } = await import("./list.ts");
-  const { bringInFrom, listRepos, removeRepo, trustRepo } = await import("./repo.ts");
+  const {
+    attachToLead,
+    createTask,
+    question,
+    repos,
+    serve,
+    startOn,
+    submitForReview,
+    tasks,
+    threads,
+  } = await import("./daemon.ts");
+  const { openDb } = await import("./db.ts");
+  const { listRepositories, printRepositories, printTasks, printThreads } = await import(
+    "./list.ts"
+  );
+  const { bringInFrom, removeRepo, trustRepo } = await import("./repo.ts");
   const { firstRun } = await import("./setup.ts");
   const { attachToThread } = await import("./thread.ts");
   if (args.length === 0 || (command === "--from" && sub && rest.length === 0)) {
@@ -39,7 +67,11 @@ async function run(args: string[]): Promise<void> {
     return;
   }
   if (command === "repo" && sub === "ls" && rest.length === 0) {
-    listRepos();
+    // An agent's sandbox hides skel's database, so there the daemon answers. In your
+    // terminal it is read here, so the list shows even while the daemon is down.
+    printRepositories(
+      process.env.SKEL_SANDBOX === "1" ? await repos() : listRepositories(openDb()),
+    );
     return;
   }
   if (command === "repo" && sub === "rm" && rest[0] && rest.length === 1) {

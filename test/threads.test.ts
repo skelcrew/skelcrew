@@ -356,7 +356,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     const out = join(data(), "lead", "out");
     await until(() => read(out) !== "");
     expect(read(out)).toBe(
-      `app-13\nStarted app-12.\nskel: only you can trust a repository, from your own terminal\n{"error":"skel's daemon doesn't know that request"}\n`,
+      `app-13\nStarted app-12.\nskel: trusting a repository is only for your own terminal, not for agents\n{"error":"skel's daemon doesn't know that request"}\n`,
     );
     await until(() => read(join(config("app-12"), "args")) !== "");
   }, 20_000);

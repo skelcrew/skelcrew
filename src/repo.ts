@@ -17,7 +17,7 @@ import { onGitHub, originHere } from "./origin.ts";
 import { cloneDir, configDir, dataDir } from "./paths.ts";
 import { refuseCredentials } from "./sandbox.ts";
 
-const noRepositories =
+export const noRepositories =
   "skel has no repositories yet. Run skel in a checkout of one, or ask the lead for one by its GitHub name.";
 
 // Returns the file of trusted repositories, kept with your settings so a clone can't bring
@@ -167,8 +167,6 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
 
 // Records your trust from outside the sandbox and brings in the repository for the lead.
 export async function trustRepo(given: string): Promise<void> {
-  if (process.env.SKEL_SANDBOX === "1")
-    throw new Error("only you can trust a repository, from your own terminal");
   const db = openDb();
   const known = repositories(db).find((r) => r.name === given);
   if (!known && !given.includes("/"))
@@ -176,22 +174,6 @@ export async function trustRepo(given: string): Promise<void> {
   const github = githubRepo(known ? `${known.owner}/${known.repo}` : given);
   trust(`${github.owner}/${github.repo}`);
   await bringIn(db, github, false);
-}
-
-// Prints registered repositories and clone paths, or tells you how to bring in the first
-// one.
-export function listRepos(): void {
-  const all = repositories(openDb());
-  if (all.length === 0) {
-    console.log(noRepositories);
-    return;
-  }
-  const width = Math.max(...all.map((r) => r.name.length));
-  const github = Math.max(...all.map((r) => r.owner.length + r.repo.length + 1));
-  for (const r of all)
-    console.log(
-      `${r.name.padEnd(width)}  ${`${r.owner}/${r.repo}`.padEnd(github)}  ${cloneDir(r.owner, r.repo)}`,
-    );
 }
 
 // Deletes skel's clone, registration and saved trust, then updates names that no longer
