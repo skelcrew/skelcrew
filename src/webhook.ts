@@ -49,13 +49,13 @@ export function signedBy(secret: string, body: Uint8Array, signature: string | n
 const Delivery = z.object({ repository: z.object({ full_name: z.string() }) });
 
 // Listens on the port for GitHub's deliveries, and has `poll` poll the repository a signed
-// one names, by its full GitHub name. It answers at once, since GitHub gives up after 10
-// seconds, and the poll runs after. Anyone can reach a Sprite's URL, so anything unsigned or
+// one names, by its full GitHub name. It answers once `poll` is done, which must be soon, as
+// GitHub gives up after 10 seconds. Anyone can reach a Sprite's URL, so anything unsigned or
 // signed with another secret is refused, and a delivery's content is never acted on.
 export function listenForWebhooks(
   port: number,
   secret: string,
-  poll: (repo: string) => void,
+  poll: (repo: string) => Promise<void>,
 ): Bun.Server<undefined> {
   return Bun.serve({
     port,
@@ -74,7 +74,7 @@ export function listenForWebhooks(
       } catch {
         return new Response("No repository\n", { status: 400 });
       }
-      poll(delivery.repository.full_name);
+      await poll(delivery.repository.full_name);
       return new Response("Polling\n", { status: 202 });
     },
   });

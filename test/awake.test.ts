@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { keepAwake } from "../src/sprite.ts";
+import { holdAwhile, keepAwake } from "../src/sprite.ts";
 import { hasWork, type Thread } from "../src/thread.ts";
 
 function thread(change: Partial<Thread> = {}): Thread {
@@ -154,4 +154,11 @@ test("a control socket that doesn't answer is tried again at the next check", as
   await Bun.sleep(60);
   await serveControlSocket();
   expect(await seen(1)).toEqual(['PUT /v1/tasks/skel {"expire":300}']);
+});
+
+// A Sprite sleeps again as soon as a webhook delivery is answered, before the poll it asked
+// for has run. This hold is apart from the daemon's own, which it never lets go of.
+test("a webhook delivery holds the Sprite for a minute, under a hold of its own", async () => {
+  await holdAwhile(60, socket);
+  expect(calls).toEqual(['PUT /v1/tasks/skel-webhook {"expire":60}']);
 });

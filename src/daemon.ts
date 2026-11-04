@@ -24,7 +24,14 @@ import { cliSocket, daemonSocket, leadSocket, threadSocket } from "./paths.ts";
 import { findRepository, refreshClones, repositories } from "./repo.ts";
 import { rerunReview, resumeRound, submitRound } from "./round.ts";
 import { setupDone } from "./setup.ts";
-import { keepAwake, onSprite, serviceLog, startSpriteService, urlPort } from "./sprite.ts";
+import {
+  holdAwhile,
+  keepAwake,
+  onSprite,
+  serviceLog,
+  startSpriteService,
+  urlPort,
+} from "./sprite.ts";
 import {
   bringBack,
   failThread,
@@ -325,8 +332,16 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   keepAwake(() => hasWork(liveThreads(db)));
   // Without the listener, events wait until something else wakes the Sprite, and polling
   // still sees them then.
+  // The Sprite sleeps again as soon as the delivery is answered, so it is held for a minute
+  // first: long enough for the poll, and for keepAwake to hold it for any work the poll starts.
+  const wake = async (repo: string) => {
+    await holdAwhile(60).catch((error) =>
+      console.log(`couldn't hold the Sprite awake: ${message(error)}`),
+    );
+    poll(repo);
+  };
   try {
-    listenForWebhooks(port, webhookSecret(), poll);
+    listenForWebhooks(port, webhookSecret(), wake);
   } catch (error) {
     console.log(`couldn't listen for GitHub's webhooks on port ${port}: ${message(error)}`);
   }

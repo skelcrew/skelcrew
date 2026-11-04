@@ -109,15 +109,19 @@ export function spriteUrl(): string {
 // fails once never lets it sleep mid-work.
 const holdFor = 300;
 
-// Asks the Sprite's control socket to hold the Sprite awake for holdFor seconds, or to let
-// go of the hold. The hold is a task, as the Sprite calls it, named skel. Throws when the
-// socket doesn't answer or answers with an error.
-async function holdTask(socket: string, method: "PUT" | "DELETE"): Promise<void> {
-  const answer = await fetch("http://sprite/v1/tasks/skel", {
+// Asks the Sprite's control socket to hold the Sprite awake for some seconds, or to let go
+// of the hold. A hold is a task, as the Sprite calls it, named skel unless named otherwise.
+// Throws when the socket doesn't answer or answers with an error.
+async function holdTask(
+  socket: string,
+  method: "PUT" | "DELETE",
+  { task = "skel", expire = holdFor } = {},
+): Promise<void> {
+  const answer = await fetch(`http://sprite/v1/tasks/${task}`, {
     unix: socket,
     method,
     headers: { "Content-Type": "application/json" },
-    body: method === "PUT" ? JSON.stringify({ expire: holdFor }) : undefined,
+    body: method === "PUT" ? JSON.stringify({ expire }) : undefined,
     signal: AbortSignal.timeout(5_000),
   }).catch(() => {
     throw new Error("the Sprite's control socket didn't answer");
@@ -168,6 +172,13 @@ export function keepAwake(
   const timer = setInterval(check, every);
   return () => clearInterval(timer);
 }
+
+// Holds the Sprite awake for some seconds after a webhook delivery. A Sprite goes back to
+// sleep as soon as the delivery is answered, before the poll it asked for has run, and
+// before keepAwake's next check sees any work the poll started. The hold has a name of its
+// own, so keepAwake never lets go of it, and it simply expires.
+export const holdAwhile = (seconds: number, socket = controlSocket) =>
+  holdTask(socket, "PUT", { task: "skel-webhook", expire: seconds });
 
 const Service = z.object({ cmd: z.string() });
 

@@ -59,10 +59,14 @@ test("makes the secret once, and keeps it where only you can read it", () => {
   expect(secretIn()).toBe(made);
 });
 
-// Starts the listener on a free port, noting each repository it is told to poll.
-function listen(): { url: string; polled: string[] } {
+// Starts the listener on a free port, noting each repository it is told to poll. Each poll
+// is taken in after `takes` milliseconds.
+function listen(takes = 0): { url: string; polled: string[] } {
   const polled: string[] = [];
-  const server = listenForWebhooks(0, secret, (repo) => polled.push(repo));
+  const server = listenForWebhooks(0, secret, async (repo) => {
+    await Bun.sleep(takes);
+    polled.push(repo);
+  });
   stop = () => server.stop(true);
   return { url: `http://127.0.0.1:${server.port}/`, polled };
 }
@@ -82,6 +86,15 @@ test("a signed delivery has the daemon poll its repository, and nothing else", a
   const { url, polled } = listen();
   const answer = await deliver(url, "issues", body, sign(body));
   expect(answer.status).toBe(202);
+  expect(polled).toEqual(["simon/app"]);
+});
+
+// A Sprite sleeps again as soon as the delivery is answered.
+test("answers a delivery only once the daemon has taken it in", async () => {
+  const { url, polled } = listen(300);
+  const sent = Date.now();
+  expect((await deliver(url, "issues", body, sign(body))).status).toBe(202);
+  expect(Date.now() - sent).toBeGreaterThanOrEqual(300);
   expect(polled).toEqual(["simon/app"]);
 });
 
