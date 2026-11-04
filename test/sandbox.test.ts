@@ -135,6 +135,35 @@ console.log(JSON.stringify(agentCommand({ name: "lead",
     expect(done.out).toBe("started\n");
   });
 
+  test("brings back the whole package a program's link points into", async () => {
+    // Codex from npm links to bin/codex.js in its package, which runs a program kept in
+    // another folder of the same package.
+    repository();
+    saveToken();
+    const pkg = join(home, "nvm", "lib", "node_modules", "pkg");
+    mkdirSync(join(pkg, "bin"), { recursive: true });
+    mkdirSync(join(pkg, "vendor"));
+    writeFileSync(join(pkg, "package.json"), "{}");
+    writeFileSync(join(pkg, "vendor", "real"), "#!/bin/sh\necho real\n", { mode: 0o755 });
+    writeFileSync(join(pkg, "bin", "cli"), `#!/bin/sh\nexec ${pkg}/vendor/real\n`, {
+      mode: 0o755,
+    });
+    mkdirSync(join(home, "bin"));
+    symlinkSync(join(pkg, "bin", "cli"), join(home, "bin", "claude"));
+    writeFileSync(join(home, "nvm", "secret"), "x");
+    const { argv, env } = agentCommand({
+      name: "lead",
+      socket: socketPath,
+      model: "opus",
+      env: outside(),
+    });
+    argv.splice(argv.indexOf("--") + 1);
+    argv.push("sh", "-c", `claude; test -e ${home}/nvm/secret || echo hidden`);
+    const done = await run(argv, env);
+    expect(done.err).toBe("");
+    expect(done.out).toBe("real\nhidden\n");
+  });
+
   test("hides the home folder's secrets and the other sockets in /run", async () => {
     repository();
     mkdirSync(join(home, ".config", "gh"), { recursive: true });
