@@ -3,12 +3,12 @@
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { z } from "zod";
+import { dataDir, leadSocket } from "./paths.ts";
 // What the lead is and how it hands work to threads. Without it, told "fix the flaky test",
 // it would try to edit the read-only clones rather than start a thread. It is a plain file so
 // it reads and changes like a doc, and Bun builds it into skel. It reaches the lead in every
 // turn, so every line costs context: keep it short, and promise only what is built.
-import instructions from "../prompts/lead.md" with { type: "text" };
-import { dataDir, leadSocket } from "./paths.ts";
+import instructions from "./prompts/lead.md" with { type: "text" };
 import { refreshClones } from "./repo.ts";
 import { agentCommand, hasTranscript } from "./sandbox.ts";
 import { endSession, failedScreen, hasSession, startServer, startSession } from "./tmux.ts";
