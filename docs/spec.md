@@ -119,7 +119,7 @@ One thread, from start to merge.
 
 At any point the builder can ask you a question with Claude Code's own `AskUserQuestion`. skel notices, and the thread needs you until you attach with `skel attach` and answer it.
 
-**Telling you.** When a thread starts needing you, skel types a one line note into the lead's session (when the lead is idle), so you hear it where you already are. An optional `notify` command (for example a curl to ntfy) reaches your phone.
+**Telling you.** When a thread starts needing you, skel types a one line note into the lead's session (when the lead is idle), so you hear it where you already are.
 
 ## Events
 
@@ -170,7 +170,6 @@ harness: claude
 builder:  { model: opus }
 reviewer: { harness: codex }
 max_rounds: 3
-notify: curl -d "$SKEL_MESSAGE" ntfy.sh/my-topic
 ```
 
 A repository's `skel.yaml` holds what that repository needs, and can override the defaults:
@@ -217,6 +216,7 @@ These are the parts that need care. `docs/learnings.md` explains the traps behin
 - Projects with their own memory beyond `AGENTS.md`
 - Agents talking to each other, beyond skel telling the lead
 - Triggers, schedules or automations
+- Reaching you outside the lead's session, such as a `notify` command for your phone
 - Slack, Linear, Jira or forges other than GitHub
 - Threads started from plain text, without a task. They would be named with a marker, such as `app-t1`, so they never clash with a task's name
 - Starting a thread by assigning or mentioning on GitHub
@@ -230,7 +230,7 @@ Each one is something you use every day from the day it lands, and lands as smal
 
 1. **skel on the server.** You `ssh workbox` yourself and run `skel`. The first run, the daemon as a systemd user service, `skel serve`, skel's own clones of your repositories, brought in when you run `skel` in one, `skel repo` and `skel repo trust`. The lead runs in bubblewrap inside tmux and sees your repositories. Ctrl-\] detaches, and logging out leaves everything running. This replaces herdr plus Claude.
 2. **One thread to a reviewed PR.** `skel task create`, `skel task ls`, `skel start`, `skel ps`, `skel attach`, `skel submit`, the reviewer's Codex login. Builder and reviewer loop, with the reviewer on Codex, skel pushes and opens the PR, the `skel/review` check, the round limit, needs you when approved.
-3. **Parallel and needs you.** Several threads at once across repositories, the note in the lead's session, `notify`, questions marked needs you, the lead knowing which repository you attached from.
+3. **Parallel and needs you.** Several threads at once across repositories, the note in the lead's session, questions marked needs you, the lead knowing which repository you attached from.
 4. **Follow-through.** Polling for failed checks, PR comments, conflicts and merges. Cleanup on merge or close. Surviving a restart with `--resume`. `skel stop`, and `skel start` on a stopped thread.
 5. **Remote, on a Sprite.** `skel --remote sprite:<name>` from the laptop: the laptop check, creating the Sprite after asking, bubblewrap and skel's binary installed in it, the first run there, the daemon as a Sprite service, keeping the Sprite awake while there is work, and a webhook to wake it. From no server at all to a running lead with one command. `skel --remote <host>` over SSH, offering to copy skel's binary with `scp` when it is missing. The lead brings in repositories when you ask for work in one.
 6. **The demo.** Pick the demo repositories and their tasks, run the script for real, record it.
