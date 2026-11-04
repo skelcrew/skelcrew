@@ -184,6 +184,8 @@ const untilCloned = () => until(() => existsSync(join(data(), "repos", "simon", 
 
 function thread(): Record<string, unknown> {
   const db = new Database(join(data(), "skel.db"));
+  // The daemon may be writing, and a read that meets a write fails without a wait.
+  db.run("PRAGMA busy_timeout = 5000");
   try {
     const row = db.query("SELECT * FROM threads").get();
     return row && typeof row === "object" ? { ...row } : {};
@@ -468,6 +470,8 @@ nameRepositories(db);`;
     expect((await skel("start", "simon/app-12")).err).toBe("");
     expect((await skel("start", "simon-app-12")).err).toBe("");
     const db = new Database(join(data(), "skel.db"));
+    // The daemon may be writing, and a read that meets a write fails without a wait.
+    db.run("PRAGMA busy_timeout = 5000");
     const folders = db.query("SELECT folder FROM threads ORDER BY owner DESC").values();
     db.close();
     expect(folders).toEqual([["simon-app-12"], ["simon-app-12-2"]]);
