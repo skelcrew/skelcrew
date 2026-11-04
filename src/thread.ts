@@ -223,6 +223,18 @@ function setupCommands(clone: string): string[] {
   return read.data?.setup ?? [];
 }
 
+// Returns the branch the thread's PR goes into: the one it started from with --from, or else
+// the default branch, which skel's clone is on.
+export function baseOf(thread: Thread): string {
+  if (thread.base) return thread.base;
+  const head = Bun.spawnSync(
+    ["git", "-C", cloneDir(thread.owner, thread.repo), "symbolic-ref", "--short", "HEAD"],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  if (!head.success) throw new Error(`git symbolic-ref failed: ${head.stderr.toString().trim()}`);
+  return head.stdout.toString().trim();
+}
+
 // Makes the thread's clone afresh: cloned from skel's clone, on the thread's branch from the
 // default branch or the one given with --from, with your name for commits, and the setup
 // commands run once in the sandbox. The daemon runs git in the thread's clone only here,
@@ -245,17 +257,17 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   ]);
   await fetchBranch(clone, github(thread), thread.base);
   await run(["git", "-C", clone, "checkout", "--quiet", "-b", thread.branch, "FETCH_HEAD"]);
-  // The reviewer reads the diff against origin/<base>. Cloned from skel's clone, the thread's
-  // clone has only the default branch there, so a branch given with --from is added.
-  if (thread.base)
-    await run([
-      "git",
-      "-C",
-      clone,
-      "update-ref",
-      `refs/remotes/origin/${thread.base}`,
-      "FETCH_HEAD",
-    ]);
+  // The reviewer reads the diff against origin/<base>, which must be where the branch
+  // started. Cloned from skel's clone, the thread's clone has only the default branch there,
+  // and as skel's clone last saw it, which can be older.
+  await run([
+    "git",
+    "-C",
+    clone,
+    "update-ref",
+    `refs/remotes/origin/${baseOf(thread)}`,
+    "FETCH_HEAD",
+  ]);
   // Your git config is hidden from the builder, and its commits are authored by you. Only
   // your global config, since the folder the daemon started in makes no difference.
   for (const key of ["user.name", "user.email"]) {

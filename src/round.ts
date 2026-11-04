@@ -12,7 +12,7 @@ import {
 } from "./github.ts";
 import { cloneDir } from "./paths.ts";
 import { type Review, review } from "./reviewer.ts";
-import { cloneOf, github, readThread, record, type Thread, threadConfig } from "./thread.ts";
+import { baseOf, cloneOf, github, readThread, record, threadConfig } from "./thread.ts";
 import { typeInto } from "./tmux.ts";
 
 export type Outcome = {
@@ -91,13 +91,6 @@ async function git(folder: string, ...args: string[]): Promise<string> {
   return out.trim();
 }
 
-// Returns the branch the thread's PR goes into: the one it started from with --from, or else
-// the default branch, which skel's clone is on.
-async function baseOf(thread: Thread): Promise<string> {
-  if (thread.base) return thread.base;
-  return git(cloneDir(thread.owner, thread.repo), "symbolic-ref", "--short", "HEAD");
-}
-
 // Fetches the thread's branch from its clone into skel's clone and pushes the commit it got
 // to the thread's branch on GitHub, then opens the PR if there is none yet. Returns the
 // commit. git never runs inside the thread's clone: the builder controls everything there,
@@ -122,7 +115,7 @@ async function push(db: Database, folder: string, summary: string): Promise<stri
   let pr = thread.pr ?? (await findPullRequest(repo, thread.branch));
   if (pr === null) {
     const { title } = await readIssue(repo, thread.task);
-    const base = await baseOf(thread);
+    const base = baseOf(thread);
     pr = await openPullRequest(repo, {
       branch: thread.branch,
       base,
@@ -157,8 +150,8 @@ async function reviewRound(
   const verdict = await review({
     clone: cloneOf(thread),
     issue: await readIssue(repo, thread.task),
-    // The thread's clone has the base branch under origin/, from skel's clone.
-    base: `origin/${await baseOf(thread)}`,
+    // Setting up the thread's clone put the base branch there under origin/.
+    base: `origin/${baseOf(thread)}`,
     commit: sha,
     model,
     harness: reviewer,
@@ -167,6 +160,8 @@ async function reviewRound(
   if (signal.aborted) return;
   const outcome = afterReview(readThread(db, folder).rounds, verdict, maxRounds);
   if (verdict.verdict !== "failed") await postReview(repo, pr, verdict.verdict, verdict.body);
+  // A newer round may be reviewing the same commit, and its check must stay pending.
+  if (signal.aborted) return;
   await setReviewStatus(repo, sha, outcome.check, outcome.description);
   if (signal.aborted) return;
   const { rounds, needsYou, status, tell } = outcome;

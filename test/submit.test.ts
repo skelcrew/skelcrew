@@ -75,6 +75,7 @@ s="$CODEX_HOME/sessions"
 n=$(( $(cat "$s/count" 2>/dev/null || echo 0) + 1 )); echo $n > "$s/count"
 cat > "$s/prompt-$n"
 git branch -r > "$s/branches-$n"
+git rev-parse origin/main > "$s/main-$n" 2>&1
 test -e "$CODEX_HOME/slow-$n" && sleep 30
 test -e "$CODEX_HOME/verdict-$n" || { echo "no verdict for review $n" >&2; exit 1; }
 cp "$CODEX_HOME/verdict-$n" "$out"`,
@@ -108,7 +109,7 @@ case "$*" in
 "api repos/simon/app/issues/12") cat "$HOME/gh/issue" ;;
 "api repos/simon/app/pulls?state=open&head="*) if test -e "$HOME/gh/pr"; then echo '[{"number":7}]'; else echo '[]'; fi ;;
 "api repos/simon/app/pulls --method POST --input -") touch "$HOME/gh/opening"; while test -e "$HOME/gh/hold"; do sleep 0.1; done; cat > "$HOME/gh/pr"; echo '{"number":7}' ;;
-"api repos/simon/app/pulls/7/reviews --method POST --input -") cat >> "$HOME/gh/reviews"; echo >> "$HOME/gh/reviews"; echo '{"id":1}' ;;
+"api repos/simon/app/pulls/7/reviews --method POST --input -") touch "$HOME/gh/posting"; while test -e "$HOME/gh/hold-review"; do sleep 0.1; done; cat >> "$HOME/gh/reviews"; echo >> "$HOME/gh/reviews"; echo '{"id":1}' ;;
 "api repos/simon/app/statuses/"*) echo "\${2##*/} $(cat)" >> "$HOME/gh/statuses"; echo '{"state":"set"}' ;;
 *) echo "the fake gh doesn't know $*" >&2; exit 1 ;;
 esac`,
@@ -510,6 +511,39 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     rmSync(join(builder(), "busy"));
     await Bun.sleep(2000);
     expect(typedMessages()).toBe(0);
+  }, 60_000);
+
+  test("reviews against the default branch as the thread started from it", async () => {
+    const work = addApp();
+    verdict(1, "approve", "Fine.");
+    serve();
+    await untilCloned();
+    writeFileSync(join(work, "LATER"), "later\n");
+    git(work, "add", ".");
+    git(work, "commit", "-qm", "later");
+    git(work, "push", "-q", "origin", "main");
+    expect((await skel(["start", "app-12"])).err).toBe("");
+    await until(() => finished("success").length === 1, 30_000);
+    expect(read(join(codexHome(), "sessions", "main-1"))).toBe(
+      `${git(work, "rev-parse", "HEAD")}\n`,
+    );
+  }, 60_000);
+
+  test("a review cancelled while it is posted doesn't set the check on the commit submitted again", async () => {
+    addApp();
+    verdict(1, "approve", "Stale.");
+    verdict(2, "approve", "Fresh.");
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "slow-2"), "");
+    writeFileSync(join(home, "gh", "hold-review"), "");
+    await startApp12();
+    await until(() => existsSync(join(home, "gh", "posting")), 30_000);
+    expect((await skel(["submit", "Again"], { SKEL_SOCKET: builderSocket() })).err).toBe("");
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 30_000);
+    rmSync(join(home, "gh", "hold-review"));
+    await until(() => reviews().length === 1);
+    await Bun.sleep(1500);
+    expect(statuses().map((s) => s.state)).toEqual(["pending", "pending"]);
   }, 60_000);
 
   test("a thread started from another branch is reviewed against it, and its PR goes into it", async () => {
