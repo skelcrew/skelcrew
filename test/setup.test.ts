@@ -143,12 +143,21 @@ test("takes every step on the first run, and none on the second", async () => {
     "skel · connected to GitHub.\n",
     "skel · step 2 of 3: pick a harness\n",
     "skel · step 3 of 3: log agents in to Claude\n",
+    `──── Claude Code ${"─".repeat(63)}\n`,
     "Your token: sk-ant-oat01-good\n",
+    `──── back in skel ${"─".repeat(62)}\n`,
     "skel · paste the token Claude printed above (it starts with sk-ant-oat01-):",
     "skel · setup is done.\n",
-  ].map((line) => first.out.indexOf(line));
-  expect(said).not.toContain(-1);
-  expect(said).toEqual([...said].sort((a, b) => a - b));
+  ];
+  // Each line comes after the one before, so a rule found is the one for its own step.
+  let at = 0;
+  for (const line of said) {
+    at = first.out.indexOf(line, at);
+    expect([line, at]).not.toEqual([line, -1]);
+  }
+  expect(first.out).toContain("──── gh ─");
+  // Only a terminal waits for Enter before each login.
+  expect(first.out).not.toContain("press Enter");
   expect(readFileSync(config(), "utf8")).toContain("harness: claude");
   expect(calls()).toContain("claude setup-token");
   expect(readFileSync(token(), "utf8").trim()).toBe("sk-ant-oat01-good");
@@ -493,6 +502,8 @@ test("finishes no setup when the reviewer's login fails, so the next skel tries 
   const run = await skel("1\nsk-ant-oat01-good\n");
   expect(run.code).toBe(1);
   expect(run.err).toContain("codex login");
+  // The way back is marked even when the tool fails.
+  expect(run.out).toEndWith(`\n\n──── back in skel ${"─".repeat(62)}\n`);
   expect(existsSync(unit())).toBe(false);
 
   fakeCodex();

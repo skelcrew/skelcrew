@@ -8,3 +8,11 @@ export function skelLine(text: string): string {
   const bold = process.stdout.isTTY && process.env.TERM !== "dumb";
   return bold ? `\x1b[1m${line}\x1b[22m` : line;
 }
+
+// Returns a rule across the terminal with a name in it, to mark where an outside tool takes
+// over the terminal and where skel takes it back. 80 wide when the output isn't a terminal.
+export function rule(name: string): string {
+  const width = (process.stdout.isTTY && process.stdout.columns) || 80;
+  const start = `──── ${name} `;
+  return start + "─".repeat(Math.max(0, width - start.length));
+}

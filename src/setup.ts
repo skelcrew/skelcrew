@@ -14,7 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
 import { codexHome, configDir } from "./paths.ts";
-import { skelLine } from "./say.ts";
+import { rule, skelLine } from "./say.ts";
 import { promptSecret } from "./secret.ts";
 import {
   dropCapabilities,
@@ -78,6 +78,30 @@ function apparmorAdvice(bwrap: string): string {
   sudo apparmor_parser -r /etc/apparmor.d/skel-bwrap`;
 }
 
+// Hands your terminal to an outside login and reports whether it succeeded. Rules naming
+// the tool mark where its output starts and ends, without touching it, since the codes and
+// tokens it prints must stay on screen. At a terminal, skel first waits for Enter, so you
+// choose when each login starts. While the tool runs, Ctrl-C stops only the tool, so the
+// way back is marked whatever happens. Ctrl-C at the pause stops skel before anything runs.
+function handOver(tool: string, command: string[], env: Env): boolean {
+  // Bun's prompt answers a bare Enter as it answers Ctrl-D, so the secret's prompt waits,
+  // which also stops skel on Ctrl-C with your terminal as it was.
+  if (process.stdin.isTTY) promptSecret(skelLine(`press Enter to start ${tool}'s login`));
+  console.log(rule(tool));
+  const ignore = () => {};
+  process.on("SIGINT", ignore);
+  let ran = false;
+  try {
+    ran = Bun.spawnSync(command, { env, stdio: ["inherit", "inherit", "inherit"] }).success;
+    return ran;
+  } finally {
+    process.off("SIGINT", ignore);
+    // A tool stopped by Ctrl-C leaves the terminal's ^C on the line, which would push the
+    // rule past the edge.
+    console.log(`${ran ? "" : "\n"}${rule("back in skel")}`);
+  }
+}
+
 // Returns what is wrong with a pasted token, or null when it looks like one. Claude Code
 // itself tells its login tokens apart by this prefix. It reports any token as logged in
 // without asking the server, so the form is all skel can check here.
@@ -94,11 +118,8 @@ function tokenProblem(token: string): string | null {
 // Code for a refresh. A wrong paste is asked for again, since running setup-token again
 // would make another token.
 function saveClaudeToken(env: Env): void {
-  const setup = Bun.spawnSync(["claude", "setup-token"], {
-    env,
-    stdio: ["inherit", "inherit", "inherit"],
-  });
-  if (!setup.success) throw new Error("claude setup-token didn't finish, so no token is saved");
+  if (!handOver("Claude Code", ["claude", "setup-token"], env))
+    throw new Error("claude setup-token didn't finish, so no token is saved");
   let question = "paste the token Claude printed above (it starts with sk-ant-oat01-):";
   for (;;) {
     const answer = promptSecret(skelLine(question));
@@ -132,11 +153,8 @@ function reviewerLoggedIn(env: Env): boolean {
 // since the machine may have no browser. Then says so, to mark where Codex's output ends.
 function loginReviewer(env: Env): void {
   mkdirSync(codexHome(), { recursive: true, mode: 0o700 });
-  const login = Bun.spawnSync(["codex", "login", "--device-auth"], {
-    env: reviewerEnv(env),
-    stdio: ["inherit", "inherit", "inherit"],
-  });
-  if (!login.success) throw new Error("codex login didn't finish, so reviews have no login");
+  if (!handOver("Codex", ["codex", "login", "--device-auth"], reviewerEnv(env)))
+    throw new Error("codex login didn't finish, so reviews have no login");
   console.log(skelLine("the reviewer is logged in to Codex."));
 }
 
@@ -148,11 +166,8 @@ const githubConnected = (env: Env) =>
 // Runs gh auth login in your terminal, then says so, since gh's own last lines can read as
 // if more is to come.
 function connectGitHub(env: Env): void {
-  const login = Bun.spawnSync(["gh", "auth", "login"], {
-    env,
-    stdio: ["inherit", "inherit", "inherit"],
-  });
-  if (!login.success) throw new Error("gh auth login didn't finish, so skel can't reach GitHub");
+  if (!handOver("gh", ["gh", "auth", "login"], env))
+    throw new Error("gh auth login didn't finish, so skel can't reach GitHub");
   console.log(skelLine("connected to GitHub."));
 }
 
