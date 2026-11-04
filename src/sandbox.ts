@@ -163,6 +163,16 @@ const builderSettings = JSON.stringify({
   },
 });
 
+// The lead hears where you attached from with your next message, through Claude Code's hook
+// for it, which adds what it prints to the message without showing it. Typed in, the note
+// would be a turn of its own, and the lead's answer to it the first thing you see.
+const leadSettings = JSON.stringify({
+  ...base,
+  hooks: {
+    UserPromptSubmit: [{ hooks: [{ type: "command", command: "skel attached", timeout: 10 }] }],
+  },
+});
+
 // Only what a shell and Claude Code need gets in. Tokens and keys in your environment stay
 // out, and so do CLAUDE_CODE_* variables inherited from a Claude Code session, which make
 // the agent misbehave, for example by writing no transcript. ANTHROPIC_API_KEY is for those
@@ -324,7 +334,7 @@ export function agentCommand(given: {
   renameSync(fresh, file);
 
   const command = ["claude", "--model", model, "--permission-mode", "bypassPermissions"];
-  command.push("--settings", thread ? builderSettings : settings);
+  command.push("--settings", thread ? builderSettings : leadSettings);
   if (resume) command.push("--resume", resume);
   if (sessionId) command.push("--session-id", sessionId);
   if (system) command.push("--append-system-prompt", system);

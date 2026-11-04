@@ -44,6 +44,7 @@ async function run(args: string[]): Promise<void> {
   // the Linux server, such as the sandbox and the daemon's lock, on a laptop that can be a
   // Mac.
   const {
+    attached,
     attachToLead,
     createTask,
     question,
@@ -93,6 +94,13 @@ async function run(args: string[]): Promise<void> {
   // nothing: Claude Code adds what a UserPromptSubmit hook prints to the builder's message.
   if (command === "question" && (sub === "asked" || sub === "answered") && rest.length === 0) {
     await question(sub === "asked");
+    return;
+  }
+  // Run by the lead's Claude Code hook with each message, not by people, so usage leaves it
+  // out. What it prints goes into the message, unseen, so the lead hears where you attached
+  // from without a turn of its own.
+  if (command === "attached" && args.length === 1) {
+    process.stdout.write(await attached());
     return;
   }
   if (command === "repo" && sub === "trust" && rest[0] && rest.length === 1) {
