@@ -3,6 +3,7 @@
 // skel.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -62,7 +63,7 @@ case "$1" in
     cd "$HOME/sprites/$name" || exit 1
     command -v "$1" > /dev/null || exit 1
     HOME=$PWD PATH="$PWD/.local/bin:${join(home, "bin")}:/usr/bin:/bin" exec "$@" ;;
-  file) cp "$5" "$HOME/sprites/$4/$6" ;;
+  file) test -f "$HOME/push-fails" && exit 1; cp "$5" "$HOME/sprites/$4/$6" ;;
 esac`,
   );
   // Like apt over sprite exec, which has no terminal for debconf's dialogs: it prints
@@ -73,12 +74,20 @@ esac`,
 test -f "${join(home, "apt-fails")}" && { echo "E: Unable to locate package bubblewrap" >&2; exit 100; }
 exit 0`,
   );
+  fake("node", 'echo "v22.0.0"');
   fake(
     "bun",
     `while [ $# -gt 1 ]; do test "$1" = --outfile && out=$2; shift; done
 cat > "$out" <<'EOF'
 ${spriteSkel}EOF
 chmod +x "$out"`,
+  );
+  // Like sprite-env on a Sprite: services get answers with the service as JSON, and fails
+  // when there is none.
+  fake(
+    "sprite-env",
+    `test "$1 $2 $3" = "services get skel" && { cat "$HOME/service.json" 2>/dev/null || exit 1; }
+exit 0`,
   );
 });
 afterEach(() => {
@@ -180,24 +189,31 @@ test("creates the Sprite, sets it up, and runs the first run there", async () =>
   const install = "sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq bubblewrap";
   expect(lines[2]).toBe(`sprite exec -s demo --no-stdin -- ${install}`);
   expect(lines[3]).toBe(install);
+  // A new Sprite's node writes to /etc on its first run, which the sandbox makes read-only,
+  // so it runs once outside, right after bubblewrap.
+  expect(lines[4]).toBe("sprite exec -s demo --no-stdin -- node --version");
+  expect(lines[5]).toBe("node --version");
   // "the Sprite demo" would read as a demo of Sprites, so skel names it as you typed it.
   expect(run.out).toContain(
     "skel · setting up sprite:demo: installing bubblewrap and copying skel there.\n",
   );
   expect(run.out).not.toContain("debconf");
   // Built for the Sprite, which is Linux on x64, whatever the laptop runs.
-  expect(lines[4]).toMatch(
+  expect(lines[6]).toMatch(
     new RegExp(
       `^bun build --compile --target=bun-linux-x64 ${main} --outfile ${home}/tmp/\\S+/skel$`,
     ),
   );
-  expect(lines[5]).toBe(
-    "sprite exec -s demo --no-stdin -- sh -c mkdir -p .local/bin && rm -f .local/bin/skel",
+  expect(lines[7]).toBe(
+    "sprite exec -s demo --no-stdin -- sh -c mkdir -p .local/bin && rm -f .local/bin/skel.new",
   );
-  expect(lines[6]).toMatch(
-    new RegExp(`^sprite file push -s demo ${home}/tmp/\\S+/skel .local/bin/skel$`),
+  expect(lines[8]).toMatch(
+    new RegExp(`^sprite file push -s demo ${home}/tmp/\\S+/skel .local/bin/skel.new$`),
   );
-  expect(lines[7]).toBe(`${exec("demo")} --from simon/app`);
+  expect(lines[9]).toBe(
+    "sprite exec -s demo --no-stdin -- sh -c mv -f .local/bin/skel.new .local/bin/skel",
+  );
+  expect(lines[10]).toBe(`${exec("demo")} --from simon/app`);
   expect(readFileSync(join(home, "sprites", "demo", ".local", "bin", "skel"), "utf8")).toBe(
     spriteSkel,
   );
@@ -250,4 +266,122 @@ test("refuses a Sprite name that isn't one", async () => {
   expect(run.err).toContain("-o");
   expect(run.code).toBe(1);
   expect(calls()).toBe("");
+});
+
+// Returns a skel checkout of its own on the laptop, on main with one commit, so a test knows
+// what update copies and from where.
+function laptopSkel(): { main: string; commit: string } {
+  const folder = join(home, "code", "skel");
+  cpSync(join(import.meta.dir, "..", "src"), join(folder, "src"), { recursive: true });
+  symlinkSync(join(import.meta.dir, "..", "node_modules"), join(folder, "node_modules"));
+  writeFileSync(join(folder, ".gitignore"), "node_modules\n");
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", "-C", folder, "-c", "user.name=t", "-c", "user.email=t", ...args], {
+      stdout: "pipe",
+    });
+  git("init", "-q", "-b", "main");
+  git("add", ".");
+  git("commit", "-q", "-m", "skel");
+  return {
+    main: join(folder, "src", "main.ts"),
+    commit: git("rev-parse", "--short", "HEAD").stdout.toString().trim(),
+  };
+}
+
+async function update(laptop: { main: string }, name = "demo") {
+  const run = Bun.spawn([process.execPath, laptop.main, "update", "--remote", `sprite:${name}`], {
+    cwd: home,
+    env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, code] = await Promise.all([
+    new Response(run.stdout).text(),
+    new Response(run.stderr).text(),
+    run.exited,
+  ]);
+  return { out, err, code };
+}
+
+test("update replaces skel on the Sprite and restarts its daemon's service", async () => {
+  const sprite = join(home, "sprites", "demo", ".local", "bin", "skel");
+  existing("demo");
+  writeFileSync(sprite, "old skel");
+  const laptop = laptopSkel();
+  const run = await update(laptop);
+  expect(run.code).toBe(0);
+  expect(readFileSync(sprite, "utf8")).toBe(spriteSkel);
+  const lines = calls().split("\n");
+  expect(lines).toContain(
+    "sprite exec -s demo --no-stdin -- sh -c mv -f .local/bin/skel.new .local/bin/skel",
+  );
+  // The daemon restarts only once the new skel is in place, so it runs the new build.
+  expect(lines.at(-3)).toBe(
+    "sprite exec -s demo --no-stdin -- sh -c sprite-env services restart skel",
+  );
+  expect(lines.at(-2)).toBe("sprite-env services restart skel");
+  expect(run.out).toContain(
+    `skel · updated sprite:demo to the skel in ~/code/skel (commit ${laptop.commit}) and restarted its daemon.`,
+  );
+  expect(run.out).toContain("the lead picks up new instructions when it's next started");
+  expect(calls()).not.toContain("apt-get");
+  expect(readdirSync(join(home, "tmp"))).toEqual([]);
+});
+
+// A transfer that breaks off must leave the skel that works in place, or the daemon has
+// nothing to restart with.
+test("update keeps the old skel on the Sprite when the copy fails", async () => {
+  existing("demo");
+  const sprite = join(home, "sprites", "demo", ".local", "bin", "skel");
+  writeFileSync(sprite, "old skel");
+  writeFileSync(join(home, "push-fails"), "");
+  const run = await update(laptopSkel());
+  expect(run.code).toBe(1);
+  expect(readFileSync(sprite, "utf8")).toBe("old skel");
+  expect(calls()).not.toContain("services restart");
+});
+
+// A Sprite service keeps the skel it was made with. Made from a checkout, a copy left in
+// ~/.local/bin runs nothing the daemon does.
+test("update goes by what the Sprite service runs, not by ~/.local/bin", async () => {
+  existing("demo");
+  const sprite = join(home, "sprites", "demo");
+  mkdirSync(join(sprite, "skel", "bin"), { recursive: true });
+  mkdirSync(join(sprite, "skel", "src"));
+  writeFileSync(join(sprite, "skel", "bin", "skel"), "#!/bin/sh\n", { mode: 0o755 });
+  writeFileSync(join(sprite, "skel", "src", "main.ts"), "");
+  const service = { name: "skel", cmd: join(sprite, "skel", "bin", "skel"), args: ["serve"] };
+  writeFileSync(join(sprite, "service.json"), JSON.stringify(service));
+  const run = await update(laptopSkel());
+  expect(run.code).toBe(0);
+  expect(run.out).toContain(`skel on sprite:demo runs from a checkout at ${join(sprite, "skel")}`);
+  expect(calls()).not.toContain("file push");
+  expect(calls()).not.toContain("services restart");
+});
+
+test("update leaves skel run from a checkout on the Sprite alone", async () => {
+  const sprite = join(home, "sprites", "demo");
+  mkdirSync(join(sprite, "skel", "bin"), { recursive: true });
+  writeFileSync(join(sprite, "skel", "bin", "skel"), "#!/bin/sh\n", { mode: 0o755 });
+  mkdirSync(join(sprite, "skel", "src"));
+  writeFileSync(join(sprite, "skel", "src", "main.ts"), "");
+  mkdirSync(join(sprite, ".local", "bin"), { recursive: true });
+  symlinkSync(join(sprite, "skel", "bin", "skel"), join(sprite, ".local", "bin", "skel"));
+  const run = await update(laptopSkel());
+  expect(run.code).toBe(0);
+  expect(run.out).toContain(
+    `skel · skel on sprite:demo runs from a checkout at ${join(sprite, "skel")}, so it wasn't replaced.`,
+  );
+  expect(run.out).toContain("sprite-env services restart skel");
+  expect(calls()).not.toContain("file push");
+  expect(calls()).not.toContain("sprite-env services restart");
+});
+
+test("update creates no Sprite", async () => {
+  const run = await update(laptopSkel());
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("No Sprite named demo");
+  expect(calls()).toBe("sprite list --json\n");
+  expect(readdirSync(join(home, "sprites"))).toEqual([]);
 });
