@@ -158,8 +158,6 @@ async function reviewNow(given: {
         body: `the reviewer answered outside the shape: ${z.prettifyError(verdict.error)}`,
       };
     return verdict.data;
-  } catch (error) {
-    return { verdict: "failed", body: error instanceof Error ? error.message : String(error) };
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }
@@ -168,10 +166,14 @@ async function reviewNow(given: {
 let queue: Promise<unknown> = Promise.resolve();
 
 // One review at a time across the daemon: reviews share skel's Codex login, and a renewal by
-// one could leave the others with a token that no longer works. A review never rejects; any
-// failure is a failed review.
+// one could leave the others with a token that no longer works. A review never rejects, so
+// one that throws can't stop the reviews queued after it.
 export function review(given: Parameters<typeof reviewNow>[0]): Promise<Review> {
-  const turn = queue.then(() => reviewNow(given));
+  const turn = queue
+    .then(() => reviewNow(given))
+    .catch((error): Review => {
+      return { verdict: "failed", body: error instanceof Error ? error.message : String(error) };
+    });
   queue = turn;
   return turn;
 }

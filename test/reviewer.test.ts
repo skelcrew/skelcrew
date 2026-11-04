@@ -240,3 +240,21 @@ describe("starting a review", () => {
     expect(existsSync(join(sessions(), "args"))).toBe(false);
   });
 });
+
+test("keeps reviewing after a review that couldn't start", async () => {
+  fakeCodex(approve);
+  const before = process.env.TMPDIR;
+  process.env.TMPDIR = join(home, "missing");
+  try {
+    expect((await start()).verdict).toBe("failed");
+  } finally {
+    if (before === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = before;
+  }
+  const cancel = new AbortController();
+  cancel.abort();
+  expect(await start({ signal: cancel.signal })).toEqual({
+    verdict: "failed",
+    body: "the review was cancelled",
+  });
+});
