@@ -1,4 +1,5 @@
-// The first run: what a plain skel sets up on a new machine, skipping each step already done.
+// The first run: what a plain skel sets up on a new machine, skipping each step already
+// done.
 import {
   existsSync,
   mkdirSync,
@@ -24,6 +25,8 @@ const tools = [
 // Unknown keys pass through, so settings this version doesn't know survive a save.
 const Config = z.looseObject({ harness: z.enum(["claude"]).optional() });
 
+// Checks required programs and tries bubblewrap, stopping setup with installation or
+// sandbox advice on failure.
 function checkTools(): void {
   const bwrap = Bun.which("bwrap");
   const missing = tools.filter((tool) => !Bun.which(tool.command));
@@ -42,10 +45,11 @@ function checkTools(): void {
   }
 }
 
-// Ubuntu's own profile for /usr/bin/bwrap lets bwrap make namespaces while keeping what it
-// runs confined. A profile replacing it would let anything use bwrap to get around the
-// restriction, so ours gets a name of its own and covers only a bwrap elsewhere. AppArmor
-// matches the file a link points to, hence the resolved path.
+// Returns advice for allowing bubblewrap through AppArmor without weakening Ubuntu's
+// existing profile. Ubuntu's own profile for /usr/bin/bwrap lets bwrap make namespaces
+// while keeping what it runs confined. A profile replacing it would let anything use bwrap
+// to get around the restriction, so ours gets a name of its own and covers only a bwrap
+// elsewhere. AppArmor matches the file a link points to, hence the resolved path.
 function apparmorAdvice(bwrap: string): string {
   const intro =
     "On Ubuntu 24.04 and later, AppArmor may block it unless a profile allows it. Other\n" +
@@ -62,7 +66,8 @@ function apparmorAdvice(bwrap: string): string {
   sudo apparmor_parser -r /etc/apparmor.d/skel-bwrap`;
 }
 
-// Your typing at a terminal shows on screen, and a token on screen can end up in a
+// Asks for a secret without echoing terminal input, restoring echo even if the prompt
+// fails. Your typing at a terminal shows on screen, and a token on screen can end up in a
 // scrollback or a screenshot. Piped input has no echo to hide.
 function promptHidden(question: string): string | null {
   if (!process.stdin.isTTY) return prompt(question);
@@ -76,6 +81,7 @@ function promptHidden(question: string): string | null {
   }
 }
 
+// Saves a pasted Claude Code agent token privately, skipping it when one is already saved.
 // Agents log in with a token from claude setup-token, which never renews, so they never
 // race your own Claude Code for a refresh.
 function saveClaudeToken(): void {
@@ -98,8 +104,9 @@ function saveClaudeToken(): void {
   writeFileSync(file, `${token}\n`, { mode: 0o600, flag: "wx" });
 }
 
-// A login of skel's own, apart from yours in ~/.codex, so a renewal on either side never
-// breaks the other.
+// Logs the reviewer into skel's Codex folder if needed, or explains the Claude Code
+// fallback. A login of skel's own, apart from yours in ~/.codex, so a renewal on either
+// side never breaks the other.
 function loginReviewer(): void {
   if (!Bun.which("codex")) {
     console.log(
@@ -107,8 +114,8 @@ function loginReviewer(): void {
     );
     return;
   }
-  // Reviews can change only the login and session files in this folder, so running codex
-  // on it with your rights runs nothing a reviewer left there. codex login status reads only
+  // Reviews can change only the login and session files in this folder, so running codex on
+  // it with your rights runs nothing a reviewer left there. codex login status reads only
   // the saved login: a key in your environment doesn't count.
   const env = { ...process.env, CODEX_HOME: codexHome() };
   if (Bun.spawnSync(["codex", "login", "status"], { env, stdout: "pipe", stderr: "pipe" }).success)
@@ -121,6 +128,8 @@ function loginReviewer(): void {
   if (!login.success) throw new Error("codex login didn't finish, so reviews have no login");
 }
 
+// Starts GitHub login when needed so the daemon can clone repositories and manage issues
+// and PRs.
 function connectGitHub(): void {
   if (Bun.spawnSync(["gh", "auth", "status"], { stdout: "pipe", stderr: "pipe" }).success) return;
   const login = Bun.spawnSync(["gh", "auth", "login"], {
@@ -129,9 +138,13 @@ function connectGitHub(): void {
   if (!login.success) throw new Error("gh auth login didn't finish, so skel can't reach GitHub");
 }
 
+// Returns the settings file path used to remember your harness choice between runs.
 const configFile = () => join(configDir(), "config.yaml");
+// Returns the private agent token file path used by setup and Claude Code sessions.
 const tokenFile = () => join(configDir(), "claude-token");
 
+// Reads and validates settings, returning the YAML document and harness choice while
+// preserving unknown settings.
 function readConfig() {
   const file = configFile();
   const config = parseDocument(existsSync(file) ? readFileSync(file, "utf8") : "");
@@ -142,12 +155,13 @@ function readConfig() {
   return { config, harness: read.data.harness };
 }
 
+// Asks for and saves your harness choice unless one is already configured.
 function pickHarness(): void {
   const { config, harness } = readConfig();
   if (harness) return;
   console.log("Harnesses:\n  1) Claude Code");
-  // Bun's prompt answers null both for Ctrl-D and for a bare Enter, unless it has a default:
-  // then Enter gives the default and only Ctrl-D gives null.
+  // Bun's prompt answers null both for Ctrl-D and for a bare Enter, unless it has a
+  // default: then Enter gives the default and only Ctrl-D gives null.
   const answer = prompt("Pick a harness", "1");
   if (answer === null) throw new Error("no harness was picked, so none is saved");
   if (answer.trim() !== "1") throw new Error("Claude Code is the only harness for now");
@@ -156,19 +170,25 @@ function pickHarness(): void {
   writeFileSync(configFile(), config.toString());
 }
 
+// Returns the systemd user service path, which also marks daemon installation complete.
 const unitFile = () => join(homedir(), ".config", "systemd", "user", "skel.service");
 
+// Runs a service installation command in your terminal and stops setup if it fails.
 function systemd(command: string[]): void {
   const run = Bun.spawnSync(command, { stdio: ["inherit", "inherit", "inherit"] });
   if (!run.success) throw new Error(`${command.join(" ")} failed, so the daemon isn't installed`);
 }
 
-// systemd reads " and \ in a unit as quoting, and % as the start of a name it fills in.
+// Returns a value safe for the daemon's unit file, rejecting quotes and backslashes and
+// escaping percent signs. systemd reads " and \ in a unit as quoting, and % as the start of
+// a name it fills in.
 function unitValue(value: string): string {
   if (/["\\]/.test(value)) throw new Error(`systemd can't be given ${value}, which holds " or \\`);
   return value.replaceAll("%", "%%");
 }
 
+// Returns the daemon's service definition with a lasting tool PATH and sessions that
+// survive daemon stops.
 function unitText(skel: string): string {
   // systemd starts services with a bare PATH, which misses bun, claude and gh where they
   // usually live, so the daemon gets yours. Folders a tool runner or a temporary folder
@@ -195,8 +215,10 @@ WantedBy=default.target
 `;
 }
 
-// Checked on every plain skel, but only by comparing files, so a moved bun, claude or
-// checkout reaches the daemon at its next start without a systemctl call each time.
+// Installs or updates the daemon service, enabling it and lingering on the first
+// installation. Checked on every plain skel, but only by comparing files, so a moved bun,
+// claude or checkout reaches the daemon at its next start without a systemctl call each
+// time.
 function installService(): void {
   const file = unitFile();
   const before = existsSync(file) ? readFileSync(file, "utf8") : null;
@@ -223,22 +245,24 @@ function installService(): void {
     );
     systemd(["loginctl", "enable-linger"]);
   } catch (error) {
-    // The unit file marks the service installed, so the old one comes back, or none, and the
-    // next skel tries again.
+    // The unit file marks the service installed, so the old one comes back, or none, and
+    // the next skel tries again.
     if (before === null) rmSync(file);
     else writeFileSync(file, before);
     throw error;
   }
 }
 
-// The steps run in order and the service is saved last, so the harness, the token and the
-// service mean every step ran, the reviewer's login included. Once set up, skel checks nothing again: a tool or login that goes missing
-// later shows up where it is used, and checking each time would put a call to GitHub before
-// every attach.
+// Reports whether saved settings, token and service show that setup finished, avoiding
+// repeated login checks. Setup saves the service last, after the reviewer login, so these
+// files show every step ran. Missing tools or logins fail where used; checking each attach
+// would require a GitHub call.
 export function setupDone(): boolean {
   return Boolean(readConfig().harness) && existsSync(tokenFile()) && existsSync(unitFile());
 }
 
+// Completes unfinished machine setup and keeps the daemon service current before attaching
+// to the lead.
 export function firstRun(): void {
   const done = setupDone();
   if (!done) {

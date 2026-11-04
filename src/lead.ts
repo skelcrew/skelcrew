@@ -1,4 +1,5 @@
-// The lead: your Claude Code session on this machine, in its own folder, kept alive in tmux.
+// The lead: your Claude Code session on this machine, in its own folder, kept alive in
+// tmux.
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -10,18 +11,20 @@ import { endSession, failedScreen, hasSession, startServer, startSession } from 
 
 const Lead = z.object({ session: z.string() }).nullable();
 
-// Claude Code saves a conversation only once it has a message, so a lead nobody talked to
-// has nothing to resume, and its id can't start a new one either. It saves it in the
-// session's own config folder, under a folder named after the folder it runs in, with every
-// character but letters and digits made a dash. Names over 200 characters get a hash
+// Reports whether the lead has a saved conversation, so skel can choose resume or a new
+// session. Claude Code saves a conversation only once it has a message, so a lead nobody
+// talked to has nothing to resume, and its id can't start a new one either. It saves it in
+// the session's own config folder, under a folder named after the folder it runs in, with
+// every character but letters and digits made a dash. Names over 200 characters get a hash
 // instead, which the lead's folder never comes near.
 function hasTranscript(folder: string, session: string): boolean {
   const project = folder.replace(/[^a-zA-Z0-9]/g, "-");
   return existsSync(join(dataDir(), "claude", "lead", "projects", project, `${session}.jsonl`));
 }
 
-// skel picks the session id rather than Claude Code, so it is stored before the lead starts
-// and the lead can be brought back with --resume after its session is gone.
+// Keeps a running lead or starts one, resuming its saved conversation when available. skel
+// picks the session id rather than Claude Code, so it is stored before the lead starts and
+// the lead can be brought back with --resume after its session is gone.
 export async function startLead(db: Database, tmux: string): Promise<void> {
   if (hasSession(tmux, "lead")) {
     const failed = failedScreen(tmux, "lead");

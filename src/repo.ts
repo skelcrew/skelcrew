@@ -19,19 +19,23 @@ import { refuseCredentials } from "./sandbox.ts";
 const noRepositories =
   "skel has no repositories yet. Run skel in a checkout of one, or ask the lead for one by its GitHub name.";
 
-// Kept with your settings, never in the repository, so a clone can't bring its own yes.
+// Returns the file of trusted repositories, kept with your settings so a clone can't bring
+// its own yes.
 const trustFile = () => join(configDir(), "trusted");
 
+// Returns saved trust entries, or an empty list before you have trusted any repositories.
 function trustLines(): string[] {
   return existsSync(trustFile()) ? readFileSync(trustFile(), "utf8").split("\n") : [];
 }
 
+// Saves your trust in a repository once, so later commands can bring it in without asking.
 function trust(full: string): void {
   if (trustLines().includes(full)) return;
   mkdirSync(configDir(), { recursive: true });
   appendFileSync(trustFile(), `${full}\n`);
 }
 
+// Returns checked repository records in name order for commands and clone refreshes.
 export function repositories(db: Database): Repository[] {
   return db
     .query("SELECT name, owner, repo FROM repositories ORDER BY name")
@@ -39,9 +43,9 @@ export function repositories(db: Database): Repository[] {
     .map((row) => Repository.parse(row));
 }
 
-// Clones it the first time, and after that moves the clone to the latest default branch.
-// The lead reads every clone in skel's folder, so a clone whose config holds a credential is
-// deleted rather than left there for it.
+// Creates or updates skel's repository clone so the lead can read its latest default
+// branch. The lead reads every clone in skel's folder, so a clone whose config holds a
+// credential is deleted rather than left there for it.
 async function refreshClone(owner: string, repo: string): Promise<void> {
   const clone = cloneDir(owner, repo);
   if (existsSync(clone)) {
@@ -60,6 +64,7 @@ async function refreshClone(owner: string, repo: string): Promise<void> {
   renameSync(part, clone);
 }
 
+// Rejects and deletes a clone holding credentials, so the lead cannot read your login.
 function checkOrDelete(clone: string): void {
   try {
     refuseCredentials(clone);
@@ -71,9 +76,10 @@ function checkOrDelete(clone: string): void {
 
 let refreshing: Promise<void> | null = null;
 
-// One refresh at a time: a second asked for meanwhile joins the one running, so two git
-// commands never fight over a clone. A clone that can't be refreshed only gets a line in
-// the log, since an old clone still lets the lead read the repository.
+// Refreshes every registered clone so the lead reads current repositories. A second call
+// joins the refresh running, so two git commands never fight over a clone. A clone that
+// can't be refreshed only gets a line in the log, since an old clone still lets the lead
+// read the repository.
 export function refreshClones(db: Database): Promise<void> {
   refreshing ??= (async () => {
     for (const { owner, repo } of repositories(db)) {
@@ -93,15 +99,16 @@ export function refreshClones(db: Database): Promise<void> {
   return refreshing;
 }
 
-// Asking is only for your own terminal. Anywhere else a repository you can't push to waits
-// for skel trust, since a yes passed on by the lead could come from an injected instruction.
+// Checks trust, refreshes the repository clone and records it for the lead. Asking is only
+// for your own terminal. Anywhere else a repository you can't push to waits for skel trust,
+// since a yes passed on by the lead could come from an injected instruction.
 export async function bringIn(db: Database, github: GitHubRepo, ask: boolean): Promise<void> {
   const { owner, repo, canPush, isFork } = github;
   const full = `${owner}/${repo}`;
   const known = repositories(db).some((r) => r.owner === owner && r.repo === repo);
   // You vouch for what is in a repository you can push to, so asking would only add a step.
-  // A fork you own holds someone else's code, so it is asked about. skel clones from GitHub,
-  // never from your checkout, so what it clones is what your permission covers.
+  // A fork you own holds someone else's code, so it is asked about. skel clones from
+  // GitHub, never from your checkout, so what it clones is what your permission covers.
   if (!known && !(canPush && !isFork) && !trustLines().includes(full)) {
     if (!ask) throw new Error(`${full} waits until you run skel trust ${full} in your terminal`);
     console.log(`Agents will run ${full}'s setup and test commands, and follow its AGENTS.md`);
@@ -120,12 +127,14 @@ export async function bringIn(db: Database, github: GitHubRepo, ask: boolean): P
   nameRepositories(db);
 }
 
+// Brings in the repository you attached from, reporting failures without blocking the lead.
 // Plain skel must stay fast, so a repository skel has costs no call to GitHub: the daemon
 // keeps its clone current. A folder that isn't on GitHub, such as your dotfiles, gets no
 // complaint.
 export async function bringInFrom(from: string | undefined): Promise<void> {
   const db = openDb();
   const named = from === undefined ? originHere() : (onGitHub(from) ?? from);
+  // Matches the attached repository despite differences in GitHub name capitalization.
   const known = (r: Repository) => `${r.owner}/${r.repo}`.toLowerCase() === named?.toLowerCase();
   try {
     if (named && !repositories(db).some(known)) await bringIn(db, githubRepo(named), true);
@@ -135,7 +144,7 @@ export async function bringInFrom(from: string | undefined): Promise<void> {
   if (repositories(db).length === 0) console.log(noRepositories);
 }
 
-// owner/repo from a GitHub remote's URL, in any of the forms git and gh write.
+// Returns owner/repo from a GitHub remote URL, or null so other hosts are quietly skipped.
 function onGitHub(url: string): string | null {
   const found = url.match(
     /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/i,
@@ -143,8 +152,10 @@ function onGitHub(url: string): string | null {
   return found?.[1] ?? null;
 }
 
-// Reading origin is the only git skel runs in your checkout: the folder only names the
-// repository. It is read as written, before any insteadOf in your git config rewrites it.
+// Returns this checkout's GitHub name, or null when its origin cannot name a GitHub
+// repository. Reading origin is the only git skel runs in your checkout: the folder only
+// names the repository. It is read as written, before any insteadOf in your git config
+// rewrites it.
 function originHere(): string | null {
   const origin = Bun.spawnSync(["git", "config", "--get", "remote.origin.url"], {
     stdout: "pipe",
@@ -153,6 +164,7 @@ function originHere(): string | null {
   return origin.success ? onGitHub(origin.stdout.toString().trim()) : null;
 }
 
+// Records your trust from outside the sandbox and brings in the repository for the lead.
 export async function trustRepo(given: string): Promise<void> {
   if (process.env.SKEL_SANDBOX === "1")
     throw new Error("only you can trust a repository, from your own terminal");
@@ -165,6 +177,8 @@ export async function trustRepo(given: string): Promise<void> {
   await bringIn(db, github, false);
 }
 
+// Prints registered repositories and clone paths, or tells you how to bring in the first
+// one.
 export function listRepos(): void {
   const all = repositories(openDb());
   if (all.length === 0) {
@@ -179,6 +193,8 @@ export function listRepos(): void {
     );
 }
 
+// Deletes skel's clone, registration and saved trust, then updates names that no longer
+// clash.
 export function removeRepo(name: string): void {
   const db = openDb();
   const found = repositories(db).find((r) => r.name === name);
