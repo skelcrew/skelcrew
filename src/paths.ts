@@ -14,3 +14,6 @@ function runtimeDir(): string {
 export const cliSocket = () => join(runtimeDir(), "skel.sock");
 // Alone in its folder, since the sandbox mounts the whole folder.
 export const leadSocket = () => join(runtimeDir(), "skel", "lead", "skel.sock");
+// skel's own clone of each repository, which the lead sees whole.
+export const reposDir = () => join(dataDir(), "repos");
+export const cloneDir = (owner: string, repo: string) => join(reposDir(), owner, repo);

@@ -1,257 +1,193 @@
-// The repositories skel works in: adding one with its setup and test commands, listing them
-// and removing one.
+// The repositories skel works on, each from a clone of its own: bringing one in, trusting
+// one, keeping the clones current, listing the repositories and removing one.
 import type { Database } from "bun:sqlite";
 import {
   appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
-  realpathSync,
+  renameSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
-import { isMap, parseDocument } from "yaml";
-import { z } from "zod";
-import { openDb, Repository } from "./db.ts";
-import { githubRepoAt } from "./github.ts";
-import { configDir } from "./paths.ts";
+import { dirname, join } from "node:path";
+import { nameRepositories, openDb, Repository } from "./db.ts";
+import { cloneRepo, type GitHubRepo, githubRepo, updateClone } from "./github.ts";
+import { cloneDir, configDir, dataDir } from "./paths.ts";
+import { refuseCredentials } from "./sandbox.ts";
+
+const noRepositories =
+  "skel has no repositories yet. Run skel in a checkout of one, or ask the lead for one by its GitHub name.";
 
 // Kept with your settings, never in the repository, so a clone can't bring its own yes.
-// Each yes names the GitHub repository too, so a folder whose origin is pointed elsewhere
-// is asked about again.
 const trustFile = () => join(configDir(), "trusted");
-// The folders where you said no to adding the repository, so plain skel doesn't ask again.
-const notAddedFile = () => join(configDir(), "not-added");
 
-function listed(file: string, line: string): boolean {
-  if (!existsSync(file)) return false;
-  return readFileSync(file, "utf8").split("\n").includes(line);
+function trustLines(): string[] {
+  return existsSync(trustFile()) ? readFileSync(trustFile(), "utf8").split("\n") : [];
 }
 
-function addLine(file: string, line: string): void {
+function trust(full: string): void {
+  if (trustLines().includes(full)) return;
   mkdirSync(configDir(), { recursive: true });
-  appendFileSync(file, `${line}\n`);
+  appendFileSync(trustFile(), `${full}\n`);
 }
 
-function excludeSkelFolder(path: string): void {
-  const run = Bun.spawnSync(
-    ["git", "rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
-    { cwd: path, stdout: "pipe", stderr: "pipe" },
-  );
-  if (!run.success) throw new Error(`git couldn't find ${path}'s exclude file`);
-  const exclude = run.stdout.toString().trim();
-  const lines = existsSync(exclude) ? readFileSync(exclude, "utf8") : "";
-  if (lines.split("\n").includes(".skel/")) return;
-  mkdirSync(dirname(exclude), { recursive: true });
-  const gap = lines === "" || lines.endsWith("\n") ? "" : "\n";
-  appendFileSync(exclude, `${gap}.skel/\n`);
-}
-
-function repositories(db: Database): Repository[] {
+export function repositories(db: Database): Repository[] {
   return db
-    .query("SELECT name, path, owner, repo FROM repositories ORDER BY name")
+    .query("SELECT name, owner, repo FROM repositories ORDER BY name")
     .all()
     .map((row) => Repository.parse(row));
 }
 
-const SkelYaml = z.looseObject({
-  setup: z.array(z.string()).optional(),
-  test: z.array(z.string()).optional(),
-});
-
-const PackageJson = z.looseObject({ scripts: z.record(z.string(), z.string()).optional() });
-
-function readSkelYaml(path: string) {
-  const file = join(path, "skel.yaml");
-  const yaml = parseDocument(existsSync(file) ? readFileSync(file, "utf8") : "");
-  const [broken] = yaml.errors;
-  if (broken) throw new Error(`${file} isn't valid YAML: ${broken.message}`);
-  const read = SkelYaml.safeParse(yaml.toJS() ?? {});
-  if (!read.success) throw new Error(`${file} isn't valid: ${z.prettifyError(read.error)}`);
-  return { file, yaml, setup: read.data.setup, test: read.data.test };
+// Clones it the first time, and after that moves the clone to the latest default branch.
+// The lead reads every clone in skel's folder, so a clone whose config holds a credential is
+// deleted rather than left there for it.
+async function refreshClone(owner: string, repo: string): Promise<void> {
+  const clone = cloneDir(owner, repo);
+  if (existsSync(clone)) {
+    await updateClone(clone);
+    checkOrDelete(clone);
+    return;
+  }
+  // Cloned outside the folder the lead sees, checked, and moved in once whole, so neither a
+  // clone stopped halfway nor one holding a credential ever shows up there.
+  const part = join(dataDir(), "cloning", owner, repo);
+  rmSync(part, { recursive: true, force: true });
+  mkdirSync(dirname(part), { recursive: true });
+  await cloneRepo(owner, repo, part);
+  checkOrDelete(part);
+  mkdirSync(dirname(clone), { recursive: true });
+  renameSync(part, clone);
 }
 
-function guessCommands(path: string): { setup: string[]; test: string[] } {
-  if (existsSync(join(path, "bun.lock")) || existsSync(join(path, "bun.lockb")))
-    return { setup: ["bun install"], test: ["bun test"] };
-  if (!existsSync(join(path, "package-lock.json"))) return { setup: [], test: [] };
-  const packageFile = join(path, "package.json");
-  if (!existsSync(packageFile)) return { setup: ["npm ci"], test: [] };
-  let found: unknown;
+function checkOrDelete(clone: string): void {
   try {
-    found = JSON.parse(readFileSync(packageFile, "utf8"));
+    refuseCredentials(clone);
   } catch (error) {
-    throw new Error(`${packageFile} isn't valid JSON: ${String(error)}`);
+    rmSync(clone, { recursive: true, force: true });
+    throw error;
   }
-  const read = PackageJson.safeParse(found);
-  if (!read.success) throw new Error(`${packageFile} isn't valid: ${z.prettifyError(read.error)}`);
-  return { setup: ["npm ci"], test: read.data.scripts?.test ? ["npm test"] : [] };
 }
 
-// Bun's prompt answers null both for Ctrl-D and for a bare Enter, unless it has a default:
-// then Enter gives the default and only Ctrl-D gives null.
-function askCommands(question: string, given: string[], short: string): string[] {
-  const shown = given.join(" && ");
-  const answer = prompt(question, shown);
-  if (answer === null) throw new Error(`${short} wasn't added`);
-  const typed = answer.trim();
-  if (typed === "" || typed === shown) return given;
-  return typed === "-" ? [] : [typed];
+let refreshing: Promise<void> | null = null;
+
+// One refresh at a time: a second asked for meanwhile joins the one running, so two git
+// commands never fight over a clone. A clone that can't be refreshed only gets a line in
+// the log, since an old clone still lets the lead read the repository.
+export function refreshClones(db: Database): Promise<void> {
+  refreshing ??= (async () => {
+    for (const { owner, repo } of repositories(db)) {
+      try {
+        await refreshClone(owner, repo);
+        // skel repo rm can run while a clone is still being made, and the clone would then
+        // land after the removal, where the lead could still read it.
+        if (!repositories(db).some((r) => r.owner === owner && r.repo === repo))
+          rmSync(cloneDir(owner, repo), { recursive: true, force: true });
+      } catch (error) {
+        console.log(error instanceof Error ? error.message : String(error));
+      }
+    }
+  })().finally(() => {
+    refreshing = null;
+  });
+  return refreshing;
 }
 
-export function initRepo(given: string, name?: string): void {
-  const full = resolve(given);
-  if (!existsSync(full) && /^[\w-][\w.-]*\/[\w.-]+$/.test(given))
-    throw new Error(
-      `cloning ${given} comes later. Clone it yourself, then run skel init in its folder`,
-    );
-  if (!existsSync(full)) throw new Error(`there is no folder at ${full}`);
-  const path = realpathSync(full);
-  if (!existsSync(join(path, ".git"))) throw new Error(`${path} isn't the top of a git repository`);
-  // A linked worktree's or a submodule's .git is a file pointing elsewhere, and the sandbox
-  // needs the repository's own .git folder to give agents their own worktrees.
-  if (!statSync(join(path, ".git")).isDirectory())
-    throw new Error(
-      `${path} is a linked worktree or a submodule. Run skel init in the main clone instead`,
-    );
-  const { owner, repo, canPush, isFork } = githubRepoAt(path);
-  const short = name ?? basename(path);
-  // Threads are named like app#12, so a name must survive being typed in that form.
-  if (!/^[a-zA-Z0-9][\w.-]*$/.test(short))
-    throw new Error(
-      `"${short}" can't be a short name: start with a letter or digit, then use letters, digits, ".", "_" or "-"`,
-    );
-  const db = openDb();
-  for (const known of repositories(db)) {
-    if (known.name === short)
-      throw new Error(`${short} is already ${known.path}. Choose another with --name`);
-    if (known.path === path) throw new Error(`${path} is already added, as ${known.name}`);
-  }
-  const trustEntry = `${path} ${owner}/${repo}`;
-  let newTrust = false;
+// Asking is only for your own terminal. Anywhere else a repository you can't push to waits
+// for skel trust, since a yes passed on by the lead could come from an injected instruction.
+export async function bringIn(db: Database, github: GitHubRepo, ask: boolean): Promise<void> {
+  const { owner, repo, canPush, isFork } = github;
+  const full = `${owner}/${repo}`;
+  const known = repositories(db).some((r) => r.owner === owner && r.repo === repo);
   // You vouch for what is in a repository you can push to, so asking would only add a step.
-  // A fork you own holds someone else's code, so it is asked about. Push access is judged
-  // from origin, which anyone who can edit .git/config controls, so it is worked out again
-  // on each init and never saved.
-  if (canPush && !isFork) console.log(`Trusting ${short}, since you can push to ${owner}/${repo}.`);
-  else if (!listed(trustFile(), trustEntry)) {
-    console.log(`Agents will run ${short}'s setup and test commands, and follow its AGENTS.md`);
+  // A fork you own holds someone else's code, so it is asked about. skel clones from GitHub,
+  // never from your checkout, so what it clones is what your permission covers.
+  if (!known && !(canPush && !isFork) && !trustLines().includes(full)) {
+    if (!ask) throw new Error(`${full} waits until you run skel trust ${full} in your terminal`);
+    console.log(`Agents will run ${full}'s setup and test commands, and follow its AGENTS.md`);
     console.log("and settings as instructions.");
-    const answer = prompt(`Do you trust ${path}? [y/N]`);
-    if (answer?.trim().toLowerCase() !== "y")
-      throw new Error(`${short} wasn't added, since you don't trust it`);
-    newTrust = true;
+    const answer = prompt(`Do you trust ${full}? [y/N]`);
+    if (!["y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
+      console.log(`skel didn't clone ${full}, since you don't trust it.`);
+      return;
+    }
+    trust(full);
   }
-  const saved = readSkelYaml(path);
-  const guess = guessCommands(path);
-  console.log("Enter keeps the suggestion, - means none, and a typed line is one command.");
-  const setup = askCommands("Setup command", saved.setup ?? guess.setup, short);
-  const test = askCommands("Test command", saved.test ?? guess.test, short);
-  let changed = false;
-  for (const [key, commands, before] of [
-    ["setup", setup, saved.setup],
-    ["test", test, saved.test],
-  ] satisfies [string, string[], string[] | undefined][]) {
-    const same =
-      before === undefined ? commands.length === 0 : before.join("\n") === commands.join("\n");
-    // A key left as it was keeps its comments and style.
-    if (same) continue;
-    if (commands.length > 0) saved.yaml.set(key, saved.yaml.createNode(commands, { flow: true }));
-    else saved.yaml.delete(key);
-    changed = true;
-  }
-  const empty = isMap(saved.yaml.contents) && saved.yaml.contents.items.length === 0;
-  let text = "";
-  // Replacing a command that carries an anchor leaves its aliases pointing at nothing, and
-  // the yaml library can't write that. Finding out here means nothing is saved yet.
-  try {
-    if (changed && !empty) text = saved.yaml.toString({ flowCollectionPadding: false });
-  } catch (error) {
-    throw new Error(
-      `can't write the commands to ${saved.file} (${String(error)}). Edit its commands by hand, then run skel init again`,
-    );
-  }
-  // Every question is answered and skel.yaml is ready before anything is saved, so stopping
-  // at any point leaves nothing half added.
-  if (newTrust) addLine(trustFile(), trustEntry);
-  if (changed && empty) {
-    rmSync(saved.file, { force: true });
-    console.log(`Removed ${saved.file}, as nothing is left in it. Commit that.`);
-  } else if (changed) {
-    writeFileSync(saved.file, text);
-    console.log(`Wrote the commands to ${saved.file}. Commit it, so every clone has them.`);
-  }
-  excludeSkelFolder(path);
-  db.query("INSERT INTO repositories (name, path, owner, repo) VALUES (?, ?, ?, ?)").run(
-    short,
-    path,
-    owner,
-    repo,
-  );
-  console.log(`Added ${short}: ${owner}/${repo} at ${path}`);
+  if (!existsSync(cloneDir(owner, repo))) console.log(`Cloning ${full} for skel.`);
+  await refreshClone(owner, repo);
+  if (known) return;
+  db.run("INSERT INTO repositories (owner, repo, name) VALUES (?, ?, ?)", [owner, repo, full]);
+  nameRepositories(db);
 }
 
-// Plain skel offers to add the repository it runs in. Returns whether it added it, since
-// the lead only sees the repositories added when it started.
-export function offerRepo(): boolean {
+// Plain skel must stay fast, so a repository skel has costs no call to GitHub: the daemon
+// keeps its clone current. A folder that isn't on GitHub, such as your dotfiles, gets no
+// complaint.
+export async function bringInFrom(from: string | undefined): Promise<void> {
   const db = openDb();
-  const top = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"], {
+  const named = from === undefined ? originHere() : (onGitHub(from) ?? from);
+  const known = (r: Repository) => `${r.owner}/${r.repo}`.toLowerCase() === named?.toLowerCase();
+  try {
+    if (named && !repositories(db).some(known)) await bringIn(db, githubRepo(named), true);
+  } catch (error) {
+    console.error(`skel: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (repositories(db).length === 0) console.log(noRepositories);
+}
+
+// owner/repo from a GitHub remote's URL, in any of the forms git and gh write.
+function onGitHub(url: string): string | null {
+  const found = url.match(
+    /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/i,
+  );
+  return found?.[1] ?? null;
+}
+
+// Reading origin is the only git skel runs in your checkout: the folder only names the
+// repository. It is read as written, before any insteadOf in your git config rewrites it.
+function originHere(): string | null {
+  const origin = Bun.spawnSync(["git", "config", "--get", "remote.origin.url"], {
     stdout: "pipe",
     stderr: "pipe",
   });
-  if (!top.success) {
-    if (!db.query("SELECT 1 FROM repositories LIMIT 1").get())
-      console.log(
-        "No repository is added yet. Add one by running skel or skel init in its folder.",
-      );
-    return false;
-  }
-  const path = realpathSync(top.stdout.toString().trim());
-  // A linked worktree is most often one of an added repository's, and skel init refuses it.
-  // A folder whose git directory lives elsewhere, through GIT_DIR, has no .git at all.
-  if (!statSync(join(path, ".git"), { throwIfNoEntry: false })?.isDirectory()) return false;
-  if (repositories(db).some((known) => known.path === path)) return false;
-  if (listed(notAddedFile(), path)) return false;
-  let github: { owner: string; repo: string };
-  try {
-    github = githubRepoAt(path);
-  } catch {
-    // Not on GitHub, so skel can't add it. A folder such as your dotfiles shouldn't get a
-    // complaint on every skel.
-    return false;
-  }
-  const { owner, repo } = github;
-  try {
-    // Bun shows a default in brackets after the question, so the hint is the default, and
-    // Enter answers with it. Only Ctrl-D gives null, which adds nothing and asks again later.
-    const answer = prompt(`Add ${owner}/${repo} to skel?`, "Y/n");
-    if (answer === null) return false;
-    if (!["y/n", "y", "yes"].includes(answer.trim().toLowerCase())) {
-      addLine(notAddedFile(), path);
-      return false;
-    }
-    initRepo(path);
-    return true;
-  } catch (error) {
-    console.error(`skel: ${error instanceof Error ? error.message : String(error)}`);
-    return false;
-  }
+  return origin.success ? onGitHub(origin.stdout.toString().trim()) : null;
+}
+
+export async function trustRepo(given: string): Promise<void> {
+  if (process.env.SKEL_SANDBOX === "1")
+    throw new Error("only you can trust a repository, from your own terminal");
+  const db = openDb();
+  const known = repositories(db).find((r) => r.name === given);
+  if (!known && !given.includes("/"))
+    throw new Error(`there is no repository named ${given}. Name a new one as owner/repo`);
+  const github = githubRepo(known ? `${known.owner}/${known.repo}` : given);
+  trust(`${github.owner}/${github.repo}`);
+  await bringIn(db, github, false);
 }
 
 export function listRepos(): void {
   const all = repositories(openDb());
   if (all.length === 0) {
-    console.log("No repositories yet. Add one by running skel init in its folder.");
+    console.log(noRepositories);
     return;
   }
   const width = Math.max(...all.map((r) => r.name.length));
-  for (const r of all) console.log(`${r.name.padEnd(width)}  ${r.owner}/${r.repo}  ${r.path}`);
+  const github = Math.max(...all.map((r) => r.owner.length + r.repo.length + 1));
+  for (const r of all)
+    console.log(
+      `${r.name.padEnd(width)}  ${`${r.owner}/${r.repo}`.padEnd(github)}  ${cloneDir(r.owner, r.repo)}`,
+    );
 }
 
 export function removeRepo(name: string): void {
-  const removed = openDb().query("DELETE FROM repositories WHERE name = ?").run(name);
-  if (removed.changes === 0) throw new Error(`there is no repository named ${name}`);
-  console.log(`Removed ${name}`);
+  const db = openDb();
+  const found = repositories(db).find((r) => r.name === name);
+  if (!found) throw new Error(`there is no repository named ${name}`);
+  const full = `${found.owner}/${found.repo}`;
+  rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });
+  db.run("DELETE FROM repositories WHERE owner = ? AND repo = ?", [found.owner, found.repo]);
+  nameRepositories(db);
+  const kept = trustLines().filter((line) => line !== "" && line !== full);
+  if (existsSync(trustFile())) writeFileSync(trustFile(), kept.map((line) => `${line}\n`).join(""));
+  console.log(`Removed ${name} and skel's clone of it.`);
 }

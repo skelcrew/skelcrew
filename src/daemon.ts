@@ -8,13 +8,11 @@ import { z } from "zod";
 import { openDb } from "./db.ts";
 import { startLead } from "./lead.ts";
 import { cliSocket, leadSocket } from "./paths.ts";
+import { refreshClones } from "./repo.ts";
 import { setupDone } from "./setup.ts";
 import { attach } from "./tmux.ts";
 
-const Request = z.object({
-  command: z.enum(["status", "lead"]),
-  restart: z.boolean().optional(),
-});
+const Request = z.object({ command: z.enum(["status", "lead"]) });
 const LeadReply = z.union([z.object({ lead: z.literal(true) }), z.object({ error: z.string() })]);
 
 function parseJson(text: string): unknown {
@@ -75,8 +73,8 @@ export async function serve(tmux: string): Promise<void> {
   const db = openDb();
   // One start at a time, so two requests can't both find the lead gone and start it twice.
   let starting: Promise<void> = Promise.resolve();
-  const lead = (restart: boolean) => {
-    starting = starting.catch(() => {}).then(() => startLead(db, tmux, restart));
+  const lead = () => {
+    starting = starting.catch(() => {}).then(() => startLead(db, tmux));
     return starting;
   };
   const answer = (connection: Socket) => {
@@ -90,8 +88,12 @@ export async function serve(tmux: string): Promise<void> {
       if (!asked.success) reply({ error: "skel's daemon doesn't know that request" });
       else if (asked.data.command === "status") reply({ running: true, pid: process.pid });
       else
-        lead(asked.data.restart ?? false).then(
-          () => reply({ lead: true }),
+        lead().then(
+          () => {
+            reply({ lead: true });
+            // After the reply, so attaching never waits on GitHub.
+            refreshClones(db).catch((error) => console.log(String(error)));
+          },
           (error) => reply({ error: error instanceof Error ? error.message : String(error) }),
         );
     });
@@ -116,14 +118,13 @@ export async function serve(tmux: string): Promise<void> {
       process.exit(0);
     });
   console.log(`Listening on ${path}.`);
-  await lead(false).catch((error) => console.log(error instanceof Error ? error.message : error));
+  await lead().catch((error) => console.log(error instanceof Error ? error.message : error));
 }
 
-// Returns when you detach with Ctrl-]. Restarting lets a running lead see a repository
-// added since it started.
-export async function attachToLead(tmux: string, restart: boolean): Promise<void> {
+// Returns when you detach with Ctrl-].
+export async function attachToLead(tmux: string): Promise<void> {
   // Asking for the lead brings it back if it ended while the daemon kept running.
-  let reply = await ask({ command: "lead", restart }, 15_000);
+  let reply = await ask({ command: "lead" }, 15_000);
   if (reply === null) {
     const start = Bun.spawnSync(["systemctl", "--user", "start", "skel"], {
       stdio: ["inherit", "inherit", "inherit"],
@@ -136,7 +137,7 @@ export async function attachToLead(tmux: string, restart: boolean): Promise<void
           "skel's daemon didn't answer within 10 seconds: journalctl --user -u skel shows why",
         );
       await Bun.sleep(100);
-      reply = await ask({ command: "lead", restart }, 15_000);
+      reply = await ask({ command: "lead" }, 15_000);
     }
   }
   const lead = LeadReply.safeParse(reply);

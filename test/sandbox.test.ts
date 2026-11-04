@@ -52,9 +52,9 @@ function git(cwd: string, ...args: string[]) {
   if (!done.success) throw new Error(done.stderr.toString());
 }
 
-// A repository the lead looks after, with one file in it.
+// skel's clone of a repository, with one file in it.
 function repository() {
-  const repo = join(home, "code", "app");
+  const repo = join(home, ".local", "share", "skel", "repos", "simon", "app");
   mkdirSync(repo, { recursive: true });
   writeFileSync(join(repo, "README"), "app\n");
   git(repo, "init", "-q");
@@ -84,11 +84,10 @@ const outside = () => ({
 });
 
 // Runs a shell script as the lead's Claude Code, inside its sandbox.
-function asLead(repositories: string[], script: string) {
+function asLead(script: string) {
   saveToken();
   fakeClaude([script]);
   const { argv, env } = agentCommand({
-    repositories,
     name: "lead",
     socket: socketPath,
     model: "opus",
@@ -103,7 +102,6 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
     const repo = repository();
     const lead = join(home, ".local", "share", "skel", "lead");
     const done = await asLead(
-      [repo],
       `pwd; echo hi > note && cat note; cat ${repo}/README; echo x > ${repo}/new; echo x > /usr/new; echo x > /tmp/ok && echo tmp-ok`,
     );
     expect(done.out).toBe(`${lead}\nhi\napp\ntmp-ok\n`);
@@ -119,14 +117,14 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
     mkdirSync(copy);
     for (const part of ["bin", "src", "package.json"])
       cpSync(join(import.meta.dir, "..", part), join(copy, part), { recursive: true });
-    const repo = repository();
+    repository();
     saveToken();
     fakeClaude(["echo started"]);
     const script = join(home, "start.ts");
     writeFileSync(
       script,
       `import { agentCommand } from ${JSON.stringify(join(copy, "src", "sandbox.ts"))};
-console.log(JSON.stringify(agentCommand({ repositories: [${JSON.stringify(repo)}], name: "lead",
+console.log(JSON.stringify(agentCommand({ name: "lead",
   socket: ${JSON.stringify(socketPath)}, model: "opus", env: ${JSON.stringify(outside())} })));`,
     );
     const made = await run([process.execPath, script]);
@@ -137,26 +135,11 @@ console.log(JSON.stringify(agentCommand({ repositories: [${JSON.stringify(repo)}
     expect(done.out).toBe("started\n");
   });
 
-  test("hides threads' folders", async () => {
-    const repo = repository();
-    mkdirSync(join(repo, ".skel", "threads", "12"), { recursive: true });
-    writeFileSync(join(repo, ".skel", "threads", "12", "work"), "draft\n");
-    const done = await asLead([repo], `ls -A ${repo}/.skel; cat ${repo}/README`);
-    expect(done.out).toBe("app\n");
-  });
-
-  test("makes the threads' folder before the lead starts, so later threads stay hidden", async () => {
-    const repo = repository();
-    await asLead([repo], "true");
-    expect(existsSync(join(repo, ".skel"))).toBe(true);
-  });
-
   test("hides the home folder's secrets and the other sockets in /run", async () => {
-    const repo = repository();
+    repository();
     mkdirSync(join(home, ".config", "gh"), { recursive: true });
     writeFileSync(join(home, ".config", "gh", "hosts.yml"), "oauth_token: secret\n");
     const done = await asLead(
-      [repo],
       `test -e ${home}/.config/gh/hosts.yml || echo hidden; ls /run; ls /run/systemd 2>/dev/null; ls /run/skel; test -S "$SKEL_SOCKET" && echo socket; echo $SKEL_SANDBOX`,
     );
     // Only the DNS resolver comes back into /run, on machines that have one there.
@@ -176,7 +159,7 @@ console.log(JSON.stringify(agentCommand({ repositories: [${JSON.stringify(repo)}
   }
 
   test("Claude Code starts in its own config folder, trusted, with skel's token", async () => {
-    const repo = repository();
+    repository();
     mkdirSync(join(home, ".claude", "projects"), { recursive: true });
     writeFileSync(join(home, ".claude", "settings.json"), "{}\n");
     writeFileSync(join(home, ".claude.json"), '{"projects":{}}\n');
@@ -196,7 +179,6 @@ console.log(JSON.stringify(agentCommand({ repositories: [${JSON.stringify(repo)}
       "mkdir -p ~/.claude && echo x > ~/.claude/settings.json",
     ]);
     const { argv, env } = agentCommand({
-      repositories: [repo],
       name: "app-12",
       socket: socketPath,
       model: "opus",
@@ -240,18 +222,16 @@ console.log(JSON.stringify(agentCommand({ repositories: [${JSON.stringify(repo)}
   });
 
   test("each session gets a config folder of its own", async () => {
-    const repo = repository();
+    repository();
     saveToken();
     fakeClaude(["ls -A ~/.local/share/skel/claude"]);
     const first = agentCommand({
-      repositories: [repo],
       name: "app-12",
       socket: socketPath,
       model: "opus",
       env: outside(),
     });
     const second = agentCommand({
-      repositories: [repo],
       name: "app-12-review-1",
       socket: socketPath,
       model: "opus",
@@ -265,11 +245,10 @@ console.log(JSON.stringify(agentCommand({ repositories: [${JSON.stringify(repo)}
 // These never start bubblewrap, so they run inside skel's sandbox too.
 describe("starting Claude Code", () => {
   test("won't write a session's settings through a link the agent left", () => {
-    const repo = repository();
+    repository();
     saveToken();
     const start = () =>
       agentCommand({
-        repositories: [repo],
         name: "app-12",
         socket: socketPath,
         model: "opus",
@@ -295,13 +274,13 @@ describe("starting Claude Code", () => {
   });
 
   test("refuses a session settings file that isn't a plain file, without hanging", async () => {
-    const repo = repository();
+    repository();
     saveToken();
     const config = join(home, ".local", "share", "skel", "claude", "app-12");
     mkdirSync(config, { recursive: true });
     Bun.spawnSync(["mkfifo", join(config, ".claude.json")]);
     const script = `import { agentCommand } from ${JSON.stringify(join(import.meta.dir, "..", "src", "sandbox.ts"))};
-agentCommand({ repositories: [${JSON.stringify(repo)}], name: "app-12", socket: "x", model: "opus" });`;
+agentCommand({ name: "app-12", socket: "x", model: "opus" });`;
     const proc = Bun.spawn(["bun", "-e", script], {
       env: { ...process.env, ...outside() },
       stdout: "pipe",
@@ -316,7 +295,6 @@ agentCommand({ repositories: [${JSON.stringify(repo)}], name: "app-12", socket: 
     mkdirSync(join(config, ".claude.json"));
     expect(() =>
       agentCommand({
-        repositories: [repo],
         name: "app-12",
         socket: socketPath,
         model: "opus",
@@ -326,12 +304,11 @@ agentCommand({ repositories: [${JSON.stringify(repo)}], name: "app-12", socket: 
   });
 
   test("starts a new session under the ID it is given, which must be a UUID", () => {
-    const repo = repository();
+    repository();
     saveToken();
     const id = "6f1c2a7e-0b4d-4c3e-9a51-2d8e7f6a9b10";
     const start = (more: { sessionId?: string; resume?: string }) =>
       agentCommand({
-        repositories: [repo],
         name: "app-12",
         socket: socketPath,
         model: "opus",
@@ -352,7 +329,6 @@ agentCommand({ repositories: [${JSON.stringify(repo)}], name: "app-12", socket: 
     saveToken();
     const start = () =>
       agentCommand({
-        repositories: [repo],
         name: "lead",
         socket: socketPath,
         model: "opus",
@@ -388,7 +364,6 @@ agentCommand({ repositories: [${JSON.stringify(repo)}], name: "app-12", socket: 
     );
     expect(() =>
       agentCommand({
-        repositories: [repo],
         name: "lead",
         socket: socketPath,
         model: "opus",
@@ -398,10 +373,9 @@ agentCommand({ repositories: [${JSON.stringify(repo)}], name: "app-12", socket: 
   });
 
   test("says to run skel first when there is no token", () => {
-    const repo = repository();
+    repository();
     expect(() =>
       agentCommand({
-        repositories: [repo],
         name: "app-12",
         socket: socketPath,
         model: "opus",

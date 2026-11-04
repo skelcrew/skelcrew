@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -15,6 +16,7 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 
+const main = join(import.meta.dir, "..", "src", "main.ts");
 const daemon = join(import.meta.dir, "..", "src", "daemon.ts");
 let home = "";
 let socket = "";
@@ -155,21 +157,50 @@ function storedSession(): string {
   }
 }
 
-// Adds a repository as skel init would leave it, with one file in it.
+// git in the test reaches GitHub through this folder: its ~/.gitconfig sends every
+// https://github.com/ URL here.
+const github = () => join(home, "github");
+
+function git(cwd: string, ...args: string[]): void {
+  const run = Bun.spawnSync(
+    ["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t", ...args],
+    {
+      stderr: "pipe",
+    },
+  );
+  if (!run.success) throw new Error(run.stderr.toString());
+}
+
+// Puts a repository with one file on the fake GitHub, and returns a checkout to push from.
+function onGitHub(name: string): string {
+  const work = join(home, "work", name);
+  mkdirSync(work, { recursive: true });
+  writeFileSync(join(work, "README"), `${name}\n`);
+  git(work, "init", "-q", "-b", "main");
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "start");
+  git(home, "clone", "-q", "--bare", work, join(github(), "simon", `${name}.git`));
+  git(work, "remote", "add", "origin", join(github(), "simon", `${name}.git`));
+  writeFileSync(
+    join(home, ".gitconfig"),
+    `[url "file://${github()}/"]\n\tinsteadOf = https://github.com/\n`,
+  );
+  return work;
+}
+
+// A repository skel knows of, as one brought in before leaves it. Returns where skel keeps
+// its clone.
 function addRepository(name: string): string {
-  const repo = join(home, "code", name);
-  mkdirSync(repo, { recursive: true });
-  writeFileSync(join(repo, "README"), `${name}\n`);
-  Bun.spawnSync(["git", "-C", repo, "init", "-q"]);
+  onGitHub(name);
   const db = join(import.meta.dir, "..", "src", "db.ts");
   const script = `import { openDb } from ${JSON.stringify(db)};
-openDb().run("INSERT INTO repositories (name, path, owner, repo) VALUES (?, ?, 'simon', ?)", [${JSON.stringify(name)}, ${JSON.stringify(repo)}, ${JSON.stringify(name)}]);`;
+openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?)", [${JSON.stringify(name)}, ${JSON.stringify(name)}]);`;
   const added = Bun.spawnSync([process.execPath, "-e", script], {
     env: { HOME: home },
     stderr: "pipe",
   });
   if (!added.success) throw new Error(added.stderr.toString());
-  return repo;
+  return join(home, ".local", "share", "skel", "repos", "simon", name);
 }
 
 // Claude Code saves a conversation once it has a message, which a fake can't send. It keeps
@@ -324,11 +355,11 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with the lead", () => {
     await untilAnswers();
   });
 
-  test("starts the lead in its sandbox, with opus, seeing every added repository", async () => {
+  test("starts the lead in its sandbox, with opus, seeing skel's clone of every repository", async () => {
     setUp();
     const repo = addRepository("app");
     fakeClaude(
-      `ls ${repo} > seen; test -S "$SKEL_SOCKET" && echo socket >> seen; test -e ${home}/.config/skel/claude-token || echo token-hidden >> seen; exec sleep 300`,
+      `while ! test -e ${repo}/README; do sleep 0.1; done; ls ${repo} > seen; test -S "$SKEL_SOCKET" && echo socket >> seen; test -e ${home}/.config/skel/claude-token || echo token-hidden >> seen; exec sleep 300`,
     );
     serve();
     await until(() => existsSync(join(leadFolder(), "seen")));
@@ -365,21 +396,6 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with the lead", () => {
     expect(await answers()).toBe(true);
   });
 
-  test("restarts the lead with --resume when asked, so it sees a repository added since", async () => {
-    setUp();
-    const repo = join(home, "code", "app");
-    fakeClaude(`ls ${repo} > seen 2>/dev/null; exec sleep 300`);
-    serve();
-    await until(() => claudeLines().length > 0);
-    const id = storedSession();
-    saveTranscript(id);
-    addRepository("app");
-    expect(await ask({ command: "lead", restart: true })).toEqual({ lead: true });
-    expect(claudeCalls()).toBe(`--session-id ${id}\n--resume ${id}\n`);
-    expect(readFileSync(join(leadFolder(), "seen"), "utf8")).toBe("README\n");
-    expect(hasLead()).toBe(true);
-  });
-
   // The lead outlives the daemon, so it must reach the next one on the socket it was given.
   test("the lead reaches the daemon again after it restarts", async () => {
     setUp();
@@ -400,5 +416,110 @@ c.on("error", () => process.exit(1));`;
     await stop(first);
     const second = serve();
     await until(() => reply().includes(`"pid":${second.pid}`));
+  }, 15_000);
+  test("the lead sees a repository brought in after it started, without a restart", async () => {
+    setUp();
+    const clone = join(home, ".local", "share", "skel", "repos", "simon", "app");
+    fakeClaude(
+      `while ! test -e ${clone}/README; do sleep 0.1; done; cat ${clone}/README > seen.new; mv seen.new seen; exec sleep 300`,
+    );
+    serve();
+    await until(hasLead);
+    onGitHub("app");
+    // Moved in once whole, as skel brings a repository in.
+    git(home, "clone", "-q", join(github(), "simon", "app.git"), join(home, "cloning"));
+    mkdirSync(join(clone, ".."));
+    renameSync(join(home, "cloning"), clone);
+    await until(() => existsSync(join(leadFolder(), "seen")));
+    expect(readFileSync(join(leadFolder(), "seen"), "utf8")).toBe("app\n");
+    expect(claudeLines()).toHaveLength(1);
+  });
+
+  test("moves skel's clones to the latest default branch when the lead starts", async () => {
+    setUp();
+    const clone = addRepository("app");
+    const first = serve();
+    await until(() => existsSync(join(clone, "README")));
+    await stop(first);
+    Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=lead"]);
+    const work = join(home, "work", "app");
+    writeFileSync(join(work, "NEWS"), "more\n");
+    git(work, "add", ".");
+    git(work, "commit", "-q", "-m", "more");
+    git(work, "push", "-q", "origin", "main");
+    serve();
+    await until(() => existsSync(join(clone, "NEWS")));
+  });
+  test("moves skel's clones to the latest after answering a lead request, not before", async () => {
+    setUp();
+    const clone = addRepository("app");
+    serve();
+    await until(() => existsSync(join(clone, "README")));
+    await until(hasLead);
+    const work = join(home, "work", "app");
+    writeFileSync(join(work, "NEWS"), "more\n");
+    git(work, "add", ".");
+    git(work, "commit", "-q", "-m", "more");
+    git(work, "push", "-q", "origin", "main");
+    // A slow fetch, so a reply that waited for it would show.
+    const real = Bun.which("git") ?? "git";
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh\ncase " $* " in *" fetch "*) sleep 2 ;; esac\nexec ${real} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const asked = Date.now();
+    expect(await ask({ command: "lead" })).toEqual({ lead: true });
+    expect(Date.now() - asked).toBeLessThan(1500);
+    expect(existsSync(join(clone, "NEWS"))).toBe(false);
+    const deadline = Date.now() + 10_000;
+    while (!existsSync(join(clone, "NEWS"))) {
+      if (Date.now() > deadline) throw new Error("the clone never moved to the new commit");
+      await Bun.sleep(50);
+    }
+  }, 15_000);
+  // The CLI gives up on the daemon after 15 seconds, and GitHub can be slow or away.
+  test("starts the lead without waiting for clones, and makes them after", async () => {
+    setUp();
+    const clone = addRepository("app");
+    const real = Bun.which("git") ?? "git";
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh\ncase " $* " in *" clone "*|*" fetch "*) sleep 4 ;; esac\nexec ${real} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const started = Date.now();
+    serve();
+    await untilAnswers();
+    expect(await ask({ command: "lead" })).toEqual({ lead: true });
+    expect(Date.now() - started).toBeLessThan(3500);
+    expect(existsSync(clone)).toBe(false);
+    const deadline = Date.now() + 15_000;
+    while (!existsSync(join(clone, "README"))) {
+      if (Date.now() > deadline) throw new Error("the clone was never made");
+      await Bun.sleep(50);
+    }
+  }, 25_000);
+
+  test("a repository removed while it is being cloned stays removed", async () => {
+    setUp();
+    const clone = addRepository("app");
+    const real = Bun.which("git") ?? "git";
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh\ncase " $* " in *" clone "*) sleep 2 ;; esac\nexec ${real} "$@"\n`,
+      { mode: 0o755 },
+    );
+    serve();
+    await untilAnswers();
+    expect(await ask({ command: "lead" })).toEqual({ lead: true });
+    const removed = Bun.spawnSync([process.execPath, main, "repo", "rm", "app"], {
+      env: { HOME: home, PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}` },
+      stderr: "pipe",
+    });
+    expect(removed.stderr.toString()).toBe("");
+    // Long enough for the slow clone to finish and be moved in, had nothing stopped it.
+    await Bun.sleep(4000);
+    expect(existsSync(clone)).toBe(false);
   }, 15_000);
 });
