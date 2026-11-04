@@ -1,5 +1,6 @@
-// Runs a fresh adversarial reviewer in the sandbox for each thread's PR. Uses Codex by
-// default, or Claude Code on the builder's model when Codex is unavailable.
+// Runs a fresh adversarial reviewer in the sandbox for each thread's PR. Uses the harness
+// your config names, or else Codex when it is installed and Claude Code on the builder's
+// model when it isn't.
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -102,6 +103,7 @@ async function reviewNow(given: {
   issue: { title: string; body: string };
   base: string;
   model: string;
+  harness?: "codex" | "claude" | undefined;
   signal?: AbortSignal;
   limit?: number;
   env?: Record<string, string | undefined>;
@@ -112,7 +114,12 @@ async function reviewNow(given: {
   if (!home)
     return { verdict: "failed", body: "HOME isn't set, so skel can't find its own folders" };
   const path = env.PATH ?? "";
-  const harness = Bun.which("codex", { PATH: path }) ? "codex" : "claude";
+  const harness = given.harness ?? (Bun.which("codex", { PATH: path }) ? "codex" : "claude");
+  if (given.harness && !Bun.which(harness, { PATH: path }))
+    return {
+      verdict: "failed",
+      body: `${harness} isn't installed, and your config picks it for reviews`,
+    };
   const folder = mkdtempSync(join(tmpdir(), "skel-review-"));
   try {
     await Bun.write(join(folder, "schema.json"), schema);

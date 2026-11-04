@@ -59,8 +59,9 @@ function fakeCodex(answer: string, extra: string[] = []): void {
 
 const kept = (name: string) => readFileSync(join(sessions(), name), "utf8");
 const approve = '{"verdict":"approve","body":"Looks right."}';
+const given = () => ({ clone, issue, base: "origin/main", model: "opus", env: env() });
 const start = (more: { signal?: AbortSignal; limit?: number } = {}) =>
-  review({ clone, issue, base: "origin/main", model: "opus", env: env(), ...more });
+  review({ ...given(), ...more });
 
 // bubblewrap can't start inside skel's own sandbox, so only there these tests can't run.
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
@@ -208,6 +209,17 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
     expect(readFileSync(join(clone, "README"), "utf8")).toBe("app\n");
   });
 
+  test("reviews on Claude Code when your config picks it, though Codex is installed", async () => {
+    mkdirSync(join(home, ".config", "skel"), { recursive: true });
+    writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-tok\n");
+    fakeCodex('{"verdict":"changes","body":"From Codex."}');
+    fakeClaude([
+      'cat > /dev/null; echo \'{"type":"result","structured_output":{"verdict":"approve","body":"From Claude Code."}}\'',
+    ]);
+    const done = await review({ ...given(), harness: "claude" });
+    expect(done).toEqual({ verdict: "approve", body: "From Claude Code." });
+  });
+
   test("fails a Claude Code review that answers outside the shape", async () => {
     mkdirSync(join(home, ".config", "skel"), { recursive: true });
     writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-tok\n");
@@ -222,6 +234,14 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
 
 // These never start bubblewrap, so they run inside skel's sandbox too.
 describe("starting a review", () => {
+  test("fails a review on a harness your config picks that isn't installed", async () => {
+    const done = await review({ ...given(), harness: "codex" });
+    expect(done).toEqual({
+      verdict: "failed",
+      body: "codex isn't installed, and your config picks it for reviews",
+    });
+  });
+
   test("fails a Claude Code review when no token is saved", async () => {
     script("claude", ["exit 0"]);
     const done = await start();
