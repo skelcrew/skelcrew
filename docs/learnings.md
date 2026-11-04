@@ -93,6 +93,23 @@ that covers the code you are about to write.
 - **Don't pass `--new-session`.** It moves Claude Code out of the terminal's process group,
   so it misses resize signals and draws at the wrong width.
 
+## On a Sprite
+
+- **Drop capabilities before starting bwrap.** Commands on a Sprite run with a large set of
+  capabilities, and bwrap refuses to start with them ("Unexpected capabilities but not
+  setuid"). Wrap it in `setpriv --inh-caps=-all --ambient-caps=-all --bounding-set=-all`.
+- **A new `/proc` can't be mounted there.** The Sprite runs inside a container that masks
+  parts of `/proc`, so `--proc` fails with "Operation not permitted". Bind the existing one
+  read-only. Agents then see other processes and their command lines, but not their
+  environment or the files outside the sandbox.
+- **Hide `/.sprite/api.sock`.** Every process can reach it. Through it, an agent could start a
+  service that runs outside the sandbox, or restore a checkpoint and wipe the disk, and the
+  Sprite's own docs tell agents to use it.
+- **A Sprite sleeps about 30 seconds after the last activity.** A detached tmux session
+  doesn't count as activity, so a daemon waiting on CI would sleep with it. A longer sleep
+  stops every process, and only Sprite services come back.
+- **DNS comes from `/etc/resolv.conf`.** There is no `/run/systemd/resolve`, and no systemd.
+
 ## The agent's shell commands
 
 - **A shell command can't block for long.** After 2 minutes Claude Code moves a running
