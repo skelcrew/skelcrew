@@ -280,9 +280,9 @@ test("names two repositories that share a GitHub name with their owners", async 
   expect((await skel(["repo", "ls"])).out).toBe(`app  simon/app  ${clone("simon/app")}\n`);
 });
 
-test("trust clones a repository you can't push to, named by its GitHub name", async () => {
+test("repo trust clones a repository you can't push to, named by its GitHub name", async () => {
   onGitHub("other/tool");
-  const run = await skel(["trust", "other/tool"]);
+  const run = await skel(["repo", "trust", "other/tool"]);
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(existsSync(join(clone("other/tool"), "README"))).toBe(true);
@@ -290,17 +290,17 @@ test("trust clones a repository you can't push to, named by its GitHub name", as
   expect((await skel(["repo", "ls"])).out).toContain("tool  other/tool");
 });
 
-test("trust refuses inside skel's sandbox, where a yes could come from an agent", async () => {
+test("repo trust refuses inside skel's sandbox, where a yes could come from an agent", async () => {
   onGitHub("other/tool");
-  const run = await skel(["trust", "other/tool"], "", home, { SKEL_SANDBOX: "1" });
+  const run = await skel(["repo", "trust", "other/tool"], "", home, { SKEL_SANDBOX: "1" });
   expect(run.code).toBe(1);
   expect(run.err).toContain("your own terminal");
   expect(existsSync(clone("other/tool"))).toBe(false);
   expect(existsSync(trustFile())).toBe(false);
 });
 
-test("trust asks for owner/repo for a repository skel doesn't know yet", async () => {
-  const run = await skel(["trust", "tool"]);
+test("repo trust asks for owner/repo for a repository skel doesn't know yet", async () => {
+  const run = await skel(["repo", "trust", "tool"]);
   expect(run.code).toBe(1);
   expect(run.err).toContain("owner/repo");
 });

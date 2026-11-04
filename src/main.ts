@@ -8,7 +8,7 @@ const usage = `Usage:
   skel serve
   skel repo ls
   skel repo rm <name>
-  skel trust <name>
+  skel repo trust <name>
   skel task create <repo> "<title>" "<body>"
   skel start <repo>-<task> [--from <branch>]`;
 
@@ -34,8 +34,8 @@ async function run(args: string[]): Promise<void> {
     removeRepo(rest[0]);
     return;
   }
-  if (command === "trust" && sub && rest.length === 0) {
-    await trustRepo(sub);
+  if (command === "repo" && sub === "trust" && rest[0] && rest.length === 1) {
+    await trustRepo(rest[0]);
     return;
   }
   const [repo, title, body] = rest;

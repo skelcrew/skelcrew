@@ -110,8 +110,8 @@ export function refreshClones(db: Database): Promise<void> {
 }
 
 // Checks trust, refreshes the repository clone and records it for the lead. Asking is only
-// for your own terminal. Anywhere else a repository you can't push to waits for skel trust,
-// since a yes passed on by the lead could come from an injected instruction.
+// for your own terminal. Anywhere else a repository you can't push to waits for skel repo
+// trust, since a yes passed on by the lead could come from an injected instruction.
 export async function bringIn(db: Database, github: GitHubRepo, ask: boolean): Promise<void> {
   const { owner, repo, canPush, isFork } = github;
   const full = `${owner}/${repo}`;
@@ -120,7 +120,8 @@ export async function bringIn(db: Database, github: GitHubRepo, ask: boolean): P
   // A fork you own holds someone else's code, so it is asked about. skel clones from
   // GitHub, never from your checkout, so what it clones is what your permission covers.
   if (!known && !(canPush && !isFork) && !trustLines().includes(full)) {
-    if (!ask) throw new Error(`${full} waits until you run skel trust ${full} in your terminal`);
+    if (!ask)
+      throw new Error(`${full} waits until you run skel repo trust ${full} in your terminal`);
     console.log(`Agents will run ${full}'s setup and test commands, and follow its AGENTS.md`);
     console.log("and settings as instructions.");
     const answer = prompt(`Do you trust ${full}? [y/N]`);
