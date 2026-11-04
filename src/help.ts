@@ -29,7 +29,6 @@ const sections: [string, [string, string][]][] = [
     [
       ["--remote <host> [command]", "Run skel on a server, over ssh"],
       ["--remote sprite:<name> [command]", "Run skel on a Sprite"],
-      ["update --remote <host>", "Copy this skel there and restart it"],
       ["serve", "Run the daemon, for systemd"],
     ],
   ],
@@ -77,7 +76,8 @@ export function help(color = colorful()): string {
   lines.push("", heading("EXAMPLES"), ...examples.map((example) => `  ${dim("%")} ${example}`));
   lines.push(
     "",
-    dim("  A task is named by its repository and number, such as app-12. See skel.run."),
+    dim("  A task is named by its repository and number, such as app-12. --remote keeps"),
+    dim("  skel on the other side up to date with yours, after asking. See skel.run."),
     "",
   );
   return lines.join("\n");
