@@ -1,9 +1,11 @@
 // skel's command line: reads the command and hands it to the file that does it.
 import { remote } from "./remote.ts";
+import { remoteSprite } from "./sprite.ts";
 
 const usage = `Usage:
   skel [--from <owner/repo>]
   skel --remote <host> [command]
+  skel --remote sprite:<name> [command]
   skel serve
   skel repo ls
   skel repo rm <name>
@@ -31,6 +33,8 @@ const yoursOnly: Record<string, string> = {
 // With no command, sets up skel and attaches you to the lead.
 async function run(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
+  if (command === "--remote" && sub?.startsWith("sprite:"))
+    process.exit(await remoteSprite(sub.slice("sprite:".length), rest));
   if (command === "--remote" && sub) process.exit(await remote(sub, rest));
   const named = command === undefined || command === "--from" ? "" : command;
   const refused = yoursOnly[command === "repo" ? `repo ${sub}` : named];
