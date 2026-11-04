@@ -1,6 +1,6 @@
 # skel
 
-skel is Claude Code, but always on, in parallel, isolated, and seeing each issue through
+skel is Claude Code, but always on, in parallel, isolated, and seeing each task through
 to the merge. The design is in `docs/spec.md`. Read it before changing anything it covers.
 The traps earlier versions found are in `docs/learnings.md`. Read the part that covers
 typing into a session, starting Claude Code or the sandbox before touching them.
@@ -17,7 +17,7 @@ whether it keeps the code small and easy to read.
   dependency injection.
 - **One file, one job.** A reader should guess what a file does from its name. Prefer a few
   clear files over many tiny ones.
-- **Name things with the spec's words**: lead, repository, issue, thread, builder,
+- **Name things with the spec's words**: lead, repository, task, thread, builder,
   reviewer, event, round, needs you.
 - **No abstraction before the second use.** Duplicating three lines beats a helper nobody
   can find.
