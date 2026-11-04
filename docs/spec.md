@@ -41,9 +41,9 @@ The demo repositories are small real apps with fast CI and real issues, not skel
 | Word | Meaning |
 | --- | --- |
 | Lead | Your Claude Code session on the server. One per machine, always running, across all your repositories. You talk to it; it writes issues and starts threads. |
-| Repository | A GitHub repository skel works on, from a clone of its own. It is named by its GitHub name, such as `app`, with the owner added (`simon/app`) only when two share a name. |
+| Repository | A GitHub repository skel works on, from a clone of its own. It is named by its GitHub name, such as `app`, with the owner added (`simon/app`) only when two share a name, or by a short name you give it. |
 | Issue | An open GitHub issue in a repository. It states the intent: what you want, in words. skel lists every one; nothing happens until it is started. |
-| Thread | The work on one issue: its branch, clone, sandbox, builder session and history. One thread per issue at a time. Named by repository and issue, such as `app#12`. |
+| Thread | The work on one issue: its branch, clone, sandbox, builder session and history. One thread per issue at a time. Named by repository and GitHub issue number, such as `app-12`: no shell reads a dash as anything special, so it never needs quoting. |
 | Builder | The thread's agent. A Claude Code session that stays alive from start until the PR merges or closes. |
 | Reviewer | A fresh agent for each review round, on Codex by default, reading the PR adversarially. It runs once and answers with a verdict, with no session to attach to. It never inherits the builder's context. |
 | Event | Something that happened to a thread: a review, a PR comment, a failed check, a merge. |
@@ -84,6 +84,8 @@ Everything must work over a plain `ssh -t` or `sprite console`: no local display
 
 **Repositories.** skel keeps its own clone of every repository it works on, in `~/.local/share/skel/repos/<owner>/<repo>/`, and keeps it at the latest default branch. A repository comes in the first time you work on it: when you run `skel` in a checkout of it, or when a command names it by its full GitHub name, such as `skel ls skelcrew/skel-github`. After that its short name works everywhere. So when you ask the lead for work in another repository, it brings it in by running one of those, after asking you. There is no command to add a repository. `skel repo ls` lists them and `skel repo rm <name>` removes skel's clone.
 
+A long name makes long thread names, so `skel repo name my-company-backend-api api` gives a repository a short name of your choosing. `api-123` then works everywhere, and so does the full GitHub name. skel refuses a short name another repository already goes by. Renaming changes only what you type: a thread keeps its folder, log and session.
+
 Before cloning, skel decides whether to trust the repository. It trusts it on its own when your GitHub login can push to it, unless it is a fork: agents will run its setup and test commands, and read its AGENTS.md and settings as instructions, and you already vouch for what is in it. For any other repository, `skel` run in a checkout of it asks you whether you trust it. Brought in any other way, it waits until you run `skel trust <name>` in your own terminal, since a yes passed on by the lead could come from an injected instruction. The answer is remembered in \~/.config/skel/, never in the repository, so a clone can't bring its own yes.
 
 A repository can say how to set up and test it in a committed `skel.yaml`. Without one, the builder works it out, as it would in any checkout.
@@ -105,7 +107,7 @@ Stopping the daemon stops only the daemon. The tmux sessions keep running, so ag
 
 One thread, from start to merge.
 
-1. **The lead starts an issue.** It runs `skel issue app "<title>" "<body>"` to create a GitHub issue, then `skel start app#12`. You can run both yourself too.
+1. **The lead starts an issue.** It runs `skel issue app "<title>" "<body>"` to create a GitHub issue, then `skel start app-12`. You can run both yourself too.
 2. **skel sets up the thread.** A clone of its own at `~/.local/share/skel/threads/app-12/`, made from skel's clone of the repository, on branch `skel/12-<slug>` from `main` (or `--from <branch>`), with the repository's setup commands run once in it.
 3. **The builder starts.** A Claude Code session in the sandbox, in the thread's clone, with the issue's title and body as its first message.
 4. **The builder finishes a round.** It commits and runs `skel done "<summary>"`. skel fetches the branch from the thread's clone into its own and pushes it from there, never running git inside the thread's folder. On the first round skel opens the PR, with `Closes #12` in its body.
@@ -143,15 +145,16 @@ For you, and for the lead:
 | `skel [--from <owner/repo>]` | Attaches to the lead, starting the daemon and the lead if needed, and tells it which repository you are in, bringing that repository in first if it is new. `--remote` passes `--from` for you. |
 | `skel --remote <host> [command]` | Runs any skel command on the server, over `ssh -t`. With `sprite:<name>` as the host, runs it on that Sprite instead, creating it after asking if it doesn't exist. |
 | `skel serve` | Runs the daemon in the foreground, for systemd or a Sprite service. One per machine. |
-| `skel repo ls`, `skel repo rm <name>` | Lists the repositories skel works on, or removes skel's clone of one. |
+| `skel repo ls`, `skel repo rm <name>` | Lists the repositories skel works on, with their short names, or removes skel's clone of one. |
+| `skel repo name <name> <short>` | Gives a repository a short name, used in its thread names. |
 | `skel trust <name>` | Trusts a repository your login can't push to, so skel clones it. Only you can run it. |
 | `skel ls [<repo>]` | Open issues and threads, with status and needs you, newest first. `--json` for tools. |
 | `skel issue <repo> "<title>" "<body>"` | Creates a GitHub issue and prints its number. |
-| `skel start <repo>#<issue> [--from <branch>]` | Starts a thread on an issue. |
-| `skel attach <repo>#<issue>` | Attaches your terminal to the builder's session. Ctrl-\] detaches. |
-| `skel say <repo>#<issue> "<text>"` | Types a message into the builder's session without attaching. |
-| `skel stop <repo>#<issue>` | Ends the session and keeps the clone, branch and PR. |
-| `skel resume <repo>#<issue>` | Starts the builder again with `--resume` on its last session. |
+| `skel start <repo>-<issue> [--from <branch>]` | Starts a thread on an issue. |
+| `skel attach <repo>-<issue>` | Attaches your terminal to the builder's session. Ctrl-\] detaches. |
+| `skel say <repo>-<issue> "<text>"` | Types a message into the builder's session without attaching. |
+| `skel stop <repo>-<issue>` | Ends the session and keeps the clone, branch and PR. |
+| `skel resume <repo>-<issue>` | Starts the builder again with `--resume` on its last session. |
 
 For the builder inside a thread:
 
