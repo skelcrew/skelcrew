@@ -319,10 +319,10 @@ test("update replaces skel on the Sprite and restarts its daemon's service", asy
     "sprite exec -s demo --no-stdin -- sh -c mv -f .local/bin/skel.new .local/bin/skel",
   );
   // The daemon restarts only once the new skel is in place, so it runs the new build.
-  expect(lines.at(-3)).toBe(
+  expect(lines.at(-4)).toBe(
     "sprite exec -s demo --no-stdin -- sh -c sprite-env services restart skel",
   );
-  expect(lines.at(-2)).toBe("sprite-env services restart skel");
+  expect(lines.at(-3)).toBe("sprite-env services restart skel");
   expect(run.out).toContain(
     `skel · updated sprite:demo to the skel in ~/code/skel (commit ${laptop.commit}) and restarted its daemon.`,
   );
@@ -337,7 +337,19 @@ test("update makes the Sprite's URL public, so GitHub's webhooks can wake it", a
   existing("demo");
   const run = await update(laptopSkel());
   expect(run.code).toBe(0);
-  expect(calls()).toContain("sprite config update --url-auth public -s demo\n");
+  // Only once the daemon that holds the URL's port runs the new skel.
+  expect(calls()).toEndWith(
+    "sprite-env services restart skel\nsprite config update --url-auth public -s demo\n",
+  );
+});
+
+// Until the new daemon holds port 8080, whatever else listens there would become public.
+test("update keeps the Sprite's URL private when the new skel isn't in place", async () => {
+  existing("demo");
+  writeFileSync(join(home, "push-fails"), "");
+  const run = await update(laptopSkel());
+  expect(run.code).toBe(1);
+  expect(calls()).not.toContain("--url-auth");
 });
 
 // A transfer that breaks off must leave the skel that works in place, or the daemon has

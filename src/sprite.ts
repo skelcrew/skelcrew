@@ -324,9 +324,12 @@ export async function updateSprite(name: string): Promise<number> {
   checkName(name);
   if (!spriteNames(`skel update --remote sprite:${name}`).includes(name))
     throw new Error(`No Sprite named ${name}: skel --remote sprite:${name} creates it`);
-  // A Sprite an older skel set up still asks for a login at its URL.
-  await makeUrlPublic(name);
-  return update(`sprite:${name}`, onTheSprite(name));
+  const code = await update(`sprite:${name}`, onTheSprite(name));
+  // A Sprite an older skel set up still asks for a login at its URL. Made public only once
+  // the new daemon runs and holds the URL's port: until then, whatever else listens there
+  // would be on the internet.
+  if (code === 0) await makeUrlPublic(name);
+  return code;
 }
 
 // Runs a skel command on the Sprite and returns its exit code. Plain skel passes the
