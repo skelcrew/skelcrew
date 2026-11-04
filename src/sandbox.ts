@@ -25,18 +25,26 @@ const { O_NONBLOCK, O_NOFOLLOW, O_RDONLY } = constants;
 // Where the folder of the agent's socket appears inside, whatever its path outside.
 const socketsInside = "/run/skel";
 
+// Returns a read-only mount so agents can read a folder without changing its files.
 const ro = (p: string) => ["--ro-bind", p, p];
+// Returns a writable mount for the agent's own work or session files.
 const rw = (p: string) => ["--bind", p, p];
+// Returns an empty mount that hides a host folder and its credentials from the agent.
 const hide = (p: string) => ["--tmpfs", p];
 
-// Codex from npm links to bin/codex.js in its package, and runs a program from another
-// folder of it. Never the home folder itself, nor above it, which would bring back too much.
+// Finds a program's package folder so its required files remain visible after hiding your
+// home folder. Codex from npm links to bin/codex.js in its package, and runs a program from
+// another folder of it. Never the home folder itself, nor above it, which would bring back
+// too much.
 function packageOf(folder: string, home: string): string {
   for (let at = folder; at !== home && at !== dirname(at); at = dirname(at))
     if (existsSync(join(at, "package.json"))) return at;
   return folder;
 }
 
+// Returns bubblewrap arguments that hide your credentials and expose only the agent's
+// chosen writable folders. Keeps the terminal connection and network available for the
+// harness and model.
 export function sandboxArgs(given: {
   home: string;
   path: string;
@@ -48,7 +56,8 @@ export function sandboxArgs(given: {
   const { home, path, mounts, socket, cwd, command } = given;
   // Its own process list, so your other processes can't be seen or signalled. No
   // --new-session: it moves Claude Code out of the terminal's process group, so it misses
-  // resize signals and draws at the wrong width. The network stays shared for the model's API.
+  // resize signals and draws at the wrong width. The network stays shared for the model's
+  // API.
   const args = ["bwrap", "--die-with-parent", "--unshare-pid"];
   args.push("--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp");
   // The ssh agent, keyring, D-Bus, systemd and docker listen under /run, and some run
@@ -69,8 +78,8 @@ export function sandboxArgs(given: {
   }
   for (const p of programs) args.push(...ro(p));
   // Only the parts skel runs from: its folder can be your checkout, whose .git and other
-  // files aren't the agent's to read. bun runs skel without node_modules by fetching its packages itself,
-  // and bwrap refuses to start when a folder it should mount is missing.
+  // files aren't the agent's to read. bun runs skel without node_modules by fetching its
+  // packages itself, and bwrap refuses to start when a folder it should mount is missing.
   const skel = resolve(import.meta.dir, "..");
   for (const part of ["bin", "src", "node_modules", "package.json"])
     if (existsSync(join(skel, part))) args.push(...ro(join(skel, part)));
@@ -87,7 +96,9 @@ export function sandboxArgs(given: {
   return args;
 }
 
-// The lead reads each clone's .git/config, so a credential in it would be the lead's.
+// Rejects clone settings containing credentials or unreadable settings, so agents cannot
+// receive your GitHub login. The lead reads each clone's .git/config, so a credential in it
+// would be the lead's.
 export function refuseCredentials(repository: string): void {
   const read = Bun.spawnSync(
     ["git", "-C", repository, "config", "--local", "--includes", "--get-regexp", "."],
@@ -121,8 +132,8 @@ export const settings = '{"skipDangerousModePermissionPrompt":true,"sandbox":{"e
 
 // Only what a shell and Claude Code need gets in. Tokens and keys in your environment stay
 // out, and so do CLAUDE_CODE_* variables inherited from a Claude Code session, which make
-// the agent misbehave, for example by writing no transcript.
-// ANTHROPIC_API_KEY is for those who use a key rather than a login.
+// the agent misbehave, for example by writing no transcript. ANTHROPIC_API_KEY is for those
+// who use a key rather than a login.
 const passed = [
   ...["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "COLORTERM", "LANG", "TZ"],
   "ANTHROPIC_API_KEY",
@@ -130,6 +141,8 @@ const passed = [
 
 const Token = z.string().trim().min(1);
 
+// Returns only the environment a shell and Claude Code need, so tokens and keys in yours
+// stay out of every sandbox.
 function keptEnv(env: Record<string, string | undefined>): Record<string, string> {
   const kept: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
@@ -138,8 +151,9 @@ function keptEnv(env: Record<string, string | undefined>): Record<string, string
   return kept;
 }
 
-// A command from a repository's skel.yaml, run in the thread's clone. It comes from the
-// repository, so it runs in the sandbox like the agents, with no socket and no login.
+// Returns the sandboxed command and environment for one of skel.yaml's setup commands, to
+// run through a shell in the thread's clone. It comes from the repository, so it runs in
+// the sandbox like the agents, with no socket and no login.
 export function setupCommand(
   folder: string,
   command: string,
@@ -157,7 +171,8 @@ export function setupCommand(
   return { argv, env: keptEnv(env) };
 }
 
-// Claude Code saves a conversation only once it has a message, so a session nobody talked to
+// Reports whether a session saved a conversation, so skel knows whether --resume can bring
+// it back. Claude Code saves a conversation only once it has a message, so a session nobody talked to
 // has nothing to resume, and its id can't start a new one either. It saves it in the
 // session's own config folder, under a folder named after the folder it runs in, with every
 // character but letters and digits made a dash. Names over 200 characters get a hash
@@ -167,8 +182,11 @@ export function hasTranscript(name: string, folder: string, session: string): bo
   return existsSync(join(dataDir(), "claude", name, "projects", project, `${session}.jsonl`));
 }
 
-// A builder, given its thread's clone, works there and sees nothing else. The lead works in
-// a folder of its own and sees skel's clone of every repository.
+// Prepares an agent's own config folder and trusted Claude Code settings, then returns its
+// sandbox command and environment. A builder, given its thread's clone, works there and sees
+// nothing else; the lead works in its own folder and sees skel's clone of every repository.
+// Each session keeps its own transcripts and logs in with skel's agent token, while your
+// other credentials stay hidden.
 export function agentCommand(given: {
   name: string;
   socket: string;
@@ -225,7 +243,8 @@ export function agentCommand(given: {
   const file = join(config, ".claude.json");
   let json: z.infer<typeof ClaudeJson> = {};
   if (existsSync(file)) {
-    // Non-blocking, since the agent could leave a pipe there, and opening one waits forever.
+    // Non-blocking, since the agent could leave a pipe there, and opening one waits
+    // forever.
     const fd = openSync(file, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
     try {
       const stat = fstatSync(fd);

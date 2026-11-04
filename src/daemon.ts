@@ -57,6 +57,8 @@ const allowed = {
   builder: ["status"],
 };
 
+// Returns a decoded socket message, or undefined so invalid JSON can be rejected without
+// crashing.
 function parseJson(text: string): unknown {
   try {
     return JSON.parse(text);
@@ -65,8 +67,8 @@ function parseJson(text: string): unknown {
   }
 }
 
-// What the daemon replies, or null when nothing answers. A socket file alone proves nothing:
-// a daemon that was killed leaves it behind.
+// Sends a request to the daemon and returns its decoded reply, or null when nothing
+// answers. A socket file alone proves nothing: a daemon that was killed leaves it behind.
 function ask(request: Request, timeout: number): Promise<unknown> {
   return new Promise((done) => {
     const connection = createConnection(cliSocket());
@@ -85,9 +87,9 @@ function ask(request: Request, timeout: number): Promise<unknown> {
   });
 }
 
-// Whether this process now owns the lock. The kernel lets go of it when the process ends,
-// however it ends, so a daemon that was killed never leaves it held. Node has no flock, so
-// it comes from libc.
+// Tries to hold the daemon lock and returns whether this process owns it, preventing
+// duplicate daemons. The kernel lets go of it when the process ends, however it ends, so a
+// daemon that was killed never leaves it held. Node has no flock, so it comes from libc.
 function lock(path: string): boolean {
   const libc = dlopen("libc.so.6", {
     flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
@@ -99,6 +101,8 @@ function lock(path: string): boolean {
   return libc.symbols.flock(fd, LOCK_EX | LOCK_NB) === 0;
 }
 
+// Opens a daemon socket and waits until it can accept requests, rejecting if opening it
+// fails.
 function listen(server: Server, path: string): Promise<void> {
   return new Promise((done, failed) => {
     server.once("error", failed);
@@ -109,32 +113,41 @@ function listen(server: Server, path: string): Promise<void> {
   });
 }
 
+// Returns the text of anything thrown, for replies and the daemon's log.
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-// It never asks anything: under systemd there is nobody to answer.
+// Opens the daemon's sockets, starts the lead, and brings back the builders of threads that
+// were running, so commands and agents can reach it. Leaves the sockets listening after
+// returning, and removes them when stopped, leaving every tmux session running. It never
+// asks questions: systemd has nobody to answer.
 export async function serve(tmux: string): Promise<void> {
   if (!setupDone()) throw new Error("the first run isn't done on this machine: run skel first");
   const db = openDb();
-  // One start at a time, so two requests can't both find the lead gone and start it twice.
   let starting: Promise<void> = Promise.resolve();
+  // Serializes lead starts so simultaneous requests cannot create two sessions.
   const lead = () => {
     starting = starting.catch(() => {}).then(() => startLead(db, tmux));
     return starting;
   };
   const sockets: string[] = [];
+  // Opens a socket that answers the given caller, removing one a killed daemon left behind,
+  // and keeps its path so stopping removes it.
   const open = async (socket: string, caller: Caller) => {
     mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
     rmSync(socket, { force: true });
     await listen(createServer(answer(caller)), socket);
     sockets.push(socket);
   };
-  // A thread that starts over keeps the socket it has.
   const listening = new Set<string>();
+  // Opens a thread's own socket, so the daemon knows which thread calls on it. A thread that
+  // starts over keeps the socket it has.
   const listenFor = async (thread: Thread) => {
     if (listening.has(thread.folder)) return;
     listening.add(thread.folder);
     await open(threadSocket(thread.folder), thread);
   };
+  // Sets up a new thread's clone, opens its socket and starts its builder, after skel start
+  // has had its answer. Marks the thread failed, with the reason, when any of it fails.
   const begin = async (thread: Thread) => {
     try {
       await setUpThread(db, thread);
@@ -144,6 +157,7 @@ export async function serve(tmux: string): Promise<void> {
       failThread(db, thread, error);
     }
   };
+  // Carries out a request the caller may make, and returns the reply to send.
   const handle = async (request: Request, caller: Caller): Promise<object> => {
     if (request.command === "status") {
       const thread = typeof caller === "object" ? { thread: threadName(db, caller) } : {};
@@ -164,8 +178,12 @@ export async function serve(tmux: string): Promise<void> {
     begin(thread);
     return { thread: threadName(db, thread) };
   };
+  // Returns a handler for connections from the given caller: it reads one request, refuses
+  // what that caller may not ask, and answers the rest.
   const answer = (caller: Caller) => (connection: Socket) => {
     let request = "";
+    // Sends one JSON reply and closes the connection so the caller knows the request
+    // finished.
     const reply = (answer: object) => connection.end(`${JSON.stringify(answer)}\n`);
     const read = (data: Buffer) => {
       request += data.toString();
@@ -232,7 +250,8 @@ export async function startOn(repo: string, issue: number, from?: string): Promi
   return understood(z.object({ thread: z.string() }), reply).thread;
 }
 
-// Returns when you detach with Ctrl-].
+// Ensures the daemon and lead are running, then attaches your terminal until you detach
+// with Ctrl-].
 export async function attachToLead(tmux: string): Promise<void> {
   // Asking for the lead brings it back if it ended while the daemon kept running.
   let reply = await ask({ command: "lead" }, 15_000);
