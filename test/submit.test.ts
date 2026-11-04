@@ -262,7 +262,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     verdict(1, "changes", "The export has no test.");
     verdict(2, "approve", "Ready to merge.");
     await startApp12();
-    await until(() => finished("success").length === 1, 30_000);
+    await until(() => finished("success").length === 1 && thread().needs_you === 1, 30_000);
 
     expect(read(join(builder(), "submitted"))).toContain("Submitted app-12 for review.");
     expect(pushedRound()).toBe("2");
@@ -292,9 +292,9 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
 
     expect(thread()).toMatchObject({ status: "waiting", needs_you: 1, rounds: 1, pr: 7 });
     expect(thread().reviewing).toBeNull();
-    const log = read(join(data(), "threads", "app-12.log"));
-    expect(log).toContain("Round 1");
-    expect(log).toContain("approved");
+    // The daemon saves a thread before it appends the thread to its log.
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("approved"));
+    expect(read(join(data(), "threads", "app-12.log"))).toContain("Round 1");
   }, 60_000);
 
   test("tells the builder about skel submit, after the task rather than in it", async () => {
@@ -340,7 +340,10 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     await until(() => thread().needs_you === 1);
     expect(reviews()).toEqual([]);
     expect(typedMessages()).toBe(0);
-    expect(read(join(data(), "threads", "app-12.log"))).toContain("no verdict for review 1");
+    // The daemon saves a thread before it appends the thread to its log.
+    await until(() =>
+      read(join(data(), "threads", "app-12.log")).includes("no verdict for review 1"),
+    );
   }, 60_000);
 
   test("a newer skel submit cancels the review still running for an older commit", async () => {

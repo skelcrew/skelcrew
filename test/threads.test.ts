@@ -362,7 +362,8 @@ c.on("data", (d) => process.stdout.write(d));`;
     await untilCloned();
     expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
     await until(() => thread().status === "failed");
-    expect(read(join(data(), "threads", "app-12.log"))).toContain("broken");
+    // The daemon saves a thread before it appends the thread to its log.
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("broken"));
     expect(hasSession("app-12")).toBe(false);
     writeFileSync(join(work, "skel.yaml"), "setup: [echo fixed > fixed]\n");
     git(work, "commit", "-q", "-am", "fix setup");
@@ -441,7 +442,7 @@ nameRepositories(db);`;
     await stop(first);
     serve();
     await until(() => thread().status === "failed");
-    expect(read(join(data(), "threads", "app-12.log"))).toContain("run skel start again");
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("run skel start again"));
     expect(hasSession("app-12")).toBe(false);
   }, 30_000);
 
