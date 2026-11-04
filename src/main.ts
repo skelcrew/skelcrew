@@ -1,5 +1,5 @@
 // skel's command line: reads the command and hands it to the file that does it.
-import { attachToLead, serve } from "./daemon.ts";
+import { attachToLead, fileIssue, serve, startOn } from "./daemon.ts";
 import { bringInFrom, listRepos, removeRepo, trustRepo } from "./repo.ts";
 import { firstRun } from "./setup.ts";
 
@@ -8,7 +8,9 @@ const usage = `Usage:
   skel serve
   skel repo ls
   skel repo rm <name>
-  skel trust <name>`;
+  skel trust <name>
+  skel issue <repo> "<title>" "<body>"
+  skel start <repo>#<issue> [--from <branch>]`;
 
 async function run(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
@@ -32,6 +34,16 @@ async function run(args: string[]): Promise<void> {
   }
   if (command === "trust" && sub && rest.length === 0) {
     await trustRepo(sub);
+    return;
+  }
+  if (command === "issue" && sub && rest[0] && rest[1] !== undefined && rest.length === 2) {
+    console.log(await fileIssue(sub, rest[0], rest[1]));
+    return;
+  }
+  const thread = sub?.match(/^(.+)#(\d+)$/);
+  const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
+  if (command === "start" && thread?.[1] && (rest.length === 0 || from)) {
+    console.log(`Started ${await startOn(thread[1], Number(thread[2]), from)}.`);
     return;
   }
   console.error(usage);

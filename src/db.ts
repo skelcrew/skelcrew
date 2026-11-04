@@ -43,5 +43,19 @@ export function openDb(): Database {
     one INTEGER PRIMARY KEY CHECK (one = 1),
     session TEXT NOT NULL
   )`);
+  // A thread names its repository by GitHub owner and name, which never change, and is named
+  // once, at start, for its folder: its clone, log, config folder, session and socket all
+  // use it, so none of them move when the repository's short name gains its owner.
+  db.run(`CREATE TABLE IF NOT EXISTS threads (
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    issue INTEGER NOT NULL,
+    folder TEXT NOT NULL UNIQUE,
+    branch TEXT NOT NULL,
+    base TEXT,
+    status TEXT NOT NULL,
+    session TEXT,
+    PRIMARY KEY (owner, repo, issue)
+  )`);
   return db;
 }

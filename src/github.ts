@@ -53,6 +53,23 @@ export async function updateClone(folder: string): Promise<void> {
   await git(["-C", folder, "reset", "--quiet", "--hard", "FETCH_HEAD"]);
 }
 
+// Leaves the commit in the folder's FETCH_HEAD. Fetched by URL, so no remote holding it is
+// saved in the folder's .git/config.
+export async function fetchBranch(
+  folder: string,
+  repo: string,
+  branch: string | null,
+): Promise<void> {
+  await git([
+    "-C",
+    folder,
+    "fetch",
+    "--quiet",
+    `https://github.com/${repo}.git`,
+    branch ? `refs/heads/${branch}` : "HEAD",
+  ]);
+}
+
 // Runs `gh api` on `endpoint`, sending `input` as the JSON body when there is one. `doing`
 // says what skel was trying, for the error when gh fails.
 async function api(endpoint: string, doing: string, input?: object): Promise<unknown> {

@@ -18,6 +18,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { z } from "zod";
+import { dataDir } from "./paths.ts";
 
 const { O_NONBLOCK, O_NOFOLLOW, O_RDONLY } = constants;
 
@@ -32,7 +33,7 @@ function sandboxArgs(given: {
   home: string;
   path: string;
   mounts: string[];
-  socket: string;
+  socket?: string;
   cwd: string;
   command: string[];
 }): string[] {
@@ -69,10 +70,11 @@ function sandboxArgs(given: {
   // Its folder rather than the socket itself: the daemon makes the socket anew each time it
   // starts, and a mounted file would stay the old one, which nothing answers on. Read-only,
   // so the agent can't replace it. The folder must hold nothing else.
-  args.push(...["--ro-bind", dirname(socket), socketsInside]);
-  const inside = join(socketsInside, basename(socket));
-  args.push("--setenv", "SKEL_SANDBOX", "1", "--setenv", "SKEL_SOCKET", inside);
-  args.push("--setenv", "PATH", `${join(skel, "bin")}:${path}`);
+  if (socket) {
+    args.push(...["--ro-bind", dirname(socket), socketsInside]);
+    args.push("--setenv", "SKEL_SOCKET", join(socketsInside, basename(socket)));
+  }
+  args.push("--setenv", "SKEL_SANDBOX", "1", "--setenv", "PATH", `${join(skel, "bin")}:${path}`);
   args.push("--chdir", cwd, "--", ...command);
   return args;
 }
@@ -120,16 +122,56 @@ const passed = [
 
 const Token = z.string().trim().min(1);
 
+function keptEnv(env: Record<string, string | undefined>): Record<string, string> {
+  const kept: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== undefined && (passed.includes(key) || key.startsWith("LC_"))) kept[key] = value;
+  }
+  return kept;
+}
+
+// A command from a repository's skel.yaml, run in the thread's clone. It comes from the
+// repository, so it runs in the sandbox like the agents, with no socket and no login.
+export function setupCommand(
+  folder: string,
+  command: string,
+  env: Record<string, string | undefined> = process.env,
+): { argv: string[]; env: Record<string, string> } {
+  const home = env.HOME;
+  if (!home) throw new Error("HOME isn't set, so skel can't find its own folders");
+  const argv = sandboxArgs({
+    home,
+    path: env.PATH ?? "",
+    mounts: rw(folder),
+    cwd: folder,
+    command: ["sh", "-c", command],
+  });
+  return { argv, env: keptEnv(env) };
+}
+
+// Claude Code saves a conversation only once it has a message, so a session nobody talked to
+// has nothing to resume, and its id can't start a new one either. It saves it in the
+// session's own config folder, under a folder named after the folder it runs in, with every
+// character but letters and digits made a dash. Names over 200 characters get a hash
+// instead, which skel's folders never come near.
+export function hasTranscript(name: string, folder: string, session: string): boolean {
+  const project = folder.replace(/[^a-zA-Z0-9]/g, "-");
+  return existsSync(join(dataDir(), "claude", name, "projects", project, `${session}.jsonl`));
+}
+
+// A builder, given its thread's clone, works there and sees nothing else. The lead works in
+// a folder of its own and sees skel's clone of every repository.
 export function agentCommand(given: {
   name: string;
   socket: string;
   model: string;
+  thread?: string;
   prompt?: string;
   resume?: string;
   sessionId?: string;
   env?: Record<string, string | undefined>;
 }): { argv: string[]; env: Record<string, string> } {
-  const { name, socket, model, prompt, resume, sessionId, env = process.env } = given;
+  const { name, socket, model, thread, prompt, resume, sessionId, env = process.env } = given;
   if (sessionId && resume) throw new Error("a session can't be both new and resumed");
   if (sessionId && !z.uuid().safeParse(sessionId).success)
     throw new Error(`Claude Code needs a UUID as a session ID, not "${sessionId}"`);
@@ -156,16 +198,19 @@ export function agentCommand(given: {
     if (lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink())
       throw new Error(`${p} is a link, so skel won't write through it`);
   mkdirSync(config, { recursive: true });
-  // The lead sees skel's clone of every repository read-only and works in a folder of its
-  // own. The whole folder is mounted, made first if need be, so a repository brought in
-  // while the lead runs shows up in its sandbox too.
-  const repos = join(home, ".local", "share", "skel", "repos");
-  mkdirSync(repos, { recursive: true });
-  for (const owner of readdirSync(repos))
-    for (const repo of readdirSync(join(repos, owner))) refuseCredentials(join(repos, owner, repo));
-  const cwd = join(home, ".local", "share", "skel", "lead");
-  mkdirSync(cwd, { recursive: true });
-  const mounts = [...rw(cwd), ...ro(repos), ...rw(config)];
+  const cwd = thread ?? join(home, ".local", "share", "skel", "lead");
+  const mounts = [...rw(cwd), ...rw(config)];
+  if (!thread) {
+    // The whole folder of clones is mounted, made first if need be, so a repository brought
+    // in while the lead runs shows up in its sandbox too.
+    const repos = join(home, ".local", "share", "skel", "repos");
+    mkdirSync(repos, { recursive: true });
+    for (const owner of readdirSync(repos))
+      for (const repo of readdirSync(join(repos, owner)))
+        refuseCredentials(join(repos, owner, repo));
+    mkdirSync(cwd, { recursive: true });
+    mounts.push(...ro(repos));
+  }
 
   // Claude Code asks whether to trust the folder even in bypass mode, and would wait there
   // with nobody to answer.
@@ -198,10 +243,7 @@ export function agentCommand(given: {
   if (sessionId) command.push("--session-id", sessionId);
   if (prompt) command.push(prompt);
 
-  const kept: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined && (passed.includes(key) || key.startsWith("LC_"))) kept[key] = value;
-  }
+  const kept = keptEnv(env);
   kept.CLAUDE_CONFIG_DIR = config;
   kept.CLAUDE_CODE_OAUTH_TOKEN = token;
   // Its greyed-out suggestions propose steps, such as pushing, that belong to skel.
