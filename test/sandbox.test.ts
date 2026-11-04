@@ -176,6 +176,12 @@ console.log(JSON.stringify(agentCommand({ name: "lead",
     expect(done.out).toBe(`hidden\nskel\n${resolver}skel.sock\nsocket\n1\n`);
   });
 
+  test("the agent runs skel from this checkout", async () => {
+    repository();
+    const done = await asLead("command -v skel");
+    expect(done.out).toBe(`${join(import.meta.dir, "..", "bin", "skel")}\n`);
+  });
+
   // Every file under a folder with its contents, to show nothing in it changed.
   function snapshot(folder: string): string {
     const listed = Bun.spawnSync([
@@ -229,6 +235,7 @@ console.log(JSON.stringify(agentCommand({ name: "lead",
         "--resume",
         "abc-123",
         "Fix the bug",
+        "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false",
         "CLAUDE_CODE_OAUTH_TOKEN=tok-123",
         `CLAUDE_CONFIG_DIR=${config}`,
         "SKEL_SANDBOX=1",

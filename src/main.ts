@@ -1,5 +1,5 @@
 // skel's command line: reads the command and hands it to the file that does it.
-import { attachToLead, serve } from "./daemon.ts";
+import { attachToLead, createTask, serve, startOn } from "./daemon.ts";
 import { bringInFrom, listRepos, removeRepo, trustRepo } from "./repo.ts";
 import { firstRun } from "./setup.ts";
 
@@ -8,7 +8,9 @@ const usage = `Usage:
   skel serve
   skel repo ls
   skel repo rm <name>
-  skel trust <name>`;
+  skel trust <name>
+  skel task create <repo> "<title>" "<body>"
+  skel start <repo>-<task> [--from <branch>]`;
 
 // Runs the requested CLI command, or prints usage and exits when its arguments are invalid.
 // With no command, sets up skel and attaches you to the lead.
@@ -34,6 +36,25 @@ async function run(args: string[]): Promise<void> {
   }
   if (command === "trust" && sub && rest.length === 0) {
     await trustRepo(sub);
+    return;
+  }
+  const [repo, title, body] = rest;
+  if (
+    command === "task" &&
+    sub === "create" &&
+    repo &&
+    title &&
+    body !== undefined &&
+    rest.length === 3
+  ) {
+    console.log(await createTask(repo, title, body));
+    return;
+  }
+  // Repository names can hold dashes, so the task is the number after the last one.
+  const thread = sub?.match(/^(.+)-(\d+)$/);
+  const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
+  if (command === "start" && thread?.[1] && (rest.length === 0 || from)) {
+    console.log(`Started ${await startOn(thread[1], Number(thread[2]), from)}.`);
     return;
   }
   console.error(usage);

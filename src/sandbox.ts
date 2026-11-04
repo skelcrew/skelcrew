@@ -18,6 +18,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { z } from "zod";
+import { dataDir } from "./paths.ts";
 
 const { O_NONBLOCK, O_NOFOLLOW, O_RDONLY } = constants;
 
@@ -43,7 +44,7 @@ function packageOf(folder: string, home: string): string {
 
 // Returns bubblewrap arguments that hide your credentials and expose only the agent's
 // chosen writable folders. Keeps the terminal connection and network available for the
-// harness and model.
+// harness and model, and puts skel's own commands on the agent's PATH.
 export function sandboxArgs(given: {
   home: string;
   path: string;
@@ -51,8 +52,9 @@ export function sandboxArgs(given: {
   socket?: string;
   cwd: string;
   command: string[];
+  programs?: string[] | undefined;
 }): string[] {
-  const { home, path, mounts, socket, cwd, command } = given;
+  const { home, path, mounts, socket, cwd, command, programs: named = [command[0]] } = given;
   // Its own process list, so your other processes can't be seen or signalled. No
   // --new-session: it moves Claude Code out of the terminal's process group, so it misses
   // resize signals and draws at the wrong width. The network stays shared for the model's
@@ -65,10 +67,11 @@ export function sandboxArgs(given: {
   if (existsSync("/run/systemd/resolve")) args.push(...ro("/run/systemd/resolve"));
   args.push(...hide(home));
   // Programs often live under the home folder: Claude Code under nvm keeps node beside it,
-  // and its package where its link points. So the command's folder and the package its link
-  // resolves into come back, as does bun, which skel's own commands run on.
+  // and its package where its link points. So the program's folder and the package its link
+  // resolves into come back, as does bun, which skel's own commands run on. The program is
+  // the command's first word unless others are named, as for a shell running a setup command.
   const programs = new Set<string>();
-  for (const name of [command[0], "bun"]) {
+  for (const name of [...named, "bun"]) {
     const found = name && Bun.which(name, { PATH: path });
     if (found) {
       programs.add(dirname(found));
@@ -90,7 +93,7 @@ export function sandboxArgs(given: {
     args.push(...["--ro-bind", dirname(socket), socketsInside]);
     args.push("--setenv", "SKEL_SOCKET", join(socketsInside, basename(socket)));
   }
-  args.push("--setenv", "SKEL_SANDBOX", "1");
+  args.push("--setenv", "SKEL_SANDBOX", "1", "--setenv", "PATH", `${join(skel, "bin")}:${path}`);
   args.push("--chdir", cwd, "--", ...command);
   return args;
 }
@@ -140,19 +143,69 @@ const passed = [
 
 const Token = z.string().trim().min(1);
 
-// Prepares the lead's folders and trusted Claude Code settings, then returns its sandbox
-// command and environment. Gives the session its own saved transcripts and agent token
-// while hiding your other credentials.
+// Returns only the environment a shell and Claude Code need, so tokens and keys in yours
+// stay out of every sandbox.
+function keptEnv(env: Record<string, string | undefined>): Record<string, string> {
+  const kept: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== undefined && (passed.includes(key) || key.startsWith("LC_"))) kept[key] = value;
+  }
+  return kept;
+}
+
+// Returns the sandboxed command and environment for one of skel.yaml's setup commands, to
+// run through a shell in the thread's clone. It comes from the repository, so it runs in
+// the sandbox like the agents, with no socket and no login.
+export function setupCommand(
+  folder: string,
+  command: string,
+  env: Record<string, string | undefined> = process.env,
+): { argv: string[]; env: Record<string, string> } {
+  const home = env.HOME;
+  if (!home) throw new Error("HOME isn't set, so skel can't find its own folders");
+  const argv = sandboxArgs({
+    home,
+    path: env.PATH ?? "",
+    mounts: rw(folder),
+    cwd: folder,
+    command: ["sh", "-c", command],
+    // sh lives outside the home folder, but the programs a setup command runs, such as npm
+    // under nvm, often don't. Every word is tried rather than the first, since a command
+    // can start with cd or a variable; words that name no program bring back nothing. Only
+    // bare names: the command comes from the repository, and a path could name a program in
+    // a folder of yours that holds secrets, such as skel's own token.
+    programs: command.split(/\s+/).filter((word) => !word.includes("/")),
+  });
+  return { argv, env: keptEnv(env) };
+}
+
+// Reports whether a session saved a conversation, so skel knows whether --resume can bring
+// it back. Claude Code saves a conversation only once it has a message, so a session nobody talked to
+// has nothing to resume, and its id can't start a new one either. It saves it in the
+// session's own config folder, under a folder named after the folder it runs in, with every
+// character but letters and digits made a dash. Names over 200 characters get a hash
+// instead, which skel's folders never come near.
+export function hasTranscript(name: string, folder: string, session: string): boolean {
+  const project = folder.replace(/[^a-zA-Z0-9]/g, "-");
+  return existsSync(join(dataDir(), "claude", name, "projects", project, `${session}.jsonl`));
+}
+
+// Prepares an agent's own config folder and trusted Claude Code settings, then returns its
+// sandbox command and environment. A builder, given its thread's clone, works there and sees
+// nothing else; the lead works in its own folder and sees skel's clone of every repository.
+// Each session keeps its own transcripts and logs in with skel's agent token, while your
+// other credentials stay hidden.
 export function agentCommand(given: {
   name: string;
   socket: string;
   model: string;
+  thread?: string;
   prompt?: string;
   resume?: string;
   sessionId?: string;
   env?: Record<string, string | undefined>;
 }): { argv: string[]; env: Record<string, string> } {
-  const { name, socket, model, prompt, resume, sessionId, env = process.env } = given;
+  const { name, socket, model, thread, prompt, resume, sessionId, env = process.env } = given;
   if (sessionId && resume) throw new Error("a session can't be both new and resumed");
   if (sessionId && !z.uuid().safeParse(sessionId).success)
     throw new Error(`Claude Code needs a UUID as a session ID, not "${sessionId}"`);
@@ -179,16 +232,19 @@ export function agentCommand(given: {
     if (lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink())
       throw new Error(`${p} is a link, so skel won't write through it`);
   mkdirSync(config, { recursive: true });
-  // The lead sees skel's clone of every repository read-only and works in a folder of its
-  // own. The whole folder is mounted, made first if need be, so a repository brought in
-  // while the lead runs shows up in its sandbox too.
-  const repos = join(home, ".local", "share", "skel", "repos");
-  mkdirSync(repos, { recursive: true });
-  for (const owner of readdirSync(repos))
-    for (const repo of readdirSync(join(repos, owner))) refuseCredentials(join(repos, owner, repo));
-  const cwd = join(home, ".local", "share", "skel", "lead");
-  mkdirSync(cwd, { recursive: true });
-  const mounts = [...rw(cwd), ...ro(repos), ...rw(config)];
+  const cwd = thread ?? join(home, ".local", "share", "skel", "lead");
+  const mounts = [...rw(cwd), ...rw(config)];
+  if (!thread) {
+    // The whole folder of clones is mounted, made first if need be, so a repository brought
+    // in while the lead runs shows up in its sandbox too.
+    const repos = join(home, ".local", "share", "skel", "repos");
+    mkdirSync(repos, { recursive: true });
+    for (const owner of readdirSync(repos))
+      for (const repo of readdirSync(join(repos, owner)))
+        refuseCredentials(join(repos, owner, repo));
+    mkdirSync(cwd, { recursive: true });
+    mounts.push(...ro(repos));
+  }
 
   // Claude Code asks whether to trust the folder even in bypass mode, and would wait there
   // with nobody to answer.
@@ -222,12 +278,11 @@ export function agentCommand(given: {
   if (sessionId) command.push("--session-id", sessionId);
   if (prompt) command.push(prompt);
 
-  const kept: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined && (passed.includes(key) || key.startsWith("LC_"))) kept[key] = value;
-  }
+  const kept = keptEnv(env);
   kept.CLAUDE_CONFIG_DIR = config;
   kept.CLAUDE_CODE_OAUTH_TOKEN = token;
+  // Its greyed-out suggestions propose steps, such as pushing, that belong to skel.
+  kept.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = "false";
   const argv = sandboxArgs({
     home,
     path: env.PATH ?? "",

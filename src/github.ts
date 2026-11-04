@@ -57,6 +57,24 @@ export async function updateClone(folder: string): Promise<void> {
   await git(["-C", folder, "reset", "--quiet", "--hard", "FETCH_HEAD"]);
 }
 
+// Fetches a branch of a GitHub repository, or its default branch when none is given, into
+// the folder's FETCH_HEAD, for a thread's clone to start from. Fetched by URL, so no remote
+// holding it is saved in the folder's .git/config.
+export async function fetchBranch(
+  folder: string,
+  repo: string,
+  branch: string | null,
+): Promise<void> {
+  await git([
+    "-C",
+    folder,
+    "fetch",
+    "--quiet",
+    `https://github.com/${repo}.git`,
+    branch ? `refs/heads/${branch}` : "HEAD",
+  ]);
+}
+
 // Returns JSON from GitHub through gh, sending a body when supplied. Failures name what
 // skel was trying, so you can tell which GitHub operation failed.
 async function api(endpoint: string, doing: string, input?: object): Promise<unknown> {

@@ -43,6 +43,16 @@ export function repositories(db: Database): Repository[] {
     .map((row) => Repository.parse(row));
 }
 
+// Returns the repository a command names, by its name in skel or its full GitHub name, in
+// any case. Throws when skel has no such repository, since commands only work on ones it has.
+export function findRepository(db: Database, given: string): Repository {
+  // Whether the repository's full GitHub name is the one given, in any case.
+  const full = (r: Repository) => `${r.owner}/${r.repo}`.toLowerCase() === given.toLowerCase();
+  const found = repositories(db).find((r) => r.name === given || full(r));
+  if (!found) throw new Error(`there is no repository named ${given}`);
+  return found;
+}
+
 // Creates or updates skel's repository clone so the lead can read its latest default
 // branch. The lead reads every clone in skel's folder, so a clone whose config holds a
 // credential is deleted rather than left there for it.

@@ -1,19 +1,61 @@
-// The daemon, run by skel serve: keeps the lead running and answers the CLI on its socket.
-// Plain skel makes sure it runs, then attaches to the lead.
+// The daemon, run by skel serve: keeps the lead and the threads' builders running, and
+// answers the CLI and the agents on their sockets. Plain skel makes sure it runs, then
+// attaches to the lead; skel task create and skel start ask it.
 import { dlopen, FFIType } from "bun:ffi";
 import { mkdirSync, openSync, rmSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import { z } from "zod";
 import { openDb } from "./db.ts";
+import { createIssue } from "./github.ts";
 import { startLead } from "./lead.ts";
-import { cliSocket, leadSocket } from "./paths.ts";
-import { refreshClones } from "./repo.ts";
+import { cliSocket, daemonSocket, leadSocket, threadSocket } from "./paths.ts";
+import { findRepository, refreshClones } from "./repo.ts";
 import { setupDone } from "./setup.ts";
+import {
+  bringBack,
+  failThread,
+  liveThreads,
+  setUpThread,
+  startBuilder,
+  startThread,
+  type Thread,
+  threadName,
+} from "./thread.ts";
 import { attach } from "./tmux.ts";
 
-const Request = z.object({ command: z.enum(["status", "lead"]) });
+// Only what a branch name holds: it goes into what git fetches, where a : or * would ask
+// for something else.
+const Branch = z.string().regex(/^(?!-)(?!.*\.\.)[\w./-]+$/);
+
+const Request = z.discriminatedUnion("command", [
+  z.object({ command: z.literal("status") }),
+  z.object({ command: z.literal("lead") }),
+  z.object({
+    command: z.literal("task create"),
+    repo: z.string(),
+    title: z.string().min(1),
+    body: z.string(),
+  }),
+  z.object({
+    command: z.literal("start"),
+    repo: z.string(),
+    task: z.number().int().positive(),
+    from: Branch.optional(),
+  }),
+]);
+type Request = z.infer<typeof Request>;
 const LeadReply = z.union([z.object({ lead: z.literal(true) }), z.object({ error: z.string() })]);
+
+// Who is on the other end of a socket: you, the lead, or a thread's builder. An agent may ask
+// only for what its commands need. Trusting a repository is never a request: only you can,
+// in your own terminal.
+type Caller = "you" | "lead" | Thread;
+const allowed = {
+  you: ["status", "lead", "task create", "start"],
+  lead: ["status", "task create", "start"],
+  builder: ["status"],
+};
 
 // Returns a decoded socket message, or undefined so invalid JSON can be rejected without
 // crashing.
@@ -27,7 +69,7 @@ function parseJson(text: string): unknown {
 
 // Sends a request to the daemon and returns its decoded reply, or null when nothing
 // answers. A socket file alone proves nothing: a daemon that was killed leaves it behind.
-function ask(request: z.infer<typeof Request>, timeout: number): Promise<unknown> {
+function ask(request: Request, timeout: number): Promise<unknown> {
   return new Promise((done) => {
     const connection = createConnection(cliSocket());
     const timer = setTimeout(() => connection.destroy(), timeout);
@@ -71,8 +113,13 @@ function listen(server: Server, path: string): Promise<void> {
   });
 }
 
-// Opens the daemon's sockets and starts the lead so commands can reach it. Leaves the
-// sockets listening after returning. It never asks questions: systemd has nobody to answer.
+// Returns the text of anything thrown, for replies and the daemon's log.
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+// Opens the daemon's sockets, starts the lead, and brings back the builders of threads that
+// were running, so commands and agents can reach it. Leaves the sockets listening after
+// returning, and removes them when stopped, leaving every tmux session running. It never
+// asks questions: systemd has nobody to answer.
 export async function serve(tmux: string): Promise<void> {
   if (!setupDone()) throw new Error("the first run isn't done on this machine: run skel first");
   const db = openDb();
@@ -82,44 +129,89 @@ export async function serve(tmux: string): Promise<void> {
     starting = starting.catch(() => {}).then(() => startLead(db, tmux));
     return starting;
   };
-  // Handles a socket connection, validating requests before reporting status or starting
-  // the lead.
-  const answer = (connection: Socket) => {
+  const sockets: string[] = [];
+  // Opens a socket that answers the given caller, removing one a killed daemon left behind,
+  // and keeps its path so stopping removes it.
+  const open = async (socket: string, caller: Caller) => {
+    mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
+    rmSync(socket, { force: true });
+    await listen(createServer(answer(caller)), socket);
+    sockets.push(socket);
+  };
+  const listening = new Set<string>();
+  // Opens a thread's own socket, so the daemon knows which thread calls on it. A thread that
+  // starts over keeps the socket it has.
+  const listenFor = async (thread: Thread) => {
+    if (listening.has(thread.folder)) return;
+    listening.add(thread.folder);
+    await open(threadSocket(thread.folder), thread);
+  };
+  // Sets up a new thread's clone, opens its socket and starts its builder, after skel start
+  // has had its answer. Marks the thread failed, with the reason, when any of it fails.
+  const begin = async (thread: Thread) => {
+    try {
+      await setUpThread(db, thread);
+      await listenFor(thread);
+      await startBuilder(db, tmux, thread);
+    } catch (error) {
+      failThread(db, thread, error);
+    }
+  };
+  // Carries out a request the caller may make, and returns the reply to send.
+  const handle = async (request: Request, caller: Caller): Promise<object> => {
+    if (request.command === "status") {
+      const thread = typeof caller === "object" ? { thread: threadName(db, caller) } : {};
+      return { running: true, pid: process.pid, ...thread };
+    }
+    if (request.command === "lead") {
+      await lead();
+      // Not waited on, so attaching never waits on GitHub.
+      refreshClones(db).catch((error) => console.log(String(error)));
+      return { lead: true };
+    }
+    if (request.command === "task create") {
+      const { owner, repo, name } = findRepository(db, request.repo);
+      const number = await createIssue(`${owner}/${repo}`, request.title, request.body);
+      return { task: `${name}-${number}` };
+    }
+    const thread = await startThread(db, request);
+    // Not waited on: an agent's command must answer quickly, and setup can take minutes.
+    begin(thread);
+    return { thread: threadName(db, thread) };
+  };
+  // Returns a handler for connections from the given caller: it reads one request, refuses
+  // what that caller may not ask, and answers the rest.
+  const answer = (caller: Caller) => (connection: Socket) => {
     let request = "";
     // Sends one JSON reply and closes the connection so the caller knows the request
     // finished.
     const reply = (answer: object) => connection.end(`${JSON.stringify(answer)}\n`);
-    connection.on("data", (data) => {
+    // Gathers data until the request's line is whole, then refuses it or has it handled.
+    const read = (data: Buffer) => {
       request += data.toString();
       const end = request.indexOf("\n");
       if (end === -1) return;
+      // One request per connection: more data while it runs must not run it again.
+      connection.off("data", read);
       const asked = Request.safeParse(parseJson(request.slice(0, end)));
-      if (!asked.success) reply({ error: "skel's daemon doesn't know that request" });
-      else if (asked.data.command === "status") reply({ running: true, pid: process.pid });
-      else
-        lead().then(
-          () => {
-            reply({ lead: true });
-            // After the reply, so attaching never waits on GitHub.
-            refreshClones(db).catch((error) => console.log(String(error)));
-          },
-          (error) => reply({ error: error instanceof Error ? error.message : String(error) }),
-        );
-    });
+      const kind = typeof caller === "object" ? "builder" : caller;
+      if (!asked.success || !allowed[kind].includes(asked.data.command))
+        reply({ error: "skel's daemon doesn't know that request" });
+      else handle(asked.data, caller).then(reply, (error) => reply({ error: message(error) }));
+    };
+    connection.on("data", read);
     connection.on("error", () => {});
   };
   // The lock decides which of two daemons started together runs. The socket can't: both
   // could find one left by a daemon that was killed, and each remove the other's new one.
-  const path = cliSocket();
+  const path = daemonSocket();
   if (!lock(`${path}.lock`))
     throw new Error("skel's daemon is already running. Run skel to attach to the lead.");
-  // The lead runs the same commands you do, so its socket answers the same requests.
-  const sockets = [path, leadSocket()];
-  for (const socket of sockets) {
-    mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
-    rmSync(socket, { force: true });
-    await listen(createServer(answer), socket);
-  }
+  // Taken before any request comes in, so a thread started meanwhile, still setting up,
+  // isn't taken for one whose setup the daemon's stop cut short.
+  const before = liveThreads(db);
+  await open(path, "you");
+  await open(leadSocket(), "lead");
   // The tmux sessions are left running: agents keep working while the daemon is down.
   for (const signal of ["SIGTERM", "SIGINT"])
     process.on(signal, () => {
@@ -127,7 +219,45 @@ export async function serve(tmux: string): Promise<void> {
       process.exit(0);
     });
   console.log(`Listening on ${path}.`);
-  await lead().catch((error) => console.log(error instanceof Error ? error.message : error));
+  await lead().catch((error) => console.log(message(error)));
+  for (const thread of before) {
+    await listenFor(thread);
+    bringBack(db, tmux, thread).catch((error) => failThread(db, thread, error));
+  }
+}
+
+// Asks the daemon on behalf of skel task create and skel start, and returns its answer. Throws
+// with the daemon's error, or when nothing answers.
+async function request(asked: Request): Promise<unknown> {
+  const reply = await ask(asked, 60_000);
+  if (reply === null) throw new Error("skel's daemon didn't answer: run skel to start it");
+  const failed = z.object({ error: z.string() }).safeParse(reply);
+  if (failed.success) throw new Error(failed.data.error);
+  return reply;
+}
+
+// Returns the daemon's reply checked against the shape this skel expects, so a daemon of
+// another version fails with a clear message.
+const understood = <T>(schema: z.ZodType<T>, reply: unknown): T => {
+  const read = schema.safeParse(reply);
+  if (!read.success)
+    throw new Error("skel's daemon answered in a way this skel doesn't understand");
+  return read.data;
+};
+
+// Has the daemon create a task, as a GitHub issue, for skel task create, and returns the
+// task's name, such as app-13. The daemon makes the call, since agents never hold a GitHub
+// login.
+export async function createTask(repo: string, title: string, body: string): Promise<string> {
+  const reply = await request({ command: "task create", repo, title, body });
+  return understood(z.object({ task: z.string() }), reply).task;
+}
+
+// Has the daemon start a thread on a task, for skel start, and returns the thread's name.
+// The daemon answers once the thread is recorded; its setup and builder come after.
+export async function startOn(repo: string, task: number, from?: string): Promise<string> {
+  const reply = await request({ command: "start", repo, task, ...(from ? { from } : {}) });
+  return understood(z.object({ thread: z.string() }), reply).thread;
 }
 
 // Ensures the daemon and lead are running, then attaches your terminal until you detach
