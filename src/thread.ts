@@ -74,6 +74,19 @@ export function liveThreads(db: Database): Thread[] {
     .map((row) => Thread.parse(row));
 }
 
+// Returns the start of a thread's folder name, made from its repository's name. The builder's
+// config folder and session are named after it too, so it starts with a letter or digit, as
+// they must. tmux changes . and : in a session's name, and / would make a folder. It stays
+// short: Claude Code hashes the name of the folder it saves a conversation in once the path
+// passes 200 characters, and skel would then miss it when bringing the builder back.
+function folderName(repository: string): string {
+  const name = repository
+    .replace(/[^\w-]/g, "-")
+    .replace(/^[^a-zA-Z0-9]+/, "")
+    .slice(0, 60);
+  return name || "thread";
+}
+
 // Records a new thread on a task, with its folder and branch, and returns it. Refuses a
 // task that has a thread already, unless that one failed: then it starts over in the same
 // folder. Only records it, since the lead waits on the answer. Setting up its clone and
@@ -110,9 +123,8 @@ export async function startThread(
       owner,
       repo,
       task,
-      // A thread that failed starts over in its folder, named when it first started. tmux
-      // changes . and : in a session's name, and / would make a folder.
-      folder: before?.folder ?? freeFolder(`${name}-${task}`.replace(/[^\w-]/g, "-")),
+      // A thread that failed starts over in its folder, named when it first started.
+      folder: before?.folder ?? freeFolder(`${folderName(name)}-${task}`),
       branch: slug ? `skel/${task}-${slug}` : `skel/${task}`,
       base: given.from ?? null,
       status: "working",

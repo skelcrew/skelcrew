@@ -160,20 +160,20 @@ function git(cwd: string, ...args: string[]): string {
   return run.stdout.toString().trim();
 }
 
-// Puts simon/app on the fake GitHub with the files given, and tells skel about it. Returns a
-// checkout to push more from.
-function addApp(files: Record<string, string> = {}): string {
-  const work = join(home, "work", "app");
+// Puts simon/<repo> on the fake GitHub with the files given, and tells skel about it.
+// Returns a checkout to push more from.
+function addApp(files: Record<string, string> = {}, repo = "app"): string {
+  const work = join(home, "work", repo);
   mkdirSync(work, { recursive: true });
   writeFileSync(join(work, "README"), "app\n");
   for (const [name, text] of Object.entries(files)) writeFileSync(join(work, name), text);
   git(work, "init", "-q", "-b", "main");
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");
-  git(home, "clone", "-q", "--bare", work, join(github(), "simon", "app.git"));
-  git(work, "remote", "add", "origin", join(github(), "simon", "app.git"));
+  git(home, "clone", "-q", "--bare", work, join(github(), "simon", `${repo}.git`));
+  git(work, "remote", "add", "origin", join(github(), "simon", `${repo}.git`));
   const script = `import { openDb } from ${JSON.stringify(join(import.meta.dir, "..", "src", "db.ts"))};
-openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app')");`;
+openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?)", [${JSON.stringify(repo)}, ${JSON.stringify(repo)}]);`;
   const added = Bun.spawnSync([process.execPath, "-e", script], { env: env(), stderr: "pipe" });
   if (!added.success) throw new Error(added.stderr.toString());
   return work;
@@ -517,5 +517,21 @@ await serve(${JSON.stringify(socket)});`;
     await skel("start", "app-12");
     await until(() => read(join(config("app-12"), "args")) !== "" || thread().status === "failed");
     expect(read(join(clone(), "ran"))).toBe("hidden\n");
+  }, 30_000);
+
+  // A builder's config folder and session are named after the thread's folder, which must
+  // start with a letter or digit. A long folder would make Claude Code hash the name of
+  // the folder its conversations are saved in, and skel would miss them when bringing the
+  // builder back.
+  test("names a thread's folder so its builder starts, whatever the repository's name", async () => {
+    const long = `x${"y".repeat(98)}`;
+    for (const repo of [".github", long]) addApp({}, repo);
+    serve();
+    await until(() => existsSync(join(data(), "repos", "simon", long, "README")));
+    await until(() => existsSync(join(data(), "repos", "simon", ".github", "README")));
+    expect((await skel("start", ".github-12")).out).toBe("Started .github-12.\n");
+    expect((await skel("start", `${long}-12`)).err).toBe("");
+    const folders = [`github-12`, `${long.slice(0, 60)}-12`];
+    for (const folder of folders) await until(() => read(join(config(folder), "args")) !== "");
   }, 30_000);
 });
