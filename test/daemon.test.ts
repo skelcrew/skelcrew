@@ -272,6 +272,11 @@ function onSprite(): void {
     `case "$*" in
   "services get skel") exit 0 ;;
   "services create skel-tmux-${socket} --cmd tmux --args -L,${socket},-f,/dev/null,-D --no-stream")
+    test -f "$HOME/tmux-service" && exit 0
+    : > "$HOME/tmux-service"
+    setsid tmux -L ${socket} -f /dev/null -D < /dev/null > /dev/null 2>&1 &
+    exit 0 ;;
+  "services start skel-tmux-${socket}")
     setsid tmux -L ${socket} -f /dev/null -D < /dev/null > /dev/null 2>&1 &
     exit 0 ;;
 esac
@@ -286,6 +291,18 @@ test("on a Sprite, starts once the first run installed its Sprite service", asyn
   serve();
   await until(() => existsSync(cliSocket()));
   expect(await answers()).toBe(true);
+});
+
+// Creating a service that exists already does nothing, even when it is stopped, and a tmux
+// server started without it would end with the daemon's service.
+test("on a Sprite, starts skel's tmux service again when it has stopped", async () => {
+  setUp();
+  onSprite();
+  writeFileSync(join(home, "tmux-service"), "");
+  serve();
+  await until(() => calls().includes("services start skel-tmux"));
+  await until(hasServer);
+  expect(calls()).not.toContain("systemd-run");
 });
 
 // A Sprite service ends every process it started when it stops, so a tmux server the

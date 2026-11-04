@@ -66,9 +66,10 @@ export function startServer(socket: string): void {
       stdout: "pipe",
       stderr: "pipe",
     });
-  // On a Sprite the server already runs, as a service, and only takes skel's options.
-  if (onSprite() && startTmuxService(socket) && run(start).success) return;
-  if (Bun.which("systemd-run") && run([...scope, ...start]).success) return;
+  // On a Sprite the server runs as a service, and then only takes skel's options. Never
+  // plainly there: the daemon's service would end it.
+  if (onSprite()) startTmuxService(socket);
+  else if (Bun.which("systemd-run") && run([...scope, ...start]).success) return;
   const plain = run(start);
   if (!plain.success)
     throw new Error(`tmux start-server failed: ${plain.stderr.toString().trim()}`);

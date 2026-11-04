@@ -57,25 +57,29 @@ export function startSpriteService(): void {
     throw new Error(`sprite-env couldn't start skel's daemon: ${started.stderr.toString().trim()}`);
 }
 
-// Starts skel's tmux server as a Sprite service of its own, and reports whether it answers.
-// A Sprite service ends every process it started when it stops, even one in a session of its
+// Starts skel's tmux server as a Sprite service of its own, and waits until it answers. A
+// Sprite service ends every process it started when it stops, even one in a session of its
 // own, and while any is left the Sprite takes a crashed service for a running one. So a tmux
 // server the daemon started would end with each restart, taking every agent with it, and
 // keep a crashed daemon from starting again. -D keeps tmux in the foreground for the service,
 // and running with no sessions.
-export function startTmuxService(socket: string): boolean {
+export function startTmuxService(socket: string): void {
+  const name = `skel-tmux-${socket}`;
+  const quiet: { stdout: "pipe"; stderr: "pipe" } = { stdout: "pipe", stderr: "pipe" };
+  const answers = (tries: number) => {
+    for (let tried = 0; tried < tries; tried++) {
+      if (Bun.spawnSync(["tmux", "-L", socket, "list-sessions"], quiet).success) return true;
+      Bun.sleepSync(100);
+    }
+    return false;
+  };
   const args = ["--cmd", "tmux", "--args", `-L,${socket},-f,/dev/null,-D`, "--no-stream"];
-  const create = ["sprite-env", "services", "create", `skel-tmux-${socket}`, ...args];
-  if (!Bun.spawnSync(create, { stdout: "pipe", stderr: "pipe" }).success) return false;
-  for (let tries = 0; tries < 50; tries++) {
-    const answered = Bun.spawnSync(["tmux", "-L", socket, "list-sessions"], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    if (answered.success) return true;
-    Bun.sleepSync(100);
-  }
-  return false;
+  Bun.spawnSync(["sprite-env", "services", "create", name, ...args], quiet);
+  if (answers(20)) return;
+  // Creating a service that exists does nothing, even when it has stopped.
+  Bun.spawnSync(["sprite-env", "services", "start", name], quiet);
+  if (answers(50)) return;
+  throw new Error(`skel's tmux service didn't start: /.sprite/logs/services/${name}.log shows why`);
 }
 
 const Listed = z.object({ sprites: z.array(z.object({ name: z.string() })) });
