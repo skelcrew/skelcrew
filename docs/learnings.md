@@ -109,6 +109,10 @@ that covers the code you are about to write.
   doesn't count as activity, so a daemon waiting on CI would sleep with it. A sleep also
   drops open connections, such as an agent's to its model. A longer sleep stops every
   process, and only Sprite services come back.
+- **A running Sprite service doesn't keep it awake either**, whatever the Sprite's own docs
+  say. A task on the control socket does: `PUT /v1/tasks/<name>` with `{"expire": 300}`
+  holds it for that many seconds, at most an hour, and the same call renews it. `DELETE`
+  lets go, and answers 404 once the task has expired. `sprite-env curl /v1/tasks` lists them.
 - **DNS comes from `/etc/resolv.conf`.** There is no `/run/systemd/resolve`, and no systemd.
 - **There is no `/run/user/<uid>`, and no `XDG_RUNTIME_DIR`.** `/run` belongs to root, so
   skel's sockets go in a folder of its own data folder, made readable only by you.
