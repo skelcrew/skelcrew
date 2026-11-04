@@ -13,10 +13,19 @@ import {
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { nameRepositories, openDb, Repository } from "./db.ts";
-import { cloneRepo, createLabel, type GitHubRepo, githubRepo, updateClone } from "./github.ts";
+import {
+  cloneRepo,
+  createLabel,
+  type GitHubRepo,
+  githubRepo,
+  removeWebhook,
+  updateClone,
+} from "./github.ts";
 import { onGitHub, originHere } from "./origin.ts";
 import { cloneDir, configDir, dataDir } from "./paths.ts";
 import { refuseCredentials } from "./sandbox.ts";
+import { onSprite, spriteUrl } from "./sprite.ts";
+import { hookRepository } from "./webhook.ts";
 
 export const noRepositories =
   "skel has no repositories yet. Run skel in a checkout of one, or ask the lead for one by its GitHub name.";
@@ -146,6 +155,14 @@ export async function bringIn(db: Database, github: GitHubRepo, ask: boolean): P
   if (known) return;
   db.run("INSERT INTO repositories (owner, repo, name) VALUES (?, ?, ?)", [owner, repo, full]);
   nameRepositories(db);
+  // The daemon sets it again when it next starts, so a failure here costs only the wake-ups
+  // until then: polling sees every event once the Sprite is awake.
+  if (onSprite())
+    await hookRepository(full).catch((error) =>
+      console.error(
+        `skel: couldn't set the webhook that wakes this Sprite in ${full}: ${error instanceof Error ? error.message : String(error)}`,
+      ),
+    );
   const labeled = "UPDATE repositories SET labeled = 1 WHERE owner = ? AND repo = ?";
   // Only people who can push or triage may add a label, so where you can't push, a label
   // would be of no use to you.
@@ -202,8 +219,9 @@ export async function trustRepo(given: string): Promise<void> {
 }
 
 // Deletes skel's clone, registration and saved trust, then updates names that no longer
-// clash. Refuses while the repository has live threads, naming them.
-export function removeRepo(name: string): void {
+// clash, and on a Sprite removes the webhook that wakes it. Refuses while the repository has
+// live threads, naming them.
+export async function removeRepo(name: string): Promise<void> {
   const db = openDb();
   const found = repositories(db).find((r) => r.name === name);
   if (!found) throw new Error(`there is no repository named ${name}`);
@@ -223,5 +241,13 @@ export function removeRepo(name: string): void {
   nameRepositories(db);
   const kept = trustLines().filter((line) => line !== "" && line !== full);
   if (existsSync(trustFile())) writeFileSync(trustFile(), kept.map((line) => `${line}\n`).join(""));
+  // Removed last, so a webhook GitHub couldn't remove never stops the rest. Left behind, it
+  // only wakes the Sprite for a repository skel no longer polls.
+  if (onSprite())
+    await removeWebhook(full, spriteUrl()).catch((error) =>
+      console.error(
+        `skel: couldn't remove the webhook that wakes this Sprite from ${full}, so remove it on GitHub: ${error instanceof Error ? error.message : String(error)}`,
+      ),
+    );
   console.log(`Removed ${name} and skel's clone of it.`);
 }
