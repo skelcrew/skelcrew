@@ -129,7 +129,7 @@ INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you) VALUE
 }
 
 describe("skel ps", () => {
-  test("lists threads newest first, with their status and whether they need you", async () => {
+  test("lists live threads newest first, with their status and whether they need you", async () => {
     threads();
     serve();
     await untilAnswers();
@@ -139,9 +139,25 @@ describe("skel ps", () => {
       "THREAD  STATUS   NEEDS YOU\n" +
         "app-9   failed\n" +
         "app-12  working\n" +
+        "site-7  waiting  yes\n",
+    );
+  });
+
+  // Done threads pile up forever, and would bury the live ones.
+  test("shows done threads only with --all", async () => {
+    threads();
+    serve();
+    await untilAnswers();
+    const listed = await skel(["ps", "--all"]);
+    expect(listed.err).toBe("");
+    expect(listed.out).toBe(
+      "THREAD  STATUS   NEEDS YOU\n" +
+        "app-9   failed\n" +
+        "app-12  working\n" +
         "site-7  waiting  yes\n" +
         "app-3   done\n",
     );
+    expect(JSON.parse((await skel(["ps", "app", "--json", "--all"])).out)).toHaveLength(3);
   });
 
   test("lists one repository's threads, as JSON for tools", async () => {
@@ -153,7 +169,7 @@ describe("skel ps", () => {
     expect(JSON.parse(listed.out)).toEqual([
       { thread: "site-7", status: "waiting", needsYou: true },
     ]);
-    expect(JSON.parse((await skel(["ps", "--json", "app"])).out)).toHaveLength(3);
+    expect(JSON.parse((await skel(["ps", "--json", "app"])).out)).toHaveLength(2);
   });
 
   test("says when there are no threads, and when the repository isn't skel's", async () => {
@@ -436,7 +452,7 @@ exec sleep 300
     const out = join(data(), "lead", "out");
     await until(() => read(out) !== "");
     const [ps, tasks, shown, app, site, attach] = read(out).trim().split("\n");
-    expect(JSON.parse(ps ?? "")).toHaveLength(3);
+    expect(JSON.parse(ps ?? "")).toHaveLength(2);
     expect(JSON.parse(tasks ?? "")).toEqual([
       { task: "app-12", title: "Add export", thread: { status: "working", needsYou: false } },
     ]);

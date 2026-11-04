@@ -98,10 +98,29 @@ that covers the code you are about to write.
 - **Drop capabilities before starting bwrap.** Commands on a Sprite run with a large set of
   capabilities, and bwrap refuses to start with them ("Unexpected capabilities but not
   setuid"). Wrap it in `setpriv --inh-caps=-all --ambient-caps=-all --bounding-set=-all`.
-- **A new `/proc` can't be mounted there.** The Sprite runs inside a container that masks
-  parts of `/proc`, so `--proc` fails with "Operation not permitted". Bind the existing one
-  read-only. Agents then see other processes and their command lines, but not their
-  environment or the files outside the sandbox.
+- **bwrap can't mount a new `/proc` there, but `unshare` can.** The Sprite runs inside a
+  container that masks parts of `/proc`, so the kernel refuses a new one to bwrap, which
+  runs without capabilities: "Operation not permitted". Commands on a Sprite have
+  `CAP_SYS_ADMIN` outside any user namespace, so run `unshare --pid --fork --kill-child
+  --mount --mount-proc` first, then drop capabilities and start bwrap without
+  `--unshare-pid`. Mask again what the container masked, since the new `/proc` shows it.
+- **A `/proc` borrowed from outside a process list breaks programs inside it.** Its numbers
+  are the outside ones, so a program that looks itself up by its own number, as setpriv
+  and bwrap do, finds another process or none, and so do `ps`, `kill` and skel's own
+  stopping of a session. A builder running skel's tests on a Sprite failed this way.
+- **`unshare --fork` ignores SIGTERM.** It waits for its child instead. End it with SIGKILL,
+  and `--kill-child` takes the sandbox down with it.
+- **An overlay can't be laid over the Sprite's own disk.** That disk is an overlay already,
+  and bwrap's `--tmp-overlay` on a folder there fails with "Invalid argument". `/tmp` is a
+  disk of its own, so a test in `/tmp` passes and proves nothing. A reviewer gets a copy
+  of the folder instead, made in the review's own folder and removed with it.
+- **Hide `sprite-env` in the sandbox too.** Without the control socket it only fails, and
+  anything inside that checks for a Sprite, skel's tests included, takes the sandbox for a
+  Sprite whose services it can't reach.
+- **The Sprite's `node` writes to `/etc/profile.d` the first time it runs.** It is a script
+  that adds a line to `languages_env`, and with `set -e` it fails where `/etc` is
+  read-only. In a sandbox on a Sprite where node never ran outside, every node program,
+  biome and tsc included, fails with "Read-only file system".
 - **Hide `/.sprite/api.sock`.** Every process can reach it. Through it, an agent could start a
   service that runs outside the sandbox, or restore a checkpoint and wipe the disk, and the
   Sprite's own docs tell agents to use it.

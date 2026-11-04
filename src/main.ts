@@ -12,12 +12,13 @@ const usage = `Usage:
   skel repo ls
   skel repo rm <name>
   skel repo trust <name>
-  skel ps [<repo>] [--json]
+  skel ps [<repo>] [--all] [--json]
   skel task ls [<repo>] [--json]
   skel task show <repo>-<task> [--json]
   skel task create <repo> "<title>" "<body>"
   skel start <repo>-<task> [--from <branch>]
   skel attach <repo>-<task>
+  skel review <repo>-<task>
   skel submit "<summary>"`;
 
 // What an agent may not run, in its words. Its sandbox hides skel's database, your settings
@@ -73,6 +74,7 @@ async function run(args: string[]): Promise<void> {
     createTask,
     question,
     repos,
+    reviewAgain,
     serve,
     startOn,
     submitForReview,
@@ -135,9 +137,15 @@ async function run(args: string[]): Promise<void> {
   // --json can go anywhere, as tools add it last and people type it where they like.
   const json = args.includes("--json");
   const words = args.filter((arg) => arg !== "--json");
-  if (command === "ps" && words.length <= 2) {
-    printThreads(await threads(words[1]), json);
-    return;
+  if (command === "ps") {
+    // Done threads pile up forever and would bury the live ones, so only --all shows them.
+    const all = words.includes("--all");
+    const rest = words.filter((word) => word !== "--all");
+    if (rest.length <= 2) {
+      const rows = await threads(rest[1]);
+      printThreads(all ? rows : rows.filter((row) => row.status !== "done"), json);
+      return;
+    }
   }
   if (command === "task" && sub === "ls" && words.length <= 3) {
     printTasks(await tasks(words[2]), json);
@@ -164,6 +172,13 @@ async function run(args: string[]): Promise<void> {
   const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
   if (command === "start" && thread && (rest.length === 0 || from)) {
     console.log(`Started ${await startOn(...thread, from)}.`);
+    return;
+  }
+  if (command === "review" && thread && rest.length === 0) {
+    const name = await reviewAgain(...thread);
+    console.log(
+      `Reviewing ${name}'s last commit again. skel posts the review on its pull request, and types any changes into its builder.`,
+    );
     return;
   }
   if (command === "attach" && thread && rest.length === 0) {

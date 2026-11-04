@@ -57,7 +57,9 @@ fork=$(test -e "$HOME/github/$full.fork" && echo true || echo false)
 echo "{\\"name\\":\\"\${full#*/}\\",\\"owner\\":{\\"login\\":\\"\${full%/*}\\"},\\"viewerPermission\\":\\"$permission\\",\\"isFork\\":$fork}"`,
   );
   fake("tmux", "exit 0");
-  fake("systemctl", "exit 1");
+  // Run from a clone rather than a worktree, as in a builder's thread, skel rewrites the
+  // service's unit and reloads systemd. Nothing else may reach systemd.
+  fake("systemctl", 'test "$2" = daemon-reload');
   // git reaches the fake GitHub for every https://github.com/ URL.
   writeFileSync(
     join(home, ".gitconfig"),
