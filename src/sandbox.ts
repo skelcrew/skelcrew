@@ -19,6 +19,7 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { dataDir } from "./paths.ts";
+import { controlSocket, dropCapabilities, onSprite } from "./sprite.ts";
 
 const { O_NONBLOCK, O_NOFOLLOW, O_RDONLY } = constants;
 
@@ -59,8 +60,16 @@ export function sandboxArgs(given: {
   // --new-session: it moves Claude Code out of the terminal's process group, so it misses
   // resize signals and draws at the wrong width. The network stays shared for the model's
   // API.
-  const args = ["bwrap", "--die-with-parent", "--unshare-pid"];
-  args.push("--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp");
+  const sprite = onSprite(path);
+  const args = [...(sprite ? dropCapabilities : []), "bwrap", "--die-with-parent", "--unshare-pid"];
+  args.push("--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp");
+  // A Sprite runs in a container that masks parts of /proc, so a new one can't be mounted
+  // there. The agent then sees other processes and their command lines, but not their
+  // environment.
+  args.push(...(sprite ? ro("/proc") : ["--proc", "/proc"]));
+  // Kept as a file the agent can't use rather than hidden with /.sprite, where gh, bun and
+  // node live.
+  if (sprite) args.push("--ro-bind", "/dev/null", controlSocket);
   // The ssh agent, keyring, D-Bus, systemd and docker listen under /run, and some run
   // commands for whoever connects. Only the DNS resolver comes back.
   args.push(...hide("/run"));

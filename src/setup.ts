@@ -14,6 +14,12 @@ import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
 import { codexHome, configDir } from "./paths.ts";
+import {
+  dropCapabilities,
+  installSpriteService,
+  onSprite,
+  spriteServiceInstalled,
+} from "./sprite.ts";
 
 type Env = Record<string, string | undefined>;
 
@@ -39,7 +45,8 @@ function checkTools(env: Env): void {
   }
   // Being installed isn't being allowed: on Ubuntu 24.04 and later, AppArmor stops bwrap
   // making the namespaces it needs, and every agent would fail to start.
-  const tried = Bun.spawnSync([bwrap, "--ro-bind", "/", "/", "true"], { stderr: "pipe" });
+  const caps = onSprite(PATH) ? dropCapabilities : [];
+  const tried = Bun.spawnSync([...caps, bwrap, "--ro-bind", "/", "/", "true"], { stderr: "pipe" });
   if (!tried.success) {
     const said = tried.stderr.toString().trim();
     throw new Error(
@@ -252,7 +259,7 @@ WantedBy=default.target
 }
 
 // Installs or updates the daemon service, enabling it and lingering on the first
-// installation. Checked on every plain skel, but only by comparing files, so a moved bun,
+// installation. On a Sprite, which has no systemd, it is a Sprite service instead. Checked on every plain skel, but only by comparing files, so a moved bun,
 // claude or checkout reaches the daemon at its next start without a systemctl call each
 // time.
 function installService(): void {
@@ -270,6 +277,10 @@ function installService(): void {
     throw new Error(
       `skel is running from a worktree (${skel}): run skel from the main checkout to install its daemon`,
     );
+  }
+  if (onSprite()) {
+    installSpriteService(skel);
+    return;
   }
   // Asking your login shell takes a moment, so only when the PATH here would change the
   // service, as over ssh.
@@ -300,7 +311,8 @@ function installService(): void {
 // files show every step ran. Missing tools or logins fail where used; checking each attach
 // would require a GitHub call.
 export function setupDone(): boolean {
-  return Boolean(readConfig().harness) && existsSync(tokenFile()) && existsSync(unitFile());
+  const service = onSprite() ? spriteServiceInstalled() : existsSync(unitFile());
+  return Boolean(readConfig().harness) && existsSync(tokenFile()) && service;
 }
 
 // Completes unfinished machine setup and keeps the daemon service current before attaching

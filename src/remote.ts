@@ -14,12 +14,12 @@ const onServer = 'env PATH="$HOME/.local/bin:$PATH" skel';
 
 // Returns a word the server's shell reads back exactly as given. ssh joins its words with
 // spaces into one line for that shell, so a space, quote or $ would split or expand it.
-const quoted = (word: string) =>
+export const quoted = (word: string) =>
   /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
 
 // Runs a program with your terminal, so ssh can ask for a password and attach, and returns
 // its exit code.
-const run = (argv: string[]) =>
+export const run = (argv: string[]) =>
   Bun.spawn(argv, { stdio: ["inherit", "inherit", "inherit"] }).exited;
 
 // Runs a skel command on the host and returns its exit code. Plain skel passes the
@@ -42,10 +42,23 @@ export async function remote(host: string, args: string[]): Promise<number> {
   return run(["ssh", "-t", host, line]);
 }
 
-// Builds skel as one file for the server, which is Linux on x64 whatever the laptop runs,
-// and copies it to the host's ~/.local/bin. Built from this checkout each time, so the
-// server gets the skel you run here.
+// Copies skel to the host's ~/.local/bin, built for it.
 async function copySkel(host: string): Promise<void> {
+  await withLinuxSkel(async (file) => {
+    // scp writes through a link, so a link left there, such as one to a checkout's launcher
+    // that can't find bun over ssh, would have the checkout's own file overwritten. Removing
+    // it first leaves the file it points to alone.
+    if ((await run(["ssh", host, "mkdir -p .local/bin && rm -f .local/bin/skel"])) !== 0)
+      throw new Error(`couldn't make ~/.local/bin on ${host}, so skel wasn't copied`);
+    if ((await run(["scp", file, `${host}:.local/bin/skel`])) !== 0)
+      throw new Error(`scp couldn't copy skel to ${host}`);
+  });
+}
+
+// Builds skel as one file for a server or Sprite, which is Linux on x64 whatever the laptop
+// runs, hands it to copy, and removes it after. Built from this checkout each time, so the
+// machine gets the skel you run here.
+export async function withLinuxSkel(copy: (file: string) => Promise<void>): Promise<void> {
   // A single-file skel runs its modules from a folder only it sees, with no sources to
   // build from.
   if (import.meta.dir.startsWith("/$bunfs"))
@@ -58,13 +71,7 @@ async function copySkel(host: string): Promise<void> {
     const target = "--target=bun-linux-x64";
     if ((await run(["bun", "build", "--compile", target, main, "--outfile", file])) !== 0)
       throw new Error("bun build failed, so skel wasn't copied");
-    // scp writes through a link, so a link left there, such as one to a checkout's launcher
-    // that can't find bun over ssh, would have the checkout's own file overwritten. Removing
-    // it first leaves the file it points to alone.
-    if ((await run(["ssh", host, "mkdir -p .local/bin && rm -f .local/bin/skel"])) !== 0)
-      throw new Error(`couldn't make ~/.local/bin on ${host}, so skel wasn't copied`);
-    if ((await run(["scp", file, `${host}:.local/bin/skel`])) !== 0)
-      throw new Error(`scp couldn't copy skel to ${host}`);
+    await copy(file);
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }

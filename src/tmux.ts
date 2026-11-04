@@ -1,6 +1,7 @@
 // skel's tmux sessions: one each for the lead, builders and reviewers, on skel's own tmux
 // server (`tmux -L skel`; tests pass a socket of their own).
 import { readdirSync, readFileSync } from "node:fs";
+import { onSprite, startTmuxService } from "./sprite.ts";
 
 // Sent on stdin with each new session instead of kept in a file, so there is no file to
 // find or keep in step, and a server an older skel started picks up changes. Your own
@@ -49,7 +50,7 @@ function mustTmux(socket: string, args: string[], input = ""): string {
 // Starts skel's tmux server if needed, keeping agent sessions alive independently of the
 // daemon. A server started by the daemon would live in skel.service's cgroup, so stopping
 // or OOM-killing the service would take every agent with it. A systemd scope of its own
-// keeps it apart; without systemd-run it starts plainly. exit-empty off keeps it up until
+// keeps it apart, as a Sprite service does on a Sprite; without either it starts plainly. exit-empty off keeps it up until
 // its first session, and the config applies to that session too.
 export function startServer(socket: string): void {
   if (tmux(socket, ["list-sessions"]).ok) return;
@@ -65,7 +66,10 @@ export function startServer(socket: string): void {
       stdout: "pipe",
       stderr: "pipe",
     });
-  if (Bun.which("systemd-run") && run([...scope, ...start]).success) return;
+  // On a Sprite the server runs as a service, and then only takes skel's options. Never
+  // plainly there: the daemon's service would end it.
+  if (onSprite()) startTmuxService(socket);
+  else if (Bun.which("systemd-run") && run([...scope, ...start]).success) return;
   const plain = run(start);
   if (!plain.success)
     throw new Error(`tmux start-server failed: ${plain.stderr.toString().trim()}`);
