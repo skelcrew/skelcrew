@@ -88,33 +88,36 @@ command or read the line. An honest partial result beats a made-up complete one.
 
 ## Comments
 
-A comment explains what the code can't: why it is this way. Most code needs no comment. A
-reader should never have to read a comment to learn what a line does.
+Comments are for a human reading the code for the first time.
 
-Write a comment when:
-- the reason isn't obvious: a trap, a harness quirk, a limit someone hit before
-- the code looks wrong or roundabout, but is right
-- a reader might "simplify" it and break something
+**Every function gets a comment** saying what it does and what it is for, in plain words.
+A reader should understand the function from its comment without reading its body. Say what
+it gives back or changes, and why skel needs it. Add the reason behind anything surprising:
+a trap, a harness quirk, a limit someone hit before. One to four lines is usually enough.
+
+Inside a function, comment only what the code can't say: why it is this way, when it looks
+wrong or roundabout but is right, or when a reader might "simplify" it and break something.
 
 Each file starts with one or two lines saying what the file is for, in the spec's words.
 
 Never write:
-- what the code does, in words ("loop over the threads")
 - the name again as a sentence ("parseConfig parses the config")
+- each line again in words, inside a function ("loop over the threads")
 - history or chat ("fixed after review", "now handles X", "as discussed")
 - references to tasks, steps, spec sections or numbers
-- doc blocks on every function that only repeat its signature
 
 Examples:
 
 ```
+Bad:  // Brings in from.
+Good: // Brings in the repository you ran skel from, so the lead can work on it. A
+      // repository skel already has costs no call to GitHub, since skel must start fast
+      // and the daemon keeps its clone current. A folder that isn't on GitHub, such as
+      // your dotfiles, is skipped without a complaint.
+
 Bad:  // Wait 2 seconds before typing
 Good: // Text typed while Claude Code is still starting can be lost, so wait until its
       // pane has been quiet.
-
-Bad:  // Paste with -p
-Good: // Without the paste marks, Claude Code reads the Enter after a long message as a
-      // new line, and the message is never sent.
 ```
 
 When you change code, update or delete any comment it makes wrong. A wrong comment is worse
