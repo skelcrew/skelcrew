@@ -167,16 +167,19 @@ export async function serve(tmux: string): Promise<void> {
   const answer = (caller: Caller) => (connection: Socket) => {
     let request = "";
     const reply = (answer: object) => connection.end(`${JSON.stringify(answer)}\n`);
-    connection.on("data", (data) => {
+    const read = (data: Buffer) => {
       request += data.toString();
       const end = request.indexOf("\n");
       if (end === -1) return;
+      // One request per connection: more data while it runs must not run it again.
+      connection.off("data", read);
       const asked = Request.safeParse(parseJson(request.slice(0, end)));
       const kind = typeof caller === "object" ? "builder" : caller;
       if (!asked.success || !allowed[kind].includes(asked.data.command))
         reply({ error: "skel's daemon doesn't know that request" });
       else handle(asked.data, caller).then(reply, (error) => reply({ error: message(error) }));
-    });
+    };
+    connection.on("data", read);
     connection.on("error", () => {});
   };
   // The lock decides which of two daemons started together runs. The socket can't: both

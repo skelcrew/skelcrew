@@ -11,6 +11,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createConnection } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
@@ -208,6 +209,27 @@ test("skel issue creates the issue on GitHub and prints its number", async () =>
     title: "Add import",
     body: "From CSV",
   });
+});
+
+test("more data on a connection doesn't run its request again", async () => {
+  addApp();
+  serve();
+  await untilAnswers();
+  const real = read(join(home, "bin", "gh"));
+  writeFileSync(
+    join(home, "bin", "gh"),
+    real.replace('"$HOME/calls"\n', '"$HOME/calls"\nsleep 1\n'),
+  );
+  await new Promise<void>((done) => {
+    const connection = createConnection(join(home, "run", "skel.sock"));
+    connection.on("connect", () => {
+      connection.write('{"command":"issue","repo":"app","title":"t","body":"b"}\n');
+      setTimeout(() => connection.write("more\n"), 200);
+    });
+    connection.on("data", () => {});
+    connection.on("close", () => done());
+  });
+  expect(read(join(home, "calls")).match(/--method POST/g)).toHaveLength(1);
 });
 
 test("skel start refuses a repository skel doesn't have, and an issue GitHub doesn't", async () => {
