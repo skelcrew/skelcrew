@@ -1,11 +1,13 @@
 // skel's command line: reads the command and hands it to the file that does it.
-import { remote } from "./remote.ts";
-import { remoteSprite } from "./sprite.ts";
+import { remote, updateServer } from "./remote.ts";
+import { remoteSprite, updateSprite } from "./sprite.ts";
 
 const usage = `Usage:
   skel [--from <owner/repo>]
   skel --remote <host> [command]
   skel --remote sprite:<name> [command]
+  skel update --remote <host>
+  skel update --remote sprite:<name>
   skel serve
   skel repo ls
   skel repo rm <name>
@@ -46,6 +48,20 @@ async function run(args: string[]): Promise<void> {
   if (command === "--remote" && sub?.startsWith("sprite:"))
     process.exit(await remoteSprite(sub.slice("sprite:".length), rest));
   if (command === "--remote" && sub) process.exit(await remote(sub, rest));
+  // update builds skel here and puts it on the other machine, so it only makes sense with
+  // --remote, and runs on the laptop rather than over there.
+  if (command === "update") {
+    const where = sub === "--remote" && rest.length === 1 ? rest[0] : undefined;
+    if (!where)
+      throw new Error(
+        "update puts a new skel on a server or Sprite: skel update --remote <host>, or skel update --remote sprite:<name>",
+      );
+    process.exit(
+      where.startsWith("sprite:")
+        ? await updateSprite(where.slice("sprite:".length))
+        : await updateServer(where),
+    );
+  }
   const named = command === undefined || command === "--from" ? "" : command;
   const refused = yoursOnly[command === "repo" ? `repo ${sub}` : named];
   if (process.env.SKEL_SANDBOX === "1" && refused)
