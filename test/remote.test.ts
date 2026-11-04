@@ -312,6 +312,24 @@ test("update finds a checkout whose path holds a percent sign", async () => {
   expect(run.out).toContain(`skel on simon@workbox runs from a checkout at ${checkout}`);
 });
 
+// update puts skel in ~/.local/bin, so a service that starts a skel elsewhere would restart
+// the old one.
+test("update replaces nothing when the service runs a skel outside ~/.local/bin", async () => {
+  installed();
+  const other = join(home, "server", "opt", "skel");
+  mkdirSync(join(home, "server", "opt"));
+  writeFileSync(other, "old skel", { mode: 0o755 });
+  const units = join(home, "server", ".config", "systemd", "user");
+  mkdirSync(units, { recursive: true });
+  writeFileSync(join(units, "skel.service"), `[Service]\nExecStart="${other}" serve\n`);
+  const run = await update(laptopSkel());
+  expect(run.code).toBe(1);
+  expect(run.err).toContain(`the daemon on simon@workbox runs skel from ${other}`);
+  expect(calls()).not.toContain("scp");
+  expect(calls()).not.toContain("systemctl --user restart");
+  expect(readFileSync(other, "utf8")).toBe("old skel");
+});
+
 // A server where ~/.local/bin/skel links into a checkout updates with git pull there, and a
 // copy would leave the checkout behind while the daemon kept running it.
 test("update leaves skel run from a checkout on the server alone, and says how to update it", async () => {

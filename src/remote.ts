@@ -61,14 +61,23 @@ async function copySkel(host: string, file: string): Promise<void> {
 export const updateServer = (host: string) =>
   update(host, {
     shell: (script) => ["ssh", host, script],
+    // The unit names the skel the daemon runs, with each % doubled for systemd.
+    daemonSkel: async () => {
+      const unit = ".config/systemd/user/skel.service";
+      const sed = `sed -n 's/%%/%/g; s/^ExecStart="\\(.*\\)" serve$/\\1/p' ${unit}`;
+      const read = await quietly(["ssh", host, sed]);
+      return read.ok && read.said !== "" ? read.said : null;
+    },
     copy: (file) => copySkel(host, file),
     restart: "systemctl --user restart skel",
   });
 
-// How update reaches a server or a Sprite: the command that runs a shell line there, how a
-// built skel is copied there, and the line that restarts the daemon's service there.
+// How update reaches a server or a Sprite: the command that runs a shell line there, the
+// skel the daemon's service starts there, or null without a service, how a built skel is
+// copied there, and the line that restarts the daemon's service there.
 export type Machine = {
   shell: (script: string) => string[];
+  daemonSkel: () => Promise<string | null>;
   copy: (file: string) => Promise<void>;
   restart: string;
 };
@@ -107,19 +116,18 @@ function describeCheckout(): { folder: string; commit: string } {
 // the lead and builders keep their Claude Code running. A skel run from a checkout there is
 // left alone: a copy would leave the checkout behind while the daemon kept running it.
 export async function update(where: string, machine: Machine): Promise<number> {
-  // What counts is the skel the daemon runs. On a server its service names it, with each %
-  // doubled for systemd, and points at a checkout once skel has run from one, even with a
-  // copy still in ~/.local/bin. A Sprite service keeps the skel it was made with. A
-  // checkout's launcher, linked or not, is bin/skel beside its sources.
-  const script = `f=.local/bin/skel
-u=.config/systemd/user/skel.service
-if [ -f "$u" ]; then f=$(sed -n 's/%%/%/g; s/^ExecStart="\\(.*\\)" serve$/\\1/p' "$u"); fi
+  // update only ever writes ~/.local/bin/skel, so it goes by the skel the daemon's service
+  // starts, which can be elsewhere: a checkout skel once ran from, or a copy put somewhere
+  // else. A checkout's launcher, linked or not, is bin/skel beside its sources.
+  const daemon = await machine.daemonSkel();
+  const script = `f=${quoted(daemon ?? ".local/bin/skel")}
 d=$(dirname "$(readlink -f "$f")")/..
 if [ -f "$d/src/main.ts" ]; then echo "checkout $(cd "$d" && pwd)"
-elif [ -e "$f" ]; then echo copied
-else echo missing; fi`;
+elif [ ! -e "$f" ]; then echo missing
+elif [ "$(readlink -f "$f")" = "$(readlink -f .local/bin/skel)" ]; then echo copied
+else echo "elsewhere $f"; fi`;
   const asked = await quietly(machine.shell(script));
-  const found = asked.said.match(/^(checkout (.+)|copied|missing)$/m);
+  const found = asked.said.match(/^(checkout (.+)|copied|missing|elsewhere (.+))$/m);
   if (!found) throw new Error(`couldn't tell how skel is installed on ${where}:\n${asked.said}`);
   if (found[2]) {
     console.log(
@@ -129,6 +137,10 @@ else echo missing; fi`;
     );
     return 0;
   }
+  if (found[3])
+    throw new Error(
+      `the daemon on ${where} runs skel from ${found[3]}, not ~/.local/bin/skel, where update puts it, so nothing was replaced`,
+    );
   if (found[1] === "missing")
     throw new Error(`skel isn't on ${where} yet: skel --remote ${where} sets it up`);
   const { folder, commit } = describeCheckout();

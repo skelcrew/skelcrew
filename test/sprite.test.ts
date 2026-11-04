@@ -81,7 +81,13 @@ cat > "$out" <<'EOF'
 ${spriteSkel}EOF
 chmod +x "$out"`,
   );
-  fake("sprite-env", "");
+  // Like sprite-env on a Sprite: services get answers with the service as JSON, and fails
+  // when there is none.
+  fake(
+    "sprite-env",
+    `test "$1 $2 $3" = "services get skel" && { cat "$HOME/service.json" 2>/dev/null || exit 1; }
+exit 0`,
+  );
 });
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });
@@ -328,6 +334,24 @@ test("update keeps the old skel on the Sprite when the copy fails", async () => 
   const run = await update(laptopSkel());
   expect(run.code).toBe(1);
   expect(readFileSync(sprite, "utf8")).toBe("old skel");
+  expect(calls()).not.toContain("services restart");
+});
+
+// A Sprite service keeps the skel it was made with. Made from a checkout, a copy left in
+// ~/.local/bin runs nothing the daemon does.
+test("update goes by what the Sprite service runs, not by ~/.local/bin", async () => {
+  existing("demo");
+  const sprite = join(home, "sprites", "demo");
+  mkdirSync(join(sprite, "skel", "bin"), { recursive: true });
+  mkdirSync(join(sprite, "skel", "src"));
+  writeFileSync(join(sprite, "skel", "bin", "skel"), "#!/bin/sh\n", { mode: 0o755 });
+  writeFileSync(join(sprite, "skel", "src", "main.ts"), "");
+  const service = { name: "skel", cmd: join(sprite, "skel", "bin", "skel"), args: ["serve"] };
+  writeFileSync(join(sprite, "service.json"), JSON.stringify(service));
+  const run = await update(laptopSkel());
+  expect(run.code).toBe(0);
+  expect(run.out).toContain(`skel on sprite:demo runs from a checkout at ${join(sprite, "skel")}`);
+  expect(calls()).not.toContain("file push");
   expect(calls()).not.toContain("services restart");
 });
 

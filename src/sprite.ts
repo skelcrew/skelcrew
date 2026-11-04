@@ -150,6 +150,8 @@ export function keepAwake(
   return () => clearInterval(timer);
 }
 
+const Service = z.object({ cmd: z.string() });
+
 const Listed = z.object({ sprites: z.array(z.object({ name: z.string() })) });
 
 // Returns the names of your Sprites. Before that, checks that sprite is installed and logged
@@ -234,6 +236,23 @@ function onTheSprite(name: string): Machine {
         throw new Error(`sprite couldn't copy skel to sprite:${name}`);
       if ((await run(shell("mv -f .local/bin/skel.new .local/bin/skel"))) !== 0)
         throw new Error(`couldn't put the new skel in place on sprite:${name}`);
+    },
+    // A Sprite service keeps the command it was made with, even after skel moves.
+    daemonSkel: async () => {
+      const get = Bun.spawn(shell("sprite-env services get skel"), {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      const [out, code] = await Promise.all([new Response(get.stdout).text(), get.exited]);
+      if (code !== 0) return null;
+      try {
+        return Service.parse(JSON.parse(out)).cmd;
+      } catch {
+        throw new Error(
+          `sprite-env on sprite:${name} described skel's service in a way this skel doesn't understand`,
+        );
+      }
     },
     restart: "sprite-env services restart skel",
   };
