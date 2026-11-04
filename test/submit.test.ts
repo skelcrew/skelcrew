@@ -287,8 +287,12 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
       [second, "success", "skel/review"],
     ]);
     expect(reviews()).toEqual([
-      { event: "COMMENT", body: "**Changes requested.**\n\nThe export has no test." },
-      { event: "COMMENT", body: "**Approved.**\n\nReady to merge." },
+      {
+        event: "COMMENT",
+        commit_id: first,
+        body: "**Changes requested.**\n\nThe export has no test.",
+      },
+      { event: "COMMENT", commit_id: second, body: "**Approved.**\n\nReady to merge." },
     ]);
     expect(typedMessages()).toBe(1);
     expect(read(join(builder(), "typed"))).toContain("The export has no test.");
@@ -377,7 +381,13 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
         .filter((s) => s.sha === older)
         .map((s) => s.state),
     ).toEqual(["pending"]);
-    expect(reviews()).toEqual([{ event: "COMMENT", body: "**Approved.**\n\nFresh." }]);
+    expect(reviews()).toEqual([
+      {
+        event: "COMMENT",
+        commit_id: git(clone(), "rev-parse", "HEAD"),
+        body: "**Approved.**\n\nFresh.",
+      },
+    ]);
   }, 60_000);
 
   test("runs again a review the daemon's stop cut short", async () => {
@@ -395,7 +405,9 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     serve();
     await until(() => finished("success").length === 1, 30_000);
     expect(finished("success")[0]?.sha).toBe(pushed());
-    expect(reviews()).toEqual([{ event: "COMMENT", body: "**Approved.**\n\nLooks right." }]);
+    expect(reviews()).toEqual([
+      { event: "COMMENT", commit_id: pushed(), body: "**Approved.**\n\nLooks right." },
+    ]);
     await until(() => thread().reviewing === null);
   }, 60_000);
 
@@ -414,7 +426,9 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     serve();
     await until(() => finished("success").length === 1, 30_000);
     expect(finished("success")[0]?.sha).toBe(pushed());
-    expect(reviews()).toEqual([{ event: "COMMENT", body: "**Approved.**\n\nLooks right." }]);
+    expect(reviews()).toEqual([
+      { event: "COMMENT", commit_id: pushed(), body: "**Approved.**\n\nLooks right." },
+    ]);
     await until(() => thread().needs_you === 1);
     expect(thread()).toMatchObject({ pr: 7, submitting: null });
   }, 60_000);

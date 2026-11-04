@@ -159,7 +159,7 @@ async function reviewRound(
   });
   if (signal.aborted) return;
   const outcome = afterReview(readThread(db, folder).rounds, verdict, maxRounds);
-  if (verdict.verdict !== "failed") await postReview(repo, pr, verdict.verdict, verdict.body);
+  if (verdict.verdict !== "failed") await postReview(repo, pr, sha, verdict.verdict, verdict.body);
   // A newer round may be reviewing the same commit, and its check must stay pending.
   if (signal.aborted) return;
   await setReviewStatus(repo, sha, outcome.check, outcome.description);
