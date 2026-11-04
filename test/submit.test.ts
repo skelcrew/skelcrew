@@ -437,6 +437,40 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     await until(() => thread().telling === null);
   }, 60_000);
 
+  test("keeps a review it couldn't type in, and needs you", async () => {
+    addApp();
+    verdict(1, "changes", "The export has no test.");
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "busy"), "");
+    await startApp12();
+    await until(() => thread().telling !== null, 30_000);
+    Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
+    await until(() => thread().needs_you === 1, 30_000);
+    expect(String(thread().telling)).toContain("The export has no test.");
+  }, 60_000);
+
+  test("types in a saved review once a builder whose session ended is started again", async () => {
+    addApp();
+    verdict(1, "changes", "The export has no test.");
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "busy"), "");
+    const first = serve();
+    await untilCloned();
+    await skel(["start", "app-12"]);
+    await until(() => thread().telling !== null, 30_000);
+    first.kill();
+    await first.exited;
+    Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
+    rmSync(join(builder(), "busy"));
+    // The builder started again has no round of its own to submit, as it never saved a
+    // conversation to go on with.
+    fakeClaude(false);
+    serve();
+    await until(() => typedMessages() === 1, 30_000);
+    expect(read(join(builder(), "typed"))).toContain("The export has no test.");
+    await until(() => thread().telling === null);
+  }, 60_000);
+
   test("a newer skel submit drops a review still waiting for the builder", async () => {
     addApp();
     verdict(1, "changes", "Stale.");

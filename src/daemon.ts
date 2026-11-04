@@ -234,8 +234,11 @@ export async function serve(tmux: string): Promise<void> {
   await lead().catch((error) => console.log(message(error)));
   for (const thread of before) {
     await listenFor(thread);
-    bringBack(db, tmux, thread).catch((error) => failThread(db, thread, error));
-    resumeRound(db, tmux, thread);
+    // After the builder is back, since the round may type into its session.
+    bringBack(db, tmux, thread).then(
+      () => resumeRound(db, tmux, thread),
+      (error) => failThread(db, thread, error),
+    );
   }
 }
 

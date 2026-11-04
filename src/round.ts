@@ -208,12 +208,8 @@ function follow(
   rest.catch((error) => {
     if (cancel.signal.aborted) return;
     const why = error instanceof Error ? error.message : String(error);
-    record(
-      db,
-      folder,
-      { needs_you: true, status: "waiting", telling: null },
-      `the round failed: ${why}`,
-    );
+    // A review not yet typed in stays saved, so starting the daemon again can type it.
+    record(db, folder, { needs_you: true, status: "waiting" }, `the round failed: ${why}`);
   });
 }
 
