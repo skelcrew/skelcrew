@@ -9,6 +9,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { createConnection } from "node:net";
@@ -76,13 +77,13 @@ function setUp(): void {
 }
 
 // Runs the daemon as skel serve would, but on the test's own tmux server.
-function serve(): Subprocess<"ignore", "pipe", "pipe"> {
+function serve(runtime = join(home, "run")): Subprocess<"ignore", "pipe", "pipe"> {
   const script = `import { serve } from ${JSON.stringify(daemon)};
 await serve(${JSON.stringify(socket)});`;
   const run = Bun.spawn([process.execPath, "-e", script], {
     env: {
       HOME: home,
-      XDG_RUNTIME_DIR: join(home, "run"),
+      XDG_RUNTIME_DIR: runtime,
       PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
     },
     stdout: "pipe",
@@ -105,6 +106,8 @@ async function until(done: () => boolean) {
   }
 }
 
+const hasServer = () =>
+  Bun.spawnSync(["tmux", "-L", socket, "list-sessions"], { stderr: "pipe" }).success;
 const hasLead = () =>
   Bun.spawnSync(["tmux", "-L", socket, "has-session", "-t", "=lead"], { stderr: "pipe" }).success;
 const calls = () =>
@@ -250,6 +253,52 @@ test("skel serve refuses inside skel's sandbox, where skel's state is hidden", a
     "skel: running the daemon is only for your own terminal, not for agents\n",
   );
   expect(existsSync(join(home, "run", "skel.sock"))).toBe(false);
+});
+
+// As on a Sprite, where the socket's folder is one of skel's own, not one systemd made.
+test("makes the folder for its socket, which only you can open", async () => {
+  setUp();
+  const folder = join(home, "fresh", "run");
+  serve(folder);
+  await until(() => existsSync(join(folder, "skel.sock")));
+  expect(statSync(folder).mode & 0o777).toBe(0o700);
+});
+
+// skel takes a machine with sprite-env, the Sprite's own tool, on its PATH for a Sprite. Like
+// the real one, it starts a service as it creates it.
+function onSprite(): void {
+  fake(
+    "sprite-env",
+    `case "$*" in
+  "services get skel") exit 0 ;;
+  "services create skel-tmux-${socket} --cmd tmux --args -L,${socket},-f,/dev/null,-D --no-stream")
+    setsid tmux -L ${socket} -f /dev/null -D < /dev/null > /dev/null 2>&1 &
+    exit 0 ;;
+esac
+exit 1`,
+  );
+}
+
+test("on a Sprite, starts once the first run installed its Sprite service", async () => {
+  setUp();
+  rmSync(join(home, ".config", "systemd"), { recursive: true });
+  onSprite();
+  serve();
+  await until(() => existsSync(cliSocket()));
+  expect(await answers()).toBe(true);
+});
+
+// A Sprite service ends every process it started when it stops, so a tmux server the
+// daemon started would take every agent with it.
+test("on a Sprite, starts skel's tmux server as a Sprite service of its own", async () => {
+  setUp();
+  onSprite();
+  serve();
+  await until(() => calls().includes("tmux"));
+  await until(hasServer);
+  expect(calls()).toContain(
+    `sprite-env services create skel-tmux-${socket} --cmd tmux --args -L,${socket},-f,/dev/null,-D --no-stream\n`,
+  );
 });
 
 // bubblewrap can't start inside skel's own sandbox, so only there the lead can't start.

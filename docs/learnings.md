@@ -110,6 +110,24 @@ that covers the code you are about to write.
   drops open connections, such as an agent's to its model. A longer sleep stops every
   process, and only Sprite services come back.
 - **DNS comes from `/etc/resolv.conf`.** There is no `/run/systemd/resolve`, and no systemd.
+- **There is no `/run/user/<uid>`, and no `XDG_RUNTIME_DIR`.** `/run` belongs to root, so
+  skel's sockets go in a folder of its own data folder, made readable only by you.
+- **Tell a Sprite by `sprite-env`.** Every Sprite has it in `/.sprite/bin`, on the PATH that
+  commands and services get. No environment variable says you are on one.
+- **Services get the same PATH as `sprite exec`**, with `~/.local/bin` and `/.sprite/bin`,
+  and run as the `sprite` user. Their output goes to `/.sprite/logs/services/<name>.log`.
+  `sprite-env services start` prints the service's log for five seconds before it returns.
+- **A Sprite service ends everything it started when it stops.** Each service is a cgroup,
+  so a tmux server the daemon starts, even in a session of its own, ends with every
+  restart. And while any process is left in it, the Sprite takes a crashed service for a
+  running one and never starts it again. skel's tmux server is a Sprite service of its own.
+- **`sprite exec` exits 1 when it can't find the program**, as for any failure. Run the
+  command through `sh -c` to get 127 for a missing one.
+- **`sprite exec --tty` forwards your keyboard**, including what was typed ahead. An
+  answer meant for skel on the laptop is lost if a command on the Sprite runs first.
+- **`sprite file push` writes through a link**, like scp. Remove what is there first.
+- **There is no command that says whether `sprite` is logged in.** `sprite list` fails,
+  telling you to run `sprite login`, when it isn't.
 
 ## The agent's shell commands
 

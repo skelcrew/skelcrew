@@ -21,6 +21,7 @@ import { cliSocket, daemonSocket, leadSocket, threadSocket } from "./paths.ts";
 import { findRepository, refreshClones } from "./repo.ts";
 import { resumeRound, submitRound } from "./round.ts";
 import { setupDone } from "./setup.ts";
+import { onSprite, serviceLog, startSpriteService } from "./sprite.ts";
 import {
   bringBack,
   failThread,
@@ -246,6 +247,7 @@ export async function serve(tmux: string): Promise<void> {
   // The lock decides which of two daemons started together runs. The socket can't: both
   // could find one left by a daemon that was killed, and each remove the other's new one.
   const path = daemonSocket();
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   if (!lock(`${path}.lock`))
     throw new Error("skel's daemon is already running. Run skel to attach to the lead.");
   // Taken before any request comes in, so a thread started meanwhile, still setting up,
@@ -351,15 +353,19 @@ export async function attachToLead(tmux: string, from?: string): Promise<void> {
   // Asking for the lead brings it back if it ended while the daemon kept running.
   let reply = await ask(asked, 15_000);
   if (reply === null) {
-    const start = Bun.spawnSync(["systemctl", "--user", "start", "skel"], {
-      stdio: ["inherit", "inherit", "inherit"],
-    });
-    if (!start.success) throw new Error("systemctl couldn't start skel's daemon");
+    const sprite = onSprite();
+    if (sprite) startSpriteService();
+    else {
+      const start = Bun.spawnSync(["systemctl", "--user", "start", "skel"], {
+        stdio: ["inherit", "inherit", "inherit"],
+      });
+      if (!start.success) throw new Error("systemctl couldn't start skel's daemon");
+    }
     const deadline = Date.now() + 10_000;
     while (reply === null) {
       if (Date.now() > deadline)
         throw new Error(
-          "skel's daemon didn't answer within 10 seconds: journalctl --user -u skel shows why",
+          `skel's daemon didn't answer within 10 seconds: ${sprite ? serviceLog : "journalctl --user -u skel"} shows why`,
         );
       await Bun.sleep(100);
       reply = await ask(asked, 15_000);

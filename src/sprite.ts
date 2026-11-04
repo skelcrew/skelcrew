@@ -57,6 +57,27 @@ export function startSpriteService(): void {
     throw new Error(`sprite-env couldn't start skel's daemon: ${started.stderr.toString().trim()}`);
 }
 
+// Starts skel's tmux server as a Sprite service of its own, and reports whether it answers.
+// A Sprite service ends every process it started when it stops, even one in a session of its
+// own, and while any is left the Sprite takes a crashed service for a running one. So a tmux
+// server the daemon started would end with each restart, taking every agent with it, and
+// keep a crashed daemon from starting again. -D keeps tmux in the foreground for the service,
+// and running with no sessions.
+export function startTmuxService(socket: string): boolean {
+  const args = ["--cmd", "tmux", "--args", `-L,${socket},-f,/dev/null,-D`, "--no-stream"];
+  const create = ["sprite-env", "services", "create", `skel-tmux-${socket}`, ...args];
+  if (!Bun.spawnSync(create, { stdout: "pipe", stderr: "pipe" }).success) return false;
+  for (let tries = 0; tries < 50; tries++) {
+    const answered = Bun.spawnSync(["tmux", "-L", socket, "list-sessions"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (answered.success) return true;
+    Bun.sleepSync(100);
+  }
+  return false;
+}
+
 const Listed = z.object({ sprites: z.array(z.object({ name: z.string() })) });
 
 // Returns the names of your Sprites. Before that, checks that sprite is installed and logged

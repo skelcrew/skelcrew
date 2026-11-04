@@ -408,6 +408,48 @@ agentCommand({ name: "app-12", socket: "x", model: "opus" });`;
     ).toThrow("config");
   });
 
+  // skel takes a machine with sprite-env, the Sprite's own tool, on its PATH for a Sprite.
+  test("on a Sprite, drops capabilities, reuses /proc and hides the control socket", () => {
+    repository();
+    saveToken();
+    mkdirSync(join(home, "bin"), { recursive: true });
+    writeFileSync(join(home, "bin", "sprite-env"), "#!/bin/sh\n", { mode: 0o755 });
+    const { argv } = agentCommand({
+      name: "lead",
+      socket: socketPath,
+      model: "opus",
+      env: outside(),
+    });
+    expect(argv.slice(0, 5)).toEqual([
+      "setpriv",
+      "--inh-caps=-all",
+      "--ambient-caps=-all",
+      "--bounding-set=-all",
+      "bwrap",
+    ]);
+    const options = argv.slice(0, argv.indexOf("--")).join(" ");
+    expect(options).toContain("--ro-bind /proc /proc");
+    expect(options).not.toContain("--proc ");
+    expect(options).toContain("--ro-bind /dev/null /.sprite/api.sock");
+    // gh, bun and node live in /.sprite/bin, so nothing else of /.sprite is hidden.
+    expect(options).not.toContain("--tmpfs /.sprite");
+  });
+
+  test("on a server, gives the agent a /proc of its own", () => {
+    repository();
+    saveToken();
+    const { argv } = agentCommand({
+      name: "lead",
+      socket: socketPath,
+      model: "opus",
+      env: outside(),
+    });
+    expect(argv[0]).toBe("bwrap");
+    const options = argv.slice(0, argv.indexOf("--")).join(" ");
+    expect(options).toContain("--proc /proc");
+    expect(options).not.toContain(".sprite");
+  });
+
   test("says to run skel first when there is no token", () => {
     repository();
     expect(() =>
@@ -420,3 +462,19 @@ agentCommand({ name: "app-12", socket: "x", model: "opus" });`;
     ).toThrow("run skel");
   });
 });
+
+// Only a Sprite has its control socket, so these run only there, as when checking skel on a
+// test Sprite, and never inside skel's own sandbox, where bubblewrap can't start.
+describe.if(existsSync("/.sprite/api.sock") && process.env.SKEL_SANDBOX !== "1")(
+  "on a Sprite",
+  () => {
+    test("the agent can't reach the control socket, but runs the Sprite's tools", async () => {
+      repository();
+      const done = await asLead(
+        "test -S /.sprite/api.sock || echo hidden; command -v gh; test -d /proc/1 && echo proc",
+      );
+      expect(done.err).toBe("");
+      expect(done.out).toBe("hidden\n/.sprite/bin/gh\nproc\n");
+    });
+  },
+);

@@ -174,6 +174,45 @@ test("installs the daemon as a systemd user service with lingering, once", async
   expect(calls()).not.toContain("loginctl");
 });
 
+// skel takes a machine with sprite-env, the Sprite's own tool, on its PATH for a Sprite. Like
+// the real one, it starts a service as it creates it.
+function onSprite(): void {
+  fake(
+    "sprite-env",
+    `case "$*" in
+  "services get skel") test -f "$HOME/service" ;;
+  "services create skel "*) : > "$HOME/service"; : > "$HOME/started" ;;
+  "services start skel") : > "$HOME/started" ;;
+esac`,
+  );
+  fake("setpriv", 'while case "$1" in --*) true ;; *) false ;; esac; do shift; done; exec "$@"');
+}
+
+test("on a Sprite, installs the daemon as a Sprite service, not with systemd", async () => {
+  onSprite();
+  const run = await skel("1\nsk-ant-oat01-good\n");
+  expect(run.code).toBe(0);
+  // bwrap refuses to start on a Sprite with the capabilities its commands get.
+  expect(calls()).toContain(
+    `setpriv --inh-caps=-all --ambient-caps=-all --bounding-set=-all ${bin}/bwrap --ro-bind / / true\n`,
+  );
+  expect(calls()).toContain(
+    `sprite-env services create skel --cmd ${join(checkout, "bin", "skel")} --args serve --no-stream\n`,
+  );
+  expect(calls()).not.toContain("systemctl");
+  expect(calls()).not.toContain("loginctl");
+  expect(existsSync(unit())).toBe(false);
+  expect(calls()).toEndWith("daemon lead\ntmux -L skel attach -t =lead\n");
+
+  writeFileSync(join(home, "calls"), "");
+  rmSync(join(home, "started"));
+  const again = await skel();
+  expect(again.code).toBe(0);
+  expect(again.out).not.toContain("Setup is done.");
+  expect(calls()).not.toContain("services create");
+  expect(calls()).toContain("sprite-env services start skel\ndaemon lead\n");
+});
+
 test("installs the service on a machine set up before skel had one", async () => {
   mkdirSync(join(home, ".config", "skel"), { recursive: true });
   writeFileSync(config(), "harness: claude\n");

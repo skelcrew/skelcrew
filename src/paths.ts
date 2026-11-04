@@ -1,4 +1,5 @@
 // Where skel keeps your settings and its state on this machine.
+import { existsSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 
@@ -9,8 +10,13 @@ export const dataDir = () => join(homedir(), ".local", "share", "skel");
 
 // Returns the socket folder shared by the CLI and daemon. Some terminals and multiplexers
 // start shells without XDG_RUNTIME_DIR, while the daemon, started by systemd, always has it
-// as /run/user/<uid>.
-const runtimeDir = () => process.env.XDG_RUNTIME_DIR || join("/run/user", String(userInfo().uid));
+// as /run/user/<uid>. A Sprite has no systemd to make that folder, nor a /run you can write
+// to, so there the sockets go in a
+// folder of skel's own, which the daemon makes for you alone.
+function runtimeDir(): string {
+  const systemd = join("/run/user", String(userInfo().uid));
+  return process.env.XDG_RUNTIME_DIR || (existsSync(systemd) ? systemd : join(dataDir(), "run"));
+}
 
 // Returns the socket path where the daemon listens for your commands, and where it takes
 // the lock that keeps a second daemon from starting.
