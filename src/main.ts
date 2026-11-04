@@ -3,6 +3,7 @@ import { attachToLead, createTask, serve, startOn, tasks, threads } from "./daem
 import { printTasks, printThreads } from "./list.ts";
 import { bringInFrom, listRepos, removeRepo, trustRepo } from "./repo.ts";
 import { firstRun } from "./setup.ts";
+import { attachToThread } from "./thread.ts";
 
 const usage = `Usage:
   skel [--from <owner/repo>]
@@ -13,7 +14,8 @@ const usage = `Usage:
   skel ps [<repo>] [--json]
   skel task ls [<repo>] [--json]
   skel task create <repo> "<title>" "<body>"
-  skel start <repo>-<task> [--from <branch>]`;
+  skel start <repo>-<task> [--from <branch>]
+  skel attach <repo>-<task>`;
 
 // Runs the requested CLI command, or prints usage and exits when its arguments are invalid.
 // With no command, sets up skel and attaches you to the lead.
@@ -69,6 +71,10 @@ async function run(args: string[]): Promise<void> {
   const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
   if (command === "start" && thread?.[1] && (rest.length === 0 || from)) {
     console.log(`Started ${await startOn(thread[1], Number(thread[2]), from)}.`);
+    return;
+  }
+  if (command === "attach" && thread?.[1] && rest.length === 0) {
+    await attachToThread("skel", thread[1], Number(thread[2]));
     return;
   }
   console.error(usage);

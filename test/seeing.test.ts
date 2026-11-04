@@ -244,3 +244,59 @@ describe("skel task ls", () => {
     expect(failed.err).toContain("Could not resolve to a Repository");
   });
 });
+
+describe("skel attach", () => {
+  // The fake tmux has a session running for each file in ~/sessions, and a dead one, whose
+  // builder exited, when that file says dead. It never reaches skel's real tmux server.
+  beforeEach(() => {
+    threads();
+    mkdirSync(join(home, "sessions"));
+    fake(
+      "tmux",
+      `session=$(printf '%s\\n' "$@" | sed -n 's/^=\\([^:]*\\):*$/\\1/p')
+case "$*" in
+*has-session*) test -e "$HOME/sessions/$session" ;;
+*display-message*) grep -q dead "$HOME/sessions/$session" && echo 1 || echo 0 ;;
+*capture-pane*) echo "Claude Code exited" ;;
+*" attach "*) exit 0 ;;
+*) exit 1 ;;
+esac`,
+    );
+  });
+  const calls = () => read(join(home, "calls"));
+
+  test("attaches your terminal to the builder's session, named when the thread started", async () => {
+    writeFileSync(join(home, "sessions", "site-7"), "");
+    sql("UPDATE repositories SET name = 'web' WHERE repo = 'site'");
+    const attached = await skel(["attach", "web-7"]);
+    expect(attached.err).toBe("");
+    expect(attached.code).toBe(0);
+    expect(calls()).toContain("tmux -L skel attach -t =site-7\n");
+  });
+
+  test("says when there is no such thread", async () => {
+    const missing = await skel(["attach", "app-99"]);
+    expect(missing.code).not.toBe(0);
+    expect(missing.err).toBe("skel: there is no thread app-99\n");
+    expect((await skel(["attach", "web-1"])).err).toContain("no repository named web");
+    expect(calls()).not.toContain("attach");
+  });
+
+  test("says when the builder isn't running, and what state its thread is in", async () => {
+    writeFileSync(join(home, "sessions", "app-12"), "dead");
+    const dead = await skel(["attach", "app-12"]);
+    expect(dead.code).not.toBe(0);
+    expect(dead.err).toBe("skel: app-12's builder isn't running: the thread is working\n");
+    const gone = await skel(["attach", "app-9"]);
+    expect(gone.err).toBe("skel: app-9's builder isn't running: the thread is failed\n");
+    expect(calls()).not.toContain(" attach ");
+  });
+
+  test("refuses inside skel's sandbox, since it takes over your terminal", async () => {
+    writeFileSync(join(home, "sessions", "app-12"), "");
+    const refused = await skel(["attach", "app-12"], { SKEL_SANDBOX: "1" });
+    expect(refused.code).not.toBe(0);
+    expect(refused.err).toContain("your own terminal");
+    expect(calls()).toBe("");
+  });
+});
