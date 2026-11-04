@@ -234,6 +234,24 @@ test("refuses to start before the first run, and says to run skel", async () => 
   expect(hasLead()).toBe(false);
 });
 
+test("skel serve refuses inside skel's sandbox, where skel's state is hidden", async () => {
+  setUp();
+  const run = Bun.spawnSync([process.execPath, main, "serve"], {
+    env: {
+      HOME: home,
+      XDG_RUNTIME_DIR: join(home, "run"),
+      PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
+      SKEL_SANDBOX: "1",
+    },
+    stderr: "pipe",
+  });
+  expect(run.exitCode).toBe(1);
+  expect(run.stderr.toString()).toBe(
+    "skel: running the daemon is only for your own terminal, not for agents\n",
+  );
+  expect(existsSync(join(home, "run", "skel.sock"))).toBe(false);
+});
+
 // bubblewrap can't start inside skel's own sandbox, so only there the lead can't start.
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("with the lead", () => {
   test("starts the lead in its folder with a session id it stores", async () => {
