@@ -34,11 +34,11 @@ const leadFolder = () => join(home, ".local", "share", "skel", "lead");
 
 // Stands in for Claude Code, staying up like the real one until its session ends. It runs in
 // the lead's sandbox, where the home folder is hidden, so it notes its calls in the lead's
-// folder.
+// folder, one line each, though the lead's instructions span several.
 function fakeClaude(body: string): void {
   writeFileSync(
     join(home, "bin", "claude"),
-    `#!/bin/sh\necho "claude $*" >> "${leadFolder()}/calls"\n${body}\n`,
+    `#!/bin/sh\necho "claude $*" | tr '\\n' ' ' >> "${leadFolder()}/calls"\necho >> "${leadFolder()}/calls"\n${body}\n`,
     { mode: 0o755 },
   );
 }
@@ -264,6 +264,23 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with the lead", () => {
     await until(() => claudeCalls().includes("--resume"));
     expect(claudeCalls()).toBe(`--session-id ${id}\n--resume ${id}\n`);
     expect(storedSession()).toBe(id);
+  });
+
+  // Without them it would edit code in its own folder rather than hand the work to a thread.
+  test("starts and brings back the lead with its instructions", async () => {
+    setUp();
+    const first = serve();
+    await until(() => claudeLines().length > 0);
+    saveTranscript(storedSession());
+    await stop(first);
+    Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=lead"]);
+    serve();
+    await until(() => claudeCalls().includes("--resume"));
+    for (const line of claudeLines()) {
+      expect(line).toContain("--append-system-prompt You are the lead");
+      expect(line).toContain("skel task create");
+      expect(line).toContain("skel start");
+    }
   });
 
   // Claude Code can't resume a conversation it never saved, nor start a new one under its id.
