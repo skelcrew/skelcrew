@@ -22,12 +22,13 @@ import {
 } from "./list.ts";
 import { cliSocket, daemonSocket, leadSocket, threadSocket } from "./paths.ts";
 import { findRepository, refreshClones } from "./repo.ts";
-import { resumeRound, submitRound } from "./round.ts";
+import { rerunReview, resumeRound, submitRound } from "./round.ts";
 import { setupDone } from "./setup.ts";
 import { keepAwake, onSprite, serviceLog, startSpriteService } from "./sprite.ts";
 import {
   bringBack,
   failThread,
+  findThread,
   hasWork,
   liveThreads,
   readThread,
@@ -67,6 +68,11 @@ const Request = z.discriminatedUnion("command", [
     task: z.number().int().positive(),
     from: Branch.optional(),
   }),
+  z.object({
+    command: z.literal("review"),
+    repo: z.string(),
+    task: z.number().int().positive(),
+  }),
   z.object({ command: z.literal("submit"), summary: z.string().min(1) }),
   z.object({ command: z.literal("question asked") }),
   z.object({ command: z.literal("question answered") }),
@@ -80,8 +86,28 @@ const LeadReply = z.union([z.object({ lead: z.literal(true) }), z.object({ error
 // in your own terminal.
 type Caller = "you" | "lead" | Thread;
 const allowed = {
-  you: ["status", "lead", "repo ls", "ps", "task ls", "task show", "task create", "start"],
-  lead: ["status", "repo ls", "ps", "task ls", "task show", "task create", "start", "attached"],
+  you: [
+    "status",
+    "lead",
+    "repo ls",
+    "ps",
+    "task ls",
+    "task show",
+    "task create",
+    "start",
+    "review",
+  ],
+  lead: [
+    "status",
+    "repo ls",
+    "ps",
+    "task ls",
+    "task show",
+    "task create",
+    "start",
+    "review",
+    "attached",
+  ],
   builder: ["status", "submit", "question asked", "question answered"],
 };
 
@@ -211,6 +237,11 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
       const { owner, repo, name } = findRepository(db, request.repo);
       const number = await createIssue(`${owner}/${repo}`, request.title, request.body);
       return { task: `${name}-${number}` };
+    }
+    if (request.command === "review") {
+      const thread = findThread(db, request.repo, request.task);
+      rerunReview(db, tmux, thread.folder);
+      return { reviewing: threadName(db, thread) };
     }
     if (request.command === "submit" && typeof caller === "object") {
       submitRound(db, tmux, caller.folder, request.summary);
@@ -358,6 +389,13 @@ export async function startOn(repo: string, task: number, from?: string): Promis
 export async function submitForReview(summary: string): Promise<string> {
   const reply = await request({ command: "submit", summary });
   return understood(z.object({ submitted: z.string() }), reply).submitted;
+}
+
+// Has the daemon review a thread's last submitted commit again, for skel review, and returns
+// the thread's name. The daemon answers at once, and the review runs after, as a round's.
+export async function reviewAgain(repo: string, task: number): Promise<string> {
+  const reply = await request({ command: "review", repo, task });
+  return understood(z.object({ reviewing: z.string() }), reply).reviewing;
 }
 
 // Tells the daemon, for a builder's hook, that its builder is asking you a question, so the

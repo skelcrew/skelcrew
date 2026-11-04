@@ -13,7 +13,16 @@ import {
 import { tellLead } from "./lead.ts";
 import { cloneDir } from "./paths.ts";
 import { type Review, review } from "./reviewer.ts";
-import { baseOf, cloneOf, github, readThread, record, threadConfig } from "./thread.ts";
+import {
+  baseOf,
+  cloneOf,
+  github,
+  readThread,
+  record,
+  type Thread,
+  threadConfig,
+  threadName,
+} from "./thread.ts";
 import { typeInto } from "./tmux.ts";
 
 export type Outcome = {
@@ -194,8 +203,13 @@ async function deliver(
 // The latest round of each thread. Cancelling it cancels its review. The next round's push
 // waits for its push, so two pushes or two PRs never race, and the next round's review
 // waits for it to end, so its last write to the skel/review check comes before the next
-// round's pending one.
-type Round = { cancel: AbortController; pushed: Promise<unknown>; done: Promise<unknown> };
+// round's pending one. `ended` tells a round still under way from one that failed.
+type Round = {
+  cancel: AbortController;
+  pushed: Promise<unknown>;
+  done: Promise<unknown>;
+  ended: boolean;
+};
 const latest = new Map<string, Round>();
 
 // Keeps the round as the thread's latest, and marks the thread needs you, with the reason,
@@ -216,7 +230,11 @@ function follow(
     record(db, folder, { needs_you: true, status: "waiting" }, `the round failed: ${why}`);
     tellLead(db, tmux);
   });
-  latest.set(folder, { cancel, pushed, done });
+  const round = { cancel, pushed, done, ended: false };
+  done.then(() => {
+    round.ended = true;
+  });
+  latest.set(folder, round);
 }
 
 // Pushes the round, after the earlier round's push, then reviews it, once the earlier round
@@ -256,6 +274,49 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
   const before = latest.get(folder);
   before?.cancel.abort();
   pushAndReview(db, tmux, folder, summary, before);
+}
+
+// Returns the commit skel last fetched from the thread's clone and pushed, or null when it
+// has pushed none. Read at once, with no await, so two skel review can't both start one.
+function lastPushed(thread: Thread): string | null {
+  const ours = cloneDir(thread.owner, thread.repo);
+  const ref = `refs/skel/threads/${thread.folder}^{commit}`;
+  const run = Bun.spawnSync(["git", "-C", ours, "rev-parse", "--verify", "--quiet", ref], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return run.success ? run.stdout.toString().trim() : null;
+}
+
+// Reviews the thread's last submitted commit again, for skel review, such as after a review
+// that failed, and returns at once, as skel submit does. The review runs like any round's,
+// so changes count toward the round limit and a newer skel submit cancels it. A submit whose
+// push failed is pushed first. Refuses a thread that is done, one with nothing submitted, and
+// one whose review is still waiting or running, since that review answers already.
+export function rerunReview(db: Database, tmux: string, folder: string): void {
+  const thread = readThread(db, folder);
+  const name = threadName(db, thread);
+  if (thread.status === "done") throw new Error(`${name} is done, so there is nothing to review`);
+  const earlier = latest.get(folder);
+  const { submitting, reviewing } = thread;
+  if ((submitting !== null || reviewing !== null) && earlier && !earlier.ended)
+    throw new Error(`a review of ${name}'s last commit is already waiting or running`);
+  const sha = submitting === null && thread.pr !== null ? lastPushed(thread) : null;
+  if (submitting === null && sha === null)
+    throw new Error(`${name} has no submitted commit to review yet`);
+  const { maxRounds } = threadConfig();
+  // Past the round limit the thread still needs you, whatever the review says.
+  const needs_you = thread.rounds > maxRounds;
+  record(db, folder, { status: "waiting", needs_you, telling: null }, "asked to review again");
+  earlier?.cancel.abort();
+  if (submitting !== null) pushAndReview(db, tmux, folder, submitting, earlier);
+  else if (sha !== null) {
+    const cancel = new AbortController();
+    const rest = Promise.resolve(earlier?.done).then(() =>
+      reviewRound(db, tmux, folder, sha, cancel.signal),
+    );
+    follow(db, tmux, folder, cancel, Promise.resolve(), rest);
+  }
 }
 
 // Carries on with a round the daemon's stop cut short: a submit not yet pushed and
