@@ -74,6 +74,7 @@ esac`,
 test -f "${join(home, "apt-fails")}" && { echo "E: Unable to locate package bubblewrap" >&2; exit 100; }
 exit 0`,
   );
+  fake("node", 'echo "v22.0.0"');
   fake(
     "bun",
     `while [ $# -gt 1 ]; do test "$1" = --outfile && out=$2; shift; done
@@ -188,27 +189,31 @@ test("creates the Sprite, sets it up, and runs the first run there", async () =>
   const install = "sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq bubblewrap";
   expect(lines[2]).toBe(`sprite exec -s demo --no-stdin -- ${install}`);
   expect(lines[3]).toBe(install);
+  // A new Sprite's node writes to /etc on its first run, which the sandbox makes read-only,
+  // so it runs once outside, right after bubblewrap.
+  expect(lines[4]).toBe("sprite exec -s demo --no-stdin -- node --version");
+  expect(lines[5]).toBe("node --version");
   // "the Sprite demo" would read as a demo of Sprites, so skel names it as you typed it.
   expect(run.out).toContain(
     "skel · setting up sprite:demo: installing bubblewrap and copying skel there.\n",
   );
   expect(run.out).not.toContain("debconf");
   // Built for the Sprite, which is Linux on x64, whatever the laptop runs.
-  expect(lines[4]).toMatch(
+  expect(lines[6]).toMatch(
     new RegExp(
       `^bun build --compile --target=bun-linux-x64 ${main} --outfile ${home}/tmp/\\S+/skel$`,
     ),
   );
-  expect(lines[5]).toBe(
+  expect(lines[7]).toBe(
     "sprite exec -s demo --no-stdin -- sh -c mkdir -p .local/bin && rm -f .local/bin/skel.new",
   );
-  expect(lines[6]).toMatch(
+  expect(lines[8]).toMatch(
     new RegExp(`^sprite file push -s demo ${home}/tmp/\\S+/skel .local/bin/skel.new$`),
   );
-  expect(lines[7]).toBe(
+  expect(lines[9]).toBe(
     "sprite exec -s demo --no-stdin -- sh -c mv -f .local/bin/skel.new .local/bin/skel",
   );
-  expect(lines[8]).toBe(`${exec("demo")} --from simon/app`);
+  expect(lines[10]).toBe(`${exec("demo")} --from simon/app`);
   expect(readFileSync(join(home, "sprites", "demo", ".local", "bin", "skel"), "utf8")).toBe(
     spriteSkel,
   );

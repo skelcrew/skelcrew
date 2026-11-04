@@ -205,6 +205,15 @@ async function setUp(name: string): Promise<void> {
   ]);
   if (code !== 0)
     throw new Error(`couldn't install bubblewrap on sprite:${name}:\n${`${out}${err}`.trim()}`);
+  // A new Sprite's node is a script that writes to /etc/profile.d the first time it runs,
+  // and /etc is read-only in the sandbox, so node, biome and tsc would fail for every
+  // builder. One run out here does that write, quietly. A Sprite without node has nothing to
+  // fix, so a failure stops nothing.
+  await Bun.spawn(on(["node", "--version"]), {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  }).exited;
   await withLinuxSkel(onTheSprite(name).copy);
 }
 
