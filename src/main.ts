@@ -1,26 +1,7 @@
 // skel's command line: reads the command and hands it to the file that does it.
+import { help } from "./help.ts";
 import { remote, updateServer } from "./remote.ts";
 import { remoteSprite, updateSprite } from "./sprite.ts";
-
-const usage = `Usage:
-  skel [--from <owner/repo>]
-  skel --remote <host> [command]
-  skel --remote sprite:<name> [command]
-  skel update --remote <host>
-  skel update --remote sprite:<name>
-  skel serve
-  skel repo ls
-  skel repo rm <name>
-  skel repo trust <name>
-  skel ps [<repo>] [--all] [--json]
-  skel task ls [<repo>] [--json]
-  skel task show <repo>-<task> [--json]
-  skel task create <repo> "<title>" "<body>"
-  skel start <repo>-<task> [--from <branch>]
-  skel attach <repo>-<task>
-  skel review <repo>-<task>
-  skel stop <repo>-<task>
-  skel submit "<summary>"`;
 
 // What an agent may not run, in its words. Its sandbox hides skel's database, your settings
 // and your logins, so these would act on an empty database or ask what nobody can answer.
@@ -45,6 +26,10 @@ function taskName(word?: string): [string, number] | undefined {
 // With no command, sets up skel and attaches you to the lead.
 async function run(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
+  if (args.length === 1 && ["--help", "-h", "help"].includes(command ?? "")) {
+    console.log(help());
+    return;
+  }
   if (command === "--remote" && sub?.startsWith("sprite:"))
     process.exit(await remoteSprite(sub.slice("sprite:".length), rest));
   if (command === "--remote" && sub) process.exit(await remote(sub, rest));
@@ -194,7 +179,26 @@ async function run(args: string[]): Promise<void> {
     await attachToThread("skel", ...thread);
     return;
   }
-  console.error(usage);
+  const known = [
+    "serve",
+    "repo",
+    "ps",
+    "task",
+    "start",
+    "stop",
+    "attach",
+    "review",
+    "submit",
+    "update",
+  ];
+  const first = command ?? "";
+  console.error(
+    first === "--remote"
+      ? "skel: --remote needs a host, such as skel --remote simon@workbox or skel --remote sprite:demo."
+      : known.includes(first)
+        ? `skel: skel ${first} was given arguments it doesn't take. Run skel --help to see how to use it.`
+        : "skel: that isn't a skel command. Run skel --help to see them.",
+  );
   process.exit(1);
 }
 
