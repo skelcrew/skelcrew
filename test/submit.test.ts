@@ -314,20 +314,23 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     expect(args.endsWith("Add export\n\nAs JSON\n")).toBe(true);
   }, 30_000);
 
-  test("after max_rounds rounds of changes, the thread needs you and the builder hears no more", async () => {
+  // max_rounds counts rounds of review and fixes, so with 2 the builder submits 3 times.
+  test("after max_rounds rounds of changes and fixes, the thread needs you and the builder hears no more", async () => {
     addApp();
     config("max_rounds: 2\n");
     verdict(1, "changes", "First problem.");
     verdict(2, "changes", "Second problem.");
-    verdict(3, "approve", "A third review should never run.");
+    verdict(3, "changes", "Third problem.");
+    verdict(4, "approve", "A fourth review should never run.");
     await startApp12();
-    await until(() => finished("failure").length === 2, 30_000);
+    await until(() => finished("failure").length === 3, 45_000);
     await until(() => thread().needs_you === 1);
     await Bun.sleep(1500);
-    expect(typedMessages()).toBe(1);
-    expect(reviews()).toHaveLength(2);
-    expect(thread()).toMatchObject({ status: "waiting", needs_you: 1, rounds: 2 });
-  }, 60_000);
+    expect(typedMessages()).toBe(2);
+    expect(read(join(builder(), "typed"))).not.toContain("Third problem.");
+    expect(reviews()).toHaveLength(3);
+    expect(thread()).toMatchObject({ status: "waiting", needs_you: 1, rounds: 3 });
+  }, 90_000);
 
   test("a review that fails sets the check to review failed, posts nothing, and needs you", async () => {
     addApp();

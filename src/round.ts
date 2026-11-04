@@ -27,8 +27,9 @@ export type Outcome = {
 
 // Decides what a finished review means for a thread that has had `rounds` rounds of changes:
 // the skel/review check to set, the thread's new state, and what to type into the builder,
-// if anything. Changes go back to the builder until the round limit; then, like an approval
-// or a failed review, the thread needs you.
+// if anything. The builder gets max_rounds rounds of changes to fix. A review asking for
+// changes after those is posted but not typed in, and, like an approval or a failed review,
+// the thread then needs you.
 export function afterReview(rounds: number, given: Review, maxRounds: number): Outcome {
   if (given.verdict === "failed")
     return {
@@ -56,13 +57,13 @@ export function afterReview(rounds: number, given: Review, maxRounds: number): O
     description: "skel's reviewer asked for changes",
     rounds: counted,
   };
-  if (counted >= maxRounds)
+  if (counted > maxRounds)
     return {
       ...changes,
       needsYou: true,
       status: "waiting",
       tell: null,
-      why: `changes asked for in round ${counted} of ${maxRounds}, so the round limit is reached`,
+      why: `changes asked for after ${maxRounds} rounds of changes, so the round limit is reached`,
     };
   return {
     ...changes,
@@ -204,7 +205,7 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
   const { maxRounds } = threadConfig();
   const thread = readThread(db, folder);
   // Past the round limit the thread still needs you, whatever the builder does.
-  const needs_you = thread.rounds >= maxRounds;
+  const needs_you = thread.rounds > maxRounds;
   record(db, folder, { status: "waiting", needs_you }, `submitted: ${summary}`);
   const before = latest.get(folder);
   before?.cancel.abort();
