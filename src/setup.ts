@@ -14,6 +14,8 @@ import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
 import { codexHome, configDir } from "./paths.ts";
+import { rule, skelLine } from "./say.ts";
+import { promptSecret } from "./secret.ts";
 import {
   dropCapabilities,
   installSpriteService,
@@ -41,7 +43,7 @@ function checkTools(env: Env): void {
   const missing = tools.filter((tool) => !Bun.which(tool.command, { PATH }));
   if (missing.length > 0 || !bwrap) {
     const lines = missing.map((tool) => `  ${tool.command}: ${tool.install}`);
-    throw new Error(`skel needs these installed first:\n${lines.join("\n")}`);
+    throw new Error(`install these first:\n${lines.join("\n")}`);
   }
   // Being installed isn't being allowed: on Ubuntu 24.04 and later, AppArmor stops bwrap
   // making the namespaces it needs, and every agent would fail to start.
@@ -76,83 +78,97 @@ function apparmorAdvice(bwrap: string): string {
   sudo apparmor_parser -r /etc/apparmor.d/skel-bwrap`;
 }
 
-// Asks for a secret without echoing terminal input, restoring echo even if the prompt
-// fails. Your typing at a terminal shows on screen, and a token on screen can end up in a
-// scrollback or a screenshot. Piped input has no echo to hide.
-function promptHidden(question: string): string | null {
-  if (!process.stdin.isTTY) return prompt(question);
-  const stdio: ["inherit", "inherit", "inherit"] = ["inherit", "inherit", "inherit"];
-  Bun.spawnSync(["stty", "-echo"], { stdio });
+// Hands your terminal to an outside login and reports whether it succeeded. Rules naming
+// the tool mark where its output starts and ends, without touching it, since the codes and
+// tokens it prints must stay on screen. At a terminal, skel first waits for Enter, so you
+// choose when each login starts. While the tool runs, Ctrl-C stops only the tool, so the
+// way back is marked whatever happens. Ctrl-C at the pause stops skel before anything runs.
+function handOver(tool: string, command: string[], env: Env): boolean {
+  // Bun's prompt answers a bare Enter as it answers Ctrl-D, so the secret's prompt waits,
+  // which also stops skel on Ctrl-C with your terminal as it was.
+  if (process.stdin.isTTY) promptSecret(skelLine(`press Enter to start ${tool}'s login`));
+  console.log(rule(tool));
+  const ignore = () => {};
+  process.on("SIGINT", ignore);
+  let ran = false;
   try {
-    return prompt(question);
+    ran = Bun.spawnSync(command, { env, stdio: ["inherit", "inherit", "inherit"] }).success;
+    return ran;
   } finally {
-    Bun.spawnSync(["stty", "echo"], { stdio });
-    console.log();
+    process.off("SIGINT", ignore);
+    // A tool stopped by Ctrl-C leaves the terminal's ^C on the line, which would push the
+    // rule past the edge.
+    console.log(`${ran ? "" : "\n"}${rule("back in skel")}`);
   }
 }
 
-// Saves a pasted Claude Code agent token privately, skipping it when one is already saved.
-// Agents log in with a token from claude setup-token, which never renews, so they never
-// race your own Claude Code for a refresh.
+// Returns what is wrong with a pasted token, or null when it looks like one. Claude Code
+// itself tells its login tokens apart by this prefix. It reports any token as logged in
+// without asking the server, so the form is all skel can check here.
+function tokenProblem(token: string): string | null {
+  if (token === "") return "nothing was pasted";
+  if (/\s/.test(token)) return "that has spaces in it, and a token is one word";
+  if (!token.startsWith("sk-ant-oat"))
+    return "that doesn't start with sk-ant-oat, so it isn't a token from claude setup-token";
+  return null;
+}
+
+// Runs claude setup-token and saves the token you paste privately. Agents log in with a
+// token from claude setup-token, which never renews, so they never race your own Claude
+// Code for a refresh. A wrong paste is asked for again, since running setup-token again
+// would make another token.
 function saveClaudeToken(env: Env): void {
-  const file = tokenFile();
-  if (existsSync(file)) return;
-  const setup = Bun.spawnSync(["claude", "setup-token"], {
-    env,
-    stdio: ["inherit", "inherit", "inherit"],
-  });
-  if (!setup.success) throw new Error("claude setup-token didn't finish, so no token is saved");
-  const token = promptHidden("Paste the token it printed (it won't show):")?.trim();
-  if (!token) throw new Error("no token was pasted, so none is saved");
-  // Claude Code itself tells its login tokens apart by this prefix. It reports any token as
-  // logged in without asking the server, so the form is all skel can check here.
-  if (!token.startsWith("sk-ant-oat") || /\s/.test(token))
-    throw new Error(
-      "that isn't a token from claude setup-token, which is one word starting with sk-ant-oat, so it isn't saved",
-    );
-  mkdirSync(configDir(), { recursive: true });
-  // Created readable only by you, so the token is never in a file others can read.
-  writeFileSync(file, `${token}\n`, { mode: 0o600, flag: "wx" });
-}
-
-// Logs the reviewer into skel's Codex folder if needed, or explains the Claude Code
-// fallback. A login of skel's own, apart from yours in ~/.codex, so a renewal on either
-// side never breaks the other.
-function loginReviewer(env: Env): void {
-  if (!Bun.which("codex", { PATH: env.PATH ?? "" })) {
-    console.log(
-      "Codex isn't installed, so reviews will run on Claude Code, on the builder's own model, and lose the second view.",
-    );
-    return;
+  if (!handOver("Claude Code", ["claude", "setup-token"], env))
+    throw new Error("claude setup-token didn't finish, so no token is saved");
+  let question = "paste the token Claude printed above (it starts with sk-ant-oat01-):";
+  for (;;) {
+    const answer = promptSecret(skelLine(question));
+    if (answer === null) throw new Error("no token was pasted, so none is saved");
+    const token = answer.trim();
+    const problem = tokenProblem(token);
+    if (problem === null) {
+      mkdirSync(configDir(), { recursive: true });
+      // Created readable only by you, so the token is never in a file others can read.
+      writeFileSync(tokenFile(), `${token}\n`, { mode: 0o600, flag: "wx" });
+      return;
+    }
+    question = `${problem}. Paste it again:`;
   }
-  // Reviews can change only the login and session files in this folder, so running codex on
-  // it with your rights runs nothing a reviewer left there. codex login status reads only
-  // the saved login: a key in your environment doesn't count.
-  const codex = { ...env, CODEX_HOME: codexHome() };
-  const status = Bun.spawnSync(["codex", "login", "status"], {
-    env: codex,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  if (status.success) return;
-  mkdirSync(codexHome(), { recursive: true, mode: 0o700 });
-  const login = Bun.spawnSync(["codex", "login", "--device-auth"], {
-    env: codex,
-    stdio: ["inherit", "inherit", "inherit"],
-  });
-  if (!login.success) throw new Error("codex login didn't finish, so reviews have no login");
 }
 
-// Starts GitHub login when needed so the daemon can clone repositories and manage issues
-// and PRs.
+// Returns the reviewer's Codex settings: a login of skel's own, apart from yours in
+// ~/.codex, so a renewal on either side never breaks the other.
+const reviewerEnv = (env: Env): Env => ({ ...env, CODEX_HOME: codexHome() });
+
+// Reports whether the reviewer has a Codex login in skel's folder. Reviews can change only
+// the login and session files in this folder, so running codex on it with your rights runs
+// nothing a reviewer left there. codex login status reads only the saved login: a key in
+// your environment doesn't count.
+function reviewerLoggedIn(env: Env): boolean {
+  const status = ["codex", "login", "status"];
+  return Bun.spawnSync(status, { env: reviewerEnv(env), stdout: "pipe", stderr: "pipe" }).success;
+}
+
+// Logs the reviewer in to Codex in skel's own folder, with a code you enter on any device,
+// since the machine may have no browser. Then says so, to mark where Codex's output ends.
+function loginReviewer(env: Env): void {
+  mkdirSync(codexHome(), { recursive: true, mode: 0o700 });
+  if (!handOver("Codex", ["codex", "login", "--device-auth"], reviewerEnv(env)))
+    throw new Error("codex login didn't finish, so reviews have no login");
+  console.log(skelLine("the reviewer is logged in to Codex."));
+}
+
+// Reports whether gh is logged in to GitHub, which the daemon needs to clone repositories
+// and manage issues and PRs.
+const githubConnected = (env: Env) =>
+  Bun.spawnSync(["gh", "auth", "status"], { env, stdout: "pipe", stderr: "pipe" }).success;
+
+// Runs gh auth login in your terminal, then says so, since gh's own last lines can read as
+// if more is to come.
 function connectGitHub(env: Env): void {
-  if (Bun.spawnSync(["gh", "auth", "status"], { env, stdout: "pipe", stderr: "pipe" }).success)
-    return;
-  const login = Bun.spawnSync(["gh", "auth", "login"], {
-    env,
-    stdio: ["inherit", "inherit", "inherit"],
-  });
-  if (!login.success) throw new Error("gh auth login didn't finish, so skel can't reach GitHub");
+  if (!handOver("gh", ["gh", "auth", "login"], env))
+    throw new Error("gh auth login didn't finish, so skel can't reach GitHub");
+  console.log(skelLine("connected to GitHub."));
 }
 
 // Returns the settings file path used to remember your harness choice between runs.
@@ -172,14 +188,13 @@ function readConfig() {
   return { config, harness: read.data.harness };
 }
 
-// Asks for and saves your harness choice unless one is already configured.
+// Asks for your harness choice and saves it.
 function pickHarness(): void {
-  const { config, harness } = readConfig();
-  if (harness) return;
-  console.log("Harnesses:\n  1) Claude Code");
+  const { config } = readConfig();
+  console.log("  1) Claude Code");
   // Bun's prompt answers null both for Ctrl-D and for a bare Enter, unless it has a
   // default: then Enter gives the default and only Ctrl-D gives null.
-  const answer = prompt("Pick a harness", "1");
+  const answer = prompt(skelLine("pick one by its number"), "1");
   if (answer === null) throw new Error("no harness was picked, so none is saved");
   if (answer.trim() !== "1") throw new Error("Claude Code is the only harness for now");
   config.set("harness", "claude");
@@ -275,7 +290,7 @@ function installService(): void {
   if (!single && statSync(join(checkout, ".git"), { throwIfNoEntry: false })?.isFile()) {
     if (before !== null) return;
     throw new Error(
-      `skel is running from a worktree (${skel}): run skel from the main checkout to install its daemon`,
+      `this skel runs from a worktree (${skel}): run skel from the main checkout to install its daemon`,
     );
   }
   if (onSprite()) {
@@ -294,7 +309,9 @@ function installService(): void {
     if (before !== null) return;
     systemd(["systemctl", "--user", "enable", "--now", "skel"]);
     console.log(
-      "Turning on lingering, so the daemon keeps running after you log out and starts after a reboot.",
+      skelLine(
+        "turning on lingering, so the daemon keeps running after you log out and starts after a reboot.",
+      ),
     );
     systemd(["loginctl", "enable-linger"]);
   } catch (error) {
@@ -325,11 +342,53 @@ export function firstRun(): void {
     // the PATH it started with, whatever process.env says later.
     const env = { ...process.env, PATH: loginPath() };
     checkTools(env);
-    connectGitHub(env);
-    pickHarness();
-    saveClaudeToken(env);
-    loginReviewer(env);
+    const steps = stepsToTake(env);
+    for (const [at, step] of steps.entries()) {
+      console.log(`\n${skelLine(`step ${at + 1} of ${steps.length}: ${step.title}`)}`);
+      console.log(`  ${step.about}`);
+      step.take();
+    }
+    if (!Bun.which("codex", { PATH: env.PATH }))
+      console.log(
+        skelLine(
+          "Codex isn't installed, so reviews will run on Claude Code, on the builder's own model, and lose the second view.",
+        ),
+      );
   }
   installService();
-  if (!done) console.log("Setup is done.");
+  if (!done) console.log(skelLine("setup is done."));
+}
+
+type Step = { title: string; about: string; take: () => void };
+
+// Returns the first run's steps that aren't done yet, so their numbers count only what
+// runs this time.
+function stepsToTake(env: Env): Step[] {
+  const steps: Step[] = [];
+  if (!githubConnected(env))
+    steps.push({
+      title: "connect to GitHub",
+      about: "gh will log you in. skel uses this login for everything it does on GitHub.",
+      take: () => connectGitHub(env),
+    });
+  if (!readConfig().harness)
+    steps.push({
+      title: "pick a harness",
+      about:
+        "The harness is the coding agent that does the work. Claude Code is the only one for now.",
+      take: pickHarness,
+    });
+  if (!existsSync(tokenFile()))
+    steps.push({
+      title: "log agents in to Claude",
+      about: "Claude Code will print a long-lived token. Copy it, then come back here.",
+      take: () => saveClaudeToken(env),
+    });
+  if (Bun.which("codex", { PATH: env.PATH ?? "" }) && !reviewerLoggedIn(env))
+    steps.push({
+      title: "log the reviewer in to Codex",
+      about: "Codex will show a link and a code. Open the link on any device and enter the code.",
+      take: () => loginReviewer(env),
+    });
+  return steps;
 }

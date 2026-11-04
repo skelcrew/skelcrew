@@ -136,7 +136,28 @@ test("takes every step on the first run, and none on the second", async () => {
   expect(first.code).toBe(0);
   expect(calls()).toContain("gh auth login");
   expect(first.out).toContain("Claude Code");
-  expect(first.out).toContain("done");
+  // skel marks where it speaks again, so its lines stand apart from what gh and claude
+  // print, and numbers only the steps it takes.
+  const said = [
+    "skel · step 1 of 3: connect to GitHub\n",
+    "skel · connected to GitHub.\n",
+    "skel · step 2 of 3: pick a harness\n",
+    "skel · step 3 of 3: log agents in to Claude\n",
+    `──── Claude Code ${"─".repeat(63)}\n`,
+    "Your token: sk-ant-oat01-good\n",
+    `──── back in skel ${"─".repeat(62)}\n`,
+    "skel · paste the token Claude printed above (it starts with sk-ant-oat01-):",
+    "skel · setup is done.\n",
+  ];
+  // Each line comes after the one before, so a rule found is the one for its own step.
+  let at = 0;
+  for (const line of said) {
+    at = first.out.indexOf(line, at);
+    expect([line, at]).not.toEqual([line, -1]);
+  }
+  expect(first.out).toContain("──── gh ─");
+  // Only a terminal waits for Enter before each login.
+  expect(first.out).not.toContain("press Enter");
   expect(readFileSync(config(), "utf8")).toContain("harness: claude");
   expect(calls()).toContain("claude setup-token");
   expect(readFileSync(token(), "utf8").trim()).toBe("sk-ant-oat01-good");
@@ -147,7 +168,7 @@ test("takes every step on the first run, and none on the second", async () => {
   expect(second.err).toBe("");
   expect(second.code).toBe(0);
   expect(second.out).not.toContain("Claude Code");
-  expect(second.out).not.toContain("Setup is done.");
+  expect(second.out).not.toContain("setup is done");
   // Once set up, skel checks no tools, asks GitHub nothing and leaves systemd alone, so it
   // starts fast.
   expect(calls()).toBe("daemon lead\ntmux -L skel attach -t =lead\n");
@@ -208,7 +229,7 @@ test("on a Sprite, installs the daemon as a Sprite service, not with systemd", a
   rmSync(join(home, "started"));
   const again = await skel();
   expect(again.code).toBe(0);
-  expect(again.out).not.toContain("Setup is done.");
+  expect(again.out).not.toContain("setup is done");
   expect(calls()).not.toContain("services create");
   expect(calls()).toContain("sprite-env services start skel\ndaemon lead\n");
 });
@@ -298,6 +319,8 @@ test("skips the GitHub login when gh is logged in already", async () => {
   expect(run.code).toBe(0);
   expect(calls()).toContain("gh auth status");
   expect(calls()).not.toContain("gh auth login");
+  expect(run.out).toContain("skel · step 1 of 2: pick a harness\n");
+  expect(run.out).not.toContain("connect to GitHub");
 });
 
 test("names each missing tool with what to install, and runs nothing else", async () => {
@@ -305,6 +328,7 @@ test("names each missing tool with what to install, and runs nothing else", asyn
   unlinkSync(join(bin, "claude"));
   const run = await skel();
   expect(run.code).toBe(1);
+  expect(run.err).toStartWith("skel: install these first:\n");
   expect(run.err).toContain("sudo apt install tmux");
   expect(run.err).toContain("curl -fsSL https://claude.ai/install.sh | bash");
   expect(run.err).not.toContain("bubblewrap");
@@ -344,11 +368,21 @@ test("asks for a token when the harness is saved but no token is", async () => {
   expect(readFileSync(token(), "utf8").trim()).toBe("sk-ant-oat01-good");
 });
 
-for (const pasted of ["sk-ant-api03-key", "sk-ant-oat01-good sk-ant-oat01-again"]) {
-  test(`doesn't save a token that isn't one from setup-token: ${pasted}`, async () => {
+for (const [pasted, why] of [
+  ["sk-ant-api03-key", "that doesn't start with sk-ant-oat"],
+  ["sk-ant-oat01-good sk-ant-oat01-again", "that has spaces"],
+  [" ", "nothing was pasted"],
+]) {
+  test(`asks again for a token that isn't one from setup-token: ${JSON.stringify(pasted)}`, async () => {
+    const run = await skel(`1\n${pasted}\nsk-ant-oat01-good\n`);
+    expect(run.code).toBe(0);
+    expect(run.out).toContain(`skel · ${why}`);
+    expect(readFileSync(token(), "utf8").trim()).toBe("sk-ant-oat01-good");
+  });
+
+  test(`saves no token when the input ends after a wrong one: ${JSON.stringify(pasted)}`, async () => {
     const run = await skel(`1\n${pasted}\n`);
     expect(run.code).toBe(1);
-    expect(run.err).toContain("sk-ant-oat");
     expect(existsSync(token())).toBe(false);
   });
 }
@@ -432,6 +466,8 @@ test("logs the reviewer in to Codex with a login of skel's own", async () => {
   const run = await skel("1\nsk-ant-oat01-good\n");
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
+  expect(run.out).toContain("skel · step 4 of 4: log the reviewer in to Codex\n");
+  expect(run.out).toContain("skel · the reviewer is logged in to Codex.\n");
   expect(calls()).toContain(`codex login --device-auth\nCODEX_HOME=${codexHome()}\n`);
   expect(existsSync(join(codexHome(), "auth.json"))).toBe(true);
   expect(statSync(codexHome()).mode & 0o777).toBe(0o700);
@@ -454,7 +490,10 @@ test("skips the reviewer's login when skel's Codex login works already", async (
 test("says reviews run on Claude Code when Codex isn't installed", async () => {
   const run = await skel("1\nsk-ant-oat01-good\n");
   expect(run.code).toBe(0);
-  expect(run.out).toContain("reviews will run on Claude Code, on the builder's own model");
+  expect(run.out).toContain(
+    "skel · Codex isn't installed, so reviews will run on Claude Code, on the builder's own model",
+  );
+  expect(run.out).toContain("step 3 of 3");
   expect(run.out).toContain("second view");
 });
 
@@ -463,6 +502,8 @@ test("finishes no setup when the reviewer's login fails, so the next skel tries 
   const run = await skel("1\nsk-ant-oat01-good\n");
   expect(run.code).toBe(1);
   expect(run.err).toContain("codex login");
+  // The way back is marked even when the tool fails.
+  expect(run.out).toEndWith(`\n\n──── back in skel ${"─".repeat(62)}\n`);
   expect(existsSync(unit())).toBe(false);
 
   fakeCodex();
