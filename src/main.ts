@@ -10,7 +10,7 @@ const usage = `Usage:
   skel repo rm <name>
   skel trust <name>
   skel issue <repo> "<title>" "<body>"
-  skel start <repo>#<issue> [--from <branch>]`;
+  skel start <repo>-<issue> [--from <branch>]`;
 
 // Runs the requested CLI command, or prints usage and exits when its arguments are invalid.
 // With no command, sets up skel and attaches you to the lead.
@@ -42,7 +42,8 @@ async function run(args: string[]): Promise<void> {
     console.log(await fileIssue(sub, rest[0], rest[1]));
     return;
   }
-  const thread = sub?.match(/^(.+)#(\d+)$/);
+  // Repository names can hold dashes, so the issue is the number after the last one.
+  const thread = sub?.match(/^(.+)-(\d+)$/);
   const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
   if (command === "start" && thread?.[1] && (rest.length === 0 || from)) {
     console.log(`Started ${await startOn(thread[1], Number(thread[2]), from)}.`);

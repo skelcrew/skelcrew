@@ -236,10 +236,10 @@ test("skel start refuses a repository skel doesn't have, and an issue GitHub doe
   addApp();
   serve();
   await untilAnswers();
-  const unknown = await skel("start", "site#1");
+  const unknown = await skel("start", "site-1");
   expect(unknown.code).not.toBe(0);
   expect(unknown.err).toContain("no repository named site");
-  const missing = await skel("start", "app#99");
+  const missing = await skel("start", "app-99");
   expect(missing.code).not.toBe(0);
   expect(missing.err).toContain("Not Found");
   expect(existsSync(join(data(), "threads", "app-99"))).toBe(false);
@@ -264,9 +264,9 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a builder", () => {
     );
     serve();
     await untilCloned();
-    const started = await skel("start", "app#12");
+    const started = await skel("start", "app-12");
     expect(started.err).toBe("");
-    expect(started.out).toBe("Started app#12.\n");
+    expect(started.out).toBe("Started app-12.\n");
     await until(() => read(join(config("app-12"), "seen")) !== "");
     expect(git(clone(), "rev-parse", "--abbrev-ref", "HEAD")).toBe("skel/12-add-export");
     expect(read(join(clone(), "setup-ran"))).toBe("set up\ntoken-hidden\n");
@@ -303,7 +303,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a builder", () => {
     );
     serve();
     await untilCloned();
-    expect((await skel("start", "app#12", "--from", "next")).err).toBe("");
+    expect((await skel("start", "app-12", "--from", "next")).err).toBe("");
     await until(() => read(join(config("app-12"), "args")) !== "");
     expect(existsSync(join(clone(), "NEXT"))).toBe(true);
     expect(read(join(config("app-12"), "args"))).toContain("--model\nsonnet\n");
@@ -323,12 +323,12 @@ c.on("data", (d) => process.stdout.write(d));`;
     );
     serve();
     await untilCloned();
-    await skel("start", "app#12");
+    await skel("start", "app-12");
     await until(() => read(join(config("app-12"), "replies")) !== "");
     const replies = read(join(config("app-12"), "replies"))
       .trim()
       .split("\n");
-    expect(JSON.parse(replies[0] ?? "")).toMatchObject({ running: true, thread: "app#12" });
+    expect(JSON.parse(replies[0] ?? "")).toMatchObject({ running: true, thread: "app-12" });
     expect(replies.slice(1).map((reply) => JSON.parse(reply))).toEqual([
       { error: "skel's daemon doesn't know that request" },
       { error: "skel's daemon doesn't know that request" },
@@ -344,14 +344,14 @@ c.on("data", (d) => process.stdout.write(d));`;
     writeFileSync(join(home, "bin", "ask.js"), asker);
     fakeClaude(
       `while ! test -e ${data()}/repos/simon/app/README; do sleep 0.1; done
-{ skel issue app "Add import" "From CSV"; skel start app#12; skel trust simon/other; bun ${join(home, "bin", "ask.js")}; } > out.new 2>&1; mv out.new out`,
+{ skel issue app "Add import" "From CSV"; skel start app-12; skel trust simon/other; bun ${join(home, "bin", "ask.js")}; } > out.new 2>&1; mv out.new out`,
       "",
     );
     serve();
     const out = join(data(), "lead", "out");
     await until(() => read(out) !== "");
     expect(read(out)).toBe(
-      `13\nStarted app#12.\nskel: only you can trust a repository, from your own terminal\n{"error":"skel's daemon doesn't know that request"}\n`,
+      `13\nStarted app-12.\nskel: only you can trust a repository, from your own terminal\n{"error":"skel's daemon doesn't know that request"}\n`,
     );
     await until(() => read(join(config("app-12"), "args")) !== "");
   }, 20_000);
@@ -360,14 +360,14 @@ c.on("data", (d) => process.stdout.write(d));`;
     const work = addApp({ "skel.yaml": "setup: [echo fine, echo broken >&2 && exit 3]\n" });
     serve();
     await untilCloned();
-    expect((await skel("start", "app#12")).out).toBe("Started app#12.\n");
+    expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
     await until(() => thread().status === "failed");
     expect(read(join(data(), "threads", "app-12.log"))).toContain("broken");
     expect(hasSession("app-12")).toBe(false);
     writeFileSync(join(work, "skel.yaml"), "setup: [echo fixed > fixed]\n");
     git(work, "commit", "-q", "-am", "fix setup");
     git(work, "push", "-q", "origin", "main");
-    expect((await skel("start", "app#12")).out).toBe("Started app#12.\n");
+    expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
     await until(() => read(join(config("app-12"), "args")) !== "");
     expect(read(join(clone(), "fixed"))).toBe("fixed\n");
     expect(thread().status).toBe("working");
@@ -377,17 +377,17 @@ c.on("data", (d) => process.stdout.write(d));`;
     addApp();
     serve();
     await untilCloned();
-    await skel("start", "app#12");
-    const again = await skel("start", "app#12");
+    await skel("start", "app-12");
+    const again = await skel("start", "app-12");
     expect(again.code).not.toBe(0);
-    expect(again.err).toContain("app#12 has a thread already");
+    expect(again.err).toContain("app-12 has a thread already");
   }, 20_000);
 
   test("brings back a builder whose session is gone with --resume, where it was, after its repository is renamed", async () => {
     addApp();
     const first = serve();
     await untilCloned();
-    await skel("start", "app#12");
+    await skel("start", "app-12");
     await until(() => read(join(config("app-12"), "args")) !== "");
     const session = String(thread().session);
     // Claude Code saves a conversation once it has a message, which a fake can't send.
@@ -408,8 +408,8 @@ nameRepositories(db);`;
     expect(read(join(config("app-12"), "pwd"))).toBe(`${clone()}\n`);
     expect(hasSession("app-12")).toBe(true);
     expect(thread().session).toBe(session);
-    expect((await skel("start", "simon/app#12")).err).toContain(
-      "simon/app#12 has a thread already",
+    expect((await skel("start", "simon/app-12")).err).toContain(
+      "simon/app-12 has a thread already",
     );
   }, 30_000);
 
@@ -417,7 +417,7 @@ nameRepositories(db);`;
     addApp();
     const first = serve();
     await untilCloned();
-    await skel("start", "app#12");
+    await skel("start", "app-12");
     await until(() => read(join(config("app-12"), "args")) !== "");
     const session = String(thread().session);
     await stop(first);
@@ -436,7 +436,7 @@ nameRepositories(db);`;
     addApp({ "skel.yaml": "setup: [sleep 30]\n" });
     const first = serve();
     await untilCloned();
-    await skel("start", "app#12");
+    await skel("start", "app-12");
     await until(() => existsSync(join(clone(), "skel.yaml")));
     await stop(first);
     serve();
@@ -450,7 +450,7 @@ nameRepositories(db);`;
     addApp({ "skel.yaml": "setup: [sleep 3]\n" });
     serve();
     await untilAnswers();
-    expect((await skel("start", "app#12")).out).toBe("Started app#12.\n");
+    expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
     await until(() => read(join(config("app-12"), "args")) !== "");
     expect(thread().status).toBe("working");
   }, 30_000);
@@ -464,8 +464,8 @@ nameRepositories(db);`;
     expect(Bun.spawnSync([process.execPath, "-e", script], { env: env() }).success).toBe(true);
     serve();
     await untilAnswers();
-    expect((await skel("start", "simon/app#12")).err).toBe("");
-    expect((await skel("start", "simon-app#12")).err).toBe("");
+    expect((await skel("start", "simon/app-12")).err).toBe("");
+    expect((await skel("start", "simon-app-12")).err).toBe("");
     const db = new Database(join(data(), "skel.db"));
     const folders = db.query("SELECT folder FROM threads ORDER BY owner DESC").values();
     db.close();
@@ -483,7 +483,7 @@ nameRepositories(db);`;
     serve();
     await untilAnswers();
     expect(existsSync(join(data(), "repos", "simon", "app"))).toBe(false);
-    expect((await skel("start", "app#12")).out).toBe("Started app#12.\n");
+    expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
     await until(() => read(join(config("app-12"), "args")) !== "");
     expect(thread().status).toBe("working");
   }, 30_000);

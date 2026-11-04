@@ -55,7 +55,7 @@ export function threadName(db: Database, thread: Thread): string {
     .query("SELECT name FROM repositories WHERE owner = ? AND repo = ?")
     .get(thread.owner, thread.repo);
   const name = z.object({ name: z.string() }).nullable().parse(row)?.name ?? github(thread);
-  return `${name}#${thread.issue}`;
+  return `${name}-${thread.issue}`;
 }
 
 export function liveThreads(db: Database): Thread[] {
@@ -92,7 +92,7 @@ export async function startThread(
       db.query(`SELECT * FROM threads ${where}`).get(owner, repo, issue),
     );
     if (before && before.status !== "failed")
-      throw new Error(`${name}#${issue} has a thread already`);
+      throw new Error(`${name}-${issue} has a thread already`);
     const thread: Thread = {
       owner,
       repo,
