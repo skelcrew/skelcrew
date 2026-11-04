@@ -40,21 +40,33 @@ export function repositories(db: Database): Repository[] {
 }
 
 // Clones it the first time, and after that moves the clone to the latest default branch.
+// The lead reads every clone in skel's folder, so a clone whose config holds a credential is
+// deleted rather than left there for it.
 async function refreshClone(owner: string, repo: string): Promise<void> {
   const clone = cloneDir(owner, repo);
   if (existsSync(clone)) {
     await updateClone(clone);
+    checkOrDelete(clone);
     return;
   }
-  // Cloned outside the folder the lead sees and moved in once whole, so a clone stopped
-  // halfway never looks like one.
+  // Cloned outside the folder the lead sees, checked, and moved in once whole, so neither a
+  // clone stopped halfway nor one holding a credential ever shows up there.
   const part = join(dataDir(), "cloning", owner, repo);
   rmSync(part, { recursive: true, force: true });
   mkdirSync(dirname(part), { recursive: true });
   await cloneRepo(owner, repo, part);
+  checkOrDelete(part);
   mkdirSync(dirname(clone), { recursive: true });
   renameSync(part, clone);
-  refuseCredentials(clone);
+}
+
+function checkOrDelete(clone: string): void {
+  try {
+    refuseCredentials(clone);
+  } catch (error) {
+    rmSync(clone, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 let refreshing: Promise<void> | null = null;

@@ -35,7 +35,6 @@ export async function startLead(db: Database, tmux: string): Promise<void> {
   const resume = stored !== null && hasTranscript(folder, stored.session);
   const session = resume ? stored.session : crypto.randomUUID();
   db.run("INSERT OR REPLACE INTO lead (one, session) VALUES (1, ?)", [session]);
-  await refreshClones(db);
   const { argv, env } = agentCommand({
     name: "lead",
     socket: leadSocket(),
@@ -43,6 +42,9 @@ export async function startLead(db: Database, tmux: string): Promise<void> {
     ...(resume ? { resume: session } : { sessionId: session }),
   });
   startSession(tmux, "lead", { folder, command: argv, env });
+  // GitHub can be slow or away, and attaching waits on this. The lead sees the whole folder
+  // of clones, so clones made after it started show up for it.
+  refreshClones(db).catch((error) => console.log(String(error)));
   console.log(`${resume ? "Brought back" : "Started"} the lead, session ${session}.`);
   // A lead that can't start, such as one whose login is gone, ends within moments, and
   // attaching would only find it gone.

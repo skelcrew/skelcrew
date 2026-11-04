@@ -333,3 +333,21 @@ test("keeps the repositories of a database from before skel had clones of its ow
   db.close();
   expect(columns).not.toContainEqual({ name: "path" });
 });
+
+// A git template, or anything else, could put a credential in a new clone's config. The lead
+// reads every clone in skel's folder, so such a clone must never get there, even briefly.
+test("refuses a clone whose config holds a credential, before the lead could see it", async () => {
+  onGitHub("simon/app", "WRITE");
+  const template = join(home, "template");
+  mkdirSync(template);
+  writeFileSync(
+    join(template, "config"),
+    "[http]\n\textraheader = AUTHORIZATION: basic c2VjcmV0\n",
+  );
+  appendFileSync(join(home, ".gitconfig"), `[init]\n\ttemplateDir = ${template}\n`);
+  const run = await skel(["--from", "simon/app"]);
+  expect(run.err).toContain("credential");
+  expect(existsSync(clone("simon/app"))).toBe(false);
+  expect(existsSync(join(home, ".local", "share", "skel", "cloning", "simon", "app"))).toBe(false);
+  expect((await skel(["repo", "ls"])).out).toBe(`${hint}\n`);
+});

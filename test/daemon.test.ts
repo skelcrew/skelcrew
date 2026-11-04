@@ -358,7 +358,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with the lead", () => {
     setUp();
     const repo = addRepository("app");
     fakeClaude(
-      `ls ${repo} > seen; test -S "$SKEL_SOCKET" && echo socket >> seen; test -e ${home}/.config/skel/claude-token || echo token-hidden >> seen; exec sleep 300`,
+      `while ! test -e ${repo}/README; do sleep 0.1; done; ls ${repo} > seen; test -S "$SKEL_SOCKET" && echo socket >> seen; test -e ${home}/.config/skel/claude-token || echo token-hidden >> seen; exec sleep 300`,
     );
     serve();
     await until(() => existsSync(join(leadFolder(), "seen")));
@@ -477,4 +477,26 @@ c.on("error", () => process.exit(1));`;
       await Bun.sleep(50);
     }
   }, 15_000);
+  // The CLI gives up on the daemon after 15 seconds, and GitHub can be slow or away.
+  test("starts the lead without waiting for clones, and makes them after", async () => {
+    setUp();
+    const clone = addRepository("app");
+    const real = Bun.which("git") ?? "git";
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh\ncase " $* " in *" clone "*|*" fetch "*) sleep 4 ;; esac\nexec ${real} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const started = Date.now();
+    serve();
+    await untilAnswers();
+    expect(await ask({ command: "lead" })).toEqual({ lead: true });
+    expect(Date.now() - started).toBeLessThan(3500);
+    expect(existsSync(clone)).toBe(false);
+    const deadline = Date.now() + 15_000;
+    while (!existsSync(join(clone, "README"))) {
+      if (Date.now() > deadline) throw new Error("the clone was never made");
+      await Bun.sleep(50);
+    }
+  }, 25_000);
 });
