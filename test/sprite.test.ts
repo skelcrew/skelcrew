@@ -63,7 +63,7 @@ case "$1" in
     cd "$HOME/sprites/$name" || exit 1
     command -v "$1" > /dev/null || exit 1
     HOME=$PWD PATH="$PWD/.local/bin:${join(home, "bin")}:/usr/bin:/bin" exec "$@" ;;
-  file) cp "$5" "$HOME/sprites/$4/$6" ;;
+  file) test -f "$HOME/push-fails" && exit 1; cp "$5" "$HOME/sprites/$4/$6" ;;
 esac`,
   );
   // Like apt over sprite exec, which has no terminal for debconf's dialogs: it prints
@@ -194,12 +194,15 @@ test("creates the Sprite, sets it up, and runs the first run there", async () =>
     ),
   );
   expect(lines[5]).toBe(
-    "sprite exec -s demo --no-stdin -- sh -c mkdir -p .local/bin && rm -f .local/bin/skel",
+    "sprite exec -s demo --no-stdin -- sh -c mkdir -p .local/bin && rm -f .local/bin/skel.new",
   );
   expect(lines[6]).toMatch(
-    new RegExp(`^sprite file push -s demo ${home}/tmp/\\S+/skel .local/bin/skel$`),
+    new RegExp(`^sprite file push -s demo ${home}/tmp/\\S+/skel .local/bin/skel.new$`),
   );
-  expect(lines[7]).toBe(`${exec("demo")} --from simon/app`);
+  expect(lines[7]).toBe(
+    "sprite exec -s demo --no-stdin -- sh -c mv -f .local/bin/skel.new .local/bin/skel",
+  );
+  expect(lines[8]).toBe(`${exec("demo")} --from simon/app`);
   expect(readFileSync(join(home, "sprites", "demo", ".local", "bin", "skel"), "utf8")).toBe(
     spriteSkel,
   );
@@ -300,7 +303,7 @@ test("update replaces skel on the Sprite and restarts its daemon's service", asy
   expect(readFileSync(sprite, "utf8")).toBe(spriteSkel);
   const lines = calls().split("\n");
   expect(lines).toContain(
-    "sprite exec -s demo --no-stdin -- sh -c mkdir -p .local/bin && rm -f .local/bin/skel",
+    "sprite exec -s demo --no-stdin -- sh -c mv -f .local/bin/skel.new .local/bin/skel",
   );
   // The daemon restarts only once the new skel is in place, so it runs the new build.
   expect(lines.at(-3)).toBe(
@@ -313,6 +316,19 @@ test("update replaces skel on the Sprite and restarts its daemon's service", asy
   expect(run.out).toContain("the lead picks up new instructions when it's next started");
   expect(calls()).not.toContain("apt-get");
   expect(readdirSync(join(home, "tmp"))).toEqual([]);
+});
+
+// A transfer that breaks off must leave the skel that works in place, or the daemon has
+// nothing to restart with.
+test("update keeps the old skel on the Sprite when the copy fails", async () => {
+  existing("demo");
+  const sprite = join(home, "sprites", "demo", ".local", "bin", "skel");
+  writeFileSync(sprite, "old skel");
+  writeFileSync(join(home, "push-fails"), "");
+  const run = await update(laptopSkel());
+  expect(run.code).toBe(1);
+  expect(readFileSync(sprite, "utf8")).toBe("old skel");
+  expect(calls()).not.toContain("services restart");
 });
 
 test("update leaves skel run from a checkout on the Sprite alone", async () => {

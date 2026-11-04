@@ -56,7 +56,7 @@ cd "$HOME/server" && HOME="$HOME/server" PATH="$bin:/usr/bin:/bin" exec sh -c "$
     `#!/bin/sh\necho "systemctl $*" >> "${join(home, "calls")}"\n`,
     { mode: 0o755 },
   );
-  fake("scp", `cp "$1" "$HOME/server/\${2#*:}"`);
+  fake("scp", `test -f "$HOME/scp-fails" && exit 1\ncp "$1" "$HOME/server/\${2#*:}"`);
   fake(
     "bun",
     `while [ $# -gt 1 ]; do test "$1" = --outfile && out=$2; shift; done
@@ -147,9 +147,12 @@ test("offers to copy skel to a server without it, then runs the command", async 
       `^bun build --compile --target=bun-linux-x64 ${main} --outfile ${home}/tmp/\\S+/skel$`,
     ),
   );
-  expect(lines[2]).toBe("ssh simon@workbox mkdir -p .local/bin && rm -f .local/bin/skel");
-  expect(lines[3]).toMatch(new RegExp(`^scp ${home}/tmp/\\S+/skel simon@workbox:.local/bin/skel$`));
-  expect(lines[4]).toBe(lines[0]);
+  expect(lines[2]).toBe("ssh simon@workbox mkdir -p .local/bin && rm -f .local/bin/skel.new");
+  expect(lines[3]).toMatch(
+    new RegExp(`^scp ${home}/tmp/\\S+/skel simon@workbox:.local/bin/skel.new$`),
+  );
+  expect(lines[4]).toBe("ssh simon@workbox mv -f .local/bin/skel.new .local/bin/skel");
+  expect(lines[5]).toBe(lines[0]);
   expect(readFileSync(join(home, "server", ".local", "bin", "skel"), "utf8")).toBe(serverSkel);
   // The build is removed once copied.
   expect(readdirSync(join(home, "tmp"))).toEqual([]);
@@ -243,7 +246,7 @@ test("update replaces skel on the server and restarts its daemon", async () => {
   const run = await update(laptop);
   expect(run.code).toBe(0);
   const lines = calls().split("\n");
-  expect(lines).toContain("ssh simon@workbox mkdir -p .local/bin && rm -f .local/bin/skel");
+  expect(lines).toContain("ssh simon@workbox mv -f .local/bin/skel.new .local/bin/skel");
   expect(lines.some((line) => line.startsWith("scp "))).toBe(true);
   // The daemon restarts only once the new skel is in place, so it runs the new build.
   expect(lines.at(-3)).toBe("ssh simon@workbox systemctl --user restart skel");
@@ -289,6 +292,19 @@ test("update leaves skel run from a checkout on the server alone, and says how t
   expect(calls()).not.toContain("scp");
   expect(calls()).not.toContain("systemctl --user restart");
   expect(lstatSync(join(home, "server", ".local", "bin", "skel")).isSymbolicLink()).toBe(true);
+});
+
+// A transfer that breaks off must leave the skel that works in place, or the daemon has
+// nothing to restart with.
+test("update keeps the old skel when the copy fails", async () => {
+  installed();
+  const skel = join(home, "server", ".local", "bin", "skel");
+  writeFileSync(skel, "old skel");
+  writeFileSync(join(home, "scp-fails"), "");
+  const run = await update(laptopSkel());
+  expect(run.code).toBe(1);
+  expect(readFileSync(skel, "utf8")).toBe("old skel");
+  expect(calls()).not.toContain("systemctl --user restart");
 });
 
 test("update copies nothing to a server without skel", async () => {

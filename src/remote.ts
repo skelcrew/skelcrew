@@ -45,13 +45,16 @@ export async function remote(host: string, args: string[]): Promise<number> {
 
 // Copies a skel built for the host to its ~/.local/bin.
 async function copySkel(host: string, file: string): Promise<void> {
-  // scp writes through a link, so a link left there, such as one to a checkout's launcher
-  // that can't find bun over ssh, would have the checkout's own file overwritten. Removing
-  // it first leaves the file it points to alone.
-  if ((await run(["ssh", host, "mkdir -p .local/bin && rm -f .local/bin/skel"])) !== 0)
+  // The copy goes to a file beside skel and is renamed over it once complete, so a transfer
+  // that breaks off leaves the skel that works. scp writes through a link, so whatever
+  // is at the new file's name is removed first. A rename replaces a link at skel itself,
+  // such as one to a checkout's launcher, without touching the file it points to.
+  if ((await run(["ssh", host, "mkdir -p .local/bin && rm -f .local/bin/skel.new"])) !== 0)
     throw new Error(`couldn't make ~/.local/bin on ${host}, so skel wasn't copied`);
-  if ((await run(["scp", file, `${host}:.local/bin/skel`])) !== 0)
+  if ((await run(["scp", file, `${host}:.local/bin/skel.new`])) !== 0)
     throw new Error(`scp couldn't copy skel to ${host}`);
+  if ((await run(["ssh", host, "mv -f .local/bin/skel.new .local/bin/skel"])) !== 0)
+    throw new Error(`couldn't put the new skel in place on ${host}`);
 }
 
 // Updates skel on the host over ssh, where systemd runs the daemon.

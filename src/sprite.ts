@@ -224,12 +224,16 @@ function onTheSprite(name: string): Machine {
   return {
     shell,
     copy: async (file) => {
-      // sprite file push writes through a link, as scp does, so a link left there would
-      // have the file it points to overwritten. Removing it first leaves that file alone.
-      if ((await run(shell("mkdir -p .local/bin && rm -f .local/bin/skel"))) !== 0)
+      // The copy goes to a file beside skel and is renamed over it once complete, so a
+      // transfer that breaks off leaves the skel that works. sprite file push writes
+      // through a link, as scp does, so whatever is at the new file's name is removed first.
+      // A rename replaces a link at skel itself without touching the file it points to.
+      if ((await run(shell("mkdir -p .local/bin && rm -f .local/bin/skel.new"))) !== 0)
         throw new Error(`couldn't make ~/.local/bin on sprite:${name}, so skel wasn't copied`);
-      if ((await run(["sprite", "file", "push", "-s", name, file, ".local/bin/skel"])) !== 0)
+      if ((await run(["sprite", "file", "push", "-s", name, file, ".local/bin/skel.new"])) !== 0)
         throw new Error(`sprite couldn't copy skel to sprite:${name}`);
+      if ((await run(shell("mv -f .local/bin/skel.new .local/bin/skel"))) !== 0)
+        throw new Error(`couldn't put the new skel in place on sprite:${name}`);
     },
     restart: "sprite-env services restart skel",
   };
