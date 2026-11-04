@@ -1,8 +1,9 @@
-// What skel shows you about its work: repositories for skel repo ls, threads for skel ps
-// and open tasks for skel task ls, as a short table for a terminal or JSON for tools.
+// What skel shows you about its work: repositories for skel repo ls, threads for skel ps,
+// open tasks for skel task ls and one task for skel task show, as short text for a terminal
+// or JSON for tools.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
-import { openIssues } from "./github.ts";
+import { openIssues, readIssue } from "./github.ts";
 import { cloneDir } from "./paths.ts";
 import { findRepository, noRepositories, repositories } from "./repo.ts";
 import { needsYou, Thread, threadName } from "./thread.ts";
@@ -75,6 +76,31 @@ export async function listTasks(db: Database, repo?: string): Promise<TaskRow[]>
     .map(({ createdAt, ...task }) => task);
 }
 
+export const TaskView = z.object({
+  task: z.string(),
+  title: z.string(),
+  body: z.string(),
+  thread: TaskRow.shape.thread,
+});
+export type TaskView = z.infer<typeof TaskView>;
+
+// Returns one task's title and body, which is all its builder sees, with the thread on it if
+// it has one, for skel task show. Tasks aren't kept: GitHub is asked each time.
+export async function showTask(db: Database, repo: string, task: number): Promise<TaskView> {
+  const r = findRepository(db, repo);
+  const { title, body } = await readIssue(`${r.owner}/${r.repo}`, task);
+  const row = db
+    .query("SELECT * FROM threads WHERE owner = ? AND repo = ? AND task = ?")
+    .get(r.owner, r.repo, task);
+  const thread = Thread.nullable().parse(row);
+  return {
+    task: `${r.name}-${task}`,
+    title,
+    body,
+    thread: thread && { status: thread.status, needsYou: needsYou(thread) },
+  };
+}
+
 // Prints rows as columns lined up under their headings, with no spaces left at line ends.
 function table(heading: string[], rows: string[][]): void {
   const widths = heading.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i]?.length ?? 0)));
@@ -120,4 +146,17 @@ export function printTasks(tasks: TaskRow[], json: boolean): void {
         return [task, status, title];
       }),
     );
+}
+
+// Prints one task for skel task show: as JSON for tools, or else its name and title, the
+// thread on it if it has one, and its body after a blank line.
+export function printTask(task: TaskView, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(task));
+    return;
+  }
+  console.log(`${task.task}  ${task.title}`);
+  if (task.thread)
+    console.log(`Thread: ${task.thread.status}${task.thread.needsYou ? ", needs you" : ""}`);
+  if (task.body) console.log(`\n${task.body.trimEnd()}`);
 }

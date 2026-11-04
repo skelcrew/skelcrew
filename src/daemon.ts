@@ -15,7 +15,9 @@ import {
   listTasks,
   listThreads,
   RepositoryRow,
+  showTask,
   TaskRow,
+  TaskView,
   ThreadRow,
 } from "./list.ts";
 import { cliSocket, daemonSocket, leadSocket, threadSocket } from "./paths.ts";
@@ -49,6 +51,11 @@ const Request = z.discriminatedUnion("command", [
   z.object({ command: z.literal("ps"), repo: z.string().optional() }),
   z.object({ command: z.literal("task ls"), repo: z.string().optional() }),
   z.object({
+    command: z.literal("task show"),
+    repo: z.string(),
+    task: z.number().int().positive(),
+  }),
+  z.object({
     command: z.literal("task create"),
     repo: z.string(),
     title: z.string().min(1),
@@ -73,8 +80,8 @@ const LeadReply = z.union([z.object({ lead: z.literal(true) }), z.object({ error
 // in your own terminal.
 type Caller = "you" | "lead" | Thread;
 const allowed = {
-  you: ["status", "lead", "repo ls", "ps", "task ls", "task create", "start"],
-  lead: ["status", "repo ls", "ps", "task ls", "task create", "start", "attached"],
+  you: ["status", "lead", "repo ls", "ps", "task ls", "task show", "task create", "start"],
+  lead: ["status", "repo ls", "ps", "task ls", "task show", "task create", "start", "attached"],
   builder: ["status", "submit", "question asked", "question answered"],
 };
 
@@ -198,6 +205,8 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
     if (request.command === "repo ls") return { repositories: listRepositories(db) };
     if (request.command === "ps") return { threads: listThreads(db, request.repo) };
     if (request.command === "task ls") return { tasks: await listTasks(db, request.repo) };
+    if (request.command === "task show")
+      return { task: await showTask(db, request.repo, request.task) };
     if (request.command === "task create") {
       const { owner, repo, name } = findRepository(db, request.repo);
       const number = await createIssue(`${owner}/${repo}`, request.title, request.body);
@@ -319,6 +328,13 @@ export async function threads(repo?: string): Promise<ThreadRow[]> {
 export async function tasks(repo?: string): Promise<TaskRow[]> {
   const reply = await request({ command: "task ls", ...(repo ? { repo } : {}) });
   return understood(z.object({ tasks: z.array(TaskRow) }), reply).tasks;
+}
+
+// Asks the daemon for one task, for skel task show. The daemon answers, as only it may call
+// GitHub.
+export async function task(repo: string, number: number): Promise<TaskView> {
+  const reply = await request({ command: "task show", repo, task: number });
+  return understood(z.object({ task: TaskView }), reply).task;
 }
 
 // Has the daemon create a task, as a GitHub issue, for skel task create, and returns the

@@ -1,4 +1,4 @@
-// skel ps, skel task ls and skel attach, run as you or the lead would run them, against a
+// skel ps, skel task ls, skel task show and skel attach, run as you or the lead would run them, against a
 // running daemon, a fake gh, a fake Claude Code and a fake tmux for attaching.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -41,12 +41,14 @@ beforeEach(() => {
   writeFileSync(join(home, "bin", "claude"), "#!/bin/sh\nexec sleep 300\n", { mode: 0o755 });
   fake("systemctl", "exit 0");
   fake("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
-  // The fake GitHub lists a repository's open issues from ~/issues/<owner>/<repo>.json.
+  // The fake GitHub lists a repository's open issues from ~/issues/<owner>/<repo>.json, and
+  // reads one from ~/issues/<owner>/<repo>/issues/<number>.json.
   mkdirSync(join(home, "issues"));
   fake(
     "gh",
     `case "$*" in
 "issue list --repo "*" --state open "*) cat "$HOME/issues/$4.json" 2>/dev/null || { echo "Could not resolve to a Repository" >&2; exit 1; } ;;
+"api repos/"*"/issues/"*) cat "$HOME/issues/\${2#repos/}.json" 2>/dev/null || { echo '{"message":"Not Found"}'; echo "gh: Not Found (HTTP 404)" >&2; exit 1; } ;;
 *) exit 1 ;;
 esac`,
   );
@@ -245,15 +247,97 @@ describe("skel task ls", () => {
   });
 });
 
-describe("skel repo ls", () => {
-  // As an agent runs skel: in its sandbox, where skel's database is hidden under an empty
-  // home folder, and with its own socket from the daemon.
-  async function asAgent(args: string[], socket: string) {
-    const empty = join(home, "sandbox-home");
-    mkdirSync(empty, { recursive: true });
-    return skel(args, { HOME: empty, SKEL_SANDBOX: "1", SKEL_SOCKET: socket });
-  }
+// As an agent runs skel: in its sandbox, where skel's database is hidden under an empty home
+// folder, and with its own socket from the daemon.
+async function asAgent(args: string[], socket: string) {
+  const empty = join(home, "sandbox-home");
+  mkdirSync(empty, { recursive: true });
+  return skel(args, { HOME: empty, SKEL_SANDBOX: "1", SKEL_SOCKET: socket });
+}
 
+// The socket the daemon opens for app-12's builder, once its thread is live.
+async function builderSocket(): Promise<string> {
+  const short = new Bun.CryptoHasher("sha256").update("app-12").digest("hex").slice(0, 16);
+  const builder = join(home, "run", "skel", "threads", short, "skel.sock");
+  await until(() => existsSync(builder));
+  return builder;
+}
+
+// Puts one issue on the fake GitHub, as GitHub's API answers for it.
+function issue(full: string, number: number, title: string, body: string | null) {
+  mkdirSync(join(home, "issues", full, "issues"), { recursive: true });
+  writeFileSync(
+    join(home, "issues", full, "issues", `${number}.json`),
+    JSON.stringify({ number, title, body, state: "open" }),
+  );
+}
+
+describe("skel task show", () => {
+  beforeEach(() => {
+    threads();
+    issue("simon/app", 12, "Add export", "Export threads as JSON.\n\nKeep it small.");
+    issue("simon/app", 10, "Fix login", null);
+    issue("simon/site", 7, "New landing page", "Make it calm.");
+  });
+
+  test("shows a task's title and body, and the thread on it", async () => {
+    serve();
+    await untilAnswers();
+    const shown = await skel(["task", "show", "site-7"]);
+    expect(shown.err).toBe("");
+    expect(shown.out).toBe(
+      "site-7  New landing page\nThread: waiting, needs you\n\nMake it calm.\n",
+    );
+    expect(read(join(home, "calls"))).toContain("gh api repos/simon/site/issues/7");
+    expect((await skel(["task", "show", "app-10"])).out).toBe("app-10  Fix login\n");
+  });
+
+  test("shows a task as JSON for tools", async () => {
+    serve();
+    await untilAnswers();
+    const shown = await skel(["task", "show", "app-12", "--json"]);
+    expect(shown.err).toBe("");
+    expect(JSON.parse(shown.out)).toEqual({
+      task: "app-12",
+      title: "Add export",
+      body: "Export threads as JSON.\n\nKeep it small.",
+      thread: { status: "working", needsYou: false },
+    });
+    expect(JSON.parse((await skel(["task", "show", "--json", "app-10"])).out)).toEqual({
+      task: "app-10",
+      title: "Fix login",
+      body: "",
+      thread: null,
+    });
+  });
+
+  test("says when the task or the repository doesn't exist", async () => {
+    serve();
+    await untilAnswers();
+    const missing = await skel(["task", "show", "app-99"]);
+    expect(missing.code).not.toBe(0);
+    expect(missing.err).toBe("skel: there is no issue #99 in simon/app\n");
+    const unknown = await skel(["task", "show", "web-1"]);
+    expect(unknown.code).not.toBe(0);
+    expect(unknown.err).toContain("no repository named web");
+  });
+
+  test("the lead can show a task from its sandbox, and a builder can't", async () => {
+    serve();
+    await untilAnswers();
+    const lead = await asAgent(
+      ["task", "show", "app-12"],
+      join(home, "run", "skel", "lead", "skel.sock"),
+    );
+    expect(lead.err).toBe("");
+    expect(lead.out).toBe((await skel(["task", "show", "app-12"])).out);
+    const refused = await asAgent(["task", "show", "app-12"], await builderSocket());
+    expect(refused.code).not.toBe(0);
+    expect(refused.err).toBe("skel: the daemon doesn't know that request\n");
+  });
+});
+
+describe("skel repo ls", () => {
   test("the lead lists the daemon's repositories, as you see them in your terminal", async () => {
     threads();
     serve();
@@ -269,10 +353,7 @@ describe("skel repo ls", () => {
     threads();
     serve();
     await untilAnswers();
-    const short = new Bun.CryptoHasher("sha256").update("app-12").digest("hex").slice(0, 16);
-    const builder = join(home, "run", "skel", "threads", short, "skel.sock");
-    await until(() => existsSync(builder));
-    const refused = await asAgent(["repo", "ls"], builder);
+    const refused = await asAgent(["repo", "ls"], await builderSocket());
     expect(refused.code).not.toBe(0);
     expect(refused.err).toBe("skel: the daemon doesn't know that request\n");
   });
@@ -336,15 +417,16 @@ esac`,
 
 // bubblewrap can't start inside skel's own sandbox, so only there the lead can't start.
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("from the lead", () => {
-  test("the lead runs skel ps, skel task ls and skel repo ls from its sandbox, but can't attach", async () => {
+  test("the lead runs skel ps, skel task ls, skel task show and skel repo ls from its sandbox, but can't attach", async () => {
     threads();
     issues("simon/app", [{ number: 12, title: "Add export", createdAt: "2026-11-03T12:00:00Z" }]);
+    issue("simon/app", 12, "Add export", "As JSON");
     issues("simon/site", []);
     writeFileSync(
       join(home, "bin", "claude"),
       `#!/bin/sh
 case "$CLAUDE_CONFIG_DIR" in
-*/lead) { skel ps app --json; skel task ls app --json; skel repo ls; skel attach app-12; } > out.new 2>&1; mv out.new out ;;
+*/lead) { skel ps app --json; skel task ls app --json; skel task show app-12 --json; skel repo ls; skel attach app-12; } > out.new 2>&1; mv out.new out ;;
 esac
 exec sleep 300
 `,
@@ -353,11 +435,12 @@ exec sleep 300
     serve();
     const out = join(data(), "lead", "out");
     await until(() => read(out) !== "");
-    const [ps, tasks, app, site, attach] = read(out).trim().split("\n");
+    const [ps, tasks, shown, app, site, attach] = read(out).trim().split("\n");
     expect(JSON.parse(ps ?? "")).toHaveLength(3);
     expect(JSON.parse(tasks ?? "")).toEqual([
       { task: "app-12", title: "Add export", thread: { status: "working", needsYou: false } },
     ]);
+    expect(JSON.parse(shown ?? "")).toMatchObject({ task: "app-12", body: "As JSON" });
     expect([app, site]).toEqual([
       `app   simon/app   ${data()}/repos/simon/app`,
       `site  simon/site  ${data()}/repos/simon/site`,

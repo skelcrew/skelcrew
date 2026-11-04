@@ -13,6 +13,7 @@ const usage = `Usage:
   skel repo trust <name>
   skel ps [<repo>] [--json]
   skel task ls [<repo>] [--json]
+  skel task show <repo>-<task> [--json]
   skel task create <repo> "<title>" "<body>"
   skel start <repo>-<task> [--from <branch>]
   skel attach <repo>-<task>
@@ -29,6 +30,13 @@ const yoursOnly: Record<string, string> = {
   "repo trust": "trusting a repository",
   attach: "attaching to a thread",
 };
+
+// Returns the repository and task in a name such as app-13, or nothing when it isn't one.
+// Repository names can hold dashes, so the task is the number after the last one.
+function taskName(word?: string): [string, number] | undefined {
+  const parts = word?.match(/^(.+)-(\d+)$/);
+  return parts?.[1] ? [parts[1], Number(parts[2])] : undefined;
+}
 
 // Runs the requested CLI command, or prints usage and exits when its arguments are invalid.
 // With no command, sets up skel and attaches you to the lead.
@@ -53,11 +61,12 @@ async function run(args: string[]): Promise<void> {
     serve,
     startOn,
     submitForReview,
+    task,
     tasks,
     threads,
   } = await import("./daemon.ts");
   const { openDb } = await import("./db.ts");
-  const { listRepositories, printRepositories, printTasks, printThreads } = await import(
+  const { listRepositories, printRepositories, printTask, printTasks, printThreads } = await import(
     "./list.ts"
   );
   const { bringInFrom, removeRepo, trustRepo } = await import("./repo.ts");
@@ -119,6 +128,11 @@ async function run(args: string[]): Promise<void> {
     printTasks(await tasks(words[2]), json);
     return;
   }
+  const shown = taskName(words[2]);
+  if (command === "task" && sub === "show" && shown && words.length === 3) {
+    printTask(await task(...shown), json);
+    return;
+  }
   const [repo, title, body] = rest;
   if (
     command === "task" &&
@@ -131,15 +145,14 @@ async function run(args: string[]): Promise<void> {
     console.log(await createTask(repo, title, body));
     return;
   }
-  // Repository names can hold dashes, so the task is the number after the last one.
-  const thread = sub?.match(/^(.+)-(\d+)$/);
+  const thread = taskName(sub);
   const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
-  if (command === "start" && thread?.[1] && (rest.length === 0 || from)) {
-    console.log(`Started ${await startOn(thread[1], Number(thread[2]), from)}.`);
+  if (command === "start" && thread && (rest.length === 0 || from)) {
+    console.log(`Started ${await startOn(...thread, from)}.`);
     return;
   }
-  if (command === "attach" && thread?.[1] && rest.length === 0) {
-    await attachToThread("skel", thread[1], Number(thread[2]));
+  if (command === "attach" && thread && rest.length === 0) {
+    await attachToThread("skel", ...thread);
     return;
   }
   console.error(usage);
