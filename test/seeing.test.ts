@@ -300,3 +300,31 @@ esac`,
     expect(calls()).toBe("");
   });
 });
+
+// bubblewrap can't start inside skel's own sandbox, so only there the lead can't start.
+describe.skipIf(process.env.SKEL_SANDBOX === "1")("from the lead", () => {
+  test("the lead runs skel ps and skel task ls from its sandbox, but can't attach", async () => {
+    threads();
+    issues("simon/app", [{ number: 12, title: "Add export", createdAt: "2026-11-03T12:00:00Z" }]);
+    issues("simon/site", []);
+    writeFileSync(
+      join(home, "bin", "claude"),
+      `#!/bin/sh
+case "$CLAUDE_CONFIG_DIR" in
+*/lead) { skel ps app --json; skel task ls app --json; skel attach app-12; } > out.new 2>&1; mv out.new out ;;
+esac
+exec sleep 300
+`,
+      { mode: 0o755 },
+    );
+    serve();
+    const out = join(data(), "lead", "out");
+    await until(() => read(out) !== "");
+    const [ps, tasks, attach] = read(out).trim().split("\n");
+    expect(JSON.parse(ps ?? "")).toHaveLength(3);
+    expect(JSON.parse(tasks ?? "")).toEqual([
+      { task: "app-12", title: "Add export", thread: { status: "working", needsYou: false } },
+    ]);
+    expect(attach).toBe("skel: skel attach is only for your own terminal, not for agents");
+  }, 20_000);
+});
