@@ -12,7 +12,8 @@ const usage = `Usage:
   skel task ls [<repo>] [--json]
   skel task create <repo> "<title>" "<body>"
   skel start <repo>-<task> [--from <branch>]
-  skel attach <repo>-<task>`;
+  skel attach <repo>-<task>
+  skel submit "<summary>"`;
 
 // Runs the requested CLI command, or prints usage and exits when its arguments are invalid.
 // With no command, sets up skel and attaches you to the lead.
@@ -22,7 +23,8 @@ async function run(args: string[]): Promise<void> {
   // Loaded only for commands that run here, so skel --remote never loads the parts made for
   // the Linux server, such as the sandbox and the daemon's lock, on a laptop that can be a
   // Mac.
-  const { attachToLead, createTask, serve, startOn, tasks, threads } = await import("./daemon.ts");
+  const { attachToLead, createTask, serve, startOn, submitForReview, tasks, threads } =
+    await import("./daemon.ts");
   const { printTasks, printThreads } = await import("./list.ts");
   const { bringInFrom, listRepos, removeRepo, trustRepo } = await import("./repo.ts");
   const { firstRun } = await import("./setup.ts");
@@ -43,6 +45,13 @@ async function run(args: string[]): Promise<void> {
   }
   if (command === "repo" && sub === "rm" && rest[0] && rest.length === 1) {
     removeRepo(rest[0]);
+    return;
+  }
+  if (command === "submit" && sub && rest.length === 0) {
+    const thread = await submitForReview(sub);
+    console.log(
+      `Submitted ${thread} for review. skel pushes it and opens or updates the pull request. If the reviewer asks for changes, skel types them in here.`,
+    );
     return;
   }
   if (command === "repo" && sub === "trust" && rest[0] && rest.length === 1) {

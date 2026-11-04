@@ -149,6 +149,8 @@ async function untilAnswers() {
 
 function storedSession(): string {
   const db = new Database(join(home, ".local", "share", "skel", "skel.db"));
+  // The daemon may be writing, and a read that meets a write fails without a wait.
+  db.run("PRAGMA busy_timeout = 5000");
   try {
     const row = db.query("SELECT session FROM lead").get();
     return row && typeof row === "object" && "session" in row ? String(row.session) : "";
