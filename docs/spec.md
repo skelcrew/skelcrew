@@ -154,7 +154,7 @@ For you, and for the lead:
 | `skel task ls [<repo>]` | Open tasks, newest first, with the thread on each one if it has one. `--json` for tools. |
 | `skel task show <repo>-<task>` | A task's title and body, which is all its builder sees, with its thread if it has one. `--json` for tools. |
 | `skel task create <repo> "<title>" "<body>"` | Creates a task, as a GitHub issue, and prints its name, such as `app-13`. It doesn't start a thread. |
-| `skel ps [<repo>]` | Threads, with status and needs you, newest first. `--json` for tools. |
+| `skel ps [<repo>]` | Threads, with status and needs you, newest first. Done threads only with `--all`. `--json` for tools. |
 | `skel start <repo>-<task> [--from <branch>]` | Starts a thread on a task. On a stopped thread, starts its builder again with `--resume` on its last session. |
 | `skel attach <repo>-<task>` | Attaches your terminal to the builder's session. Ctrl-\] detaches. |
 | `skel review <repo>-<task>` | Reviews the thread's last submitted commit again, as a round's review, such as after a review that failed. It refuses while a review of it is waiting or running. |
