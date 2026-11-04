@@ -449,4 +449,20 @@ nameRepositories(db);`;
     db.close();
     expect(folders).toEqual([["simon-app-12"], ["simon-app-12-2"]]);
   }, 30_000);
+
+  test("a thread started before skel's clone of its repository is made waits for it", async () => {
+    addApp();
+    const real = Bun.which("git") ?? "git";
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh\ncase " $* " in *" clone "*github*) sleep 3 ;; esac\nexec ${real} "$@"\n`,
+      { mode: 0o755 },
+    );
+    serve();
+    await untilAnswers();
+    expect(existsSync(join(data(), "repos", "simon", "app"))).toBe(false);
+    expect((await skel("start", "app#12")).out).toBe("Started app#12.\n");
+    await until(() => read(join(config("app-12"), "args")) !== "");
+    expect(thread().status).toBe("working");
+  }, 30_000);
 });

@@ -7,7 +7,7 @@ import { parse } from "yaml";
 import { z } from "zod";
 import { fetchBranch, readIssue } from "./github.ts";
 import { cloneDir, configDir, threadSocket, threadsDir } from "./paths.ts";
-import { findRepository } from "./repo.ts";
+import { findRepository, refreshClones } from "./repo.ts";
 import { agentCommand, hasTranscript, refuseCredentials, setupCommand } from "./sandbox.ts";
 import { endSession, failedScreen, hasSession, startServer, startSession } from "./tmux.ts";
 
@@ -146,8 +146,11 @@ function setupCommands(clone: string): string[] {
 
 // The daemon runs git in the thread's clone only here, before anything from the repository
 // has run in it. After that the builder controls everything in the folder, .git included.
-export async function setUpThread(thread: Thread): Promise<void> {
+export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   const clone = cloneOf(thread);
+  // skel's clone of the repository can still be on its way, as the daemon makes it once it
+  // has started the lead. Asking for a refresh joins the one under way.
+  if (!existsSync(cloneDir(thread.owner, thread.repo))) await refreshClones(db);
   rmSync(clone, { recursive: true, force: true });
   // From skel's own clone on the same disk, so git links its files rather than copying them.
   await run([

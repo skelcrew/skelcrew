@@ -137,7 +137,7 @@ export async function serve(tmux: string): Promise<void> {
   };
   const begin = async (thread: Thread) => {
     try {
-      await setUpThread(thread);
+      await setUpThread(db, thread);
       await listenFor(thread);
       await startBuilder(db, tmux, thread);
     } catch (error) {
