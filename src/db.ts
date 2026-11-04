@@ -23,8 +23,8 @@ const createRepositories = `CREATE TABLE IF NOT EXISTS repositories (
   PRIMARY KEY (owner, repo)
 )`;
 
-// Opens skel's database and prepares its tables so repositories and the lead survive
-// restarts.
+// Opens skel's database and prepares its tables so repositories, the lead and threads
+// survive restarts.
 export function openDb(): Database {
   mkdirSync(dataDir(), { recursive: true });
   const db = new Database(join(dataDir(), "skel.db"), { strict: true });

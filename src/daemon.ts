@@ -185,6 +185,7 @@ export async function serve(tmux: string): Promise<void> {
     // Sends one JSON reply and closes the connection so the caller knows the request
     // finished.
     const reply = (answer: object) => connection.end(`${JSON.stringify(answer)}\n`);
+    // Gathers data until the request's line is whole, then refuses it or has it handled.
     const read = (data: Buffer) => {
       request += data.toString();
       const end = request.indexOf("\n");
@@ -224,7 +225,8 @@ export async function serve(tmux: string): Promise<void> {
   }
 }
 
-// Asks the daemon on behalf of skel issue and skel start, and returns its answer.
+// Asks the daemon on behalf of skel issue and skel start, and returns its answer. Throws
+// with the daemon's error, or when nothing answers.
 async function request(asked: Request): Promise<unknown> {
   const reply = await ask(asked, 60_000);
   if (reply === null) throw new Error("skel's daemon didn't answer: run skel to start it");
@@ -233,6 +235,8 @@ async function request(asked: Request): Promise<unknown> {
   return reply;
 }
 
+// Returns the daemon's reply checked against the shape this skel expects, so a daemon of
+// another version fails with a clear message.
 const understood = <T>(schema: z.ZodType<T>, reply: unknown): T => {
   const read = schema.safeParse(reply);
   if (!read.success)
@@ -240,11 +244,15 @@ const understood = <T>(schema: z.ZodType<T>, reply: unknown): T => {
   return read.data;
 };
 
+// Has the daemon create a GitHub issue, for skel issue, and returns its number. The daemon
+// makes the call, since agents never hold a GitHub login.
 export async function fileIssue(repo: string, title: string, body: string): Promise<number> {
   const reply = await request({ command: "issue", repo, title, body });
   return understood(z.object({ number: z.number() }), reply).number;
 }
 
+// Has the daemon start a thread on an issue, for skel start, and returns the thread's name.
+// The daemon answers once the thread is recorded; its setup and builder come after.
 export async function startOn(repo: string, issue: number, from?: string): Promise<string> {
   const reply = await request({ command: "start", repo, issue, ...(from ? { from } : {}) });
   return understood(z.object({ thread: z.string() }), reply).thread;

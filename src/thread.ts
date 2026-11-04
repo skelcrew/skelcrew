@@ -23,17 +23,22 @@ export const Thread = z.object({
 });
 export type Thread = z.infer<typeof Thread>;
 
+// Returns the thread's repository as owner/name, as GitHub calls want it.
 const github = (thread: Thread) => `${thread.owner}/${thread.repo}`;
+// Returns the thread's clone folder. It comes from the folder name chosen at start, so it
+// stays put when the repository's name changes.
 const cloneOf = (thread: Thread) => join(threadsDir(), thread.folder);
 
-// Each change is also a line in the thread's log, the whole thread as it now is, so its
-// history can be read and replayed.
+// Appends the whole thread as it now is, with the reason when there is one, as a line to
+// its log. Every change goes there too, so the thread's history can be read and replayed.
 function log(thread: Thread, why?: string): void {
   mkdirSync(threadsDir(), { recursive: true });
   const line = { at: new Date().toISOString(), ...thread, ...(why ? { why } : {}) };
   appendFileSync(join(threadsDir(), `${thread.folder}.log`), `${JSON.stringify(line)}\n`);
 }
 
+// Saves a change to the thread's status or session, logs the thread as it now is, and
+// returns it. `why` goes in the log, so a failure says what went wrong.
 function record(
   db: Database,
   folder: string,
@@ -49,7 +54,9 @@ function record(
   return thread;
 }
 
-// Named by the repository's name now, which can gain its owner since the thread started.
+// Returns the thread's name, such as app-12, for replies. It uses the repository's name
+// now, which can gain its owner since the thread started, or owner/name once skel no longer
+// has the repository.
 export function threadName(db: Database, thread: Thread): string {
   const row = db
     .query("SELECT name FROM repositories WHERE owner = ? AND repo = ?")
@@ -58,6 +65,8 @@ export function threadName(db: Database, thread: Thread): string {
   return `${name}-${thread.issue}`;
 }
 
+// Returns the threads that are working or waiting, whose builders the daemon brings back
+// and whose sockets it opens again when it starts.
 export function liveThreads(db: Database): Thread[] {
   return db
     .query("SELECT * FROM threads WHERE status IN ('working', 'waiting')")
@@ -65,8 +74,10 @@ export function liveThreads(db: Database): Thread[] {
     .map((row) => Thread.parse(row));
 }
 
-// Only records the thread, since the lead waits on it. Setting up its clone and starting its
-// builder come after, and can take minutes.
+// Records a new thread on an issue, with its folder and branch, and returns it. Refuses an
+// issue that has a thread already, unless that one failed: then it starts over in the same
+// folder. Only records it, since the lead waits on the answer. Setting up its clone and
+// starting its builder come after, and can take minutes.
 export async function startThread(
   db: Database,
   given: { repo: string; issue: number; from?: string | undefined },
@@ -79,8 +90,10 @@ export async function startThread(
     .replace(/[^a-z0-9]+/g, "-")
     .slice(0, 40)
     .replace(/^-|-$/g, "");
-  // Different names can make the same folder, such as simon/app and simon-app.
+  // Returns a folder name no other thread holds, adding a number when needed. Different
+  // names can make the same folder, such as simon/app and simon-app.
   const freeFolder = (folder: string) => {
+    // Whether another thread holds that folder.
     const taken = (f: string) => db.query("SELECT 1 FROM threads WHERE folder = ?").get(f);
     let free = folder;
     for (let n = 2; taken(free); n++) free = `${folder}-${n}`;
@@ -116,7 +129,9 @@ export async function startThread(
   })();
 }
 
-// `doing` says what failed, since a sandboxed command's own words are mostly bwrap's.
+// Runs a command and waits for it, throwing with the end of its output when it fails, so a
+// failed setup says why. `doing` names what failed, since a sandboxed command's own words
+// are mostly bwrap's.
 async function run(
   argv: string[],
   doing = argv.join(" "),
@@ -133,6 +148,8 @@ async function run(
 
 const SkelYaml = z.looseObject({ setup: z.array(z.string()).optional() }).nullable();
 
+// Returns the setup commands in the clone's skel.yaml, or none when it has no skel.yaml.
+// Throws when skel.yaml isn't valid, so the thread fails with the reason.
 function setupCommands(clone: string): string[] {
   const file = join(clone, "skel.yaml");
   const stat = lstatSync(file, { throwIfNoEntry: false });
@@ -144,8 +161,11 @@ function setupCommands(clone: string): string[] {
   return read.data?.setup ?? [];
 }
 
-// The daemon runs git in the thread's clone only here, before anything from the repository
-// has run in it. After that the builder controls everything in the folder, .git included.
+// Makes the thread's clone afresh: cloned from skel's clone, on the thread's branch from the
+// default branch or the one given with --from, with your name for commits, and the setup
+// commands run once in the sandbox. The daemon runs git in the thread's clone only here,
+// before anything from the repository has run in it. After that the builder controls
+// everything in the folder, .git included.
 export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   const clone = cloneOf(thread);
   // skel's clone of the repository can still be on its way, as the daemon makes it once it
@@ -181,6 +201,8 @@ const Config = z.looseObject({
   builder: z.looseObject({ model: z.string().min(1).optional() }).optional(),
 });
 
+// Returns the builder's model from your config's builder.model, or opus when it names none.
+// Throws when the config isn't valid, rather than start a builder on a model you didn't pick.
 function builderModel(): string {
   const file = join(configDir(), "config.yaml");
   if (!existsSync(file)) return "opus";
@@ -189,9 +211,11 @@ function builderModel(): string {
   return read.data.builder?.model ?? "opus";
 }
 
-// skel picks the session id rather than Claude Code, so it is stored before the builder
-// starts and the builder can be brought back with --resume after its session is gone. A
-// builder whose conversation was never saved starts again from the issue.
+// Starts the thread's builder in tmux, in the sandbox in its clone: with --resume when it
+// saved a conversation, or else afresh with the issue as its first message. Throws when it
+// exits as soon as it starts. skel picks the session id rather than Claude Code, so it is
+// stored before the builder starts and the builder can be brought back with --resume after
+// its session is gone.
 export async function startBuilder(db: Database, tmux: string, thread: Thread): Promise<void> {
   const clone = cloneOf(thread);
   const stored = thread.session;
@@ -221,7 +245,9 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
     throw new Error(`the builder exited as soon as it started:\n${failed ?? ""}`);
 }
 
-// A thread with no session never got past its setup, which the daemon stopping cut short.
+// Brings back a thread's builder after the daemon restarts: leaves one that runs alone, and
+// starts again one whose session is gone or ended. Throws for a thread with no session,
+// which never got past its setup because the daemon stopped, so it can be started again.
 export async function bringBack(db: Database, tmux: string, thread: Thread): Promise<void> {
   if (thread.session === null)
     throw new Error("skel's daemon stopped while setting up the thread: run skel start again");
@@ -232,6 +258,8 @@ export async function bringBack(db: Database, tmux: string, thread: Thread): Pro
   await startBuilder(db, tmux, thread);
 }
 
+// Marks the thread failed and logs why, in its log and the daemon's, so you can see what
+// stopped it and start it again.
 export function failThread(db: Database, thread: Thread, error: unknown): void {
   const why = error instanceof Error ? error.message : String(error);
   record(db, thread.folder, { status: "failed" }, why);

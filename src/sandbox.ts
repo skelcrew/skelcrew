@@ -44,7 +44,7 @@ function packageOf(folder: string, home: string): string {
 
 // Returns bubblewrap arguments that hide your credentials and expose only the agent's
 // chosen writable folders. Keeps the terminal connection and network available for the
-// harness and model.
+// harness and model, and puts skel's own commands on the agent's PATH.
 export function sandboxArgs(given: {
   home: string;
   path: string;
