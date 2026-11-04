@@ -9,6 +9,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -75,8 +76,8 @@ function sandboxArgs(given: {
   return args;
 }
 
-// The lead reads each repository's .git/config, so a credential in it would be the lead's.
-function refuseCredentials(repository: string): void {
+// The lead reads each clone's .git/config, so a credential in it would be the lead's.
+export function refuseCredentials(repository: string): void {
   const read = Bun.spawnSync(
     ["git", "-C", repository, "config", "--local", "--includes", "--get-regexp", "."],
     {
@@ -119,7 +120,6 @@ const passed = [
 const Token = z.string().trim().min(1);
 
 export function agentCommand(given: {
-  repositories: string[];
   name: string;
   socket: string;
   model: string;
@@ -128,7 +128,7 @@ export function agentCommand(given: {
   sessionId?: string;
   env?: Record<string, string | undefined>;
 }): { argv: string[]; env: Record<string, string> } {
-  const { repositories, name, socket, model, prompt, resume, sessionId, env = process.env } = given;
+  const { name, socket, model, prompt, resume, sessionId, env = process.env } = given;
   if (sessionId && resume) throw new Error("a session can't be both new and resumed");
   if (sessionId && !z.uuid().safeParse(sessionId).success)
     throw new Error(`Claude Code needs a UUID as a session ID, not "${sessionId}"`);
@@ -155,11 +155,16 @@ export function agentCommand(given: {
     if (lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink())
       throw new Error(`${p} is a link, so skel won't write through it`);
   mkdirSync(config, { recursive: true });
-  // The lead sees its repositories read-only and works in a folder of its own.
-  for (const repo of repositories) refuseCredentials(repo);
+  // The lead sees skel's clone of every repository read-only and works in a folder of its
+  // own. The whole folder is mounted, made first if need be, so a repository brought in
+  // while the lead runs shows up in its sandbox too.
+  const repos = join(home, ".local", "share", "skel", "repos");
+  mkdirSync(repos, { recursive: true });
+  for (const owner of readdirSync(repos))
+    for (const repo of readdirSync(join(repos, owner))) refuseCredentials(join(repos, owner, repo));
   const cwd = join(home, ".local", "share", "skel", "lead");
   mkdirSync(cwd, { recursive: true });
-  const mounts = [...rw(cwd), ...repositories.flatMap(ro), ...rw(config)];
+  const mounts = [...rw(cwd), ...ro(repos), ...rw(config)];
 
   // Claude Code asks whether to trust the folder even in bypass mode, and would wait there
   // with nobody to answer.

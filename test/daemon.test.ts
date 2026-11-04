@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -155,21 +156,50 @@ function storedSession(): string {
   }
 }
 
-// Adds a repository with a folder holding one file.
+// git in the test reaches GitHub through this folder: its ~/.gitconfig sends every
+// https://github.com/ URL here.
+const github = () => join(home, "github");
+
+function git(cwd: string, ...args: string[]): void {
+  const run = Bun.spawnSync(
+    ["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t", ...args],
+    {
+      stderr: "pipe",
+    },
+  );
+  if (!run.success) throw new Error(run.stderr.toString());
+}
+
+// Puts a repository with one file on the fake GitHub, and returns a checkout to push from.
+function onGitHub(name: string): string {
+  const work = join(home, "work", name);
+  mkdirSync(work, { recursive: true });
+  writeFileSync(join(work, "README"), `${name}\n`);
+  git(work, "init", "-q", "-b", "main");
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "start");
+  git(home, "clone", "-q", "--bare", work, join(github(), "simon", `${name}.git`));
+  git(work, "remote", "add", "origin", join(github(), "simon", `${name}.git`));
+  writeFileSync(
+    join(home, ".gitconfig"),
+    `[url "file://${github()}/"]\n\tinsteadOf = https://github.com/\n`,
+  );
+  return work;
+}
+
+// A repository skel knows of, as one brought in before leaves it. Returns where skel keeps
+// its clone.
 function addRepository(name: string): string {
-  const repo = join(home, "code", name);
-  mkdirSync(repo, { recursive: true });
-  writeFileSync(join(repo, "README"), `${name}\n`);
-  Bun.spawnSync(["git", "-C", repo, "init", "-q"]);
+  onGitHub(name);
   const db = join(import.meta.dir, "..", "src", "db.ts");
   const script = `import { openDb } from ${JSON.stringify(db)};
-openDb().run("INSERT INTO repositories (name, path, owner, repo) VALUES (?, ?, 'simon', ?)", [${JSON.stringify(name)}, ${JSON.stringify(repo)}, ${JSON.stringify(name)}]);`;
+openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?)", [${JSON.stringify(name)}, ${JSON.stringify(name)}]);`;
   const added = Bun.spawnSync([process.execPath, "-e", script], {
     env: { HOME: home },
     stderr: "pipe",
   });
   if (!added.success) throw new Error(added.stderr.toString());
-  return repo;
+  return join(home, ".local", "share", "skel", "repos", "simon", name);
 }
 
 // Claude Code saves a conversation once it has a message, which a fake can't send. It keeps
@@ -324,7 +354,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with the lead", () => {
     await untilAnswers();
   });
 
-  test("starts the lead in its sandbox, with opus, seeing every added repository", async () => {
+  test("starts the lead in its sandbox, with opus, seeing skel's clone of every repository", async () => {
     setUp();
     const repo = addRepository("app");
     fakeClaude(
@@ -386,4 +416,37 @@ c.on("error", () => process.exit(1));`;
     const second = serve();
     await until(() => reply().includes(`"pid":${second.pid}`));
   }, 15_000);
+  test("the lead sees a repository brought in after it started, without a restart", async () => {
+    setUp();
+    const clone = join(home, ".local", "share", "skel", "repos", "simon", "app");
+    fakeClaude(
+      `while ! test -e ${clone}/README; do sleep 0.1; done; cat ${clone}/README > seen.new; mv seen.new seen; exec sleep 300`,
+    );
+    serve();
+    await until(hasLead);
+    onGitHub("app");
+    // Moved in once whole, as skel brings a repository in.
+    git(home, "clone", "-q", join(github(), "simon", "app.git"), join(home, "cloning"));
+    mkdirSync(join(clone, ".."));
+    renameSync(join(home, "cloning"), clone);
+    await until(() => existsSync(join(leadFolder(), "seen")));
+    expect(readFileSync(join(leadFolder(), "seen"), "utf8")).toBe("app\n");
+    expect(claudeLines()).toHaveLength(1);
+  });
+
+  test("moves skel's clones to the latest default branch when the lead starts", async () => {
+    setUp();
+    const clone = addRepository("app");
+    const first = serve();
+    await until(() => existsSync(join(clone, "README")));
+    await stop(first);
+    Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=lead"]);
+    const work = join(home, "work", "app");
+    writeFileSync(join(work, "NEWS"), "more\n");
+    git(work, "add", ".");
+    git(work, "commit", "-q", "-m", "more");
+    git(work, "push", "-q", "origin", "main");
+    serve();
+    await until(() => existsSync(join(clone, "NEWS")));
+  });
 });

@@ -39,3 +39,26 @@ export function githubRepoAt(path: string): {
   const canPush = ["ADMIN", "MAINTAIN", "WRITE"].includes(view.viewerPermission);
   return { owner: view.owner.login, repo: view.name, canPush, isFork: view.isFork };
 }
+
+// Your gh login is handed to git for each command, never saved, so no token ends up in a
+// clone's .git/config, where the lead could read it. Nobody may be there to type a
+// password, so git fails rather than asks.
+function git(args: string[]): void {
+  const run = Bun.spawnSync(["git", "-c", "credential.helper=!gh auth git-credential", ...args], {
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (!run.success)
+    throw new Error(`git ${args.join(" ")} failed: ${run.stderr.toString().trim()}`);
+}
+
+export function cloneRepo(owner: string, repo: string, folder: string): void {
+  git(["clone", "--quiet", `https://github.com/${owner}/${repo}.git`, folder]);
+}
+
+// Fetching HEAD gets whatever the default branch is now, even after it was renamed.
+export function updateClone(folder: string): void {
+  git(["-C", folder, "fetch", "--quiet", "origin", "HEAD"]);
+  git(["-C", folder, "reset", "--quiet", "--hard", "FETCH_HEAD"]);
+}
