@@ -55,7 +55,7 @@ These are correctness requirements. If a task asks you to break one, stop and sa
   the smallest code that passes.
 - Tests check what a user of the code sees, never private helpers.
 - **Tests never call a real model, a real harness or real GitHub.** A short shell script
-  stands in for the harness and runs `skel done` like an agent would. A fake `gh` stands
+  stands in for the harness and runs `skel submit` like an agent would. A fake `gh` stands
   in for GitHub.
 - **Tests clean up what they start.** Every session, daemon and temporary folder a test
   creates ends with the test. Tests run tmux on a socket of their own, never skel's
