@@ -14,8 +14,8 @@ const View = z.object({
 
 export type GitHubRepo = { owner: string; repo: string; canPush: boolean; isFork: boolean };
 
-// Takes owner/repo or a remote's URL. A checkout is asked about by its origin's URL: in a
-// fork with an upstream remote, gh on its own would answer for the upstream.
+// Takes owner/repo, as skel names it from a checkout's origin: in a fork with an upstream
+// remote, gh on its own would answer for the upstream.
 export function githubRepo(given: string): GitHubRepo {
   const run = Bun.spawnSync(
     ["gh", "repo", "view", given, "--json", "name,owner,viewerPermission,isFork"],
@@ -33,24 +33,24 @@ export function githubRepo(given: string): GitHubRepo {
 // Your gh login is handed to git for each command, never saved, so no token ends up in a
 // clone's .git/config, where the lead could read it. Nobody may be there to type a
 // password, so git fails rather than asks.
-function git(args: string[]): void {
-  const run = Bun.spawnSync(["git", "-c", "credential.helper=!gh auth git-credential", ...args], {
+async function git(args: string[]): Promise<void> {
+  const run = Bun.spawn(["git", "-c", "credential.helper=!gh auth git-credential", ...args], {
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
   });
-  if (!run.success)
-    throw new Error(`git ${args.join(" ")} failed: ${run.stderr.toString().trim()}`);
+  const [err, code] = await Promise.all([new Response(run.stderr).text(), run.exited]);
+  if (code !== 0) throw new Error(`git ${args.join(" ")} failed: ${err.trim()}`);
 }
 
-export function cloneRepo(owner: string, repo: string, folder: string): void {
-  git(["clone", "--quiet", `https://github.com/${owner}/${repo}.git`, folder]);
+export async function cloneRepo(owner: string, repo: string, folder: string): Promise<void> {
+  await git(["clone", "--quiet", `https://github.com/${owner}/${repo}.git`, folder]);
 }
 
 // Fetching HEAD gets whatever the default branch is now, even after it was renamed.
-export function updateClone(folder: string): void {
-  git(["-C", folder, "fetch", "--quiet", "origin", "HEAD"]);
-  git(["-C", folder, "reset", "--quiet", "--hard", "FETCH_HEAD"]);
+export async function updateClone(folder: string): Promise<void> {
+  await git(["-C", folder, "fetch", "--quiet", "origin", "HEAD"]);
+  await git(["-C", folder, "reset", "--quiet", "--hard", "FETCH_HEAD"]);
 }
 
 // Runs `gh api` on `endpoint`, sending `input` as the JSON body when there is one. `doing`

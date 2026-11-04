@@ -449,4 +449,32 @@ c.on("error", () => process.exit(1));`;
     serve();
     await until(() => existsSync(join(clone, "NEWS")));
   });
+  test("moves skel's clones to the latest after answering a lead request, not before", async () => {
+    setUp();
+    const clone = addRepository("app");
+    serve();
+    await until(() => existsSync(join(clone, "README")));
+    await until(hasLead);
+    const work = join(home, "work", "app");
+    writeFileSync(join(work, "NEWS"), "more\n");
+    git(work, "add", ".");
+    git(work, "commit", "-q", "-m", "more");
+    git(work, "push", "-q", "origin", "main");
+    // A slow fetch, so a reply that waited for it would show.
+    const real = Bun.which("git") ?? "git";
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh\ncase " $* " in *" fetch "*) sleep 2 ;; esac\nexec ${real} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const asked = Date.now();
+    expect(await ask({ command: "lead" })).toEqual({ lead: true });
+    expect(Date.now() - asked).toBeLessThan(1500);
+    expect(existsSync(join(clone, "NEWS"))).toBe(false);
+    const deadline = Date.now() + 10_000;
+    while (!existsSync(join(clone, "NEWS"))) {
+      if (Date.now() > deadline) throw new Error("the clone never moved to the new commit");
+      await Bun.sleep(50);
+    }
+  }, 15_000);
 });

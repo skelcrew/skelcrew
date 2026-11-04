@@ -14,7 +14,7 @@ async function run(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
   if (args.length === 0 || (command === "--from" && sub && rest.length === 0)) {
     firstRun();
-    bringInFrom(sub);
+    await bringInFrom(sub);
     await attachToLead("skel");
     return;
   }
@@ -31,7 +31,7 @@ async function run(args: string[]): Promise<void> {
     return;
   }
   if (command === "trust" && sub && rest.length === 0) {
-    trustRepo(sub);
+    await trustRepo(sub);
     return;
   }
   console.error(usage);

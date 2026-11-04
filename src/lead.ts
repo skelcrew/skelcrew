@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { dataDir, leadSocket } from "./paths.ts";
-import { refreshClone, repositories } from "./repo.ts";
+import { refreshClones } from "./repo.ts";
 import { agentCommand } from "./sandbox.ts";
 import { endSession, failedScreen, hasSession, startServer, startSession } from "./tmux.ts";
 
@@ -35,14 +35,7 @@ export async function startLead(db: Database, tmux: string): Promise<void> {
   const resume = stored !== null && hasTranscript(folder, stored.session);
   const session = resume ? stored.session : crypto.randomUUID();
   db.run("INSERT OR REPLACE INTO lead (one, session) VALUES (1, ?)", [session]);
-  for (const { owner, repo } of repositories(db)) {
-    try {
-      refreshClone(owner, repo);
-    } catch (error) {
-      // An old clone still lets the lead read the repository, so it starts anyway.
-      console.log(error instanceof Error ? error.message : String(error));
-    }
-  }
+  await refreshClones(db);
   const { argv, env } = agentCommand({
     name: "lead",
     socket: leadSocket(),

@@ -8,6 +8,7 @@ import { z } from "zod";
 import { openDb } from "./db.ts";
 import { startLead } from "./lead.ts";
 import { cliSocket, leadSocket } from "./paths.ts";
+import { refreshClones } from "./repo.ts";
 import { setupDone } from "./setup.ts";
 import { attach } from "./tmux.ts";
 
@@ -88,7 +89,11 @@ export async function serve(tmux: string): Promise<void> {
       else if (asked.data.command === "status") reply({ running: true, pid: process.pid });
       else
         lead().then(
-          () => reply({ lead: true }),
+          () => {
+            reply({ lead: true });
+            // After the reply, so attaching never waits on GitHub.
+            refreshClones(db).catch((error) => console.log(String(error)));
+          },
           (error) => reply({ error: error instanceof Error ? error.message : String(error) }),
         );
     });

@@ -39,12 +39,11 @@ beforeEach(async () => {
   mkdirSync(join(home, "bin"));
   mkdirSync(join(home, "run"), { mode: 0o700 });
   // The fake GitHub knows a repository when its bare repository is there, and reports your
-  // permission and whether it is a fork from the files beside it. A checkout's origin
-  // reaches it already sent to the fake GitHub's folder by git.
+  // permission and whether it is a fork from the files beside it.
   fake(
     "gh",
     `test "$1 $2" = "repo view" || exit 1
-full=$(echo "$3" | sed -E "s#^(https://github.com/|file://$HOME/github/)##; s#\\.git\\$##")
+full=$3
 test -d "$HOME/github/$full.git" || { echo "Could not resolve to a Repository" >&2; exit 1; }
 permission=$(cat "$HOME/github/$full.permission")
 fork=$(test -e "$HOME/github/$full.fork" && echo true || echo false)
@@ -186,22 +185,31 @@ for (const [what, typed] of [
   });
 }
 
-test("asks nothing in a repository already brought in, and moves its clone to the latest", async () => {
+// Plain skel must stay fast: keeping the clone current is the daemon's work.
+test("asks GitHub nothing and fetches nothing for a repository skel has", async () => {
   const checkout = onGitHub("simon/app");
   await skel([], "y\n", checkout);
   writeFileSync(join(checkout, "NEWS"), "more\n");
   git(checkout, "add", ".");
   git(checkout, "commit", "-q", "-m", "more");
   git(checkout, "push", "-q", join(home, "github", "simon", "app.git"), "main");
-  // Work you haven't pushed stays yours.
-  writeFileSync(join(checkout, "DRAFT"), "mine\n");
-  git(checkout, "add", ".");
-  git(checkout, "commit", "-q", "-m", "draft");
-  const again = await skel([], "", checkout);
-  expect(again.err).toBe("");
-  expect(again.out).not.toContain("Do you trust");
-  expect(readFileSync(join(clone("simon/app"), "NEWS"), "utf8")).toBe("more\n");
-  expect(existsSync(join(clone("simon/app"), "DRAFT"))).toBe(false);
+  for (const origin of [
+    "https://github.com/simon/app",
+    "git@github.com:Simon/App.git",
+    "ssh://git@github.com/simon/app.git",
+  ]) {
+    git(checkout, "remote", "set-url", "origin", origin);
+    writeFileSync(join(home, "calls"), "");
+    const again = await skel([], "", checkout);
+    expect(again.err).toBe("");
+    expect(again.out).toBe("");
+    expect(calls()).not.toContain("gh");
+    expect(attached()).toBe(true);
+  }
+  writeFileSync(join(home, "calls"), "");
+  expect((await skel(["--from", "simon/app"])).out).toBe("");
+  expect(calls()).not.toContain("gh");
+  expect(existsSync(join(clone("simon/app"), "NEWS"))).toBe(false);
 });
 
 test("does nothing in a repository that isn't on GitHub, or has no origin", async () => {

@@ -40,26 +40,46 @@ export function repositories(db: Database): Repository[] {
 }
 
 // Clones it the first time, and after that moves the clone to the latest default branch.
-export function refreshClone(owner: string, repo: string): string {
+async function refreshClone(owner: string, repo: string): Promise<void> {
   const clone = cloneDir(owner, repo);
   if (existsSync(clone)) {
-    updateClone(clone);
-    return clone;
+    await updateClone(clone);
+    return;
   }
   // Cloned outside the folder the lead sees and moved in once whole, so a clone stopped
   // halfway never looks like one.
   const part = join(dataDir(), "cloning", owner, repo);
   rmSync(part, { recursive: true, force: true });
   mkdirSync(dirname(part), { recursive: true });
-  cloneRepo(owner, repo, part);
+  await cloneRepo(owner, repo, part);
   mkdirSync(dirname(clone), { recursive: true });
   renameSync(part, clone);
-  return clone;
+  refuseCredentials(clone);
+}
+
+let refreshing: Promise<void> | null = null;
+
+// One refresh at a time: a second asked for meanwhile joins the one running, so two git
+// commands never fight over a clone. A clone that can't be refreshed only gets a line in
+// the log, since an old clone still lets the lead read the repository.
+export function refreshClones(db: Database): Promise<void> {
+  refreshing ??= (async () => {
+    for (const { owner, repo } of repositories(db)) {
+      try {
+        await refreshClone(owner, repo);
+      } catch (error) {
+        console.log(error instanceof Error ? error.message : String(error));
+      }
+    }
+  })().finally(() => {
+    refreshing = null;
+  });
+  return refreshing;
 }
 
 // Asking is only for your own terminal. Anywhere else a repository you can't push to waits
 // for skel trust, since a yes passed on by the lead could come from an injected instruction.
-export function bringIn(db: Database, github: GitHubRepo, ask: boolean): void {
+export async function bringIn(db: Database, github: GitHubRepo, ask: boolean): Promise<void> {
   const { owner, repo, canPush, isFork } = github;
   const full = `${owner}/${repo}`;
   const known = repositories(db).some((r) => r.owner === owner && r.repo === repo);
@@ -78,41 +98,46 @@ export function bringIn(db: Database, github: GitHubRepo, ask: boolean): void {
     trust(full);
   }
   if (!existsSync(cloneDir(owner, repo))) console.log(`Cloning ${full} for skel.`);
-  refuseCredentials(refreshClone(owner, repo));
+  await refreshClone(owner, repo);
   if (known) return;
   db.run("INSERT INTO repositories (owner, repo, name) VALUES (?, ?, ?)", [owner, repo, full]);
   nameRepositories(db);
 }
 
-// A folder that isn't on GitHub, such as your dotfiles, gets no complaint on every skel. A
-// repository you name with --from does.
-export function bringInFrom(from: string | undefined): void {
+// Plain skel must stay fast, so a repository skel has costs no call to GitHub: the daemon
+// keeps its clone current. A folder that isn't on GitHub, such as your dotfiles, gets no
+// complaint.
+export async function bringInFrom(from: string | undefined): Promise<void> {
   const db = openDb();
+  const named = from === undefined ? originHere() : (onGitHub(from) ?? from);
+  const known = (r: Repository) => `${r.owner}/${r.repo}`.toLowerCase() === named?.toLowerCase();
   try {
-    const github = from ? githubRepo(from) : githubRepoHere();
-    if (github) bringIn(db, github, true);
+    if (named && !repositories(db).some(known)) await bringIn(db, githubRepo(named), true);
   } catch (error) {
     console.error(`skel: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (repositories(db).length === 0) console.log(noRepositories);
 }
 
+// owner/repo from a GitHub remote's URL, in any of the forms git and gh write.
+function onGitHub(url: string): string | null {
+  const found = url.match(
+    /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/i,
+  );
+  return found?.[1] ?? null;
+}
+
 // Reading origin is the only git skel runs in your checkout: the folder only names the
-// repository.
-function githubRepoHere(): GitHubRepo | null {
-  const origin = Bun.spawnSync(["git", "remote", "get-url", "origin"], {
+// repository. It is read as written, before any insteadOf in your git config rewrites it.
+function originHere(): string | null {
+  const origin = Bun.spawnSync(["git", "config", "--get", "remote.origin.url"], {
     stdout: "pipe",
     stderr: "pipe",
   });
-  if (!origin.success) return null;
-  try {
-    return githubRepo(origin.stdout.toString().trim());
-  } catch {
-    return null;
-  }
+  return origin.success ? onGitHub(origin.stdout.toString().trim()) : null;
 }
 
-export function trustRepo(given: string): void {
+export async function trustRepo(given: string): Promise<void> {
   if (process.env.SKEL_SANDBOX === "1")
     throw new Error("only you can trust a repository, from your own terminal");
   const db = openDb();
@@ -121,7 +146,7 @@ export function trustRepo(given: string): void {
     throw new Error(`there is no repository named ${given}. Name a new one as owner/repo`);
   const github = githubRepo(known ? `${known.owner}/${known.repo}` : given);
   trust(`${github.owner}/${github.repo}`);
-  bringIn(db, github, false);
+  await bringIn(db, github, false);
 }
 
 export function listRepos(): void {
