@@ -26,7 +26,6 @@ test("the help names every command", () => {
   const out = skel(["--help"]).out;
   for (const command of [
     "--remote",
-    "update --remote",
     "serve",
     "repo ls",
     "repo rm",
@@ -41,6 +40,14 @@ test("the help names every command", () => {
     "review",
   ])
     expect(out).toContain(`  ${command} `);
+});
+
+// --remote keeps skel on the other side up to date, so there is no command for it.
+test("the help names no update command, and says --remote keeps skel up to date", () => {
+  const out = skel(["--help"]).out;
+  expect(out).not.toContain("update --remote");
+  expect(out).not.toMatch(/^ {2}update/m);
+  expect(out).toContain("up to date");
 });
 
 // Piped into a file or another program, color codes would be noise.

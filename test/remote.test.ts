@@ -17,13 +17,15 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const main = join(import.meta.dir, "..", "src", "main.ts");
 let home = "";
+let laptop = { folder: "", main: "", commit: "" };
 
 // The skel the fake bun builds: it says what reached it, one argument per line, so a test
-// can see that each one arrived exactly as typed.
-const serverSkel = `#!/bin/sh
-echo "skel on the server got $# arguments"
+// can see that each one arrived exactly as typed. Built with a commit, it stops as a copied
+// skel does when the laptop's build differs. Without one, it is a skel from before builds
+// carried their commit.
+const serverSkel = (built?: string) => `#!/bin/sh
+${built === undefined ? "" : `test -n "$SKEL_LAPTOP_BUILD" && test "$SKEL_LAPTOP_BUILD" != "${built}" && { echo "skel on $SKEL_REMOTE_NAME is from ${built}"; exit 98; }\n`}echo "skel on the server got $# arguments"
 for word in "$@"; do echo "[$word]"; done
 exit 3
 `;
@@ -36,6 +38,27 @@ function fake(name: string, body: string): void {
       mode: 0o755,
     },
   );
+}
+
+// Returns a skel checkout of its own on the laptop, on main with one commit, so a test knows
+// what is built and from which commit.
+function laptopSkel(): { folder: string; main: string; commit: string } {
+  const folder = join(home, "code", "skel");
+  cpSync(join(import.meta.dir, "..", "src"), join(folder, "src"), { recursive: true });
+  symlinkSync(join(import.meta.dir, "..", "node_modules"), join(folder, "node_modules"));
+  writeFileSync(join(folder, ".gitignore"), "node_modules\n");
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", "-C", folder, "-c", "user.name=t", "-c", "user.email=t", ...args], {
+      stdout: "pipe",
+    });
+  git("init", "-q", "-b", "main");
+  git("add", ".");
+  git("commit", "-q", "-m", "skel");
+  return {
+    folder,
+    main: join(folder, "src", "main.ts"),
+    commit: git("rev-parse", "--short", "HEAD").stdout.toString().trim(),
+  };
 }
 
 beforeEach(() => {
@@ -57,22 +80,30 @@ cd "$HOME/server" && HOME="$HOME/server" PATH="$bin:/usr/bin:/bin" exec sh -c "$
     { mode: 0o755 },
   );
   fake("scp", `test -f "$HOME/scp-fails" && exit 1\ncp "$1" "$HOME/server/\${2#*:}"`);
+  // Builds the stand-in skel with the commit skel stamps into the build.
   fake(
     "bun",
-    `while [ $# -gt 1 ]; do test "$1" = --outfile && out=$2; shift; done
-cat > "$out" <<'EOF'
-${serverSkel}EOF
+    `while [ $# -gt 1 ]; do
+  test "$1" = --outfile && out=$2
+  test "$1" = --define && built=$(echo "$2" | sed 's/^SKEL_BUILD="\\(.*\\)"$/\\1/')
+  shift
+done
+sed "s/@BUILT@/$built/g" > "$out" <<'EOF'
+${serverSkel("@BUILT@")}EOF
 chmod +x "$out"`,
   );
+  laptop = laptopSkel();
 });
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// Puts a skel on the server where a copy would put it.
-function installed(): void {
+// Puts a skel on the server where a copy would put it, built from the given commit.
+function installed(built?: string): void {
   mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });
-  writeFileSync(join(home, "server", ".local", "bin", "skel"), serverSkel, { mode: 0o755 });
+  writeFileSync(join(home, "server", ".local", "bin", "skel"), serverSkel(built), {
+    mode: 0o755,
+  });
 }
 
 // Returns a checkout whose origin is the given GitHub repository.
@@ -85,7 +116,7 @@ function checkout(full: string): string {
 }
 
 async function skel(args: string[], typed = "", cwd = home) {
-  const run = Bun.spawn([process.execPath, main, ...args], {
+  const run = Bun.spawn([process.execPath, laptop.main, ...args], {
     cwd,
     env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
     stdin: new Blob([typed]),
@@ -103,12 +134,15 @@ async function skel(args: string[], typed = "", cwd = home) {
 const calls = () =>
   existsSync(join(home, "calls")) ? readFileSync(join(home, "calls"), "utf8") : "";
 
+// The line ssh runs on the server: with the laptop's build, so a copied skel can tell it is
+// out of date, or without, to run whatever skel is there.
+const onServer = (words: string, build: string | null = laptop.commit) =>
+  `ssh -t simon@workbox env PATH="$HOME/.local/bin:$PATH" ${build ? `SKEL_LAPTOP_BUILD=${build} SKEL_REMOTE_NAME=simon@workbox ` : ""}skel${words}`;
+
 test("runs skel on the server with the repository you are in", async () => {
   installed();
   const run = await skel(["--remote", "simon@workbox"], "", checkout("simon/app"));
-  expect(calls()).toBe(
-    'ssh -t simon@workbox env PATH="$HOME/.local/bin:$PATH" skel --from simon/app\n',
-  );
+  expect(calls()).toBe(`${onServer(" --from simon/app")}\n`);
   expect(run.out).toBe("skel on the server got 2 arguments\n[--from]\n[simon/app]\n");
   // What skel exits with on the server is what skel exits with here.
   expect(run.code).toBe(3);
@@ -117,7 +151,7 @@ test("runs skel on the server with the repository you are in", async () => {
 test("passes no repository from outside one", async () => {
   installed();
   const run = await skel(["--remote", "simon@workbox"]);
-  expect(calls()).toBe('ssh -t simon@workbox env PATH="$HOME/.local/bin:$PATH" skel\n');
+  expect(calls()).toBe(`${onServer("")}\n`);
   expect(run.out).toBe("skel on the server got 0 arguments\n");
 });
 
@@ -140,11 +174,12 @@ test("offers to copy skel to a server without it, then runs the command", async 
   expect(run.out).toContain("Copy it to ~/.local/bin/skel there? [y/N]");
   expect(run.out).toEndWith("skel on the server got 1 arguments\n[ps]\n");
   const lines = calls().split("\n");
-  expect(lines[0]).toBe('ssh -t simon@workbox env PATH="$HOME/.local/bin:$PATH" skel ps');
-  // Built for the server, which is Linux, whatever the laptop runs.
+  expect(lines[0]).toBe(onServer(" ps"));
+  // Built for the server, which is Linux, whatever the laptop runs, with the commit it came
+  // from, so the server can tell when the laptop has moved on.
   expect(lines[1]).toMatch(
     new RegExp(
-      `^bun build --compile --target=bun-linux-x64 ${main} --outfile ${home}/tmp/\\S+/skel$`,
+      `^bun build --compile --target=bun-linux-x64 --define SKEL_BUILD="${laptop.commit}" ${laptop.main} --outfile ${home}/tmp/\\S+/skel$`,
     ),
   );
   expect(lines[2]).toBe("ssh simon@workbox mkdir -p .local/bin && rm -f .local/bin/skel.new");
@@ -152,8 +187,11 @@ test("offers to copy skel to a server without it, then runs the command", async 
     new RegExp(`^scp ${home}/tmp/\\S+/skel simon@workbox:.local/bin/skel.new$`),
   );
   expect(lines[4]).toBe("ssh simon@workbox mv -f .local/bin/skel.new .local/bin/skel");
-  expect(lines[5]).toBe(lines[0]);
-  expect(readFileSync(join(home, "server", ".local", "bin", "skel"), "utf8")).toBe(serverSkel);
+  // A fresh copy is the laptop's build, so it runs without the check.
+  expect(lines[5]).toBe(onServer(" ps", null));
+  expect(readFileSync(join(home, "server", ".local", "bin", "skel"), "utf8")).toBe(
+    serverSkel(laptop.commit),
+  );
   // The build is removed once copied.
   expect(readdirSync(join(home, "tmp"))).toEqual([]);
 });
@@ -179,7 +217,7 @@ test("copies nothing when you say no", async () => {
   expect(run.out).toContain("skel isn't installed on simon@workbox.");
   expect(run.out).toContain("skel isn't on simon@workbox, so the command didn't run.");
   expect(run.code).toBe(1);
-  expect(calls()).toBe('ssh -t simon@workbox env PATH="$HOME/.local/bin:$PATH" skel ps\n');
+  expect(calls()).toBe(`${onServer(" ps")}\n`);
 });
 
 test("needs a host", async () => {
@@ -204,72 +242,60 @@ test("the checkout's launcher finds bun in ~/.bun/bin when it isn't on the PATH"
   expect(run.stdout.toString()).toBe(`bun got ${script} ps\n`);
 });
 
-// Returns a skel checkout of its own on the laptop, on main with one commit, so a test knows
-// what update copies and from where.
-function laptopSkel(): { main: string; commit: string } {
-  const folder = join(home, "code", "skel");
-  cpSync(join(import.meta.dir, "..", "src"), join(folder, "src"), { recursive: true });
-  symlinkSync(join(import.meta.dir, "..", "node_modules"), join(folder, "node_modules"));
-  writeFileSync(join(folder, ".gitignore"), "node_modules\n");
-  const git = (...args: string[]) =>
-    Bun.spawnSync(["git", "-C", folder, "-c", "user.name=t", "-c", "user.email=t", ...args], {
-      stdout: "pipe",
-    });
-  git("init", "-q", "-b", "main");
-  git("add", ".");
-  git("commit", "-q", "-m", "skel");
-  return {
-    main: join(folder, "src", "main.ts"),
-    commit: git("rev-parse", "--short", "HEAD").stdout.toString().trim(),
-  };
-}
+test("runs the command with no offer when skel there is from the laptop's commit", async () => {
+  installed(laptop.commit);
+  const run = await skel(["--remote", "simon@workbox", "ps"]);
+  expect(run.out).toBe("skel on the server got 1 arguments\n[ps]\n");
+  expect(run.code).toBe(3);
+  expect(calls()).toBe(`${onServer(" ps")}\n`);
+});
 
-async function update(laptop: { main: string }) {
-  const run = Bun.spawn([process.execPath, laptop.main, "update", "--remote", "simon@workbox"], {
-    cwd: home,
-    env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [out, err, code] = await Promise.all([
-    new Response(run.stdout).text(),
-    new Response(run.stderr).text(),
-    run.exited,
-  ]);
-  return { out, err, code };
-}
-
-test("update replaces skel on the server and restarts its daemon", async () => {
-  installed();
-  const laptop = laptopSkel();
-  const run = await update(laptop);
-  expect(run.code).toBe(0);
-  const lines = calls().split("\n");
-  expect(lines).toContain("ssh simon@workbox mv -f .local/bin/skel.new .local/bin/skel");
-  expect(lines.some((line) => line.startsWith("scp "))).toBe(true);
-  // The daemon restarts only once the new skel is in place, so it runs the new build.
-  expect(lines.at(-3)).toBe("ssh simon@workbox systemctl --user restart skel");
-  expect(lines.at(-2)).toBe("systemctl --user restart skel");
+test("offers to update an out-of-date skel, updates it, then runs the command", async () => {
+  installed("0000000");
+  const run = await skel(["--remote", "simon@workbox", "ps"], "\n");
+  expect(run.out).toContain("skel on simon@workbox is from 0000000\n");
+  expect(run.out).toContain("skel · Update it? [Y/n]");
   expect(run.out).toContain(
     `skel · updated simon@workbox to the skel in ~/code/skel (commit ${laptop.commit}) and restarted its daemon.`,
   );
   expect(run.out).toContain("the lead picks up new instructions when it's next started");
   expect(run.out).not.toContain("uncommitted");
+  expect(run.out).toEndWith("skel on the server got 1 arguments\n[ps]\n");
+  expect(run.code).toBe(3);
+  const lines = calls().trim().split("\n");
+  expect(lines[0]).toBe(onServer(" ps"));
+  expect(lines).toContain("ssh simon@workbox mv -f .local/bin/skel.new .local/bin/skel");
+  // The daemon restarts only once the new skel is in place, so it runs the new build, and
+  // the command runs after that.
+  expect(lines.at(-3)).toBe("ssh simon@workbox systemctl --user restart skel");
+  expect(lines.at(-2)).toBe("systemctl --user restart skel");
+  expect(lines.at(-1)).toBe(onServer(" ps", null));
+  expect(readFileSync(join(home, "server", ".local", "bin", "skel"), "utf8")).toBe(
+    serverSkel(laptop.commit),
+  );
   expect(readdirSync(join(home, "tmp"))).toEqual([]);
 });
 
-// What gets copied is the laptop's checkout as it is, so you hear when that isn't main.
-test("update warns about uncommitted changes and another branch, and still copies", async () => {
-  installed();
-  const laptop = laptopSkel();
-  const folder = join(home, "code", "skel");
-  Bun.spawnSync(["git", "-C", folder, "checkout", "-q", "-b", "try"]);
-  writeFileSync(join(folder, "src", "new.ts"), "");
-  const run = await update(laptop);
-  expect(run.code).toBe(0);
+test("runs the command on the old skel when you say no to the update", async () => {
+  installed("0000000");
+  const run = await skel(["--remote", "simon@workbox", "ps"], "n\n");
+  expect(run.out).toContain("skel · running it on the old skel on simon@workbox.");
+  expect(run.out).toEndWith("skel on the server got 1 arguments\n[ps]\n");
+  expect(run.code).toBe(3);
+  expect(calls()).toBe(`${onServer(" ps")}\n${onServer(" ps", null)}\n`);
+});
+
+// What gets built is the laptop's checkout as it is, so a build with changes not committed
+// can't say which commit it is, and never counts as up to date.
+test("a laptop with uncommitted changes always offers, and says what it copies", async () => {
+  Bun.spawnSync(["git", "-C", laptop.folder, "checkout", "-q", "-b", "try"]);
+  writeFileSync(join(laptop.folder, "src", "new.ts"), "");
+  installed(laptop.commit);
+  const run = await skel(["--remote", "simon@workbox", "ps"], "y\n");
+  expect(calls().split("\n")[0]).toBe(onServer(" ps", `${laptop.commit}-dirty`));
   expect(run.out).toContain("skel · ~/code/skel has uncommitted changes, and they are copied too.");
   expect(run.out).toContain("skel · ~/code/skel is on try, not main.");
+  expect(calls()).toContain(`--define SKEL_BUILD="${laptop.commit}-dirty"`);
   expect(calls()).toContain("systemctl --user restart skel");
 });
 
@@ -283,46 +309,45 @@ function serverCheckout(name = "skel"): string {
   return checkout;
 }
 
-// skel run once from a checkout points the daemon's service at it, and a copy left in
-// ~/.local/bin then runs nothing the daemon does.
-test("update goes by what the daemon's service runs, not by ~/.local/bin", async () => {
-  installed();
-  const checkout = serverCheckout();
+// Writes the daemon's systemd unit on the server, starting the given skel.
+function unit(skel: string): void {
   const units = join(home, "server", ".config", "systemd", "user");
   mkdirSync(units, { recursive: true });
-  writeFileSync(
-    join(units, "skel.service"),
-    `[Service]\nExecStart="${join(checkout, "bin", "skel")}" serve\nKillMode=process\n`,
-  );
-  const run = await update(laptopSkel());
-  expect(run.code).toBe(0);
+  writeFileSync(join(units, "skel.service"), `[Service]\nExecStart="${skel}" serve\n`);
+}
+
+// skel run once from a checkout points the daemon's service at it, and a copy left in
+// ~/.local/bin then runs nothing the daemon does.
+test("the update goes by what the daemon's service runs, not by ~/.local/bin", async () => {
+  installed("0000000");
+  const checkout = serverCheckout();
+  unit(join(checkout, "bin", "skel"));
+  const run = await skel(["--remote", "simon@workbox", "ps"], "y\n");
   expect(run.out).toContain(`skel on simon@workbox runs from a checkout at ${checkout}`);
+  expect(run.out).toContain("git pull there updates it");
+  expect(run.out).toEndWith("skel on the server got 1 arguments\n[ps]\n");
   expect(calls()).not.toContain("scp");
+  expect(calls()).not.toContain("systemctl --user restart");
 });
 
 // systemd reads % in a unit as the start of a name it fills in, so the service doubles it.
-test("update finds a checkout whose path holds a percent sign", async () => {
+test("the update finds a checkout whose path holds a percent sign", async () => {
+  installed("0000000");
   const checkout = serverCheckout("100%skel");
-  const units = join(home, "server", ".config", "systemd", "user");
-  mkdirSync(units, { recursive: true });
-  const launcher = join(checkout, "bin", "skel").replaceAll("%", "%%");
-  writeFileSync(join(units, "skel.service"), `[Service]\nExecStart="${launcher}" serve\n`);
-  const run = await update(laptopSkel());
-  expect(run.code).toBe(0);
+  unit(join(checkout, "bin", "skel").replaceAll("%", "%%"));
+  const run = await skel(["--remote", "simon@workbox", "ps"], "y\n");
   expect(run.out).toContain(`skel on simon@workbox runs from a checkout at ${checkout}`);
 });
 
-// update puts skel in ~/.local/bin, so a service that starts a skel elsewhere would restart
-// the old one.
-test("update replaces nothing when the service runs a skel outside ~/.local/bin", async () => {
-  installed();
+// The update puts skel in ~/.local/bin, so a service that starts a skel elsewhere would
+// restart the old one.
+test("the update replaces nothing when the service runs a skel outside ~/.local/bin", async () => {
+  installed("0000000");
   const other = join(home, "server", "opt", "skel");
   mkdirSync(join(home, "server", "opt"));
   writeFileSync(other, "old skel", { mode: 0o755 });
-  const units = join(home, "server", ".config", "systemd", "user");
-  mkdirSync(units, { recursive: true });
-  writeFileSync(join(units, "skel.service"), `[Service]\nExecStart="${other}" serve\n`);
-  const run = await update(laptopSkel());
+  unit(other);
+  const run = await skel(["--remote", "simon@workbox", "ps"], "y\n");
   expect(run.code).toBe(1);
   expect(run.err).toContain(`the daemon on simon@workbox runs skel from ${other}`);
   expect(calls()).not.toContain("scp");
@@ -330,67 +355,73 @@ test("update replaces nothing when the service runs a skel outside ~/.local/bin"
   expect(readFileSync(other, "utf8")).toBe("old skel");
 });
 
-// update renames over ~/.local/bin/skel itself, so a service that starts the file a link
-// there points to would keep running the old one.
-test("update replaces nothing when the service starts the file ~/.local/bin/skel links to", async () => {
+// The update renames over ~/.local/bin/skel itself, so a service that starts the file a
+// link there points to would keep running the old one.
+test("the update replaces nothing when the service starts the file ~/.local/bin/skel links to", async () => {
   const other = join(home, "server", "opt", "skel");
   mkdirSync(join(home, "server", "opt"));
-  writeFileSync(other, "old skel", { mode: 0o755 });
+  writeFileSync(other, serverSkel("0000000"), { mode: 0o755 });
   mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });
   symlinkSync(other, join(home, "server", ".local", "bin", "skel"));
-  const units = join(home, "server", ".config", "systemd", "user");
-  mkdirSync(units, { recursive: true });
-  writeFileSync(join(units, "skel.service"), `[Service]\nExecStart="${other}" serve\n`);
-  const run = await update(laptopSkel());
+  unit(other);
+  const run = await skel(["--remote", "simon@workbox", "ps"], "y\n");
   expect(run.code).toBe(1);
   expect(run.err).toContain(`the daemon on simon@workbox runs skel from ${other}`);
   expect(calls()).not.toContain("scp");
-  expect(readFileSync(other, "utf8")).toBe("old skel");
-});
-
-// A server where ~/.local/bin/skel links into a checkout updates with git pull there, and a
-// copy would leave the checkout behind while the daemon kept running it.
-test("update leaves skel run from a checkout on the server alone, and says how to update it", async () => {
-  const checkout = serverCheckout();
-  mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });
-  symlinkSync(join(checkout, "bin", "skel"), join(home, "server", ".local", "bin", "skel"));
-  const run = await update(laptopSkel());
-  expect(run.code).toBe(0);
-  expect(run.out).toContain(
-    `skel · skel on simon@workbox runs from a checkout at ${checkout}, so it wasn't replaced.`,
-  );
-  expect(run.out).toContain("git pull there updates it");
-  expect(run.out).toContain("systemctl --user restart skel");
-  expect(calls()).not.toContain("scp");
-  expect(calls()).not.toContain("systemctl --user restart");
-  expect(lstatSync(join(home, "server", ".local", "bin", "skel")).isSymbolicLink()).toBe(true);
+  expect(readFileSync(other, "utf8")).toBe(serverSkel("0000000"));
 });
 
 // A transfer that breaks off must leave the skel that works in place, or the daemon has
 // nothing to restart with.
-test("update keeps the old skel when the copy fails", async () => {
-  installed();
-  const skel = join(home, "server", ".local", "bin", "skel");
-  writeFileSync(skel, "old skel");
+test("the update keeps the old skel when the copy fails", async () => {
+  installed("0000000");
   writeFileSync(join(home, "scp-fails"), "");
-  const run = await update(laptopSkel());
+  const run = await skel(["--remote", "simon@workbox", "ps"], "y\n");
   expect(run.code).toBe(1);
-  expect(readFileSync(skel, "utf8")).toBe("old skel");
+  expect(readFileSync(join(home, "server", ".local", "bin", "skel"), "utf8")).toBe(
+    serverSkel("0000000"),
+  );
   expect(calls()).not.toContain("systemctl --user restart");
 });
 
-test("update copies nothing to a server without skel", async () => {
-  const run = await update(laptopSkel());
-  expect(run.code).toBe(1);
-  expect(run.err).toContain(
-    "skel isn't on simon@workbox yet: skel --remote simon@workbox sets it up",
-  );
-  expect(calls()).not.toContain("scp");
+// Runs main.ts as the skel on a server or Sprite would run it, built from the given commit
+// or from a checkout, asked for its help by a laptop with the given build.
+function farSkel(built: string | null, laptopBuild?: string) {
+  const define = built === null ? [] : ["--define", `SKEL_BUILD="${built}"`];
+  const env: Record<string, string> = { PATH: "/usr/bin:/bin", HOME: home };
+  if (laptopBuild) Object.assign(env, { SKEL_LAPTOP_BUILD: laptopBuild, SKEL_REMOTE_NAME: "x" });
+  const run = Bun.spawnSync([process.execPath, ...define, laptop.main, "--help"], { env });
+  return { code: run.exitCode, out: run.stdout.toString() };
+}
+
+test("a copied skel runs a command from a laptop with its own commit", () => {
+  const run = farSkel("abc1234", "abc1234");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("USAGE");
 });
 
-test("update needs --remote and where to", async () => {
-  const run = await skel(["update"]);
-  expect(run.err).toContain("skel update --remote <host>");
+test("a copied skel from another commit says so and runs nothing", () => {
+  expect(farSkel("abc1234", "def5678")).toEqual({
+    code: 98,
+    out: "skel · skel on x is from abc1234, yours is def5678.\n",
+  });
+});
+
+test("a copied skel built with uncommitted changes is never up to date", () => {
+  expect(farSkel("abc1234-dirty", "abc1234-dirty")).toEqual({
+    code: 98,
+    out: "skel · skel on x is from abc1234 with uncommitted changes, yours is abc1234 with uncommitted changes.\n",
+  });
+});
+
+// A checkout on the server updates with git pull there, never from the laptop.
+test("skel from a checkout never says it is out of date", () => {
+  expect(farSkel(null, "def5678").out).toContain("USAGE");
+});
+
+test("skel update is gone", async () => {
+  const run = await skel(["update", "--remote", "simon@workbox"]);
+  expect(run.err).toBe("skel: that isn't a skel command. Run skel --help to see them.\n");
   expect(run.code).toBe(1);
   expect(calls()).toBe("");
 });

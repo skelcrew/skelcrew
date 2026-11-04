@@ -18,13 +18,15 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const main = join(import.meta.dir, "..", "src", "main.ts");
 let home = "";
+let laptop = { main: "", commit: "" };
 
 // The skel the fake bun builds: it says what reached it, one argument per line, so a test
-// can see that each one arrived exactly as typed.
-const spriteSkel = `#!/bin/sh
-echo "skel on the Sprite got $# arguments"
+// can see that each one arrived exactly as typed. Built with a commit, it stops as a copied
+// skel does when the laptop's build differs. Without one, it is a skel from before builds
+// carried their commit.
+const spriteSkel = (built?: string) => `#!/bin/sh
+${built === undefined ? "" : `test -n "$SKEL_LAPTOP_BUILD" && test "$SKEL_LAPTOP_BUILD" != "${built}" && { echo "skel on $SKEL_REMOTE_NAME is from ${built}"; exit 98; }\n`}echo "skel on the Sprite got $# arguments"
 for word in "$@"; do echo "[$word]"; done
 exit 3
 `;
@@ -75,11 +77,16 @@ test -f "${join(home, "apt-fails")}" && { echo "E: Unable to locate package bubb
 exit 0`,
   );
   fake("node", 'echo "v22.0.0"');
+  // Builds the stand-in skel with the commit skel stamps into the build.
   fake(
     "bun",
-    `while [ $# -gt 1 ]; do test "$1" = --outfile && out=$2; shift; done
-cat > "$out" <<'EOF'
-${spriteSkel}EOF
+    `while [ $# -gt 1 ]; do
+  test "$1" = --outfile && out=$2
+  test "$1" = --define && built=$(echo "$2" | sed 's/^SKEL_BUILD="\\(.*\\)"$/\\1/')
+  shift
+done
+sed "s/@BUILT@/$built/g" > "$out" <<'EOF'
+${spriteSkel("@BUILT@")}EOF
 chmod +x "$out"`,
   );
   // Like sprite-env on a Sprite: services get answers with the service as JSON, and fails
@@ -89,16 +96,37 @@ chmod +x "$out"`,
     `test "$1 $2 $3" = "services get skel" && { cat "$HOME/service.json" 2>/dev/null || exit 1; }
 exit 0`,
   );
+  laptop = laptopSkel();
 });
+// Returns a skel checkout of its own on the laptop, on main with one commit, so a test knows
+// what is built and from which commit.
+function laptopSkel(): { main: string; commit: string } {
+  const folder = join(home, "code", "skel");
+  cpSync(join(import.meta.dir, "..", "src"), join(folder, "src"), { recursive: true });
+  symlinkSync(join(import.meta.dir, "..", "node_modules"), join(folder, "node_modules"));
+  writeFileSync(join(folder, ".gitignore"), "node_modules\n");
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", "-C", folder, "-c", "user.name=t", "-c", "user.email=t", ...args], {
+      stdout: "pipe",
+    });
+  git("init", "-q", "-b", "main");
+  git("add", ".");
+  git("commit", "-q", "-m", "skel");
+  return {
+    main: join(folder, "src", "main.ts"),
+    commit: git("rev-parse", "--short", "HEAD").stdout.toString().trim(),
+  };
+}
+
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// Makes a Sprite with skel already copied to it.
-function existing(name: string): void {
+// Makes a Sprite with skel already copied to it, built from the given commit.
+function existing(name: string, built?: string): void {
   const bin = join(home, "sprites", name, ".local", "bin");
   mkdirSync(bin, { recursive: true });
-  writeFileSync(join(bin, "skel"), spriteSkel, { mode: 0o755 });
+  writeFileSync(join(bin, "skel"), spriteSkel(built), { mode: 0o755 });
 }
 
 // Returns a checkout whose origin is the given GitHub repository.
@@ -111,7 +139,7 @@ function checkout(full: string): string {
 }
 
 async function skel(args: string[], typed = "", cwd = home, path = join(home, "bin")) {
-  const run = Bun.spawn([process.execPath, main, ...args], {
+  const run = Bun.spawn([process.execPath, laptop.main, ...args], {
     cwd,
     env: { PATH: `${path}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
     stdin: new Blob([typed]),
@@ -129,7 +157,10 @@ async function skel(args: string[], typed = "", cwd = home, path = join(home, "b
 const calls = () =>
   existsSync(join(home, "calls")) ? readFileSync(join(home, "calls"), "utf8") : "";
 
-const exec = (name: string) => `sprite exec -s ${name} --tty -- sh -c exec skel "$@" skel`;
+// How skel runs itself on the Sprite: with the laptop's build, so a copied skel can tell it
+// is out of date, or without, to run whatever skel is there.
+const exec = (name: string, build: string | null = laptop.commit) =>
+  `sprite exec -s ${name} --tty -- env ${build ? `SKEL_LAPTOP_BUILD=${build} SKEL_REMOTE_NAME=sprite:${name} ` : ""}sh -c exec skel "$@" skel`;
 
 test("runs skel on the Sprite with the repository you are in", async () => {
   existing("demo");
@@ -201,7 +232,7 @@ test("creates the Sprite, sets it up, and runs the first run there", async () =>
   // Built for the Sprite, which is Linux on x64, whatever the laptop runs.
   expect(lines[6]).toMatch(
     new RegExp(
-      `^bun build --compile --target=bun-linux-x64 ${main} --outfile ${home}/tmp/\\S+/skel$`,
+      `^bun build --compile --target=bun-linux-x64 --define SKEL_BUILD="${laptop.commit}" ${laptop.main} --outfile ${home}/tmp/\\S+/skel$`,
     ),
   );
   expect(lines[7]).toBe(
@@ -213,9 +244,10 @@ test("creates the Sprite, sets it up, and runs the first run there", async () =>
   expect(lines[9]).toBe(
     "sprite exec -s demo --no-stdin -- sh -c mv -f .local/bin/skel.new .local/bin/skel",
   );
-  expect(lines[10]).toBe(`${exec("demo")} --from simon/app`);
+  // A fresh copy is the laptop's build, so it runs without the check.
+  expect(lines[10]).toBe(`${exec("demo", null)} --from simon/app`);
   expect(readFileSync(join(home, "sprites", "demo", ".local", "bin", "skel"), "utf8")).toBe(
-    spriteSkel,
+    spriteSkel(laptop.commit),
   );
   // The build is removed once copied.
   expect(readdirSync(join(home, "tmp"))).toEqual([]);
@@ -268,84 +300,63 @@ test("refuses a Sprite name that isn't one", async () => {
   expect(calls()).toBe("");
 });
 
-// Returns a skel checkout of its own on the laptop, on main with one commit, so a test knows
-// what update copies and from where.
-function laptopSkel(): { main: string; commit: string } {
-  const folder = join(home, "code", "skel");
-  cpSync(join(import.meta.dir, "..", "src"), join(folder, "src"), { recursive: true });
-  symlinkSync(join(import.meta.dir, "..", "node_modules"), join(folder, "node_modules"));
-  writeFileSync(join(folder, ".gitignore"), "node_modules\n");
-  const git = (...args: string[]) =>
-    Bun.spawnSync(["git", "-C", folder, "-c", "user.name=t", "-c", "user.email=t", ...args], {
-      stdout: "pipe",
-    });
-  git("init", "-q", "-b", "main");
-  git("add", ".");
-  git("commit", "-q", "-m", "skel");
-  return {
-    main: join(folder, "src", "main.ts"),
-    commit: git("rev-parse", "--short", "HEAD").stdout.toString().trim(),
-  };
-}
+test("runs the command with no offer when skel there is from the laptop's commit", async () => {
+  existing("demo", laptop.commit);
+  const run = await skel(["--remote", "sprite:demo", "ps"]);
+  expect(run.out).toBe("skel on the Sprite got 1 arguments\n[ps]\n");
+  expect(calls()).toBe(`sprite list --json\n${exec("demo")} ps\n`);
+});
 
-async function update(laptop: { main: string }, name = "demo") {
-  const run = Bun.spawn([process.execPath, laptop.main, "update", "--remote", `sprite:${name}`], {
-    cwd: home,
-    env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [out, err, code] = await Promise.all([
-    new Response(run.stdout).text(),
-    new Response(run.stderr).text(),
-    run.exited,
-  ]);
-  return { out, err, code };
-}
-
-test("update replaces skel on the Sprite and restarts its daemon's service", async () => {
+test("offers to update an out-of-date skel on the Sprite, updates it, then runs the command", async () => {
+  existing("demo", "0000000");
+  const run = await skel(["--remote", "sprite:demo", "ps"], "y\n");
+  expect(run.out).toContain("skel on sprite:demo is from 0000000\n");
+  expect(run.out).toContain("skel · Update it? [Y/n]");
+  expect(run.out).toContain(
+    `skel · updated sprite:demo to the skel in ~/code/skel (commit ${laptop.commit}) and restarted its daemon.`,
+  );
+  expect(run.out).toEndWith("skel on the Sprite got 1 arguments\n[ps]\n");
   const sprite = join(home, "sprites", "demo", ".local", "bin", "skel");
-  existing("demo");
-  writeFileSync(sprite, "old skel");
-  const laptop = laptopSkel();
-  const run = await update(laptop);
-  expect(run.code).toBe(0);
-  expect(readFileSync(sprite, "utf8")).toBe(spriteSkel);
-  const lines = calls().split("\n");
+  expect(readFileSync(sprite, "utf8")).toBe(spriteSkel(laptop.commit));
+  const lines = calls().trim().split("\n");
   expect(lines).toContain(
     "sprite exec -s demo --no-stdin -- sh -c mv -f .local/bin/skel.new .local/bin/skel",
   );
-  // The daemon restarts only once the new skel is in place, so it runs the new build.
+  // The daemon restarts only once the new skel is in place, so it runs the new build, and
+  // the command runs after that.
   expect(lines.at(-3)).toBe(
     "sprite exec -s demo --no-stdin -- sh -c sprite-env services restart skel",
   );
   expect(lines.at(-2)).toBe("sprite-env services restart skel");
-  expect(run.out).toContain(
-    `skel · updated sprite:demo to the skel in ~/code/skel (commit ${laptop.commit}) and restarted its daemon.`,
-  );
-  expect(run.out).toContain("the lead picks up new instructions when it's next started");
+  expect(lines.at(-1)).toBe(`${exec("demo", null)} ps`);
   expect(calls()).not.toContain("apt-get");
   expect(readdirSync(join(home, "tmp"))).toEqual([]);
 });
 
+test("runs the command on the old skel on the Sprite when you say no", async () => {
+  existing("demo", "0000000");
+  const run = await skel(["--remote", "sprite:demo", "ps"], "n\n");
+  expect(run.out).toContain("skel · running it on the old skel on sprite:demo.");
+  expect(run.out).toEndWith("skel on the Sprite got 1 arguments\n[ps]\n");
+  expect(calls()).not.toContain("file push");
+});
+
 // A transfer that breaks off must leave the skel that works in place, or the daemon has
 // nothing to restart with.
-test("update keeps the old skel on the Sprite when the copy fails", async () => {
-  existing("demo");
-  const sprite = join(home, "sprites", "demo", ".local", "bin", "skel");
-  writeFileSync(sprite, "old skel");
+test("the update keeps the old skel on the Sprite when the copy fails", async () => {
+  existing("demo", "0000000");
   writeFileSync(join(home, "push-fails"), "");
-  const run = await update(laptopSkel());
+  const run = await skel(["--remote", "sprite:demo", "ps"], "y\n");
   expect(run.code).toBe(1);
-  expect(readFileSync(sprite, "utf8")).toBe("old skel");
+  const sprite = join(home, "sprites", "demo", ".local", "bin", "skel");
+  expect(readFileSync(sprite, "utf8")).toBe(spriteSkel("0000000"));
   expect(calls()).not.toContain("services restart");
 });
 
 // A Sprite service keeps the skel it was made with. Made from a checkout, a copy left in
 // ~/.local/bin runs nothing the daemon does.
-test("update goes by what the Sprite service runs, not by ~/.local/bin", async () => {
-  existing("demo");
+test("the update goes by what the Sprite service runs, not by ~/.local/bin", async () => {
+  existing("demo", "0000000");
   const sprite = join(home, "sprites", "demo");
   mkdirSync(join(sprite, "skel", "bin"), { recursive: true });
   mkdirSync(join(sprite, "skel", "src"));
@@ -353,35 +364,12 @@ test("update goes by what the Sprite service runs, not by ~/.local/bin", async (
   writeFileSync(join(sprite, "skel", "src", "main.ts"), "");
   const service = { name: "skel", cmd: join(sprite, "skel", "bin", "skel"), args: ["serve"] };
   writeFileSync(join(sprite, "service.json"), JSON.stringify(service));
-  const run = await update(laptopSkel());
-  expect(run.code).toBe(0);
-  expect(run.out).toContain(`skel on sprite:demo runs from a checkout at ${join(sprite, "skel")}`);
-  expect(calls()).not.toContain("file push");
-  expect(calls()).not.toContain("services restart");
-});
-
-test("update leaves skel run from a checkout on the Sprite alone", async () => {
-  const sprite = join(home, "sprites", "demo");
-  mkdirSync(join(sprite, "skel", "bin"), { recursive: true });
-  writeFileSync(join(sprite, "skel", "bin", "skel"), "#!/bin/sh\n", { mode: 0o755 });
-  mkdirSync(join(sprite, "skel", "src"));
-  writeFileSync(join(sprite, "skel", "src", "main.ts"), "");
-  mkdirSync(join(sprite, ".local", "bin"), { recursive: true });
-  symlinkSync(join(sprite, "skel", "bin", "skel"), join(sprite, ".local", "bin", "skel"));
-  const run = await update(laptopSkel());
-  expect(run.code).toBe(0);
+  const run = await skel(["--remote", "sprite:demo", "ps"], "y\n");
   expect(run.out).toContain(
     `skel · skel on sprite:demo runs from a checkout at ${join(sprite, "skel")}, so it wasn't replaced.`,
   );
   expect(run.out).toContain("sprite-env services restart skel");
+  expect(run.out).toEndWith("skel on the Sprite got 1 arguments\n[ps]\n");
   expect(calls()).not.toContain("file push");
   expect(calls()).not.toContain("sprite-env services restart");
-});
-
-test("update creates no Sprite", async () => {
-  const run = await update(laptopSkel());
-  expect(run.code).toBe(1);
-  expect(run.err).toContain("No Sprite named demo");
-  expect(calls()).toBe("sprite list --json\n");
-  expect(readdirSync(join(home, "sprites"))).toEqual([]);
 });
