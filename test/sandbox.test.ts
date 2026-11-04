@@ -438,11 +438,12 @@ agentCommand({ name: "app-12", socket: "x", model: "opus" });`;
   test("on a server, gives the agent a /proc of its own", () => {
     repository();
     saveToken();
+    // Without the PATH this machine has, which on a Sprite holds sprite-env.
     const { argv } = agentCommand({
       name: "lead",
       socket: socketPath,
       model: "opus",
-      env: outside(),
+      env: { ...outside(), PATH: "/usr/bin:/bin" },
     });
     expect(argv[0]).toBe("bwrap");
     const options = argv.slice(0, argv.indexOf("--")).join(" ");
