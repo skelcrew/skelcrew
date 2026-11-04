@@ -72,6 +72,7 @@ function sandboxArgs(given: {
   args.push(...["--ro-bind", dirname(socket), socketsInside]);
   const inside = join(socketsInside, basename(socket));
   args.push("--setenv", "SKEL_SANDBOX", "1", "--setenv", "SKEL_SOCKET", inside);
+  args.push("--setenv", "PATH", `${join(skel, "bin")}:${path}`);
   args.push("--chdir", cwd, "--", ...command);
   return args;
 }
@@ -203,6 +204,8 @@ export function agentCommand(given: {
   }
   kept.CLAUDE_CONFIG_DIR = config;
   kept.CLAUDE_CODE_OAUTH_TOKEN = token;
+  // Its greyed-out suggestions propose steps, such as pushing, that belong to skel.
+  kept.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = "false";
   const argv = sandboxArgs({
     home,
     path: env.PATH ?? "",

@@ -7,7 +7,7 @@ import { dirname } from "node:path";
 import { z } from "zod";
 import { openDb } from "./db.ts";
 import { startLead } from "./lead.ts";
-import { cliSocket, leadSocket } from "./paths.ts";
+import { cliSocket, daemonSocket, leadSocket } from "./paths.ts";
 import { refreshClones } from "./repo.ts";
 import { setupDone } from "./setup.ts";
 import { attach } from "./tmux.ts";
@@ -101,7 +101,7 @@ export async function serve(tmux: string): Promise<void> {
   };
   // The lock decides which of two daemons started together runs. The socket can't: both
   // could find one left by a daemon that was killed, and each remove the other's new one.
-  const path = cliSocket();
+  const path = daemonSocket();
   if (!lock(`${path}.lock`))
     throw new Error("skel's daemon is already running. Run skel to attach to the lead.");
   // The lead runs the same commands you do, so its socket answers the same requests.
