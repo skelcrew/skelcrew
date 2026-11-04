@@ -100,18 +100,19 @@ test("opens a pull request that closes the issue", async () => {
 
 test("posts an approving review as a comment that states the verdict", async () => {
   gh('{"id":7}');
-  await postReview("simon/app", 40, "approve", "Looks right.");
+  await postReview("simon/app", 40, "abc123", "approve", "Looks right.");
   expect(sent()).toEqual({
     args: ["api", "repos/simon/app/pulls/40/reviews", "--method", "POST", "--input", "-"],
-    input: { event: "COMMENT", body: "**Approved.**\n\nLooks right." },
+    input: { event: "COMMENT", commit_id: "abc123", body: "**Approved.**\n\nLooks right." },
   });
 });
 
 test("posts a review asking for changes as a comment that states the verdict", async () => {
   gh('{"id":7}');
-  await postReview("simon/app", 40, "changes", "The test is missing.");
+  await postReview("simon/app", 40, "abc123", "changes", "The test is missing.");
   expect(sent().input).toEqual({
     event: "COMMENT",
+    commit_id: "abc123",
     body: "**Changes requested.**\n\nThe test is missing.",
   });
 });

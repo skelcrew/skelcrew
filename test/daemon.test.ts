@@ -149,7 +149,7 @@ async function untilAnswers() {
 
 function storedSession(): string {
   const db = new Database(join(home, ".local", "share", "skel", "skel.db"));
-  // The daemon can be writing it, and a read then would fail with "database is locked".
+  // The daemon may be writing, and a read that meets a write fails without a wait.
   db.run("PRAGMA busy_timeout = 5000");
   try {
     const row = db.query("SELECT session FROM lead").get();

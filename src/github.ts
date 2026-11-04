@@ -75,6 +75,24 @@ export async function fetchBranch(
   ]);
 }
 
+// Pushes a commit from skel's clone in the folder to a branch of a GitHub repository. Never
+// forced, so a push can only add to what the branch already holds.
+export async function pushCommit(
+  folder: string,
+  repo: string,
+  sha: string,
+  branch: string,
+): Promise<void> {
+  await git([
+    "-C",
+    folder,
+    "push",
+    "--quiet",
+    `https://github.com/${repo}.git`,
+    `${sha}:refs/heads/${branch}`,
+  ]);
+}
+
 // Returns JSON from GitHub through gh, sending a body when supplied. Failures name what
 // skel was trying, so you can tell which GitHub operation failed.
 async function gh(args: string[], doing: string, input?: object): Promise<unknown> {
@@ -173,16 +191,19 @@ export async function openPullRequest(
 // Posts the reviewer's verdict and explanation on the PR for you and the builder to read.
 // GitHub refuses to let you approve or request changes on your own pull request, and skel
 // opens and reviews it with the same gh login. So the verdict goes in a comment review, and
-// the skel/review check is what branch protection can require.
+// the skel/review check is what branch protection can require. The review names the commit
+// it covers, since a newer one can reach the PR while it is posted.
 export async function postReview(
   repo: string,
   pr: number,
+  commit: string,
   verdict: "approve" | "changes",
   body: string,
 ): Promise<void> {
   const said = verdict === "approve" ? "**Approved.**" : "**Changes requested.**";
   const posted = await api(`repos/${repo}/pulls/${pr}/reviews`, `post a review on #${pr}`, {
     event: "COMMENT",
+    commit_id: commit,
     body: `${said}\n\n${body}`,
   });
   z.object({ id: z.number() }).parse(posted);

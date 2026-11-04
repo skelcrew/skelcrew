@@ -182,16 +182,10 @@ openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?
 // skel's own clone, which the daemon makes when the lead starts.
 const untilCloned = () => until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
 
-// Opens skel's database as the daemon writes it. Without a wait, a read that lands during
-// one of its writes fails with "database is locked".
-function skelDb(): Database {
-  const db = new Database(join(data(), "skel.db"));
-  db.run("PRAGMA busy_timeout = 5000");
-  return db;
-}
-
 function thread(): Record<string, unknown> {
-  const db = skelDb();
+  const db = new Database(join(data(), "skel.db"));
+  // The daemon may be writing, and a read that meets a write fails without a wait.
+  db.run("PRAGMA busy_timeout = 5000");
   try {
     const row = db.query("SELECT * FROM threads").get();
     return row && typeof row === "object" ? { ...row } : {};
@@ -373,7 +367,8 @@ c.on("data", (d) => process.stdout.write(d));`;
     await untilCloned();
     expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
     await until(() => thread().status === "failed");
-    expect(read(join(data(), "threads", "app-12.log"))).toContain("broken");
+    // The daemon saves a thread before it appends the thread to its log.
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("broken"));
     expect(hasSession("app-12")).toBe(false);
     writeFileSync(join(work, "skel.yaml"), "setup: [echo fixed > fixed]\n");
     git(work, "commit", "-q", "-am", "fix setup");
@@ -452,7 +447,7 @@ nameRepositories(db);`;
     await stop(first);
     serve();
     await until(() => thread().status === "failed");
-    expect(read(join(data(), "threads", "app-12.log"))).toContain("run skel start again");
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("run skel start again"));
     expect(hasSession("app-12")).toBe(false);
   }, 30_000);
 
@@ -477,7 +472,9 @@ nameRepositories(db);`;
     await untilAnswers();
     expect((await skel("start", "simon/app-12")).err).toBe("");
     expect((await skel("start", "simon-app-12")).err).toBe("");
-    const db = skelDb();
+    const db = new Database(join(data(), "skel.db"));
+    // The daemon may be writing, and a read that meets a write fails without a wait.
+    db.run("PRAGMA busy_timeout = 5000");
     const folders = db.query("SELECT folder FROM threads ORDER BY owner DESC").values();
     db.close();
     expect(folders).toEqual([["simon-app-12"], ["simon-app-12-2"]]);

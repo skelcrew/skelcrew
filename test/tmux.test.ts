@@ -92,6 +92,18 @@ test("typing gives up when the harness stays busy", async () => {
   expect(read("lost.txt")).toBe("");
 });
 
+test("a message cancelled while the harness is busy is never typed", async () => {
+  start("lead", harness(1));
+  const cancel = new AbortController();
+  const typing = typeInto(socket, "lead", "stale", { moment, signal: cancel.signal });
+  await Bun.sleep(300);
+  cancel.abort();
+  await typing;
+  typeInto(socket, "lead", "fresh", { moment });
+  await until(() => read("received.txt").endsWith("\n"));
+  expect(read("received.txt")).toBe("\x1b[200~fresh\x1b[201~\n");
+});
+
 test("typing says so when it gives up because there is no prompt", async () => {
   start("lead", ["sh", "-c", "echo starting; sleep 30"]);
   const typing = typeInto(socket, "lead", "hello", { moment, timeout: 300 });

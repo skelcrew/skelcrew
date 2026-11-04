@@ -59,8 +59,9 @@ function fakeCodex(answer: string, extra: string[] = []): void {
 
 const kept = (name: string) => readFileSync(join(sessions(), name), "utf8");
 const approve = '{"verdict":"approve","body":"Looks right."}';
+const given = () => ({ clone, issue, base: "origin/main", model: "opus", env: env() });
 const start = (more: { signal?: AbortSignal; limit?: number } = {}) =>
-  review({ clone, issue, base: "origin/main", model: "opus", env: env(), ...more });
+  review({ ...given(), ...more });
 
 // bubblewrap can't start inside skel's own sandbox, so only there these tests can't run.
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
@@ -97,6 +98,32 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
     expect(kept("seen")).toBe(`${clone}\napp\n`);
     expect(readFileSync(join(clone, "README"), "utf8")).toBe("app\n");
     expect(existsSync(join(clone, "made"))).toBe(false);
+  });
+
+  test("reviews the commit it is given, whatever the builder changed since", async () => {
+    const git = (...args: string[]) =>
+      Bun.spawnSync(["git", "-C", clone, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+        stdout: "pipe",
+      })
+        .stdout.toString()
+        .trim();
+    git("init", "-q");
+    git("add", ".");
+    git("commit", "-qm", "submitted");
+    const commit = git("rev-parse", "HEAD");
+    writeFileSync(join(clone, "README"), "later\n");
+    git("commit", "-qam", "later");
+    writeFileSync(join(clone, "README"), "unsaved\n");
+    writeFileSync(join(clone, "new"), "untracked\n");
+    fakeCodex(approve, [
+      '{ git rev-parse HEAD; cat README; test -e new || echo no-new; } > "$CODEX_HOME/sessions/seen"',
+    ]);
+    expect(await review({ ...given(), commit })).toEqual({
+      verdict: "approve",
+      body: "Looks right.",
+    });
+    expect(kept("seen")).toBe(`${commit}\napp\nno-new\n`);
+    expect(readFileSync(join(clone, "README"), "utf8")).toBe("unsaved\n");
   });
 
   test("keeps Codex's instructions as they were, and its login and sessions writable", async () => {
@@ -208,6 +235,17 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
     expect(readFileSync(join(clone, "README"), "utf8")).toBe("app\n");
   });
 
+  test("reviews on Claude Code when your config picks it, though Codex is installed", async () => {
+    mkdirSync(join(home, ".config", "skel"), { recursive: true });
+    writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-tok\n");
+    fakeCodex('{"verdict":"changes","body":"From Codex."}');
+    fakeClaude([
+      'cat > /dev/null; echo \'{"type":"result","structured_output":{"verdict":"approve","body":"From Claude Code."}}\'',
+    ]);
+    const done = await review({ ...given(), harness: "claude" });
+    expect(done).toEqual({ verdict: "approve", body: "From Claude Code." });
+  });
+
   test("fails a Claude Code review that answers outside the shape", async () => {
     mkdirSync(join(home, ".config", "skel"), { recursive: true });
     writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-tok\n");
@@ -222,6 +260,14 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
 
 // These never start bubblewrap, so they run inside skel's sandbox too.
 describe("starting a review", () => {
+  test("fails a review on a harness your config picks that isn't installed", async () => {
+    const done = await review({ ...given(), harness: "codex" });
+    expect(done).toEqual({
+      verdict: "failed",
+      body: "codex isn't installed, and your config picks it for reviews",
+    });
+  });
+
   test("fails a Claude Code review when no token is saved", async () => {
     script("claude", ["exit 0"]);
     const done = await start();
