@@ -95,7 +95,14 @@ let refreshing: Promise<void> | null = null;
 // next refresh, since an old clone still lets the lead read the repository.
 export function refreshClones(db: Database): Promise<void> {
   refreshing ??= (async () => {
-    for (const { owner, repo } of repositories(db)) {
+    const done = new Set<string>();
+    // Read again after each repository, so one brought in during the refresh is cloned in it
+    // too: a thread started on it waits on this refresh for its clone.
+    for (;;) {
+      const next = repositories(db).find((r) => !done.has(`${r.owner}/${r.repo}`));
+      if (!next) break;
+      const { owner, repo } = next;
+      done.add(`${owner}/${repo}`);
       try {
         await refreshClone(owner, repo);
         // Once per repository, so a label you deleted stays deleted.
@@ -118,20 +125,22 @@ export function refreshClones(db: Database): Promise<void> {
   return refreshing;
 }
 
-// Checks trust, refreshes the repository clone, records it for the lead, and creates its skel
-// label so you can start threads from GitHub. Asking is only for your own terminal. Anywhere
-// else a repository you can't push to waits for skel repo trust, since a yes passed on by the
-// lead could come from an injected instruction.
-export async function bringIn(db: Database, github: GitHubRepo, ask: boolean): Promise<void> {
-  const { owner, repo, canPush, isFork } = github;
+// Whether skel may clone a repository without asking you. You vouch for what is in a
+// repository you can push to, so asking would only add a step. A fork you own holds someone
+// else's code, so it is asked about. skel clones from GitHub, never from your checkout, so
+// what it clones is what your permission covers.
+function trusted({ owner, repo, canPush, isFork }: GitHubRepo): boolean {
+  return (canPush && !isFork) || trustLines().includes(`${owner}/${repo}`);
+}
+
+// Checks trust, asking you when needed, refreshes the repository clone, records it for the
+// lead, and creates its skel label so you can start threads from GitHub. Runs only in your
+// own terminal, where a yes can't come from an injected instruction.
+export async function bringIn(db: Database, github: GitHubRepo): Promise<void> {
+  const { owner, repo, canPush } = github;
   const full = `${owner}/${repo}`;
   const known = repositories(db).some((r) => r.owner === owner && r.repo === repo);
-  // You vouch for what is in a repository you can push to, so asking would only add a step.
-  // A fork you own holds someone else's code, so it is asked about. skel clones from
-  // GitHub, never from your checkout, so what it clones is what your permission covers.
-  if (!known && !(canPush && !isFork) && !trustLines().includes(full)) {
-    if (!ask)
-      throw new Error(`${full} waits until you run skel repo trust ${full} in your terminal`);
+  if (!known && !trusted(github)) {
     console.log(`Agents will run ${full}'s setup and test commands, and follow its AGENTS.md`);
     console.log("and settings as instructions.");
     const answer = prompt(`Do you trust ${full}? [y/N]`);
@@ -176,11 +185,11 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
   const known = (r: Repository) => `${r.owner}/${r.repo}`.toLowerCase() === named?.toLowerCase();
   try {
     if (named && !repositories(db).some(known)) {
-      const github = githubRepo(named);
+      const github = await githubRepo(named);
       // A checkout can still use a name the repository had before it was renamed or moved on
       // GitHub. skel keeps it under the name GitHub gives now, and the lead must hear that one.
       named = `${github.owner}/${github.repo}`;
-      await bringIn(db, github, true);
+      await bringIn(db, github);
     }
   } catch (error) {
     console.error(`skel: ${error instanceof Error ? error.message : String(error)}`);
@@ -190,15 +199,51 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
   return found && `${found.owner}/${found.repo}`;
 }
 
+// Brings in a repository a command names by its full GitHub name, such as skel task ls
+// skelcrew/skel-github, when skel doesn't have it, and returns it. Returns nothing when skel
+// has it, or the name isn't owner/repo, so the command answers as for any name. The daemon
+// runs this for the lead and agents, so it never asks: a repository that isn't trusted waits
+// for skel repo trust, since a yes passed on by the lead could come from an injected
+// instruction. Recorded at once, so its short name works, and cloned in the background,
+// since an agent's command can't wait minutes for a clone. A thread started on it waits for
+// the clone.
+export async function bringInNamed(db: Database, given: string): Promise<Repository | undefined> {
+  // A name starting with a dash would reach gh as an option.
+  if (!/^[\w.][\w.-]*\/[\w.-]+$/.test(given)) return undefined;
+  const full = (r: Repository) => `${r.owner}/${r.repo}`.toLowerCase();
+  if (repositories(db).some((r) => full(r) === given.toLowerCase())) return undefined;
+  const github = await githubRepo(given);
+  const { owner, repo, canPush } = github;
+  const named = `${owner}/${repo}`;
+  if (!trusted(github))
+    throw new Error(`${named} waits until you run skel repo trust ${named} in your terminal`);
+  // GitHub can answer for a renamed repository under the name skel already has it by, and two
+  // commands can bring in the same repository at once.
+  const fresh = !repositories(db).some((r) => full(r) === named.toLowerCase());
+  if (fresh) {
+    // Only people who can push or triage may add a label, so where you can't push, a label
+    // would be of no use to you. A repository you can push to gets it with its clone.
+    db.run("INSERT OR IGNORE INTO repositories (owner, repo, name, labeled) VALUES (?, ?, ?, ?)", [
+      owner,
+      repo,
+      named,
+      canPush ? 0 : 1,
+    ]);
+    nameRepositories(db);
+    refreshClones(db).catch((error) => console.log(String(error)));
+  }
+  return findRepository(db, named);
+}
+
 // Records your trust from outside the sandbox and brings in the repository for the lead.
 export async function trustRepo(given: string): Promise<void> {
   const db = openDb();
   const known = repositories(db).find((r) => r.name === given);
   if (!known && !given.includes("/"))
     throw new Error(`there is no repository named ${given}. Name a new one as owner/repo`);
-  const github = githubRepo(known ? `${known.owner}/${known.repo}` : given);
+  const github = await githubRepo(known ? `${known.owner}/${known.repo}` : given);
   trust(`${github.owner}/${github.repo}`);
-  await bringIn(db, github, false);
+  await bringIn(db, github);
 }
 
 // Deletes skel's clone, registration and saved trust, then updates names that no longer
