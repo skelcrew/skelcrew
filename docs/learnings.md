@@ -106,8 +106,9 @@ that covers the code you are about to write.
   service that runs outside the sandbox, or restore a checkpoint and wipe the disk, and the
   Sprite's own docs tell agents to use it.
 - **A Sprite sleeps about 30 seconds after the last activity.** A detached tmux session
-  doesn't count as activity, so a daemon waiting on CI would sleep with it. A longer sleep
-  stops every process, and only Sprite services come back.
+  doesn't count as activity, so a daemon waiting on CI would sleep with it. A sleep also
+  drops open connections, such as an agent's to its model. A longer sleep stops every
+  process, and only Sprite services come back.
 - **DNS comes from `/etc/resolv.conf`.** There is no `/run/systemd/resolve`, and no systemd.
 
 ## The agent's shell commands

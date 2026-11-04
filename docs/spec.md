@@ -97,7 +97,7 @@ One daemon per machine, run by the systemd user service or Sprite service the fi
 3. It opens the database, starts skel's tmux server, and reconnects to the lead and every live thread. A session that is gone is brought back with `claude --resume`.
 4. It opens its socket at `$XDG_RUNTIME_DIR/skel.sock` for the CLI, and one socket per agent, mounted into that agent's sandbox, so skel knows which thread is calling.
 5. It polls GitHub and logs to stdout, which systemd sends to the journal.
-6. On a Sprite, it keeps the Sprite awake while any thread is working or waiting on review or CI, and lets it sleep once every thread waits on you or is done. A sleeping Sprite costs nothing for compute, but nothing polls while it sleeps: an event that arrives then, such as your merge or comment, is handled when the Sprite next wakes, for example at your next `skel --remote`.
+6. On a Sprite, it keeps the Sprite awake for as long as it runs, by holding a task on the Sprite's control socket that expires a few minutes after its last renewal. Polling needs a live process, and a sleeping Sprite drops the agents' connections to their models. If the daemon dies, the hold expires and the Sprite can sleep.
 
 Stopping the daemon stops only the daemon. The tmux sessions keep running, so agents keep working through a restart or an upgrade, and the daemon reconnects to them when it comes back. Only `skel stop` ends a session.
 
@@ -227,7 +227,7 @@ Each one is something you use every day from the day it lands, and lands as smal
 2. **One thread to a reviewed PR.** `skel issue`, `skel start`, `skel ls`, `skel attach`, `skel done`, the reviewer's Codex login. Builder and reviewer loop, with the reviewer on Codex, skel pushes and opens the PR, the `skel/review` check, the round limit, needs you when approved.
 3. **Parallel and needs you.** Several threads at once across repositories, the note in the lead's session, `notify`, questions marked needs you, `skel say`, the lead knowing which repository you attached from.
 4. **Follow-through.** Polling for failed checks, PR comments, conflicts and merges. Cleanup on merge or close. Surviving a restart with `--resume`. `skel stop`, `skel resume`.
-5. **Remote, on a Sprite.** `skel --remote sprite:<name>` from the laptop: the laptop check, creating the Sprite after asking, bubblewrap and skel's binary installed in it, the first run there, the daemon as a Sprite service, keeping the Sprite awake while threads work. From no server at all to a running lead with one command. `skel --remote <host>` over SSH, offering to copy skel's binary with `scp` when it is missing. The lead brings in repositories when you ask for work in one.
+5. **Remote, on a Sprite.** `skel --remote sprite:<name>` from the laptop: the laptop check, creating the Sprite after asking, bubblewrap and skel's binary installed in it, the first run there, the daemon as a Sprite service, keeping the Sprite awake while the daemon runs. From no server at all to a running lead with one command. `skel --remote <host>` over SSH, offering to copy skel's binary with `scp` when it is missing. The lead brings in repositories when you ask for work in one.
 6. **The demo.** Pick the demo repositories and their issues, run the script for real, record it.
 
 ## Done when
