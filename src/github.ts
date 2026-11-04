@@ -95,11 +95,10 @@ export async function pushCommit(
 
 // Returns JSON from GitHub through gh, sending a body when supplied. Failures name what
 // skel was trying, so you can tell which GitHub operation failed.
-async function api(endpoint: string, doing: string, input?: object): Promise<unknown> {
-  const args = input ? ["--method", "POST", "--input", "-"] : [];
+async function gh(args: string[], doing: string, input?: object): Promise<unknown> {
   // Bun finds gh on the PATH skel started with unless given the env, so a PATH changed
   // since would be ignored.
-  const run = Bun.spawn(["gh", "api", endpoint, ...args], {
+  const run = Bun.spawn(["gh", ...args], {
     env: process.env,
     stdin: new Blob([input ? JSON.stringify(input) : ""]),
     stdout: "pipe",
@@ -113,6 +112,10 @@ async function api(endpoint: string, doing: string, input?: object): Promise<unk
   if (code !== 0) throw new Error(`Couldn't ${doing}: ${err.trim()}`);
   return JSON.parse(out);
 }
+
+// Returns JSON from GitHub's REST API, posting the body when supplied.
+const api = (endpoint: string, doing: string, input?: object) =>
+  gh(["api", endpoint, ...(input ? ["--method", "POST", "--input", "-"] : [])], doing, input);
 
 const Numbered = z.object({ number: z.number() });
 
@@ -133,6 +136,30 @@ export async function readIssue(
   const got = await api(`repos/${repo}/issues/${issue}`, `read issue #${issue} in ${repo}`);
   const { title, body } = Issue.parse(got);
   return { title, body: body ?? "" };
+}
+
+const OpenIssue = z.object({ number: z.number(), title: z.string(), createdAt: z.string() });
+
+// Returns the open issues in owner/name, newest first, for skel task ls. gh issue list leaves
+// out pull requests, which GitHub's API counts as issues. It lists 30 unless told more, and
+// a thousand open tasks is more than anyone reads in a terminal.
+export async function openIssues(repo: string): Promise<z.infer<typeof OpenIssue>[]> {
+  const listed = await gh(
+    [
+      "issue",
+      "list",
+      "--repo",
+      repo,
+      "--state",
+      "open",
+      "--limit",
+      "1000",
+      "--json",
+      "number,title,createdAt",
+    ],
+    `list the open issues in ${repo}`,
+  );
+  return z.array(OpenIssue).parse(listed);
 }
 
 // Returns the open PR number for a branch, or null so skel knows it must open one. GitHub

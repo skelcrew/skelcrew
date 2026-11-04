@@ -344,7 +344,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     writeFileSync(join(home, "bin", "ask.js"), asker);
     fakeClaude(
       `while ! test -e ${data()}/repos/simon/app/README; do sleep 0.1; done
-{ skel task create app "Add import" "From CSV"; skel start app-12; skel trust simon/other; bun ${join(home, "bin", "ask.js")}; } > out.new 2>&1; mv out.new out`,
+{ skel task create app "Add import" "From CSV"; skel start app-12; skel repo trust simon/other; bun ${join(home, "bin", "ask.js")}; } > out.new 2>&1; mv out.new out`,
       "",
     );
     serve();

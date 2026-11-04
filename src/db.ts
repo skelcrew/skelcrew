@@ -65,7 +65,7 @@ export function openDb(): Database {
     telling TEXT,
     PRIMARY KEY (owner, repo, task)
   )`);
-  // Threads started before rounds were reviewed lack these columns. `submitting`,
+  // Threads an older skel started lack some of these columns. `submitting`,
   // `reviewing` and `telling` hold the round under way, so one the daemon's stop cut short
   // carries on when it starts again.
   const added = {

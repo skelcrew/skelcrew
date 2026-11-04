@@ -5,11 +5,12 @@ import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync 
 import { join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
+import { openDb } from "./db.ts";
 import { fetchBranch, readIssue } from "./github.ts";
 import { cloneDir, configDir, threadSocket, threadsDir } from "./paths.ts";
 import { findRepository, refreshClones } from "./repo.ts";
 import { agentCommand, hasTranscript, refuseCredentials, setupCommand } from "./sandbox.ts";
-import { endSession, failedScreen, hasSession, startServer, startSession } from "./tmux.ts";
+import { attach, endSession, failedScreen, hasSession, startServer, startSession } from "./tmux.ts";
 
 export const Thread = z.object({
   owner: z.string(),
@@ -23,7 +24,7 @@ export const Thread = z.object({
   // Rounds whose review asked for changes, counted against max_rounds.
   rounds: z.number(),
   pr: z.number().nullable(),
-  needs_you: z.number().transform((flag) => flag !== 0),
+  needs_you: z.coerce.boolean(),
   // The summary of a submit not yet pushed and reviewed.
   submitting: z.string().nullable(),
   // The commit whose skel/review check is pending, while its review waits or runs.
@@ -82,6 +83,26 @@ export function threadName(db: Database, thread: Thread): string {
     .get(thread.owner, thread.repo);
   const name = z.object({ name: z.string() }).nullable().parse(row)?.name ?? github(thread);
   return `${name}-${thread.task}`;
+}
+
+// Attaches your terminal to the builder's session of the thread named repo-task, and returns
+// when you detach with Ctrl-]. Only from your own terminal: it takes over the screen, which
+// the lead can't hand to you.
+export async function attachToThread(tmux: string, repo: string, task: number): Promise<void> {
+  if (process.env.SKEL_SANDBOX === "1")
+    throw new Error("skel attach is only for your own terminal, not for agents");
+  const db = openDb();
+  const { owner, repo: name } = findRepository(db, repo);
+  const thread = Thread.nullable().parse(
+    db
+      .query("SELECT * FROM threads WHERE owner = ? AND repo = ? AND task = ?")
+      .get(owner, name, task),
+  );
+  if (!thread) throw new Error(`there is no thread ${repo}-${task}`);
+  // A builder that exited leaves its last screen behind, which would look like it still runs.
+  if (!hasSession(tmux, thread.folder) || failedScreen(tmux, thread.folder) !== null)
+    throw new Error(`${repo}-${task}'s builder isn't running: the thread is ${thread.status}`);
+  await attach(tmux, thread.folder);
 }
 
 // Returns the threads that are working or waiting, whose builders the daemon brings back
