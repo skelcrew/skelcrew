@@ -42,8 +42,8 @@ The demo repositories are small real apps with fast CI and real issues, not skel
 | --- | --- |
 | Lead | Your Claude Code session on the server. One per machine, always running, across all your repositories. You talk to it; it writes tasks and starts threads. |
 | Repository | A GitHub repository skel works on, from a clone of its own. It is named by its GitHub name, such as `app`, with the owner added (`simon/app`) only when two share a name, or by a short name you give it. |
-| Task | What you want done, in words, in a repository. Each tracker keeps its own word for it: on GitHub, a task is an open issue, and that is the only tracker in this version. A task can exist without a thread: one you create on GitHub shows up in skel, and nothing happens until it is started. |
-| Thread | The work on one task: its branch, clone, sandbox, builder session and history. One thread per task at a time. Named by the task's own ID in its tracker, with the repository added when that ID doesn't name one: GitHub issue #12 in app is `app-12`, since its number is only unique within app, while a tracker whose IDs are already unique, such as Linear's `JOTT-12`, would keep its own. A dash, because no shell reads a dash as anything special, so it never needs quoting. |
+| Task | What you want done, in words, as an item in the tracker you connect skel to. skel is made to work from a tracker, and keeps no tasks of its own: you plan where you already do. Each tracker keeps its own word: in this version the tracker is GitHub, where a task is an open issue. A task can exist without a thread: one you create on GitHub shows up in skel, and nothing happens until it is started. |
+| Thread | skel's core: the work on one task, from its first message to the merged PR. Its branch, clone, sandbox, builder session and history. One thread per task at a time. Named by the task's own ID in its tracker, with the repository added when that ID doesn't name one: GitHub issue #12 in app is `app-12`, since its number is only unique within app, while a tracker whose IDs are already unique, such as Linear's `JOTT-12`, would keep its own. A thread never gets a second number, so the name in skel is always the one in the tracker. A dash, because no shell reads a dash as anything special, so it never needs quoting. |
 | Builder | The thread's agent. A Claude Code session that stays alive from start until the PR merges or closes. |
 | Reviewer | A fresh agent for each review round, on Codex by default, reading the PR adversarially. It runs once and answers with a verdict, with no session to attach to. It never inherits the builder's context. |
 | Event | Something that happened to a thread: a review, a PR comment, a failed check, a merge. |
@@ -218,7 +218,8 @@ These are the parts that need care. `docs/learnings.md` explains the traps behin
 - Projects with their own memory beyond `AGENTS.md`
 - Agents talking to each other, beyond skel telling the lead
 - Triggers, schedules or automations
-- Slack, Linear, Jira, local tasks or forges other than GitHub
+- Slack, Linear, Jira or forges other than GitHub
+- Threads started from plain text, without a task. They would be named with a marker, such as `app-t1`, so they never clash with a task's name
 - Starting a thread by assigning or mentioning on GitHub
 - A remote protocol of our own (SSH only), teams and permissions
 
