@@ -127,3 +127,10 @@ that covers the code you are about to write.
   repository you can't push to is trusted only from your own terminal.
 - **A clone stopped halfway must not look like one.** Clone outside the folder the lead
   sees, then move it in.
+
+## Talking on GitHub
+
+- **Report progress through GitHub's own signals, never comments.** v4 posted seven
+  comments, 11,700 characters, on one issue, restating the same summary three times. A
+  reaction, the PR's `Closes #N` and the PR's description already show progress where
+  people look.
