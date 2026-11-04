@@ -40,11 +40,30 @@ that covers the code you are about to write.
 - **Turn off Claude Code's own sandbox and permission prompts.** A prompt stalls a session
   nobody watches. Its sandbox fails inside skel's, so keep it off even if your own settings
   turn it on. Skip the warning bypass mode shows first, in the session's settings.
+- **Turn off Claude Code's prompt suggestions** with
+  `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`. Its greyed-out suggestions propose steps,
+  such as pushing, that belong to skel.
 - **Claude Code can outlive SIGTERM for a few seconds.** Wait for it to exit before
   removing the worktree or anything else it uses.
 
+## Starting Codex
+
+- **Run it with `--no-daemon`.** Otherwise Codex starts a background server that outlives
+  the run.
+- **Its folder holds what it reads as instructions.** `config.toml`, `AGENTS.md`,
+  `prompts/`, `rules/`, `skills/` and `plugins/` steer every run, `rules/` can let commands
+  past its checks, and `packages/` holds the program it runs. Reviews share skel's
+  `CODEX_HOME`, so a reviewer that wrote any of them would steer every later review. Keep
+  them read-only, and only the login and session files writable.
+- **Check how it saves `auth.json` before mounting it on its own.** If Codex writes a new
+  file and renames it over the old one, a renewal inside the sandbox never reaches skel's
+  copy, and skel's login goes stale.
+
 ## The sandbox
 
+- **The boundary holds against mistakes and overreach, not an agent set on escaping.**
+  Decided by Simon. A race that needs an agent to change a file in the instant between
+  skel's check and git's read is out of scope; one a careless agent could trip is not.
 - **bwrap being installed doesn't mean it can run.** On Ubuntu 24.04 and later, AppArmor
   blocks the namespaces it needs unless a profile allows them. Check by running
   `bwrap --ro-bind / / true`, not by finding the binary.
@@ -92,8 +111,8 @@ that covers the code you are about to write.
 ## The agent's shell commands
 
 - **A shell command can't block for long.** After 2 minutes Claude Code moves a running
-  command to the background and ends the agent's turn. So `skel done` and `skel review`
-  must answer quickly, and leave slow work, such as starting a review, to the daemon.
+  command to the background and ends the agent's turn. So `skel done` must answer
+  quickly, and leave slow work, such as starting a review, to the daemon.
 
 ## Adding a repository
 
