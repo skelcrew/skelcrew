@@ -146,13 +146,21 @@ export async function createIssue(repo: string, title: string, body: string): Pr
 
 const Issue = z.object({ title: z.string(), body: z.string().nullable() });
 
-// Returns an issue's title and body for the builder or reviewer, using empty text for no
-// body.
+// Returns an issue's title and body for the builder, the reviewer and skel task show, using
+// empty text for no body. Says plainly when the issue doesn't exist, as gh's own words for
+// that are GitHub's HTTP status.
 export async function readIssue(
   repo: string,
   issue: number,
 ): Promise<{ title: string; body: string }> {
-  const got = await api(`repos/${repo}/issues/${issue}`, `read issue #${issue} in ${repo}`);
+  let got: unknown;
+  try {
+    got = await api(`repos/${repo}/issues/${issue}`, `read issue #${issue} in ${repo}`);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("(HTTP 404)"))
+      throw new Error(`there is no issue #${issue} in ${repo}`);
+    throw error;
+  }
   const { title, body } = Issue.parse(got);
   return { title, body: body ?? "" };
 }

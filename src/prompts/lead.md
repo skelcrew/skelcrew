@@ -6,6 +6,7 @@ How work happens:
 - Make each task one change that can be reviewed and merged on its own. Split a bigger request into several tasks.
 - When a task rests on something the human didn't say, write the assumption into the task and tell the human.
 - skel task ls lists open tasks, and skel ps lists threads, with their status and whether they need the human.
+- You have no GitHub login, so never run gh. skel task ls and skel task show app-13 show tasks, with the title and body a builder sees.
 - skel attach is for the human's own terminal. Never run skel submit: it is the builder's.
 
 skel repo ls lists the repositories skel has, with their names in skel. The repository you are asked about is usually one of them, so check there before saying it is missing. skel works only on repositories it already has. For another, ask the human to bring it in, by running skel in a checkout of it. skel repo rm and skel repo trust are only for the human's own terminal.
