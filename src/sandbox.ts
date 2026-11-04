@@ -26,6 +26,14 @@ const { O_NONBLOCK, O_NOFOLLOW, O_RDONLY } = constants;
 // Where the folder of the agent's socket appears inside, whatever its path outside.
 const socketsInside = "/run/skel";
 
+// On a Sprite, unshare gives the agent a process list of its own, with a /proc to match,
+// before capabilities are dropped. bwrap can't: it runs without capabilities, and the
+// Sprite's container masks parts of /proc, so the kernel refuses a new /proc to anyone
+// without them. A /proc borrowed from outside would show the agent every process, under
+// numbers it doesn't have inside, so setpriv, ps or kill there would find the wrong
+// process or none. --kill-child ends the sandbox when unshare is stopped.
+const ownProcesses = ["unshare", "--pid", "--fork", "--kill-child", "--mount", "--mount-proc"];
+
 // Returns a read-only mount so agents can read a folder without changing its files.
 const ro = (p: string) => ["--ro-bind", p, p];
 // Returns a writable mount for the agent's own work or session files.
@@ -61,15 +69,26 @@ export function sandboxArgs(given: {
   // resize signals and draws at the wrong width. The network stays shared for the model's
   // API.
   const sprite = onSprite(path);
-  const args = [...(sprite ? dropCapabilities : []), "bwrap", "--die-with-parent", "--unshare-pid"];
+  const args = sprite
+    ? [...ownProcesses, ...dropCapabilities, "bwrap", "--die-with-parent"]
+    : ["bwrap", "--die-with-parent", "--unshare-pid"];
   args.push("--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp");
-  // A Sprite runs in a container that masks parts of /proc, so a new one can't be mounted
-  // there. The agent then sees other processes and their command lines, but not their
-  // environment.
   args.push(...(sprite ? ro("/proc") : ["--proc", "/proc"]));
-  // Kept as a file the agent can't use rather than hidden with /.sprite, where gh, bun and
-  // node live.
-  if (sprite) args.push("--ro-bind", "/dev/null", controlSocket);
+  if (sprite) {
+    // The /proc unshare mounted shows what the Sprite's container masks, so it is masked
+    // again.
+    for (const masked of ["kcore", "keys", "timer_list"])
+      if (existsSync(join("/proc", masked))) args.push("--ro-bind", "/dev/null", `/proc/${masked}`);
+    if (existsSync("/proc/scsi")) args.push(...hide("/proc/scsi"));
+    // Kept as a file the agent can't use rather than hidden with /.sprite, where gh, bun and
+    // node live.
+    args.push("--ro-bind", "/dev/null", controlSocket);
+    // sprite-env only fails without the control socket. Hidden too, the sandbox looks like
+    // any Linux machine to what runs in it, skel's own tests included, rather than a Sprite
+    // whose services can't be reached.
+    const spriteEnv = Bun.which("sprite-env", { PATH: path });
+    if (spriteEnv) args.push("--ro-bind", "/dev/null", spriteEnv);
+  }
   // The ssh agent, keyring, D-Bus, systemd and docker listen under /run, and some run
   // commands for whoever connects. Only the DNS resolver comes back.
   args.push(...hide("/run"));

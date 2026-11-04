@@ -412,7 +412,7 @@ agentCommand({ name: "app-12", socket: "x", model: "opus" });`;
   });
 
   // skel takes a machine with sprite-env, the Sprite's own tool, on its PATH for a Sprite.
-  test("on a Sprite, drops capabilities, reuses /proc and hides the control socket", () => {
+  test("on a Sprite, gives the agent processes of its own, drops capabilities, and hides the Sprite's tools", () => {
     repository();
     saveToken();
     mkdirSync(join(home, "bin"), { recursive: true });
@@ -423,7 +423,13 @@ agentCommand({ name: "app-12", socket: "x", model: "opus" });`;
       model: "opus",
       env: outside(),
     });
-    expect(argv.slice(0, 5)).toEqual([
+    expect(argv.slice(0, 11)).toEqual([
+      "unshare",
+      "--pid",
+      "--fork",
+      "--kill-child",
+      "--mount",
+      "--mount-proc",
       "setpriv",
       "--inh-caps=-all",
       "--ambient-caps=-all",
@@ -433,7 +439,9 @@ agentCommand({ name: "app-12", socket: "x", model: "opus" });`;
     const options = argv.slice(0, argv.indexOf("--")).join(" ");
     expect(options).toContain("--ro-bind /proc /proc");
     expect(options).not.toContain("--proc ");
+    expect(options).not.toContain("--unshare-pid");
     expect(options).toContain("--ro-bind /dev/null /.sprite/api.sock");
+    expect(options).toContain(`--ro-bind /dev/null ${join(home, "bin", "sprite-env")}`);
     // gh, bun and node live in /.sprite/bin, so nothing else of /.sprite is hidden.
     expect(options).not.toContain("--tmpfs /.sprite");
   });
@@ -472,13 +480,26 @@ agentCommand({ name: "app-12", socket: "x", model: "opus" });`;
 describe.if(existsSync("/.sprite/api.sock") && process.env.SKEL_SANDBOX !== "1")(
   "on a Sprite",
   () => {
-    test("the agent can't reach the control socket, but runs the Sprite's tools", async () => {
+    test("the agent can't reach the control socket or sprite-env, but runs the Sprite's tools", async () => {
       repository();
       const done = await asLead(
-        "test -S /.sprite/api.sock || echo hidden; command -v gh; test -d /proc/1 && echo proc",
+        "test -S /.sprite/api.sock || echo hidden; command -v sprite-env || echo no-sprite-env; command -v gh; test -d /proc/1 && echo proc",
       );
       expect(done.err).toBe("");
-      expect(done.out).toBe("hidden\n/.sprite/bin/gh\nproc\n");
+      expect(done.out).toBe("hidden\nno-sprite-env\n/.sprite/bin/gh\nproc\n");
+    });
+
+    // Programs find themselves in /proc by their own process number, as setpriv does, and
+    // stopping a process tree reads it too.
+    test("the agent's /proc shows its own processes, by the numbers they have inside", async () => {
+      repository();
+      const done = await asLead(
+        `cut -d" " -f1 /proc/$$/stat; echo $$; test -e /proc/${process.pid}/cmdline || echo outside-hidden`,
+      );
+      expect(done.err).toBe("");
+      const [inProc, own, hidden] = done.out.split("\n");
+      expect(inProc).toBe(own);
+      expect(hidden).toBe("outside-hidden");
     });
   },
 );

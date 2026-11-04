@@ -5,12 +5,13 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { review } from "../src/reviewer.ts";
 
@@ -21,8 +22,12 @@ const codexHome = () => join(home, ".local", "share", "skel", "codex");
 const sessions = () => join(codexHome(), "sessions");
 const issue = { title: "Fix the flaky test", body: "It fails one run in ten." };
 
+// A Sprite's own disk is an overlay, where bwrap can't lay another, while its /tmp is a disk
+// of its own. So there the test's home is on the Sprite's own disk, as skel's is.
+const sprite = existsSync("/.sprite/api.sock");
+
 beforeEach(() => {
-  home = realpathSync(mkdtempSync(join(tmpdir(), "skel-reviewer-test-")));
+  home = realpathSync(mkdtempSync(join(sprite ? homedir() : tmpdir(), "skel-reviewer-test-")));
   bin = join(home, "bin");
   mkdirSync(bin);
   clone = join(home, ".local", "share", "skel", "threads", "app-12");
@@ -33,10 +38,11 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// Without your PATH, which may find a real codex or claude.
+// Without your PATH, which may find a real codex or claude. A Sprite's own tools are kept,
+// which tell skel it runs on one.
 const env = () => ({
   HOME: home,
-  PATH: `${bin}:/usr/local/bin:/usr/bin:/bin`,
+  PATH: `${bin}:/usr/local/bin:/usr/bin:/bin${sprite ? ":/.sprite/bin" : ""}`,
   GH_TOKEN: "secret",
   OPENAI_API_KEY: "sk-test",
 });
@@ -97,6 +103,27 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
     expect(await start()).toEqual({ verdict: "approve", body: "Looks right." });
     expect(kept("seen")).toBe(`${clone}\napp\n`);
     expect(readFileSync(join(clone, "README"), "utf8")).toBe("app\n");
+    expect(existsSync(join(clone, "made"))).toBe(false);
+  });
+
+  test("leaves nothing behind in the temporary folder, whether it ends or is cancelled", async () => {
+    const temporary = join(home, "tmp");
+    mkdirSync(temporary);
+    fakeCodex(approve, ["echo made > made; sleep 30"]);
+    const before = process.env.TMPDIR;
+    process.env.TMPDIR = temporary;
+    try {
+      const cancel = new AbortController();
+      setTimeout(() => cancel.abort(), 1000);
+      expect((await start({ signal: cancel.signal })).verdict).toBe("failed");
+      expect(readdirSync(temporary)).toEqual([]);
+      fakeCodex(approve, ["echo made > made"]);
+      expect((await start()).verdict).toBe("approve");
+      expect(readdirSync(temporary)).toEqual([]);
+    } finally {
+      if (before === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = before;
+    }
     expect(existsSync(join(clone, "made"))).toBe(false);
   });
 
