@@ -41,10 +41,15 @@ test("a builder working on your comment past the round limit is work", () => {
   expect(hasWork([thread({ rounds: 4, needs_you: true })])).toBe(true);
 });
 
-test("a review waiting or running is work, even on a thread that needs you", () => {
-  const waiting = { status: "waiting" as const, needs_you: true };
-  expect(hasWork([thread({ ...waiting, submitting: "Add export" })])).toBe(true);
-  expect(hasWork([thread({ ...waiting, reviewing: "abc123" })])).toBe(true);
+test("a review waiting or running is work", () => {
+  expect(hasWork([thread({ status: "waiting", submitting: "Add export" })])).toBe(true);
+  expect(hasWork([thread({ status: "waiting", reviewing: "abc123" })])).toBe(true);
+});
+
+test("a round that failed waits on you, though its submit stays saved to resume", () => {
+  const failed = { status: "waiting" as const, needs_you: true };
+  expect(hasWork([thread({ ...failed, submitting: "Add export" })])).toBe(false);
+  expect(hasWork([thread({ ...failed, reviewing: "abc123" })])).toBe(false);
 });
 
 test("a PR waiting on CI is work", () => {
