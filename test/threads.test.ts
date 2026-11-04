@@ -222,8 +222,11 @@ test("more data on a connection doesn't run its request again", async () => {
     join(home, "bin", "gh"),
     real.replace('"$HOME/calls"\n', '"$HOME/calls"\nsleep 1\n'),
   );
-  await new Promise<void>((done) => {
+  // An error with nobody listening would be thrown outside the test, failing a run without
+  // saying which test it came from.
+  await new Promise<void>((done, failed) => {
     const connection = createConnection(join(home, "run", "skel.sock"));
+    connection.on("error", failed);
     connection.on("connect", () => {
       connection.write('{"command":"task create","repo":"app","title":"t","body":"b"}\n');
       setTimeout(() => connection.write("more\n"), 200);

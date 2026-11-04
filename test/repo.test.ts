@@ -44,6 +44,8 @@ beforeEach(async () => {
     "gh",
     `test "$1 $2" = "repo view" || exit 1
 full=$3
+# A repository renamed or moved on GitHub answers to its old name with its new one.
+test -e "$HOME/github/$full.moved" && full=$(cat "$HOME/github/$full.moved")
 test -d "$HOME/github/$full.git" || { echo "Could not resolve to a Repository" >&2; exit 1; }
 permission=$(cat "$HOME/github/$full.permission")
 fork=$(test -e "$HOME/github/$full.fork" && echo true || echo false)
@@ -63,8 +65,9 @@ echo "{\\"name\\":\\"\${full#*/}\\",\\"owner\\":{\\"login\\":\\"\${full%/*}\\"},
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
   writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
   daemon = createServer((connection) =>
-    connection.on("data", () => {
+    connection.on("data", (data) => {
       appendFileSync(join(home, "calls"), "daemon lead\n");
+      writeFileSync(join(home, "asked"), data.toString());
       connection.end('{"lead":true}\n');
     }),
   );
@@ -249,6 +252,40 @@ test("--from says why it can't bring a repository in, and attaches anyway", asyn
   expect(run.code).toBe(0);
   expect(run.err).toContain("nobody/none");
   expect(attached()).toBe(true);
+});
+
+// The daemon tells the lead, so "fix the flaky test" means that repository's.
+test("tells the daemon the repository you attached from, once skel has it", async () => {
+  const asked = () => JSON.parse(readFileSync(join(home, "asked"), "utf8"));
+  const app = onGitHub("simon/app", "WRITE");
+  await skel([], "", app);
+  expect(asked()).toEqual({ command: "lead", from: "simon/app" });
+  git(app, "remote", "set-url", "origin", "git@github.com:Simon/App.git");
+  await skel([], "", app);
+  expect(asked()).toEqual({ command: "lead", from: "simon/app" });
+  await skel(["--from", "simon/app"]);
+  expect(asked()).toEqual({ command: "lead", from: "simon/app" });
+  await skel([]);
+  expect(asked()).toEqual({ command: "lead" });
+  // Not yet in skel, as you didn't trust it.
+  await skel([], "n\n", onGitHub("other/tool"));
+  expect(asked()).toEqual({ command: "lead" });
+  git(app, "remote", "set-url", "origin", "https://gitlab.com/simon/app");
+  await skel([], "", app);
+  expect(asked()).toEqual({ command: "lead" });
+});
+
+test("tells the daemon a repository's new GitHub name when your checkout uses its old one", async () => {
+  const app = onGitHub("simon/app", "WRITE");
+  mkdirSync(join(home, "github", "simon"), { recursive: true });
+  writeFileSync(join(home, "github", "simon", "old.moved"), "simon/app");
+  git(app, "remote", "set-url", "origin", "https://github.com/simon/old");
+  await skel([], "", app);
+  expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
+  expect(JSON.parse(readFileSync(join(home, "asked"), "utf8"))).toEqual({
+    command: "lead",
+    from: "simon/app",
+  });
 });
 
 test("repo ls says how to bring a repository in while there is none", async () => {

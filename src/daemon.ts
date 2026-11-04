@@ -8,7 +8,7 @@ import { dirname } from "node:path";
 import { z } from "zod";
 import { openDb } from "./db.ts";
 import { createIssue } from "./github.ts";
-import { startLead, tellLead } from "./lead.ts";
+import { startLead, tellAttachedFrom, tellLead } from "./lead.ts";
 import { listTasks, listThreads, TaskRow, ThreadRow } from "./list.ts";
 import { cliSocket, daemonSocket, leadSocket, threadSocket } from "./paths.ts";
 import { findRepository, refreshClones } from "./repo.ts";
@@ -34,7 +34,7 @@ const Branch = z.string().regex(/^(?!-)(?!.*\.\.)[\w./-]+$/);
 
 const Request = z.discriminatedUnion("command", [
   z.object({ command: z.literal("status") }),
-  z.object({ command: z.literal("lead") }),
+  z.object({ command: z.literal("lead"), from: z.string().optional() }),
   z.object({ command: z.literal("ps"), repo: z.string().optional() }),
   z.object({ command: z.literal("task ls"), repo: z.string().optional() }),
   z.object({
@@ -174,6 +174,7 @@ export async function serve(tmux: string): Promise<void> {
     }
     if (request.command === "lead") {
       await lead();
+      tellAttachedFrom(db, tmux, request.from);
       // A lead that wasn't running kept its notes until now.
       tellLead(db, tmux);
       // Not waited on, so attaching never waits on GitHub.
@@ -327,10 +328,12 @@ export async function question(asking: boolean): Promise<void> {
 }
 
 // Ensures the daemon and lead are running, then attaches your terminal until you detach
-// with Ctrl-].
-export async function attachToLead(tmux: string): Promise<void> {
+// with Ctrl-]. The daemon tells the lead which repository you attached from, as owner/repo,
+// or that there is none.
+export async function attachToLead(tmux: string, from?: string): Promise<void> {
+  const asked: Request = { command: "lead", ...(from ? { from } : {}) };
   // Asking for the lead brings it back if it ended while the daemon kept running.
-  let reply = await ask({ command: "lead" }, 15_000);
+  let reply = await ask(asked, 15_000);
   if (reply === null) {
     const start = Bun.spawnSync(["systemctl", "--user", "start", "skel"], {
       stdio: ["inherit", "inherit", "inherit"],
@@ -343,7 +346,7 @@ export async function attachToLead(tmux: string): Promise<void> {
           "skel's daemon didn't answer within 10 seconds: journalctl --user -u skel shows why",
         );
       await Bun.sleep(100);
-      reply = await ask({ command: "lead" }, 15_000);
+      reply = await ask(asked, 15_000);
     }
   }
   const lead = LeadReply.safeParse(reply);

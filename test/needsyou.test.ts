@@ -207,11 +207,13 @@ function setNeedsYou(): void {
 }
 
 // Asks the daemon for the lead, as plain skel does before attaching, without attaching.
-function askForLead(): Promise<string> {
+function askForLead(from?: string): Promise<string> {
   return new Promise((done) => {
     const connection = createConnection(join(home, "run", "skel.sock"));
     let reply = "";
-    connection.on("connect", () => connection.write(`${JSON.stringify({ command: "lead" })}\n`));
+    connection.on("connect", () =>
+      connection.write(`${JSON.stringify({ command: "lead", from })}\n`),
+    );
     connection.on("data", (more) => {
       reply += more.toString();
     });
@@ -287,6 +289,23 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("needs you", () => {
     rmSync(join(lead(), "busy"));
     await Bun.sleep(2000);
     expect(notes()).toBe(1);
+  }, 60_000);
+
+  test("a needs-you note and a where-you-attached-from note both arrive whole, one after the other", async () => {
+    addApp();
+    mkdirSync(lead(), { recursive: true });
+    writeFileSync(join(lead(), "busy"), "");
+    await startApp12();
+    await hook("ask");
+    await untilNeedsYou(true);
+    expect(await askForLead("simon/app")).toContain('"lead":true');
+    await Bun.sleep(500);
+    rmSync(join(lead(), "busy"));
+    await until(() => notes() === 2);
+    const pastes = read(join(lead(), "typed")).split("\x1b[201~");
+    expect(pastes[0]).toContain("app-12 needs you: its builder asked a question");
+    expect(pastes[0]).not.toContain("attached");
+    expect(pastes[1]).toContain("you attached from app");
   }, 60_000);
 
   test("a note for a lead that isn't running is typed once the lead starts again", async () => {
