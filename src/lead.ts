@@ -21,13 +21,12 @@ function hasTranscript(folder: string, session: string): boolean {
 }
 
 // skel picks the session id rather than Claude Code, so it is stored before the lead starts
-// and the lead can be brought back with --resume after its session is gone. A restart
-// ends a running lead and brings it back the same way.
-export async function startLead(db: Database, tmux: string, restart: boolean): Promise<void> {
+// and the lead can be brought back with --resume after its session is gone.
+export async function startLead(db: Database, tmux: string): Promise<void> {
   if (hasSession(tmux, "lead")) {
     const failed = failedScreen(tmux, "lead");
-    if (failed === null && !restart) return;
-    if (failed !== null) console.log(`The lead had ended:\n${failed}`);
+    if (failed === null) return;
+    console.log(`The lead had ended:\n${failed}`);
     endSession(tmux, "lead");
   }
   startServer(tmux);

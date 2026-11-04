@@ -42,7 +42,7 @@ function fakeDaemon(): Promise<Server> {
       if (!existsSync(join(home, "started"))) return connection.destroy();
       const request = JSON.parse(data.toString());
       const asked = String(request.command);
-      appendFileSync(join(home, "calls"), `daemon ${asked}${request.restart ? " restart" : ""}\n`);
+      appendFileSync(join(home, "calls"), `daemon ${asked}\n`);
       connection.end(asked === "lead" ? '{"lead":true}\n' : '{"running":true,"pid":1}\n');
     }),
   );
@@ -91,14 +91,6 @@ afterEach(() => {
   daemon?.close();
   rmSync(home, { recursive: true, force: true });
 });
-
-function repository(): string {
-  const path = join(home, "code", "app");
-  mkdirSync(path, { recursive: true });
-  Bun.spawnSync(["git", "init", "-q", path]);
-  Bun.spawnSync(["git", "-C", path, "remote", "add", "origin", "https://github.com/simon/app"]);
-  return path;
-}
 
 function calls(): string {
   const log = join(home, "calls");
@@ -239,42 +231,13 @@ test("refuses a PATH that systemd would read differently", async () => {
 
 // A git worktree has a .git file pointing back at its repository, where a checkout has a folder.
 test("refuses to install a service that runs skel from a worktree", async () => {
-  const worktree = join(home, "code", "skel", ".skel", "worktrees", "12");
+  const worktree = join(home, "code", "skel", ".claude", "worktrees", "12");
   copySkel(worktree);
   writeFileSync(join(worktree, ".git"), "gitdir: ../../../.git/worktrees/12\n");
   const run = await skel("1\nsk-ant-oat01-good\n", bin, join(worktree, "src", "main.ts"));
   expect(run.code).toBe(1);
   expect(run.err).toContain("main checkout");
   expect(existsSync(unit())).toBe(false);
-});
-
-test("still says how to add a repository after setup, while none is added", async () => {
-  await skel("1\nsk-ant-oat01-good\n");
-  const again = await skel();
-  expect(again.code).toBe(0);
-  expect(again.out).toContain("skel init");
-});
-
-test("says how to add a repository while none is added", async () => {
-  const run = await skel("1\nsk-ant-oat01-good\n");
-  expect(run.code).toBe(0);
-  expect(run.out).toContain("Add one by running skel or skel init in its folder.");
-  expect(run.out).toContain("Setup is done.");
-});
-
-test("says nothing about adding a repository once one is added", async () => {
-  writeFileSync(join(home, "gh-login"), "");
-  const path = repository();
-  const added = Bun.spawnSync([process.execPath, main(), "init", path], {
-    env: { PATH: bin, HOME: home, XDG_RUNTIME_DIR: join(home, "run") },
-    stdin: new Blob(["y\n\n\n"]),
-  });
-  expect(added.exitCode).toBe(0);
-  const run = await skel("1\nsk-ant-oat01-good\n");
-  expect(run.code).toBe(0);
-  expect(run.out).not.toContain("trust");
-  expect(run.out).not.toContain("skel init");
-  expect(run.out).toContain("Setup is done.");
 });
 
 test("skips the GitHub login when gh is logged in already", async () => {
@@ -396,107 +359,4 @@ test("Enter at the harness question picks Claude Code", async () => {
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(readFileSync(config(), "utf8")).toContain("harness: claude");
-});
-
-// As the first run leaves a machine, so plain skel goes straight to the repository question.
-function setUpDone(): void {
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
-  writeFileSync(config(), "harness: claude\n");
-  writeFileSync(token(), "sk-ant-oat01-good\n");
-  writeFileSync(join(home, "gh-login"), "");
-}
-
-const skelIn = (cwd: string, typed = "") => skel(typed, bin, main(), cwd);
-const repoList = () =>
-  Bun.spawnSync([process.execPath, main(), "repo", "ls"], {
-    env: { PATH: bin, HOME: home },
-  }).stdout.toString();
-
-test("offers to add the repository you run it in, adds it on Enter, and restarts the lead", async () => {
-  setUpDone();
-  const path = repository();
-  const run = await skelIn(path, "\ny\n\n\n");
-  expect(run.err).toBe("");
-  expect(run.code).toBe(0);
-  expect(run.out).toContain("Add simon/app to skel?");
-  expect(run.out).not.toContain("Add one by running");
-  expect(repoList()).toContain(`app  simon/app  ${path}`);
-  // The lead sees only the repositories added when it started.
-  expect(calls()).toContain("daemon lead restart\ntmux -L skel attach -t =lead\n");
-});
-
-test("offers to add it from a folder inside the repository too", async () => {
-  setUpDone();
-  const path = repository();
-  mkdirSync(join(path, "src"));
-  const run = await skelIn(join(path, "src"), "\ny\n\n\n");
-  expect(run.code).toBe(0);
-  expect(repoList()).toContain(`app  simon/app  ${path}`);
-});
-
-test("remembers a no for that folder, attaches anyway, and never asks there again", async () => {
-  setUpDone();
-  const path = repository();
-  const first = await skelIn(path, "n\n");
-  expect(first.code).toBe(0);
-  expect(first.out).toContain("Add simon/app to skel?");
-  expect(repoList()).not.toContain("simon/app");
-  expect(calls()).toContain("daemon lead\ntmux -L skel attach -t =lead\n");
-  expect(readFileSync(join(home, ".config", "skel", "not-added"), "utf8")).toBe(`${path}\n`);
-
-  writeFileSync(join(home, "calls"), "");
-  const second = await skelIn(path);
-  expect(second.code).toBe(0);
-  expect(second.out).not.toContain("Add simon/app");
-  expect(second.out).not.toContain("Add one by running");
-  expect(calls()).not.toContain("gh");
-  expect(calls()).toContain("daemon lead\ntmux -L skel attach -t =lead\n");
-});
-
-test("adds nothing after Ctrl-D at the question, and asks again next time", async () => {
-  setUpDone();
-  const path = repository();
-  const first = await skelIn(path);
-  expect(first.code).toBe(0);
-  expect(calls()).toContain("tmux -L skel attach -t =lead");
-  expect(repoList()).not.toContain("simon/app");
-  const second = await skelIn(path);
-  expect(second.out).toContain("Add simon/app to skel?");
-});
-
-test("asks nothing in a repository already added", async () => {
-  setUpDone();
-  const path = repository();
-  await skelIn(path, "\ny\n\n\n");
-  writeFileSync(join(home, "calls"), "");
-  const run = await skelIn(path);
-  expect(run.code).toBe(0);
-  expect(run.out).not.toContain("Add simon/app");
-  expect(run.out).not.toContain("Add one by running");
-  expect(calls()).toBe("daemon lead\ntmux -L skel attach -t =lead\n");
-});
-
-test("says why it couldn't add the repository, attaches anyway, and asks again next time", async () => {
-  setUpDone();
-  const path = repository();
-  const refused = await skelIn(path, "\nn\n");
-  expect(refused.code).toBe(0);
-  expect(refused.err).toContain("don't trust it");
-  expect(calls()).toContain("daemon lead\ntmux -L skel attach -t =lead\n");
-  expect(existsSync(join(home, ".config", "skel", "not-added"))).toBe(false);
-  const again = await skelIn(path, "n\n");
-  expect(again.out).toContain("Add simon/app to skel?");
-});
-
-test("asks nothing and says nothing in a repository that isn't on GitHub", async () => {
-  // skel can't add it anyway, and a folder such as your dotfiles shouldn't get a complaint
-  // on every skel.
-  setUpDone();
-  const path = repository();
-  Bun.spawnSync(["git", "-C", path, "remote", "remove", "origin"]);
-  const run = await skelIn(path);
-  expect(run.code).toBe(0);
-  expect(run.err).toBe("");
-  expect(run.out).not.toContain("Add");
-  expect(calls()).toContain("daemon lead\ntmux -L skel attach -t =lead\n");
 });

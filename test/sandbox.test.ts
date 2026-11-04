@@ -137,20 +137,6 @@ console.log(JSON.stringify(agentCommand({ repositories: [${JSON.stringify(repo)}
     expect(done.out).toBe("started\n");
   });
 
-  test("hides threads' folders", async () => {
-    const repo = repository();
-    mkdirSync(join(repo, ".skel", "threads", "12"), { recursive: true });
-    writeFileSync(join(repo, ".skel", "threads", "12", "work"), "draft\n");
-    const done = await asLead([repo], `ls -A ${repo}/.skel; cat ${repo}/README`);
-    expect(done.out).toBe("app\n");
-  });
-
-  test("makes the threads' folder before the lead starts, so later threads stay hidden", async () => {
-    const repo = repository();
-    await asLead([repo], "true");
-    expect(existsSync(join(repo, ".skel"))).toBe(true);
-  });
-
   test("hides the home folder's secrets and the other sockets in /run", async () => {
     const repo = repository();
     mkdirSync(join(home, ".config", "gh"), { recursive: true });

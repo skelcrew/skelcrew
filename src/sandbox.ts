@@ -58,8 +58,8 @@ function sandboxArgs(given: {
     }
   }
   for (const p of programs) args.push(...ro(p));
-  // Only the parts skel runs from: its folder can be a checkout, whose .git and .skel hold
-  // other threads' work. bun runs skel without node_modules by fetching its packages itself,
+  // Only the parts skel runs from: its folder can be your checkout, whose .git and other
+  // files aren't the agent's to read. bun runs skel without node_modules by fetching its packages itself,
   // and bwrap refuses to start when a folder it should mount is missing.
   const skel = resolve(import.meta.dir, "..");
   for (const part of ["bin", "src", "node_modules", "package.json"])
@@ -156,20 +156,10 @@ export function agentCommand(given: {
       throw new Error(`${p} is a link, so skel won't write through it`);
   mkdirSync(config, { recursive: true });
   // The lead sees its repositories read-only and works in a folder of its own.
-  for (const repo of repositories) {
-    refuseCredentials(repo);
-    // Made before the sandbox starts, since a folder hidden only once it exists would let
-    // threads started after the lead show up in its sandbox.
-    mkdirSync(join(repo, ".skel"), { recursive: true });
-  }
+  for (const repo of repositories) refuseCredentials(repo);
   const cwd = join(home, ".local", "share", "skel", "lead");
   mkdirSync(cwd, { recursive: true });
-  // Each repository's .skel holds the threads' work, which isn't the lead's to read.
-  const mounts = [
-    ...rw(cwd),
-    ...repositories.flatMap((repo) => [...ro(repo), ...hide(join(repo, ".skel"))]),
-    ...rw(config),
-  ];
+  const mounts = [...rw(cwd), ...repositories.flatMap(ro), ...rw(config)];
 
   // Claude Code asks whether to trust the folder even in bypass mode, and would wait there
   // with nobody to answer.
