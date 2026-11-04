@@ -1,10 +1,11 @@
-// skel --remote: runs a skel command on your server over ssh -t, from your laptop, and
-// offers to copy skel there when it is missing. Your laptop can be a Mac, so this file
-// loads nothing of the skel that runs on the server.
+// skel --remote: runs a skel command on your server over ssh -t, from your laptop, offers
+// to copy skel there when it is missing, and updates it with update. Your laptop can be a
+// Mac, so this file loads nothing of the skel that runs on the server.
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { originHere } from "./origin.ts";
+import { skelLine } from "./say.ts";
 
 // A command over ssh gets a bare PATH: no login shell reads ~/.profile, and Ubuntu's
 // ~/.bashrc stops early when nobody types into it. So ~/.local/bin, where skel copies
@@ -24,8 +25,15 @@ export const run = (argv: string[]) =>
 
 // Runs a skel command on the host and returns its exit code. Plain skel passes the
 // repository you are in on the laptop, so the lead knows it too. When the host has no
-// skel, offers to copy it there, then runs the command.
+// skel, offers to copy it there, then runs the command. update is done here on the laptop,
+// since it replaces the skel that would run it there.
 export async function remote(host: string, args: string[]): Promise<number> {
+  if (args.length === 1 && args[0] === "update")
+    return update(host, {
+      shell: (script) => ["ssh", host, script],
+      copy: (file) => copySkel(host, file),
+      restart: "systemctl --user restart skel",
+    });
   const from = args.length === 0 ? originHere() : null;
   const line = [onServer, ...(from ? ["--from", from] : args).map(quoted)].join(" ");
   const code = await run(["ssh", "-t", host, line]);
@@ -38,21 +46,94 @@ export async function remote(host: string, args: string[]): Promise<number> {
     console.log(`skel isn't on ${host}, so the command didn't run.`);
     return 1;
   }
-  await copySkel(host);
+  await withLinuxSkel((file) => copySkel(host, file));
   return run(["ssh", "-t", host, line]);
 }
 
-// Copies skel to the host's ~/.local/bin, built for it.
-async function copySkel(host: string): Promise<void> {
-  await withLinuxSkel(async (file) => {
-    // scp writes through a link, so a link left there, such as one to a checkout's launcher
-    // that can't find bun over ssh, would have the checkout's own file overwritten. Removing
-    // it first leaves the file it points to alone.
-    if ((await run(["ssh", host, "mkdir -p .local/bin && rm -f .local/bin/skel"])) !== 0)
-      throw new Error(`couldn't make ~/.local/bin on ${host}, so skel wasn't copied`);
-    if ((await run(["scp", file, `${host}:.local/bin/skel`])) !== 0)
-      throw new Error(`scp couldn't copy skel to ${host}`);
-  });
+// Copies a skel built for the host to its ~/.local/bin.
+async function copySkel(host: string, file: string): Promise<void> {
+  // scp writes through a link, so a link left there, such as one to a checkout's launcher
+  // that can't find bun over ssh, would have the checkout's own file overwritten. Removing
+  // it first leaves the file it points to alone.
+  if ((await run(["ssh", host, "mkdir -p .local/bin && rm -f .local/bin/skel"])) !== 0)
+    throw new Error(`couldn't make ~/.local/bin on ${host}, so skel wasn't copied`);
+  if ((await run(["scp", file, `${host}:.local/bin/skel`])) !== 0)
+    throw new Error(`scp couldn't copy skel to ${host}`);
+}
+
+// How update reaches a server or a Sprite: the command that runs a shell line there, how a
+// built skel is copied there, and the line that restarts the daemon's service there.
+export type Machine = {
+  shell: (script: string) => string[];
+  copy: (file: string) => Promise<void>;
+  restart: string;
+};
+
+// Runs a shell line on the machine and returns what it printed, quietly: the service
+// commands print their logs, which matter only when they fail.
+async function quietly(argv: string[]): Promise<{ said: string; ok: boolean }> {
+  const ran = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const [out, err, code] = await Promise.all([
+    new Response(ran.stdout).text(),
+    new Response(ran.stderr).text(),
+    ran.exited,
+  ]);
+  return { said: `${out}${err}`.trim(), ok: code === 0 };
+}
+
+// Prints what you should know about the checkout skel is built from, and returns its folder
+// and commit as skel names them. The build is the checkout as it is, so changes not
+// committed, or a branch other than main, go along, which is allowed but worth a line.
+function describeCheckout(): { folder: string; commit: string } {
+  const folder = resolve(import.meta.dir, "..");
+  const shown = folder.startsWith(`${homedir()}/`) ? `~${folder.slice(homedir().length)}` : folder;
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", "-C", folder, ...args], { stdout: "pipe", stderr: "pipe" })
+      .stdout.toString()
+      .trim();
+  if (git("status", "--porcelain") !== "")
+    console.log(skelLine(`${shown} has uncommitted changes, and they are copied too.`));
+  const branch = git("rev-parse", "--abbrev-ref", "HEAD");
+  if (branch !== "main") console.log(skelLine(`${shown} is on ${branch}, not main.`));
+  return { folder: shown, commit: git("rev-parse", "--short", "HEAD") };
+}
+
+// Replaces skel on a server or Sprite with one built from this checkout, then restarts the
+// daemon's service there so it runs the new build. The tmux server outlives the daemon, so
+// the lead and builders keep their Claude Code running. A skel run from a checkout there is
+// left alone: a copy would leave the checkout behind while the daemon kept running it.
+export async function update(where: string, machine: Machine): Promise<number> {
+  // A link is how a checkout puts its launcher on the PATH. Its target is checkout/bin/skel.
+  const script = `f=.local/bin/skel
+if [ -L "$f" ]; then echo "checkout $(cd "$(dirname "$(readlink -f "$f")")/.." && pwd)"
+elif [ -e "$f" ]; then echo copied
+else echo missing; fi`;
+  const asked = await quietly(machine.shell(script));
+  const found = asked.said.match(/^(checkout (.+)|copied|missing)$/m);
+  if (!found) throw new Error(`couldn't tell how skel is installed on ${where}:\n${asked.said}`);
+  if (found[2]) {
+    console.log(
+      skelLine(
+        `skel on ${where} runs from a checkout at ${found[2]}, so it wasn't replaced. git pull there updates it, and ${machine.restart} there restarts its daemon with it.`,
+      ),
+    );
+    return 0;
+  }
+  if (found[1] === "missing")
+    throw new Error(`skel isn't on ${where} yet: skel --remote ${where} sets it up`);
+  const { folder, commit } = describeCheckout();
+  await withLinuxSkel(machine.copy);
+  const restarted = await quietly(machine.shell(machine.restart));
+  if (!restarted.ok)
+    throw new Error(
+      `the new skel is on ${where}, but its daemon didn't restart, so it still runs the old one:\n${restarted.said}`,
+    );
+  console.log(
+    skelLine(
+      `updated ${where} to the skel in ${folder} (commit ${commit}) and restarted its daemon. The lead and builders keep running, and the lead picks up new instructions when it's next started.`,
+    ),
+  );
+  return 0;
 }
 
 // Builds skel as one file for a server or Sprite, which is Linux on x64 whatever the laptop

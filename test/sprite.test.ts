@@ -3,6 +3,7 @@
 // skel.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -80,6 +81,7 @@ cat > "$out" <<'EOF'
 ${spriteSkel}EOF
 chmod +x "$out"`,
   );
+  fake("sprite-env", "");
 });
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });
@@ -250,4 +252,89 @@ test("refuses a Sprite name that isn't one", async () => {
   expect(run.err).toContain("-o");
   expect(run.code).toBe(1);
   expect(calls()).toBe("");
+});
+
+// Returns a skel checkout of its own on the laptop, on main with one commit, so a test knows
+// what update copies and from where.
+function laptopSkel(): { main: string; commit: string } {
+  const folder = join(home, "code", "skel");
+  cpSync(join(import.meta.dir, "..", "src"), join(folder, "src"), { recursive: true });
+  symlinkSync(join(import.meta.dir, "..", "node_modules"), join(folder, "node_modules"));
+  writeFileSync(join(folder, ".gitignore"), "node_modules\n");
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", "-C", folder, "-c", "user.name=t", "-c", "user.email=t", ...args], {
+      stdout: "pipe",
+    });
+  git("init", "-q", "-b", "main");
+  git("add", ".");
+  git("commit", "-q", "-m", "skel");
+  return {
+    main: join(folder, "src", "main.ts"),
+    commit: git("rev-parse", "--short", "HEAD").stdout.toString().trim(),
+  };
+}
+
+async function update(laptop: { main: string }, name = "demo") {
+  const run = Bun.spawn([process.execPath, laptop.main, "--remote", `sprite:${name}`, "update"], {
+    cwd: home,
+    env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, code] = await Promise.all([
+    new Response(run.stdout).text(),
+    new Response(run.stderr).text(),
+    run.exited,
+  ]);
+  return { out, err, code };
+}
+
+test("update replaces skel on the Sprite and restarts its daemon's service", async () => {
+  const sprite = join(home, "sprites", "demo", ".local", "bin", "skel");
+  existing("demo");
+  writeFileSync(sprite, "old skel");
+  const laptop = laptopSkel();
+  const run = await update(laptop);
+  expect(run.code).toBe(0);
+  expect(readFileSync(sprite, "utf8")).toBe(spriteSkel);
+  const lines = calls().split("\n");
+  expect(lines).toContain(
+    "sprite exec -s demo --no-stdin -- sh -c mkdir -p .local/bin && rm -f .local/bin/skel",
+  );
+  // The daemon restarts only once the new skel is in place, so it runs the new build.
+  expect(lines.at(-3)).toBe(
+    "sprite exec -s demo --no-stdin -- sh -c sprite-env services restart skel",
+  );
+  expect(lines.at(-2)).toBe("sprite-env services restart skel");
+  expect(run.out).toContain(
+    `skel · updated sprite:demo to the skel in ~/code/skel (commit ${laptop.commit}) and restarted its daemon.`,
+  );
+  expect(run.out).toContain("the lead picks up new instructions when it's next started");
+  expect(calls()).not.toContain("apt-get");
+  expect(readdirSync(join(home, "tmp"))).toEqual([]);
+});
+
+test("update leaves skel run from a checkout on the Sprite alone", async () => {
+  const sprite = join(home, "sprites", "demo");
+  mkdirSync(join(sprite, "skel", "bin"), { recursive: true });
+  writeFileSync(join(sprite, "skel", "bin", "skel"), "#!/bin/sh\n", { mode: 0o755 });
+  mkdirSync(join(sprite, ".local", "bin"), { recursive: true });
+  symlinkSync(join(sprite, "skel", "bin", "skel"), join(sprite, ".local", "bin", "skel"));
+  const run = await update(laptopSkel());
+  expect(run.code).toBe(0);
+  expect(run.out).toContain(
+    `skel · skel on sprite:demo runs from a checkout at ${join(sprite, "skel")}, so it wasn't replaced.`,
+  );
+  expect(run.out).toContain("sprite-env services restart skel");
+  expect(calls()).not.toContain("file push");
+  expect(calls()).not.toContain("sprite-env services restart");
+});
+
+test("update creates no Sprite", async () => {
+  const run = await update(laptopSkel());
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("No Sprite named demo");
+  expect(calls()).toBe("sprite list --json\n");
+  expect(readdirSync(join(home, "sprites"))).toEqual([]);
 });

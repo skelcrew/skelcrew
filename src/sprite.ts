@@ -4,7 +4,7 @@
 // be a Mac, so this file loads nothing made only for Linux.
 import { z } from "zod";
 import { originHere } from "./origin.ts";
-import { quoted, run, withLinuxSkel } from "./remote.ts";
+import { type Machine, quoted, run, update, withLinuxSkel } from "./remote.ts";
 import { skelLine } from "./say.ts";
 
 // Reports whether skel runs on a Sprite. It goes by sprite-env, the Sprite's own tool for
@@ -203,14 +203,36 @@ async function setUp(name: string): Promise<void> {
   ]);
   if (code !== 0)
     throw new Error(`couldn't install bubblewrap on sprite:${name}:\n${`${out}${err}`.trim()}`);
-  await withLinuxSkel(async (file) => {
-    // sprite file push writes through a link, as scp does, so a link left there would have
-    // the file it points to overwritten. Removing it first leaves that file alone.
-    if ((await run(on(["sh", "-c", "mkdir -p .local/bin && rm -f .local/bin/skel"]))) !== 0)
-      throw new Error(`couldn't make ~/.local/bin on sprite:${name}, so skel wasn't copied`);
-    if ((await run(["sprite", "file", "push", "-s", name, file, ".local/bin/skel"])) !== 0)
-      throw new Error(`sprite couldn't copy skel to sprite:${name}`);
-  });
+  await withLinuxSkel(onTheSprite(name).copy);
+}
+
+// How update and setting up reach a Sprite: sprite exec for shell lines, sprite file push
+// for skel, and the daemon's Sprite service. --no-stdin, since sprite can't reconnect a
+// command whose input it forwards.
+function onTheSprite(name: string): Machine {
+  const shell = (script: string) => [
+    "sprite",
+    "exec",
+    "-s",
+    name,
+    "--no-stdin",
+    "--",
+    "sh",
+    "-c",
+    script,
+  ];
+  return {
+    shell,
+    copy: async (file) => {
+      // sprite file push writes through a link, as scp does, so a link left there would
+      // have the file it points to overwritten. Removing it first leaves that file alone.
+      if ((await run(shell("mkdir -p .local/bin && rm -f .local/bin/skel"))) !== 0)
+        throw new Error(`couldn't make ~/.local/bin on sprite:${name}, so skel wasn't copied`);
+      if ((await run(["sprite", "file", "push", "-s", name, file, ".local/bin/skel"])) !== 0)
+        throw new Error(`sprite couldn't copy skel to sprite:${name}`);
+    },
+    restart: "sprite-env services restart skel",
+  };
 }
 
 // Runs a skel command on the Sprite and returns its exit code. Plain skel passes the
@@ -221,6 +243,11 @@ export async function remoteSprite(name: string, args: string[]): Promise<number
   if (!/^\w[\w-]*$/.test(name)) throw new Error(`"${name}" can't name a Sprite`);
   const again = ["skel", "--remote", `sprite:${name}`, ...args].map(quoted).join(" ");
   const names = spriteNames(again);
+  if (args.length === 1 && args[0] === "update") {
+    if (!names.includes(name))
+      throw new Error(`No Sprite named ${name}: skel --remote sprite:${name} creates it`);
+    return update(`sprite:${name}`, onTheSprite(name));
+  }
   const from = args.length === 0 ? originHere() : null;
   // sprite exec passes each word as given, with no shell between. It reports a program it
   // can't find as exit 1, like any failure, so a shell runs skel: it exits 127 when there is

@@ -6,6 +6,7 @@ const usage = `Usage:
   skel [--from <owner/repo>]
   skel --remote <host> [command]
   skel --remote sprite:<name> [command]
+  skel --remote <host> update
   skel serve
   skel repo ls
   skel repo rm <name>
