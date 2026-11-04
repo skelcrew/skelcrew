@@ -395,6 +395,56 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(again.err).toContain("app-12 has a thread already");
   }, 20_000);
 
+  test("skel stop ends the builder and keeps its clone, a restart leaves it stopped, and skel start brings it back with --resume", async () => {
+    addApp();
+    const first = serve();
+    await untilCloned();
+    await skel("start", "app-12");
+    await until(() => read(join(config("app-12"), "args")) !== "");
+    const session = String(thread().session);
+    // Claude Code saves a conversation once it has a message, which a fake can't send.
+    const project = clone().replace(/[^a-zA-Z0-9]/g, "-");
+    mkdirSync(join(config("app-12"), "projects", project), { recursive: true });
+    writeFileSync(join(config("app-12"), "projects", project, `${session}.jsonl`), "{}\n");
+    // Runs skel stop as an agent would, with its own socket.
+    const stopFrom = (agent: string) =>
+      Bun.spawnSync([process.execPath, main, "stop", "app-12"], {
+        env: { ...env(), SKEL_SOCKET: agent },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+    const short = new Bun.CryptoHasher("sha256").update("app-12").digest("hex").slice(0, 16);
+    const fromBuilder = stopFrom(join(home, "run", "skel", "threads", short, "skel.sock"));
+    expect(fromBuilder.stderr.toString()).toContain("doesn't know that request");
+    expect(hasSession("app-12")).toBe(true);
+
+    const fromLead = stopFrom(join(home, "run", "skel", "lead", "skel.sock"));
+    expect(fromLead.stderr.toString()).toBe("");
+    expect(fromLead.stdout.toString()).toContain("Stopped app-12.");
+    expect(hasSession("app-12")).toBe(false);
+    expect(existsSync(join(clone(), "README"))).toBe(true);
+    expect(thread().status).toBe("stopped");
+    expect((await skel("stop", "app-12")).err).toContain("app-12 is stopped already");
+
+    await stop(first);
+    rmSync(join(config("app-12"), "calls"));
+    serve();
+    await untilAnswers();
+    await Bun.sleep(2000);
+    expect(hasSession("app-12")).toBe(false);
+    expect(read(join(config("app-12"), "calls"))).toBe("");
+    expect(thread().status).toBe("stopped");
+
+    const started = await skel("start", "app-12");
+    expect(started.err).toBe("");
+    expect(started.out).toContain("Started app-12 again");
+    await until(() => read(join(config("app-12"), "calls")).includes("--resume"));
+    expect(read(join(config("app-12"), "calls"))).toContain(`--resume ${session}`);
+    expect(read(join(config("app-12"), "pwd"))).toBe(`${clone()}\n`);
+    expect(hasSession("app-12")).toBe(true);
+    expect(thread().status).toBe("working");
+  }, 40_000);
+
   test("brings back a builder whose session is gone with --resume, where it was, after its repository is renamed", async () => {
     addApp();
     const first = serve();

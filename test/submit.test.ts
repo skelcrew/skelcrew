@@ -358,6 +358,24 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     );
   }, 90_000);
 
+  test("skel start on a thread past the round limit lets it go on with the last review's changes", async () => {
+    addApp();
+    config("max_rounds: 1\n");
+    verdict(1, "changes", "First problem.");
+    verdict(2, "changes", "Second problem.");
+    verdict(3, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => thread().needs_you === 1 && thread().rounds === 2, 45_000);
+    expect(read(join(builder(), "typed"))).not.toContain("Second problem.");
+    const started = await skel(["start", "app-12"]);
+    expect(started.err).toBe("");
+    expect(started.out).toContain("app-12 goes on");
+    await until(() => read(join(builder(), "typed")).includes("Second problem."), 30_000);
+    await until(() => finished("success").length === 1, 30_000);
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
+    expect(thread()).toMatchObject({ status: "waiting", needs_you: 0, rounds: 0 });
+  }, 90_000);
+
   test("a review that fails sets the check to review failed, posts nothing, and needs you", async () => {
     addApp();
     await startApp12();
