@@ -22,10 +22,11 @@ import { cliSocket, daemonSocket, leadSocket, threadSocket } from "./paths.ts";
 import { findRepository, refreshClones } from "./repo.ts";
 import { resumeRound, submitRound } from "./round.ts";
 import { setupDone } from "./setup.ts";
-import { onSprite, serviceLog, startSpriteService } from "./sprite.ts";
+import { keepAwake, onSprite, serviceLog, startSpriteService } from "./sprite.ts";
 import {
   bringBack,
   failThread,
+  hasWork,
   liveThreads,
   readThread,
   record,
@@ -140,7 +141,7 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 // were running, so commands and agents can reach it. Leaves the sockets listening after
 // returning, and removes them when stopped, leaving every tmux session running. It never
 // asks questions: systemd has nobody to answer. Polls GitHub every `every` milliseconds while
-// a thread is active.
+// a thread is active, and on a Sprite keeps the Sprite awake while there is work.
 export async function serve(tmux: string, every = 30_000): Promise<void> {
   if (!setupDone()) throw new Error("the first run isn't done on this machine: run skel first");
   const db = openDb();
@@ -278,6 +279,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
     );
   }
   pollGitHub(db, tmux, every);
+  if (onSprite()) keepAwake(() => hasWork(liveThreads(db)));
 }
 
 // Asks the daemon on behalf of skel task create and skel start, and returns its answer. Throws

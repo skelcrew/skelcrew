@@ -50,6 +50,16 @@ export type Thread = z.infer<typeof Thread>;
 // the builder's question.
 export const needsYou = (thread: Thread) => thread.needs_you || thread.asking;
 
+// Returns whether any thread has work under way that the machine must stay awake for: a
+// builder working, a review waiting or running, or a PR waiting on CI. A thread that only
+// waits on you is no work, and a builder working on your comment past the round limit is.
+// A round that failed keeps its submit or review saved, to carry on after a restart, so those
+// don't count as work on a thread that needs you.
+export const hasWork = (threads: Thread[]) =>
+  threads.some(
+    (t) => (t.status === "working" && !t.asking) || (t.status === "waiting" && !needsYou(t)),
+  );
+
 // Returns the thread's repository as owner/name, as GitHub calls want it.
 export const github = (thread: Thread) => `${thread.owner}/${thread.repo}`;
 // Returns the thread's clone folder. It comes from the folder name chosen at start, so it
