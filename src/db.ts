@@ -76,11 +76,13 @@ export function openDb(): Database {
     last_review INTEGER,
     last_comment INTEGER,
     last_check INTEGER,
+    asking INTEGER NOT NULL DEFAULT 0,
+    noting TEXT,
     PRIMARY KEY (owner, repo, task)
   )`);
   // Threads an older skel started lack some of these columns. `submitting`,
   // `reviewing` and `telling` hold the round under way, so one the daemon's stop cut short
-  // carries on when it starts again.
+  // carries on when it starts again, and `noting` holds a note for the lead the same way.
   const added = {
     rounds: "INTEGER NOT NULL DEFAULT 0",
     pr: "INTEGER",
@@ -91,6 +93,8 @@ export function openDb(): Database {
     last_review: "INTEGER",
     last_comment: "INTEGER",
     last_check: "INTEGER",
+    asking: "INTEGER NOT NULL DEFAULT 0",
+    noting: "TEXT",
   };
   for (const [column, type] of Object.entries(added))
     if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))

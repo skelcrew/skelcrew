@@ -4,8 +4,17 @@ import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 import { z } from "zod";
 import { type Check, failedLog, type PullRequest, readPullRequests } from "./github.ts";
+import { tellLead } from "./lead.ts";
 import { endRound } from "./round.ts";
-import { cloneOf, liveThreads, readThread, record, type Thread, threadConfig } from "./thread.ts";
+import {
+  cloneOf,
+  liveThreads,
+  needsYou,
+  readThread,
+  record,
+  type Thread,
+  threadConfig,
+} from "./thread.ts";
 import { failedScreen, hasSession, stopSession, typeInto } from "./tmux.ts";
 
 type Change = Partial<Pick<Thread, "status" | "needs_you">>;
@@ -184,6 +193,7 @@ async function tellBuilder(
   } catch (error) {
     const said = error instanceof Error ? error.message : String(error);
     record(db, thread.folder, { ...handled, needs_you: true }, `couldn't tell: ${said}. ${why}`);
+    tellLead(db, tmux);
   } finally {
     typing.delete(thread.folder);
   }
@@ -223,8 +233,10 @@ async function pollRepository(db: Database, tmux: string, threads: Thread[]): Pr
         handled.last_comment !== thread.last_comment ||
         handled.last_check !== thread.last_check;
       // Most polls find nothing new, and the log stays free of them.
-      if (moved || Object.keys(change).length > 0)
+      if (moved || Object.keys(change).length > 0) {
         record(db, folder, { ...handled, ...change }, why);
+        tellLead(db, tmux);
+      }
     }
   }
 }
@@ -245,7 +257,7 @@ export function pollGitHub(db: Database, tmux: string, every: number): void {
       repos.set(repo, [...(repos.get(repo) ?? []), thread]);
     }
     for (const [repo, threads] of repos) {
-      const active = threads.some((t) => t.status === "working" || !t.needs_you);
+      const active = threads.some((t) => t.status === "working" || !needsYou(t));
       const waited = skipped.get(repo) ?? Number.POSITIVE_INFINITY;
       if (polling.has(repo) || (!active && waited < 9)) {
         skipped.set(repo, waited + 1);

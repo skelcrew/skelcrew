@@ -45,7 +45,7 @@ function script(name: string, body: string): void {
 function fakeClaude(): void {
   script(
     "claude",
-    `case "$CLAUDE_CONFIG_DIR" in */lead) exec sleep 300 ;; esac
+    `case "$CLAUDE_CONFIG_DIR" in */lead) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
 echo 1 > change
 git add -A && git commit -qm "round 1"
 skel submit "Round 1" >> "$CLAUDE_CONFIG_DIR/submitted" 2>&1
@@ -302,10 +302,14 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     pr({ reviews: [skelReview], checks: [approved, check(900, "SUCCESS")] });
     await until(() => thread().needs_you === 1);
     expect(thread().last_review).toBe(1001);
+    await until(() => read(join(data(), "claude", "lead", "typed")).includes("app-12 needs you"));
+    expect(read(join(data(), "claude", "lead", "typed"))).toContain("ready to merge");
     // Your own comment wakes the builder; skel's review, posted with your login, never does.
     const comments = [{ id: 50, author: you, body: "Call it exportJson." }];
     pr({ reviews: [skelReview], comments, checks: [approved, check(900, "SUCCESS")] });
     await until(() => typed().includes("Call it exportJson."));
+    // The thread is saved once the builder has been told.
+    await until(() => thread().last_comment === 50);
     expect(typed()).not.toContain("Ready.");
     expect(thread()).toMatchObject({ status: "working", needs_you: 0, last_comment: 50 });
   }, 60_000);

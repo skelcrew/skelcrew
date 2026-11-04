@@ -38,8 +38,17 @@ export const Thread = z.object({
   last_review: z.number().nullable(),
   last_comment: z.number().nullable(),
   last_check: z.number().nullable(),
+  // Whether the builder is asking you a question with AskUserQuestion. Kept apart from
+  // needs_you, so answering it leaves the thread needing you for any other reason.
+  asking: z.coerce.boolean(),
+  // Why the thread started needing you, until a note saying so is typed into the lead.
+  noting: z.string().nullable(),
 });
 export type Thread = z.infer<typeof Thread>;
+
+// Returns whether the thread needs you: for a review, the round limit or an approval, or for
+// the builder's question.
+export const needsYou = (thread: Thread) => thread.needs_you || thread.asking;
 
 // Returns the thread's repository as owner/name, as GitHub calls want it.
 export const github = (thread: Thread) => `${thread.owner}/${thread.repo}`;
@@ -60,7 +69,9 @@ export const readThread = (db: Database, folder: string) =>
   Thread.parse(db.query("SELECT * FROM threads WHERE folder = ?").get(folder));
 
 // Saves a change to the thread, logs the thread as it now is, and returns it. `why` goes in
-// the log, so a failure says what went wrong.
+// the log, so a failure says what went wrong. When the change makes the thread start needing
+// you, `why` is also saved as the note for the lead, on one line; once it no longer needs you,
+// a note not yet typed is dropped. The daemon types saved notes with tellLead.
 export function record(
   db: Database,
   folder: string,
@@ -78,13 +89,20 @@ export function record(
       | "last_review"
       | "last_comment"
       | "last_check"
+      | "asking"
+      | "noting"
     >
   >,
   why?: string,
 ): Thread {
+  const before = readThread(db, folder);
+  let { noting } = change;
+  if (!needsYou({ ...before, ...change })) noting = null;
+  else if (!needsYou(before)) noting = (why ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
   // The column names come from the keys of Thread above, never from outside. One statement,
   // so a change is saved whole or not at all.
-  const set = Object.entries(change).filter(([, value]) => value !== undefined);
+  const full = noting === undefined ? change : { ...change, noting };
+  const set = Object.entries(full).filter(([, value]) => value !== undefined);
   if (set.length > 0)
     db.run(
       `UPDATE threads SET ${set.map(([column]) => `${column} = ?`).join(", ")} WHERE folder = ?`,
@@ -200,6 +218,8 @@ export async function startThread(
       last_review: 0,
       last_comment: 0,
       last_check: 0,
+      asking: false,
+      noting: null,
     };
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run(
