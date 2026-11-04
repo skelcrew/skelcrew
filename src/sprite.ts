@@ -235,19 +235,28 @@ function onTheSprite(name: string): Machine {
   };
 }
 
+// Stops at a name that can't be a Sprite's. A name starting with a dash would reach sprite
+// as one of its options.
+function checkName(name: string): void {
+  if (!/^\w[\w-]*$/.test(name)) throw new Error(`"${name}" can't name a Sprite`);
+}
+
+// Updates skel on an existing Sprite, whose daemon runs as a Sprite service. It never
+// creates one: a mistyped name would otherwise make a second Sprite you pay for.
+export async function updateSprite(name: string): Promise<number> {
+  checkName(name);
+  if (!spriteNames(`skel update --remote sprite:${name}`).includes(name))
+    throw new Error(`No Sprite named ${name}: skel --remote sprite:${name} creates it`);
+  return update(`sprite:${name}`, onTheSprite(name));
+}
+
 // Runs a skel command on the Sprite and returns its exit code. Plain skel passes the
 // repository you are in on the laptop, so the lead knows it too. A Sprite that doesn't exist
 // is created after asking, then set up, and one without skel is set up after asking.
 export async function remoteSprite(name: string, args: string[]): Promise<number> {
-  // A name starting with a dash would reach sprite as one of its options.
-  if (!/^\w[\w-]*$/.test(name)) throw new Error(`"${name}" can't name a Sprite`);
+  checkName(name);
   const again = ["skel", "--remote", `sprite:${name}`, ...args].map(quoted).join(" ");
   const names = spriteNames(again);
-  if (args.length === 1 && args[0] === "update") {
-    if (!names.includes(name))
-      throw new Error(`No Sprite named ${name}: skel --remote sprite:${name} creates it`);
-    return update(`sprite:${name}`, onTheSprite(name));
-  }
   const from = args.length === 0 ? originHere() : null;
   // sprite exec passes each word as given, with no shell between. It reports a program it
   // can't find as exit 1, like any failure, so a shell runs skel: it exits 127 when there is

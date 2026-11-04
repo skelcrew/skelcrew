@@ -222,7 +222,7 @@ function laptopSkel(): { main: string; commit: string } {
 }
 
 async function update(laptop: { main: string }) {
-  const run = Bun.spawn([process.execPath, laptop.main, "--remote", "simon@workbox", "update"], {
+  const run = Bun.spawn([process.execPath, laptop.main, "update", "--remote", "simon@workbox"], {
     cwd: home,
     env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
     stdin: "ignore",
@@ -298,4 +298,11 @@ test("update copies nothing to a server without skel", async () => {
     "skel isn't on simon@workbox yet: skel --remote simon@workbox sets it up",
   );
   expect(calls()).not.toContain("scp");
+});
+
+test("update needs --remote and where to", async () => {
+  const run = await skel(["update"]);
+  expect(run.err).toContain("skel update --remote <host>");
+  expect(run.code).toBe(1);
+  expect(calls()).toBe("");
 });

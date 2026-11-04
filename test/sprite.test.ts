@@ -275,7 +275,7 @@ function laptopSkel(): { main: string; commit: string } {
 }
 
 async function update(laptop: { main: string }, name = "demo") {
-  const run = Bun.spawn([process.execPath, laptop.main, "--remote", `sprite:${name}`, "update"], {
+  const run = Bun.spawn([process.execPath, laptop.main, "update", "--remote", `sprite:${name}`], {
     cwd: home,
     env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
     stdin: "ignore",

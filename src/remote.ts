@@ -1,6 +1,6 @@
-// skel --remote: runs a skel command on your server over ssh -t, from your laptop, offers
-// to copy skel there when it is missing, and updates it with update. Your laptop can be a
-// Mac, so this file loads nothing of the skel that runs on the server.
+// skel --remote: runs a skel command on your server over ssh -t, from your laptop, and
+// offers to copy skel there when it is missing. skel update --remote puts a new build there.
+// Your laptop can be a Mac, so this file loads nothing of the skel that runs on the server.
 import { mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -25,15 +25,8 @@ export const run = (argv: string[]) =>
 
 // Runs a skel command on the host and returns its exit code. Plain skel passes the
 // repository you are in on the laptop, so the lead knows it too. When the host has no
-// skel, offers to copy it there, then runs the command. update is done here on the laptop,
-// since it replaces the skel that would run it there.
+// skel, offers to copy it there, then runs the command.
 export async function remote(host: string, args: string[]): Promise<number> {
-  if (args.length === 1 && args[0] === "update")
-    return update(host, {
-      shell: (script) => ["ssh", host, script],
-      copy: (file) => copySkel(host, file),
-      restart: "systemctl --user restart skel",
-    });
   const from = args.length === 0 ? originHere() : null;
   const line = [onServer, ...(from ? ["--from", from] : args).map(quoted)].join(" ");
   const code = await run(["ssh", "-t", host, line]);
@@ -60,6 +53,14 @@ async function copySkel(host: string, file: string): Promise<void> {
   if ((await run(["scp", file, `${host}:.local/bin/skel`])) !== 0)
     throw new Error(`scp couldn't copy skel to ${host}`);
 }
+
+// Updates skel on the host over ssh, where systemd runs the daemon.
+export const updateServer = (host: string) =>
+  update(host, {
+    shell: (script) => ["ssh", host, script],
+    copy: (file) => copySkel(host, file),
+    restart: "systemctl --user restart skel",
+  });
 
 // How update reaches a server or a Sprite: the command that runs a shell line there, how a
 // built skel is copied there, and the line that restarts the daemon's service there.
