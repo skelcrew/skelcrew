@@ -15,6 +15,8 @@ import { parseDocument } from "yaml";
 import { z } from "zod";
 import { codexHome, configDir } from "./paths.ts";
 
+type Env = Record<string, string | undefined>;
+
 const tools = [
   { command: "tmux", install: "sudo apt install tmux" },
   { command: "bwrap", install: "sudo apt install bubblewrap" },
@@ -27,9 +29,10 @@ const Config = z.looseObject({ harness: z.enum(["claude"]).optional() });
 
 // Checks required programs and tries bubblewrap, stopping setup with installation or
 // sandbox advice on failure.
-function checkTools(): void {
-  const bwrap = Bun.which("bwrap");
-  const missing = tools.filter((tool) => !Bun.which(tool.command));
+function checkTools(env: Env): void {
+  const PATH = env.PATH ?? "";
+  const bwrap = Bun.which("bwrap", { PATH });
+  const missing = tools.filter((tool) => !Bun.which(tool.command, { PATH }));
   if (missing.length > 0 || !bwrap) {
     const lines = missing.map((tool) => `  ${tool.command}: ${tool.install}`);
     throw new Error(`skel needs these installed first:\n${lines.join("\n")}`);
@@ -84,10 +87,11 @@ function promptHidden(question: string): string | null {
 // Saves a pasted Claude Code agent token privately, skipping it when one is already saved.
 // Agents log in with a token from claude setup-token, which never renews, so they never
 // race your own Claude Code for a refresh.
-function saveClaudeToken(): void {
+function saveClaudeToken(env: Env): void {
   const file = tokenFile();
   if (existsSync(file)) return;
   const setup = Bun.spawnSync(["claude", "setup-token"], {
+    env,
     stdio: ["inherit", "inherit", "inherit"],
   });
   if (!setup.success) throw new Error("claude setup-token didn't finish, so no token is saved");
@@ -107,8 +111,8 @@ function saveClaudeToken(): void {
 // Logs the reviewer into skel's Codex folder if needed, or explains the Claude Code
 // fallback. A login of skel's own, apart from yours in ~/.codex, so a renewal on either
 // side never breaks the other.
-function loginReviewer(): void {
-  if (!Bun.which("codex")) {
+function loginReviewer(env: Env): void {
+  if (!Bun.which("codex", { PATH: env.PATH ?? "" })) {
     console.log(
       "Codex isn't installed, so reviews will run on Claude Code, on the builder's own model, and lose the second view.",
     );
@@ -117,12 +121,16 @@ function loginReviewer(): void {
   // Reviews can change only the login and session files in this folder, so running codex on
   // it with your rights runs nothing a reviewer left there. codex login status reads only
   // the saved login: a key in your environment doesn't count.
-  const env = { ...process.env, CODEX_HOME: codexHome() };
-  if (Bun.spawnSync(["codex", "login", "status"], { env, stdout: "pipe", stderr: "pipe" }).success)
-    return;
+  const codex = { ...env, CODEX_HOME: codexHome() };
+  const status = Bun.spawnSync(["codex", "login", "status"], {
+    env: codex,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (status.success) return;
   mkdirSync(codexHome(), { recursive: true, mode: 0o700 });
   const login = Bun.spawnSync(["codex", "login", "--device-auth"], {
-    env,
+    env: codex,
     stdio: ["inherit", "inherit", "inherit"],
   });
   if (!login.success) throw new Error("codex login didn't finish, so reviews have no login");
@@ -130,9 +138,11 @@ function loginReviewer(): void {
 
 // Starts GitHub login when needed so the daemon can clone repositories and manage issues
 // and PRs.
-function connectGitHub(): void {
-  if (Bun.spawnSync(["gh", "auth", "status"], { stdout: "pipe", stderr: "pipe" }).success) return;
+function connectGitHub(env: Env): void {
+  if (Bun.spawnSync(["gh", "auth", "status"], { env, stdout: "pipe", stderr: "pipe" }).success)
+    return;
   const login = Bun.spawnSync(["gh", "auth", "login"], {
+    env,
     stdio: ["inherit", "inherit", "inherit"],
   });
   if (!login.success) throw new Error("gh auth login didn't finish, so skel can't reach GitHub");
@@ -187,14 +197,40 @@ function unitValue(value: string): string {
   return value.replaceAll("%", "%%");
 }
 
+// Returns the PATH your login shell sets up, followed by any folders of this one it lacks.
+// A command over ssh, as skel --remote runs, gets a bare PATH, and Ubuntu's ~/.bashrc adds
+// folders such as nvm's only in a shell you type into. So the shell starts as one, login
+// and interactive, in a session of its own: with no terminal to take over, it can't stop
+// skel's. Its startup files can print, so the PATH comes after a marker. Without SHELL
+// there is no login shell to ask.
+function loginPath(): string {
+  const here = (process.env.PATH ?? "").split(":");
+  const shell = process.env.SHELL;
+  const asked = shell
+    ? Bun.spawnSync([shell, "-l", "-i", "-c", 'printf "\\nskel-path=%s\\n" "$PATH"'], {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "ignore",
+        detached: true,
+        timeout: 10_000,
+      })
+    : null;
+  const found =
+    asked?.stdout
+      .toString()
+      .match(/^skel-path=(.*)$/m)?.[1]
+      ?.split(":") ?? [];
+  return [...new Set([...found, ...here].filter(Boolean))].join(":");
+}
+
 // Returns the daemon's service definition with a lasting tool PATH and sessions that
 // survive daemon stops.
-function unitText(skel: string): string {
+function unitText(skel: string, given: string): string {
   // systemd starts services with a bare PATH, which misses bun, claude and gh where they
   // usually live, so the daemon gets yours. Folders a tool runner or a temporary folder
   // added are left out: they are gone by the time the daemon starts.
   const temporary = tmpdir();
-  const path = (process.env.PATH ?? "")
+  const path = given
     .split(":")
     .filter((p) => p && !p.includes("/node_modules/.bin") && !p.startsWith(`${temporary}/`))
     .map(unitValue)
@@ -235,7 +271,10 @@ function installService(): void {
       `skel is running from a worktree (${skel}): run skel from the main checkout to install its daemon`,
     );
   }
-  const unit = unitText(skel);
+  // Asking your login shell takes a moment, so only when the PATH here would change the
+  // service, as over ssh.
+  if (before === unitText(skel, process.env.PATH ?? "")) return;
+  const unit = unitText(skel, loginPath());
   if (before === unit) return;
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, unit);
@@ -269,11 +308,15 @@ export function setupDone(): boolean {
 export function firstRun(): void {
   const done = setupDone();
   if (!done) {
-    checkTools();
-    connectGitHub();
+    // The tools are found where your login shell finds them, even over ssh, so a codex
+    // under nvm isn't taken for missing. Passed to each one, since Bun looks programs up in
+    // the PATH it started with, whatever process.env says later.
+    const env = { ...process.env, PATH: loginPath() };
+    checkTools(env);
+    connectGitHub(env);
     pickHarness();
-    saveClaudeToken();
-    loginReviewer();
+    saveClaudeToken(env);
+    loginReviewer(env);
   }
   installService();
   if (!done) console.log("Setup is done.");
