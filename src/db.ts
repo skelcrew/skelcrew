@@ -57,7 +57,11 @@ export function openDb(): Database {
     base TEXT,
     status TEXT NOT NULL,
     session TEXT,
+    needs_you INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (owner, repo, task)
   )`);
+  // Threads started before skel kept needs you have no column for it.
+  if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = 'needs_you'").get())
+    db.run("ALTER TABLE threads ADD COLUMN needs_you INTEGER NOT NULL DEFAULT 0");
   return db;
 }

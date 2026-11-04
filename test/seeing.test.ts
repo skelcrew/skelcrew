@@ -1,0 +1,180 @@
+// skel ps, skel task ls and skel attach, run as you or the lead would run them, against a
+// running daemon, a fake gh, a fake Claude Code and a fake tmux for attaching.
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir, userInfo } from "node:os";
+import { join } from "node:path";
+import type { Subprocess } from "bun";
+
+const main = join(import.meta.dir, "..", "src", "main.ts");
+const daemon = join(import.meta.dir, "..", "src", "daemon.ts");
+const dbFile = join(import.meta.dir, "..", "src", "db.ts");
+let home = "";
+let socket = "";
+const running: Subprocess[] = [];
+
+const data = () => join(home, ".local", "share", "skel");
+
+function fake(name: string, body: string): void {
+  writeFileSync(
+    join(home, "bin", name),
+    `#!/bin/sh\necho "${name} $*" >> "$HOME/calls"\n${body}\n`,
+    { mode: 0o755 },
+  );
+}
+
+beforeEach(() => {
+  home = realpathSync(mkdtempSync(join(tmpdir(), "skel-seeing-test-")));
+  socket = `skel-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
+  mkdirSync(join(home, "bin"));
+  mkdirSync(join(home, "run"), { mode: 0o700 });
+  writeFileSync(join(home, "bin", "claude"), "#!/bin/sh\nexec sleep 300\n", { mode: 0o755 });
+  fake("systemctl", "exit 0");
+  fake("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
+  // The fake GitHub lists a repository's open issues from ~/issues/<owner>/<repo>.json.
+  mkdirSync(join(home, "issues"));
+  fake(
+    "gh",
+    `case "$*" in
+"issue list --repo "*" --state open "*) cat "$HOME/issues/$4.json" 2>/dev/null || { echo "Could not resolve to a Repository" >&2; exit 1; } ;;
+*) exit 1 ;;
+esac`,
+  );
+  mkdirSync(join(home, ".config", "skel"), { recursive: true });
+  writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\n");
+  writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
+  mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
+  writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
+});
+afterEach(async () => {
+  for (const serve of running.splice(0)) {
+    serve.kill();
+    await serve.exited;
+  }
+  Bun.spawnSync(["tmux", "-L", socket, "kill-server"], { stderr: "pipe" });
+  const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
+  rmSync(join(folder, socket), { force: true });
+  rmSync(home, { recursive: true, force: true });
+});
+
+const env = () => ({
+  HOME: home,
+  XDG_RUNTIME_DIR: join(home, "run"),
+  PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
+});
+
+function serve(): void {
+  const script = `import { serve } from ${JSON.stringify(daemon)};
+await serve(${JSON.stringify(socket)});`;
+  running.push(
+    Bun.spawn([process.execPath, "-e", script], { env: env(), stdout: "ignore", stderr: "ignore" }),
+  );
+}
+
+async function skel(args: string[], more: Record<string, string> = {}) {
+  const run = Bun.spawn([process.execPath, main, ...args], {
+    env: { ...env(), ...more },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, code] = await Promise.all([
+    new Response(run.stdout).text(),
+    new Response(run.stderr).text(),
+    run.exited,
+  ]);
+  return { out, err, code };
+}
+
+async function until(done: () => boolean, timeout = 10_000) {
+  const deadline = Date.now() + timeout;
+  while (!done()) {
+    if (Date.now() > deadline) throw new Error("gave up waiting");
+    await Bun.sleep(50);
+  }
+}
+
+async function untilAnswers() {
+  await until(() => existsSync(join(home, "run", "skel.sock")));
+  await Bun.sleep(100);
+}
+
+// Runs SQL against skel's database as skel itself would open it, so its tables exist.
+function sql(statements: string): void {
+  const script = `import { openDb } from ${JSON.stringify(dbFile)};
+openDb().run(${JSON.stringify(statements)});`;
+  const run = Bun.spawnSync([process.execPath, "-e", script], { env: env(), stderr: "pipe" });
+  if (!run.success) throw new Error(run.stderr.toString());
+}
+
+// skel has app and site, and four threads, started in this order.
+function threads(): void {
+  sql(`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app'), ('site', 'simon', 'site');
+INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you) VALUES
+  ('simon', 'app', 3, 'app-3', 'skel/3', 'done', 0),
+  ('simon', 'site', 7, 'site-7', 'skel/7', 'waiting', 1),
+  ('simon', 'app', 12, 'app-12', 'skel/12', 'working', 0),
+  ('simon', 'app', 9, 'app-9', 'skel/9', 'failed', 0);`);
+}
+
+describe("skel ps", () => {
+  test("lists threads newest first, with their status and whether they need you", async () => {
+    threads();
+    serve();
+    await untilAnswers();
+    const listed = await skel(["ps"]);
+    expect(listed.err).toBe("");
+    expect(listed.out).toBe(
+      "THREAD  STATUS   NEEDS YOU\n" +
+        "app-9   failed\n" +
+        "app-12  working\n" +
+        "site-7  waiting  yes\n" +
+        "app-3   done\n",
+    );
+  });
+
+  test("lists one repository's threads, as JSON for tools", async () => {
+    threads();
+    serve();
+    await untilAnswers();
+    const listed = await skel(["ps", "site", "--json"]);
+    expect(listed.err).toBe("");
+    expect(JSON.parse(listed.out)).toEqual([
+      { thread: "site-7", status: "waiting", needsYou: true },
+    ]);
+    expect(JSON.parse((await skel(["ps", "--json", "app"])).out)).toHaveLength(3);
+  });
+
+  test("says when there are no threads, and when the repository isn't skel's", async () => {
+    serve();
+    await untilAnswers();
+    expect((await skel(["ps"])).out).toBe("There are no threads.\n");
+    const unknown = await skel(["ps", "web"]);
+    expect(unknown.code).not.toBe(0);
+    expect(unknown.err).toContain("no repository named web");
+  });
+
+  test("shows threads from a database made before threads could need you", async () => {
+    mkdirSync(data(), { recursive: true });
+    const old = new Database(join(data(), "skel.db"));
+    old.run(`CREATE TABLE threads (owner TEXT NOT NULL, repo TEXT NOT NULL, task INTEGER NOT NULL,
+      folder TEXT NOT NULL UNIQUE, branch TEXT NOT NULL, base TEXT, status TEXT NOT NULL,
+      session TEXT, PRIMARY KEY (owner, repo, task))`);
+    old.run(
+      "INSERT INTO threads VALUES ('simon', 'app', 12, 'app-12', 'skel/12', NULL, 'working', NULL)",
+    );
+    old.close();
+    sql("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app')");
+    serve();
+    await untilAnswers();
+    expect(JSON.parse((await skel(["ps", "--json"])).out)).toEqual([
+      { thread: "app-12", status: "working", needsYou: false },
+    ]);
+  });
+
+  test("says when the daemon isn't running", async () => {
+    const listed = await skel(["ps"]);
+    expect(listed.code).not.toBe(0);
+    expect(listed.err).toContain("run skel");
+  });
+});

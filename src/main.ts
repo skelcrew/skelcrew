@@ -1,5 +1,6 @@
 // skel's command line: reads the command and hands it to the file that does it.
-import { attachToLead, createTask, serve, startOn } from "./daemon.ts";
+import { attachToLead, createTask, serve, startOn, threads } from "./daemon.ts";
+import { printThreads } from "./list.ts";
 import { bringInFrom, listRepos, removeRepo, trustRepo } from "./repo.ts";
 import { firstRun } from "./setup.ts";
 
@@ -9,6 +10,7 @@ const usage = `Usage:
   skel repo ls
   skel repo rm <name>
   skel repo trust <name>
+  skel ps [<repo>] [--json]
   skel task create <repo> "<title>" "<body>"
   skel start <repo>-<task> [--from <branch>]`;
 
@@ -36,6 +38,13 @@ async function run(args: string[]): Promise<void> {
   }
   if (command === "repo" && sub === "trust" && rest[0] && rest.length === 1) {
     await trustRepo(rest[0]);
+    return;
+  }
+  // --json can go anywhere, as tools add it last and people type it where they like.
+  const json = args.includes("--json");
+  const words = args.filter((arg) => arg !== "--json");
+  if (command === "ps" && words.length <= 2) {
+    printThreads(await threads(words[1]), json);
     return;
   }
   const [repo, title, body] = rest;

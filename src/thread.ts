@@ -20,6 +20,7 @@ export const Thread = z.object({
   base: z.string().nullable(),
   status: z.enum(["working", "waiting", "failed", "done"]),
   session: z.string().nullable(),
+  needs_you: z.coerce.boolean(),
 });
 export type Thread = z.infer<typeof Thread>;
 
@@ -129,6 +130,7 @@ export async function startThread(
       base: given.from ?? null,
       status: "working",
       session: null,
+      needs_you: false,
     };
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run(
