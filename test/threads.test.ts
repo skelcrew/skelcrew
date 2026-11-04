@@ -265,8 +265,11 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a builder", () => {
     });
     fakeClaude(
       "",
-      `{ test -e ${data()}/repos || echo repos-hidden; git config user.name; git config --get-regexp '^remote' | grep -c github; } > "$CLAUDE_CONFIG_DIR/seen.new" 2>&1; mv "$CLAUDE_CONFIG_DIR/seen.new" "$CLAUDE_CONFIG_DIR/seen"`,
+      `{ test -e ${data()}/repos/simon/site || echo others-hidden; touch ${data()}/repos/simon/app/x 2>/dev/null || echo origin-read-only; git config user.name; git config --get-regexp '^remote' | grep -c github; } > "$CLAUDE_CONFIG_DIR/seen.new" 2>&1; mv "$CLAUDE_CONFIG_DIR/seen.new" "$CLAUDE_CONFIG_DIR/seen"`,
     );
+    // Another repository's clone, which the lead sees but no builder of app's should.
+    mkdirSync(join(data(), "repos", "simon", "site"), { recursive: true });
+    git(join(data(), "repos", "simon", "site"), "init", "-q");
     serve();
     await untilCloned();
     const started = await skel("start", "app-12");
@@ -276,7 +279,10 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a builder", () => {
     expect(git(clone(), "rev-parse", "--abbrev-ref", "HEAD")).toBe("skel/12-add-export");
     expect(read(join(clone(), "setup-ran"))).toBe("set up\ntoken-hidden\n");
     expect(read(join(config("app-12"), "pwd"))).toBe(`${clone()}\n`);
-    expect(read(join(config("app-12"), "seen"))).toBe("repos-hidden\nSimon\n0\n");
+    // Its own repository's clone is its origin, read-only; skel's other clones stay hidden.
+    expect(read(join(config("app-12"), "seen"))).toBe(
+      "others-hidden\norigin-read-only\nSimon\n0\n",
+    );
     const args = read(join(config("app-12"), "args"));
     expect(args).toContain("--model\nopus\n");
     expect(args.endsWith("Add export\n\nAs JSON\n")).toBe(true);

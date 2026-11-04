@@ -3,11 +3,22 @@
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 import { z } from "zod";
-import { type Check, canPush, failedLog, type PullRequest, readPullRequests } from "./github.ts";
+import {
+  type Check,
+  canPush,
+  failedLog,
+  fetchIntoClone,
+  type PullRequest,
+  readPullRequests,
+} from "./github.ts";
 import { tellLead } from "./lead.ts";
+import { cloneDir } from "./paths.ts";
+import { refreshClones } from "./repo.ts";
 import { endRound } from "./round.ts";
 import {
+  baseOf,
   cloneOf,
+  github,
   liveThreads,
   needsYou,
   readThread,
@@ -28,6 +39,9 @@ export type Decision =
       // What to type into the builder, besides the failed checks, whose logs come from GitHub.
       tell: string[];
       failed: Check[];
+      // The base branch the PR conflicts with, which skel's clone must hold before the
+      // builder, told to merge it, fetches it from there.
+      conflict: string | null;
       change: Change;
       why: string;
     };
@@ -76,7 +90,8 @@ export function decide(
       last_comment: Math.max(0, ...pr.comments.map((c) => c.id)),
       last_check: Math.max(0, ...runs.map((r) => r.id)),
     };
-    return { handled, tell: [], failed: [], change: {}, why: "started after the PR's history" };
+    const why = "started after the PR's history";
+    return { handled, tell: [], failed: [], conflict: null, change: {}, why };
   }
   const past = thread.rounds > given.maxRounds;
   // Whether what this author wrote is typed into the builder.
@@ -119,9 +134,10 @@ export function decide(
           : quiet && ["FAILURE", "ERROR"].includes(c.state),
       )
     : [];
-  if (quiet && pr.mergeable === "CONFLICTING")
+  const conflict = quiet && pr.mergeable === "CONFLICTING" ? pr.base : null;
+  if (conflict !== null)
     tell.push(
-      `The PR conflicts with ${pr.base}. Merge ${pr.base} into your branch and fix the conflict, then commit and run skel submit "<summary>" again.`,
+      `The PR conflicts with ${conflict}. Run git fetch origin, merge origin/${conflict} into your branch and fix the conflict, then commit and run skel submit "<summary>" again.`,
     );
   const handled = {
     last_review: Math.max(last_review, ...reviews.map((r) => r.id)),
@@ -132,7 +148,8 @@ export function decide(
     const told = [...failed.map((r) => `${r.name} failed`), ...tell.map((t) => t.split("\n")[0])];
     // Past the round limit the thread still needs you, as the builder's next round would.
     const change: Change = { status: "working", needs_you: past };
-    return { handled, tell, failed, change, why: `told the builder: ${told.join("; ")}` };
+    const why = `told the builder: ${told.join("; ")}`;
+    return { handled, tell, failed, conflict, change, why };
   }
   // skel's reviewer approves by setting its skel/review check, so an approved PR with every
   // check passed, its own included, is ready. With no CI, that check is the only one.
@@ -144,10 +161,11 @@ export function decide(
       handled,
       tell,
       failed,
+      conflict,
       change: { needs_you: true },
       why: "approved by skel's reviewer with every check green, so it is ready to merge",
     };
-  return { handled, tell, failed, change: {}, why: "" };
+  return { handled, tell, failed, conflict, change: {}, why: "" };
 }
 
 // The message about failed checks, with the end of each one's log. A check that isn't a
@@ -165,6 +183,15 @@ async function aboutChecks(repo: string, failed: Check[]): Promise<string[]> {
       return `The check ${c.name} failed${link}. The end of its log:\n\n${log}\n\n${fix}`;
     }),
   );
+}
+
+// Brings skel's clone of the repository up to date with the base branch, so the builder,
+// whose clone has it as origin, gets the latest base when it fetches. The daemon otherwise
+// refreshes it only when you attach or it starts, and holds only the default branch.
+async function freshBase(db: Database, thread: Thread, base: string): Promise<void> {
+  await refreshClones(db);
+  if (base !== baseOf({ ...thread, base: null }))
+    await fetchIntoClone(cloneDir(thread.owner, thread.repo), github(thread), base);
 }
 
 // Typing in progress per thread. A poll leaves a thread alone while its events are typed in,
@@ -198,6 +225,7 @@ async function tellBuilder(
   typing.set(thread.folder, cancel);
   const { handled, change, why } = decision;
   try {
+    if (decision.conflict !== null) await freshBase(db, thread, decision.conflict);
     const checks = await aboutChecks(`${thread.owner}/${thread.repo}`, decision.failed);
     const text = [...checks, ...decision.tell].join("\n\n---\n\n");
     if (!hasSession(tmux, thread.folder) || failedScreen(tmux, thread.folder) !== null)

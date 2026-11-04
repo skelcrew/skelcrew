@@ -288,6 +288,9 @@ test("a review still pending holds back the reviews after it until it is submitt
 test("a merge conflict tells the builder to merge the base branch", () => {
   const decision = acted(thread({ base: "next" }), pr({ mergeable: "CONFLICTING", base: "next" }));
   expect(decision.tell).toEqual([expect.stringContaining("conflicts with next")]);
+  expect(decision.tell[0]).toContain("git fetch origin, merge origin/next");
+  // skel's clone, the builder's origin, must hold next before the builder is told.
+  expect(decision.conflict).toBe("next");
   expect(decision.change).toEqual({ status: "working", needs_you: false });
 });
 

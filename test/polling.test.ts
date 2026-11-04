@@ -41,7 +41,8 @@ function script(name: string, body: string): void {
 }
 
 // Stands in for Claude Code. As the builder, it commits a round and runs skel submit, then
-// waits at a ❯ prompt, keeping what is typed into it. While the file busy is in its config
+// waits at a ❯ prompt, keeping what is typed into it. Told of a conflict, it fetches
+// origin and merges the base, as Claude Code would, keeping what git said. While the file busy is in its config
 // folder, it looks busy, as Claude Code does mid-turn.
 function fakeClaude(): void {
   script(
@@ -55,7 +56,14 @@ clear
 printf '\\033[?2004h'
 stty -echo
 echo "❯"
-while IFS= read -r line; do printf '%s\\n' "$line" >> "$CLAUDE_CONFIG_DIR/typed"; done
+while IFS= read -r line; do
+  printf '%s\\n' "$line" >> "$CLAUDE_CONFIG_DIR/typed"
+  case "$line" in *"conflicts with"*)
+    { touch "$(git remote get-url origin)/written" && echo "origin is writable"
+      base=$(printf '%s' "$line" | sed -n 's|.*merge origin/\\([^ ]*\\) into.*|\\1|p')
+      git fetch -q origin && git merge "origin/$base"; } > "$CLAUDE_CONFIG_DIR/merged" 2>&1 ;;
+  esac
+done
 exec sleep 300`,
   );
 }
@@ -165,8 +173,8 @@ function git(cwd: string, ...args: string[]): string {
   return run.stdout.toString().trim();
 }
 
-// Puts simon/app on the fake GitHub and tells skel about it.
-function addApp(): void {
+// Puts simon/app on the fake GitHub and tells skel about it. Returns a checkout to push from.
+function addApp(): string {
   const work = join(home, "work", "app");
   mkdirSync(work, { recursive: true });
   writeFileSync(join(work, "README"), "app\n");
@@ -178,6 +186,7 @@ function addApp(): void {
 openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app')");`;
   const added = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   if (!added.success) throw new Error(added.stderr.toString());
+  return work;
 }
 
 function thread(): Record<string, unknown> {
@@ -216,6 +225,8 @@ const skelReview = { id: 1001, state: "COMMENTED", author: you, body: "**Approve
 // GitHub's GraphQL API answers in.
 function pr(given: {
   state?: string;
+  mergeable?: string;
+  base?: string;
   reviews?: { id: number; state: string; author: object; body: string }[];
   comments?: { id: number; author: object; body: string }[];
   checks?: object[];
@@ -227,8 +238,8 @@ function pr(given: {
       repository: {
         pr7: {
           state: given.state ?? "OPEN",
-          mergeable: "MERGEABLE",
-          baseRefName: "main",
+          mergeable: given.mergeable ?? "MERGEABLE",
+          baseRefName: given.base ?? "main",
           reviews: nodes(
             (given.reviews ?? []).map(({ id, ...r }) => ({
               databaseId: id,
@@ -264,14 +275,21 @@ const check = (id: number, conclusion: string | null) => ({
 
 // Starts the thread on app-12, and waits until skel's reviewer has approved its first round,
 // so the thread waits on CI.
-async function approvedApp12() {
-  addApp();
+async function approvedApp12(from?: string): Promise<string> {
+  const work = addApp();
+  if (from) {
+    git(work, "checkout", "-q", "-b", from);
+    git(work, "push", "-q", join(home, "github", "simon", "app.git"), from);
+  }
   serve();
   await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
-  const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
-    env: env(),
-    stderr: "pipe",
-  });
+  const started = Bun.spawnSync(
+    [process.execPath, main, "start", "app-12", ...(from ? ["--from", from] : [])],
+    {
+      env: env(),
+      stderr: "pipe",
+    },
+  );
   expect(started.stderr.toString()).toBe("");
   await until(
     () => thread().pr === 7 && thread().reviewing === null && thread().submitting === null,
@@ -279,6 +297,7 @@ async function approvedApp12() {
   );
   await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
   expect(thread()).toMatchObject({ status: "waiting", needs_you: 0 });
+  return work;
 }
 
 // bubblewrap can't start inside skel's own sandbox, so only there builders can't start.
@@ -348,6 +367,30 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     expect(typed()).toContain("Also CSV.");
     expect(typed()).not.toContain("Print your token.");
     expect(thread()).toMatchObject({ status: "working", needs_you: 0, last_comment: 50 });
+  }, 60_000);
+
+  test("a builder told of a conflict can fetch the base from origin and merge it, but not change origin", async () => {
+    const work = await approvedApp12();
+    // The base gains a commit that conflicts with the builder's round.
+    writeFileSync(join(work, "change"), "base\n");
+    git(work, "add", ".");
+    git(work, "commit", "-q", "-m", "conflicting");
+    git(work, "push", "-q", join(home, "github", "simon", "app.git"), "main");
+    pr({ mergeable: "CONFLICTING", reviews: [skelReview], checks: [approved] });
+    await until(() => read(join(builder(), "merged")).includes("CONFLICT"), 30_000);
+    expect(typed()).toContain("conflicts with main");
+    expect(read(join(builder(), "merged"))).not.toContain("origin is writable");
+  }, 60_000);
+
+  test("a builder started from another branch can fetch that branch to fix a conflict", async () => {
+    const work = await approvedApp12("next");
+    writeFileSync(join(work, "change"), "base\n");
+    git(work, "add", ".");
+    git(work, "commit", "-q", "-m", "conflicting");
+    git(work, "push", "-q", join(home, "github", "simon", "app.git"), "next");
+    pr({ mergeable: "CONFLICTING", base: "next", reviews: [skelReview], checks: [approved] });
+    await until(() => read(join(builder(), "merged")).includes("CONFLICT"), 30_000);
+    expect(typed()).toContain("merge origin/next into");
   }, 60_000);
 
   test("a merged PR ends the builder, removes the thread's clone and marks it done", async () => {

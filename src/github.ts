@@ -75,6 +75,21 @@ export async function fetchBranch(
   ]);
 }
 
+// Brings a branch of a GitHub repository into skel's clone in the folder, as a branch of its
+// own, so a builder whose clone has skel's as origin can fetch it. Never the branch skel's
+// clone has checked out, which updateClone keeps current with its files.
+export async function fetchIntoClone(folder: string, repo: string, branch: string): Promise<void> {
+  await git([
+    "-C",
+    folder,
+    "fetch",
+    "--quiet",
+    "--no-write-fetch-head",
+    `https://github.com/${repo}.git`,
+    `+refs/heads/${branch}:refs/heads/${branch}`,
+  ]);
+}
+
 // Pushes a commit from skel's clone in the folder to a branch of a GitHub repository. Never
 // forced, so a push can only add to what the branch already holds.
 export async function pushCommit(
