@@ -201,11 +201,22 @@ export function agentCommand(given: {
   model: string;
   thread?: string;
   prompt?: string;
+  system?: string;
   resume?: string;
   sessionId?: string;
   env?: Record<string, string | undefined>;
 }): { argv: string[]; env: Record<string, string> } {
-  const { name, socket, model, thread, prompt, resume, sessionId, env = process.env } = given;
+  const {
+    name,
+    socket,
+    model,
+    thread,
+    prompt,
+    system,
+    resume,
+    sessionId,
+    env = process.env,
+  } = given;
   if (sessionId && resume) throw new Error("a session can't be both new and resumed");
   if (sessionId && !z.uuid().safeParse(sessionId).success)
     throw new Error(`Claude Code needs a UUID as a session ID, not "${sessionId}"`);
@@ -276,6 +287,7 @@ export function agentCommand(given: {
   command.push("--settings", settings);
   if (resume) command.push("--resume", resume);
   if (sessionId) command.push("--session-id", sessionId);
+  if (system) command.push("--append-system-prompt", system);
   if (prompt) command.push(prompt);
 
   const kept = keptEnv(env);
