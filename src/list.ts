@@ -1,10 +1,24 @@
-// What skel shows you about its work: threads for skel ps and open tasks for skel task ls,
-// as a short table for a terminal or JSON for tools.
+// What skel shows you about its work: repositories for skel repo ls, threads for skel ps
+// and open tasks for skel task ls, as a short table for a terminal or JSON for tools.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { openIssues } from "./github.ts";
-import { findRepository, repositories } from "./repo.ts";
+import { cloneDir } from "./paths.ts";
+import { findRepository, noRepositories, repositories } from "./repo.ts";
 import { Thread, threadName } from "./thread.ts";
+
+export const RepositoryRow = z.object({ name: z.string(), github: z.string(), clone: z.string() });
+export type RepositoryRow = z.infer<typeof RepositoryRow>;
+
+// Returns the repositories skel works on, in name order, with where skel keeps each clone,
+// for skel repo ls.
+export function listRepositories(db: Database): RepositoryRow[] {
+  return repositories(db).map(({ name, owner, repo }) => ({
+    name,
+    github: `${owner}/${repo}`,
+    clone: cloneDir(owner, repo),
+  }));
+}
 
 export const ThreadRow = z.object({
   thread: z.string(),
@@ -71,6 +85,15 @@ function table(heading: string[], rows: string[][]): void {
         .join("  ")
         .trimEnd(),
     );
+}
+
+// Prints repositories for skel repo ls, or tells you how to bring in the first one.
+export function printRepositories(repositories: RepositoryRow[]): void {
+  const name = Math.max(...repositories.map((r) => r.name.length));
+  const github = Math.max(...repositories.map((r) => r.github.length));
+  if (repositories.length === 0) console.log(noRepositories);
+  for (const r of repositories)
+    console.log(`${r.name.padEnd(name)}  ${r.github.padEnd(github)}  ${r.clone}`);
 }
 
 // Prints threads for skel ps: as JSON for tools, or else as a table.

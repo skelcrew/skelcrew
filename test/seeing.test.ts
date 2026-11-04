@@ -245,6 +245,39 @@ describe("skel task ls", () => {
   });
 });
 
+describe("skel repo ls", () => {
+  // As an agent runs skel: in its sandbox, where skel's database is hidden under an empty
+  // home folder, and with its own socket from the daemon.
+  async function asAgent(args: string[], socket: string) {
+    const empty = join(home, "sandbox-home");
+    mkdirSync(empty, { recursive: true });
+    return skel(args, { HOME: empty, SKEL_SANDBOX: "1", SKEL_SOCKET: socket });
+  }
+
+  test("the lead lists the daemon's repositories, as you see them in your terminal", async () => {
+    threads();
+    serve();
+    await untilAnswers();
+    const yours = await skel(["repo", "ls"]);
+    expect(yours.out).toContain("site  simon/site");
+    const lead = await asAgent(["repo", "ls"], join(home, "run", "skel", "lead", "skel.sock"));
+    expect(lead.err).toBe("");
+    expect(lead.out).toBe(yours.out);
+  });
+
+  test("a builder can't ask the daemon for the repositories", async () => {
+    threads();
+    serve();
+    await untilAnswers();
+    const short = new Bun.CryptoHasher("sha256").update("app-12").digest("hex").slice(0, 16);
+    const builder = join(home, "run", "skel", "threads", short, "skel.sock");
+    await until(() => existsSync(builder));
+    const refused = await asAgent(["repo", "ls"], builder);
+    expect(refused.code).not.toBe(0);
+    expect(refused.err).toBe("skel: skel's daemon doesn't know that request\n");
+  });
+});
+
 describe("skel attach", () => {
   // The fake tmux has a session running for each file in ~/sessions, and a dead one, whose
   // builder exited, when that file says dead. It never reaches skel's real tmux server.
@@ -303,7 +336,7 @@ esac`,
 
 // bubblewrap can't start inside skel's own sandbox, so only there the lead can't start.
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("from the lead", () => {
-  test("the lead runs skel ps and skel task ls from its sandbox, but can't attach", async () => {
+  test("the lead runs skel ps, skel task ls and skel repo ls from its sandbox, but can't attach", async () => {
     threads();
     issues("simon/app", [{ number: 12, title: "Add export", createdAt: "2026-11-03T12:00:00Z" }]);
     issues("simon/site", []);
@@ -311,7 +344,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("from the lead", () => {
       join(home, "bin", "claude"),
       `#!/bin/sh
 case "$CLAUDE_CONFIG_DIR" in
-*/lead) { skel ps app --json; skel task ls app --json; skel attach app-12; } > out.new 2>&1; mv out.new out ;;
+*/lead) { skel ps app --json; skel task ls app --json; skel repo ls; skel attach app-12; } > out.new 2>&1; mv out.new out ;;
 esac
 exec sleep 300
 `,
@@ -320,10 +353,14 @@ exec sleep 300
     serve();
     const out = join(data(), "lead", "out");
     await until(() => read(out) !== "");
-    const [ps, tasks, attach] = read(out).trim().split("\n");
+    const [ps, tasks, app, site, attach] = read(out).trim().split("\n");
     expect(JSON.parse(ps ?? "")).toHaveLength(3);
     expect(JSON.parse(tasks ?? "")).toEqual([
       { task: "app-12", title: "Add export", thread: { status: "working", needsYou: false } },
+    ]);
+    expect([app, site]).toEqual([
+      `app   simon/app   ${data()}/repos/simon/app`,
+      `site  simon/site  ${data()}/repos/simon/site`,
     ]);
     expect(attach).toBe("skel: skel attach is only for your own terminal, not for agents");
   }, 20_000);

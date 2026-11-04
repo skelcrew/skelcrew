@@ -23,10 +23,13 @@ async function run(args: string[]): Promise<void> {
   // Loaded only for commands that run here, so skel --remote never loads the parts made for
   // the Linux server, such as the sandbox and the daemon's lock, on a laptop that can be a
   // Mac.
-  const { attachToLead, createTask, serve, startOn, submitForReview, tasks, threads } =
+  const { attachToLead, createTask, repos, serve, startOn, submitForReview, tasks, threads } =
     await import("./daemon.ts");
-  const { printTasks, printThreads } = await import("./list.ts");
-  const { bringInFrom, listRepos, removeRepo, trustRepo } = await import("./repo.ts");
+  const { openDb } = await import("./db.ts");
+  const { listRepositories, printRepositories, printTasks, printThreads } = await import(
+    "./list.ts"
+  );
+  const { bringInFrom, removeRepo, trustRepo } = await import("./repo.ts");
   const { firstRun } = await import("./setup.ts");
   const { attachToThread } = await import("./thread.ts");
   if (args.length === 0 || (command === "--from" && sub && rest.length === 0)) {
@@ -39,7 +42,11 @@ async function run(args: string[]): Promise<void> {
     return;
   }
   if (command === "repo" && sub === "ls" && rest.length === 0) {
-    listRepos();
+    // An agent's sandbox hides skel's database, so there the daemon answers. In your
+    // terminal it is read here, so the list shows even while the daemon is down.
+    printRepositories(
+      process.env.SKEL_SANDBOX === "1" ? await repos() : listRepositories(openDb()),
+    );
     return;
   }
   if (command === "repo" && sub === "rm" && rest[0] && rest.length === 1) {

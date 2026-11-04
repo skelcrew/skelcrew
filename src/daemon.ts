@@ -9,7 +9,14 @@ import { z } from "zod";
 import { openDb } from "./db.ts";
 import { createIssue } from "./github.ts";
 import { startLead, tellAttachedFrom } from "./lead.ts";
-import { listTasks, listThreads, TaskRow, ThreadRow } from "./list.ts";
+import {
+  listRepositories,
+  listTasks,
+  listThreads,
+  RepositoryRow,
+  TaskRow,
+  ThreadRow,
+} from "./list.ts";
 import { cliSocket, daemonSocket, leadSocket, threadSocket } from "./paths.ts";
 import { findRepository, refreshClones } from "./repo.ts";
 import { resumeRound, submitRound } from "./round.ts";
@@ -33,6 +40,7 @@ const Branch = z.string().regex(/^(?!-)(?!.*\.\.)[\w./-]+$/);
 const Request = z.discriminatedUnion("command", [
   z.object({ command: z.literal("status") }),
   z.object({ command: z.literal("lead"), from: z.string().optional() }),
+  z.object({ command: z.literal("repo ls") }),
   z.object({ command: z.literal("ps"), repo: z.string().optional() }),
   z.object({ command: z.literal("task ls"), repo: z.string().optional() }),
   z.object({
@@ -57,8 +65,8 @@ const LeadReply = z.union([z.object({ lead: z.literal(true) }), z.object({ error
 // in your own terminal.
 type Caller = "you" | "lead" | Thread;
 const allowed = {
-  you: ["status", "lead", "ps", "task ls", "task create", "start"],
-  lead: ["status", "ps", "task ls", "task create", "start"],
+  you: ["status", "lead", "repo ls", "ps", "task ls", "task create", "start"],
+  lead: ["status", "repo ls", "ps", "task ls", "task create", "start"],
   builder: ["status", "submit"],
 };
 
@@ -175,6 +183,7 @@ export async function serve(tmux: string): Promise<void> {
       refreshClones(db).catch((error) => console.log(String(error)));
       return { lead: true };
     }
+    if (request.command === "repo ls") return { repositories: listRepositories(db) };
     if (request.command === "ps") return { threads: listThreads(db, request.repo) };
     if (request.command === "task ls") return { tasks: await listTasks(db, request.repo) };
     if (request.command === "task create") {
@@ -261,6 +270,13 @@ const understood = <T>(schema: z.ZodType<T>, reply: unknown): T => {
     throw new Error("skel's daemon answered in a way this skel doesn't understand");
   return read.data;
 };
+
+// Asks the daemon for the repositories, for skel repo ls run by the lead. The daemon
+// answers, as the lead's sandbox hides skel's database.
+export async function repos(): Promise<RepositoryRow[]> {
+  const reply = await request({ command: "repo ls" });
+  return understood(z.object({ repositories: z.array(RepositoryRow) }), reply).repositories;
+}
 
 // Asks the daemon for the threads, or one repository's, for skel ps. The daemon answers, as
 // the lead's sandbox hides skel's database.
