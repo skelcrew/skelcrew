@@ -1,6 +1,10 @@
-// skel init, repo ls and repo rm, run as you would run them, against a fake gh.
+// Bringing a repository into skel's own clones, repo ls, repo rm and trust, run as you would
+// run them, against a fake gh, a fake daemon and a folder of bare repositories standing in
+// for GitHub.
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -9,57 +13,101 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const main = join(import.meta.dir, "..", "src", "main.ts");
 let home = "";
+let daemon: Server | undefined;
 
-beforeEach(() => {
-  home = realpathSync(mkdtempSync(join(tmpdir(), "skel-repo-test-")));
-});
-afterEach(() => rmSync(home, { recursive: true, force: true }));
+const hint =
+  "skel has no repositories yet. Run skel in a checkout of one, or ask the lead for one by its GitHub name.";
+const clone = (full: string) => join(home, ".local", "share", "skel", "repos", full);
+const trustFile = () => join(home, ".config", "skel", "trusted");
 
-// A git repository whose GitHub name, your permission on it and whether it is a fork the
-// fake gh reports, or refuses to know.
-function repository(
-  folder: string,
-  github: string | null,
-  permission = "READ",
-  fork = false,
-): string {
-  const path = join(home, "code", folder);
-  mkdirSync(path, { recursive: true });
-  Bun.spawnSync(["git", "init", "-q", path]);
-  Bun.spawnSync([
-    "git",
-    "-C",
-    path,
-    "remote",
-    "add",
-    "origin",
-    `https://github.com/${github ?? "x/y"}`,
-  ]);
-  const bin = join(home, "bin");
-  mkdirSync(bin, { recursive: true });
-  const [owner, name] = (github ?? "/").split("/");
-  const answer = github
-    ? `echo '{"name":"${name}","owner":{"login":"${owner}"},"viewerPermission":"${permission}","isFork":${fork}}'`
-    : `echo 'none of the git remotes point to a known GitHub host' >&2; exit 1`;
-  // The fake answers for every repository; tests that need two use the same GitHub name.
-  writeFileSync(join(bin, "gh"), `#!/bin/sh\n${answer}\n`, { mode: 0o755 });
-  return path;
+function fake(name: string, body: string): void {
+  writeFileSync(
+    join(home, "bin", name),
+    `#!/bin/sh\necho "${name} $*" >> "$HOME/calls"\n${body}\n`,
+    { mode: 0o755 },
+  );
 }
 
-// Says yes to the trust question and keeps both commands as they are.
-const trustAndKeep = "y\n\n\n";
+beforeEach(async () => {
+  home = realpathSync(mkdtempSync(join(tmpdir(), "skel-repo-test-")));
+  mkdirSync(join(home, "bin"));
+  mkdirSync(join(home, "run"), { mode: 0o700 });
+  // The fake GitHub knows a repository when its bare repository is there, and reports your
+  // permission and whether it is a fork from the files beside it.
+  fake(
+    "gh",
+    `test "$1 $2" = "repo view" || exit 1
+full=$3
+test -d "$HOME/github/$full.git" || { echo "Could not resolve to a Repository" >&2; exit 1; }
+permission=$(cat "$HOME/github/$full.permission")
+fork=$(test -e "$HOME/github/$full.fork" && echo true || echo false)
+echo "{\\"name\\":\\"\${full#*/}\\",\\"owner\\":{\\"login\\":\\"\${full%/*}\\"},\\"viewerPermission\\":\\"$permission\\",\\"isFork\\":$fork}"`,
+  );
+  fake("tmux", "exit 0");
+  fake("systemctl", "exit 1");
+  // git reaches the fake GitHub for every https://github.com/ URL.
+  writeFileSync(
+    join(home, ".gitconfig"),
+    `[url "file://${home}/github/"]\n\tinsteadOf = https://github.com/\n`,
+  );
+  // As the first run leaves a machine, so plain skel goes straight to the repository.
+  mkdirSync(join(home, ".config", "skel"), { recursive: true });
+  writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\n");
+  writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
+  mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
+  writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
+  daemon = createServer((connection) =>
+    connection.on("data", () => {
+      appendFileSync(join(home, "calls"), "daemon lead\n");
+      connection.end('{"lead":true}\n');
+    }),
+  );
+  await new Promise<void>((listening) => daemon?.listen(join(home, "run", "skel.sock"), listening));
+});
+afterEach(() => {
+  daemon?.close();
+  rmSync(home, { recursive: true, force: true });
+});
 
-async function skel(args: string[], typed = "", cwd = home) {
-  const run = Bun.spawn(["bun", main, ...args], {
+function git(cwd: string, ...args: string[]): string {
+  const run = Bun.spawnSync(
+    ["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t", ...args],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  if (!run.success) throw new Error(run.stderr.toString());
+  return run.stdout.toString();
+}
+
+// Puts a repository with one file on the fake GitHub, and returns your checkout of it.
+function onGitHub(full: string, permission = "READ", fork = false): string {
+  const bare = join(home, "github", `${full}.git`);
+  const work = join(home, "code", full);
+  mkdirSync(work, { recursive: true });
+  writeFileSync(join(work, "README"), `${full}\n`);
+  git(work, "init", "-q", "-b", "main");
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "start");
+  git(home, "clone", "-q", "--bare", work, bare);
+  git(work, "remote", "add", "origin", `https://github.com/${full}`);
+  writeFileSync(join(home, "github", `${full}.permission`), permission);
+  if (fork) writeFileSync(join(home, "github", `${full}.fork`), "");
+  return work;
+}
+
+async function skel(args: string[], typed = "", cwd = home, more: Record<string, string> = {}) {
+  const run = Bun.spawn([process.execPath, main, ...args], {
     cwd,
     env: {
       PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
       HOME: home,
+      XDG_RUNTIME_DIR: join(home, "run"),
+      ...more,
     },
     stdin: new Blob([typed]),
     stdout: "pipe",
@@ -73,347 +121,233 @@ async function skel(args: string[], typed = "", cwd = home) {
   return { out, err, code };
 }
 
-test("adds a repository you trust and lists it", async () => {
-  const path = repository("app", "simon/app");
-  const added = await skel(["init", path], trustAndKeep);
-  expect(added.err).toBe("");
-  expect(added.code).toBe(0);
-  expect(added.out).toContain("trust");
-  const listed = await skel(["repo", "ls"]);
-  expect(listed.out).toContain("app");
-  expect(listed.out).toContain("simon/app");
-  expect(listed.out).toContain(path);
+const calls = () =>
+  existsSync(join(home, "calls")) ? readFileSync(join(home, "calls"), "utf8") : "";
+const attached = () => calls().endsWith("daemon lead\ntmux -L skel attach -t =lead\n");
+
+test("brings in a repository you can push to from its checkout, without asking", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  const config = readFileSync(join(checkout, ".git", "config"), "utf8");
+  const run = await skel([], "", checkout);
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).not.toContain("Do you trust");
+  expect(run.out).not.toContain(hint);
+  expect(attached()).toBe(true);
+  expect(readFileSync(join(clone("simon/app"), "README"), "utf8")).toBe("simon/app\n");
+  // The lead reads the clone's config, so no token may be in it.
+  expect(git(clone("simon/app"), "config", "remote.origin.url")).toBe(
+    "https://github.com/simon/app.git\n",
+  );
+  expect(readFileSync(join(checkout, ".git", "config"), "utf8")).toBe(config);
+  expect(git(checkout, "status", "--porcelain")).toBe("");
+  expect((await skel(["repo", "ls"])).out).toBe(`app  simon/app  ${clone("simon/app")}\n`);
 });
 
-test("keeps skel's folder out of git", async () => {
-  const path = repository("app", "simon/app");
-  await skel(["init", path], trustAndKeep);
-  await skel(["repo", "rm", "app"]);
-  await skel(["init", path], trustAndKeep);
-  const exclude = readFileSync(join(path, ".git", "info", "exclude"), "utf8");
-  expect(exclude.split("\n").filter((line) => line === ".skel/")).toHaveLength(1);
+test("brings it in from a folder inside the checkout too", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  mkdirSync(join(checkout, "src"));
+  expect((await skel([], "", join(checkout, "src"))).code).toBe(0);
+  expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
 });
 
-test("doesn't add a repository you don't trust", async () => {
-  const path = repository("app", "simon/app");
-  const added = await skel(["init", path], "n\n");
-  expect(added.code).toBe(1);
-  expect((await skel(["repo", "ls"])).out).not.toContain(path);
-});
-
-test("asks about trust only once per folder", async () => {
-  const path = repository("app", "simon/app");
-  await skel(["init", path], trustAndKeep);
-  await skel(["repo", "rm", "app"]);
-  const again = await skel(["init", path], "\n\n");
-  expect(again.code).toBe(0);
-  expect(again.out).not.toContain("trust");
+test("asks about a repository you can't push to, and a yes clones it and is remembered", async () => {
+  const checkout = onGitHub("simon/app");
+  const run = await skel([], "y\n", checkout);
+  expect(run.err).toBe("");
+  expect(run.out).toContain("Do you trust simon/app?");
+  expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
   // The answer lives with your settings, so a clone of the repository can't bring it.
-  expect(readFileSync(join(home, ".config", "skel", "trusted"), "utf8")).toContain(path);
-  expect(existsSync(join(path, ".skel"))).toBe(false);
+  expect(readFileSync(trustFile(), "utf8")).toBe("simon/app\n");
+  expect(attached()).toBe(true);
 });
 
-test("refuses a folder that isn't on GitHub, before asking about trust", async () => {
-  const path = repository("app", null);
-  const added = await skel(["init", path], trustAndKeep);
-  expect(added.code).toBe(1);
-  expect(added.err).toContain("GitHub");
-  expect(added.out).not.toContain("trust");
+test("asks about a fork, even one you can push to", async () => {
+  const checkout = onGitHub("simon/app", "ADMIN", true);
+  const run = await skel([], "y\n", checkout);
+  expect(run.out).toContain("Do you trust simon/app?");
 });
 
-test("refuses a folder that isn't a git repository", async () => {
-  const path = join(home, "plain");
-  mkdirSync(path);
-  const added = await skel(["init", path], trustAndKeep);
-  expect(added.code).toBe(1);
-  expect(added.err).toContain("git");
+for (const [what, typed] of [
+  ["a no", "n\n"],
+  ["Ctrl-D", ""],
+]) {
+  test(`after ${what} clones nothing, attaches anyway, and asks again next time`, async () => {
+    const checkout = onGitHub("simon/app");
+    const first = await skel([], typed, checkout);
+    expect(first.code).toBe(0);
+    expect(first.out).toContain("Do you trust simon/app?");
+    expect(first.out).toContain(hint);
+    expect(existsSync(clone("simon/app"))).toBe(false);
+    expect(existsSync(trustFile())).toBe(false);
+    expect(attached()).toBe(true);
+    expect((await skel([], "", checkout)).out).toContain("Do you trust simon/app?");
+  });
+}
+
+// Plain skel must stay fast: keeping the clone current is the daemon's work.
+test("asks GitHub nothing and fetches nothing for a repository skel has", async () => {
+  const checkout = onGitHub("simon/app");
+  await skel([], "y\n", checkout);
+  writeFileSync(join(checkout, "NEWS"), "more\n");
+  git(checkout, "add", ".");
+  git(checkout, "commit", "-q", "-m", "more");
+  git(checkout, "push", "-q", join(home, "github", "simon", "app.git"), "main");
+  for (const origin of [
+    "https://github.com/simon/app",
+    "git@github.com:Simon/App.git",
+    "ssh://git@github.com/simon/app.git",
+  ]) {
+    git(checkout, "remote", "set-url", "origin", origin);
+    writeFileSync(join(home, "calls"), "");
+    const again = await skel([], "", checkout);
+    expect(again.err).toBe("");
+    expect(again.out).toBe("");
+    expect(calls()).not.toContain("gh");
+    expect(attached()).toBe(true);
+  }
+  writeFileSync(join(home, "calls"), "");
+  expect((await skel(["--from", "simon/app"])).out).toBe("");
+  expect(calls()).not.toContain("gh");
+  expect(existsSync(join(clone("simon/app"), "NEWS"))).toBe(false);
 });
 
-test("takes another short name with --name, and refuses one already taken", async () => {
-  const first = repository("app", "simon/app");
-  const second = repository("app2", "simon/app");
-  expect((await skel(["init", first, "--name", "web"], trustAndKeep)).code).toBe(0);
-  const clash = await skel(["init", second, "--name", "web"], trustAndKeep);
-  expect(clash.code).toBe(1);
-  expect(clash.err).toContain("web");
-  const listed = (await skel(["repo", "ls"])).out;
-  expect(listed).toContain("web");
-  expect(listed).not.toContain(second);
+test("does nothing in a repository that isn't on GitHub, or has no origin", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  git(checkout, "remote", "set-url", "origin", "https://gitlab.com/simon/app");
+  const elsewhere = await skel([], "", checkout);
+  expect(elsewhere.err).toBe("");
+  expect(elsewhere.out).toBe(`${hint}\n`);
+  expect(attached()).toBe(true);
+  git(checkout, "remote", "remove", "origin");
+  const none = await skel([], "", checkout);
+  expect(none.err).toBe("");
+  expect(none.out).toBe(`${hint}\n`);
+  expect(existsSync(clone("simon/app"))).toBe(false);
 });
 
-test("refuses a folder already added under another name", async () => {
-  const path = repository("app", "simon/app");
-  await skel(["init", path], trustAndKeep);
-  const again = await skel(["init", path, "--name", "web"], trustAndKeep);
-  expect(again.code).toBe(1);
-  expect(again.err).toContain("app");
+test("outside a repository, says how to bring one in only while skel has none", async () => {
+  const first = await skel([]);
+  expect(first.err).toBe("");
+  expect(first.out).toBe(`${hint}\n`);
+  expect(calls()).not.toContain("gh");
+  expect(attached()).toBe(true);
+  await skel([], "", onGitHub("simon/app", "WRITE"));
+  expect((await skel([])).out).toBe("");
 });
 
-test("refuses a short name that would read as a flag", async () => {
-  const path = repository("app", "simon/app");
-  const added = await skel(["init", path, "--name", "-app"], trustAndKeep);
-  expect(added.code).toBe(1);
-  expect(added.err).toContain("-app");
+test("--from brings in the repository it names, wherever skel runs", async () => {
+  onGitHub("simon/app", "WRITE");
+  const run = await skel(["--from", "simon/app"]);
+  expect(run.err).toBe("");
+  expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
+  expect(attached()).toBe(true);
 });
 
-test("refuses a folder with no origin remote", async () => {
-  const path = repository("app", "simon/app");
-  Bun.spawnSync(["git", "-C", path, "remote", "remove", "origin"]);
-  const added = await skel(["init", path], trustAndKeep);
-  expect(added.code).toBe(1);
-  expect(added.err).toContain("origin");
+test("--from says why it can't bring a repository in, and attaches anyway", async () => {
+  const run = await skel(["--from", "nobody/none"]);
+  expect(run.code).toBe(0);
+  expect(run.err).toContain("nobody/none");
+  expect(attached()).toBe(true);
 });
 
-test("removes a repository, and says so when there is none by that name", async () => {
-  const path = repository("app", "simon/app");
-  await skel(["init", path], trustAndKeep);
-  expect((await skel(["repo", "rm", "app"])).code).toBe(0);
-  expect((await skel(["repo", "ls"])).out).not.toContain(path);
+test("repo ls says how to bring a repository in while there is none", async () => {
+  expect((await skel(["repo", "ls"])).out).toBe(`${hint}\n`);
+});
+
+test("repo rm removes skel's clone and forgets the trust", async () => {
+  const checkout = onGitHub("simon/app");
+  await skel([], "y\n", checkout);
+  const removed = await skel(["repo", "rm", "app"]);
+  expect(removed.err).toBe("");
+  expect(existsSync(clone("simon/app"))).toBe(false);
+  expect(readFileSync(trustFile(), "utf8")).toBe("");
+  expect((await skel(["repo", "ls"])).out).toBe(`${hint}\n`);
+  // Your checkout is yours, and stays.
+  expect(existsSync(join(checkout, "README"))).toBe(true);
   const missing = await skel(["repo", "rm", "app"]);
   expect(missing.code).toBe(1);
   expect(missing.err).toContain("app");
 });
 
-test("adds the repository in the current folder", async () => {
-  const path = repository("app", "simon/app");
-  const added = await skel(["init"], trustAndKeep, path);
-  expect(added.err).toBe("");
-  expect(added.code).toBe(0);
-  expect((await skel(["repo", "ls"])).out).toContain(path);
+test("names two repositories that share a GitHub name with their owners", async () => {
+  await skel([], "", onGitHub("simon/app", "WRITE"));
+  await skel([], "", onGitHub("other/app", "WRITE"));
+  expect((await skel(["repo", "ls"])).out).toBe(
+    `other/app  other/app  ${clone("other/app")}\nsimon/app  simon/app  ${clone("simon/app")}\n`,
+  );
+  await skel(["repo", "rm", "other/app"]);
+  expect((await skel(["repo", "ls"])).out).toBe(`app  simon/app  ${clone("simon/app")}\n`);
 });
 
-test("refuses a folder inside a repository, below its top", async () => {
-  const path = repository("app", "simon/app");
-  mkdirSync(join(path, "src"));
-  const added = await skel(["init"], trustAndKeep, join(path, "src"));
-  expect(added.code).toBe(1);
-  expect(added.err).toContain("top");
+test("trust clones a repository you can't push to, named by its GitHub name", async () => {
+  onGitHub("other/tool");
+  const run = await skel(["trust", "other/tool"]);
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(existsSync(join(clone("other/tool"), "README"))).toBe(true);
+  expect(readFileSync(trustFile(), "utf8")).toBe("other/tool\n");
+  expect((await skel(["repo", "ls"])).out).toContain("tool  other/tool");
 });
 
-test("says cloning comes later for owner/repo", async () => {
-  const added = await skel(["init", "simon/app"]);
-  expect(added.code).toBe(1);
-  expect(added.err).toContain("clon");
+test("trust refuses inside skel's sandbox, where a yes could come from an agent", async () => {
+  onGitHub("other/tool");
+  const run = await skel(["trust", "other/tool"], "", home, { SKEL_SANDBOX: "1" });
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("your own terminal");
+  expect(existsSync(clone("other/tool"))).toBe(false);
+  expect(existsSync(trustFile())).toBe(false);
 });
 
-test("trusts a repository you can push to, without asking", async () => {
-  const path = repository("app", "simon/app", "WRITE");
-  const added = await skel(["init", path], "\n\n");
-  expect(added.code).toBe(0);
-  expect(added.out).toContain("you can push to simon/app");
-  expect(added.out).not.toContain("Do you trust");
+test("trust asks for owner/repo for a repository skel doesn't know yet", async () => {
+  const run = await skel(["trust", "tool"]);
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("owner/repo");
 });
 
-test("asks about trust when you can only read the repository", async () => {
-  const path = repository("app", "simon/app", "READ");
-  const added = await skel(["init", path], trustAndKeep);
-  expect(added.code).toBe(0);
-  expect(added.out).toContain("Do you trust");
+test("skel init is gone", async () => {
+  const run = await skel(["init"]);
+  expect(run.code).toBe(1);
+  expect(run.err).not.toContain("init");
 });
 
-const skelYaml = (path: string) => readFileSync(join(path, "skel.yaml"), "utf8");
-
-test("guesses bun's commands, and writes them for you to commit", async () => {
-  const path = repository("app", "simon/app", "WRITE");
-  writeFileSync(join(path, "bun.lock"), "");
-  const added = await skel(["init", path], "\n\n");
-  expect(added.out).toContain("Setup command [bun install]");
-  expect(added.out).toContain("Test command [bun test]");
-  expect(added.out).toContain("Commit it");
-  expect(skelYaml(path)).toBe("setup: [bun install]\ntest: [bun test]\n");
+// skel init kept a path to your checkout for each repository, under a short name of your
+// choosing.
+test("keeps the repositories of a database from before skel had clones of its own", async () => {
+  const data = join(home, ".local", "share", "skel");
+  mkdirSync(data, { recursive: true });
+  const old = new Database(join(data, "skel.db"));
+  old.run(`CREATE TABLE repositories (
+    name TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, owner TEXT NOT NULL, repo TEXT NOT NULL)`);
+  old.run(`INSERT INTO repositories VALUES ('app', '/code/app', 'simon', 'app'),
+    ('web', '/code/app2', 'simon', 'app'), ('tools', '/code/t', 'simon', 'skel-tools')`);
+  old.close();
+  const listed = await skel(["repo", "ls"]);
+  expect(listed.err).toBe("");
+  expect(listed.out).toBe(
+    `app         simon/app         ${data}/repos/simon/app\n` +
+      `skel-tools  simon/skel-tools  ${data}/repos/simon/skel-tools\n`,
+  );
+  const db = new Database(join(data, "skel.db"));
+  const columns = db.query("SELECT name FROM pragma_table_info('repositories')").all();
+  db.close();
+  expect(columns).not.toContainEqual({ name: "path" });
 });
 
-test("guesses npm's commands, with a test command only when package.json has one", async () => {
-  const path = repository("app", "simon/app", "WRITE");
-  writeFileSync(join(path, "package-lock.json"), "{}");
-  writeFileSync(join(path, "package.json"), JSON.stringify({ scripts: { build: "tsc" } }));
-  const added = await skel(["init", path], "\n\n");
-  expect(added.out).toContain("Setup command [npm ci]");
-  expect(added.out).toContain("Test command []");
-  expect(skelYaml(path)).toBe("setup: [npm ci]\n");
-  await skel(["repo", "rm", "app"]);
-  writeFileSync(join(path, "package.json"), JSON.stringify({ scripts: { test: "jest" } }));
-  rmSync(join(path, "skel.yaml"));
-  const again = await skel(["init", path], "\n\n");
-  expect(again.out).toContain("Test command [npm test]");
-});
-
-test("guesses nothing for other repositories, and writes no file without commands", async () => {
-  const path = repository("app", "simon/app", "WRITE");
-  const added = await skel(["init", path], "\n\n");
-  expect(added.code).toBe(0);
-  expect(added.out).toContain("Setup command []");
-  expect(added.out).not.toContain("Commit it");
-  expect(existsSync(join(path, "skel.yaml"))).toBe(false);
-});
-
-test("typed text replaces a command and - means none", async () => {
-  const path = repository("app", "simon/app", "WRITE");
-  writeFileSync(join(path, "bun.lock"), "");
-  await skel(["init", path], "bun install --frozen-lockfile\n-\n");
-  expect(skelYaml(path)).toBe("setup: [bun install --frozen-lockfile]\n");
-});
-
-test("shows an existing skel.yaml's commands, and keeps its other settings", async () => {
-  const path = repository("app", "simon/app", "WRITE");
-  writeFileSync(join(path, "bun.lock"), "");
+// A git template, or anything else, could put a credential in a new clone's config. The lead
+// reads every clone in skel's folder, so such a clone must never get there, even briefly.
+test("refuses a clone whose config holds a credential, before the lead could see it", async () => {
+  onGitHub("simon/app", "WRITE");
+  const template = join(home, "template");
+  mkdirSync(template);
   writeFileSync(
-    join(path, "skel.yaml"),
-    "# for skel\nmax_rounds: 2\nsetup: [make deps, make tools]\ntest: [make test]\n",
+    join(template, "config"),
+    "[http]\n\textraheader = AUTHORIZATION: basic c2VjcmV0\n",
   );
-  const added = await skel(["init", path], "\nmake check\n");
-  expect(added.out).toContain("Setup command [make deps && make tools]");
-  expect(added.out).toContain("Test command [make test]");
-  expect(skelYaml(path)).toBe(
-    "# for skel\nmax_rounds: 2\nsetup: [make deps, make tools]\ntest: [make check]\n",
-  );
-});
-
-test("- for both commands removes them from an existing skel.yaml", async () => {
-  const path = repository("app", "simon/app", "WRITE");
-  writeFileSync(join(path, "skel.yaml"), "max_rounds: 2\nsetup: [make deps]\n");
-  const added = await skel(["init", path], "-\n-\n");
-  expect(added.code).toBe(0);
-  expect(skelYaml(path)).toBe("max_rounds: 2\n");
-});
-
-test("removes a skel.yaml left with nothing in it", async () => {
-  const path = repository("app", "simon/app", "WRITE");
-  writeFileSync(join(path, "skel.yaml"), "setup: [make deps]\n");
-  const added = await skel(["init", path], "-\n-\n");
-  expect(added.code).toBe(0);
-  expect(existsSync(join(path, "skel.yaml"))).toBe(false);
-});
-
-test("leaves skel.yaml byte for byte as it was when the commands are kept", async () => {
-  const path = repository("app", "simon/app", "WRITE");
-  const before = "# what agents run\nsetup:\n  - bun install # first\ntest:\n  - bun test\n";
-  writeFileSync(join(path, "skel.yaml"), before);
-  const added = await skel(["init", path], "\n\n");
-  expect(added.code).toBe(0);
-  expect(skelYaml(path)).toBe(before);
-  expect(added.out).not.toContain("Commit it");
-});
-
-test("refuses a skel.yaml that isn't valid", async () => {
-  const path = repository("app", "simon/app", "WRITE");
-  writeFileSync(join(path, "skel.yaml"), "setup: bun install\n");
-  const added = await skel(["init", path], "\n\n");
-  expect(added.code).toBe(1);
-  expect(added.err).toContain("skel.yaml");
-});
-
-test("Ctrl-D at a command question adds nothing", async () => {
-  const path = repository("app", "simon/app", "WRITE");
-  writeFileSync(join(path, "bun.lock"), "");
-  const stopped = await skel(["init", path], "\n");
-  expect(stopped.code).toBe(1);
-  expect(existsSync(join(path, "skel.yaml"))).toBe(false);
-  const exclude = join(path, ".git", "info", "exclude");
-  expect(existsSync(exclude) ? readFileSync(exclude, "utf8") : "").not.toContain(".skel/");
-  expect((await skel(["repo", "ls"])).out).not.toContain(path);
-});
-
-test("says to use skel init when no repository is added", async () => {
-  expect((await skel(["repo", "ls"])).out).toContain("skel init");
-});
-
-test("skel repo add is gone", async () => {
-  const path = repository("app", "simon/app", "WRITE");
-  const added = await skel(["repo", "add", path]);
-  expect(added.code).toBe(1);
-  expect(added.err).toContain("skel init");
-  expect(added.err).not.toContain("repo add");
-});
-
-test("refuses a linked worktree, and points to the main clone", async () => {
-  const path = repository("app", "simon/app", "WRITE");
-  const git = ["git", "-C", path, "-c", "user.name=t", "-c", "user.email=t@t"];
-  Bun.spawnSync([...git, "commit", "-q", "--allow-empty", "-m", "start"]);
-  const linked = join(home, "code", "app-linked");
-  Bun.spawnSync([...git, "worktree", "add", "-q", linked]);
-  const added = await skel(["init", linked], "\n\n");
-  expect(added.code).toBe(1);
-  expect(added.err).toContain("main clone");
-  expect((await skel(["repo", "ls"])).out).not.toContain(linked);
-});
-
-test("refuses a package.json that isn't valid, naming it", async () => {
-  const path = repository("app", "simon/app", "WRITE");
-  writeFileSync(join(path, "package-lock.json"), "{}");
-  writeFileSync(join(path, "package.json"), "{ not json");
-  const added = await skel(["init", path], "\n\n");
-  expect(added.code).toBe(1);
-  expect(added.err).toContain("package.json");
-  expect((await skel(["repo", "ls"])).out).not.toContain(path);
-});
-
-test("asks about trust for a fork, even one you can push to", async () => {
-  const path = repository("app", "simon/app", "ADMIN", true);
-  const added = await skel(["init", path], trustAndKeep);
-  expect(added.code).toBe(0);
-  expect(added.out).toContain("Do you trust");
-});
-
-test("asks about trust again when a trusted folder's origin points elsewhere", async () => {
-  const path = repository("app", "simon/app");
-  await skel(["init", path], trustAndKeep);
-  await skel(["repo", "rm", "app"]);
-  repository("app", "stranger/app");
-  Bun.spawnSync([
-    "git",
-    "-C",
-    path,
-    "remote",
-    "set-url",
-    "origin",
-    "https://github.com/stranger/app",
-  ]);
-  const again = await skel(["init", path], trustAndKeep);
-  expect(again.code).toBe(0);
-  expect(again.out).toContain("Do you trust");
-});
-
-test("says how to answer the command questions", async () => {
-  const path = repository("app", "simon/app", "WRITE");
-  const added = await skel(["init", path], "\n\n");
-  expect(added.out).toContain("Enter keeps the suggestion, - means none");
-  expect(added.out).toContain("one command");
-});
-
-test("Ctrl-D at a command question after a yes saves no trust", async () => {
-  const path = repository("app", "simon/app");
-  const stopped = await skel(["init", path], "y\n");
-  expect(stopped.code).toBe(1);
-  expect(existsSync(join(home, ".config", "skel", "trusted"))).toBe(false);
-});
-
-test("says there is no folder for a relative path that doesn't exist", async () => {
-  for (const given of ["./app", "../app", "code/app/src"]) {
-    const added = await skel(["init", given]);
-    expect(added.code).toBe(1);
-    expect(added.err).toContain("no folder");
-  }
-});
-
-test("refuses a submodule, naming it as one", async () => {
-  const path = join(home, "code", "sub");
-  mkdirSync(path, { recursive: true });
-  writeFileSync(join(path, ".git"), "gitdir: ../.git/modules/sub\n");
-  const added = await skel(["init", path]);
-  expect(added.code).toBe(1);
-  expect(added.err).toContain("submodule");
-});
-
-test("stops before saving anything when skel.yaml's commands use anchors", async () => {
-  const path = repository("app", "simon/app");
-  const before = "setup: &commands [make check]\ntest: *commands\n";
-  writeFileSync(join(path, "skel.yaml"), before);
-  const added = await skel(["init", path], "y\nmake deps\n\n");
-  expect(added.code).toBe(1);
-  expect(added.err).toContain("skel.yaml");
-  expect(added.err).toContain("by hand");
-  expect(skelYaml(path)).toBe(before);
-  expect(existsSync(join(home, ".config", "skel", "trusted"))).toBe(false);
-  expect((await skel(["repo", "ls"])).out).not.toContain(path);
+  appendFileSync(join(home, ".gitconfig"), `[init]\n\ttemplateDir = ${template}\n`);
+  const run = await skel(["--from", "simon/app"]);
+  expect(run.err).toContain("credential");
+  expect(existsSync(clone("simon/app"))).toBe(false);
+  expect(existsSync(join(home, ".local", "share", "skel", "cloning", "simon", "app"))).toBe(false);
+  expect((await skel(["repo", "ls"])).out).toBe(`${hint}\n`);
 });
