@@ -236,7 +236,7 @@ export async function serve(tmux: string): Promise<void> {
     await listenFor(thread);
     // After the builder is back, since the round may type into its session.
     bringBack(db, tmux, thread).then(
-      () => resumeRound(db, tmux, thread),
+      () => resumeRound(db, tmux, thread.folder),
       (error) => failThread(db, thread, error),
     );
   }

@@ -250,9 +250,11 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
 
 // Carries on with a round the daemon's stop cut short: a submit not yet pushed and
 // reviewed, a review whose skel/review check was left pending, or changes not yet typed
-// into the builder. Pushing again is harmless: GitHub has the commit, or gets it now.
-export function resumeRound(db: Database, tmux: string, thread: Thread): void {
-  const { folder, submitting, reviewing, telling } = thread;
+// into the builder. Pushing again is harmless: GitHub has the commit, or gets it now. A
+// builder brought back can submit before this runs, and then its newer round wins.
+export function resumeRound(db: Database, tmux: string, folder: string): void {
+  if (latest.has(folder)) return;
+  const { submitting, reviewing, telling } = readThread(db, folder);
   const cancel = new AbortController();
   const none = Promise.resolve();
   if (submitting !== null) pushAndReview(db, tmux, folder, submitting, none);

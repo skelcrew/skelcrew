@@ -471,6 +471,26 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     await until(() => thread().telling === null);
   }, 60_000);
 
+  test("a builder started again that submits at once drops the saved review", async () => {
+    addApp();
+    verdict(1, "changes", "Stale.");
+    verdict(2, "approve", "Fresh.");
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "busy"), "");
+    const first = serve();
+    await untilCloned();
+    await skel(["start", "app-12"]);
+    await until(() => thread().telling !== null, 30_000);
+    first.kill();
+    await first.exited;
+    Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
+    rmSync(join(builder(), "busy"));
+    serve();
+    await until(() => finished("success").length === 1, 30_000);
+    await Bun.sleep(2000);
+    expect(typedMessages()).toBe(0);
+  }, 60_000);
+
   test("a newer skel submit drops a review still waiting for the builder", async () => {
     addApp();
     verdict(1, "changes", "Stale.");
