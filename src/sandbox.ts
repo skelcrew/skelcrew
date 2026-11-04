@@ -296,8 +296,8 @@ export function agentCommand(given: {
     mounts.push(...ro(repos));
   }
 
-  // Claude Code asks whether to trust the folder even in bypass mode, and would wait there
-  // with nobody to answer.
+  // Claude Code asks whether to trust the folder even in bypass mode, and on its first
+  // launch asks for a theme and more, and would wait there with nobody to answer.
   const file = join(config, ".claude.json");
   let json: z.infer<typeof ClaudeJson> = {};
   if (existsSync(file)) {
@@ -319,7 +319,8 @@ export function agentCommand(given: {
   // never followed. "wx" refuses a link already at the new name.
   const fresh = join(config, `.claude.json.${process.pid}`);
   rmSync(fresh, { force: true });
-  writeFileSync(fresh, JSON.stringify({ ...json, projects }), { mode: 0o600, flag: "wx" });
+  const done = { ...json, hasCompletedOnboarding: true, projects };
+  writeFileSync(fresh, JSON.stringify(done), { mode: 0o600, flag: "wx" });
   renameSync(fresh, file);
 
   const command = ["claude", "--model", model, "--permission-mode", "bypassPermissions"];
@@ -334,6 +335,9 @@ export function agentCommand(given: {
   kept.CLAUDE_CODE_OAUTH_TOKEN = token;
   // Its greyed-out suggestions propose steps, such as pushing, that belong to skel.
   kept.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = "false";
+  // Its install folder is read-only in the sandbox, so an update only fails, with a red line
+  // in every session. You update claude outside skel, and agents start on that version.
+  kept.DISABLE_AUTOUPDATER = "1";
   const argv = sandboxArgs({
     home,
     path: env.PATH ?? "",
