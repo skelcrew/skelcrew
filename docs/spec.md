@@ -147,7 +147,8 @@ For you, and for the lead:
 | `skel [--from <owner/repo>]` | Attaches to the lead, starting the daemon and the lead if needed, and tells it which repository you are in, bringing that repository in first if it is new. `--remote` passes `--from` for you. |
 | `skel --remote <host> [command]` | Runs any skel command on the server, over `ssh -t`. With `sprite:<name>` as the host, runs it on that Sprite instead, creating it after asking if it doesn't exist. |
 | `skel serve` | Runs the daemon in the foreground, for systemd or a Sprite service. One per machine. |
-| `skel repo ls`, `skel repo rm <name>` | Lists the repositories skel works on, with their short names, or removes skel's clone of one. |
+| `skel repo ls` | Lists the repositories skel works on, with their short names. |
+| `skel repo rm <name>` | Removes skel's clone of a repository. It refuses while the repository has live threads, and names them. Only you can run it: the lead never needs to, and asks you instead. |
 | `skel repo name <name> <short>` | Gives a repository a short name, used in its thread names. |
 | `skel repo trust <name>` | Trusts a repository your login can't push to, so skel clones it. Only you can run it. |
 | `skel task ls [<repo>]` | Open tasks, newest first, with the thread on each one if it has one. `--json` for tools. |
