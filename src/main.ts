@@ -1,12 +1,9 @@
 // skel's command line: reads the command and hands it to the file that does it.
-import { attachToLead, createTask, serve, startOn, tasks, threads } from "./daemon.ts";
-import { printTasks, printThreads } from "./list.ts";
-import { bringInFrom, listRepos, removeRepo, trustRepo } from "./repo.ts";
-import { firstRun } from "./setup.ts";
-import { attachToThread } from "./thread.ts";
+import { remote } from "./remote.ts";
 
 const usage = `Usage:
   skel [--from <owner/repo>]
+  skel --remote <host> [command]
   skel serve
   skel repo ls
   skel repo rm <name>
@@ -21,6 +18,15 @@ const usage = `Usage:
 // With no command, sets up skel and attaches you to the lead.
 async function run(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
+  if (command === "--remote" && sub) process.exit(await remote(sub, rest));
+  // Loaded only for commands that run here, so skel --remote never loads the parts made for
+  // the Linux server, such as the sandbox and the daemon's lock, on a laptop that can be a
+  // Mac.
+  const { attachToLead, createTask, serve, startOn, tasks, threads } = await import("./daemon.ts");
+  const { printTasks, printThreads } = await import("./list.ts");
+  const { bringInFrom, listRepos, removeRepo, trustRepo } = await import("./repo.ts");
+  const { firstRun } = await import("./setup.ts");
+  const { attachToThread } = await import("./thread.ts");
   if (args.length === 0 || (command === "--from" && sub && rest.length === 0)) {
     firstRun();
     await bringInFrom(sub);
