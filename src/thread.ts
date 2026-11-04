@@ -32,6 +32,12 @@ export const Thread = z.object({
   reviewing: z.string().nullable(),
   // A posted review's changes, until they are typed into the builder.
   telling: z.string().nullable(),
+  // The ID of the last review, PR comment and check run handled, so each event is handled
+  // once, across restarts too. Null until the PR is first polled, for threads an older skel
+  // started: that poll starts after the PR's history rather than replaying it.
+  last_review: z.number().nullable(),
+  last_comment: z.number().nullable(),
+  last_check: z.number().nullable(),
 });
 export type Thread = z.infer<typeof Thread>;
 
@@ -61,7 +67,17 @@ export function record(
   change: Partial<
     Pick<
       Thread,
-      "status" | "session" | "rounds" | "pr" | "needs_you" | "submitting" | "reviewing" | "telling"
+      | "status"
+      | "session"
+      | "rounds"
+      | "pr"
+      | "needs_you"
+      | "submitting"
+      | "reviewing"
+      | "telling"
+      | "last_review"
+      | "last_comment"
+      | "last_check"
     >
   >,
   why?: string,
@@ -180,11 +196,15 @@ export async function startThread(
       submitting: null,
       reviewing: null,
       telling: null,
+      // A new thread has no PR yet, so everything on the one it opens is new.
+      last_review: 0,
+      last_comment: 0,
+      last_check: 0,
     };
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run(
-      `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session,
+        last_review, last_comment, last_check) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0)`,
       [owner, repo, task, thread.folder, thread.branch, thread.base, thread.status, null],
     );
     log(thread);

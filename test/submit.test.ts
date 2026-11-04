@@ -265,12 +265,17 @@ async function startApp12() {
 
 // bubblewrap can't start inside skel's own sandbox, so only there builders can't start.
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
-  test("pushes the round, opens the PR, has it reviewed, types the changes in, and needs you once approved", async () => {
+  test("pushes the round, opens the PR, has it reviewed, types the changes in, and waits on CI once approved", async () => {
     addApp();
     verdict(1, "changes", "The export has no test.");
     verdict(2, "approve", "Ready to merge.");
     await startApp12();
-    await until(() => finished("success").length === 1 && thread().needs_you === 1, 30_000);
+    await until(
+      () =>
+        finished("success").length === 1 &&
+        read(join(data(), "threads", "app-12.log")).includes("waits on CI"),
+      30_000,
+    );
 
     expect(read(join(builder(), "submitted"))).toContain("Submitted app-12 for review.");
     expect(pushedRound()).toBe("2");
@@ -302,7 +307,8 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     expect(prompt).toContain("git diff origin/main...HEAD");
     expect(read(join(codexHome(), "sessions", "branches-1"))).toContain("origin/main");
 
-    expect(thread()).toMatchObject({ status: "waiting", needs_you: 1, rounds: 1, pr: 7 });
+    // Approved, it waits on CI: polling GitHub marks it needs you once every check is green.
+    expect(thread()).toMatchObject({ status: "waiting", needs_you: 0, rounds: 1, pr: 7 });
     expect(thread().reviewing).toBeNull();
     // The daemon saves a thread before it appends the thread to its log.
     await until(() => read(join(data(), "threads", "app-12.log")).includes("approved"));
@@ -429,7 +435,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     expect(reviews()).toEqual([
       { event: "COMMENT", commit_id: pushed(), body: "**Approved.**\n\nLooks right." },
     ]);
-    await until(() => thread().needs_you === 1);
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
     expect(thread()).toMatchObject({ pr: 7, submitting: null });
   }, 60_000);
 
