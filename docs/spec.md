@@ -4,9 +4,9 @@ Nov 3, 2026 · @Simon
 
 ## Goal
 
-skel is Claude Code, but always on, in parallel, isolated, and seeing each issue through to the merge.
+skel is Claude Code, but always on, in parallel, isolated, and seeing each task through to the merge.
 
-You run `skel` and talk to your lead: a Claude Code session on your server that knows all your repositories. The lead writes issues and starts threads. Each thread works in one repository, as a builder agent in its own branch, clone and sandbox. It opens a PR, a fresh reviewer on another model, Codex by default, reviews it adversarially, and they go back and forth until it is ready. CI failures and your PR comments wake the builder again. You merge.
+You run `skel` and talk to your lead: a Claude Code session on your server that knows all your repositories. The lead writes tasks and starts threads. Each thread works in one repository, as a builder agent in its own branch, clone and sandbox. It opens a PR, a fresh reviewer on another model, Codex by default, reviews it adversarially, and they go back and forth until it is ready. CI failures and your PR comments wake the builder again. You merge.
 
 There are no roles, phases or flows as files. We trust capable agents and add an adversarial review.
 
@@ -20,7 +20,7 @@ The repository starts with three documents: this spec, `AGENTS.md` for how to wr
 | Unattended, where it makes sense | Agents stay alive, wake on events, and only ask you when they need you. You approve and you merge. |
 | Parallel | Many threads at once, across repositories, without juggling chat windows. |
 | Isolated | Each thread gets a branch, clone and sandbox. Your own checkouts are never touched. No tokens inside. |
-| Connected | Issues come from GitHub and PRs go back to it. More tools can be added behind the same seam. |
+| Connected | Tasks come from GitHub issues and PRs go back to it. More tools can be added behind the same seam. |
 | Build ⇄ review | A builder and a fresh adversarial reviewer on another model loop until the change is ready. A model reviewing its own work shares its blind spots. |
 | In your harness | You stay in Claude Code. There is no new app to live in. |
 
@@ -29,7 +29,7 @@ The repository starts with three documents: this spec, `AGENTS.md` for how to wr
 Everything in this version serves this two minute demo, recorded for real with a visible clock and a time lapse.
 
 1. On the laptop: `skel --remote sprite:demo`. The lead opens, running on a Sprite.
-2. "Make issues for these two bugs in app and this one in site, and start them." The lead creates three GitHub issues in two repositories and starts three threads.
+2. "Make tasks for these two bugs in app and this one in site, and start them." The lead creates three GitHub issues in two repositories and starts three threads.
 3. Close the laptop.
 4. Open it later and run the same command. The lead says what happened: two PRs are reviewed and green, one of them after the builder fixed a failing check on its own. The third thread needs you: its builder has a question.
 5. Attach to the third thread and answer its question. Merge the two PRs on GitHub. skel cleans up.
@@ -40,10 +40,10 @@ The demo repositories are small real apps with fast CI and real issues, not skel
 
 | Word | Meaning |
 | --- | --- |
-| Lead | Your Claude Code session on the server. One per machine, always running, across all your repositories. You talk to it; it writes issues and starts threads. |
+| Lead | Your Claude Code session on the server. One per machine, always running, across all your repositories. You talk to it; it writes tasks and starts threads. |
 | Repository | A GitHub repository skel works on, from a clone of its own. It is named by its GitHub name, such as `app`, with the owner added (`simon/app`) only when two share a name, or by a short name you give it. |
-| Issue | An open GitHub issue in a repository. It states the intent: what you want, in words. skel lists every one; nothing happens until it is started. |
-| Thread | The work on one issue: its branch, clone, sandbox, builder session and history. One thread per issue at a time. Named by repository and GitHub issue number, such as `app-12`: no shell reads a dash as anything special, so it never needs quoting. |
+| Task | What you want done, in words, as an item in the tracker you connect skel to. skel is made to work from a tracker, and keeps no tasks of its own: you plan where you already do. Each tracker keeps its own word: in this version the tracker is GitHub, where a task is an open issue. A task can exist without a thread: one you create on GitHub shows up in skel, and nothing happens until it is started. |
+| Thread | skel's core: the work on one task, from its first message to the merged PR. Its branch, clone, sandbox, builder session and history. One thread per task at a time. Named by the task's own ID in its tracker, with the repository added when that ID doesn't name one: GitHub issue #12 in app is `app-12`, since its number is only unique within app, while a tracker whose IDs are already unique, such as Linear's `JOTT-12`, would keep its own. A thread never gets a second number, so the name in skel is always the one in the tracker. A dash, because no shell reads a dash as anything special, so it never needs quoting. |
 | Builder | The thread's agent. A Claude Code session that stays alive from start until the PR merges or closes. |
 | Reviewer | A fresh agent for each review round, on Codex by default, reading the PR adversarially. It runs once and answers with a verdict, with no session to attach to. It never inherits the builder's context. |
 | Event | Something that happened to a thread: a review, a PR comment, a failed check, a merge. |
@@ -67,7 +67,7 @@ Before the first step, skel checks that `tmux`, `bwrap`, `gh` and the harness ar
 
 Each step is skipped when it is already done. Once the first run has finished, `skel` skips it entirely and goes straight to the lead: a tool or login that goes missing later shows up where it is used.
 
-For now, `skel` only wraps the harness: it sets up the lead and puts you in it, full screen. Later, issues and threads show next to the harness, in a sidebar beside the lead.
+For now, `skel` only wraps the harness: it sets up the lead and puts you in it, full screen. Later, tasks and threads show next to the harness, in a sidebar beside the lead.
 
 From a laptop, `skel --remote simon@workbox` runs `ssh -t simon@workbox skel --from <owner/repo>`, passing the GitHub name of the repository you are in on the laptop, so the lead knows it too. Any command works the same way: `skel --remote simon@workbox ls`. There is no protocol of our own; SSH (and Tailscale, if you use it) does the connecting.
 
@@ -82,11 +82,11 @@ After that, `skel --remote sprite:demo` attaches to the lead, and `skel --remote
 
 Everything must work over a plain `ssh -t` or `sprite console`: no local display, no browser on the same machine, no clipboard. Logins that need a browser, such as GitHub's and Claude's, use a code and a link you open on your laptop.
 
-**Repositories.** skel keeps its own clone of every repository it works on, in `~/.local/share/skel/repos/<owner>/<repo>/`, and keeps it at the latest default branch. A repository comes in the first time you work on it: when you run `skel` in a checkout of it, or when a command names it by its full GitHub name, such as `skel ls skelcrew/skel-github`. After that its short name works everywhere. So when you ask the lead for work in another repository, it brings it in by running one of those, after asking you. There is no command to add a repository. `skel repo ls` lists them and `skel repo rm <name>` removes skel's clone.
+**Repositories.** skel keeps its own clone of every repository it works on, in `~/.local/share/skel/repos/<owner>/<repo>/`, and keeps it at the latest default branch. A repository comes in the first time you work on it: when you run `skel` in a checkout of it, or when a command names it by its full GitHub name, such as `skel task ls skelcrew/skel-github`. After that its short name works everywhere. So when you ask the lead for work in another repository, it brings it in by running one of those, after asking you. There is no command to add a repository. `skel repo ls` lists them and `skel repo rm <name>` removes skel's clone.
 
 A long name makes long thread names, so `skel repo name my-company-backend-api api` gives a repository a short name of your choosing. `api-123` then works everywhere, and so does the full GitHub name. skel refuses a short name another repository already goes by. Renaming changes only what you type: a thread keeps its folder, log and session.
 
-Before cloning, skel decides whether to trust the repository. It trusts it on its own when your GitHub login can push to it, unless it is a fork: agents will run its setup and test commands, and read its AGENTS.md and settings as instructions, and you already vouch for what is in it. For any other repository, `skel` run in a checkout of it asks you whether you trust it. Brought in any other way, it waits until you run `skel trust <name>` in your own terminal, since a yes passed on by the lead could come from an injected instruction. The answer is remembered in \~/.config/skel/, never in the repository, so a clone can't bring its own yes.
+Before cloning, skel decides whether to trust the repository. It trusts it on its own when your GitHub login can push to it, unless it is a fork: agents will run its setup and test commands, and read its AGENTS.md and settings as instructions, and you already vouch for what is in it. For any other repository, `skel` run in a checkout of it asks you whether you trust it. Brought in any other way, it waits until you run `skel repo trust <name>` in your own terminal, since a yes passed on by the lead could come from an injected instruction. The answer is remembered in \~/.config/skel/, never in the repository, so a clone can't bring its own yes.
 
 A repository can say how to set up and test it in a committed `skel.yaml`. Without one, the builder works it out, as it would in any checkout.
 
@@ -107,12 +107,12 @@ Stopping the daemon stops only the daemon. The tmux sessions keep running, so ag
 
 One thread, from start to merge.
 
-1. **The lead starts an issue.** It runs `skel issue app "<title>" "<body>"` to create a GitHub issue, then `skel start app-12`. You can run both yourself too.
+1. **The lead creates a task.** It runs `skel task create app "<title>" "<body>"`, which creates a GitHub issue, then `skel start app-12`. You can run both yourself too.
 2. **skel sets up the thread.** A clone of its own at `~/.local/share/skel/threads/app-12/`, made from skel's clone of the repository, on branch `skel/12-<slug>` from `main` (or `--from <branch>`), with the repository's setup commands run once in it.
-3. **The builder starts.** A Claude Code session in the sandbox, in the thread's clone, with the issue's title and body as its first message.
-4. **The builder finishes a round.** It commits and runs `skel done "<summary>"`. skel fetches the branch from the thread's clone into its own and pushes it from there, never running git inside the thread's folder. On the first round skel opens the PR, with `Closes #12` in its body.
-5. **The reviewer reviews.** skel sets the `skel/review` status check on the commit to pending and runs a fresh reviewer once, in the sandbox, with `codex exec` (or `claude -p` without Codex). It is given the issue, reads the diff against the base branch, runs the tests, and answers in a fixed JSON shape: approve or changes, and the review's body. skel posts it as a GitHub review and sets the check to success or failure, so branch protection can require it. Reviews run one at a time, since they share skel's Codex login, and a renewal by one could leave the others with a token that no longer works. A review covers the commit it started for: a newer `skel done` cancels a review still waiting or running. A reviewer that fails, answers outside the shape, or runs past 30 minutes sets the check to failure with "review failed", and the thread needs you.
-6. **Changes go back to the builder.** skel types the review into the builder's live session. The builder fixes, commits and runs `skel done` again. Back to step 4.
+3. **The builder starts.** A Claude Code session in the sandbox, in the thread's clone, with the task's title and body as its first message.
+4. **The builder finishes a round.** It commits and runs `skel submit "<summary>"`. skel fetches the branch from the thread's clone into its own and pushes it from there, never running git inside the thread's folder. On the first round skel opens the PR, with `Closes #12` in its body.
+5. **The reviewer reviews.** skel sets the `skel/review` status check on the commit to pending and runs a fresh reviewer once, in the sandbox, with `codex exec` (or `claude -p` without Codex). It is given the task, reads the diff against the base branch, runs the tests, and answers in a fixed JSON shape: approve or changes, and the review's body. skel posts it as a GitHub review and sets the check to success or failure, so branch protection can require it. Reviews run one at a time, since they share skel's Codex login, and a renewal by one could leave the others with a token that no longer works. A review covers the commit it started for: a newer `skel submit` cancels a review still waiting or running. A reviewer that fails, answers outside the shape, or runs past 30 minutes sets the check to failure with "review failed", and the thread needs you.
+6. **Changes go back to the builder.** skel types the review into the builder's live session. The builder fixes, commits and runs `skel submit` again. Back to step 4.
 7. **After 3 rounds of changes, the thread needs you.** skel stops sending reviews to the builder until you say go on.
 8. **Approved and CI green: the thread needs you.** Its status is `waiting`, on you.
 9. **You merge on GitHub.** skel ends the builder session, removes the thread's clone, and marks the thread `done`. A PR closed without merging does the same.
@@ -147,20 +147,20 @@ For you, and for the lead:
 | `skel serve` | Runs the daemon in the foreground, for systemd or a Sprite service. One per machine. |
 | `skel repo ls`, `skel repo rm <name>` | Lists the repositories skel works on, with their short names, or removes skel's clone of one. |
 | `skel repo name <name> <short>` | Gives a repository a short name, used in its thread names. |
-| `skel trust <name>` | Trusts a repository your login can't push to, so skel clones it. Only you can run it. |
-| `skel ls [<repo>]` | Open issues and threads, with status and needs you, newest first. `--json` for tools. |
-| `skel issue <repo> "<title>" "<body>"` | Creates a GitHub issue and prints its number. |
-| `skel start <repo>-<issue> [--from <branch>]` | Starts a thread on an issue. |
-| `skel attach <repo>-<issue>` | Attaches your terminal to the builder's session. Ctrl-\] detaches. |
-| `skel say <repo>-<issue> "<text>"` | Types a message into the builder's session without attaching. |
-| `skel stop <repo>-<issue>` | Ends the session and keeps the clone, branch and PR. |
-| `skel resume <repo>-<issue>` | Starts the builder again with `--resume` on its last session. |
+| `skel repo trust <name>` | Trusts a repository your login can't push to, so skel clones it. Only you can run it. |
+| `skel task ls [<repo>]` | Open tasks, newest first, with the thread on each one if it has one. `--json` for tools. |
+| `skel task create <repo> "<title>" "<body>"` | Creates a task, as a GitHub issue, and prints its name, such as `app-13`. It doesn't start a thread. |
+| `skel ps [<repo>]` | Threads, with status and needs you, newest first. `--json` for tools. |
+| `skel start <repo>-<task> [--from <branch>]` | Starts a thread on a task. On a stopped thread, starts its builder again with `--resume` on its last session. |
+| `skel attach <repo>-<task>` | Attaches your terminal to the builder's session. Ctrl-\] detaches. |
+| `skel say <repo>-<task> "<text>"` | Types a message into the builder's session without attaching. |
+| `skel stop <repo>-<task>` | Ends the session and keeps the clone, branch and PR. |
 
 For the builder inside a thread:
 
 | Command | Who | What it does |
 | --- | --- | --- |
-| `skel done "<summary>"` | Builder | Ends a round: skel pushes, opens the PR if needed, starts a review |
+| `skel submit "<summary>"` | Builder | Submits a round for review: skel pushes, opens the PR if needed, starts a review |
 
 Agents talk to the daemon over a socket mounted into their sandbox, which also tells skel which thread they belong to. The lead and the agents never call GitHub themselves.
 
@@ -185,7 +185,7 @@ test: [bun test]
 
 **Sessions.** Every agent runs in tmux, on skel's own tmux server (`tmux -L skel`) with skel's own config: one session for the lead and one per builder. A reviewer runs once and needs no session. tmux keeps them alive, handles attach and detach, and answers the terminal's queries. skel never runs its own terminal emulator.
 
-**State.** One SQLite file per machine, `~/.local/share/skel/skel.db`, with `bun:sqlite`. It holds repositories (name, GitHub owner and name) and threads (repository, issue, branch, status, needs you, round count, builder session ID, PR number), and the last handled ID per event kind. Every change is also appended to `~/.local/share/skel/threads/<repo>-<issue>.log` as one JSON line, so a thread's history can be read and replayed. Open issues are not stored; `skel ls` asks GitHub. Repository clones live in `~/.local/share/skel/repos/` and thread clones in `~/.local/share/skel/threads/`, on one disk, so a thread's clone shares its files with the repository's.
+**State.** One SQLite file per machine, `~/.local/share/skel/skel.db`, with `bun:sqlite`. It holds repositories (name, GitHub owner and name) and threads (repository, task, branch, status, needs you, round count, builder session ID, PR number), and the last handled ID per event kind. Every change is also appended to `~/.local/share/skel/threads/<repo>-<task>.log` as one JSON line, so a thread's history can be read and replayed. Open tasks are not stored; `skel task ls` asks GitHub. Repository clones live in `~/.local/share/skel/repos/` and thread clones in `~/.local/share/skel/threads/`, on one disk, so a thread's clone shares its files with the repository's.
 
 **Surviving restarts.** When the daemon starts, it brings back the lead and every thread that was `working` or `waiting` with `claude --resume <session>`, runs again every review whose `skel/review` check is still pending, and polling picks up any event it missed.
 
@@ -193,7 +193,7 @@ test: [bun test]
 
 **Tokens stay out.** Agents never see your GitHub token. They don't push or call GitHub. They call skel commands, and the daemon, outside the sandbox, pushes and posts with your `gh` login. Commits are authored by you, with skel as co-author.
 
-**One seam for GitHub.** All GitHub calls live in one module, so Linear, local issues or another forge can be added later without touching the flow.
+**One seam for GitHub.** All GitHub calls live in one module, so Linear, Jira, local tasks or another forge can be added later without touching the flow.
 
 **One seam for Sprites.** Creating a Sprite, running commands on it and keeping it awake live in one module, so other machines that skel creates or that sleep can be added later without touching the flow.
 
@@ -209,7 +209,7 @@ These are the parts that need care. `docs/learnings.md` explains the traps behin
 
 ## Not in this version
 
-- Issues and threads shown next to the harness (the sidebar comes later)
+- Tasks and threads shown next to the harness (the sidebar comes later)
 - Reviewing pull requests skel didn't open (a likely early addition)
 - Roles, phases and flows as files
 - Harnesses other than Claude Code, and Codex for the reviewer
@@ -218,7 +218,8 @@ These are the parts that need care. `docs/learnings.md` explains the traps behin
 - Projects with their own memory beyond `AGENTS.md`
 - Agents talking to each other, beyond skel telling the lead
 - Triggers, schedules or automations
-- Slack, Linear, local issues or forges other than GitHub
+- Slack, Linear, Jira or forges other than GitHub
+- Threads started from plain text, without a task. They would be named with a marker, such as `app-t1`, so they never clash with a task's name
 - Starting a thread by assigning or mentioning on GitHub
 - A remote protocol of our own (SSH only), teams and permissions
 
@@ -228,14 +229,14 @@ If something seems missing, ask instead of adding it.
 
 Each one is something you use every day from the day it lands, and lands as small pull requests that pass `bun run check`. From milestone 2 on, skel builds skel.
 
-1. **skel on the server.** You `ssh workbox` yourself and run `skel`. The first run, the daemon as a systemd user service, `skel serve`, skel's own clones of your repositories, brought in when you run `skel` in one, `skel repo` and `skel trust`. The lead runs in bubblewrap inside tmux and sees your repositories. Ctrl-\] detaches, and logging out leaves everything running. This replaces herdr plus Claude.
-2. **One thread to a reviewed PR.** `skel issue`, `skel start`, `skel ls`, `skel attach`, `skel done`, the reviewer's Codex login. Builder and reviewer loop, with the reviewer on Codex, skel pushes and opens the PR, the `skel/review` check, the round limit, needs you when approved.
+1. **skel on the server.** You `ssh workbox` yourself and run `skel`. The first run, the daemon as a systemd user service, `skel serve`, skel's own clones of your repositories, brought in when you run `skel` in one, `skel repo` and `skel repo trust`. The lead runs in bubblewrap inside tmux and sees your repositories. Ctrl-\] detaches, and logging out leaves everything running. This replaces herdr plus Claude.
+2. **One thread to a reviewed PR.** `skel task create`, `skel task ls`, `skel start`, `skel ps`, `skel attach`, `skel submit`, the reviewer's Codex login. Builder and reviewer loop, with the reviewer on Codex, skel pushes and opens the PR, the `skel/review` check, the round limit, needs you when approved.
 3. **Parallel and needs you.** Several threads at once across repositories, the note in the lead's session, `notify`, questions marked needs you, `skel say`, the lead knowing which repository you attached from.
-4. **Follow-through.** Polling for failed checks, PR comments, conflicts and merges. Cleanup on merge or close. Surviving a restart with `--resume`. `skel stop`, `skel resume`.
+4. **Follow-through.** Polling for failed checks, PR comments, conflicts and merges. Cleanup on merge or close. Surviving a restart with `--resume`. `skel stop`, and `skel start` on a stopped thread.
 5. **Remote, on a Sprite.** `skel --remote sprite:<name>` from the laptop: the laptop check, creating the Sprite after asking, bubblewrap and skel's binary installed in it, the first run there, the daemon as a Sprite service, keeping the Sprite awake while there is work, and a webhook to wake it. From no server at all to a running lead with one command. `skel --remote <host>` over SSH, offering to copy skel's binary with `scp` when it is missing. The lead brings in repositories when you ask for work in one.
-6. **The demo.** Pick the demo repositories and their issues, run the script for real, record it.
+6. **The demo.** Pick the demo repositories and their tasks, run the script for real, record it.
 
 ## Done when
 
-The demo runs as written, start to finish, with nothing faked: three issues in two repositories from one sentence to the lead, the laptop closed, two reviewed green PRs and one question waiting when it opens again, one CI failure fixed by its builder, and the threads' clones gone after you merge.
+The demo runs as written, start to finish, with nothing faked: three tasks in two repositories from one sentence to the lead, the laptop closed, two reviewed green PRs and one question waiting when it opens again, one CI failure fixed by its builder, and the threads' clones gone after you merge.
 
