@@ -118,9 +118,10 @@ export function refreshClones(db: Database): Promise<void> {
   return refreshing;
 }
 
-// Checks trust, refreshes the repository clone and records it for the lead. Asking is only
-// for your own terminal. Anywhere else a repository you can't push to waits for skel repo
-// trust, since a yes passed on by the lead could come from an injected instruction.
+// Checks trust, refreshes the repository clone, records it for the lead, and creates its skel
+// label so you can start threads from GitHub. Asking is only for your own terminal. Anywhere
+// else a repository you can't push to waits for skel repo trust, since a yes passed on by the
+// lead could come from an injected instruction.
 export async function bringIn(db: Database, github: GitHubRepo, ask: boolean): Promise<void> {
   const { owner, repo, canPush, isFork } = github;
   const full = `${owner}/${repo}`;
@@ -145,6 +146,22 @@ export async function bringIn(db: Database, github: GitHubRepo, ask: boolean): P
   if (known) return;
   db.run("INSERT INTO repositories (owner, repo, name) VALUES (?, ?, ?)", [owner, repo, full]);
   nameRepositories(db);
+  const labeled = "UPDATE repositories SET labeled = 1 WHERE owner = ? AND repo = ?";
+  // Only people who can push or triage may add a label, so where you can't push, a label
+  // would be of no use to you.
+  if (!canPush) {
+    db.run(labeled, [owner, repo]);
+    return;
+  }
+  try {
+    await createLabel(full);
+    db.run(labeled, [owner, repo]);
+  } catch (error) {
+    // The daemon tries again when it next refreshes the clone.
+    console.error(
+      `skel: couldn't create the skel label in ${full}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 // Brings in the repository you attached from, reporting failures without blocking the lead.

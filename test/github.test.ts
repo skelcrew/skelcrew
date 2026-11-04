@@ -12,6 +12,7 @@ import {
   postReview,
   reactToIssue,
   readIssue,
+  readRepository,
   setReviewStatus,
 } from "../src/github.ts";
 
@@ -202,4 +203,15 @@ test("reacts to an issue with eyes", async () => {
     args: ["api", "repos/simon/app/issues/12/reactions", "--method", "POST", "--input", "-"],
     input: { content: "eyes" },
   });
+});
+
+// Issues with threads keep their label, so the oldest labeled issues could fill every answer.
+// Adding a label updates an issue, so one just labeled is always among the newest.
+test("asks for the labeled issues updated last", async () => {
+  gh(
+    '{"data":{"viewer":{"login":"simon"},"repository":{"labeled":{"nodes":[{"number":12,"title":"Add export"}]}}}}',
+  );
+  const read = await readRepository("simon/app", []);
+  expect(read.labeled).toEqual([{ number: 12, title: "Add export" }]);
+  expect(JSON.stringify(sent().input)).toContain("orderBy: { field: UPDATED_AT, direction: DESC }");
 });

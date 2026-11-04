@@ -389,7 +389,7 @@ const pullFields = `state mergeable baseRefName
 const Labeled = z.object({ number: z.number(), title: z.string() });
 export type Labeled = z.infer<typeof Labeled>;
 
-// Returns your gh login, the repository's open issues labeled skel, oldest first, and each of
+// Returns your gh login, the repository's open issues labeled skel, and each of
 // its given PRs, with their reviews, comments, head checks and merge state, in one GraphQL
 // query, so the number of requests doesn't grow with the number of threads. A PR GitHub
 // doesn't find is left out.
@@ -399,9 +399,10 @@ export async function readRepository(
 ): Promise<{ you: string; labeled: Labeled[]; prs: Map<number, PullRequest> }> {
   const [owner, name] = repo.split("/");
   const pulls = numbers.map((n) => `pr${n}: pullRequest(number: ${n}) { ${pullFields} }`);
-  // A hundred is more issues than anyone labels between two polls; the rest come next time.
+  // Issues with threads keep their label, so the oldest labeled issues could fill every
+  // answer. Adding a label updates an issue, so one just labeled is always among the newest.
   const labeled = `labeled: issues(labels: ["skel"], states: [OPEN], first: 100,
-    orderBy: { field: CREATED_AT, direction: ASC }) { nodes { number title } }`;
+    orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { number title } }`;
   const query = `query($owner: String!, $name: String!) { viewer { login }
     repository(owner: $owner, name: $name) { ${labeled}\n${pulls.join("\n")} } }`;
   const got = await gh(["api", "graphql", "--input", "-"], `poll ${repo}`, {
