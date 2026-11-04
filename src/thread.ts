@@ -296,10 +296,11 @@ export function threadConfig(): {
   };
 }
 
-// Tells the builder how a round ends. It goes in the system prompt rather than the first
+// Tells the builder how a round ends, and when to ask you: a builder's question waits on a
+// screen nobody watches. It goes in the system prompt rather than the first
 // message, so the first message stays the task in its own words, and the builder still has
 // it after a long conversation is compacted.
-const howToSubmit = `You are the builder in a skel thread, working on the task in your first message, in your own clone and branch. When a round of work is ready for review, commit it and run skel submit "<summary>", with a summary of the change for the pull request. skel then pushes your branch, opens the pull request if there is none yet, and has a fresh reviewer review it. You can't push or call GitHub yourself from here, so don't try. If the reviewer asks for changes, skel types the review into this session: fix what it asks, commit, and run skel submit again.`;
+const howToSubmit = `You are the builder in a skel thread, working on the task in your first message, in your own clone and branch. When a round of work is ready for review, commit it and run skel submit "<summary>", with a summary of the change for the pull request. skel then pushes your branch, opens the pull request if there is none yet, and has a fresh reviewer review it. You can't push or call GitHub yourself from here, so don't try. If the reviewer asks for changes, skel types the review into this session: fix what it asks, commit, and run skel submit again. Come back to the human only for new scope, missing access, or a decision that is theirs. Decide everything else yourself.`;
 
 // Starts the thread's builder in tmux, in the sandbox in its clone: with --resume when it
 // saved a conversation, or else afresh with the task's title and body as its first message. Throws when it

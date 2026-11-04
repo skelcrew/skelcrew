@@ -314,6 +314,9 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
         .slice(told + 1)
         .join("\n"),
     ).toContain('skel submit "<summary>"');
+    expect(args).toContain(
+      "Come back to the human only for new scope, missing access, or a decision that is theirs. Decide everything else yourself.",
+    );
     expect(args.endsWith("Add export\n\nAs JSON\n")).toBe(true);
   }, 30_000);
 
