@@ -9,7 +9,7 @@ import { z } from "zod";
 import { openDb } from "./db.ts";
 import { pollGitHub } from "./events.ts";
 import { createIssue } from "./github.ts";
-import { startLead, tellAttachedFrom, tellLead } from "./lead.ts";
+import { attachedNote, recordAttachedFrom, startLead, tellLead } from "./lead.ts";
 import {
   listRepositories,
   listTasks,
@@ -63,6 +63,7 @@ const Request = z.discriminatedUnion("command", [
   z.object({ command: z.literal("submit"), summary: z.string().min(1) }),
   z.object({ command: z.literal("question asked") }),
   z.object({ command: z.literal("question answered") }),
+  z.object({ command: z.literal("attached") }),
 ]);
 type Request = z.infer<typeof Request>;
 const LeadReply = z.union([z.object({ lead: z.literal(true) }), z.object({ error: z.string() })]);
@@ -73,7 +74,7 @@ const LeadReply = z.union([z.object({ lead: z.literal(true) }), z.object({ error
 type Caller = "you" | "lead" | Thread;
 const allowed = {
   you: ["status", "lead", "repo ls", "ps", "task ls", "task create", "start"],
-  lead: ["status", "repo ls", "ps", "task ls", "task create", "start"],
+  lead: ["status", "repo ls", "ps", "task ls", "task create", "start", "attached"],
   builder: ["status", "submit", "question asked", "question answered"],
 };
 
@@ -186,13 +187,14 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
     }
     if (request.command === "lead") {
       await lead();
-      tellAttachedFrom(db, tmux, request.from);
+      recordAttachedFrom(db, request.from);
       // A lead that wasn't running kept its notes until now.
       tellLead(db, tmux);
       // Not waited on, so attaching never waits on GitHub.
       refreshClones(db).catch((error) => console.log(String(error)));
       return { lead: true };
     }
+    if (request.command === "attached") return { note: attachedNote(db) };
     if (request.command === "repo ls") return { repositories: listRepositories(db) };
     if (request.command === "ps") return { threads: listThreads(db, request.repo) };
     if (request.command === "task ls") return { tasks: await listTasks(db, request.repo) };
@@ -350,9 +352,17 @@ export async function question(asking: boolean): Promise<void> {
   await request({ command: asking ? "question asked" : "question answered" });
 }
 
+// Returns the note telling the lead where you attached from, for the lead's hook, or nothing
+// when it has nothing new. Claude Code holds your message until the hook ends, so it gives
+// up quickly, and never throws: a daemon that is down must not stop your message.
+export async function attached(): Promise<string> {
+  const reply = z.object({ note: z.string() }).safeParse(await ask({ command: "attached" }, 2000));
+  return reply.success ? reply.data.note : "";
+}
+
 // Ensures the daemon and lead are running, then attaches your terminal until you detach
-// with Ctrl-]. The daemon tells the lead which repository you attached from, as owner/repo,
-// or that there is none.
+// with Ctrl-]. The daemon keeps which repository you attached from, as owner/repo, or that
+// there is none, for the lead to hear with your next message.
 export async function attachToLead(tmux: string, from?: string): Promise<void> {
   const asked: Request = { command: "lead", ...(from ? { from } : {}) };
   // Asking for the lead brings it back if it ended while the daemon kept running.
