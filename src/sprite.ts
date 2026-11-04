@@ -4,7 +4,7 @@
 // be a Mac, so this file loads nothing made only for Linux.
 import { z } from "zod";
 import { originHere } from "./origin.ts";
-import { type Machine, quoted, run, update, withLinuxSkel } from "./remote.ts";
+import { type Machine, quoted, run, upToDate, withLinuxSkel } from "./remote.ts";
 import { skelLine } from "./say.ts";
 
 // Reports whether skel runs on a Sprite. It goes by sprite-env, the Sprite's own tool for
@@ -262,7 +262,7 @@ async function makeUrlPublic(name: string): Promise<void> {
     );
 }
 
-// How update and setting up reach a Sprite: sprite exec for shell lines, sprite file push
+// How updating and setting up reach a Sprite: sprite exec for shell lines, sprite file push
 // for skel, and the daemon's Sprite service. --no-stdin, since sprite can't reconnect a
 // command whose input it forwards.
 function onTheSprite(name: string): Machine {
@@ -309,6 +309,10 @@ function onTheSprite(name: string): Machine {
       }
     },
     restart: "sprite-env services restart skel",
+    // A Sprite an older skel set up still asks for a login at its URL. Made public only once
+    // the new daemon runs and holds the URL's port: until then, whatever else listens there
+    // would be on the internet.
+    updated: () => makeUrlPublic(name),
   };
 }
 
@@ -316,20 +320,6 @@ function onTheSprite(name: string): Machine {
 // as one of its options.
 function checkName(name: string): void {
   if (!/^\w[\w-]*$/.test(name)) throw new Error(`"${name}" can't name a Sprite`);
-}
-
-// Updates skel on an existing Sprite, whose daemon runs as a Sprite service. It never
-// creates one: a mistyped name would otherwise make a second Sprite you pay for.
-export async function updateSprite(name: string): Promise<number> {
-  checkName(name);
-  if (!spriteNames(`skel update --remote sprite:${name}`).includes(name))
-    throw new Error(`No Sprite named ${name}: skel --remote sprite:${name} creates it`);
-  const code = await update(`sprite:${name}`, onTheSprite(name));
-  // A Sprite an older skel set up still asks for a login at its URL. Made public only once
-  // the new daemon runs and holds the URL's port: until then, whatever else listens there
-  // would be on the internet.
-  if (code === 0) await makeUrlPublic(name);
-  return code;
 }
 
 // Runs a skel command on the Sprite and returns its exit code. Plain skel passes the
@@ -344,7 +334,8 @@ export async function remoteSprite(name: string, args: string[]): Promise<number
   // can't find as exit 1, like any failure, so a shell runs skel: it exits 127 when there is
   // none, which skel itself never does.
   const line = ["sh", "-c", 'exec skel "$@"', "skel", ...(from ? ["--from", from] : args)];
-  const skel = ["sprite", "exec", "-s", name, "--tty", "--", ...line];
+  const there = (env: string[]) =>
+    run(["sprite", "exec", "-s", name, "--tty", "--", "env", ...env, ...line]);
   if (!names.includes(name)) {
     // A mistyped name would otherwise make a second Sprite you pay for.
     if (!yes(skelLine(`No Sprite named ${name}. Create it? [y/N]`))) {
@@ -354,9 +345,9 @@ export async function remoteSprite(name: string, args: string[]): Promise<number
     if ((await run(["sprite", "create", "--skip-console", name])) !== 0)
       throw new Error(`sprite couldn't create sprite:${name}`);
     await setUp(name);
-    return run(skel);
+    return there([]);
   }
-  const code = await run(skel);
+  const code = await upToDate(`sprite:${name}`, there, onTheSprite(name));
   if (code !== 127) return code;
   console.log(skelLine(`sprite:${name} doesn't have skel installed.`));
   if (!yes(skelLine("install bubblewrap there and copy skel to ~/.local/bin? [y/N]"))) {
@@ -364,5 +355,5 @@ export async function remoteSprite(name: string, args: string[]): Promise<number
     return 1;
   }
   await setUp(name);
-  return run(skel);
+  return there([]);
 }

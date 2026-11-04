@@ -1,7 +1,7 @@
 // skel's command line: reads the command and hands it to the file that does it.
 import { help } from "./help.ts";
-import { remote, updateServer } from "./remote.ts";
-import { remoteSprite, updateSprite } from "./sprite.ts";
+import { outdated, outOfDate, remote } from "./remote.ts";
+import { remoteSprite } from "./sprite.ts";
 
 // What an agent may not run, in its words. Its sandbox hides skel's database, your settings
 // and your logins, so these would act on an empty database or ask what nobody can answer.
@@ -26,6 +26,7 @@ function taskName(word?: string): [string, number] | undefined {
 // With no command, sets up skel and attaches you to the lead.
 async function run(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
+  if (outOfDate()) process.exit(outdated);
   if (args.length === 1 && ["--help", "-h", "help"].includes(command ?? "")) {
     console.log(help());
     return;
@@ -33,20 +34,6 @@ async function run(args: string[]): Promise<void> {
   if (command === "--remote" && sub?.startsWith("sprite:"))
     process.exit(await remoteSprite(sub.slice("sprite:".length), rest));
   if (command === "--remote" && sub) process.exit(await remote(sub, rest));
-  // update builds skel here and puts it on the other machine, so it only makes sense with
-  // --remote, and runs on the laptop rather than over there.
-  if (command === "update") {
-    const where = sub === "--remote" && rest.length === 1 ? rest[0] : undefined;
-    if (!where)
-      throw new Error(
-        "update puts a new skel on a server or Sprite: skel update --remote <host>, or skel update --remote sprite:<name>",
-      );
-    process.exit(
-      where.startsWith("sprite:")
-        ? await updateSprite(where.slice("sprite:".length))
-        : await updateServer(where),
-    );
-  }
   const named = command === undefined || command === "--from" ? "" : command;
   const refused = yoursOnly[command === "repo" ? `repo ${sub}` : named];
   if (process.env.SKEL_SANDBOX === "1" && refused)
@@ -179,18 +166,7 @@ async function run(args: string[]): Promise<void> {
     await attachToThread("skel", ...thread);
     return;
   }
-  const known = [
-    "serve",
-    "repo",
-    "ps",
-    "task",
-    "start",
-    "stop",
-    "attach",
-    "review",
-    "submit",
-    "update",
-  ];
+  const known = ["serve", "repo", "ps", "task", "start", "stop", "attach", "review", "submit"];
   const first = command ?? "";
   console.error(
     first === "--remote"
