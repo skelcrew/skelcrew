@@ -24,8 +24,12 @@ export const Thread = z.object({
   rounds: z.number(),
   pr: z.number().nullable(),
   needs_you: z.number().transform((flag) => flag !== 0),
+  // The summary of a submit not yet pushed and reviewed.
+  submitting: z.string().nullable(),
   // The commit whose skel/review check is pending, while its review waits or runs.
   reviewing: z.string().nullable(),
+  // A posted review's changes, until they are typed into the builder.
+  telling: z.string().nullable(),
 });
 export type Thread = z.infer<typeof Thread>;
 
@@ -52,7 +56,12 @@ export const readThread = (db: Database, folder: string) =>
 export function record(
   db: Database,
   folder: string,
-  change: Partial<Pick<Thread, "status" | "session" | "rounds" | "pr" | "needs_you" | "reviewing">>,
+  change: Partial<
+    Pick<
+      Thread,
+      "status" | "session" | "rounds" | "pr" | "needs_you" | "submitting" | "reviewing" | "telling"
+    >
+  >,
   why?: string,
 ): Thread {
   // The column names come from the keys of Thread above, never from outside.
@@ -142,7 +151,9 @@ export async function startThread(
       rounds: 0,
       pr: null,
       needs_you: false,
+      submitting: null,
       reviewing: null,
+      telling: null,
     };
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run(

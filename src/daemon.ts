@@ -11,7 +11,7 @@ import { createIssue } from "./github.ts";
 import { startLead } from "./lead.ts";
 import { cliSocket, daemonSocket, leadSocket, threadSocket } from "./paths.ts";
 import { findRepository, refreshClones } from "./repo.ts";
-import { reviewAgain, submitRound } from "./round.ts";
+import { resumeRound, submitRound } from "./round.ts";
 import { setupDone } from "./setup.ts";
 import {
   bringBack,
@@ -230,7 +230,7 @@ export async function serve(tmux: string): Promise<void> {
   for (const thread of before) {
     await listenFor(thread);
     bringBack(db, tmux, thread).catch((error) => failThread(db, thread, error));
-    reviewAgain(db, tmux, thread);
+    resumeRound(db, tmux, thread);
   }
 }
 

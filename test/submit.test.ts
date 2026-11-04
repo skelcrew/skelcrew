@@ -35,7 +35,8 @@ function script(name: string, body: string): void {
 // Stands in for Claude Code. As the builder, it commits a round and runs skel submit, then
 // waits at a ❯ prompt, keeping what is typed into it. Each typed message ends in a paste mark
 // and an Enter, and it answers each one with another round, as a builder fixing a review
-// would. `submits` false leaves the first round to the test.
+// would. `submits` false leaves the first round to the test. While the file busy is in its
+// config folder after a round, it looks busy, as Claude Code does mid-turn.
 function fakeClaude(submits = true): void {
   script(
     "claude",
@@ -47,6 +48,8 @@ round() {
   echo "$n" > change
   git add -A && git commit -qm "round $n"
   skel submit "Round $n" >> "$CLAUDE_CONFIG_DIR/submitted" 2>&1
+  while test -e "$CLAUDE_CONFIG_DIR/busy"; do echo "esc to interrupt"; sleep 0.2; done
+  clear
 }
 ${submits ? "round" : ""}
 printf '\\033[?2004h'
@@ -104,7 +107,7 @@ beforeEach(() => {
 case "$*" in
 "api repos/simon/app/issues/12") cat "$HOME/gh/issue" ;;
 "api repos/simon/app/pulls?state=open&head="*) if test -e "$HOME/gh/pr"; then echo '[{"number":7}]'; else echo '[]'; fi ;;
-"api repos/simon/app/pulls --method POST --input -") cat > "$HOME/gh/pr"; echo '{"number":7}' ;;
+"api repos/simon/app/pulls --method POST --input -") touch "$HOME/gh/opening"; while test -e "$HOME/gh/hold"; do sleep 0.1; done; cat > "$HOME/gh/pr"; echo '{"number":7}' ;;
 "api repos/simon/app/pulls/7/reviews --method POST --input -") cat >> "$HOME/gh/reviews"; echo >> "$HOME/gh/reviews"; echo '{"id":1}' ;;
 "api repos/simon/app/statuses/"*) echo "\${2##*/} $(cat)" >> "$HOME/gh/statuses"; echo '{"state":"set"}' ;;
 *) echo "the fake gh doesn't know $*" >&2; exit 1 ;;
@@ -386,6 +389,70 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     expect(finished("success")[0]?.sha).toBe(pushed());
     expect(reviews()).toEqual([{ event: "COMMENT", body: "**Approved.**\n\nLooks right." }]);
     await until(() => thread().reviewing === null);
+  }, 60_000);
+
+  test("finishes a submit the daemon's stop cut short while opening the PR", async () => {
+    addApp();
+    verdict(1, "approve", "Looks right.");
+    writeFileSync(join(home, "gh", "hold"), "");
+    const first = serve();
+    await untilCloned();
+    await skel(["start", "app-12"]);
+    await until(() => existsSync(join(home, "gh", "opening")), 30_000);
+    first.kill();
+    await first.exited;
+    // The gh the stopped daemon started opens its PR once let go, as GitHub would.
+    rmSync(join(home, "gh", "hold"));
+    serve();
+    await until(() => finished("success").length === 1, 30_000);
+    expect(finished("success")[0]?.sha).toBe(pushed());
+    expect(reviews()).toEqual([{ event: "COMMENT", body: "**Approved.**\n\nLooks right." }]);
+    await until(() => thread().needs_you === 1);
+    expect(thread()).toMatchObject({ pr: 7, submitting: null });
+  }, 60_000);
+
+  test("types in a review the daemon's stop kept from the builder, without reviewing again", async () => {
+    addApp();
+    verdict(1, "changes", "The export has no test.");
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "busy"), "");
+    const first = serve();
+    await untilCloned();
+    await skel(["start", "app-12"]);
+    await until(() => thread().telling !== null, 30_000);
+    const reviewed = statuses()[0]?.sha;
+    first.kill();
+    await first.exited;
+    serve();
+    await Bun.sleep(1000);
+    rmSync(join(builder(), "busy"));
+    await until(() => typedMessages() === 1, 30_000);
+    expect(read(join(builder(), "typed"))).toContain("The export has no test.");
+    expect(reviews()).toHaveLength(1);
+    expect(
+      statuses()
+        .filter((s) => s.sha === reviewed)
+        .map((s) => s.state),
+    ).toEqual(["pending", "failure"]);
+    await until(() => thread().telling === null);
+  }, 60_000);
+
+  test("a newer skel submit drops a review still waiting for the builder", async () => {
+    addApp();
+    verdict(1, "changes", "Stale.");
+    verdict(2, "approve", "Fresh.");
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "busy"), "");
+    await startApp12();
+    await until(() => thread().telling !== null, 30_000);
+    writeFileSync(join(clone(), "change"), "newer\n");
+    git(clone(), "commit", "-qam", "newer");
+    expect((await skel(["submit", "Newer"], { SKEL_SOCKET: builderSocket() })).err).toBe("");
+    expect(thread().telling).toBeNull();
+    await until(() => finished("success").length === 1, 30_000);
+    rmSync(join(builder(), "busy"));
+    await Bun.sleep(2000);
+    expect(typedMessages()).toBe(0);
   }, 60_000);
 
   test("a thread started from another branch is reviewed against it, and its PR goes into it", async () => {

@@ -152,7 +152,8 @@ async function reviewRound(
   const repo = github(thread);
   const { model, reviewer, maxRounds } = threadConfig();
   await setReviewStatus(repo, sha, "pending", "skel's reviewer is reviewing");
-  record(db, folder, { reviewing: sha }, `reviewing ${sha}`);
+  if (signal.aborted) return;
+  record(db, folder, { reviewing: sha, submitting: null }, `reviewing ${sha}`);
   const verdict = await review({
     clone: cloneOf(thread),
     issue: await readIssue(repo, thread.task),
@@ -168,60 +169,99 @@ async function reviewRound(
   if (verdict.verdict !== "failed") await postReview(repo, pr, verdict.verdict, verdict.body);
   await setReviewStatus(repo, sha, outcome.check, outcome.description);
   if (signal.aborted) return;
-  const { rounds, needsYou, status } = outcome;
-  record(db, folder, { reviewing: null, rounds, needs_you: needsYou, status }, outcome.why);
-  // A builder can work long after it submits, but one busy this long has likely hung. A
-  // newer round makes the review stale, so it is never typed once one starts.
-  if (outcome.tell) await typeInto(tmux, folder, outcome.tell, { timeout: 30 * 60_000, signal });
+  const { rounds, needsYou, status, tell } = outcome;
+  const change = { reviewing: null, rounds, needs_you: needsYou, status, telling: tell };
+  record(db, folder, change, outcome.why);
+  if (tell) await deliver(db, tmux, folder, tell, signal);
+}
+
+// Types a review's changes into the builder once it is idle, then forgets them. They are
+// saved until then, so a stop of the daemon while the builder is busy doesn't lose them.
+// A newer round makes them stale, so they are never typed once one starts.
+async function deliver(
+  db: Database,
+  tmux: string,
+  folder: string,
+  text: string,
+  signal: AbortSignal,
+): Promise<void> {
+  // A builder can work long after it submits, but one busy this long has likely hung.
+  await typeInto(tmux, folder, text, { timeout: 30 * 60_000, signal });
+  if (!signal.aborted) record(db, folder, { telling: null }, "typed the review into the builder");
 }
 
 // The latest round of each thread: cancelling it cancels its review, and its push is what
 // the next round's push waits for, so two pushes or two PRs never race.
 const latest = new Map<string, { cancel: AbortController; pushed: Promise<unknown> }>();
 
-// Starts reviewing once the commit is pushed, and marks the thread needs you, with the
-// reason, when any of the round fails, unless a newer round has taken over.
+// Keeps the round as the thread's latest, and marks the thread needs you, with the reason,
+// when any of it fails, unless a newer round has taken over. `pushed` settles once the
+// round's push is done, for the next round's push to wait for.
 function follow(
+  db: Database,
+  folder: string,
+  cancel: AbortController,
+  pushed: Promise<unknown>,
+  rest: Promise<void>,
+): void {
+  latest.set(folder, { cancel, pushed });
+  rest.catch((error) => {
+    if (cancel.signal.aborted) return;
+    const why = error instanceof Error ? error.message : String(error);
+    record(
+      db,
+      folder,
+      { needs_you: true, status: "waiting", telling: null },
+      `the round failed: ${why}`,
+    );
+  });
+}
+
+// Pushes the round, after the earlier round's push, then reviews it.
+function pushAndReview(
   db: Database,
   tmux: string,
   folder: string,
-  pushed: Promise<string>,
-  cancel: AbortController,
+  summary: string,
+  earlier: Promise<unknown>,
 ): void {
-  latest.set(folder, { cancel, pushed });
-  pushed
-    .then((sha) => reviewRound(db, tmux, folder, sha, cancel.signal))
-    .catch((error) => {
-      if (cancel.signal.aborted) return;
-      const why = error instanceof Error ? error.message : String(error);
-      record(db, folder, { needs_you: true, status: "waiting" }, `the round failed: ${why}`);
-    });
+  const cancel = new AbortController();
+  const pushed = earlier.then(() => push(db, folder, summary));
+  const rest = pushed.then((sha) => reviewRound(db, tmux, folder, sha, cancel.signal));
+  follow(db, folder, cancel, pushed, rest);
 }
 
 // Starts a round for skel submit, cancelling the thread's older round if one is still under
 // way, and returns at once: a shell command can't block long, so pushing and the review go on
-// in the background. Throws when your config isn't valid, so the builder hears why.
+// in the background. The submit is saved first, so a stop of the daemon can't lose it. A
+// review still waiting to be typed in is dropped, as it is about an older commit. Throws when
+// your config isn't valid, so the builder hears why.
 export function submitRound(db: Database, tmux: string, folder: string, summary: string): void {
   const { maxRounds } = threadConfig();
   const thread = readThread(db, folder);
   // Past the round limit the thread still needs you, whatever the builder does.
   const needs_you = thread.rounds > maxRounds;
-  record(db, folder, { status: "waiting", needs_you }, `submitted: ${summary}`);
+  record(
+    db,
+    folder,
+    { status: "waiting", needs_you, submitting: summary, telling: null },
+    `submitted: ${summary}`,
+  );
   const before = latest.get(folder);
   before?.cancel.abort();
-  const earlier = before?.pushed.catch(() => {}) ?? Promise.resolve();
-  follow(
-    db,
-    tmux,
-    folder,
-    earlier.then(() => push(db, folder, summary)),
-    new AbortController(),
-  );
+  pushAndReview(db, tmux, folder, summary, before?.pushed.catch(() => {}) ?? Promise.resolve());
 }
 
-// Runs again the review of a thread whose skel/review check was left pending when the
-// daemon stopped.
-export function reviewAgain(db: Database, tmux: string, thread: Thread): void {
-  if (thread.reviewing === null) return;
-  follow(db, tmux, thread.folder, Promise.resolve(thread.reviewing), new AbortController());
+// Carries on with a round the daemon's stop cut short: a submit not yet pushed and
+// reviewed, a review whose skel/review check was left pending, or changes not yet typed
+// into the builder. Pushing again is harmless: GitHub has the commit, or gets it now.
+export function resumeRound(db: Database, tmux: string, thread: Thread): void {
+  const { folder, submitting, reviewing, telling } = thread;
+  const cancel = new AbortController();
+  const none = Promise.resolve();
+  if (submitting !== null) pushAndReview(db, tmux, folder, submitting, none);
+  else if (reviewing !== null)
+    follow(db, folder, cancel, none, reviewRound(db, tmux, folder, reviewing, cancel.signal));
+  else if (telling !== null)
+    follow(db, folder, cancel, none, deliver(db, tmux, folder, telling, cancel.signal));
 }
