@@ -39,3 +39,67 @@ export function githubRepoAt(path: string): {
   const canPush = ["ADMIN", "MAINTAIN", "WRITE"].includes(view.viewerPermission);
   return { owner: view.owner.login, repo: view.name, canPush, isFork: view.isFork };
 }
+
+// Runs `gh api` on `endpoint`, sending `input` as the JSON body when there is one. `doing`
+// says what skel was trying, for the error when gh fails.
+async function api(endpoint: string, doing: string, input?: object): Promise<unknown> {
+  const args = input ? ["--method", "POST", "--input", "-"] : [];
+  // Bun finds gh on the PATH skel started with unless given the env, so a PATH changed
+  // since would be ignored.
+  const run = Bun.spawn(["gh", "api", endpoint, ...args], {
+    env: process.env,
+    stdin: new Blob([input ? JSON.stringify(input) : ""]),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, code] = await Promise.all([
+    new Response(run.stdout).text(),
+    new Response(run.stderr).text(),
+    run.exited,
+  ]);
+  if (code !== 0) throw new Error(`Couldn't ${doing}: ${err.trim()}`);
+  return JSON.parse(out);
+}
+
+const Numbered = z.object({ number: z.number() });
+
+// `repo` is always "owner/name".
+export async function createIssue(repo: string, title: string, body: string): Promise<number> {
+  const made = await api(`repos/${repo}/issues`, `create an issue in ${repo}`, { title, body });
+  return Numbered.parse(made).number;
+}
+
+const Issue = z.object({ title: z.string(), body: z.string().nullable() });
+
+export async function readIssue(
+  repo: string,
+  issue: number,
+): Promise<{ title: string; body: string }> {
+  const got = await api(`repos/${repo}/issues/${issue}`, `read issue #${issue} in ${repo}`);
+  const { title, body } = Issue.parse(got);
+  return { title, body: body ?? "" };
+}
+
+// GitHub only matches a branch named with its owner: "owner:branch".
+export async function findPullRequest(repo: string, branch: string): Promise<number | null> {
+  const owner = repo.split("/")[0];
+  const head = encodeURIComponent(`${owner}:${branch}`);
+  const found = await api(
+    `repos/${repo}/pulls?state=open&head=${head}`,
+    `look for a pull request from ${branch} in ${repo}`,
+  );
+  return z.array(Numbered).parse(found)[0]?.number ?? null;
+}
+
+export async function openPullRequest(
+  repo: string,
+  pr: { branch: string; base: string; title: string; body: string; issue: number },
+): Promise<number> {
+  const opened = await api(`repos/${repo}/pulls`, `open a pull request from ${pr.branch}`, {
+    head: pr.branch,
+    base: pr.base,
+    title: pr.title,
+    body: `${pr.body}\n\nCloses #${pr.issue}`,
+  });
+  return Numbered.parse(opened).number;
+}
