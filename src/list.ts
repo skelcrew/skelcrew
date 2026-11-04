@@ -5,7 +5,7 @@ import { z } from "zod";
 import { openIssues } from "./github.ts";
 import { cloneDir } from "./paths.ts";
 import { findRepository, noRepositories, repositories } from "./repo.ts";
-import { Thread, threadName } from "./thread.ts";
+import { needsYou, Thread, threadName } from "./thread.ts";
 
 export const RepositoryRow = z.object({ name: z.string(), github: z.string(), clone: z.string() });
 export type RepositoryRow = z.infer<typeof RepositoryRow>;
@@ -38,7 +38,7 @@ export function listThreads(db: Database, repo?: string): ThreadRow[] {
     : db.query("SELECT * FROM threads ORDER BY rowid DESC").all();
   return all.map((row) => {
     const thread = Thread.parse(row);
-    return { thread: threadName(db, thread), status: thread.status, needsYou: thread.needs_you };
+    return { thread: threadName(db, thread), status: thread.status, needsYou: needsYou(thread) };
   });
 }
 
@@ -64,7 +64,7 @@ export async function listTasks(db: Database, repo?: string): Promise<TaskRow[]>
           createdAt: issue.createdAt,
           task: `${r.name}-${issue.number}`,
           title: issue.title,
-          thread: thread && { status: thread.status, needsYou: thread.needs_you },
+          thread: thread && { status: thread.status, needsYou: needsYou(thread) },
         };
       }),
     ),

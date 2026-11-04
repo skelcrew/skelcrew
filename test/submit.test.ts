@@ -25,6 +25,7 @@ const running: Subprocess[] = [];
 const data = () => join(home, ".local", "share", "skel");
 const codexHome = () => join(data(), "codex");
 const builder = () => join(data(), "claude", "app-12");
+const lead = () => join(data(), "claude", "lead");
 const clone = () => join(data(), "threads", "app-12");
 const read = (file: string) => (existsSync(file) ? readFileSync(file, "utf8") : "");
 
@@ -32,7 +33,8 @@ function script(name: string, body: string): void {
   writeFileSync(join(home, "bin", name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
 }
 
-// Stands in for Claude Code. As the builder, it commits a round and runs skel submit, then
+// Stands in for Claude Code. As the lead, it waits at a ❯ prompt and keeps what is typed
+// into it. As the builder, it commits a round and runs skel submit, then
 // waits at a ❯ prompt, keeping what is typed into it. Each typed message ends in a paste mark
 // and an Enter, and it answers each one with another round, as a builder fixing a review
 // would. `submits` false leaves the first round to the test. While the file busy is in its
@@ -40,7 +42,7 @@ function script(name: string, body: string): void {
 function fakeClaude(submits = true): void {
   script(
     "claude",
-    `case "$CLAUDE_CONFIG_DIR" in */lead) exec sleep 300 ;; esac
+    `case "$CLAUDE_CONFIG_DIR" in */lead) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
 printf '%s\\n' "$@" > "$CLAUDE_CONFIG_DIR/args"
 n=0
 round() {
@@ -307,6 +309,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     // The daemon saves a thread before it appends the thread to its log.
     await until(() => read(join(data(), "threads", "app-12.log")).includes("approved"));
     expect(read(join(data(), "threads", "app-12.log"))).toContain("Round 1");
+    await until(() => read(join(lead(), "typed")).includes("app-12 needs you: approved"));
   }, 60_000);
 
   test("tells the builder about skel submit, after the task rather than in it", async () => {
@@ -345,6 +348,9 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     expect(read(join(builder(), "typed"))).not.toContain("Third problem.");
     expect(reviews()).toHaveLength(3);
     expect(thread()).toMatchObject({ status: "waiting", needs_you: 1, rounds: 3 });
+    await until(() =>
+      read(join(lead(), "typed")).includes("app-12 needs you: changes asked for after 2 rounds"),
+    );
   }, 90_000);
 
   test("a review that fails sets the check to review failed, posts nothing, and needs you", async () => {

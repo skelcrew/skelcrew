@@ -13,3 +13,5 @@ skel repo ls lists the repositories skel has, with their names in skel. The repo
 When skel types "you attached from app", the human is in a checkout of app: a request that names no repository means app's. "you attached from outside any of skel's repositories" means there is no such default.
 
 A thread is done when the human merges its PR. An approved thread waits for the human to merge it. When a thread needs the human, say so plainly, naming the thread.
+
+When a thread starts needing the human, skel types a one line note into this session, such as "app-12 needs you: its builder asked a question". It comes from skel, not the human. Tell the human plainly what the thread needs. They answer a builder's question with skel attach app-12.

@@ -10,6 +10,7 @@ import {
   readIssue,
   setReviewStatus,
 } from "./github.ts";
+import { tellLead } from "./lead.ts";
 import { cloneDir } from "./paths.ts";
 import { type Review, review } from "./reviewer.ts";
 import { baseOf, cloneOf, github, readThread, record, threadConfig } from "./thread.ts";
@@ -167,6 +168,7 @@ async function reviewRound(
   const { rounds, needsYou, status, tell } = outcome;
   const change = { reviewing: null, rounds, needs_you: needsYou, status, telling: tell };
   record(db, folder, change, outcome.why);
+  tellLead(db, tmux);
   if (tell) await deliver(db, tmux, folder, tell, signal);
 }
 
@@ -197,6 +199,7 @@ const latest = new Map<string, Round>();
 // round's push is done.
 function follow(
   db: Database,
+  tmux: string,
   folder: string,
   cancel: AbortController,
   pushed: Promise<unknown>,
@@ -207,6 +210,7 @@ function follow(
     const why = error instanceof Error ? error.message : String(error);
     // A review not yet typed in stays saved, so starting the daemon again can type it.
     record(db, folder, { needs_you: true, status: "waiting" }, `the round failed: ${why}`);
+    tellLead(db, tmux);
   });
   latest.set(folder, { cancel, pushed, done });
 }
@@ -226,7 +230,7 @@ function pushAndReview(
   const rest = Promise.all([pushed, earlier?.done]).then(([sha]) =>
     reviewRound(db, tmux, folder, sha, cancel.signal),
   );
-  follow(db, folder, cancel, pushed, rest);
+  follow(db, tmux, folder, cancel, pushed, rest);
 }
 
 // Starts a round for skel submit, cancelling the thread's older round if one is still under
@@ -261,7 +265,7 @@ export function resumeRound(db: Database, tmux: string, folder: string): void {
   const none = Promise.resolve();
   if (submitting !== null) pushAndReview(db, tmux, folder, submitting, undefined);
   else if (reviewing !== null)
-    follow(db, folder, cancel, none, reviewRound(db, tmux, folder, reviewing, cancel.signal));
+    follow(db, tmux, folder, cancel, none, reviewRound(db, tmux, folder, reviewing, cancel.signal));
   else if (telling !== null)
-    follow(db, folder, cancel, none, deliver(db, tmux, folder, telling, cancel.signal));
+    follow(db, tmux, folder, cancel, none, deliver(db, tmux, folder, telling, cancel.signal));
 }
