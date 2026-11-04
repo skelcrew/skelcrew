@@ -28,6 +28,9 @@ const createRepositories = `CREATE TABLE IF NOT EXISTS repositories (
 export function openDb(): Database {
   mkdirSync(dataDir(), { recursive: true });
   const db = new Database(join(dataDir(), "skel.db"), { strict: true });
+  // The daemon and skel run in your terminal can use the file at once. Without a wait, a
+  // write that meets another one fails with "database is locked" at once.
+  db.run("PRAGMA busy_timeout = 5000");
   // Repositories once had a path to your checkout, and a name you chose. They keep their
   // GitHub names, and the lead clones them when it next starts.
   if (db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = 'path'").get())
@@ -57,11 +60,27 @@ export function openDb(): Database {
     base TEXT,
     status TEXT NOT NULL,
     session TEXT,
+    rounds INTEGER NOT NULL DEFAULT 0,
+    pr INTEGER,
     needs_you INTEGER NOT NULL DEFAULT 0,
+    reviewing TEXT,
+    submitting TEXT,
+    telling TEXT,
     PRIMARY KEY (owner, repo, task)
   )`);
-  // Threads started before skel kept needs you have no column for it.
-  if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = 'needs_you'").get())
-    db.run("ALTER TABLE threads ADD COLUMN needs_you INTEGER NOT NULL DEFAULT 0");
+  // Threads an older skel started lack some of these columns. `submitting`,
+  // `reviewing` and `telling` hold the round under way, so one the daemon's stop cut short
+  // carries on when it starts again.
+  const added = {
+    rounds: "INTEGER NOT NULL DEFAULT 0",
+    pr: "INTEGER",
+    needs_you: "INTEGER NOT NULL DEFAULT 0",
+    reviewing: "TEXT",
+    submitting: "TEXT",
+    telling: "TEXT",
+  };
+  for (const [column, type] of Object.entries(added))
+    if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))
+      db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
   return db;
 }

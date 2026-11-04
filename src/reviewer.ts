@@ -1,5 +1,6 @@
-// Runs a fresh adversarial reviewer in the sandbox for each thread's PR. Uses Codex by
-// default, or Claude Code on the builder's model when Codex is unavailable.
+// Runs a fresh adversarial reviewer in the sandbox for each thread's PR. Uses the harness
+// your config names, or else Codex when it is installed and Claude Code on the builder's
+// model when it isn't.
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -101,7 +102,9 @@ async function reviewNow(given: {
   clone: string;
   issue: { title: string; body: string };
   base: string;
+  commit?: string;
   model: string;
+  harness?: "codex" | "claude" | undefined;
   signal?: AbortSignal;
   limit?: number;
   env?: Record<string, string | undefined>;
@@ -112,7 +115,12 @@ async function reviewNow(given: {
   if (!home)
     return { verdict: "failed", body: "HOME isn't set, so skel can't find its own folders" };
   const path = env.PATH ?? "";
-  const harness = Bun.which("codex", { PATH: path }) ? "codex" : "claude";
+  const harness = given.harness ?? (Bun.which("codex", { PATH: path }) ? "codex" : "claude");
+  if (given.harness && !Bun.which(harness, { PATH: path }))
+    return {
+      verdict: "failed",
+      body: `${harness} isn't installed, and your config picks it for reviews`,
+    };
   const folder = mkdtempSync(join(tmpdir(), "skel-review-"));
   try {
     await Bun.write(join(folder, "schema.json"), schema);
@@ -123,12 +131,21 @@ async function reviewNow(given: {
       if (value !== undefined && (passed.includes(key) || key.startsWith("LC_"))) kept[key] = value;
     // Tests and builds write in the clone, so it is seen through a throwaway layer too.
     const mounts = ["--overlay-src", clone, "--tmp-overlay", clone, "--bind", folder, folder];
+    // The builder can go on changing its clone after it submits, so the reviewer sees the
+    // submitted commit, with what the builder changed since put aside. Ignored files, such
+    // as installed packages, stay for the tests. git runs in the sandbox, as the clone's
+    // .git is the builder's to plant settings in.
+    const checkout = 'git checkout -q -f --detach "$0" && git clean -q -fd && exec "$@"';
+    const command = given.commit
+      ? ["sh", "-c", checkout, given.commit, ...run.command]
+      : run.command;
     const argv = sandboxArgs({
       home,
       path,
       mounts: [...mounts, ...run.mounts],
       cwd: clone,
-      command: run.command,
+      command,
+      programs: run.command.slice(0, 1),
     });
     const timeout = AbortSignal.timeout(limit);
     const signal = given.signal ? AbortSignal.any([given.signal, timeout]) : timeout;
