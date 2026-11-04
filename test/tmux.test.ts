@@ -257,6 +257,14 @@ test("Ctrl-] detaches with no prefix, and there is no status bar", () => {
   expect(tmux(["list-keys", "-T", "root", "C-]"])).toContain("detach-client");
 });
 
+// Without it, tmux draws Claude Code's redraws in pieces, and over a slow link such as a
+// Sprite's the prompt visibly flickers.
+test("tmux passes synchronized output through to your terminal", () => {
+  start("lead", ["sleep", "30"]);
+  const features = Bun.spawnSync(["tmux", "-L", socket, "show-options", "-s", "terminal-features"]);
+  expect(features.stdout.toString()).toContain("*:sync");
+});
+
 test("a session that was never started doesn't exist", () => {
   expect(hasSession(socket, "nobody")).toBe(false);
 });

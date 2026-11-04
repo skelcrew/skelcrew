@@ -7,10 +7,15 @@ import { onSprite, startTmuxService } from "./sprite.ts";
 // find or keep in step, and a server an older skel started picks up changes. Your own
 // ~/.tmux.conf never applies: -f /dev/null replaces it. Ctrl-] with no prefix and no status
 // bar make attaching feel like being inside Claude Code. A session whose command fails
-// keeps its last screen, so skel can say why it ended instead of finding it gone.
+// keeps its last screen, so skel can say why it ended instead of finding it gone. tmux only
+// passes synchronized output on to terminals it knows have it, and without it Claude Code's
+// redraws arrive in pieces, so the prompt flickers over a slow link such as a Sprite's.
+// Terminals without it ignore the codes. A fixed index, since this runs again with each
+// new session and appending would add it every time.
 const config = `set -g status off
 bind -n C-] detach-client
 set -g remain-on-exit failed
+set -s terminal-features[90] "*:sync"
 `;
 
 type Waits = { moment?: number; timeout?: number; signal?: AbortSignal };
