@@ -28,6 +28,14 @@ const ro = (p: string) => ["--ro-bind", p, p];
 const rw = (p: string) => ["--bind", p, p];
 const hide = (p: string) => ["--tmpfs", p];
 
+// Codex from npm links to bin/codex.js in its package, and runs a program from another
+// folder of it. Never the home folder itself, nor above it, which would bring back too much.
+function packageOf(folder: string, home: string): string {
+  for (let at = folder; at !== home && at !== dirname(at); at = dirname(at))
+    if (existsSync(join(at, "package.json"))) return at;
+  return folder;
+}
+
 function sandboxArgs(given: {
   home: string;
   path: string;
@@ -48,14 +56,14 @@ function sandboxArgs(given: {
   if (existsSync("/run/systemd/resolve")) args.push(...ro("/run/systemd/resolve"));
   args.push(...hide(home));
   // Programs often live under the home folder: Claude Code under nvm keeps node beside it,
-  // and its package where its link points. So the command's folder and the folder its link
+  // and its package where its link points. So the command's folder and the package its link
   // resolves into come back, as does bun, which skel's own commands run on.
   const programs = new Set<string>();
   for (const name of [command[0], "bun"]) {
     const found = name && Bun.which(name, { PATH: path });
     if (found) {
       programs.add(dirname(found));
-      programs.add(dirname(realpathSync(found)));
+      programs.add(packageOf(dirname(realpathSync(found)), home));
     }
   }
   for (const p of programs) args.push(...ro(p));
