@@ -280,8 +280,8 @@ async function pollRepository(db: Database, tmux: string, threads: Thread[]): Pr
 }
 
 // Polls GitHub for the PRs of live threads, one query per repository: every `every`
-// milliseconds while any of its threads is working or waits on review or CI, and ten times
-// less often while they only wait on you. Starts at once, to pick up what happened while the
+// milliseconds while any of its threads is working or waits on review or CI, and half as
+// often while they only wait on you, so your comment still reaches a builder within a minute. Starts at once, to pick up what happened while the
 // daemon was down. A failed poll, such as GitHub answering with an error, is logged and tried
 // again at the next one. Polls run in the background, so they never hold up the daemon.
 export function pollGitHub(db: Database, tmux: string, every: number): void {
@@ -297,7 +297,7 @@ export function pollGitHub(db: Database, tmux: string, every: number): void {
     for (const [repo, threads] of repos) {
       const active = threads.some((t) => t.status === "working" || !needsYou(t));
       const waited = skipped.get(repo) ?? Number.POSITIVE_INFINITY;
-      if (polling.has(repo) || (!active && waited < 9)) {
+      if (polling.has(repo) || (!active && waited < 1)) {
         skipped.set(repo, waited + 1);
         continue;
       }

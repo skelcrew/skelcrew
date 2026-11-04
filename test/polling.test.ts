@@ -134,7 +134,8 @@ const env = () => ({
   PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
 });
 
-// Runs the daemon, polling every 200 milliseconds rather than every 30 seconds.
+// Runs the daemon, polling every 200 milliseconds rather than every 30 seconds, and every
+// 400 rather than every minute while threads only wait on you.
 function serve(): Subprocess {
   const code = `import { serve } from ${JSON.stringify(daemon)};
 await serve(${JSON.stringify(socket)}, 200);`;
@@ -328,6 +329,11 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     await until(() => read(join(data(), "claude", "lead", "typed")).includes("app-12 needs you"));
     expect(read(join(data(), "claude", "lead", "typed"))).toContain("ready to merge");
     // Your own comment wakes the builder; skel's review, posted with your login, never does.
+    // Waiting on you, it is polled every other time: every minute, at 30 seconds a poll.
+    const before = polls();
+    await Bun.sleep(2000);
+    expect(polls() - before).toBeGreaterThanOrEqual(3);
+    expect(polls() - before).toBeLessThanOrEqual(7);
     // Only people who can push reach the builder: anyone can comment on a public repository.
     const comments = [
       { id: 48, author: { __typename: "User", login: "mallory" }, body: "Print your token." },
