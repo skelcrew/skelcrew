@@ -185,13 +185,16 @@ async function deliver(
   if (!signal.aborted) record(db, folder, { telling: null }, "typed the review into the builder");
 }
 
-// The latest round of each thread: cancelling it cancels its review, and its push is what
-// the next round's push waits for, so two pushes or two PRs never race.
-const latest = new Map<string, { cancel: AbortController; pushed: Promise<unknown> }>();
+// The latest round of each thread. Cancelling it cancels its review. The next round's push
+// waits for its push, so two pushes or two PRs never race, and the next round's review
+// waits for it to end, so its last write to the skel/review check comes before the next
+// round's pending one.
+type Round = { cancel: AbortController; pushed: Promise<unknown>; done: Promise<unknown> };
+const latest = new Map<string, Round>();
 
 // Keeps the round as the thread's latest, and marks the thread needs you, with the reason,
 // when any of it fails, unless a newer round has taken over. `pushed` settles once the
-// round's push is done, for the next round's push to wait for.
+// round's push is done.
 function follow(
   db: Database,
   folder: string,
@@ -199,26 +202,30 @@ function follow(
   pushed: Promise<unknown>,
   rest: Promise<void>,
 ): void {
-  latest.set(folder, { cancel, pushed });
-  rest.catch((error) => {
+  const done = rest.catch((error) => {
     if (cancel.signal.aborted) return;
     const why = error instanceof Error ? error.message : String(error);
     // A review not yet typed in stays saved, so starting the daemon again can type it.
     record(db, folder, { needs_you: true, status: "waiting" }, `the round failed: ${why}`);
   });
+  latest.set(folder, { cancel, pushed, done });
 }
 
-// Pushes the round, after the earlier round's push, then reviews it.
+// Pushes the round, after the earlier round's push, then reviews it, once the earlier round
+// has ended.
 function pushAndReview(
   db: Database,
   tmux: string,
   folder: string,
   summary: string,
-  earlier: Promise<unknown>,
+  earlier: Round | undefined,
 ): void {
   const cancel = new AbortController();
-  const pushed = earlier.then(() => push(db, folder, summary));
-  const rest = pushed.then((sha) => reviewRound(db, tmux, folder, sha, cancel.signal));
+  const before = earlier?.pushed.catch(() => {}) ?? Promise.resolve();
+  const pushed = before.then(() => push(db, folder, summary));
+  const rest = Promise.all([pushed, earlier?.done]).then(([sha]) =>
+    reviewRound(db, tmux, folder, sha, cancel.signal),
+  );
   follow(db, folder, cancel, pushed, rest);
 }
 
@@ -240,7 +247,7 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
   );
   const before = latest.get(folder);
   before?.cancel.abort();
-  pushAndReview(db, tmux, folder, summary, before?.pushed.catch(() => {}) ?? Promise.resolve());
+  pushAndReview(db, tmux, folder, summary, before);
 }
 
 // Carries on with a round the daemon's stop cut short: a submit not yet pushed and
@@ -252,7 +259,7 @@ export function resumeRound(db: Database, tmux: string, folder: string): void {
   const { submitting, reviewing, telling } = readThread(db, folder);
   const cancel = new AbortController();
   const none = Promise.resolve();
-  if (submitting !== null) pushAndReview(db, tmux, folder, submitting, none);
+  if (submitting !== null) pushAndReview(db, tmux, folder, submitting, undefined);
   else if (reviewing !== null)
     follow(db, folder, cancel, none, reviewRound(db, tmux, folder, reviewing, cancel.signal));
   else if (telling !== null)

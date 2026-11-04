@@ -110,7 +110,9 @@ case "$*" in
 "api repos/simon/app/pulls?state=open&head="*) if test -e "$HOME/gh/pr"; then echo '[{"number":7}]'; else echo '[]'; fi ;;
 "api repos/simon/app/pulls --method POST --input -") touch "$HOME/gh/opening"; while test -e "$HOME/gh/hold"; do sleep 0.1; done; cat > "$HOME/gh/pr"; echo '{"number":7}' ;;
 "api repos/simon/app/pulls/7/reviews --method POST --input -") touch "$HOME/gh/posting"; while test -e "$HOME/gh/hold-review"; do sleep 0.1; done; cat >> "$HOME/gh/reviews"; echo >> "$HOME/gh/reviews"; echo '{"id":1}' ;;
-"api repos/simon/app/statuses/"*) echo "\${2##*/} $(cat)" >> "$HOME/gh/statuses"; echo '{"state":"set"}' ;;
+"api repos/simon/app/statuses/"*) body=$(cat)
+  case "$body" in *pending*) ;; *) touch "$HOME/gh/finishing"; while test -e "$HOME/gh/hold-status"; do sleep 0.1; done ;; esac
+  echo "\${2##*/} $body" >> "$HOME/gh/statuses"; echo '{"state":"set"}' ;;
 *) echo "the fake gh doesn't know $*" >&2; exit 1 ;;
 esac`,
   );
@@ -531,6 +533,22 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     );
   }, 60_000);
 
+  test("a commit submitted again while its check is being set gets pending after it", async () => {
+    addApp();
+    verdict(1, "approve", "Stale.");
+    verdict(2, "approve", "Fresh.");
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "slow-2"), "");
+    writeFileSync(join(home, "gh", "hold-status"), "");
+    await startApp12();
+    await until(() => existsSync(join(home, "gh", "finishing")), 30_000);
+    expect((await skel(["submit", "Again"], { SKEL_SOCKET: builderSocket() })).err).toBe("");
+    await Bun.sleep(1000);
+    rmSync(join(home, "gh", "hold-status"));
+    await until(() => statuses().length === 3);
+    expect(statuses().map((s) => s.state)).toEqual(["pending", "success", "pending"]);
+  }, 60_000);
+
   test("a review cancelled while it is posted doesn't set the check on the commit submitted again", async () => {
     addApp();
     verdict(1, "approve", "Stale.");
@@ -541,9 +559,10 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     await startApp12();
     await until(() => existsSync(join(home, "gh", "posting")), 30_000);
     expect((await skel(["submit", "Again"], { SKEL_SOCKET: builderSocket() })).err).toBe("");
-    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 30_000);
+    await Bun.sleep(1000);
     rmSync(join(home, "gh", "hold-review"));
-    await until(() => reviews().length === 1);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 30_000);
+    expect(reviews()).toHaveLength(1);
     await Bun.sleep(1500);
     expect(statuses().map((s) => s.state)).toEqual(["pending", "pending"]);
   }, 60_000);
