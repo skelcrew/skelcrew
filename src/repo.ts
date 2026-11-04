@@ -139,10 +139,11 @@ export async function bringIn(db: Database, github: GitHubRepo, ask: boolean): P
 }
 
 // Brings in the repository you attached from, reporting failures without blocking the lead.
-// Plain skel must stay fast, so a repository skel has costs no call to GitHub: the daemon
-// keeps its clone current. A folder that isn't on GitHub, such as your dotfiles, gets no
-// complaint.
-export async function bringInFrom(from: string | undefined): Promise<void> {
+// Returns its owner/repo once skel has it, so the lead takes it as the default; one waiting
+// for trust isn't a default yet. Plain skel must stay fast, so a repository skel has costs
+// no call to GitHub: the daemon keeps its clone current. A folder that isn't on GitHub,
+// such as your dotfiles, gets no complaint.
+export async function bringInFrom(from: string | undefined): Promise<string | undefined> {
   const db = openDb();
   const named = from === undefined ? originHere() : (onGitHub(from) ?? from);
   // Matches the attached repository despite differences in GitHub name capitalization.
@@ -153,6 +154,8 @@ export async function bringInFrom(from: string | undefined): Promise<void> {
     console.error(`skel: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (repositories(db).length === 0) console.log(noRepositories);
+  const found = repositories(db).find(known);
+  return found && `${found.owner}/${found.repo}`;
 }
 
 // Returns owner/repo from a GitHub remote URL, or null so other hosts are quietly skipped.

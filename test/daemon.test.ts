@@ -518,6 +518,107 @@ c.on("error", () => process.exit(1));`;
     }
   }, 25_000);
 
+  // A Claude Code at its prompt, noting each message it is sent.
+  const listening = `echo "❯"; while IFS= read -r line; do echo "$line" >> heard; echo "❯"; done`;
+  const heard = () =>
+    existsSync(join(leadFolder(), "heard"))
+      ? readFileSync(join(leadFolder(), "heard"), "utf8").split("\n").filter(Boolean)
+      : [];
+  const outside = "you attached from outside any of skel's repositories";
+
+  // The notes are typed in order, so a note that came when the repository stayed the same
+  // would show up before the next one.
+  test("tells the lead the repository you attached from, only when it changes", async () => {
+    setUp();
+    addRepository("app");
+    addRepository("web");
+    fakeClaude(listening);
+    serve();
+    await untilAnswers();
+    expect(await ask({ command: "lead" })).toEqual({ lead: true });
+    expect(await ask({ command: "lead", from: "simon/app" })).toEqual({ lead: true });
+    expect(await ask({ command: "lead", from: "Simon/App" })).toEqual({ lead: true });
+    expect(await ask({ command: "lead", from: "simon/web" })).toEqual({ lead: true });
+    expect(await ask({ command: "lead", from: "simon/web" })).toEqual({ lead: true });
+    expect(await ask({ command: "lead" })).toEqual({ lead: true });
+    expect(await ask({ command: "lead" })).toEqual({ lead: true });
+    expect(await ask({ command: "lead", from: "simon/app" })).toEqual({ lead: true });
+    await until(() => heard().length === 4);
+    await Bun.sleep(1500);
+    expect(heard()).toEqual([
+      "you attached from app",
+      "you attached from web",
+      outside,
+      "you attached from app",
+    ]);
+  }, 15_000);
+
+  test("remembers the repository you attached from when the daemon restarts", async () => {
+    setUp();
+    addRepository("app");
+    fakeClaude(listening);
+    const first = serve();
+    await untilAnswers();
+    await ask({ command: "lead", from: "simon/app" });
+    await until(() => heard().length === 1);
+    await stop(first);
+    serve();
+    await untilAnswers();
+    await ask({ command: "lead", from: "simon/app" });
+    await ask({ command: "lead" });
+    await until(() => heard().length === 2);
+    expect(heard()).toEqual(["you attached from app", outside]);
+  }, 15_000);
+
+  // A repository waiting for skel repo trust isn't in yet, so the lead couldn't work on it.
+  test("a repository skel doesn't have is no default", async () => {
+    setUp();
+    addRepository("app");
+    fakeClaude(listening);
+    serve();
+    await untilAnswers();
+    await ask({ command: "lead", from: "simon/app" });
+    await ask({ command: "lead", from: "other/tool" });
+    await until(() => heard().length === 2);
+    expect(heard()).toEqual(["you attached from app", outside]);
+  }, 15_000);
+
+  test("names the repository with its owner while two share a name", async () => {
+    setUp();
+    addRepository("app");
+    const db = new Database(join(home, ".local", "share", "skel", "skel.db"));
+    db.run("INSERT INTO repositories (name, owner, repo) VALUES ('other/app', 'other', 'app')");
+    db.run("UPDATE repositories SET name = 'simon/app' WHERE owner = 'simon'");
+    db.close();
+    fakeClaude(listening);
+    serve();
+    await untilAnswers();
+    await ask({ command: "lead", from: "simon/app" });
+    await until(() => heard().length === 1);
+    expect(heard()).toEqual(["you attached from simon/app"]);
+  });
+
+  // You land in the lead at once, and the note waits until the lead is ready for it.
+  test("attaching doesn't wait for the note, which comes once the lead is idle", async () => {
+    setUp();
+    addRepository("app");
+    fakeClaude(
+      `echo "working (esc to interrupt)"; while ! test -e done; do sleep 0.1; done; printf '\\033[2J\\033[H'; ${listening}`,
+    );
+    serve();
+    await untilAnswers();
+    // Once the lead has started, so the timing is the note's alone.
+    await ask({ command: "lead" });
+    const asked = Date.now();
+    expect(await ask({ command: "lead", from: "simon/app" })).toEqual({ lead: true });
+    expect(Date.now() - asked).toBeLessThan(1000);
+    await Bun.sleep(1500);
+    expect(heard()).toEqual([]);
+    writeFileSync(join(leadFolder(), "done"), "");
+    await until(() => heard().length === 1);
+    expect(heard()).toEqual(["you attached from app"]);
+  }, 15_000);
+
   test("a repository removed while it is being cloned stays removed", async () => {
     setUp();
     const clone = addRepository("app");

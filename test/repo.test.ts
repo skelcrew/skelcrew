@@ -63,8 +63,9 @@ echo "{\\"name\\":\\"\${full#*/}\\",\\"owner\\":{\\"login\\":\\"\${full%/*}\\"},
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
   writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
   daemon = createServer((connection) =>
-    connection.on("data", () => {
+    connection.on("data", (data) => {
       appendFileSync(join(home, "calls"), "daemon lead\n");
+      writeFileSync(join(home, "asked"), data.toString());
       connection.end('{"lead":true}\n');
     }),
   );
@@ -249,6 +250,27 @@ test("--from says why it can't bring a repository in, and attaches anyway", asyn
   expect(run.code).toBe(0);
   expect(run.err).toContain("nobody/none");
   expect(attached()).toBe(true);
+});
+
+// The daemon tells the lead, so "fix the flaky test" means that repository's.
+test("tells the daemon the repository you attached from, once skel has it", async () => {
+  const asked = () => JSON.parse(readFileSync(join(home, "asked"), "utf8"));
+  const app = onGitHub("simon/app", "WRITE");
+  await skel([], "", app);
+  expect(asked()).toEqual({ command: "lead", from: "simon/app" });
+  git(app, "remote", "set-url", "origin", "git@github.com:Simon/App.git");
+  await skel([], "", app);
+  expect(asked()).toEqual({ command: "lead", from: "simon/app" });
+  await skel(["--from", "simon/app"]);
+  expect(asked()).toEqual({ command: "lead", from: "simon/app" });
+  await skel([]);
+  expect(asked()).toEqual({ command: "lead" });
+  // Not yet in skel, as you didn't trust it.
+  await skel([], "n\n", onGitHub("other/tool"));
+  expect(asked()).toEqual({ command: "lead" });
+  git(app, "remote", "set-url", "origin", "https://gitlab.com/simon/app");
+  await skel([], "", app);
+  expect(asked()).toEqual({ command: "lead" });
 });
 
 test("repo ls says how to bring a repository in while there is none", async () => {

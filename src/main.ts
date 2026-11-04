@@ -23,8 +23,7 @@ async function run(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
   if (args.length === 0 || (command === "--from" && sub && rest.length === 0)) {
     firstRun();
-    await bringInFrom(sub);
-    await attachToLead("skel");
+    await attachToLead("skel", await bringInFrom(sub));
     return;
   }
   if (command === "serve" && args.length === 1) {
