@@ -273,13 +273,37 @@ test("update warns about uncommitted changes and another branch, and still copie
   expect(calls()).toContain("systemctl --user restart skel");
 });
 
+// Returns a skel checkout on the server, with its launcher and sources.
+function serverCheckout(): string {
+  const checkout = join(home, "server", "skel");
+  mkdirSync(join(checkout, "bin"), { recursive: true });
+  mkdirSync(join(checkout, "src"));
+  writeFileSync(join(checkout, "bin", "skel"), "#!/bin/sh\n", { mode: 0o755 });
+  writeFileSync(join(checkout, "src", "main.ts"), "");
+  return checkout;
+}
+
+// skel run once from a checkout points the daemon's service at it, and a copy left in
+// ~/.local/bin then runs nothing the daemon does.
+test("update goes by what the daemon's service runs, not by ~/.local/bin", async () => {
+  installed();
+  const checkout = serverCheckout();
+  const units = join(home, "server", ".config", "systemd", "user");
+  mkdirSync(units, { recursive: true });
+  writeFileSync(
+    join(units, "skel.service"),
+    `[Service]\nExecStart="${join(checkout, "bin", "skel")}" serve\nKillMode=process\n`,
+  );
+  const run = await update(laptopSkel());
+  expect(run.code).toBe(0);
+  expect(run.out).toContain(`skel on simon@workbox runs from a checkout at ${checkout}`);
+  expect(calls()).not.toContain("scp");
+});
+
 // A server where ~/.local/bin/skel links into a checkout updates with git pull there, and a
 // copy would leave the checkout behind while the daemon kept running it.
 test("update leaves skel run from a checkout on the server alone, and says how to update it", async () => {
-  const checkout = join(home, "server", "skel");
-  mkdirSync(join(checkout, "bin"), { recursive: true });
-  mkdirSync(join(checkout, ".git"));
-  writeFileSync(join(checkout, "bin", "skel"), "#!/bin/sh\n", { mode: 0o755 });
+  const checkout = serverCheckout();
   mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });
   symlinkSync(join(checkout, "bin", "skel"), join(home, "server", ".local", "bin", "skel"));
   const run = await update(laptopSkel());

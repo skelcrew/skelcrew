@@ -335,6 +335,8 @@ test("update leaves skel run from a checkout on the Sprite alone", async () => {
   const sprite = join(home, "sprites", "demo");
   mkdirSync(join(sprite, "skel", "bin"), { recursive: true });
   writeFileSync(join(sprite, "skel", "bin", "skel"), "#!/bin/sh\n", { mode: 0o755 });
+  mkdirSync(join(sprite, "skel", "src"));
+  writeFileSync(join(sprite, "skel", "src", "main.ts"), "");
   mkdirSync(join(sprite, ".local", "bin"), { recursive: true });
   symlinkSync(join(sprite, "skel", "bin", "skel"), join(sprite, ".local", "bin", "skel"));
   const run = await update(laptopSkel());

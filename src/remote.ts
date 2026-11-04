@@ -107,9 +107,15 @@ function describeCheckout(): { folder: string; commit: string } {
 // the lead and builders keep their Claude Code running. A skel run from a checkout there is
 // left alone: a copy would leave the checkout behind while the daemon kept running it.
 export async function update(where: string, machine: Machine): Promise<number> {
-  // A link is how a checkout puts its launcher on the PATH. Its target is checkout/bin/skel.
+  // What counts is the skel the daemon runs. On a server its service names it, and points at
+  // a checkout once skel has run from one, even with a copy still in ~/.local/bin. A Sprite
+  // service keeps the skel it was made with. A checkout's launcher, linked or not, is
+  // bin/skel beside its sources.
   const script = `f=.local/bin/skel
-if [ -L "$f" ]; then echo "checkout $(cd "$(dirname "$(readlink -f "$f")")/.." && pwd)"
+u=.config/systemd/user/skel.service
+if [ -f "$u" ]; then f=$(sed -n 's/^ExecStart="\\(.*\\)" serve$/\\1/p' "$u"); fi
+d=$(dirname "$(readlink -f "$f")")/..
+if [ -f "$d/src/main.ts" ]; then echo "checkout $(cd "$d" && pwd)"
 elif [ -e "$f" ]; then echo copied
 else echo missing; fi`;
   const asked = await quietly(machine.shell(script));
