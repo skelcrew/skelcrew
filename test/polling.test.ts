@@ -88,7 +88,7 @@ beforeEach(() => {
   fakeClaude();
   fakeCodex();
   script("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
-  // The fake GitHub: issue 12, PR 7 once opened, reviews numbered from 1001, the poll
+  // The fake GitHub: issue 12, the skel label and reactions, kept in files, PR 7 once opened, reviews numbered from 1001, the poll
   // answered from the file graphql, failing as GitHub does today while it is missing, and slow
   // to answer, with what the file held when asked, while hold-graphql is there, and
   // ana, who can push, and mallory, who can't.
@@ -109,6 +109,10 @@ beforeEach(() => {
     touch "$HOME/gh/graphql-held"; while test -e "$HOME/gh/hold-graphql"; do sleep 0.1; done
   fi
   cat "$HOME/gh/answer.$$"; rm "$HOME/gh/answer.$$" ;;
+"api repos/simon/app/labels --method POST --input -") cat >> "$HOME/gh/label"; echo >> "$HOME/gh/label"
+  echo '{"name":"skel"}' ;;
+"api repos/simon/app/issues/12/reactions --method POST --input -") cat >> "$HOME/gh/reacted"
+  echo >> "$HOME/gh/reacted"; echo '{"content":"eyes"}' ;;
 "api repos/simon/app/collaborators/ana/permission") echo '{"permission":"write"}' ;;
 "api repos/simon/app/collaborators/mallory/permission") echo '{"permission":"read"}' ;;
 "run view --job 900 --log-failed --repo simon/app")
@@ -235,12 +239,14 @@ function pr(given: {
   reviews?: { id: number; state: string; author: object; body: string }[];
   comments?: { id: number; author: object; body: string }[];
   checks?: object[];
+  labeled?: { number: number; title: string }[];
 }): void {
   const nodes = <T>(list: T[]) => ({ nodes: list });
   const answer = {
     data: {
       viewer: { login: "simon" },
       repository: {
+        labeled: nodes(given.labeled ?? []),
         pr7: {
           state: given.state ?? "OPEN",
           mergeable: given.mergeable ?? "MERGEABLE",
@@ -433,9 +439,46 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     );
     expect(fakeBuilders()).toEqual([]);
     expect(thread().needs_you).toBe(0);
-    // A thread that is done isn't polled again.
-    const before = polls();
-    await Bun.sleep(1000);
-    expect(polls()).toBe(before);
+    // A thread that is done isn't polled again. Its repository still is, for labeled issues.
+    await morePolls();
+    expect(read(join(home, "gh", "query"))).not.toContain("pullRequest");
+  }, 60_000);
+
+  test("an issue labeled skel starts a thread once, and one that failed isn't started again", async () => {
+    // A builder that can't start, so the thread fails.
+    script(
+      "claude",
+      `case "$CLAUDE_CONFIG_DIR" in */lead) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
+echo "Not logged in"; exit 1`,
+    );
+    addApp();
+    serve();
+    await until(() => read(join(home, "gh", "label")) !== "");
+    expect(JSON.parse(read(join(home, "gh", "label")))).toMatchObject({ name: "skel" });
+    pr({ labeled: [{ number: 12, title: "Add export" }] });
+    const lead = () => read(join(data(), "claude", "lead", "typed"));
+    await until(() => lead().includes("started app-12 from GitHub: Add export"));
+    await until(() => read(join(home, "gh", "reacted")) !== "");
+    expect(JSON.parse(read(join(home, "gh", "reacted")))).toEqual({ content: "eyes" });
+    await until(() => thread().status === "failed");
+    // The label is still there, after a restart too.
+    await morePolls();
+    const first = running[0];
+    first?.kill();
+    await first?.exited;
+    serve();
+    await morePolls();
+    expect(thread().status).toBe("failed");
+    expect(
+      read(join(home, "gh", "reacted"))
+        .trim()
+        .split("\n"),
+    ).toHaveLength(1);
+    expect(lead().split("started app-12").length - 1).toBe(1);
+    expect(
+      read(join(home, "gh", "label"))
+        .trim()
+        .split("\n"),
+    ).toHaveLength(1);
   }, 60_000);
 });

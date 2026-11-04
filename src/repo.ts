@@ -13,7 +13,7 @@ import {
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { nameRepositories, openDb, Repository } from "./db.ts";
-import { cloneRepo, type GitHubRepo, githubRepo, updateClone } from "./github.ts";
+import { cloneRepo, createLabel, type GitHubRepo, githubRepo, updateClone } from "./github.ts";
 import { onGitHub, originHere } from "./origin.ts";
 import { cloneDir, configDir, dataDir } from "./paths.ts";
 import { refuseCredentials } from "./sandbox.ts";
@@ -88,15 +88,22 @@ function checkOrDelete(clone: string): void {
 
 let refreshing: Promise<void> | null = null;
 
-// Refreshes every registered clone so the lead reads current repositories. A second call
-// joins the refresh running, so two git commands never fight over a clone. A clone that
-// can't be refreshed only gets a line in the log, since an old clone still lets the lead
-// read the repository.
+// Refreshes every registered clone so the lead reads current repositories, and creates the
+// skel label in a repository skel hasn't made it in yet, so you can start threads from
+// GitHub. A second call joins the refresh running, so two git commands never fight over a
+// clone. A clone or label that fails only gets a line in the log and is tried again at the
+// next refresh, since an old clone still lets the lead read the repository.
 export function refreshClones(db: Database): Promise<void> {
   refreshing ??= (async () => {
     for (const { owner, repo } of repositories(db)) {
       try {
         await refreshClone(owner, repo);
+        // Once per repository, so a label you deleted stays deleted.
+        const where = "WHERE owner = ? AND repo = ? AND labeled = 0";
+        if (db.query(`SELECT 1 FROM repositories ${where}`).get(owner, repo)) {
+          await createLabel(`${owner}/${repo}`);
+          db.run(`UPDATE repositories SET labeled = 1 ${where}`, [owner, repo]);
+        }
         // skel repo rm can run while a clone is still being made, and the clone would then
         // land after the removal, where the lead could still read it.
         if (!repositories(db).some((r) => r.owner === owner && r.repo === repo))
@@ -111,9 +118,10 @@ export function refreshClones(db: Database): Promise<void> {
   return refreshing;
 }
 
-// Checks trust, refreshes the repository clone and records it for the lead. Asking is only
-// for your own terminal. Anywhere else a repository you can't push to waits for skel repo
-// trust, since a yes passed on by the lead could come from an injected instruction.
+// Checks trust, refreshes the repository clone, records it for the lead, and creates its skel
+// label so you can start threads from GitHub. Asking is only for your own terminal. Anywhere
+// else a repository you can't push to waits for skel repo trust, since a yes passed on by the
+// lead could come from an injected instruction.
 export async function bringIn(db: Database, github: GitHubRepo, ask: boolean): Promise<void> {
   const { owner, repo, canPush, isFork } = github;
   const full = `${owner}/${repo}`;
@@ -138,6 +146,22 @@ export async function bringIn(db: Database, github: GitHubRepo, ask: boolean): P
   if (known) return;
   db.run("INSERT INTO repositories (owner, repo, name) VALUES (?, ?, ?)", [owner, repo, full]);
   nameRepositories(db);
+  const labeled = "UPDATE repositories SET labeled = 1 WHERE owner = ? AND repo = ?";
+  // Only people who can push or triage may add a label, so where you can't push, a label
+  // would be of no use to you.
+  if (!canPush) {
+    db.run(labeled, [owner, repo]);
+    return;
+  }
+  try {
+    await createLabel(full);
+    db.run(labeled, [owner, repo]);
+  } catch (error) {
+    // The daemon tries again when it next refreshes the clone.
+    console.error(
+      `skel: couldn't create the skel label in ${full}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 // Brings in the repository you attached from, reporting failures without blocking the lead.

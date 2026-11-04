@@ -234,7 +234,7 @@ test("more data on a connection doesn't run its request again", async () => {
     connection.on("data", () => {});
     connection.on("close", () => done());
   });
-  expect(read(join(home, "calls")).match(/--method POST/g)).toHaveLength(1);
+  expect(read(join(home, "calls")).match(/issues --method POST/g)).toHaveLength(1);
 });
 
 test("skel start refuses a repository skel doesn't have, and a task GitHub doesn't have", async () => {

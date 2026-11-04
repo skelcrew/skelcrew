@@ -42,7 +42,12 @@ beforeEach(async () => {
   // permission and whether it is a fork from the files beside it.
   fake(
     "gh",
-    `test "$1 $2" = "repo view" || exit 1
+    `case "$*" in "api repos/"*"/labels --method POST --input -")
+  full=\${2#repos/}; full=\${full%/labels}
+  test -e "$HOME/github/$full.nolabel" && { echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1; }
+  cat > /dev/null; echo '{"name":"skel"}'; exit 0 ;;
+esac
+test "$1 $2" = "repo view" || exit 1
 full=$3
 # A repository renamed or moved on GitHub answers to its old name with its new one.
 test -e "$HOME/github/$full.moved" && full=$(cat "$HOME/github/$full.moved")
@@ -145,6 +150,7 @@ test("brings in a repository you can push to from its checkout, without asking",
   expect(readFileSync(join(checkout, ".git", "config"), "utf8")).toBe(config);
   expect(git(checkout, "status", "--porcelain")).toBe("");
   expect((await skel(["repo", "ls"])).out).toBe(`app  simon/app  ${clone("simon/app")}\n`);
+  expect(calls()).toContain("gh api repos/simon/app/labels --method POST");
 });
 
 test("brings it in from a folder inside the checkout too", async () => {
@@ -365,6 +371,19 @@ test("repo trust clones a repository you can't push to, named by its GitHub name
   expect(existsSync(join(clone("other/tool"), "README"))).toBe(true);
   expect(readFileSync(trustFile(), "utf8")).toBe("other/tool\n");
   expect((await skel(["repo", "ls"])).out).toContain("tool  other/tool");
+  // You can't label its issues, so skel makes no label there.
+  expect(calls()).not.toContain("labels");
+});
+
+// skel has the repository all the same, and the daemon tries the label again when it next
+// refreshes the clone.
+test("brings in a repository whose skel label GitHub fails to create, saying so", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  writeFileSync(join(home, "github", "simon/app.nolabel"), "");
+  const run = await skel([], "", checkout);
+  expect(run.code).toBe(0);
+  expect(run.err).toContain("couldn't create the skel label in simon/app");
+  expect((await skel(["repo", "ls"])).out).toContain("app  simon/app");
 });
 
 test("repo trust refuses inside skel's sandbox, where a yes could come from an agent", async () => {

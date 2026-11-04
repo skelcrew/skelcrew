@@ -189,6 +189,29 @@ export async function openIssues(repo: string): Promise<z.infer<typeof OpenIssue
   return z.array(OpenIssue).parse(listed);
 }
 
+// Creates the skel label in owner/name, so you can add it to an issue to start a thread.
+// GitHub answers 422 when the repository has the label already, which is fine as it is.
+export async function createLabel(repo: string): Promise<void> {
+  try {
+    await api(`repos/${repo}/labels`, `create the skel label in ${repo}`, {
+      name: "skel",
+      color: "5319e7",
+      description: "skel starts a thread on this issue",
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("(HTTP 422)")) return;
+    throw error;
+  }
+}
+
+// Reacts to an issue with 👀, so you can see on GitHub that skel took it, without a comment.
+export async function reactToIssue(repo: string, issue: number): Promise<void> {
+  const reacted = await api(`repos/${repo}/issues/${issue}/reactions`, `react to #${issue}`, {
+    content: "eyes",
+  });
+  z.object({ content: z.string() }).parse(reacted);
+}
+
 // Returns the open PR number for a branch, or null so skel knows it must open one. GitHub
 // only matches a branch named with its owner: "owner:branch".
 export async function findPullRequest(repo: string, branch: string): Promise<number | null> {
@@ -363,18 +386,26 @@ const pullFields = `state mergeable baseRefName
     ... on CheckRun { databaseId name status conclusion detailsUrl }
     ... on StatusContext { context state targetUrl } } } } } } }`;
 
-// Returns your gh login and each of the repository's given PRs, with their reviews, comments,
-// head checks and merge state, in one GraphQL query, so the number of requests doesn't grow
-// with the number of threads. A PR GitHub doesn't find is left out.
-export async function readPullRequests(
+const Labeled = z.object({ number: z.number(), title: z.string() });
+export type Labeled = z.infer<typeof Labeled>;
+
+// Returns your gh login, the repository's open issues labeled skel, and each of
+// its given PRs, with their reviews, comments, head checks and merge state, in one GraphQL
+// query, so the number of requests doesn't grow with the number of threads. A PR GitHub
+// doesn't find is left out.
+export async function readRepository(
   repo: string,
   numbers: number[],
-): Promise<{ you: string; prs: Map<number, PullRequest> }> {
+): Promise<{ you: string; labeled: Labeled[]; prs: Map<number, PullRequest> }> {
   const [owner, name] = repo.split("/");
   const pulls = numbers.map((n) => `pr${n}: pullRequest(number: ${n}) { ${pullFields} }`);
+  // Issues with threads keep their label, so the oldest labeled issues could fill every
+  // answer. Adding a label updates an issue, so one just labeled is always among the newest.
+  const labeled = `labeled: issues(labels: ["skel"], states: [OPEN], first: 100,
+    orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { number title } }`;
   const query = `query($owner: String!, $name: String!) { viewer { login }
-    repository(owner: $owner, name: $name) { ${pulls.join("\n")} } }`;
-  const got = await gh(["api", "graphql", "--input", "-"], `read the pull requests of ${repo}`, {
+    repository(owner: $owner, name: $name) { ${labeled}\n${pulls.join("\n")} } }`;
+  const got = await gh(["api", "graphql", "--input", "-"], `poll ${repo}`, {
     query,
     variables: { owner, name },
   });
@@ -382,16 +413,17 @@ export async function readPullRequests(
     .object({
       data: z.object({
         viewer: z.object({ login: z.string() }),
-        repository: z.record(z.string(), Pull.nullable()),
+        repository: z.object({ labeled: nodes(Labeled) }).catchall(Pull.nullable()),
       }),
     })
     .parse(got);
+  const { labeled: issues, ...found } = data.repository;
   const prs = new Map<number, PullRequest>();
   for (const n of numbers) {
-    const pr = data.repository[`pr${n}`];
+    const pr = found[`pr${n}`];
     if (pr) prs.set(n, pr);
   }
-  return { you: data.viewer.login, prs };
+  return { you: data.viewer.login, labeled: issues, prs };
 }
 
 // Returns whether someone can push to the repository: write, maintain or admin access, which
