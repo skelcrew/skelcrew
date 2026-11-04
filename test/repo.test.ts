@@ -307,6 +307,25 @@ test("repo rm removes skel's clone and forgets the trust", async () => {
   expect(missing.err).toContain("app");
 });
 
+test("repo rm refuses while the repository has live threads, and names them", async () => {
+  await skel([], "y\n", onGitHub("simon/app"));
+  const db = new Database(join(home, ".local", "share", "skel", "skel.db"));
+  db.run(`INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES
+    ('simon', 'app', 12, 'app-12', 'skel/12', 'working'),
+    ('simon', 'app', 15, 'app-15', 'skel/15', 'waiting'),
+    ('simon', 'app', 9, 'app-9', 'skel/9', 'done')`);
+  const refused = await skel(["repo", "rm", "app"]);
+  expect(refused.code).toBe(1);
+  expect(refused.err).toBe("skel: app has live threads: app-12, app-15. Stop them first.\n");
+  expect(existsSync(clone("simon/app"))).toBe(true);
+  db.run("UPDATE threads SET status = 'done' WHERE task = 12");
+  db.run("UPDATE threads SET status = 'failed' WHERE task = 15");
+  db.close();
+  const removed = await skel(["repo", "rm", "app"]);
+  expect(removed.err).toBe("");
+  expect(existsSync(clone("simon/app"))).toBe(false);
+});
+
 test("repo rm refuses inside skel's sandbox, where skel's database is hidden", async () => {
   await skel([], "", onGitHub("simon/app", "WRITE"));
   const run = await skel(["repo", "rm", "app"], "", home, { SKEL_SANDBOX: "1" });
