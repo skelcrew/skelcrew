@@ -167,8 +167,6 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
 
 // Records your trust from outside the sandbox and brings in the repository for the lead.
 export async function trustRepo(given: string): Promise<void> {
-  if (process.env.SKEL_SANDBOX === "1")
-    throw new Error("only you can trust a repository, from your own terminal");
   const db = openDb();
   const known = repositories(db).find((r) => r.name === given);
   if (!known && !given.includes("/"))

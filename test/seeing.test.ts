@@ -362,6 +362,8 @@ exec sleep 300
       `app   simon/app   ${data()}/repos/simon/app`,
       `site  simon/site  ${data()}/repos/simon/site`,
     ]);
-    expect(attach).toBe("skel: skel attach is only for your own terminal, not for agents");
+    expect(attach).toBe(
+      "skel: attaching to a thread is only for your own terminal, not for agents",
+    );
   }, 20_000);
 });

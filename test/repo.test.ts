@@ -307,6 +307,27 @@ test("repo rm removes skel's clone and forgets the trust", async () => {
   expect(missing.err).toContain("app");
 });
 
+test("repo rm refuses inside skel's sandbox, where skel's database is hidden", async () => {
+  await skel([], "", onGitHub("simon/app", "WRITE"));
+  const run = await skel(["repo", "rm", "app"], "", home, { SKEL_SANDBOX: "1" });
+  expect(run.code).toBe(1);
+  expect(run.err).toBe(
+    "skel: removing a repository is only for your own terminal, not for agents\n",
+  );
+  expect(existsSync(clone("simon/app"))).toBe(true);
+});
+
+test("plain skel refuses inside skel's sandbox, and brings in nothing", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  const run = await skel([], "", checkout, { SKEL_SANDBOX: "1" });
+  expect(run.code).toBe(1);
+  expect(run.err).toBe(
+    "skel: attaching to the lead is only for your own terminal, not for agents\n",
+  );
+  expect(calls()).toBe("");
+  expect(existsSync(clone("simon/app"))).toBe(false);
+});
+
 test("names two repositories that share a GitHub name with their owners", async () => {
   await skel([], "", onGitHub("simon/app", "WRITE"));
   await skel([], "", onGitHub("other/app", "WRITE"));

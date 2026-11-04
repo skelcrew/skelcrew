@@ -15,11 +15,27 @@ const usage = `Usage:
   skel attach <repo>-<task>
   skel submit "<summary>"`;
 
+// What an agent may not run, in its words. Its sandbox hides skel's database, your settings
+// and your logins, so these would act on an empty database or ask what nobody can answer.
+// Trusting a repository is yours alone even with the database at hand: a yes passed on by
+// the lead could come from an injected instruction.
+const yoursOnly: Record<string, string> = {
+  "": "attaching to the lead",
+  serve: "running the daemon",
+  "repo rm": "removing a repository",
+  "repo trust": "trusting a repository",
+  attach: "attaching to a thread",
+};
+
 // Runs the requested CLI command, or prints usage and exits when its arguments are invalid.
 // With no command, sets up skel and attaches you to the lead.
 async function run(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
   if (command === "--remote" && sub) process.exit(await remote(sub, rest));
+  const named = command === undefined || command === "--from" ? "" : command;
+  const refused = yoursOnly[command === "repo" ? `repo ${sub}` : named];
+  if (process.env.SKEL_SANDBOX === "1" && refused)
+    throw new Error(`${refused} is only for your own terminal, not for agents`);
   // Loaded only for commands that run here, so skel --remote never loads the parts made for
   // the Linux server, such as the sandbox and the daemon's lock, on a laptop that can be a
   // Mac.
