@@ -222,11 +222,14 @@ WantedBy=default.target
 function installService(): void {
   const file = unitFile();
   const before = existsSync(file) ? readFileSync(file, "utf8") : null;
+  // skel built as one file runs its modules from a folder only it sees, so the service runs
+  // the file itself.
+  const single = import.meta.dir.startsWith("/$bunfs");
   const checkout = resolve(import.meta.dir, "..");
-  const skel = join(checkout, "bin", "skel");
+  const skel = single ? process.execPath : join(checkout, "bin", "skel");
   // A worktree goes away once its work merges, and the daemon with it. Its .git is a file
   // pointing back at the repository, wherever the worktree lives.
-  if (statSync(join(checkout, ".git"), { throwIfNoEntry: false })?.isFile()) {
+  if (!single && statSync(join(checkout, ".git"), { throwIfNoEntry: false })?.isFile()) {
     if (before !== null) return;
     throw new Error(
       `skel is running from a worktree (${skel}): run skel from the main checkout to install its daemon`,
