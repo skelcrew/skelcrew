@@ -1,11 +1,36 @@
-// The repositories skel works on, each from a clone of its own: keeping the clones current,
-// listing the repositories and removing one.
+// The repositories skel works on, each from a clone of its own: bringing one in, trusting
+// one, keeping the clones current, listing the repositories and removing one.
 import type { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { nameRepositories, openDb, Repository } from "./db.ts";
-import { cloneRepo, updateClone } from "./github.ts";
-import { cloneDir, dataDir } from "./paths.ts";
+import { cloneRepo, type GitHubRepo, githubRepo, updateClone } from "./github.ts";
+import { cloneDir, configDir, dataDir } from "./paths.ts";
+import { refuseCredentials } from "./sandbox.ts";
+
+const noRepositories =
+  "skel has no repositories yet. Run skel in a checkout of one, or ask the lead for one by its GitHub name.";
+
+// Kept with your settings, never in the repository, so a clone can't bring its own yes.
+const trustFile = () => join(configDir(), "trusted");
+
+function trustLines(): string[] {
+  return existsSync(trustFile()) ? readFileSync(trustFile(), "utf8").split("\n") : [];
+}
+
+function trust(full: string): void {
+  if (trustLines().includes(full)) return;
+  mkdirSync(configDir(), { recursive: true });
+  appendFileSync(trustFile(), `${full}\n`);
+}
 
 export function repositories(db: Database): Repository[] {
   return db
@@ -32,10 +57,77 @@ export function refreshClone(owner: string, repo: string): string {
   return clone;
 }
 
+// Asking is only for your own terminal. Anywhere else a repository you can't push to waits
+// for skel trust, since a yes passed on by the lead could come from an injected instruction.
+export function bringIn(db: Database, github: GitHubRepo, ask: boolean): void {
+  const { owner, repo, canPush, isFork } = github;
+  const full = `${owner}/${repo}`;
+  const known = repositories(db).some((r) => r.owner === owner && r.repo === repo);
+  // You vouch for what is in a repository you can push to, so asking would only add a step.
+  // A fork you own holds someone else's code, so it is asked about. skel clones from GitHub,
+  // never from your checkout, so what it clones is what your permission covers.
+  if (!known && !(canPush && !isFork) && !trustLines().includes(full)) {
+    if (!ask) throw new Error(`${full} waits until you run skel trust ${full} in your terminal`);
+    console.log(`Agents will run ${full}'s setup and test commands, and follow its AGENTS.md`);
+    console.log("and settings as instructions.");
+    const answer = prompt(`Do you trust ${full}? [y/N]`);
+    if (!["y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
+      console.log(`skel didn't clone ${full}, since you don't trust it.`);
+      return;
+    }
+    trust(full);
+  }
+  if (!existsSync(cloneDir(owner, repo))) console.log(`Cloning ${full} for skel.`);
+  refuseCredentials(refreshClone(owner, repo));
+  if (known) return;
+  db.run("INSERT INTO repositories (owner, repo, name) VALUES (?, ?, ?)", [owner, repo, full]);
+  nameRepositories(db);
+}
+
+// A folder that isn't on GitHub, such as your dotfiles, gets no complaint on every skel. A
+// repository you name with --from does.
+export function bringInFrom(from: string | undefined): void {
+  const db = openDb();
+  try {
+    const github = from ? githubRepo(from) : githubRepoHere();
+    if (github) bringIn(db, github, true);
+  } catch (error) {
+    console.error(`skel: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (repositories(db).length === 0) console.log(noRepositories);
+}
+
+// Reading origin is the only git skel runs in your checkout: the folder only names the
+// repository.
+function githubRepoHere(): GitHubRepo | null {
+  const origin = Bun.spawnSync(["git", "remote", "get-url", "origin"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (!origin.success) return null;
+  try {
+    return githubRepo(origin.stdout.toString().trim());
+  } catch {
+    return null;
+  }
+}
+
+export function trustRepo(given: string): void {
+  if (process.env.SKEL_SANDBOX === "1")
+    throw new Error("only you can trust a repository, from your own terminal");
+  const db = openDb();
+  const known = repositories(db).find((r) => r.name === given);
+  if (!known && !given.includes("/"))
+    throw new Error(`there is no repository named ${given}. Name a new one as owner/repo`);
+  const github = githubRepo(known ? `${known.owner}/${known.repo}` : given);
+  trust(`${github.owner}/${github.repo}`);
+  bringIn(db, github, false);
+}
+
 export function listRepos(): void {
   const all = repositories(openDb());
   if (all.length === 0) {
-    console.log("No repositories yet.");
+    console.log(noRepositories);
     return;
   }
   const width = Math.max(...all.map((r) => r.name.length));
@@ -50,8 +142,11 @@ export function removeRepo(name: string): void {
   const db = openDb();
   const found = repositories(db).find((r) => r.name === name);
   if (!found) throw new Error(`there is no repository named ${name}`);
+  const full = `${found.owner}/${found.repo}`;
   rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });
   db.run("DELETE FROM repositories WHERE owner = ? AND repo = ?", [found.owner, found.repo]);
   nameRepositories(db);
+  const kept = trustLines().filter((line) => line !== "" && line !== full);
+  if (existsSync(trustFile())) writeFileSync(trustFile(), kept.map((line) => `${line}\n`).join(""));
   console.log(`Removed ${name} and skel's clone of it.`);
 }

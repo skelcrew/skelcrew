@@ -1,21 +1,23 @@
 // skel's command line: reads the command and hands it to the file that does it.
 import { attachToLead, serve } from "./daemon.ts";
-import { listRepos, removeRepo } from "./repo.ts";
+import { bringInFrom, listRepos, removeRepo, trustRepo } from "./repo.ts";
 import { firstRun } from "./setup.ts";
 
 const usage = `Usage:
-  skel
+  skel [--from <owner/repo>]
   skel serve
   skel repo ls
-  skel repo rm <name>`;
+  skel repo rm <name>
+  skel trust <name>`;
 
 async function run(args: string[]): Promise<void> {
-  if (args.length === 0) {
+  const [command, sub, ...rest] = args;
+  if (args.length === 0 || (command === "--from" && sub && rest.length === 0)) {
     firstRun();
+    bringInFrom(sub);
     await attachToLead("skel");
     return;
   }
-  const [command, sub, ...rest] = args;
   if (command === "serve" && args.length === 1) {
     await serve("skel");
     return;
@@ -26,6 +28,10 @@ async function run(args: string[]): Promise<void> {
   }
   if (command === "repo" && sub === "rm" && rest[0] && rest.length === 1) {
     removeRepo(rest[0]);
+    return;
+  }
+  if (command === "trust" && sub && rest.length === 0) {
+    trustRepo(sub);
     return;
   }
   console.error(usage);
