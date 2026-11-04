@@ -9,6 +9,7 @@ import { z } from "zod";
 import { openDb } from "./db.ts";
 import { createIssue } from "./github.ts";
 import { startLead } from "./lead.ts";
+import { listTasks, listThreads, TaskRow, ThreadRow } from "./list.ts";
 import { cliSocket, daemonSocket, leadSocket, threadSocket } from "./paths.ts";
 import { findRepository, refreshClones } from "./repo.ts";
 import { setupDone } from "./setup.ts";
@@ -31,6 +32,8 @@ const Branch = z.string().regex(/^(?!-)(?!.*\.\.)[\w./-]+$/);
 const Request = z.discriminatedUnion("command", [
   z.object({ command: z.literal("status") }),
   z.object({ command: z.literal("lead") }),
+  z.object({ command: z.literal("ps"), repo: z.string().optional() }),
+  z.object({ command: z.literal("task ls"), repo: z.string().optional() }),
   z.object({
     command: z.literal("task create"),
     repo: z.string(),
@@ -52,8 +55,8 @@ const LeadReply = z.union([z.object({ lead: z.literal(true) }), z.object({ error
 // in your own terminal.
 type Caller = "you" | "lead" | Thread;
 const allowed = {
-  you: ["status", "lead", "task create", "start"],
-  lead: ["status", "task create", "start"],
+  you: ["status", "lead", "ps", "task ls", "task create", "start"],
+  lead: ["status", "ps", "task ls", "task create", "start"],
   builder: ["status"],
 };
 
@@ -169,6 +172,8 @@ export async function serve(tmux: string): Promise<void> {
       refreshClones(db).catch((error) => console.log(String(error)));
       return { lead: true };
     }
+    if (request.command === "ps") return { threads: listThreads(db, request.repo) };
+    if (request.command === "task ls") return { tasks: await listTasks(db, request.repo) };
     if (request.command === "task create") {
       const { owner, repo, name } = findRepository(db, request.repo);
       const number = await createIssue(`${owner}/${repo}`, request.title, request.body);
@@ -244,6 +249,20 @@ const understood = <T>(schema: z.ZodType<T>, reply: unknown): T => {
     throw new Error("skel's daemon answered in a way this skel doesn't understand");
   return read.data;
 };
+
+// Asks the daemon for the threads, or one repository's, for skel ps. The daemon answers, as
+// the lead's sandbox hides skel's database.
+export async function threads(repo?: string): Promise<ThreadRow[]> {
+  const reply = await request({ command: "ps", ...(repo ? { repo } : {}) });
+  return understood(z.object({ threads: z.array(ThreadRow) }), reply).threads;
+}
+
+// Asks the daemon for the open tasks of every repository, or of one, for skel task ls. The
+// daemon answers, as only it may call GitHub.
+export async function tasks(repo?: string): Promise<TaskRow[]> {
+  const reply = await request({ command: "task ls", ...(repo ? { repo } : {}) });
+  return understood(z.object({ tasks: z.array(TaskRow) }), reply).tasks;
+}
 
 // Has the daemon create a task, as a GitHub issue, for skel task create, and returns the
 // task's name, such as app-13. The daemon makes the call, since agents never hold a GitHub
