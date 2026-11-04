@@ -23,7 +23,7 @@ async function run(args: string[]): Promise<void> {
   // Loaded only for commands that run here, so skel --remote never loads the parts made for
   // the Linux server, such as the sandbox and the daemon's lock, on a laptop that can be a
   // Mac.
-  const { attachToLead, createTask, serve, startOn, submitForReview, tasks, threads } =
+  const { attachToLead, createTask, question, serve, startOn, submitForReview, tasks, threads } =
     await import("./daemon.ts");
   const { printTasks, printThreads } = await import("./list.ts");
   const { bringInFrom, listRepos, removeRepo, trustRepo } = await import("./repo.ts");
@@ -51,6 +51,12 @@ async function run(args: string[]): Promise<void> {
     console.log(
       `Submitted ${thread} for review. skel pushes it and opens or updates the pull request. If the reviewer asks for changes, skel types them in here.`,
     );
+    return;
+  }
+  // Run by a builder's Claude Code hooks, not by people, so usage leaves it out. It prints
+  // nothing: Claude Code adds what a UserPromptSubmit hook prints to the builder's message.
+  if (command === "question" && (sub === "asked" || sub === "answered") && rest.length === 0) {
+    await question(sub === "asked");
     return;
   }
   if (command === "repo" && sub === "trust" && rest[0] && rest.length === 1) {

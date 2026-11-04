@@ -4,7 +4,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { openIssues } from "./github.ts";
 import { findRepository, repositories } from "./repo.ts";
-import { Thread, threadName } from "./thread.ts";
+import { needsYou, Thread, threadName } from "./thread.ts";
 
 export const ThreadRow = z.object({
   thread: z.string(),
@@ -24,7 +24,7 @@ export function listThreads(db: Database, repo?: string): ThreadRow[] {
     : db.query("SELECT * FROM threads ORDER BY rowid DESC").all();
   return all.map((row) => {
     const thread = Thread.parse(row);
-    return { thread: threadName(db, thread), status: thread.status, needsYou: thread.needs_you };
+    return { thread: threadName(db, thread), status: thread.status, needsYou: needsYou(thread) };
   });
 }
 
@@ -50,7 +50,7 @@ export async function listTasks(db: Database, repo?: string): Promise<TaskRow[]>
           createdAt: issue.createdAt,
           task: `${r.name}-${issue.number}`,
           title: issue.title,
-          thread: thread && { status: thread.status, needsYou: thread.needs_you },
+          thread: thread && { status: thread.status, needsYou: needsYou(thread) },
         };
       }),
     ),
