@@ -89,8 +89,8 @@ Pick a row to look at that agent. Click it, or move with Alt-Up and Alt-Down fro
 
 The sidebar has three lists, the three stages of a task: ISSUES, THREADS and PRS. The rows described above are THREADS. Each list shows what is really open, on its own, so a task in review is in all three, and a row goes when what it stands for ends. A PR's merge usually ends all three at once, since it ends the thread and closes the issue. Nothing has to match: a thread can have no issue or no PR yet, and a PR can have no thread.
 
-- **ISSUES** are open issues assigned to you or labeled `skel`. Those with a thread are dim and come last, so what is waiting stands out.
-- **PRS** are open PRs from skel's threads, with the same word as their thread, and open PRs assigned to you or waiting on your review, across your repositories, including ones skel didn't open.
+- **ISSUES** are the open issues in your repositories, as `skel task ls` shows them, newest first. Those with a thread are dim and come last, so what is waiting stands out.
+- **PRS** are the open PRs in your repositories, newest first, including ones skel didn't open. A PR from a thread shows the same word as its thread.
 
 It is an overview, never a replacement for the tracker or GitHub. A row with no agent is a link: it opens in your browser, as a terminal link, since skel may run on another machine than your browser. The agent on the right stays as it is. Each list shows a few rows, then a count of the rest, leaving out dim rows first. skel asks GitHub for these lists only while a screen is open, so they never keep a Sprite awake.
 
