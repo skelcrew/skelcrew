@@ -158,9 +158,45 @@ const calls = () =>
   existsSync(join(home, "calls")) ? readFileSync(join(home, "calls"), "utf8") : "";
 
 // How skel runs itself on the Sprite: with the laptop's build, so a copied skel can tell it
-// is out of date, or without, to run whatever skel is there.
+// is out of date, or without, to run whatever skel is there. Always with the Sprite's name.
 const exec = (name: string, build: string | null = laptop.commit) =>
-  `sprite exec -s ${name} --tty -- env ${build ? `SKEL_LAPTOP_BUILD=${build} SKEL_REMOTE_NAME=sprite:${name} ` : ""}sh -c exec skel "$@" skel`;
+  `sprite exec -s ${name} --tty -- env SKEL_REMOTE_NAME=sprite:${name} ${build ? `SKEL_LAPTOP_BUILD=${build} ` : ""}sh -c exec skel "$@" skel`;
+
+// Runs skel in a terminal, and returns all it wrote there, escape codes included.
+async function skelInTerminal(args: string[]): Promise<string> {
+  let wrote = "";
+  const run = Bun.spawn([process.execPath, laptop.main, ...args], {
+    cwd: home,
+    env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
+    terminal: {
+      data: (_, bytes) => {
+        wrote += new TextDecoder().decode(bytes);
+      },
+    },
+  });
+  await run.exited;
+  run.terminal?.close();
+  return wrote;
+}
+
+test("the raw command sprite puts in the title is replaced, and yours comes back", async () => {
+  existing("demo");
+  // The real sprite writes its own title as it connects, naming the command it runs.
+  const sprite = join(home, "bin", "sprite");
+  const said = readFileSync(sprite, "utf8").replace(
+    "  exec)\n",
+    "  exec)\n    printf '\\033]0;demo: raw command\\033\\\\'\n",
+  );
+  writeFileSync(sprite, said);
+  const wrote = await skelInTerminal(["--remote", "sprite:demo", "ps"]);
+  const saved = wrote.indexOf("\x1b[22;0t");
+  const raw = wrote.indexOf("\x1b]0;demo: raw command");
+  const short = wrote.indexOf("\x1b]2;skel · sprite:demo\x07");
+  const skelRan = wrote.indexOf("skel on the Sprite got 1 arguments");
+  expect([saved, raw, short, skelRan]).toEqual([saved, raw, short, skelRan].sort((a, b) => a - b));
+  expect(saved).toBe(0);
+  expect(wrote.endsWith("\x1b[23;0t")).toBe(true);
+});
 
 test("runs skel on the Sprite with the repository you are in", async () => {
   existing("demo");

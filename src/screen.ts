@@ -1,6 +1,7 @@
 // The screen: the sidebar on the left of your terminal, with the agent you are looking at on
 // the right. It is a second tmux server, one session per open terminal, ended when you leave.
 import { join } from "node:path";
+import { windowTitle } from "./say.ts";
 import { applyConfig, cleanEnv } from "./tmux.ts";
 
 // How wide the sidebar is. tmux shares a resize out among panes, so it is set back after each.
@@ -22,9 +23,16 @@ export const screenSocket = (agents: string) => `${agents}-screen`;
 // detached, so the session is made attached, in one go. The sync feature is the agents'
 // server's, for the same reason: this server's redraws must reach your terminal whole too.
 // xterm-256color, unlike tmux's default, tells the client in the right pane that it may use
-// colour and more, and every machine knows it.
+// colour and more, and every machine knows it. tmux writes the title to your terminal, over
+// whatever sprite or your shell put there. An agent's own title stops at its pane, on the
+// agents' server: Claude Code changes its title as it works, and the title says where you
+// are, which switching agents doesn't change. tmux saves your terminal's title on the way in
+// and puts it back on the way out, on terminals that keep one. It goes out as OSC 2, since
+// sprite writes the Sprite's name in front of a title sent as OSC 0, tmux's usual way.
 const config = [
   ["set", "-g", "status", "off"],
+  ["set", "-g", "set-titles", "on"],
+  ["set", "-s", "terminal-overrides[90]", "*:tsl=\\E]2;:fsl=\\007"],
   ["set", "-g", "prefix", "None"],
   ["set", "-g", "prefix2", "None"],
   ["unbind", "-a", "-T", "root"],
@@ -75,9 +83,11 @@ export async function openScreen(agents: string, session: string): Promise<void>
   if (env.TERM && !known(env.TERM)) env.TERM = "xterm-256color";
   applyConfig(agents);
   const name = `screen-${process.pid}`;
+  // The title is the session's own: terminals on this server can come from different laptops.
   const open = [
     ...config,
     ["new-session", "-s", name, "--", ...agentClient(agents, session)],
+    ["set", "set-titles-string", windowTitle(env.SKEL_REMOTE_NAME)],
     ["split-window", "-hbd", "-l", String(sidebarWidth), "--", ...sidebar(agents, name)],
   ];
   // The lone ";" separates tmux commands.

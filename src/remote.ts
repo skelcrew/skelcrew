@@ -2,7 +2,7 @@
 // to copy skel there when it is missing, and to replace it when it was built from another
 // commit than yours. Your laptop can be a Mac, so this file loads nothing of the skel that
 // runs on the server.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { originHere } from "./origin.ts";
@@ -71,14 +71,35 @@ export const quoted = (word: string) =>
 export const run = (argv: string[]) =>
   Bun.spawn(argv, { stdio: ["inherit", "inherit", "inherit"] }).exited;
 
+// Runs `go` and returns what it gives back, with your terminal's title saved before and put
+// back after, for skel --remote. The screen's tmux saves it too, but on a Sprite that is too
+// late: sprite has already put the raw command there, and writes nothing back. Ghostty and
+// some others keep no saved title and ignore this, so there your shell's prompt puts its own
+// back. Written straight to the terminal, as process.exit can drop what stdout still holds.
+export async function keepingTitle<T>(go: () => Promise<T>): Promise<T> {
+  const say = (code: string) => process.stdout.isTTY && writeSync(1, code);
+  say("\x1b[22;0t");
+  try {
+    return await go();
+  } finally {
+    say("\x1b[23;0t");
+  }
+}
+
 // Runs a skel command on the host and returns its exit code. Plain skel passes the
 // repository you are in on the laptop, so the lead knows it too. When the host has no
 // skel, offers to copy it there, then runs the command.
 export async function remote(host: string, args: string[]): Promise<number> {
   const from = args.length === 0 ? originHere() : null;
   const words = (from ? ["--from", from] : args).map(quoted);
+  const named = quoted(`SKEL_REMOTE_NAME=${host}`);
   const there = (env: string[]) =>
-    run(["ssh", "-t", host, ["env", pathOnServer, ...env.map(quoted), "skel", ...words].join(" ")]);
+    run([
+      "ssh",
+      "-t",
+      host,
+      ["env", pathOnServer, named, ...env.map(quoted), "skel", ...words].join(" "),
+    ]);
   const code = await upToDate(host, there, server(host));
   // The server's shell exits 127 when it finds no skel to run. skel itself never does: it
   // exits 1 on any error.
@@ -93,8 +114,8 @@ export async function remote(host: string, args: string[]): Promise<number> {
   return there([]);
 }
 
-// Runs skel on a server or Sprite through `there`, which takes the environment to run it
-// with, and returns its exit code. A copied skel there from another build than this
+// Runs skel on a server or Sprite through `there`, which takes the environment to add to
+// what it always passes, and returns its exit code. A copied skel there from another build than this
 // laptop's runs nothing, so you are asked to replace it first. Either way the command then
 // runs, without the check, so a build with uncommitted changes can't ask twice.
 export async function upToDate(
@@ -103,9 +124,7 @@ export async function upToDate(
   machine: Machine,
 ): Promise<number> {
   const build = laptopBuild();
-  const code = await there(
-    build ? [`SKEL_LAPTOP_BUILD=${build}`, `SKEL_REMOTE_NAME=${where}`] : [],
-  );
+  const code = await there(build ? [`SKEL_LAPTOP_BUILD=${build}`] : []);
   if (code !== outdated) return code;
   const answer = prompt(skelLine("Update it? [Y/n]"))?.trim().toLowerCase() ?? "";
   if (["n", "no"].includes(answer))

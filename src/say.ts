@@ -9,6 +9,10 @@ export function skelLine(text: string): string {
   return bold ? `\x1b[1m${line}\x1b[22m` : line;
 }
 
+// Returns the title of your terminal's window while skel runs in it, naming the server or
+// Sprite you reached with --remote, if any.
+export const windowTitle = (where?: string) => (where ? `skel · ${where}` : "skel");
+
 // Returns a rule across the terminal with a name in it, to mark where an outside tool takes
 // over the terminal and where skel takes it back. 80 wide when the output isn't a terminal.
 export function rule(name: string): string {

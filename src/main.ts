@@ -1,6 +1,6 @@
 // skel's command line: reads the command and hands it to the file that does it.
 import { help } from "./help.ts";
-import { outdated, outOfDate, remote } from "./remote.ts";
+import { keepingTitle, outdated, outOfDate, remote } from "./remote.ts";
 import { remoteSprite } from "./sprite.ts";
 
 // What an agent may not run, in its words. Its sandbox hides skel's database, your settings
@@ -34,9 +34,14 @@ async function run(args: string[]): Promise<void> {
     console.log(help());
     return;
   }
-  if (command === "--remote" && sub?.startsWith("sprite:"))
-    process.exit(await remoteSprite(sub.slice("sprite:".length), rest));
-  if (command === "--remote" && sub) process.exit(await remote(sub, rest));
+  if (command === "--remote" && sub)
+    process.exit(
+      await keepingTitle(() =>
+        sub.startsWith("sprite:")
+          ? remoteSprite(sub.slice("sprite:".length), rest)
+          : remote(sub, rest),
+      ),
+    );
   const named = command === undefined || command === "--from" ? "" : command;
   const refused = yoursOnly[command === "repo" ? `repo ${sub}` : named];
   if (process.env.SKEL_SANDBOX === "1" && refused)

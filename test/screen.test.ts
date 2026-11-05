@@ -45,11 +45,15 @@ async function until(done: () => boolean, what: string, window = "one") {
 
 // What you see in the first terminal, or a second one.
 const seen = (window = "one") => tmux(terminal, "capture-pane", "-p", "-t", `=${window}:`).out;
+// The title your terminal shows in its window and tab.
+const title = (window = "one") =>
+  tmux(terminal, "display-message", "-p", "-t", `=${window}:`, "#{pane_title}").out.trim();
 const screenSessions = () =>
   tmux(screen, "list-sessions", "-F", "#{session_name}").out.trim().split("\n").filter(Boolean);
 
-// Starts an agent that says its name, logs what you type and the size of its window. It first
-// runs `before`, such as printing a long history.
+// Starts an agent that sets a title of its own, as Claude Code does, says its name, and logs
+// what you type and the size of its window. It first runs `before`, such as printing a long
+// history.
 function agent(name: string, before = ""): void {
   const script = join(home, `${name}.sh`);
   writeFileSync(
@@ -59,6 +63,7 @@ cd ${JSON.stringify(home)}
 trap 'stty size > ${name}.size' WINCH
 stty size > ${name}.size
 ${before}
+printf '\\033]0;title of ${name}\\007'
 echo "I am ${name}"
 # A resize cuts read short, which must not end the agent.
 while :; do read -r line && echo "$line" >> ${name}.typed; done
@@ -68,8 +73,15 @@ while :; do read -r line && echo "$line" >> ${name}.typed; done
   startSession(agents, name, { folder: home, command: [script], env: { PATH: pathNow } });
 }
 
-// Opens the screen on an agent in a terminal of its own, which logs how skel exited.
-function open(session: string, window = "one", term = "xterm-256color", width = "120"): void {
+// Opens the screen on an agent in a terminal of its own, whose title until then is "my shell",
+// and which logs how skel exited. `where` is the name a laptop's skel --remote passes along.
+function open(
+  session: string,
+  window = "one",
+  term = "xterm-256color",
+  width = "120",
+  where = "",
+): void {
   const script = join(home, `open-${window}.ts`);
   writeFileSync(
     script,
@@ -77,7 +89,9 @@ function open(session: string, window = "one", term = "xterm-256color", width = 
 await openScreen(${JSON.stringify(agents)}, ${JSON.stringify(session)});
 await Bun.write(${JSON.stringify(join(home, `left-${window}`))}, "left");`,
   );
-  const command = `TERM=${term} ${process.execPath} ${script}; sleep 300`;
+  const named = where ? `SKEL_REMOTE_NAME=${where} ` : "";
+  const title = `printf '\\033]2;my shell\\007'`;
+  const command = `${title}; ${named}TERM=${term} ${process.execPath} ${script}; sleep 300`;
   tmux(terminal, "new-session", "-d", "-s", window, "-x", width, "-y", "30", command);
 }
 
@@ -404,6 +418,74 @@ test("both tmux servers pass synchronized output on, so nesting brings no flicke
   await ready("lead");
   for (const socket of [screen, agents])
     expect(tmux(socket, "list-clients", "-F", "#{client_termfeatures}").out).toContain("sync");
+});
+
+test("the terminal's title says skel while the screen is open, and comes back after", async () => {
+  open("lead");
+  await ready("lead");
+  await until(() => title() === "skel", "the title");
+  press("C-]");
+  await until(() => existsSync(join(home, "left-one")), "skel to return");
+  expect(title()).toBe("my shell");
+});
+
+test("the title names the machine when you came from a laptop", async () => {
+  open("lead", "one", "xterm-256color", "120", "sprite:demo");
+  await ready("lead");
+  await until(() => title() === "skel · sprite:demo", "the title");
+});
+
+test("the title goes out in the form sprite leaves alone", async () => {
+  // sprite writes its own name in front of a title sent the other way, OSC 0.
+  const script = join(home, "open-raw.ts");
+  writeFileSync(
+    script,
+    `import { openScreen } from ${JSON.stringify(screenFile)};
+await openScreen(${JSON.stringify(agents)}, "lead");`,
+  );
+  let wrote = "";
+  const run = Bun.spawn([process.execPath, script], {
+    env: { ...env(), TMUX: "", TERM: "xterm-256color" },
+    terminal: {
+      cols: 120,
+      rows: 30,
+      data: (_, bytes) => {
+        wrote += new TextDecoder().decode(bytes);
+      },
+    },
+  });
+  try {
+    await until(() => wrote.includes("skel\x07") || wrote.includes("skel\x1b\\"), "the title");
+    expect(wrote).toContain("\x1b]2;skel");
+    expect(wrote).not.toContain("\x1b]0;");
+  } finally {
+    tmux(screen, "kill-server");
+    await run.exited;
+    run.terminal?.close();
+  }
+});
+
+test("two terminals on one machine keep a title each", async () => {
+  open("lead", "one", "xterm-256color", "120", "sprite:demo");
+  await ready("lead");
+  open("lead", "two");
+  await ready("lead", "two");
+  await until(() => title("two") === "skel", "the second title");
+  press("M-Down");
+  await until(() => seen().includes("I am app-12"), "app-12");
+  expect(title()).toBe("skel · sprite:demo");
+});
+
+test("an agent's own title never reaches the terminal, even after switching", async () => {
+  open("lead");
+  await ready("lead");
+  await until(() => title() === "skel", "the title");
+  expect(tmux(agents, "list-panes", "-t", "=lead:", "-F", "#{pane_title}").out).toContain(
+    "title of lead",
+  );
+  press("M-Down");
+  await until(() => seen().includes("I am app-12"), "app-12");
+  expect(title()).toBe("skel");
 });
 
 test("a terminal too narrow for a sidebar still shows the agent", async () => {

@@ -135,9 +135,35 @@ const calls = () =>
   existsSync(join(home, "calls")) ? readFileSync(join(home, "calls"), "utf8") : "";
 
 // The line ssh runs on the server: with the laptop's build, so a copied skel can tell it is
-// out of date, or without, to run whatever skel is there.
+// out of date, or without, to run whatever skel is there. Always with the server's name, for
+// the title of your terminal.
 const onServer = (words: string, build: string | null = laptop.commit) =>
-  `ssh -t simon@workbox env PATH="$HOME/.local/bin:$PATH" ${build ? `SKEL_LAPTOP_BUILD=${build} SKEL_REMOTE_NAME=simon@workbox ` : ""}skel${words}`;
+  `ssh -t simon@workbox env PATH="$HOME/.local/bin:$PATH" SKEL_REMOTE_NAME=simon@workbox ${build ? `SKEL_LAPTOP_BUILD=${build} ` : ""}skel${words}`;
+
+// Runs skel in a terminal, and returns all it wrote there, escape codes included.
+async function skelInTerminal(args: string[]): Promise<string> {
+  let wrote = "";
+  const run = Bun.spawn([process.execPath, laptop.main, ...args], {
+    cwd: home,
+    env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
+    terminal: {
+      data: (_, bytes) => {
+        wrote += new TextDecoder().decode(bytes);
+      },
+    },
+  });
+  await run.exited;
+  run.terminal?.close();
+  return wrote;
+}
+
+test("the terminal's title is saved before the server is reached and put back after", async () => {
+  installed();
+  const wrote = await skelInTerminal(["--remote", "simon@workbox", "ps"]);
+  expect(wrote.startsWith("\x1b[22;0t")).toBe(true);
+  expect(wrote.endsWith("\x1b[23;0t")).toBe(true);
+  expect(wrote).toContain("skel on the server got 1 arguments");
+});
 
 test("runs skel on the server with the repository you are in", async () => {
   installed();
