@@ -67,7 +67,23 @@ Before the first step, skel checks that `tmux`, `bwrap`, `gh` and the harness ar
 
 Each step is skipped when it is already done. Once the first run has finished, `skel` skips it entirely and goes straight to the lead: a tool or login that goes missing later shows up where it is used.
 
-**The sidebar.** `skel` puts a narrow sidebar on the left of your terminal, with the agent you are looking at on the right. The sidebar lists the lead first, then every thread that isn't done, one row each: a mark, the thread's name, and its status, with needs you in yellow. It updates on its own.
+**The sidebar.** `skel` puts a narrow sidebar on the left of your terminal, with the agent you are looking at on the right. The sidebar lists the lead first, then every thread that isn't done, one row each: a mark, the thread's name, and a word for what it is doing. It updates on its own.
+
+| Word | Means |
+|---|---|
+| `working` | The builder is working |
+| `reviewing` | A review is waiting or running |
+| `checks` | Waiting on CI |
+| `changes` | The reviewer asked for changes, and the builder hasn't picked them up yet |
+| `question` | Needs you: the builder asked a question |
+| `approved` | Needs you: approved and green, ready to merge |
+| `round limit` | Needs you: review hit its round limit |
+| `review failed` | Needs you: the review itself couldn't run |
+| `failed`, `stopped` | As the thread's status says |
+
+The ones that need you are yellow, with a `?` mark. These words only describe the thread: its status and needs you stay as they are.
+
+Under the list, the sidebar shows the picked thread: its task's title, its PR's number and whether its checks pass, then one line per review round, with the reviewer, the verdict and the first line of what it said. So you can see that a review ran, and what it found, without leaving the agent you are looking at. Nothing is shown for the lead.
 
 Pick a row to look at that agent. Click it, or move with Alt-Up and Alt-Down from anywhere, even while typing to an agent. The right side switches at once, and you type straight to whichever agent it shows. So answering a builder's question is one click, with nothing to detach from. Ctrl-\] still leaves the whole screen, and everything keeps running.
 
@@ -196,7 +212,7 @@ test: [bun test]
 
 **The screen.** The sidebar lives in a second tmux server, `tmux -L skel-screen`, one session per open terminal, ended when you leave. Its left pane runs the sidebar. Its right pane is an ordinary tmux client attached to the agent's session on `tmux -L skel`, and picking a row switches that client to another session. So agents' sessions stay single-pane and know nothing of the screen: typing into them, reading them and checking them work as if it weren't there, and leaving the screen ends nothing.
 
-**State.** One SQLite file per machine, `~/.local/share/skel/skel.db`, with `bun:sqlite`. It holds repositories (name, GitHub owner and name) and threads (repository, task, branch, status, needs you, round count, builder session ID, PR number), and the last handled ID per event kind. Every change is also appended to `~/.local/share/skel/threads/<repo>-<task>.log` as one JSON line, so a thread's history can be read and replayed. Open tasks are not stored; `skel task ls` asks GitHub. Repository clones live in `~/.local/share/skel/repos/` and thread clones in `~/.local/share/skel/threads/`, on one disk, so a thread's clone shares its files with the repository's.
+**State.** One SQLite file per machine, `~/.local/share/skel/skel.db`, with `bun:sqlite`. It holds repositories (name, GitHub owner and name) and threads (repository, task, branch, status, needs you, round count, builder session ID, PR number), and the last handled ID per event kind. Every change is also appended to `~/.local/share/skel/threads/<repo>-<task>.log` as one JSON line, so a thread's history can be read and replayed. That includes each review's round, reviewer, verdict and first line, which the sidebar shows. Open tasks are not stored; `skel task ls` asks GitHub. Repository clones live in `~/.local/share/skel/repos/` and thread clones in `~/.local/share/skel/threads/`, on one disk, so a thread's clone shares its files with the repository's.
 
 **Surviving restarts.** When the daemon starts, it brings back the lead and every thread that was `working` or `waiting` with `claude --resume <session>`, runs again every review whose `skel/review` check is still pending, and polling picks up any event it missed.
 
