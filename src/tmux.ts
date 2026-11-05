@@ -12,17 +12,40 @@ import { onSprite, startTmuxService } from "./sprite.ts";
 // redraws arrive in pieces, so the prompt flickers over a slow link such as a Sprite's.
 // Terminals without it ignore the codes. A fixed index, since this runs again with each
 // new session and appending would add it every time.
+//
+// The wheel scrolls back through an agent's output. Claude Code draws in one of two ways. Its
+// classic drawing leaves its output in tmux's history, so copy mode shows it. Its full-screen
+// drawing keeps its own, and asks for the mouse, so the wheel goes to it. A program on the
+// alternate screen that didn't ask has no history here, so it gets arrow keys, as a terminal
+// would send it. Copy mode's own keys are all gone, as they would swallow what you type and
+// leave you wondering why the agent doesn't answer: any key goes back to the live agent and
+// reaches it too, as send-keys alone sends the key that ran it. mode-keys, since tmux picks
+// vi's table, and keeps these keys out of it, when $EDITOR says vi.
 const config = `set -g status off
 bind -n C-] detach-client
 set -g remain-on-exit failed
 set -s terminal-features[90] "*:sync"
+set -g mouse on
+set -g mode-keys emacs
+bind -n WheelUpPane {
+  if -F "#{mouse_any_flag}" { send-keys -M } {
+    if -F "#{alternate_on}" { send-keys Up } { copy-mode -e; send-keys -X -N 5 scroll-up }
+  }
+}
+bind -n WheelDownPane {
+  if -F "#{mouse_any_flag}" { send-keys -M } { if -F "#{alternate_on}" { send-keys Down } }
+}
+unbind -a -T copy-mode
+bind -T copy-mode WheelUpPane send-keys -X -N 5 scroll-up
+bind -T copy-mode WheelDownPane send-keys -X -N 5 scroll-down
+bind -T copy-mode Any { send-keys -X cancel; send-keys }
 `;
 
 type Waits = { moment?: number; timeout?: number; signal?: AbortSignal };
 
 // Returns the inherited environment without TMUX, which otherwise prevents attaching from
 // inside tmux.
-function cleanEnv(): Record<string, string> {
+export function cleanEnv(): Record<string, string> {
   const kept = Object.entries(process.env).flatMap(([key, value]) =>
     value === undefined || key === "TMUX" ? [] : [[key, value]],
   );
@@ -103,6 +126,12 @@ export function startSession(
   mustTmux(socket, ["source-file", "-"], config);
 }
 
+// Gives a running tmux server skel's settings, so one an older skel started scrolls too.
+// Quietly does nothing without a server.
+export function applyConfig(socket: string): void {
+  tmux(socket, ["source-file", "-"], config);
+}
+
 // Reports whether the exact session exists so skel can reconnect instead of starting it
 // twice.
 export function hasSession(socket: string, name: string): boolean {
@@ -176,22 +205,31 @@ export async function stopSession(socket: string, name: string, timeout = 10_000
   }
 }
 
-// Attaches your terminal to the named agent session and returns when you detach with
-// Ctrl-].
-export async function attach(socket: string, name: string): Promise<void> {
-  const env = cleanEnv();
-  // Reports whether this machine knows the terminal, so attachment can choose a fallback.
-  // tmux refuses unknown terminals, such as Ghostty's xterm-ghostty over ssh.
-  // xterm-256color draws Claude Code well enough.
-  const known = (term: string) =>
-    !Bun.which("infocmp") ||
-    Bun.spawnSync(["infocmp", term], { stdout: "ignore", stderr: "ignore" }).success;
-  if (env.TERM && !known(env.TERM)) env.TERM = "xterm-256color";
-  const code = await Bun.spawn(["tmux", "-L", socket, "attach", "-t", `=${name}`], {
-    env,
-    stdio: ["inherit", "inherit", "inherit"],
-  }).exited;
-  if (code !== 0) throw new Error(`couldn't attach to ${name}: tmux exited with ${code}`);
+// Returns the sessions whose agent is running, for the sidebar. A builder that exited keeps
+// its session and last screen, which would look like it still runs. Nothing when the server
+// isn't up.
+export function runningSessions(socket: string): string[] {
+  const panes = tmux(socket, ["list-panes", "-a", "-F", "#{pane_dead} #{session_name}"]).out;
+  return panes.split("\n").flatMap((pane) => (pane.startsWith("0 ") ? [pane.slice(2)] : []));
+}
+
+// Returns the terminal of a pane, by which another tmux server knows the client running in
+// it. Throws when the pane is gone, since the sidebar then has nothing to switch.
+export const paneTty = (socket: string, target: string) =>
+  mustTmux(socket, ["display-message", "-p", "-t", target, "#{pane_tty}"]).trim();
+
+// Returns the session a client on the given terminal is showing, or null while it has none,
+// such as the moment between an agent ending and the client attaching to the lead.
+export function shownSession(socket: string, tty: string): string | null {
+  const clients = tmux(socket, ["list-clients", "-F", "#{client_tty} #{session_name}"]).out;
+  const line = clients.split("\n").find((client) => client.startsWith(`${tty} `));
+  return line ? line.slice(tty.length + 1) : null;
+}
+
+// Switches the client on the given terminal to another session. Quietly does nothing if that
+// session ended this moment: the sidebar shows what is left at its next look.
+export function showSession(socket: string, tty: string, name: string): void {
+  tmux(socket, ["switch-client", "-c", tty, "-t", `=${name}`]);
 }
 
 // Returns the visible pane text so skel can check whether Claude Code is ready for a
@@ -258,6 +296,10 @@ async function typeNow(socket: string, name: string, text: string, waits: Waits)
       throw new Error(`${name} wasn't idle for ${timeout / 1000}s (${why}), so nothing was typed`);
   }
   const buffer = `skel-${process.pid}-${buffers++}`;
+  // Someone scrolled back would swallow the Enter below, and the message would never be
+  // sent. Being scrolled back shows in neither the check above nor the pane's text, so it
+  // is left here, whether or not anyone is. It fails when nobody is, which is fine.
+  tmux(socket, ["send-keys", "-X", "-t", `=${name}:`, "cancel"]);
   try {
     mustTmux(socket, ["load-buffer", "-b", buffer, "-"], text);
     // Without the paste marks, Claude Code reads the Enter after a long message as a new

@@ -137,9 +137,15 @@ async function skel(args: string[], typed = "", cwd = home, more: Record<string,
   return { out, err, code };
 }
 
+// Returns what skel ran, with the long tmux line that opens the screen cut to the agent it
+// opens on.
 const calls = () =>
-  existsSync(join(home, "calls")) ? readFileSync(join(home, "calls"), "utf8") : "";
-const attached = () => calls().endsWith("daemon lead\ntmux -L skel attach -t =lead\n");
+  existsSync(join(home, "calls"))
+    ? readFileSync(join(home, "calls"), "utf8")
+        .replace(/tmux -L skel -f \/dev\/null source-file -\n/g, "")
+        .replace(/tmux -L skel-screen .* sh skel (\S+) ;.*/g, "screen on $1")
+    : "";
+const attached = () => calls().endsWith("daemon lead\nscreen on lead\n");
 
 test("brings in a repository you can push to from its checkout, without asking", async () => {
   const checkout = onGitHub("simon/app", "WRITE");

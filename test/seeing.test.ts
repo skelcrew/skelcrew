@@ -388,20 +388,21 @@ case "$*" in
 *has-session*) test -e "$HOME/sessions/$session" ;;
 *display-message*) grep -q dead "$HOME/sessions/$session" && echo 1 || echo 0 ;;
 *capture-pane*) echo "Claude Code exited" ;;
-*" attach "*) exit 0 ;;
+*" new-session "*) exit 0 ;;
 *) exit 1 ;;
 esac`,
     );
   });
   const calls = () => read(join(home, "calls"));
 
-  test("attaches your terminal to the builder's session, named when the thread started", async () => {
+  test("opens the screen on the builder's session, named when the thread started", async () => {
     writeFileSync(join(home, "sessions", "site-7"), "");
     sql("UPDATE repositories SET name = 'web' WHERE repo = 'site'");
     const attached = await skel(["attach", "web-7"]);
     expect(attached.err).toBe("");
     expect(attached.code).toBe(0);
-    expect(calls()).toContain("tmux -L skel attach -t =site-7\n");
+    expect(calls()).toContain("tmux -L skel-screen -f /dev/null");
+    expect(calls()).toMatch(/new-session .* skel site-7 ;/);
   });
 
   test("says when there is no such thread", async () => {
@@ -409,7 +410,7 @@ esac`,
     expect(missing.code).not.toBe(0);
     expect(missing.err).toBe("skel: there is no thread app-99\n");
     expect((await skel(["attach", "web-1"])).err).toContain("no repository named web");
-    expect(calls()).not.toContain("attach");
+    expect(calls()).not.toContain("new-session");
   });
 
   test("says when the builder isn't running, and what state its thread is in", async () => {
@@ -419,7 +420,7 @@ esac`,
     expect(dead.err).toBe("skel: app-12's builder isn't running: the thread is working\n");
     const gone = await skel(["attach", "app-9"]);
     expect(gone.err).toBe("skel: app-9's builder isn't running: the thread is failed\n");
-    expect(calls()).not.toContain(" attach ");
+    expect(calls()).not.toContain("new-session");
   });
 
   test("refuses inside skel's sandbox, since it takes over your terminal", async () => {
@@ -428,6 +429,8 @@ esac`,
     expect(refused.code).not.toBe(0);
     expect(refused.err).toContain("your own terminal");
     expect(calls()).toBe("");
+    const sidebar = await skel(["sidebar", "skel", "screen-1"], { SKEL_SANDBOX: "1" });
+    expect(sidebar.err).toContain("your own terminal");
   });
 });
 

@@ -13,6 +13,7 @@ const yoursOnly: Record<string, string> = {
   "repo rm": "removing a repository",
   "repo trust": "trusting a repository",
   attach: "attaching to a thread",
+  sidebar: "showing the sidebar",
 };
 
 // Returns the repository and task in a name such as app-13, or nothing when it isn't one.
@@ -23,10 +24,12 @@ function taskName(word?: string): [string, number] | undefined {
 }
 
 // Runs the requested CLI command, or prints usage and exits when its arguments are invalid.
-// With no command, sets up skel and attaches you to the lead.
+// With no command, sets up skel and opens the screen on the lead.
 async function run(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
-  if (outOfDate()) process.exit(outdated);
+  // A sidebar is started by a skel that passed this check, and its tmux server can hand it
+  // the build of whichever laptop started the server, so it would refuse to run.
+  if (command !== "sidebar" && outOfDate()) process.exit(outdated);
   if (args.length === 1 && ["--help", "-h", "help"].includes(command ?? "")) {
     console.log(help());
     return;
@@ -62,6 +65,7 @@ async function run(args: string[]): Promise<void> {
   );
   const { bringInFrom, removeRepo, trustRepo } = await import("./repo.ts");
   const { firstRun } = await import("./setup.ts");
+  const { runSidebar } = await import("./sidebar.ts");
   const { attachToThread } = await import("./thread.ts");
   if (args.length === 0 || (command === "--from" && sub && rest.length === 0)) {
     firstRun();
@@ -70,6 +74,11 @@ async function run(args: string[]): Promise<void> {
   }
   if (command === "serve" && args.length === 1) {
     await serve("skel");
+    return;
+  }
+  // Run by the screen in its left pane, not by people, so usage leaves it out.
+  if (command === "sidebar" && sub && rest[0] && rest.length === 1) {
+    await runSidebar(sub, rest[0]);
     return;
   }
   if (command === "repo" && sub === "ls" && rest.length === 0) {
