@@ -12,7 +12,7 @@ import {
 } from "./github.ts";
 import { tellLead } from "./lead.ts";
 import { cloneDir } from "./paths.ts";
-import { type Review, review } from "./reviewer.ts";
+import { type Review, review, reviewerHarness } from "./reviewer.ts";
 import {
   baseOf,
   cloneOf,
@@ -164,7 +164,8 @@ async function reviewRound(
   const { model, reviewer, maxRounds } = threadConfig();
   await setReviewStatus(repo, sha, "pending", "skel's reviewer is reviewing");
   if (signal.aborted) return;
-  record(db, folder, { reviewing: sha, submitting: null }, `reviewing ${sha}`);
+  const harness = reviewerHarness(reviewer, process.env.PATH ?? "");
+  record(db, folder, { reviewing: sha, submitting: null, reviewer: harness }, `reviewing ${sha}`);
   const verdict = await review({
     clone: cloneOf(thread),
     issue: await readIssue(repo, thread.task),
@@ -176,7 +177,8 @@ async function reviewRound(
     signal,
   });
   if (signal.aborted) return;
-  const outcome = afterReview(readThread(db, folder).rounds, verdict, maxRounds);
+  const before = readThread(db, folder).rounds;
+  const outcome = afterReview(before, verdict, maxRounds);
   if (verdict.verdict !== "failed") {
     const id = await postReview(repo, pr, sha, verdict.verdict, verdict.body);
     db.run("INSERT OR IGNORE INTO posted (id) VALUES (?)", [id]);
@@ -186,7 +188,17 @@ async function reviewRound(
   await setReviewStatus(repo, sha, outcome.check, outcome.description);
   if (signal.aborted) return;
   const { rounds, needsYou, status, tell, held } = outcome;
-  const change = { reviewing: null, rounds, needs_you: needsYou, status, telling: tell, held };
+  const change = {
+    reviewing: null,
+    rounds,
+    needs_you: needsYou,
+    status,
+    telling: tell,
+    held,
+    review_round: before + 1,
+    verdict: verdict.verdict,
+    review_line: verdict.body.trim().split("\n")[0]?.slice(0, 200) ?? "",
+  };
   record(db, folder, change, outcome.why);
   tellLead(db, tmux);
   if (tell) await deliver(db, tmux, folder, tell, signal);
@@ -269,7 +281,7 @@ function pushAndReview(
 // about an older commit. Throws when your config isn't valid, so the builder hears why, and
 // for a thread skel stop is ending, whose builder may submit while it exits.
 export function submitRound(db: Database, tmux: string, folder: string, summary: string): void {
-  const { maxRounds } = threadConfig();
+  const { maxRounds, reviewer } = threadConfig();
   const thread = readThread(db, folder);
   if (thread.status === "stopped")
     throw new Error("this thread was stopped, so skel won't push it");
@@ -278,7 +290,16 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
   record(
     db,
     folder,
-    { status: "waiting", needs_you, submitting: summary, telling: null, held: null },
+    {
+      status: "waiting",
+      needs_you,
+      submitting: summary,
+      telling: null,
+      held: null,
+      // What CI said was about the commit before this one.
+      checks: null,
+      reviewer: reviewerHarness(reviewer, process.env.PATH ?? ""),
+    },
     `submitted: ${summary}`,
   );
   const before = latest.get(folder);

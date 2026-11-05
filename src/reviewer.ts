@@ -40,6 +40,12 @@ const passed = [
   ...["OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY"],
 ];
 
+// Returns the harness a review runs on: the one your config names, or else Codex when it is
+// installed and Claude Code when it isn't. The thread saves it as the review starts, so you can
+// see which agent has the thread while it waits and runs.
+export const reviewerHarness = (configured: "codex" | "claude" | undefined, path: string) =>
+  configured ?? (Bun.which("codex", { PATH: path }) ? "codex" : "claude");
+
 // Builds the reviewer's instructions from the issue and base branch, asking for actionable
 // findings.
 function prompt(issue: { title: string; body: string }, base: string): string {
@@ -161,7 +167,7 @@ async function reviewNow(given: {
   if (!home)
     return { verdict: "failed", body: "HOME isn't set, so skel can't find its own folders" };
   const path = env.PATH ?? "";
-  const harness = given.harness ?? (Bun.which("codex", { PATH: path }) ? "codex" : "claude");
+  const harness = reviewerHarness(given.harness, path);
   if (given.harness && !Bun.which(harness, { PATH: path }))
     return {
       verdict: "failed",

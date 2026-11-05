@@ -62,6 +62,24 @@ const passed = (check: Check) =>
       ["SUCCESS", "NEUTRAL", "SKIPPED"].includes(check.conclusion ?? "")
     : check.state === "SUCCESS";
 
+// Returns whether a check is still to finish.
+const running = (check: Check) =>
+  check.kind === "run"
+    ? check.status !== "COMPLETED"
+    : ["PENDING", "EXPECTED"].includes(check.state);
+
+// Returns CI's checks, without skel's own review check, which its rounds look after.
+const ciOf = (pr: PullRequest) => pr.checks.filter((c) => c.name !== "skel/review");
+
+// Returns what the PR's CI says, for the strip, or null when it has none. One failure is enough
+// to say so, while the rest still run.
+export function ciChecks(pr: PullRequest): Thread["checks"] {
+  const ci = ciOf(pr);
+  if (ci.length === 0) return null;
+  if (ci.every(passed)) return "passing";
+  return ci.some((c) => !passed(c) && !running(c)) ? "failing" : "pending";
+}
+
 // Returns the reviews after the last one handled, oldest first, up to the first one still
 // pending. A pending review gets its ID when it is started, not when it is submitted, so the
 // reviews after it must wait for it, or it would come in behind the last handled ID.
@@ -122,16 +140,11 @@ export function decide(
   // builder then works on it until it submits again.
   const quiet =
     thread.status === "waiting" && thread.submitting === null && thread.reviewing === null;
-  // CI's checks, without skel's own review check, which its rounds look after.
-  const ci = pr.checks.filter((c) => c.name !== "skel/review");
+  const ci = ciOf(pr);
   // While a newer round is still being pushed, the checks GitHub shows are an older commit's.
   // Parallel jobs finish out of order, and one that fails later must not fall behind the last
   // handled ID, so failures wait until every check has finished. A commit status has no ID.
-  const finished =
-    thread.submitting === null &&
-    ci.every((c) =>
-      c.kind === "run" ? c.status === "COMPLETED" : !["PENDING", "EXPECTED"].includes(c.state),
-    );
+  const finished = thread.submitting === null && !ci.some(running);
   const failed = finished
     ? ci.filter((c) =>
         c.kind === "run"
@@ -367,6 +380,11 @@ async function pollRepository(
       thread.submitting !== before.submitting ||
       thread.reviewing !== before.reviewing ||
       thread.rounds !== before.rounds;
+    // Saved ahead of what the decision does, so a thread never needs you for an approval while
+    // its saved checks still say otherwise. A commit on its way has no checks to speak of yet.
+    const checks = ciChecks(pr);
+    if (!stale && thread.submitting === null && checks !== thread.checks)
+      record(db, folder, { checks });
     if ("end" in decision) await endThread(db, tmux, thread, decision.end);
     // Left unhandled, so a stopped thread's events reach its builder once it starts again.
     else if (thread.status === "stopped" || typing.has(folder) || stale) continue;

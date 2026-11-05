@@ -313,6 +313,14 @@ async function approvedApp12(from?: string): Promise<string> {
 
 // bubblewrap can't start inside skel's own sandbox, so only there builders can't start.
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
+  test("a PR's checks are saved for the strip, without skel's own review check", async () => {
+    await approvedApp12();
+    await morePolls();
+    pr({ reviews: [skelReview], checks: [approved, check(900, "SUCCESS")] });
+    await until(() => thread().checks === "passing");
+    expect(thread()).toMatchObject({ status: "waiting", needs_you: 1 });
+  });
+
   test("a failed check reaches the builder once, even after GitHub fails and the daemon restarts", async () => {
     await approvedApp12();
     // GitHub fails until the graphql file is there; skel tries again at the next poll.

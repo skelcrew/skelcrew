@@ -89,6 +89,12 @@ export function openDb(): Database {
     last_check INTEGER,
     asking INTEGER NOT NULL DEFAULT 0,
     noting TEXT,
+    title TEXT,
+    checks TEXT,
+    reviewer TEXT,
+    review_round INTEGER,
+    verdict TEXT,
+    review_line TEXT,
     PRIMARY KEY (owner, repo, task)
   )`);
   // Threads an older skel started lack some of these columns. `submitting`,
@@ -107,6 +113,12 @@ export function openDb(): Database {
     last_check: "INTEGER",
     asking: "INTEGER NOT NULL DEFAULT 0",
     noting: "TEXT",
+    title: "TEXT",
+    checks: "TEXT",
+    reviewer: "TEXT",
+    review_round: "INTEGER",
+    verdict: "TEXT",
+    review_line: "TEXT",
   };
   for (const [column, type] of Object.entries(added))
     if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))

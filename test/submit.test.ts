@@ -267,6 +267,33 @@ async function startApp12() {
 
 // bubblewrap can't start inside skel's own sandbox, so only there builders can't start.
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
+  test("each review's round, reviewer, verdict and first line go in the thread's log, and the task's title too", async () => {
+    addApp();
+    verdict(1, "changes", "\n  The export has no test.\n\nMore detail here.");
+    verdict(2, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"), 30_000);
+    const lines = read(join(data(), "threads", "app-12.log"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const said = lines.filter((line) => line.why?.includes("in round 1"))[0];
+    expect(said).toMatchObject({
+      review_round: 1,
+      reviewer: "codex",
+      verdict: "changes",
+      review_line: "The export has no test.",
+    });
+    expect(lines.at(-1)).toMatchObject({
+      title: "Add export",
+      review_round: 2,
+      reviewer: "codex",
+      verdict: "approve",
+      review_line: "Ready to merge.",
+    });
+    expect(lines.some((line) => line.reviewer === "codex" && line.submitting !== null)).toBe(true);
+  });
+
   test("pushes the round, opens the PR, has it reviewed, types the changes in, and waits on CI once approved", async () => {
     addApp();
     verdict(1, "changes", "The export has no test.");
