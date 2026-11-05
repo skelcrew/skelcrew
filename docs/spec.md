@@ -87,7 +87,14 @@ Above the agent, a strip of two lines says what you are looking at. For a thread
 
 Pick a row to look at that agent. Click it, or move with Alt-Up and Alt-Down from anywhere, even while typing to an agent. The right side switches at once, and you type straight to whichever agent it shows. So answering a builder's question is one click, with nothing to detach from. Ctrl-\] still leaves the whole screen, and everything keeps running.
 
-The sidebar only shows and switches. It has no commands of its own, and creates, starts and stops nothing: you ask the lead, or run `skel`.
+The sidebar has three lists, the three stages of a task: ISSUES, THREADS and PRS. The rows described above are THREADS. Each list shows what is really open, on its own, so a task in review is in all three, and a row goes when what it stands for ends. A PR's merge usually ends all three at once, since it ends the thread and closes the issue. Nothing has to match: a thread can have no issue or no PR yet, and a PR can have no thread.
+
+- **ISSUES** are the open issues in your repositories, as `skel task ls` shows them, newest first. Those with a thread are dim and come last, so what is waiting stands out.
+- **PRS** are the open PRs in your repositories, newest first, including ones skel didn't open. A PR from a thread shows the same word as its thread.
+
+It is an overview, never a replacement for the tracker or GitHub. A row with no agent is a link: it opens in your browser, as a terminal link, since skel may run on another machine than your browser. The agent on the right stays as it is. Each list shows a few rows, then a count of the rest, leaving out dim rows first. skel asks GitHub for these lists only while a screen is open, so they never keep a Sprite awake.
+
+The sidebar only shows, switches and links. It has no commands of its own, and creates, starts and stops nothing: you ask the lead, or run `skel`.
 
 From a laptop, `skel --remote simon@workbox` runs `ssh -t simon@workbox skel --from <owner/repo>`, passing the GitHub name of the repository you are in on the laptop, so the lead knows it too. Any command works the same way: `skel --remote simon@workbox ls`. There is no protocol of our own; SSH (and Tailscale, if you use it) does the connecting.
 
@@ -210,7 +217,7 @@ test: [bun test]
 
 **Sessions.** Every agent runs in tmux, on skel's own tmux server (`tmux -L skel`) with skel's own config: one session for the lead and one per builder. A reviewer runs once and needs no session. tmux keeps them alive, handles attach and detach, and answers the terminal's queries. skel never runs its own terminal emulator.
 
-**The screen.** The sidebar lives in a second tmux server, `tmux -L skel-screen`, one session per open terminal, ended when you leave. Its left pane runs the sidebar, and the strip sits above the right pane. Its right pane is an ordinary tmux client attached to the agent's session on `tmux -L skel`, and picking a row switches that client to another session. So agents' sessions stay single-pane and know nothing of the screen: typing into them, reading them and checking them work as if it weren't there, and leaving the screen ends nothing.
+**The screen.** The sidebar lives in a second tmux server, `tmux -L skel-screen`, one session per open terminal, ended when you leave. Its left pane runs the sidebar, on a server with terminal links turned on (the `hyperlinks` terminal feature), and the strip sits above the right pane. Its right pane is an ordinary tmux client attached to the agent's session on `tmux -L skel`, and picking a row switches that client to another session. So agents' sessions stay single-pane and know nothing of the screen: typing into them, reading them and checking them work as if it weren't there, and leaving the screen ends nothing.
 
 **State.** One SQLite file per machine, `~/.local/share/skel/skel.db`, with `bun:sqlite`. It holds repositories (name, GitHub owner and name) and threads (repository, task, branch, status, needs you, round count, builder session ID, PR number), and the last handled ID per event kind. Every change is also appended to `~/.local/share/skel/threads/<repo>-<task>.log` as one JSON line, so a thread's history can be read and replayed. That includes each review's round, reviewer, verdict and first line, which the strip shows. Open tasks are not stored; `skel task ls` asks GitHub. Repository clones live in `~/.local/share/skel/repos/` and thread clones in `~/.local/share/skel/threads/`, on one disk, so a thread's clone shares its files with the repository's.
 
