@@ -148,6 +148,10 @@ that covers the code you are about to write.
   command through `sh -c` to get 127 for a missing one.
 - **`sprite exec --tty` forwards your keyboard**, including what was typed ahead. An
   answer meant for skel on the laptop is lost if a command on the Sprite runs first.
+- **`sprite exec --tty` puts the raw command in your terminal's title** as it connects, and
+  writes nothing back at the end. It then writes the Sprite's name in front of any title sent
+  as OSC 0, which is tmux's usual way, and leaves OSC 2 alone. It gives the Sprite a terminal
+  even when your output goes to a pipe, so only the laptop can tell whether to send a title.
 - **`sprite file push` writes through a link**, like scp. Remove what is there first.
 - **A Sprite's URL wants a Fly.io login unless it is public.** Without one, it answers a
   redirect to a login page, which GitHub's webhooks can't follow. Only `sprite` on the
@@ -189,6 +193,8 @@ that covers the code you are about to write.
 - **`unbind -a -T prefix` fails the second time**, as the first removed that table.
 - **tmux shares a resize among panes.** The `window-resized` hook sets the sidebar back;
   `client-resized` doesn't run for this.
+- **Ghostty ignores saving and restoring the title** (`CSI 22 t`, `CSI 23 t`). There, only
+  your shell's prompt puts the title back, through Ghostty's shell integration.
 - **tmux 3.6 doesn't hold a program's synchronized frames back.** It marks only its own full
   redraws, so a frame written in two halves arrives in two, attached directly or nested.
 

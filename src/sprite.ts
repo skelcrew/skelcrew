@@ -5,7 +5,7 @@
 import { z } from "zod";
 import { originHere } from "./origin.ts";
 import { type Machine, quoted, run, upToDate, withLinuxSkel } from "./remote.ts";
-import { skelLine } from "./say.ts";
+import { skelLine, windowTitle } from "./say.ts";
 
 // Reports whether skel runs on a Sprite. It goes by sprite-env, the Sprite's own tool for
 // its services: every Sprite has it in /.sprite/bin, on the PATH its commands and services
@@ -332,10 +332,16 @@ export async function remoteSprite(name: string, args: string[]): Promise<number
   const from = args.length === 0 ? originHere() : null;
   // sprite exec passes each word as given, with no shell between. It reports a program it
   // can't find as exit 1, like any failure, so a shell runs skel: it exits 127 when there is
-  // none, which skel itself never does.
-  const line = ["sh", "-c", 'exec skel "$@"', "skel", ...(from ? ["--from", from] : args)];
+  // none, which skel itself never does. sprite puts this whole line in your terminal's title
+  // as it connects, and the screen can be seconds away while a daemon wakes, so the shell
+  // replaces the title first. Only the laptop can tell when output goes to a pipe, as --tty
+  // gives the Sprite a terminal either way. checkName keeps quotes and % out of the name.
+  const where = `sprite:${name}`;
+  const title = process.stdout.isTTY ? `printf '\\033]2;${windowTitle(where)}\\007'; ` : "";
+  const line = ["sh", "-c", `${title}exec skel "$@"`, "skel", ...(from ? ["--from", from] : args)];
+  const named = `SKEL_REMOTE_NAME=${where}`;
   const there = (env: string[]) =>
-    run(["sprite", "exec", "-s", name, "--tty", "--", "env", ...env, ...line]);
+    run(["sprite", "exec", "-s", name, "--tty", "--", "env", named, ...env, ...line]);
   if (!names.includes(name)) {
     // A mistyped name would otherwise make a second Sprite you pay for.
     if (!yes(skelLine(`No Sprite named ${name}. Create it? [y/N]`))) {
@@ -347,7 +353,7 @@ export async function remoteSprite(name: string, args: string[]): Promise<number
     await setUp(name);
     return there([]);
   }
-  const code = await upToDate(`sprite:${name}`, there, onTheSprite(name));
+  const code = await upToDate(where, there, onTheSprite(name));
   if (code !== 127) return code;
   console.log(skelLine(`sprite:${name} doesn't have skel installed.`));
   if (!yes(skelLine("install bubblewrap there and copy skel to ~/.local/bin? [y/N]"))) {
