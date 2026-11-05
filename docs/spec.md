@@ -87,12 +87,12 @@ Above the agent, a strip of two lines says what you are looking at. For a thread
 
 Pick a row to look at that agent. Click it, or move with Alt-Up and Alt-Down from anywhere, even while typing to an agent. The right side switches at once, and you type straight to whichever agent it shows. So answering a builder's question is one click, with nothing to detach from. Ctrl-\] still leaves the whole screen, and everything keeps running.
 
-The sidebar has three lists, the three stages of a task: ISSUES, THREADS and PRS. The rows described above are THREADS. A task appears once, at its stage. When it gets a thread it leaves ISSUES, and when its thread is approved it moves to PRS, with its agent still one click away.
+The sidebar has three lists, the three stages of a task: ISSUES, THREADS and PRS. The rows described above are THREADS. Each list shows what is really open, on its own, so a task in review is in all three, and a row goes when what it stands for ends. A PR's merge usually ends all three at once, since it ends the thread and closes the issue. Nothing has to match: a thread can have no issue or no PR yet, and a PR can have no thread.
 
-- **ISSUES** are open issues assigned to you or labeled `skel` that have no thread.
-- **PRS** are approved threads, then open PRs assigned to you or waiting on your review, across your repositories, including ones skel didn't open.
+- **ISSUES** are open issues assigned to you or labeled `skel`. Those with a thread are dim and come last, so what is waiting stands out.
+- **PRS** are open PRs from skel's threads, with the same word as their thread, and open PRs assigned to you or waiting on your review, across your repositories, including ones skel didn't open.
 
-It is an overview, never a replacement for the tracker or GitHub. A row with no agent is a link: it opens in your browser, as a terminal link, since skel may run on another machine than your browser. The agent on the right stays as it is. Each list shows a few rows, then a count of the rest. skel asks GitHub for these lists only while a screen is open, so they never keep a Sprite awake.
+It is an overview, never a replacement for the tracker or GitHub. A row with no agent is a link: it opens in your browser, as a terminal link, since skel may run on another machine than your browser. The agent on the right stays as it is. Each list shows a few rows, then a count of the rest, leaving out dim rows first. skel asks GitHub for these lists only while a screen is open, so they never keep a Sprite awake.
 
 The sidebar only shows, switches and links. It has no commands of its own, and creates, starts and stops nothing: you ask the lead, or run `skel`.
 
