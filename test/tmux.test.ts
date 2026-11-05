@@ -95,21 +95,6 @@ test("a message arrives whole while someone is scrolled back, and the agent read
   expect(read("received.txt")).toBe("\x1b[200~fix the bug\x1b[201~\n");
 });
 
-test("any character typed while scrolled back reaches the agent and leaves the scrollback", async () => {
-  start("lead", harness());
-  await Bun.sleep(moment * 2);
-  const run = (...args: string[]) => Bun.spawnSync(["tmux", "-L", socket, ...args]);
-  const typed = Array.from({ length: 95 }, (_, i) => String.fromCharCode(32 + i)).join("");
-  for (const key of typed) {
-    run("copy-mode", "-t", "=lead:");
-    // tmux reads a bare ; on its command line as the end of a command.
-    run("send-keys", "-t", "=lead:", "-l", key === ";" ? "\\;" : key);
-  }
-  run("send-keys", "-t", "=lead:", "Enter");
-  await until(() => read("received.txt").endsWith("\n"));
-  expect(read("received.txt")).toBe(`${typed}\n`);
-});
-
 test("typing waits while the harness is busy, then goes through", async () => {
   start("lead", harness(1));
   await typeInto(socket, "lead", "hello", { moment });

@@ -227,9 +227,9 @@ test("the wheel scrolls back through the agent's output, and typing returns you 
   await until(() => seen().includes("line 155"), "the agent's older output");
   expect(seen()).not.toContain("I am output");
   expect(seen()).toContain("app-7");
-  type("hello\r");
+  type("æble\r");
   await until(() => existsSync(join(home, "output.typed")), "the typing");
-  expect(readFileSync(join(home, "output.typed"), "utf8")).toBe("hello\n");
+  expect(readFileSync(join(home, "output.typed"), "utf8")).toBe("æble\n");
   await until(() => seen().includes("I am output"), "the live agent");
   expect(scrolledBack()).not.toContain("1");
 });
@@ -247,6 +247,25 @@ test("any key leaves the scrollback, and turning the wheel back to the end does 
   wheel(65);
   await until(() => seen().includes("I am output"), "the live agent");
   expect(scrolledBack()).not.toContain("1");
+});
+
+test("every key pressed while scrolled back reaches the agent, Enter too", async () => {
+  agent("output", history);
+  open("output");
+  await until(() => seen().includes("I am output"), "the agent");
+  const keys = ["a", ";", "'", '"', "~", "#", "{", " ", "æ", "€", "日"];
+  for (const key of keys) {
+    wheel(64);
+    await until(() => scrolledBack().includes("1"), "the scrollback");
+    // tmux reads a bare ; on its command line as the end of a command.
+    type(key === ";" ? "\\;" : key);
+    await until(() => !scrolledBack().includes("1"), "the live agent");
+  }
+  wheel(64);
+  await until(() => scrolledBack().includes("1"), "the scrollback");
+  press("Enter");
+  await until(() => existsSync(join(home, "output.typed")), "the Enter");
+  expect(readFileSync(join(home, "output.typed"), "utf8")).toBe(`${keys.join("")}\n`);
 });
 
 test("Ctrl-] and switching still work while scrolled back", async () => {

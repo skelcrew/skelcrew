@@ -3,13 +3,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { onSprite, startTmuxService } from "./sprite.ts";
 
-// Each key you can type, with what tmux calls it. Single quotes keep tmux from reading any of
-// them, and a single quote itself goes in double ones.
-const typedKeys = Array.from({ length: 95 }, (_, i) => String.fromCharCode(32 + i)).map((key) => {
-  const word = key === "'" ? `"'"` : `'${key}'`;
-  return [key === " " ? "Space" : word, word];
-});
-
 // Sent on stdin with each new session instead of kept in a file, so there is no file to
 // find or keep in step, and a server an older skel started picks up changes. Your own
 // ~/.tmux.conf never applies: -f /dev/null replaces it. Ctrl-] with no prefix and no status
@@ -25,9 +18,9 @@ const typedKeys = Array.from({ length: 95 }, (_, i) => String.fromCharCode(32 + 
 // drawing keeps its own, and asks for the mouse, so the wheel goes to it. A program on the
 // alternate screen that didn't ask has no history here, so it gets arrow keys, as a terminal
 // would send it. Copy mode's own keys are all gone, as they would swallow what you type and
-// leave you wondering why the agent doesn't answer: any key goes back to the live agent, and
-// one that types a character still types it. mode-keys, since tmux picks vi's table, and
-// keeps these keys out of it, when $EDITOR says vi.
+// leave you wondering why the agent doesn't answer: any key goes back to the live agent and
+// reaches it too, as send-keys alone sends the key that ran it. mode-keys, since tmux picks
+// vi's table, and keeps these keys out of it, when $EDITOR says vi.
 const config = `set -g status off
 bind -n C-] detach-client
 set -g remain-on-exit failed
@@ -45,8 +38,7 @@ bind -n WheelDownPane {
 unbind -a -T copy-mode
 bind -T copy-mode WheelUpPane send-keys -X -N 5 scroll-up
 bind -T copy-mode WheelDownPane send-keys -X -N 5 scroll-down
-bind -T copy-mode Any send-keys -X cancel
-${typedKeys.map(([key, word]) => `bind -T copy-mode ${key} { send-keys -X cancel; send-keys -l ${word} }`).join("\n")}
+bind -T copy-mode Any { send-keys -X cancel; send-keys }
 `;
 
 type Waits = { moment?: number; timeout?: number; signal?: AbortSignal };
