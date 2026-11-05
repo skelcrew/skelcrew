@@ -64,6 +64,7 @@ function firstRow(rows: Row[], shown: string | null, height: number): number {
 function fitted(name: string, width: number): string {
   if (name.length <= width) return name;
   const end = name.match(/-\d+$/)?.[0] ?? "";
+  if (end.length >= width) return name.slice(-Math.max(width, 1));
   return `${name.slice(0, width - end.length - 1)}…${end}`;
 }
 
@@ -79,13 +80,16 @@ function line(row: Row, here: boolean, width: number): string {
   if (row.status === null) return `${pointer} ${styled(row.name)}`;
   const [mark, colour] = row.needsYou ? ["?", yellow] : marks[row.status];
   const status = row.needsYou ? "needs you" : row.status;
+  // A terminal narrower than the sidebar squeezes its pane, and the name matters more.
+  const start = `${pointer} ${paint(colour, mark)} `;
+  if (width - status.length - 7 < 6) return `${start}${styled(fitted(row.name, width - 5))}`;
   // Four columns go to the pointer and mark, one stays clear of the pane's edge, and two
   // keep a cut name from running into the status.
   const name = fitted(row.name, width - status.length - 7);
   const gap = " ".repeat(width - status.length - name.length - 5);
   // Blue is for the mark alone: a list of working threads reads calmer with the word in grey.
   const said = paint(colour === blue ? grey : colour, status);
-  return `${pointer} ${paint(colour, mark)} ${styled(name)}${gap}${said}`;
+  return `${start}${styled(name)}${gap}${said}`;
 }
 
 // Returns the whole sidebar as lines, given the rows, the session on the right, and the

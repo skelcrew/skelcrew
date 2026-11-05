@@ -49,6 +49,15 @@ test("a long name keeps its task number and leaves room for the status", () => {
   expect([...screen].length).toBeLessThanOrEqual(size.width);
 });
 
+test("a pane too narrow for a status shows the mark and name, at any width", () => {
+  const rows = [lead, thread("a-very-long-repository-name-1234")];
+  expect(plain(draw(rows, "lead", { width: 15, height: 10 })).split("\n")[1]).toBe(
+    "  ● a-ve…-1234",
+  );
+  for (let width = 0; width < 28; width++)
+    expect(() => draw(rows, "lead", { width, height: 10 })).not.toThrow();
+});
+
 test("scrolls so the row you are looking at stays on screen", () => {
   const rows = [lead, ...[1, 2, 3, 4, 5].map((n) => thread(`app-${n}`))];
   const short = { width: 28, height: 3 };
