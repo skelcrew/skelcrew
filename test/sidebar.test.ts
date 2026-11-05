@@ -192,6 +192,7 @@ const state: Thread = {
   title: null,
   checks: null,
   reviewer: null,
+  reviewed_by: null,
   review_round: null,
   verdict: null,
   review_line: null,

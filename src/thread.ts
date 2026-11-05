@@ -53,10 +53,12 @@ export const Thread = z.object({
   // What the PR's CI says, without skel's own review check, as last polled. Null with no CI,
   // or while the commit it would be about is still on its way to GitHub.
   checks: z.enum(["passing", "failing", "pending"]).nullable(),
-  // The harness of the review running, or else of the latest one.
+  // The harness of the review waiting or running, which can differ from the latest finished
+  // one's once you change your config.
   reviewer: z.enum(["codex", "claude"]).nullable(),
-  // The latest finished review: its round, its verdict and the first line of what it said.
+  // The latest finished review: its round, reviewer, verdict and the first line of what it said.
   // Each one is saved here, so it reaches the thread's log with the rest of the thread.
+  reviewed_by: z.enum(["codex", "claude"]).nullable(),
   review_round: z.number().nullable(),
   verdict: z.enum(["approve", "changes", "failed"]).nullable(),
   review_line: z.string().nullable(),
@@ -121,6 +123,7 @@ export function record(
       | "noting"
       | "checks"
       | "reviewer"
+      | "reviewed_by"
       | "review_round"
       | "verdict"
       | "review_line"
@@ -266,6 +269,7 @@ export async function startThread(
       title,
       checks: null,
       reviewer: null,
+      reviewed_by: null,
       review_round: null,
       verdict: null,
       review_line: null,

@@ -280,14 +280,14 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     const said = lines.filter((line) => line.why?.includes("in round 1"))[0];
     expect(said).toMatchObject({
       review_round: 1,
-      reviewer: "codex",
+      reviewed_by: "codex",
       verdict: "changes",
       review_line: "The export has no test.",
     });
     expect(lines.at(-1)).toMatchObject({
       title: "Add export",
       review_round: 2,
-      reviewer: "codex",
+      reviewed_by: "codex",
       verdict: "approve",
       review_line: "Ready to merge.",
     });

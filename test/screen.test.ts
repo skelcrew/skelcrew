@@ -389,7 +389,7 @@ test("a terminal a few lines high still shows the agent, and Ctrl-Q still leaves
 
 test("the strip sits above the agent, and the agent's height stays as you switch", async () => {
   sql(`UPDATE threads SET title = 'Fix the login', pr = 34, checks = 'passing',
-    review_round = 2, reviewer = 'codex', verdict = 'changes',
+    review_round = 2, reviewer = 'claude', reviewed_by = 'codex', verdict = 'changes',
     review_line = 'A test is missing.' WHERE task = 7`);
   open("lead");
   await ready("lead");
@@ -411,7 +411,7 @@ test("a thread's strip follows it as it changes", async () => {
   open("app-7");
   await ready("app-7");
   await until(() => seen().includes("no review yet"), "the strip");
-  sql(`UPDATE threads SET review_round = 1, reviewer = 'codex', verdict = 'approve',
+  sql(`UPDATE threads SET review_round = 1, reviewed_by = 'codex', verdict = 'approve',
     review_line = 'Looks right.' WHERE task = 7`);
   await until(() => seen().includes("round 1 · codex · approved · Looks right."), "the review");
 });

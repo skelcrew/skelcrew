@@ -195,6 +195,7 @@ async function reviewRound(
     status,
     telling: tell,
     held,
+    reviewed_by: harness,
     review_round: before + 1,
     verdict: verdict.verdict,
     review_line: verdict.body.trim().split("\n")[0]?.slice(0, 200) ?? "",

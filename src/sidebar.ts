@@ -91,7 +91,7 @@ export function sidebarRows(db: Database, running: string[], maxRounds: number):
     },
     ...threads.all().map((row) => {
       const thread = Thread.parse(row);
-      const { review_round: round, reviewer, verdict, review_line: line } = thread;
+      const { review_round: round, reviewer, reviewed_by: by, verdict, review_line: line } = thread;
       const word = threadWord(thread, maxRounds);
       return {
         name: threadName(db, thread),
@@ -107,7 +107,7 @@ export function sidebarRows(db: Database, running: string[], maxRounds: number):
         checks: thread.checks,
         review:
           round !== null && verdict !== null
-            ? { round, reviewer: reviewer ?? "", verdict, line: line ?? "" }
+            ? { round, reviewer: by ?? "", verdict, line: line ?? "" }
             : null,
       };
     }),
