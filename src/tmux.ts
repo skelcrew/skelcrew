@@ -22,7 +22,7 @@ type Waits = { moment?: number; timeout?: number; signal?: AbortSignal };
 
 // Returns the inherited environment without TMUX, which otherwise prevents attaching from
 // inside tmux.
-function cleanEnv(): Record<string, string> {
+export function cleanEnv(): Record<string, string> {
   const kept = Object.entries(process.env).flatMap(([key, value]) =>
     value === undefined || key === "TMUX" ? [] : [[key, value]],
   );
@@ -176,22 +176,31 @@ export async function stopSession(socket: string, name: string, timeout = 10_000
   }
 }
 
-// Attaches your terminal to the named agent session and returns when you detach with
-// Ctrl-].
-export async function attach(socket: string, name: string): Promise<void> {
-  const env = cleanEnv();
-  // Reports whether this machine knows the terminal, so attachment can choose a fallback.
-  // tmux refuses unknown terminals, such as Ghostty's xterm-ghostty over ssh.
-  // xterm-256color draws Claude Code well enough.
-  const known = (term: string) =>
-    !Bun.which("infocmp") ||
-    Bun.spawnSync(["infocmp", term], { stdout: "ignore", stderr: "ignore" }).success;
-  if (env.TERM && !known(env.TERM)) env.TERM = "xterm-256color";
-  const code = await Bun.spawn(["tmux", "-L", socket, "attach", "-t", `=${name}`], {
-    env,
-    stdio: ["inherit", "inherit", "inherit"],
-  }).exited;
-  if (code !== 0) throw new Error(`couldn't attach to ${name}: tmux exited with ${code}`);
+// Returns the sessions whose agent is running, for the sidebar. A builder that exited keeps
+// its session and last screen, which would look like it still runs. Nothing when the server
+// isn't up.
+export function runningSessions(socket: string): string[] {
+  const panes = tmux(socket, ["list-panes", "-a", "-F", "#{pane_dead} #{session_name}"]).out;
+  return panes.split("\n").flatMap((pane) => (pane.startsWith("0 ") ? [pane.slice(2)] : []));
+}
+
+// Returns the terminal of a pane, by which another tmux server knows the client running in
+// it. Throws when the pane is gone, since the sidebar then has nothing to switch.
+export const paneTty = (socket: string, target: string) =>
+  mustTmux(socket, ["display-message", "-p", "-t", target, "#{pane_tty}"]).trim();
+
+// Returns the session a client on the given terminal is showing, or null while it has none,
+// such as the moment between an agent ending and the client attaching to the lead.
+export function shownSession(socket: string, tty: string): string | null {
+  const clients = tmux(socket, ["list-clients", "-F", "#{client_tty} #{session_name}"]).out;
+  const line = clients.split("\n").find((client) => client.startsWith(`${tty} `));
+  return line ? line.slice(tty.length + 1) : null;
+}
+
+// Switches the client on the given terminal to another session. Quietly does nothing if that
+// session ended this moment: the sidebar shows what is left at its next look.
+export function showSession(socket: string, tty: string, name: string): void {
+  tmux(socket, ["switch-client", "-c", tty, "-t", `=${name}`]);
 }
 
 // Returns the visible pane text so skel can check whether Claude Code is ready for a

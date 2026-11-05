@@ -23,6 +23,7 @@ import {
 import { cliSocket, daemonSocket, leadSocket, threadSocket } from "./paths.ts";
 import { bringInNamed, findRepository, refreshClones, repositories } from "./repo.ts";
 import { goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
+import { openScreen } from "./screen.ts";
 import { setupDone } from "./setup.ts";
 import {
   holdAwhile,
@@ -48,7 +49,6 @@ import {
   threadName,
   threadOn,
 } from "./thread.ts";
-import { attach } from "./tmux.ts";
 import { hookRepository, listenForWebhooks, webhookSecret } from "./webhook.ts";
 
 // Only what a branch name holds: it goes into what git fetches, where a : or * would ask
@@ -534,7 +534,7 @@ export async function attached(): Promise<string> {
   return reply.success ? reply.data.note : "";
 }
 
-// Ensures the daemon and lead are running, then attaches your terminal until you detach
+// Ensures the daemon and lead are running, then opens the screen on the lead until you leave
 // with Ctrl-]. The daemon keeps which repository you attached from, as owner/repo, or that
 // there is none, for the lead to hear with your next message.
 export async function attachToLead(tmux: string, from?: string): Promise<void> {
@@ -563,5 +563,5 @@ export async function attachToLead(tmux: string, from?: string): Promise<void> {
   const lead = LeadReply.safeParse(reply);
   if (!lead.success) throw new Error("the daemon answered in a way this skel doesn't understand");
   if ("error" in lead.data) throw new Error(lead.data.error);
-  await attach(tmux, "lead");
+  await openScreen(tmux, "lead");
 }

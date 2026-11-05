@@ -95,7 +95,9 @@ afterEach(() => {
 
 function calls(): string {
   const log = join(home, "calls");
-  return existsSync(log) ? readFileSync(log, "utf8") : "";
+  // The long tmux line that opens the screen is cut to the agent it opens on.
+  const said = existsSync(log) ? readFileSync(log, "utf8") : "";
+  return said.replace(/tmux -L skel-screen .* sh skel (\S+) ;.*/g, "screen on $1");
 }
 
 const config = () => join(home, ".config", "skel", "config.yaml");
@@ -171,7 +173,7 @@ test("takes every step on the first run, and none on the second", async () => {
   expect(second.out).not.toContain("setup is done");
   // Once set up, skel checks no tools, asks GitHub nothing and leaves systemd alone, so it
   // starts fast.
-  expect(calls()).toBe("daemon lead\ntmux -L skel attach -t =lead\n");
+  expect(calls()).toBe("daemon lead\nscreen on lead\n");
 });
 
 test("installs the daemon as a systemd user service with lingering, once", async () => {
@@ -223,7 +225,7 @@ test("on a Sprite, installs the daemon as a Sprite service, not with systemd", a
   expect(calls()).not.toContain("systemctl");
   expect(calls()).not.toContain("loginctl");
   expect(existsSync(unit())).toBe(false);
-  expect(calls()).toEndWith("daemon lead\ntmux -L skel attach -t =lead\n");
+  expect(calls()).toEndWith("daemon lead\nscreen on lead\n");
 
   writeFileSync(join(home, "calls"), "");
   rmSync(join(home, "started"));
@@ -260,7 +262,7 @@ test("starts the daemon through systemd when it doesn't answer, then attaches to
   writeFileSync(join(home, "calls"), "");
   const run = await skel();
   expect(run.code).toBe(0);
-  expect(calls()).toBe("systemctl --user start skel\ndaemon lead\ntmux -L skel attach -t =lead\n");
+  expect(calls()).toBe("systemctl --user start skel\ndaemon lead\nscreen on lead\n");
 });
 
 test("shows why when the daemon can't start the lead", async () => {
@@ -283,9 +285,7 @@ test("rewrites the service when the PATH it needs moved, without restarting anyt
   const run = await skel("", `${bin}:/opt/bun/bin`);
   expect(run.code).toBe(0);
   expect(readFileSync(unit(), "utf8")).toContain(`Environment="PATH=${bin}:/opt/bun/bin"`);
-  expect(calls()).toBe(
-    "systemctl --user daemon-reload\ndaemon lead\ntmux -L skel attach -t =lead\n",
-  );
+  expect(calls()).toBe("systemctl --user daemon-reload\ndaemon lead\nscreen on lead\n");
 });
 
 test("leaves out PATH folders that won't last, and escapes % for systemd", async () => {
@@ -555,5 +555,5 @@ test("keeps the login shell's folders in the service when skel runs over ssh aga
   const run = await skel("", bin, main(), home, { SHELL: "/bin/bash" });
   expect(run.code).toBe(0);
   expect(servicePath()).toContain(nvm);
-  expect(calls()).toBe("daemon lead\ntmux -L skel attach -t =lead\n");
+  expect(calls()).toBe("daemon lead\nscreen on lead\n");
 });

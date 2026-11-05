@@ -165,6 +165,25 @@ that covers the code you are about to write.
 - **There is no command that says whether `sprite` is logged in.** `sprite list` fails,
   telling you to run `sprite login`, when it isn't.
 
+## The screen
+
+- **A Sprite keeps a terminal alive after the link drops.** `sprite exec --tty` is a session
+  that goes on without you, so `sprite exec` can reconnect, and tmux never sees a hangup. A
+  screen left that way stays, attached to nobody, until the Sprite stops or `sprite sessions
+  kill` ends it. It doesn't keep an idle Sprite awake. Nothing inside the Sprite can tell:
+  only `sprite api /exec` on the laptop says, as `is_active`.
+- **`destroy-unattached` also ends a session made detached**, as soon as any other client
+  leaves. Make the session attached, in one go.
+- **tmux's default mouse keys take you into copy mode**, where your typing stops reaching the
+  agent. Remove them all, then bind what you need.
+- **Without a key of its own, a click reaches only the pane you type to.** `send-keys -M`
+  hands it to the pane under the mouse, and leaves your typing where it was.
+- **`unbind -a -T prefix` fails the second time**, as the first removed that table.
+- **tmux shares a resize among panes.** The `window-resized` hook sets the sidebar back;
+  `client-resized` doesn't run for this.
+- **tmux 3.6 doesn't hold a program's synchronized frames back.** It marks only its own full
+  redraws, so a frame written in two halves arrives in two, attached directly or nested.
+
 ## The agent's shell commands
 
 - **A shell command can't block for long.** After 2 minutes Claude Code moves a running

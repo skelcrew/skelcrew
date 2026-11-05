@@ -5,14 +5,14 @@ const sections: [string, [string, string][]][] = [
   [
     "COMMANDS",
     [
-      ["(no command)", "Attach to the lead"],
+      ["(no command)", "Open the lead, with the sidebar"],
       ["ps [<repo>]", "Threads and whether they need you"],
       ["task ls [<repo>]", "Open tasks, with the thread on each"],
       ["task show <task>", "A task's title and body"],
       ['task create <repo> "<title>" "<body>"', "Create a task, as a GitHub issue"],
       ["start <task> [--from <branch>]", "Start, resume, or go on past the limit"],
       ["stop <task>", "End the builder, keeping its clone and PR"],
-      ["attach <task>", "Attach to the builder's session"],
+      ["attach <task>", "Open that builder, with the sidebar"],
       ["review <task>", "Run the thread's last review again"],
     ],
   ],
@@ -78,6 +78,7 @@ export function help(color = colorful()): string {
     "",
     dim("  A task is named by its repository and number, such as app-12. --remote keeps"),
     dim("  skel on the other side up to date with yours, after asking. See skel.run."),
+    dim("  In the sidebar, click a row or press Alt-Up or Alt-Down. Ctrl-] leaves."),
     "",
   );
   return lines.join("\n");

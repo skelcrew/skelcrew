@@ -386,11 +386,11 @@ test("the update keeps the old skel when the copy fails", async () => {
 
 // Runs main.ts as the skel on a server or Sprite would run it, built from the given commit
 // or from a checkout, asked for its help by a laptop with the given build.
-function farSkel(built: string | null, laptopBuild?: string) {
+function farSkel(built: string | null, laptopBuild?: string, args = ["--help"]) {
   const define = built === null ? [] : ["--define", `SKEL_BUILD="${built}"`];
   const env: Record<string, string> = { PATH: "/usr/bin:/bin", HOME: home };
   if (laptopBuild) Object.assign(env, { SKEL_LAPTOP_BUILD: laptopBuild, SKEL_REMOTE_NAME: "x" });
-  const run = Bun.spawnSync([process.execPath, ...define, laptop.main, "--help"], { env });
+  const run = Bun.spawnSync([process.execPath, ...define, laptop.main, ...args], { env });
   return { code: run.exitCode, out: run.stdout.toString() };
 }
 
@@ -405,6 +405,14 @@ test("a copied skel from another commit says so and runs nothing", () => {
     code: 98,
     out: "skel · skel on x is from abc1234, yours is def5678.\n",
   });
+});
+
+test("a sidebar runs whichever laptop's build its tmux server remembers", () => {
+  // A server started from one laptop hands its environment to the panes of every terminal.
+  const socket = `skel-test-${process.pid}-no-server`;
+  const run = farSkel("abc1234", "def5678", ["sidebar", socket, "screen-1"]);
+  expect(run.code).toBe(1);
+  expect(run.out).toBe("");
 });
 
 test("a copied skel built with uncommitted changes is never up to date", () => {

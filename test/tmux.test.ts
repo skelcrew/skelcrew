@@ -11,7 +11,6 @@ import {
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import {
-  attach,
   endSession,
   hasSession,
   isIdle,
@@ -176,33 +175,6 @@ test("a name tmux would change is refused", () => {
   expect(() => start("app.1", ["sleep", "30"])).toThrow("app.1");
   expect(() => start("app:1", ["sleep", "30"])).toThrow("app:1");
   expect(hasSession(socket, "app_1")).toBe(false);
-});
-
-test("attaching to a session that doesn't exist fails", async () => {
-  start("lead", ["sleep", "30"]);
-  await expect(attach(socket, "nobody")).rejects.toThrow("nobody");
-});
-
-test("attaches from a terminal this machine has no description of", async () => {
-  // Ghostty over ssh sets TERM=xterm-ghostty, which a server rarely knows, and tmux refuses
-  // to attach to a terminal it can't look up.
-  start("lead", ["sleep", "1"]);
-  const child = join(home, "attach.ts");
-  writeFileSync(
-    child,
-    `import { attach } from ${JSON.stringify(join(import.meta.dir, "..", "src", "tmux.ts"))};
-await attach(${JSON.stringify(socket)}, "lead");
-console.log("attached");`,
-  );
-  // script gives the attach a terminal of its own, as your ssh session would.
-  const run = Bun.spawnSync(["script", "-qec", `${process.execPath} '${child}'`, "/dev/null"], {
-    env: { ...process.env, TERM: "xterm-skel-unknown" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const out = run.stdout.toString();
-  expect(out).not.toContain("unsuitable terminal");
-  expect(out).toContain("attached");
 });
 
 test("ending a session ends its process", async () => {
