@@ -141,10 +141,9 @@ async function skel(args: string[], typed = "", cwd = home, more: Record<string,
 // opens on.
 const calls = () =>
   existsSync(join(home, "calls"))
-    ? readFileSync(join(home, "calls"), "utf8").replace(
-        /tmux -L skel-screen .* sh skel (\S+) ;.*/g,
-        "screen on $1",
-      )
+    ? readFileSync(join(home, "calls"), "utf8")
+        .replace(/tmux -L skel -f \/dev\/null source-file -\n/g, "")
+        .replace(/tmux -L skel-screen .* sh skel (\S+) ;.*/g, "screen on $1")
     : "";
 const attached = () => calls().endsWith("daemon lead\nscreen on lead\n");
 

@@ -178,6 +178,14 @@ that covers the code you are about to write.
   agent. Remove them all, then bind what you need.
 - **Without a key of its own, a click reaches only the pane you type to.** `send-keys -M`
   hands it to the pane under the mouse, and leaves your typing where it was.
+- **A key sent to a pane in copy mode goes to copy mode.** `send-keys Enter` would be taken
+  for a copy, and a message typed in would never be sent. `paste-buffer` and `capture-pane`
+  don't care. Leave copy mode before typing into a session.
+- **Claude Code draws in two ways.** Its classic drawing leaves output in tmux's history.
+  Its full-screen drawing (`tui: fullscreen`, or `CLAUDE_CODE_NO_FLICKER=1`) has the alternate
+  screen, no tmux history, and asks for the mouse. The wheel must suit both.
+- **tmux's `mode-keys` turns to vi when `$EDITOR` says vi**, and then none of the keys bound
+  in the `copy-mode` table apply. Set it.
 - **`unbind -a -T prefix` fails the second time**, as the first removed that table.
 - **tmux shares a resize among panes.** The `window-resized` hook sets the sidebar back;
   `client-resized` doesn't run for this.

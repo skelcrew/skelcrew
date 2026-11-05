@@ -3,6 +3,13 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { onSprite, startTmuxService } from "./sprite.ts";
 
+// Each key you can type, with what tmux calls it. Single quotes keep tmux from reading any of
+// them, and a single quote itself goes in double ones.
+const typedKeys = Array.from({ length: 95 }, (_, i) => String.fromCharCode(32 + i)).map((key) => {
+  const word = key === "'" ? `"'"` : `'${key}'`;
+  return [key === " " ? "Space" : word, word];
+});
+
 // Sent on stdin with each new session instead of kept in a file, so there is no file to
 // find or keep in step, and a server an older skel started picks up changes. Your own
 // ~/.tmux.conf never applies: -f /dev/null replaces it. Ctrl-] with no prefix and no status
@@ -12,10 +19,34 @@ import { onSprite, startTmuxService } from "./sprite.ts";
 // redraws arrive in pieces, so the prompt flickers over a slow link such as a Sprite's.
 // Terminals without it ignore the codes. A fixed index, since this runs again with each
 // new session and appending would add it every time.
+//
+// The wheel scrolls back through an agent's output. Claude Code draws in one of two ways. Its
+// classic drawing leaves its output in tmux's history, so copy mode shows it. Its full-screen
+// drawing keeps its own, and asks for the mouse, so the wheel goes to it. A program on the
+// alternate screen that didn't ask has no history here, so it gets arrow keys, as a terminal
+// would send it. Copy mode's own keys are all gone, as they would swallow what you type and
+// leave you wondering why the agent doesn't answer: any key goes back to the live agent, and
+// one that types a character still types it. mode-keys, since tmux picks vi's table, and
+// keeps these keys out of it, when $EDITOR says vi.
 const config = `set -g status off
 bind -n C-] detach-client
 set -g remain-on-exit failed
 set -s terminal-features[90] "*:sync"
+set -g mouse on
+set -g mode-keys emacs
+bind -n WheelUpPane {
+  if -F "#{mouse_any_flag}" { send-keys -M } {
+    if -F "#{alternate_on}" { send-keys Up } { copy-mode -e; send-keys -X -N 5 scroll-up }
+  }
+}
+bind -n WheelDownPane {
+  if -F "#{mouse_any_flag}" { send-keys -M } { if -F "#{alternate_on}" { send-keys Down } }
+}
+unbind -a -T copy-mode
+bind -T copy-mode WheelUpPane send-keys -X -N 5 scroll-up
+bind -T copy-mode WheelDownPane send-keys -X -N 5 scroll-down
+bind -T copy-mode Any send-keys -X cancel
+${typedKeys.map(([key, word]) => `bind -T copy-mode ${key} { send-keys -X cancel; send-keys -l ${word} }`).join("\n")}
 `;
 
 type Waits = { moment?: number; timeout?: number; signal?: AbortSignal };
@@ -101,6 +132,12 @@ export function startSession(
   const start = ["new-session", "-d", "-s", name, "-c", session.folder];
   mustTmux(socket, [...start, "--", ...clean, ...session.command]);
   mustTmux(socket, ["source-file", "-"], config);
+}
+
+// Gives a running tmux server skel's settings, so one an older skel started scrolls too.
+// Quietly does nothing without a server.
+export function applyConfig(socket: string): void {
+  tmux(socket, ["source-file", "-"], config);
 }
 
 // Reports whether the exact session exists so skel can reconnect instead of starting it
@@ -267,6 +304,10 @@ async function typeNow(socket: string, name: string, text: string, waits: Waits)
       throw new Error(`${name} wasn't idle for ${timeout / 1000}s (${why}), so nothing was typed`);
   }
   const buffer = `skel-${process.pid}-${buffers++}`;
+  // Someone scrolled back would swallow the Enter below, and the message would never be
+  // sent. Being scrolled back shows in neither the check above nor the pane's text, so it
+  // is left here, whether or not anyone is. It fails when nobody is, which is fine.
+  tmux(socket, ["send-keys", "-X", "-t", `=${name}:`, "cancel"]);
   try {
     mustTmux(socket, ["load-buffer", "-b", buffer, "-"], text);
     // Without the paste marks, Claude Code reads the Enter after a long message as a new

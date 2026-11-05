@@ -1,7 +1,7 @@
 // The screen: the sidebar on the left of your terminal, with the agent you are looking at on
 // the right. It is a second tmux server, one session per open terminal, ended when you leave.
 import { join } from "node:path";
-import { cleanEnv } from "./tmux.ts";
+import { applyConfig, cleanEnv } from "./tmux.ts";
 
 // How wide the sidebar is. tmux shares a resize out among panes, so it is set back after each.
 export const sidebarWidth = 28;
@@ -16,6 +16,7 @@ export const screenSocket = (agents: string) => `${agents}-screen`;
 // prefix belongs to the agents' server. Ctrl-] here, not there, leaves the whole screen.
 // Alt-Up, Alt-Down and clicks go to the sidebar, in pane 0, without moving your typing from
 // the agent. A click needs its own key: left alone, it reaches only the pane you type to.
+// The wheel goes on to the pane under it, as the agents' server decides what scrolling means.
 // destroy-unattached ends a session as its client goes, by Ctrl-] or by a terminal or ssh link
 // that drops, and the server goes with its last session. It would also end a session made
 // detached, so the session is made attached, in one go. The sync feature is the agents'
@@ -31,6 +32,9 @@ const config = [
   ["bind", "-n", "M-Up", "send-keys", "-t", ":.0", "M-Up"],
   ["bind", "-n", "M-Down", "send-keys", "-t", ":.0", "M-Down"],
   ["bind", "-n", "MouseDown1Pane", "send-keys", "-M"],
+  ["bind", "-n", "MouseUp1Pane", "send-keys", "-M"],
+  ["bind", "-n", "WheelUpPane", "send-keys", "-M"],
+  ["bind", "-n", "WheelDownPane", "send-keys", "-M"],
   ["set", "-g", "mouse", "on"],
   ["set", "-g", "destroy-unattached", "on"],
   ["set", "-g", "default-terminal", "xterm-256color"],
@@ -69,6 +73,7 @@ export async function openScreen(agents: string, session: string): Promise<void>
     !Bun.which("infocmp") ||
     Bun.spawnSync(["infocmp", term], { stdout: "ignore", stderr: "ignore" }).success;
   if (env.TERM && !known(env.TERM)) env.TERM = "xterm-256color";
+  applyConfig(agents);
   const name = `screen-${process.pid}`;
   const open = [
     ...config,

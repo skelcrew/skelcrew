@@ -48,8 +48,9 @@ const seen = (window = "one") => tmux(terminal, "capture-pane", "-p", "-t", `=${
 const screenSessions = () =>
   tmux(screen, "list-sessions", "-F", "#{session_name}").out.trim().split("\n").filter(Boolean);
 
-// Starts an agent that says its name, logs what you type and the size of its window.
-function agent(name: string): void {
+// Starts an agent that says its name, logs what you type and the size of its window. It first
+// runs `before`, such as printing a long history.
+function agent(name: string, before = ""): void {
   const script = join(home, `${name}.sh`);
   writeFileSync(
     script,
@@ -57,6 +58,7 @@ function agent(name: string): void {
 cd ${JSON.stringify(home)}
 trap 'stty size > ${name}.size' WINCH
 stty size > ${name}.size
+${before}
 echo "I am ${name}"
 # A resize cuts read short, which must not end the agent.
 while :; do read -r line && echo "$line" >> ${name}.typed; done
@@ -202,6 +204,101 @@ test("the mouse wheel and a drag over the agent leave you typing to it", async (
   expect(modes).toEqual(["0", "0"]);
   type("hello\r");
   await until(() => existsSync(join(home, "lead.typed")), "the typing");
+});
+
+// The wheel, as a terminal sends it, turned up or down over the agent.
+const wheel = (button: 64 | 65) => type(`\x1b[<${button};60;5M`);
+const history = 'for n in $(seq 1 200); do echo "line $n"; done';
+// Claude Code's full-screen drawing: the alternate screen, with its own scrolling, and what
+// it is sent logged byte by byte.
+const fullScreen = (name: string, mouse: string) => `printf '\\033[?1049h${mouse}'
+stty raw -echo
+echo "I am ${name}"
+exec cat > ${name}.bytes`;
+const scrolledBack = () => tmux(agents, "list-panes", "-a", "-F", "#{pane_in_mode}").out;
+
+test("the wheel scrolls back through the agent's output, and typing returns you to it", async () => {
+  agent("output", history);
+  sql(`INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES
+    ('simon', 'app', 20, 'output', 'skel/20', 'working')`);
+  open("output");
+  await ready("output");
+  for (let turn = 0; turn < 4; turn++) wheel(64);
+  await until(() => seen().includes("line 155"), "the agent's older output");
+  expect(seen()).not.toContain("I am output");
+  expect(seen()).toContain("app-7");
+  type("hello\r");
+  await until(() => existsSync(join(home, "output.typed")), "the typing");
+  expect(readFileSync(join(home, "output.typed"), "utf8")).toBe("hello\n");
+  await until(() => seen().includes("I am output"), "the live agent");
+  expect(scrolledBack()).not.toContain("1");
+});
+
+test("any key leaves the scrollback, and turning the wheel back to the end does too", async () => {
+  agent("output", history);
+  open("output");
+  await until(() => seen().includes("I am output"), "the agent");
+  wheel(64);
+  await until(() => !seen().includes("I am output"), "the scrollback");
+  press("Down");
+  await until(() => seen().includes("I am output"), "the live agent");
+  wheel(64);
+  await until(() => !seen().includes("I am output"), "the scrollback");
+  wheel(65);
+  await until(() => seen().includes("I am output"), "the live agent");
+  expect(scrolledBack()).not.toContain("1");
+});
+
+test("Ctrl-] and switching still work while scrolled back", async () => {
+  agent("output", history);
+  sql(`INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES
+    ('simon', 'app', 20, 'output', 'skel/20', 'working')`);
+  open("output");
+  await ready("output");
+  wheel(64);
+  await until(() => !seen().includes("I am output"), "the scrollback");
+  press("M-Down");
+  await until(() => seen().includes("› ● app-12"), "the next row");
+  press("C-]");
+  await until(() => existsSync(join(home, "left-one")), "skel to return");
+});
+
+test("an agent drawing the full screen with the mouse gets the wheel itself", async () => {
+  agent("drawn", fullScreen("drawn", "\\033[?1000h\\033[?1006h"));
+  open("drawn");
+  await until(() => seen().includes("I am drawn"), "the agent");
+  wheel(64);
+  await until(() => existsSync(join(home, "drawn.bytes")), "the wheel");
+  await until(
+    () => readFileSync(join(home, "drawn.bytes"), "utf8").startsWith("\x1b[<64;31;5M"),
+    "the wheel at its place in the agent's window",
+  );
+  expect(scrolledBack()).not.toContain("1");
+});
+
+test("an agent drawing the full screen without the mouse gets arrow keys, as from a terminal", async () => {
+  agent("drawn", fullScreen("drawn", ""));
+  open("drawn");
+  await until(() => seen().includes("I am drawn"), "the agent");
+  wheel(64);
+  wheel(65);
+  await until(() => existsSync(join(home, "drawn.bytes")), "the wheel");
+  await until(
+    () =>
+      readFileSync(join(home, "drawn.bytes"), "utf8").replaceAll("\x1bO", "\x1b[") ===
+      "\x1b[A\x1b[B",
+    "the arrow keys",
+  );
+  expect(scrolledBack()).not.toContain("1");
+});
+
+test("a tmux server started by an older skel gets scrolling when the screen opens", async () => {
+  agent("output", history);
+  tmux(agents, "set", "-g", "mouse", "off");
+  open("output");
+  await until(() => seen().includes("I am output"), "the agent");
+  wheel(64);
+  await until(() => !seen().includes("I am output"), "the scrollback");
 });
 
 test("resizing the terminal resizes the agent and keeps the sidebar narrow", async () => {

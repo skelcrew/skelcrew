@@ -97,7 +97,9 @@ function calls(): string {
   const log = join(home, "calls");
   // The long tmux line that opens the screen is cut to the agent it opens on.
   const said = existsSync(log) ? readFileSync(log, "utf8") : "";
-  return said.replace(/tmux -L skel-screen .* sh skel (\S+) ;.*/g, "screen on $1");
+  return said
+    .replace(/tmux -L skel -f \/dev\/null source-file -\n/g, "")
+    .replace(/tmux -L skel-screen .* sh skel (\S+) ;.*/g, "screen on $1");
 }
 
 const config = () => join(home, ".config", "skel", "config.yaml");
