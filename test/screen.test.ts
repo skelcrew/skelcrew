@@ -12,11 +12,13 @@ import {
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
+import { sidebarWidth } from "../src/screen.ts";
 import { startSession } from "../src/tmux.ts";
 
 const dbFile = join(import.meta.dir, "..", "src", "db.ts");
 const screenFile = join(import.meta.dir, "..", "src", "screen.ts");
 const pathNow = process.env.PATH ?? "";
+const sidebar = sidebarWidth;
 const leaving = "Your agents keep running. Run skel to come back.";
 // Longer than the waits below, so a test that fails says what it waited for.
 setDefaultTimeout(20_000);
@@ -147,10 +149,12 @@ test("shows the lead and every thread that isn't done, beside the agent", async 
   open("lead");
   await ready("lead");
   const lines = seen().split("\n");
-  expect(lines[0]).toContain("› lead");
-  expect(lines[0]).toContain("I am lead");
-  expect(lines[1]).toContain("● app-12");
-  expect(lines[2]).toContain("● app-7");
+  expect(lines[2]).toContain("› ◆ lead");
+  expect(lines[2]).toContain("I am lead");
+  expect(lines[3]).toContain("running · claude");
+  expect(lines[4]).toContain("● app-12");
+  expect(lines[5]).toContain("working · claude");
+  expect(lines[6]).toContain("● app-7");
   expect(seen()).not.toContain("app-3");
   // Nothing of the screen is left in agents' sessions: each stays one pane.
   const panes = tmux(agents, "list-panes", "-a", "-F", "#{session_name}").out.trim().split("\n");
@@ -175,7 +179,7 @@ test("Alt-Down and Alt-Up switch the right side, and you type to whichever agent
 test("clicking a row switches the right side and leaves your typing there", async () => {
   open("lead");
   await ready("lead");
-  click(5, 3);
+  click(5, 7);
   await until(() => seen().includes("I am app-7"), "app-7");
   type("hello\r");
   await until(() => existsSync(join(home, "app-7.typed")), "the typing");
@@ -314,7 +318,7 @@ test("an agent drawing the full screen with the mouse gets the wheel itself", as
   wheel(64);
   await until(() => existsSync(join(home, "drawn.bytes")), "the wheel");
   await until(
-    () => readFileSync(join(home, "drawn.bytes"), "utf8").startsWith("\x1b[<64;31;5M"),
+    () => readFileSync(join(home, "drawn.bytes"), "utf8").startsWith("\x1b[<64;31;3M"),
     "the wheel at its place in the agent's window",
   );
   expect(scrolledBack()).not.toContain("1");
@@ -349,12 +353,12 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
   open("lead");
   await ready("lead");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "30 91\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "28 91\n",
     "the agent's size",
   );
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "40");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "40 121\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "38 121\n",
     "the agent to resize",
   );
   const widths = tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out.trim().split("\n");
@@ -363,8 +367,88 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
   press("M-Down");
   press("M-Down");
   await until(() => seen().includes("› ● app-7"), "app-7");
-  tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "2");
-  await until(() => seen().startsWith("  ● app-12"), "the sidebar to scroll");
+  tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "7");
+  await until(() => !seen().includes("switch"), "the hints to give way");
+  await until(() => seen().includes("› ● app-7"), "the sidebar to scroll");
+});
+
+test("a terminal a few lines high still shows the agent, and Ctrl-Q still leaves", async () => {
+  open("lead");
+  await ready("lead");
+  for (const height of ["4", "3", "2", "1"]) {
+    tmux(terminal, "resize-window", "-t", "=one:", "-x", "120", "-y", height);
+    await Bun.sleep(200);
+    expect(screenSessions()).toHaveLength(1);
+  }
+  tmux(terminal, "resize-window", "-t", "=one:", "-x", "120", "-y", "30");
+  await until(() => seen().includes("I am lead"), "the agent to come back");
+  await until(() => seen().includes("switch"), "the hints to come back");
+  press("C-q");
+  await until(() => existsSync(join(home, "left-one")), "skel to return");
+});
+
+test("the strip sits above the agent, and the agent's height stays as you switch", async () => {
+  sql(`UPDATE threads SET title = 'Fix the login', pr = 34, checks = 'passing',
+    review_round = 2, reviewer = 'codex', verdict = 'changes',
+    review_line = 'A test is missing.' WHERE task = 7`);
+  open("lead");
+  await ready("lead");
+  await until(() => seen().split("\n")[0]?.includes("2 working") === true, "the lead's strip");
+  expect(seen().split("\n")[0]?.indexOf("2 working")).toBe(sidebar + 1);
+  const height = readFileSync(join(home, "lead.size"), "utf8");
+  press("M-Down");
+  press("M-Down");
+  await until(() => seen().includes("app-7  Fix the login  #34  checks passing"), "the strip");
+  const [first = "", second = ""] = seen().split("\n");
+  expect(first.indexOf("app-7")).toBe(sidebar + 1);
+  expect(second).toContain("round 2 · codex · changes · A test is missing.");
+  expect(readFileSync(join(home, "app-7.size"), "utf8")).toBe(height);
+  press("M-Up");
+  await until(() => seen().split("\n")[1]?.includes("no review yet") === true, "app-12's strip");
+});
+
+test("a thread's strip follows it as it changes", async () => {
+  open("app-7");
+  await ready("app-7");
+  await until(() => seen().includes("no review yet"), "the strip");
+  sql(`UPDATE threads SET review_round = 1, reviewer = 'codex', verdict = 'approve',
+    review_line = 'Looks right.' WHERE task = 7`);
+  await until(() => seen().includes("round 1 · codex · approved · Looks right."), "the review");
+});
+
+test("what a title says is shown, never run or read as a format", async () => {
+  const proof = join(home, "ran");
+  const title = `100% %H #(touch ${proof}) #[fg=red] #{pane_pid}`;
+  sql(`UPDATE threads SET title = '${title}' WHERE task = 7`);
+  open("app-7");
+  await ready("app-7");
+  await until(() => seen().includes("#(touch"), "the strip");
+  expect(seen()).toContain(title);
+  await Bun.sleep(300);
+  expect(existsSync(proof)).toBe(false);
+});
+
+test("clicking the strip, or turning the wheel over it, does nothing", async () => {
+  open("lead");
+  await ready("lead");
+  click(60, 1);
+  type("\x1b[<64;60;2M");
+  await Bun.sleep(200);
+  const modes = tmux(screen, "list-panes", "-a", "-F", "#{pane_in_mode}").out.trim().split("\n");
+  expect(modes).toEqual(["0", "0"]);
+  expect(scrolledBack()).not.toContain("1");
+  expect(seen()).toContain("I am lead");
+});
+
+test("the hints stay at the bottom, and a click there picks nothing", async () => {
+  open("lead");
+  await ready("lead");
+  const lines = seen().trimEnd().split("\n");
+  expect(lines.at(-2)).toContain("⌥↑↓ switch");
+  expect(lines.at(-1)).toContain("⌃Q  quit");
+  click(5, 30);
+  await Bun.sleep(200);
+  expect(seen()).toContain("› ◆ lead");
 });
 
 test("two terminals each get their own session, and leaving one leaves the other", async () => {
@@ -375,7 +459,7 @@ test("two terminals each get their own session, and leaving one leaves the other
   expect(screenSessions()).toHaveLength(2);
   press("M-Up", "two");
   await until(() => seen("two").includes("› ● app-12"), "the second to switch", "two");
-  expect(seen("one")).toContain("› lead");
+  expect(seen("one")).toContain("› ◆ lead");
   press("C-q", "one");
   await until(() => screenSessions().length === 1, "the first to end");
   press("M-Down", "two");
@@ -402,7 +486,7 @@ test("when the agent you are looking at ends, the right side goes to the lead", 
   await ready("app-7");
   tmux(agents, "kill-session", "-t", "=app-7");
   await until(() => seen().includes("I am lead"), "the lead");
-  await until(() => seen().includes("› lead"), "the sidebar to follow");
+  await until(() => seen().includes("› ◆ lead"), "the sidebar to follow");
 });
 
 test("a row whose agent isn't running can't be picked", async () => {
@@ -411,7 +495,7 @@ test("a row whose agent isn't running can't be picked", async () => {
   open("lead");
   await ready("lead");
   expect(seen()).toContain("app-12");
-  click(5, 2);
+  click(5, 5);
   press("M-Down");
   await until(() => seen().includes("I am app-7"), "the row after it");
 });

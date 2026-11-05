@@ -1,35 +1,64 @@
-// What the sidebar shows and which row a key or click picks, given the rows it was handed.
+// What the sidebar shows and which row a key or click picks, given the rows it was handed, and
+// the word each thread gets.
 import { expect, test } from "bun:test";
-import { draw, picked, type Row, stepped } from "../src/sidebar.ts";
+import { draw, picked, type Row, stepped, threadWord } from "../src/sidebar.ts";
+import type { Thread } from "../src/thread.ts";
 
-const lead: Row = { name: "lead", session: "lead", status: null, needsYou: false, running: true };
+const row = {
+  title: null,
+  pr: null,
+  checks: null,
+  review: null,
+  needsYou: false,
+  running: true,
+  harness: "claude",
+} satisfies Partial<Row>;
+const lead: Row = { ...row, name: "lead", session: "lead", status: null, word: "running" };
 const thread = (name: string, more: Partial<Row> = {}): Row => ({
+  ...row,
   name,
   session: name,
   status: "working",
-  needsYou: false,
-  running: true,
+  word: "working",
   ...more,
 });
 
-const size = { width: 28, height: 10 };
+const size = { width: 28, height: 12 };
 // Removes the colours, to read a row as text.
 const plain = (screen: string) => Bun.stripANSI(screen);
+// The sidebar's lines, without the blank ones and the two hints at the bottom.
+const listed = (screen: string) =>
+  plain(screen)
+    .split("\n")
+    .slice(0, -2)
+    .filter((text) => text.trim());
 
-test("lists the lead first, then each thread with a mark, its name and its status", () => {
-  const rows = [lead, thread("app-12"), thread("site-7", { status: "waiting" })];
-  expect(plain(draw(rows, "lead", size)).split("\n")).toEqual([
-    "› lead",
-    "  ● app-12          working",
-    "  ○ site-7          waiting",
+test("lists the lead first, then each thread on two lines: a mark and name, then word and harness", () => {
+  const rows = [
+    lead,
+    thread("app-12"),
+    thread("site-7", { status: "waiting", word: "reviewing", harness: "codex" }),
+  ];
+  expect(listed(draw(rows, "lead", size))).toEqual([
+    "› ◆ lead",
+    "    running · claude",
+    "  ● app-12",
+    "    working · claude",
+    "  ○ site-7",
+    "    reviewing · codex",
   ]);
 });
 
-test("a thread that needs you reads so in yellow, whatever its status", () => {
-  const screen = draw([lead, thread("app-12", { needsYou: true })], "lead", size);
-  expect(plain(screen)).toContain("  ? app-12        needs you");
+test("the word and harness are grey, so the names stand out", () => {
+  expect(draw([thread("app-12")], "lead", size)).toContain("\x1b[90mworking");
+  expect(draw([thread("app-12")], "lead", size)).toContain("\x1b[90m · claude");
+});
+
+test("a thread that needs you has a yellow ? and a yellow word, whatever its status", () => {
+  const screen = draw([lead, thread("app-12", { needsYou: true, word: "approved" })], "lead", size);
+  expect(plain(screen)).toContain("  ? app-12\n    approved · claude");
   expect(screen).toContain("\x1b[33m?");
-  expect(screen).toContain("\x1b[33mneeds you");
+  expect(screen).toContain("\x1b[33mapproved");
 });
 
 test("colour comes with a mark: blue for working, green for done", () => {
@@ -39,32 +68,57 @@ test("colour comes with a mark: blue for working, green for done", () => {
 
 test("marks the row you are looking at, and nothing when it isn't listed", () => {
   const rows = [lead, thread("app-12")];
-  expect(plain(draw(rows, "app-12", size)).split("\n")[1]).toStartWith("› ●");
+  expect(listed(draw(rows, "app-12", size))[2]).toStartWith("› ●");
   expect(plain(draw(rows, "gone", size))).not.toContain("›");
 });
 
-test("a long name keeps its task number and leaves room for the status", () => {
-  const screen = plain(draw([thread("a-very-long-repository-name-1234")], "lead", size));
-  expect(screen).toBe("  ● a-very-l…-1234  working");
-  expect([...screen].length).toBeLessThanOrEqual(size.width);
+test("a name too long for a line goes on to the next, whole", () => {
+  const name = "a-very-long-repository-name-1234";
+  expect(listed(draw([thread(name)], "lead", size))).toEqual([
+    "  ● a-very-long-repository-n",
+    "    ame-1234",
+    "    working · claude",
+  ]);
 });
 
-test("a pane too narrow for a status shows the mark and name, at any width", () => {
+test("a pane narrower than the sidebar keeps every name whole, at any width", () => {
   const rows = [lead, thread("a-very-long-repository-name-1234")];
-  expect(plain(draw(rows, "lead", { width: 15, height: 10 })).split("\n")[1]).toBe(
-    "  ● a-ve…-1234",
-  );
-  for (let width = 0; width < 28; width++)
-    expect(() => draw(rows, "lead", { width, height: 10 })).not.toThrow();
+  for (let width = 0; width < 28; width++) {
+    const text = plain(draw(rows, "lead", { width, height: 60 })).replace(/[\s\n]/g, "");
+    expect(text).toContain("a-very-long-repository-name-1234");
+  }
 });
 
-test("scrolls so the row you are looking at stays on screen", () => {
+test("two hints with the keys stay at the bottom, below however few rows there are", () => {
+  const lines = plain(draw([lead], "lead", size)).split("\n");
+  expect(lines).toHaveLength(size.height);
+  expect(lines.slice(-2)).toEqual(["  ⌥↑↓ switch", "  ⌃Q  quit"]);
+  expect(draw([lead], "lead", size)).toContain("\x1b[90m  ⌥↑↓ switch");
+});
+
+test("a list too long for the sidebar scrolls above the hints, and never runs into them", () => {
   const rows = [lead, ...[1, 2, 3, 4, 5].map((n) => thread(`app-${n}`))];
-  const short = { width: 28, height: 3 };
+  const short = { width: 28, height: 6 };
   const lines = plain(draw(rows, "app-4", short)).split("\n");
-  expect(lines).toHaveLength(3);
-  expect(lines.at(-1)).toContain("› ● app-4");
-  expect(picked(rows, "app-4", short, 1)).toBe("app-3");
+  expect(lines).toEqual([
+    "  ● app-3",
+    "    working · claude",
+    "› ● app-4",
+    "    working · claude",
+    "  ⌥↑↓ switch",
+    "  ⌃Q  quit",
+  ]);
+});
+
+test("a sidebar too short for a row and the hints drops the hints, as the row matters more", () => {
+  const rows = [lead, thread("app-1")];
+  for (const height of [1, 2, 3]) {
+    const lines = plain(draw(rows, "app-1", { width: 28, height })).split("\n");
+    expect(lines.length).toBeLessThanOrEqual(height);
+    expect(lines.join("\n")).not.toContain("switch");
+    expect(lines.join("\n")).toContain("› ● app-1");
+  }
+  expect(plain(draw(rows, "app-1", { width: 28, height: 4 }))).toContain("switch");
 });
 
 test("Alt-Up and Alt-Down move one row, stop at the ends, and skip agents that aren't running", () => {
@@ -80,9 +134,102 @@ test("moving from an agent that isn't listed goes to the lead", () => {
   expect(stepped([lead, thread("app-1")], "gone", 1)).toBe("lead");
 });
 
-test("a click picks the row under it, but no row, nor an agent that isn't running", () => {
+test("a click on either line of a row picks it, but no row, nor an agent that isn't running", () => {
   const rows = [lead, thread("app-1"), thread("app-2", { running: false })];
-  expect(picked(rows, "lead", size, 1)).toBe("app-1");
-  expect(picked(rows, "lead", size, 2)).toBeNull();
+  expect(picked(rows, "lead", size, 2)).toBe("app-1");
+  expect(picked(rows, "lead", size, 3)).toBe("app-1");
+  expect(picked(rows, "lead", size, 4)).toBeNull();
   expect(picked(rows, "lead", size, 7)).toBeNull();
+});
+
+test("a click follows the list as it scrolls, and on a hint picks nothing", () => {
+  const rows = [lead, ...[1, 2, 3, 4, 5].map((n) => thread(`app-${n}`))];
+  const short = { width: 28, height: 6 };
+  expect(picked(rows, "app-4", short, 0)).toBe("app-3");
+  expect(picked(rows, "app-4", short, 3)).toBe("app-4");
+  expect(picked(rows, "app-4", short, 4)).toBeNull();
+  expect(picked(rows, "app-4", short, 5)).toBeNull();
+});
+
+test("a click goes to the row below a name that took two lines", () => {
+  const rows = [thread("a-very-long-repository-name-1234"), thread("app-1")];
+  expect(picked(rows, "lead", size, 2)).toBe("a-very-long-repository-name-1234");
+  expect(picked(rows, "lead", size, 3)).toBe("app-1");
+});
+
+const state: Thread = {
+  owner: "simon",
+  repo: "app",
+  task: 12,
+  folder: "app-12",
+  branch: "skel/12",
+  base: null,
+  status: "working",
+  session: null,
+  rounds: 0,
+  pr: 34,
+  needs_you: false,
+  submitting: null,
+  reviewing: null,
+  telling: null,
+  held: null,
+  last_review: 0,
+  last_comment: 0,
+  last_check: 0,
+  asking: false,
+  noting: null,
+  title: null,
+  checks: null,
+  reviewer: null,
+  review_round: null,
+  verdict: null,
+  review_line: null,
+};
+const word = (more: Partial<Thread>) => threadWord({ ...state, ...more }, 3);
+const needing = { status: "waiting", needs_you: true } satisfies Partial<Thread>;
+
+test("a thread's word says who has it right now", () => {
+  expect(word({})).toBe("working");
+  expect(word({ status: "waiting", submitting: "the fix" })).toBe("reviewing");
+  expect(word({ status: "waiting", reviewing: "abc" })).toBe("reviewing");
+  expect(word({ status: "waiting", verdict: "approve" })).toBe("checks");
+  expect(word({ telling: "fix it", verdict: "changes" })).toBe("changes");
+});
+
+test("a builder that took up the changes is working again", () => {
+  expect(word({ verdict: "changes", rounds: 1 })).toBe("working");
+});
+
+test("each reason a thread needs you has its own word", () => {
+  expect(word({ asking: true })).toBe("question");
+  expect(word({ ...needing, verdict: "approve", checks: "passing" })).toBe("approved");
+  expect(word({ ...needing, verdict: "approve" })).toBe("approved");
+  expect(word({ ...needing, verdict: "changes", rounds: 4, held: "fix" })).toBe("round limit");
+  expect(word({ ...needing, verdict: "failed" })).toBe("review failed");
+});
+
+test("a round that failed before its review answered reads as a failed review", () => {
+  expect(word({ ...needing, submitting: "the fix" })).toBe("review failed");
+  expect(word({ ...needing, reviewing: "abc" })).toBe("review failed");
+});
+
+test("past the round limit it stays so while the builder submits again", () => {
+  expect(word({ ...needing, rounds: 4, submitting: "the fix" })).toBe("round limit");
+  expect(word({ ...needing, rounds: 4, reviewing: "abc" })).toBe("round limit");
+});
+
+test("approved is only said of a PR whose checks don't say otherwise", () => {
+  expect(word({ ...needing, verdict: "approve", checks: "failing" })).toBe("needs you");
+  expect(word({ ...needing, verdict: "approve", checks: "pending" })).toBe("needs you");
+});
+
+test("a thread that needs you for no reason in the table says just that", () => {
+  expect(word({ needs_you: true })).toBe("needs you");
+  expect(word({ ...needing, verdict: "changes", rounds: 1 })).toBe("needs you");
+});
+
+test("failed and stopped are as the status says, whatever else is true", () => {
+  expect(word({ status: "failed", needs_you: true })).toBe("failed");
+  expect(word({ status: "failed", asking: true })).toBe("failed");
+  expect(word({ status: "stopped", reviewing: "abc" })).toBe("stopped");
 });

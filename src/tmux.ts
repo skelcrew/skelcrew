@@ -220,6 +220,25 @@ export function runningSessions(socket: string): string[] {
 export const paneTty = (socket: string, target: string) =>
   mustTmux(socket, ["display-message", "-p", "-t", target, "#{pane_tty}"]).trim();
 
+// Returns the width of a pane, or 0 once it is gone.
+export const paneWidth = (socket: string, target: string) =>
+  Number(tmux(socket, ["display-message", "-p", "-t", target, "#{pane_width}"]).out.trim());
+
+// Sets the two lines of a session's strip, as tmux formats. Each set makes tmux redraw the whole
+// screen, so both go in one run, for one redraw, and only when a line changed. The lone ";"
+// separates tmux commands, so it skips literal().
+export function showStrip(socket: string, session: string, lines: [string, string]): void {
+  const set = (index: number) => [
+    "set",
+    "-t",
+    `=${session}:`,
+    `status-format[${index}]`,
+    literal(lines[index] ?? ""),
+  ];
+  const argv = ["tmux", "-L", socket, "-f", "/dev/null", ...set(0), ";", ...set(1)];
+  Bun.spawnSync(argv, { env: cleanEnv(), stdout: "ignore", stderr: "ignore" });
+}
+
 // Returns the session a client on the given terminal is showing, or null while it has none,
 // such as the moment between an agent ending and the client attaching to the lead.
 export function shownSession(socket: string, tty: string): string | null {

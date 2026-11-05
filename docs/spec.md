@@ -67,7 +67,7 @@ Before the first step, skel checks that `tmux`, `bwrap`, `gh` and the harness ar
 
 Each step is skipped when it is already done. Once the first run has finished, `skel` skips it entirely and goes straight to the lead: a tool or login that goes missing later shows up where it is used.
 
-**The sidebar.** `skel` puts a narrow sidebar on the left of your terminal, with the agent you are looking at on the right. The sidebar lists the lead first, then every thread that isn't done, each on two lines: a mark and its full name, then, dim, a word for what it is doing and the harness doing it, such as `approved · claude`. While a review runs that is `reviewing · codex`, so you can see which agent has the thread right now. It updates on its own.
+**The sidebar.** `skel` puts a narrow sidebar on the left of your terminal, with the agent you are looking at on the right. The sidebar lists the lead first, then every thread that isn't done, each on two lines: a mark and its full name, then, dim, a word for what it is doing and the harness doing it, such as `approved · claude`. While a review runs that is `reviewing · codex`, so you can see which agent has the thread right now. It updates on its own. At the bottom, two dim lines show the keys: `⌥↑↓ switch` and `⌃Q  quit`. They are always there, except on a terminal too short for them and a whole row, where the row comes first.
 
 | Word | Means |
 |---|---|

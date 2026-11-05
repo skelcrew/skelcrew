@@ -1,0 +1,80 @@
+// The strip: two lines above the agent saying what you are looking at. For a thread, its name,
+// task, PR and checks, then its latest review. For the lead, the threads counted by their words.
+import type { Row } from "./sidebar.ts";
+
+type Size = { left: number; width: number };
+
+const said = { passing: "checks passing", failing: "checks failing", pending: "checks running" };
+const verdicts: Record<string, string> = {
+  approve: "approved",
+  changes: "changes",
+  failed: "review failed",
+};
+
+// Returns text from outside, such as an issue's title, safe to show: its control codes would
+// otherwise reach your terminal, or break the line.
+const clean = (text: string) => text.replace(/\p{Cc}/gu, " ");
+
+// Returns text cut to fit a number of columns, with … where it was cut. Columns, not characters,
+// as a Japanese title takes two for each.
+function fitted(text: string, width: number): string {
+  if (Bun.stringWidth(text) <= width) return text;
+  let cut = "";
+  for (const letter of text) {
+    if (Bun.stringWidth(`${cut}${letter}…`) > width) break;
+    cut += letter;
+  }
+  return width > 0 ? `${cut}…` : "";
+}
+
+// Returns text as tmux shows it as is. tmux reads the strip as a format, where #(...) would run
+// a shell command and #[...] restyle the line. Any title on GitHub could say that. The strip goes
+// through strftime too, so % is doubled for it to stay itself.
+const shown = (text: string) => text.replaceAll("#", "##").replaceAll("%", "%%");
+
+// Returns the first line for a thread: the title gives way to the rest, as the title is what is
+// longest and you have it from the task.
+function aboutThread(row: Row, width: number): string {
+  const name = fitted(clean(row.name), width);
+  const tail = [row.pr === null ? "" : `#${row.pr}`, row.checks ? said[row.checks] : ""]
+    .filter(Boolean)
+    .join("  ");
+  const end = tail ? `  ${tail}` : "";
+  const spare = width - Bun.stringWidth(name) - Bun.stringWidth(end);
+  if (spare < 0) return `#[bold]${shown(name)}#[default]`;
+  const title = row.title ? fitted(`  ${clean(row.title)}`, spare) : "";
+  return `#[bold]${shown(name)}#[default]${shown(title)}${shown(end)}`;
+}
+
+// Returns the second line for a thread: its latest review.
+function aboutReview(row: Row, width: number): string {
+  if (row.review === null) return `#[fg=brightblack]${shown(fitted("no review yet", width))}`;
+  const { round, reviewer, verdict, line } = row.review;
+  const parts = [`round ${round}`, reviewer, verdicts[verdict] ?? verdict, clean(line)];
+  const text = parts.filter(Boolean).join(" · ");
+  return `#[fg=brightblack]${shown(fitted(text, width))}`;
+}
+
+// Returns the threads counted by their words, such as 2 approved · 1 working, with what needs
+// you first, as that is what you came to look for.
+function counted(rows: Row[]): string {
+  const threads = rows.filter((row) => row.status !== null);
+  if (threads.length === 0) return "no threads";
+  const ordered = [...threads.filter((t) => t.needsYou), ...threads.filter((t) => !t.needsYou)];
+  const counts = new Map<string, number>();
+  for (const { word } of ordered) counts.set(word, (counts.get(word) ?? 0) + 1);
+  return [...counts].map(([word, count]) => `${count} ${word}`).join(" · ");
+}
+
+// Returns the strip's two lines as tmux formats, given the rows, the session on the right, and
+// where the agent's pane is: `left` columns in, `width` wide. tmux's status lines span the whole
+// terminal, so spaces carry the text past the sidebar. It reads nothing, so what you see can be
+// tested without a terminal. Always two lines, so the agent's height never changes.
+export function drawStrip(rows: Row[], session: string | null, size: Size): [string, string] {
+  const { left, width } = size;
+  const pad = " ".repeat(left);
+  const row = rows.find((candidate) => candidate.session === session);
+  if (!row) return [pad, pad];
+  if (row.status === null) return [`${pad}${shown(fitted(counted(rows), width))}`, pad];
+  return [`${pad}${aboutThread(row, width)}`, `${pad}${aboutReview(row, width)}`];
+}

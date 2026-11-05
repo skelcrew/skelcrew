@@ -1,5 +1,6 @@
 // The screen: the sidebar on the left of your terminal, with the agent you are looking at on
-// the right. It is a second tmux server, one session per open terminal, ended when you leave.
+// the right and the strip above it. It is a second tmux server, one session per open terminal,
+// ended when you leave.
 import { join } from "node:path";
 import { windowTitle } from "./say.ts";
 import { applyConfig, cleanEnv } from "./tmux.ts";
@@ -29,8 +30,16 @@ export const screenSocket = (agents: string) => `${agents}-screen`;
 // are, which switching agents doesn't change. tmux saves your terminal's title on the way in
 // and puts it back on the way out, on terminals that keep one. It goes out as OSC 2, since
 // sprite writes the Sprite's name in front of a title sent as OSC 0, tmux's usual way.
+// The strip is tmux's own two status lines, at the top, so the agent's height stays the same on
+// every session. Its pane stays as wide as it was, and needs no process of its own. They start
+// empty, as the sidebar fills them in, and have no clock to redraw for.
 const config = [
-  ["set", "-g", "status", "off"],
+  ["set", "-g", "status", "2"],
+  ["set", "-g", "status-position", "top"],
+  ["set", "-g", "status-interval", "0"],
+  ["set", "-g", "status-style", "default"],
+  ["set", "-g", "status-format[0]", ""],
+  ["set", "-g", "status-format[1]", ""],
   ["set", "-g", "set-titles", "on"],
   ["set", "-s", "terminal-overrides[90]", "*:tsl=\\E]2;:fsl=\\007"],
   ["set", "-g", "prefix", "None"],
