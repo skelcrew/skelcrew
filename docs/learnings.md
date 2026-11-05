@@ -201,6 +201,10 @@ that covers the code you are about to write.
   `client-resized` doesn't run for this.
 - **Ghostty ignores saving and restoring the title** (`CSI 22 t`, `CSI 23 t`). There, only
   your shell's prompt puts the title back, through Ghostty's shell integration.
+- **Ctrl-Q is XON, and is not eaten.** A tty has `ixon` on until tmux makes it raw, and the key
+  reached tmux locally, through `ssh -t` and through `sprite exec --tty`.
+- **`sprite exec` prints the command it runs.** A test that waits for text in the output
+  matches that line at once, unless the text it waits for is split up in the command.
 - **tmux 3.6 doesn't hold a program's synchronized frames back.** It marks only its own full
   redraws, so a frame written in two halves arrives in two, attached directly or nested.
 

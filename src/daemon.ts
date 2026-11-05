@@ -535,7 +535,7 @@ export async function attached(): Promise<string> {
 }
 
 // Ensures the daemon and lead are running, then opens the screen on the lead until you leave
-// with Ctrl-]. The daemon keeps which repository you attached from, as owner/repo, or that
+// with Ctrl-Q. The daemon keeps which repository you attached from, as owner/repo, or that
 // there is none, for the lead to hear with your next message.
 export async function attachToLead(tmux: string, from?: string): Promise<void> {
   const asked: Request = { command: "lead", ...(from ? { from } : {}) };

@@ -17,6 +17,7 @@ import { startSession } from "../src/tmux.ts";
 const dbFile = join(import.meta.dir, "..", "src", "db.ts");
 const screenFile = join(import.meta.dir, "..", "src", "screen.ts");
 const pathNow = process.env.PATH ?? "";
+const leaving = "Your agents keep running. Run skel to come back.";
 // Longer than the waits below, so a test that fails says what it waited for.
 setDefaultTimeout(20_000);
 let home = "";
@@ -196,16 +197,26 @@ test("updates on its own, with needs you in the sidebar", async () => {
   await until(() => !seen().includes("app-12"), "the done thread to go");
 });
 
-test("Ctrl-] leaves the whole screen and ends no agent", async () => {
+test("Ctrl-Q leaves the whole screen, ends no agent, and says so", async () => {
   open("lead");
   await ready("lead");
-  press("C-]");
+  press("C-q");
   await until(() => existsSync(join(home, "left-one")), "skel to return");
   await until(() => screenSessions().length === 0, "the session to end");
   expect(tmux(screen, "list-sessions").ok).toBe(false);
   for (const name of ["lead", "app-7", "app-12"])
     expect(tmux(agents, "has-session", "-t", `=${name}`).ok).toBe(true);
   expect(tmux(agents, "list-clients", "-F", "#{client_tty}").out).toBe("");
+  await until(() => seen().includes(leaving), "the line that says what happened");
+});
+
+test("Ctrl-] no longer leaves", async () => {
+  open("lead");
+  await ready("lead");
+  press("C-]");
+  await Bun.sleep(300);
+  expect(existsSync(join(home, "left-one"))).toBe(false);
+  expect(seen()).toContain("I am lead");
 });
 
 test("the mouse wheel and a drag over the agent leave you typing to it", async () => {
@@ -282,7 +293,7 @@ test("every key pressed while scrolled back reaches the agent, Enter too", async
   expect(readFileSync(join(home, "output.typed"), "utf8")).toBe(`${keys.join("")}\n`);
 });
 
-test("Ctrl-] and switching still work while scrolled back", async () => {
+test("Ctrl-Q and switching still work while scrolled back", async () => {
   agent("output", history);
   sql(`INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES
     ('simon', 'app', 20, 'output', 'skel/20', 'working')`);
@@ -292,7 +303,7 @@ test("Ctrl-] and switching still work while scrolled back", async () => {
   await until(() => !seen().includes("I am output"), "the scrollback");
   press("M-Down");
   await until(() => seen().includes("› ● app-12"), "the next row");
-  press("C-]");
+  press("C-q");
   await until(() => existsSync(join(home, "left-one")), "skel to return");
 });
 
@@ -365,7 +376,7 @@ test("two terminals each get their own session, and leaving one leaves the other
   press("M-Up", "two");
   await until(() => seen("two").includes("› ● app-12"), "the second to switch", "two");
   expect(seen("one")).toContain("› lead");
-  press("C-]", "one");
+  press("C-q", "one");
   await until(() => screenSessions().length === 1, "the first to end");
   press("M-Down", "two");
   await until(() => seen("two").includes("› ● app-7"), "the second to go on working", "two");
@@ -424,7 +435,7 @@ test("the terminal's title says skel while the screen is open, and comes back af
   open("lead");
   await ready("lead");
   await until(() => title() === "skel", "the title");
-  press("C-]");
+  press("C-q");
   await until(() => existsSync(join(home, "left-one")), "skel to return");
   expect(title()).toBe("my shell");
 });

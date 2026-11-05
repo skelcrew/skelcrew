@@ -14,11 +14,11 @@ export const screenSocket = (agents: string) => `${agents}-screen`;
 // Run with each opening, ahead of the new session, so a first draw never shows tmux's own
 // look. Your own ~/.tmux.conf never applies, and all of tmux's own keys go: its default mouse
 // keys pull a drag or the wheel into copy mode, which would swallow your typing, and its
-// prefix belongs to the agents' server. Ctrl-] here, not there, leaves the whole screen.
+// prefix belongs to the agents' server. Ctrl-Q here, not there, leaves the whole screen.
 // Alt-Up, Alt-Down and clicks go to the sidebar, in pane 0, without moving your typing from
 // the agent. A click needs its own key: left alone, it reaches only the pane you type to.
 // The wheel goes on to the pane under it, as the agents' server decides what scrolling means.
-// destroy-unattached ends a session as its client goes, by Ctrl-] or by a terminal or ssh link
+// destroy-unattached ends a session as its client goes, by Ctrl-Q or by a terminal or ssh link
 // that drops, and the server goes with its last session. It would also end a session made
 // detached, so the session is made attached, in one go. The sync feature is the agents'
 // server's, for the same reason: this server's redraws must reach your terminal whole too.
@@ -36,7 +36,7 @@ const config = [
   ["set", "-g", "prefix", "None"],
   ["set", "-g", "prefix2", "None"],
   ["unbind", "-a", "-T", "root"],
-  ["bind", "-n", "C-]", "detach-client"],
+  ["bind", "-n", "C-q", "detach-client"],
   ["bind", "-n", "M-Up", "send-keys", "-t", ":.0", "M-Up"],
   ["bind", "-n", "M-Down", "send-keys", "-t", ":.0", "M-Down"],
   ["bind", "-n", "MouseDown1Pane", "send-keys", "-M"],
@@ -70,8 +70,9 @@ function sidebar(agents: string, session: string): string[] {
 }
 
 // Opens the screen in your terminal on the named agent session, and returns when you leave
-// with Ctrl-]. The name of the session here only has to differ from other terminals', and
-// this process runs as long as the terminal has it open. Agents' sessions are never touched.
+// with Ctrl-Q, saying that nothing stopped. The name of the session here only has to differ from
+// other terminals', and this process runs as long as the terminal has it open. Agents' sessions
+// are never touched.
 export async function openScreen(agents: string, session: string): Promise<void> {
   const env = cleanEnv();
   // Reports whether this machine knows the terminal, so opening can choose a fallback.
@@ -95,4 +96,5 @@ export async function openScreen(agents: string, session: string): Promise<void>
   const argv = ["tmux", "-L", screenSocket(agents), "-f", "/dev/null", ...commands];
   const code = await Bun.spawn(argv, { env, stdio: ["inherit", "inherit", "inherit"] }).exited;
   if (code !== 0) throw new Error(`couldn't open the screen: tmux exited with ${code}`);
+  console.log("Your agents keep running. Run skel to come back.");
 }

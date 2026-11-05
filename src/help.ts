@@ -78,7 +78,7 @@ export function help(color = colorful()): string {
     "",
     dim("  A task is named by its repository and number, such as app-12. --remote keeps"),
     dim("  skel on the other side up to date with yours, after asking. See skel.run."),
-    dim("  In the sidebar, click a row or press Alt-Up or Alt-Down. Ctrl-] leaves."),
+    dim("  In the sidebar, click a row or press Alt-Up or Alt-Down. Ctrl-Q leaves."),
     "",
   );
   return lines.join("\n");

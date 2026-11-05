@@ -176,7 +176,7 @@ export function findThread(db: Database, repo: string, task: number): Thread {
 }
 
 // Opens the screen with the builder of the thread named repo-task on the right, and returns
-// when you leave with Ctrl-]. Only from your own terminal: it takes over the screen, which
+// when you leave with Ctrl-Q. Only from your own terminal: it takes over the screen, which
 // the lead can't hand to you.
 export async function attachToThread(tmux: string, repo: string, task: number): Promise<void> {
   const thread = findThread(openDb(), repo, task);
