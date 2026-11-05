@@ -32,7 +32,7 @@ Everything in this version serves this two minute demo, recorded for real with a
 2. On GitHub, add the `skel` label to two issues in app and one in site. Within a minute skel starts three threads, and the lead says so.
 3. Close the laptop.
 4. Open it later and run the same command. The lead says what happened: two PRs are reviewed and green, one of them after the builder fixed a failing check on its own. The third thread needs you: its builder has a question.
-5. Attach to the third thread and answer its question. Merge the two PRs on GitHub. skel cleans up.
+5. Pick the third thread in the sidebar and answer its question. Merge the two PRs on GitHub. skel cleans up.
 
 The demo repositories are small real apps with fast CI and real issues, not skel itself.
 
@@ -67,7 +67,11 @@ Before the first step, skel checks that `tmux`, `bwrap`, `gh` and the harness ar
 
 Each step is skipped when it is already done. Once the first run has finished, `skel` skips it entirely and goes straight to the lead: a tool or login that goes missing later shows up where it is used.
 
-For now, `skel` only wraps the harness: it sets up the lead and puts you in it, full screen. Later, tasks and threads show next to the harness, in a sidebar beside the lead.
+**The sidebar.** `skel` puts a narrow sidebar on the left of your terminal, with the agent you are looking at on the right. The sidebar lists the lead first, then every thread that isn't done, one row each: a mark, the thread's name, and its status, with needs you in yellow. It updates on its own.
+
+Pick a row to look at that agent. Click it, or move with Alt-Up and Alt-Down from anywhere, even while typing to an agent. The right side switches at once, and you type straight to whichever agent it shows. So answering a builder's question is one click, with nothing to detach from. Ctrl-\] still leaves the whole screen, and everything keeps running.
+
+The sidebar only shows and switches. It has no commands of its own, and creates, starts and stops nothing: you ask the lead, or run `skel`.
 
 From a laptop, `skel --remote simon@workbox` runs `ssh -t simon@workbox skel --from <owner/repo>`, passing the GitHub name of the repository you are in on the laptop, so the lead knows it too. Any command works the same way: `skel --remote simon@workbox ls`. There is no protocol of our own; SSH (and Tailscale, if you use it) does the connecting.
 
@@ -119,7 +123,7 @@ One thread, from start to merge.
 8. **Approved and CI green: the thread needs you.** Its status is `waiting`, on you.
 9. **You merge on GitHub.** skel ends the builder session, removes the thread's clone, and marks the thread `done`. A PR closed without merging does the same.
 
-At any point the builder can ask you a question with Claude Code's own `AskUserQuestion`. skel notices, and the thread needs you until you attach with `skel attach` and answer it.
+At any point the builder can ask you a question with Claude Code's own `AskUserQuestion`. skel notices, and the thread needs you until you pick it in the sidebar and answer it.
 
 **Telling you.** When a thread starts needing you, skel types a one line note into the lead's session (when the lead is idle), so you hear it where you already are.
 
@@ -158,7 +162,7 @@ For you, and for the lead:
 | `skel task create <repo> "<title>" "<body>"` | Creates a task, as a GitHub issue, and prints its name, such as `app-13`. It doesn't start a thread. |
 | `skel ps [<repo>]` | Threads, with status and needs you, newest first. Done threads only with `--all`. `--json` for tools. |
 | `skel start <repo>-<task> [--from <branch>]` | Starts a thread on a task. On a stopped thread, resumes it: starts its builder again with `--resume` on its last session. On a thread past the round limit, lets it go on: counts its rounds from zero again and types the last review's changes into the builder. |
-| `skel attach <repo>-<task>` | Attaches your terminal to the builder's session. Ctrl-\] detaches. |
+| `skel attach <repo>-<task>` | Opens the same screen as `skel`, with that builder on the right. Ctrl-\] detaches. |
 | `skel review <repo>-<task>` | Reviews the thread's last submitted commit again, as a round's review, such as after a review that failed. It refuses while a review of it is waiting or running. |
 | `skel stop <repo>-<task>` | Ends the session and keeps the clone, branch and PR. |
 
@@ -190,6 +194,8 @@ test: [bun test]
 
 **Sessions.** Every agent runs in tmux, on skel's own tmux server (`tmux -L skel`) with skel's own config: one session for the lead and one per builder. A reviewer runs once and needs no session. tmux keeps them alive, handles attach and detach, and answers the terminal's queries. skel never runs its own terminal emulator.
 
+**The screen.** The sidebar lives in a second tmux server, `tmux -L skel-screen`, one session per open terminal, ended when you leave. Its left pane runs the sidebar. Its right pane is an ordinary tmux client attached to the agent's session on `tmux -L skel`, and picking a row switches that client to another session. So agents' sessions stay single-pane and know nothing of the screen: typing into them, reading them and checking them work as if it weren't there, and leaving the screen ends nothing.
+
 **State.** One SQLite file per machine, `~/.local/share/skel/skel.db`, with `bun:sqlite`. It holds repositories (name, GitHub owner and name) and threads (repository, task, branch, status, needs you, round count, builder session ID, PR number), and the last handled ID per event kind. Every change is also appended to `~/.local/share/skel/threads/<repo>-<task>.log` as one JSON line, so a thread's history can be read and replayed. Open tasks are not stored; `skel task ls` asks GitHub. Repository clones live in `~/.local/share/skel/repos/` and thread clones in `~/.local/share/skel/threads/`, on one disk, so a thread's clone shares its files with the repository's.
 
 **Surviving restarts.** When the daemon starts, it brings back the lead and every thread that was `working` or `waiting` with `claude --resume <session>`, runs again every review whose `skel/review` check is still pending, and polling picks up any event it missed.
@@ -214,7 +220,6 @@ These are the parts that need care. `docs/learnings.md` explains the traps behin
 
 ## Not in this version
 
-- Tasks and threads shown next to the harness (the sidebar comes later)
 - Reviewing pull requests skel didn't open (a likely early addition)
 - Roles, phases and flows as files
 - Harnesses other than Claude Code, and Codex for the reviewer
@@ -240,7 +245,7 @@ Each one is something you use every day from the day it lands, and lands as smal
 3. **Parallel and needs you.** Several threads at once across repositories, the note in the lead's session, questions marked needs you, the lead knowing which repository you attached from.
 4. **Follow-through.** Polling for failed checks, PR comments, conflicts and merges. Starting threads on issues labeled `skel`. Cleanup on merge or close. Surviving a restart with `--resume`. `skel stop`, and `skel start` on a stopped thread.
 5. **Remote, on a Sprite.** `skel --remote sprite:<name>` from the laptop: the laptop check, creating the Sprite after asking, bubblewrap and skel's binary installed in it, the first run there, the daemon as a Sprite service, keeping the Sprite awake while there is work, and a webhook to wake it. From no server at all to a running lead with one command. `skel --remote <host>` over SSH, offering to copy skel's binary with `scp` when it is missing. The lead brings in repositories when you ask for work in one.
-6. **The demo.** Pick the demo repositories and their tasks, run the script for real, record it.
+6. **The demo.** The sidebar. Pick the demo repositories and their tasks, run the script for real, record it.
 
 ## Done when
 
