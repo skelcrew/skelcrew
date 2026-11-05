@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentCommand } from "../src/sandbox.ts";
+import { agentCommand, setupCommand } from "../src/sandbox.ts";
 
 let home = "";
 let socket: ReturnType<typeof Bun.listen> | undefined;
@@ -208,6 +208,28 @@ console.log(JSON.stringify(agentCommand({ name: "lead",
       "./packages/standalone/releases/1.0-linux/codex-path/rg",
       "",
     ]);
+  });
+
+  test("starts when a program's link passes through a folder on the PATH", async () => {
+    // tool reaches its file through current, and the same folder is on the PATH for other,
+    // which comes back as a folder. bubblewrap can't mount a folder through a link it made.
+    const versions = join(home, "tools", "1.0", "bin");
+    mkdirSync(versions, { recursive: true });
+    mkdirSync(join(home, "bin"));
+    writeFileSync(join(versions, "tool"), "#!/bin/sh\necho tool\n", { mode: 0o755 });
+    writeFileSync(join(versions, "other"), "#!/bin/sh\necho other\n", { mode: 0o755 });
+    const current = join(home, "tools", "current");
+    symlinkSync(join(home, "tools", "1.0"), current);
+    symlinkSync(join(current, "bin", "tool"), join(home, "bin", "tool"));
+    const folder = join(home, "work");
+    mkdirSync(folder);
+    const { argv, env } = setupCommand(folder, "tool ; other", {
+      HOME: home,
+      PATH: `${join(home, "bin")}:${join(current, "bin")}:${process.env.PATH ?? ""}`,
+    });
+    const done = await run(argv, env);
+    expect(done.err).toBe("");
+    expect(done.out).toBe("tool\nother\n");
   });
 
   test("hides the home folder's secrets and the other sockets in /run", async () => {

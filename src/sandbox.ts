@@ -136,8 +136,12 @@ export function sandboxArgs(given: {
   }
   // The links on the way are made anew rather than mounted, since the folder one sits in can
   // hold what must stay hidden: Codex's sit in ~/.codex, beside your login. Made first, so
-  // one in a folder that comes back is simply covered by the real one.
-  for (const [link, target] of links) args.push("--symlink", target, link);
+  // one in a folder that comes back is simply covered by the real one. One that a mount
+  // passes through stays out: bubblewrap can't mount through a link it made, and refuses to
+  // start. The mount makes a real folder there instead.
+  for (const [link, target] of links)
+    if (![...programs, ...mounts].some((p) => p.startsWith(`${link}/`)))
+      args.push("--symlink", target, link);
   for (const p of programs) args.push(...ro(p));
   // skel built as one file runs its modules from a folder only it sees, and needs nothing
   // but itself. From a checkout, only the parts skel runs from: the checkout's .git and
