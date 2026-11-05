@@ -432,12 +432,14 @@ export async function bringBack(db: Database, tmux: string, thread: Thread): Pro
 }
 
 // Marks the thread failed and logs why, in its log and the daemon's, so you can see what
-// stopped it and start it again. A thread skel stop stopped meanwhile stays stopped: its
-// builder ended because of the stop, such as within the moment skel watches it start.
+// stopped it and start it again. A thread that skel stop stopped, or that its PR's merge or
+// close ended, meanwhile stays as it is: its builder ended because of that, such as within
+// the moment skel watches it start.
 export function failThread(db: Database, thread: Thread, error: unknown): void {
   const why = error instanceof Error ? error.message : String(error);
-  if (readThread(db, thread.folder).status === "stopped") {
-    console.log(`${thread.folder} stays stopped: ${why}`);
+  const { status } = readThread(db, thread.folder);
+  if (status === "stopped" || status === "done") {
+    console.log(`${thread.folder} stays ${status}: ${why}`);
     return;
   }
   record(db, thread.folder, { status: "failed" }, why);

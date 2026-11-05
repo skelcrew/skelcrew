@@ -444,6 +444,26 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     expect(read(join(home, "gh", "query"))).not.toContain("pullRequest");
   }, 60_000);
 
+  test("a PR merged while the daemon was down leaves its thread done, not failed", async () => {
+    await approvedApp12();
+    const first = running[0];
+    first?.kill();
+    await first?.exited;
+    // With its session gone too, the daemon brings the builder back as it starts, and its
+    // first poll ends that builder while the daemon still watches it start.
+    Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
+    pr({ state: "MERGED", reviews: [skelReview], checks: [approved] });
+    serve();
+    await until(() => thread().status === "done");
+    // Watching a builder start takes a second, and only then could it call the thread failed.
+    await Bun.sleep(1500);
+    expect(thread().status).toBe("done");
+    expect(Bun.spawnSync(["tmux", "-L", socket, "has-session", "-t", "=app-12"]).success).toBe(
+      false,
+    );
+    expect(fakeBuilders()).toEqual([]);
+  }, 60_000);
+
   test("a stopped thread holds your comment until it starts again, and its merge still ends it", async () => {
     await approvedApp12();
     const stopped = Bun.spawnSync([process.execPath, main, "stop", "app-12"], {
