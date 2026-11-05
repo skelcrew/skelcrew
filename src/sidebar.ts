@@ -139,32 +139,29 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
   ];
 }
 
-// Returns how many lines of the sidebar the list gets. The hints take the bottom two, until the
-// sidebar can't hold them and a whole row: then they give way, as the rows are what you pick
-// from and the keys are also in skel's help.
-const listHeight = (height: number) =>
-  height >= hints.length + 2 ? height - hints.length : height;
-
-// Returns each row's lines, and the first row on screen. A list taller than its space scrolls by
-// whole rows, just enough to keep the row you are looking at in view, so Alt-Down never moves
-// off the bottom.
+// Returns each row's lines, how many lines the list gets, and the first row on screen. The hints
+// take the bottom two, until the sidebar can't hold them and the whole row you are looking at:
+// then they give way, as the rows are what you pick from and the keys are also in skel's help.
+// A list taller than its space scrolls by whole rows, just enough to keep that row in view, so
+// Alt-Down never moves off the bottom.
 function layout(rows: Row[], shown: string | null, size: Size) {
   const blocks = rows.map((row) => rowLines(row, row.session === shown, size.width));
   const here = rows.findIndex((row) => row.session === shown);
+  const tallest = blocks[here]?.length ?? 2;
+  const room = size.height >= tallest + hints.length ? size.height - hints.length : size.height;
   let used = blocks.slice(0, here + 1).flat().length;
   let first = 0;
-  while (first < here && used > listHeight(size.height)) {
+  while (first < here && used > room) {
     used -= blocks[first]?.length ?? 0;
     first++;
   }
-  return { blocks, first };
+  return { blocks, first, room };
 }
 
 // Returns the whole sidebar as lines, given the rows, the session on the right, and the
 // sidebar's size. It reads nothing, so what you see can be tested without a terminal.
 export function draw(rows: Row[], shown: string | null, size: Size): string {
-  const { blocks, first } = layout(rows, shown, size);
-  const room = listHeight(size.height);
+  const { blocks, first, room } = layout(rows, shown, size);
   const list = blocks.slice(first).flat().slice(0, room);
   if (room === size.height) return list.join("\n");
   const gap = Array<string>(room - list.length).fill("");
@@ -185,8 +182,8 @@ export function stepped(rows: Row[], shown: string | null, by: 1 | -1): string |
 // Returns the session of the row at a line of the sidebar, counted from 0, for a click, or
 // null when there is no row there or its agent isn't running. Any line of a row picks it.
 export function picked(rows: Row[], shown: string | null, size: Size, y: number): string | null {
-  const { blocks, first } = layout(rows, shown, size);
-  if (y >= listHeight(size.height)) return null;
+  const { blocks, first, room } = layout(rows, shown, size);
+  if (y >= room) return null;
   const lines = blocks.slice(first).flatMap((block, i) => block.map(() => rows[first + i]));
   const row = lines[y];
   return row?.running ? row.session : null;

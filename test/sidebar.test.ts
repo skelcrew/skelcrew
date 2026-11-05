@@ -121,6 +121,17 @@ test("a sidebar too short for a row and the hints drops the hints, as the row ma
   expect(plain(draw(rows, "app-1", { width: 28, height: 4 }))).toContain("switch");
 });
 
+test("the hints also give way to a row whose name takes more lines", () => {
+  const name = "a-very-long-repository-name-1234";
+  const rows = [lead, thread(name)];
+  const tight = { width: 28, height: 4 };
+  const text = plain(draw(rows, name, tight));
+  expect(text).toContain("working · claude");
+  expect(text).not.toContain("switch");
+  expect(picked(rows, name, tight, 2)).toBe(name);
+  expect(plain(draw(rows, name, { width: 28, height: 5 }))).toContain("switch");
+});
+
 test("Alt-Up and Alt-Down move one row, stop at the ends, and skip agents that aren't running", () => {
   const rows = [lead, thread("app-1"), thread("app-2", { running: false }), thread("app-3")];
   expect(stepped(rows, "lead", 1)).toBe("app-1");
