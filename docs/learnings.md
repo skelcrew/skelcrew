@@ -121,6 +121,12 @@ that covers the code you are about to write.
   that adds a line to `languages_env`, and with `set -e` it fails where `/etc` is
   read-only. In a sandbox on a Sprite where node never ran outside, every node program,
   biome and tsc included, fails with "Read-only file system".
+- **Codex reaches its program through two links.** `~/.local/bin/codex` links to
+  `~/.codex/packages/standalone/current/bin/codex`, and `current` links to the release.
+  Bringing back only the first link and the final file leaves the path broken in the
+  sandbox, so every review fails with "codex: not found". Make each link on the way anew
+  with `--symlink`, and never mount the folder it sits in: `~/.codex` holds logins. The
+  release is marked by `codex-package.json`, and keeps `rg` and `bwrap` beside `bin`.
 - **Hide `/.sprite/api.sock`.** Every process can reach it. Through it, an agent could start a
   service that runs outside the sandbox, or restore a checkpoint and wipe the disk, and the
   Sprite's own docs tell agents to use it.

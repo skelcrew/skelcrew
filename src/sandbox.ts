@@ -11,6 +11,7 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -43,12 +44,36 @@ const hide = (p: string) => ["--tmpfs", p];
 
 // Finds a program's package folder so its required files remain visible after hiding your
 // home folder. Codex from npm links to bin/codex.js in its package, and runs a program from
-// another folder of it. Never the home folder itself, nor above it, which would bring back
-// too much.
+// another folder of it. Codex's own installer marks a release with codex-package.json, and
+// keeps rg and its bwrap beside bin. Never the home folder itself, nor above it, which would
+// bring back too much.
 function packageOf(folder: string, home: string): string {
   for (let at = folder; at !== home && at !== dirname(at); at = dirname(at))
-    if (existsSync(join(at, "package.json"))) return at;
+    for (const mark of ["package.json", "codex-package.json"])
+      if (existsSync(join(at, mark))) return at;
   return folder;
+}
+
+// Returns every link on the way from a program to its real file, each with what it points
+// to, so the sandbox can make the same links. Following a program's link only to its end
+// misses the ones between: Codex's installer links ~/.local/bin/codex into a folder named
+// current, itself a link to the release. It walks one name at a time, as the kernel does,
+// since a link can be any folder on the way, not only the last name. The program must
+// exist, so a loop of links can't reach here.
+function linksTo(program: string): Map<string, string> {
+  const links = new Map<string, string>();
+  const rest = [basename(program)];
+  let at = dirname(program);
+  for (let name = rest.shift(); name !== undefined; name = rest.shift()) {
+    const next = join(at, name);
+    if (lstatSync(next).isSymbolicLink()) {
+      const target = readlinkSync(next);
+      links.set(next, target);
+      if (target.startsWith("/")) at = "/";
+      rest.unshift(...target.split("/").filter(Boolean));
+    } else at = next;
+  }
+  return links;
 }
 
 // Returns bubblewrap arguments that hide your credentials and expose only the agent's
@@ -99,13 +124,24 @@ export function sandboxArgs(given: {
   // resolves into come back, as does bun, which skel's own commands run on. The program is
   // the command's first word unless others are named, as for a shell running a setup command.
   const programs = new Set<string>();
+  const links = new Map<string, string>();
   for (const name of [...named, "bun"]) {
     const found = name && Bun.which(name, { PATH: path });
     if (found) {
       programs.add(dirname(found));
       programs.add(packageOf(dirname(realpathSync(found)), home));
+      for (const [link, target] of linksTo(found))
+        if (link.startsWith(`${home}/`)) links.set(link, target);
     }
   }
+  // The links on the way are made anew rather than mounted, since the folder one sits in can
+  // hold what must stay hidden: Codex's sit in ~/.codex, beside your login. Made first, so
+  // one in a folder that comes back is simply covered by the real one. One that a mount
+  // passes through stays out: bubblewrap can't mount through a link it made, and refuses to
+  // start. The mount makes a real folder there instead.
+  for (const [link, target] of links)
+    if (![...programs, ...mounts].some((p) => p.startsWith(`${link}/`)))
+      args.push("--symlink", target, link);
   for (const p of programs) args.push(...ro(p));
   // skel built as one file runs its modules from a folder only it sees, and needs nothing
   // but itself. From a checkout, only the parts skel runs from: the checkout's .git and

@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentCommand } from "../src/sandbox.ts";
+import { agentCommand, setupCommand } from "../src/sandbox.ts";
 
 let home = "";
 let socket: ReturnType<typeof Bun.listen> | undefined;
@@ -162,6 +162,74 @@ console.log(JSON.stringify(agentCommand({ name: "lead",
     const done = await run(argv, env);
     expect(done.err).toBe("");
     expect(done.out).toBe("real\nhidden\n");
+  });
+
+  test("brings back a program behind two links, and nothing beside its package", async () => {
+    // Codex's installer links ~/.local/bin/codex to current/bin/codex, and current to the
+    // release, so the second link sits in a folder that is neither the program's nor its
+    // package's. That folder sits in ~/.codex, beside your login.
+    repository();
+    saveToken();
+    const codex = join(home, ".codex");
+    const standalone = join(codex, "packages", "standalone");
+    const release = join(standalone, "releases", "1.0-linux");
+    mkdirSync(join(release, "bin"), { recursive: true });
+    mkdirSync(join(release, "codex-path"));
+    writeFileSync(join(release, "codex-package.json"), "{}");
+    writeFileSync(join(release, "codex-path", "rg"), "#!/bin/sh\necho real\n", { mode: 0o755 });
+    // Finds what it needs beside its real file, as Codex does.
+    const launcher = 'exec "$(dirname "$(readlink -f "$0")")/../codex-path/rg"';
+    writeFileSync(join(release, "bin", "codex"), `#!/bin/sh\n${launcher}\n`, { mode: 0o755 });
+    symlinkSync(join("releases", "1.0-linux"), join(standalone, "current"));
+    mkdirSync(join(home, "bin"));
+    symlinkSync(join(standalone, "current", "bin", "codex"), join(home, "bin", "claude"));
+    writeFileSync(join(codex, "auth.json"), "secret");
+    writeFileSync(join(codex, "config.toml"), "secret");
+    // Without a mark of its own, the release would pass for part of this package.
+    writeFileSync(join(codex, "package.json"), "{}");
+    writeFileSync(join(standalone, "selection-history"), "secret");
+    const { argv, env } = agentCommand({
+      name: "lead",
+      socket: socketPath,
+      model: "opus",
+      env: outside(),
+    });
+    argv.splice(argv.indexOf("--") + 1);
+    // By its full path: with the link broken, a bare name would find your real claude.
+    const claude = join(home, "bin", "claude");
+    argv.push("sh", "-c", `${claude}; cd ${codex} && find . ! -type d | sort`);
+    const done = await run(argv, env);
+    expect(done.err).toBe("");
+    expect(done.out.split("\n")).toEqual([
+      "real",
+      "./packages/standalone/current",
+      "./packages/standalone/releases/1.0-linux/bin/codex",
+      "./packages/standalone/releases/1.0-linux/codex-package.json",
+      "./packages/standalone/releases/1.0-linux/codex-path/rg",
+      "",
+    ]);
+  });
+
+  test("starts when a program's link passes through a folder on the PATH", async () => {
+    // tool reaches its file through current, and the same folder is on the PATH for other,
+    // which comes back as a folder. bubblewrap can't mount a folder through a link it made.
+    const versions = join(home, "tools", "1.0", "bin");
+    mkdirSync(versions, { recursive: true });
+    mkdirSync(join(home, "bin"));
+    writeFileSync(join(versions, "tool"), "#!/bin/sh\necho tool\n", { mode: 0o755 });
+    writeFileSync(join(versions, "other"), "#!/bin/sh\necho other\n", { mode: 0o755 });
+    const current = join(home, "tools", "current");
+    symlinkSync(join(home, "tools", "1.0"), current);
+    symlinkSync(join(current, "bin", "tool"), join(home, "bin", "tool"));
+    const folder = join(home, "work");
+    mkdirSync(folder);
+    const { argv, env } = setupCommand(folder, "tool ; other", {
+      HOME: home,
+      PATH: `${join(home, "bin")}:${join(current, "bin")}:${process.env.PATH ?? ""}`,
+    });
+    const done = await run(argv, env);
+    expect(done.err).toBe("");
+    expect(done.out).toBe("tool\nother\n");
   });
 
   test("hides the home folder's secrets and the other sockets in /run", async () => {
