@@ -17,6 +17,7 @@ import {
   showSession,
   showStrip,
 } from "./tmux.ts";
+import { release } from "./version.ts";
 
 // One row of the sidebar, with what the strip says of the agent too. The lead has no status of
 // its own, and a row's age is empty unless it shows a running time.
@@ -436,7 +437,7 @@ export async function runSidebar(agents: string, session: string, where: string)
     lists = sidebarLists(db, rows, size().height);
     shown = shownSession(agents, tty) ?? shown;
     const width = paneWidth(screenSocket(agents), `=${session}:.1`);
-    const strip = drawStrip(rows, shown, { left: size().width + 1, width }, where);
+    const strip = drawStrip(rows, shown, { left: size().width + 1, width }, where, release);
     if (strip.join("\n") !== lastStrip) {
       lastStrip = strip.join("\n");
       showStrip(screenSocket(agents), session, strip);

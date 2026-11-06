@@ -118,6 +118,36 @@ test("on this machine the header is just skel, with no dot and no place", () => 
   expect(first).not.toContain("·");
 });
 
+test("a release shows dim right after the name, here and on a remote", () => {
+  const [here = ""] = drawStrip([thread()], "lead", size, "", "0.4.2");
+  expect(seen(here).trimEnd()).toBe("  skel 0.4.2");
+  expect(here).toContain("#[bold,fg=colour231]skel#[default]#[fg=brightblack] 0.4.2#[default]");
+  const [there = ""] = drawStrip([thread()], "lead", size, "sprite:skel", "0.4.2");
+  expect(seen(there).trimEnd()).toBe("  skel 0.4.2 · sprite:skel");
+  expect(there).toContain("#[fg=brightblack] 0.4.2 · sprite:skel#[default]");
+});
+
+test("a release leaves the strip above the agent where it was", () => {
+  const [first = ""] = drawStrip([thread()], "app-12", size, "sprite:skel", "0.4.2");
+  expect(seen(first).indexOf("app-12")).toBe(30);
+});
+
+test("the place is cut before the release, which stays whole", () => {
+  const where = "simon@a-very-long-server-name.example.com";
+  const [first = ""] = drawStrip([thread()], "app-12", size, where, "0.4.2");
+  expect(seen(first).slice(0, 30)).toBe("  skel 0.4.2 · simon@a-ve…    ");
+  expect(seen(first).indexOf("app-12")).toBe(30);
+});
+
+test("with no room for both, the place goes first, and then the release, never half of it", () => {
+  const line = (left: number) =>
+    seen(drawStrip([lead], "lead", { left, width: 40 }, "sprite:skel", "0.4.2")[0]);
+  expect(line(20).trimEnd()).toBe("  skel 0.4.2 · …");
+  expect(line(19).trimEnd()).toBe("  skel 0.4.2");
+  expect(line(16).trimEnd()).toBe("  skel 0.4.2");
+  expect(line(15).trimEnd()).toBe("  skel");
+});
+
 test("the header stays whatever you are looking at", () => {
   for (const shown of ["lead", "app-12", "gone", null]) {
     const [first = ""] = drawStrip([lead, thread()], shown, size, "");
