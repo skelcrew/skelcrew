@@ -224,7 +224,7 @@ export const paneTty = (socket: string, target: string) =>
 export const paneWidth = (socket: string, target: string) =>
   Number(tmux(socket, ["display-message", "-p", "-t", target, "#{pane_width}"]).out.trim());
 
-// Sets the two lines of a session's strip, as tmux formats. Each set makes tmux redraw the whole
+// Sets the lines of a session's strip, as tmux formats. Each set makes tmux redraw the whole
 // screen, so both go in one run, for one redraw, and only when a line changed. The lone ";"
 // separates tmux commands, so it skips literal().
 export function showStrip(socket: string, session: string, lines: [string, string]): void {

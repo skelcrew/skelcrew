@@ -1,5 +1,6 @@
-// The strip: two lines above the agent saying what you are looking at. For a thread, its name,
-// task, PR and checks, then its latest review. For the lead, the threads counted by their words.
+// The strip: one line above the agent saying what you are looking at. For a thread, its name,
+// task, PR and checks, then its latest review. The lead has none, as the sidebar says it all.
+// Above the sidebar the same line says skel and where it runs. A thin line runs under them all.
 import type { Row } from "./sidebar.ts";
 
 type Size = { left: number; width: number };
@@ -32,8 +33,17 @@ function fitted(text: string, width: number): string {
 // through strftime too, so % is doubled for it to stay itself.
 const shown = (text: string) => text.replaceAll("#", "##").replaceAll("%", "%%");
 
-// Returns the first line for a thread: the title gives way to the rest, as the title is what is
-// longest and you have it from the task.
+// Returns what a review says, short enough to share the line, or nothing before the first one.
+function aboutReview(row: Row): string {
+  if (row.review === null) return "";
+  const { round, reviewer, verdict } = row.review;
+  const parts = [`round ${round}`, reviewer, verdicts[verdict] ?? verdict];
+  return `  ${clean(parts.filter(Boolean).join(" · "))}`;
+}
+
+// Returns the line for a thread. The name, PR and checks are what you look for, so the review
+// takes what room is left and the title what the review leaves: the title is what is longest,
+// and you have it from the task. A name too long for all that is shown alone.
 function aboutThread(row: Row, width: number): string {
   const name = fitted(clean(row.name), width);
   const tail = [row.pr === null ? "" : `#${row.pr}`, row.checks ? said[row.checks] : ""]
@@ -42,39 +52,42 @@ function aboutThread(row: Row, width: number): string {
   const end = tail ? `  ${tail}` : "";
   const spare = width - Bun.stringWidth(name) - Bun.stringWidth(end);
   if (spare < 0) return `#[bold]${shown(name)}#[default]`;
-  const title = row.title ? fitted(`  ${clean(row.title)}`, spare) : "";
-  return `#[bold]${shown(name)}#[default]${shown(title)}${shown(end)}`;
+  const review = fitted(aboutReview(row), spare);
+  const room = spare - Bun.stringWidth(review);
+  const title = row.title ? fitted(`  ${clean(row.title)}`, room) : "";
+  const dim = review ? `#[fg=brightblack]${shown(review)}` : "";
+  return `#[bold]${shown(name)}#[default]${shown(title)}${shown(end)}${dim}`;
 }
 
-// Returns the second line for a thread: its latest review.
-function aboutReview(row: Row, width: number): string {
-  if (row.review === null) return `#[fg=brightblack]${shown(fitted("no review yet", width))}`;
-  const { round, reviewer, verdict, line } = row.review;
-  const parts = [`round ${round}`, reviewer, verdicts[verdict] ?? verdict, clean(line)];
-  const text = parts.filter(Boolean).join(" · ");
-  return `#[fg=brightblack]${shown(fitted(text, width))}`;
+// skel's name above the sidebar, in its teal. A 256-colour number, so it looks the same whatever
+// your theme.
+const skelName = "#[bold,fg=colour79]skel#[default]";
+
+// Returns the header above the sidebar: skel's name, in line with the sidebar's marks, then dim
+// where it runs, then spaces out to the agent's column. Where skel runs comes from outside, so
+// it is cut and made safe as a title is.
+function header(where: string, left: number): string {
+  const place = fitted(clean(where), Math.max(left - 11, 0));
+  const spare = " ".repeat(Math.max(left - 9 - Bun.stringWidth(place), 0));
+  return `   ${skelName}  #[fg=brightblack]${shown(place)}#[default]${spare}`;
 }
 
-// Returns the threads counted by their words, such as 2 approved · 1 working, with what needs
-// you first, as that is what you came to look for.
-function counted(rows: Row[]): string {
-  const threads = rows.filter((row) => row.status !== null);
-  if (threads.length === 0) return "no threads";
-  const ordered = [...threads.filter((t) => t.needsYou), ...threads.filter((t) => !t.needsYou)];
-  const counts = new Map<string, number>();
-  for (const { word } of ordered) counts.set(word, (counts.get(word) ?? 0) + 1);
-  return [...counts].map(([word, count]) => `${count} ${word}`).join(" · ");
-}
-
-// Returns the strip's two lines as tmux formats, given the rows, the session on the right, and
-// where the agent's pane is: `left` columns in, `width` wide. tmux's status lines span the whole
-// terminal, so spaces carry the text past the sidebar. It reads nothing, so what you see can be
-// tested without a terminal. Always two lines, so the agent's height never changes.
-export function drawStrip(rows: Row[], session: string | null, size: Size): [string, string] {
+// Returns the strip's two lines as tmux formats, given the rows, the session on the right,
+// where the agent's pane is, `left` columns in and `width` wide, and where skel runs. tmux's
+// status lines span the whole terminal, so the first starts with the header, and the second
+// meets the line at the sidebar's edge, two columns left of the agent, with a ┬. It reads
+// nothing, so what you see can be tested without a terminal. Always two lines, so the agent's
+// height never changes.
+export function drawStrip(
+  rows: Row[],
+  session: string | null,
+  size: Size,
+  where: string,
+): [string, string] {
   const { left, width } = size;
-  const pad = " ".repeat(left);
+  const top = header(where, left);
+  const line = `#[fg=colour237]${"─".repeat(Math.max(left - 2, 0))}┬${"─".repeat(width + 1)}`;
   const row = rows.find((candidate) => candidate.session === session);
-  if (!row) return [pad, pad];
-  if (row.status === null) return [`${pad}${shown(fitted(counted(rows), width))}`, pad];
-  return [`${pad}${aboutThread(row, width)}`, `${pad}${aboutReview(row, width)}`];
+  if (!row || row.status === null) return [top, line];
+  return [`${top}${aboutThread(row, width)}`, line];
 }

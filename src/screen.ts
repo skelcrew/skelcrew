@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { windowTitle } from "./say.ts";
 import { applyConfig, cleanEnv } from "./tmux.ts";
 
-// How wide the sidebar is. tmux shares a resize out among panes, so it is set back after each.
-export const sidebarWidth = 28;
+// How wide the sidebar is, with the line it draws at its edge. tmux shares a resize out among
+// panes, so it is set back after each.
+export const sidebarWidth = 30;
 
 // Returns the screen's tmux server beside the agents': skel-screen beside skel, and a test's
 // own beside the test's.
@@ -30,9 +31,11 @@ export const screenSocket = (agents: string) => `${agents}-screen`;
 // are, which switching agents doesn't change. tmux saves your terminal's title on the way in
 // and puts it back on the way out, on terminals that keep one. It goes out as OSC 2, since
 // sprite writes the Sprite's name in front of a title sent as OSC 0, tmux's usual way.
-// The strip is tmux's own two status lines, at the top, so the agent's height stays the same on
-// every session. Its pane stays as wide as it was, and needs no process of its own. They start
-// empty, as the sidebar fills them in, and have no clock to redraw for.
+// The strip and header share the first of tmux's own two status lines, at the top, and the thin
+// line is the second, so the agent's height stays the same on every session. Its pane stays as
+// wide as it was, and needs no process of its own. They start empty, as the sidebar fills them in, and have no clock to redraw
+// for. tmux's border between the panes is blank: the sidebar draws its own line, so the border
+// is a gap before the agent.
 const config = [
   ["set", "-g", "status", "2"],
   ["set", "-g", "status-position", "top"],
@@ -56,8 +59,7 @@ const config = [
   ["set", "-g", "destroy-unattached", "on"],
   ["set", "-g", "default-terminal", "xterm-256color"],
   ["set", "-s", "terminal-features[90]", "*:sync"],
-  ["set", "-g", "pane-border-style", "fg=brightblack"],
-  ["set", "-g", "pane-active-border-style", "fg=brightblack"],
+  ["set", "-g", "pane-border-lines", "spaces"],
   ["set-hook", "-g", "window-resized", `resize-pane -t :.0 -x ${sidebarWidth}`],
 ];
 
@@ -72,10 +74,12 @@ function agentClient(agents: string, session: string): string[] {
 }
 
 // Returns the command that runs skel's sidebar: the skel you are running, which is a single
-// file on a server, or else this checkout.
-function sidebar(agents: string, session: string): string[] {
+// file on a server, or else this checkout. Where skel runs goes along as a word, not in the
+// environment: a tmux server hands its panes the environment of whichever terminal started it,
+// and terminals on this server can come from different laptops.
+function sidebar(agents: string, session: string, where: string): string[] {
   const skel = import.meta.dir.startsWith("/$bunfs") ? [] : [join(import.meta.dir, "main.ts")];
-  return [process.execPath, ...skel, "sidebar", agents, session];
+  return [process.execPath, ...skel, "sidebar", agents, session, where];
 }
 
 // Opens the screen in your terminal on the named agent session, and returns when you leave
@@ -93,12 +97,15 @@ export async function openScreen(agents: string, session: string): Promise<void>
   if (env.TERM && !known(env.TERM)) env.TERM = "xterm-256color";
   applyConfig(agents);
   const name = `screen-${process.pid}`;
+  // The name skel --remote passes along, such as sprite:demo. Without it you are on this machine.
+  const where = env.SKEL_REMOTE_NAME || "local";
+  const left = sidebar(agents, name, where);
   // The title is the session's own: terminals on this server can come from different laptops.
   const open = [
     ...config,
     ["new-session", "-s", name, "--", ...agentClient(agents, session)],
     ["set", "set-titles-string", windowTitle(env.SKEL_REMOTE_NAME)],
-    ["split-window", "-hbd", "-l", String(sidebarWidth), "--", ...sidebar(agents, name)],
+    ["split-window", "-hbd", "-l", String(sidebarWidth), "--", ...left],
   ];
   // The lone ";" separates tmux commands.
   const commands = open.flatMap((command) => [...command, ";"]).slice(0, -1);
