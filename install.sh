@@ -74,7 +74,7 @@ verify() {
   want=$(awk -v name="$asset" '$2 == name { print $1 }' SHA256SUMS)
   [ -n "$want" ] || fail "the release has no checksum for $asset, so it wasn't installed."
   got=$(checksum)
-  [ "$got" = "$want" ] || fail "the download failed its checksum, so it wasn't installed."
+  [ "$got" = "$want" ] || fail "the download failed its checksum, so it wasn't installed. Try again."
 }
 
 # Downloads an address to a file, or stops and names the address.
@@ -116,8 +116,10 @@ main() {
   trap 'exit 1' HUP INT TERM
   cd "$folder"
   echo "Downloading skel for $system on $cpu."
-  download "$base/latest/download/$asset" skel
+  # The small file first: both must come from one release, and a new one could otherwise land
+  # during the long download. If one still slips between them, the checksum stops the install.
   download "$base/latest/download/SHA256SUMS" SHA256SUMS
+  download "$base/latest/download/$asset" skel
   verify "$asset"
   chmod 755 skel
   version=$(./skel --version) || fail "the download won't start on this machine, so it wasn't installed."

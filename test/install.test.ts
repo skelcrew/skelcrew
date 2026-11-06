@@ -170,6 +170,11 @@ describe.each([[["sh"]], [["dash"]], [["bash", "--posix"]]])("under %j", (shell)
     expect(readFileSync(installed(), "utf8")).toBe("the old skel");
   });
 
+  test("asks for the checksums just before the long download, so a new release can't slip between", async () => {
+    await install(shell);
+    expect(asked).toEqual(["SHA256SUMS", "skel-linux-x64"]);
+  });
+
   test("a download that fails says which address failed", async () => {
     served.delete("skel-linux-x64");
     const done = await install(shell);
