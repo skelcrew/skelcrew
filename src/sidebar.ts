@@ -261,19 +261,22 @@ function linkLines(link: Link, width: number): string[] {
   );
 }
 
-// Returns a list's lines for a third of `height` lines: its heading, as many rows as fit, then a
-// count of the rest. Rows come with the dim ones last, so those are the first to be left out.
+// Returns what starts a list: its heading, dim, and the blank line that parts it from the rows.
+const headed = (heading: string): Line[] => [{ text: paint(grey, `   ${heading}`) }, { text: "" }];
+
+// Returns a list's lines for a third of `height` lines: its heading and a blank line, as many
+// rows as fit, then a count of the rest. Rows come with the dim ones last, so those are the first to be left out.
 // A third with room for just one row keeps the row, and the count gives way. An empty list says
 // so, as its third stays either way.
 function listLines(heading: string, list: List, height: number, width: number): Line[] {
-  const top = { text: paint(grey, `   ${heading}`) };
-  if (list.links.length === 0) return [top, { text: paint(grey, "     none") }];
-  const fit = Math.floor((height - 1) / 2);
-  const few = list.total > fit ? Math.max(Math.floor((height - 2) / 2), 1) : fit;
+  const top = headed(heading);
+  if (list.links.length === 0) return [...top, { text: paint(grey, "     none") }];
+  const fit = Math.floor((height - top.length) / 2);
+  const few = list.total > fit ? Math.max(Math.floor((height - top.length - 1) / 2), 1) : fit;
   const links = list.links.slice(0, few);
   const rest = list.total - links.length;
   return [
-    top,
+    ...top,
     ...links.flatMap((link) => linkLines(link, width).map((text) => ({ text }))),
     ...(rest > 0 ? [{ text: paint(grey, `     + ${rest} more`) }] : []),
   ].slice(0, height);
@@ -319,16 +322,17 @@ function layout(
   const room = size.height >= tallest + hints.length ? size.height - hints.length : size.height;
   const third = Math.floor((room - 2) / 3);
   const middle = room - 2 - 2 * third;
-  if (third < 3 || middle < tallest + 1) return { lines: scrolled(blocks, here, room), room };
+  const top = headed("Threads");
+  if (third < top.length + 2 || middle < top.length + tallest)
+    return { lines: scrolled(blocks, here, room), room };
   const divider = { text: paint(edge, "─".repeat(Math.max(width, 0))), joins: true };
-  const heading = { text: paint(grey, "   THREADS") };
   const lines = [
-    ...held(listLines("ISSUES", lists.issues, third, width), third),
+    ...held(listLines("Issues", lists.issues, third, width), third),
     divider,
-    heading,
-    ...held(scrolled(blocks, here, middle - 1), middle - 1),
+    ...top,
+    ...held(scrolled(blocks, here, middle - top.length), middle - top.length),
     divider,
-    ...listLines("PRS", lists.prs, third, width),
+    ...listLines("PRs", lists.prs, third, width),
   ];
   return { lines, room };
 }

@@ -369,19 +369,19 @@ test("ISSUES, THREADS and PRS sit in that order, with rows together and a line b
       .filter(Boolean)
       .slice(0, -2),
   ).toEqual([
-    "   ISSUES",
+    "   Issues",
     "     Add CSV export",
     "     app-31",
     "     Fix login",
     "     app-12",
     rule,
-    "   THREADS",
+    "   Threads",
     "   ◆ lead",
     "     running · claude",
     "   ● app-12",
     "     working · claude · 5m",
     rule,
-    "   PRS",
+    "   PRs",
     "     Fix login",
     "     app#34 · approved",
     "     Bump deps",
@@ -400,9 +400,21 @@ test("the line between lists has the colour of the sidebar's edge, and joins it"
   }
 });
 
+test("one blank line parts each heading from its first row", () => {
+  const lines = read(drawLists(threads, lists, "lead", tall));
+  for (const [heading, first] of [
+    ["   Issues", "     Add CSV export"],
+    ["   Threads", "   ◆ lead"],
+    ["   PRs", "     Fix login"],
+  ]) {
+    const y = lines.indexOf(heading ?? "");
+    expect(lines.slice(y, y + 3)).toEqual([heading ?? "", "", first ?? ""]);
+  }
+});
+
 test("headings are dim, and sit where the marks do", () => {
   const screen = drawLists(threads, lists, "lead", tall);
-  for (const heading of ["ISSUES", "THREADS", "PRS"])
+  for (const heading of ["Issues", "Threads", "PRs"])
     expect(screen).toContain(`\x1b[90m   ${heading}`);
 });
 
@@ -472,38 +484,38 @@ test("a list shows as many rows as fit its third, then a count of the rest", () 
   const height = 40;
   const room = { width: sidebarWidth, height };
   const lines = read(drawLists(threads, { ...nothing, issues: list(links(9), 240) }, "lead", room));
-  expect(third(lines, "ISSUES")).toHaveLength(12);
-  expect(lines).toContain("     app-5");
-  expect(lines).not.toContain("     app-6");
-  expect(lines).toContain("     + 235 more");
+  expect(third(lines, "Issues")).toHaveLength(10);
+  expect(lines).toContain("     app-4");
+  expect(lines).not.toContain("     app-5");
+  expect(lines).toContain("     + 236 more");
 });
 
 test("a list that just fits its third has no count", () => {
   const room = { width: sidebarWidth, height: 40 };
   const lines = read(drawLists(threads, { ...nothing, prs: list(links(5)) }, "lead", room));
-  expect(third(lines, "PRS")).toHaveLength(11);
+  expect(third(lines, "PRs")).toHaveLength(11);
   expect(lines.join("\n")).not.toContain("more");
 });
 
 test("the count gives way to the row in a third that only has room for one", () => {
-  const room = { width: sidebarWidth, height: 13 };
+  const room = { width: sidebarWidth, height: 16 };
   const lines = read(drawLists(threads, { ...nothing, issues: list(links(9)) }, "lead", room));
-  expect(third(lines, "ISSUES")).toEqual(["   ISSUES", "     An issue", "     app-1"]);
+  expect(third(lines, "Issues")).toEqual(["   Issues", "     An issue", "     app-1"]);
 });
 
 test("an empty list keeps its heading and a dim none", () => {
   const screen = drawLists(threads, { ...nothing, prs: lists.prs }, "lead", tall);
   const lines = read(screen);
-  expect(third(lines, "ISSUES")).toEqual(["   ISSUES", "     none"]);
-  expect(third(lines, "THREADS")[0]).toBe("   THREADS");
+  expect(third(lines, "Issues")).toEqual(["   Issues", "     none"]);
+  expect(third(lines, "Threads")[0]).toBe("   Threads");
   expect(screen).toContain("\x1b[90m     none");
   expect(lines.filter((line) => line === rule)).toHaveLength(2);
 });
 
 test("with nothing open, all three lists keep their place", () => {
   const lines = read(draw(threads, "lead", tall));
-  expect(third(lines, "ISSUES")).toEqual(["   ISSUES", "     none"]);
-  expect(third(lines, "PRS")).toEqual(["   PRS", "     none"]);
+  expect(third(lines, "Issues")).toEqual(["   Issues", "     none"]);
+  expect(third(lines, "PRs")).toEqual(["   PRs", "     none"]);
 });
 
 test("each list has a third of the sidebar above the hints, and THREADS has what is left over", () => {
@@ -511,7 +523,7 @@ test("each list has a third of the sidebar above the hints, and THREADS has what
   const places = (height: number) => {
     const lines = read(drawLists(threads, lists, "lead", { width: sidebarWidth, height }));
     const at = (text: string) => lines.indexOf(text);
-    return [at("   ISSUES"), at("   THREADS"), at("   PRS"), lines.length - 2];
+    return [at("   Issues"), at("   Threads"), at("   PRs"), lines.length - 2];
   };
   expect(places(40)).toEqual([0, 13, 26, 38]);
   expect(places(41)).toEqual([0, 13, 27, 39]);
@@ -525,7 +537,7 @@ test("each list stays in its place, however full any of them is", () => {
   const moreThreads = [lead, ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => thread(`app-${n}`))];
   const places = (rows: Row[], shownLists: Lists) => {
     const lines = read(drawLists(rows, shownLists, "lead", room));
-    return ["   ISSUES", "   THREADS", "   PRS"].map((text) => lines.indexOf(text));
+    return ["   Issues", "   Threads", "   PRs"].map((text) => lines.indexOf(text));
   };
   const expected = [0, 13, 26];
   expect(places(threads, nothing)).toEqual(expected);
@@ -542,32 +554,32 @@ test("THREADS scrolls inside its third, and the lists around it stay", () => {
   const room = { width: sidebarWidth, height: 24 };
   for (const { session } of busy) {
     const lines = read(drawLists(busy, full, session, room));
-    expect(lines.indexOf("   THREADS")).toBe(7);
-    expect(lines.indexOf("   PRS")).toBe(16);
+    expect(lines.indexOf("   Threads")).toBe(7);
+    expect(lines.indexOf("   PRs")).toBe(16);
     const name = session === "lead" ? "◆ lead" : `● ${session}`;
-    expect(third(lines, "THREADS").join("\n")).toContain(name);
+    expect(third(lines, "Threads").join("\n")).toContain(name);
   }
 });
 
 test("a third too short for a heading and one row leaves THREADS the whole sidebar", () => {
-  const short = { width: sidebarWidth, height: 12 };
+  const short = { width: sidebarWidth, height: 15 };
   const whole = read(drawLists(busy, full, "app-7", short));
-  expect(whole.join("\n")).not.toContain("ISSUES");
-  expect(whole.join("\n")).not.toContain("THREADS");
+  expect(whole.join("\n")).not.toContain("Issues");
+  expect(whole.join("\n")).not.toContain("Threads");
   expect(whole.join("\n")).toContain("● app-7");
   expect(read(drawLists(busy, nothing, "app-7", short))).toEqual(whole);
-  const enough = read(drawLists(busy, full, "app-7", { width: sidebarWidth, height: 13 }));
-  expect(enough).toContain("   ISSUES");
+  const enough = read(drawLists(busy, full, "app-7", { width: sidebarWidth, height: 16 }));
+  expect(enough).toContain("   Issues");
 });
 
 test("a row too tall for THREADS' third leaves THREADS the whole sidebar, as it must stay whole", () => {
   const name = "a-very-long-repository-name-1234";
   const rows = [lead, thread(name)];
-  const room = { width: sidebarWidth, height: 13 };
+  const room = { width: sidebarWidth, height: 16 };
   const lines = read(drawLists(rows, full, name, room));
-  expect(lines.join("\n")).not.toContain("ISSUES");
+  expect(lines.join("\n")).not.toContain("Issues");
   expect(lines.join("\n")).toContain("working · claude");
-  expect(read(drawLists(rows, full, "lead", room))).toContain("   ISSUES");
+  expect(read(drawLists(rows, full, "lead", room))).toContain("   Issues");
 });
 
 test("the thread you are on stays on screen with the lists, at every height", () => {
@@ -590,8 +602,11 @@ test("a click picks a thread below the other lists, and on a link or heading pic
   expect(click(y("● app-12"))).toBe("app-12");
   expect(click(y("working · claude"))).toBe("app-12");
   expect(click(y("◆ lead"))).toBe("lead");
-  for (const text of ["ISSUES", "app-31", "THREADS", "PRS", "app#34", "───"])
+  for (const text of ["Issues", "app-31", "Threads", "PRs", "app#34", "───"])
     expect(click(y(text))).toBeNull();
+  // The blank line under a heading is no row, and the first row is just below it.
+  expect(click(y("Threads") + 1)).toBeNull();
+  expect(click(y("Threads") + 2)).toBe("lead");
 });
 
 test("a click finds its row as THREADS scrolls between the other lists", () => {

@@ -272,7 +272,7 @@ test("the wheel scrolls back through the agent's output, and typing returns you 
   for (let turn = 0; turn < 4; turn++) wheel(64);
   await until(() => seen().includes("line 160"), "the agent's older output");
   expect(seen()).not.toContain("I am output");
-  expect(seen()).toContain("app-7");
+  expect(seen()).toContain("app-12");
   type("æble\r");
   await until(() => existsSync(join(home, "output.typed")), "the typing");
   expect(readFileSync(join(home, "output.typed"), "utf8")).toBe("æble\n");
