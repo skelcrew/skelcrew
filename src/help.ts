@@ -31,7 +31,7 @@ const sections: [string, [string, string][]][] = [
       ["remote add sprite:<name>", "Set up a Sprite"],
       ["--remote <host> [command]", "Run skel on a server, over ssh"],
       ["--remote sprite:<name> [command]", "Run skel on a Sprite"],
-      ["serve", "Run the daemon, for systemd"],
+      ["serve", "Run the daemon, for systemd or launchd"],
     ],
   ],
   ["IN A THREAD", [['submit "<summary>"', "Hand in a round for review"]]],

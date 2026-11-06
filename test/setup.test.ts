@@ -16,7 +16,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createServer, type Server } from "node:net";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 
 let home = "";
@@ -313,6 +313,134 @@ test("refuses to install a service that runs skel from a worktree", async () => 
   expect(run.code).toBe(1);
   expect(run.err).toContain("main checkout");
   expect(existsSync(unit())).toBe(false);
+});
+
+// Runs skel as it runs on a Mac, with fake launchctl and sandbox-exec.
+function skelOnMac(typed = "", path = bin) {
+  const preload = join(import.meta.dir, "as-mac.ts");
+  return skel(typed, path, main(), home, { BUN_OPTIONS: `--preload ${preload}` });
+}
+
+// Sets up the fakes a Mac has, and takes away what only Linux has.
+function asMac(): void {
+  rmSync(join(bin, "bwrap"));
+  rmSync(join(bin, "systemctl"));
+  rmSync(join(bin, "loginctl"));
+  fake("sandbox-exec", "exit 0");
+  fake(
+    "launchctl",
+    `case "$1" in
+  bootstrap|kickstart) : > "$HOME/started" ;;
+esac`,
+  );
+  fake("brew", "exit 0");
+}
+
+const plist = () => join(home, "Library", "LaunchAgents", "run.skel.daemon.plist");
+const uid = userInfo().uid;
+
+test("on a Mac, installs the daemon as a launchd agent, with no systemd", async () => {
+  asMac();
+  const first = await skelOnMac("1\nsk-ant-oat01-good\n");
+  expect(first.err).toBe("");
+  expect(first.code).toBe(0);
+  expect(calls()).toContain(`launchctl bootstrap gui/${uid} ${plist()}\n`);
+  const text = readFileSync(plist(), "utf8");
+  expect(text).toContain("<string>run.skel.daemon</string>");
+  expect(text).toContain(
+    `<string>${join(checkout, "bin", "skel")}</string>\n    <string>serve</string>`,
+  );
+  expect(text).toContain("<key>AbandonProcessGroup</key>\n  <true/>");
+  expect(text).toContain(`<string>${join(home, "Library", "Logs", "skel.log")}</string>`);
+  expect(calls()).toContain("daemon lead");
+});
+
+test("on a Mac, says once that work stops with the lid closed", async () => {
+  asMac();
+  const first = await skelOnMac("1\nsk-ant-oat01-good\n");
+  const done = first.out.indexOf("setup is done");
+  const note = first.out.indexOf("work stops while the lid is closed");
+  expect(done).toBeGreaterThan(-1);
+  expect(note).toBeGreaterThan(done);
+  expect(first.out).toContain("skel --remote");
+  const second = await skelOnMac();
+  expect(second.out).not.toContain("lid");
+});
+
+test("says nothing about a lid on Linux", async () => {
+  const first = await skel("1\nsk-ant-oat01-good\n");
+  expect(first.out).not.toContain("lid");
+});
+
+test("on a Mac, installs no agent when launchctl fails, so the next skel tries again", async () => {
+  asMac();
+  fake("launchctl", 'test "$1" = bootout && exit 3; echo "Load failed" >&2; exit 5');
+  const run = await skelOnMac("1\nsk-ant-oat01-good\n");
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("Load failed");
+  expect(existsSync(plist())).toBe(false);
+});
+
+test("on a Mac, starts the daemon through launchd when it doesn't answer", async () => {
+  asMac();
+  await skelOnMac("1\nsk-ant-oat01-good\n");
+  rmSync(join(home, "started"));
+  writeFileSync(join(home, "calls"), "");
+  const run = await skelOnMac();
+  expect(run.err).toBe("");
+  expect(calls()).toContain(`launchctl kickstart gui/${uid}/run.skel.daemon\n`);
+});
+
+test("on a Mac, reloads the agent when the PATH it needs moved", async () => {
+  asMac();
+  await skelOnMac("1\nsk-ant-oat01-good\n");
+  writeFileSync(join(home, "calls"), "");
+  await skelOnMac("", `${bin}:/usr/bin`);
+  expect(readFileSync(plist(), "utf8")).toContain(`<string>${bin}:/usr/bin</string>`);
+  expect(calls()).toContain(`launchctl bootout gui/${uid}/run.skel.daemon\n`);
+  expect(calls()).toContain(`launchctl bootstrap gui/${uid} ${plist()}\n`);
+});
+
+test("on a Mac, escapes a PATH for the agent's definition", async () => {
+  asMac();
+  const odd = join(home, "a&b");
+  mkdirSync(odd);
+  await skelOnMac("1\nsk-ant-oat01-good\n", `${bin}:${odd}`);
+  expect(readFileSync(plist(), "utf8")).toContain(`<string>${bin}:${home}/a&amp;b</string>`);
+});
+
+test("on a Mac, says exactly what to install with Homebrew, and runs nothing else", async () => {
+  asMac();
+  rmSync(join(bin, "tmux"));
+  rmSync(join(bin, "gh"));
+  rmSync(join(bin, "claude"));
+  const run = await skelOnMac();
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("  brew install tmux gh\n");
+  expect(run.err).toContain("claude: curl -fsSL https://claude.ai/install.sh | bash");
+  expect(run.err).not.toContain("bwrap");
+  expect(run.err).not.toContain("apt");
+  expect(run.err).not.toContain("brew.sh");
+  expect(existsSync(join(home, "calls"))).toBe(false);
+});
+
+test("on a Mac without Homebrew, says where to get it", async () => {
+  asMac();
+  rmSync(join(bin, "brew"));
+  rmSync(join(bin, "tmux"));
+  const run = await skelOnMac();
+  expect(run.err).toContain("https://brew.sh");
+  expect(run.err).toContain("  brew install tmux\n");
+});
+
+test("on a Mac, stops when sandbox-exec can't start a sandbox", async () => {
+  asMac();
+  fake("sandbox-exec", 'echo "sandbox_apply: Operation not permitted" >&2; exit 71');
+  const run = await skelOnMac();
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("sandbox-exec can't start a sandbox here");
+  expect(run.err).toContain("sandbox_apply: Operation not permitted");
+  expect(calls()).not.toContain("gh auth");
 });
 
 test("skips the GitHub login when gh is logged in already", async () => {

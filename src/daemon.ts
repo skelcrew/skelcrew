@@ -9,6 +9,7 @@ import { z } from "zod";
 import { openDb } from "./db.ts";
 import { pollGitHub, stopThread } from "./events.ts";
 import { createIssue } from "./github.ts";
+import { daemonLog, startLaunchAgent } from "./launchd.ts";
 import { attachedNote, recordAttachedFrom, startLead, tellLead } from "./lead.ts";
 import {
   listRepositories,
@@ -164,7 +165,7 @@ function ask(request: Request, timeout: number): Promise<unknown> {
 // duplicate daemons. The kernel lets go of it when the process ends, however it ends, so a
 // daemon that was killed never leaves it held. Node has no flock, so it comes from libc.
 function lock(path: string): boolean {
-  const libc = dlopen("libc.so.6", {
+  const libc = dlopen(process.platform === "darwin" ? "libSystem.B.dylib" : "libc.so.6", {
     flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
   });
   const LOCK_EX = 2;
@@ -560,7 +561,9 @@ export async function attachToLead(tmux: string, from?: string): Promise<void> {
   let reply = await ask(asked, 15_000);
   if (reply === null) {
     const sprite = onSprite();
+    const mac = process.platform === "darwin";
     if (sprite) startSpriteService();
+    else if (mac) startLaunchAgent();
     else {
       const start = Bun.spawnSync(["systemctl", "--user", "start", "skel"], {
         stdio: ["inherit", "inherit", "inherit"],
@@ -571,7 +574,7 @@ export async function attachToLead(tmux: string, from?: string): Promise<void> {
     while (reply === null) {
       if (Date.now() > deadline)
         throw new Error(
-          `skel's daemon didn't answer within 10 seconds: ${sprite ? serviceLog : "journalctl --user -u skel"} shows why`,
+          `skel's daemon didn't answer within 10 seconds: ${sprite ? serviceLog : mac ? daemonLog() : "journalctl --user -u skel"} shows why`,
         );
       await Bun.sleep(100);
       reply = await ask(asked, 15_000);

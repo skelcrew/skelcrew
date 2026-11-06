@@ -13,6 +13,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
+import { daemonLog, loadLaunchAgent, plistFile, plistText } from "./launchd.ts";
 import { codexHome, configDir } from "./paths.ts";
 import { rule, skelLine } from "./say.ts";
 import { promptSecret } from "./secret.ts";
@@ -25,15 +26,41 @@ import {
 
 type Env = Record<string, string | undefined>;
 
+const claude = { command: "claude", install: "curl -fsSL https://claude.ai/install.sh | bash" };
 const tools = [
   { command: "tmux", install: "sudo apt install tmux" },
   { command: "bwrap", install: "sudo apt install bubblewrap" },
   { command: "gh", install: "sudo apt install gh" },
-  { command: "claude", install: "curl -fsSL https://claude.ai/install.sh | bash" },
+  claude,
+];
+// On a Mac the sandbox comes with the system, and what Homebrew gives goes in one line.
+const brewed = ["tmux", "gh"];
+const macTools = [
+  { command: "sandbox-exec", install: "it comes with macOS, and skel can't run agents without it" },
+  claude,
 ];
 
 // Unknown keys pass through, so settings this version doesn't know survive a save.
 const Config = z.looseObject({ harness: z.enum(["claude"]).optional() });
+
+// Checks the programs a Mac needs and tries sandbox-exec, stopping setup with what to install
+// on failure. Homebrew's tools are named in one line that can be pasted as it is.
+function checkMacTools(env: Env): void {
+  const PATH = env.PATH ?? "";
+  const brew = brewed.filter((command) => !Bun.which(command, { PATH }));
+  const missing = macTools.filter((tool) => !Bun.which(tool.command, { PATH }));
+  const lines = missing.map((tool) => `  ${tool.command}: ${tool.install}`);
+  if (brew.length > 0) lines.unshift(`  brew install ${brew.join(" ")}`);
+  if (brew.length > 0 && !Bun.which("brew", { PATH }))
+    lines.unshift("  Homebrew, for the line below: https://brew.sh");
+  if (lines.length > 0) throw new Error(`install these first:\n${lines.join("\n")}`);
+  const tried = Bun.spawnSync(["sandbox-exec", "-p", "(version 1)(allow default)", "true"], {
+    env,
+    stderr: "pipe",
+  });
+  if (!tried.success)
+    throw new Error(`sandbox-exec can't start a sandbox here: ${tried.stderr.toString().trim()}`);
+}
 
 // Checks required programs and tries bubblewrap, stopping setup with installation or
 // sandbox advice on failure.
@@ -205,6 +232,9 @@ function pickHarness(): void {
 // Returns the systemd user service path, which also marks daemon installation complete.
 const unitFile = () => join(homedir(), ".config", "systemd", "user", "skel.service");
 
+// Returns the file that defines the daemon's service here and marks it as installed.
+const serviceFile = () => (process.platform === "darwin" ? plistFile() : unitFile());
+
 // Runs a service installation command in your terminal and stops setup if it fails.
 function systemd(command: string[]): void {
   const run = Bun.spawnSync(command, { stdio: ["inherit", "inherit", "inherit"] });
@@ -245,18 +275,21 @@ function loginPath(): string {
   return [...new Set([...found, ...here].filter(Boolean))].join(":");
 }
 
+// Returns the folders of a PATH that will still be there when the daemon starts. Folders a
+// tool runner or a temporary folder added are left out.
+function lastingPath(given: string): string[] {
+  const temporary = tmpdir();
+  return given
+    .split(":")
+    .filter((p) => p && !p.includes("/node_modules/.bin") && !p.startsWith(`${temporary}/`));
+}
+
 // Returns the daemon's service definition with a lasting tool PATH and sessions that
 // survive daemon stops.
 function unitText(skel: string, given: string): string {
   // systemd starts services with a bare PATH, which misses bun, claude and gh where they
-  // usually live, so the daemon gets yours. Folders a tool runner or a temporary folder
-  // added are left out: they are gone by the time the daemon starts.
-  const temporary = tmpdir();
-  const path = given
-    .split(":")
-    .filter((p) => p && !p.includes("/node_modules/.bin") && !p.startsWith(`${temporary}/`))
-    .map(unitValue)
-    .join(":");
+  // usually live, so the daemon gets yours.
+  const path = lastingPath(given).map(unitValue).join(":");
   // Where tmux couldn't get a scope of its own, stopping the service would otherwise end
   // the tmux server, and every agent with it.
   return `[Unit]
@@ -274,11 +307,13 @@ WantedBy=default.target
 }
 
 // Installs or updates the daemon service, enabling it and lingering on the first
-// installation. On a Sprite, which has no systemd, it is a Sprite service instead. Checked on every plain skel, but only by comparing files, so a moved bun,
-// claude or checkout reaches the daemon at its next start without a systemctl call each
+// installation. On a Sprite, which has no systemd, it is a Sprite service instead, and on a
+// Mac a launchd agent. Checked on every plain skel, but only by comparing files, so a moved
+// bun, claude or checkout reaches the daemon at its next start without a systemctl call each
 // time.
 function installService(): void {
-  const file = unitFile();
+  const mac = process.platform === "darwin";
+  const file = serviceFile();
   const before = existsSync(file) ? readFileSync(file, "utf8") : null;
   // skel built as one file runs its modules from a folder only it sees, so the service runs
   // the file itself.
@@ -297,14 +332,20 @@ function installService(): void {
     installSpriteService(skel);
     return;
   }
+  const text = (path: string) =>
+    mac ? plistText(skel, lastingPath(path).join(":"), daemonLog()) : unitText(skel, path);
   // Asking your login shell takes a moment, so only when the PATH here would change the
   // service, as over ssh.
-  if (before === unitText(skel, process.env.PATH ?? "")) return;
-  const unit = unitText(skel, loginPath());
+  if (before === text(process.env.PATH ?? "")) return;
+  const unit = text(loginPath());
   if (before === unit) return;
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, unit);
   try {
+    if (mac) {
+      loadLaunchAgent();
+      return;
+    }
     systemd(["systemctl", "--user", "daemon-reload"]);
     if (before !== null) return;
     systemd(["systemctl", "--user", "enable", "--now", "skel"]);
@@ -328,7 +369,7 @@ function installService(): void {
 // files show every step ran. Missing tools or logins fail where used; checking each attach
 // would require a GitHub call.
 export function setupDone(): boolean {
-  const service = onSprite() ? spriteServiceInstalled() : existsSync(unitFile());
+  const service = onSprite() ? spriteServiceInstalled() : existsSync(serviceFile());
   return Boolean(readConfig().harness) && existsSync(tokenFile()) && service;
 }
 
@@ -341,7 +382,8 @@ export function firstRun(): void {
     // under nvm isn't taken for missing. Passed to each one, since Bun looks programs up in
     // the PATH it started with, whatever process.env says later.
     const env = { ...process.env, PATH: loginPath() };
-    checkTools(env);
+    if (process.platform === "darwin") checkMacTools(env);
+    else checkTools(env);
     const steps = stepsToTake(env);
     for (const [at, step] of steps.entries()) {
       console.log(`\n${skelLine(`step ${at + 1} of ${steps.length}: ${step.title}`)}`);
@@ -356,7 +398,14 @@ export function firstRun(): void {
       );
   }
   installService();
-  if (!done) console.log(skelLine("setup is done."));
+  if (done) return;
+  console.log(skelLine("setup is done."));
+  if (process.platform === "darwin")
+    console.log(
+      skelLine(
+        "a laptop sleeps, so work stops while the lid is closed. skel --remote keeps it going, on a server or a Sprite.",
+      ),
+    );
 }
 
 type Step = { title: string; about: string; take: () => void };
