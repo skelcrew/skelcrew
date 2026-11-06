@@ -225,9 +225,9 @@ export const paneWidth = (socket: string, target: string) =>
   Number(tmux(socket, ["display-message", "-p", "-t", target, "#{pane_width}"]).out.trim());
 
 // Sets the lines of a session's strip, as tmux formats. Each set makes tmux redraw the whole
-// screen, so all go in one run, for one redraw, and only when a line changed. The lone ";"
+// screen, so both go in one run, for one redraw, and only when a line changed. The lone ";"
 // separates tmux commands, so it skips literal().
-export function showStrip(socket: string, session: string, lines: [string, string, string]): void {
+export function showStrip(socket: string, session: string, lines: [string, string]): void {
   const set = (index: number) => [
     "set",
     "-t",
@@ -235,7 +235,7 @@ export function showStrip(socket: string, session: string, lines: [string, strin
     `status-format[${index}]`,
     literal(lines[index] ?? ""),
   ];
-  const argv = ["tmux", "-L", socket, "-f", "/dev/null", ...set(0), ";", ...set(1), ";", ...set(2)];
+  const argv = ["tmux", "-L", socket, "-f", "/dev/null", ...set(0), ";", ...set(1)];
   Bun.spawnSync(argv, { env: cleanEnv(), stdout: "ignore", stderr: "ignore" });
 }
 

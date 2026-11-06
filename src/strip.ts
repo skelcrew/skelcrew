@@ -1,6 +1,6 @@
-// The strip: two lines above the agent saying what you are looking at. For a thread, its name,
+// The strip: one line above the agent saying what you are looking at. For a thread, its name,
 // task, PR and checks, then its latest review. The lead has none, as the sidebar says it all.
-// Above the sidebar the first line says skel and where it runs. A thin line runs under them all.
+// Above the sidebar the same line says skel and where it runs. A thin line runs under them all.
 import type { Row } from "./sidebar.ts";
 
 type Size = { left: number; width: number };
@@ -33,8 +33,17 @@ function fitted(text: string, width: number): string {
 // through strftime too, so % is doubled for it to stay itself.
 const shown = (text: string) => text.replaceAll("#", "##").replaceAll("%", "%%");
 
-// Returns the first line for a thread: the title gives way to the rest, as the title is what is
-// longest and you have it from the task.
+// Returns what a review says, short enough to share the line, or nothing before the first one.
+function aboutReview(row: Row): string {
+  if (row.review === null) return "";
+  const { round, reviewer, verdict } = row.review;
+  const parts = [`round ${round}`, reviewer, verdicts[verdict] ?? verdict];
+  return `  ${clean(parts.filter(Boolean).join(" · "))}`;
+}
+
+// Returns the line for a thread. The name, PR and checks are what you look for, so the review
+// takes what room is left and the title what the review leaves: the title is what is longest,
+// and you have it from the task. A name too long for all that is shown alone.
 function aboutThread(row: Row, width: number): string {
   const name = fitted(clean(row.name), width);
   const tail = [row.pr === null ? "" : `#${row.pr}`, row.checks ? said[row.checks] : ""]
@@ -43,17 +52,11 @@ function aboutThread(row: Row, width: number): string {
   const end = tail ? `  ${tail}` : "";
   const spare = width - Bun.stringWidth(name) - Bun.stringWidth(end);
   if (spare < 0) return `#[bold]${shown(name)}#[default]`;
-  const title = row.title ? fitted(`  ${clean(row.title)}`, spare) : "";
-  return `#[bold]${shown(name)}#[default]${shown(title)}${shown(end)}`;
-}
-
-// Returns the second line for a thread: its latest review.
-function aboutReview(row: Row, width: number): string {
-  if (row.review === null) return `#[fg=brightblack]${shown(fitted("no review yet", width))}`;
-  const { round, reviewer, verdict, line } = row.review;
-  const parts = [`round ${round}`, reviewer, verdicts[verdict] ?? verdict, clean(line)];
-  const text = parts.filter(Boolean).join(" · ");
-  return `#[fg=brightblack]${shown(fitted(text, width))}`;
+  const review = fitted(aboutReview(row), spare);
+  const room = spare - Bun.stringWidth(review);
+  const title = row.title ? fitted(`  ${clean(row.title)}`, room) : "";
+  const dim = review ? `#[fg=brightblack]${shown(review)}` : "";
+  return `#[bold]${shown(name)}#[default]${shown(title)}${shown(end)}${dim}`;
 }
 
 // skel's name above the sidebar, in its teal. A 256-colour number, so it looks the same whatever
@@ -69,23 +72,22 @@ function header(where: string, left: number): string {
   return `  ${skelName}  #[fg=brightblack]${shown(place)}#[default]${spare}`;
 }
 
-// Returns the strip's three lines as tmux formats, given the rows, the session on the right,
+// Returns the strip's two lines as tmux formats, given the rows, the session on the right,
 // where the agent's pane is, `left` columns in and `width` wide, and where skel runs. tmux's
-// status lines span the whole terminal, so the first starts with the header, and the third
+// status lines span the whole terminal, so the first starts with the header, and the second
 // meets the line at the sidebar's edge, two columns left of the agent, with a ┬. It reads
-// nothing, so what you see can be tested without a terminal. Always three lines, so the agent's
+// nothing, so what you see can be tested without a terminal. Always two lines, so the agent's
 // height never changes.
 export function drawStrip(
   rows: Row[],
   session: string | null,
   size: Size,
   where: string,
-): [string, string, string] {
+): [string, string] {
   const { left, width } = size;
   const top = header(where, left);
-  const pad = " ".repeat(left);
   const line = `#[fg=colour237]${"─".repeat(Math.max(left - 2, 0))}┬${"─".repeat(width + 1)}`;
   const row = rows.find((candidate) => candidate.session === session);
-  if (!row || row.status === null) return [top, pad, line];
-  return [`${top}${aboutThread(row, width)}`, `${pad}${aboutReview(row, width)}`, line];
+  if (!row || row.status === null) return [top, line];
+  return [`${top}${aboutThread(row, width)}`, line];
 }

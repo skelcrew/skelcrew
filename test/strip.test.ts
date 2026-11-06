@@ -25,74 +25,82 @@ const thread = (more: Partial<Row> = {}): Row => ({
   title: "Fix the login redirect",
   pr: 34,
   checks: "passing",
-  review: { round: 2, reviewer: "codex", verdict: "approve", line: "Looks right to me." },
+  review: { round: 2, reviewer: "codex", verdict: "approve" },
   ...more,
 });
 const size = { left: 30, width: 90 };
 // Returns a line as you see it, without tmux's styles. A ## is how tmux is told to show one #.
 const seen = (line: string) => line.replace(/#\[[^\]]*\]/g, "").replaceAll("##", "#");
-// The two lines above the agent as text, without what is above the sidebar.
+// The strip above the agent as text, without what is above the sidebar.
 const read = (rows: Row[], shown: string | null, given = size) =>
-  drawStrip(rows, shown, given, "local")
-    .slice(0, 2)
-    .map((line) => seen(line).slice(given.left));
+  seen(drawStrip(rows, shown, given, "local")[0]).slice(given.left);
+const whole = "app-12  Fix the login redirect  #34  checks passing  round 2 · codex · approved";
 
-test("a thread's first line has its name, title, PR and checks", () => {
-  expect(read([lead, thread()], "app-12")[0]).toBe(
-    "app-12  Fix the login redirect  #34  checks passing",
+test("a thread's line has its name, title, PR, checks and latest review", () => {
+  expect(read([lead, thread()], "app-12")).toBe(whole);
+  const changes = { round: 1, reviewer: "claude", verdict: "changes" };
+  expect(read([thread({ review: changes })], "app-12")).toEndWith(
+    "#34  checks passing  round 1 · claude · changes",
+  );
+  const failed = { round: 3, reviewer: "codex", verdict: "failed" };
+  expect(read([thread({ review: failed })], "app-12")).toEndWith(
+    "#34  checks passing  round 3 · codex · review failed",
   );
 });
 
-test("a thread's second line has its latest review", () => {
-  expect(read([lead, thread()], "app-12")[1]).toBe(
-    "round 2 · codex · approved · Looks right to me.",
-  );
-  const changes = { round: 1, reviewer: "claude", verdict: "changes", line: "A test is missing." };
-  expect(read([thread({ review: changes })], "app-12")[1]).toBe(
-    "round 1 · claude · changes · A test is missing.",
-  );
-  const failed = { round: 3, reviewer: "codex", verdict: "failed", line: "codex exited with 1" };
-  expect(read([thread({ review: failed })], "app-12")[1]).toBe(
-    "round 3 · codex · review failed · codex exited with 1",
-  );
+test("the review is dim, and the rest isn't", () => {
+  const [first] = drawStrip([thread()], "app-12", size, "local");
+  expect(first).toEndWith("checks passing#[fg=brightblack]  round 2 · codex · approved");
 });
 
-test("what a thread doesn't have yet is left out", () => {
+test("what a thread doesn't have yet is left out, with no words in its place", () => {
   const early = thread({ title: null, pr: null, checks: null, review: null });
-  expect(read([early], "app-12")).toEqual(["app-12", "no review yet"]);
-  expect(read([thread({ checks: "pending" })], "app-12")[0]).toEndWith("#34  checks running");
-  expect(read([thread({ checks: "failing" })], "app-12")[0]).toEndWith("#34  checks failing");
+  expect(read([early], "app-12")).toBe("app-12");
+  const unreviewed = thread({ review: null });
+  expect(read([unreviewed], "app-12")).toBe("app-12  Fix the login redirect  #34  checks passing");
+  const pending = thread({ checks: "pending", review: null });
+  expect(read([pending], "app-12")).toEndWith("#34  checks running");
+  const failing = thread({ checks: "failing", review: null });
+  expect(read([failing], "app-12")).toEndWith("#34  checks failing");
 });
 
-test("a long title gives way, and the PR and checks stay on screen", () => {
-  const long = thread({ title: "x".repeat(200) });
-  const [first] = read([long], "app-12", { left: 30, width: 50 });
-  expect(first).toEndWith("…  #34  checks passing");
-  expect(Bun.stringWidth(first ?? "")).toBe(50);
+test("as room runs out the title gives way first, and everything after it stays", () => {
+  const line = read([thread()], "app-12", { left: 30, width: 70 });
+  expect(line).toStartWith("app-12  Fix the logi…");
+  expect(line).toEndWith("…  #34  checks passing  round 2 · codex · approved");
+  expect(Bun.stringWidth(line)).toBe(70);
+});
+
+test("with the title gone the review gives way next, and the PR and checks stay", () => {
+  const line = read([thread()], "app-12", { left: 30, width: 40 });
+  expect(line).toStartWith("app-12  #34  checks passing  round 2");
+  expect(line).toEndWith("…");
+  expect(line).not.toContain("Fix");
+  expect(Bun.stringWidth(line)).toBe(40);
+  expect(read([thread()], "app-12", { left: 30, width: 27 })).toBe("app-12  #34  checks passing");
+});
+
+test("a long title gives way, and what follows it stays on screen", () => {
+  const line = read([thread({ title: "x".repeat(200) })], "app-12", { left: 30, width: 80 });
+  expect(line).toEndWith("…  #34  checks passing  round 2 · codex · approved");
+  expect(Bun.stringWidth(line)).toBe(80);
 });
 
 test("a wide title is measured by the columns it takes, not its characters", () => {
-  const [first] = read([thread({ title: "日本語".repeat(40) })], "app-12", { left: 30, width: 50 });
-  expect(Bun.stringWidth(first ?? "")).toBeLessThanOrEqual(50);
-});
-
-test("a long review line is cut to the width", () => {
-  const review = { round: 1, reviewer: "codex", verdict: "changes", line: "y".repeat(300) };
-  const [, second] = read([thread({ review })], "app-12", { left: 30, width: 40 });
-  expect(second).toEndWith("…");
-  expect(Bun.stringWidth(second ?? "")).toBe(40);
+  const line = read([thread({ title: "日本語".repeat(40) })], "app-12", { left: 30, width: 70 });
+  expect(Bun.stringWidth(line)).toBeLessThanOrEqual(70);
 });
 
 test("too narrow for anything else, it still shows what fits and never fails", () => {
-  for (let width = 0; width < 40; width++)
-    for (const line of read([thread()], "app-12", { left: 30, width }))
-      expect(Bun.stringWidth(line)).toBeLessThanOrEqual(width);
+  for (let width = 0; width < 90; width++)
+    expect(Bun.stringWidth(read([thread()], "app-12", { left: 30, width }))).toBeLessThanOrEqual(
+      width,
+    );
 });
 
 test("the strip starts past the sidebar, so it sits above the agent", () => {
-  const [first = "", second = ""] = drawStrip([thread()], "app-12", size, "local");
+  const [first = ""] = drawStrip([thread()], "app-12", size, "local");
   expect(seen(first).indexOf("app-12")).toBe(30);
-  expect(seen(second).indexOf("round 2")).toBe(30);
 });
 
 test("above the sidebar, skel in teal in line with the marks, then dim where it runs", () => {
@@ -102,13 +110,17 @@ test("above the sidebar, skel in teal in line with the marks, then dim where it 
   expect(first).toContain("#[fg=brightblack]sprite:demo#[default]");
 });
 
-test("the header stays whatever you are looking at, with nothing under it", () => {
+test("the header stays whatever you are looking at", () => {
   for (const shown of ["lead", "app-12", "gone", null]) {
-    const [first = "", second = ""] = drawStrip([lead, thread()], shown, size, "local");
+    const [first = ""] = drawStrip([lead, thread()], shown, size, "local");
     expect(seen(first).slice(0, 30).trimEnd()).toBe("  skel  local");
     expect(seen(first).slice(0, 30)).toHaveLength(30);
-    expect(seen(second).slice(0, 30).trim()).toBe("");
   }
+});
+
+test("it is always two lines, so the agent's height never changes as you switch", () => {
+  for (const shown of ["lead", "app-12", "gone", null])
+    expect(drawStrip([lead, thread()], shown, size, "local")).toHaveLength(2);
 });
 
 test("a long place is cut to fit above the sidebar, and the strip stays above the agent", () => {
@@ -126,35 +138,41 @@ test("where skel runs can't run commands, restyle the strip or reach your termin
   expect(first).not.toMatch(/\p{Cc}/u);
 });
 
-test("the third line is a thin line across the whole width, joining the sidebar's edge", () => {
+test("the second line is a thin line across the whole width, joining the sidebar's edge", () => {
   for (const given of [size, { left: 30, width: 50 }, { left: 12, width: 8 }]) {
-    const line = seen(drawStrip([thread()], "app-12", given, "local")[2]);
+    const line = seen(drawStrip([thread()], "app-12", given, "local")[1]);
     expect(Bun.stringWidth(line)).toBe(given.left + given.width);
     expect(line.indexOf("┬")).toBe(given.left - 2);
     expect(line.replace("┬", "")).toMatch(/^─+$/);
   }
-  expect(drawStrip([], null, size, "local")[2]).toStartWith("#[fg=colour237]─");
+  expect(drawStrip([], null, size, "local")[1]).toStartWith("#[fg=colour237]─");
 });
 
 test("the lead's strip is empty, as the sidebar already shows what needs you", () => {
   const rows = [lead, thread({ word: "approved", needsYou: true })];
-  expect(read(rows, "lead")).toEqual(["", ""]);
+  expect(read(rows, "lead")).toBe("");
 });
 
-test("an agent that isn't listed shows an empty strip of the same two lines", () => {
-  expect(read([lead], "gone")).toEqual(["", ""]);
-  expect(read([lead], null)).toEqual(["", ""]);
+test("an agent that isn't listed shows an empty strip", () => {
+  expect(read([lead], "gone")).toBe("");
+  expect(read([lead], null)).toBe("");
 });
 
 test("a title can't run commands or restyle the strip, as tmux reads the strip as a format", () => {
   const title = "#(touch /tmp/pwned) #[fg=red] #{pane_pid}";
-  const line = drawStrip([thread({ title })], "app-12", size, "local")[0];
+  const line = drawStrip([thread({ title, review: null })], "app-12", size, "local")[0];
   expect(line).toContain("##(touch /tmp/pwned) ##[fg=red] ##{pane_pid}");
 });
 
+test("a review can't run commands or restyle the strip either", () => {
+  const review = { round: 1, reviewer: "#(id) 5%", verdict: "#[fg=red]" };
+  const line = drawStrip([thread({ review })], "app-12", size, "local")[0];
+  expect(line).toContain("##(id) 5%% · ##[fg=red]");
+});
+
 test("a title or review can't reach your terminal with control codes", () => {
-  const review = { round: 1, reviewer: "codex", verdict: "changes", line: "a\x1b]2;owned\x07b\tc" };
+  const review = { round: 1, reviewer: "co\x1b]2;owned\x07dex", verdict: "chan\tges" };
   const strip = drawStrip([thread({ title: "x\x1b[2Jy\r\nz", review })], "app-12", size, "local");
   expect(strip.join("")).not.toMatch(/\p{Cc}/u);
-  expect(read([thread({ title: "x\x1b[2Jy", review })], "app-12")[0]).toContain("x [2Jy");
+  expect(read([thread({ title: "x\x1b[2Jy", review })], "app-12")).toContain("x [2Jy");
 });

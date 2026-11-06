@@ -28,7 +28,7 @@ export type Row = {
   title: string | null;
   pr: number | null;
   checks: Thread["checks"];
-  review: { round: number; reviewer: string; verdict: string; line: string } | null;
+  review: { round: number; reviewer: string; verdict: string } | null;
 };
 type Size = { width: number; height: number };
 
@@ -105,7 +105,7 @@ export function sidebarRows(db: Database, running: string[], maxRounds: number):
     },
     ...threads.all().map((row) => {
       const thread = Thread.parse(row);
-      const { review_round: round, reviewer, reviewed_by: by, verdict, review_line: line } = thread;
+      const { review_round: round, reviewer, reviewed_by: by, verdict } = thread;
       const word = threadWord(thread, maxRounds);
       return {
         name: threadName(db, thread),
@@ -119,10 +119,7 @@ export function sidebarRows(db: Database, running: string[], maxRounds: number):
         title: thread.title,
         pr: thread.pr,
         checks: thread.checks,
-        review:
-          round !== null && verdict !== null
-            ? { round, reviewer: by ?? "", verdict, line: line ?? "" }
-            : null,
+        review: round !== null && verdict !== null ? { round, reviewer: by ?? "", verdict } : null,
       };
     }),
   ];
