@@ -368,8 +368,10 @@ test("ISSUES, THREADS and PRS sit in that order, with rows together and a line b
       .slice(0, -2),
   ).toEqual([
     "   ISSUES",
-    "   app-31 Add CSV export",
-    "   app-12 Fix login",
+    "     Add CSV export",
+    "     app-31",
+    "     Fix login",
+    "     app-12",
     rule,
     "   THREADS",
     "   ◆ lead",
@@ -378,8 +380,10 @@ test("ISSUES, THREADS and PRS sit in that order, with rows together and a line b
     "     working · claude · 5m",
     rule,
     "   PRS",
-    "   app#34 approved · Fix log…",
-    "   app#33 Bump deps",
+    "     Fix login",
+    "     app#34 · approved",
+    "     Bump deps",
+    "     app#33",
   ]);
 });
 
@@ -400,11 +404,11 @@ test("headings are dim, and sit where the marks do", () => {
     expect(screen).toContain(`\x1b[90m   ${heading}`);
 });
 
-test("an issue with a thread is dim all along, and one without isn't", () => {
+test("an issue with a thread is dim on both lines, and one without only on its name", () => {
   const screen = drawLists(threads, lists, "lead", tall);
-  expect(screen).toContain("\x1b[90mapp-12 Fix login");
-  expect(screen).toContain("app-31 Add CSV export");
-  expect(screen).not.toContain("\x1b[90mapp-31");
+  expect(screen).toContain("\x1b[90mFix login");
+  expect(screen).toContain("\x1b\\Add CSV export");
+  expect(screen).not.toContain("\x1b[90mAdd CSV export");
 });
 
 test("a PR takes its thread's word, in yellow when the thread needs you, and dim otherwise", () => {
@@ -415,10 +419,17 @@ test("a PR takes its thread's word, in yellow when the thread needs you, and dim
   expect(dim).toContain("\x1b[90mworking");
 });
 
-test("a row that isn't a thread is a terminal link to GitHub, and only the text is", () => {
+test("a PR's name is dim, and one with no thread has no word after it", () => {
+  const screen = drawLists(threads, lists, "lead", tall);
+  expect(screen).toContain("\x1b[90mapp#34");
+  expect(read(screen)).toContain("     app#33");
+});
+
+test("both lines of a row that isn't a thread are a terminal link, and only the text is", () => {
   const screen = drawLists(threads, lists, "lead", tall);
   const open = "\x1b]8;;https://github.com/simon/app/issues/31\x1b\\";
-  expect(screen).toContain(`   ${open}app-31 Add CSV export\x1b]8;;\x1b\\`);
+  expect(screen).toContain(`     ${open}Add CSV export\x1b]8;;\x1b\\`);
+  expect(screen).toContain(`     ${open}\x1b[90mapp-31\x1b[22;39m\x1b]8;;\x1b\\`);
 });
 
 test("a long title is cut to the row, and every line still reaches the edge", () => {
@@ -426,12 +437,12 @@ test("a long title is cut to the row, and every line still reaches the edge", ()
   const wide = "とても長いタイトルがサイドバーの端を越えて続きます";
   const both = list([link("app-31", long), link("app-30", wide)]);
   const screen = drawLists(threads, { issues: both, prs: both }, "lead", tall);
-  expect(plain(screen)).toContain("   app-31 A very long title …");
+  expect(plain(screen)).toContain("     A very long title that …");
   for (const line of screen.split("\n")) expect(Bun.stringWidth(line)).toBe(sidebarWidth);
 });
 
 test("a name that fills the row is cut too, so the row never wraps", () => {
-  for (const length of [24, 25, 26, 27, 30, 40]) {
+  for (const length of [20, 21, 22, 23, 24, 25, 26, 30, 40]) {
     const name = "n".repeat(length);
     const rows = list([link(name, "A title", { word: "approved" }), link(name, "A title")]);
     const screen = drawLists(threads, { issues: rows, prs: rows }, "lead", tall);
@@ -454,8 +465,8 @@ test("each list shows a few rows, then a count of the rest", () => {
       height: 40,
     }),
   );
-  expect(screen).toContain("   app-5 An issue");
-  expect(screen).toContain("   + 235 more");
+  expect(screen).toContain("     app-5");
+  expect(screen).toContain("     + 235 more");
 });
 
 test("a list with nothing to count has no count, and an empty list isn't shown", () => {

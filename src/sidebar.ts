@@ -248,18 +248,19 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
   return here ? lines.map(band) : lines;
 }
 
-// Returns a row of ISSUES or PRS as a terminal link, cut to the sidebar's width: its name, then
-// a PR's word, then the title with what room is left. skel may run on another machine than your
-// browser, so your terminal opens the link. The title comes from outside, so it is made safe.
-function linkLine(link: Link, width: number): string {
-  const name = fitted(link.name, Math.max(width - 4, 0));
-  const room = width - 4 - Bun.stringWidth(name);
-  const word = fitted(link.word, room);
-  const title = clean(link.title);
-  const rest = fitted(word ? ` · ${title}` : title, room - Bun.stringWidth(word));
-  const about = word ? `${paint(link.needing ? yellow : grey, word)}${paint(grey, rest)}` : rest;
-  const text = link.dim ? paint(grey, `${name} ${rest}`) : `${name} ${about}`;
-  return `   \x1b]8;;${link.url}\x1b\\${text}\x1b]8;;\x1b\\`;
+// Returns a row of ISSUES or PRS as two lines, each a terminal link and cut to the sidebar's
+// width: its title, then, dim, its name and a PR's word, in the colours a thread gives that word.
+// skel may run on another machine than your browser, so your terminal opens the link. The title
+// comes from outside, so it is made safe.
+function linkLines(link: Link, width: number): string[] {
+  const room = Math.max(width - 5, 0);
+  const title = fitted(clean(link.title), room);
+  const name = fitted(link.name, room);
+  const word = link.word && fitted(link.word, room - Bun.stringWidth(name) - 3);
+  const about = word && `${paint(grey, " · ")}${paint(link.needing ? yellow : grey, word)}`;
+  return [link.dim ? paint(grey, title) : title, `${paint(grey, name)}${about}`].map(
+    (text) => `     \x1b]8;;${link.url}\x1b\\${text}\x1b]8;;\x1b\\`,
+  );
 }
 
 // Returns a list's lines, or none for an empty one: its heading, up to `few` rows, then a count
@@ -270,8 +271,8 @@ function listLines(heading: string, list: List, few: number, width: number): Lin
   const rest = list.total - links.length;
   return [
     { text: paint(grey, `   ${heading}`) },
-    ...links.map((link) => ({ text: linkLine(link, width) })),
-    ...(rest > 0 ? [{ text: paint(grey, `   + ${rest} more`) }] : []),
+    ...links.flatMap((link) => linkLines(link, width).map((text) => ({ text }))),
+    ...(rest > 0 ? [{ text: paint(grey, `     + ${rest} more`) }] : []),
   ];
 }
 

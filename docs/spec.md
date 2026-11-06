@@ -105,7 +105,7 @@ The sidebar has three lists, the three stages of a task: ISSUES, THREADS and PRS
 - **ISSUES** are the open issues in your repositories, as `skel task ls` shows them, newest first. Those with a thread are dim and come last, so what is waiting stands out.
 - **PRS** are the open PRs in your repositories, newest first, including ones skel didn't open. A PR from a thread shows the same word as its thread.
 
-An issue's row is its name and title, such as `app-31 Add CSV export`. A PR's row is its repository and number, its word if it has one, and its title, such as `app#34 approved · Fix login`. Each is one line, cut to fit.
+Each row of ISSUES and PRS has two lines, like a thread's, starting where a thread's name does. The first is the title, cut with `…` to fit. The second, dim, is the name, such as `app-24` or `app#26`, and a PR from a thread adds its word, in the colour a thread's word has: `app#26 · approved`.
 
 It is an overview, never a replacement for the tracker or GitHub. A row with no agent is a link: it opens in your browser, as a terminal link, since skel may run on another machine than your browser. The agent on the right stays as it is. Each list shows a few rows, five at most, then a count of the rest, leaving out dim rows first. skel asks GitHub for these lists only while a screen is open, so they never keep a Sprite awake. They come in the daemon's usual poll and query, and it saves them, so the sidebar only reads the database and never asks GitHub itself. A screen opening brings a poll at once, so the lists fill within seconds rather than at the next poll.
 

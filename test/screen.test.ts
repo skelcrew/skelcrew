@@ -553,11 +553,12 @@ test("open issues and PRs reach your terminal as links, through both tmux server
   openOnGitHub();
   open("lead");
   await ready("lead");
-  await until(() => seen().includes("app-31 Add CSV export"), "the issue");
+  await until(() => seen().includes("Add CSV export"), "the issue");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
   expect(colours).toContain("https://github.com/simon/app/issues/31");
   expect(colours).toContain("https://github.com/simon/app/pull/34");
-  expect(seen()).toContain("app#34 Bump deps");
+  expect(seen()).toContain("Bump deps");
+  expect(seen()).toContain("app#34");
 });
 
 test("the screen's server turns terminal links on, whatever your terminal says it is", async () => {
