@@ -287,7 +287,14 @@ test("nothing a reviewer started outlives it, or keeps the review waiting", asyn
 
 test("a process that left the reviewer's group can't keep the review waiting", async () => {
   const pid = join(home, "pid");
-  const clone = reviewable(`setsid sleep 60 &\necho $! > ${pid}\nsleep 0.3`);
+  const leave = join(home, "leave.ts");
+  writeFileSync(
+    leave,
+    `const left = Bun.spawn(["sleep", "60"], { detached: true, stdio: ["ignore", "inherit", "inherit"] });
+await Bun.write(${JSON.stringify(pid)}, String(left.pid));
+left.unref();`,
+  );
+  const clone = reviewable(`bun ${leave}`);
   try {
     expect((await reviewOnMac(clone)).verdict).toBe("approve");
   } finally {
