@@ -134,6 +134,11 @@ export function seatbeltProfile(given: {
 // /var, where a Mac's temporary folders live, are links into /private.
 const real = (path: string) => (existsSync(path) ? realpathSync(path) : path);
 
+// Returns a socket's path with the links in its folders resolved. Only its folder is looked up:
+// finding a path's real name opens the file on a Mac, and a socket can't be opened, so that
+// fails with EOPNOTSUPP.
+const realSocket = (path: string) => join(real(dirname(path)), basename(path));
+
 // A Mac reaches its data through a second path too, /System/Volumes/Data, so what is hidden
 // is hidden under both.
 const bothPaths = (path: string) => [path, `/System/Volumes/Data${path}`];
@@ -182,10 +187,10 @@ export function seatbeltArgs(given: {
   const profile = join(own, "profile.sb");
   const text = seatbeltProfile({
     hidden,
-    read: [...shown.map(real), ...(socket ? [dirname(real(socket))] : [])],
+    read: [...shown.map(real), ...(socket ? [real(dirname(socket))] : [])],
     links: links.map((link) => join(real(dirname(link)), basename(link))),
     write: [...write.map(real), ownHome, ownTemp],
-    ...(socket ? { socket: real(socket) } : {}),
+    ...(socket ? { socket: realSocket(socket) } : {}),
   });
   writeFileSync(profile, text);
   const vars = [`HOME=${ownHome}`, `TMPDIR=${ownTemp}`, "SKEL_SANDBOX=1", `PATH=${path}`];

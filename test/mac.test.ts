@@ -144,6 +144,20 @@ test("an agent starts under sandbox-exec, in its folder, with a home of its own"
   expect(seen).toContain(`CLAUDE_CODE_TMPDIR=${ownTemp}\n`);
 });
 
+test("the agent's socket is never resolved itself, as a Mac can't open one to find its real path", async () => {
+  const socket = join(home, "run", "skel", "lead", "skel.sock");
+  mkdirSync(join(socket, ".."), { recursive: true });
+  // A link stands in for the socket, which Linux would resolve without complaint. The last part
+  // of the path going unresolved is what keeps a Mac from failing with EOPNOTSUPP.
+  symlinkSync(join(home, "elsewhere"), socket);
+  writeFileSync(join(home, "elsewhere"), "");
+  const made = await asMacRun(`import { agentCommand } from ${source("sandbox.ts")};
+console.log(JSON.stringify(agentCommand({ name: "lead", socket: ${JSON.stringify(socket)}, model: "opus" })));`);
+  expect(made.err).toBe("");
+  const text = readFileSync(rules(Command(made.out).argv), "utf8");
+  expect(text).toContain(`(remote unix-socket (subpath "${socket}"))`);
+});
+
 test("the profile hides your home folder and brings back the agent's folders", async () => {
   const { argv, socket } = await leadCommand();
   const text = readFileSync(rules(argv), "utf8");
