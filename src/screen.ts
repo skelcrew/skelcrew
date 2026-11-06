@@ -5,9 +5,10 @@ import { join } from "node:path";
 import { windowTitle } from "./say.ts";
 import { applyConfig, cleanEnv } from "./tmux.ts";
 
-// How wide the sidebar is, with the line it draws at its edge. tmux shares a resize out among
-// panes, so it is set back after each.
-export const sidebarWidth = 30;
+// How wide the sidebar is, with the line it draws at its edge: room for 24 columns of a name or
+// title, between its mark and two columns of padding. tmux shares a resize out among panes, so
+// it is set back after each.
+export const sidebarWidth = 31;
 
 // Returns the screen's tmux server beside the agents': skel-screen beside skel, and a test's
 // own beside the test's.
@@ -99,8 +100,8 @@ export async function openScreen(agents: string, session: string): Promise<void>
   if (env.TERM && !known(env.TERM)) env.TERM = "xterm-256color";
   applyConfig(agents);
   const name = `screen-${process.pid}`;
-  // The name skel --remote passes along, such as sprite:demo. Without it you are on this machine.
-  const where = env.SKEL_REMOTE_NAME || "local";
+  // The name skel --remote passes along, such as sprite:demo. Empty on this machine.
+  const where = env.SKEL_REMOTE_NAME ?? "";
   const left = sidebar(agents, name, where);
   // The title is the session's own: terminals on this server can come from different laptops.
   const open = [

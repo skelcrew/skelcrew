@@ -35,8 +35,11 @@ export type Row = {
   checks: Thread["checks"];
   review: { round: number; reviewer: string; verdict: string } | null;
 };
+// A sign, and the colour it is drawn in.
+type Mark = [string, number];
 // One row of ISSUES or PRS. It has no agent to pick, so it is a link to GitHub. `word` is the
-// word of the thread a PR comes from, and `needing` says whether that thread needs you.
+// word of the thread a PR comes from, and `needing` says whether that thread needs you. A PR has
+// a mark, and an issue has none, so it starts where the headings do.
 export type Link = {
   name: string;
   title: string;
@@ -44,6 +47,7 @@ export type Link = {
   word: string;
   needing: boolean;
   dim: boolean;
+  mark: Mark | null;
 };
 // The rows to show, and how many are open in all, which can be far more.
 type List = { links: Link[]; total: number };
@@ -60,13 +64,15 @@ const [green, yellow, red, grey] = [32, 33, 31, 90];
 const paint = (code: number | string, text: string) => `\x1b[${code}m${text}\x1b[22;39m`;
 // Each thread's mark is a circle in its status's colour. Waiting and stopped look alike, and the
 // word under the name tells every status apart, so nothing is told by colour alone.
-const marks: Record<Thread["status"], [string, number]> = {
+const marks: Record<Thread["status"], Mark> = {
   working: ["●", green],
   waiting: ["○", grey],
   stopped: ["○", grey],
   failed: ["●", red],
   done: ["●", green],
 };
+// A PR with no thread has nothing to say, so it looks like a thread that is waiting.
+const noThread: Mark = ["○", grey];
 // The row you are looking at has a grey background, which is also what parts it from the rows
 // around it. 256-colour numbers, as they reach your terminal through both tmux servers and
 // sprite, and mean the same whatever your theme. So do the colours on the grey: a theme's own
@@ -81,8 +87,23 @@ const onShade: Record<number, string> = {
 };
 // The line at the sidebar's edge, a shade quieter than dim text, as it only parts two things.
 const edge = "38;5;237";
+// The padding on each side, in columns, which also starts every heading and mark. A terminal
+// cell is about twice as tall as wide, so two columns look like the one blank row at the top.
+const pad = "  ";
+// Where a name starts, past its mark.
+const indent = `${pad}  `;
 // The keys you need most, at the bottom of the sidebar.
-const hints = ["   ⌥↑↓ switch", "   ⌃Q  quit"];
+const hints = [`${pad}⌥↑↓ switch`, `${pad}⌃Q  quit`];
+
+// Says whether a thread shows as needing you. A thread that failed can still have its needs you
+// flag, and its word says failed.
+const needing = (row: Row) => row.needsYou && row.status !== "failed";
+
+// Returns the mark of a row of THREADS, which a PR from that thread shows too.
+function threadMark(row: Row): Mark {
+  if (row.status === null) return ["◆", grey];
+  return needing(row) ? ["●", yellow] : marks[row.status];
+}
 
 // Returns the word for what the thread is doing, given the rounds of changes it may have. Its
 // status and needs you stay as they are: the word only describes them, from what they and the
@@ -180,8 +201,8 @@ const OpenRow = z.object({
 // Returns ISSUES and PRS as the daemon's last poll saved them, up to `most` rows of each: it
 // reads the database and never asks GitHub, as it runs each second. Newest first, across
 // repositories, with issues that have a thread last. A thread that is done has left THREADS,
-// so its issue counts as waiting again. A PR from a thread takes the word of its row. GitHub
-// numbers issues and PRs from one counter, so no issue can be taken for a thread's PR.
+// so its issue counts as waiting again. A PR from a thread takes the word and mark of its row.
+// GitHub numbers issues and PRs from one counter, so no issue can be taken for a thread's PR.
 export function sidebarLists(db: Database, rows: Row[], most: number): Lists {
   // Returns one list, of the kind saved in the database, with the path GitHub shows it at.
   const read = (kind: string, path: string, column: string): List => {
@@ -198,8 +219,9 @@ export function sidebarLists(db: Database, rows: Row[], most: number): Lists {
         title,
         url: `https://github.com/${owner}/${repo}/${path}/${number}`,
         word: thread?.word ?? "",
-        needing: thread?.needsYou === true && thread.status !== "failed",
+        needing: thread !== undefined && needing(thread),
         dim: threaded,
+        mark: kind === "issue" ? null : thread ? threadMark(thread) : noThread,
       };
     });
     const sum = db.query(`SELECT COALESCE(SUM(${column}), 0) AS total FROM repositories`).get();
@@ -226,43 +248,44 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
   const tinted = (code: number, text: string) => paint(here ? (onShade[code] ?? code) : code, text);
   // Returns a line with the grey behind it, out to the end of the row.
   const band = (line: string) => `\x1b[${shade}m${filled(line, width)}\x1b[49m`;
-  const room = Math.max(width - 5, 1);
+  const room = Math.max(width - indent.length - pad.length, 1);
   const [first = "", ...rest] = row.name.match(new RegExp(`.{1,${room}}`, "g")) ?? [];
-  // A thread that failed can still have its needs you flag, and its word says failed.
-  const needing = row.needsYou && row.status !== "failed";
-  let mark = tinted(grey, "◆");
-  if (row.status !== null) {
-    const [sign, colour] = needing ? ["●", yellow] : marks[row.status];
-    mark = tinted(colour, sign);
-  }
+  const [sign, colour] = threadMark(row);
   const word = row.word.slice(0, room);
   const after = [row.harness, row.age].flatMap((part) => (part ? [` · ${part}`] : [])).join("");
   const more = after.slice(0, room - word.length);
   const lines = [
-    `   ${mark} ${styled(first)}`,
-    ...rest.map((part) => `     ${styled(part)}`),
-    `     ${tinted(needing ? yellow : grey, word)}${more && tinted(grey, more)}`,
+    `${pad}${tinted(colour, sign)} ${styled(first)}`,
+    ...rest.map((part) => `${indent}${styled(part)}`),
+    `${indent}${tinted(needing(row) ? yellow : grey, word)}${more && tinted(grey, more)}`,
   ];
   return here ? lines.map(band) : lines;
 }
 
-// Returns a row of ISSUES or PRS as two lines, each a terminal link and cut to the sidebar's
-// width: its title, then, dim, its name and a PR's word, in the colours a thread gives that word.
-// skel may run on another machine than your browser, so your terminal opens the link. The title
-// comes from outside, so it is made safe.
+// Returns a row of ISSUES or PRS as two lines, each a terminal link and cut to stop at the
+// padding: its title, then, dim, its name and a PR's word, in the colours a thread gives that
+// word. A PR's mark comes before its title, outside the link. An issue has none, so its lines
+// start at the padding. skel may run on another machine than your browser, so your terminal
+// opens the link. The title comes from outside, so it is made safe.
 function linkLines(link: Link, width: number): string[] {
-  const room = Math.max(width - 5, 0);
+  const start = link.mark ? indent : pad;
+  const room = Math.max(width - start.length - pad.length, 0);
   const title = fitted(clean(link.title), room);
   const name = fitted(link.name, room);
   const word = link.word && fitted(link.word, room - Bun.stringWidth(name) - 3);
   const about = word && `${paint(grey, " · ")}${paint(link.needing ? yellow : grey, word)}`;
-  return [link.dim ? paint(grey, title) : title, `${paint(grey, name)}${about}`].map(
-    (text) => `     \x1b]8;;${link.url}\x1b\\${text}\x1b]8;;\x1b\\`,
+  const [top, bottom] = [link.dim ? paint(grey, title) : title, `${paint(grey, name)}${about}`].map(
+    (text) => `\x1b]8;;${link.url}\x1b\\${text}\x1b]8;;\x1b\\`,
   );
+  const mark = link.mark && `${pad}${paint(link.mark[1], link.mark[0])} `;
+  return [`${mark ?? pad}${top}`, `${start}${bottom}`];
 }
 
 // Returns what starts a list: its heading, dim, and the blank line that parts it from the rows.
-const headed = (heading: string): Line[] => [{ text: paint(grey, `   ${heading}`) }, { text: "" }];
+const headed = (heading: string): Line[] => [
+  { text: paint(grey, `${pad}${heading}`) },
+  { text: "" },
+];
 
 // Returns a list's lines for a third of `height` lines: its heading and a blank line, as many
 // rows as fit, then a count of the rest. Rows come with the dim ones last, so those are the first to be left out.
@@ -270,7 +293,7 @@ const headed = (heading: string): Line[] => [{ text: paint(grey, `   ${heading}`
 // so, as its third stays either way.
 function listLines(heading: string, list: List, height: number, width: number): Line[] {
   const top = headed(heading);
-  if (list.links.length === 0) return [...top, { text: paint(grey, "     none") }];
+  if (list.links.length === 0) return [...top, { text: paint(grey, `${pad}none`) }];
   const fit = Math.floor((height - top.length) / 2);
   const few = list.total > fit ? Math.max(Math.floor((height - top.length - 1) / 2), 1) : fit;
   const links = list.links.slice(0, few);
@@ -278,7 +301,7 @@ function listLines(heading: string, list: List, height: number, width: number): 
   return [
     ...top,
     ...links.flatMap((link) => linkLines(link, width).map((text) => ({ text }))),
-    ...(rest > 0 ? [{ text: paint(grey, `     + ${rest} more`) }] : []),
+    ...(rest > 0 ? [{ text: paint(grey, `${pad}+ ${rest} more`) }] : []),
   ].slice(0, height);
 }
 
@@ -344,7 +367,9 @@ function layout(
 export function draw(rows: Row[], lists: Lists, shown: string | null, size: Size): string {
   const { lines, room } = layout(rows, lists, shown, size);
   const width = size.width - 1;
-  const keys = hints.map((hint) => ({ text: paint(grey, hint.slice(0, Math.max(width, 0))) }));
+  const keys = hints.map((hint) => ({
+    text: paint(grey, hint.slice(0, Math.max(width - pad.length, 0))),
+  }));
   const all: Line[] = [...held(lines, room), ...(room < size.height ? keys : [])];
   return all
     .map(({ text, joins }) => `${filled(text, width)}${paint(edge, joins ? "┤" : "│")}`)
@@ -381,7 +406,7 @@ const esc = "\x1b";
 const input = new RegExp(`${esc}\\[1;3([AB])|${esc}\\[<0;\\d+;(\\d+)M`, "g");
 
 // Runs the sidebar until its pane goes. The session given is its own, on the screen's server,
-// and `where` says where skel runs, for the header above it.
+// and `where` says which remote skel runs on, if any, for the header above it.
 // tmux brings it Alt-Up, Alt-Down and clicks on its input. It looks again each second, and
 // writes only when something changed: over a slow link each write costs, and on a Sprite a
 // terminal that stays quiet lets it sleep.

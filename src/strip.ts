@@ -1,6 +1,6 @@
 // The strip: one line above the agent saying what you are looking at. For a thread, its name,
 // task, PR and checks, then its latest review. The lead has none, as the sidebar says it all.
-// Above the sidebar the same line says skel and where it runs. A thin line runs under them all.
+// Above the sidebar the same line says skel and, on a remote, where it runs. A thin line runs under them all.
 import type { Row } from "./sidebar.ts";
 
 type Size = { left: number; width: number };
@@ -59,22 +59,25 @@ function aboutThread(row: Row, width: number): string {
   return `#[bold]${shown(name)}#[default]${shown(title)}${shown(end)}${dim}`;
 }
 
-// skel's name above the sidebar, in its teal. A 256-colour number, so it looks the same whatever
-// your theme.
-const skelName = "#[bold,fg=colour79]skel#[default]";
+// skel's name above the sidebar, in the white of a selected name. A 256-colour number, so it
+// looks the same whatever your theme.
+const skelName = "#[bold,fg=colour231]skel#[default]";
 
-// Returns the header above the sidebar: skel's name, in line with the sidebar's marks, then dim
-// where it runs, then spaces out to the agent's column. Where skel runs comes from outside, so
-// it is cut and made safe as a title is.
+// Returns the header above the sidebar: skel's name, in line with the sidebar's marks, then, on
+// a remote, a dim dot and where it runs, then spaces out to the agent's column. `where` is empty
+// on this machine. It comes from outside, so it is made safe as a title is, and cut to stop two
+// columns before the sidebar's edge, as all the sidebar's text does.
 function header(where: string, left: number): string {
-  const place = fitted(clean(where), Math.max(left - 11, 0));
-  const spare = " ".repeat(Math.max(left - 9 - Bun.stringWidth(place), 0));
-  return `   ${skelName}  #[fg=brightblack]${shown(place)}#[default]${spare}`;
+  const place = fitted(clean(where), Math.max(left - 13, 0));
+  const about = place && ` · ${place}`;
+  const spare = " ".repeat(Math.max(left - 6 - Bun.stringWidth(about), 0));
+  const dim = about && `#[fg=brightblack]${shown(about)}#[default]`;
+  return `  ${skelName}${dim}${spare}`;
 }
 
 // Returns the strip's two lines as tmux formats, given the rows, the session on the right,
-// where the agent's pane is, `left` columns in and `width` wide, and where skel runs. tmux's
-// status lines span the whole terminal, so the first starts with the header, and the second
+// where the agent's pane is, `left` columns in and `width` wide, and the remote skel runs on, if
+// any. tmux's status lines span the whole terminal, so the first starts with the header, and the second
 // meets the line at the sidebar's edge, two columns left of the agent, with a ┬. It reads
 // nothing, so what you see can be tested without a terminal. Always two lines, so the agent's
 // height never changes.
