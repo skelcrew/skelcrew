@@ -198,6 +198,20 @@ test("the raw command sprite puts in the title is replaced, and yours comes back
   expect(wrote.endsWith("\x1b[23;0t")).toBe(true);
 });
 
+test("says it is connecting before anything reaches the Sprite, which can take a while to wake", async () => {
+  existing("demo");
+  const wrote = await skelInTerminal(["--remote", "sprite:demo", "ps"]);
+  const connecting = wrote.indexOf("skel · connecting to sprite:demo…");
+  expect(connecting).toBeGreaterThan(-1);
+  expect(connecting).toBeLessThan(wrote.indexOf("skel on the Sprite got 1 arguments"));
+});
+
+test("keeps the connecting line out of a pipe, so a command's output stays its own", async () => {
+  existing("demo");
+  const run = await skel(["--remote", "sprite:demo", "ps"]);
+  expect(run.out).not.toContain("connecting");
+});
+
 test("runs skel on the Sprite with the repository you are in", async () => {
   existing("demo");
   const run = await skel(["--remote", "sprite:demo"], "", checkout("simon/app"));
