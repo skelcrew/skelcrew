@@ -1,7 +1,14 @@
 // The sandbox on a Mac: a profile for sandbox-exec that draws the same boundary bubblewrap
 // draws on Linux, as far as a Mac allows. The agent's folder is writable, the rest of the
 // system read-only, and your home folder, credentials and Keychain out of reach.
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -158,6 +165,16 @@ export function seatbeltArgs(given: {
   const own = realpathSync(mkdtempSync(join(tmpdir(), "skel-sandbox-")));
   const [ownHome, ownTemp] = [join(own, "home"), join(own, "tmp")];
   for (const folder of [ownHome, ownTemp]) mkdirSync(folder);
+  // What comes back of your home folder keeps its place under the agent's own, since agents
+  // are told of it by that path: the lead finds its repositories in ~/.local/share/skel/repos.
+  // Shortest first, so a folder inside one already linked is found there.
+  const under = `${home}/`;
+  for (const folder of [...shown, ...write].sort((a, b) => a.length - b.length)) {
+    const place = join(ownHome, folder.slice(under.length));
+    if (!folder.startsWith(under) || existsSync(place)) continue;
+    mkdirSync(dirname(place), { recursive: true });
+    symlinkSync(folder, place);
+  }
   // tmux's socket, the ssh agent and your programs' files sit in these two, as /run does on
   // Linux, so like your home folder they are hidden.
   const hidden = [real(home), "/private/tmp", "/private/var/folders"].flatMap(bothPaths);

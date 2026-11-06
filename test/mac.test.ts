@@ -136,6 +136,16 @@ test("the profile hides your home folder and brings back the agent's folders", a
   expect(text).toContain(`${join(import.meta.dir, "..", "bin")}"`);
 });
 
+test("what comes back of your home folder keeps its place under the agent's own", async () => {
+  const { argv } = await leadCommand();
+  const ownHome = join(argv[2] ?? "", "..", "home");
+  // The lead's instructions name its repositories by this path.
+  const repos = join(ownHome, ".local", "share", "skel", "repos");
+  expect(realpathSync(repos)).toBe(join(home, ".local", "share", "skel", "repos"));
+  // Nothing else of yours is put there.
+  expect(existsSync(join(ownHome, ".config"))).toBe(false);
+});
+
 test("the agent can't reach the file its rules are in", async () => {
   const { argv } = await leadCommand();
   const file = argv[2] ?? "";
