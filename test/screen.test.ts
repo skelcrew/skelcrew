@@ -162,9 +162,9 @@ test("shows the lead and every thread that isn't done, beside the agent", async 
   expect(selected()).toBe("◆ lead");
   expect(lines[2]).toContain("I am lead");
   expect(lines[3]).toContain("running · claude");
-  expect(lines[4]).toContain("● app-12");
-  expect(lines[5]).toContain("working · claude");
-  expect(lines[6]).toContain("● app-7");
+  expect(lines[5]).toContain("● app-12");
+  expect(lines[6]).toContain("working · claude");
+  expect(lines[8]).toContain("● app-7");
   expect(seen()).not.toContain("app-3");
   // Nothing of the screen is left in agents' sessions: each stays one pane.
   const panes = tmux(agents, "list-panes", "-a", "-F", "#{session_name}").out.trim().split("\n");
@@ -189,10 +189,19 @@ test("Alt-Down and Alt-Up switch the right side, and you type to whichever agent
 test("clicking a row switches the right side and leaves your typing there", async () => {
   open("lead");
   await ready("lead");
-  click(5, 7);
+  click(5, 9);
   await until(() => seen().includes("I am app-7"), "app-7");
   type("hello\r");
   await until(() => existsSync(join(home, "app-7.typed")), "the typing");
+});
+
+test("clicking the blank line between two rows changes nothing", async () => {
+  open("lead");
+  await ready("lead");
+  click(5, 8);
+  await Bun.sleep(300);
+  expect(seen()).toContain("I am lead");
+  expect(selected()).toBe("◆ lead");
 });
 
 test("skel attach's screen starts on the agent it names, marked in the sidebar", async () => {
@@ -505,7 +514,7 @@ test("a row whose agent isn't running can't be picked", async () => {
   open("lead");
   await ready("lead");
   expect(seen()).toContain("app-12");
-  click(5, 5);
+  click(5, 6);
   press("M-Down");
   await until(() => seen().includes("I am app-7"), "the row after it");
 });

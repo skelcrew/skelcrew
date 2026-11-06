@@ -50,6 +50,24 @@ test("lists the lead first, then each thread on two lines: a mark and name, then
   ]);
 });
 
+test("one blank line parts the rows", () => {
+  const rows = [lead, thread("app-12")];
+  expect(read(draw(rows, "lead", size)).slice(0, 6)).toEqual([
+    "  ◆ lead",
+    "    running · claude",
+    "",
+    "  ● app-12",
+    "    working · claude",
+    "",
+  ]);
+});
+
+test("the blank line between rows has no blue, even beside the row you are looking at", () => {
+  const lines = draw([lead, thread("app-12")], "lead", size).split("\n");
+  expect(lines[1]).toContain(blue);
+  expect(lines[2]).not.toContain(blue);
+});
+
 test("the word and harness are grey, so the names stand out", () => {
   expect(draw([thread("app-12")], "lead", size)).toContain("\x1b[90mworking");
   expect(draw([thread("app-12")], "lead", size)).toContain("\x1b[90m · claude");
@@ -147,10 +165,11 @@ test("two hints with the keys stay at the bottom, below however few rows there a
 
 test("a list too long for the sidebar scrolls above the hints, and never runs into them", () => {
   const rows = [lead, ...[1, 2, 3, 4, 5].map((n) => thread(`app-${n}`))];
-  const short = { width: 28, height: 6 };
+  const short = { width: 28, height: 7 };
   expect(read(draw(rows, "app-4", short))).toEqual([
     "  ● app-3",
     "    working · claude",
+    "",
     "  ● app-4",
     "    working · claude",
     "  ⌥↑↓ switch",
@@ -180,6 +199,17 @@ test("the hints also give way to a row whose name takes more lines", () => {
   expect(plain(draw(rows, name, { width: 28, height: 5 }))).toContain("switch");
 });
 
+test("the row you are looking at stays on screen however far down the list it is", () => {
+  const rows = [lead, ...[1, 2, 3, 4, 5, 6].map((n) => thread(`app-${n}`))];
+  for (const height of [4, 5, 6, 7, 8, 9, 12])
+    for (const { session } of rows) {
+      const shown = { width: 28, height };
+      const lines = selected(draw(rows, session, shown));
+      expect(lines).toHaveLength(2);
+      expect(lines.map(plain).join("")).toContain(session);
+    }
+});
+
 test("Alt-Up and Alt-Down move one row, stop at the ends, and skip agents that aren't running", () => {
   const rows = [lead, thread("app-1"), thread("app-2", { running: false }), thread("app-3")];
   expect(stepped(rows, "lead", 1)).toBe("app-1");
@@ -195,25 +225,34 @@ test("moving from an agent that isn't listed goes to the lead", () => {
 
 test("a click on either line of a row picks it, but no row, nor an agent that isn't running", () => {
   const rows = [lead, thread("app-1"), thread("app-2", { running: false })];
-  expect(picked(rows, "lead", size, 2)).toBe("app-1");
   expect(picked(rows, "lead", size, 3)).toBe("app-1");
-  expect(picked(rows, "lead", size, 4)).toBeNull();
-  expect(picked(rows, "lead", size, 7)).toBeNull();
+  expect(picked(rows, "lead", size, 4)).toBe("app-1");
+  expect(picked(rows, "lead", size, 6)).toBeNull();
+  expect(picked(rows, "lead", size, 9)).toBeNull();
+});
+
+test("a click on the blank line between rows picks nothing", () => {
+  const rows = [lead, thread("app-1"), thread("app-2")];
+  expect(picked(rows, "app-1", size, 2)).toBeNull();
+  expect(picked(rows, "app-1", size, 5)).toBeNull();
+  expect(picked(rows, "app-1", size, 6)).toBe("app-2");
 });
 
 test("a click follows the list as it scrolls, and on a hint picks nothing", () => {
   const rows = [lead, ...[1, 2, 3, 4, 5].map((n) => thread(`app-${n}`))];
-  const short = { width: 28, height: 6 };
+  const short = { width: 28, height: 7 };
   expect(picked(rows, "app-4", short, 0)).toBe("app-3");
+  expect(picked(rows, "app-4", short, 2)).toBeNull();
   expect(picked(rows, "app-4", short, 3)).toBe("app-4");
-  expect(picked(rows, "app-4", short, 4)).toBeNull();
   expect(picked(rows, "app-4", short, 5)).toBeNull();
+  expect(picked(rows, "app-4", short, 6)).toBeNull();
 });
 
 test("a click goes to the row below a name that took two lines", () => {
   const rows = [thread("a-very-long-repository-name-1234"), thread("app-1")];
   expect(picked(rows, "lead", size, 2)).toBe("a-very-long-repository-name-1234");
-  expect(picked(rows, "lead", size, 3)).toBe("app-1");
+  expect(picked(rows, "lead", size, 3)).toBeNull();
+  expect(picked(rows, "lead", size, 4)).toBe("app-1");
 });
 
 const state: Thread = {
