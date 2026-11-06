@@ -256,6 +256,11 @@ export function showSession(socket: string, tty: string, name: string): void {
   tmux(socket, ["switch-client", "-c", tty, "-t", `=${name}`]);
 }
 
+// Replaces what a pane runs with a command. Its terminal is a new one, with a new name.
+export function respawnPane(socket: string, target: string, command: string[]): void {
+  tmux(socket, ["respawn-pane", "-k", "-t", target, "--", ...command]);
+}
+
 // Returns the visible pane text so skel can check whether Claude Code is ready for a
 // message.
 const screen = (socket: string, name: string) =>
