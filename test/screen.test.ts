@@ -463,12 +463,14 @@ test("the strip sits above the agent, and the agent's height stays as you switch
   await until(() => seen().split("\n")[1]?.includes("no review yet") === true, "app-12's strip");
 });
 
-test("above the sidebar it says skel, in bold, and local when no laptop sent you here", async () => {
+test("above the sidebar it says skel, from green to blue, and local when no laptop sent you here", async () => {
   open("lead");
   await ready("lead");
   await until(() => seen().split("\n")[0]?.startsWith("  skel  local") === true, "the place");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
-  expect(colours.split("\n")[0]).toContain("\x1b[1m");
+  const header = colours.split("\n")[0];
+  expect(header).toContain("\x1b[1m");
+  for (const colour of [71, 36, 31, 32]) expect(header).toContain(`38;5;${colour}m`);
 });
 
 test("each terminal says where it came from, as they can come from different laptops", async () => {
@@ -484,7 +486,7 @@ test("each terminal says where it came from, as they can come from different lap
 // The divider under the strip, as you see it.
 const divider = () => (seen().split("\n")[2] ?? "").trimEnd();
 
-test("a thin line runs under the top bar, meeting the sidebar's edge, at every width", async () => {
+test("a thin line runs under the strip, meeting the sidebar's edge, at every width", async () => {
   open("lead");
   await ready("lead");
   await until(() => divider().length === 120, "the divider");

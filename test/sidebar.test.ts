@@ -136,7 +136,7 @@ test("a pane narrower than the sidebar keeps every name whole, at any width", ()
   }
 });
 
-test("a grey line fills the last column of every line, from top to bottom, at any height", () => {
+test("a faint line fills the last column of every line, from top to bottom, at any height", () => {
   const rows = [lead, ...[1, 2, 3, 4, 5, 6].map((n) => thread(`app-${n}`))];
   for (const list of [[lead], rows])
     for (let height = 1; height < 30; height++)

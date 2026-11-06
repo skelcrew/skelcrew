@@ -1,6 +1,6 @@
 // The strip: two lines above the agent saying what you are looking at. For a thread, its name,
 // task, PR and checks, then its latest review. The lead has none, as the sidebar says it all.
-// Above the sidebar the same lines say skel and where it runs, and a thin line runs under them.
+// Above the sidebar the first line says skel and where it runs. A thin line runs under them all.
 import type { Row } from "./sidebar.ts";
 
 type Size = { left: number; width: number };
@@ -58,15 +58,15 @@ function aboutReview(row: Row, width: number): string {
 
 // skel's name above the sidebar, each letter a step from green to blue, in 256-colour numbers
 // so it looks the same whatever your theme.
-const name = "#[bold,fg=colour71]s#[fg=colour36]k#[fg=colour31]e#[fg=colour32]l#[default]";
+const skelName = "#[bold,fg=colour71]s#[fg=colour36]k#[fg=colour31]e#[fg=colour32]l#[default]";
 
-// Returns the header above the sidebar: skel's name, then dim where it runs, in line with the
-// sidebar's marks, then spaces out to the agent's column. Where skel runs comes from outside, so
+// Returns the header above the sidebar: skel's name, in line with the sidebar's marks, then dim
+// where it runs, then spaces out to the agent's column. Where skel runs comes from outside, so
 // it is cut and made safe as a title is.
 function header(where: string, left: number): string {
   const place = fitted(clean(where), Math.max(left - 10, 0));
   const spare = " ".repeat(Math.max(left - 8 - Bun.stringWidth(place), 0));
-  return `  ${name}  #[fg=brightblack]${shown(place)}#[default]${spare}`;
+  return `  ${skelName}  #[fg=brightblack]${shown(place)}#[default]${spare}`;
 }
 
 // Returns the strip's three lines as tmux formats, given the rows, the session on the right,
