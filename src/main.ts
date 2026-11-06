@@ -64,9 +64,8 @@ async function run(args: string[]): Promise<void> {
       ),
     );
   }
-  // Loaded only for commands that run here, so skel --remote never loads the parts made for
-  // the Linux server, such as the sandbox and the daemon's lock, on a laptop that can be a
-  // Mac.
+  // Loaded only for commands that run here, so skel --remote starts quickly and loads no
+  // part of the daemon on your laptop.
   const {
     attached,
     attachToLead,

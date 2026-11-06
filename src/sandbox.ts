@@ -1,6 +1,6 @@
 // The sandbox every agent runs in, and how Claude Code starts inside it. bubblewrap draws
-// the boundary: the agent's folder is writable, the rest of the system read-only, and your
-// home folder and credentials hidden.
+// the boundary, or sandbox-exec on a Mac: the agent's folder is writable, the rest of the
+// system read-only, and your home folder and credentials hidden.
 import {
   closeSync,
   constants,
@@ -20,6 +20,7 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { dataDir } from "./paths.ts";
+import { seatbeltArgs } from "./seatbelt.ts";
 import { controlSocket, dropCapabilities, onSprite } from "./sprite.ts";
 
 const { O_NONBLOCK, O_NOFOLLOW, O_RDONLY } = constants;
@@ -76,9 +77,10 @@ function linksTo(program: string): Map<string, string> {
   return links;
 }
 
-// Returns bubblewrap arguments that hide your credentials and expose only the agent's
-// chosen writable folders. Keeps the terminal connection and network available for the
-// harness and model, and puts skel's own commands on the agent's PATH.
+// Returns the command that runs an agent in its sandbox, hiding your credentials and exposing
+// only its chosen writable folders: bubblewrap on Linux, sandbox-exec on a Mac. Keeps the
+// terminal connection and network available for the harness and model, and puts skel's own
+// commands on the agent's PATH. `mounts` is in bubblewrap's words.
 export function sandboxArgs(given: {
   home: string;
   path: string;
@@ -89,6 +91,44 @@ export function sandboxArgs(given: {
   programs?: string[] | undefined;
 }): string[] {
   const { home, path, mounts, socket, cwd, command, programs: named = [command[0]] } = given;
+  // Programs often live under the home folder: Claude Code under nvm keeps node beside it,
+  // and its package where its link points. So the program's folder and the package its link
+  // resolves into come back, as does bun, which skel's own commands run on. The program is
+  // the command's first word unless others are named, as for a shell running a setup command.
+  const programs = new Set<string>();
+  const links = new Map<string, string>();
+  for (const name of [...named, "bun"]) {
+    const found = name && Bun.which(name, { PATH: path });
+    if (found) {
+      programs.add(dirname(found));
+      programs.add(packageOf(dirname(realpathSync(found)), home));
+      for (const [link, target] of linksTo(found))
+        if (link.startsWith(`${home}/`)) links.set(link, target);
+    }
+  }
+  // skel built as one file runs its modules from a folder only it sees, and needs nothing
+  // but itself. From a checkout, only the parts skel runs from: the checkout's .git and
+  // other files aren't the agent's to read. bun runs skel without node_modules by fetching
+  // its packages itself, and a sandbox can't show a folder that is missing.
+  const checkout = resolve(import.meta.dir, "..");
+  const single = import.meta.dir.startsWith("/$bunfs");
+  const bin = single ? dirname(process.execPath) : join(checkout, "bin");
+  const skel = single
+    ? [process.execPath]
+    : ["bin", "src", "node_modules", "package.json"]
+        .map((part) => join(checkout, part))
+        .filter((part) => existsSync(part));
+  if (process.platform === "darwin")
+    return seatbeltArgs({
+      home,
+      path: `${bin}:${path}`,
+      read: [...programs, ...skel],
+      links: [...links.keys()],
+      mounts,
+      socket,
+      cwd,
+      command,
+    });
   // Its own process list, so your other processes can't be seen or signalled. No
   // --new-session: it moves Claude Code out of the terminal's process group, so it misses
   // resize signals and draws at the wrong width. The network stays shared for the model's
@@ -119,21 +159,6 @@ export function sandboxArgs(given: {
   args.push(...hide("/run"));
   if (existsSync("/run/systemd/resolve")) args.push(...ro("/run/systemd/resolve"));
   args.push(...hide(home));
-  // Programs often live under the home folder: Claude Code under nvm keeps node beside it,
-  // and its package where its link points. So the program's folder and the package its link
-  // resolves into come back, as does bun, which skel's own commands run on. The program is
-  // the command's first word unless others are named, as for a shell running a setup command.
-  const programs = new Set<string>();
-  const links = new Map<string, string>();
-  for (const name of [...named, "bun"]) {
-    const found = name && Bun.which(name, { PATH: path });
-    if (found) {
-      programs.add(dirname(found));
-      programs.add(packageOf(dirname(realpathSync(found)), home));
-      for (const [link, target] of linksTo(found))
-        if (link.startsWith(`${home}/`)) links.set(link, target);
-    }
-  }
   // The links on the way are made anew rather than mounted, since the folder one sits in can
   // hold what must stay hidden: Codex's sit in ~/.codex, beside your login. Made first, so
   // one in a folder that comes back is simply covered by the real one. One that a mount
@@ -143,17 +168,7 @@ export function sandboxArgs(given: {
     if (![...programs, ...mounts].some((p) => p.startsWith(`${link}/`)))
       args.push("--symlink", target, link);
   for (const p of programs) args.push(...ro(p));
-  // skel built as one file runs its modules from a folder only it sees, and needs nothing
-  // but itself. From a checkout, only the parts skel runs from: the checkout's .git and
-  // other files aren't the agent's to read. bun runs skel without node_modules by fetching
-  // its packages itself, and bwrap refuses to start when a folder it should mount is missing.
-  const skel = resolve(import.meta.dir, "..");
-  const single = import.meta.dir.startsWith("/$bunfs");
-  const bin = single ? dirname(process.execPath) : join(skel, "bin");
-  if (single) args.push(...ro(process.execPath));
-  else
-    for (const part of ["bin", "src", "node_modules", "package.json"])
-      if (existsSync(join(skel, part))) args.push(...ro(join(skel, part)));
+  for (const p of skel) args.push(...ro(p));
   args.push(...mounts);
   // Its folder rather than the socket itself: the daemon makes the socket anew each time it
   // starts, and a mounted file would stay the old one, which nothing answers on. Read-only,

@@ -9,6 +9,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -65,33 +66,46 @@ Answer "approve" only if it is ready to merge. Otherwise answer "changes", and i
 }
 
 // Returns the mounts that show the reviewer a folder whose changes are thrown away after the
-// review. A copy leaves out the entries named in `kept`, which the caller mounts writable
-// over it, and bwrap makes their places in the copy.
+// review, and where it sees that folder. A copy leaves out the entries named in `kept`, which
+// the caller mounts writable over it, and bwrap makes their places in the copy.
 // bwrap's throwaway overlay does it, but on a Sprite an overlay can't be made on the
 // Sprite's own disk, which is an overlay already: bwrap fails with "Invalid argument". There
-// the reviewer gets a copy instead, made in the review's own folder so it goes with it.
+// the reviewer gets a copy instead, made in the review's own folder so it goes with it. A Mac
+// has no overlay either, and can't show a folder at another path, so there the reviewer
+// works in the copy where it lies, which the review's folder already opens to it.
 async function throwaway(given: {
   source: string;
   copy: string;
   sprite: boolean;
   signal: AbortSignal;
   kept?: string[];
-}): Promise<string[]> {
+}): Promise<{ mounts: string[]; at: string }> {
   const { source, copy, sprite, signal, kept = [] } = given;
-  if (!sprite) return ["--overlay-src", source, "--tmp-overlay", source];
+  const mac = process.platform === "darwin";
+  if (!sprite && !mac)
+    return { mounts: ["--overlay-src", source, "--tmp-overlay", source], at: source };
   mkdirSync(copy);
   const entries = readdirSync(source).filter((entry) => !kept.includes(entry));
   if (entries.length > 0) {
+    let copied = false;
+    let err = "";
     // A copy of a clone with its installed packages is large, and cp shares the blocks
-    // where the disk allows it.
-    const cp = ["cp", "-a", "--reflink=auto", ...entries.map((entry) => join(source, entry))];
-    const copying = Bun.spawn([...cp, copy], { stdout: "ignore", stderr: "pipe", signal });
-    const [err, code] = await Promise.all([new Response(copying.stderr).text(), copying.exited]);
+    // where the disk allows it. A Mac's cp has its own word for that, and can fail on it
+    // across two disks, so it goes on to a plain copy.
+    const paths = entries.map((entry) => join(source, entry));
+    for (const share of mac ? [["-c"], []] : [["--reflink=auto"]]) {
+      const cp = ["cp", "-a", ...share, ...paths, copy];
+      const copying = Bun.spawn(cp, { stdout: "ignore", stderr: "pipe", signal });
+      const [said, code] = await Promise.all([new Response(copying.stderr).text(), copying.exited]);
+      err = said;
+      copied = code === 0;
+      if (copied) break;
+    }
     // A copy cut short by a cancel is reported as the cancel, after the copy is removed.
-    if (code !== 0 && !signal.aborted)
+    if (!copied && !signal.aborted)
       throw new Error(`couldn't copy ${source} for the reviewer: ${err.trim()}`);
   }
-  return ["--bind", copy, source];
+  return mac ? { mounts: [], at: copy } : { mounts: ["--bind", copy, source], at: source };
 }
 
 // Returns Codex's review command, mounts and environment, protecting instructions shared by
@@ -104,7 +118,7 @@ async function codexCommand(home: string, folder: string, sprite: boolean, signa
   const sessions = join(codexHome, "sessions");
   mkdirSync(sessions, { recursive: true, mode: 0o700 });
   const copy = join(folder, "codex");
-  const mounts = await throwaway({
+  const { mounts, at } = await throwaway({
     source: codexHome,
     copy,
     sprite,
@@ -114,12 +128,17 @@ async function codexCommand(home: string, folder: string, sprite: boolean, signa
   mounts.push("--bind", sessions, sessions);
   const auth = join(codexHome, "auth.json");
   if (existsSync(auth)) mounts.push("--bind", auth, auth);
+  // A copy at another path can't have the real ones mounted into it, so it links to them.
+  if (at !== codexHome) {
+    symlinkSync(sessions, join(at, "sessions"));
+    if (existsSync(auth)) symlinkSync(auth, join(at, "auth.json"));
+  }
   // --no-daemon belongs to codex itself, not to exec: without it Codex may start a
   // background server that outlives the review.
   const command = ["codex", "--no-daemon", "exec", "--dangerously-bypass-approvals-and-sandbox"];
   command.push("--output-schema", join(folder, "schema.json"), "-o", join(folder, "answer.json"));
   command.push("-");
-  return { command, mounts, env: { CODEX_HOME: codexHome } };
+  return { command, mounts, env: { CODEX_HOME: at } };
 }
 
 // Returns Claude Code's review command and isolated login settings when Codex is
@@ -175,7 +194,9 @@ async function reviewNow(given: {
     };
   const folder = mkdtempSync(join(tmpdir(), "skel-review-"));
   const timeout = AbortSignal.timeout(limit);
-  const signal = given.signal ? AbortSignal.any([given.signal, timeout]) : timeout;
+  // Never the timeout itself, even alone: Bun cancels a timeout's timer when a process given
+  // it ends, so the copying before the review would leave the review with no limit.
+  const signal = AbortSignal.any(given.signal ? [given.signal, timeout] : [timeout]);
   const sprite = onSprite(path);
   // A review can be cancelled or run out of time while its folders are copied, as well as
   // while the reviewer runs.
@@ -196,7 +217,7 @@ async function reviewNow(given: {
       if (value !== undefined && (passed.includes(key) || key.startsWith("LC_"))) kept[key] = value;
     // Tests and builds write in the clone, so it is seen as a throwaway folder too.
     const copy = join(folder, "clone");
-    const mounts = await throwaway({ source: clone, copy, sprite, signal });
+    const { mounts, at } = await throwaway({ source: clone, copy, sprite, signal });
     mounts.push("--bind", folder, folder);
     // The builder can go on changing its clone after it submits, so the reviewer sees the
     // submitted commit, with what the builder changed since put aside. Ignored files, such
@@ -210,7 +231,7 @@ async function reviewNow(given: {
       home,
       path,
       mounts: [...mounts, ...run.mounts],
-      cwd: clone,
+      cwd: at,
       command,
       programs: run.command.slice(0, 1),
     });
@@ -219,6 +240,10 @@ async function reviewNow(given: {
     // Ending bwrap ends everything inside: the reviewer runs as the first process of a
     // process list of its own, which the kernel empties when that process dies. On a
     // Sprite, unshare comes first and ignores SIGTERM, so the review is ended with SIGKILL.
+    // A Mac has no process lists of their own, so the reviewer leads a group, which is ended
+    // when it ends. A process left in it would also hold its output open, and the review
+    // would wait forever.
+    const mac = process.platform === "darwin";
     const proc = Bun.spawn(argv, {
       env: kept,
       stdin: new Blob([prompt(issue, base)]),
@@ -226,12 +251,23 @@ async function reviewNow(given: {
       stderr: "pipe",
       signal,
       killSignal: "SIGKILL",
+      detached: mac,
     });
-    const [out, err, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
+    if (mac)
+      proc.exited.then(() => {
+        try {
+          process.kill(-proc.pid, "SIGKILL");
+        } catch {}
+      });
+    // A process that left the group can still hold the output open, and a Mac can't find it
+    // once its parent is gone. So there the output gets a moment after the reviewer ends, or
+    // the review, and every review queued after it, would wait forever.
+    const read = (output: ReadableStream<Uint8Array>) => {
+      const text = new Response(output).text();
+      if (!mac) return text;
+      return Promise.race([text, proc.exited.then(() => Bun.sleep(1000)).then(() => "")]);
+    };
+    const [out, err, code] = await Promise.all([read(proc.stdout), read(proc.stderr), proc.exited]);
     const after = stopped();
     if (after) return after;
     if (code !== 0)
