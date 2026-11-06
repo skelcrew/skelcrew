@@ -5,7 +5,16 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sidebarWidth } from "../src/screen.ts";
-import { draw, picked, type Row, stepped, threadAge, threadWord } from "../src/sidebar.ts";
+import {
+  draw as drawLists,
+  type Link,
+  type Lists,
+  picked as pickedInLists,
+  type Row,
+  stepped,
+  threadAge,
+  threadWord,
+} from "../src/sidebar.ts";
 import type { Thread } from "../src/thread.ts";
 
 const row = {
@@ -17,6 +26,7 @@ const row = {
   running: true,
   harness: "claude",
   age: "",
+  github: null,
 } satisfies Partial<Row>;
 const lead: Row = { ...row, name: "lead", session: "lead", status: null, word: "running" };
 const thread = (name: string, more: Partial<Row> = {}): Row => ({
@@ -29,6 +39,12 @@ const thread = (name: string, more: Partial<Row> = {}): Row => ({
 });
 
 const size = { width: sidebarWidth, height: 12 };
+const nothing: Lists = { issues: { links: [], total: 0 }, prs: { links: [], total: 0 } };
+// The sidebar and a click with nothing open on GitHub, as most of these tests need.
+const draw = (rows: Row[], shown: string | null, room: typeof size) =>
+  drawLists(rows, nothing, shown, room);
+const picked = (rows: Row[], shown: string | null, room: typeof size, y: number) =>
+  pickedInLists(rows, nothing, shown, room, y);
 // Removes the colours, to read a row as text.
 const plain = (screen: string) => Bun.stripANSI(screen);
 // The sidebar's lines as you read them, without what fills them out to the line at its edge.
@@ -324,6 +340,179 @@ test("a click goes to the row below a name that took two lines", () => {
   expect(picked(rows, "lead", size, 3)).toBe("app-1");
 });
 
+const link = (name: string, title: string, more: Partial<Link> = {}): Link => ({
+  name,
+  title,
+  url: `https://github.com/simon/app/issues/${name.slice(4)}`,
+  word: "",
+  needing: false,
+  dim: false,
+  ...more,
+});
+const list = (links: Link[], total = links.length) => ({ links, total });
+const lists: Lists = {
+  issues: list([link("app-31", "Add CSV export"), link("app-12", "Fix login", { dim: true })]),
+  prs: list([
+    link("app#34", "Fix login", { word: "approved", needing: true }),
+    link("app#33", "Bump deps"),
+  ]),
+};
+const tall = { width: sidebarWidth, height: 30 };
+const rule = "─".repeat(sidebarWidth - 1);
+const threads = [lead, thread("app-12", { age: "5m" })];
+
+test("ISSUES, THREADS and PRS sit in that order, with rows together and a line between lists", () => {
+  expect(
+    read(drawLists(threads, lists, "lead", tall))
+      .filter(Boolean)
+      .slice(0, -2),
+  ).toEqual([
+    "   ISSUES",
+    "   app-31 Add CSV export",
+    "   app-12 Fix login",
+    rule,
+    "   THREADS",
+    "   ◆ lead",
+    "     running · claude",
+    "   ● app-12",
+    "     working · claude · 5m",
+    rule,
+    "   PRS",
+    "   app#34 approved · Fix log…",
+    "   app#33 Bump deps",
+  ]);
+});
+
+test("the line between lists has the colour of the sidebar's edge, and joins it", () => {
+  const lines = drawLists(threads, lists, "lead", tall).split("\n");
+  const divider = lines.filter((line) => plain(line).startsWith("─"));
+  expect(divider).toHaveLength(2);
+  for (const line of divider) {
+    expect(line).toContain(`\x1b[38;5;237m${rule}`);
+    expect(plain(line)).toBe(`${rule}┤`);
+    expect(Bun.stringWidth(line)).toBe(sidebarWidth);
+  }
+});
+
+test("headings are dim, and sit where the marks do", () => {
+  const screen = drawLists(threads, lists, "lead", tall);
+  for (const heading of ["ISSUES", "THREADS", "PRS"])
+    expect(screen).toContain(`\x1b[90m   ${heading}`);
+});
+
+test("an issue with a thread is dim all along, and one without isn't", () => {
+  const screen = drawLists(threads, lists, "lead", tall);
+  expect(screen).toContain("\x1b[90mapp-12 Fix login");
+  expect(screen).toContain("app-31 Add CSV export");
+  expect(screen).not.toContain("\x1b[90mapp-31");
+});
+
+test("a PR takes its thread's word, in yellow when the thread needs you, and dim otherwise", () => {
+  const needing = drawLists(threads, lists, "lead", tall);
+  expect(needing).toContain("\x1b[33mapproved");
+  const working = link("app#34", "Fix login", { word: "working" });
+  const dim = drawLists(threads, { ...lists, prs: list([working]) }, "lead", tall);
+  expect(dim).toContain("\x1b[90mworking");
+});
+
+test("a row that isn't a thread is a terminal link to GitHub, and only the text is", () => {
+  const screen = drawLists(threads, lists, "lead", tall);
+  const open = "\x1b]8;;https://github.com/simon/app/issues/31\x1b\\";
+  expect(screen).toContain(`   ${open}app-31 Add CSV export\x1b]8;;\x1b\\`);
+});
+
+test("a long title is cut to the row, and every line still reaches the edge", () => {
+  const long = "A very long title that goes on past the edge of the sidebar";
+  const wide = "とても長いタイトルがサイドバーの端を越えて続きます";
+  const both = list([link("app-31", long), link("app-30", wide)]);
+  const screen = drawLists(threads, { issues: both, prs: both }, "lead", tall);
+  expect(plain(screen)).toContain("   app-31 A very long title …");
+  for (const line of screen.split("\n")) expect(Bun.stringWidth(line)).toBe(sidebarWidth);
+});
+
+test("control codes in a title never reach your terminal", () => {
+  const bad = list([link("app-31", "evil\x1b]8;;http://x\x07\x1b[2Jtitle")]);
+  const screen = drawLists(threads, { ...nothing, issues: bad }, "lead", tall);
+  expect(screen).not.toContain("\x1b]8;;http://x");
+  expect(screen).not.toContain("\x1b[2J");
+});
+
+test("each list shows a few rows, then a count of the rest", () => {
+  const five = Array.from({ length: 5 }, (_, n) => link(`app-${n + 1}`, "An issue"));
+  const screen = read(
+    drawLists(threads, { ...nothing, issues: list(five, 240) }, "lead", {
+      width: sidebarWidth,
+      height: 40,
+    }),
+  );
+  expect(screen).toContain("   app-5 An issue");
+  expect(screen).toContain("   + 235 more");
+});
+
+test("a list with nothing to count has no count, and an empty list isn't shown", () => {
+  const screen = read(drawLists(threads, { ...nothing, prs: lists.prs }, "lead", tall));
+  expect(screen.join("\n")).not.toContain("more");
+  expect(screen).not.toContain("   ISSUES");
+  expect(screen.slice(0, 2)).toEqual(["   THREADS", "   ◆ lead"]);
+  expect(screen.filter((line) => line === rule)).toHaveLength(1);
+});
+
+test("with nothing open, the sidebar needs no heading", () => {
+  expect(read(draw(threads, "lead", tall))[0]).toBe("   ◆ lead");
+});
+
+const many = Array.from({ length: 5 }, (_, n) => link(`app-${n + 1}`, "A row"));
+const full: Lists = { issues: list(many, 40), prs: list(many, 40) };
+const busy = [lead, ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => thread(`app-${n}`))];
+
+test("on a short terminal the other lists shrink first, so every thread that fits stays", () => {
+  const few = [lead, thread("app-1"), thread("app-2")];
+  const text = read(drawLists(few, full, "lead", { width: sidebarWidth, height: 22 }));
+  for (const name of ["◆ lead", "● app-1", "● app-2"]) expect(text.join("\n")).toContain(name);
+  expect(text.filter((line) => line.endsWith("A row")).length).toBeLessThan(10);
+  expect(text).toContain("   ISSUES");
+  expect(text).toContain("   PRS");
+});
+
+test("too short for all three, THREADS is all that shows, as it does with nothing open", () => {
+  const short = { width: sidebarWidth, height: 9 };
+  expect(drawLists(busy, full, "app-7", short)).toBe(draw(busy, "app-7", short));
+});
+
+test("the thread you are on stays on screen with the lists, at every height", () => {
+  for (const height of [1, 2, 3, 4, 5, 6, 8, 10, 12, 14, 15, 16, 18, 20, 22, 24, 30, 38, 60])
+    for (const { session } of busy) {
+      const room = { width: sidebarWidth, height };
+      const lines = drawLists(busy, full, session, room).split("\n");
+      expect(lines).toHaveLength(height);
+      const here = lines.filter((line) => line.includes(shaded)).map(plain);
+      expect(here.join("")).toContain(session);
+      if (height >= 2) expect(here).toHaveLength(2);
+      for (const line of lines) expect(Bun.stringWidth(line)).toBe(sidebarWidth);
+    }
+});
+
+test("a click picks a thread below the other lists, and on a link or heading picks nothing", () => {
+  const y = (text: string) =>
+    read(drawLists(threads, lists, "lead", tall)).findIndex((line) => line.includes(text));
+  const click = (line: number) => pickedInLists(threads, lists, "lead", tall, line);
+  expect(click(y("● app-12"))).toBe("app-12");
+  expect(click(y("working · claude"))).toBe("app-12");
+  expect(click(y("◆ lead"))).toBe("lead");
+  for (const text of ["ISSUES", "app-31", "THREADS", "PRS", "app#34", "───"])
+    expect(click(y(text))).toBeNull();
+});
+
+test("a click finds its row as THREADS scrolls between the other lists", () => {
+  const room = { width: sidebarWidth, height: 20 };
+  for (const { session } of busy) {
+    const lines = read(drawLists(busy, full, session, room));
+    const name = session === "lead" ? "◆ lead" : `● ${session}`;
+    const y = lines.findIndex((line) => line.endsWith(name));
+    expect(pickedInLists(busy, full, session, room, y)).toBe(session);
+  }
+});
+
 const state: Thread = {
   owner: "simon",
   repo: "app",
@@ -415,13 +604,14 @@ describe("the rows the database gives", () => {
   // Returns the rows after running the SQL, at a moment in milliseconds. It takes a process of
   // its own with HOME set: homedir() keeps the HOME this process started with, so opening the
   // database from here would reach your real one.
-  function rowsAfter(sql: string, now: number): Row[] {
+  function after(sql: string, now: number): { rows: Row[]; lists: Lists } {
     const src = join(import.meta.dir, "..", "src");
     const code = `import { openDb } from ${JSON.stringify(join(src, "db.ts"))};
-import { sidebarRows } from ${JSON.stringify(join(src, "sidebar.ts"))};
+import { sidebarLists, sidebarRows } from ${JSON.stringify(join(src, "sidebar.ts"))};
 const db = openDb();
 db.run(${JSON.stringify(sql)});
-console.log(JSON.stringify(sidebarRows(db, ["lead", "app-12"], 3, ${now})));`;
+const rows = sidebarRows(db, ["lead", "app-12"], 3, ${now});
+console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows) }));`;
     const run = Bun.spawnSync([process.execPath, "-e", code], {
       env: { ...process.env, HOME: home },
       stdout: "pipe",
@@ -431,6 +621,7 @@ console.log(JSON.stringify(sidebarRows(db, ["lead", "app-12"], 3, ${now})));`;
     rmSync(join(home, ".local"), { recursive: true, force: true });
     return JSON.parse(run.stdout.toString());
   }
+  const rowsAfter = (sql: string, now: number) => after(sql, now).rows;
   const repository = "INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');";
   // Returns the sidebar with one thread that started at 0, in the state given, at a moment.
   function shown(columns: string, values: string, now: number): string {
@@ -440,6 +631,67 @@ console.log(JSON.stringify(sidebarRows(db, ["lead", "app-12"], 3, ${now})));`;
     return draw(rowsAfter(sql, now), "lead", size);
   }
   const hours = (n: number) => n * 3_600_000;
+
+  // Adds two repositories' open issues and PRs, whose dates and numbers run in different
+  // orders, with a total for each repository.
+  const open = `INSERT INTO repositories (name, owner, repo, open_issues, open_prs)
+      VALUES ('app', 'simon', 'app', 212, 3), ('site', 'simon', 'site', 1, 0);
+    INSERT INTO open_items (owner, repo, kind, number, title, created) VALUES
+      ('simon', 'app', 'issue', 12, 'Fix login', '2026-11-05T10:00:00Z'),
+      ('simon', 'app', 'issue', 3, 'Add export', '2026-11-01T10:00:00Z'),
+      ('simon', 'site', 'issue', 8, 'Dark mode', '2026-11-03T10:00:00Z'),
+      ('simon', 'app', 'pr', 34, 'Fix the login', '2026-11-05T11:00:00Z'),
+      ('simon', 'app', 'pr', 40, 'Bump deps', '2026-11-05T09:00:00Z');`;
+  // Adds a thread on issue 12, with PR 34.
+  const onTwelve = (status: string, needing = 0) =>
+    `INSERT INTO threads (owner, repo, task, folder, branch, status, pr, needs_you)
+      VALUES ('simon', 'app', 12, 'app-12', 'skel/12', '${status}', 34, ${needing});`;
+
+  test("issues come newest first across repositories, with those on a thread dim and last", () => {
+    const { issues } = after(`${open} ${onTwelve("working")}`, 0).lists;
+    expect(issues.links.map(({ name, dim }) => [name, dim])).toEqual([
+      ["site-8", false],
+      ["app-3", false],
+      ["app-12", true],
+    ]);
+    expect(issues.total).toBe(213);
+  });
+
+  test("a thread that is done no longer dims its issue, as it is gone from THREADS", () => {
+    const { issues } = after(`${open} ${onTwelve("done")}`, 0).lists;
+    expect(issues.links[0]).toMatchObject({ name: "app-12", dim: false });
+  });
+
+  test("PRs come newest first, and one from a thread has that thread's word", () => {
+    const { prs } = after(`${open} ${onTwelve("waiting", 1)}`, 0).lists;
+    expect(prs.links.map(({ name, word, needing }) => [name, word, needing])).toEqual([
+      ["app#34", "needs you", true],
+      ["app#40", "", false],
+    ]);
+    expect(prs.total).toBe(3);
+  });
+
+  test("a row links to the issue or PR on GitHub", () => {
+    const { issues, prs } = after(open, 0).lists;
+    expect(issues.links[0]?.url).toBe("https://github.com/simon/app/issues/12");
+    expect(prs.links[0]?.url).toBe("https://github.com/simon/app/pull/34");
+  });
+
+  test("only as many rows as could show are read, as the sidebar reads each second", () => {
+    const rows = Array.from(
+      { length: 9 },
+      (_, n) => `('simon', 'app', 'issue', ${n + 1}, 't', '2026-11-0${n + 1}T10:00:00Z')`,
+    );
+    const sql = `${repository} INSERT INTO open_items
+      (owner, repo, kind, number, title, created) VALUES ${rows.join(", ")}`;
+    expect(after(sql, 0).lists.issues.links).toHaveLength(5);
+  });
+
+  test("a repository skel no longer works on shows nothing", () => {
+    const sql = `INSERT INTO open_items (owner, repo, kind, number, title, created)
+      VALUES ('simon', 'gone', 'issue', 1, 't', '2026-11-01T10:00:00Z')`;
+    expect(after(sql, 0).lists).toEqual(nothing);
+  });
 
   test("a working thread shows how long ago it started, and the lead shows no time", () => {
     expect(listed(shown("status", "'working'", hours(2)))).toEqual([

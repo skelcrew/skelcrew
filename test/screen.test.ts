@@ -541,6 +541,47 @@ test("clicking the strip, or turning the wheel over it, does nothing", async () 
   expect(seen()).toContain("I am lead");
 });
 
+// Puts two open issues and a PR in the database, as a poll would.
+const openOnGitHub = () =>
+  sql(`INSERT INTO open_items (owner, repo, kind, number, title, created) VALUES
+  ('simon', 'app', 'issue', 31, 'Add CSV export', '2026-11-05T10:00:00Z'),
+  ('simon', 'app', 'issue', 12, 'Fix login', '2026-11-04T10:00:00Z'),
+  ('simon', 'app', 'pr', 34, 'Bump deps', '2026-11-05T10:00:00Z');
+UPDATE repositories SET open_issues = 2, open_prs = 1;`);
+
+test("open issues and PRs reach your terminal as links, through both tmux servers", async () => {
+  openOnGitHub();
+  open("lead");
+  await ready("lead");
+  await until(() => seen().includes("app-31 Add CSV export"), "the issue");
+  const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
+  expect(colours).toContain("https://github.com/simon/app/issues/31");
+  expect(colours).toContain("https://github.com/simon/app/pull/34");
+  expect(seen()).toContain("app#34 Bump deps");
+});
+
+test("the screen's server turns terminal links on, whatever your terminal says it is", async () => {
+  open("lead");
+  await ready("lead");
+  expect(tmux(screen, "show", "-s", "terminal-features").out).toContain("hyperlinks");
+});
+
+test("a click on a link leaves the agent as it is, and Alt-Down still goes to a thread", async () => {
+  openOnGitHub();
+  open("lead");
+  await ready("lead");
+  await until(() => seen().includes("app-31"), "the issue");
+  const y = seen()
+    .split("\n")
+    .findIndex((line) => line.includes("app-31"));
+  click(6, y + 1);
+  await Bun.sleep(300);
+  expect(selected()).toBe("◆ lead");
+  expect(seen()).toContain("I am lead");
+  press("M-Down");
+  await until(() => selected() === "● app-12", "the first thread");
+});
+
 test("with nothing working, an open screen sends your terminal nothing at all", async () => {
   // Close enough to a minute that a time shown on any row would change during the wait.
   const started = Date.now() - 56_000;

@@ -3,7 +3,7 @@
 import { z } from "zod";
 
 // Owner and name become folders, so neither may climb out of skel's.
-const Name = z.string().regex(/^(?!\.\.?$)[\w.-]+$/);
+export const Name = z.string().regex(/^(?!\.\.?$)[\w.-]+$/);
 
 const View = z.object({
   name: Name,
