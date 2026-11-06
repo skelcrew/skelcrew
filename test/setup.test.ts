@@ -559,3 +559,34 @@ test("keeps the login shell's folders in the service when skel runs over ssh aga
   expect(servicePath()).toContain(nvm);
   expect(calls()).toBe("daemon lead\nscreen on lead\n");
 });
+
+// skel remote add runs this on the machine it sets up, and leaves connecting to you.
+test("skel first-run takes the steps and installs the service, without attaching", async () => {
+  const run = Bun.spawn([process.execPath, main(), "first-run"], {
+    cwd: home,
+    env: { PATH: bin, HOME: home, XDG_RUNTIME_DIR: join(home, "run"), TMPDIR: join(home, "tmp") },
+    stdin: new Blob(["1\nsk-ant-oat01-good\n"]),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(await run.exited).toBe(0);
+  expect(existsSync(unit())).toBe(true);
+  expect(calls()).not.toContain("attach");
+});
+
+// Logging in on a machine is what skel remote add is for, so --remote never starts it.
+test("over --remote, a machine whose first run isn't done says so and takes no step", async () => {
+  const run = await skel("", bin, main(), home, { SKEL_REMOTE_NAME: "simon@workbox" });
+  expect(run.err).toBe(
+    "skel: simon@workbox isn't set up. Run this on your laptop:\n  skel remote add simon@workbox\n",
+  );
+  expect(run.code).toBe(1);
+  expect(calls()).not.toContain("gh auth login");
+});
+
+test("over --remote, a machine that finished its first run attaches as usual", async () => {
+  await skel("1\nsk-ant-oat01-good\n");
+  const run = await skel("", bin, main(), home, { SKEL_REMOTE_NAME: "simon@workbox" });
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+});

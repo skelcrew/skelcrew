@@ -26,6 +26,7 @@ test("the help names every command", () => {
   const out = skel(["--help"]).out;
   for (const command of [
     "--remote",
+    "remote add",
     "serve",
     "repo ls",
     "repo rm",
