@@ -46,9 +46,8 @@ async function run(args: string[]): Promise<void> {
   const refused = yoursOnly[command === "repo" ? `repo ${sub}` : named];
   if (process.env.SKEL_SANDBOX === "1" && refused)
     throw new Error(`${refused} is only for your own terminal, not for agents`);
-  // Loaded only for commands that run here, so skel --remote never loads the parts made for
-  // the Linux server, such as the sandbox and the daemon's lock, on a laptop that can be a
-  // Mac.
+  // Loaded only for commands that run here, so skel --remote starts quickly and loads no
+  // part of the daemon on your laptop.
   const {
     attached,
     attachToLead,

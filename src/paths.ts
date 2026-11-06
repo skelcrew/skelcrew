@@ -10,9 +10,9 @@ export const dataDir = () => join(homedir(), ".local", "share", "skel");
 
 // Returns the socket folder shared by the CLI and daemon. Some terminals and multiplexers
 // start shells without XDG_RUNTIME_DIR, while the daemon, started by systemd, always has it
-// as /run/user/<uid>. A Sprite has no systemd to make that folder, nor a /run you can write
-// to, so there the sockets go in a
-// folder of skel's own, which the daemon makes for you alone.
+// as /run/user/<uid>. A Sprite or a Mac has no systemd to make that folder, nor a /run you
+// can write to, so there the sockets go in a folder of skel's own, which the daemon makes for
+// you alone.
 function runtimeDir(): string {
   const systemd = join("/run/user", String(userInfo().uid));
   return process.env.XDG_RUNTIME_DIR || (existsSync(systemd) ? systemd : join(dataDir(), "run"));
@@ -28,8 +28,8 @@ export const cliSocket = () => process.env.SKEL_SOCKET || daemonSocket();
 // whole.
 export const leadSocket = () => join(runtimeDir(), "skel", "lead", "skel.sock");
 // Returns a thread's daemon socket path, alone in its folder like the lead's. Linux refuses
-// a socket path over 108 bytes, which a long repository name would make, so the folder is
-// named by a short hash of the thread's folder.
+// a socket path over 108 bytes, and a Mac over 104, which a long repository name would make,
+// so the folder is named by a short hash of the thread's folder.
 export const threadSocket = (folder: string) => {
   const short = new Bun.CryptoHasher("sha256").update(folder).digest("hex").slice(0, 16);
   return join(runtimeDir(), "skel", "threads", short, "skel.sock");

@@ -1,7 +1,6 @@
 // Everything skel knows about Sprites, Fly.io's Linux machines. From your laptop, skel
 // --remote sprite:<name> creates one and runs skel there. On a Sprite, skel finds out it is
-// on one, shapes the sandbox for it, and runs the daemon as a Sprite service. Your laptop can
-// be a Mac, so this file loads nothing made only for Linux.
+// on one, shapes the sandbox for it, and runs the daemon as a Sprite service.
 import { z } from "zod";
 import { originHere } from "./origin.ts";
 import { type Machine, quoted, run, upToDate, withLinuxSkel } from "./remote.ts";
