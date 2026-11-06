@@ -23,14 +23,14 @@ const thread = (name: string, more: Partial<Row> = {}): Row => ({
   ...more,
 });
 
-const size = { width: 28, height: 12 };
+const size = { width: 29, height: 12 };
 // Removes the colours, to read a row as text.
 const plain = (screen: string) => Bun.stripANSI(screen);
-// The sidebar's lines as you read them, without what fills them out to the width.
+// The sidebar's lines as you read them, without what fills them out to the line at its edge.
 const read = (screen: string) =>
   plain(screen)
     .split("\n")
-    .map((text) => text.trimEnd());
+    .map((text) => text.slice(0, -1).trimEnd());
 // The sidebar's lines, without the blank ones and the two hints at the bottom.
 const listed = (screen: string) => read(screen).slice(0, -2).filter(Boolean);
 
@@ -75,7 +75,7 @@ test("the word and harness are grey, so the names stand out", () => {
 
 test("a thread that needs you has a yellow ? and a yellow word, whatever its status", () => {
   const screen = draw([lead, thread("app-12", { needsYou: true, word: "approved" })], "lead", size);
-  expect(plain(screen)).toContain("  ? app-12\n    approved · claude");
+  expect(read(screen).join("\n")).toContain("  ? app-12\n    approved · claude");
   expect(screen).toContain("\x1b[33m?");
   expect(screen).toContain("\x1b[33mapproved");
 });
@@ -91,11 +91,10 @@ const selected = (screen: string) => screen.split("\n").filter((line) => line.in
 
 test("the row you are looking at is dark blue, and nothing is when it isn't listed", () => {
   const rows = [lead, thread("app-12")];
-  expect(
-    selected(draw(rows, "app-12", size))
-      .map(plain)
-      .map((text) => text.trimEnd()),
-  ).toEqual(["  ● app-12", "    working · claude"]);
+  expect(read(selected(draw(rows, "app-12", size)).join("\n"))).toEqual([
+    "  ● app-12",
+    "    working · claude",
+  ]);
   expect(selected(draw(rows, "gone", size))).toEqual([]);
 });
 
@@ -113,8 +112,7 @@ test("the blue runs the whole width, on every line of the row, and ends with it"
   const lines = selected(draw([lead, thread(name)], name, size));
   expect(lines).toHaveLength(3);
   for (const line of lines) {
-    expect(Bun.stringWidth(line)).toBe(size.width);
-    expect(line).toEndWith("\x1b[49m");
+    expect(Bun.stringWidth(line.split("\x1b[49m")[0] ?? "")).toBe(size.width - 1);
     // A full reset inside the line would end the blue partway across.
     expect(line).not.toContain("\x1b[0m");
   }
@@ -150,14 +148,34 @@ test("a name too long for a line goes on to the next, whole", () => {
 
 test("a pane narrower than the sidebar keeps every name whole, at any width", () => {
   const rows = [lead, thread("a-very-long-repository-name-1234")];
-  for (let width = 0; width < 28; width++) {
-    const text = plain(draw(rows, "lead", { width, height: 60 })).replace(/[\s\n]/g, "");
+  for (let width = 0; width < 29; width++) {
+    const text = plain(draw(rows, "lead", { width, height: 60 })).replace(/[\s\n│]/g, "");
     expect(text).toContain("a-very-long-repository-name-1234");
   }
 });
 
+test("a grey line fills the last column of every line, from top to bottom, at any height", () => {
+  const rows = [lead, ...[1, 2, 3, 4, 5, 6].map((n) => thread(`app-${n}`))];
+  for (const list of [[lead], rows])
+    for (let height = 1; height < 30; height++)
+      for (const shown of ["lead", "app-6", "gone"]) {
+        const lines = draw(list, shown, { width: 29, height }).split("\n");
+        expect(lines).toHaveLength(height);
+        for (const line of lines) {
+          expect(line).toContain("\x1b[90m│");
+          expect(Bun.stringWidth(line)).toBe(29);
+          expect(plain(line).at(-1)).toBe("│");
+        }
+      }
+});
+
+test("the blue stops at the line, which keeps its own background", () => {
+  const [first = ""] = selected(draw([lead], "lead", size));
+  expect(first).toEndWith("\x1b[49m\x1b[90m│\x1b[22;39m");
+});
+
 test("two hints with the keys stay at the bottom, below however few rows there are", () => {
-  const lines = plain(draw([lead], "lead", size)).split("\n");
+  const lines = read(draw([lead], "lead", size));
   expect(lines).toHaveLength(size.height);
   expect(lines.slice(-2)).toEqual(["  ⌥↑↓ switch", "  ⌃Q  quit"]);
   expect(draw([lead], "lead", size)).toContain("\x1b[90m  ⌥↑↓ switch");
@@ -165,7 +183,7 @@ test("two hints with the keys stay at the bottom, below however few rows there a
 
 test("a list too long for the sidebar scrolls above the hints, and never runs into them", () => {
   const rows = [lead, ...[1, 2, 3, 4, 5].map((n) => thread(`app-${n}`))];
-  const short = { width: 28, height: 7 };
+  const short = { width: 29, height: 7 };
   expect(read(draw(rows, "app-4", short))).toEqual([
     "  ● app-3",
     "    working · claude",
@@ -180,30 +198,30 @@ test("a list too long for the sidebar scrolls above the hints, and never runs in
 test("a sidebar too short for a row and the hints drops the hints, as the row matters more", () => {
   const rows = [lead, thread("app-1")];
   for (const height of [1, 2, 3]) {
-    const lines = plain(draw(rows, "app-1", { width: 28, height })).split("\n");
+    const lines = plain(draw(rows, "app-1", { width: 29, height })).split("\n");
     expect(lines.length).toBeLessThanOrEqual(height);
     expect(lines.join("\n")).not.toContain("switch");
     expect(lines.join("\n")).toContain("  ● app-1");
   }
-  expect(plain(draw(rows, "app-1", { width: 28, height: 4 }))).toContain("switch");
+  expect(plain(draw(rows, "app-1", { width: 29, height: 4 }))).toContain("switch");
 });
 
 test("the hints also give way to a row whose name takes more lines", () => {
   const name = "a-very-long-repository-name-1234";
   const rows = [lead, thread(name)];
-  const tight = { width: 28, height: 4 };
+  const tight = { width: 29, height: 4 };
   const text = plain(draw(rows, name, tight));
   expect(text).toContain("working · claude");
   expect(text).not.toContain("switch");
   expect(picked(rows, name, tight, 2)).toBe(name);
-  expect(plain(draw(rows, name, { width: 28, height: 5 }))).toContain("switch");
+  expect(plain(draw(rows, name, { width: 29, height: 5 }))).toContain("switch");
 });
 
 test("the row you are looking at stays on screen however far down the list it is", () => {
   const rows = [lead, ...[1, 2, 3, 4, 5, 6].map((n) => thread(`app-${n}`))];
   for (const height of [4, 5, 6, 7, 8, 9, 12])
     for (const { session } of rows) {
-      const shown = { width: 28, height };
+      const shown = { width: 29, height };
       const lines = selected(draw(rows, session, shown));
       expect(lines).toHaveLength(2);
       expect(lines.map(plain).join("")).toContain(session);
@@ -240,7 +258,7 @@ test("a click on the blank line between rows picks nothing", () => {
 
 test("a click follows the list as it scrolls, and on a hint picks nothing", () => {
   const rows = [lead, ...[1, 2, 3, 4, 5].map((n) => thread(`app-${n}`))];
-  const short = { width: 28, height: 7 };
+  const short = { width: 29, height: 7 };
   expect(picked(rows, "app-4", short, 0)).toBe("app-3");
   expect(picked(rows, "app-4", short, 2)).toBeNull();
   expect(picked(rows, "app-4", short, 3)).toBe("app-4");

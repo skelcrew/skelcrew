@@ -54,7 +54,7 @@ function selected(window = "one"): string {
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", `=${window}:`).out;
   const line = colours.split("\n").find((text) => text.includes("48;5;18"));
   return Bun.stripANSI(line ?? "")
-    .slice(0, sidebar)
+    .slice(0, sidebar - 1)
     .trim();
 }
 // The title your terminal shows in its window and tab.
@@ -337,7 +337,7 @@ test("an agent drawing the full screen with the mouse gets the wheel itself", as
   wheel(64);
   await until(() => existsSync(join(home, "drawn.bytes")), "the wheel");
   await until(
-    () => readFileSync(join(home, "drawn.bytes"), "utf8").startsWith("\x1b[<64;31;3M"),
+    () => readFileSync(join(home, "drawn.bytes"), "utf8").startsWith("\x1b[<64;30;3M"),
     "the wheel at its place in the agent's window",
   );
   expect(scrolledBack()).not.toContain("1");
@@ -372,16 +372,16 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
   open("lead");
   await ready("lead");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "28 91\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "28 90\n",
     "the agent's size",
   );
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "40");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "38 121\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "38 120\n",
     "the agent to resize",
   );
   const widths = tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out.trim().split("\n");
-  expect(widths).toEqual(["28", "121"]);
+  expect(widths).toEqual(["29", "120"]);
   // A terminal shorter than the list keeps the row you are looking at in view.
   press("M-Down");
   press("M-Down");
@@ -389,6 +389,54 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "7");
   await until(() => !seen().includes("switch"), "the hints to give way");
   await until(() => selected() === "● app-7", "the sidebar to scroll");
+});
+
+// The columns at the sidebar's edge, on each line below the strip: the sidebar's line, then
+// tmux's border. Blank past the end of a line that holds nothing else.
+const edge = (height: number) =>
+  seen()
+    .split("\n")
+    .slice(2, height)
+    .map((line) => `${line[sidebar - 1]}${line[sidebar] ?? " "}`);
+
+test("the sidebar's line runs to the bottom, with a blank column before the agent", async () => {
+  open("lead");
+  await ready("lead");
+  expect(new Set(edge(30))).toEqual(new Set(["│ "]));
+  expect(seen().split("\n")[2]?.indexOf("I am lead")).toBe(sidebar + 1);
+});
+
+test("the sidebar's line stays whole however the terminal is resized", async () => {
+  open("lead");
+  await ready("lead");
+  for (const [width, height] of [
+    [150, 40],
+    [100, 20],
+    [121, 21],
+    [120, 30],
+    [80, 24],
+  ]) {
+    tmux(terminal, "resize-window", "-t", "=one:", "-x", `${width}`, "-y", `${height}`);
+    // Right after a resize you can see the old frame, cut to the new size.
+    const whole = () =>
+      edge(height ?? 0).every((columns) => columns === "│ ") &&
+      seen().split("◆ lead").length === 2 &&
+      seen().includes("⌃Q  quit");
+    await until(whole, "the sidebar to be whole");
+  }
+});
+
+test("the sidebar is whole after the terminal goes narrower than it and straight back", async () => {
+  open("lead");
+  await ready("lead");
+  for (let turn = 0; turn < 5; turn++) {
+    tmux(terminal, "resize-window", "-t", "=one:", "-x", "20", "-y", "30");
+    tmux(terminal, "resize-window", "-t", "=one:", "-x", "120", "-y", "30");
+  }
+  await Bun.sleep(1500);
+  expect(new Set(edge(30))).toEqual(new Set(["│ "]));
+  expect(seen().split("◆ lead")).toHaveLength(2);
+  expect(selected()).toBe("◆ lead");
 });
 
 test("a terminal a few lines high still shows the agent, and Ctrl-Q still leaves", async () => {

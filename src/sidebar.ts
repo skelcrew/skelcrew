@@ -126,6 +126,10 @@ export function sidebarRows(db: Database, running: string[], maxRounds: number):
   ];
 }
 
+// Returns a line with spaces added out to a width.
+const filled = (line: string, width: number) =>
+  `${line}${" ".repeat(Math.max(width - Bun.stringWidth(line), 0))}`;
+
 // Returns one row as lines: a mark and the whole name, which goes on to more lines when it is
 // too long, then the word and harness. A cut name could hide what tells two threads apart. An
 // agent that isn't running is dim, as it can't be picked. The one you are looking at is blue
@@ -139,10 +143,7 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
   // Returns text in a colour, or the one that stands in for it on the blue.
   const tinted = (code: number, text: string) => paint(here ? (onBlue[code] ?? code) : code, text);
   // Returns a line with the blue behind it, out to the end of the row.
-  const band = (line: string) => {
-    const spare = " ".repeat(Math.max(width - Bun.stringWidth(line), 0));
-    return `\x1b[${darkBlue}m${line}${spare}\x1b[49m`;
-  };
+  const band = (line: string) => `\x1b[${darkBlue}m${filled(line, width)}\x1b[49m`;
   const room = Math.max(width - 4, 1);
   const [first = "", ...rest] = row.name.match(new RegExp(`.{1,${room}}`, "g")) ?? [];
   let mark = tinted(grey, "◆");
@@ -166,7 +167,7 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
 // A list taller than its space scrolls by whole rows, just enough to keep that row in view, so
 // Alt-Down never moves off the bottom. One blank line follows each row, to part them.
 function layout(rows: Row[], shown: string | null, size: Size) {
-  const blocks = rows.map((row) => rowLines(row, row.session === shown, size.width));
+  const blocks = rows.map((row) => rowLines(row, row.session === shown, size.width - 1));
   const here = rows.findIndex((row) => row.session === shown);
   const tallest = blocks[here]?.length ?? 2;
   const room = size.height >= tallest + hints.length ? size.height - hints.length : size.height;
@@ -180,17 +181,20 @@ function layout(rows: Row[], shown: string | null, size: Size) {
 }
 
 // Returns the whole sidebar as lines, given the rows, the session on the right, and the
-// sidebar's size. It reads nothing, so what you see can be tested without a terminal.
+// sidebar's size. It reads nothing, so what you see can be tested without a terminal. Every line
+// fills the pane, with the line beside the agent in the last column. tmux's own border is blank,
+// so that line and the border make a gap before the agent.
 export function draw(rows: Row[], shown: string | null, size: Size): string {
   const { blocks, first, room } = layout(rows, shown, size);
   const list = blocks
     .slice(first)
     .flatMap((block) => [...block, ""])
     .slice(0, room);
-  if (room === size.height) return list.join("\n");
   const gap = Array<string>(room - list.length).fill("");
-  const keys = hints.map((hint) => paint(grey, hint.slice(0, Math.max(size.width, 0))));
-  return [...list, ...gap, ...keys].join("\n");
+  const text = size.width - 1;
+  const keys = hints.map((hint) => paint(grey, hint.slice(0, Math.max(text, 0))));
+  const lines = [...list, ...gap, ...(room < size.height ? keys : [])];
+  return lines.map((line) => `${filled(line, text)}${paint(grey, "│")}`).join("\n");
 }
 
 // Returns the session one row up or down, for Alt-Up and Alt-Down, or null at either end.
@@ -256,9 +260,8 @@ export async function runSidebar(agents: string, session: string): Promise<void>
     const frame = draw(rows, shown, size());
     if (frame === last) return;
     last = frame;
-    // Each line clears what is left of the old one, and the end clears what is left below.
-    const lines = frame.split("\n").map((text) => `${text}\x1b[K`);
-    process.stdout.write(`\x1b[H${lines.join("\r\n")}\x1b[J`);
+    // Every line fills the pane, so nothing of the last frame is left to clear.
+    process.stdout.write(`\x1b[H${frame.replaceAll("\n", "\r\n")}`);
   };
   // Switches the right side to a session, if a row was picked at all.
   const show = (next: string | null) => {
