@@ -452,7 +452,7 @@ async function pollRepository(
 // error, is logged and tried again at the next one. Polls run in the background, so they never hold up the daemon. `begin` sets up a
 // thread started from a label and starts its builder, as the daemon does for skel start.
 // Returns a function that polls one repository at once, named by its full GitHub name, for
-// a webhook delivery about it.
+// a webhook delivery about it or a screen opening.
 export function pollGitHub(
   db: Database,
   tmux: string,
@@ -462,7 +462,8 @@ export function pollGitHub(
   const skipped = new Map<string, number>();
   const polling = new Set<string>();
   // A delivery that comes in while its repository is being polled may be about an event the
-  // poll's query was too early to see, so the repository is polled again once it is done.
+  // poll's query was too early to see, and a screen that opens may want lists it didn't ask
+  // for, so the repository is polled again once it is done.
   const again = new Set<string>();
   // The threads whose PRs a poll reads. A stopped thread's PR still merges or closes.
   const polled = () =>
