@@ -5,9 +5,10 @@ import { join } from "node:path";
 import { windowTitle } from "./say.ts";
 import { applyConfig, cleanEnv } from "./tmux.ts";
 
-// How wide the sidebar is, with the line it draws at its edge. tmux shares a resize out among
-// panes, so it is set back after each.
-export const sidebarWidth = 30;
+// How wide the sidebar is, with the line it draws at its edge: room for 24 columns of a name or
+// title, between its mark and two columns of padding. tmux shares a resize out among panes, so
+// it is set back after each.
+export const sidebarWidth = 31;
 
 // Returns the screen's tmux server beside the agents': skel-screen beside skel, and a test's
 // own beside the test's.
@@ -34,7 +35,9 @@ export const screenSocket = (agents: string) => `${agents}-screen`;
 // and puts it back on the way out, on terminals that keep one. It goes out as OSC 2, since
 // sprite writes the Sprite's name in front of a title sent as OSC 0, tmux's usual way.
 // The strip and header share the first of tmux's own two status lines, at the top, and the thin
-// line is the second, so the agent's height stays the same on every session. Its pane stays as
+// line is the second, so the agent's height stays the same on every session. No blank rows go
+// around them: the thin line sits mid-cell, so half a row falls on each side of it, which is the
+// padding the header needs. Its pane stays as
 // wide as it was, and needs no process of its own. They start empty, as the sidebar fills them in, and have no clock to redraw
 // for. tmux's border between the panes is blank: the sidebar draws its own line, so the border
 // is a gap before the agent.
@@ -99,8 +102,8 @@ export async function openScreen(agents: string, session: string): Promise<void>
   if (env.TERM && !known(env.TERM)) env.TERM = "xterm-256color";
   applyConfig(agents);
   const name = `screen-${process.pid}`;
-  // The name skel --remote passes along, such as sprite:demo. Without it you are on this machine.
-  const where = env.SKEL_REMOTE_NAME || "local";
+  // The name skel --remote passes along, such as sprite:demo. Empty on this machine.
+  const where = env.SKEL_REMOTE_NAME ?? "";
   const left = sidebar(agents, name, where);
   // The title is the session's own: terminals on this server can come from different laptops.
   const open = [

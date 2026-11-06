@@ -27,6 +27,8 @@ const sections: [string, [string, string][]][] = [
   [
     "ELSEWHERE",
     [
+      ["remote add <host>", "Set up a server, over ssh"],
+      ["remote add sprite:<name>", "Set up a Sprite"],
       ["--remote <host> [command]", "Run skel on a server, over ssh"],
       ["--remote sprite:<name> [command]", "Run skel on a Sprite"],
       ["serve", "Run the daemon, for systemd or launchd"],
@@ -48,6 +50,7 @@ const examples = [
   'skel task create app "Fix the login redirect" "Sign-in lands on a 404."',
   "skel start app-12",
   "skel ps",
+  "skel remote add sprite:demo",
   "skel --remote sprite:demo",
 ];
 

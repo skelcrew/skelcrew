@@ -1,9 +1,9 @@
-// Everything skel knows about Sprites, Fly.io's Linux machines. From your laptop, skel
-// --remote sprite:<name> creates one and runs skel there. On a Sprite, skel finds out it is
-// on one, shapes the sandbox for it, and runs the daemon as a Sprite service.
+// Everything skel knows about Sprites, Fly.io's Linux machines. From your laptop, skel remote
+// add sprite:<name> creates one, and skel --remote sprite:<name> runs skel there. On a Sprite,
+// skel finds out it is on one, shapes the sandbox for it, and runs the daemon as a Sprite service.
 import { z } from "zod";
 import { originHere } from "./origin.ts";
-import { type Machine, quoted, run, upToDate, withLinuxSkel } from "./remote.ts";
+import { addMachine, type Machine, notSetUp, quoted, run, upToDate } from "./remote.ts";
 import { skelLine, windowTitle } from "./say.ts";
 
 // Reports whether skel runs on a Sprite. It goes by sprite-env, the Sprite's own tool for
@@ -211,13 +211,10 @@ function spriteNames(again: string): string[] {
 const yes = (question: string) =>
   ["y", "yes"].includes(prompt(question)?.trim().toLowerCase() ?? "");
 
-// Installs bubblewrap on the Sprite and copies skel there, built for it, to ~/.local/bin,
-// which is on the PATH a Sprite gives its commands. The Sprite is named as you typed it,
-// sprite:demo, since "the Sprite demo" reads as a demo of Sprites.
-async function setUp(name: string): Promise<void> {
+// Installs bubblewrap on the Sprite and readies its node, which skel's sandbox needs.
+async function prepare(name: string): Promise<void> {
   // --no-stdin, since sprite can't reconnect a command whose input it forwards.
   const on = (command: string[]) => ["sprite", "exec", "-s", name, "--no-stdin", "--", ...command];
-  console.log(skelLine(`setting up sprite:${name}: installing bubblewrap and copying skel there.`));
   // apt over sprite exec has no terminal for its dialogs, and says so in lines that look
   // like errors though the install works. So its output shows only when it fails. sudo
   // drops the environment, hence env after it.
@@ -243,8 +240,6 @@ async function setUp(name: string): Promise<void> {
     stdout: "ignore",
     stderr: "ignore",
   }).exited;
-  await withLinuxSkel(onTheSprite(name).copy);
-  await makeUrlPublic(name);
 }
 
 // Lets anyone reach the Sprite's URL without a Fly.io login, so GitHub's webhooks can wake
@@ -321,17 +316,9 @@ function checkName(name: string): void {
   if (!/^\w[\w-]*$/.test(name)) throw new Error(`"${name}" can't name a Sprite`);
 }
 
-// Runs a skel command on the Sprite and returns its exit code. Plain skel passes the
-// repository you are in on the laptop, so the lead knows it too. A Sprite that doesn't exist
-// is created after asking, then set up, and one without skel is set up after asking.
-export async function remoteSprite(name: string, args: string[]): Promise<number> {
-  checkName(name);
-  // A sleeping Sprite can take a while to answer, which looks like a hang with nothing on
-  // screen. Not in a pipe, where the output is the command's own.
-  if (process.stdout.isTTY) console.log(skelLine(`connecting to sprite:${name}…`));
-  const again = ["skel", "--remote", `sprite:${name}`, ...args].map(quoted).join(" ");
-  const names = spriteNames(again);
-  const from = args.length === 0 ? originHere() : null;
+// Returns how to run skel on the Sprite with these words. It takes the environment to add to
+// what it always passes, and gives back the exit code.
+function skelOnSprite(name: string, words: string[]) {
   // sprite exec passes each word as given, with no shell between. It reports a program it
   // can't find as exit 1, like any failure, so a shell runs skel: it exits 127 when there is
   // none, which skel itself never does. sprite puts this whole line in your terminal's title
@@ -340,28 +327,56 @@ export async function remoteSprite(name: string, args: string[]): Promise<number
   // gives the Sprite a terminal either way. checkName keeps quotes and % out of the name.
   const where = `sprite:${name}`;
   const title = process.stdout.isTTY ? `printf '\\033]2;${windowTitle(where)}\\007'; ` : "";
-  const line = ["sh", "-c", `${title}exec skel "$@"`, "skel", ...(from ? ["--from", from] : args)];
+  const line = ["sh", "-c", `${title}exec skel "$@"`, "skel", ...words];
   const named = `SKEL_REMOTE_NAME=${where}`;
-  const there = (env: string[]) =>
+  return (env: string[]) =>
     run(["sprite", "exec", "-s", name, "--tty", "--", "env", named, ...env, ...line]);
+}
+
+// Sets up a Sprite for --remote and returns the exit code, for skel remote add. The Sprite is
+// named as you typed it, sprite:demo, since "the Sprite demo" reads as a demo of Sprites. The
+// URL is made public on every run, so a run that failed there is finished by the next.
+export async function addSprite(name: string): Promise<number> {
+  checkName(name);
+  const where = `sprite:${name}`;
+  const names = spriteNames(`skel remote add ${where}`);
+  console.log(
+    skelLine(
+      `setting up ${where}: installing bubblewrap, making its URL public for GitHub's webhooks, copying skel there and running the first run.`,
+    ),
+  );
   if (!names.includes(name)) {
     // A mistyped name would otherwise make a second Sprite you pay for.
     if (!yes(skelLine(`No Sprite named ${name}. Create it? [y/N]`))) {
-      console.log(skelLine("no Sprite was created, so the command didn't run."));
+      console.log(skelLine("no Sprite was created."));
       return 1;
     }
     if ((await run(["sprite", "create", "--skip-console", name])) !== 0)
-      throw new Error(`sprite couldn't create sprite:${name}`);
-    await setUp(name);
-    return there([]);
+      throw new Error(`sprite couldn't create ${where}`);
   }
-  const code = await upToDate(where, there, onTheSprite(name));
-  if (code !== 127) return code;
-  console.log(skelLine(`sprite:${name} doesn't have skel installed.`));
-  if (!yes(skelLine("install bubblewrap there and copy skel to ~/.local/bin? [y/N]"))) {
-    console.log(skelLine(`skel isn't on sprite:${name}, so the command didn't run.`));
-    return 1;
-  }
-  await setUp(name);
-  return there([]);
+  await prepare(name);
+  await makeUrlPublic(name);
+  return addMachine(where, skelOnSprite(name, ["first-run"]), onTheSprite(name));
+}
+
+// Runs a skel command on the Sprite and returns its exit code. Plain skel passes the
+// repository you are in on the laptop, so the lead knows it too. Stops at a Sprite that doesn't
+// exist or has no skel.
+export async function remoteSprite(name: string, args: string[]): Promise<number> {
+  checkName(name);
+  // A sleeping Sprite can take a while to answer, which looks like a hang with nothing on
+  // screen. Not in a pipe, where the output is the command's own.
+  if (process.stdout.isTTY) console.log(skelLine(`connecting to sprite:${name}…`));
+  const again = ["skel", "--remote", `sprite:${name}`, ...args].map(quoted).join(" ");
+  const names = spriteNames(again);
+  const from = args.length === 0 ? originHere() : null;
+  const where = `sprite:${name}`;
+  if (!names.includes(name)) throw new Error(notSetUp(where));
+  const code = await upToDate(
+    where,
+    skelOnSprite(name, from ? ["--from", from] : args),
+    onTheSprite(name),
+  );
+  if (code === 127) throw new Error(notSetUp(where));
+  return code;
 }

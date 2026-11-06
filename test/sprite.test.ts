@@ -1,4 +1,5 @@
-// skel --remote sprite:<name>, run as you would run it on your laptop, against a fake sprite
+// skel --remote sprite:<name> and skel remote add sprite:<name>, run as you would run them on
+// your laptop, against a fake sprite
 // command that plays Sprites in folders of the test, and a fake bun that builds a stand-in
 // skel.
 import { afterEach, beforeEach, expect, test } from "bun:test";
@@ -26,7 +27,8 @@ let laptop = { main: "", commit: "" };
 // skel does when the laptop's build differs. Without one, it is a skel from before builds
 // carried their commit.
 const spriteSkel = (built?: string) => `#!/bin/sh
-${built === undefined ? "" : `test -n "$SKEL_LAPTOP_BUILD" && test "$SKEL_LAPTOP_BUILD" != "${built}" && { echo "skel on $SKEL_REMOTE_NAME is from ${built}"; exit 98; }\n`}echo "skel on the Sprite got $# arguments"
+${built === undefined ? "" : `test -n "$SKEL_LAPTOP_BUILD" && test "$SKEL_LAPTOP_BUILD" != "${built}" && { echo "skel on $SKEL_REMOTE_NAME is from ${built}"; exit 98; }\n`}test "$1" = first-run && { echo "the first run on the Sprite"; test ! -f first-run-fails; exit; }
+echo "skel on the Sprite got $# arguments"
 for word in "$@"; do echo "[$word]"; done
 exit 3
 `;
@@ -252,83 +254,34 @@ test("says to log in when sprite isn't logged in", async () => {
   expect(calls()).toBe("sprite list --json\n");
 });
 
-test("asks before creating a Sprite, and creates none when you say no", async () => {
-  const run = await skel(["--remote", "sprite:demo"], "n\n");
-  expect(run.out).toContain("skel · No Sprite named demo. Create it? [y/N]");
-  expect(run.out).toContain("no Sprite was created");
+test("--remote only connects: it creates no Sprite and says how to set one up", async () => {
+  const run = await skel(["--remote", "sprite:demo"]);
+  expect(run.err).toBe(
+    "skel: sprite:demo isn't set up. Run this on your laptop:\n  skel remote add sprite:demo\n",
+  );
   expect(run.code).toBe(1);
   expect(calls()).toBe("sprite list --json\n");
   expect(readdirSync(join(home, "sprites"))).toEqual([]);
 });
 
-test("creates the Sprite, sets it up, and runs the first run there", async () => {
-  const run = await skel(["--remote", "sprite:demo"], "y\n", checkout("simon/app"));
-  expect(run.out).toEndWith("skel on the Sprite got 2 arguments\n[--from]\n[simon/app]\n");
-  const lines = calls().split("\n");
-  expect(lines[0]).toBe("sprite list --json");
-  expect(lines[1]).toBe("sprite create --skip-console demo");
-  const install = "sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq bubblewrap";
-  expect(lines[2]).toBe(`sprite exec -s demo --no-stdin -- ${install}`);
-  expect(lines[3]).toBe(install);
-  // A new Sprite's node writes to /etc on its first run, which the sandbox makes read-only,
-  // so it runs once outside, right after bubblewrap.
-  expect(lines[4]).toBe("sprite exec -s demo --no-stdin -- node --version");
-  expect(lines[5]).toBe("node --version");
-  // "the Sprite demo" would read as a demo of Sprites, so skel names it as you typed it.
-  expect(run.out).toContain(
-    "skel · setting up sprite:demo: installing bubblewrap and copying skel there.\n",
-  );
-  expect(run.out).not.toContain("debconf");
-  // Built for the Sprite, which is Linux on x64, whatever the laptop runs.
-  expect(lines[6]).toMatch(
-    new RegExp(
-      `^bun build --compile --target=bun-linux-x64 --define SKEL_BUILD="${laptop.commit}" ${laptop.main} --outfile ${home}/tmp/\\S+/skel$`,
-    ),
-  );
-  expect(lines[7]).toBe(
-    "sprite exec -s demo --no-stdin -- sh -c mkdir -p .local/bin && rm -f .local/bin/skel.new",
-  );
-  expect(lines[8]).toMatch(
-    new RegExp(`^sprite file push -s demo ${home}/tmp/\\S+/skel .local/bin/skel.new$`),
-  );
-  expect(lines[9]).toBe(
-    "sprite exec -s demo --no-stdin -- sh -c mv -f .local/bin/skel.new .local/bin/skel",
-  );
-  // GitHub's webhooks wake the Sprite through its URL, and GitHub has no Fly.io login.
-  expect(lines[10]).toBe("sprite config update --url-auth public -s demo");
-  // A fresh copy is the laptop's build, so it runs without the check.
-  expect(lines[11]).toBe(`${exec("demo", null)} --from simon/app`);
-  expect(readFileSync(join(home, "sprites", "demo", ".local", "bin", "skel"), "utf8")).toBe(
-    spriteSkel(laptop.commit),
-  );
-  // The build is removed once copied.
-  expect(readdirSync(join(home, "tmp"))).toEqual([]);
-});
-
-test("offers to set up a Sprite that has no skel, then runs the command", async () => {
+test("--remote only connects: it sets up nothing on a Sprite without skel", async () => {
   mkdirSync(join(home, "sprites", "demo"));
-  const run = await skel(["--remote", "sprite:demo", "ps"], "y\n");
-  expect(run.out).toContain("skel · sprite:demo doesn't have skel installed.");
-  expect(run.out).toEndWith("skel on the Sprite got 1 arguments\n[ps]\n");
-  expect(calls()).toContain("sprite file push -s demo");
+  const run = await skel(["--remote", "sprite:demo", "ps"]);
+  expect(run.err).toContain("skel remote add sprite:demo");
+  expect(run.code).toBe(1);
+  expect(calls()).not.toContain("apt-get");
+  expect(calls()).not.toContain("sprite file push");
 });
 
 test("shows apt's output only when installing bubblewrap fails", async () => {
   writeFileSync(join(home, "apt-fails"), "");
-  const run = await skel(["--remote", "sprite:demo"], "y\n");
+  const run = await skel(["remote", "add", "sprite:demo"], "y\n");
   expect(run.code).toBe(1);
+  expect(run.out).not.toContain("debconf");
   expect(run.err).toContain("skel: couldn't install bubblewrap on sprite:demo:\n");
   expect(run.err).toContain("debconf: unable to initialize frontend: Dialog\n");
   expect(run.err).toContain("E: Unable to locate package bubblewrap");
   expect(calls()).not.toContain("sprite file push");
-});
-
-test("sets up nothing on a Sprite without skel when you say no", async () => {
-  mkdirSync(join(home, "sprites", "demo"));
-  const run = await skel(["--remote", "sprite:demo", "ps"], "n\n");
-  expect(run.out).toContain("skel isn't on sprite:demo, so the command didn't run.");
-  expect(run.code).toBe(1);
-  expect(calls()).not.toContain("apt-get");
 });
 
 // sprite file push writes through a link, like scp, so a link left there would have the
@@ -338,8 +291,8 @@ test("replaces a link at ~/.local/bin/skel instead of writing through it", async
   mkdirSync(join(sprite, ".local", "bin"), { recursive: true });
   writeFileSync(join(sprite, "launcher"), "#!/bin/sh\nexit 127\n", { mode: 0o755 });
   symlinkSync(join(sprite, "launcher"), join(sprite, ".local", "bin", "skel"));
-  const run = await skel(["--remote", "sprite:demo", "ps"], "y\n");
-  expect(run.out).toEndWith("skel on the Sprite got 1 arguments\n[ps]\n");
+  const run = await skel(["remote", "add", "sprite:demo"]);
+  expect(run.code).toBe(0);
   expect(readFileSync(join(sprite, "launcher"), "utf8")).toBe("#!/bin/sh\nexit 127\n");
   expect(lstatSync(join(sprite, ".local", "bin", "skel")).isSymbolicLink()).toBe(false);
 });
@@ -429,4 +382,81 @@ test("the update goes by what the Sprite service runs, not by ~/.local/bin", asy
   expect(run.out).toEndWith("skel on the Sprite got 1 arguments\n[ps]\n");
   expect(calls()).not.toContain("file push");
   expect(calls()).not.toContain("sprite-env services restart");
+});
+
+test("skel remote add creates the Sprite after asking, sets it up, and prints how to connect", async () => {
+  const run = await skel(["remote", "add", "sprite:demo"], "y\n");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("skel · setting up sprite:demo: installing bubblewrap,");
+  expect(run.out).toContain("skel · No Sprite named demo. Create it? [y/N]");
+  expect(run.out).toContain("the first run on the Sprite\n");
+  expect(run.out).toEndWith(
+    "skel · sprite:demo is ready. Connect to it with:\n  skel --remote sprite:demo\n",
+  );
+  const lines = calls().split("\n");
+  expect(lines[0]).toBe("sprite list --json");
+  expect(lines[1]).toBe("sprite create --skip-console demo");
+  const install = "sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq bubblewrap";
+  expect(lines[2]).toBe(`sprite exec -s demo --no-stdin -- ${install}`);
+  // A new Sprite's node writes to /etc on its first run, which the sandbox makes read-only,
+  // so it runs once outside, right after bubblewrap.
+  expect(lines[4]).toBe("sprite exec -s demo --no-stdin -- node --version");
+  // GitHub's webhooks wake the Sprite through its URL, and GitHub has no Fly.io login.
+  expect(lines[6]).toBe("sprite config update --url-auth public -s demo");
+  // Built for the Sprite, which is Linux on x64, whatever the laptop runs. A first attempt
+  // comes first, which finds no skel.
+  expect(lines[7]).toBe(`${exec("demo")} first-run`);
+  expect(lines[8]).toMatch(
+    new RegExp(
+      `^bun build --compile --target=bun-linux-x64 --define SKEL_BUILD="${laptop.commit}" ${laptop.main} --outfile ${home}/tmp/\\S+/skel$`,
+    ),
+  );
+  expect(lines[9]).toBe(
+    "sprite exec -s demo --no-stdin -- sh -c mkdir -p .local/bin && rm -f .local/bin/skel.new",
+  );
+  expect(lines[10]).toMatch(
+    new RegExp(`^sprite file push -s demo ${home}/tmp/\\S+/skel .local/bin/skel.new$`),
+  );
+  expect(lines[11]).toBe(
+    "sprite exec -s demo --no-stdin -- sh -c mv -f .local/bin/skel.new .local/bin/skel",
+  );
+  // A fresh copy is the laptop's build, so it runs without the check.
+  expect(lines[12]).toBe(`${exec("demo", null)} first-run`);
+  // The build is removed once copied.
+  expect(readdirSync(join(home, "tmp"))).toEqual([]);
+  expect(readFileSync(join(home, "sprites", "demo", ".local", "bin", "skel"), "utf8")).toBe(
+    spriteSkel(laptop.commit),
+  );
+});
+
+test("skel remote add creates nothing when you say no", async () => {
+  const run = await skel(["remote", "add", "sprite:demo"], "n\n");
+  expect(run.out).toContain("no Sprite was created");
+  expect(run.code).toBe(1);
+  expect(calls()).toBe("sprite list --json\n");
+});
+
+// A URL that failed to go public, or a first run that stopped, is finished by running add
+// again, even though skel is already on the Sprite.
+test("skel remote add again finishes the setup of a Sprite that has skel", async () => {
+  existing("demo", laptop.commit);
+  const run = await skel(["remote", "add", "sprite:demo"]);
+  expect(run.code).toBe(0);
+  const made = calls();
+  expect(made).not.toContain("sprite create");
+  expect(made).not.toContain("sprite file push");
+  expect(made).toContain("sprite config update --url-auth public -s demo\n");
+  expect(made).toContain(`${exec("demo")} first-run\n`);
+});
+
+test("skel remote add says what the laptop is missing, with the command to run again", async () => {
+  const run = await skel(["remote", "add", "sprite:demo"], "", home, join(home, "none"));
+  expect(run.err).toContain("Then run skel remote add sprite:demo again.");
+  expect(run.code).toBe(1);
+});
+
+test("skel remote add refuses a Sprite name that isn't one", async () => {
+  const run = await skel(["remote", "add", "sprite:--help"]);
+  expect(run.err).toContain("can't name a Sprite");
+  expect(calls()).toBe("");
 });
