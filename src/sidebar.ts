@@ -16,7 +16,7 @@ import {
 } from "./tmux.ts";
 
 // One row of the sidebar, with what the strip says of the agent too. The lead has no status of
-// its own.
+// its own, and a row's age is empty unless it shows a running time.
 export type Row = {
   name: string;
   session: string;
@@ -25,6 +25,7 @@ export type Row = {
   running: boolean;
   word: string;
   harness: string;
+  age: string;
   title: string | null;
   pr: number | null;
   checks: Thread["checks"];
@@ -85,9 +86,26 @@ export function threadWord(thread: Thread, maxRounds: number): string {
   return status === "working" ? "working" : "checks";
 }
 
+// Returns how long ago a thread started, in the fewest letters: <1m, then 5m, 2h, 3d. Rounded
+// down, so the text changes at most once a minute.
+export function threadAge(started: number, now: number): string {
+  const minutes = Math.floor((now - started) / 60_000);
+  if (minutes < 1) return "<1m";
+  if (minutes < 60) return `${minutes}m`;
+  return minutes < 24 * 60 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 1440)}d`;
+}
+
 // Returns the rows as the database and tmux have them now: the lead, then each thread that
 // isn't done, newest first as in skel ps. It runs each second, so it reads only what shows.
-export function sidebarRows(db: Database, running: string[], maxRounds: number): Row[] {
+// Only a thread whose word is working shows its running time. A time on any other row would
+// write to the terminal each minute, and on a Sprite a terminal that stays quiet lets it sleep.
+// Such a thread keeps the Sprite awake anyway, so its time costs nothing.
+export function sidebarRows(
+  db: Database,
+  running: string[],
+  maxRounds: number,
+  now: number,
+): Row[] {
   const threads = db.query("SELECT * FROM threads WHERE status != 'done' ORDER BY rowid DESC");
   const leadRuns = running.includes("lead");
   return [
@@ -99,6 +117,7 @@ export function sidebarRows(db: Database, running: string[], maxRounds: number):
       running: leadRuns,
       word: leadRuns ? "running" : "stopped",
       harness: builderHarness,
+      age: "",
       title: null,
       pr: null,
       checks: null,
@@ -117,6 +136,7 @@ export function sidebarRows(db: Database, running: string[], maxRounds: number):
         word,
         // Only a review is on another harness. An older skel's review has none saved.
         harness: word === "reviewing" ? (reviewer ?? "") : builderHarness,
+        age: word === "working" && thread.started !== null ? threadAge(thread.started, now) : "",
         title: thread.title,
         pr: thread.pr,
         checks: thread.checks,
@@ -154,11 +174,12 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
     mark = tinted(colour, sign);
   }
   const word = row.word.slice(0, room);
-  const harness = row.harness ? ` · ${row.harness}`.slice(0, room - word.length) : "";
+  const after = [row.harness, row.age].flatMap((part) => (part ? [` · ${part}`] : [])).join("");
+  const more = after.slice(0, room - word.length);
   const lines = [
     `   ${mark} ${styled(first)}`,
     ...rest.map((part) => `     ${styled(part)}`),
-    `     ${tinted(needing ? yellow : grey, word)}${harness && tinted(grey, harness)}`,
+    `     ${tinted(needing ? yellow : grey, word)}${more && tinted(grey, more)}`,
   ];
   return here ? lines.map(band) : lines;
 }
@@ -246,7 +267,7 @@ export async function runSidebar(agents: string, session: string, where: string)
   });
   // Looks at the database and tmux again, and redraws what that changed.
   const refresh = () => {
-    rows = sidebarRows(db, runningSessions(agents), maxRounds);
+    rows = sidebarRows(db, runningSessions(agents), maxRounds, Date.now());
     shown = shownSession(agents, tty) ?? shown;
     const width = paneWidth(screenSocket(agents), `=${session}:.1`);
     const strip = drawStrip(rows, shown, { left: size().width + 1, width }, where);

@@ -31,6 +31,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     asking: false,
     noting: null,
     title: null,
+    started: null,
     checks: null,
     reviewer: null,
     reviewed_by: null,

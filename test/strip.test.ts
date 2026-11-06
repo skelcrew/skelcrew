@@ -11,6 +11,7 @@ const lead: Row = {
   running: true,
   word: "running",
   harness: "claude",
+  age: "",
   title: null,
   pr: null,
   checks: null,

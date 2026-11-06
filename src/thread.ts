@@ -50,6 +50,9 @@ export const Thread = z.object({
   // The task's title when the thread started, for the strip, which looks each second and so
   // can't ask GitHub. Null on a thread an older skel started.
   title: z.string().nullable(),
+  // When the thread started, in milliseconds since 1970, for its running time in the sidebar.
+  // Null on a thread an older skel started.
+  started: z.number().nullable(),
   // What the PR's CI says, without skel's own review check, as last polled. Null with no CI,
   // or while the commit it would be about is still on its way to GitHub.
   checks: z.enum(["passing", "failing", "pending"]).nullable(),
@@ -267,6 +270,7 @@ export async function startThread(
       asking: false,
       noting: null,
       title,
+      started: Date.now(),
       checks: null,
       reviewer: null,
       reviewed_by: null,
@@ -277,8 +281,20 @@ export async function startThread(
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run(
       `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, title,
-        last_review, last_comment, last_check) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0)`,
-      [owner, repo, task, thread.folder, thread.branch, thread.base, thread.status, null, title],
+        started, last_review, last_comment, last_check)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0)`,
+      [
+        owner,
+        repo,
+        task,
+        thread.folder,
+        thread.branch,
+        thread.base,
+        thread.status,
+        null,
+        title,
+        thread.started,
+      ],
     );
     log(thread);
     return thread;

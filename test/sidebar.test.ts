@@ -1,8 +1,11 @@
 // What the sidebar shows and which row a key or click picks, given the rows it was handed, and
 // the word each thread gets.
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { sidebarWidth } from "../src/screen.ts";
-import { draw, picked, type Row, stepped, threadWord } from "../src/sidebar.ts";
+import { draw, picked, type Row, stepped, threadAge, threadWord } from "../src/sidebar.ts";
 import type { Thread } from "../src/thread.ts";
 
 const row = {
@@ -13,6 +16,7 @@ const row = {
   needsYou: false,
   running: true,
   harness: "claude",
+  age: "",
 } satisfies Partial<Row>;
 const lead: Row = { ...row, name: "lead", session: "lead", status: null, word: "running" };
 const thread = (name: string, more: Partial<Row> = {}): Row => ({
@@ -159,6 +163,36 @@ test("on the grey, every colour is a fixed light one, as a theme's own can vanis
   expect(on("app-5")).toContain("\x1b[38;5;210m●");
   expect(on("app-5")).toContain("\x1b[38;5;250mfailed");
   expect(selected(draw([lead], "lead", size)).join("\n")).toContain("\x1b[38;5;250m◆");
+});
+
+test("a running time ends the second line, dim like the rest of it", () => {
+  const screen = draw([thread("app-12", { age: "5m" })], "lead", size);
+  expect(listed(screen)).toEqual(["   ● app-12", "     working · claude · 5m"]);
+  expect(screen).toContain("\x1b[90m · claude · 5m");
+});
+
+test("the longest running time fits on the line whole", () => {
+  const long = thread("app-12", { age: "59m" });
+  expect(listed(draw([long], "lead", size))[1]).toBe("     working · claude · 59m");
+});
+
+test("a running time starts below a minute, then counts minutes, hours and days", () => {
+  const minute = 60_000;
+  const start = 1_000_000;
+  const after = (ms: number) => threadAge(start, start + ms);
+  expect(after(0)).toBe("<1m");
+  expect(after(minute - 1)).toBe("<1m");
+  expect(after(minute)).toBe("1m");
+  expect(after(5 * minute)).toBe("5m");
+  expect(after(60 * minute - 1)).toBe("59m");
+  expect(after(60 * minute)).toBe("1h");
+  expect(after(24 * 60 * minute - 1)).toBe("23h");
+  expect(after(24 * 60 * minute)).toBe("1d");
+  expect(after(3 * 24 * 60 * minute)).toBe("3d");
+});
+
+test("a clock set back never shows a time that makes no sense", () => {
+  expect(threadAge(1_000_000, 0)).toBe("<1m");
 });
 
 test("a name too long for a line goes on to the next, whole", () => {
@@ -312,6 +346,7 @@ const state: Thread = {
   asking: false,
   noting: null,
   title: null,
+  started: null,
   checks: null,
   reviewer: null,
   reviewed_by: null,
@@ -366,4 +401,77 @@ test("failed and stopped are as the status says, whatever else is true", () => {
   expect(word({ status: "failed", needs_you: true })).toBe("failed");
   expect(word({ status: "failed", asking: true })).toBe("failed");
   expect(word({ status: "stopped", reviewing: "abc" })).toBe("stopped");
+});
+
+describe("the rows the database gives", () => {
+  let home = "";
+  beforeEach(() => {
+    home = realpathSync(mkdtempSync(join(tmpdir(), "skel-sidebar-test-")));
+  });
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  // Returns the rows after running the SQL, at a moment in milliseconds. It takes a process of
+  // its own with HOME set: homedir() keeps the HOME this process started with, so opening the
+  // database from here would reach your real one.
+  function rowsAfter(sql: string, now: number): Row[] {
+    const src = join(import.meta.dir, "..", "src");
+    const code = `import { openDb } from ${JSON.stringify(join(src, "db.ts"))};
+import { sidebarRows } from ${JSON.stringify(join(src, "sidebar.ts"))};
+const db = openDb();
+db.run(${JSON.stringify(sql)});
+console.log(JSON.stringify(sidebarRows(db, ["lead", "app-12"], 3, ${now})));`;
+    const run = Bun.spawnSync([process.execPath, "-e", code], {
+      env: { ...process.env, HOME: home },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (!run.success) throw new Error(run.stderr.toString());
+    rmSync(join(home, ".local"), { recursive: true, force: true });
+    return JSON.parse(run.stdout.toString());
+  }
+  const repository = "INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');";
+  // Returns the sidebar with one thread that started at 0, in the state given, at a moment.
+  function shown(columns: string, values: string, now: number): string {
+    const sql = `${repository} INSERT INTO threads
+      (owner, repo, task, folder, branch, started, ${columns})
+      VALUES ('simon', 'app', 12, 'app-12', 'skel/12', 0, ${values})`;
+    return draw(rowsAfter(sql, now), "lead", size);
+  }
+  const hours = (n: number) => n * 3_600_000;
+
+  test("a working thread shows how long ago it started, and the lead shows no time", () => {
+    expect(listed(shown("status", "'working'", hours(2)))).toEqual([
+      "   ◆ lead",
+      "     running · claude",
+      "   ● app-12",
+      "     working · claude · 2h",
+    ]);
+  });
+
+  test("only a working thread has a time, so nothing else changes as time passes", () => {
+    const quiet = [
+      ["status, verdict", "'waiting', 'approve'"],
+      ["status, reviewing", "'waiting', 'abc'"],
+      ["status, needs_you, verdict", "'waiting', 1, 'approve'"],
+      ["status, asking", "'working', 1"],
+      ["status, needs_you, rounds", "'working', 1, 4"],
+      ["status", "'stopped'"],
+      ["status", "'failed'"],
+    ] as const;
+    for (const [columns, values] of quiet) {
+      const frame = shown(columns, values, hours(2));
+      expect(plain(frame)).not.toMatch(/ · \d/);
+      expect(shown(columns, values, hours(30))).toBe(frame);
+    }
+  });
+
+  test("a thread an older skel started has no time saved, and shows none", () => {
+    const sql = `${repository} INSERT INTO threads (owner, repo, task, folder, branch, status)
+      VALUES ('simon', 'app', 12, 'app-12', 'skel/12', 'working')`;
+    const [, older] = rowsAfter(sql, 5_000);
+    expect(older?.word).toBe("working");
+    expect(older?.age).toBe("");
+  });
 });

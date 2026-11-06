@@ -541,6 +541,32 @@ test("clicking the strip, or turning the wheel over it, does nothing", async () 
   expect(seen()).toContain("I am lead");
 });
 
+test("with nothing working, an open screen sends your terminal nothing at all", async () => {
+  // Close enough to a minute that a time shown on any row would change during the wait.
+  const started = Date.now() - 56_000;
+  sql(`UPDATE threads SET status = 'waiting', started = ${started} WHERE status = 'working'`);
+  open("lead");
+  await ready("lead");
+  await until(() => seen().includes("checks · claude"), "the threads");
+  // tmux redraws its border once as the screen settles.
+  await Bun.sleep(1500);
+  const written = join(home, "written");
+  tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
+  await Bun.sleep(4000);
+  expect(existsSync(written) ? readFileSync(written, "utf8") : "").toBe("");
+});
+
+test("a working thread's time moves on by itself, and writes when it does", async () => {
+  sql(`UPDATE threads SET started = ${Date.now() - 58_000} WHERE folder = 'app-12'`);
+  open("lead");
+  await ready("lead");
+  await until(() => seen().includes("working · claude · <1m"), "the time to start");
+  const written = join(home, "written");
+  tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
+  await until(() => seen().includes("working · claude · 1m"), "the time to move on");
+  await until(() => existsSync(written) && readFileSync(written, "utf8") !== "", "the write");
+});
+
 test("the hints stay at the bottom, and a click there picks nothing", async () => {
   open("lead");
   await ready("lead");
