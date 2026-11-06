@@ -7,7 +7,7 @@ import { applyConfig, cleanEnv } from "./tmux.ts";
 
 // How wide the sidebar is, with the line it draws at its edge. tmux shares a resize out among
 // panes, so it is set back after each.
-export const sidebarWidth = 29;
+export const sidebarWidth = 30;
 
 // Returns the screen's tmux server beside the agents': skel-screen beside skel, and a test's
 // own beside the test's.

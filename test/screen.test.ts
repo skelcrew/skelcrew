@@ -330,7 +330,7 @@ test("an agent drawing the full screen with the mouse gets the wheel itself", as
   wheel(64);
   await until(() => existsSync(join(home, "drawn.bytes")), "the wheel");
   await until(
-    () => readFileSync(join(home, "drawn.bytes"), "utf8").startsWith("\x1b[<64;30;3M"),
+    () => readFileSync(join(home, "drawn.bytes"), "utf8").startsWith("\x1b[<64;29;3M"),
     "the wheel at its place in the agent's window",
   );
   expect(scrolledBack()).not.toContain("1");
@@ -365,16 +365,16 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
   open("lead");
   await ready("lead");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "28 90\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "28 89\n",
     "the agent's size",
   );
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "40");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "38 120\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "38 119\n",
     "the agent to resize",
   );
   const widths = tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out.trim().split("\n");
-  expect(widths).toEqual(["29", "120"]);
+  expect(widths).toEqual(["30", "119"]);
   // A terminal shorter than the list keeps the row you are looking at in view.
   press("M-Down");
   press("M-Down");
@@ -470,7 +470,7 @@ test("the strip sits above the agent, and the agent's height stays as you switch
 test("above the sidebar it says skel, in teal, and local when no laptop sent you here", async () => {
   open("lead");
   await ready("lead");
-  await until(() => seen().split("\n")[0]?.startsWith("  skel  local") === true, "the place");
+  await until(() => seen().split("\n")[0]?.startsWith("   skel  local") === true, "the place");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
   const header = colours.split("\n")[0];
   expect(header).toContain("\x1b[1m");
@@ -483,8 +483,8 @@ test("each terminal says where it came from, as they can come from different lap
   open("lead", "two");
   await ready("lead", "two");
   const place = (window: string) => seen(window).split("\n")[0] ?? "";
-  await until(() => place("one").startsWith("  skel  sprite:demo"), "the first place");
-  await until(() => place("two").startsWith("  skel  local"), "the second place", "two");
+  await until(() => place("one").startsWith("   skel  sprite:demo"), "the first place");
+  await until(() => place("two").startsWith("   skel  local"), "the second place", "two");
 });
 
 // The divider under the strip, as you see it.

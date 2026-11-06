@@ -61,7 +61,7 @@ const onShade: Record<number, string> = {
 // The line at the sidebar's edge, a shade quieter than dim text, as it only parts two things.
 const edge = "38;5;237";
 // The keys you need most, at the bottom of the sidebar.
-const hints = ["  ⌥↑↓ switch", "  ⌃Q  quit"];
+const hints = ["   ⌥↑↓ switch", "   ⌃Q  quit"];
 
 // Returns the word for what the thread is doing, given the rounds of changes it may have. Its
 // status and needs you stay as they are: the word only describes them, from what they and the
@@ -144,7 +144,7 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
   const tinted = (code: number, text: string) => paint(here ? (onShade[code] ?? code) : code, text);
   // Returns a line with the grey behind it, out to the end of the row.
   const band = (line: string) => `\x1b[${shade}m${filled(line, width)}\x1b[49m`;
-  const room = Math.max(width - 4, 1);
+  const room = Math.max(width - 5, 1);
   const [first = "", ...rest] = row.name.match(new RegExp(`.{1,${room}}`, "g")) ?? [];
   // A thread that failed can still have its needs you flag, and its word says failed.
   const needing = row.needsYou && row.status !== "failed";
@@ -156,9 +156,9 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
   const word = row.word.slice(0, room);
   const harness = row.harness ? ` · ${row.harness}`.slice(0, room - word.length) : "";
   const lines = [
-    `  ${mark} ${styled(first)}`,
-    ...rest.map((part) => `    ${styled(part)}`),
-    `    ${tinted(needing ? yellow : grey, word)}${harness && tinted(grey, harness)}`,
+    `   ${mark} ${styled(first)}`,
+    ...rest.map((part) => `     ${styled(part)}`),
+    `     ${tinted(needing ? yellow : grey, word)}${harness && tinted(grey, harness)}`,
   ];
   return here ? lines.map(band) : lines;
 }

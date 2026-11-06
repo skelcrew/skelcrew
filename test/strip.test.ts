@@ -105,7 +105,7 @@ test("the strip starts past the sidebar, so it sits above the agent", () => {
 
 test("above the sidebar, skel in teal in line with the marks, then dim where it runs", () => {
   const [first] = drawStrip([thread()], "app-12", size, "sprite:demo");
-  expect(seen(first)).toStartWith("  skel  sprite:demo");
+  expect(seen(first)).toStartWith("   skel  sprite:demo");
   expect(first).toContain("#[bold,fg=colour79]skel#[default]");
   expect(first).toContain("#[fg=brightblack]sprite:demo#[default]");
 });
@@ -113,7 +113,7 @@ test("above the sidebar, skel in teal in line with the marks, then dim where it 
 test("the header stays whatever you are looking at", () => {
   for (const shown of ["lead", "app-12", "gone", null]) {
     const [first = ""] = drawStrip([lead, thread()], shown, size, "local");
-    expect(seen(first).slice(0, 30).trimEnd()).toBe("  skel  local");
+    expect(seen(first).slice(0, 30).trimEnd()).toBe("   skel  local");
     expect(seen(first).slice(0, 30)).toHaveLength(30);
   }
 });

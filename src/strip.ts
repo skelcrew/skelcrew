@@ -67,9 +67,9 @@ const skelName = "#[bold,fg=colour79]skel#[default]";
 // where it runs, then spaces out to the agent's column. Where skel runs comes from outside, so
 // it is cut and made safe as a title is.
 function header(where: string, left: number): string {
-  const place = fitted(clean(where), Math.max(left - 10, 0));
-  const spare = " ".repeat(Math.max(left - 8 - Bun.stringWidth(place), 0));
-  return `  ${skelName}  #[fg=brightblack]${shown(place)}#[default]${spare}`;
+  const place = fitted(clean(where), Math.max(left - 11, 0));
+  const spare = " ".repeat(Math.max(left - 9 - Bun.stringWidth(place), 0));
+  return `   ${skelName}  #[fg=brightblack]${shown(place)}#[default]${spare}`;
 }
 
 // Returns the strip's two lines as tmux formats, given the rows, the session on the right,
