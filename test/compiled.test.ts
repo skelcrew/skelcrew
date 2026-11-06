@@ -10,8 +10,9 @@ let skel = "";
 
 // Builds a program as one file, as skel --remote does, but for this machine, so the test can
 // run it.
-function compile(entry: string, file: string): void {
-  const built = Bun.spawnSync([process.execPath, "build", "--compile", entry, "--outfile", file], {
+function compile(entry: string, file: string, stamp: string[] = []): void {
+  const argv = [process.execPath, "build", "--compile", ...stamp, entry, "--outfile", file];
+  const built = Bun.spawnSync(argv, {
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -78,6 +79,26 @@ test("points the daemon's service at itself", async () => {
   fake("systemctl", 'test "$2" = daemon-reload');
   await run([]);
   expect(readFileSync(unit, "utf8")).toContain(`ExecStart="${skel}" serve\n`);
+});
+
+test("says which release it is, or which commit a build from a checkout came from", () => {
+  const main = join(import.meta.dir, "..", "src", "main.ts");
+  const said = (build: string) => {
+    const file = join(home, "stamped", build, "skel");
+    compile(main, file, ["--define", `SKEL_BUILD=${JSON.stringify(build)}`]);
+    return Bun.spawnSync([file, "--version"]).stdout.toString();
+  };
+  expect(said("0.4.2")).toBe("skel 0.4.2\n");
+  expect(said("39939b0")).toBe("skel from a checkout, at commit 39939b0\n");
+  expect(said("39939b0-dirty")).toBe(
+    "skel from a checkout, at commit 39939b0 with uncommitted changes\n",
+  );
+});
+
+test("a build nobody stamped doesn't pretend to know what it is", () => {
+  expect(Bun.spawnSync([skel, "--version"]).stdout.toString()).toBe(
+    "skel from a checkout, at an unknown commit\n",
+  );
 });
 
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("in the sandbox", () => {

@@ -1,5 +1,7 @@
 // skel's help: what you see with skel --help, and with a command skel doesn't know.
 import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const main = join(import.meta.dir, "..", "src", "main.ts");
@@ -61,4 +63,38 @@ test("a command skel doesn't know gets one line on stderr pointing to the help",
   expect(wrong.code).toBe(1);
   expect(wrong.out).toBe("");
   expect(wrong.err).toBe("skel: that isn't a skel command. Run skel --help to see them.\n");
+});
+
+test("skel --version from a checkout says so, with its commit", () => {
+  const home = mkdtempSync(join(tmpdir(), "skel-version-test-"));
+  try {
+    const git = (status: string) => {
+      const body = `#!/bin/sh\ncase "$*" in *rev-parse*) echo 39939b0;; *status*) echo "${status}";; esac\n`;
+      writeFileSync(join(home, "git"), body, { mode: 0o755 });
+    };
+    const path = `${home}:${process.env.PATH ?? ""}`;
+    git("");
+    const clean = skel(["--version"], { PATH: path });
+    expect(clean).toEqual({
+      code: 0,
+      out: "skel from a checkout, at commit 39939b0\n",
+      err: "",
+    });
+    git(" M src/main.ts");
+    expect(skel(["--version"], { PATH: path }).out).toBe(
+      "skel from a checkout, at commit 39939b0 with uncommitted changes\n",
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("skel --version answers on a server whose skel differs from the laptop's", () => {
+  const seen = skel(["--version"], { SKEL_LAPTOP_BUILD: "other", SKEL_REMOTE_NAME: "x" });
+  expect(seen.code).toBe(0);
+  expect(seen.out).toStartWith("skel ");
+});
+
+test("the help names --version", () => {
+  expect(skel(["--help"]).out).toContain("--version");
 });

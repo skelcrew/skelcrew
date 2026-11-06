@@ -4,9 +4,10 @@
 // of the skel that runs on the server.
 import { mkdtempSync, rmSync, writeSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { originHere } from "./origin.ts";
 import { skelLine } from "./say.ts";
+import { built, checkoutFolder, dirty, git, laptopBuild, readable } from "./version.ts";
 
 // A command over ssh gets a bare PATH: no login shell reads ~/.profile, and Ubuntu's
 // ~/.bashrc stops early when nobody types into it. So ~/.local/bin, where skel copies
@@ -14,22 +15,9 @@ import { skelLine } from "./say.ts";
 // same way.
 const pathOnServer = 'PATH="$HOME/.local/bin:$PATH"';
 
-// The commit skel was built from, which withLinuxSkel stamps into the copy it builds for a
-// server or Sprite. A skel run from a checkout has none, and updates with git pull.
-declare const SKEL_BUILD: string;
-const built = typeof SKEL_BUILD === "string" ? SKEL_BUILD : undefined;
-
-// Follows the commit of a build made with changes not committed. Such a build can't say
-// what it holds, so it never counts as up to date.
-const dirty = "-dirty";
-
 // What a copied skel exits with when the laptop's build differs. skel otherwise exits 0 or
 // 1, and the server's shell 127 when it finds no skel.
 export const outdated = 98;
-
-// Returns a build as people read it.
-const readable = (build: string) =>
-  build.endsWith(dirty) ? `${build.slice(0, -dirty.length)} with uncommitted changes` : build;
 
 // Reports whether this skel, copied to a server or Sprite, is from another build than the
 // laptop that runs it there with --remote, and says so. The laptop passes its build along
@@ -42,23 +30,6 @@ export function outOfDate(): boolean {
     skelLine(`skel on ${where} is from ${readable(built)}, yours is ${readable(laptop)}.`),
   );
   return true;
-}
-
-// The checkout this skel runs from on the laptop, and git in it.
-const checkoutFolder = resolve(import.meta.dir, "..");
-const git = (...args: string[]) =>
-  Bun.spawnSync(["git", "-C", checkoutFolder, ...args], { stdout: "pipe", stderr: "pipe" })
-    .stdout.toString()
-    .trim();
-
-// Returns the build a copy made from this checkout gets: its commit, marked when changes
-// aren't committed, or null when skel doesn't run from a checkout.
-function laptopBuild(): string | null {
-  // A single-file skel runs its modules from a folder only it sees, outside any checkout.
-  if (import.meta.dir.startsWith("/$bunfs")) return null;
-  const commit = git("rev-parse", "--short", "HEAD");
-  if (commit === "") return null;
-  return git("status", "--porcelain") === "" ? commit : `${commit}${dirty}`;
 }
 
 // Returns a word the server's shell reads back exactly as given. ssh joins its words with
