@@ -34,27 +34,28 @@ type Size = { width: number; height: number };
 
 // Claude Code is the only harness offered for the lead and builders.
 const builderHarness = "claude";
-const [blue, green, yellow, grey] = [34, 32, 33, 90];
+const [green, yellow, red, grey] = [32, 33, 31, 90];
 // Returns text in a colour or style, ending just that, as a background behind it must go on.
 const paint = (code: number | string, text: string) => `\x1b[${code}m${text}\x1b[22;39m`;
-// Each status has its mark, so nothing is told by colour alone.
+// Each thread's mark is a circle in its status's colour. Waiting and stopped look alike, and the
+// word under the name tells every status apart, so nothing is told by colour alone.
 const marks: Record<Thread["status"], [string, number]> = {
-  working: ["●", blue],
+  working: ["●", green],
   waiting: ["○", grey],
-  stopped: ["–", grey],
-  failed: ["×", grey],
-  done: ["✓", green],
+  stopped: ["○", grey],
+  failed: ["●", red],
+  done: ["●", green],
 };
 // The row you are looking at has a grey background, which is also what parts it from the rows
 // around it. 256-colour numbers, as they reach your terminal through both tmux servers and
 // sprite, and mean the same whatever your theme. So do the colours on the grey: a theme's own
-// blue or grey can vanish there, and its default text can be dark.
+// red or grey can vanish there, and its default text can be dark.
 const shade = "48;5;238";
 const white = "1;38;5;231";
 const onShade: Record<number, string> = {
-  [blue]: "38;5;117",
   [green]: "38;5;120",
   [yellow]: "38;5;221",
+  [red]: "38;5;210",
   [grey]: "38;5;250",
 };
 // The line at the sidebar's edge, a shade quieter than dim text, as it only parts two things.
@@ -145,9 +146,11 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
   const band = (line: string) => `\x1b[${shade}m${filled(line, width)}\x1b[49m`;
   const room = Math.max(width - 4, 1);
   const [first = "", ...rest] = row.name.match(new RegExp(`.{1,${room}}`, "g")) ?? [];
+  // A thread that failed can still have its needs you flag, and its word says failed.
+  const needing = row.needsYou && row.status !== "failed";
   let mark = tinted(grey, "◆");
   if (row.status !== null) {
-    const [sign, colour] = row.needsYou ? ["?", yellow] : marks[row.status];
+    const [sign, colour] = needing ? ["●", yellow] : marks[row.status];
     mark = tinted(colour, sign);
   }
   const word = row.word.slice(0, room);
@@ -155,7 +158,7 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
   const lines = [
     `  ${mark} ${styled(first)}`,
     ...rest.map((part) => `    ${styled(part)}`),
-    `    ${tinted(row.needsYou ? yellow : grey, word)}${harness && tinted(grey, harness)}`,
+    `    ${tinted(needing ? yellow : grey, word)}${harness && tinted(grey, harness)}`,
   ];
   return here ? lines.map(band) : lines;
 }

@@ -205,7 +205,9 @@ test("updates on its own, with needs you in the sidebar", async () => {
   open("lead");
   await ready("lead");
   sql("UPDATE threads SET needs_you = 1 WHERE task = 7");
-  await until(() => seen().includes("? app-7"), "needs you");
+  const colours = () => tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
+  await until(() => colours().includes("\x1b[33m●"), "needs you");
+  expect(seen()).toContain("● app-7");
   expect(seen()).toContain("needs you");
   sql("UPDATE threads SET status = 'done' WHERE task = 12");
   await until(() => !seen().includes("app-12"), "the done thread to go");

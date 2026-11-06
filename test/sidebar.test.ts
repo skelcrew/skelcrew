@@ -55,16 +55,45 @@ test("the word and harness are grey, so the names stand out", () => {
   expect(draw([thread("app-12")], "lead", size)).toContain("\x1b[90m · claude");
 });
 
-test("a thread that needs you has a yellow ? and a yellow word, whatever its status", () => {
-  const screen = draw([lead, thread("app-12", { needsYou: true, word: "approved" })], "lead", size);
-  expect(read(screen).join("\n")).toContain("  ? app-12\n    approved · claude");
-  expect(screen).toContain("\x1b[33m?");
-  expect(screen).toContain("\x1b[33mapproved");
+test("a thread that needs you has a yellow circle and a yellow word, whatever its status", () => {
+  for (const status of ["working", "waiting"] as const) {
+    const needing = thread("app-12", { status, needsYou: true, word: "approved" });
+    const screen = draw([lead, needing], "lead", size);
+    expect(read(screen).join("\n")).toContain("  ● app-12\n    approved · claude");
+    expect(screen).toContain("\x1b[33m●");
+    expect(screen).toContain("\x1b[33mapproved");
+  }
 });
 
-test("colour comes with a mark: blue for working, green for done", () => {
-  expect(draw([thread("app-12")], "lead", size)).toContain("\x1b[34m●");
-  expect(draw([thread("app-12", { status: "done" })], "lead", size)).toContain("\x1b[32m✓");
+test("every thread's mark is a circle, in its status's colour", () => {
+  const mark = (more: Partial<Row>) => draw([thread("app-12", more)], "lead", size);
+  expect(mark({ status: "working" })).toContain("\x1b[32m●");
+  expect(mark({ status: "failed", word: "failed" })).toContain("\x1b[31m●");
+  expect(mark({ status: "waiting", word: "checks" })).toContain("\x1b[90m○");
+  expect(mark({ status: "stopped", word: "stopped" })).toContain("\x1b[90m○");
+  expect(mark({ status: "done", word: "done" })).toContain("\x1b[32m●");
+});
+
+test("a failed thread is red even while it needs you, as its word says failed", () => {
+  const screen = draw(
+    [thread("app-12", { status: "failed", needsYou: true, word: "failed" })],
+    "lead",
+    size,
+  );
+  expect(screen).toContain("\x1b[31m●");
+  expect(screen).toContain("\x1b[90mfailed");
+  expect(screen).not.toContain("\x1b[33m");
+});
+
+test("the lead keeps its diamond", () => {
+  expect(draw([lead], "app-12", size)).toContain("\x1b[90m◆");
+});
+
+test("only the word of a thread that needs you takes a colour", () => {
+  for (const status of ["working", "failed", "waiting", "stopped"] as const)
+    expect(draw([thread("app-12", { status, word: "said" })], "lead", size)).toContain(
+      "\x1b[90msaid",
+    );
 });
 
 // The lines of a drawn sidebar that have the grey background of the row you are looking at.
@@ -106,16 +135,19 @@ test("on the grey, every colour is a fixed light one, as a theme's own can vanis
     thread("app-2", { status: "done" }),
     thread("app-3", { status: "waiting" }),
     thread("app-4", { needsYou: true, word: "approved" }),
+    thread("app-5", { status: "failed", word: "failed" }),
   ];
   const on = (session: string) => selected(draw(rows, session, size)).join("\n");
-  expect(on("app-1")).toContain("\x1b[38;5;117m●");
+  expect(on("app-1")).toContain("\x1b[38;5;120m●");
   expect(on("app-1")).toContain("\x1b[1;38;5;231mapp-1");
   expect(on("app-1")).toContain("\x1b[38;5;250mworking");
   expect(on("app-1")).toContain("\x1b[38;5;250m · claude");
-  expect(on("app-2")).toContain("\x1b[38;5;120m✓");
+  expect(on("app-2")).toContain("\x1b[38;5;120m●");
   expect(on("app-3")).toContain("\x1b[38;5;250m○");
-  expect(on("app-4")).toContain("\x1b[38;5;221m?");
+  expect(on("app-4")).toContain("\x1b[38;5;221m●");
   expect(on("app-4")).toContain("\x1b[38;5;221mapproved");
+  expect(on("app-5")).toContain("\x1b[38;5;210m●");
+  expect(on("app-5")).toContain("\x1b[38;5;250mfailed");
   expect(selected(draw([lead], "lead", size)).join("\n")).toContain("\x1b[38;5;250m◆");
 });
 
