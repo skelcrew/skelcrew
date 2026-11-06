@@ -34,9 +34,9 @@ type Size = { width: number; height: number };
 
 // Claude Code is the only harness offered for the lead and builders.
 const builderHarness = "claude";
-const [bold, blue, green, yellow, grey] = [1, 34, 32, 33, 90];
-// Returns text in a colour or style, ending it after the text.
-const paint = (code: number, text: string) => `\x1b[${code}m${text}\x1b[0m`;
+const [blue, green, yellow, grey] = [34, 32, 33, 90];
+// Returns text in a colour or style, ending just that, as a background behind it must go on.
+const paint = (code: number | string, text: string) => `\x1b[${code}m${text}\x1b[22;39m`;
 // Each status has its mark, so nothing is told by colour alone.
 const marks: Record<Thread["status"], [string, number]> = {
   working: ["●", blue],
@@ -44,6 +44,18 @@ const marks: Record<Thread["status"], [string, number]> = {
   stopped: ["–", grey],
   failed: ["×", grey],
   done: ["✓", green],
+};
+// The row you are looking at is dark blue. 256-colour numbers, as they reach your terminal
+// through both tmux servers and sprite, and mean the same whatever your theme. So do the
+// colours on the blue: a theme's own blue or grey can vanish there, and its default text can
+// be dark.
+const darkBlue = "48;5;18";
+const white = "1;38;5;231";
+const onBlue: Record<number, string> = {
+  [blue]: "38;5;117",
+  [green]: "38;5;120",
+  [yellow]: "38;5;221",
+  [grey]: "38;5;250",
 };
 // The keys you need most, at the bottom of the sidebar.
 const hints = ["  ⌥↑↓ switch", "  ⌃Q  quit"];
@@ -114,29 +126,38 @@ export function sidebarRows(db: Database, running: string[], maxRounds: number):
   ];
 }
 
-// Returns one row as lines: a pointer on the one you are looking at, a mark and the whole name,
-// which goes on to more lines when it is too long, then the word and harness. A cut name could
-// hide what tells two threads apart. An agent that isn't running is dim, as it can't be picked.
+// Returns one row as lines: a mark and the whole name, which goes on to more lines when it is
+// too long, then the word and harness. A cut name could hide what tells two threads apart. An
+// agent that isn't running is dim, as it can't be picked. The one you are looking at is blue
+// across the whole width, on all its lines.
 function rowLines(row: Row, here: boolean, width: number): string[] {
   // Returns part of the name as this row shows it.
   const styled = (name: string) => {
-    if (here) return paint(bold, name);
+    if (here) return paint(white, name);
     return row.running ? name : paint(grey, name);
+  };
+  // Returns text in a colour, or the one that stands in for it on the blue.
+  const tinted = (code: number, text: string) => paint(here ? (onBlue[code] ?? code) : code, text);
+  // Returns a line with the blue behind it, out to the end of the row.
+  const band = (line: string) => {
+    const spare = " ".repeat(Math.max(width - Bun.stringWidth(line), 0));
+    return `\x1b[${darkBlue}m${line}${spare}\x1b[49m`;
   };
   const room = Math.max(width - 4, 1);
   const [first = "", ...rest] = row.name.match(new RegExp(`.{1,${room}}`, "g")) ?? [];
-  let mark = paint(grey, "◆");
+  let mark = tinted(grey, "◆");
   if (row.status !== null) {
     const [sign, colour] = row.needsYou ? ["?", yellow] : marks[row.status];
-    mark = paint(colour, sign);
+    mark = tinted(colour, sign);
   }
   const word = row.word.slice(0, room);
   const harness = row.harness ? ` · ${row.harness}`.slice(0, room - word.length) : "";
-  return [
-    `${here ? "›" : " "} ${mark} ${styled(first)}`,
+  const lines = [
+    `  ${mark} ${styled(first)}`,
     ...rest.map((part) => `    ${styled(part)}`),
-    `    ${paint(row.needsYou ? yellow : grey, word)}${harness && paint(grey, harness)}`,
+    `    ${tinted(row.needsYou ? yellow : grey, word)}${harness && tinted(grey, harness)}`,
   ];
+  return here ? lines.map(band) : lines;
 }
 
 // Returns each row's lines, how many lines the list gets, and the first row on screen. The hints

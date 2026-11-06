@@ -26,12 +26,13 @@ const thread = (name: string, more: Partial<Row> = {}): Row => ({
 const size = { width: 28, height: 12 };
 // Removes the colours, to read a row as text.
 const plain = (screen: string) => Bun.stripANSI(screen);
-// The sidebar's lines, without the blank ones and the two hints at the bottom.
-const listed = (screen: string) =>
+// The sidebar's lines as you read them, without what fills them out to the width.
+const read = (screen: string) =>
   plain(screen)
     .split("\n")
-    .slice(0, -2)
-    .filter((text) => text.trim());
+    .map((text) => text.trimEnd());
+// The sidebar's lines, without the blank ones and the two hints at the bottom.
+const listed = (screen: string) => read(screen).slice(0, -2).filter(Boolean);
 
 test("lists the lead first, then each thread on two lines: a mark and name, then word and harness", () => {
   const rows = [
@@ -40,7 +41,7 @@ test("lists the lead first, then each thread on two lines: a mark and name, then
     thread("site-7", { status: "waiting", word: "reviewing", harness: "codex" }),
   ];
   expect(listed(draw(rows, "lead", size))).toEqual([
-    "› ◆ lead",
+    "  ◆ lead",
     "    running · claude",
     "  ● app-12",
     "    working · claude",
@@ -66,10 +67,58 @@ test("colour comes with a mark: blue for working, green for done", () => {
   expect(draw([thread("app-12", { status: "done" })], "lead", size)).toContain("\x1b[32m✓");
 });
 
-test("marks the row you are looking at, and nothing when it isn't listed", () => {
+// The lines of a drawn sidebar that have the dark blue background of the row you are looking at.
+const blue = "\x1b[48;5;18m";
+const selected = (screen: string) => screen.split("\n").filter((line) => line.includes(blue));
+
+test("the row you are looking at is dark blue, and nothing is when it isn't listed", () => {
   const rows = [lead, thread("app-12")];
-  expect(listed(draw(rows, "app-12", size))[2]).toStartWith("› ●");
-  expect(plain(draw(rows, "gone", size))).not.toContain("›");
+  expect(
+    selected(draw(rows, "app-12", size))
+      .map(plain)
+      .map((text) => text.trimEnd()),
+  ).toEqual(["  ● app-12", "    working · claude"]);
+  expect(selected(draw(rows, "gone", size))).toEqual([]);
+});
+
+test("the mark stays in its column, whether or not you are looking at the row", () => {
+  const rows = [lead, thread("app-12")];
+  const column = (shown: string) =>
+    plain(draw(rows, shown, size))
+      .split("\n")[0]
+      ?.indexOf("◆");
+  expect(column("lead")).toBe(column("app-12"));
+});
+
+test("the blue runs the whole width, on every line of the row, and ends with it", () => {
+  const name = "a-very-long-repository-name-1234";
+  const lines = selected(draw([lead, thread(name)], name, size));
+  expect(lines).toHaveLength(3);
+  for (const line of lines) {
+    expect(Bun.stringWidth(line)).toBe(size.width);
+    expect(line).toEndWith("\x1b[49m");
+    // A full reset inside the line would end the blue partway across.
+    expect(line).not.toContain("\x1b[0m");
+  }
+});
+
+test("on the blue, every colour is a fixed light one, as a theme's own can vanish there", () => {
+  const rows = [
+    thread("app-1"),
+    thread("app-2", { status: "done" }),
+    thread("app-3", { status: "waiting" }),
+    thread("app-4", { needsYou: true, word: "approved" }),
+  ];
+  const on = (session: string) => selected(draw(rows, session, size)).join("\n");
+  expect(on("app-1")).toContain("\x1b[38;5;117m●");
+  expect(on("app-1")).toContain("\x1b[1;38;5;231mapp-1");
+  expect(on("app-1")).toContain("\x1b[38;5;250mworking");
+  expect(on("app-1")).toContain("\x1b[38;5;250m · claude");
+  expect(on("app-2")).toContain("\x1b[38;5;120m✓");
+  expect(on("app-3")).toContain("\x1b[38;5;250m○");
+  expect(on("app-4")).toContain("\x1b[38;5;221m?");
+  expect(on("app-4")).toContain("\x1b[38;5;221mapproved");
+  expect(selected(draw([lead], "lead", size)).join("\n")).toContain("\x1b[38;5;250m◆");
 });
 
 test("a name too long for a line goes on to the next, whole", () => {
@@ -99,11 +148,10 @@ test("two hints with the keys stay at the bottom, below however few rows there a
 test("a list too long for the sidebar scrolls above the hints, and never runs into them", () => {
   const rows = [lead, ...[1, 2, 3, 4, 5].map((n) => thread(`app-${n}`))];
   const short = { width: 28, height: 6 };
-  const lines = plain(draw(rows, "app-4", short)).split("\n");
-  expect(lines).toEqual([
+  expect(read(draw(rows, "app-4", short))).toEqual([
     "  ● app-3",
     "    working · claude",
-    "› ● app-4",
+    "  ● app-4",
     "    working · claude",
     "  ⌥↑↓ switch",
     "  ⌃Q  quit",
@@ -116,7 +164,7 @@ test("a sidebar too short for a row and the hints drops the hints, as the row ma
     const lines = plain(draw(rows, "app-1", { width: 28, height })).split("\n");
     expect(lines.length).toBeLessThanOrEqual(height);
     expect(lines.join("\n")).not.toContain("switch");
-    expect(lines.join("\n")).toContain("› ● app-1");
+    expect(lines.join("\n")).toContain("  ● app-1");
   }
   expect(plain(draw(rows, "app-1", { width: 28, height: 4 }))).toContain("switch");
 });

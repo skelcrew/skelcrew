@@ -48,6 +48,15 @@ async function until(done: () => boolean, what: string, window = "one") {
 
 // What you see in the first terminal, or a second one.
 const seen = (window = "one") => tmux(terminal, "capture-pane", "-p", "-t", `=${window}:`).out;
+// The row you are looking at, as the name line with the dark blue background shows it. Empty
+// until the sidebar has drawn one.
+function selected(window = "one"): string {
+  const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", `=${window}:`).out;
+  const line = colours.split("\n").find((text) => text.includes("48;5;18"));
+  return Bun.stripANSI(line ?? "")
+    .slice(0, sidebar)
+    .trim();
+}
 // The title your terminal shows in its window and tab.
 const title = (window = "one") =>
   tmux(terminal, "display-message", "-p", "-t", `=${window}:`, "#{pane_title}").out.trim();
@@ -140,7 +149,7 @@ afterEach(() => {
 // Waits until the screen shows the sidebar and the agent you opened it on.
 const ready = (name: string, window = "one") =>
   until(
-    () => seen(window).includes(`I am ${name}`) && seen(window).includes("› "),
+    () => seen(window).includes(`I am ${name}`) && selected(window) !== "",
     "the screen",
     window,
   );
@@ -149,7 +158,8 @@ test("shows the lead and every thread that isn't done, beside the agent", async 
   open("lead");
   await ready("lead");
   const lines = seen().split("\n");
-  expect(lines[2]).toContain("› ◆ lead");
+  expect(lines[2]).toContain("◆ lead");
+  expect(selected()).toBe("◆ lead");
   expect(lines[2]).toContain("I am lead");
   expect(lines[3]).toContain("running · claude");
   expect(lines[4]).toContain("● app-12");
@@ -166,7 +176,7 @@ test("Alt-Down and Alt-Up switch the right side, and you type to whichever agent
   await ready("lead");
   press("M-Down");
   await until(() => seen().includes("I am app-12"), "app-12");
-  await until(() => seen().includes("› ● app-12"), "the sidebar to follow");
+  await until(() => selected() === "● app-12", "the sidebar to follow");
   type("hello\r");
   await until(() => existsSync(join(home, "app-12.typed")), "the typing");
   expect(readFileSync(join(home, "app-12.typed"), "utf8")).toBe("hello\n");
@@ -188,7 +198,7 @@ test("clicking a row switches the right side and leaves your typing there", asyn
 test("skel attach's screen starts on the agent it names, marked in the sidebar", async () => {
   open("app-7");
   await ready("app-7");
-  expect(seen()).toContain("› ● app-7");
+  expect(selected()).toBe("● app-7");
 });
 
 test("updates on its own, with needs you in the sidebar", async () => {
@@ -306,7 +316,7 @@ test("Ctrl-Q and switching still work while scrolled back", async () => {
   wheel(64);
   await until(() => !seen().includes("I am output"), "the scrollback");
   press("M-Down");
-  await until(() => seen().includes("› ● app-12"), "the next row");
+  await until(() => selected() === "● app-12", "the next row");
   press("C-q");
   await until(() => existsSync(join(home, "left-one")), "skel to return");
 });
@@ -366,10 +376,10 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
   // A terminal shorter than the list keeps the row you are looking at in view.
   press("M-Down");
   press("M-Down");
-  await until(() => seen().includes("› ● app-7"), "app-7");
+  await until(() => selected() === "● app-7", "app-7");
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "7");
   await until(() => !seen().includes("switch"), "the hints to give way");
-  await until(() => seen().includes("› ● app-7"), "the sidebar to scroll");
+  await until(() => selected() === "● app-7", "the sidebar to scroll");
 });
 
 test("a terminal a few lines high still shows the agent, and Ctrl-Q still leaves", async () => {
@@ -448,7 +458,7 @@ test("the hints stay at the bottom, and a click there picks nothing", async () =
   expect(lines.at(-1)).toContain("⌃Q  quit");
   click(5, 30);
   await Bun.sleep(200);
-  expect(seen()).toContain("› ◆ lead");
+  expect(selected()).toBe("◆ lead");
 });
 
 test("two terminals each get their own session, and leaving one leaves the other", async () => {
@@ -458,12 +468,12 @@ test("two terminals each get their own session, and leaving one leaves the other
   await ready("app-7", "two");
   expect(screenSessions()).toHaveLength(2);
   press("M-Up", "two");
-  await until(() => seen("two").includes("› ● app-12"), "the second to switch", "two");
-  expect(seen("one")).toContain("› ◆ lead");
+  await until(() => selected("two") === "● app-12", "the second to switch", "two");
+  expect(selected("one")).toBe("◆ lead");
   press("C-q", "one");
   await until(() => screenSessions().length === 1, "the first to end");
   press("M-Down", "two");
-  await until(() => seen("two").includes("› ● app-7"), "the second to go on working", "two");
+  await until(() => selected("two") === "● app-7", "the second to go on working", "two");
 });
 
 test("a terminal that just goes leaves no session behind, and no sidebar running", async () => {
@@ -486,7 +496,7 @@ test("when the agent you are looking at ends, the right side goes to the lead", 
   await ready("app-7");
   tmux(agents, "kill-session", "-t", "=app-7");
   await until(() => seen().includes("I am lead"), "the lead");
-  await until(() => seen().includes("› ◆ lead"), "the sidebar to follow");
+  await until(() => selected() === "◆ lead", "the sidebar to follow");
 });
 
 test("a row whose agent isn't running can't be picked", async () => {
