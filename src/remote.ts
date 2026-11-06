@@ -103,24 +103,22 @@ const onServer = (host: string, words: string[]) => (env: string[]) =>
     ].join(" "),
   ]);
 
+// Says a machine isn't set up, and how to do that. --remote only connects, as setting up
+// means logins and can mean a Sprite you pay for, which nobody expects from a mistyped name.
+export const notSetUp = (where: string) =>
+  `${where} isn't set up. Run this on your laptop:\n  skel remote add ${where}`;
+
 // Runs a skel command on the host and returns its exit code. Plain skel passes the
-// repository you are in on the laptop, so the lead knows it too. When the host has no
-// skel, offers to copy it there, then runs the command.
+// repository you are in on the laptop, so the lead knows it too. Stops when the host has no
+// skel.
 export async function remote(host: string, args: string[]): Promise<number> {
   const from = args.length === 0 ? originHere() : null;
   const there = onServer(host, from ? ["--from", from] : args);
   const code = await upToDate(host, there, server(host));
   // The server's shell exits 127 when it finds no skel to run. skel itself never does: it
   // exits 1 on any error.
-  if (code !== 127) return code;
-  console.log(`skel isn't installed on ${host}.`);
-  const answer = prompt("Copy it to ~/.local/bin/skel there? [y/N]");
-  if (!["y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
-    console.log(`skel isn't on ${host}, so the command didn't run.`);
-    return 1;
-  }
-  await withLinuxSkel((file) => copySkel(host, file));
-  return there([]);
+  if (code === 127) throw new Error(notSetUp(host));
+  return code;
 }
 
 // Sets up your server for --remote and returns the exit code, for skel remote add.

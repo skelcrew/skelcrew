@@ -1,6 +1,6 @@
 // skel's command line: reads the command and hands it to the file that does it.
 import { help } from "./help.ts";
-import { addServer, keepingTitle, outdated, outOfDate, remote } from "./remote.ts";
+import { addServer, keepingTitle, notSetUp, outdated, outOfDate, remote } from "./remote.ts";
 import { addSprite, remoteSprite } from "./sprite.ts";
 
 // What an agent may not run, in its words. Its sandbox hides skel's database, your settings
@@ -81,9 +81,20 @@ async function run(args: string[]): Promise<void> {
     "./list.ts"
   );
   const { bringInFrom, removeRepo, trustRepo } = await import("./repo.ts");
-  const { firstRun } = await import("./setup.ts");
+  const { firstRun, setupDone } = await import("./setup.ts");
   const { runSidebar } = await import("./sidebar.ts");
   const { attachToThread } = await import("./thread.ts");
+  // A sidebar or an agent can inherit this name from whoever started tmux, and its sandbox
+  // hides what setupDone reads.
+  const remoteName = process.env.SKEL_REMOTE_NAME;
+  if (
+    remoteName &&
+    command !== "first-run" &&
+    command !== "sidebar" &&
+    process.env.SKEL_SANDBOX !== "1" &&
+    !setupDone()
+  )
+    throw new Error(notSetUp(remoteName));
   if (args.length === 0 || (command === "--from" && sub && rest.length === 0)) {
     firstRun();
     await attachToLead("skel", await bringInFrom(sub));

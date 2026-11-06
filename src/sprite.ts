@@ -4,7 +4,7 @@
 // be a Mac, so this file loads nothing made only for Linux.
 import { z } from "zod";
 import { originHere } from "./origin.ts";
-import { addMachine, type Machine, quoted, run, upToDate, withLinuxSkel } from "./remote.ts";
+import { addMachine, type Machine, notSetUp, quoted, run, upToDate } from "./remote.ts";
 import { skelLine, windowTitle } from "./say.ts";
 
 // Reports whether skel runs on a Sprite. It goes by sprite-env, the Sprite's own tool for
@@ -243,14 +243,6 @@ async function prepare(name: string): Promise<void> {
   }).exited;
 }
 
-// Installs bubblewrap and copies skel to the Sprite, for a Sprite --remote finds without skel.
-async function setUp(name: string): Promise<void> {
-  console.log(skelLine(`setting up sprite:${name}: installing bubblewrap and copying skel there.`));
-  await prepare(name);
-  await withLinuxSkel(onTheSprite(name).copy);
-  await makeUrlPublic(name);
-}
-
 // Lets anyone reach the Sprite's URL without a Fly.io login, so GitHub's webhooks can wake
 // it. The URL only reaches the port where the daemon listens, which acts on nothing but a
 // delivery signed with skel's secret, and then only polls GitHub.
@@ -369,8 +361,8 @@ export async function addSprite(name: string): Promise<number> {
 }
 
 // Runs a skel command on the Sprite and returns its exit code. Plain skel passes the
-// repository you are in on the laptop, so the lead knows it too. A Sprite that doesn't exist
-// is created after asking, then set up, and one without skel is set up after asking.
+// repository you are in on the laptop, so the lead knows it too. Stops at a Sprite that doesn't
+// exist or has no skel.
 export async function remoteSprite(name: string, args: string[]): Promise<number> {
   checkName(name);
   // A sleeping Sprite can take a while to answer, which looks like a hang with nothing on
@@ -380,25 +372,12 @@ export async function remoteSprite(name: string, args: string[]): Promise<number
   const names = spriteNames(again);
   const from = args.length === 0 ? originHere() : null;
   const where = `sprite:${name}`;
-  const there = skelOnSprite(name, from ? ["--from", from] : args);
-  if (!names.includes(name)) {
-    // A mistyped name would otherwise make a second Sprite you pay for.
-    if (!yes(skelLine(`No Sprite named ${name}. Create it? [y/N]`))) {
-      console.log(skelLine("no Sprite was created, so the command didn't run."));
-      return 1;
-    }
-    if ((await run(["sprite", "create", "--skip-console", name])) !== 0)
-      throw new Error(`sprite couldn't create sprite:${name}`);
-    await setUp(name);
-    return there([]);
-  }
-  const code = await upToDate(where, there, onTheSprite(name));
-  if (code !== 127) return code;
-  console.log(skelLine(`sprite:${name} doesn't have skel installed.`));
-  if (!yes(skelLine("install bubblewrap there and copy skel to ~/.local/bin? [y/N]"))) {
-    console.log(skelLine(`skel isn't on sprite:${name}, so the command didn't run.`));
-    return 1;
-  }
-  await setUp(name);
-  return there([]);
+  if (!names.includes(name)) throw new Error(notSetUp(where));
+  const code = await upToDate(
+    where,
+    skelOnSprite(name, from ? ["--from", from] : args),
+    onTheSprite(name),
+  );
+  if (code === 127) throw new Error(notSetUp(where));
+  return code;
 }

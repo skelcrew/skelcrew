@@ -1,4 +1,4 @@
-// skel --remote, run as you would run it on your laptop, against a fake ssh and scp that
+// skel --remote and skel remote add, run as you would run them on your laptop, against a fake ssh and scp that
 // play a server in a folder of the test, and a fake bun that builds a stand-in skel.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
@@ -195,32 +195,14 @@ test("a command reaches the server exactly as typed", async () => {
   );
 });
 
-test("offers to copy skel to a server without it, then runs the command", async () => {
-  const run = await skel(["--remote", "simon@workbox", "ps"], "y\n");
-  expect(run.out).toContain("skel isn't installed on simon@workbox.");
-  expect(run.out).toContain("Copy it to ~/.local/bin/skel there? [y/N]");
-  expect(run.out).toEndWith("skel on the server got 1 arguments\n[ps]\n");
-  const lines = calls().split("\n");
-  expect(lines[0]).toBe(onServer(" ps"));
-  // Built for the server, which is Linux, whatever the laptop runs, with the commit it came
-  // from, so the server can tell when the laptop has moved on.
-  expect(lines[1]).toMatch(
-    new RegExp(
-      `^bun build --compile --target=bun-linux-x64 --define SKEL_BUILD="${laptop.commit}" ${laptop.main} --outfile ${home}/tmp/\\S+/skel$`,
-    ),
+test("--remote only connects: on a server without skel it says how to set it up", async () => {
+  const run = await skel(["--remote", "simon@workbox", "ps"]);
+  // The server's shell says first that it found no skel.
+  expect(run.err).toEndWith(
+    "skel: simon@workbox isn't set up. Run this on your laptop:\n  skel remote add simon@workbox\n",
   );
-  expect(lines[2]).toBe("ssh simon@workbox mkdir -p .local/bin && rm -f .local/bin/skel.new");
-  expect(lines[3]).toMatch(
-    new RegExp(`^scp ${home}/tmp/\\S+/skel simon@workbox:.local/bin/skel.new$`),
-  );
-  expect(lines[4]).toBe("ssh simon@workbox mv -f .local/bin/skel.new .local/bin/skel");
-  // A fresh copy is the laptop's build, so it runs without the check.
-  expect(lines[5]).toBe(onServer(" ps", null));
-  expect(readFileSync(join(home, "server", ".local", "bin", "skel"), "utf8")).toBe(
-    serverSkel(laptop.commit),
-  );
-  // The build is removed once copied.
-  expect(readdirSync(join(home, "tmp"))).toEqual([]);
+  expect(run.code).toBe(1);
+  expect(calls()).toBe(`${onServer(" ps")}\n`);
 });
 
 // A link left at ~/.local/bin/skel, such as one to a checkout's launcher that can't find bun
@@ -233,18 +215,10 @@ test("replaces a link at ~/.local/bin/skel instead of writing through it", async
   writeFileSync(launcher, original, { mode: 0o755 });
   mkdirSync(join(home, "server", ".local", "bin"), { recursive: true });
   symlinkSync(launcher, join(home, "server", ".local", "bin", "skel"));
-  const run = await skel(["--remote", "simon@workbox", "ps"], "y\n");
-  expect(run.out).toEndWith("skel on the server got 1 arguments\n[ps]\n");
+  const run = await skel(["remote", "add", "simon@workbox"]);
+  expect(run.code).toBe(0);
   expect(readFileSync(launcher, "utf8")).toBe(original);
   expect(lstatSync(join(home, "server", ".local", "bin", "skel")).isSymbolicLink()).toBe(false);
-});
-
-test("copies nothing when you say no", async () => {
-  const run = await skel(["--remote", "simon@workbox", "ps"], "n\n");
-  expect(run.out).toContain("skel isn't installed on simon@workbox.");
-  expect(run.out).toContain("skel isn't on simon@workbox, so the command didn't run.");
-  expect(run.code).toBe(1);
-  expect(calls()).toBe(`${onServer(" ps")}\n`);
 });
 
 test("needs a host", async () => {
@@ -471,7 +445,22 @@ test("skel remote add copies skel to a server, runs the first run, and prints ho
   );
   const lines = calls().split("\n");
   expect(lines[0]).toBe(onServer(" first-run"));
-  expect(lines).toContain(onServer(" first-run", null));
+  // Built for the server, which is Linux, whatever the laptop runs, with the commit it came
+  // from, so the server can tell when the laptop has moved on.
+  expect(lines[1]).toMatch(
+    new RegExp(
+      `^bun build --compile --target=bun-linux-x64 --define SKEL_BUILD="${laptop.commit}" ${laptop.main} --outfile ${home}/tmp/\\S+/skel$`,
+    ),
+  );
+  expect(lines[2]).toBe("ssh simon@workbox mkdir -p .local/bin && rm -f .local/bin/skel.new");
+  expect(lines[3]).toMatch(
+    new RegExp(`^scp ${home}/tmp/\\S+/skel simon@workbox:.local/bin/skel.new$`),
+  );
+  expect(lines[4]).toBe("ssh simon@workbox mv -f .local/bin/skel.new .local/bin/skel");
+  // A fresh copy is the laptop's build, so it runs without the check.
+  expect(lines[5]).toBe(onServer(" first-run", null));
+  // The build is removed once copied.
+  expect(readdirSync(join(home, "tmp"))).toEqual([]);
   expect(readFileSync(join(home, "server", ".local", "bin", "skel"), "utf8")).toBe(
     serverSkel(laptop.commit),
   );
