@@ -167,3 +167,11 @@ test("the workflow runs on a version tag, checks, builds, then publishes all the
   expect(publish).toContain("dist/SHA256SUMS");
   for (const run of runs) expect(Bun.spawnSync(["sh", "-n", "-c", run]).success).toBe(true);
 });
+
+test("the workflow and the install script are the only places that say where releases live", () => {
+  const text = readFileSync(join(root, ".github", "workflows", "release.yml"), "utf8");
+  const { RELEASES_REPO } = Workflow.parse(parse(text)).env;
+  expect(text.split(RELEASES_REPO)).toHaveLength(2);
+  const install = readFileSync(join(root, "install.sh"), "utf8");
+  expect(install.match(/https:\/\//g)).toHaveLength(1);
+});
