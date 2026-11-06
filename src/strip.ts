@@ -77,10 +77,10 @@ function header(where: string, left: number): string {
 
 // Returns the strip's two lines as tmux formats, given the rows, the session on the right,
 // where the agent's pane is, `left` columns in and `width` wide, and the remote skel runs on, if
-// any. tmux's status lines span the whole terminal, so the first starts with the header, and the second
-// meets the line at the sidebar's edge, two columns left of the agent, with a ┬. It reads
+// any. tmux's status lines span the whole terminal, so the first starts with the header, and the
+// second meets the line at the sidebar's edge, two columns left of the agent, with a ┬. It reads
 // nothing, so what you see can be tested without a terminal. Always two lines, so the agent's
-// height never changes.
+// height never changes. The blank rows around the first are the screen's.
 export function drawStrip(
   rows: Row[],
   session: string | null,

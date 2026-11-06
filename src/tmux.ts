@@ -224,18 +224,20 @@ export const paneTty = (socket: string, target: string) =>
 export const paneWidth = (socket: string, target: string) =>
   Number(tmux(socket, ["display-message", "-p", "-t", target, "#{pane_width}"]).out.trim());
 
-// Sets the lines of a session's strip, as tmux formats. Each set makes tmux redraw the whole
-// screen, so both go in one run, for one redraw, and only when a line changed. The lone ";"
-// separates tmux commands, so it skips literal().
+// Sets the header and strip, then the thin line, as tmux formats, on the second and fourth of a
+// session's status lines. The first and third stay blank, as padding. Each set makes tmux redraw
+// the whole screen, so both go in one run, for one redraw, and only when a line changed. The
+// lone ";" separates tmux commands, so it skips literal().
 export function showStrip(socket: string, session: string, lines: [string, string]): void {
-  const set = (index: number) => [
+  const set = (index: number, line: string) => [
     "set",
     "-t",
     `=${session}:`,
     `status-format[${index}]`,
-    literal(lines[index] ?? ""),
+    literal(line),
   ];
-  const argv = ["tmux", "-L", socket, "-f", "/dev/null", ...set(0), ";", ...set(1)];
+  const [top, under] = lines;
+  const argv = ["tmux", "-L", socket, "-f", "/dev/null", ...set(1, top), ";", ...set(3, under)];
   Bun.spawnSync(argv, { env: cleanEnv(), stdout: "ignore", stderr: "ignore" });
 }
 
