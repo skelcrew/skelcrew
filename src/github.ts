@@ -447,14 +447,36 @@ const pullFields = `state mergeable baseRefName
 const Labeled = z.object({ number: z.number(), title: z.string() });
 export type Labeled = z.infer<typeof Labeled>;
 
+// The newest open issues or PRs, and how many there are in all, which can be far more.
+const OpenList = z
+  .object({
+    totalCount: z.number(),
+    nodes: z.array(z.object({ number: z.number(), title: z.string(), createdAt: z.string() })),
+  })
+  .transform((list) => ({ total: list.totalCount, items: list.nodes }));
+export type OpenList = z.infer<typeof OpenList>;
+
+// A hundred is the most GitHub gives in one answer, and more than a sidebar can show.
+const openFields = `first: 100, orderBy: { field: CREATED_AT, direction: DESC }) {
+  totalCount nodes { number title createdAt } }`;
+const openLists = `openIssues: issues(states: [OPEN], ${openFields}
+  openPulls: pullRequests(states: [OPEN], ${openFields}`;
+
 // Returns your gh login, the repository's open issues labeled skel, and each of
 // its given PRs, with their reviews, comments, head checks and merge state, in one GraphQL
 // query, so the number of requests doesn't grow with the number of threads. A PR GitHub
-// doesn't find is left out.
+// doesn't find is left out. With `lists`, the same query brings the open issues and PRs the
+// sidebar shows, so showing them costs no request of its own.
 export async function readRepository(
   repo: string,
   numbers: number[],
-): Promise<{ you: string; labeled: Labeled[]; prs: Map<number, PullRequest> }> {
+  lists: boolean,
+): Promise<{
+  you: string;
+  labeled: Labeled[];
+  prs: Map<number, PullRequest>;
+  open: { issues: OpenList; prs: OpenList } | null;
+}> {
   const [owner, name] = repo.split("/");
   const pulls = numbers.map((n) => `pr${n}: pullRequest(number: ${n}) { ${pullFields} }`);
   // Issues with threads keep their label, so the oldest labeled issues could fill every
@@ -462,7 +484,8 @@ export async function readRepository(
   const labeled = `labeled: issues(labels: ["skel"], states: [OPEN], first: 100,
     orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { number title } }`;
   const query = `query($owner: String!, $name: String!) { viewer { login }
-    repository(owner: $owner, name: $name) { ${labeled}\n${pulls.join("\n")} } }`;
+    repository(owner: $owner, name: $name) {
+      ${labeled}\n${lists ? openLists : ""}\n${pulls.join("\n")} } }`;
   const got = await gh(["api", "graphql", "--input", "-"], `poll ${repo}`, {
     query,
     variables: { owner, name },
@@ -471,17 +494,24 @@ export async function readRepository(
     .object({
       data: z.object({
         viewer: z.object({ login: z.string() }),
-        repository: z.object({ labeled: nodes(Labeled) }).catchall(Pull.nullable()),
+        repository: z
+          .object({
+            labeled: nodes(Labeled),
+            openIssues: OpenList.optional(),
+            openPulls: OpenList.optional(),
+          })
+          .catchall(Pull.nullable()),
       }),
     })
     .parse(got);
-  const { labeled: issues, ...found } = data.repository;
+  const { labeled: issues, openIssues, openPulls, ...found } = data.repository;
   const prs = new Map<number, PullRequest>();
   for (const n of numbers) {
     const pr = found[`pr${n}`];
     if (pr) prs.set(n, pr);
   }
-  return { you: data.viewer.login, labeled: issues, prs };
+  const open = openIssues && openPulls ? { issues: openIssues, prs: openPulls } : null;
+  return { you: data.viewer.login, labeled: issues, prs, open };
 }
 
 // Returns whether someone can push to the repository: write, maintain or admin access, which

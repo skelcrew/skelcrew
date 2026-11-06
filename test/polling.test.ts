@@ -311,6 +311,68 @@ async function approvedApp12(from?: string): Promise<string> {
   return work;
 }
 
+// What the sidebar would read: the saved open issues and PRs, as kind and number, and the totals.
+function savedOpen(): { rows: string[]; totals: unknown } {
+  const db = new Database(join(data(), "skel.db"), { readonly: true });
+  const rows = db.query("SELECT kind, number FROM open_items ORDER BY kind, number").all();
+  const totals = db.query("SELECT open_issues, open_prs FROM repositories").get();
+  db.close();
+  return { rows: rows.map((row) => Object.values(Object(row)).join(" ")), totals };
+}
+
+test("only while a screen is open does a poll ask for open issues and PRs, and it saves them", async () => {
+  addApp();
+  const item = (number: number) => ({ number, title: "t", createdAt: "2026-11-05T10:00:00Z" });
+  const answer = (issues: number[], prs: number[]) =>
+    writeFileSync(
+      join(home, "gh", "graphql"),
+      JSON.stringify({
+        data: {
+          viewer: { login: "simon" },
+          repository: {
+            labeled: { nodes: [] },
+            openIssues: { totalCount: issues.length + 200, nodes: issues.map(item) },
+            openPulls: { totalCount: prs.length, nodes: prs.map(item) },
+          },
+        },
+      }),
+    );
+  // GitHub only sends what the query asks for, so the lists come once the screen opens.
+  pr({});
+  const screen = `${socket}-screen`;
+  // Runs tmux on the screen's server, which is the test's own.
+  const onScreen = (...args: string[]) =>
+    Bun.spawnSync(["tmux", "-L", screen, "-f", "/dev/null", ...args], {
+      env: { ...process.env, TMUX: "" },
+      stderr: "pipe",
+    });
+  try {
+    serve();
+    await until(() => polls() >= 3);
+    expect(read(join(home, "gh", "query"))).not.toContain("totalCount");
+    expect(savedOpen().rows).toEqual([]);
+    answer([12, 13], [34]);
+    onScreen("new-session", "-d", "-s", "screen-1", "sleep 300");
+    await until(() => savedOpen().rows.length === 3);
+    expect(read(join(home, "gh", "query"))).toContain("totalCount");
+    expect(savedOpen()).toEqual({
+      rows: ["issue 12", "issue 13", "pr 34"],
+      totals: { open_issues: 202, open_prs: 1 },
+    });
+    // A closed issue goes, as each poll replaces what the last one saved.
+    answer([13], []);
+    await until(() => savedOpen().rows.length === 1);
+    expect(savedOpen().rows).toEqual(["issue 13"]);
+    onScreen("kill-server");
+    await morePolls();
+    expect(read(join(home, "gh", "query"))).not.toContain("totalCount");
+  } finally {
+    onScreen("kill-server");
+    const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
+    rmSync(join(folder, screen), { force: true });
+  }
+});
+
 // bubblewrap can't start inside skel's own sandbox, so only there builders can't start.
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
   test("a PR's checks are saved for the strip, without skel's own review check", async () => {

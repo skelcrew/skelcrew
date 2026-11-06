@@ -11,6 +11,7 @@ import {
   failedLog,
   fetchIntoClone,
   type Labeled,
+  type OpenList,
   type PullRequest,
   reactToIssue,
   readRepository,
@@ -19,6 +20,7 @@ import { tellLead } from "./lead.ts";
 import { cloneDir } from "./paths.ts";
 import { refreshClones, repositories } from "./repo.ts";
 import { endRound } from "./round.ts";
+import { screenSocket } from "./screen.ts";
 import {
   baseOf,
   cloneOf,
@@ -31,7 +33,7 @@ import {
   threadConfig,
   threadName,
 } from "./thread.ts";
-import { failedScreen, hasSession, stopSession, typeInto } from "./tmux.ts";
+import { failedScreen, hasSession, runningSessions, stopSession, typeInto } from "./tmux.ts";
 
 type Change = Partial<Pick<Thread, "status" | "needs_you">>;
 type Author = PullRequest["comments"][number]["author"];
@@ -333,20 +335,56 @@ async function startLabeled(
 // Returns the text of anything thrown, for the daemon's log.
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-// Polls one repository: starts threads on its issues labeled skel, then acts on what each of
-// its threads' PRs means for the thread. Thread rows are read again after GitHub answers,
-// since a round can change them while it waits.
+// Replaces what is saved of a repository's open issues and PRs with what GitHub just said, for
+// the sidebar, which only reads the database. All at once, so it never reads half a list.
+function saveOpen(
+  db: Database,
+  owner: string,
+  name: string,
+  open: { issues: OpenList; prs: OpenList },
+): void {
+  // Saves one list's rows.
+  const insert = (kind: string, list: OpenList) => {
+    for (const { number, title, createdAt } of list.items)
+      db.run(
+        `INSERT INTO open_items (owner, repo, kind, number, title, created)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+        [owner, name, kind, number, title, createdAt],
+      );
+  };
+  db.transaction(() => {
+    db.run("DELETE FROM open_items WHERE owner = ? AND repo = ?", [owner, name]);
+    insert("issue", open.issues);
+    insert("pr", open.prs);
+    db.run("UPDATE repositories SET open_issues = ?, open_prs = ? WHERE owner = ? AND repo = ?", [
+      open.issues.total,
+      open.prs.total,
+      owner,
+      name,
+    ]);
+  })();
+}
+
+// Polls one repository: saves its open issues and PRs while a screen is open, starts threads on
+// its issues labeled skel, then acts on what each of its threads' PRs means for the thread.
+// Thread rows are read again after GitHub answers, since a round can change them while it waits.
 async function pollRepository(
   db: Database,
   tmux: string,
-  repo: string,
+  owner: string,
+  name: string,
   threads: Thread[],
   begin: (thread: Thread) => Promise<void>,
 ): Promise<void> {
-  const { you, labeled, prs } = await readRepository(
+  const repo = `${owner}/${name}`;
+  // Nobody sees the lists with no screen open, so GitHub isn't asked for them.
+  const lists = runningSessions(screenSocket(tmux)).length > 0;
+  const { you, labeled, prs, open } = await readRepository(
     repo,
     threads.flatMap((t) => (t.pr === null ? [] : [t.pr])),
+    lists,
   );
+  if (open) saveOpen(db, owner, name, open);
   await startLabeled(db, tmux, repo, labeled, begin);
   const { maxRounds } = threadConfig();
   // Asked once per poll, and only about authors of what is new.
@@ -407,7 +445,7 @@ async function pollRepository(
 }
 
 // Polls GitHub for each repository's issues labeled skel and the PRs of its live and stopped
-// threads, one query per repository, so a stopped thread's merge still ends it: every `every`
+// threads, and its open issues and PRs while a screen is open, one query per repository, so a stopped thread's merge still ends it: every `every`
 // milliseconds while any of its threads is working or waits on review or CI, and half as
 // often otherwise, so a label or your comment is seen within a minute. Starts at once, to pick
 // up what happened while the daemon was down. A failed poll, such as GitHub answering with an
@@ -442,7 +480,7 @@ export function pollGitHub(
     }
     polling.add(repo);
     const threads = polled().filter((t) => t.owner === owner && t.repo === name);
-    pollRepository(db, tmux, repo, threads, begin)
+    pollRepository(db, tmux, owner, name, threads, begin)
       .catch((error) => console.log(`couldn't poll ${repo}: ${message(error)}`))
       .finally(() => {
         polling.delete(repo);

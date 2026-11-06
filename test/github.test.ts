@@ -213,9 +213,48 @@ test("asks for the labeled issues updated last", async () => {
   gh(
     '{"data":{"viewer":{"login":"simon"},"repository":{"labeled":{"nodes":[{"number":12,"title":"Add export"}]}}}}',
   );
-  const read = await readRepository("simon/app", []);
+  const read = await readRepository("simon/app", [], false);
   expect(read.labeled).toEqual([{ number: 12, title: "Add export" }]);
   expect(JSON.stringify(sent().input)).toContain("orderBy: { field: UPDATED_AT, direction: DESC }");
+});
+
+const repository = (more: object) =>
+  JSON.stringify({
+    data: { viewer: { login: "simon" }, repository: { labeled: { nodes: [] }, ...more } },
+  });
+
+test("asks for open issues and PRs in the same query, only when told to", async () => {
+  gh(repository({}));
+  const quiet = await readRepository("simon/app", [], false);
+  expect(quiet.open).toBeNull();
+  expect(JSON.stringify(sent().input)).not.toContain("totalCount");
+  const issue = { number: 12, title: "Add export", createdAt: "2026-11-05T10:00:00Z" };
+  const pull = { number: 34, title: "Bump deps", createdAt: "2026-11-04T10:00:00Z" };
+  gh(
+    repository({
+      openIssues: { totalCount: 240, nodes: [issue] },
+      openPulls: { totalCount: 1, nodes: [pull] },
+    }),
+  );
+  const read = await readRepository("simon/app", [], true);
+  expect(read.open).toEqual({
+    issues: { total: 240, items: [issue] },
+    prs: { total: 1, items: [pull] },
+  });
+  const query = JSON.stringify(sent().input);
+  expect(query).toContain("issues(states: [OPEN], first: 100");
+  expect(query).toContain("pullRequests(states: [OPEN], first: 100");
+  expect(query).toContain("orderBy: { field: CREATED_AT, direction: DESC }");
+});
+
+test("an open issue in a shape skel doesn't expect is refused, not saved", async () => {
+  gh(
+    repository({
+      openIssues: { totalCount: 1, nodes: [{ number: "12", title: "x", createdAt: "y" }] },
+      openPulls: { totalCount: 0, nodes: [] },
+    }),
+  );
+  await expect(readRepository("simon/app", [], true)).rejects.toThrow();
 });
 
 const hookUrl = "https://demo-simon.sprites.app";
