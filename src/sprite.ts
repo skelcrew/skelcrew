@@ -327,6 +327,9 @@ function checkName(name: string): void {
 // is created after asking, then set up, and one without skel is set up after asking.
 export async function remoteSprite(name: string, args: string[]): Promise<number> {
   checkName(name);
+  // A sleeping Sprite can take a while to answer, which looks like a hang with nothing on
+  // screen. Not in a pipe, where the output is the command's own.
+  if (process.stdout.isTTY) console.log(skelLine(`connecting to sprite:${name}…`));
   const again = ["skel", "--remote", `sprite:${name}`, ...args].map(quoted).join(" ");
   const names = spriteNames(again);
   const from = args.length === 0 ? originHere() : null;

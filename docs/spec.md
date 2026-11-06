@@ -120,7 +120,7 @@ From a laptop, `skel --remote simon@workbox` runs `ssh -t simon@workbox skel --f
 3. **It sets the Sprite up**: installs bubblewrap and copies skel's binary there.
 4. **It runs the first run inside the Sprite**, then attaches you to the lead.
 
-After that, `skel --remote sprite:demo` attaches to the lead, and `skel --remote sprite:demo ls` runs any command there, waking the Sprite if it sleeps.
+After that, `skel --remote sprite:demo` attaches to the lead, and `skel --remote sprite:demo ls` runs any command there, waking the Sprite if it sleeps. In a terminal, skel first prints `skel · connecting to sprite:demo…`, as waking can take a while.
 
 Everything must work over a plain `ssh -t` or `sprite console`: no local display, no browser on the same machine, no clipboard. Logins that need a browser, such as GitHub's and Claude's, use a code and a link you open on your laptop.
 
