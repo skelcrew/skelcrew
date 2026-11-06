@@ -160,9 +160,9 @@ test("shows the lead and every thread that isn't done, beside the agent", async 
   await ready("lead");
   const lines = seen().split("\n");
   const y = lines.findIndex((line) => line.includes("◆ lead"));
-  expect(y).toBeGreaterThan(4);
+  expect(y).toBeGreaterThan(2);
   expect(selected()).toBe("◆ lead");
-  expect(lines[4]).toContain("I am lead");
+  expect(lines[2]).toContain("I am lead");
   expect(lines[y + 1]).toContain("running · claude");
   expect(lines[y + 2]).toContain("● app-12");
   expect(lines[y + 3]).toContain("working · claude");
@@ -335,7 +335,7 @@ test("an agent drawing the full screen with the mouse gets the wheel itself", as
   wheel(64);
   await until(() => existsSync(join(home, "drawn.bytes")), "the wheel");
   await until(
-    () => readFileSync(join(home, "drawn.bytes"), "utf8").startsWith("\x1b[<64;28;1M"),
+    () => readFileSync(join(home, "drawn.bytes"), "utf8").startsWith("\x1b[<64;28;3M"),
     "the wheel at its place in the agent's window",
   );
   expect(scrolledBack()).not.toContain("1");
@@ -370,12 +370,12 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
   open("lead");
   await ready("lead");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "26 88\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "28 88\n",
     "the agent's size",
   );
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "40");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "36 118\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "38 118\n",
     "the agent to resize",
   );
   const widths = tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out.trim().split("\n");
@@ -384,7 +384,7 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
   press("M-Down");
   press("M-Down");
   await until(() => selected() === "● app-7", "app-7");
-  tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "7");
+  tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "5");
   await until(() => !seen().includes("switch"), "the hints to give way");
   await until(() => selected() === "● app-7", "the sidebar to scroll");
 });
@@ -395,14 +395,14 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
 const edge = (height: number) =>
   seen()
     .split("\n")
-    .slice(4, height)
+    .slice(2, height)
     .map((line) => `${line[sidebar - 1]}${line[sidebar] ?? " "}`);
 
 test("the sidebar's line runs to the bottom, with a blank column before the agent", async () => {
   open("lead");
   await ready("lead");
   expect(new Set(edge(30))).toEqual(new Set(["│ ", "┤ "]));
-  expect(seen().split("\n")[4]?.indexOf("I am lead")).toBe(sidebar + 1);
+  expect(seen().split("\n")[2]?.indexOf("I am lead")).toBe(sidebar + 1);
 });
 
 test("the sidebar's line stays whole however the terminal is resized", async () => {
@@ -464,16 +464,16 @@ test("the strip sits above the agent, and the agent's height stays as you switch
   press("M-Down");
   const line = "app-7  Fix the login  #34  checks passing  round 2 · codex · changes";
   await until(() => seen().includes(line), "the strip");
-  const first = seen().split("\n")[1] ?? "";
+  const [first = ""] = seen().split("\n");
   expect(first.indexOf("app-7")).toBe(sidebar + 1);
   expect(seen()).not.toContain("A test is missing.");
   expect(readFileSync(join(home, "app-7.size"), "utf8")).toBe(height);
   press("M-Up");
-  await until(() => seen().split("\n")[1]?.trimEnd().endsWith("app-12") === true, "app-12's strip");
+  await until(() => seen().split("\n")[0]?.trimEnd().endsWith("app-12") === true, "app-12's strip");
   expect(readFileSync(join(home, "app-12.size"), "utf8")).toBe(height);
 });
 
-test("one blank row sits above the header and one below it, and the agent starts under the line", async () => {
+test("the header is the first row and the thin line the second, with no blank rows", async () => {
   sql("UPDATE threads SET title = 'Fix the login', pr = 34 WHERE task = 7");
   open("lead");
   await ready("lead");
@@ -481,20 +481,18 @@ test("one blank row sits above the header and one below it, and the agent starts
   press("M-Down");
   await until(() => seen().includes("#34"), "the strip");
   const lines = seen().split("\n");
-  expect(lines[0]?.trim()).toBe("");
-  expect(lines[1]).toStartWith("  skel");
-  expect(lines[1]).toContain("#34");
-  expect(lines[2]?.trim()).toBe("");
-  expect(lines[3]).toStartWith("───");
-  expect(lines[4]).toContain("I am app-7");
+  expect(lines[0]).toStartWith("  skel");
+  expect(lines[0]).toContain("#34");
+  expect(lines[1]).toStartWith("───");
+  expect(lines[2]).toContain("I am app-7");
 });
 
 test("above the sidebar it says just skel, in white, when no laptop sent you here", async () => {
   open("lead");
   await ready("lead");
-  await until(() => seen().split("\n")[1]?.trimEnd() === "  skel", "the header");
+  await until(() => seen().split("\n")[0]?.trimEnd() === "  skel", "the header");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
-  const header = colours.split("\n")[1];
+  const header = colours.split("\n")[0];
   expect(header).toContain("\x1b[1m");
   expect(header).toContain("38;5;231m");
 });
@@ -504,13 +502,13 @@ test("each terminal says where it came from, as they can come from different lap
   await ready("lead");
   open("lead", "two");
   await ready("lead", "two");
-  const place = (window: string) => seen(window).split("\n")[1] ?? "";
+  const place = (window: string) => seen(window).split("\n")[0] ?? "";
   await until(() => place("one").startsWith("  skel · sprite:demo"), "the first place");
   await until(() => place("two").trimEnd() === "  skel", "the second header", "two");
 });
 
 // The divider under the strip, as you see it.
-const divider = () => (seen().split("\n")[3] ?? "").trimEnd();
+const divider = () => (seen().split("\n")[1] ?? "").trimEnd();
 
 test("a thin line runs under the strip, meeting the sidebar's edge, at every width", async () => {
   open("lead");
@@ -518,7 +516,7 @@ test("a thin line runs under the strip, meeting the sidebar's edge, at every wid
   await until(() => divider().length === 120, "the divider");
   expect(divider().indexOf("┬")).toBe(sidebar - 1);
   expect(divider().replace("┬", "")).toMatch(/^─+$/);
-  expect(seen().split("\n")[4]?.[sidebar - 1]).toBe("│");
+  expect(seen().split("\n")[2]?.[sidebar - 1]).toBe("│");
   for (const width of [150, 90, 120]) {
     tmux(terminal, "resize-window", "-t", "=one:", "-x", String(width), "-y", "30");
     // tmux stretches the sidebar for a moment before the screen's hook sets its width back.
@@ -532,7 +530,7 @@ test("a thin line runs under the strip, meeting the sidebar's edge, at every wid
 test("a thread's strip follows it as it changes", async () => {
   open("app-7");
   await ready("app-7");
-  await until(() => seen().split("\n")[1]?.trimEnd().endsWith("app-7") === true, "the strip");
+  await until(() => seen().split("\n")[0]?.trimEnd().endsWith("app-7") === true, "the strip");
   sql(`UPDATE threads SET review_round = 1, reviewed_by = 'codex', verdict = 'approve',
     review_line = 'Looks right.' WHERE task = 7`);
   await until(() => seen().includes("app-7  round 1 · codex · approved"), "the review");
@@ -553,10 +551,9 @@ test("what a title says is shown, never run or read as a format", async () => {
 test("clicking the strip, or turning the wheel over it, does nothing", async () => {
   open("lead");
   await ready("lead");
-  for (const y of [1, 2, 3, 4]) {
-    click(60, y);
-    type(`\x1b[<64;60;${y}M`);
-  }
+  click(60, 1);
+  click(60, 2);
+  type("\x1b[<64;60;1M");
   await Bun.sleep(200);
   const modes = tmux(screen, "list-panes", "-a", "-F", "#{pane_in_mode}").out.trim().split("\n");
   expect(modes).toEqual(["0", "0"]);

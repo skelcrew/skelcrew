@@ -34,21 +34,20 @@ export const screenSocket = (agents: string) => `${agents}-screen`;
 // are, which switching agents doesn't change. tmux saves your terminal's title on the way in
 // and puts it back on the way out, on terminals that keep one. It goes out as OSC 2, since
 // sprite writes the Sprite's name in front of a title sent as OSC 0, tmux's usual way.
-// tmux's own four status lines are at the top: a blank row, the header and strip, a blank row,
-// then the thin line. The blank rows give the header the padding the sidebar has, as one row
-// looks as wide as two columns. They are there on every session, so the agent's height stays the
-// same. Its pane stays as wide as it was, and needs no process of its own. They start empty, as
-// the sidebar fills them in, and have no clock to redraw for. tmux's border between the panes is blank: the sidebar draws its own line, so the border
+// The strip and header share the first of tmux's own two status lines, at the top, and the thin
+// line is the second, so the agent's height stays the same on every session. No blank rows go
+// around them: the thin line sits mid-cell, so half a row falls on each side of it, which is the
+// padding the header needs. Its pane stays as
+// wide as it was, and needs no process of its own. They start empty, as the sidebar fills them in, and have no clock to redraw
+// for. tmux's border between the panes is blank: the sidebar draws its own line, so the border
 // is a gap before the agent.
 const config = [
-  ["set", "-g", "status", "4"],
+  ["set", "-g", "status", "2"],
   ["set", "-g", "status-position", "top"],
   ["set", "-g", "status-interval", "0"],
   ["set", "-g", "status-style", "default"],
   ["set", "-g", "status-format[0]", ""],
   ["set", "-g", "status-format[1]", ""],
-  ["set", "-g", "status-format[2]", ""],
-  ["set", "-g", "status-format[3]", ""],
   ["set", "-g", "set-titles", "on"],
   ["set", "-s", "terminal-overrides[90]", "*:tsl=\\E]2;:fsl=\\007"],
   ["set", "-g", "prefix", "None"],
