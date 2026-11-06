@@ -50,6 +50,7 @@ import {
   threadName,
   threadOn,
 } from "./thread.ts";
+import { processTree, stillRunning } from "./tmux.ts";
 import { hookRepository, listenForWebhooks, webhookSecret } from "./webhook.ts";
 
 // Only what a branch name holds: it goes into what git fetches, where a : or * would ask
@@ -392,10 +393,27 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   const before = liveThreads(db);
   await open(path, "you");
   await open(leadSocket(), "lead");
-  // The tmux sessions are left running: agents keep working while the daemon is down.
+  // The tmux sessions are left running: agents keep working while the daemon is down. They
+  // aren't under the daemon. What is, such as a clone or a reviewer, is ended: the service
+  // stops only the daemon, and the next daemon starts that work again, so a clone left going
+  // would write into the folder the new one clones into. So the daemon waits for it. Asked
+  // rather than killed, so git can remove its lock files. The wait blocks on purpose: left to
+  // run, the daemon would publish a reviewer it just ended as a failed review, where the next
+  // daemon would have run it again, and a refresh would go on to the next clone.
   for (const signal of ["SIGTERM", "SIGINT"])
     process.on(signal, () => {
       for (const socket of sockets) rmSync(socket, { force: true });
+      const started = processTree(process.pid).slice(1);
+      const end = (pids: number[], signal: NodeJS.Signals) => {
+        for (const pid of pids)
+          try {
+            process.kill(pid, signal);
+          } catch {}
+      };
+      end(started, "SIGTERM");
+      const deadline = Date.now() + 5000;
+      while (stillRunning(started).length > 0 && Date.now() < deadline) Bun.sleepSync(50);
+      end(stillRunning(started), "SIGKILL");
       process.exit(0);
     });
   console.log(`Listening on ${path}.`);
