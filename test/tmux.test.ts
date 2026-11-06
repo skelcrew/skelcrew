@@ -15,6 +15,7 @@ import {
   hasSession,
   isIdle,
   startSession,
+  stillRunning,
   stopSession,
   typeInto,
 } from "../src/tmux.ts";
@@ -224,14 +225,9 @@ test("stopping a session kills what won't exit", async () => {
   expect(alive(Number(read("pid.txt").trim()))).toBe(false);
 });
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
+// Returns whether a process is still running. One that exited stays a zombie until the test
+// run ends, as the run adopts orphans, so asking the system for its ID would still find it.
+const alive = (pid: number) => stillRunning([pid]).length > 0;
 
 test("Ctrl-Q detaches with no prefix, and there is no status bar", () => {
   start("lead", ["sleep", "30"]);

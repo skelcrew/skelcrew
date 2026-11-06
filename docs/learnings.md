@@ -222,6 +222,22 @@ that covers the code you are about to write.
 - **`homedir()` keeps the HOME the process started with.** Setting `process.env.HOME` inside a
   running process or test changes nothing for `homedir()`, so `openDb()` there opens your real
   database. Open it in a process of its own, started with HOME in its environment.
+- **A test's clean-up only runs if the run gets that far.** A killed run skips `afterEach`,
+  and its tmux servers and daemons go on forever. A timed-out test gets its `afterEach`, but
+  its `finally` waits for a run that may already have ended. `test/leftovers.ts` ends both
+  cases, and fails any test that leaves a process. It adopts orphans, so one that exited stays
+  a zombie until the run ends, and `process.kill(pid, 0)` still finds it. Ask `stillRunning`.
+- **A fake must never wait on a file alone.** The test can remove the folder between two
+  looks for the file, and the loop then never ends. A wait also ends when the folder goes,
+  or after a limit.
+- **Stopping the daemon doesn't stop what it started.** `KillMode=process` leaves its
+  children running, so the daemon ends them itself and waits for them. It asks first, as a
+  killed git leaves lock files behind.
+- **Don't end a session while bubblewrap is starting.** Killed about 10 to 20 ms in,
+  `--die-with-parent` can miss, and the sandbox's first process lives on. It is PID 1 of its
+  namespace, so only SIGKILL from outside ends it. Wait until the fake has run.
+- **`Bun.spawn` without `env` ignores changes to `process.env`.** It hands on the environment
+  the process started with. Pass `env: process.env` to hand on a change.
 
 ## The agent's shell commands
 

@@ -13,7 +13,7 @@ import {
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { sidebarWidth } from "../src/screen.ts";
-import { startSession } from "../src/tmux.ts";
+import { startSession, stillRunning } from "../src/tmux.ts";
 
 const dbFile = join(import.meta.dir, "..", "src", "db.ts");
 const screenFile = join(import.meta.dir, "..", "src", "screen.ts");
@@ -671,8 +671,9 @@ test("a terminal that just goes leaves no session behind, and no sidebar running
   await until(() => screenSessions().length === 1, "the session to end");
   tmux(terminal, "kill-session", "-t", "=two");
   await until(() => !tmux(screen, "list-sessions").ok, "the server to end");
-  const alive = (pid: string) => existsSync(join("/proc", pid));
-  await until(() => !sidebars.some(alive), "the sidebars and clients to end");
+  // One that exited stays a zombie until the test run ends, which only this tells from running.
+  const gone = () => stillRunning(sidebars.map(Number)).length === 0;
+  await until(gone, "the sidebars and clients to end");
   expect(tmux(agents, "has-session", "-t", "=lead").ok).toBe(true);
 });
 

@@ -1,0 +1,3 @@
+# Every test run gets the check that it leaves nothing running.
+[test]
+preload = ["./test/leftovers.ts"]
