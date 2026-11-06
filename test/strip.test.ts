@@ -95,10 +95,10 @@ test("the strip starts past the sidebar, so it sits above the agent", () => {
   expect(seen(second).indexOf("round 2")).toBe(30);
 });
 
-test("above the sidebar, skel from green to blue in line with the marks, then dim where it runs", () => {
+test("above the sidebar, skel in teal in line with the marks, then dim where it runs", () => {
   const [first] = drawStrip([thread()], "app-12", size, "sprite:demo");
   expect(seen(first)).toStartWith("  skel  sprite:demo");
-  expect(first).toContain("#[bold,fg=colour71]s#[fg=colour36]k#[fg=colour31]e#[fg=colour32]l");
+  expect(first).toContain("#[bold,fg=colour79]skel#[default]");
   expect(first).toContain("#[fg=brightblack]sprite:demo#[default]");
 });
 

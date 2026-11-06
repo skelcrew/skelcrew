@@ -96,7 +96,7 @@ The ones that need you are yellow, with a `?` mark. These words only describe th
 
 Above the agent, a strip of two lines says what you are looking at. For a thread, the first line has its name, its task's title, its PR's number and whether its checks pass. The second has its latest review: the round, the reviewer, the verdict and the first line of what it said. So you can see that a review ran, and what it found, without leaving the agent. For the lead, the strip is empty, as the sidebar already shows what needs you. It is always there, so the agent's height doesn't change as you switch.
 
-Above the sidebar, beside the strip, `skel` is in bold, its letters going from green to blue, and beside it, dim, where skel runs: the name you gave `--remote`, such as `sprite:demo`, or `local` without it. A thin, faint line runs under all of this, across the whole terminal, and joins the line at the sidebar's right edge. One empty column parts that edge from the agent.
+Above the sidebar, beside the strip, `skel` is in bold teal, and beside it, dim, where skel runs: the name you gave `--remote`, such as `sprite:demo`, or `local` without it. A thin, faint line runs under all of this, across the whole terminal, and joins the line at the sidebar's right edge. One empty column parts that edge from the agent.
 
 Pick a row to look at that agent. Click it, or move with Alt-Up and Alt-Down from anywhere, even while typing to an agent. The right side switches at once, and you type straight to whichever agent it shows. So answering a builder's question is one click, with nothing to detach from. Ctrl-Q leaves the whole screen, and everything keeps running. skel then prints one line: `Your agents keep running. Run skel to come back.`
 

@@ -56,9 +56,9 @@ function aboutReview(row: Row, width: number): string {
   return `#[fg=brightblack]${shown(fitted(text, width))}`;
 }
 
-// skel's name above the sidebar, each letter a step from green to blue, in 256-colour numbers
-// so it looks the same whatever your theme.
-const skelName = "#[bold,fg=colour71]s#[fg=colour36]k#[fg=colour31]e#[fg=colour32]l#[default]";
+// skel's name above the sidebar, in its teal. A 256-colour number, so it looks the same whatever
+// your theme.
+const skelName = "#[bold,fg=colour79]skel#[default]";
 
 // Returns the header above the sidebar: skel's name, in line with the sidebar's marks, then dim
 // where it runs, then spaces out to the agent's column. Where skel runs comes from outside, so
