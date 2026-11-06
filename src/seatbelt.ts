@@ -142,7 +142,7 @@ const bothPaths = (path: string) => [path, `/System/Volumes/Data${path}`];
 // bubblewrap would get. sandbox-exec can't show a folder empty or elsewhere, only deny it, so
 // the agent gets a home and temporary folder of its own, which programs find through HOME
 // and TMPDIR. A real home folder denied would stop git, which refuses a ~/.gitconfig it may
-// not read. They live in your temporary folder, which macOS clears of old files.
+// not read. They live in your temporary folder, and go when the sandbox ends.
 export function seatbeltArgs(given: {
   home: string;
   path: string;
@@ -193,5 +193,11 @@ export function seatbeltArgs(given: {
   vars.push(`CLAUDE_CODE_TMPDIR=${ownTemp}`);
   if (socket) vars.push(`SKEL_SOCKET=${socket}`);
   const enter = 'cd "$1" && shift && exec /usr/bin/env "$@"';
-  return ["sandbox-exec", "-f", profile, "/bin/sh", "-c", enter, "sh", cwd, ...vars, ...command];
+  const sandboxed = ["sandbox-exec", "-f", profile, "/bin/sh", "-c", enter, "sh", cwd];
+  // Outside the sandbox, a shell waits for it and then removes its folders, or every review
+  // and setup command would leave a home full of caches behind. A hangup, as when tmux ends
+  // a session, reaches the agent too, so the shell lets it pass and goes on to clean up. A
+  // SIGKILL leaves the folders to macOS.
+  const after = 'own=$1; shift; trap : HUP INT TERM; "$@"; code=$?; rm -rf "$own"; exit $code';
+  return ["/bin/sh", "-c", after, "sh", own, ...sandboxed, ...vars, ...command];
 }

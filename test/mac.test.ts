@@ -95,9 +95,35 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
+// Returns the file holding a command's sandbox rules.
+const rules = (argv: string[]) => argv[argv.indexOf("-f") + 1] ?? "";
+
+test("a sandbox's home and temporary folder go when it ends, and its exit code stays", async () => {
+  const clone = join(home, "clone");
+  mkdirSync(clone);
+  const made = await asMacRun(`import { setupCommand } from ${source("sandbox.ts")};
+console.log(JSON.stringify(setupCommand(${JSON.stringify(clone)}, "echo left > $TMPDIR/file; exit 3")));`);
+  const { argv, env: given } = Command(made.out);
+  expect(existsSync(rules(argv))).toBe(true);
+  const run = Bun.spawnSync(argv, { env: given });
+  expect(run.exitCode).toBe(3);
+  expect(readdirSync(join(home, "tmp"))).toEqual([]);
+});
+
+test("a sandbox's folders go even when the terminal hangs up on it", async () => {
+  fake("claude", 'trap "exit 0" HUP; echo up > "$CLAUDE_CONFIG_DIR/up"; sleep 30 & wait');
+  const { argv, env: given } = await leadCommand();
+  const run = Bun.spawn(argv, { env: given, detached: true, stdout: "ignore", stderr: "ignore" });
+  const up = join(home, ".local", "share", "skel", "claude", "lead", "up");
+  await until(() => existsSync(up));
+  process.kill(-run.pid, "SIGHUP");
+  await run.exited;
+  expect(readdirSync(join(home, "tmp"))).toEqual([]);
+});
+
 test("an agent starts under sandbox-exec, in its folder, with a home of its own", async () => {
   const { argv, env: given, socket } = await leadCommand();
-  expect(argv[0]).toBe("sandbox-exec");
+  expect(argv).toContain("sandbox-exec");
   expect(argv).not.toContain("bwrap");
   const out = join(home, ".local", "share", "skel", "claude", "lead");
   const run = Bun.spawnSync(argv, { env: given, stderr: "pipe" });
@@ -114,14 +140,13 @@ test("an agent starts under sandbox-exec, in its folder, with a home of its own"
   expect(seen).not.toContain(`HOME=${home}\n`);
   const ownHome = seen.match(/^HOME=(.*)$/m)?.[1] ?? "";
   expect(ownHome.startsWith(join(home, "tmp", "skel-sandbox-"))).toBe(true);
-  expect(existsSync(ownHome)).toBe(true);
   const ownTemp = seen.match(/^TMPDIR=(.*)$/m)?.[1] ?? "";
   expect(seen).toContain(`CLAUDE_CODE_TMPDIR=${ownTemp}\n`);
 });
 
 test("the profile hides your home folder and brings back the agent's folders", async () => {
   const { argv, socket } = await leadCommand();
-  const text = readFileSync(argv[2] ?? "", "utf8");
+  const text = readFileSync(rules(argv), "utf8");
   const skel = join(home, ".local", "share", "skel");
   for (const folder of [home, `/System/Volumes/Data${home}`, "/private/tmp"])
     expect(text).toContain(`(deny file-read* (subpath "${folder}"))`);
@@ -138,7 +163,7 @@ test("the profile hides your home folder and brings back the agent's folders", a
 
 test("what comes back of your home folder keeps its place under the agent's own", async () => {
   const { argv } = await leadCommand();
-  const ownHome = join(argv[2] ?? "", "..", "home");
+  const ownHome = join(rules(argv), "..", "home");
   // The lead's instructions name its repositories by this path.
   const repos = join(ownHome, ".local", "share", "skel", "repos");
   expect(realpathSync(repos)).toBe(join(home, ".local", "share", "skel", "repos"));
@@ -148,7 +173,7 @@ test("what comes back of your home folder keeps its place under the agent's own"
 
 test("the agent can't reach the file its rules are in", async () => {
   const { argv } = await leadCommand();
-  const file = argv[2] ?? "";
+  const file = rules(argv);
   const folder = join(file, "..");
   expect(readdirSync(folder).sort()).toEqual(["home", "profile.sb", "tmp"]);
   const text = readFileSync(file, "utf8");
@@ -163,13 +188,13 @@ test("a setup command runs in the sandbox with no socket", async () => {
 console.log(JSON.stringify(setupCommand(${JSON.stringify(clone)}, "pwd; echo \\"$HOME\\"")));`);
   expect(made.err).toBe("");
   const { argv, env: given } = Command(made.out);
+  expect(readFileSync(rules(argv), "utf8")).toContain(
+    `(allow file-read* file-write* (subpath "${clone}"))`,
+  );
   const run = Bun.spawnSync(argv, { env: given, stdout: "pipe" });
   const [where, ownHome] = run.stdout.toString().trim().split("\n");
   expect(where).toBe(clone);
   expect(ownHome).not.toBe(home);
-  expect(readFileSync(argv[2] ?? "", "utf8")).toContain(
-    `(allow file-read* file-write* (subpath "${clone}"))`,
-  );
 });
 
 // Waits until `done` holds, for what a daemon does in its own time.
