@@ -305,6 +305,13 @@ echo renewed > "$CODEX_HOME/auth.json"`);
   expect(readFileSync(join(home, "calls"), "utf8")).toContain("sandbox-exec -f");
 });
 
+test("a reviewer gets a plain copy where the disk can't share blocks", async () => {
+  const clone = reviewable("");
+  const cp = Bun.which("cp") ?? "cp";
+  fake("cp", `test "$2" = -c && exit 1; exec ${cp} "$@"`);
+  expect(await reviewOnMac(clone)).toEqual({ verdict: "approve", body: "Fine." });
+});
+
 test("nothing a reviewer started outlives it, or keeps the review waiting", async () => {
   const pid = join(home, "pid");
   const clone = reviewable(`sleep 300 &\necho $! > ${pid}`);

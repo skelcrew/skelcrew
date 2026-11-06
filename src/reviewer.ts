@@ -87,14 +87,22 @@ async function throwaway(given: {
   mkdirSync(copy);
   const entries = readdirSync(source).filter((entry) => !kept.includes(entry));
   if (entries.length > 0) {
+    let copied = false;
+    let err = "";
     // A copy of a clone with its installed packages is large, and cp shares the blocks
-    // where the disk allows it. A Mac's cp has its own word for that.
-    const share = mac ? "-c" : "--reflink=auto";
-    const cp = ["cp", "-a", share, ...entries.map((entry) => join(source, entry))];
-    const copying = Bun.spawn([...cp, copy], { stdout: "ignore", stderr: "pipe", signal });
-    const [err, code] = await Promise.all([new Response(copying.stderr).text(), copying.exited]);
+    // where the disk allows it. A Mac's cp has its own word for that, and can fail on it
+    // across two disks, so it goes on to a plain copy.
+    const paths = entries.map((entry) => join(source, entry));
+    for (const share of mac ? [["-c"], []] : [["--reflink=auto"]]) {
+      const cp = ["cp", "-a", ...share, ...paths, copy];
+      const copying = Bun.spawn(cp, { stdout: "ignore", stderr: "pipe", signal });
+      const [said, code] = await Promise.all([new Response(copying.stderr).text(), copying.exited]);
+      err = said;
+      copied = code === 0;
+      if (copied) break;
+    }
     // A copy cut short by a cancel is reported as the cancel, after the copy is removed.
-    if (code !== 0 && !signal.aborted)
+    if (!copied && !signal.aborted)
       throw new Error(`couldn't copy ${source} for the reviewer: ${err.trim()}`);
   }
   return mac ? { mounts: [], at: copy } : { mounts: ["--bind", copy, source], at: source };
