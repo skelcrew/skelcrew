@@ -225,11 +225,12 @@ export function picked(rows: Row[], shown: string | null, size: Size, y: number)
 const esc = "\x1b";
 const input = new RegExp(`${esc}\\[1;3([AB])|${esc}\\[<0;\\d+;(\\d+)M`, "g");
 
-// Runs the sidebar until its pane goes. The session given is its own, on the screen's server.
+// Runs the sidebar until its pane goes. The session given is its own, on the screen's server,
+// and `where` says where skel runs, for the header above it.
 // tmux brings it Alt-Up, Alt-Down and clicks on its input. It looks again each second, and
 // writes only when something changed: over a slow link each write costs, and on a Sprite a
 // terminal that stays quiet lets it sleep.
-export async function runSidebar(agents: string, session: string): Promise<void> {
+export async function runSidebar(agents: string, session: string, where: string): Promise<void> {
   const db = openDb();
   const tty = paneTty(screenSocket(agents), `=${session}:.1`);
   let rows: Row[] = [];
@@ -252,7 +253,7 @@ export async function runSidebar(agents: string, session: string): Promise<void>
     rows = sidebarRows(db, runningSessions(agents), maxRounds);
     shown = shownSession(agents, tty) ?? shown;
     const width = paneWidth(screenSocket(agents), `=${session}:.1`);
-    const strip = drawStrip(rows, shown, { left: size().width + 1, width });
+    const strip = drawStrip(rows, shown, { left: size().width + 1, width }, where);
     if (strip.join("\n") !== lastStrip) {
       lastStrip = strip.join("\n");
       showStrip(screenSocket(agents), session, strip);

@@ -436,7 +436,7 @@ test("a copied skel from another commit says so and runs nothing", () => {
 test("a sidebar runs whichever laptop's build its tmux server remembers", () => {
   // A server started from one laptop hands its environment to the panes of every terminal.
   const socket = `skel-test-${process.pid}-no-server`;
-  const run = farSkel("abc1234", "def5678", ["sidebar", socket, "screen-1"]);
+  const run = farSkel("abc1234", "def5678", ["sidebar", socket, "screen-1", "local"]);
   expect(run.code).toBe(1);
   expect(run.out).toBe("");
 });

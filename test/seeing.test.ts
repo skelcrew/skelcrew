@@ -429,7 +429,7 @@ esac`,
     expect(refused.code).not.toBe(0);
     expect(refused.err).toContain("your own terminal");
     expect(calls()).toBe("");
-    const sidebar = await skel(["sidebar", "skel", "screen-1"], { SKEL_SANDBOX: "1" });
+    const sidebar = await skel(["sidebar", "skel", "screen-1", "local"], { SKEL_SANDBOX: "1" });
     expect(sidebar.err).toContain("your own terminal");
   });
 });

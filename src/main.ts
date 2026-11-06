@@ -82,8 +82,8 @@ async function run(args: string[]): Promise<void> {
     return;
   }
   // Run by the screen in its left pane, not by people, so usage leaves it out.
-  if (command === "sidebar" && sub && rest[0] && rest.length === 1) {
-    await runSidebar(sub, rest[0]);
+  if (command === "sidebar" && sub && rest[0] && rest[1] && rest.length === 2) {
+    await runSidebar(sub, rest[0], rest[1]);
     return;
   }
   if (command === "repo" && sub === "ls" && rest.length === 0) {

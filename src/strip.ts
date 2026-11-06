@@ -1,5 +1,6 @@
 // The strip: two lines above the agent saying what you are looking at. For a thread, its name,
 // task, PR and checks, then its latest review. For the lead, the threads counted by their words.
+// Above the sidebar the same lines say skel and where it runs, and a thin line runs under them.
 import type { Row } from "./sidebar.ts";
 
 type Size = { left: number; width: number };
@@ -66,15 +67,33 @@ function counted(rows: Row[]): string {
   return [...counts].map(([word, count]) => `${count} ${word}`).join(" · ");
 }
 
-// Returns the strip's two lines as tmux formats, given the rows, the session on the right, and
-// where the agent's pane is: `left` columns in, `width` wide. tmux's status lines span the whole
-// terminal, so spaces carry the text past the sidebar. It reads nothing, so what you see can be
-// tested without a terminal. Always two lines, so the agent's height never changes.
-export function drawStrip(rows: Row[], session: string | null, size: Size): [string, string] {
+// Returns the start of a status line, above the sidebar: text in a style, in line with the
+// sidebar's marks, then spaces out to the agent's column. Where skel runs comes from outside, so
+// it is cut and made safe as a title is.
+function above(text: string, style: string, left: number): string {
+  const cut = fitted(clean(text), Math.max(left - 4, 0));
+  const spare = " ".repeat(Math.max(left - 2 - Bun.stringWidth(cut), 0));
+  return `  ${style}${shown(cut)}#[default]${spare}`;
+}
+
+// Returns the strip's three lines as tmux formats, given the rows, the session on the right,
+// where the agent's pane is, `left` columns in and `width` wide, and where skel runs. tmux's
+// status lines span the whole terminal, so the first two start with the header, and the third
+// meets the line at the sidebar's edge, two columns left of the agent, with a ┬. It reads
+// nothing, so what you see can be tested without a terminal. Always three lines, so the agent's
+// height never changes.
+export function drawStrip(
+  rows: Row[],
+  session: string | null,
+  size: Size,
+  where: string,
+): [string, string, string] {
   const { left, width } = size;
-  const pad = " ".repeat(left);
+  const skel = above("skel", "#[bold]", left);
+  const place = above(where, "#[fg=brightblack]", left);
+  const line = `#[fg=brightblack]${"─".repeat(Math.max(left - 2, 0))}┬${"─".repeat(width + 1)}`;
   const row = rows.find((candidate) => candidate.session === session);
-  if (!row) return [pad, pad];
-  if (row.status === null) return [`${pad}${shown(fitted(counted(rows), width))}`, pad];
-  return [`${pad}${aboutThread(row, width)}`, `${pad}${aboutReview(row, width)}`];
+  if (!row) return [skel, place, line];
+  if (row.status === null) return [`${skel}${shown(fitted(counted(rows), width))}`, place, line];
+  return [`${skel}${aboutThread(row, width)}`, `${place}${aboutReview(row, width)}`, line];
 }

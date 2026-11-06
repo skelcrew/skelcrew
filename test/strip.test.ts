@@ -28,16 +28,14 @@ const thread = (more: Partial<Row> = {}): Row => ({
   review: { round: 2, reviewer: "codex", verdict: "approve", line: "Looks right to me." },
   ...more,
 });
-const size = { left: 29, width: 91 };
-// Removes tmux's styles and the room left for the sidebar, to read the strip as text. A ## is
-// how tmux is told to show one #.
+const size = { left: 30, width: 90 };
+// Returns a line as you see it, without tmux's styles. A ## is how tmux is told to show one #.
+const seen = (line: string) => line.replace(/#\[[^\]]*\]/g, "").replaceAll("##", "#");
+// The two lines above the agent as text, without what is above the sidebar.
 const read = (rows: Row[], shown: string | null, given = size) =>
-  drawStrip(rows, shown, given).map((line) =>
-    line
-      .replace(/#\[[^\]]*\]/g, "")
-      .replaceAll("##", "#")
-      .slice(given.left),
-  );
+  drawStrip(rows, shown, given, "local")
+    .slice(0, 2)
+    .map((line) => seen(line).slice(given.left));
 
 test("a thread's first line has its name, title, PR and checks", () => {
   expect(read([lead, thread()], "app-12")[0]).toBe(
@@ -68,31 +66,73 @@ test("what a thread doesn't have yet is left out", () => {
 
 test("a long title gives way, and the PR and checks stay on screen", () => {
   const long = thread({ title: "x".repeat(200) });
-  const [first] = read([long], "app-12", { left: 29, width: 50 });
+  const [first] = read([long], "app-12", { left: 30, width: 50 });
   expect(first).toEndWith("…  #34  checks passing");
   expect(Bun.stringWidth(first ?? "")).toBe(50);
 });
 
 test("a wide title is measured by the columns it takes, not its characters", () => {
-  const [first] = read([thread({ title: "日本語".repeat(40) })], "app-12", { left: 0, width: 50 });
+  const [first] = read([thread({ title: "日本語".repeat(40) })], "app-12", { left: 30, width: 50 });
   expect(Bun.stringWidth(first ?? "")).toBeLessThanOrEqual(50);
 });
 
 test("a long review line is cut to the width", () => {
   const review = { round: 1, reviewer: "codex", verdict: "changes", line: "y".repeat(300) };
-  const [, second] = read([thread({ review })], "app-12", { left: 0, width: 40 });
+  const [, second] = read([thread({ review })], "app-12", { left: 30, width: 40 });
   expect(second).toEndWith("…");
   expect(Bun.stringWidth(second ?? "")).toBe(40);
 });
 
 test("too narrow for anything else, it still shows what fits and never fails", () => {
   for (let width = 0; width < 40; width++)
-    for (const line of read([thread()], "app-12", { left: 0, width }))
+    for (const line of read([thread()], "app-12", { left: 30, width }))
       expect(Bun.stringWidth(line)).toBeLessThanOrEqual(width);
 });
 
 test("the strip starts past the sidebar, so it sits above the agent", () => {
-  expect(drawStrip([thread()], "app-12", size)[0]).toStartWith(" ".repeat(29));
+  const [first = "", second = ""] = drawStrip([thread()], "app-12", size, "local");
+  expect(seen(first).indexOf("app-12")).toBe(30);
+  expect(seen(second).indexOf("round 2")).toBe(30);
+});
+
+test("above the sidebar, skel in bold, then dim where it runs, in line with the marks", () => {
+  const [first, second] = drawStrip([thread()], "app-12", size, "sprite:demo");
+  expect(first).toStartWith("  #[bold]skel#[default]");
+  expect(second).toStartWith("  #[fg=brightblack]sprite:demo#[default]");
+});
+
+test("the header stays whatever you are looking at", () => {
+  for (const shown of ["lead", "app-12", "gone", null]) {
+    const [first = "", second = ""] = drawStrip([lead, thread()], shown, size, "local");
+    expect(seen(first).slice(0, 30).trimEnd()).toBe("  skel");
+    expect(seen(second).slice(0, 30).trimEnd()).toBe("  local");
+    expect(seen(second).slice(0, 30)).toHaveLength(30);
+  }
+});
+
+test("a long place is cut to fit above the sidebar, and the strip stays above the agent", () => {
+  const where = "simon@a-very-long-server-name.example.com";
+  const second = drawStrip([thread()], "app-12", size, where)[1];
+  const text = seen(second);
+  expect(text.slice(0, 30).trimEnd()).toEndWith("…");
+  expect(Bun.stringWidth(text.slice(0, 30).trimEnd())).toBe(28);
+  expect(text.indexOf("round 2")).toBe(30);
+});
+
+test("where skel runs can't run commands, restyle the strip or reach your terminal", () => {
+  const second = drawStrip([thread()], "app-12", size, "#(id) 5%\x1b[2J")[1];
+  expect(second).toContain("##(id) 5%% [2J");
+  expect(second).not.toMatch(/\p{Cc}/u);
+});
+
+test("the third line is a thin line across the whole width, joining the sidebar's edge", () => {
+  for (const given of [size, { left: 30, width: 50 }, { left: 12, width: 8 }]) {
+    const line = seen(drawStrip([thread()], "app-12", given, "local")[2]);
+    expect(Bun.stringWidth(line)).toBe(given.left + given.width);
+    expect(line.indexOf("┬")).toBe(given.left - 2);
+    expect(line.replace("┬", "")).toMatch(/^─+$/);
+  }
+  expect(drawStrip([], null, size, "local")[2]).toStartWith("#[fg=brightblack]─");
 });
 
 test("the lead's strip counts the threads by their words, those that need you first", () => {
@@ -116,13 +156,13 @@ test("an agent that isn't listed shows an empty strip of the same two lines", ()
 
 test("a title can't run commands or restyle the strip, as tmux reads the strip as a format", () => {
   const title = "#(touch /tmp/pwned) #[fg=red] #{pane_pid}";
-  const line = drawStrip([thread({ title })], "app-12", size)[0];
+  const line = drawStrip([thread({ title })], "app-12", size, "local")[0];
   expect(line).toContain("##(touch /tmp/pwned) ##[fg=red] ##{pane_pid}");
 });
 
 test("a title or review can't reach your terminal with control codes", () => {
   const review = { round: 1, reviewer: "codex", verdict: "changes", line: "a\x1b]2;owned\x07b\tc" };
-  const strip = drawStrip([thread({ title: "x\x1b[2Jy\r\nz", review })], "app-12", size);
+  const strip = drawStrip([thread({ title: "x\x1b[2Jy\r\nz", review })], "app-12", size, "local");
   expect(strip.join("")).not.toMatch(/\p{Cc}/u);
   expect(read([thread({ title: "x\x1b[2Jy", review })], "app-12")[0]).toContain("x [2Jy");
 });
