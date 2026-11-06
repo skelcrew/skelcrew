@@ -48,7 +48,7 @@ case "$CLAUDE_CONFIG_DIR" in */lead)
   # A shell gives a command run in the background /dev/null as its input, unless told.
   exec 3<&0
   while IFS= read -r line; do printf '%s\\n' "$line" >> "$CLAUDE_CONFIG_DIR/typed"; done <&3 &
-  while :; do
+  for i in $(seq 3000); do
     now=idle; test -e "$CLAUDE_CONFIG_DIR/busy" && now=busy
     if [ "$now" != "$shown" ]; then
       clear; if [ $now = busy ]; then echo "esc to interrupt"; else echo "❯"; fi; shown=$now
@@ -66,7 +66,7 @@ for (const group of JSON.parse(settings).hooks?.[event] ?? [])
   echo "$1" >> "$CLAUDE_CONFIG_DIR/ran"
 }
 echo "❯"
-while :; do
+for i in $(seq 3000); do
   test -e "$CLAUDE_CONFIG_DIR/ask" && { rm "$CLAUDE_CONFIG_DIR/ask"; hook PreToolUse AskUserQuestion; }
   test -e "$CLAUDE_CONFIG_DIR/answer" && { rm "$CLAUDE_CONFIG_DIR/answer"; hook PostToolUse AskUserQuestion; }
   test -e "$CLAUDE_CONFIG_DIR/talk" && { rm "$CLAUDE_CONFIG_DIR/talk"; hook UserPromptSubmit; }

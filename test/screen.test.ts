@@ -79,7 +79,7 @@ ${before}
 printf '\\033]0;title of ${name}\\007'
 echo "I am ${name}"
 # A resize cuts read short, which must not end the agent.
-while :; do read -r line && echo "$line" >> ${name}.typed; done
+while test -d ${JSON.stringify(home)}; do read -r line && echo "$line" >> ${name}.typed; done
 `,
     { mode: 0o755 },
   );
@@ -310,8 +310,13 @@ test("every key pressed while scrolled back reaches the agent, Enter too", async
   wheel(64);
   await until(() => scrolledBack().includes("1"), "the scrollback");
   press("Enter");
-  await until(() => existsSync(join(home, "output.typed")), "the Enter");
-  expect(readFileSync(join(home, "output.typed"), "utf8")).toBe(`${keys.join("")}\n`);
+  // The shell makes the file a moment before it writes to it.
+  const typed = () => {
+    const file = join(home, "output.typed");
+    return existsSync(file) ? readFileSync(file, "utf8") : "";
+  };
+  await until(() => typed() !== "", "the Enter");
+  expect(typed()).toBe(`${keys.join("")}\n`);
 });
 
 test("Ctrl-Q and switching still work while scrolled back", async () => {
@@ -540,7 +545,8 @@ test("what a title says is shown, never run or read as a format", async () => {
   const proof = join(home, "ran");
   const title = `100% %H #(touch ${proof}) #[fg=red] #{pane_pid}`;
   sql(`UPDATE threads SET title = '${title}' WHERE task = 7`);
-  open("app-7");
+  // Wide enough for the whole title, which holds a path as long as the test's folder.
+  open("app-7", "one", "xterm-256color", "200");
   await ready("app-7");
   await until(() => seen().includes("#(touch"), "the strip");
   expect(seen()).toContain(title);

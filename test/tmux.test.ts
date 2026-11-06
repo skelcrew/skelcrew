@@ -217,7 +217,7 @@ test("stopping a session kills what won't exit", async () => {
   start("builder", [
     "sh",
     "-c",
-    "trap '' HUP TERM; echo $$ > pid.txt; while :; do sleep 0.1; done",
+    "trap '' HUP TERM; echo $$ > pid.txt; for i in $(seq 300); do sleep 0.1; done",
   ]);
   await until(() => read("pid.txt") !== "");
   await stopSession(socket, "builder", 500);
@@ -256,7 +256,7 @@ test("a session that was never started doesn't exist", () => {
 test("idle means a quiet pane showing the prompt, and not busy", async () => {
   start("waiting", harness());
   start("busy", harness(30));
-  start("drawing", ["sh", "-c", 'echo "❯"; while :; do date +%N; sleep 0.02; done']);
+  start("drawing", ["sh", "-c", 'echo "❯"; for i in $(seq 1500); do date +%N; sleep 0.02; done']);
   start("other", ["sh", "-c", "echo ready; sleep 30"]);
   await Bun.sleep(moment * 3);
   expect(await isIdle(socket, "waiting", { moment })).toBe(true);
