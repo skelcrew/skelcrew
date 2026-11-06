@@ -205,3 +205,17 @@ await serve(${JSON.stringify(socket)});`;
   expect(readFileSync(said, "utf8")).toBe("There are no threads.\n");
   expect(readFileSync(join(home, "calls"), "utf8")).toContain("sandbox-exec -f");
 });
+
+test("stopping a session asks ps, as a Mac has no /proc", async () => {
+  const ps = Bun.which("ps") ?? "ps";
+  fake("ps", `exec ${ps} "$@"`);
+  const script = `import { startServer, startSession, stopSession } from ${source("tmux.ts")};
+startServer(${JSON.stringify(socket)});
+startSession(${JSON.stringify(socket)}, "agent", { folder: "/", command: ["sleep", "300"], env: { PATH: process.env.PATH ?? "" } });
+await stopSession(${JSON.stringify(socket)}, "agent");`;
+  fake("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
+  const stopped = await asMacRun(script);
+  expect(stopped.err).toBe("");
+  // Each column is asked for apart: a Mac's ps reads the rest of the word as the first's title.
+  expect(readFileSync(join(home, "calls"), "utf8")).toContain("ps -A -o pid= -o ppid= -o stat=");
+});
