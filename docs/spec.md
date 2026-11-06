@@ -1,6 +1,6 @@
 # Skel rewrite spec
 
-Nov 3, 2026 · @Simon
+Nov 3, 2026 · @Simon · updated Nov 6 for the launch on Nov 16
 
 ## Goal
 
@@ -24,17 +24,28 @@ The repository starts with three documents: this spec, `AGENTS.md` for how to wr
 | Build ⇄ review | A builder and a fresh adversarial reviewer on another model loop until the change is ready. A model reviewing its own work shares its blind spots. |
 | In your harness | You stay in Claude Code. There is no new app to live in. |
 
-## The demo
+## The launch
 
-Everything in this version serves this two minute demo, recorded for real with a visible clock and a time lapse.
+skel launches as a beta on Monday 16 November 2026. It is a quiet launch: the repository goes public, skel installs on macOS and Linux, and a first video shows it working. Many small launches follow, each with a short video, and we reach out to developers directly. Windows comes later.
 
-1. On the laptop: `skel --remote sprite:demo`. The lead opens, running on a Sprite.
-2. On GitHub, add the `skel` label to two issues in app and one in site. Within a minute skel starts three threads, and the lead says so.
-3. Close the laptop.
-4. Open it later and run the same command. The lead says what happened: two PRs are reviewed and green, one of them after the builder fixed a failing check on its own. The third thread needs you: its builder has a question.
-5. Pick the third thread in the sidebar and answer its question. Merge the two PRs on GitHub. skel cleans up.
+Everything until then serves two moments, and the launch is ready when someone who isn't Simon gets through both on their own machine, with no help.
 
-The demo repositories are small real apps with fast CI and real issues, not skel itself.
+1. **Install it on your laptop, and it is useful at once.** One line installs skel. The first `skel` connects GitHub and the harness and opens the lead. Add the `skel` label to an issue on GitHub, and within 2 minutes skel picks it up, starts a thread and says so. A reviewed PR follows.
+2. **Move it to a server with one command.** `skel --remote sprite:<name>`, or `skel --remote <host>` for a server of your own, and the work carries on with the laptop closed.
+
+Until the launch, the work is making these two moments smooth, fixing the bugs people hit on the way, polishing what they see, and building skel for macOS and Linux. Anything that doesn't serve them waits until after the launch. If something seems missing, ask instead of adding it.
+
+**The video.** Recorded for real, with a visible clock and a time lapse.
+
+1. On a Mac: run the install line, then `skel` in a checkout of app. The first run, then the lead.
+2. On GitHub, add the `skel` label to an issue in app. Within 2 minutes skel starts a thread, and the lead says so. A reviewed PR follows.
+3. On the laptop: `skel --remote sprite:demo`. The lead opens, running on a Sprite.
+4. On GitHub, add the `skel` label to two issues in app and one in site. Within a minute skel starts three threads, and the lead says so.
+5. Close the laptop.
+6. Open it later and run the same command. The lead says what happened: two PRs are reviewed and green, one of them after the builder fixed a failing check on its own. The third thread needs you: its builder has a question.
+7. Pick the third thread in the sidebar and answer its question. Merge the two PRs on GitHub. skel cleans up.
+
+The repositories in the video are small real apps with fast CI and real issues, not skel itself.
 
 ## Words
 
@@ -246,13 +257,14 @@ These are the parts that need care. `docs/learnings.md` explains the traps behin
 - Reviewing pull requests skel didn't open (a likely early addition)
 - Roles, phases and flows as files
 - Harnesses other than Claude Code, and Codex for the reviewer
-- macOS, and threads on other machines
+- Windows, and threads on other machines
 - Per-thread environments such as a database each (the `setup` commands only)
 - Projects with their own memory beyond `AGENTS.md`
 - Agents talking to each other, beyond skel telling the lead
 - Triggers, schedules or automations
 - Reaching you outside the lead's session, such as a `notify` command for your phone
 - Slack, Linear, Jira or forges other than GitHub
+- Errors from Sentry as tasks, planned as the launch after this one
 - Threads started from plain text, without a task. They would be named with a marker, such as `app-t1`, so they never clash with a task's name
 - Starting a thread by assigning an issue or mentioning skel on GitHub
 - A remote protocol of our own (SSH only), teams and permissions
@@ -261,16 +273,19 @@ If something seems missing, ask instead of adding it.
 
 ## Milestones
 
-Each one is something you use every day from the day it lands, and lands as small pull requests that pass `bun run check`. From milestone 2 on, skel builds skel.
+Each one is something you use every day from the day it lands, and lands as small pull requests that pass `bun run check`. skel builds skel.
 
-1. **skel on the server.** You `ssh workbox` yourself and run `skel`. The first run, the daemon as a systemd user service, `skel serve`, skel's own clones of your repositories, brought in when you run `skel` in one, `skel repo` and `skel repo trust`. The lead runs in bubblewrap inside tmux and sees your repositories. Ctrl-Q detaches, and logging out leaves everything running. This replaces herdr plus Claude.
-2. **One thread to a reviewed PR.** `skel task create`, `skel task ls`, `skel start`, `skel ps`, `skel attach`, `skel submit`, the reviewer's Codex login. Builder and reviewer loop, with the reviewer on Codex, skel pushes and opens the PR, the `skel/review` check, the round limit, needs you when approved.
-3. **Parallel and needs you.** Several threads at once across repositories, the note in the lead's session, questions marked needs you, the lead knowing which repository you attached from.
-4. **Follow-through.** Polling for failed checks, PR comments, conflicts and merges. Starting threads on issues labeled `skel`. Cleanup on merge or close. Surviving a restart with `--resume`. `skel stop`, and `skel start` on a stopped thread.
-5. **Remote, on a Sprite.** `skel --remote sprite:<name>` from the laptop: the laptop check, creating the Sprite after asking, bubblewrap and skel's binary installed in it, the first run there, the daemon as a Sprite service, keeping the Sprite awake while there is work, and a webhook to wake it. From no server at all to a running lead with one command. `skel --remote <host>` over SSH, offering to copy skel's binary with `scp` when it is missing. The lead brings in repositories when you ask for work in one.
-6. **The demo.** The sidebar. Pick the demo repositories and their tasks, run the script for real, record it.
+Already in: skel on a Linux server, one thread to a reviewed PR, parallel threads and needs you, follow-through on GitHub, `skel --remote` over SSH and on a Sprite, and the sidebar.
+
+Launch milestones, in order:
+
+1. **skel on a Mac.** The same skel, lead and flow on macOS, so you can install it on your laptop. The daemon runs as a launchd agent instead of a systemd service. Agents run in macOS's own sandbox, `sandbox-exec`, drawing the same boundary bubblewrap draws on Linux. Earlier versions of skel used it. The first run checks for `tmux`, `gh` and the harness, and says exactly what to install, such as `brew install tmux gh`. A laptop sleeps, so skel says once, after the first run, that work stops while the lid is closed, and that `skel --remote` keeps it going.
+2. **Installables.** Every release builds skel for macOS and Linux, on arm64 and x64, and publishes the binaries with release notes. One line from skel.run installs the right one. `skel --version` says which release you have.
+3. **Updates.** There will be a release most days, so updating works like Claude Code's: skel downloads and installs a new release in the background, and tells you. The sidebar shows a short notice, such as `skel 0.4.2 installed · restart to use it`. Leave with Ctrl-Q and run `skel` again, and skel restarts the daemon on the new release before attaching. Agents keep running through it, since their sessions live in tmux and only the daemon restarts. `skel --remote` keeps skel on a server or Sprite at the same release as the laptop.
+4. **The first two minutes.** From the install line to a picked up issue, without reading anything but what skel prints. The first run is short and every step says what comes next. Once it is done, the lead says how to start work: add the `skel` label to an issue. skel looks for labeled issues as soon as a repository comes in, then often enough that a label is picked up within 2 minutes.
+5. **Someone else installs it.** By Thursday 12 November, a developer who isn't Simon installs skel on their own machine and hands it a real issue, with no help. Everything that stops them is fixed before the launch.
+6. **The launch.** A README with the install line, a quickstart, what agents can and can't touch, which accounts the harness and reviewer use, the known limits, and where to report bugs: GitHub issues. Record the video. Make the repository public on 16 November.
 
 ## Done when
 
-The demo runs as written, start to finish, with nothing faked: three issues in two repositories labeled `skel` on GitHub, the laptop closed, two reviewed green PRs and one question waiting when it opens again, one CI failure fixed by its builder, and the threads' clones gone after you merge.
-
+Someone who isn't Simon installs skel on macOS or Linux from the README, with no help, and gets a reviewed PR from an issue they labeled, picked up within 2 minutes. `skel --remote sprite:<name>` takes them from there to a running lead on a Sprite with one command. The video runs as written, start to finish, with nothing faked. The repository is public.
