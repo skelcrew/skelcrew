@@ -31,7 +31,7 @@ skel launches as a beta on Monday 16 November 2026. It is a quiet launch: the re
 Everything until then serves two moments, and the launch is ready when someone who isn't Simon gets through both on their own machine, with no help.
 
 1. **Install it on your laptop, and it is useful at once.** One line installs skel. The first `skel` connects GitHub and the harness and opens the lead. Add the `skel` label to an issue on GitHub, and within 2 minutes skel picks it up, starts a thread and says so. A reviewed PR follows.
-2. **Move it to a server with one command.** `skel --remote sprite:<name>`, or `skel --remote <host>` for a server of your own, and the work carries on with the laptop closed.
+2. **Move it to a server.** `skel remote add sprite:<name>`, or `skel remote add <host>` for a server of your own, sets the machine up and prints the command that connects to it. Run that, and the work carries on with the laptop closed.
 
 Until the launch, the work is making these two moments smooth, fixing the bugs people hit on the way, polishing what they see, and building skel for macOS and Linux. Anything that doesn't serve them waits until after the launch. If something seems missing, ask instead of adding it.
 
@@ -39,10 +39,10 @@ Until the launch, the work is making these two moments smooth, fixing the bugs p
 
 1. On a Mac: run the install line, then `skel` in a checkout of app. The first run, then the lead.
 2. On GitHub, add the `skel` label to an issue in app. Within 2 minutes skel starts a thread, and the lead says so. A reviewed PR follows.
-3. On the laptop: `skel --remote sprite:demo`. The lead opens, running on a Sprite.
+3. On the laptop: `skel remote add sprite:demo`. The first run there, then skel prints `skel --remote sprite:demo`. Run it, and the lead opens, running on a Sprite.
 4. On GitHub, add the `skel` label to two issues in app and one in site. Within a minute skel starts three threads, and the lead says so.
 5. Close the laptop.
-6. Open it later and run the same command. The lead says what happened: two PRs are reviewed and green, one of them after the builder fixed a failing check on its own. The third thread needs you: its builder has a question.
+6. Open it later and run `skel --remote sprite:demo` again. The lead says what happened: two PRs are reviewed and green, one of them after the builder fixed a failing check on its own. The third thread needs you: its builder has a question.
 7. Pick the third thread in the sidebar and answer its question. Merge the two PRs on GitHub. skel cleans up.
 
 The repositories in the video are small real apps with fast CI and real issues, not skel itself.
@@ -77,6 +77,8 @@ The repository you attach from is the lead's default, as the folder is for `clau
 Before the first step, skel checks that `tmux`, `bwrap`, `gh` and the harness are installed, and if one is missing, says exactly what to install instead of failing halfway. After the last step, it installs the daemon as a systemd user service and turns on lingering (`loginctl enable-linger`), so the daemon keeps running after you log out and starts again after a reboot. On a Sprite, which has no systemd, it installs the daemon as a Sprite service instead, which the Sprite starts at boot and restarts when it crashes.
 
 Each step is skipped when it is already done. Once the first run has finished, `skel` skips it entirely and goes straight to the lead: a tool or login that goes missing later shows up where it is used.
+
+On a server or Sprite, `skel remote add` runs these steps from your laptop and installs the daemon. The lead starts at the first `skel --remote`.
 
 **The sidebar.** `skel` puts a narrow sidebar on the left of your terminal, with the agent you are looking at on the right. The sidebar lists the lead first, then every thread that isn't done, each on two lines: a mark and its full name, then, dim, a word for what it is doing and the harness doing it, such as `approved · claude`. While a review runs that is `reviewing · codex`, so you can see which agent has the thread right now. A thread whose word is `working` also ends that line with how long ago it started: `<1m`, then `5m`, `2h`, `3d`, such as `working · claude · 5m`. No other row shows a time, the lead included, as a time would write to the terminal each minute, and on a Sprite a terminal that stays quiet lets it sleep. The row you are looking at has a grey background across the whole sidebar, on all its lines. It updates on its own. At the bottom, two dim lines show the keys: `⌥↑↓ switch` and `⌃Q  quit`. They are always there, except on a terminal too short for them and a whole row, where the row comes first.
 
@@ -113,16 +115,20 @@ List headings are dim, written `Issues`, `Threads` and `PRs`, with one blank lin
 
 The sidebar only shows, switches and links. It has no commands of its own, and creates, starts and stops nothing: you ask the lead, or run `skel`.
 
+**A new machine.** `skel remote add simon@workbox` is how a server joins skel. It first says what it will do. Then it puts skel there and runs the first run on that machine. It ends by printing the command that connects, and doesn't connect: `skel --remote simon@workbox`. The skel it puts there is the laptop's release, built for that machine, or one built from your checkout when you run skel from one. skel keeps no list of remotes, as the machine itself shows whether it is set up. Running it again is safe, and picks up whatever a run that stopped partway left undone.
+
 From a laptop, `skel --remote simon@workbox` runs `ssh -t simon@workbox skel --from <owner/repo>`, passing the GitHub name of the repository you are in on the laptop, so the lead knows it too. Any command works the same way: `skel --remote simon@workbox ls`. There is no protocol of our own; SSH (and Tailscale, if you use it) does the connecting.
+
+`--remote` only connects, and never sets a machine up. On a machine where skel is missing, or its first run hasn't finished, it says so and prints the `skel remote add` to run. A mistyped name never creates or installs anything.
 
 `--remote` also keeps skel there up to date. The skel it copies to a server or Sprite carries the commit it was built from, and each command passes along the laptop's. When they differ, or either has changes not committed, skel asks before running the command: "skel on sprite:demo is from abc1234, yours is def5678. Update it?" Yes replaces skel there with one built from your checkout and restarts the daemon, and agents keep running. No runs the command on the old skel. A skel run from a checkout there is never offered an update: `git pull` there updates it.
 
-**On a Sprite.** `skel --remote sprite:demo` does the same with Fly.io's `sprite` command in place of `ssh`, so you need no server of your own. The first time, it goes from nothing to a running lead:
+**On a Sprite.** `skel remote add sprite:demo` and `skel --remote sprite:demo` do the same with Fly.io's `sprite` command in place of `ssh`, so you need no server of your own. `skel remote add sprite:demo` goes from nothing to a Sprite that is ready:
 
-1. **It checks the laptop**: that `sprite` is installed and logged in, and which repository you are in. It lists everything that is missing with the command that fixes it, such as `sprite login`, creates nothing, and ends with the command to run again.
+1. **It checks the laptop**: that `sprite` is installed and logged in. It lists everything that is missing with the command that fixes it, such as `sprite login`, creates nothing, and ends with the command to run again.
 2. **It asks before creating the Sprite**: "No Sprite named demo. Create it?", so a mistyped name never makes a second one you pay for.
-3. **It sets the Sprite up**: installs bubblewrap and copies skel's binary there.
-4. **It runs the first run inside the Sprite**, then attaches you to the lead.
+3. **It sets the Sprite up**: installs bubblewrap, puts skel there, and makes the Sprite's URL public, so GitHub's webhooks can wake it.
+4. **It runs the first run inside the Sprite**, then prints `skel --remote sprite:demo`.
 
 After that, `skel --remote sprite:demo` attaches to the lead, and `skel --remote sprite:demo ls` runs any command there, waking the Sprite if it sleeps. In a terminal, skel first prints `skel · connecting to sprite:demo…`, as waking can take a while.
 
@@ -191,7 +197,8 @@ For you, and for the lead:
 | Command | What it does |
 | --- | --- |
 | `skel [--from <owner/repo>]` | Attaches to the lead, starting the daemon and the lead if needed, and tells it which repository you are in, bringing that repository in first if it is new. `--remote` passes `--from` for you. |
-| `skel --remote <host> [command]` | Runs any skel command on the server, over `ssh -t`. With `sprite:<name>` as the host, runs it on that Sprite instead, creating it after asking if it doesn't exist. Keeps skel there up to date with your checkout, after asking. |
+| `skel --remote <host> [command]` | Runs any skel command on the server, over `ssh -t`. With `sprite:<name>` as the host, runs it on that Sprite instead. Keeps skel there up to date with your checkout, after asking. |
+| `skel remote add <host>` | Sets up a server, or with `sprite:<name>` a Sprite, creating it after asking if it doesn't exist. Runs the first run there and prints the `skel --remote` command that connects. Run it on your laptop. |
 | `skel serve` | Runs the daemon in the foreground, for systemd or a Sprite service. One per machine. |
 | `skel repo ls` | Lists the repositories skel works on, with their short names. |
 | `skel repo rm <name>` | Removes skel's clone of a repository. It refuses while the repository has live threads, and names them. Only you can run it: the lead never needs to, and asks you instead. |
@@ -294,4 +301,4 @@ Launch milestones, in order:
 
 ## Done when
 
-Someone who isn't Simon installs skel on macOS or Linux from the README, with no help, and gets a reviewed PR from an issue they labeled, picked up within 2 minutes. `skel --remote sprite:<name>` takes them from there to a running lead on a Sprite with one command. The video runs as written, start to finish, with nothing faked. The repository is public.
+Someone who isn't Simon installs skel on macOS or Linux from the README, with no help, and gets a reviewed PR from an issue they labeled, picked up within 2 minutes. `skel remote add sprite:<name>` takes them from there to a Sprite that is ready, and the command it prints opens the lead there. The video runs as written, start to finish, with nothing faked. The repository is public.
