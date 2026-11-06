@@ -3,10 +3,12 @@
 # release, checks its checksum and puts it in ~/.local/bin. Run as curl ... | sh, with no sudo.
 set -eu
 
-# The one place that says where releases are downloaded from. Each release's binaries and its
-# SHA256SUMS file sit directly under this address. To move them, change this line and
-# RELEASES_REPO in .github/workflows/release.yml.
-base="${SKEL_DOWNLOAD_BASE:-https://github.com/skelcrew/skel/releases/latest/download}"
+# The one place that says where releases live. The latest release's binaries and SHA256SUMS
+# file are under $base/latest/download, and those of v0.4.2 under $base/download/v0.4.2, which
+# is how GitHub lays them out. The release build reads this line, so that skel can fetch its own
+# release for a server. To move releases, change this line and RELEASES_REPO in
+# .github/workflows/release.yml, and keep that layout.
+base="${SKEL_DOWNLOAD_BASE:-https://github.com/skelcrew/skel/releases}"
 
 # Says why skel can't be installed and stops, leaving things as they were.
 fail() {
@@ -114,8 +116,8 @@ main() {
   trap 'exit 1' HUP INT TERM
   cd "$folder"
   echo "Downloading skel for $system on $cpu."
-  download "$base/$asset" skel
-  download "$base/SHA256SUMS" SHA256SUMS
+  download "$base/latest/download/$asset" skel
+  download "$base/latest/download/SHA256SUMS" SHA256SUMS
   verify "$asset"
   chmod 755 skel
   version=$(./skel --version) || fail "the download won't start on this machine, so it wasn't installed."

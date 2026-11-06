@@ -12,6 +12,11 @@ export const built = typeof SKEL_BUILD === "string" ? SKEL_BUILD : undefined;
 // the stamp can't be mistaken.
 export const release = built !== undefined && /^\d+\.\d+\.\d+$/.test(built) ? built : "";
 
+// Where releases live, stamped in by the release build from the install script, the one place
+// that says so.
+declare const SKEL_RELEASES: string;
+export const releases = typeof SKEL_RELEASES === "string" ? SKEL_RELEASES : "";
+
 // Follows the commit of a build made with changes not committed. Such a build can't say
 // what it holds, so it never counts as up to date.
 export const dirty = "-dirty";

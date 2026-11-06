@@ -33,7 +33,7 @@ beforeAll(() => {
   server = Bun.serve({
     port: 0,
     fetch(request) {
-      const name = new URL(request.url).pathname.slice(1);
+      const name = new URL(request.url).pathname.replace("/latest/download/", "");
       asked.push(name);
       const file = served.get(name);
       return file === undefined ? new Response("no", { status: 404 }) : new Response(file);
@@ -174,7 +174,7 @@ describe.each([[["sh"]], [["dash"]], [["bash", "--posix"]]])("under %j", (shell)
     served.delete("skel-linux-x64");
     const done = await install(shell);
     expect(done.code).not.toBe(0);
-    expect(done.err).toContain(`http://127.0.0.1:${server.port}/skel-linux-x64`);
+    expect(done.err).toContain(`http://127.0.0.1:${server.port}/latest/download/skel-linux-x64`);
     expect(existsSync(installed())).toBe(false);
     expect(readdirSync(join(home, ".local", "bin"))).toEqual([]);
   });

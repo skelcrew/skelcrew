@@ -80,6 +80,14 @@ test("builds all four binaries, stamped with the release", () => {
   expect(calls.match(/ \S+\/src\/main\.ts /g)).toHaveLength(4);
 });
 
+test("each binary knows where releases live, from the one line in the install script", () => {
+  build("0.4.2");
+  const install = readFileSync(join(root, "install.sh"), "utf8");
+  const releases = install.match(/SKEL_DOWNLOAD_BASE:-([^}]+)}/)?.[1];
+  const calls = readFileSync(join(home, "calls"), "utf8");
+  expect(calls.split(`--define SKEL_RELEASES="${releases}"`)).toHaveLength(5);
+});
+
 test("lists each binary's checksum the way sha256sum and the install script read it", () => {
   build("0.4.2");
   const sums = assets.map((name) => {

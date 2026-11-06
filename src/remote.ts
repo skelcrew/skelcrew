@@ -2,12 +2,21 @@
 // laptop, and set a server up for that. --remote offers to replace skel there when it was
 // built from another commit than yours. Your laptop can be a Mac, so this file loads nothing
 // of the skel that runs on the server.
-import { mkdtempSync, rmSync, writeSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { originHere } from "./origin.ts";
 import { skelLine } from "./say.ts";
-import { built, checkoutFolder, dirty, git, laptopBuild, readable } from "./version.ts";
+import {
+  built,
+  checkoutFolder,
+  dirty,
+  git,
+  laptopBuild,
+  readable,
+  release,
+  releases,
+} from "./version.ts";
 
 // A command over ssh gets a bare PATH: no login shell reads ~/.profile, and Ubuntu's
 // ~/.bashrc stops early when nobody types into it. So ~/.local/bin, where skel copies
@@ -249,25 +258,52 @@ else echo "elsewhere $f"; fi`;
   );
 }
 
-// Builds skel as one file for a server or Sprite, which is Linux on x64 whatever the laptop
-// runs, hands it to copy, and removes it after. Built from this checkout each time, so the
-// machine gets the skel you run here, stamped with its build so it can tell when yours moves
-// on.
+// Downloads this release's Linux skel to a file, so a skel installed from a release can set up a
+// server. It has no sources to build from, and is often on a Mac. Stops on a download that
+// doesn't match the release's checksums, as the install script does.
+async function downloadLinuxSkel(file: string): Promise<void> {
+  const name = "skel-linux-x64";
+  const fetched = async (asset: string) => {
+    const address = `${releases}/download/v${release}/${asset}`;
+    const response = await fetch(address);
+    if (!response.ok) throw new Error(`couldn't download ${address} (${response.status})`);
+    return response;
+  };
+  console.log(`Downloading skel ${release} for Linux.`);
+  const sums = await (await fetched("SHA256SUMS")).text();
+  const listed = sums.split("\n").find((line) => line.endsWith(`  ${name}`));
+  const bytes = await (await fetched(name)).arrayBuffer();
+  const sum = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+  if (listed !== `${sum}  ${name}`)
+    throw new Error(`the download failed its checksum, so skel wasn't copied`);
+  await Bun.write(file, bytes);
+  chmodSync(file, 0o755);
+}
+
+// Builds skel from this checkout as one file for a server or Sprite, which is Linux on x64
+// whatever the laptop runs, stamped with its build so it can tell when yours moves on.
+async function buildLinuxSkel(file: string): Promise<void> {
+  console.log("Building skel for Linux.");
+  const main = join(import.meta.dir, "main.ts");
+  const target = "--target=bun-linux-x64";
+  const build = laptopBuild();
+  const stamp = build ? ["--define", `SKEL_BUILD=${JSON.stringify(build)}`] : [];
+  const argv = ["bun", "build", "--compile", target, ...stamp, main, "--outfile", file];
+  if ((await run(argv)) !== 0) throw new Error("bun build failed, so skel wasn't copied");
+}
+
+// Gets the skel you run here for a server or Sprite, hands it to copy, and removes it after: your
+// release when you run one, or else one built from this checkout.
 export async function withLinuxSkel(copy: (file: string) => Promise<void>): Promise<void> {
   // A single-file skel runs its modules from a folder only it sees, with no sources to
   // build from.
-  if (import.meta.dir.startsWith("/$bunfs"))
+  const single = import.meta.dir.startsWith("/$bunfs");
+  if (single && !release)
     throw new Error("this skel is a single file and can't build one: run skel from a checkout");
   const folder = mkdtempSync(join(tmpdir(), "skel-"));
   try {
     const file = join(folder, "skel");
-    console.log("Building skel for Linux.");
-    const main = join(import.meta.dir, "main.ts");
-    const target = "--target=bun-linux-x64";
-    const build = laptopBuild();
-    const stamp = build ? ["--define", `SKEL_BUILD=${JSON.stringify(build)}`] : [];
-    const argv = ["bun", "build", "--compile", target, ...stamp, main, "--outfile", file];
-    if ((await run(argv)) !== 0) throw new Error("bun build failed, so skel wasn't copied");
+    await (single ? downloadLinuxSkel(file) : buildLinuxSkel(file));
     await copy(file);
   } finally {
     rmSync(folder, { recursive: true, force: true });

@@ -1,7 +1,7 @@
 // The release build: makes skel for macOS and Linux, on arm64 and x64, from this one machine,
 // with the checksums and release notes, into dist/. Run by the release workflow on a version
 // tag, as bun scripts/build-release.ts 0.4.2. It publishes nothing.
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // Each release file and the Bun target it is built for. On x64 the baseline build, which runs
@@ -17,13 +17,23 @@ const targets = [
 const dist = "dist";
 const main = join(import.meta.dir, "..", "src", "main.ts");
 
-// Builds one binary, stamped with its release. By default a binary built by Bun reads any .env
+// Returns where releases live, from the install script's line that says so, so that moving them
+// stays a change to that one line.
+function releases(): string {
+  const install = readFileSync(join(import.meta.dir, "..", "install.sh"), "utf8");
+  const found = install.match(/SKEL_DOWNLOAD_BASE:-([^}]+)}/)?.[1];
+  if (!found) throw new Error("install.sh doesn't say where releases live");
+  return found;
+}
+
+// Builds one binary, stamped with its release and where releases live. By default a binary built by Bun reads any .env
 // and bunfig.toml in the folder it runs in. skel runs in your projects, so a project's .env
 // would land in skel's environment, and from there could reach the agents.
 function compile(version: string, file: string, target: string): void {
   const argv = ["bun", "build", "--compile", `--target=${target}`];
   argv.push("--no-compile-autoload-dotenv", "--no-compile-autoload-bunfig");
   argv.push("--define", `SKEL_BUILD=${JSON.stringify(version)}`);
+  argv.push("--define", `SKEL_RELEASES=${JSON.stringify(releases())}`);
   argv.push(main, "--outfile", join(dist, file));
   const built = Bun.spawnSync(argv, { stdout: "inherit", stderr: "inherit" });
   if (!built.success) throw new Error(`bun build failed for ${target}`);
