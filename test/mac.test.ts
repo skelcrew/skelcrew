@@ -245,7 +245,8 @@ printf '%s' '{"verdict":"approve","body":"Fine."}' > "$out"`,
 // Runs a review as a Mac would, and returns its verdict.
 async function reviewOnMac(clone: string, more = "") {
   const ran = await asMacRun(`import { review } from ${source("reviewer.ts")};
-console.log(JSON.stringify(await review({ clone: ${JSON.stringify(clone)}, issue: { title: "t", body: "b" }, base: "origin/main", model: "opus", ${more} })));`);
+console.log(JSON.stringify(await review({ clone: ${JSON.stringify(clone)}, issue: { title: "t", body: "b" }, base: "origin/main", model: "opus", ${more} })));
+process.exit(0);`);
   expect(ran.err).toBe("");
   return JSON.parse(ran.out);
 }
@@ -282,6 +283,16 @@ test("nothing a reviewer started outlives it, or keeps the review waiting", asyn
       return true;
     }
   });
+});
+
+test("a process that left the reviewer's group can't keep the review waiting", async () => {
+  const pid = join(home, "pid");
+  const clone = reviewable(`setsid sleep 60 &\necho $! > ${pid}\nsleep 0.3`);
+  try {
+    expect((await reviewOnMac(clone)).verdict).toBe("approve");
+  } finally {
+    process.kill(Number(readFileSync(pid, "utf8")), "SIGKILL");
+  }
 });
 
 test("a review that runs out of time ends, with all it started", async () => {

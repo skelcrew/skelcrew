@@ -251,11 +251,15 @@ async function reviewNow(given: {
           process.kill(-proc.pid, "SIGKILL");
         } catch {}
       });
-    const [out, err, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
+    // A process that left the group can still hold the output open, and a Mac can't find it
+    // once its parent is gone. So there the output gets a moment after the reviewer ends, or
+    // the review, and every review queued after it, would wait forever.
+    const read = (output: ReadableStream<Uint8Array>) => {
+      const text = new Response(output).text();
+      if (!mac) return text;
+      return Promise.race([text, proc.exited.then(() => Bun.sleep(1000)).then(() => "")]);
+    };
+    const [out, err, code] = await Promise.all([read(proc.stdout), read(proc.stderr), proc.exited]);
     const after = stopped();
     if (after) return after;
     if (code !== 0)
