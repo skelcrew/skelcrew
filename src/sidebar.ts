@@ -81,8 +81,6 @@ const onShade: Record<number, string> = {
 };
 // The line at the sidebar's edge, a shade quieter than dim text, as it only parts two things.
 const edge = "38;5;237";
-// The most rows ISSUES and PRS each show. Few, as THREADS is the list you work in.
-const most = 5;
 // The keys you need most, at the bottom of the sidebar.
 const hints = ["   ⌥↑↓ switch", "   ⌃Q  quit"];
 
@@ -179,12 +177,12 @@ const OpenRow = z.object({
   threaded: z.coerce.boolean(),
 });
 
-// Returns ISSUES and PRS as the daemon's last poll saved them: it reads the database and never
-// asks GitHub, as it runs each second and only what shows is read. Newest first, across
+// Returns ISSUES and PRS as the daemon's last poll saved them, up to `most` rows of each: it
+// reads the database and never asks GitHub, as it runs each second. Newest first, across
 // repositories, with issues that have a thread last. A thread that is done has left THREADS,
 // so its issue counts as waiting again. A PR from a thread takes the word of its row. GitHub
 // numbers issues and PRs from one counter, so no issue can be taken for a thread's PR.
-export function sidebarLists(db: Database, rows: Row[]): Lists {
+export function sidebarLists(db: Database, rows: Row[], most: number): Lists {
   // Returns one list, of the kind saved in the database, with the path GitHub shows it at.
   const read = (kind: string, path: string, column: string): List => {
     const found = db.query(`SELECT i.owner, i.repo, r.name, i.number, i.title,
@@ -263,18 +261,29 @@ function linkLines(link: Link, width: number): string[] {
   );
 }
 
-// Returns a list's lines, or none for an empty one: its heading, up to `few` rows, then a count
-// of the rest. Rows come with the dim ones last, so those are the first to be left out.
-function listLines(heading: string, list: List, few: number, width: number): Line[] {
-  if (list.links.length === 0) return [];
+// Returns a list's lines for a third of `height` lines: its heading, as many rows as fit, then a
+// count of the rest. Rows come with the dim ones last, so those are the first to be left out.
+// A third with room for just one row keeps the row, and the count gives way. An empty list says
+// so, as its third stays either way.
+function listLines(heading: string, list: List, height: number, width: number): Line[] {
+  const top = { text: paint(grey, `   ${heading}`) };
+  if (list.links.length === 0) return [top, { text: paint(grey, "     none") }];
+  const fit = Math.floor((height - 1) / 2);
+  const few = list.total > fit ? Math.max(Math.floor((height - 2) / 2), 1) : fit;
   const links = list.links.slice(0, few);
   const rest = list.total - links.length;
   return [
-    { text: paint(grey, `   ${heading}`) },
+    top,
     ...links.flatMap((link) => linkLines(link, width).map((text) => ({ text }))),
     ...(rest > 0 ? [{ text: paint(grey, `     + ${rest} more`) }] : []),
-  ];
+  ].slice(0, height);
 }
+
+// Returns lines with blank ones added, out to a height.
+const held = (lines: Line[], height: number) => [
+  ...lines,
+  ...Array<Line>(height - lines.length).fill({ text: "" }),
+];
 
 // Returns what fits of the threads in a number of lines, by whole rows from the top, just far
 // enough down to keep the row you are looking at in view, so Alt-Down never moves off the bottom.
@@ -291,9 +300,10 @@ function scrolled(blocks: Line[][], here: number, room: number): Line[] {
 // Returns the lines above the hints, and how many there can be. The hints take the bottom two,
 // until the sidebar can't hold them and the whole row you are looking at: then they give way, as
 // the rows are what you pick from and the keys are also in skel's help.
-// THREADS comes first in a short terminal, as it is the list you move through. ISSUES and PRS
-// shrink until every thread fits, down to one row each. Past that THREADS scrolls between them,
-// and once that would leave it too little to move in, they go, and THREADS has the whole sidebar.
+// ISSUES, THREADS and PRS each have a third of those lines, however full, so each list stays in
+// the same place on screen, and what doesn't divide goes to THREADS. On a terminal too short for
+// a heading and a row in each third, or for the row you are looking at in THREADS, ISSUES and PRS
+// go, and THREADS has the whole sidebar, as it is the list you move through.
 function layout(
   rows: Row[],
   lists: Lists,
@@ -307,27 +317,20 @@ function layout(
   const here = rows.findIndex((row) => row.session === shown);
   const tallest = blocks[here]?.length ?? 2;
   const room = size.height >= tallest + hints.length ? size.height - hints.length : size.height;
+  const third = Math.floor((room - 2) / 3);
+  const middle = room - 2 - 2 * third;
+  if (third < 3 || middle < tallest + 1) return { lines: scrolled(blocks, here, room), room };
   const divider = { text: paint(edge, "─".repeat(Math.max(width, 0))), joins: true };
-  // Returns ISSUES and PRS at a number of rows, with what parts each from THREADS.
-  const others = (few: number) => {
-    const issues = listLines("ISSUES", lists.issues, few, width);
-    const prs = listLines("PRS", lists.prs, few, width);
-    return {
-      above: issues.length > 0 ? [...issues, divider] : [],
-      below: prs.length > 0 ? [divider, ...prs] : [],
-    };
-  };
-  // Returns the lines left for threads beside those, after THREADS' own heading.
-  const left = ({ above, below }: ReturnType<typeof others>) =>
-    room - above.length - below.length - 1;
-  let few = most;
-  while (few > 1 && left(others(few)) < blocks.flat().length) few--;
-  const sides = others(few);
-  const { above, below } = sides;
-  if ((above.length === 0 && below.length === 0) || left(sides) < tallest + 2)
-    return { lines: scrolled(blocks, here, room), room };
   const heading = { text: paint(grey, "   THREADS") };
-  return { lines: [...above, heading, ...scrolled(blocks, here, left(sides)), ...below], room };
+  const lines = [
+    ...held(listLines("ISSUES", lists.issues, third, width), third),
+    divider,
+    heading,
+    ...held(scrolled(blocks, here, middle - 1), middle - 1),
+    divider,
+    ...listLines("PRS", lists.prs, third, width),
+  ];
+  return { lines, room };
 }
 
 // Returns the whole sidebar as lines, given the rows, the lists, the session on the right, and
@@ -336,10 +339,9 @@ function layout(
 // beside it is blank, which leaves a gap before the agent.
 export function draw(rows: Row[], lists: Lists, shown: string | null, size: Size): string {
   const { lines, room } = layout(rows, lists, shown, size);
-  const gap = Array<Line>(room - lines.length).fill({ text: "" });
   const width = size.width - 1;
   const keys = hints.map((hint) => ({ text: paint(grey, hint.slice(0, Math.max(width, 0))) }));
-  const all: Line[] = [...lines, ...gap, ...(room < size.height ? keys : [])];
+  const all: Line[] = [...held(lines, room), ...(room < size.height ? keys : [])];
   return all
     .map(({ text, joins }) => `${filled(text, width)}${paint(edge, joins ? "┤" : "│")}`)
     .join("\n");
@@ -401,7 +403,8 @@ export async function runSidebar(agents: string, session: string, where: string)
   // Looks at the database and tmux again, and redraws what that changed.
   const refresh = () => {
     rows = sidebarRows(db, runningSessions(agents), maxRounds, Date.now());
-    lists = sidebarLists(db, rows);
+    // A row takes two lines, so the sidebar's height is more than any list can show.
+    lists = sidebarLists(db, rows, size().height);
     shown = shownSession(agents, tty) ?? shown;
     const width = paneWidth(screenSocket(agents), `=${session}:.1`);
     const strip = drawStrip(rows, shown, { left: size().width + 1, width }, where);
