@@ -47,6 +47,21 @@ export const Thread = z.object({
   asking: z.coerce.boolean(),
   // Why the thread started needing you, until a note saying so is typed into the lead.
   noting: z.string().nullable(),
+  // The task's title when the thread started, for the strip, which looks each second and so
+  // can't ask GitHub. Null on a thread an older skel started.
+  title: z.string().nullable(),
+  // What the PR's CI says, without skel's own review check, as last polled. Null with no CI,
+  // or while the commit it would be about is still on its way to GitHub.
+  checks: z.enum(["passing", "failing", "pending"]).nullable(),
+  // The harness of the review waiting or running, which can differ from the latest finished
+  // one's once you change your config.
+  reviewer: z.enum(["codex", "claude"]).nullable(),
+  // The latest finished review: its round, reviewer, verdict and the first line of what it said.
+  // Each one is saved here, so it reaches the thread's log with the rest of the thread.
+  reviewed_by: z.enum(["codex", "claude"]).nullable(),
+  review_round: z.number().nullable(),
+  verdict: z.enum(["approve", "changes", "failed"]).nullable(),
+  review_line: z.string().nullable(),
 });
 export type Thread = z.infer<typeof Thread>;
 
@@ -106,6 +121,12 @@ export function record(
       | "last_check"
       | "asking"
       | "noting"
+      | "checks"
+      | "reviewer"
+      | "reviewed_by"
+      | "review_round"
+      | "verdict"
+      | "review_line"
     >
   >,
   why?: string,
@@ -158,7 +179,7 @@ export function findThread(db: Database, repo: string, task: number): Thread {
 }
 
 // Opens the screen with the builder of the thread named repo-task on the right, and returns
-// when you leave with Ctrl-]. Only from your own terminal: it takes over the screen, which
+// when you leave with Ctrl-Q. Only from your own terminal: it takes over the screen, which
 // the lead can't hand to you.
 export async function attachToThread(tmux: string, repo: string, task: number): Promise<void> {
   const thread = findThread(openDb(), repo, task);
@@ -245,12 +266,19 @@ export async function startThread(
       last_check: 0,
       asking: false,
       noting: null,
+      title,
+      checks: null,
+      reviewer: null,
+      reviewed_by: null,
+      review_round: null,
+      verdict: null,
+      review_line: null,
     };
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run(
-      `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session,
-        last_review, last_comment, last_check) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0)`,
-      [owner, repo, task, thread.folder, thread.branch, thread.base, thread.status, null],
+      `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, title,
+        last_review, last_comment, last_check) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0)`,
+      [owner, repo, task, thread.folder, thread.branch, thread.base, thread.status, null, title],
     );
     log(thread);
     return thread;

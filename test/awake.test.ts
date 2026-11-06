@@ -30,6 +30,13 @@ function thread(change: Partial<Thread> = {}): Thread {
     last_check: 0,
     asking: false,
     noting: null,
+    title: null,
+    checks: null,
+    reviewer: null,
+    reviewed_by: null,
+    review_round: null,
+    verdict: null,
+    review_line: null,
     ...change,
   };
 }

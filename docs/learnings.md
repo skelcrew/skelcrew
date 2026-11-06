@@ -201,6 +201,16 @@ that covers the code you are about to write.
   `client-resized` doesn't run for this.
 - **Ghostty ignores saving and restoring the title** (`CSI 22 t`, `CSI 23 t`). There, only
   your shell's prompt puts the title back, through Ghostty's shell integration.
+- **tmux reads a status line as a format, and runs what it says.** `#(...)` in `status-format`
+  starts a shell command, `#[...]` restyles the line, and `%` goes through strftime. Text from
+  outside, such as an issue's title, needs `#` and `%` doubled, and its control codes removed.
+- **`set -t =name` fails with "no such session".** An option's target takes `=name:`.
+- **Every `set` redraws the whole screen.** About 3.9 KB on a 120 by 40 terminal, so set a
+  status line only when it changed, and both lines in one run.
+- **Ctrl-Q is XON, and is not eaten.** A tty has `ixon` on until tmux makes it raw, and the key
+  reached tmux locally, through `ssh -t` and through `sprite exec --tty`.
+- **`sprite exec` prints the command it runs.** A test that waits for text in the output
+  matches that line at once, unless the text it waits for is split up in the command.
 - **tmux 3.6 doesn't hold a program's synchronized frames back.** It marks only its own full
   redraws, so a frame written in two halves arrives in two, attached directly or nested.
 

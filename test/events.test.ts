@@ -1,7 +1,7 @@
 // What each event on a thread's PR means for the thread, decided from plain data: the
 // thread's row and what GitHub returned, with no clock, files or network.
 import { expect, test } from "bun:test";
-import { decide, labeledToStart } from "../src/events.ts";
+import { ciChecks, decide, labeledToStart } from "../src/events.ts";
 import type { Check, PullRequest } from "../src/github.ts";
 import type { Thread } from "../src/thread.ts";
 
@@ -27,6 +27,13 @@ function thread(change: Partial<Thread> = {}): Thread {
     last_check: 0,
     asking: false,
     noting: null,
+    title: null,
+    checks: null,
+    reviewer: null,
+    reviewed_by: null,
+    review_round: null,
+    verdict: null,
+    review_line: null,
     ...change,
   };
 }
@@ -351,4 +358,16 @@ test("a labeled issue whose thread failed or is done gets no new thread", () => 
     { number: 13, title: "Fix the login redirect" },
   ];
   expect(labeledToStart(threads, issues)).toEqual([]);
+});
+
+test("a PR's CI reads as passing, failing or still running, and skel's own check doesn't count", () => {
+  const review: Check = { kind: "status", name: "skel/review", state: "FAILURE", url: null };
+  const passed = run(30, "test", "COMPLETED", "SUCCESS");
+  const failed = run(31, "build", "COMPLETED", "FAILURE");
+  const going = run(32, "lint", "IN_PROGRESS", null);
+  expect(ciChecks(pr({ checks: [] }))).toBeNull();
+  expect(ciChecks(pr({ checks: [review] }))).toBeNull();
+  expect(ciChecks(pr({ checks: [review, passed] }))).toBe("passing");
+  expect(ciChecks(pr({ checks: [passed, going] }))).toBe("pending");
+  expect(ciChecks(pr({ checks: [failed, going] }))).toBe("failing");
 });

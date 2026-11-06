@@ -46,6 +46,13 @@ console.log(JSON.stringify(liveThreads(openDb())));`;
       last_review: null,
       last_comment: null,
       last_check: null,
+      title: null,
+      checks: null,
+      reviewer: null,
+      reviewed_by: null,
+      review_round: null,
+      verdict: null,
+      review_line: null,
     }),
   ]);
 });

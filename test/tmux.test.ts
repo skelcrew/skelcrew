@@ -233,11 +233,12 @@ function alive(pid: number): boolean {
   }
 }
 
-test("Ctrl-] detaches with no prefix, and there is no status bar", () => {
+test("Ctrl-Q detaches with no prefix, and there is no status bar", () => {
   start("lead", ["sleep", "30"]);
   const tmux = (args: string[]) => Bun.spawnSync(["tmux", "-L", socket, ...args]).stdout.toString();
   expect(tmux(["show-options", "-g", "status"])).toBe("status off\n");
-  expect(tmux(["list-keys", "-T", "root", "C-]"])).toContain("detach-client");
+  expect(tmux(["list-keys", "-T", "root", "C-q"])).toContain("detach-client");
+  expect(tmux(["list-keys", "-T", "root", "C-]"])).toBe("");
 });
 
 // Without it, tmux draws Claude Code's redraws in pieces, and over a slow link such as a

@@ -23,6 +23,8 @@ let daemon: Server | undefined;
 
 const hint =
   "skel has no repositories yet. Run skel in a checkout of one, or ask the lead for one by its GitHub name.";
+// What skel says once you leave the screen.
+const left = "Your agents keep running. Run skel to come back.\n";
 const clone = (full: string) => join(home, ".local", "share", "skel", "repos", full);
 const trustFile = () => join(home, ".config", "skel", "trusted");
 
@@ -227,12 +229,12 @@ test("asks GitHub nothing and fetches nothing for a repository skel has", async 
     writeFileSync(join(home, "calls"), "");
     const again = await skel([], "", checkout);
     expect(again.err).toBe("");
-    expect(again.out).toBe("");
+    expect(again.out).toBe(left);
     expect(calls()).not.toContain("gh");
     expect(attached()).toBe(true);
   }
   writeFileSync(join(home, "calls"), "");
-  expect((await skel(["--from", "simon/app"])).out).toBe("");
+  expect((await skel(["--from", "simon/app"])).out).toBe(left);
   expect(calls()).not.toContain("gh");
   expect(existsSync(join(clone("simon/app"), "NEWS"))).toBe(false);
 });
@@ -242,23 +244,23 @@ test("does nothing in a repository that isn't on GitHub, or has no origin", asyn
   git(checkout, "remote", "set-url", "origin", "https://gitlab.com/simon/app");
   const elsewhere = await skel([], "", checkout);
   expect(elsewhere.err).toBe("");
-  expect(elsewhere.out).toBe(`${hint}\n`);
+  expect(elsewhere.out).toBe(`${hint}\n${left}`);
   expect(attached()).toBe(true);
   git(checkout, "remote", "remove", "origin");
   const none = await skel([], "", checkout);
   expect(none.err).toBe("");
-  expect(none.out).toBe(`${hint}\n`);
+  expect(none.out).toBe(`${hint}\n${left}`);
   expect(existsSync(clone("simon/app"))).toBe(false);
 });
 
 test("outside a repository, says how to bring one in only while skel has none", async () => {
   const first = await skel([]);
   expect(first.err).toBe("");
-  expect(first.out).toBe(`${hint}\n`);
+  expect(first.out).toBe(`${hint}\n${left}`);
   expect(calls()).not.toContain("gh");
   expect(attached()).toBe(true);
   await skel([], "", onGitHub("simon/app", "WRITE"));
-  expect((await skel([])).out).toBe("");
+  expect((await skel([])).out).toBe(left);
 });
 
 test("--from brings in the repository it names, wherever skel runs", async () => {

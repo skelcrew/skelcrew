@@ -5,13 +5,14 @@ import { onSprite, startTmuxService } from "./sprite.ts";
 
 // Sent on stdin with each new session instead of kept in a file, so there is no file to
 // find or keep in step, and a server an older skel started picks up changes. Your own
-// ~/.tmux.conf never applies: -f /dev/null replaces it. Ctrl-] with no prefix and no status
+// ~/.tmux.conf never applies: -f /dev/null replaces it. Ctrl-Q with no prefix and no status
 // bar make attaching feel like being inside Claude Code. A session whose command fails
 // keeps its last screen, so skel can say why it ended instead of finding it gone. tmux only
 // passes synchronized output on to terminals it knows have it, and without it Claude Code's
 // redraws arrive in pieces, so the prompt flickers over a slow link such as a Sprite's.
 // Terminals without it ignore the codes. A fixed index, since this runs again with each
-// new session and appending would add it every time.
+// new session and appending would add it every time. The key an older skel bound goes, since
+// a server keeps its keys while agents run.
 //
 // The wheel scrolls back through an agent's output. Claude Code draws in one of two ways. Its
 // classic drawing leaves its output in tmux's history, so copy mode shows it. Its full-screen
@@ -22,7 +23,8 @@ import { onSprite, startTmuxService } from "./sprite.ts";
 // reaches it too, as send-keys alone sends the key that ran it. mode-keys, since tmux picks
 // vi's table, and keeps these keys out of it, when $EDITOR says vi.
 const config = `set -g status off
-bind -n C-] detach-client
+unbind -n C-]
+bind -n C-q detach-client
 set -g remain-on-exit failed
 set -s terminal-features[90] "*:sync"
 set -g mouse on
@@ -217,6 +219,25 @@ export function runningSessions(socket: string): string[] {
 // it. Throws when the pane is gone, since the sidebar then has nothing to switch.
 export const paneTty = (socket: string, target: string) =>
   mustTmux(socket, ["display-message", "-p", "-t", target, "#{pane_tty}"]).trim();
+
+// Returns the width of a pane, or 0 once it is gone.
+export const paneWidth = (socket: string, target: string) =>
+  Number(tmux(socket, ["display-message", "-p", "-t", target, "#{pane_width}"]).out.trim());
+
+// Sets the two lines of a session's strip, as tmux formats. Each set makes tmux redraw the whole
+// screen, so both go in one run, for one redraw, and only when a line changed. The lone ";"
+// separates tmux commands, so it skips literal().
+export function showStrip(socket: string, session: string, lines: [string, string]): void {
+  const set = (index: number) => [
+    "set",
+    "-t",
+    `=${session}:`,
+    `status-format[${index}]`,
+    literal(lines[index] ?? ""),
+  ];
+  const argv = ["tmux", "-L", socket, "-f", "/dev/null", ...set(0), ";", ...set(1)];
+  Bun.spawnSync(argv, { env: cleanEnv(), stdout: "ignore", stderr: "ignore" });
+}
 
 // Returns the session a client on the given terminal is showing, or null while it has none,
 // such as the moment between an agent ending and the client attaching to the lead.
