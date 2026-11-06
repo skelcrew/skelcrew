@@ -25,7 +25,8 @@ let laptop = { folder: "", main: "", commit: "" };
 // skel does when the laptop's build differs. Without one, it is a skel from before builds
 // carried their commit.
 const serverSkel = (built?: string) => `#!/bin/sh
-${built === undefined ? "" : `test -n "$SKEL_LAPTOP_BUILD" && test "$SKEL_LAPTOP_BUILD" != "${built}" && { echo "skel on $SKEL_REMOTE_NAME is from ${built}"; exit 98; }\n`}echo "skel on the server got $# arguments"
+${built === undefined ? "" : `test -n "$SKEL_LAPTOP_BUILD" && test "$SKEL_LAPTOP_BUILD" != "${built}" && { echo "skel on $SKEL_REMOTE_NAME is from ${built}"; exit 98; }\n`}test "$1" = first-run && { echo "the first run on the server"; test ! -f first-run-fails; exit; }
+echo "skel on the server got $# arguments"
 for word in "$@"; do echo "[$word]"; done
 exit 3
 `;
@@ -457,5 +458,53 @@ test("skel update is gone", async () => {
   const run = await skel(["update", "--remote", "simon@workbox"]);
   expect(run.err).toBe("skel: that isn't a skel command. Run skel --help to see them.\n");
   expect(run.code).toBe(1);
+  expect(calls()).toBe("");
+});
+
+test("skel remote add copies skel to a server, runs the first run, and prints how to connect", async () => {
+  const run = await skel(["remote", "add", "simon@workbox"]);
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("skel · setting up simon@workbox: copying skel there and running");
+  expect(run.out).toContain("the first run on the server\n");
+  expect(run.out).toEndWith(
+    "skel · simon@workbox is ready. Connect to it with:\n  skel --remote simon@workbox\n",
+  );
+  const lines = calls().split("\n");
+  expect(lines[0]).toBe(onServer(" first-run"));
+  expect(lines).toContain(onServer(" first-run", null));
+  expect(readFileSync(join(home, "server", ".local", "bin", "skel"), "utf8")).toBe(
+    serverSkel(laptop.commit),
+  );
+});
+
+// A setup that stopped partway is finished by running it again, so this must be safe.
+test("skel remote add on a server with skel copies nothing and runs the first run", async () => {
+  installed(laptop.commit);
+  const run = await skel(["remote", "add", "simon@workbox"]);
+  expect(run.code).toBe(0);
+  expect(calls()).toBe(`${onServer(" first-run")}\n`);
+});
+
+test("skel remote add prints no way to connect when the first run fails", async () => {
+  installed(laptop.commit);
+  writeFileSync(join(home, "server", "first-run-fails"), "");
+  const run = await skel(["remote", "add", "simon@workbox"]);
+  expect(run.code).toBe(1);
+  expect(run.out).not.toContain("skel --remote");
+});
+
+test("skel remote add needs a host", async () => {
+  const run = await skel(["remote", "add"]);
+  expect(run.err).toContain("skel remote add needs a host");
+  expect(run.code).toBe(1);
+  expect(calls()).toBe("");
+});
+
+test("an agent can't set up a machine", () => {
+  const env = { PATH: "/usr/bin:/bin", HOME: home, SKEL_SANDBOX: "1" };
+  const said = (args: string[]) =>
+    Bun.spawnSync([process.execPath, laptop.main, ...args], { env }).stderr.toString();
+  expect(said(["remote", "add", "simon@workbox"])).toContain("only for your own terminal");
+  expect(said(["first-run"])).toContain("only for your own terminal");
   expect(calls()).toBe("");
 });

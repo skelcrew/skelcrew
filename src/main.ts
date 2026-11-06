@@ -1,7 +1,7 @@
 // skel's command line: reads the command and hands it to the file that does it.
 import { help } from "./help.ts";
-import { keepingTitle, outdated, outOfDate, remote } from "./remote.ts";
-import { remoteSprite } from "./sprite.ts";
+import { addServer, keepingTitle, outdated, outOfDate, remote } from "./remote.ts";
+import { addSprite, remoteSprite } from "./sprite.ts";
 
 // What an agent may not run, in its words. Its sandbox hides skel's database, your settings
 // and your logins, so these would act on an empty database or ask what nobody can answer.
@@ -14,6 +14,8 @@ const yoursOnly: Record<string, string> = {
   "repo trust": "trusting a repository",
   attach: "attaching to a thread",
   sidebar: "showing the sidebar",
+  "first-run": "setting up this machine",
+  "remote add": "setting up a machine",
 };
 
 // Returns the repository and task in a name such as app-13, or nothing when it isn't one.
@@ -43,9 +45,18 @@ async function run(args: string[]): Promise<void> {
       ),
     );
   const named = command === undefined || command === "--from" ? "" : command;
-  const refused = yoursOnly[command === "repo" ? `repo ${sub}` : named];
+  const refused =
+    yoursOnly[command === "repo" || command === "remote" ? `${command} ${sub}` : named];
   if (process.env.SKEL_SANDBOX === "1" && refused)
     throw new Error(`${refused} is only for your own terminal, not for agents`);
+  if (command === "remote" && sub === "add" && rest[0] && rest.length === 1) {
+    const host = rest[0];
+    process.exit(
+      await keepingTitle(() =>
+        host.startsWith("sprite:") ? addSprite(host.slice("sprite:".length)) : addServer(host),
+      ),
+    );
+  }
   // Loaded only for commands that run here, so skel --remote never loads the parts made for
   // the Linux server, such as the sandbox and the daemon's lock, on a laptop that can be a
   // Mac.
@@ -76,6 +87,11 @@ async function run(args: string[]): Promise<void> {
   if (args.length === 0 || (command === "--from" && sub && rest.length === 0)) {
     firstRun();
     await attachToLead("skel", await bringInFrom(sub));
+    return;
+  }
+  // Run by skel remote add on the machine it sets up, not by people, so usage leaves it out.
+  if (command === "first-run" && args.length === 1) {
+    firstRun();
     return;
   }
   if (command === "serve" && args.length === 1) {
@@ -188,9 +204,11 @@ async function run(args: string[]): Promise<void> {
   console.error(
     first === "--remote"
       ? "skel: --remote needs a host, such as skel --remote simon@workbox or skel --remote sprite:demo."
-      : known.includes(first)
-        ? `skel: skel ${first} was given arguments it doesn't take. Run skel --help to see how to use it.`
-        : "skel: that isn't a skel command. Run skel --help to see them.",
+      : first === "remote"
+        ? "skel: skel remote add needs a host, such as skel remote add simon@workbox or skel remote add sprite:demo."
+        : known.includes(first)
+          ? `skel: skel ${first} was given arguments it doesn't take. Run skel --help to see how to use it.`
+          : "skel: that isn't a skel command. Run skel --help to see them.",
   );
   process.exit(1);
 }

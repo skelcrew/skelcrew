@@ -1,7 +1,7 @@
-// skel --remote: runs a skel command on your server over ssh -t, from your laptop. It offers
-// to copy skel there when it is missing, and to replace it when it was built from another
-// commit than yours. Your laptop can be a Mac, so this file loads nothing of the skel that
-// runs on the server.
+// skel --remote and skel remote add: run a skel command on your server over ssh -t, from your
+// laptop, and set a server up for that. --remote offers to replace skel there when it was
+// built from another commit than yours. Your laptop can be a Mac, so this file loads nothing
+// of the skel that runs on the server.
 import { mkdtempSync, rmSync, writeSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -86,20 +86,29 @@ export async function keepingTitle<T>(go: () => Promise<T>): Promise<T> {
   }
 }
 
+// Returns how to run skel on the host with these words. It takes the environment to add to
+// what it always passes, and gives back the exit code.
+const onServer = (host: string, words: string[]) => (env: string[]) =>
+  run([
+    "ssh",
+    "-t",
+    host,
+    [
+      "env",
+      pathOnServer,
+      quoted(`SKEL_REMOTE_NAME=${host}`),
+      ...env.map(quoted),
+      "skel",
+      ...words.map(quoted),
+    ].join(" "),
+  ]);
+
 // Runs a skel command on the host and returns its exit code. Plain skel passes the
 // repository you are in on the laptop, so the lead knows it too. When the host has no
 // skel, offers to copy it there, then runs the command.
 export async function remote(host: string, args: string[]): Promise<number> {
   const from = args.length === 0 ? originHere() : null;
-  const words = (from ? ["--from", from] : args).map(quoted);
-  const named = quoted(`SKEL_REMOTE_NAME=${host}`);
-  const there = (env: string[]) =>
-    run([
-      "ssh",
-      "-t",
-      host,
-      ["env", pathOnServer, named, ...env.map(quoted), "skel", ...words].join(" "),
-    ]);
+  const there = onServer(host, from ? ["--from", from] : args);
   const code = await upToDate(host, there, server(host));
   // The server's shell exits 127 when it finds no skel to run. skel itself never does: it
   // exits 1 on any error.
@@ -112,6 +121,32 @@ export async function remote(host: string, args: string[]): Promise<number> {
   }
   await withLinuxSkel((file) => copySkel(host, file));
   return there([]);
+}
+
+// Sets up your server for --remote and returns the exit code, for skel remote add.
+export async function addServer(host: string): Promise<number> {
+  console.log(skelLine(`setting up ${host}: copying skel there and running the first run.`));
+  return addMachine(host, onServer(host, ["first-run"]), server(host));
+}
+
+// Puts skel on a server or Sprite if it isn't there, and runs the first run through `there`,
+// without attaching, so that logging in there stays separate from starting to work. Ends
+// with the command that connects. Running it again is safe, as the first run skips what is
+// done, which is how a setup that stopped partway gets finished.
+export async function addMachine(
+  where: string,
+  there: (env: string[]) => Promise<number>,
+  machine: Machine,
+): Promise<number> {
+  let code = await upToDate(where, there, machine);
+  if (code === 127) {
+    await withLinuxSkel(machine.copy);
+    code = await there([]);
+  }
+  if (code !== 0) return code;
+  console.log(skelLine(`${where} is ready. Connect to it with:`));
+  console.log(`  skel --remote ${where}`);
+  return 0;
 }
 
 // Runs skel on a server or Sprite through `there`, which takes the environment to add to
