@@ -182,8 +182,8 @@ function layout(rows: Row[], shown: string | null, size: Size) {
 
 // Returns the whole sidebar as lines, given the rows, the session on the right, and the
 // sidebar's size. It reads nothing, so what you see can be tested without a terminal. Every line
-// fills the pane, with the line beside the agent in the last column. tmux's own border is blank,
-// so that line and the border make a gap before the agent.
+// fills the pane and ends with the sidebar's edge, in the last column. tmux's own border beside
+// it is blank, which leaves a gap before the agent.
 export function draw(rows: Row[], shown: string | null, size: Size): string {
   const { blocks, first, room } = layout(rows, shown, size);
   const list = blocks
