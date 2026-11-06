@@ -252,7 +252,7 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
 // a PR's word, then the title with what room is left. skel may run on another machine than your
 // browser, so your terminal opens the link. The title comes from outside, so it is made safe.
 function linkLine(link: Link, width: number): string {
-  const name = fitted(link.name, Math.max(width - 3, 0));
+  const name = fitted(link.name, Math.max(width - 4, 0));
   const room = width - 4 - Bun.stringWidth(name);
   const word = fitted(link.word, room);
   const title = clean(link.title);

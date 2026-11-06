@@ -430,6 +430,15 @@ test("a long title is cut to the row, and every line still reaches the edge", ()
   for (const line of screen.split("\n")) expect(Bun.stringWidth(line)).toBe(sidebarWidth);
 });
 
+test("a name that fills the row is cut too, so the row never wraps", () => {
+  for (const length of [24, 25, 26, 27, 30, 40]) {
+    const name = "n".repeat(length);
+    const rows = list([link(name, "A title", { word: "approved" }), link(name, "A title")]);
+    const screen = drawLists(threads, { issues: rows, prs: rows }, "lead", tall);
+    for (const line of screen.split("\n")) expect(Bun.stringWidth(line)).toBe(sidebarWidth);
+  }
+});
+
 test("control codes in a title never reach your terminal", () => {
   const bad = list([link("app-31", "evil\x1b]8;;http://x\x07\x1b[2Jtitle")]);
   const screen = drawLists(threads, { ...nothing, issues: bad }, "lead", tall);
