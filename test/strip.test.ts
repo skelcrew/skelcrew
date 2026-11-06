@@ -95,34 +95,35 @@ test("the strip starts past the sidebar, so it sits above the agent", () => {
   expect(seen(second).indexOf("round 2")).toBe(30);
 });
 
-test("above the sidebar, skel in bold, then dim where it runs, in line with the marks", () => {
-  const [first, second] = drawStrip([thread()], "app-12", size, "sprite:demo");
-  expect(first).toStartWith("  #[bold]skel#[default]");
-  expect(second).toStartWith("  #[fg=brightblack]sprite:demo#[default]");
+test("above the sidebar, skel from green to blue, then dim where it runs, in line with the marks", () => {
+  const [first] = drawStrip([thread()], "app-12", size, "sprite:demo");
+  expect(seen(first)).toStartWith("  skel  sprite:demo");
+  expect(first).toContain("#[bold,fg=colour71]s#[fg=colour36]k#[fg=colour31]e#[fg=colour32]l");
+  expect(first).toContain("#[fg=brightblack]sprite:demo#[default]");
 });
 
-test("the header stays whatever you are looking at", () => {
+test("the header stays whatever you are looking at, with nothing under it", () => {
   for (const shown of ["lead", "app-12", "gone", null]) {
     const [first = "", second = ""] = drawStrip([lead, thread()], shown, size, "local");
-    expect(seen(first).slice(0, 30).trimEnd()).toBe("  skel");
-    expect(seen(second).slice(0, 30).trimEnd()).toBe("  local");
-    expect(seen(second).slice(0, 30)).toHaveLength(30);
+    expect(seen(first).slice(0, 30).trimEnd()).toBe("  skel  local");
+    expect(seen(first).slice(0, 30)).toHaveLength(30);
+    expect(seen(second).slice(0, 30).trim()).toBe("");
   }
 });
 
 test("a long place is cut to fit above the sidebar, and the strip stays above the agent", () => {
   const where = "simon@a-very-long-server-name.example.com";
-  const second = drawStrip([thread()], "app-12", size, where)[1];
-  const text = seen(second);
+  const first = drawStrip([thread()], "app-12", size, where)[0];
+  const text = seen(first);
   expect(text.slice(0, 30).trimEnd()).toEndWith("…");
   expect(Bun.stringWidth(text.slice(0, 30).trimEnd())).toBe(28);
-  expect(text.indexOf("round 2")).toBe(30);
+  expect(text.indexOf("app-12")).toBe(30);
 });
 
 test("where skel runs can't run commands, restyle the strip or reach your terminal", () => {
-  const second = drawStrip([thread()], "app-12", size, "#(id) 5%\x1b[2J")[1];
-  expect(second).toContain("##(id) 5%% [2J");
-  expect(second).not.toMatch(/\p{Cc}/u);
+  const first = drawStrip([thread()], "app-12", size, "#(id) 5%\x1b[2J")[0];
+  expect(first).toContain("##(id) 5%% [2J");
+  expect(first).not.toMatch(/\p{Cc}/u);
 });
 
 test("the third line is a thin line across the whole width, joining the sidebar's edge", () => {
@@ -132,21 +133,12 @@ test("the third line is a thin line across the whole width, joining the sidebar'
     expect(line.indexOf("┬")).toBe(given.left - 2);
     expect(line.replace("┬", "")).toMatch(/^─+$/);
   }
-  expect(drawStrip([], null, size, "local")[2]).toStartWith("#[fg=brightblack]─");
+  expect(drawStrip([], null, size, "local")[2]).toStartWith("#[fg=colour237]─");
 });
 
-test("the lead's strip counts the threads by their words, those that need you first", () => {
-  const rows = [
-    lead,
-    thread({ name: "a", word: "working", needsYou: false }),
-    thread({ name: "b", word: "approved", needsYou: true }),
-    thread({ name: "c", word: "approved", needsYou: true }),
-  ];
-  expect(read(rows, "lead")).toEqual(["2 approved · 1 working", ""]);
-});
-
-test("the lead's strip says so when there are no threads", () => {
-  expect(read([lead], "lead")).toEqual(["no threads", ""]);
+test("the lead's strip is empty, as the sidebar already shows what needs you", () => {
+  const rows = [lead, thread({ word: "approved", needsYou: true })];
+  expect(read(rows, "lead")).toEqual(["", ""]);
 });
 
 test("an agent that isn't listed shows an empty strip of the same two lines", () => {

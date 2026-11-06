@@ -31,7 +31,7 @@ const read = (screen: string) =>
   plain(screen)
     .split("\n")
     .map((text) => text.slice(0, -1).trimEnd());
-// The sidebar's lines, without the blank ones and the two hints at the bottom.
+// The sidebar's rows, with the empty lines and the two hints at the bottom left out.
 const listed = (screen: string) => read(screen).slice(0, -2).filter(Boolean);
 
 test("lists the lead first, then each thread on two lines: a mark and name, then word and harness", () => {
@@ -48,24 +48,6 @@ test("lists the lead first, then each thread on two lines: a mark and name, then
     "  ○ site-7",
     "    reviewing · codex",
   ]);
-});
-
-test("one blank line parts the rows", () => {
-  const rows = [lead, thread("app-12")];
-  expect(read(draw(rows, "lead", size)).slice(0, 6)).toEqual([
-    "  ◆ lead",
-    "    running · claude",
-    "",
-    "  ● app-12",
-    "    working · claude",
-    "",
-  ]);
-});
-
-test("the blank line between rows has no blue, even beside the row you are looking at", () => {
-  const lines = draw([lead, thread("app-12")], "lead", size).split("\n");
-  expect(lines[1]).toContain(blue);
-  expect(lines[2]).not.toContain(blue);
 });
 
 test("the word and harness are grey, so the names stand out", () => {
@@ -85,11 +67,11 @@ test("colour comes with a mark: blue for working, green for done", () => {
   expect(draw([thread("app-12", { status: "done" })], "lead", size)).toContain("\x1b[32m✓");
 });
 
-// The lines of a drawn sidebar that have the dark blue background of the row you are looking at.
-const blue = "\x1b[48;5;18m";
-const selected = (screen: string) => screen.split("\n").filter((line) => line.includes(blue));
+// The lines of a drawn sidebar that have the grey background of the row you are looking at.
+const shaded = "\x1b[48;5;238m";
+const selected = (screen: string) => screen.split("\n").filter((line) => line.includes(shaded));
 
-test("the row you are looking at is dark blue, and nothing is when it isn't listed", () => {
+test("the row you are looking at is shaded, and nothing is when it isn't listed", () => {
   const rows = [lead, thread("app-12")];
   expect(read(selected(draw(rows, "app-12", size)).join("\n"))).toEqual([
     "  ● app-12",
@@ -107,18 +89,18 @@ test("the mark stays in its column, whether or not you are looking at the row", 
   expect(column("lead")).toBe(column("app-12"));
 });
 
-test("the blue runs the whole width, on every line of the row, and ends with it", () => {
+test("the grey runs the whole width, on every line of the row, and ends with it", () => {
   const name = "a-very-long-repository-name-1234";
   const lines = selected(draw([lead, thread(name)], name, size));
   expect(lines).toHaveLength(3);
   for (const line of lines) {
     expect(Bun.stringWidth(line.split("\x1b[49m")[0] ?? "")).toBe(size.width - 1);
-    // A full reset inside the line would end the blue partway across.
+    // A full reset inside the line would end the grey partway across.
     expect(line).not.toContain("\x1b[0m");
   }
 });
 
-test("on the blue, every colour is a fixed light one, as a theme's own can vanish there", () => {
+test("on the grey, every colour is a fixed light one, as a theme's own can vanish there", () => {
   const rows = [
     thread("app-1"),
     thread("app-2", { status: "done" }),
@@ -162,16 +144,16 @@ test("a grey line fills the last column of every line, from top to bottom, at an
         const lines = draw(list, shown, { width: 29, height }).split("\n");
         expect(lines).toHaveLength(height);
         for (const line of lines) {
-          expect(line).toContain("\x1b[90m│");
+          expect(line).toContain("\x1b[38;5;237m│");
           expect(Bun.stringWidth(line)).toBe(29);
           expect(plain(line).at(-1)).toBe("│");
         }
       }
 });
 
-test("the blue stops at the line, which keeps its own background", () => {
+test("the grey stops at the line, which keeps its own background", () => {
   const [first = ""] = selected(draw([lead], "lead", size));
-  expect(first).toEndWith("\x1b[49m\x1b[90m│\x1b[22;39m");
+  expect(first).toEndWith("\x1b[49m\x1b[38;5;237m│\x1b[22;39m");
 });
 
 test("two hints with the keys stay at the bottom, below however few rows there are", () => {
@@ -187,9 +169,9 @@ test("a list too long for the sidebar scrolls above the hints, and never runs in
   expect(read(draw(rows, "app-4", short))).toEqual([
     "  ● app-3",
     "    working · claude",
-    "",
     "  ● app-4",
     "    working · claude",
+    "  ● app-5",
     "  ⌥↑↓ switch",
     "  ⌃Q  quit",
   ]);
@@ -243,25 +225,19 @@ test("moving from an agent that isn't listed goes to the lead", () => {
 
 test("a click on either line of a row picks it, but no row, nor an agent that isn't running", () => {
   const rows = [lead, thread("app-1"), thread("app-2", { running: false })];
+  expect(picked(rows, "lead", size, 2)).toBe("app-1");
   expect(picked(rows, "lead", size, 3)).toBe("app-1");
-  expect(picked(rows, "lead", size, 4)).toBe("app-1");
-  expect(picked(rows, "lead", size, 6)).toBeNull();
+  expect(picked(rows, "lead", size, 4)).toBeNull();
   expect(picked(rows, "lead", size, 9)).toBeNull();
-});
-
-test("a click on the blank line between rows picks nothing", () => {
-  const rows = [lead, thread("app-1"), thread("app-2")];
-  expect(picked(rows, "app-1", size, 2)).toBeNull();
-  expect(picked(rows, "app-1", size, 5)).toBeNull();
-  expect(picked(rows, "app-1", size, 6)).toBe("app-2");
 });
 
 test("a click follows the list as it scrolls, and on a hint picks nothing", () => {
   const rows = [lead, ...[1, 2, 3, 4, 5].map((n) => thread(`app-${n}`))];
   const short = { width: 29, height: 7 };
   expect(picked(rows, "app-4", short, 0)).toBe("app-3");
-  expect(picked(rows, "app-4", short, 2)).toBeNull();
+  expect(picked(rows, "app-4", short, 2)).toBe("app-4");
   expect(picked(rows, "app-4", short, 3)).toBe("app-4");
+  expect(picked(rows, "app-4", short, 4)).toBe("app-5");
   expect(picked(rows, "app-4", short, 5)).toBeNull();
   expect(picked(rows, "app-4", short, 6)).toBeNull();
 });
@@ -269,8 +245,7 @@ test("a click follows the list as it scrolls, and on a hint picks nothing", () =
 test("a click goes to the row below a name that took two lines", () => {
   const rows = [thread("a-very-long-repository-name-1234"), thread("app-1")];
   expect(picked(rows, "lead", size, 2)).toBe("a-very-long-repository-name-1234");
-  expect(picked(rows, "lead", size, 3)).toBeNull();
-  expect(picked(rows, "lead", size, 4)).toBe("app-1");
+  expect(picked(rows, "lead", size, 3)).toBe("app-1");
 });
 
 const state: Thread = {

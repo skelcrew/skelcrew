@@ -45,18 +45,20 @@ const marks: Record<Thread["status"], [string, number]> = {
   failed: ["×", grey],
   done: ["✓", green],
 };
-// The row you are looking at is dark blue. 256-colour numbers, as they reach your terminal
-// through both tmux servers and sprite, and mean the same whatever your theme. So do the
-// colours on the blue: a theme's own blue or grey can vanish there, and its default text can
-// be dark.
-const darkBlue = "48;5;18";
+// The row you are looking at has a grey background, which is also what parts it from the rows
+// around it. 256-colour numbers, as they reach your terminal through both tmux servers and
+// sprite, and mean the same whatever your theme. So do the colours on the grey: a theme's own
+// blue or grey can vanish there, and its default text can be dark.
+const shade = "48;5;238";
 const white = "1;38;5;231";
-const onBlue: Record<number, string> = {
+const onShade: Record<number, string> = {
   [blue]: "38;5;117",
   [green]: "38;5;120",
   [yellow]: "38;5;221",
   [grey]: "38;5;250",
 };
+// The line at the sidebar's edge, a shade quieter than dim text, as it only parts two things.
+const edge = "38;5;237";
 // The keys you need most, at the bottom of the sidebar.
 const hints = ["  ⌥↑↓ switch", "  ⌃Q  quit"];
 
@@ -132,7 +134,7 @@ const filled = (line: string, width: number) =>
 
 // Returns one row as lines: a mark and the whole name, which goes on to more lines when it is
 // too long, then the word and harness. A cut name could hide what tells two threads apart. An
-// agent that isn't running is dim, as it can't be picked. The one you are looking at is blue
+// agent that isn't running is dim, as it can't be picked. The one you are looking at is shaded
 // across the whole width, on all its lines.
 function rowLines(row: Row, here: boolean, width: number): string[] {
   // Returns part of the name as this row shows it.
@@ -140,10 +142,10 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
     if (here) return paint(white, name);
     return row.running ? name : paint(grey, name);
   };
-  // Returns text in a colour, or the one that stands in for it on the blue.
-  const tinted = (code: number, text: string) => paint(here ? (onBlue[code] ?? code) : code, text);
-  // Returns a line with the blue behind it, out to the end of the row.
-  const band = (line: string) => `\x1b[${darkBlue}m${filled(line, width)}\x1b[49m`;
+  // Returns text in a colour, or the one that stands in for it on the grey.
+  const tinted = (code: number, text: string) => paint(here ? (onShade[code] ?? code) : code, text);
+  // Returns a line with the grey behind it, out to the end of the row.
+  const band = (line: string) => `\x1b[${shade}m${filled(line, width)}\x1b[49m`;
   const room = Math.max(width - 4, 1);
   const [first = "", ...rest] = row.name.match(new RegExp(`.{1,${room}}`, "g")) ?? [];
   let mark = tinted(grey, "◆");
@@ -165,16 +167,16 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
 // take the bottom two, until the sidebar can't hold them and the whole row you are looking at:
 // then they give way, as the rows are what you pick from and the keys are also in skel's help.
 // A list taller than its space scrolls by whole rows, just enough to keep that row in view, so
-// Alt-Down never moves off the bottom. One blank line follows each row, to part them.
+// Alt-Down never moves off the bottom.
 function layout(rows: Row[], shown: string | null, size: Size) {
   const blocks = rows.map((row) => rowLines(row, row.session === shown, size.width - 1));
   const here = rows.findIndex((row) => row.session === shown);
   const tallest = blocks[here]?.length ?? 2;
   const room = size.height >= tallest + hints.length ? size.height - hints.length : size.height;
-  let used = blocks.slice(0, here + 1).flat().length + here;
+  let used = blocks.slice(0, here + 1).flat().length;
   let first = 0;
   while (first < here && used > room) {
-    used -= (blocks[first]?.length ?? 0) + 1;
+    used -= blocks[first]?.length ?? 0;
     first++;
   }
   return { blocks, first, room };
@@ -186,15 +188,12 @@ function layout(rows: Row[], shown: string | null, size: Size) {
 // it is blank, which leaves a gap before the agent.
 export function draw(rows: Row[], shown: string | null, size: Size): string {
   const { blocks, first, room } = layout(rows, shown, size);
-  const list = blocks
-    .slice(first)
-    .flatMap((block) => [...block, ""])
-    .slice(0, room);
+  const list = blocks.slice(first).flat().slice(0, room);
   const gap = Array<string>(room - list.length).fill("");
   const text = size.width - 1;
   const keys = hints.map((hint) => paint(grey, hint.slice(0, Math.max(text, 0))));
   const lines = [...list, ...gap, ...(room < size.height ? keys : [])];
-  return lines.map((line) => `${filled(line, text)}${paint(grey, "│")}`).join("\n");
+  return lines.map((line) => `${filled(line, text)}${paint(edge, "│")}`).join("\n");
 }
 
 // Returns the session one row up or down, for Alt-Up and Alt-Down, or null at either end.
@@ -208,14 +207,11 @@ export function stepped(rows: Row[], shown: string | null, by: 1 | -1): string |
 }
 
 // Returns the session of the row at a line of the sidebar, counted from 0, for a click, or
-// null when there is no row there or its agent isn't running. Any line of a row picks it, and
-// the blank line after it picks nothing.
+// null when there is no row there or its agent isn't running. Any line of a row picks it.
 export function picked(rows: Row[], shown: string | null, size: Size, y: number): string | null {
   const { blocks, first, room } = layout(rows, shown, size);
   if (y >= room) return null;
-  const lines = blocks
-    .slice(first)
-    .flatMap((block, i) => [...block.map(() => rows[first + i]), undefined]);
+  const lines = blocks.slice(first).flatMap((block, i) => block.map(() => rows[first + i]));
   const row = lines[y];
   return row?.running ? row.session : null;
 }

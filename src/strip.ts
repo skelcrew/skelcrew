@@ -1,5 +1,5 @@
 // The strip: two lines above the agent saying what you are looking at. For a thread, its name,
-// task, PR and checks, then its latest review. For the lead, the threads counted by their words.
+// task, PR and checks, then its latest review. The lead has none, as the sidebar says it all.
 // Above the sidebar the same lines say skel and where it runs, and a thin line runs under them.
 import type { Row } from "./sidebar.ts";
 
@@ -56,29 +56,22 @@ function aboutReview(row: Row, width: number): string {
   return `#[fg=brightblack]${shown(fitted(text, width))}`;
 }
 
-// Returns the threads counted by their words, such as 2 approved · 1 working, with what needs
-// you first, as that is what you came to look for.
-function counted(rows: Row[]): string {
-  const threads = rows.filter((row) => row.status !== null);
-  if (threads.length === 0) return "no threads";
-  const ordered = [...threads.filter((t) => t.needsYou), ...threads.filter((t) => !t.needsYou)];
-  const counts = new Map<string, number>();
-  for (const { word } of ordered) counts.set(word, (counts.get(word) ?? 0) + 1);
-  return [...counts].map(([word, count]) => `${count} ${word}`).join(" · ");
-}
+// skel's name above the sidebar, each letter a step from green to blue, in 256-colour numbers
+// so it looks the same whatever your theme.
+const name = "#[bold,fg=colour71]s#[fg=colour36]k#[fg=colour31]e#[fg=colour32]l#[default]";
 
-// Returns the start of a status line, above the sidebar: text in a style, in line with the
+// Returns the header above the sidebar: skel's name, then dim where it runs, in line with the
 // sidebar's marks, then spaces out to the agent's column. Where skel runs comes from outside, so
 // it is cut and made safe as a title is.
-function above(text: string, style: string, left: number): string {
-  const cut = fitted(clean(text), Math.max(left - 4, 0));
-  const spare = " ".repeat(Math.max(left - 2 - Bun.stringWidth(cut), 0));
-  return `  ${style}${shown(cut)}#[default]${spare}`;
+function header(where: string, left: number): string {
+  const place = fitted(clean(where), Math.max(left - 10, 0));
+  const spare = " ".repeat(Math.max(left - 8 - Bun.stringWidth(place), 0));
+  return `  ${name}  #[fg=brightblack]${shown(place)}#[default]${spare}`;
 }
 
 // Returns the strip's three lines as tmux formats, given the rows, the session on the right,
 // where the agent's pane is, `left` columns in and `width` wide, and where skel runs. tmux's
-// status lines span the whole terminal, so the first two start with the header, and the third
+// status lines span the whole terminal, so the first starts with the header, and the third
 // meets the line at the sidebar's edge, two columns left of the agent, with a ┬. It reads
 // nothing, so what you see can be tested without a terminal. Always three lines, so the agent's
 // height never changes.
@@ -89,11 +82,10 @@ export function drawStrip(
   where: string,
 ): [string, string, string] {
   const { left, width } = size;
-  const skel = above("skel", "#[bold]", left);
-  const place = above(where, "#[fg=brightblack]", left);
-  const line = `#[fg=brightblack]${"─".repeat(Math.max(left - 2, 0))}┬${"─".repeat(width + 1)}`;
+  const top = header(where, left);
+  const pad = " ".repeat(left);
+  const line = `#[fg=colour237]${"─".repeat(Math.max(left - 2, 0))}┬${"─".repeat(width + 1)}`;
   const row = rows.find((candidate) => candidate.session === session);
-  if (!row) return [skel, place, line];
-  if (row.status === null) return [`${skel}${shown(fitted(counted(rows), width))}`, place, line];
-  return [`${skel}${aboutThread(row, width)}`, `${place}${aboutReview(row, width)}`, line];
+  if (!row || row.status === null) return [top, pad, line];
+  return [`${top}${aboutThread(row, width)}`, `${pad}${aboutReview(row, width)}`, line];
 }
