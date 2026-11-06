@@ -5,6 +5,9 @@ to the merge. The design is in `docs/spec.md`. Read it before changing anything 
 The traps earlier versions found are in `docs/learnings.md`. Read the part that covers
 typing into a session, starting Claude Code or the sandbox before touching them.
 
+We launch a beta on Monday 16 November 2026. The launch and its milestones are in the
+spec. Until then, work that doesn't serve the launch waits.
+
 ## The goal: simple and clear
 
 The last version grew too big to hold in your head. Every change is judged first by
