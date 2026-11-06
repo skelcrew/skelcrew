@@ -219,3 +219,74 @@ await stopSession(${JSON.stringify(socket)}, "agent");`;
   // Each column is asked for apart: a Mac's ps reads the rest of the word as the first's title.
   expect(readFileSync(join(home, "calls"), "utf8")).toContain("ps -A -o pid= -o ppid= -o stat=");
 });
+
+const codexHome = () => join(home, ".local", "share", "skel", "codex");
+
+// Writes a clone and a fake Codex that answers as told, after running `extra`.
+function reviewable(extra: string): string {
+  const clone = join(home, ".local", "share", "skel", "threads", "app-12");
+  mkdirSync(clone, { recursive: true });
+  writeFileSync(join(clone, "README"), "app\n");
+  mkdirSync(codexHome(), { recursive: true });
+  // Linux's cp doesn't know the word a Mac's has for sharing blocks.
+  const cp = Bun.which("cp") ?? "cp";
+  fake("cp", `test "$2" = -c && { shift 2; exec ${cp} -a "$@"; }; exit 1`);
+  writeFileSync(join(codexHome(), "config.toml"), "model = 1\n");
+  writeFileSync(join(codexHome(), "auth.json"), "login\n");
+  fake(
+    "codex",
+    `for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
+${extra}
+printf '%s' '{"verdict":"approve","body":"Fine."}' > "$out"`,
+  );
+  return clone;
+}
+
+// Runs a review as a Mac would, and returns its verdict.
+async function reviewOnMac(clone: string, more = "") {
+  const ran = await asMacRun(`import { review } from ${source("reviewer.ts")};
+console.log(JSON.stringify(await review({ clone: ${JSON.stringify(clone)}, issue: { title: "t", body: "b" }, base: "origin/main", model: "opus", ${more} })));`);
+  expect(ran.err).toBe("");
+  return JSON.parse(ran.out);
+}
+
+test("a reviewer works in a copy, and only its login and sessions reach skel's", async () => {
+  const clone = reviewable(`mkdir -p "$CODEX_HOME/sessions"
+pwd > "$CODEX_HOME/sessions/where"
+cat README >> "$CODEX_HOME/sessions/where"
+echo "$CODEX_HOME" > "$CODEX_HOME/sessions/home"
+echo changed > README
+echo evil > "$CODEX_HOME/config.toml"
+echo renewed > "$CODEX_HOME/auth.json"`);
+  expect(await reviewOnMac(clone)).toEqual({ verdict: "approve", body: "Fine." });
+  const [where, seen] = readFileSync(join(codexHome(), "sessions", "where"), "utf8").split("\n");
+  expect(where).not.toBe(clone);
+  expect(seen).toBe("app");
+  expect(readFileSync(join(clone, "README"), "utf8")).toBe("app\n");
+  expect(readFileSync(join(codexHome(), "sessions", "home"), "utf8").trim()).not.toBe(codexHome());
+  expect(readFileSync(join(codexHome(), "config.toml"), "utf8")).toBe("model = 1\n");
+  expect(readFileSync(join(codexHome(), "auth.json"), "utf8")).toBe("renewed\n");
+  expect(readFileSync(join(home, "calls"), "utf8")).toContain("sandbox-exec -f");
+});
+
+test("nothing a reviewer started outlives it, or keeps the review waiting", async () => {
+  const pid = join(home, "pid");
+  const clone = reviewable(`sleep 300 &\necho $! > ${pid}`);
+  expect((await reviewOnMac(clone)).verdict).toBe("approve");
+  const left = Number(readFileSync(pid, "utf8"));
+  await until(() => {
+    try {
+      process.kill(left, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  });
+});
+
+test("a review that runs out of time ends, with all it started", async () => {
+  const clone = reviewable("sleep 300");
+  const verdict = await reviewOnMac(clone, "limit: 500");
+  expect(verdict.verdict).toBe("failed");
+  expect(verdict.body).toContain("ran past");
+});
