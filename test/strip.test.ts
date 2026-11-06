@@ -1,6 +1,6 @@
 // What the strip above the agent says, given the rows it was handed.
 import { expect, test } from "bun:test";
-import type { Row } from "../src/sidebar.ts";
+import type { Link, Row } from "../src/sidebar.ts";
 import { drawStrip } from "../src/strip.ts";
 
 const lead: Row = {
@@ -184,4 +184,37 @@ test("a title or review can't reach your terminal with control codes", () => {
   const strip = drawStrip([thread({ title: "x\x1b[2Jy\r\nz", review })], "app-12", size, "");
   expect(strip.join("")).not.toMatch(/\p{Cc}/u);
   expect(read([thread({ title: "x\x1b[2Jy", review })], "app-12")).toContain("x [2Jy");
+});
+
+const issue: Link = {
+  name: "app-31",
+  title: "Add CSV export",
+  url: "https://github.com/simon/app/issues/31",
+  word: "",
+  needing: false,
+  dim: false,
+  mark: null,
+};
+// The strip's first line above the agent, as tmux would show it, without its styles.
+const aboutPage = (link: Link, width = size.width) =>
+  seen(drawStrip([lead], link.url, { ...size, width }, "", link)[0]).slice(size.left);
+
+test("while a page shows, the strip has the row's name and title", () => {
+  expect(aboutPage(issue)).toBe("app-31  Add CSV export");
+  expect(drawStrip([lead], issue.url, size, "", issue)[0]).toContain("#[bold]app-31#[default]");
+});
+
+test("a page's long title is cut to the strip", () => {
+  const long = aboutPage({ ...issue, title: "word ".repeat(40) }, 30);
+  expect(Bun.stringWidth(long)).toBeLessThanOrEqual(30);
+  expect(long).toEndWith("…");
+});
+
+test("what a page's title says is shown, never run or read as a format", () => {
+  const [line] = drawStrip([lead], issue.url, size, "", {
+    ...issue,
+    title: "#(touch owned) 100%\x1b[31m",
+  });
+  expect(line).toContain("##(touch owned) 100%%");
+  expect(line).not.toContain("\x1b");
 });
