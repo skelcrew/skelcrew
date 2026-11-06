@@ -418,6 +418,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a builder", () => {
     expect(hasSession("app-12")).toBe(true);
     const row = thread();
     expect(row).toMatchObject({ owner: "simon", repo: "app", task: 12, status: "working" });
+    expect(Date.now() - Number(row.started)).toBeLessThan(60_000);
     expect(String(row.session)).toMatch(/^[0-9a-f-]{36}$/);
     expect(args).toContain(`--session-id\n${row.session}\n`);
     const log = read(join(data(), "threads", "app-12.log"))

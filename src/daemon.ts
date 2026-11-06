@@ -92,6 +92,7 @@ const Request = z.discriminatedUnion("command", [
   z.object({ command: z.literal("question asked") }),
   z.object({ command: z.literal("question answered") }),
   z.object({ command: z.literal("attached") }),
+  z.object({ command: z.literal("screen opened") }),
 ]);
 type Request = z.infer<typeof Request>;
 const LeadReply = z.union([z.object({ lead: z.literal(true) }), z.object({ error: z.string() })]);
@@ -112,6 +113,7 @@ const allowed = {
     "start",
     "review",
     "stop",
+    "screen opened",
   ],
   lead: [
     "status",
@@ -211,6 +213,9 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
     await listen(createServer(answer(caller)), socket);
     sockets.push(socket);
   };
+  // Polls one repository at once. Until polling starts it does nothing, as the first poll comes
+  // as soon as it does.
+  let poll: (full: string) => void = () => {};
   const listening = new Set<string>();
   // Opens a thread's own socket, so the daemon knows which thread calls on it. A thread that
   // starts over keeps the socket it has.
@@ -270,6 +275,10 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       return { lead: true };
     }
     if (request.command === "attached") return { note: attachedNote(db) };
+    if (request.command === "screen opened") {
+      for (const { owner, repo } of repositories(db)) poll(`${owner}/${repo}`);
+      return { polling: true };
+    }
     if (request.command === "repo ls") return { repositories: listRepositories(db) };
     if (request.command === "ps") return { threads: listThreads(db, request.repo) };
     if (request.command === "task ls") return { tasks: await listTasks(db, request.repo) };
@@ -400,7 +409,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       (error) => failThread(db, thread, error),
     );
   }
-  const poll = pollGitHub(db, tmux, every, begin);
+  poll = pollGitHub(db, tmux, every, begin);
   if (!onSprite()) return;
   keepAwake(() => hasWork(liveThreads(db)));
   // Without the listener, events wait until something else wakes the Sprite, and polling
@@ -532,6 +541,14 @@ export async function question(asking: boolean): Promise<void> {
 export async function attached(): Promise<string> {
   const reply = z.object({ note: z.string() }).safeParse(await ask({ command: "attached" }, 2000));
   return reply.success ? reply.data.note : "";
+}
+
+// Tells the daemon a screen just opened, for the sidebar as it starts, so ISSUES and PRS fill
+// within seconds and not at the next poll. Only a poll with a screen open asks for them, which
+// is why this comes from the sidebar: while you attach, no screen is open yet. A daemon that is
+// down has nothing to tell, and the sidebar goes on without it.
+export async function screenOpened(): Promise<void> {
+  await ask({ command: "screen opened" }, 2000);
 }
 
 // Ensures the daemon and lead are running, then opens the screen on the lead until you leave

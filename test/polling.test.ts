@@ -152,10 +152,10 @@ const env = () => ({
 });
 
 // Runs the daemon, polling every 200 milliseconds rather than every 30 seconds, and every
-// 400 rather than every minute while threads only wait on you.
-function serve(): Subprocess {
+// 400 rather than every minute while threads only wait on you, unless a test says otherwise.
+function serve(every = 200): Subprocess {
   const code = `import { serve } from ${JSON.stringify(daemon)};
-await serve(${JSON.stringify(socket)}, 200);`;
+await serve(${JSON.stringify(socket)}, ${every});`;
   const run = Bun.spawn([process.execPath, "-e", code], {
     env: env(),
     stdout: "ignore",
@@ -310,6 +310,127 @@ async function approvedApp12(from?: string): Promise<string> {
   expect(thread()).toMatchObject({ status: "waiting", needs_you: 0 });
   return work;
 }
+
+// What the sidebar would read: the saved open issues and PRs, as kind and number, and the totals.
+function savedOpen(): { rows: string[]; totals: unknown } {
+  const db = new Database(join(data(), "skel.db"), { readonly: true });
+  const rows = db.query("SELECT kind, number FROM open_items ORDER BY kind, number").all();
+  const totals = db.query("SELECT open_issues, open_prs FROM repositories").get();
+  db.close();
+  return { rows: rows.map((row) => Object.values(Object(row)).join(" ")), totals };
+}
+
+test("only while a screen is open does a poll ask for open issues and PRs, and it saves them", async () => {
+  addApp();
+  const item = (number: number) => ({ number, title: "t", createdAt: "2026-11-05T10:00:00Z" });
+  const answer = (issues: number[], prs: number[]) =>
+    writeFileSync(
+      join(home, "gh", "graphql"),
+      JSON.stringify({
+        data: {
+          viewer: { login: "simon" },
+          repository: {
+            labeled: { nodes: [] },
+            openIssues: { totalCount: issues.length + 200, nodes: issues.map(item) },
+            openPulls: { totalCount: prs.length, nodes: prs.map(item) },
+          },
+        },
+      }),
+    );
+  // GitHub only sends what the query asks for, so the lists come once the screen opens.
+  pr({});
+  const screen = `${socket}-screen`;
+  // Runs tmux on the screen's server, which is the test's own.
+  const onScreen = (...args: string[]) =>
+    Bun.spawnSync(["tmux", "-L", screen, "-f", "/dev/null", ...args], {
+      env: { ...process.env, TMUX: "" },
+      stderr: "pipe",
+    });
+  try {
+    serve();
+    await until(() => polls() >= 3);
+    expect(read(join(home, "gh", "query"))).not.toContain("totalCount");
+    expect(savedOpen().rows).toEqual([]);
+    answer([12, 13], [34]);
+    onScreen("new-session", "-d", "-s", "screen-1", "sleep 300");
+    await until(() => savedOpen().rows.length === 3);
+    expect(read(join(home, "gh", "query"))).toContain("totalCount");
+    expect(savedOpen()).toEqual({
+      rows: ["issue 12", "issue 13", "pr 34"],
+      totals: { open_issues: 202, open_prs: 1 },
+    });
+    // A closed issue goes, as each poll replaces what the last one saved.
+    answer([13], []);
+    await until(() => savedOpen().rows.length === 1);
+    expect(savedOpen().rows).toEqual(["issue 13"]);
+    onScreen("kill-server");
+    await morePolls();
+    expect(read(join(home, "gh", "query"))).not.toContain("totalCount");
+  } finally {
+    onScreen("kill-server");
+    const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
+    rmSync(join(folder, screen), { force: true });
+  }
+});
+
+test("a screen opening fills the lists at once, and no screen means no extra poll", async () => {
+  addApp();
+  const item = (number: number) => ({ number, title: "t", createdAt: "2026-11-05T10:00:00Z" });
+  // GitHub only sends what the query asks for, so the lists come once the screen opens.
+  pr({});
+  const lists = () =>
+    writeFileSync(
+      join(home, "gh", "graphql"),
+      JSON.stringify({
+        data: {
+          viewer: { login: "simon" },
+          repository: {
+            labeled: { nodes: [] },
+            openIssues: { totalCount: 2, nodes: [item(12), item(13)] },
+            openPulls: { totalCount: 1, nodes: [item(34)] },
+          },
+        },
+      }),
+    );
+  // Your terminal, on a server of the test's own, and the screen that opens in it.
+  const terminal = `${socket}-terminal`;
+  const screen = `${socket}-screen`;
+  const script = join(home, "open.ts");
+  const screenFile = join(import.meta.dir, "..", "src", "screen.ts");
+  writeFileSync(
+    script,
+    `import { openScreen } from ${JSON.stringify(screenFile)};
+await openScreen(${JSON.stringify(socket)}, "lead");`,
+  );
+  // Runs tmux on one of the test's own servers.
+  const on = (server: string, ...args: string[]) =>
+    Bun.spawnSync(["tmux", "-L", server, "-f", "/dev/null", ...args], {
+      env: { ...process.env, ...env(), TMUX: "" },
+      stderr: "pipe",
+    });
+  try {
+    // An hour between polls, so only the screen opening can bring a second one.
+    serve(3_600_000);
+    await until(() => polls() === 1);
+    await Bun.sleep(1500);
+    expect(polls()).toBe(1);
+    expect(savedOpen().rows).toEqual([]);
+    lists();
+    on(terminal, "new-session", "-d", "-x", "120", "-y", "30", `${process.execPath} ${script}`);
+    await until(() => savedOpen().rows.length === 3, 5000);
+    expect(savedOpen().rows).toEqual(["issue 12", "issue 13", "pr 34"]);
+    expect(polls()).toBe(2);
+    // The screen's going brings no poll either.
+    on(screen, "kill-server");
+    await Bun.sleep(1000);
+    expect(polls()).toBe(2);
+  } finally {
+    on(screen, "kill-server");
+    on(terminal, "kill-server");
+    const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
+    for (const server of [screen, terminal]) rmSync(join(folder, server), { force: true });
+  }
+}, 20_000);
 
 // bubblewrap can't start inside skel's own sandbox, so only there builders can't start.
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {

@@ -56,6 +56,7 @@ async function run(args: string[]): Promise<void> {
     question,
     repos,
     reviewAgain,
+    screenOpened,
     serve,
     startOn,
     stopOn,
@@ -83,6 +84,8 @@ async function run(args: string[]): Promise<void> {
   }
   // Run by the screen in its left pane, not by people, so usage leaves it out.
   if (command === "sidebar" && sub && rest[0] && rest[1] && rest.length === 2) {
+    // Not waited on, so the sidebar draws at once.
+    screenOpened();
     await runSidebar(sub, rest[0], rest[1]);
     return;
   }

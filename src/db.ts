@@ -47,6 +47,10 @@ export function openDb(): Database {
   // brought in get it once, when the daemon next refreshes their clones.
   if (!db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = 'labeled'").get())
     db.run("ALTER TABLE repositories ADD COLUMN labeled INTEGER NOT NULL DEFAULT 0");
+  // How many issues and PRs are open in all, as the sidebar counts those it doesn't show.
+  for (const column of ["open_issues", "open_prs"])
+    if (!db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = ?").get(column))
+      db.run(`ALTER TABLE repositories ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
   // One row at most: there is one lead per machine.
   db.run(`CREATE TABLE IF NOT EXISTS lead (
     one INTEGER PRIMARY KEY CHECK (one = 1),
@@ -90,6 +94,7 @@ export function openDb(): Database {
     asking INTEGER NOT NULL DEFAULT 0,
     noting TEXT,
     title TEXT,
+    started INTEGER,
     checks TEXT,
     reviewer TEXT,
     reviewed_by TEXT,
@@ -115,6 +120,7 @@ export function openDb(): Database {
     asking: "INTEGER NOT NULL DEFAULT 0",
     noting: "TEXT",
     title: "TEXT",
+    started: "INTEGER",
     checks: "TEXT",
     reviewer: "TEXT",
     reviewed_by: "TEXT",
@@ -125,6 +131,18 @@ export function openDb(): Database {
   for (const [column, type] of Object.entries(added))
     if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))
       db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
+  // The newest open issues and PRs of each repository, as the last poll with a screen open
+  // found them. Only a copy for the sidebar, which looks each second and so can't ask GitHub.
+  // Tasks stay in the tracker.
+  db.run(`CREATE TABLE IF NOT EXISTS open_items (
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    number INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    created TEXT NOT NULL,
+    PRIMARY KEY (owner, repo, kind, number)
+  )`);
   // Notes for the lead that aren't about a thread needing you, such as a thread started from
   // GitHub, kept until they are typed in, since the lead may not be running.
   db.run("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)");

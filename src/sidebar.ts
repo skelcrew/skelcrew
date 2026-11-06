@@ -1,11 +1,14 @@
-// The sidebar: the left pane of the screen, listing the lead and every thread that isn't done,
-// with what each is doing. It only shows and switches. Picking a row switches the client in the
-// right pane. It also keeps the strip above that pane up to date.
+// The sidebar: the left pane of the screen, with three lists. THREADS has the lead and every
+// thread that isn't done, with what each is doing. ISSUES and PRS show what is open on GitHub, as
+// links. It only shows, switches and links. Picking a thread switches the client in the right
+// pane. It also keeps the strip above that pane up to date.
 import type { Database } from "bun:sqlite";
+import { z } from "zod";
 import { openDb } from "./db.ts";
+import { Name } from "./github.ts";
 import { screenSocket, sidebarWidth } from "./screen.ts";
-import { drawStrip } from "./strip.ts";
-import { needsYou, Thread, threadConfig, threadName } from "./thread.ts";
+import { clean, drawStrip, fitted } from "./strip.ts";
+import { github, needsYou, Thread, threadConfig, threadName } from "./thread.ts";
 import {
   paneTty,
   paneWidth,
@@ -16,7 +19,7 @@ import {
 } from "./tmux.ts";
 
 // One row of the sidebar, with what the strip says of the agent too. The lead has no status of
-// its own.
+// its own, and a row's age is empty unless it shows a running time.
 export type Row = {
   name: string;
   session: string;
@@ -25,12 +28,30 @@ export type Row = {
   running: boolean;
   word: string;
   harness: string;
+  age: string;
+  github: string | null;
   title: string | null;
   pr: number | null;
   checks: Thread["checks"];
   review: { round: number; reviewer: string; verdict: string } | null;
 };
+// One row of ISSUES or PRS. It has no agent to pick, so it is a link to GitHub. `word` is the
+// word of the thread a PR comes from, and `needing` says whether that thread needs you.
+export type Link = {
+  name: string;
+  title: string;
+  url: string;
+  word: string;
+  needing: boolean;
+  dim: boolean;
+};
+// The rows to show, and how many are open in all, which can be far more.
+type List = { links: Link[]; total: number };
+export type Lists = { issues: List; prs: List };
 type Size = { width: number; height: number };
+// One line of the sidebar, with the thread it belongs to, if any, for a click. A line that
+// `joins` the sidebar's edge runs into it, as the lines between lists do.
+type Line = { text: string; row?: Row; joins?: boolean };
 
 // Claude Code is the only harness offered for the lead and builders.
 const builderHarness = "claude";
@@ -85,9 +106,26 @@ export function threadWord(thread: Thread, maxRounds: number): string {
   return status === "working" ? "working" : "checks";
 }
 
+// Returns how long ago a thread started, in the fewest letters: <1m, then 5m, 2h, 3d. Rounded
+// down, so the text changes at most once a minute.
+export function threadAge(started: number, now: number): string {
+  const minutes = Math.floor((now - started) / 60_000);
+  if (minutes < 1) return "<1m";
+  if (minutes < 60) return `${minutes}m`;
+  return minutes < 24 * 60 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 1440)}d`;
+}
+
 // Returns the rows as the database and tmux have them now: the lead, then each thread that
 // isn't done, newest first as in skel ps. It runs each second, so it reads only what shows.
-export function sidebarRows(db: Database, running: string[], maxRounds: number): Row[] {
+// Only a thread whose word is working shows its running time. A time on any other row would
+// write to the terminal each minute, and on a Sprite a terminal that stays quiet lets it sleep.
+// Such a thread keeps the Sprite awake anyway, so its time costs nothing.
+export function sidebarRows(
+  db: Database,
+  running: string[],
+  maxRounds: number,
+  now: number,
+): Row[] {
   const threads = db.query("SELECT * FROM threads WHERE status != 'done' ORDER BY rowid DESC");
   const leadRuns = running.includes("lead");
   return [
@@ -99,6 +137,8 @@ export function sidebarRows(db: Database, running: string[], maxRounds: number):
       running: leadRuns,
       word: leadRuns ? "running" : "stopped",
       harness: builderHarness,
+      age: "",
+      github: null,
       title: null,
       pr: null,
       checks: null,
@@ -117,6 +157,8 @@ export function sidebarRows(db: Database, running: string[], maxRounds: number):
         word,
         // Only a review is on another harness. An older skel's review has none saved.
         harness: word === "reviewing" ? (reviewer ?? "") : builderHarness,
+        age: word === "working" && thread.started !== null ? threadAge(thread.started, now) : "",
+        github: github(thread),
         title: thread.title,
         pr: thread.pr,
         checks: thread.checks,
@@ -124,6 +166,46 @@ export function sidebarRows(db: Database, running: string[], maxRounds: number):
       };
     }),
   ];
+}
+
+const OpenRow = z.object({
+  owner: Name,
+  repo: Name,
+  name: z.string(),
+  number: z.number(),
+  title: z.string(),
+  threaded: z.coerce.boolean(),
+});
+
+// Returns ISSUES and PRS as the daemon's last poll saved them, up to `most` rows of each: it
+// reads the database and never asks GitHub, as it runs each second. Newest first, across
+// repositories, with issues that have a thread last. A thread that is done has left THREADS,
+// so its issue counts as waiting again. A PR from a thread takes the word of its row. GitHub
+// numbers issues and PRs from one counter, so no issue can be taken for a thread's PR.
+export function sidebarLists(db: Database, rows: Row[], most: number): Lists {
+  // Returns one list, of the kind saved in the database, with the path GitHub shows it at.
+  const read = (kind: string, path: string, column: string): List => {
+    const found = db.query(`SELECT i.owner, i.repo, r.name, i.number, i.title,
+        EXISTS (SELECT 1 FROM threads t WHERE i.kind = 'issue' AND t.owner = i.owner
+          AND t.repo = i.repo AND t.task = i.number AND t.status != 'done') AS threaded
+      FROM open_items i JOIN repositories r ON r.owner = i.owner AND r.repo = i.repo
+      WHERE i.kind = ? ORDER BY threaded, i.created DESC, i.number DESC LIMIT ?`);
+    const links = found.all(kind, most).map((saved) => {
+      const { owner, repo, name, number, title, threaded } = OpenRow.parse(saved);
+      const thread = rows.find((row) => row.github === `${owner}/${repo}` && row.pr === number);
+      return {
+        name: kind === "pr" ? `${name}#${number}` : `${name}-${number}`,
+        title,
+        url: `https://github.com/${owner}/${repo}/${path}/${number}`,
+        word: thread?.word ?? "",
+        needing: thread?.needsYou === true && thread.status !== "failed",
+        dim: threaded,
+      };
+    });
+    const sum = db.query(`SELECT COALESCE(SUM(${column}), 0) AS total FROM repositories`).get();
+    return { links, total: z.object({ total: z.number() }).parse(sum).total };
+  };
+  return { issues: read("issue", "issues", "open_issues"), prs: read("pr", "pull", "open_prs") };
 }
 
 // Returns a line with spaces added out to a width.
@@ -154,46 +236,119 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
     mark = tinted(colour, sign);
   }
   const word = row.word.slice(0, room);
-  const harness = row.harness ? ` · ${row.harness}`.slice(0, room - word.length) : "";
+  const after = [row.harness, row.age].flatMap((part) => (part ? [` · ${part}`] : [])).join("");
+  const more = after.slice(0, room - word.length);
   const lines = [
     `   ${mark} ${styled(first)}`,
     ...rest.map((part) => `     ${styled(part)}`),
-    `     ${tinted(needing ? yellow : grey, word)}${harness && tinted(grey, harness)}`,
+    `     ${tinted(needing ? yellow : grey, word)}${more && tinted(grey, more)}`,
   ];
   return here ? lines.map(band) : lines;
 }
 
-// Returns each row's lines, how many lines the list gets, and the first row on screen. The hints
-// take the bottom two, until the sidebar can't hold them and the whole row you are looking at:
-// then they give way, as the rows are what you pick from and the keys are also in skel's help.
-// A list taller than its space scrolls by whole rows, just enough to keep that row in view, so
-// Alt-Down never moves off the bottom.
-function layout(rows: Row[], shown: string | null, size: Size) {
-  const blocks = rows.map((row) => rowLines(row, row.session === shown, size.width - 1));
-  const here = rows.findIndex((row) => row.session === shown);
-  const tallest = blocks[here]?.length ?? 2;
-  const room = size.height >= tallest + hints.length ? size.height - hints.length : size.height;
+// Returns a row of ISSUES or PRS as two lines, each a terminal link and cut to the sidebar's
+// width: its title, then, dim, its name and a PR's word, in the colours a thread gives that word.
+// skel may run on another machine than your browser, so your terminal opens the link. The title
+// comes from outside, so it is made safe.
+function linkLines(link: Link, width: number): string[] {
+  const room = Math.max(width - 5, 0);
+  const title = fitted(clean(link.title), room);
+  const name = fitted(link.name, room);
+  const word = link.word && fitted(link.word, room - Bun.stringWidth(name) - 3);
+  const about = word && `${paint(grey, " · ")}${paint(link.needing ? yellow : grey, word)}`;
+  return [link.dim ? paint(grey, title) : title, `${paint(grey, name)}${about}`].map(
+    (text) => `     \x1b]8;;${link.url}\x1b\\${text}\x1b]8;;\x1b\\`,
+  );
+}
+
+// Returns what starts a list: its heading, dim, and the blank line that parts it from the rows.
+const headed = (heading: string): Line[] => [{ text: paint(grey, `   ${heading}`) }, { text: "" }];
+
+// Returns a list's lines for a third of `height` lines: its heading and a blank line, as many
+// rows as fit, then a count of the rest. Rows come with the dim ones last, so those are the first to be left out.
+// A third with room for just one row keeps the row, and the count gives way. An empty list says
+// so, as its third stays either way.
+function listLines(heading: string, list: List, height: number, width: number): Line[] {
+  const top = headed(heading);
+  if (list.links.length === 0) return [...top, { text: paint(grey, "     none") }];
+  const fit = Math.floor((height - top.length) / 2);
+  const few = list.total > fit ? Math.max(Math.floor((height - top.length - 1) / 2), 1) : fit;
+  const links = list.links.slice(0, few);
+  const rest = list.total - links.length;
+  return [
+    ...top,
+    ...links.flatMap((link) => linkLines(link, width).map((text) => ({ text }))),
+    ...(rest > 0 ? [{ text: paint(grey, `     + ${rest} more`) }] : []),
+  ].slice(0, height);
+}
+
+// Returns lines with blank ones added, out to a height.
+const held = (lines: Line[], height: number) => [
+  ...lines,
+  ...Array<Line>(height - lines.length).fill({ text: "" }),
+];
+
+// Returns what fits of the threads in a number of lines, by whole rows from the top, just far
+// enough down to keep the row you are looking at in view, so Alt-Down never moves off the bottom.
+function scrolled(blocks: Line[][], here: number, room: number): Line[] {
   let used = blocks.slice(0, here + 1).flat().length;
   let first = 0;
   while (first < here && used > room) {
     used -= blocks[first]?.length ?? 0;
     first++;
   }
-  return { blocks, first, room };
+  return blocks.slice(first).flat().slice(0, room);
 }
 
-// Returns the whole sidebar as lines, given the rows, the session on the right, and the
-// sidebar's size. It reads nothing, so what you see can be tested without a terminal. Every line
-// fills the pane and ends with the sidebar's edge, in the last column. tmux's own border beside
-// it is blank, which leaves a gap before the agent.
-export function draw(rows: Row[], shown: string | null, size: Size): string {
-  const { blocks, first, room } = layout(rows, shown, size);
-  const list = blocks.slice(first).flat().slice(0, room);
-  const gap = Array<string>(room - list.length).fill("");
-  const text = size.width - 1;
-  const keys = hints.map((hint) => paint(grey, hint.slice(0, Math.max(text, 0))));
-  const lines = [...list, ...gap, ...(room < size.height ? keys : [])];
-  return lines.map((line) => `${filled(line, text)}${paint(edge, "│")}`).join("\n");
+// Returns the lines above the hints, and how many there can be. The hints take the bottom two,
+// until the sidebar can't hold them and the whole row you are looking at: then they give way, as
+// the rows are what you pick from and the keys are also in skel's help.
+// ISSUES, THREADS and PRS each have a third of those lines, however full, so each list stays in
+// the same place on screen, and what doesn't divide goes to THREADS. On a terminal too short for
+// a heading and a row in each third, or for the row you are looking at in THREADS, ISSUES and PRS
+// go, and THREADS has the whole sidebar, as it is the list you move through.
+function layout(
+  rows: Row[],
+  lists: Lists,
+  shown: string | null,
+  size: Size,
+): { lines: Line[]; room: number } {
+  const width = size.width - 1;
+  const blocks = rows.map((row) =>
+    rowLines(row, row.session === shown, width).map((text) => ({ text, row })),
+  );
+  const here = rows.findIndex((row) => row.session === shown);
+  const tallest = blocks[here]?.length ?? 2;
+  const room = size.height >= tallest + hints.length ? size.height - hints.length : size.height;
+  const third = Math.floor((room - 2) / 3);
+  const middle = room - 2 - 2 * third;
+  const top = headed("Threads");
+  if (third < top.length + 2 || middle < top.length + tallest)
+    return { lines: scrolled(blocks, here, room), room };
+  const divider = { text: paint(edge, "─".repeat(Math.max(width, 0))), joins: true };
+  const lines = [
+    ...held(listLines("Issues", lists.issues, third, width), third),
+    divider,
+    ...top,
+    ...held(scrolled(blocks, here, middle - top.length), middle - top.length),
+    divider,
+    ...listLines("PRs", lists.prs, third, width),
+  ];
+  return { lines, room };
+}
+
+// Returns the whole sidebar as lines, given the rows, the lists, the session on the right, and
+// the sidebar's size. It reads nothing, so what you see can be tested without a terminal. Every
+// line fills the pane and ends with the sidebar's edge, in the last column. tmux's own border
+// beside it is blank, which leaves a gap before the agent.
+export function draw(rows: Row[], lists: Lists, shown: string | null, size: Size): string {
+  const { lines, room } = layout(rows, lists, shown, size);
+  const width = size.width - 1;
+  const keys = hints.map((hint) => ({ text: paint(grey, hint.slice(0, Math.max(width, 0))) }));
+  const all: Line[] = [...held(lines, room), ...(room < size.height ? keys : [])];
+  return all
+    .map(({ text, joins }) => `${filled(text, width)}${paint(edge, joins ? "┤" : "│")}`)
+    .join("\n");
 }
 
 // Returns the session one row up or down, for Alt-Up and Alt-Down, or null at either end.
@@ -207,12 +362,16 @@ export function stepped(rows: Row[], shown: string | null, by: 1 | -1): string |
 }
 
 // Returns the session of the row at a line of the sidebar, counted from 0, for a click, or
-// null when there is no row there or its agent isn't running. Any line of a row picks it.
-export function picked(rows: Row[], shown: string | null, size: Size, y: number): string | null {
-  const { blocks, first, room } = layout(rows, shown, size);
-  if (y >= room) return null;
-  const lines = blocks.slice(first).flatMap((block, i) => block.map(() => rows[first + i]));
-  const row = lines[y];
+// null when there is no thread there or its agent isn't running. Any line of a row picks it. A
+// link picks nothing: your terminal opens it, and the agent on the right stays as it is.
+export function picked(
+  rows: Row[],
+  lists: Lists,
+  shown: string | null,
+  size: Size,
+  y: number,
+): string | null {
+  const row = layout(rows, lists, shown, size).lines[y]?.row;
   return row?.running ? row.session : null;
 }
 
@@ -230,6 +389,7 @@ export async function runSidebar(agents: string, session: string, where: string)
   const db = openDb();
   const tty = paneTty(screenSocket(agents), `=${session}:.1`);
   let rows: Row[] = [];
+  let lists: Lists = { issues: { links: [], total: 0 }, prs: { links: [], total: 0 } };
   let shown: string | null = null;
   let last = "";
   let lastStrip = "";
@@ -246,7 +406,9 @@ export async function runSidebar(agents: string, session: string, where: string)
   });
   // Looks at the database and tmux again, and redraws what that changed.
   const refresh = () => {
-    rows = sidebarRows(db, runningSessions(agents), maxRounds);
+    rows = sidebarRows(db, runningSessions(agents), maxRounds, Date.now());
+    // A row takes two lines, so the sidebar's height is more than any list can show.
+    lists = sidebarLists(db, rows, size().height);
     shown = shownSession(agents, tty) ?? shown;
     const width = paneWidth(screenSocket(agents), `=${session}:.1`);
     const strip = drawStrip(rows, shown, { left: size().width + 1, width }, where);
@@ -254,7 +416,7 @@ export async function runSidebar(agents: string, session: string, where: string)
       lastStrip = strip.join("\n");
       showStrip(screenSocket(agents), session, strip);
     }
-    const frame = draw(rows, shown, size());
+    const frame = draw(rows, lists, shown, size());
     if (frame === last) return;
     last = frame;
     // Every line fills the pane, so nothing of the last frame is left to clear.
@@ -273,7 +435,7 @@ export async function runSidebar(agents: string, session: string, where: string)
   process.stdin.on("data", (bytes) => {
     for (const [, arrow, y] of bytes.toString().matchAll(input)) {
       if (arrow) show(stepped(rows, shown, arrow === "A" ? -1 : 1));
-      else show(picked(rows, shown, size(), Number(y) - 1));
+      else show(picked(rows, lists, shown, size(), Number(y) - 1));
     }
     refresh();
   });

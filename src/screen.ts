@@ -24,6 +24,8 @@ export const screenSocket = (agents: string) => `${agents}-screen`;
 // that drops, and the server goes with its last session. It would also end a session made
 // detached, so the session is made attached, in one go. The sync feature is the agents'
 // server's, for the same reason: this server's redraws must reach your terminal whole too.
+// Terminal links are turned on for every terminal: left alone, tmux drops them on the way to a
+// terminal it doesn't recognise, and a row would be plain text you can't open.
 // xterm-256color, unlike tmux's default, tells the client in the right pane that it may use
 // colour and more, and every machine knows it. tmux writes the title to your terminal, over
 // whatever sprite or your shell put there. An agent's own title stops at its pane, on the
@@ -58,7 +60,7 @@ const config = [
   ["set", "-g", "mouse", "on"],
   ["set", "-g", "destroy-unattached", "on"],
   ["set", "-g", "default-terminal", "xterm-256color"],
-  ["set", "-s", "terminal-features[90]", "*:sync"],
+  ["set", "-s", "terminal-features[90]", "*:sync:hyperlinks"],
   ["set", "-g", "pane-border-lines", "spaces"],
   ["set-hook", "-g", "window-resized", `resize-pane -t :.0 -x ${sidebarWidth}`],
 ];

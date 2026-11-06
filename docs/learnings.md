@@ -211,8 +211,17 @@ that covers the code you are about to write.
   reached tmux locally, through `ssh -t` and through `sprite exec --tty`.
 - **`sprite exec` prints the command it runs.** A test that waits for text in the output
   matches that line at once, unless the text it waits for is split up in the command.
+- **tmux drops terminal links on the way to a terminal it doesn't recognise.** A client under
+  `script`, which answers no terminal queries, got no OSC 8 at all until the server set the
+  `hyperlinks` feature. A tmux inside tmux hides this, as the outer one is recognised.
 - **tmux 3.6 doesn't hold a program's synchronized frames back.** It marks only its own full
   redraws, so a frame written in two halves arrives in two, attached directly or nested.
+
+## Tests
+
+- **`homedir()` keeps the HOME the process started with.** Setting `process.env.HOME` inside a
+  running process or test changes nothing for `homedir()`, so `openDb()` there opens your real
+  database. Open it in a process of its own, started with HOME in its environment.
 
 ## The agent's shell commands
 
