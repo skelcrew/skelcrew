@@ -59,9 +59,10 @@ type Line = { text: string; row?: Row; joins?: boolean };
 
 // Claude Code is the only harness offered for the lead and builders.
 const builderHarness = "claude";
-const [green, yellow, red, grey] = [32, 33, 31, 90];
+const [green, yellow, red] = [32, 33, 31];
+export const grey = 90;
 // Returns text in a colour or style, ending just that, as a background behind it must go on.
-const paint = (code: number | string, text: string) => `\x1b[${code}m${text}\x1b[22;39m`;
+export const paint = (code: number | string, text: string) => `\x1b[${code}m${text}\x1b[22;39m`;
 // Each thread's mark is a circle in its status's colour. Waiting and stopped look alike, and the
 // word under the name tells every status apart, so nothing is told by colour alone.
 const marks: Record<Thread["status"], Mark> = {
@@ -78,7 +79,7 @@ const noThread: Mark = ["○", grey];
 // sprite, and mean the same whatever your theme. So do the colours on the grey: a theme's own
 // red or grey can vanish there, and its default text can be dark.
 const shade = "48;5;238";
-const white = "1;38;5;231";
+export const white = "1;38;5;231";
 const onShade: Record<number, string> = {
   [green]: "38;5;120",
   [yellow]: "38;5;221",
@@ -89,7 +90,7 @@ const onShade: Record<number, string> = {
 const edge = "38;5;237";
 // The padding on each side, in columns, which also starts every heading and mark. A terminal
 // cell is about twice as tall as wide, so two columns look like the one blank row at the top.
-const pad = "  ";
+export const pad = "  ";
 // Where a name starts, past its mark.
 const indent = `${pad}  `;
 // The keys you need most, at the bottom of the sidebar.

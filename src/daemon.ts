@@ -21,6 +21,7 @@ import {
   TaskView,
   ThreadRow,
 } from "./list.ts";
+import { Page, PageUrl, readPage } from "./page.ts";
 import { cliSocket, daemonSocket, leadSocket, threadSocket } from "./paths.ts";
 import { bringInNamed, findRepository, refreshClones, repositories } from "./repo.ts";
 import { goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
@@ -94,6 +95,7 @@ const Request = z.discriminatedUnion("command", [
   z.object({ command: z.literal("question answered") }),
   z.object({ command: z.literal("attached") }),
   z.object({ command: z.literal("screen opened") }),
+  z.object({ command: z.literal("page"), url: PageUrl }),
 ]);
 type Request = z.infer<typeof Request>;
 const LeadReply = z.union([z.object({ lead: z.literal(true) }), z.object({ error: z.string() })]);
@@ -115,6 +117,7 @@ const allowed = {
     "review",
     "stop",
     "screen opened",
+    "page",
   ],
   lead: [
     "status",
@@ -280,6 +283,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       for (const { owner, repo } of repositories(db)) poll(`${owner}/${repo}`);
       return { polling: true };
     }
+    if (request.command === "page") return { page: await readPage(request.url) };
     if (request.command === "repo ls") return { repositories: listRepositories(db) };
     if (request.command === "ps") return { threads: listThreads(db, request.repo) };
     if (request.command === "task ls") return { tasks: await listTasks(db, request.repo) };
@@ -550,6 +554,13 @@ export async function attached(): Promise<string> {
 // down has nothing to tell, and the sidebar goes on without it.
 export async function screenOpened(): Promise<void> {
   await ask({ command: "screen opened" }, 2000);
+}
+
+// Asks the daemon for the page of an issue or PR, for the page command. The daemon answers, as
+// only it may call GitHub.
+export async function pageOf(url: string): Promise<Page> {
+  const reply = await request({ command: "page", url });
+  return understood(z.object({ page: Page }), reply).page;
 }
 
 // Ensures the daemon and lead are running, then opens the screen on the lead until you leave

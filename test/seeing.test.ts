@@ -434,6 +434,69 @@ esac`,
   });
 });
 
+describe("the page of an issue or PR", () => {
+  // Asks the daemon for a page as the page command does, over the socket given, if any.
+  async function ask(url: string, more: Record<string, string> = {}) {
+    const script = `import { pageOf } from ${JSON.stringify(daemon)};
+console.log(JSON.stringify(await pageOf(${JSON.stringify(url)})));`;
+    const run = Bun.spawn([process.execPath, "-e", script], {
+      env: { ...env(), ...more },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err] = await Promise.all([
+      new Response(run.stdout).text(),
+      new Response(run.stderr).text(),
+      run.exited,
+    ]);
+    return { out, err };
+  }
+  const url = "https://github.com/simon/app/issues/31";
+
+  beforeEach(async () => {
+    threads();
+    mkdirSync(join(home, "issues", "simon", "app", "issues"), { recursive: true });
+    writeFileSync(
+      join(home, "issues", "simon", "app", "issues", "31.json"),
+      JSON.stringify({
+        title: "Add CSV export",
+        body: "Export threads.",
+        state: "open",
+        user: { login: "ana" },
+        labels: [],
+      }),
+    );
+    serve();
+    await untilAnswers();
+  });
+
+  test("the daemon asks GitHub, and hands you the page", async () => {
+    expect(JSON.parse((await ask(url)).out)).toEqual({
+      title: "Add CSV export",
+      facts: [
+        ["State", "open"],
+        ["Author", "ana"],
+        ["Labels", "none"],
+      ],
+      body: "Export threads.",
+    });
+    expect(read(join(home, "calls"))).toContain("gh api repos/simon/app/issues/31");
+  });
+
+  test("the daemon reads nothing but a page on GitHub", async () => {
+    const asked = await ask("https://github.com/simon/app/issues/31 --hostname evil");
+    expect(asked.err).toContain("doesn't know that request");
+    expect(read(join(home, "calls"))).not.toContain("evil");
+  });
+
+  test("an agent can't ask for a page, nor run the page command", async () => {
+    const lead = join(home, "run", "skel", "lead", "skel.sock");
+    expect((await ask(url, { SKEL_SOCKET: lead })).err).toContain("doesn't know that request");
+    const refused = await skel(["page", url], { SKEL_SANDBOX: "1" });
+    expect(refused.err).toContain("your own terminal");
+  });
+});
+
 // bubblewrap can't start inside skel's own sandbox, so only there the lead can't start.
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("from the lead", () => {
   test("the lead runs skel ps, skel task ls, skel task show and skel repo ls from its sandbox, but can't attach", async () => {
