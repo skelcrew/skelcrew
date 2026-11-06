@@ -62,22 +62,22 @@ test("lists the lead first, then each thread on two lines: a mark and name, then
     thread("site-7", { status: "waiting", word: "reviewing", harness: "codex" }),
   ];
   expect(listed(draw(rows, "lead", size))).toEqual([
-    "   ◆ lead",
-    "     running · claude",
-    "   ● app-12",
-    "     working · claude",
-    "   ○ site-7",
-    "     reviewing · codex",
+    "  ◆ lead",
+    "    running · claude",
+    "  ● app-12",
+    "    working · claude",
+    "  ○ site-7",
+    "    reviewing · codex",
   ]);
 });
 
-test("rows and hints sit three columns in, and the word two further", () => {
+test("rows and hints sit two columns in, and the word two further", () => {
   const lines = plain(draw([lead, thread("app-12")], "lead", size)).split("\n");
-  expect(lines[0]?.indexOf("◆")).toBe(3);
-  expect(lines[1]?.indexOf("running")).toBe(5);
-  expect(lines[2]?.indexOf("●")).toBe(3);
-  expect(lines[2]?.indexOf("app-12")).toBe(5);
-  expect(lines.at(-2)?.indexOf("⌥")).toBe(3);
+  expect(lines[0]?.indexOf("◆")).toBe(2);
+  expect(lines[1]?.indexOf("running")).toBe(4);
+  expect(lines[2]?.indexOf("●")).toBe(2);
+  expect(lines[2]?.indexOf("app-12")).toBe(4);
+  expect(lines.at(-2)?.indexOf("⌥")).toBe(2);
 });
 
 test("the word and harness are grey, so the names stand out", () => {
@@ -89,7 +89,7 @@ test("a thread that needs you has a yellow circle and a yellow word, whatever it
   for (const status of ["working", "waiting"] as const) {
     const needing = thread("app-12", { status, needsYou: true, word: "approved" });
     const screen = draw([lead, needing], "lead", size);
-    expect(read(screen).join("\n")).toContain("   ● app-12\n     approved · claude");
+    expect(read(screen).join("\n")).toContain("  ● app-12\n    approved · claude");
     expect(screen).toContain("\x1b[33m●");
     expect(screen).toContain("\x1b[33mapproved");
   }
@@ -133,8 +133,8 @@ const selected = (screen: string) => screen.split("\n").filter((line) => line.in
 test("the row you are looking at is shaded, and nothing is when it isn't listed", () => {
   const rows = [lead, thread("app-12")];
   expect(read(selected(draw(rows, "app-12", size)).join("\n"))).toEqual([
-    "   ● app-12",
-    "     working · claude",
+    "  ● app-12",
+    "    working · claude",
   ]);
   expect(selected(draw(rows, "gone", size))).toEqual([]);
 });
@@ -183,13 +183,13 @@ test("on the grey, every colour is a fixed light one, as a theme's own can vanis
 
 test("a running time ends the second line, dim like the rest of it", () => {
   const screen = draw([thread("app-12", { age: "5m" })], "lead", size);
-  expect(listed(screen)).toEqual(["   ● app-12", "     working · claude · 5m"]);
+  expect(listed(screen)).toEqual(["  ● app-12", "    working · claude · 5m"]);
   expect(screen).toContain("\x1b[90m · claude · 5m");
 });
 
 test("the longest running time fits on the line whole", () => {
   const long = thread("app-12", { age: "59m" });
-  expect(listed(draw([long], "lead", size))[1]).toBe("     working · claude · 59m");
+  expect(listed(draw([long], "lead", size))[1]).toBe("    working · claude · 59m");
 });
 
 test("a running time starts below a minute, then counts minutes, hours and days", () => {
@@ -214,9 +214,9 @@ test("a clock set back never shows a time that makes no sense", () => {
 test("a name too long for a line goes on to the next, whole", () => {
   const name = "a-very-long-repository-name-1234";
   expect(listed(draw([thread(name)], "lead", size))).toEqual([
-    "   ● a-very-long-repository-n",
-    "     ame-1234",
-    "     working · claude",
+    "  ● a-very-long-repository-n",
+    "    ame-1234",
+    "    working · claude",
   ]);
 });
 
@@ -253,21 +253,21 @@ test("the grey stops at the line, which keeps its own background", () => {
 test("two hints with the keys stay at the bottom, below however few rows there are", () => {
   const lines = read(draw([lead], "lead", size));
   expect(lines).toHaveLength(size.height);
-  expect(lines.slice(-2)).toEqual(["   ⌥↑↓ switch", "   ⌃Q  quit"]);
-  expect(draw([lead], "lead", size)).toContain("\x1b[90m   ⌥↑↓ switch");
+  expect(lines.slice(-2)).toEqual(["  ⌥↑↓ switch", "  ⌃Q  quit"]);
+  expect(draw([lead], "lead", size)).toContain("\x1b[90m  ⌥↑↓ switch");
 });
 
 test("a list too long for the sidebar scrolls above the hints, and never runs into them", () => {
   const rows = [lead, ...[1, 2, 3, 4, 5].map((n) => thread(`app-${n}`))];
   const short = { width: sidebarWidth, height: 7 };
   expect(read(draw(rows, "app-4", short))).toEqual([
-    "   ● app-3",
-    "     working · claude",
-    "   ● app-4",
-    "     working · claude",
-    "   ● app-5",
-    "   ⌥↑↓ switch",
-    "   ⌃Q  quit",
+    "  ● app-3",
+    "    working · claude",
+    "  ● app-4",
+    "    working · claude",
+    "  ● app-5",
+    "  ⌥↑↓ switch",
+    "  ⌃Q  quit",
   ]);
 });
 
@@ -277,7 +277,7 @@ test("a sidebar too short for a row and the hints drops the hints, as the row ma
     const lines = plain(draw(rows, "app-1", { width: sidebarWidth, height })).split("\n");
     expect(lines.length).toBeLessThanOrEqual(height);
     expect(lines.join("\n")).not.toContain("switch");
-    expect(lines.join("\n")).toContain("   ● app-1");
+    expect(lines.join("\n")).toContain("  ● app-1");
   }
   expect(plain(draw(rows, "app-1", { width: sidebarWidth, height: 4 }))).toContain("switch");
 });
@@ -349,14 +349,18 @@ const link = (name: string, title: string, more: Partial<Link> = {}): Link => ({
   word: "",
   needing: false,
   dim: false,
+  mark: null,
   ...more,
 });
+// A row of PRS, with the dim mark of a PR that has no thread unless it is given another.
+const pr = (name: string, title: string, more: Partial<Link> = {}): Link =>
+  link(name, title, { mark: ["○", 90], ...more });
 const list = (links: Link[], total = links.length) => ({ links, total });
 const lists: Lists = {
   issues: list([link("app-31", "Add CSV export"), link("app-12", "Fix login", { dim: true })]),
   prs: list([
-    link("app#34", "Fix login", { word: "approved", needing: true }),
-    link("app#33", "Bump deps"),
+    pr("app#34", "Fix login", { word: "approved", needing: true, mark: ["●", 33] }),
+    pr("app#33", "Bump deps"),
   ]),
 };
 const tall = { width: sidebarWidth, height: 30 };
@@ -369,23 +373,23 @@ test("ISSUES, THREADS and PRS sit in that order, with rows together and a line b
       .filter(Boolean)
       .slice(0, -2),
   ).toEqual([
-    "   Issues",
-    "     Add CSV export",
-    "     app-31",
-    "     Fix login",
-    "     app-12",
+    "  Issues",
+    "  Add CSV export",
+    "  app-31",
+    "  Fix login",
+    "  app-12",
     rule,
-    "   Threads",
-    "   ◆ lead",
-    "     running · claude",
-    "   ● app-12",
-    "     working · claude · 5m",
+    "  Threads",
+    "  ◆ lead",
+    "    running · claude",
+    "  ● app-12",
+    "    working · claude · 5m",
     rule,
-    "   PRs",
-    "     Fix login",
-    "     app#34 · approved",
-    "     Bump deps",
-    "     app#33",
+    "  PRs",
+    "  ● Fix login",
+    "    app#34 · approved",
+    "  ○ Bump deps",
+    "    app#33",
   ]);
 });
 
@@ -403,9 +407,9 @@ test("the line between lists has the colour of the sidebar's edge, and joins it"
 test("one blank line parts each heading from its first row", () => {
   const lines = read(drawLists(threads, lists, "lead", tall));
   for (const [heading, first] of [
-    ["   Issues", "     Add CSV export"],
-    ["   Threads", "   ◆ lead"],
-    ["   PRs", "     Fix login"],
+    ["  Issues", "  Add CSV export"],
+    ["  Threads", "  ◆ lead"],
+    ["  PRs", "  ● Fix login"],
   ]) {
     const y = lines.indexOf(heading ?? "");
     expect(lines.slice(y, y + 3)).toEqual([heading ?? "", "", first ?? ""]);
@@ -415,7 +419,7 @@ test("one blank line parts each heading from its first row", () => {
 test("headings are dim, and sit where the marks do", () => {
   const screen = drawLists(threads, lists, "lead", tall);
   for (const heading of ["Issues", "Threads", "PRs"])
-    expect(screen).toContain(`\x1b[90m   ${heading}`);
+    expect(screen).toContain(`\x1b[90m  ${heading}`);
 });
 
 test("an issue with a thread is dim on both lines, and one without only on its name", () => {
@@ -428,7 +432,7 @@ test("an issue with a thread is dim on both lines, and one without only on its n
 test("a PR takes its thread's word, in yellow when the thread needs you, and dim otherwise", () => {
   const needing = drawLists(threads, lists, "lead", tall);
   expect(needing).toContain("\x1b[33mapproved");
-  const working = link("app#34", "Fix login", { word: "working" });
+  const working = pr("app#34", "Fix login", { word: "working" });
   const dim = drawLists(threads, { ...lists, prs: list([working]) }, "lead", tall);
   expect(dim).toContain("\x1b[90mworking");
 });
@@ -436,32 +440,93 @@ test("a PR takes its thread's word, in yellow when the thread needs you, and dim
 test("a PR's name is dim, and one with no thread has no word after it", () => {
   const screen = drawLists(threads, lists, "lead", tall);
   expect(screen).toContain("\x1b[90mapp#34");
-  expect(read(screen)).toContain("     app#33");
+  expect(read(screen)).toContain("    app#33");
 });
 
 test("both lines of a row that isn't a thread are a terminal link, and only the text is", () => {
   const screen = drawLists(threads, lists, "lead", tall);
   const open = "\x1b]8;;https://github.com/simon/app/issues/31\x1b\\";
-  expect(screen).toContain(`     ${open}Add CSV export\x1b]8;;\x1b\\`);
-  expect(screen).toContain(`     ${open}\x1b[90mapp-31\x1b[22;39m\x1b]8;;\x1b\\`);
+  expect(screen).toContain(`  ${open}Add CSV export\x1b]8;;\x1b\\`);
+  expect(screen).toContain(`  ${open}\x1b[90mapp-31\x1b[22;39m\x1b]8;;\x1b\\`);
+  const pull = "\x1b]8;;https://github.com/simon/app/pull/34\x1b\\";
+  const prs = list([pr("app#34", "Fix login", { url: "https://github.com/simon/app/pull/34" })]);
+  const marked = drawLists(threads, { ...lists, prs }, "lead", tall);
+  expect(marked).toContain(`\x1b[90m○\x1b[22;39m ${pull}Fix login\x1b]8;;\x1b\\`);
+  expect(marked).toContain(`    ${pull}\x1b[90mapp#34\x1b[22;39m\x1b]8;;\x1b\\`);
 });
 
 test("a long title is cut to the row, and every line still reaches the edge", () => {
   const long = "A very long title that goes on past the edge of the sidebar";
   const wide = "とても長いタイトルがサイドバーの端を越えて続きます";
-  const both = list([link("app-31", long), link("app-30", wide)]);
-  const screen = drawLists(threads, { issues: both, prs: both }, "lead", tall);
-  expect(plain(screen)).toContain("     A very long title that …");
+  const issues = list([link("app-31", long), link("app-30", wide)]);
+  const prs = list([pr("app#31", long), pr("app#30", wide)]);
+  const screen = drawLists(threads, { issues, prs }, "lead", tall);
+  expect(read(screen)).toContain("  A very long title that go…");
+  expect(read(screen)).toContain("  ○ A very long title that …");
   for (const line of screen.split("\n")) expect(Bun.stringWidth(line)).toBe(sidebarWidth);
 });
 
 test("a name that fills the row is cut too, so the row never wraps", () => {
   for (const length of [20, 21, 22, 23, 24, 25, 26, 30, 40]) {
     const name = "n".repeat(length);
-    const rows = list([link(name, "A title", { word: "approved" }), link(name, "A title")]);
-    const screen = drawLists(threads, { issues: rows, prs: rows }, "lead", tall);
+    const issues = list([link(name, "A title"), link(name, "A title")]);
+    const prs = list([pr(name, "A title", { word: "approved" }), pr(name, "A title")]);
+    const screen = drawLists(threads, { issues, prs }, "lead", tall);
     for (const line of screen.split("\n")) expect(Bun.stringWidth(line)).toBe(sidebarWidth);
   }
+});
+
+test("an issue's title and name start where the Issues heading does", () => {
+  const lines = plain(drawLists(threads, lists, "lead", tall)).split("\n");
+  const column = (text: string) => lines.find((line) => line.includes(text))?.indexOf(text);
+  expect(column("Add CSV export")).toBe(column("Issues"));
+  expect(column("app-31")).toBe(column("Issues"));
+});
+
+test("a PR has a mark in the mark column, with its title and name in the name column", () => {
+  const lines = plain(drawLists(threads, lists, "lead", tall)).split("\n");
+  const column = (text: string) => lines.find((line) => line.includes(text))?.indexOf(text);
+  expect(column("○ Bump deps")).toBe(column("◆ lead"));
+  expect(column("Bump deps")).toBe(column("lead"));
+  expect(column("app#33")).toBe(column("lead"));
+});
+
+test("a PR's mark takes the colour it was given, and one with no thread is dim", () => {
+  const screen = drawLists(threads, lists, "lead", tall);
+  expect(screen).toContain("\x1b[33m●");
+  expect(screen).toContain("\x1b[90m○");
+});
+
+test("padding is two columns on the left and two before the edge, on every line of text", () => {
+  const long = "A very long title that goes on past the edge of the sidebar";
+  const wide = "とても長いタイトルがサイドバーの端を越えて続きます";
+  const name = "a-very-long-repository-name-1234";
+  const issues = list([link(name, long), link("app-30", wide)], 900);
+  const prs = list([pr(name, long, { word: "review failed" }), pr("app#30", wide)], 900);
+  const rows = [lead, thread(name), thread("app-7", { word: "review failed", age: "59m" })];
+  for (const shown of ["lead", name]) {
+    const screen = drawLists(rows, { issues, prs }, shown, { width: sidebarWidth, height: 40 });
+    for (const line of plain(screen).split("\n")) {
+      if (line.startsWith("─")) continue;
+      expect(line.slice(0, 2)).toBe("  ");
+      expect(line.slice(-3)).toBe("  │");
+    }
+  }
+});
+
+test("a title keeps as much room as a thread's name, and the grey still runs past it", () => {
+  const name = "n".repeat(24);
+  const rows = [lead, thread(name)];
+  const prs = list([pr("app#34", "t".repeat(24))]);
+  const screen = drawLists(rows, { ...nothing, prs }, name, tall);
+  expect(read(screen)).toContain(`  ● ${name}`);
+  expect(read(screen)).toContain(`  ○ ${"t".repeat(24)}`);
+  expect(selected(screen)[0]).toContain("\x1b[22;39m  \x1b[49m");
+});
+
+test("on a narrow pane the hints are cut two columns before the edge", () => {
+  const lines = plain(draw([lead], "lead", { width: 10, height: 6 })).split("\n");
+  expect(lines.at(-2)).toBe("  ⌥↑↓ s  │");
 });
 
 test("control codes in a title never reach your terminal", () => {
@@ -475,7 +540,7 @@ const links = (count: number) =>
   Array.from({ length: count }, (_, n) => link(`app-${n + 1}`, "An issue"));
 // The lines of one list, from its heading to the line under it or the hints.
 const third = (lines: string[], heading: string) => {
-  const from = lines.indexOf(`   ${heading}`);
+  const from = lines.indexOf(`  ${heading}`);
   const next = lines.findIndex((line, y) => y > from && (line === rule || line.includes("⌥")));
   return lines.slice(from, next).filter(Boolean);
 };
@@ -485,9 +550,9 @@ test("a list shows as many rows as fit its third, then a count of the rest", () 
   const room = { width: sidebarWidth, height };
   const lines = read(drawLists(threads, { ...nothing, issues: list(links(9), 240) }, "lead", room));
   expect(third(lines, "Issues")).toHaveLength(10);
-  expect(lines).toContain("     app-4");
-  expect(lines).not.toContain("     app-5");
-  expect(lines).toContain("     + 236 more");
+  expect(lines).toContain("  app-4");
+  expect(lines).not.toContain("  app-5");
+  expect(lines).toContain("  + 236 more");
 });
 
 test("a list that just fits its third has no count", () => {
@@ -500,22 +565,22 @@ test("a list that just fits its third has no count", () => {
 test("the count gives way to the row in a third that only has room for one", () => {
   const room = { width: sidebarWidth, height: 16 };
   const lines = read(drawLists(threads, { ...nothing, issues: list(links(9)) }, "lead", room));
-  expect(third(lines, "Issues")).toEqual(["   Issues", "     An issue", "     app-1"]);
+  expect(third(lines, "Issues")).toEqual(["  Issues", "  An issue", "  app-1"]);
 });
 
 test("an empty list keeps its heading and a dim none", () => {
   const screen = drawLists(threads, { ...nothing, prs: lists.prs }, "lead", tall);
   const lines = read(screen);
-  expect(third(lines, "Issues")).toEqual(["   Issues", "     none"]);
-  expect(third(lines, "Threads")[0]).toBe("   Threads");
-  expect(screen).toContain("\x1b[90m     none");
+  expect(third(lines, "Issues")).toEqual(["  Issues", "  none"]);
+  expect(third(lines, "Threads")[0]).toBe("  Threads");
+  expect(screen).toContain("\x1b[90m  none");
   expect(lines.filter((line) => line === rule)).toHaveLength(2);
 });
 
 test("with nothing open, all three lists keep their place", () => {
   const lines = read(draw(threads, "lead", tall));
-  expect(third(lines, "Issues")).toEqual(["   Issues", "     none"]);
-  expect(third(lines, "PRs")).toEqual(["   PRs", "     none"]);
+  expect(third(lines, "Issues")).toEqual(["  Issues", "  none"]);
+  expect(third(lines, "PRs")).toEqual(["  PRs", "  none"]);
 });
 
 test("each list has a third of the sidebar above the hints, and THREADS has what is left over", () => {
@@ -523,7 +588,7 @@ test("each list has a third of the sidebar above the hints, and THREADS has what
   const places = (height: number) => {
     const lines = read(drawLists(threads, lists, "lead", { width: sidebarWidth, height }));
     const at = (text: string) => lines.indexOf(text);
-    return [at("   Issues"), at("   Threads"), at("   PRs"), lines.length - 2];
+    return [at("  Issues"), at("  Threads"), at("  PRs"), lines.length - 2];
   };
   expect(places(40)).toEqual([0, 13, 26, 38]);
   expect(places(41)).toEqual([0, 13, 27, 39]);
@@ -537,7 +602,7 @@ test("each list stays in its place, however full any of them is", () => {
   const moreThreads = [lead, ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => thread(`app-${n}`))];
   const places = (rows: Row[], shownLists: Lists) => {
     const lines = read(drawLists(rows, shownLists, "lead", room));
-    return ["   Issues", "   Threads", "   PRs"].map((text) => lines.indexOf(text));
+    return ["  Issues", "  Threads", "  PRs"].map((text) => lines.indexOf(text));
   };
   const expected = [0, 13, 26];
   expect(places(threads, nothing)).toEqual(expected);
@@ -554,8 +619,8 @@ test("THREADS scrolls inside its third, and the lists around it stay", () => {
   const room = { width: sidebarWidth, height: 24 };
   for (const { session } of busy) {
     const lines = read(drawLists(busy, full, session, room));
-    expect(lines.indexOf("   Threads")).toBe(7);
-    expect(lines.indexOf("   PRs")).toBe(16);
+    expect(lines.indexOf("  Threads")).toBe(7);
+    expect(lines.indexOf("  PRs")).toBe(16);
     const name = session === "lead" ? "◆ lead" : `● ${session}`;
     expect(third(lines, "Threads").join("\n")).toContain(name);
   }
@@ -569,7 +634,7 @@ test("a third too short for a heading and one row leaves THREADS the whole sideb
   expect(whole.join("\n")).toContain("● app-7");
   expect(read(drawLists(busy, nothing, "app-7", short))).toEqual(whole);
   const enough = read(drawLists(busy, full, "app-7", { width: sidebarWidth, height: 16 }));
-  expect(enough).toContain("   Issues");
+  expect(enough).toContain("  Issues");
 });
 
 test("a row too tall for THREADS' third leaves THREADS the whole sidebar, as it must stay whole", () => {
@@ -579,7 +644,7 @@ test("a row too tall for THREADS' third leaves THREADS the whole sidebar, as it 
   const lines = read(drawLists(rows, full, name, room));
   expect(lines.join("\n")).not.toContain("Issues");
   expect(lines.join("\n")).toContain("working · claude");
-  expect(read(drawLists(rows, full, "lead", room))).toContain("   Issues");
+  expect(read(drawLists(rows, full, "lead", room))).toContain("  Issues");
 });
 
 test("the thread you are on stays on screen with the lists, at every height", () => {
@@ -777,6 +842,34 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5) }));`;
     expect(prs.total).toBe(3);
   });
 
+  test("a PR shows the same mark and colour as its thread, in every state", () => {
+    const states = [
+      ["working", 0, "\x1b[32m●"],
+      ["waiting", 0, "\x1b[90m○"],
+      ["stopped", 0, "\x1b[90m○"],
+      ["failed", 0, "\x1b[31m●"],
+      ["failed", 1, "\x1b[31m●"],
+      ["waiting", 1, "\x1b[33m●"],
+    ] as const;
+    for (const [status, needing, mark] of states) {
+      const seen = after(`${open} ${onTwelve(status, needing)}`, 0);
+      const screen = drawLists(seen.rows, seen.lists, "lead", tall);
+      expect(screen).toContain(`${mark}\x1b[22;39m app-12`);
+      expect(screen).toContain(`${mark}\x1b[22;39m \x1b]8;;https://github.com/simon/app/pull/34`);
+    }
+  });
+
+  test("a PR with no thread shows the dim circle, and an issue has no mark", () => {
+    const { issues, prs } = after(open, 0).lists;
+    expect(prs.links[0]?.mark).toEqual(["○", 90]);
+    expect(issues.links[0]?.mark).toBeNull();
+  });
+
+  test("a PR whose thread is done has no thread left, so it shows the dim circle", () => {
+    const { prs } = after(`${open} ${onTwelve("done")}`, 0).lists;
+    expect(prs.links[0]?.mark).toEqual(["○", 90]);
+  });
+
   test("a row links to the issue or PR on GitHub", () => {
     const { issues, prs } = after(open, 0).lists;
     expect(issues.links[0]?.url).toBe("https://github.com/simon/app/issues/12");
@@ -801,10 +894,10 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5) }));`;
 
   test("a working thread shows how long ago it started, and the lead shows no time", () => {
     expect(listed(shown("status", "'working'", hours(2)))).toEqual([
-      "   ◆ lead",
-      "     running · claude",
-      "   ● app-12",
-      "     working · claude · 2h",
+      "  ◆ lead",
+      "    running · claude",
+      "  ● app-12",
+      "    working · claude · 2h",
     ]);
   });
 

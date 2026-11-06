@@ -110,7 +110,8 @@ async function run(args: string[]): Promise<void> {
     return;
   }
   // Run by the screen in its left pane, not by people, so usage leaves it out.
-  if (command === "sidebar" && sub && rest[0] && rest[1] && rest.length === 2) {
+  // The last word is the remote skel runs on, and empty on this machine.
+  if (command === "sidebar" && sub && rest[0] && rest[1] !== undefined && rest.length === 2) {
     // Not waited on, so the sidebar draws at once.
     screenOpened();
     await runSidebar(sub, rest[0], rest[1]);

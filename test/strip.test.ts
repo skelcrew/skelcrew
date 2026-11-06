@@ -35,7 +35,7 @@ const size = { left: 30, width: 90 };
 const seen = (line: string) => line.replace(/#\[[^\]]*\]/g, "").replaceAll("##", "#");
 // The strip above the agent as text, without what is above the sidebar.
 const read = (rows: Row[], shown: string | null, given = size) =>
-  seen(drawStrip(rows, shown, given, "local")[0]).slice(given.left);
+  seen(drawStrip(rows, shown, given, "")[0]).slice(given.left);
 const whole = "app-12  Fix the login redirect  #34  checks passing  round 2 · codex · approved";
 
 test("a thread's line has its name, title, PR, checks and latest review", () => {
@@ -51,7 +51,7 @@ test("a thread's line has its name, title, PR, checks and latest review", () => 
 });
 
 test("the review is dim, and the rest isn't", () => {
-  const [first] = drawStrip([thread()], "app-12", size, "local");
+  const [first] = drawStrip([thread()], "app-12", size, "");
   expect(first).toEndWith("checks passing#[fg=brightblack]  round 2 · codex · approved");
 });
 
@@ -101,28 +101,34 @@ test("too narrow for anything else, it still shows what fits and never fails", (
 });
 
 test("the strip starts past the sidebar, so it sits above the agent", () => {
-  const [first = ""] = drawStrip([thread()], "app-12", size, "local");
+  const [first = ""] = drawStrip([thread()], "app-12", size, "");
   expect(seen(first).indexOf("app-12")).toBe(30);
 });
 
-test("above the sidebar, skel in teal in line with the marks, then dim where it runs", () => {
+test("above the sidebar, skel in white in line with the marks, then dim a dot and where it runs", () => {
   const [first] = drawStrip([thread()], "app-12", size, "sprite:demo");
-  expect(seen(first)).toStartWith("   skel  sprite:demo");
-  expect(first).toContain("#[bold,fg=colour79]skel#[default]");
-  expect(first).toContain("#[fg=brightblack]sprite:demo#[default]");
+  expect(seen(first)).toStartWith("  skel · sprite:demo");
+  expect(first).toContain("#[bold,fg=colour231]skel#[default]");
+  expect(first).toContain("#[fg=brightblack] · sprite:demo#[default]");
+});
+
+test("on this machine the header is just skel, with no dot and no place", () => {
+  const [first = ""] = drawStrip([thread()], "lead", size, "");
+  expect(seen(first).trimEnd()).toBe("  skel");
+  expect(first).not.toContain("·");
 });
 
 test("the header stays whatever you are looking at", () => {
   for (const shown of ["lead", "app-12", "gone", null]) {
-    const [first = ""] = drawStrip([lead, thread()], shown, size, "local");
-    expect(seen(first).slice(0, 30).trimEnd()).toBe("   skel  local");
+    const [first = ""] = drawStrip([lead, thread()], shown, size, "");
+    expect(seen(first).slice(0, 30).trimEnd()).toBe("  skel");
     expect(seen(first).slice(0, 30)).toHaveLength(30);
   }
 });
 
 test("it is always two lines, so the agent's height never changes as you switch", () => {
   for (const shown of ["lead", "app-12", "gone", null])
-    expect(drawStrip([lead, thread()], shown, size, "local")).toHaveLength(2);
+    expect(drawStrip([lead, thread()], shown, size, "")).toHaveLength(2);
 });
 
 test("a long place is cut to fit above the sidebar, and the strip stays above the agent", () => {
@@ -130,7 +136,8 @@ test("a long place is cut to fit above the sidebar, and the strip stays above th
   const first = drawStrip([thread()], "app-12", size, where)[0];
   const text = seen(first);
   expect(text.slice(0, 30).trimEnd()).toEndWith("…");
-  expect(Bun.stringWidth(text.slice(0, 30).trimEnd())).toBe(28);
+  // Two columns short of the sidebar's edge, which is in column 28.
+  expect(Bun.stringWidth(text.slice(0, 30).trimEnd())).toBe(26);
   expect(text.indexOf("app-12")).toBe(30);
 });
 
@@ -142,12 +149,12 @@ test("where skel runs can't run commands, restyle the strip or reach your termin
 
 test("the second line is a thin line across the whole width, joining the sidebar's edge", () => {
   for (const given of [size, { left: 30, width: 50 }, { left: 12, width: 8 }]) {
-    const line = seen(drawStrip([thread()], "app-12", given, "local")[1]);
+    const line = seen(drawStrip([thread()], "app-12", given, "")[1]);
     expect(Bun.stringWidth(line)).toBe(given.left + given.width);
     expect(line.indexOf("┬")).toBe(given.left - 2);
     expect(line.replace("┬", "")).toMatch(/^─+$/);
   }
-  expect(drawStrip([], null, size, "local")[1]).toStartWith("#[fg=colour237]─");
+  expect(drawStrip([], null, size, "")[1]).toStartWith("#[fg=colour237]─");
 });
 
 test("the lead's strip is empty, as the sidebar already shows what needs you", () => {
@@ -162,19 +169,19 @@ test("an agent that isn't listed shows an empty strip", () => {
 
 test("a title can't run commands or restyle the strip, as tmux reads the strip as a format", () => {
   const title = "#(touch /tmp/pwned) #[fg=red] #{pane_pid}";
-  const line = drawStrip([thread({ title, review: null })], "app-12", size, "local")[0];
+  const line = drawStrip([thread({ title, review: null })], "app-12", size, "")[0];
   expect(line).toContain("##(touch /tmp/pwned) ##[fg=red] ##{pane_pid}");
 });
 
 test("a review can't run commands or restyle the strip either", () => {
   const review = { round: 1, reviewer: "#(id) 5%", verdict: "#[fg=red]" };
-  const line = drawStrip([thread({ review })], "app-12", size, "local")[0];
+  const line = drawStrip([thread({ review })], "app-12", size, "")[0];
   expect(line).toContain("##(id) 5%% · ##[fg=red]");
 });
 
 test("a title or review can't reach your terminal with control codes", () => {
   const review = { round: 1, reviewer: "co\x1b]2;owned\x07dex", verdict: "chan\tges" };
-  const strip = drawStrip([thread({ title: "x\x1b[2Jy\r\nz", review })], "app-12", size, "local");
+  const strip = drawStrip([thread({ title: "x\x1b[2Jy\r\nz", review })], "app-12", size, "");
   expect(strip.join("")).not.toMatch(/\p{Cc}/u);
   expect(read([thread({ title: "x\x1b[2Jy", review })], "app-12")).toContain("x [2Jy");
 });
