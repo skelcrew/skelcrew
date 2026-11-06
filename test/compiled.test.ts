@@ -155,7 +155,10 @@ describe("a release setting up a server", () => {
       "--define",
       `SKEL_RELEASES="http://127.0.0.1:${server.port}"`,
     ]);
-    fake("ssh", 'case "$*" in *first-run*) test -f "$HOME/copied" || exit 127;; esac');
+    fake(
+      "ssh",
+      'case "$*" in *first-run*) test -f "$HOME/copied" || exit 127;; *uname*) cat "$HOME/cpu"; echo "** WARNING: this ssh is old" >&2;; esac',
+    );
     fake("scp", 'for word; do test -f "$word" && cp "$word" "$HOME/copied"; done; exit 0');
   });
   afterAll(() => {
@@ -163,6 +166,7 @@ describe("a release setting up a server", () => {
   });
   beforeEach(() => {
     rmSync(join(home, "copied"), { force: true });
+    writeFileSync(join(home, "cpu"), "x86_64\n");
     files = new Map([
       ["/download/v0.4.2/skel-linux-x64", linux],
       [
@@ -178,6 +182,24 @@ describe("a release setting up a server", () => {
     expect(done.code).toBe(0);
     expect(readFileSync(join(home, "copied"), "utf8")).toBe(linux);
     expect(done.out).toContain("skel --remote simon@workbox");
+  });
+
+  test("copies the binary for the server's CPU, which can differ from the laptop's", async () => {
+    const arm = "the arm64 Linux skel of 0.4.2";
+    files.set("/download/v0.4.2/skel-linux-arm64", arm);
+    files.set("/download/v0.4.2/SHA256SUMS", `${sum(arm)}  skel-linux-arm64\n`);
+    writeFileSync(join(home, "cpu"), "aarch64\n");
+    const done = await run(["remote", "add", "simon@workbox"], released);
+    expect(done.err).toBe("");
+    expect(readFileSync(join(home, "copied"), "utf8")).toBe(arm);
+  });
+
+  test("says so when the server has a CPU skel isn't built for", async () => {
+    writeFileSync(join(home, "cpu"), "riscv64\n");
+    const done = await run(["remote", "add", "simon@workbox"], released);
+    expect(done.code).toBe(1);
+    expect(done.err).toContain("riscv64");
+    expect(existsSync(join(home, "copied"))).toBe(false);
   });
 
   test("copies nothing that fails its checksum", async () => {

@@ -118,7 +118,7 @@ export async function addMachine(
 ): Promise<number> {
   let code = await upToDate(where, there, machine);
   if (code === 127) {
-    await withLinuxSkel(machine.copy);
+    await withLinuxSkel(machine);
     code = await there([]);
   }
   if (code !== 0) return code;
@@ -244,7 +244,7 @@ else echo "elsewhere $f"; fi`;
       `the daemon on ${where} runs skel from ${found[3]}, not ~/.local/bin/skel, where update puts it, so nothing was replaced`,
     );
   const { folder, commit } = describeCheckout();
-  await withLinuxSkel(machine.copy);
+  await withLinuxSkel(machine);
   const restarted = await quietly(machine.shell(machine.restart));
   if (!restarted.ok)
     throw new Error(
@@ -258,11 +258,16 @@ else echo "elsewhere $f"; fi`;
   );
 }
 
-// Downloads this release's Linux skel to a file, so a skel installed from a release can set up a
-// server. It has no sources to build from, and is often on a Mac. Stops on a download that
-// doesn't match the release's checksums, as the install script does.
-async function downloadLinuxSkel(file: string): Promise<void> {
-  const name = "skel-linux-x64";
+// Downloads this release's Linux skel for the machine's CPU to a file, so a skel installed from
+// a release can set up a server. It has no sources to build from, and is often on a Mac. Stops
+// on a download that doesn't match the release's checksums, as the install script does.
+async function downloadLinuxSkel(file: string, machine: Machine): Promise<void> {
+  const cpus: Record<string, string> = { x86_64: "x64", aarch64: "arm64", arm64: "arm64" };
+  // ssh's warnings arrive in the same text, so the CPU is picked out of it.
+  const { said } = await quietly(machine.shell("uname -m"));
+  const cpu = cpus[said.match(/\b(x86_64|aarch64|arm64)\b/)?.[1] ?? ""];
+  if (!cpu) throw new Error(`skel runs on arm64 and x64 CPUs, not on "${said}"`);
+  const name = `skel-linux-${cpu}`;
   const fetched = async (asset: string) => {
     const address = `${releases}/download/v${release}/${asset}`;
     const response = await fetch(address);
@@ -292,9 +297,9 @@ async function buildLinuxSkel(file: string): Promise<void> {
   if ((await run(argv)) !== 0) throw new Error("bun build failed, so skel wasn't copied");
 }
 
-// Gets the skel you run here for a server or Sprite, hands it to copy, and removes it after: your
+// Gets the skel you run here for a server or Sprite, copies it there, and removes it after: your
 // release when you run one, or else one built from this checkout.
-export async function withLinuxSkel(copy: (file: string) => Promise<void>): Promise<void> {
+async function withLinuxSkel(machine: Machine): Promise<void> {
   // A single-file skel runs its modules from a folder only it sees, with no sources to
   // build from.
   const single = import.meta.dir.startsWith("/$bunfs");
@@ -303,8 +308,8 @@ export async function withLinuxSkel(copy: (file: string) => Promise<void>): Prom
   const folder = mkdtempSync(join(tmpdir(), "skel-"));
   try {
     const file = join(folder, "skel");
-    await (single ? downloadLinuxSkel(file) : buildLinuxSkel(file));
-    await copy(file);
+    await (single ? downloadLinuxSkel(file, machine) : buildLinuxSkel(file));
+    await machine.copy(file);
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }
