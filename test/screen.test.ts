@@ -14,6 +14,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { drawPage, type Page } from "../src/page.ts";
 import { sidebarWidth } from "../src/screen.ts";
 import { startSession } from "../src/tmux.ts";
 
@@ -98,6 +99,9 @@ while :; do read -r line && echo "$line" >> ${name}.typed; done
   startSession(agents, name, { folder: home, command: [script], env: { PATH: pathNow } });
 }
 
+// What goes ahead of skel in a terminal's command, such as a PATH that changes what it finds.
+let before = "";
+
 // Opens the screen on an agent in a terminal of its own, whose title until then is "my shell",
 // and which logs how skel exited. `where` is the name a laptop's skel --remote passes along.
 function open(
@@ -114,7 +118,7 @@ function open(
 await openScreen(${JSON.stringify(agents)}, ${JSON.stringify(session)});
 await Bun.write(${JSON.stringify(join(home, `left-${window}`))}, "left");`,
   );
-  const named = where ? `SKEL_REMOTE_NAME=${where} ` : "";
+  const named = where ? `SKEL_REMOTE_NAME=${where} ` : `${before}`;
   const title = `printf '\\033]2;my shell\\007'`;
   const command = `${title}; ${named}TERM=${term} ${process.execPath} ${script}; sleep 300`;
   tmux(terminal, "new-session", "-d", "-s", window, "-x", width, "-y", "30", command);
@@ -137,6 +141,7 @@ openDb().run(${JSON.stringify(statements)});`;
 
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-screen-test-")));
+  before = "";
   agents = `skel-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
   screen = `${agents}-screen`;
   terminal = `${agents}-terminal`;
@@ -626,7 +631,7 @@ function daemon(): void {
 const issueUrl = "https://github.com/simon/app/issues/31";
 const nearestUrl = "https://github.com/simon/app/issues/12";
 const pullUrl = "https://github.com/simon/app/pull/34";
-const issuePage = {
+const issuePage: Page = {
   title: "Add CSV export",
   facts: [
     ["State", "open"],
@@ -647,15 +652,15 @@ const pullPage = {
 };
 
 // Opens the screen on the lead with the lists filled, ready to land on their rows.
-async function openWithPages(): Promise<void> {
+async function openWithPages(width = "120"): Promise<void> {
   pages.set(issueUrl, issuePage);
   pages.set(nearestUrl, { ...issuePage, title: "Fix login" });
   pages.set(pullUrl, pullPage);
   daemon();
   openOnGitHub();
-  open("lead");
+  open("lead", "one", "xterm-256color", width);
   await ready("lead");
-  await until(() => seen().includes("Add CSV export"), "the issue");
+  await until(() => seen().includes("app-31"), "the issue");
 }
 
 // Clicks a row of the sidebar, found by what it says.
@@ -747,6 +752,57 @@ test("moving from a thread to a page and back returns to that thread, not the le
   await until(() => seen().includes("I am app-7"), "its agent");
   type("to the agent\r");
   await until(() => read("app-7.typed").includes("to the agent"), "what you typed");
+});
+
+test("keys pressed together when leaving a page all count, however slowly the client attaches", async () => {
+  // A client attaching slowly, as over a busy Sprite, can't be switched yet.
+  const real = Bun.which("tmux") ?? "tmux";
+  mkdirSync(join(home, "slow"));
+  writeFileSync(
+    join(home, "slow", "tmux"),
+    `#!/bin/sh\ncase "$*" in *" attach "*) sleep 0.4 ;; esac\nexec ${real} "$@"\n`,
+    { mode: 0o755 },
+  );
+  before = `PATH=${join(home, "slow")}:$PATH `;
+  await openWithPages();
+  press("M-Up");
+  await until(() => right().includes("Author"), "the page");
+  type("\x1b[1;3B\x1b[1;3B");
+  await until(() => seen().includes("I am app-12"), "the second row's agent");
+  await Bun.sleep(1200);
+  expect(selected()).toBe("● app-12");
+  expect(seen()).toContain("I am app-12");
+});
+
+test("a pane too narrow for a page's lines cuts them, so every line keeps its own row", async () => {
+  pages.set(issueUrl, issuePage);
+  daemon();
+  openOnGitHub();
+  open("lead", "one", "xterm-256color", "42");
+  await until(() => seen().includes("app-31"), "the issue");
+  clickRow("app-31");
+  await until(() => right().includes("Author"), "the page");
+  const panes = tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out.trim().split("\n");
+  const width = Number(panes.at(-1));
+  expect(width).toBeLessThan(11);
+  const rows = right().split("\n").slice(2, 20);
+  const lines = drawPage(issuePage, issueUrl, width).map((line) =>
+    Bun.stripANSI(line).slice(0, width).trimEnd(),
+  );
+  expect(rows.map((row) => row.trimEnd())).toEqual(lines.slice(0, 18));
+});
+
+test("a page leaves none of its terminal's modes behind on the agent", async () => {
+  await openWithPages();
+  const modes = () =>
+    tmux(screen, "list-panes", "-a", "-F", "#{wrap_flag} #{cursor_flag} #{mouse_any_flag}").out;
+  const before = modes();
+  clickRow("app-31");
+  await onPage("line 1 of the description");
+  expect(modes()).not.toBe(before);
+  press("M-S-Down");
+  await until(() => seen().includes("I am lead"), "the lead");
+  await until(() => modes() === before, "the modes to come back");
 });
 
 test("the wheel scrolls a page and stops at both ends, and the keys scroll nothing", async () => {

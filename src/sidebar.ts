@@ -518,13 +518,14 @@ export async function runSidebar(agents: string, session: string, where: string)
     process.stdout.write(`\x1b[H${frame.replaceAll("\n", "\r\n")}`);
   };
   // Puts what was picked on the right, if anything was. A client can switch between agents, but
-  // a page and an agent each need the pane to run something else. Landing where you are does
-  // nothing, so a page isn't asked for again.
+  // a page needs the pane to run something else, and so does a client still attaching, which
+  // can't switch yet: keys pressed together when leaving a page would be lost. Landing where you
+  // are does nothing, so a page isn't asked for again.
   const show = (next: string | null) => {
     if (next === null || next === shown) return;
     const link = linkAt(next);
     if (link) respawnPane(screenSocket(agents), right, pageCommand(next));
-    else if (page) {
+    else if (page || shownSession(agents, tty) === null) {
       respawnPane(screenSocket(agents), right, agentClient(agents, next));
       tty = paneTty(screenSocket(agents), right);
     } else showSession(agents, tty, next);

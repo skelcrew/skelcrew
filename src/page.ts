@@ -125,8 +125,9 @@ export async function runPage(url: string, reading: Promise<Page>): Promise<void
   };
   process.stdin.setRawMode(true);
   // Without the cursor hidden it would blink on the page. 1000 and 1006 ask for the wheel, so
-  // tmux hands it here.
-  process.stdout.write("\x1b[?25l\x1b[?1000h\x1b[?1006h");
+  // tmux hands it here. ?7l cuts a line at the edge: a pane too narrow for a label would
+  // otherwise wrap it, and rows the page doesn't count would throw its scrolling off.
+  process.stdout.write("\x1b[?25l\x1b[?1000h\x1b[?1006h\x1b[?7l");
   process.stdin.on("data", (bytes) => {
     const before = top;
     for (const [, button] of bytes.toString().matchAll(wheel))
