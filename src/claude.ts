@@ -58,6 +58,17 @@ const leadSettings = JSON.stringify({
 
 const Token = z.string().trim().min(1);
 
+// Returns the Claude Code login token skel saved for agents, which the lead, builders and
+// reviewers all log in with. Throws if setup hasn't saved one. A token from claude setup-token
+// never renews. A shared login would: renewing makes the old refresh token stop working, so
+// your own login or the agent's would go stale.
+export function claudeToken(home: string): string {
+  const tokenFile = claudeTokenFile(home);
+  if (!existsSync(tokenFile))
+    throw new Error("Claude Code's login token for agents isn't saved yet: run skel to set it up");
+  return Token.parse(readFileSync(tokenFile, "utf8"));
+}
+
 // Reports whether a session saved a conversation, so skel knows whether --resume can bring
 // it back. Claude Code saves a conversation only once it has a message, so a session nobody talked to
 // has nothing to resume, and its id can't start a new one either. It saves it in the
@@ -106,12 +117,7 @@ export function agentCommand(given: {
   // The name becomes a folder, so it must not climb out of skel's.
   if (!/^[a-zA-Z0-9][\w.-]*$/.test(name)) throw new Error(`"${name}" can't name a session`);
 
-  // A token from claude setup-token never renews. A shared login would: renewing makes the
-  // old refresh token stop working, so your own login or the agent's would go stale.
-  const tokenFile = claudeTokenFile(home);
-  if (!existsSync(tokenFile))
-    throw new Error("Claude Code's login token for agents isn't saved yet: run skel to set it up");
-  const token = Token.parse(readFileSync(tokenFile, "utf8"));
+  const token = claudeToken(home);
 
   // A folder of its own per session, never your ~/.claude: an agent could write memory or
   // settings that another session loads as instructions. It stays, so --resume finds the
