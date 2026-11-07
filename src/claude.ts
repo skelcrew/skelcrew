@@ -80,6 +80,36 @@ export function hasTranscript(name: string, folder: string, session: string): bo
   return existsSync(join(dataDir(), "claude", name, "projects", project, `${session}.jsonl`));
 }
 
+// Marks a folder trusted and the first launch done in a session's .claude.json, keeping all
+// else in the file. Claude Code asks whether to trust the folder even in bypass mode, and on
+// its first launch asks for a theme and more, and would wait there with nobody to answer.
+function trustFolder(config: string, cwd: string): void {
+  const file = join(config, ".claude.json");
+  let json: z.infer<typeof ClaudeJson> = {};
+  if (existsSync(file)) {
+    // Non-blocking, since the agent could leave a pipe there, and opening one waits
+    // forever.
+    const fd = openSync(file, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+    try {
+      const stat = fstatSync(fd);
+      if (!stat.isFile() || stat.size > 64 * 1024 * 1024)
+        throw new Error(`${file} isn't a plain file, so skel won't use it`);
+      json = ClaudeJson.parse(JSON.parse(readFileSync(fd, "utf8")));
+    } finally {
+      closeSync(fd);
+    }
+  }
+  const projects = json.projects ?? {};
+  projects[cwd] = { ...projects[cwd], hasTrustDialogAccepted: true };
+  // Written beside it and renamed over it, so even a link made since the check is replaced,
+  // never followed. "wx" refuses a link already at the new name.
+  const fresh = join(config, `.claude.json.${process.pid}`);
+  rmSync(fresh, { force: true });
+  const done = { ...json, hasCompletedOnboarding: true, projects };
+  writeFileSync(fresh, JSON.stringify(done), { mode: 0o600, flag: "wx" });
+  renameSync(fresh, file);
+}
+
 // Prepares an agent's own config folder and trusted Claude Code settings, then returns its
 // sandbox command and environment. A builder, given its thread's clone, works there and sees
 // nothing else but its origin, read-only; the lead works in its own folder and sees skel's
@@ -150,32 +180,7 @@ export function agentCommand(given: {
     mounts.push(...ro(repos));
   }
 
-  // Claude Code asks whether to trust the folder even in bypass mode, and on its first
-  // launch asks for a theme and more, and would wait there with nobody to answer.
-  const file = join(config, ".claude.json");
-  let json: z.infer<typeof ClaudeJson> = {};
-  if (existsSync(file)) {
-    // Non-blocking, since the agent could leave a pipe there, and opening one waits
-    // forever.
-    const fd = openSync(file, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
-    try {
-      const stat = fstatSync(fd);
-      if (!stat.isFile() || stat.size > 64 * 1024 * 1024)
-        throw new Error(`${file} isn't a plain file, so skel won't use it`);
-      json = ClaudeJson.parse(JSON.parse(readFileSync(fd, "utf8")));
-    } finally {
-      closeSync(fd);
-    }
-  }
-  const projects = json.projects ?? {};
-  projects[cwd] = { ...projects[cwd], hasTrustDialogAccepted: true };
-  // Written beside it and renamed over it, so even a link made since the check is replaced,
-  // never followed. "wx" refuses a link already at the new name.
-  const fresh = join(config, `.claude.json.${process.pid}`);
-  rmSync(fresh, { force: true });
-  const done = { ...json, hasCompletedOnboarding: true, projects };
-  writeFileSync(fresh, JSON.stringify(done), { mode: 0o600, flag: "wx" });
-  renameSync(fresh, file);
+  trustFolder(config, cwd);
 
   const command = ["claude", "--model", model, "--permission-mode", "bypassPermissions"];
   command.push("--settings", thread ? builderSettings : leadSettings);
