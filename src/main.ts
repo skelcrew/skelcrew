@@ -71,20 +71,21 @@ async function run(args: string[]): Promise<void> {
   const {
     attached,
     attachToLead,
+    attachToThread,
     createTask,
     pageOf,
     question,
     repos,
     reviewAgain,
     screenOpened,
-    serve,
     startOn,
     stopOn,
     submitForReview,
     task,
     tasks,
     threads,
-  } = await import("./daemon.ts");
+  } = await import("./client.ts");
+  const { serve } = await import("./daemon.ts");
   const { openDb } = await import("./db.ts");
   const { listRepositories, printRepositories, printTask, printTasks, printThreads } = await import(
     "./list.ts"
@@ -93,7 +94,6 @@ async function run(args: string[]): Promise<void> {
   const { bringInFrom, removeRepo, trustRepo } = await import("./repo.ts");
   const { firstRun, setupDone } = await import("./setup.ts");
   const { runSidebar } = await import("./sidebar.ts");
-  const { attachToThread } = await import("./thread.ts");
   // A sidebar, a page or an agent can inherit this name from whoever started tmux, and its
   // sandbox hides what setupDone reads.
   const remoteName = process.env.SKEL_REMOTE_NAME;
