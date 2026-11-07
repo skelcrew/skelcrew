@@ -11,7 +11,7 @@ import { parseJson, type Request } from "./requests.ts";
 import { openScreen } from "./screen.ts";
 import { onSprite, serviceLog, startSpriteService } from "./sprite.ts";
 import { findThread } from "./thread.ts";
-import { failedScreen, hasSession } from "./tmux.ts";
+import { agentRuns } from "./tmux.ts";
 
 const LeadReply = z.union([z.object({ lead: z.literal(true) }), z.object({ error: z.string() })]);
 
@@ -200,7 +200,7 @@ export async function attachToLead(tmux: string, from?: string): Promise<void> {
 export async function attachToThread(tmux: string, repo: string, task: number): Promise<void> {
   const thread = findThread(openDb(), repo, task);
   // A builder that exited leaves its last screen behind, which would look like it still runs.
-  if (!hasSession(tmux, thread.folder) || failedScreen(tmux, thread.folder) !== null)
+  if (!agentRuns(tmux, thread.folder))
     throw new Error(`${repo}-${task}'s builder isn't running: the thread is ${thread.status}`);
   await openScreen(tmux, thread.folder);
 }

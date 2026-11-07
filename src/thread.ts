@@ -12,7 +12,14 @@ import instructions from "./prompts/builder.md" with { type: "text" };
 import { findRepository, refreshClones } from "./repo.ts";
 import { refuseCredentials, setupCommand } from "./sandbox.ts";
 import { errorText } from "./say.ts";
-import { endSession, failedScreen, hasSession, startServer, startSession } from "./tmux.ts";
+import {
+  agentRuns,
+  endSession,
+  failedScreen,
+  hasSession,
+  startServer,
+  startSession,
+} from "./tmux.ts";
 
 export const Thread = z.object({
   owner: z.string(),
@@ -435,10 +442,8 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
 export async function bringBack(db: Database, tmux: string, thread: Thread): Promise<void> {
   if (thread.session === null)
     throw new Error("the daemon stopped while setting up the thread: run skel start again");
-  if (hasSession(tmux, thread.folder)) {
-    if (failedScreen(tmux, thread.folder) === null) return;
-    endSession(tmux, thread.folder);
-  }
+  if (agentRuns(tmux, thread.folder)) return;
+  if (hasSession(tmux, thread.folder)) endSession(tmux, thread.folder);
   await startBuilder(db, tmux, thread);
 }
 

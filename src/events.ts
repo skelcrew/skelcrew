@@ -10,7 +10,7 @@ import { refreshClones } from "./repo.ts";
 import { endRound } from "./round.ts";
 import { errorText } from "./say.ts";
 import { baseOf, cloneOf, github, readThread, record, type Thread } from "./thread.ts";
-import { failedScreen, hasSession, stopSession, typeInto } from "./tmux.ts";
+import { agentRuns, stopSession, typeInto } from "./tmux.ts";
 
 // The message about failed checks, with the end of each one's log. A check that isn't a
 // GitHub Actions job has no log gh can read, so it gets its link instead.
@@ -91,8 +91,7 @@ export async function tellBuilder(
     if (decision.conflict !== null) await freshBase(db, thread, decision.conflict);
     const checks = await aboutChecks(github(thread), decision.failed);
     const text = [...checks, ...decision.tell].join("\n\n---\n\n");
-    if (!hasSession(tmux, thread.folder) || failedScreen(tmux, thread.folder) !== null)
-      throw new Error("its builder isn't running");
+    if (!agentRuns(tmux, thread.folder)) throw new Error("its builder isn't running");
     // A builder can work long after an event, but one busy this long has likely hung.
     await typeInto(tmux, thread.folder, text, { timeout: 30 * 60_000, signal: cancel.signal });
     if (cancel.signal.aborted) return;

@@ -14,6 +14,7 @@ import { refreshClones, repositories } from "./repo.ts";
 import { errorText } from "./say.ts";
 import { readThread, record, Thread, threadName } from "./thread.ts";
 import {
+  agentRuns,
   endSession,
   failedScreen,
   hasSession,
@@ -77,7 +78,7 @@ async function typeNotes(db: Database, tmux: string): Promise<void> {
     const row = db.query("SELECT * FROM threads WHERE noting IS NOT NULL ORDER BY rowid").get();
     const thread = Thread.nullable().parse(row);
     if (note === null && (thread === null || thread.noting === null)) return;
-    if (!hasSession(tmux, "lead") || failedScreen(tmux, "lead") !== null) return;
+    if (!agentRuns(tmux, "lead")) return;
     if (!(await isIdle(tmux, "lead"))) continue;
     if (note !== null) {
       await typeInto(tmux, "lead", note.text);

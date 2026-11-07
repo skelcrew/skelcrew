@@ -153,6 +153,12 @@ export function failedScreen(socket: string, name: string): string | null {
   return mustTmux(socket, ["capture-pane", "-p", "-S", "-", "-t", `=${name}:`]).trim();
 }
 
+// Reports whether the agent in the named session is still running, so skel only types into
+// or attaches to a live one. A session alone doesn't say: an agent that failed leaves its
+// last screen behind in a session that looks alive.
+export const agentRuns = (socket: string, name: string) =>
+  hasSession(socket, name) && failedScreen(socket, name) === null;
+
 // Ends the named session so skel can replace an agent that has stopped working.
 export function endSession(socket: string, name: string): void {
   mustTmux(socket, ["kill-session", "-t", `=${name}`]);
