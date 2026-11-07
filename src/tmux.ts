@@ -176,13 +176,19 @@ function processes(): { pid: number; parent: number; state: string }[] {
 
 // Returns a process and every process under it, so stopping a session can wait for all of
 // them: an agent in its sandbox runs a few levels down from the pane's own process.
-function processTree(root: number): number[] {
+export function processTree(root: number): number[] {
   const children = new Map<number, number[]>();
   for (const { pid, parent } of processes())
     children.set(parent, [...(children.get(parent) ?? []), pid]);
   const tree = [root];
   for (let i = 0; i < tree.length; i++) tree.push(...(children.get(tree[i] ?? 0) ?? []));
   return tree;
+}
+
+// Returns those of the given processes that haven't exited, to wait for them to end.
+export function stillRunning(tree: number[]): number[] {
+  const alive = processes().filter(({ state }) => state !== "Z");
+  return tree.filter((pid) => alive.some((process) => process.pid === pid));
 }
 
 // Ends the named session and returns once every process it ran has exited, so what it was
@@ -195,14 +201,10 @@ export async function stopSession(socket: string, name: string, timeout = 10_000
   if (!pane) return;
   const tree = processTree(pane);
   tmux(socket, ["kill-session", "-t", `=${name}`]);
-  const running = () => {
-    const alive = processes().filter(({ state }) => state !== "Z");
-    return tree.filter((pid) => alive.some((process) => process.pid === pid));
-  };
   const deadline = Date.now() + timeout;
-  while (running().length > 0) {
+  while (stillRunning(tree).length > 0) {
     if (Date.now() > deadline)
-      for (const pid of running())
+      for (const pid of stillRunning(tree))
         try {
           process.kill(pid, "SIGKILL");
         } catch {}
@@ -254,6 +256,11 @@ export function shownSession(socket: string, tty: string): string | null {
 // session ended this moment: the sidebar shows what is left at its next look.
 export function showSession(socket: string, tty: string, name: string): void {
   tmux(socket, ["switch-client", "-c", tty, "-t", `=${name}`]);
+}
+
+// Replaces what a pane runs with a command. Its terminal is a new one, with a new name.
+export function respawnPane(socket: string, target: string, command: string[]): void {
+  tmux(socket, ["respawn-pane", "-k", "-t", target, "--", ...command]);
 }
 
 // Returns the visible pane text so skel can check whether Claude Code is ready for a

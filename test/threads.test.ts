@@ -15,6 +15,7 @@ import { createConnection } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
+import { stillRunning } from "../src/tmux.ts";
 
 const main = join(import.meta.dir, "..", "src", "main.ts");
 const daemon = join(import.meta.dir, "..", "src", "daemon.ts");
@@ -199,11 +200,23 @@ openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?
 const untilCloned = () => until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
 
 // Holds every clone from GitHub until the test lets it go, so a test can see that skel
-// answered before the clone was there.
+// answered before the clone was there. It notes in held that it started and in released that
+// it went on. The test can remove the folder in the moment between two looks for the file go,
+// so the wait also ends when the folder goes, and in any case after a minute.
 function holdClones(): void {
   writeFileSync(
     join(home, "bin", "git"),
-    `#!/bin/sh\ncase "$*" in *"clone --quiet https://github.com/"*) while [ ! -e "$HOME/go" ]; do sleep 0.05; done ;; esac\nexec ${Bun.which("git") ?? "git"} "$@"\n`,
+    `#!/bin/sh
+case "$*" in *"clone --quiet https://github.com/"*)
+  touch "$HOME/held"
+  for i in $(seq 1200); do
+    if [ -e "$HOME/go" ] || [ ! -d "$HOME" ]; then break; fi
+    sleep 0.05
+  done
+  touch "$HOME/released" ;;
+esac
+exec ${Bun.which("git") ?? "git"} "$@"
+`,
     { mode: 0o755 },
   );
 }
@@ -339,6 +352,64 @@ describe("a command naming a repository skel doesn't have by its full GitHub nam
     expect(cloned("site")).toBe(false);
     writeFileSync(join(home, "go"), "");
   });
+
+  // Left running, it would write into the folder the next daemon clones into.
+  test("stopping the daemon stops a clone it started", async () => {
+    onGitHub({}, "site");
+    const run = serve();
+    await untilAnswers();
+    holdClones();
+    await skel("task", "create", "simon/site", "Add import", "From CSV");
+    await until(() => existsSync(join(home, "held")));
+    await stop(run);
+    writeFileSync(join(home, "go"), "");
+    await Bun.sleep(300);
+    expect(existsSync(join(home, "released"))).toBe(false);
+  });
+
+  test("the daemon waits for a clone it stops to end, so the next daemon can't meet it", async () => {
+    onGitHub({}, "site");
+    const run = serve();
+    await untilAnswers();
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh
+case "$*" in *"clone --quiet https://github.com/"*)
+  trap 'sleep 0.5; touch "$HOME/ended"; exit' TERM
+  touch "$HOME/held"
+  for i in $(seq 1200); do sleep 0.05; done ;;
+esac
+exec ${Bun.which("git") ?? "git"} "$@"
+`,
+      { mode: 0o755 },
+    );
+    await skel("task", "create", "simon/site", "Add import", "From CSV");
+    await until(() => existsSync(join(home, "held")));
+    await stop(run);
+    expect(existsSync(join(home, "ended"))).toBe(true);
+  });
+
+  test("a clone that ignores the daemon's stop is killed", async () => {
+    onGitHub({}, "site");
+    const run = serve();
+    await untilAnswers();
+    writeFileSync(
+      join(home, "bin", "git"),
+      `#!/bin/sh
+case "$*" in *"clone --quiet https://github.com/"*)
+  trap '' TERM
+  echo $$ > "$HOME/held"
+  for i in $(seq 1200); do sleep 0.05; done ;;
+esac
+exec ${Bun.which("git") ?? "git"} "$@"
+`,
+      { mode: 0o755 },
+    );
+    await skel("task", "create", "simon/site", "Add import", "From CSV");
+    await until(() => read(join(home, "held")) !== "");
+    await stop(run);
+    expect(stillRunning([Number(read(join(home, "held")))])).toEqual([]);
+  }, 20_000);
 
   test("a fork, or one you can't push to, waits for skel repo trust and is never cloned", async () => {
     onGitHub({}, "fork");

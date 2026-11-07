@@ -1,7 +1,8 @@
 // The strip: one line above the agent saying what you are looking at. For a thread, its name,
-// task, PR and checks, then its latest review. The lead has none, as the sidebar says it all.
+// task, PR and checks, then its latest review. For a page, its row's name and title. The lead
+// has none, as the sidebar says it all.
 // Above the sidebar the same line says skel, its release and, on a remote, where it runs. A thin line runs under them all.
-import type { Row } from "./sidebar.ts";
+import type { Link, Row } from "./sidebar.ts";
 
 type Size = { left: number; width: number };
 
@@ -59,6 +60,13 @@ function aboutThread(row: Row, width: number): string {
   return `#[bold]${shown(name)}#[default]${shown(title)}${shown(end)}${dim}`;
 }
 
+// Returns the line for a page: its row's name, and its title in what room is left.
+function aboutPage(page: Link, width: number): string {
+  const name = fitted(clean(page.name), width);
+  const title = fitted(`  ${clean(page.title)}`, width - Bun.stringWidth(name));
+  return `#[bold]${shown(name)}#[default]${shown(title)}`;
+}
+
 // skel's name above the sidebar, in the white of a selected name. A 256-colour number, so it
 // looks the same whatever your theme.
 const skelName = "#[bold,fg=colour231]skel#[default]";
@@ -79,8 +87,8 @@ function header(where: string, left: number, release: string): string {
 }
 
 // Returns the strip's two lines as tmux formats, given the rows, the session on the right,
-// where the agent's pane is, `left` columns in and `width` wide, the remote skel runs on, if any,
-// and the release of the skel running here, if it is one. tmux's status lines span the whole terminal, so the first starts with the header, and the
+// where the agent's pane is, `left` columns in and `width` wide, the remote skel runs on, if
+// any, the release of the skel running here, if it is one, and the row of the page on the right, if that is what shows. tmux's status lines span the whole terminal, so the first starts with the header, and the
 // second meets the line at the sidebar's edge, two columns left of the agent, with a ┬. It reads
 // nothing, so what you see can be tested without a terminal. Always two lines, so the agent's
 // height never changes.
@@ -90,10 +98,12 @@ export function drawStrip(
   size: Size,
   where: string,
   release = "",
+  page: Link | null = null,
 ): [string, string] {
   const { left, width } = size;
   const top = header(where, left, release);
   const line = `#[fg=colour237]${"─".repeat(Math.max(left - 2, 0))}┬${"─".repeat(width + 1)}`;
+  if (page) return [`${top}${aboutPage(page, width)}`, line];
   const row = rows.find((candidate) => candidate.session === session);
   if (!row || row.status === null) return [top, line];
   return [`${top}${aboutThread(row, width)}`, line];

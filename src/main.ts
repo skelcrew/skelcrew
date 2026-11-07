@@ -15,6 +15,7 @@ const yoursOnly: Record<string, string> = {
   "repo trust": "trusting a repository",
   attach: "attaching to a thread",
   sidebar: "showing the sidebar",
+  page: "showing a page",
   "first-run": "setting up this machine",
   "remote add": "setting up a machine",
 };
@@ -36,9 +37,10 @@ async function run(args: string[]): Promise<void> {
     console.log(versionLine());
     return;
   }
-  // A sidebar is started by a skel that passed this check, and its tmux server can hand it
-  // the build of whichever laptop started the server, so it would refuse to run.
-  if (command !== "sidebar" && outOfDate()) process.exit(outdated);
+  // A sidebar or page is started by a skel that passed this check, and its tmux server can hand
+  // it the build of whichever laptop started the server, so it would refuse to run.
+  const onScreen = command === "sidebar" || command === "page";
+  if (!onScreen && outOfDate()) process.exit(outdated);
   if (args.length === 1 && ["--help", "-h", "help"].includes(command ?? "")) {
     console.log(help());
     return;
@@ -70,6 +72,7 @@ async function run(args: string[]): Promise<void> {
     attached,
     attachToLead,
     createTask,
+    pageOf,
     question,
     repos,
     reviewAgain,
@@ -86,17 +89,18 @@ async function run(args: string[]): Promise<void> {
   const { listRepositories, printRepositories, printTask, printTasks, printThreads } = await import(
     "./list.ts"
   );
+  const { runPage } = await import("./page.ts");
   const { bringInFrom, removeRepo, trustRepo } = await import("./repo.ts");
   const { firstRun, setupDone } = await import("./setup.ts");
   const { runSidebar } = await import("./sidebar.ts");
   const { attachToThread } = await import("./thread.ts");
-  // A sidebar or an agent can inherit this name from whoever started tmux, and its sandbox
-  // hides what setupDone reads.
+  // A sidebar, a page or an agent can inherit this name from whoever started tmux, and its
+  // sandbox hides what setupDone reads.
   const remoteName = process.env.SKEL_REMOTE_NAME;
   if (
     remoteName &&
     command !== "first-run" &&
-    command !== "sidebar" &&
+    !onScreen &&
     process.env.SKEL_SANDBOX !== "1" &&
     !setupDone()
   )
@@ -121,6 +125,11 @@ async function run(args: string[]): Promise<void> {
     // Not waited on, so the sidebar draws at once.
     screenOpened();
     await runSidebar(sub, rest[0], rest[1]);
+    return;
+  }
+  // Run by the sidebar in the screen's right pane, not by people, so usage leaves it out.
+  if (command === "page" && sub && rest.length === 0) {
+    await runPage(sub, pageOf(sub));
     return;
   }
   if (command === "repo" && sub === "ls" && rest.length === 0) {
