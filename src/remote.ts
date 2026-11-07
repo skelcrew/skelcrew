@@ -13,9 +13,11 @@ import {
   dirty,
   git,
   laptopBuild,
+  mainFile,
   readable,
   release,
   releases,
+  singleFile,
 } from "./version.ts";
 
 // A command over ssh gets a bare PATH: no login shell reads ~/.profile, and Ubuntu's
@@ -289,11 +291,10 @@ async function downloadLinuxSkel(file: string, machine: Machine): Promise<void> 
 // whatever the laptop runs, stamped with its build so it can tell when yours moves on.
 async function buildLinuxSkel(file: string): Promise<void> {
   console.log("Building skel for Linux.");
-  const main = join(import.meta.dir, "main.ts");
   const target = "--target=bun-linux-x64";
   const build = laptopBuild();
   const stamp = build ? ["--define", `SKEL_BUILD=${JSON.stringify(build)}`] : [];
-  const argv = ["bun", "build", "--compile", target, ...stamp, main, "--outfile", file];
+  const argv = ["bun", "build", "--compile", target, ...stamp, mainFile, "--outfile", file];
   if ((await run(argv)) !== 0) throw new Error("bun build failed, so skel wasn't copied");
 }
 
@@ -302,13 +303,12 @@ async function buildLinuxSkel(file: string): Promise<void> {
 async function withLinuxSkel(machine: Machine): Promise<void> {
   // A single-file skel runs its modules from a folder only it sees, with no sources to
   // build from.
-  const single = import.meta.dir.startsWith("/$bunfs");
-  if (single && !release)
+  if (singleFile && !release)
     throw new Error("this skel is a single file and can't build one: run skel from a checkout");
   const folder = mkdtempSync(join(tmpdir(), "skel-"));
   try {
     const file = join(folder, "skel");
-    await (single ? downloadLinuxSkel(file, machine) : buildLinuxSkel(file));
+    await (singleFile ? downloadLinuxSkel(file, machine) : buildLinuxSkel(file));
     await machine.copy(file);
   } finally {
     rmSync(folder, { recursive: true, force: true });

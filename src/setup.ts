@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
 import { daemonLog, loadLaunchAgent, plistFile, plistText } from "./launchd.ts";
@@ -23,6 +23,7 @@ import {
   onSprite,
   spriteServiceInstalled,
 } from "./sprite.ts";
+import { checkoutFolder, singleFile } from "./version.ts";
 
 type Env = Record<string, string | undefined>;
 
@@ -317,12 +318,10 @@ function installService(): void {
   const before = existsSync(file) ? readFileSync(file, "utf8") : null;
   // skel built as one file runs its modules from a folder only it sees, so the service runs
   // the file itself.
-  const single = import.meta.dir.startsWith("/$bunfs");
-  const checkout = resolve(import.meta.dir, "..");
-  const skel = single ? process.execPath : join(checkout, "bin", "skel");
+  const skel = singleFile ? process.execPath : join(checkoutFolder, "bin", "skel");
   // A worktree goes away once its work merges, and the daemon with it. Its .git is a file
   // pointing back at the repository, wherever the worktree lives.
-  if (!single && statSync(join(checkout, ".git"), { throwIfNoEntry: false })?.isFile()) {
+  if (!singleFile && statSync(join(checkoutFolder, ".git"), { throwIfNoEntry: false })?.isFile()) {
     if (before !== null) return;
     throw new Error(
       `this skel runs from a worktree (${skel}): run skel from the main checkout to install its daemon`,
