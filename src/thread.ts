@@ -385,10 +385,10 @@ export function threadConfig(): {
 }
 
 // Starts the thread's builder in tmux, in the sandbox in its clone: with --resume when it
-// saved a conversation, or else afresh with the task's title and body as its first message. Throws when it
-// exits as soon as it starts. skel picks the session id rather than Claude Code, so it is
-// stored before the builder starts and the builder can be brought back with --resume after
-// its session is gone.
+// saved a conversation, or else afresh with the task's title and body as its first message.
+// Throws when it exits as soon as it starts. skel picks the session id rather than Claude
+// Code, so it is stored before the builder starts and the builder can be brought back with
+// --resume after its session is gone.
 export async function startBuilder(db: Database, tmux: string, thread: Thread): Promise<void> {
   const clone = cloneOf(thread);
   const stored = thread.session;

@@ -130,9 +130,9 @@ export async function addMachine(
 }
 
 // Runs skel on a server or Sprite through `there`, which takes the environment to add to
-// what it always passes, and returns its exit code. A copied skel there from another build than this
-// laptop's runs nothing, so you are asked to replace it first. Either way the command then
-// runs, without the check, so a build with uncommitted changes can't ask twice.
+// what it always passes, and returns its exit code. A copied skel there from another build
+// than this laptop's runs nothing, so you are asked to replace it first. Either way the
+// command then runs, without the check, so a build with uncommitted changes can't ask twice.
 export async function upToDate(
   where: string,
   there: (env: string[]) => Promise<number>,

@@ -27,9 +27,10 @@ function releases(): string {
   return found;
 }
 
-// Builds one binary, stamped with its release and where releases live. By default a binary built by Bun reads any .env
-// and bunfig.toml in the folder it runs in. skel runs in your projects, so a project's .env
-// would land in skel's environment, and from there could reach the agents.
+// Builds one binary, stamped with its release and where releases live. By default a binary
+// built by Bun reads any .env and bunfig.toml in the folder it runs in. skel runs in your
+// projects, so a project's .env would land in skel's environment, and from there could reach
+// the agents.
 function compile(version: string, file: string, target: string): void {
   const argv = ["bun", "build", "--compile", `--target=${target}`];
   argv.push("--no-compile-autoload-dotenv", "--no-compile-autoload-bunfig");

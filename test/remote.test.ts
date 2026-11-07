@@ -1,5 +1,6 @@
-// skel --remote and skel remote add, run as you would run them on your laptop, against a fake ssh and scp that
-// play a server in a folder of the test, and a fake bun that builds a stand-in skel.
+// skel --remote and skel remote add, run as you would run them on your laptop, against a
+// fake ssh and scp that play a server in a folder of the test, and a fake bun that builds a
+// stand-in skel.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
   cpSync,

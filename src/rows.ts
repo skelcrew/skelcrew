@@ -136,7 +136,8 @@ export function sidebarRows(
         needsYou: needsYou(thread),
         running: running.includes(thread.folder),
         word,
-        // Only a review is on another harness. An older skel's review has none saved.
+        // Only a review is on another harness. A submit saves which one, so the empty text
+        // is only there for a field that stays null until the first submit.
         harness: word === "reviewing" ? (reviewer ?? "") : builderHarness,
         age: word === "working" && thread.started !== null ? threadAge(thread.started, now) : "",
         github: github(thread),

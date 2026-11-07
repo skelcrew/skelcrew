@@ -240,7 +240,7 @@ test("the workflow runs on a version tag, checks, builds, signs, then publishes 
 
 test("each Mac binary is signed on a Mac with its own CPU, so it can be started there", () => {
   const { sign } = workflow().jobs;
-  // biome-ignore lint/suspicious/noTemplateCurlyInString: this is GitHub's syntax, not JavaScript's.
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub's syntax, not JavaScript's.
   expect(sign["runs-on"]).toBe("${{ matrix.runner }}");
   expect(sign.strategy.matrix.include).toEqual([
     { binary: "skel-darwin-arm64", runner: "macos-26" },

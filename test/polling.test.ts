@@ -42,8 +42,8 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 
 // Stands in for Claude Code. As the builder, it commits a round and runs skel submit, then
 // waits at a ❯ prompt, keeping what is typed into it. Told of a conflict, it fetches
-// origin and merges the base, as Claude Code would, keeping what git said. While the file busy is in its config
-// folder, it looks busy, as Claude Code does mid-turn.
+// origin and merges the base, as Claude Code would, keeping what git said. While the file
+// busy is in its config folder, it looks busy, as Claude Code does mid-turn.
 function fakeClaude(): void {
   script(
     "claude",
@@ -88,10 +88,10 @@ beforeEach(() => {
   fakeClaude();
   fakeCodex();
   script("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
-  // The fake GitHub: issue 12, the skel label and reactions, kept in files, PR 7 once opened, reviews numbered from 1001, the poll
-  // answered from the file graphql, failing as GitHub does today while it is missing, and slow
-  // to answer, with what the file held when asked, while hold-graphql is there, and
-  // ana, who can push, and mallory, who can't.
+  // The fake GitHub: issue 12, the skel label and reactions, kept in files, PR 7 once opened,
+  // reviews numbered from 1001, the poll answered from the file graphql, failing as GitHub
+  // does today while it is missing, and slow to answer, with what the file held when asked,
+  // while hold-graphql is there, and ana, who can push, and mallory, who can't.
   script(
     "gh",
     `case "$*" in

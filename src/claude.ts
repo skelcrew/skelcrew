@@ -70,8 +70,8 @@ export function claudeToken(home: string): string {
 }
 
 // Reports whether a session saved a conversation, so skel knows whether --resume can bring
-// it back. Claude Code saves a conversation only once it has a message, so a session nobody talked to
-// has nothing to resume, and its id can't start a new one either. It saves it in the
+// it back. Claude Code saves a conversation only once it has a message, so a session nobody
+// talked to has nothing to resume, and its id can't start a new one either. It saves it in the
 // session's own config folder, under a folder named after the folder it runs in, with every
 // character but letters and digits made a dash. Names over 200 characters get a hash
 // instead, which skel's folders never come near.

@@ -158,12 +158,13 @@ async function pollRepository(
 }
 
 // Polls GitHub for each repository's issues labeled skel and the PRs of its live and stopped
-// threads, and its open issues and PRs while a screen is open, one query per repository, so a stopped thread's merge still ends it: every `every`
-// milliseconds while any of its threads is working or waits on review or CI, and half as
-// often otherwise, so a label or your comment is seen within a minute. Starts at once, to pick
-// up what happened while the daemon was down. A failed poll, such as GitHub answering with an
-// error, is logged and tried again at the next one. Polls run in the background, so they never hold up the daemon. `begin` sets up a
-// thread started from a label and starts its builder, as the daemon does for skel start.
+// threads, and its open issues and PRs while a screen is open, one query per repository, so
+// a stopped thread's merge still ends it: every `every` milliseconds while any of its threads
+// is working or waits on review or CI, and half as often otherwise, so a label or your comment
+// is seen within a minute. Starts at once, to pick up what happened while the daemon was down.
+// A failed poll, such as GitHub answering with an error, is logged and tried again at the next
+// one. Polls run in the background, so they never hold up the daemon. `begin` sets up a thread
+// started from a label and starts its builder, as the daemon does for skel start.
 // Returns a function that polls one repository at once, named by its full GitHub name, for
 // a webhook delivery about it or a screen opening.
 export function pollGitHub(
