@@ -148,6 +148,19 @@ test("says what it tried and what gh said when gh fails", async () => {
   );
 });
 
+// githubRepo finds gh on the PATH skel started with, so only a skel started with the fake's
+// folder on its PATH reaches the fake.
+test("says a repository can't be reached in its own words", () => {
+  gh("HTTP 404: Not Found", 1);
+  const code = `await import(${JSON.stringify(join(import.meta.dir, "..", "src", "github.ts"))})
+    .then((github) => github.githubRepo("simon/app"))
+    .catch((error) => console.log(error.message));`;
+  const run = Bun.spawnSync(["bun", "-e", code], { env: process.env, stdout: "pipe" });
+  expect(run.stdout.toString().trim()).toBe(
+    "simon/app isn't on GitHub, or your gh login can't reach it: HTTP 404: Not Found",
+  );
+});
+
 test("refuses an answer from gh that isn't what GitHub sends", async () => {
   gh('{"title":"no number"}');
   await expect(createIssue("simon/app", "Add export", "As JSON")).rejects.toThrow();
