@@ -5,6 +5,7 @@ import type { Database } from "bun:sqlite";
 import { mkdirSync, openSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
+import { threadConfig } from "./config.ts";
 import { openDb } from "./db.ts";
 import { pastLimit } from "./decide.ts";
 import { stopThread } from "./events.ts";
@@ -32,7 +33,6 @@ import {
   startBuilder,
   startThread,
   type Thread,
-  threadConfig,
   threadName,
   threadOn,
 } from "./thread.ts";
