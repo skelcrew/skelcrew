@@ -15,6 +15,7 @@ import {
 import { tellLead } from "./lead.ts";
 import { cloneDir } from "./paths.ts";
 import { review, reviewerHarness } from "./reviewer.ts";
+import { quietly } from "./run.ts";
 import { errorText } from "./say.ts";
 import { baseOf, cloneOf, github, readThread, record, type Thread, threadName } from "./thread.ts";
 import { typeInto } from "./tmux.ts";
@@ -22,17 +23,10 @@ import { typeInto } from "./tmux.ts";
 // Runs git in skel's own clone and returns what it printed, throwing with its error when it
 // fails.
 async function git(folder: string, ...args: string[]): Promise<string> {
-  const run = Bun.spawn(["git", "-C", folder, ...args], {
+  const { out, err, ok } = await quietly(["git", "-C", folder, ...args], {
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-    stdout: "pipe",
-    stderr: "pipe",
   });
-  const [out, err, code] = await Promise.all([
-    new Response(run.stdout).text(),
-    new Response(run.stderr).text(),
-    run.exited,
-  ]);
-  if (code !== 0) throw new Error(`git ${args.join(" ")} failed: ${err.trim()}`);
+  if (!ok) throw new Error(`git ${args.join(" ")} failed: ${err.trim()}`);
   return out.trim();
 }
 

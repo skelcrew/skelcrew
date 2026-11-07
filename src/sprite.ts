@@ -4,6 +4,7 @@
 import { z } from "zod";
 import { originHere } from "./origin.ts";
 import { addMachine, type Machine, notSetUp, quoted, run, upToDate } from "./remote.ts";
+import { quietly } from "./run.ts";
 import { errorText, skelLine, windowTitle } from "./say.ts";
 
 // Reports whether skel runs on a Sprite. It goes by sprite-env, the Sprite's own tool for
@@ -217,18 +218,9 @@ async function prepare(name: string): Promise<void> {
   // like errors though the install works. So its output shows only when it fails. sudo
   // drops the environment, hence env after it.
   const apt = ["sudo", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "-qq"];
-  const install = Bun.spawn(on([...apt, "bubblewrap"]), {
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [out, err, code] = await Promise.all([
-    new Response(install.stdout).text(),
-    new Response(install.stderr).text(),
-    install.exited,
-  ]);
-  if (code !== 0)
-    throw new Error(`couldn't install bubblewrap on sprite:${name}:\n${`${out}${err}`.trim()}`);
+  const install = await quietly(on([...apt, "bubblewrap"]));
+  if (!install.ok)
+    throw new Error(`couldn't install bubblewrap on sprite:${name}:\n${install.said}`);
   // A new Sprite's node is a script that writes to /etc/profile.d the first time it runs,
   // and /etc is read-only in the sandbox, so node, biome and tsc would fail for every
   // builder. One run out here does that write, quietly. A Sprite without node has nothing to
@@ -246,11 +238,10 @@ async function prepare(name: string): Promise<void> {
 // It is quiet, as sprite says "Updated" with the Sprite's name.
 async function makeUrlPublic(name: string): Promise<void> {
   const update = ["sprite", "config", "update", "--url-auth", "public", "-s", name];
-  const made = Bun.spawn(update, { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  const [said, code] = await Promise.all([new Response(made.stderr).text(), made.exited]);
-  if (code !== 0)
+  const { err, ok } = await quietly(update);
+  if (!ok)
     throw new Error(
-      `sprite couldn't make sprite:${name}'s URL public, so GitHub's webhooks can't wake it: ${said.trim()}`,
+      `sprite couldn't make sprite:${name}'s URL public, so GitHub's webhooks can't wake it: ${err.trim()}`,
     );
 }
 
@@ -285,13 +276,10 @@ function onTheSprite(name: string): Machine {
     },
     // A Sprite service keeps the command it was made with, even after skel moves.
     daemonSkel: async () => {
-      const get = Bun.spawn(shell("sprite-env services get skel"), {
-        stdin: "ignore",
-        stdout: "pipe",
+      const { out, ok } = await quietly(shell("sprite-env services get skel"), {
         stderr: "ignore",
       });
-      const [out, code] = await Promise.all([new Response(get.stdout).text(), get.exited]);
-      if (code !== 0) return null;
+      if (!ok) return null;
       try {
         return Service.parse(JSON.parse(out)).cmd;
       } catch {

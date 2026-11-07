@@ -6,6 +6,7 @@ import { chmodSync, mkdtempSync, rmSync, writeSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { originHere } from "./origin.ts";
+import { quietly } from "./run.ts";
 import { skelLine } from "./say.ts";
 import {
   built,
@@ -189,18 +190,6 @@ export type Machine = {
   updated: () => Promise<void>;
 };
 
-// Runs a shell line on the machine and returns what it printed, quietly: the service
-// commands print their logs, which matter only when they fail.
-async function quietly(argv: string[]): Promise<{ said: string; ok: boolean }> {
-  const ran = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  const [out, err, code] = await Promise.all([
-    new Response(ran.stdout).text(),
-    new Response(ran.stderr).text(),
-    ran.exited,
-  ]);
-  return { said: `${out}${err}`.trim(), ok: code === 0 };
-}
-
 // Prints what you should know about the checkout skel is built from, and returns its folder
 // and commit as skel names them. The build is the checkout as it is, so changes not
 // committed, or a branch other than main, go along, which is allowed but worth a line.
@@ -247,6 +236,7 @@ else echo "elsewhere $f"; fi`;
     );
   const { folder, commit } = describeCheckout();
   await withLinuxSkel(machine);
+  // The service commands print their logs, which matter only when they fail.
   const restarted = await quietly(machine.shell(machine.restart));
   if (!restarted.ok)
     throw new Error(
