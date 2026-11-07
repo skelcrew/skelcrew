@@ -17,11 +17,12 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "./paths.ts";
 import { seatbeltArgs } from "./seatbelt.ts";
 import { controlSocket, dropCapabilities, onSprite } from "./sprite.ts";
+import { checkoutFolder, singleFile } from "./version.ts";
 
 const { O_NONBLOCK, O_NOFOLLOW, O_RDONLY } = constants;
 
@@ -110,13 +111,11 @@ export function sandboxArgs(given: {
   // but itself. From a checkout, only the parts skel runs from: the checkout's .git and
   // other files aren't the agent's to read. bun runs skel without node_modules by fetching
   // its packages itself, and a sandbox can't show a folder that is missing.
-  const checkout = resolve(import.meta.dir, "..");
-  const single = import.meta.dir.startsWith("/$bunfs");
-  const bin = single ? dirname(process.execPath) : join(checkout, "bin");
-  const skel = single
+  const bin = singleFile ? dirname(process.execPath) : join(checkoutFolder, "bin");
+  const skel = singleFile
     ? [process.execPath]
     : ["bin", "src", "node_modules", "package.json"]
-        .map((part) => join(checkout, part))
+        .map((part) => join(checkoutFolder, part))
         .filter((part) => existsSync(part));
   if (process.platform === "darwin")
     return seatbeltArgs({
