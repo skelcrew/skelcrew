@@ -7,7 +7,7 @@ import { onSprite, startTmuxService } from "./sprite.ts";
 export const screenSocket = (agents: string) => `${agents}-screen`;
 
 // Sent on stdin with each new session instead of kept in a file, so there is no file to
-// find or keep in step, and a server an older skel started picks up changes. Your own
+// find or keep in step, and a server that outlives an upgrade picks up changes. Your own
 // ~/.tmux.conf never applies: -f /dev/null replaces it. Ctrl-Q with no prefix and no status
 // bar make attaching feel like being inside Claude Code. A session whose command fails
 // keeps its last screen, so skel can say why it ended instead of finding it gone. tmux only
@@ -130,7 +130,7 @@ export function startSession(
   mustTmux(socket, ["source-file", "-"], config);
 }
 
-// Gives a running tmux server skel's settings, so one an older skel started scrolls too.
+// Gives a running tmux server skel's settings, so one that outlived an upgrade scrolls too.
 // Quietly does nothing without a server.
 export function applyConfig(socket: string): void {
   tmux(socket, ["source-file", "-"], config);

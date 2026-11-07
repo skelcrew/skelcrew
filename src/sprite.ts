@@ -295,9 +295,9 @@ function onTheSprite(name: string): Machine {
       }
     },
     restart: "sprite-env services restart skel",
-    // A Sprite an older skel set up still asks for a login at its URL. Made public only once
-    // the new daemon runs and holds the URL's port: until then, whatever else listens there
-    // would be on the internet.
+    // A Sprite whose URL was never made public asks for a login there, which GitHub's
+    // webhooks can't give. Made public only once the new daemon runs and holds the URL's
+    // port: until then, whatever else listens there would be on the internet.
     updated: () => makeUrlPublic(name),
   };
 }

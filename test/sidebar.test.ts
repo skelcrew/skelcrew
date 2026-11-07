@@ -1038,7 +1038,7 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5) }));`;
     }
   });
 
-  test("a thread an older skel started has no time saved, and shows none", () => {
+  test("a thread with no start time saved shows none", () => {
     const sql = `${repository} INSERT INTO threads (owner, repo, task, folder, branch, status)
       VALUES ('simon', 'app', 12, 'app-12', 'skel/12', 'working')`;
     const [, older] = rowsAfter(sql, 5_000);

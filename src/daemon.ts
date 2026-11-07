@@ -117,8 +117,8 @@ function wakeOnWebhooks(db: Database, port: number, poll: (fullName: string) => 
   } catch (error) {
     console.log(`couldn't listen for GitHub's webhooks on port ${port}: ${errorText(error)}`);
   }
-  // Set again at each start, so a webhook deleted on GitHub, or one an older skel set with
-  // other events, is put right.
+  // Set again at each start, so a webhook deleted on GitHub, or one that asks for other
+  // events than this skel wants, is put right.
   for (const { owner, repo } of repositories(db))
     hookRepository(`${owner}/${repo}`).catch((error) => console.log(errorText(error)));
 }
