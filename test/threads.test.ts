@@ -656,6 +656,53 @@ nameRepositories(db);`;
     expect(hasSession("app-12")).toBe(false);
   }, 30_000);
 
+  test("skel stop refuses a thread still setting up, and one with no builder", async () => {
+    addApp({ "skel.yaml": "setup: [sleep 2, exit 3]\n" });
+    serve();
+    await untilCloned();
+    await skel("start", "app-12");
+    expect((await skel("stop", "app-12")).err).toContain(
+      "app-12 is still setting up: stop it once its builder has started",
+    );
+    await until(() => thread().status === "failed");
+    expect((await skel("stop", "app-12")).err).toContain(
+      "app-12 is failed, so it has no builder to stop",
+    );
+  }, 30_000);
+
+  // A stopped thread's builder sits at its prompt once back, so skel start must say whether
+  // something will wake it. Sets the row while the thread is stopped, as a round would have.
+  test("a stopped thread comes back waiting on its PR, or working on a review's changes", async () => {
+    addApp();
+    serve();
+    await untilCloned();
+    await skel("start", "app-12");
+    await until(() => read(join(config("app-12"), "args")) !== "");
+    const stoppedWith = async (columns: string) => {
+      await skel("stop", "app-12");
+      const db = new Database(join(data(), "skel.db"));
+      db.run("PRAGMA busy_timeout = 5000");
+      db.run(`UPDATE threads SET ${columns}`);
+      db.close();
+      expect((await skel("start", "app-12")).out).toContain("Started app-12 again");
+      return thread().status;
+    };
+    expect(await stoppedWith("pr = 7")).toBe("waiting");
+    expect(await stoppedWith("telling = 'Add a test.'")).toBe("working");
+  }, 30_000);
+
+  // The round limit is read only for a thread it can matter to, so a bad one fails the new
+  // thread with the reason rather than refusing skel start.
+  test("a bad max_rounds fails a new thread, and skel start still answers", async () => {
+    addApp();
+    writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\nmax_rounds: 0\n");
+    serve();
+    await untilCloned();
+    expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
+    await until(() => thread().status === "failed");
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("isn't valid"));
+  }, 30_000);
+
   // The daemon brings back threads once the lead has started, which takes a moment.
   test("a thread started while the daemon starts the lead isn't taken for one cut short", async () => {
     addApp({ "skel.yaml": "setup: [sleep 3]\n" });
