@@ -22,9 +22,6 @@ import {
   startSession,
 } from "./tmux.ts";
 
-// The sidebar reads the round limit from here, with the rest of what it knows about threads.
-export { threadConfig };
-
 export const Thread = z.object({
   owner: z.string(),
   repo: z.string(),
