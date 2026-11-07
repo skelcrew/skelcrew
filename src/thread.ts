@@ -30,8 +30,8 @@ export const Thread = z.object({
   // let the thread go on with skel start.
   held: z.string().nullable(),
   // The ID of the last review, PR comment and check run handled, so each event is handled
-  // once, across restarts too. Null until the PR is first polled, for threads an older skel
-  // started: that poll starts after the PR's history rather than replaying it.
+  // once, across restarts too. A new thread starts them at 0. An old row can hold null: the
+  // PR's first poll then starts after its history rather than replaying it.
   last_review: z.number().nullable(),
   last_comment: z.number().nullable(),
   last_check: z.number().nullable(),
@@ -41,10 +41,10 @@ export const Thread = z.object({
   // Why the thread started needing you, until a note saying so is typed into the lead.
   noting: z.string().nullable(),
   // The task's title when the thread started, for the strip, which looks each second and so
-  // can't ask GitHub. Null on a thread an older skel started.
+  // can't ask GitHub. An old row can hold null.
   title: z.string().nullable(),
   // When the thread started, in milliseconds since 1970, for its running time in the sidebar.
-  // Null on a thread an older skel started.
+  // An old row can hold null.
   started: z.number().nullable(),
   // What the PR's CI says, without skel's own review check, as last polled. Null with no CI,
   // or while the commit it would be about is still on its way to GitHub.
