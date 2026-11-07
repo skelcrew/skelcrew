@@ -12,6 +12,7 @@ import { fetchBranch, readIssue } from "./github.ts";
 import { cloneDir, threadSocket } from "./paths.ts";
 import instructions from "./prompts/builder.md" with { type: "text" };
 import { findRepository, refreshClones } from "./repo.ts";
+import { quietly } from "./run.ts";
 import { refuseCredentials, setupCommand } from "./sandbox.ts";
 import { errorText } from "./say.ts";
 import { cloneOf, folderName, github, log, readThread, record, Thread } from "./thread.ts";
@@ -140,13 +141,8 @@ async function run(
   doing = argv.join(" "),
   env: Record<string, string | undefined> = process.env,
 ) {
-  const proc = Bun.spawn(argv, { env, stdout: "pipe", stderr: "pipe" });
-  const [out, err, code] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  if (code !== 0) throw new Error(`${doing} failed: ${(out + err).trim().slice(-2000)}`);
+  const { said, ok } = await quietly(argv, { env });
+  if (!ok) throw new Error(`${doing} failed: ${said.slice(-2000)}`);
 }
 
 const SkelYaml = z.looseObject({ setup: z.array(z.string()).optional() }).nullable();
