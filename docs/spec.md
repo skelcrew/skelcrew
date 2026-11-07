@@ -19,7 +19,7 @@ The repository starts with three documents: this spec, `AGENTS.md` for how to wr
 | Always on | skel runs on a server. Start and attach from your laptop, close the lid, and the work carries on. |
 | Unattended, where it makes sense | Agents stay alive, wake on events, and only ask you when they need you. You approve and you merge. |
 | Parallel | Many threads at once, across repositories, without juggling chat windows. |
-| Isolated | Each thread gets a branch, clone and sandbox. Your own checkouts are never touched. No tokens inside. |
+| Isolated | Each thread gets a branch, clone and sandbox. Your own checkouts are never touched. No GitHub token inside, and no secret you didn't give that repository. |
 | Connected | Tasks come from GitHub issues and PRs go back to it. More tools can be added behind the same seam. |
 | Build ⇄ review | A builder and a fresh adversarial reviewer on another model loop until the change is ready. A model reviewing its own work shares its blind spots. |
 | In your harness | You stay in Claude Code. There is no new app to live in. |
@@ -57,6 +57,7 @@ The repositories in the video are small real apps with fast CI and real issues, 
 | Thread | skel's core: the work on one task, from its first message to the merged PR. Its branch, clone, sandbox, builder session and history. One thread per task at a time. Named by the task's own ID in its tracker, with the repository added when that ID doesn't name one: GitHub issue #12 in app is `app-12`, since its number is only unique within app, while a tracker whose IDs are already unique, such as Linear's `JOTT-12`, would keep its own. A thread never gets a second number, so the name in skel is always the one in the tracker. A dash, because no shell reads a dash as anything special, so it never needs quoting. |
 | Builder | The thread's agent. A Claude Code session that stays alive from start until the PR merges or closes. |
 | Reviewer | A fresh agent for each review round, on Codex by default, reading the PR adversarially. It runs once and answers with a verdict, with no session to attach to. It never inherits the builder's context. |
+| Secret | A value a repository's commands need, such as a test API key, which you give skel for that one repository. Its builders and reviewers can use it. The lead can't. |
 | Event | Something that happened to a thread: a review, a PR comment, a failed check, a merge. |
 | Needs you | A flag on a thread: the builder asked a question, review hit its round limit, or the PR is approved and green. |
 
@@ -140,7 +141,7 @@ Everything must work over a plain `ssh -t` or `sprite console`: no local display
 
 Before cloning, skel decides whether to trust the repository. It trusts it on its own when your GitHub login can push to it, unless it is a fork: agents will run its setup and test commands, and read its AGENTS.md and settings as instructions, and you already vouch for what is in it. For any other repository, `skel` run in a checkout of it asks you whether you trust it. Brought in any other way, it waits until you run `skel repo trust <name>` in your own terminal, since a yes passed on by the lead could come from an injected instruction. The answer is remembered in \~/.config/skel/, never in the repository, so a clone can't bring its own yes.
 
-A repository can say how to set up and test it in a committed `skel.yaml`. Without one, the builder works it out, as it would in any checkout.
+A repository can say how to set up and test it in a committed `skel.yaml`. Without one, the builder works it out, as it would in any checkout. A committed file never holds a secret, and can't ask for one: see Secrets.
 
 ## The daemon
 
@@ -160,10 +161,10 @@ The tmux sessions keep running when the daemon stops, so agents keep working thr
 One thread, from start to merge.
 
 1. **A task is started.** You add the `skel` label to an issue on GitHub, from anywhere, even your phone. Or the lead runs `skel task create app "<title>" "<body>"`, which creates a GitHub issue, then `skel start app-12`. You can run both yourself too.
-2. **skel sets up the thread.** A clone of its own at `~/.local/share/skel/threads/app-12/`, made from skel's clone of the repository, on branch `skel/12-<slug>` from `main` (or `--from <branch>`), with the repository's setup commands run once in it.
-3. **The builder starts.** A Claude Code session in the sandbox, in the thread's clone, with the task's title and body as its first message.
-4. **The builder finishes a round.** It commits and runs `skel submit "<summary>"`. skel fetches the branch from the thread's clone into its own and pushes it from there, never running git inside the thread's folder. On the first round skel opens the PR, with `Closes #12` in its body.
-5. **The reviewer reviews.** skel sets the `skel/review` status check on the commit to pending and runs a fresh reviewer once, in the sandbox, with `codex exec` (or `claude -p` without Codex). It is given the task, reads the diff against the base branch, runs the tests, and answers in a fixed JSON shape: approve or changes, and the review's body. skel posts it as a GitHub review and sets the check to success or failure, so branch protection can require it. Reviews run one at a time, since they share skel's Codex login, and a renewal by one could leave the others with a token that no longer works. A review covers the commit it started for: a newer `skel submit` cancels a review still waiting or running. A reviewer that fails, answers outside the shape, or runs past 30 minutes sets the check to failure with "review failed", and the thread needs you. You or the lead can rerun a review with `skel review`, such as after a review that failed.
+2. **skel sets up the thread.** A clone of its own at `~/.local/share/skel/threads/app-12/`, made from skel's clone of the repository, on branch `skel/12-<slug>` from `main` (or `--from <branch>`), with the repository's setup commands run once in it, with the repository's secrets if the thread gets them.
+3. **The builder starts.** A Claude Code session in the sandbox, in the thread's clone, with the task's title and body as its first message. Its instructions name the secrets it can use, if any.
+4. **The builder finishes a round.** It commits and runs `skel submit "<summary>"`. skel fetches the branch from the thread's clone into its own and pushes it from there, never running git inside the thread's folder. A commit holding a secret isn't pushed, and the builder is told. On the first round skel opens the PR, with `Closes #12` in its body.
+5. **The reviewer reviews.** skel sets the `skel/review` status check on the commit to pending and runs a fresh reviewer once, in the sandbox, with `codex exec` (or `claude -p` without Codex). It is given the task and the names of the secrets it can use, reads the diff against the base branch, runs the tests, and answers in a fixed JSON shape: approve or changes, and the review's body. skel posts it as a GitHub review and sets the check to success or failure, so branch protection can require it. Reviews run one at a time, since they share skel's Codex login, and a renewal by one could leave the others with a token that no longer works. A review covers the commit it started for: a newer `skel submit` cancels a review still waiting or running. A reviewer that fails, answers outside the shape, or runs past 30 minutes sets the check to failure with "review failed", and the thread needs you. You or the lead can rerun a review with `skel review`, such as after a review that failed.
 6. **Changes go back to the builder.** skel types the review into the builder's live session. The builder fixes, commits and runs `skel submit` again. Back to step 4.
 7. **After 3 rounds of changes, the thread needs you.** skel stops sending reviews to the builder until you say go on, with `skel start`.
 8. **Approved and CI green: the thread needs you.** Its status is `waiting`, on you.
@@ -201,8 +202,11 @@ For you, and for the lead:
 | `skel remote add <host>` | Sets up a server, or with `sprite:<name>` a Sprite, creating it after asking if it doesn't exist. Runs the first run there and prints the `skel --remote` command that connects. Run it on your laptop. |
 | `skel serve` | Runs the daemon in the foreground, for systemd or a Sprite service. One per machine. |
 | `skel repo ls` | Lists the repositories skel works on, with their short names. |
-| `skel repo rm <name>` | Removes skel's clone of a repository. It refuses while the repository has live threads, and names them. Only you can run it: the lead never needs to, and asks you instead. |
+| `skel repo rm <name>` | Removes skel's clone of a repository and its secrets. It refuses while the repository has live threads, and names them. Only you can run it: the lead never needs to, and asks you instead. |
 | `skel repo trust <name>` | Trusts a repository your login can't push to, so skel clones it. Only you can run it. |
+| `skel secret add <repo> <NAME>` | Asks for a secret's value without showing it, and saves it for that repository, replacing any value it had. Only you can run it, in your own terminal, for a repository you can push to. |
+| `skel secret ls [<repo>]` | Lists secrets by repository and name, never their values. Only you can run it. |
+| `skel secret rm <repo> <NAME>` | Removes a secret. It doesn't revoke the key: do that where it was issued. Only you can run it. |
 | `skel task ls [<repo>]` | Open tasks, newest first, with the thread on each one if it has one. `--json` for tools. |
 | `skel task show <repo>-<task>` | A task's title and body, which is all its builder sees, with its thread if it has one. `--json` for tools. |
 | `skel task create <repo> "<title>" "<body>"` | Creates a task, as a GitHub issue, and prints its name, such as `app-13`. It doesn't start a thread. |
@@ -212,11 +216,12 @@ For you, and for the lead:
 | `skel review <repo>-<task>` | Reviews the thread's last submitted commit again, as a round's review, such as after a review that failed. It refuses while a review of it is waiting or running. |
 | `skel stop <repo>-<task>` | Ends the session and keeps the clone, branch and PR. |
 
-For the builder inside a thread:
+For the builder and reviewer inside a thread:
 
 | Command | Who | What it does |
 | --- | --- | --- |
 | `skel submit "<summary>"` | Builder | Submits a round for review: skel pushes, opens the PR if needed, starts a review |
+| `skel secret run <command>` | Builder, reviewer | Runs a command with the repository's secrets in its environment, and masks them in what it prints |
 
 Agents talk to the daemon over a socket mounted into their sandbox, which also tells skel which thread they belong to. The lead and the agents never call GitHub themselves.
 
@@ -242,31 +247,74 @@ test: [bun test]
 
 **The screen.** The sidebar lives in a second tmux server, `tmux -L skel-screen`, one session per open terminal, ended when you leave. Its left pane runs the sidebar, on a server with terminal links turned on (the `hyperlinks` terminal feature), and draws the line at its own right edge, as tmux's border is blank. tmux has two status lines: the header above the sidebar and the strip share the first, and the thin line under them is the second. Its right pane is an ordinary tmux client attached to the agent's session on `tmux -L skel`, and picking a row switches that client to another session. Landing on an issue or PR replaces that client with a small `skel page` command, in the same pane, and moving back to a thread starts a client again. So a page lives and ends with the screen, on your side, outside any sandbox. Agents' sessions stay single-pane and know nothing of the screen: typing into them, reading them and checking them work as if it weren't there, and leaving the screen ends nothing.
 
-**State.** One SQLite file per machine, `~/.local/share/skel/skel.db`, with `bun:sqlite`. It holds repositories (name, GitHub owner and name, how many issues and PRs are open) and threads (repository, task, branch, status, needs you, round count, builder session ID, PR number, when it started), and the last handled ID per event kind. Every change is also appended to `~/.local/share/skel/threads/<repo>-<task>.log` as one JSON line, so a thread's history can be read and replayed. That includes each review's round, reviewer, verdict and first line. The strip shows all but the first line. skel keeps no tasks of its own. It saves only a copy of each repository's newest open issues and PRs for the sidebar, which it replaces at each poll while a screen is open. `skel task ls` asks GitHub. Repository clones live in `~/.local/share/skel/repos/` and thread clones in `~/.local/share/skel/threads/`, on one disk, so a thread's clone shares its files with the repository's.
+**State.** One SQLite file per machine, `~/.local/share/skel/skel.db`, with `bun:sqlite`. It holds repositories (name, GitHub owner and name, how many issues and PRs are open) and threads (repository, task, branch, status, needs you, round count, builder session ID, PR number, when it started, whether it gets secrets), and the last handled ID per event kind. Every change is also appended to `~/.local/share/skel/threads/<repo>-<task>.log` as one JSON line, so a thread's history can be read and replayed. That includes each review's round, reviewer, verdict and first line. The strip shows all but the first line. skel keeps no tasks of its own. It saves only a copy of each repository's newest open issues and PRs for the sidebar, which it replaces at each poll while a screen is open. `skel task ls` asks GitHub. Repository clones live in `~/.local/share/skel/repos/` and thread clones in `~/.local/share/skel/threads/`, on one disk, so a thread's clone shares its files with the repository's.
 
 **Surviving restarts.** When the daemon starts, it brings back the lead and every thread that was `working` or `waiting` with `claude --resume <session>`, runs again every review whose `skel/review` check is still pending, and polling picks up any event it missed.
 
-**Isolation.** Each thread gets its own branch and clone, so nothing a builder does in it reaches your checkouts, skel's clone or another thread. Each agent runs inside bubblewrap: its folder is writable, the rest of the system is read-only, your home folder and credentials are hidden. The lead works in its own folder in `~/.local/share/skel/lead/` and sees skel's clone of every repository read-only, including ones brought in while it runs, so it can plan across them while the work happens in threads. The reviewer sees the thread's clone through a throwaway layer, so it can run the tests but changes nothing.
+**Isolation.** Each thread gets its own branch and clone, so nothing a builder does in it reaches your checkouts, skel's clone or another thread. Each agent runs inside bubblewrap: its folder is writable, the rest of the system is read-only, your home folder and credentials are hidden, and only a repository's own secrets come back, for those who get them. The lead works in its own folder in `~/.local/share/skel/lead/` and sees skel's clone of every repository read-only, including ones brought in while it runs, so it can plan across them while the work happens in threads. The reviewer sees the thread's clone through a throwaway layer, so it can run the tests but changes nothing.
 
-**Tokens stay out.** Agents never see your GitHub token. They don't push or call GitHub. They call skel commands, and the daemon, outside the sandbox, pushes and posts with your `gh` login. Commits are authored by you, with skel as co-author.
+**Tokens stay out.** Agents never see your GitHub token. They don't push or call GitHub. They call skel commands, and the daemon, outside the sandbox, pushes and posts with your `gh` login. Commits are authored by you, with skel as co-author. An agent can read the login its harness runs on, as the harness needs it, and so can the code it runs.
 
 **One seam for GitHub.** All GitHub calls live in one module, so Linear, Jira, local tasks or another forge can be added later without touching the flow.
 
 **One seam for Sprites.** Creating a Sprite, running commands on it and keeping it awake live in one module, so other machines that skel creates or that sleep can be added later without touching the flow.
+
+## Secrets
+
+A builder or reviewer sometimes needs a value skel can't give it any other way: a token to install from a private package registry, or a test API key for tests that call a real service. A secret is such a value, which you give skel for one repository. Most repositories need none, and then nothing here shows.
+
+Secrets are for what a repository runs in the sandbox: its setup commands, its tests, and a tool the builder uses, such as a payment provider's command line in test mode. skel's own logins are not secrets, and neither is a token only the daemon uses.
+
+**Adding one.** `skel secret add app STRIPE_TEST_KEY` asks for the value without showing it, as the first run asks for the Claude token, then says "Agents working on app can read this. Use a key you can replace, never a production one." The command takes no value as an argument, so a value never lands in your shell's history or a process list. It refuses to run inside a sandbox or without a terminal, so neither the lead nor an agent can hand one in. A value is one line of at least 8 characters, so that masking it is exact and doesn't garble ordinary output. A key that is a file goes in as base64, and the repository's tests decode it.
+
+A value is never shown again. `skel secret ls` shows names only, and adding a name again replaces its value. When a builder needs a secret it doesn't have, it asks you, and the thread needs you, as for any question. You run `skel secret add` in your own terminal and answer, and the builder goes on, with no restart. A value pasted into the lead or a builder has already gone to the model, so replace it.
+
+**Never a GitHub token.** `skel secret add` refuses the names `GH_TOKEN` and `GITHUB_TOKEN`, any value with the start of a GitHub token, such as `ghp_` or `github_pat_`, and the value of your `gh` login. So packages on GitHub Packages and private GitHub repositories as dependencies stay out of an agent's reach. This catches a mistake, and can't recognise every token.
+
+**Which repositories.** A secret belongs to one repository, by its full GitHub name. There are no secrets for all repositories, so one brought in later starts with none. `skel secret add` asks GitHub first, and works only for a repository your login can push to and that isn't a fork. `skel repo trust` isn't enough: someone else decides what that repository's setup commands do. Everyone who can push to a repository can run code with its secrets, as with secrets in CI.
+
+What a repository may use is written only on your machine. `skel.yaml` has no setting for secrets, and nothing in a clone can ask for one, so a clone can't get a secret you never gave it, and a fork, with a full name of its own, starts with none.
+
+**Which agents.** A repository's setup commands, builders and reviewers all get its secrets. The reviewer runs the same tests as the builder, and all it runs is code the builder wrote with the same secrets in reach. The lead never gets one: it reads every repository and every issue.
+
+A thread whose task was written by someone who can't push to the repository gets none. On a public repository anyone can write an issue, and a label only says someone wanted it done, so this text is the easiest way to steer an agent. skel looks at the issue's author once, as the thread starts, and saves the answer with the thread. Its builder and reviewer work on without secrets. To run that task with them, read it and write a task of your own.
+
+**How a secret reaches a command.** Never through the agent's own environment. The repository's folder of secrets is mounted read-only in the sandbox, and `SKEL_SECRETS` says where. `skel secret run <command>` runs one command with the secrets as environment variables, for it and what it starts: `skel secret run bun test`. skel runs setup commands this way on its own. The builder's and reviewer's instructions list the secrets by name and tell them to use `skel secret run`. So a stray `env` or a debug line in the agent's shell shows nothing, and the harness never holds a value. Because the folder is mounted, rather than each file, a secret added or removed reaches a running builder at once. A process already running keeps what it was given.
+
+`skel secret run` needs no daemon or socket, so it works in a review too. It runs in the agent's own shell, and takes as long as its command does.
+
+**Keeping secrets out of what skel keeps and sends.** skel replaces an exact value with `[secret NAME]` wherever the text passes through it:
+
+- In the output of `skel secret run`, line by line, before the agent reads it. This is what stops a key a test prints from reaching the model.
+- In what skel writes or sends: the PR's body, a review's body, what it types into a builder, and the thread's log.
+
+A commit holding a value is never pushed. Before pushing, skel reads the new commits in its own clone, their messages included. If one holds a value, it pushes nothing and tells the builder which secret it found and to take it out of the branch's history. Once on GitHub, a value can't be taken back.
+
+**What this can't protect.** The README says this too.
+
+- **An agent can read every secret it is given.** The folder is there to read, and a command can print a value in a way masking doesn't catch. `skel secret run` guards against accidents, as the sandbox guards against mistakes and overreach, not against an agent set on it.
+- **Nothing stops a secret leaving.** The network is open, as agents need their model and package registries. An agent steered by text in a repository, a dependency or a web page can send a secret anywhere, and so can a test. skel doesn't filter the network: one allowed host can be enough to carry a value out, and the rule would differ on Linux, a Sprite and a Mac.
+- **Masking matches exact values.** A value encoded or split passes through. A value an agent reads by other means goes to its model's company, and stays in its transcript. skel never rewrites transcripts.
+
+So the protection is in what you give. Use a key with a test mode, a spending limit or a narrow scope, and one you can revoke. After a leak, revoke it where it was issued: `skel secret rm` only stops later use.
+
+**Where they are kept.** In `~/.config/skel/secrets/<owner>/<repo>/<NAME>`, one plain file per secret, readable only by you, like the Claude token beside it. The daemon has to read them with nobody there, on servers and Sprites that have no keyring, so a passphrase can't work, and encrypting with a key kept beside the file would add nothing. A Mac's Keychain would be a second way of storing for one system, and could stop an unattended daemon at a prompt each time a release changes the program. The sandbox hides this folder, apart from the repository's own. Plain files keep secrets from other accounts and from agents you gave nothing, but not from programs you run yourself, and backups of your home folder hold them. On a Sprite they sit on Fly.io's machine, with the Claude token.
+
+**On another machine.** Secrets stay on the machine where you add them. `skel --remote sprite:demo secret add app STRIPE_TEST_KEY` asks in your terminal, and the value goes over the same connection as your typing and is saved on the Sprite, never on the laptop. Nothing copies secrets between machines: `skel remote add` brings none, so you add them again where the work runs.
 
 ## Building blocks
 
 These are the parts that need care. `docs/learnings.md` explains the traps behind each one.
 
 - **Typing into a session.** Wait until the pane is quiet (compare `tmux capture-pane` a moment apart), load the text with `tmux load-buffer`, paste it with `tmux paste-buffer -p` so it arrives as a bracketed paste, then send Enter on its own a moment later.
-- **The sandbox.** bubblewrap with the agent's folder writable, the rest of the system read-only, and the home folder and credentials hidden. Each Claude Code session gets its own config folder in `~/.local/share/skel/claude/`, where its transcripts stay for `claude --resume`, and logs in with the token from the first run. Nothing renews the token, so your own login is never touched, and your `~/.claude` stays hidden like the rest of the home folder. Its own permission prompts and sandbox are turned off, since skel's sandbox draws the boundary. Codex gets skel's `CODEX_HOME` and runs with its own sandbox and approvals turned off too. On a Sprite, the sandbox also hides the Sprite's control socket, through which an agent could start a service outside the sandbox or restore a checkpoint.
+- **The sandbox.** bubblewrap with the agent's folder writable, the rest of the system read-only, and the home folder and credentials hidden. Each Claude Code session gets its own config folder in `~/.local/share/skel/claude/`, where its transcripts stay for `claude --resume`, and logs in with the token from the first run. Nothing renews the token, so your own login is never touched, and your `~/.claude` stays hidden like the rest of the home folder. Its own permission prompts and sandbox are turned off, since skel's sandbox draws the boundary. A repository's folder of secrets is mounted read-only at its own path, and made first if need be, as bubblewrap refuses a folder that doesn't exist. It is a folder rather than each file, so a secret added later shows up. Codex gets skel's `CODEX_HOME` and runs with its own sandbox and approvals turned off too. On a Sprite, the sandbox also hides the Sprite's control socket, through which an agent could start a service outside the sandbox or restore a checkpoint.
 - **Starting Claude Code.** Remove inherited `CLAUDE_CODE_*` variables. Mark the folder as trusted in the session's copy of its settings, or it waits at a question nobody sees. Pass the first message on the command line.
-- **Agent commands.** Every command an agent can run answers quickly: Claude Code moves a shell command to the background after 2 minutes.
+- **Agent commands.** Every command an agent can run answers quickly: Claude Code moves a shell command to the background after 2 minutes. `skel secret run` is the one exception, and takes as long as the command it runs, as that command would on its own.
 - **Detaching.** skel's tmux config binds Ctrl-Q to detach with no prefix and hides the status bar, so attaching feels like being inside Claude Code.
 
 ## Not in this version
 
-- Reviewing pull requests skel didn't open (a likely early addition)
+- Reviewing pull requests skel didn't open (a likely early addition, in which code from a fork must never get a secret)
 - Roles, phases and flows as files
 - Harnesses other than Claude Code, and Codex for the reviewer
 - Windows, and threads on other machines
@@ -280,6 +328,10 @@ These are the parts that need care. `docs/learnings.md` explains the traps behin
 - Threads started from plain text, without a task. They would be named with a marker, such as `app-t1`, so they never clash with a task's name
 - Starting a thread by assigning an issue or mentioning skel on GitHub
 - A remote protocol of our own (SSH only), teams and permissions
+- Secrets for all repositories, for one role or for one thread, and secrets as files
+- Limiting what the network can reach from a sandbox
+- A keychain, password manager or vault behind secrets
+- Tokens for GitHub Packages, or for private GitHub repositories as dependencies
 
 If something seems missing, ask instead of adding it.
 
@@ -296,7 +348,11 @@ Launch milestones, in order:
 3. **Updates.** There will be a release most days, so updating works like Claude Code's: skel downloads and installs a new release in the background, and tells you. The sidebar shows a short notice, such as `skel 0.4.2 installed · restart to use it`. Leave with Ctrl-Q and run `skel` again, and skel restarts the daemon on the new release before attaching. Agents keep running through it, since their sessions live in tmux and only the daemon restarts. `skel --remote` keeps skel on a server or Sprite at the same release as the laptop.
 4. **The first two minutes.** From the install line to a picked up issue, without reading anything but what skel prints. The first run is short and every step says what comes next. Once it is done, the lead says how to start work: add the `skel` label to an issue. skel looks for labeled issues as soon as a repository comes in, then often enough that a label is picked up within 2 minutes.
 5. **Someone else installs it.** By Thursday 12 November, a developer who isn't Simon installs skel on their own machine and hands it a real issue, with no help. Everything that stops them is fixed before the launch.
-6. **The launch.** A README with the install line, a quickstart, what agents can and can't touch, which accounts the harness and reviewer use, the known limits, and where to report bugs: GitHub issues. Record the video. Make the repository public on 16 November.
+6. **The launch.** A README with the install line, a quickstart, what agents can and can't touch, which accounts the harness and reviewer use, the known limits, and where to report bugs: GitHub issues. Until secrets land, the known limits say that a repository needing a private package registry can't be set up, and that tests needing a live key can't run in the sandbox, though CI still runs them. Record the video. Make the repository public on 16 November.
+
+After the launch:
+
+7. **Secrets.** `skel secret add`, `ls`, `rm` and `run`, as Secrets says. None of it touches the install path, and it waits until after the launch, unless someone installing skel is stopped by it. Two things must be in first, since a transcript can hold a value: `~/.local/share/skel` is readable only by you, and each thread's reviews have a Codex sessions folder of their own, so that a review can't read another repository's.
 
 ## Done when
 
