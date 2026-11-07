@@ -14,13 +14,13 @@ import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { drawPage, type Page } from "../src/page.ts";
-import { sidebarWidth } from "../src/screen.ts";
-import { startSession, stillRunning } from "../src/tmux.ts";
+import { startSession, stillRunning } from "../src/agents/tmux.ts";
+import { drawPage, type Page } from "../src/screen/page.ts";
+import { sidebarWidth } from "../src/screen/screen.ts";
 import { source, until as wait } from "./harness.ts";
 
 const dbFile = source("db.ts");
-const screenFile = source("screen.ts");
+const screenFile = source("screen/screen.ts");
 const pathNow = process.env.PATH ?? "";
 const sidebar = sidebarWidth;
 const leaving = "Your agents keep running. Run skel to come back.";

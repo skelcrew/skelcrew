@@ -2,6 +2,8 @@
 // add sprite:<name> creates one, and skel --remote sprite:<name> runs skel there. On a Sprite,
 // skel finds out it is on one, shapes the sandbox for it, and runs the daemon as a Sprite service.
 import { z } from "zod";
+import { quietly } from "../run.ts";
+import { errorText, skelLine, windowTitle } from "../say.ts";
 import { originHere } from "./origin.ts";
 import {
   addMachine,
@@ -12,8 +14,6 @@ import {
   runInTerminal,
   upToDate,
 } from "./remote.ts";
-import { quietly } from "./run.ts";
-import { errorText, skelLine, windowTitle } from "./say.ts";
 
 // Reports whether skel runs on a Sprite. It goes by sprite-env, the Sprite's own tool for
 // its services: every Sprite has it in /.sprite/bin, on the PATH its commands and services

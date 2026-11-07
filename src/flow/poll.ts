@@ -2,16 +2,16 @@
 // PRs, and hands what each PR means for its thread to the code that acts on it.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
+import { runningSessions, screenSocket } from "../agents/tmux.ts";
+import { threadConfig } from "../config.ts";
+import { canPush, type Labeled, type OpenList, reactToIssue, readRepository } from "../github.ts";
+import { errorText } from "../say.ts";
 import { startThread } from "./builder.ts";
-import { threadConfig } from "./config.ts";
 import { ciChecks, decide, labeledToStart, newAuthors } from "./decide.ts";
 import { endThread, tellBuilder, typingEvents } from "./events.ts";
-import { canPush, type Labeled, type OpenList, reactToIssue, readRepository } from "./github.ts";
 import { tellLead } from "./lead.ts";
 import { fullNameIs, repositories } from "./repo.ts";
-import { errorText } from "./say.ts";
 import { needsYou, readThread, record, Thread, threadName } from "./thread.ts";
-import { runningSessions, screenSocket } from "./tmux.ts";
 
 // Starts a thread on each of the repository's issues labeled skel that has none, exactly as
 // skel start does, then reacts to the issue with 👀 and tells the lead. Thread rows are read

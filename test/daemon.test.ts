@@ -19,7 +19,7 @@ import type { Subprocess } from "bun";
 import { source, until as wait } from "./harness.ts";
 
 const main = source("main.ts");
-const daemon = source("daemon.ts");
+const daemon = source("flow/daemon.ts");
 let home = "";
 let socket = "";
 const running: Subprocess[] = [];

@@ -3,10 +3,10 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { skelLine } from "../say.ts";
+import { checkoutFolder, singleFile } from "../version.ts";
 import { daemonLog, loadLaunchAgent, plistFile, plistText, startLaunchAgent } from "./launchd.ts";
-import { skelLine } from "./say.ts";
 import { installSpriteService, onSprite, serviceLog, startSpriteService } from "./sprite.ts";
-import { checkoutFolder, singleFile } from "./version.ts";
 
 // Returns the systemd user service path, which also marks daemon installation complete.
 const unitFile = () => join(homedir(), ".config", "systemd", "user", "skel.service");

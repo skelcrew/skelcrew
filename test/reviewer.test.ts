@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { review } from "../src/reviewer.ts";
+import { review } from "../src/flow/reviewer.ts";
 
 let home = "";
 let clone = "";

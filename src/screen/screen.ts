@@ -1,9 +1,9 @@
 // The screen: the sidebar on the left of your terminal, with the agent or page you are looking
 // at on the right and the strip above it. It is a second tmux server, one session per open
 // terminal, ended when you leave.
-import { windowTitle } from "./say.ts";
-import { applyConfig, cleanEnv, screenSocket } from "./tmux.ts";
-import { mainFile, singleFile } from "./version.ts";
+import { applyConfig, cleanEnv, screenSocket } from "../agents/tmux.ts";
+import { windowTitle } from "../say.ts";
+import { mainFile, singleFile } from "../version.ts";
 
 // How wide the sidebar is, with the line it draws at its edge: room for 24 columns of a name or
 // title, between its mark and two columns of padding. tmux shares a resize out among panes, so

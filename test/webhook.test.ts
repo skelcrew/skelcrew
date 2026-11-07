@@ -5,7 +5,7 @@ import { createHmac } from "node:crypto";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listenForWebhooks, signedBy } from "../src/webhook.ts";
+import { listenForWebhooks, signedBy } from "../src/flow/webhook.ts";
 import { source } from "./harness.ts";
 
 const secret = "a".repeat(64);
@@ -40,7 +40,7 @@ afterEach(() => {
 
 // Runs webhookSecret in a skel whose home is the test's, and returns what it printed.
 function secretIn(): string {
-  const script = `import { webhookSecret } from ${JSON.stringify(source("webhook.ts"))};
+  const script = `import { webhookSecret } from ${JSON.stringify(source("flow/webhook.ts"))};
 process.stdout.write(webhookSecret());`;
   const run = Bun.spawnSync([process.execPath, "-e", script], {
     env: { HOME: home },

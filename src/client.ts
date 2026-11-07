@@ -2,15 +2,15 @@
 // thread's builder. Plain skel makes sure the daemon runs, then attaches to the lead.
 import { createConnection } from "node:net";
 import { z } from "zod";
+import { agentRuns } from "./agents/tmux.ts";
 import { openDb } from "./db.ts";
-import { RepositoryRow, TaskRow, TaskView, ThreadRow } from "./list.ts";
-import { Page } from "./page.ts";
+import { RepositoryRow, TaskRow, TaskView, ThreadRow } from "./flow/list.ts";
+import { type DaemonRequest, parseJson } from "./flow/requests.ts";
+import { findThread } from "./flow/thread.ts";
+import { startDaemon } from "./machine/service.ts";
 import { cliSocket } from "./paths.ts";
-import { type DaemonRequest, parseJson } from "./requests.ts";
-import { openScreen } from "./screen.ts";
-import { startDaemon } from "./service.ts";
-import { findThread } from "./thread.ts";
-import { agentRuns } from "./tmux.ts";
+import { Page } from "./screen/page.ts";
+import { openScreen } from "./screen/screen.ts";
 
 const LeadReply = z.union([z.object({ lead: z.literal(true) }), z.object({ error: z.string() })]);
 

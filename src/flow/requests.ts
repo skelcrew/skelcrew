@@ -1,7 +1,7 @@
 // The requests the daemon takes on its sockets, and who may make which. The daemon and the
 // commands that ask it both go by these.
 import { z } from "zod";
-import { PageUrl } from "./page.ts";
+import { PageUrl } from "../screen/page.ts";
 import type { Thread } from "./thread.ts";
 
 // Only what a branch name holds: it goes into what git fetches, where a : or * would ask

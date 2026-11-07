@@ -19,7 +19,7 @@ import {
   stillRunning,
   stopSession,
   typeInto,
-} from "../src/tmux.ts";
+} from "../src/agents/tmux.ts";
 import { source, until as wait } from "./harness.ts";
 
 const moment = 100;
@@ -156,7 +156,7 @@ test("a first message and an environment value ending in ; arrive as given", asy
 // The tmux server hands its own environment to every session, so a token in the daemon's
 // environment would reach every agent.
 test("a session gets only the environment it is given, and tmux's TERM", async () => {
-  const tmux = source("tmux.ts");
+  const tmux = source("agents/tmux.ts");
   const script = `import { startSession } from ${JSON.stringify(tmux)};
 startSession(${JSON.stringify(socket)}, "builder", {
   folder: ${JSON.stringify(home)},

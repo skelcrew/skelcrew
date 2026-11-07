@@ -1,8 +1,15 @@
 // skel's command line: reads the command and hands it to the file that does it.
 import { help } from "./help.ts";
-import { addServer, keepingTitle, notSetUp, outdated, outOfDate, remote } from "./remote.ts";
+import {
+  addServer,
+  keepingTitle,
+  notSetUp,
+  outdated,
+  outOfDate,
+  remote,
+} from "./machine/remote.ts";
+import { addSprite, remoteSprite } from "./machine/sprite.ts";
 import { errorText } from "./say.ts";
-import { addSprite, remoteSprite } from "./sprite.ts";
 import { versionLine } from "./version.ts";
 
 // What an agent may not run, in its words. Its sandbox hides skel's database, your settings
@@ -86,15 +93,15 @@ async function runCommand(args: string[]): Promise<void> {
     stopOn,
     submitForReview,
   } = await import("./client.ts");
-  const { serve } = await import("./daemon.ts");
+  const { serve } = await import("./flow/daemon.ts");
   const { openDb } = await import("./db.ts");
   const { listRepositories, printRepositories, printTask, printTasks, printThreads } = await import(
-    "./list.ts"
+    "./flow/list.ts"
   );
-  const { runPage } = await import("./page.ts");
-  const { bringInFrom, removeRepo, trustRepo } = await import("./repo.ts");
-  const { firstRun, setupDone } = await import("./setup.ts");
-  const { runSidebar } = await import("./sidebar.ts");
+  const { runPage } = await import("./screen/page.ts");
+  const { bringInFrom, removeRepo, trustRepo } = await import("./flow/repo.ts");
+  const { firstRun, setupDone } = await import("./machine/setup.ts");
+  const { runSidebar } = await import("./screen/sidebar.ts");
   // A sidebar, a page or an agent can inherit this name from whoever started tmux, and its
   // sandbox hides what setupDone reads.
   const remoteName = process.env.SKEL_REMOTE_NAME;

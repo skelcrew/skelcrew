@@ -61,7 +61,7 @@ export function startDaemon(
   env: Record<string, string>,
   running: Subprocess[],
 ): Subprocess {
-  const code = `import { serve } from ${JSON.stringify(source("daemon.ts"))};
+  const code = `import { serve } from ${JSON.stringify(source("flow/daemon.ts"))};
 await serve(${JSON.stringify(socket)});`;
   const run = Bun.spawn([process.execPath, "-e", code], {
     env,

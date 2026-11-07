@@ -19,7 +19,7 @@ import type { Subprocess } from "bun";
 import { git, homeEnv, source, until as wait, writeScript } from "./harness.ts";
 
 const main = source("main.ts");
-const daemon = source("daemon.ts");
+const daemon = source("flow/daemon.ts");
 let home = "";
 let socket = "";
 const running: Subprocess[] = [];
@@ -381,7 +381,7 @@ test("a screen opening fills the lists at once, and no screen means no extra pol
   const terminal = `${socket}-terminal`;
   const screen = `${socket}-screen`;
   const script = join(home, "open.ts");
-  const screenFile = source("screen.ts");
+  const screenFile = source("screen/screen.ts");
   writeFileSync(
     script,
     `import { openScreen } from ${JSON.stringify(screenFile)};

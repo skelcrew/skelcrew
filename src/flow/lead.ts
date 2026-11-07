@@ -3,16 +3,12 @@
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { z } from "zod";
-import { agentCommand, hasTranscript } from "./claude.ts";
-import { dataDir, leadSocket } from "./paths.ts";
+import { agentCommand, hasTranscript } from "../agents/claude.ts";
 // What the lead is and how it hands work to threads. Without it, told "fix the flaky test",
 // it would try to edit the read-only clones rather than start a thread. It is a plain file so
 // it reads and changes like a doc, and Bun builds it into skel. It reaches the lead in every
 // turn, so every line costs context: keep it short, and promise only what is built.
-import instructions from "./prompts/lead.md" with { type: "text" };
-import { fullNameIs, refreshClones, repositories } from "./repo.ts";
-import { errorText } from "./say.ts";
-import { readThread, record, Thread, threadName } from "./thread.ts";
+import instructions from "../agents/prompts/lead.md" with { type: "text" };
 import {
   agentRuns,
   checkItLived,
@@ -23,7 +19,11 @@ import {
   startServer,
   startSession,
   typeInto,
-} from "./tmux.ts";
+} from "../agents/tmux.ts";
+import { dataDir, leadSocket } from "../paths.ts";
+import { errorText } from "../say.ts";
+import { fullNameIs, refreshClones, repositories } from "./repo.ts";
+import { readThread, record, Thread, threadName } from "./thread.ts";
 
 const Lead = z.object({ session: z.string() }).nullable();
 const Told = z.object({ session: z.string(), note: z.string() }).nullable();

@@ -26,7 +26,7 @@ test("a thread saved before the newer columns keeps working, with no rounds and 
   );
   old.close();
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-import { liveThreads } from ${JSON.stringify(source("thread.ts"))};
+import { liveThreads } from ${JSON.stringify(source("flow/thread.ts"))};
 console.log(JSON.stringify(liveThreads(openDb())));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], {
     env: { ...process.env, HOME: home },

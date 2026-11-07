@@ -134,7 +134,7 @@ test("the sidebar's header shows the release of the skel that runs it", async ()
 
 test("the screen's panes run the single file itself, with no checkout to find", () => {
   const entry = join(home, "panes.ts");
-  const screen = JSON.stringify(source("screen.ts"));
+  const screen = JSON.stringify(source("screen/screen.ts"));
   writeFileSync(
     entry,
     `import { pageCommand } from ${screen};\nconsole.log(JSON.stringify(pageCommand("url")));`,
@@ -246,7 +246,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("in the sandbox", () => {
     const entry = join(home, "agent.ts");
     writeFileSync(
       entry,
-      `import { sandboxArgs } from ${JSON.stringify(source("sandbox.ts"))};
+      `import { sandboxArgs } from ${JSON.stringify(source("agents/sandbox.ts"))};
 if (process.argv[2] === "inside") {
   console.log("skel ran in the sandbox");
 } else {

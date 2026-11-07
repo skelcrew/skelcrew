@@ -6,9 +6,9 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { linkSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { setWebhook } from "./github.ts";
-import { configDir } from "./paths.ts";
-import { spriteUrl } from "./sprite.ts";
+import { setWebhook } from "../github.ts";
+import { spriteUrl } from "../machine/sprite.ts";
+import { configDir } from "../paths.ts";
 
 const secretFile = () => join(configDir(), "webhook-secret");
 

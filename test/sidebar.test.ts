@@ -4,15 +4,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Link, type Lists, type Row, threadAge, threadWord } from "../src/rows.ts";
-import { sidebarWidth } from "../src/screen.ts";
+import type { Thread } from "../src/flow/thread.ts";
+import { type Link, type Lists, type Row, threadAge, threadWord } from "../src/screen/rows.ts";
+import { sidebarWidth } from "../src/screen/screen.ts";
 import {
   draw as drawLists,
   jumped,
   picked as pickedInLists,
   stepped as steppedInLists,
-} from "../src/sidebar.ts";
-import type { Thread } from "../src/thread.ts";
+} from "../src/screen/sidebar.ts";
 import { source } from "./harness.ts";
 
 const row = {
@@ -898,7 +898,7 @@ describe("the rows the database gives", () => {
   // database from here would reach your real one.
   function after(sql: string, now: number): { rows: Row[]; lists: Lists } {
     const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-import { sidebarLists, sidebarRows } from ${JSON.stringify(source("rows.ts"))};
+import { sidebarLists, sidebarRows } from ${JSON.stringify(source("screen/rows.ts"))};
 const db = openDb();
 db.run(${JSON.stringify(sql)});
 const rows = sidebarRows(db, ["lead", "app-12"], 3, ${now});

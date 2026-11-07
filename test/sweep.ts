@@ -3,7 +3,7 @@
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
-import { processTree } from "../src/tmux.ts";
+import { processTree } from "../src/agents/tmux.ts";
 
 // A test run: its process and the folder its tests' folders land in.
 export type Run = { run: number; folder: string };

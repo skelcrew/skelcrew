@@ -2,10 +2,10 @@
 // each thread, with the word that says what it is doing, and ISSUES and PRS as links.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
-import { pastLimit } from "./decide.ts";
-import { Name } from "./github.ts";
+import { pastLimit } from "../flow/decide.ts";
+import { fullNameOf, needsYou, Thread, threadName } from "../flow/thread.ts";
+import { Name } from "../github.ts";
 import { green, grey, red, yellow } from "./look.ts";
-import { fullNameOf, needsYou, Thread, threadName } from "./thread.ts";
 
 // One row of the sidebar, with what the strip says of the agent too. The lead has no status of
 // its own, and a row's age is empty unless it shows a running time.

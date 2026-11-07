@@ -4,7 +4,7 @@ import type { Database } from "bun:sqlite";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { threadsDir } from "./paths.ts";
+import { threadsDir } from "../paths.ts";
 import { findRepository } from "./repo.ts";
 
 export const Thread = z.object({

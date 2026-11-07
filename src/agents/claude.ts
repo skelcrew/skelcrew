@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { claudeTokenFile, dataDir } from "./paths.ts";
+import { claudeTokenFile, dataDir } from "../paths.ts";
 import { keptEnv, refuseCredentials, ro, rw, sandboxArgs } from "./sandbox.ts";
 
 const { O_NONBLOCK, O_NOFOLLOW, O_RDONLY } = constants;
