@@ -41,7 +41,7 @@ export function threadConfig(): {
   reviewer: "codex" | "claude" | undefined;
   maxRounds: number;
 } {
-  const file = join(configDir(), "config.yaml");
+  const file = configFile();
   const read = ThreadConfig.safeParse(
     existsSync(file) ? (parse(readFileSync(file, "utf8")) ?? {}) : {},
   );

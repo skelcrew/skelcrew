@@ -3,6 +3,7 @@
 // links. It only shows, switches, links and opens pages. Picking a thread switches the client in
 // the right pane, and picking an issue or PR puts its page there. It also keeps the strip above
 // that pane up to date.
+import { threadConfig } from "./config.ts";
 import { openDb } from "./db.ts";
 import { clean, edge, fitted, grey, onShade, pad, paint, shade, white, yellow } from "./look.ts";
 import {
@@ -17,7 +18,6 @@ import {
 } from "./rows.ts";
 import { agentClient, pageCommand, sidebarWidth } from "./screen.ts";
 import { drawStrip } from "./strip.ts";
-import { threadConfig } from "./thread.ts";
 import {
   paneTty,
   paneWidth,

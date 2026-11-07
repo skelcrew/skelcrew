@@ -1,6 +1,7 @@
 // skel's command line: reads the command and hands it to the file that does it.
 import { help } from "./help.ts";
 import { addServer, keepingTitle, notSetUp, outdated, outOfDate, remote } from "./remote.ts";
+import { errorText } from "./say.ts";
 import { addSprite, remoteSprite } from "./sprite.ts";
 import { versionLine } from "./version.ts";
 
@@ -243,6 +244,6 @@ async function run(args: string[]): Promise<void> {
 try {
   await run(process.argv.slice(2));
 } catch (error) {
-  console.error(`skel: ${error instanceof Error ? error.message : String(error)}`);
+  console.error(`skel: ${errorText(error)}`);
   process.exit(1);
 }

@@ -24,6 +24,7 @@ import {
 import { onGitHub, originHere } from "./origin.ts";
 import { cloneDir, configDir, dataDir } from "./paths.ts";
 import { refuseCredentials } from "./sandbox.ts";
+import { errorText } from "./say.ts";
 import { onSprite, spriteUrl } from "./sprite.ts";
 import { hookRepository } from "./webhook.ts";
 
@@ -54,12 +55,16 @@ export function repositories(db: Database): Repository[] {
     .map((row) => Repository.parse(row));
 }
 
+// Returns whether the name is the repository's full GitHub name. GitHub ignores case in
+// names, so a checkout's remote or a command can spell one differently from skel. No name,
+// such as a folder that isn't on GitHub, matches nothing.
+export const fullNameIs = (r: Repository, name: string | null | undefined) =>
+  `${r.owner}/${r.repo}`.toLowerCase() === name?.toLowerCase();
+
 // Returns the repository a command names, by its name in skel or its full GitHub name, in
 // any case. Throws when skel has no such repository, since commands only work on ones it has.
 export function findRepository(db: Database, given: string): Repository {
-  // Whether the repository's full GitHub name is the one given, in any case.
-  const full = (r: Repository) => `${r.owner}/${r.repo}`.toLowerCase() === given.toLowerCase();
-  const found = repositories(db).find((r) => r.name === given || full(r));
+  const found = repositories(db).find((r) => r.name === given || fullNameIs(r, given));
   if (!found) throw new Error(`there is no repository named ${given}`);
   return found;
 }
@@ -125,7 +130,7 @@ export function refreshClones(db: Database): Promise<void> {
         if (!repositories(db).some((r) => r.owner === owner && r.repo === repo))
           rmSync(cloneDir(owner, repo), { recursive: true, force: true });
       } catch (error) {
-        console.log(error instanceof Error ? error.message : String(error));
+        console.log(errorText(error));
       }
     }
   })().finally(() => {
@@ -145,7 +150,7 @@ function trusted({ owner, repo, canPush, isFork }: GitHubRepo): boolean {
 // Checks trust, asking you when needed, refreshes the repository clone, records it for the
 // lead, and creates its skel label so you can start threads from GitHub. Runs only in your
 // own terminal, where a yes can't come from an injected instruction.
-export async function bringIn(db: Database, github: GitHubRepo): Promise<void> {
+async function bringIn(db: Database, github: GitHubRepo): Promise<void> {
   const { owner, repo, canPush } = github;
   const full = `${owner}/${repo}`;
   const known = repositories(db).some((r) => r.owner === owner && r.repo === repo);
@@ -169,7 +174,7 @@ export async function bringIn(db: Database, github: GitHubRepo): Promise<void> {
   if (onSprite())
     await hookRepository(full).catch((error) =>
       console.error(
-        `skel: couldn't set the webhook that wakes this Sprite in ${full}: ${error instanceof Error ? error.message : String(error)}`,
+        `skel: couldn't set the webhook that wakes this Sprite in ${full}: ${errorText(error)}`,
       ),
     );
   const labeled = "UPDATE repositories SET labeled = 1 WHERE owner = ? AND repo = ?";
@@ -184,9 +189,7 @@ export async function bringIn(db: Database, github: GitHubRepo): Promise<void> {
     db.run(labeled, [owner, repo]);
   } catch (error) {
     // The daemon tries again when it next refreshes the clone.
-    console.error(
-      `skel: couldn't create the skel label in ${full}: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    console.error(`skel: couldn't create the skel label in ${full}: ${errorText(error)}`);
   }
 }
 
@@ -199,7 +202,7 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
   const db = openDb();
   let named = from === undefined ? originHere() : (onGitHub(from) ?? from);
   // Matches the attached repository despite differences in GitHub name capitalization.
-  const known = (r: Repository) => `${r.owner}/${r.repo}`.toLowerCase() === named?.toLowerCase();
+  const known = (r: Repository) => fullNameIs(r, named);
   try {
     if (named && !repositories(db).some(known)) {
       const github = await githubRepo(named);
@@ -209,7 +212,7 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
       await bringIn(db, github);
     }
   } catch (error) {
-    console.error(`skel: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`skel: ${errorText(error)}`);
   }
   if (repositories(db).length === 0) console.log(noRepositories);
   const found = repositories(db).find(known);
@@ -227,8 +230,7 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
 export async function bringInNamed(db: Database, given: string): Promise<Repository | undefined> {
   // A name starting with a dash would reach gh as an option.
   if (!/^[\w.][\w.-]*\/[\w.-]+$/.test(given)) return undefined;
-  const full = (r: Repository) => `${r.owner}/${r.repo}`.toLowerCase();
-  if (repositories(db).some((r) => full(r) === given.toLowerCase())) return undefined;
+  if (repositories(db).some((r) => fullNameIs(r, given))) return undefined;
   const github = await githubRepo(given);
   const { owner, repo, canPush } = github;
   const named = `${owner}/${repo}`;
@@ -236,7 +238,7 @@ export async function bringInNamed(db: Database, given: string): Promise<Reposit
     throw new Error(`${named} waits until you run skel repo trust ${named} in your terminal`);
   // GitHub can answer for a renamed repository under the name skel already has it by, and two
   // commands can bring in the same repository at once.
-  const fresh = !repositories(db).some((r) => full(r) === named.toLowerCase());
+  const fresh = !repositories(db).some((r) => fullNameIs(r, named));
   if (fresh) {
     // Only people who can push or triage may add a label, so where you can't push, a label
     // would be of no use to you. A repository you can push to gets it with its clone.
@@ -293,7 +295,7 @@ export async function removeRepo(name: string): Promise<void> {
   if (onSprite())
     await removeWebhook(full, spriteUrl()).catch((error) =>
       console.error(
-        `skel: couldn't remove the webhook that wakes this Sprite from ${full}, so remove it on GitHub: ${error instanceof Error ? error.message : String(error)}`,
+        `skel: couldn't remove the webhook that wakes this Sprite from ${full}, so remove it on GitHub: ${errorText(error)}`,
       ),
     );
   console.log(`Removed ${name} and skel's clone of it.`);

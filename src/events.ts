@@ -8,8 +8,9 @@ import { tellLead } from "./lead.ts";
 import { cloneDir } from "./paths.ts";
 import { refreshClones } from "./repo.ts";
 import { endRound } from "./round.ts";
+import { errorText } from "./say.ts";
 import { baseOf, cloneOf, github, readThread, record, type Thread } from "./thread.ts";
-import { failedScreen, hasSession, stopSession, typeInto } from "./tmux.ts";
+import { agentRuns, stopSession, typeInto } from "./tmux.ts";
 
 // The message about failed checks, with the end of each one's log. A check that isn't a
 // GitHub Actions job has no log gh can read, so it gets its link instead.
@@ -20,8 +21,7 @@ async function aboutChecks(repo: string, failed: Check[]): Promise<string[]> {
       const fix = 'Fix it, commit, and run skel submit "<summary>" again.';
       if (c.kind === "status") return `The check ${c.name} failed${link}. ${fix}`;
       const log = await failedLog(repo, c.id).catch(
-        (error) =>
-          `(skel couldn't read its log: ${error instanceof Error ? error.message : error})`,
+        (error) => `(skel couldn't read its log: ${errorText(error)})`,
       );
       return `The check ${c.name} failed${link}. The end of its log:\n\n${log}\n\n${fix}`;
     }),
@@ -89,10 +89,9 @@ export async function tellBuilder(
   const { handled, change, why } = decision;
   try {
     if (decision.conflict !== null) await freshBase(db, thread, decision.conflict);
-    const checks = await aboutChecks(`${thread.owner}/${thread.repo}`, decision.failed);
+    const checks = await aboutChecks(github(thread), decision.failed);
     const text = [...checks, ...decision.tell].join("\n\n---\n\n");
-    if (!hasSession(tmux, thread.folder) || failedScreen(tmux, thread.folder) !== null)
-      throw new Error("its builder isn't running");
+    if (!agentRuns(tmux, thread.folder)) throw new Error("its builder isn't running");
     // A builder can work long after an event, but one busy this long has likely hung.
     await typeInto(tmux, thread.folder, text, { timeout: 30 * 60_000, signal: cancel.signal });
     if (cancel.signal.aborted) return;
@@ -110,7 +109,7 @@ export async function tellBuilder(
     // Ending the session for a stop or a merge can make typing fail, and a stopped thread's
     // events must stay unhandled for its builder to hear once it starts again.
     if (cancel.signal.aborted) return;
-    const said = error instanceof Error ? error.message : String(error);
+    const said = errorText(error);
     record(db, thread.folder, { ...handled, needs_you: true }, `couldn't tell: ${said}. ${why}`);
     tellLead(db, tmux);
   } finally {

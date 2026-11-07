@@ -5,6 +5,7 @@ import { z } from "zod";
 import { ciChecks } from "./decide.ts";
 import { Name, readIssueDetails, readPullDetails } from "./github.ts";
 import { clean, fitted, grey, pad, paint, white } from "./look.ts";
+import { errorText } from "./say.ts";
 
 // What the daemon hands the page, checked on both sides of its socket. Each fact is a short
 // label and what it says. All of it comes from GitHub, so none of it is safe to show yet.
@@ -141,7 +142,7 @@ export async function runPage(url: string, reading: Promise<Page>): Promise<void
       draw();
     },
     (error) => {
-      const why = error instanceof Error ? error.message : String(error);
+      const why = errorText(error);
       const about = { title: "Couldn't read this from GitHub", facts: [], body: why };
       lines = (columns) => drawPage(about, url, columns);
       draw();

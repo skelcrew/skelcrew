@@ -7,6 +7,10 @@ import type { Thread } from "./thread.ts";
 type Change = Partial<Pick<Thread, "status" | "needs_you">>;
 type Author = PullRequest["comments"][number]["author"];
 
+// Returns whether the thread has used up its rounds of changes. Past that it goes on needing
+// you, whatever its builder or reviewer does, until you let it go on.
+export const pastLimit = (thread: Thread, maxRounds: number) => thread.rounds > maxRounds;
+
 export type Decision =
   | { end: string }
   | {
@@ -87,7 +91,7 @@ export function decide(
     const why = "started after the PR's history";
     return { handled, tell: [], failed: [], conflict: null, change: {}, why };
   }
-  const past = thread.rounds > given.maxRounds;
+  const past = pastLimit(thread, given.maxRounds);
   // Whether what this author wrote is typed into the builder.
   const wakes = (author: Author) =>
     author !== null &&
@@ -186,7 +190,7 @@ export function newAuthors(
   return authors;
 }
 
-export type Outcome = {
+type Outcome = {
   check: "success" | "failure";
   description: string;
   rounds: number;

@@ -17,6 +17,7 @@ import { z } from "zod";
 import { claudeToken, settings } from "./claude.ts";
 import { dataDir } from "./paths.ts";
 import { sandboxArgs } from "./sandbox.ts";
+import { errorText } from "./say.ts";
 import { onSprite } from "./sprite.ts";
 
 export type Review = { verdict: "approve" | "changes" | "failed"; body: string };
@@ -172,7 +173,7 @@ async function reviewNow(given: {
   clone: string;
   issue: { title: string; body: string };
   base: string;
-  commit?: string;
+  commit: string;
   model: string;
   harness?: "codex" | "claude" | undefined;
   signal?: AbortSignal;
@@ -223,15 +224,12 @@ async function reviewNow(given: {
     // as installed packages, stay for the tests. git runs in the sandbox, as the clone's
     // .git is the builder's to plant settings in.
     const checkout = 'git checkout -q -f --detach "$0" && git clean -q -fd && exec "$@"';
-    const command = given.commit
-      ? ["sh", "-c", checkout, given.commit, ...run.command]
-      : run.command;
     const argv = sandboxArgs({
       home,
       path,
       mounts: [...mounts, ...run.mounts],
       cwd: at,
-      command,
+      command: ["sh", "-c", checkout, given.commit, ...run.command],
       programs: run.command.slice(0, 1),
     });
     const before = stopped();
@@ -278,7 +276,7 @@ async function reviewNow(given: {
     try {
       said = answer(harness, folder, out);
     } catch (error) {
-      const why = error instanceof Error ? error.message : String(error);
+      const why = errorText(error);
       return { verdict: "failed", body: `the reviewer answered outside the shape: ${why}` };
     }
     const verdict = Verdict.safeParse(said);
@@ -303,7 +301,7 @@ export function review(given: Parameters<typeof reviewNow>[0]): Promise<Review> 
   const turn = queue
     .then(() => reviewNow(given))
     .catch((error): Review => {
-      return { verdict: "failed", body: error instanceof Error ? error.message : String(error) };
+      return { verdict: "failed", body: errorText(error) };
     });
   queue = turn;
   return turn;

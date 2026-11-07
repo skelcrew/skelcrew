@@ -4,6 +4,7 @@
 // workflow signs the Mac binaries afterwards, and signing changes them.
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { errorText } from "../src/say.ts";
 
 // Each release file and the Bun target it is built for. On x64 the baseline build, which runs
 // on every CPU: the plain one stops with "Illegal instruction" on a CPU or virtual machine
@@ -27,9 +28,10 @@ function releases(): string {
   return found;
 }
 
-// Builds one binary, stamped with its release and where releases live. By default a binary built by Bun reads any .env
-// and bunfig.toml in the folder it runs in. skel runs in your projects, so a project's .env
-// would land in skel's environment, and from there could reach the agents.
+// Builds one binary, stamped with its release and where releases live. By default a binary
+// built by Bun reads any .env and bunfig.toml in the folder it runs in. skel runs in your
+// projects, so a project's .env would land in skel's environment, and from there could reach
+// the agents.
 function compile(version: string, file: string, target: string): void {
   const argv = ["bun", "build", "--compile", `--target=${target}`];
   argv.push("--no-compile-autoload-dotenv", "--no-compile-autoload-bunfig");
@@ -64,6 +66,6 @@ function build(version: string): void {
 try {
   build(process.argv[2] ?? "");
 } catch (error) {
-  console.error(`skel: ${error instanceof Error ? error.message : String(error)}`);
+  console.error(`skel: ${errorText(error)}`);
   process.exit(1);
 }

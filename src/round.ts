@@ -3,7 +3,7 @@
 // into the builder's session when it asks for changes.
 import type { Database } from "bun:sqlite";
 import { threadConfig } from "./config.ts";
-import { afterReview } from "./decide.ts";
+import { afterReview, pastLimit } from "./decide.ts";
 import {
   findPullRequest,
   openPullRequest,
@@ -15,6 +15,7 @@ import {
 import { tellLead } from "./lead.ts";
 import { cloneDir } from "./paths.ts";
 import { review, reviewerHarness } from "./reviewer.ts";
+import { errorText } from "./say.ts";
 import { baseOf, cloneOf, github, readThread, record, type Thread, threadName } from "./thread.ts";
 import { typeInto } from "./tmux.ts";
 
@@ -171,7 +172,7 @@ function follow(
 ): void {
   const done = rest.catch((error) => {
     if (cancel.signal.aborted) return;
-    const why = error instanceof Error ? error.message : String(error);
+    const why = errorText(error);
     // A review not yet typed in stays saved, so starting the daemon again can type it.
     record(db, folder, { needs_you: true, status: "waiting" }, `the round failed: ${why}`);
     tellLead(db, tmux);
@@ -213,7 +214,7 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
   if (thread.status === "stopped")
     throw new Error("this thread was stopped, so skel won't push it");
   // Past the round limit the thread still needs you, whatever the builder does.
-  const needs_you = thread.rounds > maxRounds;
+  const needs_you = pastLimit(thread, maxRounds);
   record(
     db,
     folder,
@@ -267,7 +268,7 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
     throw new Error(`${name} has no submitted commit to review yet`);
   const { maxRounds } = threadConfig();
   // Past the round limit the thread still needs you, whatever the review says.
-  const needs_you = thread.rounds > maxRounds;
+  const needs_you = pastLimit(thread, maxRounds);
   // The commit is saved as under review at once, so a second skel review asked before the
   // check is pending again is refused rather than cancelling this one.
   const change = {

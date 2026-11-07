@@ -1,5 +1,5 @@
-// skel's tmux sessions: one each for the lead, builders and reviewers, on skel's own tmux
-// server (`tmux -L skel`; tests pass a socket of their own).
+// skel's tmux sessions: one each for the lead and builders, on skel's own tmux server
+// (`tmux -L skel`; tests pass a socket of their own).
 import { onSprite, startTmuxService } from "./sprite.ts";
 
 // Returns the screen's tmux server beside the agents': skel-screen beside skel, and a test's
@@ -81,8 +81,9 @@ function mustTmux(socket: string, args: string[], input = ""): string {
 // Starts skel's tmux server if needed, keeping agent sessions alive independently of the
 // daemon. A server started by the daemon would live in skel.service's cgroup, so stopping
 // or OOM-killing the service would take every agent with it. A systemd scope of its own
-// keeps it apart, as a Sprite service does on a Sprite; without either it starts plainly. exit-empty off keeps it up until
-// its first session, and the config applies to that session too.
+// keeps it apart, as a Sprite service does on a Sprite; without either it starts plainly.
+// exit-empty off keeps it up until its first session, and the config applies to that
+// session too.
 export function startServer(socket: string): void {
   if (tmux(socket, ["list-sessions"]).ok) return;
   // The lone ";" separates tmux commands, so these words skip literal().
@@ -151,6 +152,12 @@ export function failedScreen(socket: string, name: string): string | null {
   // text.
   return mustTmux(socket, ["capture-pane", "-p", "-S", "-", "-t", `=${name}:`]).trim();
 }
+
+// Reports whether the agent in the named session is still running, so skel only types into
+// or attaches to a live one. A session alone doesn't say: an agent that failed leaves its
+// last screen behind in a session that looks alive.
+export const agentRuns = (socket: string, name: string) =>
+  hasSession(socket, name) && failedScreen(socket, name) === null;
 
 // Ends the named session so skel can replace an agent that has stopped working.
 export function endSession(socket: string, name: string): void {

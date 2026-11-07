@@ -7,7 +7,8 @@ import { ciChecks, decide, labeledToStart, newAuthors } from "./decide.ts";
 import { endThread, tellBuilder, typing } from "./events.ts";
 import { canPush, type Labeled, type OpenList, reactToIssue, readRepository } from "./github.ts";
 import { tellLead } from "./lead.ts";
-import { repositories } from "./repo.ts";
+import { fullNameIs, repositories } from "./repo.ts";
+import { errorText } from "./say.ts";
 import { needsYou, readThread, record, startThread, Thread, threadName } from "./thread.ts";
 import { runningSessions, screenSocket } from "./tmux.ts";
 
@@ -19,19 +20,20 @@ import { runningSessions, screenSocket } from "./tmux.ts";
 async function startLabeled(
   db: Database,
   tmux: string,
-  repo: string,
+  owner: string,
+  name: string,
   labeled: Labeled[],
   begin: (thread: Thread) => Promise<void>,
 ): Promise<void> {
-  const [owner, name] = repo.split("/");
+  const repo = `${owner}/${name}`;
   const threads = db
     .query("SELECT * FROM threads WHERE owner = ? AND repo = ?")
-    .all(owner ?? "", name ?? "")
+    .all(owner, name)
     .map((row) => Thread.parse(row));
   for (const issue of labeledToStart(threads, labeled)) {
     // An issue skel can't read, or one skel start took meanwhile, waits for the next poll.
     const thread = await startThread(db, { repo, task: issue.number }).catch((error) => {
-      console.log(`couldn't start #${issue.number} in ${repo}: ${message(error)}`);
+      console.log(`couldn't start #${issue.number} in ${repo}: ${errorText(error)}`);
       return null;
     });
     if (thread === null) continue;
@@ -41,13 +43,10 @@ async function startLabeled(
     // Not waited on, as for skel start: setup can take minutes.
     begin(thread);
     await reactToIssue(repo, issue.number).catch((error) =>
-      console.log(`couldn't react to #${issue.number} in ${repo}: ${message(error)}`),
+      console.log(`couldn't react to #${issue.number} in ${repo}: ${errorText(error)}`),
     );
   }
 }
-
-// Returns the text of anything thrown, for the daemon's log.
-const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 // Replaces what is saved of a repository's open issues and PRs with what GitHub just said, for
 // the sidebar, which only reads the database. All at once, so it never reads half a list.
@@ -99,7 +98,7 @@ async function pollRepository(
     lists,
   );
   if (open) saveOpen(db, owner, name, open);
-  await startLabeled(db, tmux, repo, labeled, begin);
+  await startLabeled(db, tmux, owner, name, labeled, begin);
   const { maxRounds } = threadConfig();
   // Asked once per poll, and only about authors of what is new.
   const pushers: string[] = [];
@@ -150,12 +149,13 @@ async function pollRepository(
 }
 
 // Polls GitHub for each repository's issues labeled skel and the PRs of its live and stopped
-// threads, and its open issues and PRs while a screen is open, one query per repository, so a stopped thread's merge still ends it: every `every`
-// milliseconds while any of its threads is working or waits on review or CI, and half as
-// often otherwise, so a label or your comment is seen within a minute. Starts at once, to pick
-// up what happened while the daemon was down. A failed poll, such as GitHub answering with an
-// error, is logged and tried again at the next one. Polls run in the background, so they never hold up the daemon. `begin` sets up a
-// thread started from a label and starts its builder, as the daemon does for skel start.
+// threads, and its open issues and PRs while a screen is open, one query per repository, so
+// a stopped thread's merge still ends it: every `every` milliseconds while any of its threads
+// is working or waits on review or CI, and half as often otherwise, so a label or your comment
+// is seen within a minute. Starts at once, to pick up what happened while the daemon was down.
+// A failed poll, such as GitHub answering with an error, is logged and tried again at the next
+// one. Polls run in the background, so they never hold up the daemon. `begin` sets up a thread
+// started from a label and starts its builder, as the daemon does for skel start.
 // Returns a function that polls one repository at once, named by its full GitHub name, for
 // a webhook delivery about it or a screen opening.
 export function pollGitHub(
@@ -187,7 +187,7 @@ export function pollGitHub(
     polling.add(repo);
     const threads = polled().filter((t) => t.owner === owner && t.repo === name);
     pollRepository(db, tmux, owner, name, threads, begin)
-      .catch((error) => console.log(`couldn't poll ${repo}: ${message(error)}`))
+      .catch((error) => console.log(`couldn't poll ${repo}: ${errorText(error)}`))
       .finally(() => {
         polling.delete(repo);
         if (again.delete(repo)) poll(owner, name);
@@ -212,9 +212,7 @@ export function pollGitHub(
   tick();
   setInterval(tick, every);
   return (full) => {
-    const found = repositories(db).find(
-      (r) => `${r.owner}/${r.repo}`.toLowerCase() === full.toLowerCase(),
-    );
+    const found = repositories(db).find((r) => fullNameIs(r, full));
     if (found) poll(found.owner, found.repo);
   };
 }

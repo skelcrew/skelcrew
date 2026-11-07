@@ -2,6 +2,7 @@
 // each thread, with the word that says what it is doing, and ISSUES and PRS as links.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
+import { pastLimit } from "./decide.ts";
 import { Name } from "./github.ts";
 import { green, grey, red, yellow } from "./look.ts";
 import { github, needsYou, Thread, threadName } from "./thread.ts";
@@ -77,7 +78,7 @@ export function threadWord(thread: Thread, maxRounds: number): string {
   const underWay = thread.submitting !== null || thread.reviewing !== null;
   if (thread.asking) return "question";
   if (thread.needs_you) {
-    if (thread.rounds > maxRounds) return "round limit";
+    if (pastLimit(thread, maxRounds)) return "round limit";
     if (underWay || verdict === "failed") return "review failed";
     if (verdict === "approve" && (checks === "passing" || checks === null)) return "approved";
     return "needs you";
@@ -136,7 +137,8 @@ export function sidebarRows(
         needsYou: needsYou(thread),
         running: running.includes(thread.folder),
         word,
-        // Only a review is on another harness. An older skel's review has none saved.
+        // Only a review is on another harness. A submit saves which one, so the empty text
+        // is only there for a field that stays null until the first submit.
         harness: word === "reviewing" ? (reviewer ?? "") : builderHarness,
         age: word === "working" && thread.started !== null ? threadAge(thread.started, now) : "",
         github: github(thread),

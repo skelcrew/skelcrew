@@ -14,9 +14,10 @@ export const sidebarWidth = 31;
 // look. Your own ~/.tmux.conf never applies, and all of tmux's own keys go: its default mouse
 // keys pull a drag or the wheel into copy mode, which would swallow your typing, and its
 // prefix belongs to the agents' server. Ctrl-Q here, not there, leaves the whole screen.
-// Alt-Up, Alt-Down, the same with Shift, and clicks go to the sidebar, in pane 0, without moving
-// your typing from the agent. A click needs its own key: left alone, it reaches only the pane you type to.
-// The wheel goes on to the pane under it, as the agents' server decides what scrolling means.
+// Alt-Up, Alt-Down, the same with Shift, and clicks go to the sidebar, in pane 0, without
+// moving your typing from the agent. A click needs its own key: left alone, it reaches only
+// the pane you type to. The wheel goes on to the pane under it, as the agents' server
+// decides what scrolling means.
 // destroy-unattached ends a session as its client goes, by Ctrl-Q or by a terminal or ssh link
 // that drops, and the server goes with its last session. It would also end a session made
 // detached, so the session is made attached, in one go. The sync feature is the agents'
@@ -33,9 +34,9 @@ export const sidebarWidth = 31;
 // The strip and header share the first of tmux's own two status lines, at the top, and the thin
 // line is the second, so the agent's height stays the same on every session. No blank rows go
 // around them: the thin line sits mid-cell, so half a row falls on each side of it, which is the
-// padding the header needs. Its pane stays as
-// wide as it was, and needs no process of its own. They start empty, as the sidebar fills them in, and have no clock to redraw
-// for. tmux's border between the panes is blank: the sidebar draws its own line, so the border
+// padding the header needs. Its pane stays as wide as it was, and needs no process of its
+// own. They start empty, as the sidebar fills them in, and have no clock to redraw for.
+// tmux's border between the panes is blank: the sidebar draws its own line, so the border
 // is a gap before the agent.
 const config = [
   ["set", "-g", "status", "2"],

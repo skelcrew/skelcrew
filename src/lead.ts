@@ -10,9 +10,11 @@ import { dataDir, leadSocket } from "./paths.ts";
 // it reads and changes like a doc, and Bun builds it into skel. It reaches the lead in every
 // turn, so every line costs context: keep it short, and promise only what is built.
 import instructions from "./prompts/lead.md" with { type: "text" };
-import { refreshClones, repositories } from "./repo.ts";
+import { fullNameIs, refreshClones, repositories } from "./repo.ts";
+import { errorText } from "./say.ts";
 import { readThread, record, Thread, threadName } from "./thread.ts";
 import {
+  agentRuns,
   endSession,
   failedScreen,
   hasSession,
@@ -76,7 +78,7 @@ async function typeNotes(db: Database, tmux: string): Promise<void> {
     const row = db.query("SELECT * FROM threads WHERE noting IS NOT NULL ORDER BY rowid").get();
     const thread = Thread.nullable().parse(row);
     if (note === null && (thread === null || thread.noting === null)) return;
-    if (!hasSession(tmux, "lead") || failedScreen(tmux, "lead") !== null) return;
+    if (!agentRuns(tmux, "lead")) return;
     if (!(await isIdle(tmux, "lead"))) continue;
     if (note !== null) {
       await typeInto(tmux, "lead", note.text);
@@ -101,11 +103,7 @@ let telling: Promise<void> = Promise.resolve();
 export function tellLead(db: Database, tmux: string): void {
   telling = telling
     .then(() => typeNotes(db, tmux))
-    .catch((error) =>
-      console.log(
-        `couldn't tell the lead: ${error instanceof Error ? error.message : String(error)}`,
-      ),
-    );
+    .catch((error) => console.log(`couldn't tell the lead: ${errorText(error)}`));
 }
 
 // Keeps where you attached from, as owner/repo, or that there is none, for the lead to hear
@@ -125,9 +123,7 @@ export function attachedNote(db: Database): string {
   const lead = Lead.parse(db.query("SELECT session FROM lead").get());
   if (attached === null || lead === null) return "";
   // One skel doesn't have yet, such as one waiting for skel repo trust, is no default.
-  const found = repositories(db).find(
-    (r) => `${r.owner}/${r.repo}`.toLowerCase() === attached.repo?.toLowerCase(),
-  );
+  const found = repositories(db).find((r) => fullNameIs(r, attached.repo));
   const note = found
     ? `The human is attached from ${found.name}. Unless they name another repository, they mean this one.`
     : "The human is attached from outside skel's repositories, so no repository is the default.";

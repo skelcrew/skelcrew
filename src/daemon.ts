@@ -7,6 +7,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import { threadConfig } from "./config.ts";
 import { openDb } from "./db.ts";
+import { pastLimit } from "./decide.ts";
 import { stopThread } from "./events.ts";
 import { createIssue } from "./github.ts";
 import { attachedNote, recordAttachedFrom, startLead, tellLead } from "./lead.ts";
@@ -17,6 +18,7 @@ import { pollGitHub } from "./poll.ts";
 import { bringInNamed, findRepository, refreshClones, repositories } from "./repo.ts";
 import { allowed, type Caller, parseJson, Request } from "./requests.ts";
 import { goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
+import { errorText } from "./say.ts";
 import { setupDone } from "./setup.ts";
 import { holdAwhile, keepAwake, onSprite, urlPort } from "./sprite.ts";
 import {
@@ -63,9 +65,6 @@ function listen(server: Server, path: string): Promise<void> {
   });
 }
 
-// Returns the text of anything thrown, for replies and the daemon's log.
-const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
-
 // Returns the thread whose builder is calling, for the requests only a builder may make.
 // `allowed` already refuses them from anyone else, so the throw never runs: it is what tells
 // the typecheck the caller is a thread.
@@ -107,19 +106,19 @@ function wakeOnWebhooks(db: Database, port: number, poll: (full: string) => void
   // first: long enough for the poll, and for keepAwake to hold it for any work the poll starts.
   const wake = async (repo: string) => {
     await holdAwhile(60).catch((error) =>
-      console.log(`couldn't hold the Sprite awake: ${message(error)}`),
+      console.log(`couldn't hold the Sprite awake: ${errorText(error)}`),
     );
     poll(repo);
   };
   try {
     listenForWebhooks(port, webhookSecret(), wake);
   } catch (error) {
-    console.log(`couldn't listen for GitHub's webhooks on port ${port}: ${message(error)}`);
+    console.log(`couldn't listen for GitHub's webhooks on port ${port}: ${errorText(error)}`);
   }
   // Set again at each start, so a webhook deleted on GitHub, or one an older skel set with
   // other events, is put right.
   for (const { owner, repo } of repositories(db))
-    hookRepository(`${owner}/${repo}`).catch((error) => console.log(message(error)));
+    hookRepository(`${owner}/${repo}`).catch((error) => console.log(errorText(error)));
 }
 
 // Opens the daemon's sockets, starts the lead, and brings back the builders of threads that
@@ -270,7 +269,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
           return { started: `Started ${name} again: its builder is back where it was.` };
         }
         const live = before?.status === "working" || before?.status === "waiting";
-        if (before && live && before.rounds > threadConfig().maxRounds) {
+        if (before && live && pastLimit(before, threadConfig().maxRounds)) {
           goOn(db, tmux, before.folder);
           return { started: `${threadName(db, before)} goes on past the round limit.` };
         }
@@ -316,7 +315,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       if (!asked.success || !allowed[kind].includes(asked.data.command))
         reply({ error: "the daemon doesn't know that request" });
       else
-        bringInFirst(asked.data, caller).then(reply, (error) => reply({ error: message(error) }));
+        bringInFirst(asked.data, caller).then(reply, (error) => reply({ error: errorText(error) }));
     };
     connection.on("data", read);
     connection.on("error", () => {});
@@ -334,7 +333,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   await open(leadSocket(), "lead");
   for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => endWhatItStarted(sockets));
   console.log(`Listening on ${path}.`);
-  await lead().catch((error) => console.log(message(error)));
+  await lead().catch((error) => console.log(errorText(error)));
   // Notes the daemon's stop kept from the lead.
   tellLead(db, tmux);
   for (const thread of before) {

@@ -12,10 +12,15 @@ import { cloneDir, threadSocket, threadsDir } from "./paths.ts";
 import instructions from "./prompts/builder.md" with { type: "text" };
 import { findRepository, refreshClones } from "./repo.ts";
 import { refuseCredentials, setupCommand } from "./sandbox.ts";
-import { endSession, failedScreen, hasSession, startServer, startSession } from "./tmux.ts";
-
-// The sidebar reads the round limit from here, with the rest of what it knows about threads.
-export { threadConfig };
+import { errorText } from "./say.ts";
+import {
+  agentRuns,
+  endSession,
+  failedScreen,
+  hasSession,
+  startServer,
+  startSession,
+} from "./tmux.ts";
 
 export const Thread = z.object({
   owner: z.string(),
@@ -111,29 +116,7 @@ export function record(
   db: Database,
   folder: string,
   change: Partial<
-    Pick<
-      Thread,
-      | "status"
-      | "session"
-      | "rounds"
-      | "pr"
-      | "needs_you"
-      | "submitting"
-      | "reviewing"
-      | "telling"
-      | "held"
-      | "last_review"
-      | "last_comment"
-      | "last_check"
-      | "asking"
-      | "noting"
-      | "checks"
-      | "reviewer"
-      | "reviewed_by"
-      | "review_round"
-      | "verdict"
-      | "review_line"
-    >
+    Omit<Thread, "owner" | "repo" | "task" | "folder" | "branch" | "base" | "title" | "started">
   >,
   why?: string,
 ): Thread {
@@ -385,10 +368,10 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
 }
 
 // Starts the thread's builder in tmux, in the sandbox in its clone: with --resume when it
-// saved a conversation, or else afresh with the task's title and body as its first message. Throws when it
-// exits as soon as it starts. skel picks the session id rather than Claude Code, so it is
-// stored before the builder starts and the builder can be brought back with --resume after
-// its session is gone.
+// saved a conversation, or else afresh with the task's title and body as its first message.
+// Throws when it exits as soon as it starts. skel picks the session id rather than Claude
+// Code, so it is stored before the builder starts and the builder can be brought back with
+// --resume after its session is gone.
 export async function startBuilder(db: Database, tmux: string, thread: Thread): Promise<void> {
   const clone = cloneOf(thread);
   const stored = thread.session;
@@ -434,10 +417,8 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
 export async function bringBack(db: Database, tmux: string, thread: Thread): Promise<void> {
   if (thread.session === null)
     throw new Error("the daemon stopped while setting up the thread: run skel start again");
-  if (hasSession(tmux, thread.folder)) {
-    if (failedScreen(tmux, thread.folder) === null) return;
-    endSession(tmux, thread.folder);
-  }
+  if (agentRuns(tmux, thread.folder)) return;
+  if (hasSession(tmux, thread.folder)) endSession(tmux, thread.folder);
   await startBuilder(db, tmux, thread);
 }
 
@@ -446,7 +427,7 @@ export async function bringBack(db: Database, tmux: string, thread: Thread): Pro
 // close ended, meanwhile stays as it is: its builder ended because of that, such as within
 // the moment skel watches it start.
 export function failThread(db: Database, thread: Thread, error: unknown): void {
-  const why = error instanceof Error ? error.message : String(error);
+  const why = errorText(error);
   const { status } = readThread(db, thread.folder);
   if (status === "stopped" || status === "done") {
     console.log(`${thread.folder} stays ${status}: ${why}`);

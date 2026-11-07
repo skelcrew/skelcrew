@@ -11,6 +11,7 @@ import {
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import {
+  agentRuns,
   endSession,
   hasSession,
   isIdle,
@@ -243,6 +244,17 @@ test("tmux passes synchronized output through to your terminal", () => {
 
 test("a session that was never started doesn't exist", () => {
   expect(hasSession(socket, "nobody")).toBe(false);
+});
+
+test("an agent runs only while its session lives and its command hasn't failed", async () => {
+  expect(agentRuns(socket, "builder")).toBe(false);
+  start("builder", ["sh", "-c", "sleep 30"]);
+  expect(agentRuns(socket, "builder")).toBe(true);
+  endSession(socket, "builder");
+  start("failed", ["sh", "-c", "exit 3"]);
+  await until(() => !agentRuns(socket, "failed"));
+  // A failed command leaves its session behind, showing its last screen.
+  expect(hasSession(socket, "failed")).toBe(true);
 });
 
 test("idle means a quiet pane showing the prompt, and not busy", async () => {

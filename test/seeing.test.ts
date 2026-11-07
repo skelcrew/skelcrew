@@ -1,5 +1,5 @@
-// skel ps, skel task ls, skel task show and skel attach, run as you or the lead would run them, against a
-// running daemon, a fake gh, a fake Claude Code and a fake tmux for attaching.
+// skel ps, skel task ls, skel task show and skel attach, run as you or the lead would run
+// them, against a running daemon, a fake gh, a fake Claude Code and a fake tmux for attaching.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
