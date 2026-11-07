@@ -14,8 +14,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { settings } from "./claude.ts";
 import { claudeTokenFile, dataDir } from "./paths.ts";
-import { sandboxArgs, settings } from "./sandbox.ts";
+import { sandboxArgs } from "./sandbox.ts";
 import { onSprite } from "./sprite.ts";
 
 export type Review = { verdict: "approve" | "changes" | "failed"; body: string };
