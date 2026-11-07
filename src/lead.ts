@@ -15,6 +15,7 @@ import { errorText } from "./say.ts";
 import { readThread, record, Thread, threadName } from "./thread.ts";
 import {
   agentRuns,
+  checkItLived,
   endSession,
   failedScreen,
   hasSession,
@@ -57,13 +58,7 @@ export async function startLead(db: Database, tmux: string): Promise<void> {
   // of clones, so clones made after it started show up for it.
   refreshClones(db).catch((error) => console.log(String(error)));
   console.log(`${resume ? "Brought back" : "Started"} the lead, session ${session}.`);
-  // A lead that can't start, such as one whose login is gone, ends within moments, and
-  // attaching would only find it gone.
-  await Bun.sleep(1000);
-  const failed = failedScreen(tmux, "lead");
-  if (failed !== null) endSession(tmux, "lead");
-  if (failed !== null || !hasSession(tmux, "lead"))
-    throw new Error(`the lead exited as soon as it started:\n${failed ?? ""}`);
+  await checkItLived(tmux, "lead", "lead");
 }
 
 // Types each saved note into the lead, one at a time, such as "started app-12 from GitHub:

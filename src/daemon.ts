@@ -5,9 +5,16 @@ import type { Database } from "bun:sqlite";
 import { mkdirSync, openSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
-import { threadConfig } from "./config.ts";
+import {
+  bringBack,
+  failThread,
+  setUpThread,
+  startBuilder,
+  startChoice,
+  startThread,
+  statusOnceBack,
+} from "./builder.ts";
 import { openDb } from "./db.ts";
-import { pastLimit } from "./decide.ts";
 import { stopThread } from "./events.ts";
 import { createIssue } from "./github.ts";
 import { attachedNote, recordAttachedFrom, startLead, tellLead } from "./lead.ts";
@@ -22,16 +29,11 @@ import { errorText } from "./say.ts";
 import { setupDone } from "./setup.ts";
 import { holdAwhile, keepAwake, onSprite, urlPort } from "./sprite.ts";
 import {
-  bringBack,
-  failThread,
   findThread,
   hasWork,
   liveThreads,
   readThread,
   record,
-  setUpThread,
-  startBuilder,
-  startThread,
   type Thread,
   threadName,
   threadOn,
@@ -171,18 +173,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   // in the same clone, then carries on the round its stop cut short, as after a restart.
   // Marks the thread failed, with the reason, when the builder can't start.
   const resume = async (stopped: Thread) => {
-    // Its builder sits at its prompt once back, as its turn ended with the stop. It waits when
-    // a round or its PR will wake it: a submit or review under way, or the PR's checks,
-    // reviews and comments. It works when it has a review's changes to be typed in, or no PR
-    // yet.
-    const { pr, submitting, reviewing, telling } = stopped;
-    const handed = telling === null && (pr !== null || submitting !== null || reviewing !== null);
-    const thread = record(
-      db,
-      stopped.folder,
-      { status: handed ? "waiting" : "working" },
-      "started again",
-    );
+    const thread = record(db, stopped.folder, { status: statusOnceBack(stopped) }, "started again");
     try {
       await listenFor(thread);
       await bringBack(db, tmux, thread);
@@ -235,12 +226,6 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       case "stop": {
         const thread = findThread(db, request.repo, request.task);
         const name = threadName(db, thread);
-        if (thread.status === "stopped") throw new Error(`${name} is stopped already`);
-        if (thread.status !== "working" && thread.status !== "waiting")
-          throw new Error(`${name} is ${thread.status}, so it has no builder to stop`);
-        // Its setup would go on to start the builder after the stop.
-        if (thread.session === null)
-          throw new Error(`${name} is still setting up: stop it once its builder has started`);
         await stopThread(db, tmux, thread);
         return { stopped: name };
       }
@@ -263,13 +248,13 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       }
       case "start": {
         const before = threadOn(db, request.repo, request.task);
-        if (before?.status === "stopped") {
+        const choice = startChoice(before);
+        if (before && choice === "bring back") {
           const name = threadName(db, before);
           resume(before);
           return { started: `Started ${name} again: its builder is back where it was.` };
         }
-        const live = before?.status === "working" || before?.status === "waiting";
-        if (before && live && pastLimit(before, threadConfig().maxRounds)) {
+        if (before && choice === "go on") {
           goOn(db, tmux, before.folder);
           return { started: `${threadName(db, before)} goes on past the round limit.` };
         }
