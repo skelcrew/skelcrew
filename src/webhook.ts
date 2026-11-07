@@ -55,7 +55,7 @@ const Delivery = z.object({ repository: z.object({ full_name: z.string() }) });
 export function listenForWebhooks(
   port: number,
   secret: string,
-  poll: (repo: string) => Promise<void>,
+  poll: (fullName: string) => Promise<void>,
 ): Bun.Server<undefined> {
   return Bun.serve({
     port,
@@ -82,6 +82,6 @@ export function listenForWebhooks(
 
 // Sets the webhook that wakes this Sprite on a repository, owner/name, so a label, your
 // comment or your merge there reaches skel while the Sprite sleeps.
-export async function hookRepository(full: string): Promise<void> {
-  await setWebhook(full, spriteUrl(), webhookSecret());
+export async function hookRepository(fullName: string): Promise<void> {
+  await setWebhook(fullName, spriteUrl(), webhookSecret());
 }

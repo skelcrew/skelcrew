@@ -37,7 +37,7 @@ async function git(folder: string, ...args: string[]): Promise<string> {
 // .git included, and a planted setting would run with your rights.
 async function push(db: Database, folder: string, summary: string): Promise<string> {
   const thread = readThread(db, folder);
-  const repo = github(thread);
+  const fullName = github(thread);
   const ours = cloneDir(thread.owner, thread.repo);
   // A ref of the thread's own, not FETCH_HEAD, which refreshing skel's clone also writes.
   const ref = `refs/skel/threads/${thread.folder}`;
@@ -50,13 +50,13 @@ async function push(db: Database, folder: string, summary: string): Promise<stri
     `+refs/heads/${thread.branch}:${ref}`,
   );
   const sha = await git(ours, "rev-parse", "--verify", `${ref}^{commit}`);
-  await pushCommit(ours, repo, sha, thread.branch);
+  await pushCommit(ours, fullName, sha, thread.branch);
   // Found rather than opened when the daemon stopped between opening it and saving it.
-  let pr = thread.pr ?? (await findPullRequest(repo, thread.branch));
+  let pr = thread.pr ?? (await findPullRequest(fullName, thread.branch));
   if (pr === null) {
-    const { title } = await readIssue(repo, thread.task);
+    const { title } = await readIssue(fullName, thread.task);
     const base = baseOf(thread);
-    pr = await openPullRequest(repo, {
+    pr = await openPullRequest(fullName, {
       branch: thread.branch,
       base,
       title,
@@ -82,15 +82,15 @@ async function reviewRound(
   const thread = readThread(db, folder);
   const { pr } = thread;
   if (pr === null) throw new Error("the thread has no pull request to review");
-  const repo = github(thread);
+  const fullName = github(thread);
   const { model, reviewer, maxRounds } = threadConfig();
-  await setReviewStatus(repo, sha, "pending", "skel's reviewer is reviewing");
+  await setReviewStatus(fullName, sha, "pending", "skel's reviewer is reviewing");
   if (signal.aborted) return;
   const harness = reviewerHarness(reviewer, process.env.PATH ?? "");
   record(db, folder, { reviewing: sha, submitting: null, reviewer: harness }, `reviewing ${sha}`);
   const verdict = await review({
     clone: cloneOf(thread),
-    issue: await readIssue(repo, thread.task),
+    issue: await readIssue(fullName, thread.task),
     // Setting up the thread's clone put the base branch there under origin/.
     base: `origin/${baseOf(thread)}`,
     commit: sha,
@@ -102,12 +102,12 @@ async function reviewRound(
   const before = readThread(db, folder).rounds;
   const outcome = afterReview(before, verdict, maxRounds);
   if (verdict.verdict !== "failed") {
-    const id = await postReview(repo, pr, sha, verdict.verdict, verdict.body);
+    const id = await postReview(fullName, pr, sha, verdict.verdict, verdict.body);
     db.run("INSERT OR IGNORE INTO posted (id) VALUES (?)", [id]);
   }
   // A newer round may be reviewing the same commit, and its check must stay pending.
   if (signal.aborted) return;
-  await setReviewStatus(repo, sha, outcome.check, outcome.description);
+  await setReviewStatus(fullName, sha, outcome.check, outcome.description);
   if (signal.aborted) return;
   const { rounds, needsYou, status, tell, held } = outcome;
   const change = {

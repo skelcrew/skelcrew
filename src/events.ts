@@ -15,13 +15,13 @@ import { agentRuns, stopSession, typeInto } from "./tmux.ts";
 
 // The message about failed checks, with the end of each one's log. A check that isn't a
 // GitHub Actions job has no log gh can read, so it gets its link instead.
-async function aboutChecks(repo: string, failed: Check[]): Promise<string[]> {
+async function aboutChecks(fullName: string, failed: Check[]): Promise<string[]> {
   return Promise.all(
     failed.map(async (c) => {
       const link = c.url ? ` (${c.url})` : "";
       const fix = 'Fix it, commit, and run skel submit "<summary>" again.';
       if (c.kind === "status") return `The check ${c.name} failed${link}. ${fix}`;
-      const log = await failedLog(repo, c.id).catch(
+      const log = await failedLog(fullName, c.id).catch(
         (error) => `(skel couldn't read its log: ${errorText(error)})`,
       );
       return `The check ${c.name} failed${link}. The end of its log:\n\n${log}\n\n${fix}`;

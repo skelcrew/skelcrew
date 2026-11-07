@@ -103,14 +103,14 @@ function endWhatItStarted(sockets: string[]): void {
 // wakes a sleeping Sprite and polls its repository at once.
 // Without the listener, events wait until something else wakes the Sprite, and polling
 // still sees them then.
-function wakeOnWebhooks(db: Database, port: number, poll: (full: string) => void): void {
+function wakeOnWebhooks(db: Database, port: number, poll: (fullName: string) => void): void {
   // The Sprite sleeps again as soon as the delivery is answered, so it is held for a minute
   // first: long enough for the poll, and for keepAwake to hold it for any work the poll starts.
-  const wake = async (repo: string) => {
+  const wake = async (fullName: string) => {
     await holdAwhile(60).catch((error) =>
       console.log(`couldn't hold the Sprite awake: ${errorText(error)}`),
     );
-    poll(repo);
+    poll(fullName);
   };
   try {
     listenForWebhooks(port, webhookSecret(), wake);
@@ -149,7 +149,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   };
   // Polls one repository at once. Until polling starts it does nothing, as the first poll comes
   // as soon as it does.
-  let poll: (full: string) => void = () => {};
+  let poll: (fullName: string) => void = () => {};
   const listening = new Set<string>();
   // Opens a thread's own socket, so the daemon knows which thread calls on it. A thread that
   // starts over keeps the socket it has.

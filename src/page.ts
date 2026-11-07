@@ -24,13 +24,13 @@ export const PageUrl = z.string().regex(address);
 // this, as only it may call GitHub.
 export async function readPage(url: string): Promise<Page> {
   const [, owner, repo, kind, number] = url.match(address) ?? [];
-  const full = `${Name.parse(owner)}/${Name.parse(repo)}`;
-  return kind === "pull" ? pullPage(full, Number(number)) : issuePage(full, Number(number));
+  const fullName = `${Name.parse(owner)}/${Name.parse(repo)}`;
+  return kind === "pull" ? pullPage(fullName, Number(number)) : issuePage(fullName, Number(number));
 }
 
 // Returns an issue's page.
-async function issuePage(repo: string, number: number): Promise<Page> {
-  const { title, body, state, user, labels } = await readIssueDetails(repo, number);
+async function issuePage(fullName: string, number: number): Promise<Page> {
+  const { title, body, state, user, labels } = await readIssueDetails(fullName, number);
   const names = labels.map((label) => label.name).join(", ");
   const facts: Page["facts"] = [
     ["State", state],
@@ -42,8 +42,8 @@ async function issuePage(repo: string, number: number): Promise<Page> {
 
 // Returns a PR's page. Its checks read as they do in the strip, and a review still being
 // written isn't one yet.
-async function pullPage(repo: string, number: number): Promise<Page> {
-  const pull = await readPullDetails(repo, number);
+async function pullPage(fullName: string, number: number): Promise<Page> {
+  const pull = await readPullDetails(fullName, number);
   const checks = ciChecks(pull);
   const latest = pull.reviews.filter((review) => review.state !== "PENDING").at(-1);
   const facts: Page["facts"] = [

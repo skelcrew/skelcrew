@@ -22,19 +22,19 @@ async function startLabeled(
   db: Database,
   tmux: string,
   owner: string,
-  name: string,
+  repo: string,
   labeled: Labeled[],
   begin: (thread: Thread) => Promise<void>,
 ): Promise<void> {
-  const repo = `${owner}/${name}`;
+  const fullName = `${owner}/${repo}`;
   const threads = db
     .query("SELECT * FROM threads WHERE owner = ? AND repo = ?")
-    .all(owner, name)
+    .all(owner, repo)
     .map((row) => Thread.parse(row));
   for (const issue of labeledToStart(threads, labeled)) {
     // An issue skel can't read, or one skel start took meanwhile, waits for the next poll.
-    const thread = await startThread(db, { repo, task: issue.number }).catch((error) => {
-      console.log(`couldn't start #${issue.number} in ${repo}: ${errorText(error)}`);
+    const thread = await startThread(db, { repo: fullName, task: issue.number }).catch((error) => {
+      console.log(`couldn't start #${issue.number} in ${fullName}: ${errorText(error)}`);
       return null;
     });
     if (thread === null) continue;
@@ -43,8 +43,8 @@ async function startLabeled(
     tellLead(db, tmux);
     // Not waited on, as for skel start: setup can take minutes.
     begin(thread);
-    await reactToIssue(repo, issue.number).catch((error) =>
-      console.log(`couldn't react to #${issue.number} in ${repo}: ${errorText(error)}`),
+    await reactToIssue(fullName, issue.number).catch((error) =>
+      console.log(`couldn't react to #${issue.number} in ${fullName}: ${errorText(error)}`),
     );
   }
 }
@@ -54,7 +54,7 @@ async function startLabeled(
 function saveOpen(
   db: Database,
   owner: string,
-  name: string,
+  repo: string,
   open: { issues: OpenList; prs: OpenList },
 ): void {
   // Saves one list's rows.
@@ -63,18 +63,18 @@ function saveOpen(
       db.run(
         `INSERT INTO open_items (owner, repo, kind, number, title, created)
           VALUES (?, ?, ?, ?, ?, ?)`,
-        [owner, name, kind, number, title, createdAt],
+        [owner, repo, kind, number, title, createdAt],
       );
   };
   db.transaction(() => {
-    db.run("DELETE FROM open_items WHERE owner = ? AND repo = ?", [owner, name]);
+    db.run("DELETE FROM open_items WHERE owner = ? AND repo = ?", [owner, repo]);
     insert("issue", open.issues);
     insert("pr", open.prs);
     db.run("UPDATE repositories SET open_issues = ?, open_prs = ? WHERE owner = ? AND repo = ?", [
       open.issues.total,
       open.prs.total,
       owner,
-      name,
+      repo,
     ]);
   })();
 }
@@ -86,25 +86,25 @@ async function pollRepository(
   db: Database,
   tmux: string,
   owner: string,
-  name: string,
+  repo: string,
   threads: Thread[],
   begin: (thread: Thread) => Promise<void>,
 ): Promise<void> {
-  const repo = `${owner}/${name}`;
+  const fullName = `${owner}/${repo}`;
   // Nobody sees the lists with no screen open, so GitHub isn't asked for them.
   const lists = runningSessions(screenSocket(tmux)).length > 0;
   const { you, labeled, prs, open } = await readRepository(
-    repo,
+    fullName,
     threads.flatMap((t) => (t.pr === null ? [] : [t.pr])),
     lists,
   );
-  if (open) saveOpen(db, owner, name, open);
-  await startLabeled(db, tmux, owner, name, labeled, begin);
+  if (open) saveOpen(db, owner, repo, open);
+  await startLabeled(db, tmux, owner, repo, labeled, begin);
   const { maxRounds } = threadConfig();
   // Asked once per poll, and only about authors of what is new.
   const pushers: string[] = [];
   for (const login of newAuthors(threads, prs, you))
-    if (await canPush(repo, login)) pushers.push(login);
+    if (await canPush(fullName, login)) pushers.push(login);
   for (const before of threads) {
     const { folder } = before;
     // Read together, with no wait between, so a review the thread's round has finished is
@@ -164,7 +164,7 @@ export function pollGitHub(
   tmux: string,
   every: number,
   begin: (thread: Thread) => Promise<void>,
-): (full: string) => void {
+): (fullName: string) => void {
   const skipped = new Map<string, number>();
   const polling = new Set<string>();
   // A delivery that comes in while its repository is being polled may be about an event the
@@ -178,42 +178,42 @@ export function pollGitHub(
       .all()
       .map((row) => Thread.parse(row))
       .filter((t) => t.pr !== null);
-  const poll = (owner: string, name: string) => {
-    const repo = `${owner}/${name}`;
-    skipped.set(repo, 0);
-    if (polling.has(repo)) {
-      again.add(repo);
+  const poll = (owner: string, repo: string) => {
+    const fullName = `${owner}/${repo}`;
+    skipped.set(fullName, 0);
+    if (polling.has(fullName)) {
+      again.add(fullName);
       return;
     }
-    polling.add(repo);
-    const threads = polled().filter((t) => t.owner === owner && t.repo === name);
-    pollRepository(db, tmux, owner, name, threads, begin)
-      .catch((error) => console.log(`couldn't poll ${repo}: ${errorText(error)}`))
+    polling.add(fullName);
+    const threads = polled().filter((t) => t.owner === owner && t.repo === repo);
+    pollRepository(db, tmux, owner, repo, threads, begin)
+      .catch((error) => console.log(`couldn't poll ${fullName}: ${errorText(error)}`))
       .finally(() => {
-        polling.delete(repo);
-        if (again.delete(repo)) poll(owner, name);
+        polling.delete(fullName);
+        if (again.delete(fullName)) poll(owner, repo);
       });
   };
   const tick = () => {
     const live = polled();
-    for (const { owner, repo: name } of repositories(db)) {
-      const repo = `${owner}/${name}`;
-      const threads = live.filter((t) => t.owner === owner && t.repo === name);
+    for (const { owner, repo } of repositories(db)) {
+      const fullName = `${owner}/${repo}`;
+      const threads = live.filter((t) => t.owner === owner && t.repo === repo);
       const active = threads.some(
         (t) => t.status === "working" || (t.status === "waiting" && !needsYou(t)),
       );
-      const waited = skipped.get(repo) ?? Number.POSITIVE_INFINITY;
-      if (polling.has(repo) || (!active && waited < 1)) {
-        skipped.set(repo, waited + 1);
+      const waited = skipped.get(fullName) ?? Number.POSITIVE_INFINITY;
+      if (polling.has(fullName) || (!active && waited < 1)) {
+        skipped.set(fullName, waited + 1);
         continue;
       }
-      poll(owner, name);
+      poll(owner, repo);
     }
   };
   tick();
   setInterval(tick, every);
-  return (full) => {
-    const found = repositories(db).find((r) => fullNameIs(r, full));
+  return (fullName) => {
+    const found = repositories(db).find((r) => fullNameIs(r, fullName));
     if (found) poll(found.owner, found.repo);
   };
 }
