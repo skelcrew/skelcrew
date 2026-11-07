@@ -2,6 +2,7 @@
 // task, PR and checks, then its latest review. For a page, its row's name and title. The lead
 // has none, as the sidebar says it all.
 // Above the sidebar the same line says skel, its release and, on a remote, where it runs. A thin line runs under them all.
+import { clean, fitted } from "./look.ts";
 import type { Link, Row } from "./sidebar.ts";
 
 type Size = { left: number; width: number };
@@ -12,22 +13,6 @@ const verdicts: Record<string, string> = {
   changes: "changes",
   failed: "review failed",
 };
-
-// Returns text from outside, such as an issue's title, safe to show: its control codes would
-// otherwise reach your terminal, or break the line.
-export const clean = (text: string) => text.replace(/\p{Cc}/gu, " ");
-
-// Returns text cut to fit a number of columns, with … where it was cut. Columns, not characters,
-// as a Japanese title takes two for each.
-export function fitted(text: string, width: number): string {
-  if (Bun.stringWidth(text) <= width) return text;
-  let cut = "";
-  for (const letter of text) {
-    if (Bun.stringWidth(`${cut}${letter}…`) > width) break;
-    cut += letter;
-  }
-  return width > 0 ? `${cut}…` : "";
-}
 
 // Returns text as tmux shows it as is. tmux reads the strip as a format, where #(...) would run
 // a shell command and #[...] restyle the line. Any title on GitHub could say that. The strip goes

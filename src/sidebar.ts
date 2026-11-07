@@ -7,8 +7,22 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { openDb } from "./db.ts";
 import { Name } from "./github.ts";
+import {
+  clean,
+  edge,
+  fitted,
+  green,
+  grey,
+  onShade,
+  pad,
+  paint,
+  red,
+  shade,
+  white,
+  yellow,
+} from "./look.ts";
 import { agentClient, pageCommand, sidebarWidth } from "./screen.ts";
-import { clean, drawStrip, fitted } from "./strip.ts";
+import { drawStrip } from "./strip.ts";
 import { github, needsYou, Thread, threadConfig, threadName } from "./thread.ts";
 import {
   paneTty,
@@ -66,10 +80,6 @@ type Stop = { place: string; open: boolean };
 
 // Claude Code is the only harness offered for the lead and builders.
 const builderHarness = "claude";
-const [green, yellow, red] = [32, 33, 31];
-export const grey = 90;
-// Returns text in a colour or style, ending just that, as a background behind it must go on.
-export const paint = (code: number | string, text: string) => `\x1b[${code}m${text}\x1b[22;39m`;
 // Each thread's mark is a circle in its status's colour. Waiting and stopped look alike, and the
 // word under the name tells every status apart, so nothing is told by colour alone.
 const marks: Record<Thread["status"], Mark> = {
@@ -81,23 +91,6 @@ const marks: Record<Thread["status"], Mark> = {
 };
 // A PR with no thread has nothing to say, so it looks like a thread that is waiting.
 const noThread: Mark = ["○", grey];
-// The row you are looking at has a grey background, which is also what parts it from the rows
-// around it. 256-colour numbers, as they reach your terminal through both tmux servers and
-// sprite, and mean the same whatever your theme. So do the colours on the grey: a theme's own
-// red or grey can vanish there, and its default text can be dark.
-const shade = "48;5;238";
-export const white = "1;38;5;231";
-const onShade: Record<number, string> = {
-  [green]: "38;5;120",
-  [yellow]: "38;5;221",
-  [red]: "38;5;210",
-  [grey]: "38;5;250",
-};
-// The line at the sidebar's edge, a shade quieter than dim text, as it only parts two things.
-const edge = "38;5;237";
-// The padding on each side, in columns, which also starts every heading and mark. A terminal
-// cell is about twice as tall as wide, so two columns look like the one blank row at the top.
-export const pad = "  ";
 // Where a name starts, past its mark.
 const indent = `${pad}  `;
 // The keys you need most, at the bottom of the sidebar.
