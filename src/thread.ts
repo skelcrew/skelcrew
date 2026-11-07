@@ -5,13 +5,11 @@ import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync 
 import { join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
-import { openDb } from "./db.ts";
 import { fetchBranch, readIssue } from "./github.ts";
 import { cloneDir, configDir, threadSocket, threadsDir } from "./paths.ts";
 import instructions from "./prompts/builder.md" with { type: "text" };
 import { findRepository, refreshClones } from "./repo.ts";
 import { agentCommand, hasTranscript, refuseCredentials, setupCommand } from "./sandbox.ts";
-import { openScreen } from "./screen.ts";
 import { endSession, failedScreen, hasSession, startServer, startSession } from "./tmux.ts";
 
 export const Thread = z.object({
@@ -179,17 +177,6 @@ export function findThread(db: Database, repo: string, task: number): Thread {
   const thread = threadOn(db, repo, task);
   if (!thread) throw new Error(`there is no thread ${repo}-${task}`);
   return thread;
-}
-
-// Opens the screen with the builder of the thread named repo-task on the right, and returns
-// when you leave with Ctrl-Q. Only from your own terminal: it takes over the screen, which
-// the lead can't hand to you.
-export async function attachToThread(tmux: string, repo: string, task: number): Promise<void> {
-  const thread = findThread(openDb(), repo, task);
-  // A builder that exited leaves its last screen behind, which would look like it still runs.
-  if (!hasSession(tmux, thread.folder) || failedScreen(tmux, thread.folder) !== null)
-    throw new Error(`${repo}-${task}'s builder isn't running: the thread is ${thread.status}`);
-  await openScreen(tmux, thread.folder);
 }
 
 // Returns the threads that are working or waiting, whose builders the daemon brings back

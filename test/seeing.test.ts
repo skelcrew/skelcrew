@@ -401,7 +401,7 @@ esac`,
 describe("the page of an issue or PR", () => {
   // Asks the daemon for a page as the page command does, over the socket given, if any.
   async function ask(url: string, more: Record<string, string> = {}) {
-    const script = `import { pageOf } from ${JSON.stringify(source("daemon.ts"))};
+    const script = `import { pageOf } from ${JSON.stringify(source("client.ts"))};
 console.log(JSON.stringify(await pageOf(${JSON.stringify(url)})));`;
     const run = Bun.spawn([process.execPath, "-e", script], {
       env: { ...env(), ...more },
