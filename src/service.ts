@@ -3,9 +3,9 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { daemonLog, loadLaunchAgent, plistFile, plistText } from "./launchd.ts";
+import { daemonLog, loadLaunchAgent, plistFile, plistText, startLaunchAgent } from "./launchd.ts";
 import { skelLine } from "./say.ts";
-import { installSpriteService, onSprite } from "./sprite.ts";
+import { installSpriteService, onSprite, serviceLog, startSpriteService } from "./sprite.ts";
 import { checkoutFolder, singleFile } from "./version.ts";
 
 // Returns the systemd user service path, which also marks daemon installation complete.
@@ -139,4 +139,22 @@ export function installService(): void {
     else writeFileSync(file, before);
     throw error;
   }
+}
+
+// Starts the daemon's service on this machine, and returns where its log is, for when it
+// still doesn't answer. Throws when systemd refuses, as the daemon then won't come.
+export function startDaemon(): string {
+  if (onSprite()) {
+    startSpriteService();
+    return serviceLog;
+  }
+  if (process.platform === "darwin") {
+    startLaunchAgent();
+    return daemonLog();
+  }
+  const start = Bun.spawnSync(["systemctl", "--user", "start", "skel"], {
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  if (!start.success) throw new Error("systemctl couldn't start skel's daemon");
+  return "journalctl --user -u skel";
 }
