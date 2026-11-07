@@ -2,11 +2,21 @@
 // laptop, and set a server up for that. --remote offers to replace skel there when it was
 // built from another commit than yours. Your laptop can be a Mac, so this file loads nothing
 // of the skel that runs on the server.
-import { mkdtempSync, rmSync, writeSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { originHere } from "./origin.ts";
 import { skelLine } from "./say.ts";
+import {
+  built,
+  checkoutFolder,
+  dirty,
+  git,
+  laptopBuild,
+  readable,
+  release,
+  releases,
+} from "./version.ts";
 
 // A command over ssh gets a bare PATH: no login shell reads ~/.profile, and Ubuntu's
 // ~/.bashrc stops early when nobody types into it. So ~/.local/bin, where skel copies
@@ -14,22 +24,9 @@ import { skelLine } from "./say.ts";
 // same way.
 const pathOnServer = 'PATH="$HOME/.local/bin:$PATH"';
 
-// The commit skel was built from, which withLinuxSkel stamps into the copy it builds for a
-// server or Sprite. A skel run from a checkout has none, and updates with git pull.
-declare const SKEL_BUILD: string;
-const built = typeof SKEL_BUILD === "string" ? SKEL_BUILD : undefined;
-
-// Follows the commit of a build made with changes not committed. Such a build can't say
-// what it holds, so it never counts as up to date.
-const dirty = "-dirty";
-
 // What a copied skel exits with when the laptop's build differs. skel otherwise exits 0 or
 // 1, and the server's shell 127 when it finds no skel.
 export const outdated = 98;
-
-// Returns a build as people read it.
-const readable = (build: string) =>
-  build.endsWith(dirty) ? `${build.slice(0, -dirty.length)} with uncommitted changes` : build;
 
 // Reports whether this skel, copied to a server or Sprite, is from another build than the
 // laptop that runs it there with --remote, and says so. The laptop passes its build along
@@ -42,23 +39,6 @@ export function outOfDate(): boolean {
     skelLine(`skel on ${where} is from ${readable(built)}, yours is ${readable(laptop)}.`),
   );
   return true;
-}
-
-// The checkout this skel runs from on the laptop, and git in it.
-const checkoutFolder = resolve(import.meta.dir, "..");
-const git = (...args: string[]) =>
-  Bun.spawnSync(["git", "-C", checkoutFolder, ...args], { stdout: "pipe", stderr: "pipe" })
-    .stdout.toString()
-    .trim();
-
-// Returns the build a copy made from this checkout gets: its commit, marked when changes
-// aren't committed, or null when skel doesn't run from a checkout.
-function laptopBuild(): string | null {
-  // A single-file skel runs its modules from a folder only it sees, outside any checkout.
-  if (import.meta.dir.startsWith("/$bunfs")) return null;
-  const commit = git("rev-parse", "--short", "HEAD");
-  if (commit === "") return null;
-  return git("status", "--porcelain") === "" ? commit : `${commit}${dirty}`;
 }
 
 // Returns a word the server's shell reads back exactly as given. ssh joins its words with
@@ -138,7 +118,7 @@ export async function addMachine(
 ): Promise<number> {
   let code = await upToDate(where, there, machine);
   if (code === 127) {
-    await withLinuxSkel(machine.copy);
+    await withLinuxSkel(machine);
     code = await there([]);
   }
   if (code !== 0) return code;
@@ -264,7 +244,7 @@ else echo "elsewhere $f"; fi`;
       `the daemon on ${where} runs skel from ${found[3]}, not ~/.local/bin/skel, where update puts it, so nothing was replaced`,
     );
   const { folder, commit } = describeCheckout();
-  await withLinuxSkel(machine.copy);
+  await withLinuxSkel(machine);
   const restarted = await quietly(machine.shell(machine.restart));
   if (!restarted.ok)
     throw new Error(
@@ -278,26 +258,58 @@ else echo "elsewhere $f"; fi`;
   );
 }
 
-// Builds skel as one file for a server or Sprite, which is Linux on x64 whatever the laptop
-// runs, hands it to copy, and removes it after. Built from this checkout each time, so the
-// machine gets the skel you run here, stamped with its build so it can tell when yours moves
-// on.
-export async function withLinuxSkel(copy: (file: string) => Promise<void>): Promise<void> {
+// Downloads this release's Linux skel for the machine's CPU to a file, so a skel installed from
+// a release can set up a server. It has no sources to build from, and is often on a Mac. Stops
+// on a download that doesn't match the release's checksums, as the install script does.
+async function downloadLinuxSkel(file: string, machine: Machine): Promise<void> {
+  const cpus: Record<string, string> = { x86_64: "x64", aarch64: "arm64", arm64: "arm64" };
+  // ssh's warnings arrive in the same text, so the CPU is picked out of it.
+  const { said } = await quietly(machine.shell("uname -m"));
+  const cpu = cpus[said.match(/\b(x86_64|aarch64|arm64)\b/)?.[1] ?? ""];
+  if (!cpu) throw new Error(`skel runs on arm64 and x64 CPUs, not on "${said}"`);
+  const name = `skel-linux-${cpu}`;
+  const fetched = async (asset: string) => {
+    const address = `${releases}/download/v${release}/${asset}`;
+    const response = await fetch(address);
+    if (!response.ok) throw new Error(`couldn't download ${address} (${response.status})`);
+    return response;
+  };
+  console.log(`Downloading skel ${release} for Linux.`);
+  const sums = await (await fetched("SHA256SUMS")).text();
+  const listed = sums.split("\n").find((line) => line.endsWith(`  ${name}`));
+  const bytes = await (await fetched(name)).arrayBuffer();
+  const sum = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+  if (listed !== `${sum}  ${name}`)
+    throw new Error(`the download failed its checksum, so skel wasn't copied`);
+  await Bun.write(file, bytes);
+  chmodSync(file, 0o755);
+}
+
+// Builds skel from this checkout as one file for a server or Sprite, which is Linux on x64
+// whatever the laptop runs, stamped with its build so it can tell when yours moves on.
+async function buildLinuxSkel(file: string): Promise<void> {
+  console.log("Building skel for Linux.");
+  const main = join(import.meta.dir, "main.ts");
+  const target = "--target=bun-linux-x64";
+  const build = laptopBuild();
+  const stamp = build ? ["--define", `SKEL_BUILD=${JSON.stringify(build)}`] : [];
+  const argv = ["bun", "build", "--compile", target, ...stamp, main, "--outfile", file];
+  if ((await run(argv)) !== 0) throw new Error("bun build failed, so skel wasn't copied");
+}
+
+// Gets the skel you run here for a server or Sprite, copies it there, and removes it after: your
+// release when you run one, or else one built from this checkout.
+async function withLinuxSkel(machine: Machine): Promise<void> {
   // A single-file skel runs its modules from a folder only it sees, with no sources to
   // build from.
-  if (import.meta.dir.startsWith("/$bunfs"))
+  const single = import.meta.dir.startsWith("/$bunfs");
+  if (single && !release)
     throw new Error("this skel is a single file and can't build one: run skel from a checkout");
   const folder = mkdtempSync(join(tmpdir(), "skel-"));
   try {
     const file = join(folder, "skel");
-    console.log("Building skel for Linux.");
-    const main = join(import.meta.dir, "main.ts");
-    const target = "--target=bun-linux-x64";
-    const build = laptopBuild();
-    const stamp = build ? ["--define", `SKEL_BUILD=${JSON.stringify(build)}`] : [];
-    const argv = ["bun", "build", "--compile", target, ...stamp, main, "--outfile", file];
-    if ((await run(argv)) !== 0) throw new Error("bun build failed, so skel wasn't copied");
-    await copy(file);
+    await (single ? downloadLinuxSkel(file, machine) : buildLinuxSkel(file));
+    await machine.copy(file);
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }

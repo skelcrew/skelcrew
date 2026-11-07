@@ -56,9 +56,6 @@ const read = (file: string) => {
   const path = join(home, file);
   return existsSync(path) ? readFileSync(path, "utf8") : "";
 };
-// Returns those of the given processes that are still running.
-const pids = (list: string[]) =>
-  list.filter((pid) => Bun.spawnSync(["kill", "-0", pid], { stderr: "pipe" }).success);
 
 // What you see in the first terminal, or a second one.
 const seen = (window = "one") => tmux(terminal, "capture-pane", "-p", "-t", `=${window}:`).out;
@@ -938,10 +935,10 @@ test("Ctrl-Q leaves from a page, and no page is left running", async () => {
   clickRow("app-31");
   await onPage("line 1 of the description");
   expect(pagesRunning()).toBe(1);
-  const pid = tmux(screen, "list-panes", "-a", "-F", "#{pane_pid}").out.trim().split("\n");
+  const panes = tmux(screen, "list-panes", "-a", "-F", "#{pane_pid}").out.trim().split("\n");
   press("C-q");
   await until(() => seen().includes(leaving), "skel to say goodbye");
-  await until(() => pids(pid).length === 0, "the panes' processes to end");
+  await until(() => stillRunning(panes.map(Number)).length === 0, "the panes' processes to end");
 });
 
 test("leaving a page for an agent ends the page, and no client is left behind it", async () => {

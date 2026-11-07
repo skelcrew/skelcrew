@@ -2,6 +2,7 @@
 import { help } from "./help.ts";
 import { addServer, keepingTitle, notSetUp, outdated, outOfDate, remote } from "./remote.ts";
 import { addSprite, remoteSprite } from "./sprite.ts";
+import { versionLine } from "./version.ts";
 
 // What an agent may not run, in its words. Its sandbox hides skel's database, your settings
 // and your logins, so these would act on an empty database or ask what nobody can answer.
@@ -30,6 +31,12 @@ function taskName(word?: string): [string, number] | undefined {
 // With no command, sets up skel and opens the screen on the lead.
 async function run(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
+  // Before the check below, so a server whose skel differs from the laptop's still says what
+  // it is.
+  if (args.length === 1 && command === "--version") {
+    console.log(versionLine());
+    return;
+  }
   // A sidebar or page is started by a skel that passed this check, and its tmux server can hand
   // it the build of whichever laptop started the server, so it would refuse to run.
   const onScreen = command === "sidebar" || command === "page";

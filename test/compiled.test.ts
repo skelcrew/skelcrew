@@ -1,7 +1,15 @@
 // skel as one file, built with bun build --compile as skel --remote builds it for a server:
 // it runs, installs its daemon's service, and agents can run it in their sandbox.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,8 +18,9 @@ let skel = "";
 
 // Builds a program as one file, as skel --remote does, but for this machine, so the test can
 // run it.
-function compile(entry: string, file: string): void {
-  const built = Bun.spawnSync([process.execPath, "build", "--compile", entry, "--outfile", file], {
+function compile(entry: string, file: string, stamp: string[] = []): void {
+  const argv = [process.execPath, "build", "--compile", ...stamp, entry, "--outfile", file];
+  const built = Bun.spawnSync(argv, {
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -39,8 +48,8 @@ afterAll(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-async function run(args: string[]) {
-  const proc = Bun.spawn([skel, ...args], {
+async function run(args: string[], file = skel) {
+  const proc = Bun.spawn([file, ...args], {
     cwd: home,
     env: {
       PATH: `${join(home, "bin")}:/usr/bin:/bin`,
@@ -78,6 +87,135 @@ test("points the daemon's service at itself", async () => {
   fake("systemctl", 'test "$2" = daemon-reload');
   await run([]);
   expect(readFileSync(unit, "utf8")).toContain(`ExecStart="${skel}" serve\n`);
+});
+
+test("says which release it is, or which commit a build from a checkout came from", () => {
+  const main = join(import.meta.dir, "..", "src", "main.ts");
+  const said = (build: string) => {
+    const file = join(home, "stamped", build, "skel");
+    compile(main, file, ["--define", `SKEL_BUILD=${JSON.stringify(build)}`]);
+    return Bun.spawnSync([file, "--version"]).stdout.toString();
+  };
+  expect(said("0.4.2")).toBe("skel 0.4.2\n");
+  expect(said("39939b0")).toBe("skel from a checkout, at commit 39939b0\n");
+  expect(said("39939b0-dirty")).toBe(
+    "skel from a checkout, at commit 39939b0 with uncommitted changes\n",
+  );
+});
+
+test("a build nobody stamped doesn't pretend to know what it is", () => {
+  expect(Bun.spawnSync([skel, "--version"]).stdout.toString()).toBe(
+    "skel from a checkout, at an unknown commit\n",
+  );
+});
+
+test("the sidebar's header shows the release of the skel that runs it", async () => {
+  const file = join(home, "released", "skel");
+  const main = join(import.meta.dir, "..", "src", "main.ts");
+  compile(main, file, ["--define", 'SKEL_BUILD="0.4.2"']);
+  const agents = `skel-compiled-test-${process.pid}`;
+  const tmux = (...args: string[]) =>
+    Bun.spawnSync(["tmux", "-L", `${agents}-screen`, "-f", "/dev/null", ...args], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  try {
+    tmux("new-session", "-d", "-s", "one", "-x", "120", "-y", "30", "sleep 60");
+    const env = `env HOME=${home} XDG_RUNTIME_DIR=${join(home, "run")}`;
+    tmux("split-window", "-b", "-h", "-t", "=one:", `${env} ${file} sidebar ${agents} one ''`);
+    const header = () => tmux("show", "-v", "-t", "=one:", "status-format[0]").stdout.toString();
+    for (let tries = 0; tries < 100 && !header().includes("skel"); tries++) await Bun.sleep(100);
+    expect(header()).toContain(" 0.4.2");
+  } finally {
+    tmux("kill-server");
+  }
+});
+
+describe("a release setting up a server", () => {
+  let files = new Map<string, string>();
+  let server: ReturnType<typeof Bun.serve>;
+  let released = "";
+  const linux = "the Linux skel of 0.4.2";
+  const sum = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
+
+  // Stands in for a new server: it has no skel until scp brings one.
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const file = files.get(new URL(request.url).pathname);
+        return file === undefined ? new Response("no", { status: 404 }) : new Response(file);
+      },
+    });
+    released = join(home, "from-release", "skel");
+    const main = join(import.meta.dir, "..", "src", "main.ts");
+    compile(main, released, [
+      "--define",
+      'SKEL_BUILD="0.4.2"',
+      "--define",
+      `SKEL_RELEASES="http://127.0.0.1:${server.port}"`,
+    ]);
+    fake(
+      "ssh",
+      'case "$*" in *first-run*) test -f "$HOME/copied" || exit 127;; *uname*) cat "$HOME/cpu"; echo "** WARNING: this ssh is old" >&2;; esac',
+    );
+    fake("scp", 'for word; do test -f "$word" && cp "$word" "$HOME/copied"; done; exit 0');
+  });
+  afterAll(() => {
+    server.stop(true);
+  });
+  beforeEach(() => {
+    rmSync(join(home, "copied"), { force: true });
+    writeFileSync(join(home, "cpu"), "x86_64\n");
+    files = new Map([
+      ["/download/v0.4.2/skel-linux-x64", linux],
+      [
+        "/download/v0.4.2/SHA256SUMS",
+        `${sum("other")}  skel-darwin-arm64\n${sum(linux)}  skel-linux-x64\n`,
+      ],
+    ]);
+  });
+
+  test("copies over the Linux binary of its own release", async () => {
+    const done = await run(["remote", "add", "simon@workbox"], released);
+    expect(done.err).toBe("");
+    expect(done.code).toBe(0);
+    expect(readFileSync(join(home, "copied"), "utf8")).toBe(linux);
+    expect(done.out).toContain("skel --remote simon@workbox");
+  });
+
+  test("copies the binary for the server's CPU, which can differ from the laptop's", async () => {
+    const arm = "the arm64 Linux skel of 0.4.2";
+    files.set("/download/v0.4.2/skel-linux-arm64", arm);
+    files.set("/download/v0.4.2/SHA256SUMS", `${sum(arm)}  skel-linux-arm64\n`);
+    writeFileSync(join(home, "cpu"), "aarch64\n");
+    const done = await run(["remote", "add", "simon@workbox"], released);
+    expect(done.err).toBe("");
+    expect(readFileSync(join(home, "copied"), "utf8")).toBe(arm);
+  });
+
+  test("says so when the server has a CPU skel isn't built for", async () => {
+    writeFileSync(join(home, "cpu"), "riscv64\n");
+    const done = await run(["remote", "add", "simon@workbox"], released);
+    expect(done.code).toBe(1);
+    expect(done.err).toContain("riscv64");
+    expect(existsSync(join(home, "copied"))).toBe(false);
+  });
+
+  test("copies nothing that fails its checksum", async () => {
+    files.set("/download/v0.4.2/skel-linux-x64", "tampered");
+    const done = await run(["remote", "add", "simon@workbox"], released);
+    expect(done.code).toBe(1);
+    expect(done.err).toContain("checksum");
+    expect(existsSync(join(home, "copied"))).toBe(false);
+  });
+
+  test("names the address when the download fails", async () => {
+    files.delete("/download/v0.4.2/skel-linux-x64");
+    const done = await run(["remote", "add", "simon@workbox"], released);
+    expect(done.code).toBe(1);
+    expect(done.err).toContain(`http://127.0.0.1:${server.port}/download/v0.4.2/skel-linux-x64`);
+  });
 });
 
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("in the sandbox", () => {

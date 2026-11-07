@@ -41,6 +41,7 @@ const sections: [string, [string, string][]][] = [
       ["--json", "Output for tools"],
       ["--all", "Done threads too, on ps"],
       ["--from <owner/repo>", "The repository you're in"],
+      ["--version", "Which release of skel this is"],
     ],
   ],
 ];
