@@ -2,10 +2,10 @@
 // scroll it with the wheel, and typing goes nowhere. It is a process of its own, in the
 // screen's right pane, so it ends with the screen and agents' sessions never see it.
 import { z } from "zod";
-import { ciChecks } from "./decide.ts";
-import { Name, readIssueDetails, readPullDetails } from "./github.ts";
+import { ciChecks } from "../flow/decide.ts";
+import { Name, readIssueDetails, readPullDetails } from "../github.ts";
+import { errorText } from "../say.ts";
 import { clean, fitted, grey, pad, paint, white } from "./look.ts";
-import { errorText } from "./say.ts";
 
 // What the daemon hands the page, checked on both sides of its socket. Each fact is a short
 // label and what it says. All of it comes from GitHub, so none of it is safe to show yet.

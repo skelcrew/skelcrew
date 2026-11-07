@@ -3,9 +3,9 @@
 // credentials hidden.
 import { existsSync, lstatSync, readlinkSync, realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { controlSocket, dropCapabilities, onSprite } from "../machine/sprite.ts";
+import { checkoutFolder, singleFile } from "../version.ts";
 import { seatbeltArgs } from "./seatbelt.ts";
-import { controlSocket, dropCapabilities, onSprite } from "./sprite.ts";
-import { checkoutFolder, singleFile } from "./version.ts";
 
 // Where the folder of the agent's socket appears inside, whatever its path outside.
 const socketsInside = "/run/skel";

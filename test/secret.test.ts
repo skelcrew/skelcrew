@@ -1,7 +1,7 @@
 // Turning what you type or paste at the token question into the token, and what is shown
 // for it while you type.
 import { expect, test } from "bun:test";
-import { masked, typeKeys } from "../src/secret.ts";
+import { masked, typeKeys } from "../src/machine/secret.ts";
 
 test("keeps each character, and ends on Enter", () => {
   expect(typeKeys("", "abc\r")).toEqual({ token: "abc", end: "enter", pending: "" });

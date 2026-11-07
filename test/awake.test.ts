@@ -5,8 +5,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { holdAwhile, keepAwake } from "../src/sprite.ts";
-import { hasWork, type Thread } from "../src/thread.ts";
+import { hasWork, type Thread } from "../src/flow/thread.ts";
+import { holdAwhile, keepAwake } from "../src/machine/sprite.ts";
 
 function thread(change: Partial<Thread> = {}): Thread {
   return {

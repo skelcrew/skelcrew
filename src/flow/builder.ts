@@ -5,17 +5,9 @@ import { existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
-import { agentCommand, hasTranscript } from "./claude.ts";
-import { threadConfig } from "./config.ts";
-import { pastLimit } from "./decide.ts";
-import { fetchBranch, readIssue } from "./github.ts";
-import { cloneDir, threadSocket } from "./paths.ts";
-import instructions from "./prompts/builder.md" with { type: "text" };
-import { findRepository, refreshClones } from "./repo.ts";
-import { quietly } from "./run.ts";
-import { refuseCredentials, setupCommand } from "./sandbox.ts";
-import { errorText } from "./say.ts";
-import { cloneOf, folderName, fullNameOf, log, readThread, record, Thread } from "./thread.ts";
+import { agentCommand, hasTranscript } from "../agents/claude.ts";
+import instructions from "../agents/prompts/builder.md" with { type: "text" };
+import { refuseCredentials, setupCommand } from "../agents/sandbox.ts";
 import {
   agentRuns,
   checkItLived,
@@ -23,7 +15,15 @@ import {
   hasSession,
   startServer,
   startSession,
-} from "./tmux.ts";
+} from "../agents/tmux.ts";
+import { threadConfig } from "../config.ts";
+import { fetchBranch, readIssue } from "../github.ts";
+import { cloneDir, threadSocket } from "../paths.ts";
+import { quietly } from "../run.ts";
+import { errorText } from "../say.ts";
+import { pastLimit } from "./decide.ts";
+import { findRepository, refreshClones } from "./repo.ts";
+import { cloneOf, folderName, fullNameOf, log, readThread, record, Thread } from "./thread.ts";
 
 // Returns what skel start means for a task, given its thread if it has one: bring back a
 // stopped thread, let a live one past the round limit go on, or else start a new thread, which

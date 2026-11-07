@@ -14,11 +14,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { claudeToken, settings } from "./claude.ts";
-import { dataDir } from "./paths.ts";
-import { sandboxArgs } from "./sandbox.ts";
-import { errorText } from "./say.ts";
-import { onSprite } from "./sprite.ts";
+import { claudeToken, settings } from "../agents/claude.ts";
+import { sandboxArgs } from "../agents/sandbox.ts";
+import { onSprite } from "../machine/sprite.ts";
+import { dataDir } from "../paths.ts";
+import { errorText } from "../say.ts";
 
 export type Review = { verdict: "approve" | "changes" | "failed"; body: string };
 

@@ -3,8 +3,8 @@
 // or JSON for tools.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
-import { openIssues, readIssue } from "./github.ts";
-import { cloneDir } from "./paths.ts";
+import { openIssues, readIssue } from "../github.ts";
+import { cloneDir } from "../paths.ts";
 import { findRepository, noRepositories, repositories } from "./repo.ts";
 import { needsYou, Thread, threadName } from "./thread.ts";
 

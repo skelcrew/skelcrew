@@ -5,6 +5,14 @@ import type { Database } from "bun:sqlite";
 import { mkdirSync, openSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
+import { processTree, stillRunning } from "../agents/tmux.ts";
+import { openDb } from "../db.ts";
+import { createIssue } from "../github.ts";
+import { setupDone } from "../machine/setup.ts";
+import { holdAwhile, keepAwake, onSprite, urlPort } from "../machine/sprite.ts";
+import { daemonSocket, leadSocket, threadSocket } from "../paths.ts";
+import { errorText } from "../say.ts";
+import { readPage } from "../screen/page.ts";
 import {
   bringBack,
   failThread,
@@ -14,20 +22,13 @@ import {
   startThread,
   statusOnceBack,
 } from "./builder.ts";
-import { openDb } from "./db.ts";
 import { stopThread } from "./events.ts";
-import { createIssue } from "./github.ts";
 import { attachedNote, recordAttachedFrom, startLead, tellLead } from "./lead.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
-import { readPage } from "./page.ts";
-import { daemonSocket, leadSocket, threadSocket } from "./paths.ts";
 import { pollGitHub } from "./poll.ts";
 import { bringInNamed, findRepository, refreshClones, repositories } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
-import { errorText } from "./say.ts";
-import { setupDone } from "./setup.ts";
-import { holdAwhile, keepAwake, onSprite, urlPort } from "./sprite.ts";
 import {
   findThread,
   hasWork,
@@ -38,7 +39,6 @@ import {
   threadName,
   threadOn,
 } from "./thread.ts";
-import { processTree, stillRunning } from "./tmux.ts";
 import { hookRepository, listenForWebhooks, webhookSecret } from "./webhook.ts";
 
 // Tries to hold the daemon lock and returns whether this process owns it, preventing

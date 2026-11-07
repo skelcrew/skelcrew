@@ -15,7 +15,7 @@ import {
 import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import type { Subprocess } from "bun";
-import { stillRunning } from "../src/tmux.ts";
+import { stillRunning } from "../src/agents/tmux.ts";
 import { source, until as wait } from "./harness.ts";
 
 const asMac = join(import.meta.dir, "as-mac.ts");
@@ -66,7 +66,8 @@ const Command = (text: string) => {
 async function leadCommand() {
   const socket = join(home, "run", "skel", "lead", "skel.sock");
   mkdirSync(join(socket, ".."), { recursive: true });
-  const made = await asMacRun(`import { agentCommand } from ${JSON.stringify(source("claude.ts"))};
+  const made =
+    await asMacRun(`import { agentCommand } from ${JSON.stringify(source("agents/claude.ts"))};
 console.log(JSON.stringify(agentCommand({ name: "lead", socket: ${JSON.stringify(socket)}, model: "opus" })));`);
   expect(made.err).toBe("");
   return { socket, ...Command(made.out) };
@@ -102,7 +103,8 @@ const rules = (argv: string[]) => argv[argv.indexOf("-f") + 1] ?? "";
 test("a sandbox's home and temporary folder go when it ends, and its exit code stays", async () => {
   const clone = join(home, "clone");
   mkdirSync(clone);
-  const made = await asMacRun(`import { setupCommand } from ${JSON.stringify(source("sandbox.ts"))};
+  const made =
+    await asMacRun(`import { setupCommand } from ${JSON.stringify(source("agents/sandbox.ts"))};
 console.log(JSON.stringify(setupCommand(${JSON.stringify(clone)}, "echo left > $TMPDIR/file; exit 3")));`);
   const { argv, env: given } = Command(made.out);
   expect(existsSync(rules(argv))).toBe(true);
@@ -152,7 +154,8 @@ test("the agent's socket is never resolved itself, as a Mac can't open one to fi
   // of the path going unresolved is what keeps a Mac from failing with EOPNOTSUPP.
   symlinkSync(join(home, "elsewhere"), socket);
   writeFileSync(join(home, "elsewhere"), "");
-  const made = await asMacRun(`import { agentCommand } from ${JSON.stringify(source("claude.ts"))};
+  const made =
+    await asMacRun(`import { agentCommand } from ${JSON.stringify(source("agents/claude.ts"))};
 console.log(JSON.stringify(agentCommand({ name: "lead", socket: ${JSON.stringify(socket)}, model: "opus" })));`);
   expect(made.err).toBe("");
   const text = readFileSync(rules(Command(made.out).argv), "utf8");
@@ -199,7 +202,8 @@ test("the agent can't reach the file its rules are in", async () => {
 test("a setup command runs in the sandbox with no socket", async () => {
   const clone = join(home, "clone");
   mkdirSync(clone);
-  const made = await asMacRun(`import { setupCommand } from ${JSON.stringify(source("sandbox.ts"))};
+  const made =
+    await asMacRun(`import { setupCommand } from ${JSON.stringify(source("agents/sandbox.ts"))};
 console.log(JSON.stringify(setupCommand(${JSON.stringify(clone)}, "pwd; echo \\"$HOME\\"")));`);
   expect(made.err).toBe("");
   const { argv, env: given } = Command(made.out);
@@ -234,7 +238,7 @@ test("the daemon takes its lock from a Mac's system library, and the lead reache
     "claude",
     'skel ps > "$CLAUDE_CONFIG_DIR/ps.new" 2>&1; mv "$CLAUDE_CONFIG_DIR/ps.new" "$CLAUDE_CONFIG_DIR/ps"; read -r line',
   );
-  const script = `import { serve } from ${JSON.stringify(source("daemon.ts"))};
+  const script = `import { serve } from ${JSON.stringify(source("flow/daemon.ts"))};
 await serve(${JSON.stringify(socket)});`;
   const log = join(home, "daemon.log");
   const serve = Bun.spawn([process.execPath, "--preload", asMac, "-e", script], {
@@ -255,7 +259,7 @@ await serve(${JSON.stringify(socket)});`;
 test("stopping a session asks ps, as a Mac has no /proc", async () => {
   const ps = Bun.which("ps") ?? "ps";
   fake("ps", `exec ${ps} "$@"`);
-  const script = `import { startServer, startSession, stopSession } from ${JSON.stringify(source("tmux.ts"))};
+  const script = `import { startServer, startSession, stopSession } from ${JSON.stringify(source("agents/tmux.ts"))};
 startServer(${JSON.stringify(socket)});
 startSession(${JSON.stringify(socket)}, "agent", { folder: "/", command: ["sleep", "300"], env: { PATH: process.env.PATH ?? "" } });
 await stopSession(${JSON.stringify(socket)}, "agent");`;
@@ -302,7 +306,7 @@ printf '%s' '{"verdict":"approve","body":"Fine."}' > "$out"`,
 
 // Runs a review as a Mac would, and returns its verdict.
 async function reviewOnMac(clone: string, more = "") {
-  const ran = await asMacRun(`import { review } from ${JSON.stringify(source("reviewer.ts"))};
+  const ran = await asMacRun(`import { review } from ${JSON.stringify(source("flow/reviewer.ts"))};
 console.log(JSON.stringify(await review({ clone: ${JSON.stringify(clone)}, issue: { title: "t", body: "b" }, base: "origin/main", commit: ${JSON.stringify(git(clone, "rev-parse", "HEAD"))}, model: "opus", ${more} })));
 process.exit(0);`);
   expect(ran.err).toBe("");

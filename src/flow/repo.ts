@@ -12,7 +12,8 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import { nameRepositories, openDb, Repository } from "./db.ts";
+import { refuseCredentials } from "../agents/sandbox.ts";
+import { nameRepositories, openDb, Repository } from "../db.ts";
 import {
   cloneRepo,
   createLabel,
@@ -20,12 +21,11 @@ import {
   githubRepo,
   removeWebhook,
   updateClone,
-} from "./github.ts";
-import { onGitHub, originHere } from "./origin.ts";
-import { cloneDir, configDir, dataDir } from "./paths.ts";
-import { refuseCredentials } from "./sandbox.ts";
-import { errorText } from "./say.ts";
-import { onSprite, spriteUrl } from "./sprite.ts";
+} from "../github.ts";
+import { onGitHub, originHere } from "../machine/origin.ts";
+import { onSprite, spriteUrl } from "../machine/sprite.ts";
+import { cloneDir, configDir, dataDir } from "../paths.ts";
+import { errorText } from "../say.ts";
 import { hookRepository } from "./webhook.ts";
 
 export const noRepositories =

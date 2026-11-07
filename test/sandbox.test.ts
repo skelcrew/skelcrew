@@ -17,8 +17,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentCommand } from "../src/claude.ts";
-import { setupCommand } from "../src/sandbox.ts";
+import { agentCommand } from "../src/agents/claude.ts";
+import { setupCommand } from "../src/agents/sandbox.ts";
 import { source } from "./harness.ts";
 
 let home = "";
@@ -125,7 +125,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
     const script = join(home, "start.ts");
     writeFileSync(
       script,
-      `import { agentCommand } from ${JSON.stringify(join(copy, "src", "claude.ts"))};
+      `import { agentCommand } from ${JSON.stringify(join(copy, "src", "agents", "claude.ts"))};
 console.log(JSON.stringify(agentCommand({ name: "lead",
   socket: ${JSON.stringify(socketPath)}, model: "opus", env: ${JSON.stringify(outside())} })));`,
     );
@@ -388,7 +388,7 @@ describe("starting Claude Code", () => {
     const config = join(home, ".local", "share", "skel", "claude", "app-12");
     mkdirSync(config, { recursive: true });
     Bun.spawnSync(["mkfifo", join(config, ".claude.json")]);
-    const script = `import { agentCommand } from ${JSON.stringify(source("claude.ts"))};
+    const script = `import { agentCommand } from ${JSON.stringify(source("agents/claude.ts"))};
 agentCommand({ name: "app-12", socket: "x", model: "opus" });`;
     const proc = Bun.spawn(["bun", "-e", script], {
       env: { ...process.env, ...outside() },

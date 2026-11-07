@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { userInfo } from "node:os";
+import { dropCapabilities, onSprite } from "../src/machine/sprite";
 import { cliSocket, threadSocket } from "../src/paths";
-import { dropCapabilities, onSprite } from "../src/sprite";
 import { source } from "./harness.ts";
 
 const saved = { runtime: process.env.XDG_RUNTIME_DIR, socket: process.env.SKEL_SOCKET };

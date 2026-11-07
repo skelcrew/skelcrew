@@ -1,6 +1,6 @@
 // Deciding what an event means: given a thread and what GitHub returned, these functions say
 // what to do. They read no clock, files or network, so they can be tested without them.
-import type { Check, Labeled, PullRequest } from "./github.ts";
+import type { Check, Labeled, PullRequest } from "../github.ts";
 import type { Review } from "./reviewer.ts";
 import type { Thread } from "./thread.ts";
 

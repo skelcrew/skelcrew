@@ -7,7 +7,7 @@ import { createConnection } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
-import { stillRunning } from "../src/tmux.ts";
+import { stillRunning } from "../src/agents/tmux.ts";
 import { git, homeEnv, read, runSkel, source, startDaemon, until } from "./harness.ts";
 
 const main = source("main.ts");

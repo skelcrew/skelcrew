@@ -2,16 +2,16 @@
 // builder for a merge or for skel stop, as both must cancel the events still being typed in.
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
+import { agentRuns, stopSession, typeInto } from "../agents/tmux.ts";
+import { type Check, failedLog, fetchIntoClone } from "../github.ts";
+import { cloneDir } from "../paths.ts";
+import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
 import type { Decision } from "./decide.ts";
-import { type Check, failedLog, fetchIntoClone } from "./github.ts";
 import { tellLead } from "./lead.ts";
-import { cloneDir } from "./paths.ts";
 import { refreshClones } from "./repo.ts";
 import { endRound } from "./round.ts";
-import { errorText } from "./say.ts";
 import { cloneOf, fullNameOf, readThread, record, type Thread, threadName } from "./thread.ts";
-import { agentRuns, stopSession, typeInto } from "./tmux.ts";
 
 // The message about failed checks, with the end of each one's log. A check that isn't a
 // GitHub Actions job has no log gh can read, so it gets its link instead.

@@ -2,9 +2,8 @@
 // its PR opened on the first round, reviewed by a fresh reviewer, and the review typed back
 // into the builder's session when it asks for changes.
 import type { Database } from "bun:sqlite";
-import { baseOf } from "./builder.ts";
-import { threadConfig } from "./config.ts";
-import { afterReview, pastLimit } from "./decide.ts";
+import { typeInto } from "../agents/tmux.ts";
+import { threadConfig } from "../config.ts";
 import {
   findPullRequest,
   openPullRequest,
@@ -12,14 +11,15 @@ import {
   pushCommit,
   readIssue,
   setReviewStatus,
-} from "./github.ts";
+} from "../github.ts";
+import { cloneDir } from "../paths.ts";
+import { quietly } from "../run.ts";
+import { errorText } from "../say.ts";
+import { baseOf } from "./builder.ts";
+import { afterReview, pastLimit } from "./decide.ts";
 import { tellLead } from "./lead.ts";
-import { cloneDir } from "./paths.ts";
 import { review, reviewerHarness } from "./reviewer.ts";
-import { quietly } from "./run.ts";
-import { errorText } from "./say.ts";
 import { cloneOf, fullNameOf, readThread, record, type Thread, threadName } from "./thread.ts";
-import { typeInto } from "./tmux.ts";
 
 // Runs git in skel's own clone and returns what it printed, throwing with its error when it
 // fails.

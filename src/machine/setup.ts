@@ -1,9 +1,9 @@
 // The first run: what a plain skel sets up on a new machine, skipping each step already
 // done.
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { configFile, readConfig } from "./config.ts";
-import { claudeTokenFile, codexHome, configDir } from "./paths.ts";
-import { rule, skelLine } from "./say.ts";
+import { configFile, readConfig } from "../config.ts";
+import { claudeTokenFile, codexHome, configDir } from "../paths.ts";
+import { rule, skelLine } from "../say.ts";
 import { promptSecret } from "./secret.ts";
 import { installService, loginPath, serviceFile } from "./service.ts";
 import { dropCapabilities, onSprite, spriteServiceInstalled } from "./sprite.ts";

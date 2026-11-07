@@ -1,7 +1,7 @@
 // The macOS sandbox profile, as plain text. Nothing here can run sandbox-exec, so these check
 // the rules that draw the boundary, and that the text is well formed.
 import { expect, test } from "bun:test";
-import { seatbeltProfile } from "../src/seatbelt.ts";
+import { seatbeltProfile } from "../src/agents/seatbelt.ts";
 
 const profile = () =>
   seatbeltProfile({

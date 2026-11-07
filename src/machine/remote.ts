@@ -5,9 +5,8 @@
 import { chmodSync, mkdtempSync, rmSync, writeSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { originHere } from "./origin.ts";
-import { quietly } from "./run.ts";
-import { skelLine } from "./say.ts";
+import { quietly } from "../run.ts";
+import { skelLine } from "../say.ts";
 import {
   built,
   checkoutFolder,
@@ -19,7 +18,8 @@ import {
   release,
   releases,
   singleFile,
-} from "./version.ts";
+} from "../version.ts";
+import { originHere } from "./origin.ts";
 
 // A command over ssh gets a bare PATH: no login shell reads ~/.profile, and Ubuntu's
 // ~/.bashrc stops early when nobody types into it. So ~/.local/bin, where skel copies
