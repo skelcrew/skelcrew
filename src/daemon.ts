@@ -5,6 +5,7 @@ import type { Database } from "bun:sqlite";
 import { mkdirSync, openSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
+import { bringBack, failThread, setUpThread, startBuilder, startThread } from "./builder.ts";
 import { threadConfig } from "./config.ts";
 import { openDb } from "./db.ts";
 import { pastLimit } from "./decide.ts";
@@ -22,16 +23,11 @@ import { errorText } from "./say.ts";
 import { setupDone } from "./setup.ts";
 import { holdAwhile, keepAwake, onSprite, urlPort } from "./sprite.ts";
 import {
-  bringBack,
-  failThread,
   findThread,
   hasWork,
   liveThreads,
   readThread,
   record,
-  setUpThread,
-  startBuilder,
-  startThread,
   type Thread,
   threadName,
   threadOn,

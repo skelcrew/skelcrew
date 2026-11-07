@@ -2,6 +2,7 @@
 // builder for a merge or for skel stop, as both must cancel the events still being typed in.
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
+import { baseOf } from "./builder.ts";
 import type { Decision } from "./decide.ts";
 import { type Check, failedLog, fetchIntoClone } from "./github.ts";
 import { tellLead } from "./lead.ts";
@@ -9,7 +10,7 @@ import { cloneDir } from "./paths.ts";
 import { refreshClones } from "./repo.ts";
 import { endRound } from "./round.ts";
 import { errorText } from "./say.ts";
-import { baseOf, cloneOf, github, readThread, record, type Thread } from "./thread.ts";
+import { cloneOf, github, readThread, record, type Thread } from "./thread.ts";
 import { agentRuns, stopSession, typeInto } from "./tmux.ts";
 
 // The message about failed checks, with the end of each one's log. A check that isn't a
