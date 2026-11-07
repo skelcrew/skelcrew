@@ -14,7 +14,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { sandboxArgs, settings } from "./sandbox.ts";
+import { claudeToken, settings } from "./claude.ts";
+import { dataDir } from "./paths.ts";
+import { sandboxArgs } from "./sandbox.ts";
 import { onSprite } from "./sprite.ts";
 
 export type Review = { verdict: "approve" | "changes" | "failed"; body: string };
@@ -114,7 +116,7 @@ async function throwaway(given: {
 // reach the real one. Codex saves its login by rewriting auth.json in place, not by renaming
 // a new file over it, so the file itself can be mounted and a renewal still reaches skel's.
 async function codexCommand(home: string, folder: string, sprite: boolean, signal: AbortSignal) {
-  const codexHome = join(home, ".local", "share", "skel", "codex");
+  const codexHome = join(dataDir(home), "codex");
   const sessions = join(codexHome, "sessions");
   mkdirSync(sessions, { recursive: true, mode: 0o700 });
   const copy = join(folder, "codex");
@@ -144,10 +146,7 @@ async function codexCommand(home: string, folder: string, sprite: boolean, signa
 // Returns Claude Code's review command and isolated login settings when Codex is
 // unavailable.
 function claudeCommand(home: string, folder: string, model: string) {
-  const tokenFile = join(home, ".config", "skel", "claude-token");
-  if (!existsSync(tokenFile))
-    throw new Error("Claude Code's login token for agents isn't saved yet: run skel to set it up");
-  const token = z.string().trim().min(1).parse(readFileSync(tokenFile, "utf8"));
+  const token = claudeToken(home);
   const command = ["claude", "-p", "--model", model, "--output-format", "json"];
   command.push("--json-schema", schema, "--no-session-persistence");
   command.push("--permission-mode", "bypassPermissions", "--settings", settings);
