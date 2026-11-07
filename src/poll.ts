@@ -26,14 +26,15 @@ import { runningSessions, screenSocket } from "./tmux.ts";
 async function startLabeled(
   db: Database,
   tmux: string,
-  repo: string,
+  owner: string,
+  name: string,
   labeled: Labeled[],
   begin: (thread: Thread) => Promise<void>,
 ): Promise<void> {
-  const [owner, name] = repo.split("/");
+  const repo = `${owner}/${name}`;
   const threads = db
     .query("SELECT * FROM threads WHERE owner = ? AND repo = ?")
-    .all(owner ?? "", name ?? "")
+    .all(owner, name)
     .map((row) => Thread.parse(row));
   for (const issue of labeledToStart(threads, labeled)) {
     // An issue skel can't read, or one skel start took meanwhile, waits for the next poll.
@@ -106,7 +107,7 @@ async function pollRepository(
     lists,
   );
   if (open) saveOpen(db, owner, name, open);
-  await startLabeled(db, tmux, repo, labeled, begin);
+  await startLabeled(db, tmux, owner, name, labeled, begin);
   const { maxRounds } = threadConfig();
   // Asked once per poll, and only about authors of what is new.
   const pushers: string[] = [];

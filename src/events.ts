@@ -89,7 +89,7 @@ export async function tellBuilder(
   const { handled, change, why } = decision;
   try {
     if (decision.conflict !== null) await freshBase(db, thread, decision.conflict);
-    const checks = await aboutChecks(`${thread.owner}/${thread.repo}`, decision.failed);
+    const checks = await aboutChecks(github(thread), decision.failed);
     const text = [...checks, ...decision.tell].join("\n\n---\n\n");
     if (!hasSession(tmux, thread.folder) || failedScreen(tmux, thread.folder) !== null)
       throw new Error("its builder isn't running");
