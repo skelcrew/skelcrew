@@ -1,6 +1,6 @@
 // What the strip above the agent says, given the rows it was handed.
 import { expect, test } from "bun:test";
-import type { Link, Row } from "../src/sidebar.ts";
+import type { Link, Row } from "../src/rows.ts";
 import { drawStrip } from "../src/strip.ts";
 
 const lead: Row = {
