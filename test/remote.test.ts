@@ -416,6 +416,12 @@ test("a sidebar runs whichever laptop's build its tmux server remembers", () => 
   expect(run.out).toBe("");
 });
 
+test("a page runs whichever laptop's build its tmux server remembers", () => {
+  const run = farSkel("abc1234", "def5678", ["page", "https://github.com/simon/app/issues/1"]);
+  expect(run.code).toBe(1);
+  expect(run.out).toBe("");
+});
+
 test("a copied skel built with uncommitted changes is never up to date", () => {
   expect(farSkel("abc1234-dirty", "abc1234-dirty")).toEqual({
     code: 98,

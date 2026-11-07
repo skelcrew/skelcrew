@@ -216,6 +216,24 @@ that covers the code you are about to write.
   `hyperlinks` feature. A tmux inside tmux hides this, as the outer one is recognised.
 - **tmux 3.6 doesn't hold a program's synchronized frames back.** It marks only its own full
   redraws, so a frame written in two halves arrives in two, attached directly or nested.
+- **Alt-Shift-Up and Alt-Shift-Down get through.** They arrive as `ESC[1;4A` and `ESC[1;4B`
+  through nested tmux and through `sprite exec --tty`, and tmux knows them as `M-S-Up` and
+  `M-S-Down`. Alt-Left and Alt-Right move by word in Claude Code's input, and Alt with a digit
+  types a character on a Mac, so neither is free.
+- **Bun doesn't keep a signal it inherits as ignored.** `trap "" INT; exec bun ...` still dies
+  on Ctrl-C. Until a program makes its terminal raw, Ctrl-C can end it, so a pane that must
+  stay needs `remain-on-exit`. `respawn-pane -k` starts a dead pane again.
+- **`respawn-pane` gives a pane a new terminal.** Anything that holds its `pane_tty` must read
+  it again. It also resets the pane, so the mouse modes a page asked for go with it.
+- **tmux 3.6 can crash when a client leaves under `destroy-unattached`.** The server segfaults
+  if another client, even a one-off command, disconnects at that moment. The session is
+  destroyed while the leaving client still points at it. It needs nothing of skel's: a plain
+  server with a busy `list-clients` loop crashed within 8 rounds. Every terminal on that
+  server loses its screen, and agents keep running. The sidebar's own commands hit this about
+  once in 500 leavings on a loaded machine, so a screen test can fail with `server exited
+  unexpectedly`.
+- **`capture-pane -e` shows a terminal link with an id tmux made up**, as `ESC]8;id=...;url`.
+  A test that looks for `ESC]8;;url` finds nothing.
 
 ## Tests
 

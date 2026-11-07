@@ -1,6 +1,6 @@
-// The screen: the sidebar on the left of your terminal, with the agent you are looking at on
-// the right and the strip above it. It is a second tmux server, one session per open terminal,
-// ended when you leave.
+// The screen: the sidebar on the left of your terminal, with the agent or page you are looking
+// at on the right and the strip above it. It is a second tmux server, one session per open
+// terminal, ended when you leave.
 import { join } from "node:path";
 import { windowTitle } from "./say.ts";
 import { applyConfig, cleanEnv } from "./tmux.ts";
@@ -18,8 +18,8 @@ export const screenSocket = (agents: string) => `${agents}-screen`;
 // look. Your own ~/.tmux.conf never applies, and all of tmux's own keys go: its default mouse
 // keys pull a drag or the wheel into copy mode, which would swallow your typing, and its
 // prefix belongs to the agents' server. Ctrl-Q here, not there, leaves the whole screen.
-// Alt-Up, Alt-Down and clicks go to the sidebar, in pane 0, without moving your typing from
-// the agent. A click needs its own key: left alone, it reaches only the pane you type to.
+// Alt-Up, Alt-Down, the same with Shift, and clicks go to the sidebar, in pane 0, without moving
+// your typing from the agent. A click needs its own key: left alone, it reaches only the pane you type to.
 // The wheel goes on to the pane under it, as the agents' server decides what scrolling means.
 // destroy-unattached ends a session as its client goes, by Ctrl-Q or by a terminal or ssh link
 // that drops, and the server goes with its last session. It would also end a session made
@@ -56,6 +56,8 @@ const config = [
   ["bind", "-n", "C-q", "detach-client"],
   ["bind", "-n", "M-Up", "send-keys", "-t", ":.0", "M-Up"],
   ["bind", "-n", "M-Down", "send-keys", "-t", ":.0", "M-Down"],
+  ["bind", "-n", "M-S-Up", "send-keys", "-t", ":.0", "M-S-Up"],
+  ["bind", "-n", "M-S-Down", "send-keys", "-t", ":.0", "M-S-Down"],
   ["bind", "-n", "MouseDown1Pane", "send-keys", "-M"],
   ["bind", "-n", "MouseUp1Pane", "send-keys", "-M"],
   ["bind", "-n", "WheelUpPane", "send-keys", "-M"],
@@ -72,20 +74,27 @@ const config = [
 // When the client ends, because the agent you were looking at ended or you left its session
 // with its own keys, it comes back on the lead, trying again while the lead restarts. TMUX
 // must go, or tmux refuses to attach from inside tmux.
-function agentClient(agents: string, session: string): string[] {
+export function agentClient(agents: string, session: string): string[] {
   const client = `tmux -L "$1" -f /dev/null attach -t`;
   const script = `unset TMUX; ${client} "=$2"; while sleep 1; do ${client} =lead; done`;
   return ["sh", "-c", script, "sh", agents, session];
 }
 
-// Returns the command that runs skel's sidebar: the skel you are running, which is a single
-// file on a server, or else this checkout. Where skel runs goes along as a word, not in the
-// environment: a tmux server hands its panes the environment of whichever terminal started it,
-// and terminals on this server can come from different laptops.
-function sidebar(agents: string, session: string, where: string): string[] {
-  const skel = import.meta.dir.startsWith("/$bunfs") ? [] : [join(import.meta.dir, "main.ts")];
-  return [process.execPath, ...skel, "sidebar", agents, session, where];
+// Returns the command that runs the skel you are running, which is a single file on a server,
+// or else this checkout.
+function skel(...words: string[]): string[] {
+  const checkout = import.meta.dir.startsWith("/$bunfs") ? [] : [join(import.meta.dir, "main.ts")];
+  return [process.execPath, ...checkout, ...words];
 }
+
+// Returns the command that runs skel's sidebar. Where skel runs goes along as a word, not in
+// the environment: a tmux server hands its panes the environment of whichever terminal started
+// it, and terminals on this server can come from different laptops.
+const sidebar = (agents: string, session: string, where: string) =>
+  skel("sidebar", agents, session, where);
+
+// Returns the command for the right pane while it shows a page.
+export const pageCommand = (url: string) => skel("page", url);
 
 // Opens the screen in your terminal on the named agent session, and returns when you leave
 // with Ctrl-Q, saying that nothing stopped. The name of the session here only has to differ from
@@ -111,6 +120,10 @@ export async function openScreen(agents: string, session: string): Promise<void>
     ["new-session", "-s", name, "--", ...agentClient(agents, session)],
     ["set", "set-titles-string", windowTitle(env.SKEL_REMOTE_NAME)],
     ["split-window", "-hbd", "-l", String(sidebarWidth), "--", ...left],
+    // Ctrl-C reaches a page until it has made its terminal raw, and Bun won't stay ignoring it.
+    // A pane that ended would give the whole screen to the sidebar. A dead one stays in its
+    // place, and moving away starts it again.
+    ["set", "-p", "-t", ":.1", "remain-on-exit", "on"],
   ];
   // The lone ";" separates tmux commands.
   const commands = open.flatMap((command) => [...command, ";"]).slice(0, -1);

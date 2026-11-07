@@ -169,6 +169,19 @@ export async function readIssue(
   return { title, body: body ?? "" };
 }
 
+const IssueDetails = z.object({
+  title: z.string(),
+  body: z.string().nullable(),
+  state: z.string(),
+  user: z.object({ login: z.string() }).nullable(),
+  labels: z.array(z.object({ name: z.string() })),
+});
+
+// Returns what an issue's page shows.
+export async function readIssueDetails(repo: string, issue: number) {
+  return IssueDetails.parse(await api(`repos/${repo}/issues/${issue}`, `read issue #${issue}`));
+}
+
 const OpenIssue = z.object({ number: z.number(), title: z.string(), createdAt: z.string() });
 
 // Returns the open issues in owner/name, newest first, for skel task ls. gh issue list leaves
@@ -443,6 +456,25 @@ const pullFields = `state mergeable baseRefName
     __typename
     ... on CheckRun { databaseId name status conclusion detailsUrl }
     ... on StatusContext { context state targetUrl } } } } } } }`;
+
+const PullHead = z.object({ title: z.string(), body: z.string(), headRefName: z.string() });
+const PullDetails = z.object({
+  data: z.object({ repository: z.object({ pullRequest: PullHead.and(Pull) }) }),
+});
+
+// Returns what a PR's page shows, from the same fields a poll reads, so the page says what the
+// strip says.
+export async function readPullDetails(repo: string, pr: number) {
+  const [owner, name] = repo.split("/");
+  const query = `query($owner: String!, $name: String!, $number: Int!) {
+    repository(owner: $owner, name: $name) {
+      pullRequest(number: $number) { title body headRefName ${pullFields} } } }`;
+  const got = await gh(["api", "graphql", "--input", "-"], `read PR #${pr}`, {
+    query,
+    variables: { owner, name, number: pr },
+  });
+  return PullDetails.parse(got).data.repository.pullRequest;
+}
 
 const Labeled = z.object({ number: z.number(), title: z.string() });
 export type Labeled = z.infer<typeof Labeled>;
