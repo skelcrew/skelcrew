@@ -19,7 +19,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
-import { dataDir } from "./paths.ts";
+import { claudeTokenFile, dataDir } from "./paths.ts";
 import { seatbeltArgs } from "./seatbelt.ts";
 import { controlSocket, dropCapabilities, onSprite } from "./sprite.ts";
 import { checkoutFolder, singleFile } from "./version.ts";
@@ -339,7 +339,7 @@ export function agentCommand(given: {
 
   // A token from claude setup-token never renews. A shared login would: renewing makes the
   // old refresh token stop working, so your own login or the agent's would go stale.
-  const tokenFile = join(home, ".config", "skel", "claude-token");
+  const tokenFile = claudeTokenFile(home);
   if (!existsSync(tokenFile))
     throw new Error("Claude Code's login token for agents isn't saved yet: run skel to set it up");
   const token = Token.parse(readFileSync(tokenFile, "utf8"));
@@ -347,7 +347,7 @@ export function agentCommand(given: {
   // A folder of its own per session, never your ~/.claude: an agent could write memory or
   // settings that another session loads as instructions. It stays, so --resume finds the
   // transcripts.
-  const configs = join(home, ".local", "share", "skel", "claude");
+  const configs = join(dataDir(home), "claude");
   const config = join(configs, name);
   // skel writes here with your rights, and the agent can change what is in its folder. A
   // link it left would send that write to any file of yours.
@@ -355,7 +355,7 @@ export function agentCommand(given: {
     if (lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink())
       throw new Error(`${p} is a link, so skel won't write through it`);
   mkdirSync(config, { recursive: true });
-  const cwd = thread ?? join(home, ".local", "share", "skel", "lead");
+  const cwd = thread ?? join(dataDir(home), "lead");
   const mounts = [...rw(cwd), ...rw(config)];
   // A thread's clone has skel's clone of the repository as origin. Read-only at the same path,
   // it lets the builder fetch the base branch and merge it to fix a conflict, with no token.
@@ -366,7 +366,7 @@ export function agentCommand(given: {
   if (!thread) {
     // The whole folder of clones is mounted, made first if need be, so a repository brought
     // in while the lead runs shows up in its sandbox too.
-    const repos = join(home, ".local", "share", "skel", "repos");
+    const repos = join(dataDir(home), "repos");
     mkdirSync(repos, { recursive: true });
     for (const owner of readdirSync(repos))
       for (const repo of readdirSync(join(repos, owner)))
