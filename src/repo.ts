@@ -55,12 +55,16 @@ export function repositories(db: Database): Repository[] {
     .map((row) => Repository.parse(row));
 }
 
+// Returns whether the name is the repository's full GitHub name. GitHub ignores case in
+// names, so a checkout's remote or a command can spell one differently from skel. No name,
+// such as a folder that isn't on GitHub, matches nothing.
+export const fullNameIs = (r: Repository, name: string | null | undefined) =>
+  `${r.owner}/${r.repo}`.toLowerCase() === name?.toLowerCase();
+
 // Returns the repository a command names, by its name in skel or its full GitHub name, in
 // any case. Throws when skel has no such repository, since commands only work on ones it has.
 export function findRepository(db: Database, given: string): Repository {
-  // Whether the repository's full GitHub name is the one given, in any case.
-  const full = (r: Repository) => `${r.owner}/${r.repo}`.toLowerCase() === given.toLowerCase();
-  const found = repositories(db).find((r) => r.name === given || full(r));
+  const found = repositories(db).find((r) => r.name === given || fullNameIs(r, given));
   if (!found) throw new Error(`there is no repository named ${given}`);
   return found;
 }
@@ -198,7 +202,7 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
   const db = openDb();
   let named = from === undefined ? originHere() : (onGitHub(from) ?? from);
   // Matches the attached repository despite differences in GitHub name capitalization.
-  const known = (r: Repository) => `${r.owner}/${r.repo}`.toLowerCase() === named?.toLowerCase();
+  const known = (r: Repository) => fullNameIs(r, named);
   try {
     if (named && !repositories(db).some(known)) {
       const github = await githubRepo(named);
@@ -226,8 +230,7 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
 export async function bringInNamed(db: Database, given: string): Promise<Repository | undefined> {
   // A name starting with a dash would reach gh as an option.
   if (!/^[\w.][\w.-]*\/[\w.-]+$/.test(given)) return undefined;
-  const full = (r: Repository) => `${r.owner}/${r.repo}`.toLowerCase();
-  if (repositories(db).some((r) => full(r) === given.toLowerCase())) return undefined;
+  if (repositories(db).some((r) => fullNameIs(r, given))) return undefined;
   const github = await githubRepo(given);
   const { owner, repo, canPush } = github;
   const named = `${owner}/${repo}`;
@@ -235,7 +238,7 @@ export async function bringInNamed(db: Database, given: string): Promise<Reposit
     throw new Error(`${named} waits until you run skel repo trust ${named} in your terminal`);
   // GitHub can answer for a renamed repository under the name skel already has it by, and two
   // commands can bring in the same repository at once.
-  const fresh = !repositories(db).some((r) => full(r) === named.toLowerCase());
+  const fresh = !repositories(db).some((r) => fullNameIs(r, named));
   if (fresh) {
     // Only people who can push or triage may add a label, so where you can't push, a label
     // would be of no use to you. A repository you can push to gets it with its clone.

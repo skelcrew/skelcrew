@@ -6,7 +6,7 @@ import { ciChecks, decide, labeledToStart, newAuthors } from "./decide.ts";
 import { endThread, tellBuilder, typing } from "./events.ts";
 import { canPush, type Labeled, type OpenList, reactToIssue, readRepository } from "./github.ts";
 import { tellLead } from "./lead.ts";
-import { repositories } from "./repo.ts";
+import { fullNameIs, repositories } from "./repo.ts";
 import { errorText } from "./say.ts";
 import {
   needsYou,
@@ -219,9 +219,7 @@ export function pollGitHub(
   tick();
   setInterval(tick, every);
   return (full) => {
-    const found = repositories(db).find(
-      (r) => `${r.owner}/${r.repo}`.toLowerCase() === full.toLowerCase(),
-    );
+    const found = repositories(db).find((r) => fullNameIs(r, full));
     if (found) poll(found.owner, found.repo);
   };
 }
