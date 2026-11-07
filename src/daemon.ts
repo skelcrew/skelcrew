@@ -1,6 +1,7 @@
 // The daemon, run by skel serve: keeps the lead and the threads' builders running, and
 // answers the CLI and the agents on their sockets.
 import { dlopen, FFIType } from "bun:ffi";
+import type { Database } from "bun:sqlite";
 import { mkdirSync, openSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
@@ -63,6 +64,54 @@ function listen(server: Server, path: string): Promise<void> {
 
 // Returns the text of anything thrown, for replies and the daemon's log.
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+// Ends the daemon on a signal: removes its sockets, ends what it started, and exits.
+// The tmux sessions are left running: agents keep working while the daemon is down. They
+// aren't under the daemon. What is, such as a clone or a reviewer, is ended: the service
+// stops only the daemon, and the next daemon starts that work again, so a clone left going
+// would write into the folder the new one clones into. So the daemon waits for it. Asked
+// rather than killed, so git can remove its lock files. The wait blocks on purpose: left to
+// run, the daemon would publish a reviewer it just ended as a failed review, where the next
+// daemon would have run it again, and a refresh would go on to the next clone.
+function endWhatItStarted(sockets: string[]): void {
+  for (const socket of sockets) rmSync(socket, { force: true });
+  const started = processTree(process.pid).slice(1);
+  const end = (pids: number[], signal: NodeJS.Signals) => {
+    for (const pid of pids)
+      try {
+        process.kill(pid, signal);
+      } catch {}
+  };
+  end(started, "SIGTERM");
+  const deadline = Date.now() + 5000;
+  while (stillRunning(started).length > 0 && Date.now() < deadline) Bun.sleepSync(50);
+  end(stillRunning(started), "SIGKILL");
+  process.exit(0);
+}
+
+// Listens on `port` for GitHub's webhooks, and has each repository send them, so a delivery
+// wakes a sleeping Sprite and polls its repository at once.
+// Without the listener, events wait until something else wakes the Sprite, and polling
+// still sees them then.
+function wakeOnWebhooks(db: Database, port: number, poll: (full: string) => void): void {
+  // The Sprite sleeps again as soon as the delivery is answered, so it is held for a minute
+  // first: long enough for the poll, and for keepAwake to hold it for any work the poll starts.
+  const wake = async (repo: string) => {
+    await holdAwhile(60).catch((error) =>
+      console.log(`couldn't hold the Sprite awake: ${message(error)}`),
+    );
+    poll(repo);
+  };
+  try {
+    listenForWebhooks(port, webhookSecret(), wake);
+  } catch (error) {
+    console.log(`couldn't listen for GitHub's webhooks on port ${port}: ${message(error)}`);
+  }
+  // Set again at each start, so a webhook deleted on GitHub, or one an older skel set with
+  // other events, is put right.
+  for (const { owner, repo } of repositories(db))
+    hookRepository(`${owner}/${repo}`).catch((error) => console.log(message(error)));
+}
 
 // Opens the daemon's sockets, starts the lead, and brings back the builders of threads that
 // were running, so commands and agents can reach it. Leaves the sockets listening after
@@ -267,29 +316,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   const before = liveThreads(db);
   await open(path, "you");
   await open(leadSocket(), "lead");
-  // The tmux sessions are left running: agents keep working while the daemon is down. They
-  // aren't under the daemon. What is, such as a clone or a reviewer, is ended: the service
-  // stops only the daemon, and the next daemon starts that work again, so a clone left going
-  // would write into the folder the new one clones into. So the daemon waits for it. Asked
-  // rather than killed, so git can remove its lock files. The wait blocks on purpose: left to
-  // run, the daemon would publish a reviewer it just ended as a failed review, where the next
-  // daemon would have run it again, and a refresh would go on to the next clone.
-  for (const signal of ["SIGTERM", "SIGINT"])
-    process.on(signal, () => {
-      for (const socket of sockets) rmSync(socket, { force: true });
-      const started = processTree(process.pid).slice(1);
-      const end = (pids: number[], signal: NodeJS.Signals) => {
-        for (const pid of pids)
-          try {
-            process.kill(pid, signal);
-          } catch {}
-      };
-      end(started, "SIGTERM");
-      const deadline = Date.now() + 5000;
-      while (stillRunning(started).length > 0 && Date.now() < deadline) Bun.sleepSync(50);
-      end(stillRunning(started), "SIGKILL");
-      process.exit(0);
-    });
+  for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => endWhatItStarted(sockets));
   console.log(`Listening on ${path}.`);
   await lead().catch((error) => console.log(message(error)));
   // Notes the daemon's stop kept from the lead.
@@ -305,23 +332,5 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   poll = pollGitHub(db, tmux, every, begin);
   if (!onSprite()) return;
   keepAwake(() => hasWork(liveThreads(db)));
-  // Without the listener, events wait until something else wakes the Sprite, and polling
-  // still sees them then.
-  // The Sprite sleeps again as soon as the delivery is answered, so it is held for a minute
-  // first: long enough for the poll, and for keepAwake to hold it for any work the poll starts.
-  const wake = async (repo: string) => {
-    await holdAwhile(60).catch((error) =>
-      console.log(`couldn't hold the Sprite awake: ${message(error)}`),
-    );
-    poll(repo);
-  };
-  try {
-    listenForWebhooks(port, webhookSecret(), wake);
-  } catch (error) {
-    console.log(`couldn't listen for GitHub's webhooks on port ${port}: ${message(error)}`);
-  }
-  // Set again at each start, so a webhook deleted on GitHub, or one an older skel set with
-  // other events, is put right.
-  for (const { owner, repo } of repositories(db))
-    hookRepository(`${owner}/${repo}`).catch((error) => console.log(message(error)));
+  wakeOnWebhooks(db, port, poll);
 }
