@@ -57,6 +57,7 @@ The repositories in the video are small real apps with fast CI and real issues, 
 | Thread | skel's core: the work on one task, from its first message to the merged PR. Its branch, clone, sandbox, builder session and history. One thread per task at a time. Named by the task's own ID in its tracker, with the repository added when that ID doesn't name one: GitHub issue #12 in app is `app-12`, since its number is only unique within app, while a tracker whose IDs are already unique, such as Linear's `JOTT-12`, would keep its own. A thread never gets a second number, so the name in skel is always the one in the tracker. A dash, because no shell reads a dash as anything special, so it never needs quoting. |
 | Builder | The thread's agent. A Claude Code session that stays alive from start until the PR merges or closes. |
 | Reviewer | A fresh agent for each review round, on Codex by default, reading the PR adversarially. It runs once and answers with a verdict, with no session to attach to. It never inherits the builder's context. |
+| Subagent | A helper that a builder or the lead starts with its harness's own tool, inside its own session, to read, search or try something beside its main work. It shares that agent's folder, sandbox and socket, and skel doesn't track it. Work that needs its own branch, PR and review is a thread, never a subagent. |
 | Event | Something that happened to a thread: a review, a PR comment, a failed check, a merge. |
 | Needs you | A flag on a thread: the builder asked a question, review hit its round limit, or the PR is approved and green. |
 
@@ -114,6 +115,8 @@ It is an overview, never a replacement for the tracker or GitHub. A row with no 
 List headings are dim, written `Issues`, `Threads` and `PRs`, with one blank line between a heading and its first row. Rows sit together, with no blank lines between them. A thin line parts one list from the next, in the faint colour of the sidebar's edge, and joins that edge. ISSUES, THREADS and PRS each have one third of the sidebar's height, above the keys, whether or not they are full, so each list stays in the same place on screen. What doesn't divide goes to THREADS. A list with nothing in it keeps its third and its heading, and says `none`, dim. THREADS scrolls inside its third, always keeping the row you are on in view. On a terminal too short for a third to hold a heading, its blank line and one row, or for THREADS to hold the row you are on, ISSUES and PRS go, and THREADS has the whole sidebar, with no heading, as it is the list you move through.
 
 Landing on a row of ISSUES or PRS shows its page on the right, in place of the agent. An issue's page has its title, state, author, labels, description and a link to GitHub. A PR's page has its title, state, branch, checks, latest review, description and a link to GitHub. A page is read-only, with no diff and no comments. The wheel scrolls it, and typing goes nowhere. Moving back to a thread puts you straight in its agent. skel asks for a page once, when you land on its row, and the daemon asks GitHub, so a page sitting open writes nothing to the terminal and lets a Sprite sleep. What GitHub returns comes from outside, so its control codes are removed before it reaches your terminal.
+
+Subagents have no row. A builder running them is `working` like any other, and Claude Code shows them in the builder's session on the right. You talk to the builder, never to a subagent.
 
 The sidebar only shows, switches, links and opens pages. It has no commands of its own, and creates, starts and stops nothing: you ask the lead, or run `skel`.
 
@@ -173,6 +176,30 @@ At any point the builder can ask you a question with Claude Code's own `AskUserQ
 
 **Telling you.** When a thread starts needing you, skel types a one line note into the lead's session (when the lead is idle), so you hear it where you already are.
 
+**Bigger requests.** A request too big for one PR is the lead's to split, into tasks that each get a thread. There is no parent task and no link between threads: a part is an ordinary task, written so a builder with no other context can do it.
+
+- Parts that don't touch the same code start together. Each has its own branch, clone, sandbox, PR and review, and you merge each one on its own. If a merge leaves another part in conflict, the Events table already covers it: skel tells that builder to merge and fix it.
+- A part that needs another's work starts once that PR has merged, from the default branch. When in doubt, parts go one after another.
+- skel doesn't keep the order. The plan lives in the lead's conversation, and the lead isn't told of a merge, so you tell it when to go on.
+- `--from <branch>` is for when you choose to stack work on an unmerged branch. That thread's PR goes into that branch, so merging it doesn't reach the default branch. The lead doesn't use it unless you ask.
+
+A builder that finds work beyond its task asks you, as it does for any new scope. It can't create a task or start a thread. Only you and the lead can, since what a builder reads can steer it.
+
+**Subagents.** A builder can use its harness's subagents inside a round, such as to read a large part of the code or to try something on the side. skel adds nothing for this: Claude Code has them, and a builder can use them from its first message.
+
+- **They are part of the builder.** A subagent works in the thread's clone, on its branch, in its sandbox. Everything comes back through the builder, which commits and runs `skel submit`, so a thread is still one builder, one branch and one PR. Only the builder runs `skel submit`. skel can't tell a subagent's call from the builder's, so that rule lives in the builder's instructions.
+- **Writers stay apart.** Two subagents writing in one folder can undo each other's work. A builder that wants that gives each a worktree inside the thread's clone. Only what it brings onto the thread's branch reaches the PR. Work big enough to want that is often a task of its own.
+- **They reach what the builder reaches, no more.** They share its socket, which takes only `submit`, `status` and the question hooks. So however many there are, and whatever they read, none can start a thread, create a task or call GitHub. What grows with them is cost, and the load on the machine.
+- **They have limits.** Up to 3 run at once, and a subagent can't start another. Three is about what a small server takes with tests running, and the agents on a machine share one login and its usage limit. These limits are Claude Code's own settings, so they guard against mistakes, not against an agent set on more. A thread's total cost has no limit, with or without subagents.
+- **They can't reach you.** Claude Code takes `AskUserQuestion` away from subagents, so a question always comes from the builder, and needs you works as it does without them.
+- **A quiet builder isn't a finished one.** Claude Code runs subagents in the background, so a builder can sit at its prompt while they work. Only `skel submit` ends a round. Text typed into the builder then starts a new turn as usual, and the builder hears from its subagents when they finish.
+- **A subagent's check is not the review.** It runs on the builder's model, with the builder's brief, and shares its blind spots. Each round still goes to a fresh reviewer, which sees the PR and neither knows nor cares what wrote it. Rounds count per thread.
+- **Their end is the session's end.** A subagent that fails is the builder's to deal with, and the thread's status doesn't change. `skel stop` ends the session and every subagent in it, and what they wrote stays in the clone. A daemon restart doesn't touch them, as they live in the session. A session brought back with `--resume` gets its conversation back, and the builder carries on from the clone, starting again whatever it still needs. On a Sprite, a thread that needs you lets the Sprite sleep, which cuts off any subagent still running.
+
+A repository can commit its own subagents in `.claude/agents/`, such as one that knows its database. They load in a thread like the rest of its settings, under the trust the repository already has. That is the whole of specialist agents in skel.
+
+The lead can use subagents too, to read across repositories. They see what it sees, and act with its socket.
+
 ## Events
 
 The daemon polls GitHub with one GraphQL query per repository, fetching every open thread's PR with its reviews, comments, checks and merge state, so the number of requests doesn't grow with the number of threads. While a screen is open, the same query brings the open issues and PRs for the sidebar. It polls every 30 seconds while a thread is active, and less often for threads that only wait on you. Webhooks are a faster wake-up, never the only source, since deliveries are missed while the daemon is down. On a server they may be added later; on a Sprite they wake it from sleep. Calls go through `gh`. Each event is handled once: skel records the ID of the last review, comment and check run it acted on.
@@ -218,7 +245,7 @@ For the builder inside a thread:
 | --- | --- | --- |
 | `skel submit "<summary>"` | Builder | Submits a round for review: skel pushes, opens the PR if needed, starts a review |
 
-Agents talk to the daemon over a socket mounted into their sandbox, which also tells skel which thread they belong to. The lead and the agents never call GitHub themselves.
+Agents talk to the daemon over a socket mounted into their sandbox, which also tells skel which thread they belong to. A subagent uses its agent's socket, so skel takes it for that agent. The lead and the agents never call GitHub themselves.
 
 Settings come in two layers, and both are optional. `~/.config/skel/config.yaml` holds your defaults:
 
@@ -238,15 +265,15 @@ test: [bun test]
 
 ## State and isolation
 
-**Sessions.** Every agent runs in tmux, on skel's own tmux server (`tmux -L skel`) with skel's own config: one session for the lead and one per builder. A reviewer runs once and needs no session. tmux keeps them alive, handles attach and detach, and answers the terminal's queries. skel never runs its own terminal emulator.
+**Sessions.** Every agent runs in tmux, on skel's own tmux server (`tmux -L skel`) with skel's own config: one session for the lead and one per builder. A reviewer runs once and needs no session, and a subagent lives inside its agent's session. tmux keeps them alive, handles attach and detach, and answers the terminal's queries. skel never runs its own terminal emulator.
 
 **The screen.** The sidebar lives in a second tmux server, `tmux -L skel-screen`, one session per open terminal, ended when you leave. Its left pane runs the sidebar, on a server with terminal links turned on (the `hyperlinks` terminal feature), and draws the line at its own right edge, as tmux's border is blank. tmux has two status lines: the header above the sidebar and the strip share the first, and the thin line under them is the second. Its right pane is an ordinary tmux client attached to the agent's session on `tmux -L skel`, and picking a row switches that client to another session. Landing on an issue or PR replaces that client with a small `skel page` command, in the same pane, and moving back to a thread starts a client again. So a page lives and ends with the screen, on your side, outside any sandbox. Agents' sessions stay single-pane and know nothing of the screen: typing into them, reading them and checking them work as if it weren't there, and leaving the screen ends nothing.
 
-**State.** One SQLite file per machine, `~/.local/share/skel/skel.db`, with `bun:sqlite`. It holds repositories (name, GitHub owner and name, how many issues and PRs are open) and threads (repository, task, branch, status, needs you, round count, builder session ID, PR number, when it started), and the last handled ID per event kind. Every change is also appended to `~/.local/share/skel/threads/<repo>-<task>.log` as one JSON line, so a thread's history can be read and replayed. That includes each review's round, reviewer, verdict and first line. The strip shows all but the first line. skel keeps no tasks of its own. It saves only a copy of each repository's newest open issues and PRs for the sidebar, which it replaces at each poll while a screen is open. `skel task ls` asks GitHub. Repository clones live in `~/.local/share/skel/repos/` and thread clones in `~/.local/share/skel/threads/`, on one disk, so a thread's clone shares its files with the repository's.
+**State.** One SQLite file per machine, `~/.local/share/skel/skel.db`, with `bun:sqlite`. It holds repositories (name, GitHub owner and name, how many issues and PRs are open) and threads (repository, task, branch, status, needs you, round count, builder session ID, PR number, when it started), and the last handled ID per event kind. Every change is also appended to `~/.local/share/skel/threads/<repo>-<task>.log` as one JSON line, so a thread's history can be read and replayed. That includes each review's round, reviewer, verdict and first line. The strip shows all but the first line. skel saves nothing about subagents: their transcripts stay in the session's config folder, with the builder's. skel keeps no tasks of its own. It saves only a copy of each repository's newest open issues and PRs for the sidebar, which it replaces at each poll while a screen is open. `skel task ls` asks GitHub. Repository clones live in `~/.local/share/skel/repos/` and thread clones in `~/.local/share/skel/threads/`, on one disk, so a thread's clone shares its files with the repository's.
 
-**Surviving restarts.** When the daemon starts, it brings back the lead and every thread that was `working` or `waiting` with `claude --resume <session>`, runs again every review whose `skel/review` check is still pending, and polling picks up any event it missed.
+**Surviving restarts.** When the daemon starts, it brings back the lead and every thread that was `working` or `waiting` with `claude --resume <session>`, runs again every review whose `skel/review` check is still pending, and polling picks up any event it missed. Subagents aren't brought back: whether one starts again is the builder's call.
 
-**Isolation.** Each thread gets its own branch and clone, so nothing a builder does in it reaches your checkouts, skel's clone or another thread. Each agent runs inside bubblewrap: its folder is writable, the rest of the system is read-only, your home folder and credentials are hidden. The lead works in its own folder in `~/.local/share/skel/lead/` and sees skel's clone of every repository read-only, including ones brought in while it runs, so it can plan across them while the work happens in threads. The reviewer sees the thread's clone through a throwaway layer, so it can run the tests but changes nothing.
+**Isolation.** Each thread gets its own branch and clone, so nothing a builder does in it reaches your checkouts, skel's clone or another thread. Each agent runs inside bubblewrap: its folder is writable, the rest of the system is read-only, your home folder and credentials are hidden. A subagent runs in its agent's sandbox, so it adds no boundary and needs none. The lead works in its own folder in `~/.local/share/skel/lead/` and sees skel's clone of every repository read-only, including ones brought in while it runs, so it can plan across them while the work happens in threads. The reviewer sees the thread's clone through a throwaway layer, so it can run the tests but changes nothing.
 
 **Tokens stay out.** Agents never see your GitHub token. They don't push or call GitHub. They call skel commands, and the daemon, outside the sandbox, pushes and posts with your `gh` login. Commits are authored by you, with skel as co-author.
 
@@ -260,7 +287,7 @@ These are the parts that need care. `docs/learnings.md` explains the traps behin
 
 - **Typing into a session.** Wait until the pane is quiet (compare `tmux capture-pane` a moment apart), load the text with `tmux load-buffer`, paste it with `tmux paste-buffer -p` so it arrives as a bracketed paste, then send Enter on its own a moment later.
 - **The sandbox.** bubblewrap with the agent's folder writable, the rest of the system read-only, and the home folder and credentials hidden. Each Claude Code session gets its own config folder in `~/.local/share/skel/claude/`, where its transcripts stay for `claude --resume`, and logs in with the token from the first run. Nothing renews the token, so your own login is never touched, and your `~/.claude` stays hidden like the rest of the home folder. Its own permission prompts and sandbox are turned off, since skel's sandbox draws the boundary. Codex gets skel's `CODEX_HOME` and runs with its own sandbox and approvals turned off too. On a Sprite, the sandbox also hides the Sprite's control socket, through which an agent could start a service outside the sandbox or restore a checkpoint.
-- **Starting Claude Code.** Remove inherited `CLAUDE_CODE_*` variables. Mark the folder as trusted in the session's copy of its settings, or it waits at a question nobody sees. Pass the first message on the command line.
+- **Starting Claude Code.** Remove inherited `CLAUDE_CODE_*` variables. Mark the folder as trusted in the session's copy of its settings, or it waits at a question nobody sees. Pass the first message on the command line. Set `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=3` and `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1`, since its own defaults of 20 at once and three layers deep are more than a small server takes.
 - **Agent commands.** Every command an agent can run answers quickly: Claude Code moves a shell command to the background after 2 minutes.
 - **Detaching.** skel's tmux config binds Ctrl-Q to detach with no prefix and hides the status bar, so attaching feels like being inside Claude Code.
 
@@ -272,7 +299,10 @@ These are the parts that need care. `docs/learnings.md` explains the traps behin
 - Windows, and threads on other machines
 - Per-thread environments such as a database each (the `setup` commands only)
 - Projects with their own memory beyond `AGENTS.md`
-- Agents talking to each other, beyond skel telling the lead
+- Agents talking to each other, beyond skel telling the lead and a subagent answering the agent that started it
+- Child tasks, or one thread waiting for another. The lead splits a request into tasks, and you say when the next one starts
+- A builder creating tasks or starting threads
+- Subagents with a session, a sidebar row, a branch or a PR of their own
 - Triggers, schedules or automations
 - Reaching you outside the lead's session, such as a `notify` command for your phone
 - Slack, Linear, Jira or forges other than GitHub
@@ -297,6 +327,10 @@ Launch milestones, in order:
 4. **The first two minutes.** From the install line to a picked up issue, without reading anything but what skel prints. The first run is short and every step says what comes next. Once it is done, the lead says how to start work: add the `skel` label to an issue. skel looks for labeled issues as soon as a repository comes in, then often enough that a label is picked up within 2 minutes.
 5. **Someone else installs it.** By Thursday 12 November, a developer who isn't Simon installs skel on their own machine and hands it a real issue, with no help. Everything that stops them is fixed before the launch.
 6. **The launch.** A README with the install line, a quickstart, what agents can and can't touch, which accounts the harness and reviewer use, the known limits, and where to report bugs: GitHub issues. Record the video. Make the repository public on 16 November.
+
+After the launch:
+
+- **Subagent limits.** Subagents already work in a builder and need nothing to launch, so this waits until the launch is out, as it touches how every agent starts. First, try them by hand in a real builder, on Linux and on a Mac: a subagent running through a typed review, a `skel stop`, a daemon restart and an open question. Then skel starts Claude Code with the two limits, the builder's instructions say that only it runs `skel submit` and that it waits for its subagents first, and the lead's say how to order the parts of a bigger request.
 
 ## Done when
 
