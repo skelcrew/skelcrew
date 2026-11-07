@@ -25,6 +25,16 @@ export function openDb(): Database {
   // The daemon and skel run in your terminal can use the file at once. Without a wait, a
   // write that meets another one fails with "database is locked" at once.
   db.run("PRAGMA busy_timeout = 5000");
+  // One process prepares the tables at a time. On a first run the daemon and the screen open
+  // a new file together. Both would see a column missing, and the slower one would stop with
+  // "duplicate column name" adding it.
+  db.transaction(() => prepareTables(db)).immediate();
+  return db;
+}
+
+// Creates the tables skel keeps, and adds the columns a database from an earlier release
+// lacks, leaving everything already there as it is.
+function prepareTables(db: Database): void {
   db.run(`CREATE TABLE IF NOT EXISTS repositories (
     owner TEXT NOT NULL,
     repo TEXT NOT NULL,
@@ -138,5 +148,4 @@ export function openDb(): Database {
   // The reviews skel posted. They go out with your gh login, so on GitHub they look like
   // reviews of yours, and polling must not type them back into the builder.
   db.run("CREATE TABLE IF NOT EXISTS posted (id INTEGER PRIMARY KEY)");
-  return db;
 }
