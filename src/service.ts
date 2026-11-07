@@ -15,7 +15,7 @@ const unitFile = () => join(homedir(), ".config", "systemd", "user", "skel.servi
 export const serviceFile = () => (process.platform === "darwin" ? plistFile() : unitFile());
 
 // Runs a service installation command in your terminal and stops setup if it fails.
-function systemd(command: string[]): void {
+function runServiceCommand(command: string[]): void {
   const run = Bun.spawnSync(command, { stdio: ["inherit", "inherit", "inherit"] });
   if (!run.success) throw new Error(`${command.join(" ")} failed, so the daemon isn't installed`);
 }
@@ -123,15 +123,15 @@ export function installService(): void {
       loadLaunchAgent();
       return;
     }
-    systemd(["systemctl", "--user", "daemon-reload"]);
+    runServiceCommand(["systemctl", "--user", "daemon-reload"]);
     if (before !== null) return;
-    systemd(["systemctl", "--user", "enable", "--now", "skel"]);
+    runServiceCommand(["systemctl", "--user", "enable", "--now", "skel"]);
     console.log(
       skelLine(
         "turning on lingering, so the daemon keeps running after you log out and starts after a reboot.",
       ),
     );
-    systemd(["loginctl", "enable-linger"]);
+    runServiceCommand(["loginctl", "enable-linger"]);
   } catch (error) {
     // The unit file marks the service installed, so the old one comes back, or none, and
     // the next skel tries again.
