@@ -59,6 +59,7 @@ The repositories in the video are small real apps with fast CI and real issues, 
 | Reviewer | A fresh agent for each review round, on Codex by default, reading the PR adversarially. It runs once and answers with a verdict, with no session to attach to. It never inherits the builder's context. |
 | Event | Something that happened to a thread: a review, a PR comment, a failed check, a merge. |
 | Needs you | A flag on a thread: the builder asked a question, review hit its round limit, or the PR is approved and green. |
+| Automation | Recurring work you set on one machine: a time, a check that says whether there is work, and the task to file when there is. It only ever files a task, so what follows is an ordinary thread. |
 
 A thread's status is one of `working`, `waiting` (on review, CI or you), `failed`, `stopped` or `done`. Needs you is a separate flag, so a thread can wait on CI and need you at once.
 
@@ -150,8 +151,8 @@ One daemon per machine, run by the systemd user service or Sprite service the fi
 2. If the first run isn't done, it exits and tells you to run `skel`. It never asks questions, since systemd or the Sprite has no one to answer them.
 3. It opens the database, starts skel's tmux server, and reconnects to the lead and every live thread. A session that is gone is brought back with `claude --resume`.
 4. It opens its socket at `$XDG_RUNTIME_DIR/skel.sock` for the CLI, and one socket per agent, mounted into that agent's sandbox, so skel knows which thread is calling.
-5. It polls GitHub and logs to stdout, which systemd sends to the journal.
-6. On a Sprite, it keeps the Sprite awake while there is work: a builder working, a review running, or a PR waiting on CI. It holds a task on the Sprite's control socket that expires a few minutes after its last renewal, so if the daemon dies, the hold expires too. Once every thread waits on you or is done, it lets the Sprite sleep, which costs nothing for compute. A GitHub webhook to the Sprite's URL wakes it when you comment on or merge a PR, and polling then picks up the event. A webhook that never arrives is caught when the Sprite next wakes, for example at your next `skel --remote`.
+5. It polls GitHub, starts the automations that are due at each poll, and logs to stdout, which systemd sends to the journal.
+6. On a Sprite, it keeps the Sprite awake while there is work: a builder working, a review running, an automation's run, or a PR waiting on CI. It holds a task on the Sprite's control socket that expires a few minutes after its last renewal, so if the daemon dies, the hold expires too. Once every thread waits on you or is done, it lets the Sprite sleep, which costs nothing for compute. A GitHub webhook to the Sprite's URL wakes it when you comment on or merge a PR, and polling then picks up the event. A webhook that never arrives is caught when the Sprite next wakes, for example at your next `skel --remote`.
 
 The tmux sessions keep running when the daemon stops, so agents keep working through a restart or an upgrade, and the daemon reconnects to them when it comes back. What the daemon itself started, such as a clone or a reviewer, ends with it, and the next daemon starts that work again. Only `skel stop` ends a session.
 
@@ -159,7 +160,7 @@ The tmux sessions keep running when the daemon stops, so agents keep working thr
 
 One thread, from start to merge.
 
-1. **A task is started.** You add the `skel` label to an issue on GitHub, from anywhere, even your phone. Or the lead runs `skel task create app "<title>" "<body>"`, which creates a GitHub issue, then `skel start app-12`. You can run both yourself too.
+1. **A task is started.** You add the `skel` label to an issue on GitHub, from anywhere, even your phone. Or the lead runs `skel task create app "<title>" "<body>"`, which creates a GitHub issue, then `skel start app-12`. You can run both yourself too. Or an automation finds work and files the issue, with the label on it.
 2. **skel sets up the thread.** A clone of its own at `~/.local/share/skel/threads/app-12/`, made from skel's clone of the repository, on branch `skel/12-<slug>` from `main` (or `--from <branch>`), with the repository's setup commands run once in it.
 3. **The builder starts.** A Claude Code session in the sandbox, in the thread's clone, with the task's title and body as its first message.
 4. **The builder finishes a round.** It commits and runs `skel submit "<summary>"`. skel fetches the branch from the thread's clone into its own and pushes it from there, never running git inside the thread's folder. On the first round skel opens the PR, with `Closes #12` in its body.
@@ -190,6 +191,61 @@ The daemon polls GitHub with one GraphQL query per repository, fetching every op
 | PR merged or closed | Ends the thread and cleans up |
 | Bot comments | Ignored |
 
+## Automations
+
+An automation is recurring work on a schedule, such as updating dependencies every Monday or running the tests on `main` each night. You write it in `~/.config/skel/config.yaml`, on the machine it runs on:
+
+```yaml
+automations:
+  - title: Update outdated dependencies
+    repo: app
+    at: mon 06:00
+    check: npm outdated
+    body: Update what npm outdated lists. Leave out any update that needs more than a small change, and name it in the PR.
+  - title: Fix the failing tests on main
+    repo: app
+    at: "03:00"
+    check: bun test
+    body: The nightly test run on main failed. Find out why and fix it.
+```
+
+`at` is a time of day, or a day of the week and a time, on the machine's clock, which on a server is often UTC. There is no other form and nothing more often than daily: the work this is for comes daily or weekly, and it keeps what a schedule can start small. The `check` is a shell command that says whether there is work, like a test: it passes when there is nothing to do, and fails when there is. Every automation has one.
+
+**A run.** At the first poll after an automation's time, the daemon:
+
+1. **Looks at the last task.** If the task this automation last filed is still open, or its thread still runs, the run ends here. The last run stays on the record as `waiting on app-57`.
+2. **Runs the check.** It makes a folder from skel's clone at the latest default branch, and runs the repository's setup commands and the check there, in the sandbox, with no socket and no login. So a check sees no token and has no way to spend on a model. The two together get 30 minutes, then the folder is removed.
+3. **Passes: stops.** skel records `passed`. It writes nothing to GitHub, tells the lead nothing and starts nothing.
+4. **Fails: files a task.** skel creates a GitHub issue with the `title` and `body`, the check's last 100 lines of output, a line saying which automation filed it, and the `skel` label, then polls the repository at once. From there it is **Starting from GitHub**, with nothing special: the thread is `app-57`, skel reacts with 👀, the lead says so, and a reviewed PR follows, with `Closes #57` in it.
+
+A run that can't finish, because setup failed, the 30 minutes ran out or GitHub refused the issue, files nothing and waits for the next time. skel types one line into the lead, such as "automation Update outdated dependencies couldn't run: setup failed", and says it once until a run gets through. A check that fails because the command is wrong looks like work, so it files a task, and the builder finds out why.
+
+**Its task.** An automation is not a task and has no thread. Each run that finds work files a task of its own, in the tracker, so a thread from a schedule is named like any other, and skel still keeps no tasks. A run that finds nothing leaves no task, so there is nothing to clean up. The check's output goes on GitHub, where anyone who can read the repository can read it.
+
+The line the issue carries also tells the builder that if nothing needs changing, it asks you rather than opening a PR. So a failed check that turns out to be nothing ends with the thread needing you, not with an empty PR.
+
+**Who can set one.** Only you, by editing your own `config.yaml`. `automations` is read from nowhere else: in a repository's `skel.yaml` it is ignored, since a clone must not start paid work on your machine or bring a schedule you never agreed to. The sandbox hides the file from every agent, and no request over a socket adds, changes or removes an automation, so the lead can't set one even if you ask it to. A yes passed on by the lead could come from an injected instruction. It can write out the lines for you to paste. `repo` must be a repository skel already has: a run never brings one in, so a schedule never gets round the trust question.
+
+An automation runs only on the machine it is written on. Moving work to a Sprite means moving its lines there, over `sprite console`. Written on two machines, it files two tasks.
+
+**The clock.** skel keeps, for each automation, when it last ran. Deciding which automations are due is pure: the daemon reads the clock at each poll and hands the time in, with the automations and what it saved. An automation is due when one of its times has passed since it last ran.
+
+- **The machine slept or the daemon was down.** However many times were missed, the first poll after they passed starts one run. A nightly check on a laptop closed for a week runs once, when the lid opens.
+- **A new automation** waits for its next time, so saving the file starts nothing.
+- **A run still going** is never started again, and runs on a machine go one at a time, as reviews do, so several automations set for the same time don't all run their tests at once.
+- **The daemon stops during a run.** Its last run is saved only when the check ends, so the next daemon runs it again. It is saved before the issue is created, so a restart can't file a task twice.
+- **On a Sprite,** nothing wakes a sleeping Sprite for a schedule: only a request does, and an automation is never a reason to stay awake. So `at` there means "not before". A run starts when the Sprite next wakes, from a webhook or your next `skel --remote`, and is held awake only until it ends, including the poll a filed task brings. A check that passes lets the Sprite sleep again.
+
+**What it can spend.** skel can't see what a run costs in money, so the limits are on what can start:
+
+- A check that passes uses no model at all.
+- A check that fails starts at most one thread, and that thread keeps to the round limit, then needs you.
+- Nothing more starts until you have dealt with it. A test that fails all week is one task and one thread, and a schedule can't spend more while you are away. A PR you close without merging leaves its issue open, so the automation stays quiet until you close the issue too.
+
+**Seeing, pausing and removing.** `skel automation ls` lists each one with its repository, its next time and how its last run went: `passed`, `filed app-57`, `waiting on app-57` or `couldn't run`. It takes nothing else to manage them: the daemon reads `config.yaml` at each poll, so an edit counts at once. Comment the lines out to pause an automation, and delete them to remove it. Either way skel forgets it, and when the lines come back, it waits for its next time as a new one does. `skel stop app-57` stops a thread from an automation like any other. Automations that aren't valid are listed with what's wrong, the lead hears it once, and none of them run until the file is fixed. Threads carry on.
+
+The sidebar has nothing for automations. What a run files shows up in ISSUES, and its thread in THREADS.
+
 ## Commands
 
 For you, and for the lead:
@@ -211,6 +267,7 @@ For you, and for the lead:
 | `skel attach <repo>-<task>` | Opens the same screen as `skel`, with that builder on the right. Ctrl-Q detaches. |
 | `skel review <repo>-<task>` | Reviews the thread's last submitted commit again, as a round's review, such as after a review that failed. It refuses while a review of it is waiting or running. |
 | `skel stop <repo>-<task>` | Ends the session and keeps the clone, branch and PR. |
+| `skel automation ls` | Your automations on this machine, with each one's repository, next time and last run. It only shows: you set them in `config.yaml`. |
 
 For the builder inside a thread:
 
@@ -236,17 +293,19 @@ setup: [bun install]
 test: [bun test]
 ```
 
+`automations` is the one exception: only your own `config.yaml` can hold them.
+
 ## State and isolation
 
 **Sessions.** Every agent runs in tmux, on skel's own tmux server (`tmux -L skel`) with skel's own config: one session for the lead and one per builder. A reviewer runs once and needs no session. tmux keeps them alive, handles attach and detach, and answers the terminal's queries. skel never runs its own terminal emulator.
 
 **The screen.** The sidebar lives in a second tmux server, `tmux -L skel-screen`, one session per open terminal, ended when you leave. Its left pane runs the sidebar, on a server with terminal links turned on (the `hyperlinks` terminal feature), and draws the line at its own right edge, as tmux's border is blank. tmux has two status lines: the header above the sidebar and the strip share the first, and the thin line under them is the second. Its right pane is an ordinary tmux client attached to the agent's session on `tmux -L skel`, and picking a row switches that client to another session. Landing on an issue or PR replaces that client with a small `skel page` command, in the same pane, and moving back to a thread starts a client again. So a page lives and ends with the screen, on your side, outside any sandbox. Agents' sessions stay single-pane and know nothing of the screen: typing into them, reading them and checking them work as if it weren't there, and leaving the screen ends nothing.
 
-**State.** One SQLite file per machine, `~/.local/share/skel/skel.db`, with `bun:sqlite`. It holds repositories (name, GitHub owner and name, how many issues and PRs are open) and threads (repository, task, branch, status, needs you, round count, builder session ID, PR number, when it started), and the last handled ID per event kind. Every change is also appended to `~/.local/share/skel/threads/<repo>-<task>.log` as one JSON line, so a thread's history can be read and replayed. That includes each review's round, reviewer, verdict and first line. The strip shows all but the first line. skel keeps no tasks of its own. It saves only a copy of each repository's newest open issues and PRs for the sidebar, which it replaces at each poll while a screen is open. `skel task ls` asks GitHub. Repository clones live in `~/.local/share/skel/repos/` and thread clones in `~/.local/share/skel/threads/`, on one disk, so a thread's clone shares its files with the repository's.
+**State.** One SQLite file per machine, `~/.local/share/skel/skel.db`, with `bun:sqlite`. It holds repositories (name, GitHub owner and name, how many issues and PRs are open), threads (repository, task, branch, status, needs you, round count, builder session ID, PR number, when it started) and automations (title, repository, when it last ran, how that went, the task it last filed), and the last handled ID per event kind. Every change is also appended to `~/.local/share/skel/threads/<repo>-<task>.log` as one JSON line, so a thread's history can be read and replayed. That includes each review's round, reviewer, verdict and first line. The strip shows all but the first line. skel keeps no tasks of its own. It saves only a copy of each repository's newest open issues and PRs for the sidebar, which it replaces at each poll while a screen is open. `skel task ls` asks GitHub. Repository clones live in `~/.local/share/skel/repos/` and thread clones in `~/.local/share/skel/threads/`, on one disk, so a thread's clone shares its files with the repository's.
 
-**Surviving restarts.** When the daemon starts, it brings back the lead and every thread that was `working` or `waiting` with `claude --resume <session>`, runs again every review whose `skel/review` check is still pending, and polling picks up any event it missed.
+**Surviving restarts.** When the daemon starts, it brings back the lead and every thread that was `working` or `waiting` with `claude --resume <session>`, runs again every review whose `skel/review` check is still pending, and polling picks up any event it missed and any automation that came due.
 
-**Isolation.** Each thread gets its own branch and clone, so nothing a builder does in it reaches your checkouts, skel's clone or another thread. Each agent runs inside bubblewrap: its folder is writable, the rest of the system is read-only, your home folder and credentials are hidden. The lead works in its own folder in `~/.local/share/skel/lead/` and sees skel's clone of every repository read-only, including ones brought in while it runs, so it can plan across them while the work happens in threads. The reviewer sees the thread's clone through a throwaway layer, so it can run the tests but changes nothing.
+**Isolation.** Each thread gets its own branch and clone, so nothing a builder does in it reaches your checkouts, skel's clone or another thread. Each agent runs inside bubblewrap: its folder is writable, the rest of the system is read-only, your home folder and credentials are hidden. The lead works in its own folder in `~/.local/share/skel/lead/` and sees skel's clone of every repository read-only, including ones brought in while it runs, so it can plan across them while the work happens in threads. The reviewer sees the thread's clone through a throwaway layer, so it can run the tests but changes nothing. An automation's check runs like a setup command, in the sandbox with no socket and no login, in a folder of its own that is removed afterwards.
 
 **Tokens stay out.** Agents never see your GitHub token. They don't push or call GitHub. They call skel commands, and the daemon, outside the sandbox, pushes and posts with your `gh` login. Commits are authored by you, with skel as co-author.
 
@@ -273,7 +332,8 @@ These are the parts that need care. `docs/learnings.md` explains the traps behin
 - Per-thread environments such as a database each (the `setup` commands only)
 - Projects with their own memory beyond `AGENTS.md`
 - Agents talking to each other, beyond skel telling the lead
-- Triggers, schedules or automations
+- Automations started by anything but the clock, such as a GitHub event or an incoming webhook
+- A model deciding whether an automation has work, and automations that report instead of filing a task
 - Reaching you outside the lead's session, such as a `notify` command for your phone
 - Slack, Linear, Jira or forges other than GitHub
 - Errors from Sentry as tasks, planned as the launch after this one
@@ -297,6 +357,10 @@ Launch milestones, in order:
 4. **The first two minutes.** From the install line to a picked up issue, without reading anything but what skel prints. The first run is short and every step says what comes next. Once it is done, the lead says how to start work: add the `skel` label to an issue. skel looks for labeled issues as soon as a repository comes in, then often enough that a label is picked up within 2 minutes.
 5. **Someone else installs it.** By Thursday 12 November, a developer who isn't Simon installs skel on their own machine and hands it a real issue, with no help. Everything that stops them is fixed before the launch.
 6. **The launch.** A README with the install line, a quickstart, what agents can and can't touch, which accounts the harness and reviewer use, the known limits, and where to report bugs: GitHub issues. Record the video. Make the repository public on 16 November.
+
+After the launch:
+
+7. **Automations.** A check on a schedule that files a task when it finds work. None of it lands before the launch, so the install, the first run and the video stay as they are, and it starts only when someone has recurring work to give it. It adds to the daemon's poll and leaves the first run, the sidebar and the flow alone.
 
 ## Done when
 
