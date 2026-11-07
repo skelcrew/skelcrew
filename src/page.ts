@@ -2,7 +2,7 @@
 // scroll it with the wheel, and typing goes nowhere. It is a process of its own, in the
 // screen's right pane, so it ends with the screen and agents' sessions never see it.
 import { z } from "zod";
-import { ciChecks } from "./events.ts";
+import { ciChecks } from "./decide.ts";
 import { Name, readIssueDetails, readPullDetails } from "./github.ts";
 import { grey, pad, paint, white } from "./sidebar.ts";
 import { clean, fitted } from "./strip.ts";

@@ -2,29 +2,18 @@
 // running daemon, a fake gh, a fake Claude Code and a fake tmux for attaching.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
+import { homeEnv, read, runSkel, source, startDaemon, until } from "./harness.ts";
 
-const main = join(import.meta.dir, "..", "src", "main.ts");
-const daemon = join(import.meta.dir, "..", "src", "daemon.ts");
-const client = join(import.meta.dir, "..", "src", "client.ts");
-const dbFile = join(import.meta.dir, "..", "src", "db.ts");
+const dbFile = source("db.ts");
 let home = "";
 let socket = "";
 const running: Subprocess[] = [];
 
 const data = () => join(home, ".local", "share", "skel");
-const read = (file: string) => (existsSync(file) ? readFileSync(file, "utf8") : "");
 
 function fake(name: string, body: string): void {
   writeFileSync(
@@ -70,41 +59,15 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-const env = () => ({
-  HOME: home,
-  XDG_RUNTIME_DIR: join(home, "run"),
-  PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
-});
+// What this test's processes run with.
+const env = () => homeEnv(home);
 
-function serve(): void {
-  const script = `import { serve } from ${JSON.stringify(daemon)};
-await serve(${JSON.stringify(socket)});`;
-  running.push(
-    Bun.spawn([process.execPath, "-e", script], { env: env(), stdout: "ignore", stderr: "ignore" }),
-  );
-}
+// Runs this test's daemon, which the test's clean-up stops.
+const serve = () => startDaemon(socket, env(), running);
 
-async function skel(args: string[], more: Record<string, string> = {}) {
-  const run = Bun.spawn([process.execPath, main, ...args], {
-    env: { ...env(), ...more },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [out, err, code] = await Promise.all([
-    new Response(run.stdout).text(),
-    new Response(run.stderr).text(),
-    run.exited,
-  ]);
-  return { out, err, code };
-}
-
-async function until(done: () => boolean, timeout = 10_000) {
-  const deadline = Date.now() + timeout;
-  while (!done()) {
-    if (Date.now() > deadline) throw new Error("gave up waiting");
-    await Bun.sleep(50);
-  }
-}
+// Runs skel as you or the lead would.
+const skel = (args: string[], more: Record<string, string> = {}) =>
+  runSkel(args, { ...env(), ...more });
 
 async function untilAnswers() {
   await until(() => existsSync(join(home, "run", "skel.sock")));
@@ -438,7 +401,7 @@ esac`,
 describe("the page of an issue or PR", () => {
   // Asks the daemon for a page as the page command does, over the socket given, if any.
   async function ask(url: string, more: Record<string, string> = {}) {
-    const script = `import { pageOf } from ${JSON.stringify(client)};
+    const script = `import { pageOf } from ${JSON.stringify(source("client.ts"))};
 console.log(JSON.stringify(await pageOf(${JSON.stringify(url)})));`;
     const run = Bun.spawn([process.execPath, "-e", script], {
       env: { ...env(), ...more },

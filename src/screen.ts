@@ -2,17 +2,13 @@
 // at on the right and the strip above it. It is a second tmux server, one session per open
 // terminal, ended when you leave.
 import { windowTitle } from "./say.ts";
-import { applyConfig, cleanEnv } from "./tmux.ts";
+import { applyConfig, cleanEnv, screenSocket } from "./tmux.ts";
 import { mainFile, singleFile } from "./version.ts";
 
 // How wide the sidebar is, with the line it draws at its edge: room for 24 columns of a name or
 // title, between its mark and two columns of padding. tmux shares a resize out among panes, so
 // it is set back after each.
 export const sidebarWidth = 31;
-
-// Returns the screen's tmux server beside the agents': skel-screen beside skel, and a test's
-// own beside the test's.
-export const screenSocket = (agents: string) => `${agents}-screen`;
 
 // Run with each opening, ahead of the new session, so a first draw never shows tmux's own
 // look. Your own ~/.tmux.conf never applies, and all of tmux's own keys go: its default mouse

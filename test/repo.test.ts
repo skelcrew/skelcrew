@@ -16,8 +16,9 @@ import {
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { source } from "./harness.ts";
 
-const main = join(import.meta.dir, "..", "src", "main.ts");
+const main = source("main.ts");
 let home = "";
 let daemon: Server | undefined;
 

@@ -3,8 +3,9 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { source } from "./harness.ts";
 
-const main = join(import.meta.dir, "..", "src", "main.ts");
+const main = source("main.ts");
 
 function skel(args: string[], env: Record<string, string> = {}) {
   const run = Bun.spawnSync([process.execPath, main, ...args], {

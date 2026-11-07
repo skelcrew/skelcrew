@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { source } from "./harness.ts";
 
 let home = "";
 let skel = "";
@@ -42,7 +43,7 @@ beforeAll(() => {
   mkdirSync(join(home, "bin"));
   mkdirSync(join(home, "run"), { mode: 0o700 });
   skel = join(home, ".local", "bin", "skel");
-  compile(join(import.meta.dir, "..", "src", "main.ts"), skel);
+  compile(source("main.ts"), skel);
 });
 afterAll(() => {
   rmSync(home, { recursive: true, force: true });
@@ -90,7 +91,7 @@ test("points the daemon's service at itself", async () => {
 });
 
 test("says which release it is, or which commit a build from a checkout came from", () => {
-  const main = join(import.meta.dir, "..", "src", "main.ts");
+  const main = source("main.ts");
   const said = (build: string) => {
     const file = join(home, "stamped", build, "skel");
     compile(main, file, ["--define", `SKEL_BUILD=${JSON.stringify(build)}`]);
@@ -111,7 +112,7 @@ test("a build nobody stamped doesn't pretend to know what it is", () => {
 
 test("the sidebar's header shows the release of the skel that runs it", async () => {
   const file = join(home, "released", "skel");
-  const main = join(import.meta.dir, "..", "src", "main.ts");
+  const main = source("main.ts");
   compile(main, file, ["--define", 'SKEL_BUILD="0.4.2"']);
   const agents = `skel-compiled-test-${process.pid}`;
   const tmux = (...args: string[]) =>
@@ -133,7 +134,7 @@ test("the sidebar's header shows the release of the skel that runs it", async ()
 
 test("the screen's panes run the single file itself, with no checkout to find", () => {
   const entry = join(home, "panes.ts");
-  const screen = JSON.stringify(join(import.meta.dir, "..", "src", "screen.ts"));
+  const screen = JSON.stringify(source("screen.ts"));
   writeFileSync(
     entry,
     `import { pageCommand } from ${screen};\nconsole.log(JSON.stringify(pageCommand("url")));`,
@@ -161,7 +162,7 @@ describe("a release setting up a server", () => {
       },
     });
     released = join(home, "from-release", "skel");
-    const main = join(import.meta.dir, "..", "src", "main.ts");
+    const main = source("main.ts");
     compile(main, released, [
       "--define",
       'SKEL_BUILD="0.4.2"',
@@ -245,7 +246,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("in the sandbox", () => {
     const entry = join(home, "agent.ts");
     writeFileSync(
       entry,
-      `import { sandboxArgs } from ${JSON.stringify(join(import.meta.dir, "..", "src", "sandbox.ts"))};
+      `import { sandboxArgs } from ${JSON.stringify(source("sandbox.ts"))};
 if (process.argv[2] === "inside") {
   console.log("skel ran in the sandbox");
 } else {

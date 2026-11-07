@@ -2,6 +2,7 @@
 // its PR opened on the first round, reviewed by a fresh reviewer, and the review typed back
 // into the builder's session when it asks for changes.
 import type { Database } from "bun:sqlite";
+import { afterReview } from "./decide.ts";
 import {
   findPullRequest,
   openPullRequest,
@@ -12,7 +13,7 @@ import {
 } from "./github.ts";
 import { tellLead } from "./lead.ts";
 import { cloneDir } from "./paths.ts";
-import { type Review, review, reviewerHarness } from "./reviewer.ts";
+import { review, reviewerHarness } from "./reviewer.ts";
 import {
   baseOf,
   cloneOf,
@@ -24,73 +25,6 @@ import {
   threadName,
 } from "./thread.ts";
 import { typeInto } from "./tmux.ts";
-
-export type Outcome = {
-  check: "success" | "failure";
-  description: string;
-  rounds: number;
-  needsYou: boolean;
-  status: "working" | "waiting";
-  tell: string | null;
-  // Changes past the round limit, kept rather than typed in.
-  held: string | null;
-  why: string;
-};
-
-// Decides what a finished review means for a thread that has had `rounds` rounds of changes:
-// the skel/review check to set, the thread's new state, and what to type into the builder,
-// if anything. The builder gets max_rounds rounds of changes to fix. A review asking for
-// changes after those is posted but not typed in, only held for skel start to let the thread
-// go on, and, like a failed review, the thread then needs you. An approved thread waits on
-// CI: polling GitHub marks it needs you once every check is green.
-export function afterReview(rounds: number, given: Review, maxRounds: number): Outcome {
-  if (given.verdict === "failed")
-    return {
-      check: "failure",
-      description: "review failed",
-      rounds,
-      needsYou: true,
-      status: "waiting",
-      tell: null,
-      held: null,
-      why: `review failed: ${given.body}`,
-    };
-  if (given.verdict === "approve")
-    return {
-      check: "success",
-      description: "skel's reviewer approved",
-      rounds,
-      needsYou: false,
-      status: "waiting",
-      tell: null,
-      held: null,
-      why: "approved by skel's reviewer, so it waits on CI",
-    };
-  const counted = rounds + 1;
-  const changes: Pick<Outcome, "check" | "description" | "rounds"> = {
-    check: "failure",
-    description: "skel's reviewer asked for changes",
-    rounds: counted,
-  };
-  const tell = `skel's reviewer asked for changes:\n\n${given.body}\n\nFix what it asks, commit, and run skel submit "<summary>" again.`;
-  if (counted > maxRounds)
-    return {
-      ...changes,
-      needsYou: true,
-      status: "waiting",
-      tell: null,
-      held: tell,
-      why: `changes asked for after ${maxRounds} rounds of changes, so the round limit is reached`,
-    };
-  return {
-    ...changes,
-    needsYou: false,
-    status: "working",
-    tell,
-    held: null,
-    why: `changes asked for in round ${counted} of ${maxRounds}`,
-  };
-}
 
 // Runs git in skel's own clone and returns what it printed, throwing with its error when it
 // fails.

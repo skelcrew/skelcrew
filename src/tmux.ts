@@ -2,6 +2,10 @@
 // server (`tmux -L skel`; tests pass a socket of their own).
 import { onSprite, startTmuxService } from "./sprite.ts";
 
+// Returns the screen's tmux server beside the agents': skel-screen beside skel, and a test's
+// own beside the test's.
+export const screenSocket = (agents: string) => `${agents}-screen`;
+
 // Sent on stdin with each new session instead of kept in a file, so there is no file to
 // find or keep in step, and a server an older skel started picks up changes. Your own
 // ~/.tmux.conf never applies: -f /dev/null replaces it. Ctrl-Q with no prefix and no status

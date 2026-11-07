@@ -17,6 +17,7 @@ import {
   threadWord,
 } from "../src/sidebar.ts";
 import type { Thread } from "../src/thread.ts";
+import { source } from "./harness.ts";
 
 const row = {
   title: null,
@@ -900,9 +901,8 @@ describe("the rows the database gives", () => {
   // its own with HOME set: homedir() keeps the HOME this process started with, so opening the
   // database from here would reach your real one.
   function after(sql: string, now: number): { rows: Row[]; lists: Lists } {
-    const src = join(import.meta.dir, "..", "src");
-    const code = `import { openDb } from ${JSON.stringify(join(src, "db.ts"))};
-import { sidebarLists, sidebarRows } from ${JSON.stringify(join(src, "sidebar.ts"))};
+    const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { sidebarLists, sidebarRows } from ${JSON.stringify(source("sidebar.ts"))};
 const db = openDb();
 db.run(${JSON.stringify(sql)});
 const rows = sidebarRows(db, ["lead", "app-12"], 3, ${now});
