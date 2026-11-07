@@ -17,6 +17,7 @@ import type { Subprocess } from "bun";
 
 const main = join(import.meta.dir, "..", "src", "main.ts");
 const daemon = join(import.meta.dir, "..", "src", "daemon.ts");
+const client = join(import.meta.dir, "..", "src", "client.ts");
 const dbFile = join(import.meta.dir, "..", "src", "db.ts");
 let home = "";
 let socket = "";
@@ -437,7 +438,7 @@ esac`,
 describe("the page of an issue or PR", () => {
   // Asks the daemon for a page as the page command does, over the socket given, if any.
   async function ask(url: string, more: Record<string, string> = {}) {
-    const script = `import { pageOf } from ${JSON.stringify(daemon)};
+    const script = `import { pageOf } from ${JSON.stringify(client)};
 console.log(JSON.stringify(await pageOf(${JSON.stringify(url)})));`;
     const run = Bun.spawn([process.execPath, "-e", script], {
       env: { ...env(), ...more },
