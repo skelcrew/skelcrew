@@ -297,6 +297,8 @@ async function approvedApp12(from?: string): Promise<string> {
 // What the sidebar would read: the saved open issues and PRs, as kind and number, and the totals.
 function savedOpen(): { rows: string[]; totals: unknown } {
   const db = new Database(join(data(), "skel.db"), { readonly: true });
+  // The daemon can be saving a poll just as this reads, which would otherwise fail the test.
+  db.run("PRAGMA busy_timeout = 5000");
   const rows = db.query("SELECT kind, number FROM open_items ORDER BY kind, number").all();
   const totals = db.query("SELECT open_issues, open_prs FROM repositories").get();
   db.close();
