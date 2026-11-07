@@ -131,6 +131,19 @@ test("the sidebar's header shows the release of the skel that runs it", async ()
   }
 });
 
+test("the screen's panes run the single file itself, with no checkout to find", () => {
+  const entry = join(home, "panes.ts");
+  const screen = JSON.stringify(join(import.meta.dir, "..", "src", "screen.ts"));
+  writeFileSync(
+    entry,
+    `import { pageCommand } from ${screen};\nconsole.log(JSON.stringify(pageCommand("url")));`,
+  );
+  const file = join(home, "panes", "skel");
+  compile(entry, file);
+  const said = Bun.spawnSync([file]).stdout.toString();
+  expect(JSON.parse(said)).toEqual([file, "page", "url"]);
+});
+
 describe("a release setting up a server", () => {
   let files = new Map<string, string>();
   let server: ReturnType<typeof Bun.serve>;
@@ -182,6 +195,13 @@ describe("a release setting up a server", () => {
     expect(done.code).toBe(0);
     expect(readFileSync(join(home, "copied"), "utf8")).toBe(linux);
     expect(done.out).toContain("skel --remote simon@workbox");
+  });
+
+  test("a single file that is no release says it can't build a copy", async () => {
+    const done = await run(["remote", "add", "simon@workbox"]);
+    expect(done.code).toBe(1);
+    expect(done.err).toContain("can't build one");
+    expect(existsSync(join(home, "copied"))).toBe(false);
   });
 
   test("copies the binary for the server's CPU, which can differ from the laptop's", async () => {
