@@ -20,7 +20,7 @@ The repository starts with three documents: this spec, `AGENTS.md` for how to wr
 | Unattended, where it makes sense | Agents stay alive, wake on events, and only ask you when they need you. You approve and you merge. |
 | Parallel | Many threads at once, across repositories, without juggling chat windows. |
 | Isolated | Each thread gets a branch, clone and sandbox. Your own checkouts are never touched. No tokens inside. |
-| Connected | Tasks come from GitHub issues and PRs go back to it. More tools can be added behind the same seam. |
+| Connected | Tasks come from GitHub issues and PRs go back to it, through a plugin. More tools come in as plugins, and the flow stays the same. |
 | Build ⇄ review | A builder and a fresh adversarial reviewer on another model loop until the change is ready. A model reviewing its own work shares its blind spots. |
 | In your harness | You stay in Claude Code. There is no new app to live in. |
 
@@ -59,6 +59,7 @@ The repositories in the video are small real apps with fast CI and real issues, 
 | Reviewer | A fresh agent for each review round, on Codex by default, reading the PR adversarially. It runs once and answers with a verdict, with no session to attach to. It never inherits the builder's context. |
 | Event | Something that happened to a thread: a review, a PR comment, a failed check, a merge. |
 | Needs you | A flag on a thread: the builder asked a question, review hit its round limit, or the PR is approved and green. |
+| Plugin | The part of skel that connects it to an outside tool. GitHub is a plugin. Each plugin does one or more of three jobs: tracker, forge or chat. |
 
 A thread's status is one of `working`, `waiting` (on review, CI or you), `failed`, `stopped` or `done`. Needs you is a separate flag, so a thread can wait on CI and need you at once.
 
@@ -150,7 +151,7 @@ One daemon per machine, run by the systemd user service or Sprite service the fi
 2. If the first run isn't done, it exits and tells you to run `skel`. It never asks questions, since systemd or the Sprite has no one to answer them.
 3. It opens the database, starts skel's tmux server, and reconnects to the lead and every live thread. A session that is gone is brought back with `claude --resume`.
 4. It opens its socket at `$XDG_RUNTIME_DIR/skel.sock` for the CLI, and one socket per agent, mounted into that agent's sandbox, so skel knows which thread is calling.
-5. It polls GitHub and logs to stdout, which systemd sends to the journal.
+5. It polls its plugins, which in this version means GitHub, and logs to stdout, which systemd sends to the journal.
 6. On a Sprite, it keeps the Sprite awake while there is work: a builder working, a review running, or a PR waiting on CI. It holds a task on the Sprite's control socket that expires a few minutes after its last renewal, so if the daemon dies, the hold expires too. Once every thread waits on you or is done, it lets the Sprite sleep, which costs nothing for compute. A GitHub webhook to the Sprite's URL wakes it when you comment on or merge a PR, and polling then picks up the event. A webhook that never arrives is caught when the Sprite next wakes, for example at your next `skel --remote`.
 
 The tmux sessions keep running when the daemon stops, so agents keep working through a restart or an upgrade, and the daemon reconnects to them when it comes back. What the daemon itself started, such as a clone or a reviewer, ends with it, and the next daemon starts that work again. Only `skel stop` ends a session.
@@ -175,7 +176,7 @@ At any point the builder can ask you a question with Claude Code's own `AskUserQ
 
 ## Events
 
-The daemon polls GitHub with one GraphQL query per repository, fetching every open thread's PR with its reviews, comments, checks and merge state, so the number of requests doesn't grow with the number of threads. While a screen is open, the same query brings the open issues and PRs for the sidebar. It polls every 30 seconds while a thread is active, and less often for threads that only wait on you. Webhooks are a faster wake-up, never the only source, since deliveries are missed while the daemon is down. On a server they may be added later; on a Sprite they wake it from sleep. Calls go through `gh`. Each event is handled once: skel records the ID of the last review, comment and check run it acted on.
+The daemon polls GitHub with one GraphQL query per repository, fetching every open thread's PR with its reviews, comments, checks and merge state, so the number of requests doesn't grow with the number of threads. While a screen is open, the same query brings the open issues and PRs for the sidebar. It polls every 30 seconds while a thread is active, and less often for threads that only wait on you. Webhooks are a faster wake-up, never the only source, since deliveries are missed while the daemon is down. On a server they may be added later; on a Sprite they wake it from sleep. Calls go through `gh`, inside the GitHub plugin, which hands the flow each PR in skel's own words. Each event is handled once: skel records the ID of the last review, comment and check run it acted on.
 
 **Starting from GitHub.** Every minute the daemon also asks each repository for open issues labeled `skel`, in the same query, and starts a thread on each one that has none, exactly as `skel start` does. It reacts to the issue with 👀, so you can see on GitHub that skel took it, and types a one line note into the lead, such as "started app-12 from GitHub: Fix the login redirect". skel never comments on the issue: a builder's question waits in skel, where the thread needs you and the lead tells you, and you answer it with `skel attach`. A label is the signal because skel acts with your GitHub login, so assigning an issue to yourself can't mean "skel, take this", and a GitHub App can't be assigned an issue. Only people with triage or write access can add a label, so a stranger can't start work. Removing the label doesn't stop a running thread; `skel stop` does. A thread that failed or was stopped isn't started again by its label, only by `skel start`. skel creates the label in a repository the first time it brings it in.
 
@@ -190,6 +191,50 @@ The daemon polls GitHub with one GraphQL query per repository, fetching every op
 | PR merged or closed | Ends the thread and cleans up |
 | Bot comments | Ignored |
 
+## Plugins
+
+A plugin connects skel to an outside tool. GitHub is one, so the flow holds nothing of GitHub's. Everything this spec says about GitHub works as written: the plugin is how it is built, and you never see the difference.
+
+**Three jobs.** Tools do different things, so a plugin does one or more of three jobs. How a plugin is made, turned on and trusted is the same for all of them.
+
+| Job | What it does | Done by |
+| --- | --- | --- |
+| Tracker | Where tasks come from. It lists and reads them, says which to start, and hears when skel takes one. A tracker that can also creates them. | GitHub, later Sentry |
+| Forge | Where code lands. It holds the repository and the PRs, with their checks, reviews and comments. | GitHub |
+| Chat | Carries messages between you and the lead. | Later Slack |
+
+A job exists once a plugin needs it, and grows only when one does. What a job adds is about tasks, PRs and messages, never about one tool.
+
+**What a plugin is.** A file in skel's own repository, such as `src/plugins/github.ts`, with plain functions and data. It is part of skel's binary. So there is nothing to install, every release has every plugin, and a plugin is always the same release as the skel running it. `skel remote add` and updates carry plugins with no extra step. `src/plugins.ts` lists them.
+
+**State, not a stream.** At each poll, the daemon asks each plugin what it sees now: tasks to start, the open tasks for the sidebar, and from the forge the threads' PRs. It is one question per plugin and repository, so GitHub's one query stays one. The flow compares the answer with the IDs it last handled, and works out the events from that. So a plugin keeps no records, and a daemon that was down loses nothing: the next answer holds what it missed. What a plugin does outside must be safe to do twice, as a restart can repeat it. GitHub's looks for a PR on the branch before opening one.
+
+**Waking up.** The daemon holds the one public port. A delivery to `/<plugin>` goes to that plugin, which checks its signature and brings its next poll forward. As for GitHub, a delivery only says "look now". GitHub's stays at the root of the URL. A plugin holds no connection of its own open, since a Sprite that sleeps drops it, while a delivery to its URL wakes it.
+
+**What the flow knows.** The flow knows a PR, a check and a review, in skel's words:
+
+- **A PR** is `open`, `merged` or `closed`. It has a base branch, says whether it conflicts with it, and has checks, reviews and comments.
+- **A check** has a name and is `running`, `passed`, `failed` or `cancelled`. `failed` is one the builder can do something about. `cancelled` finished without passing and isn't the builder's to fix, so the PR isn't green and the builder isn't told. A check may have an ID, and then the forge can give the end of its log.
+- **A review or comment** has an ID that grows over time, its text, and its author, with whether the author is a bot. A review also has its comments on lines of code. Only finished reviews reach the flow.
+- **People:** which login is you, and whether a login can push to the repository.
+
+The flow asks the forge to clone and update a repository, say whether you can push to it and whether it is a fork, push a commit, find or open a PR, post a review, set the `skel/review` check, and read a failed check's log. It asks the tracker for the line that goes in the PR's body, which for GitHub is `Closes #12`.
+
+The flow never sees GraphQL, GitHub's check runs and commit statuses, labels, reactions or webhooks. Deciding what an event means stays pure: given a thread and a PR in these words, it says what to do.
+
+GitHub is the only forge, so the flow calls its functions directly. There is no forge type and no lookup, until a second forge needs them.
+
+**Turning one on.** GitHub is always on, and uses the `gh` login from the first run. Any other plugin starts off. `skel plugin add <name>`, in your own terminal, says what the plugin reads and writes, asks for its token without showing it, and checks that the token works. It saves the token in `~/.config/skel/plugins/<name>`, readable only by you, and the plugin's settings under `plugins:` in `config.yaml`. A plugin belongs to the machine the daemon runs on, so for a server or Sprite you run `skel --remote sprite:demo plugin add <name>`, which asks for the token over plain `ssh -t` or `sprite console`.
+
+**Trust.** A plugin runs in the daemon, outside the sandbox, and can reach what the daemon can reach. There is no wall between it and your tokens. What protects you is who gets to put code there and who gets to turn it on.
+
+- **Only skel's repository holds plugins.** A plugin arrives through a PR a person merged, and a release, like the rest of skel. skel never runs a plugin from anywhere else. A public repository changes nothing here: a stranger can open a PR, and only a person merges it.
+- **Only you turn one on.** `skel plugin` is refused for the lead and every agent, as `skel repo trust` is. A repository's `skel.yaml` can't name a plugin, since an agent or a stranger's PR can change that file.
+- **Agents never reach a plugin or a token.** Plugin tokens live in your home folder, which the sandbox hides. Agents only have skel's commands, whose meaning is fixed. The daemon hands each plugin its own token, and only the GitHub plugin uses your `gh` login. That is how the code is written, not a wall: reviewing a plugin is what holds it to that.
+- **What a plugin brings in is outside text.** Its control codes are removed. Typed into an agent, it steers that agent, so each plugin says who may reach one. For GitHub that is you and people who can push. A task only starts when a person with access says so, such as by adding the `skel` label.
+
+**How Sentry and Slack fit.** Neither is in this version, and each gets its own spec first. Sentry is a tracker and nothing else. An error is a task, named by Sentry's own ID, and your config says which repository a Sentry project belongs to, as its PR still lands on GitHub. Anyone who can reach your app can cause an error and choose its text, so an error shows up in ISSUES and starts nothing on its own: you or the lead run `skel start`. Slack is chat and nothing else. What skel types into the lead also goes to Slack, so you hear that a thread needs you, and you attach to answer. A message from someone you allowed goes to the lead. Its deliveries come through the port, so it can wake a Sprite.
+
 ## Commands
 
 For you, and for the lead:
@@ -203,6 +248,8 @@ For you, and for the lead:
 | `skel repo ls` | Lists the repositories skel works on, with their short names. |
 | `skel repo rm <name>` | Removes skel's clone of a repository. It refuses while the repository has live threads, and names them. Only you can run it: the lead never needs to, and asks you instead. |
 | `skel repo trust <name>` | Trusts a repository your login can't push to, so skel clones it. Only you can run it. |
+| `skel plugin add <name>` | Turns on a plugin on this machine, asking for its token. Only you can run it. |
+| `skel plugin rm <name>` | Turns a plugin off, and removes its token and settings. GitHub can't be turned off. Only you can run it. |
 | `skel task ls [<repo>]` | Open tasks, newest first, with the thread on each one if it has one. `--json` for tools. |
 | `skel task show <repo>-<task>` | A task's title and body, which is all its builder sees, with its thread if it has one. `--json` for tools. |
 | `skel task create <repo> "<title>" "<body>"` | Creates a task, as a GitHub issue, and prints its name, such as `app-13`. It doesn't start a thread. |
@@ -229,7 +276,7 @@ reviewer: { harness: codex }
 max_rounds: 3
 ```
 
-A repository's `skel.yaml` holds what that repository needs, and can override the defaults:
+A repository's `skel.yaml` holds what that repository needs, and can override the defaults, but never `plugins`:
 
 ```yaml
 setup: [bun install]
@@ -248,9 +295,9 @@ test: [bun test]
 
 **Isolation.** Each thread gets its own branch and clone, so nothing a builder does in it reaches your checkouts, skel's clone or another thread. Each agent runs inside bubblewrap: its folder is writable, the rest of the system is read-only, your home folder and credentials are hidden. The lead works in its own folder in `~/.local/share/skel/lead/` and sees skel's clone of every repository read-only, including ones brought in while it runs, so it can plan across them while the work happens in threads. The reviewer sees the thread's clone through a throwaway layer, so it can run the tests but changes nothing.
 
-**Tokens stay out.** Agents never see your GitHub token. They don't push or call GitHub. They call skel commands, and the daemon, outside the sandbox, pushes and posts with your `gh` login. Commits are authored by you, with skel as co-author.
+**Tokens stay out.** Agents never see your GitHub token, or any plugin's. They don't push or call GitHub. They call skel commands, and the daemon, outside the sandbox, pushes and posts with your `gh` login. Commits are authored by you, with skel as co-author.
 
-**One seam for GitHub.** All GitHub calls live in one module, so Linear, Jira, local tasks or another forge can be added later without touching the flow.
+**One file for GitHub.** All GitHub calls live in the GitHub plugin, and no other file speaks GitHub's words, so a new tool is added beside it and the flow stays as it is.
 
 **One seam for Sprites.** Creating a Sprite, running commands on it and keeping it awake live in one module, so other machines that skel creates or that sleep can be added later without touching the flow.
 
@@ -275,8 +322,10 @@ These are the parts that need care. `docs/learnings.md` explains the traps behin
 - Agents talking to each other, beyond skel telling the lead
 - Triggers, schedules or automations
 - Reaching you outside the lead's session, such as a `notify` command for your phone
-- Slack, Linear, Jira or forges other than GitHub
-- Errors from Sentry as tasks, planned as the launch after this one
+- Errors from Sentry as tasks, planned as the launch after this one, as the second plugin
+- Slack, as a plugin, planned after Sentry
+- Linear, Jira or forges other than GitHub
+- Plugins from outside skel's repository, as a package or a command skel starts. They would need a sandbox of their own, a way to install and pin them, and a way to stay in step with a release most days. Until someone needs one, a new plugin is a PR to skel
 - Threads started from plain text, without a task. They would be named with a marker, such as `app-t1`, so they never clash with a task's name
 - Starting a thread by assigning an issue or mentioning skel on GitHub
 - A remote protocol of our own (SSH only), teams and permissions
@@ -297,6 +346,11 @@ Launch milestones, in order:
 4. **The first two minutes.** From the install line to a picked up issue, without reading anything but what skel prints. The first run is short and every step says what comes next. Once it is done, the lead says how to start work: add the `skel` label to an issue. skel looks for labeled issues as soon as a repository comes in, then often enough that a label is picked up within 2 minutes.
 5. **Someone else installs it.** By Thursday 12 November, a developer who isn't Simon installs skel on their own machine and hands it a real issue, with no help. Everything that stops them is fixed before the launch.
 6. **The launch.** A README with the install line, a quickstart, what agents can and can't touch, which accounts the harness and reviewer use, the known limits, and where to report bugs: GitHub issues. Record the video. Make the repository public on 16 November.
+
+After the launch, in order. None of this starts before 16 November, so the tester and the video run on the GitHub code as it is:
+
+7. **GitHub in a plugin.** `src/github.ts` moves whole to `src/plugins/github.ts`, and GitHub's part of the webhook listener goes with it. The flow gets PRs, checks and reviews in skel's words, so `src/flow/decide.ts` no longer imports GitHub's types. Every case in its tests stays, and GitHub's words are tested where they are turned into skel's. Nothing changes for you: the same first run, commands, webhooks and database. This step adds no plugin type, list or command, as they would have only one user.
+8. **Sentry, the second plugin.** It gets its own spec first. It lands together with everything only a second plugin justifies: the list in `src/plugins.ts`, the tracker job with GitHub and Sentry both behind it, `skel plugin add` and `rm`, deliveries by plugin on the public port, and task IDs that aren't numbers, with existing threads carried over under the same names.
 
 ## Done when
 
