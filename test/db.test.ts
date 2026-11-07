@@ -83,3 +83,33 @@ openDb().run("INSERT INTO repositories (owner, repo, name) VALUES ('simon', 'sit
   expect(err).toBe("");
   expect(code).toBe(0);
 });
+
+test("a process that opens the database while another is adding the newer columns still starts", async () => {
+  const data = join(home, ".local", "share", "skel");
+  mkdirSync(data, { recursive: true });
+  const other = new Database(join(data, "skel.db"));
+  // The waiting process keeps looking at the file, and a commit that meets one of those looks
+  // fails at once without a wait of its own.
+  other.run("PRAGMA busy_timeout = 5000");
+  other.run(`CREATE TABLE repositories (owner TEXT NOT NULL, repo TEXT NOT NULL,
+    name TEXT NOT NULL UNIQUE, PRIMARY KEY (owner, repo))`);
+  other.run("BEGIN IMMEDIATE");
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+console.log("opening");
+openDb().close();`;
+  const run = Bun.spawn([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const reader = run.stdout.getReader();
+  await reader.read();
+  // Long enough for the process to reach the point where it waits for its turn to write. One
+  // that gets there late only sees the finished columns, so a slow machine can't fail this.
+  await Bun.sleep(500);
+  other.run("ALTER TABLE repositories ADD COLUMN labeled INTEGER NOT NULL DEFAULT 0");
+  other.run("COMMIT");
+  other.close();
+  expect(await new Response(run.stderr).text()).toBe("");
+  expect(await run.exited).toBe(0);
+}, 15_000);
