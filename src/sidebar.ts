@@ -7,7 +7,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { openDb } from "./db.ts";
 import { Name } from "./github.ts";
-import { agentClient, pageCommand, screenSocket, sidebarWidth } from "./screen.ts";
+import { agentClient, pageCommand, sidebarWidth } from "./screen.ts";
 import { clean, drawStrip, fitted } from "./strip.ts";
 import { github, needsYou, Thread, threadConfig, threadName } from "./thread.ts";
 import {
@@ -15,6 +15,7 @@ import {
   paneWidth,
   respawnPane,
   runningSessions,
+  screenSocket,
   shownSession,
   showSession,
   showStrip,

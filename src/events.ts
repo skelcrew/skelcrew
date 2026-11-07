@@ -20,7 +20,6 @@ import { tellLead } from "./lead.ts";
 import { cloneDir } from "./paths.ts";
 import { refreshClones, repositories } from "./repo.ts";
 import { endRound } from "./round.ts";
-import { screenSocket } from "./screen.ts";
 import {
   baseOf,
   cloneOf,
@@ -33,7 +32,14 @@ import {
   threadConfig,
   threadName,
 } from "./thread.ts";
-import { failedScreen, hasSession, runningSessions, stopSession, typeInto } from "./tmux.ts";
+import {
+  failedScreen,
+  hasSession,
+  runningSessions,
+  screenSocket,
+  stopSession,
+  typeInto,
+} from "./tmux.ts";
 
 type Change = Partial<Pick<Thread, "status" | "needs_you">>;
 type Author = PullRequest["comments"][number]["author"];
