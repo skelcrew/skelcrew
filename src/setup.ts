@@ -403,7 +403,7 @@ export function firstRun(): void {
   if (process.platform === "darwin")
     console.log(
       skelLine(
-        "a laptop sleeps, so work stops while the lid is closed. skel --remote keeps it going, on a server or a Sprite.",
+        "a laptop sleeps, so work stops while the lid is closed. skel remote add keeps it going, on a server or a Sprite.",
       ),
     );
 }

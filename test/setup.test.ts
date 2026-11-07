@@ -362,7 +362,7 @@ test("on a Mac, says once that work stops with the lid closed", async () => {
   const note = first.out.indexOf("work stops while the lid is closed");
   expect(done).toBeGreaterThan(-1);
   expect(note).toBeGreaterThan(done);
-  expect(first.out).toContain("skel --remote");
+  expect(first.out).toContain("skel remote add keeps it going");
   const second = await skelOnMac();
   expect(second.out).not.toContain("lid");
 });
