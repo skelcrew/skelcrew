@@ -4,7 +4,8 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { drawPage, type Page, readPage } from "../src/screen/page.ts";
+import { type Page, readPage } from "../src/flow/page.ts";
+import { drawPage } from "../src/screen/page.ts";
 
 const esc = "\x1b";
 const issueUrl = "https://github.com/simon/app/issues/31";

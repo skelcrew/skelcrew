@@ -15,7 +15,8 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { startSession, stillRunning } from "../src/agents/tmux.ts";
-import { drawPage, type Page } from "../src/screen/page.ts";
+import type { Page } from "../src/flow/page.ts";
+import { drawPage } from "../src/screen/page.ts";
 import { sidebarWidth } from "../src/screen/screen.ts";
 import { source, until as wait } from "./harness.ts";
 

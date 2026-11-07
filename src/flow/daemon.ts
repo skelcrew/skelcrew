@@ -12,7 +12,6 @@ import { setupDone } from "../machine/setup.ts";
 import { holdAwhile, keepAwake, onSprite, urlPort } from "../machine/sprite.ts";
 import { daemonSocket, leadSocket, threadSocket } from "../paths.ts";
 import { errorText } from "../say.ts";
-import { readPage } from "../screen/page.ts";
 import {
   bringBack,
   failThread,
@@ -25,6 +24,7 @@ import {
 import { stopThread } from "./events.ts";
 import { attachedNote, recordAttachedFrom, startLead, tellLead } from "./lead.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
+import { readPage } from "./page.ts";
 import { pollGitHub } from "./poll.ts";
 import { bringInNamed, findRepository, refreshClones, repositories } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
