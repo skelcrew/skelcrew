@@ -274,6 +274,15 @@ that covers the code you are about to write.
 - **A clone stopped halfway must not look like one.** Clone outside the folder the lead
   sees, then move it in.
 
+## Releasing
+
+- **Bun's cross-built Mac binaries carry a signature that fails verification.** Built on
+  Linux, they fail `codesign --verify --strict` with "invalid signature (code or signature
+  have been modified)". They still start and serve, so a quick try looks fine, but macOS
+  checks pages as they load, and a later page could get the binary killed.
+  `codesign --force --sign -` on a Mac fixes it, with no Apple account.
+- **Signing changes the binary.** Checksums made before signing fail every Mac install.
+
 ## Talking on GitHub
 
 - **Report progress through GitHub's own signals, never comments.** v4 posted seven
