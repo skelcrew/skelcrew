@@ -77,7 +77,7 @@ export const hasWork = (threads: Thread[]) =>
   );
 
 // Returns the thread's repository as owner/name, as GitHub calls want it.
-export const github = (thread: Thread) => `${thread.owner}/${thread.repo}`;
+export const fullNameOf = (thread: Thread) => `${thread.owner}/${thread.repo}`;
 // Returns the thread's clone folder. It comes from the folder name chosen at start, so it
 // stays put when the repository's name changes.
 export const cloneOf = (thread: Thread) => join(threadsDir(), thread.folder);
@@ -131,7 +131,7 @@ export function threadName(db: Database, thread: Thread): string {
   const row = db
     .query("SELECT name FROM repositories WHERE owner = ? AND repo = ?")
     .get(thread.owner, thread.repo);
-  const name = z.object({ name: z.string() }).nullable().parse(row)?.name ?? github(thread);
+  const name = z.object({ name: z.string() }).nullable().parse(row)?.name ?? fullNameOf(thread);
   return `${name}-${thread.task}`;
 }
 

@@ -15,7 +15,7 @@ import { findRepository, refreshClones } from "./repo.ts";
 import { quietly } from "./run.ts";
 import { refuseCredentials, setupCommand } from "./sandbox.ts";
 import { errorText } from "./say.ts";
-import { cloneOf, folderName, github, log, readThread, record, Thread } from "./thread.ts";
+import { cloneOf, folderName, fullNameOf, log, readThread, record, Thread } from "./thread.ts";
 import {
   agentRuns,
   checkItLived,
@@ -193,7 +193,7 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
     cloneDir(thread.owner, thread.repo),
     clone,
   ]);
-  await fetchBranch(clone, github(thread), thread.base);
+  await fetchBranch(clone, fullNameOf(thread), thread.base);
   await run(["git", "-C", clone, "checkout", "--quiet", "-b", thread.branch, "FETCH_HEAD"]);
   // The reviewer reads the diff against origin/<base>, which must be where the branch
   // started. Cloned from skel's clone, the thread's clone has only the default branch there,
@@ -232,7 +232,7 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
   const session = resume ?? crypto.randomUUID();
   let start: { resume: string } | { sessionId: string; prompt: string } = { resume: session };
   if (!resume) {
-    const { title, body } = await readIssue(github(thread), thread.task);
+    const { title, body } = await readIssue(fullNameOf(thread), thread.task);
     start = { sessionId: session, prompt: body ? `${title}\n\n${body}` : title };
   }
   record(db, thread.folder, { session });

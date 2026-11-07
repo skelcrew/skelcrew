@@ -18,7 +18,7 @@ import { cloneDir } from "./paths.ts";
 import { review, reviewerHarness } from "./reviewer.ts";
 import { quietly } from "./run.ts";
 import { errorText } from "./say.ts";
-import { cloneOf, github, readThread, record, type Thread, threadName } from "./thread.ts";
+import { cloneOf, fullNameOf, readThread, record, type Thread, threadName } from "./thread.ts";
 import { typeInto } from "./tmux.ts";
 
 // Runs git in skel's own clone and returns what it printed, throwing with its error when it
@@ -37,7 +37,7 @@ async function git(folder: string, ...args: string[]): Promise<string> {
 // .git included, and a planted setting would run with your rights.
 async function push(db: Database, folder: string, summary: string): Promise<string> {
   const thread = readThread(db, folder);
-  const fullName = github(thread);
+  const fullName = fullNameOf(thread);
   const ours = cloneDir(thread.owner, thread.repo);
   // A ref of the thread's own, not FETCH_HEAD, which refreshing skel's clone also writes.
   const ref = `refs/skel/threads/${thread.folder}`;
@@ -82,7 +82,7 @@ async function reviewRound(
   const thread = readThread(db, folder);
   const { pr } = thread;
   if (pr === null) throw new Error("the thread has no pull request to review");
-  const fullName = github(thread);
+  const fullName = fullNameOf(thread);
   const { model, reviewer, maxRounds } = threadConfig();
   await setReviewStatus(fullName, sha, "pending", "skel's reviewer is reviewing");
   if (signal.aborted) return;

@@ -10,7 +10,7 @@ import { cloneDir } from "./paths.ts";
 import { refreshClones } from "./repo.ts";
 import { endRound } from "./round.ts";
 import { errorText } from "./say.ts";
-import { cloneOf, github, readThread, record, type Thread, threadName } from "./thread.ts";
+import { cloneOf, fullNameOf, readThread, record, type Thread, threadName } from "./thread.ts";
 import { agentRuns, stopSession, typeInto } from "./tmux.ts";
 
 // The message about failed checks, with the end of each one's log. A check that isn't a
@@ -35,7 +35,7 @@ async function aboutChecks(fullName: string, failed: Check[]): Promise<string[]>
 async function freshBase(db: Database, thread: Thread, base: string): Promise<void> {
   await refreshClones(db);
   if (base !== baseOf({ ...thread, base: null }))
-    await fetchIntoClone(cloneDir(thread.owner, thread.repo), github(thread), base);
+    await fetchIntoClone(cloneDir(thread.owner, thread.repo), fullNameOf(thread), base);
 }
 
 // Typing in progress per thread. A poll leaves a thread alone while its events are typed in,
@@ -98,7 +98,7 @@ export async function tellBuilder(
   const { handled, change, why } = decision;
   try {
     if (decision.conflict !== null) await freshBase(db, thread, decision.conflict);
-    const checks = await aboutChecks(github(thread), decision.failed);
+    const checks = await aboutChecks(fullNameOf(thread), decision.failed);
     const text = [...checks, ...decision.tell].join("\n\n---\n\n");
     if (!agentRuns(tmux, thread.folder)) throw new Error("its builder isn't running");
     // A builder can work long after an event, but one busy this long has likely hung.

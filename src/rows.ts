@@ -5,7 +5,7 @@ import { z } from "zod";
 import { pastLimit } from "./decide.ts";
 import { Name } from "./github.ts";
 import { green, grey, red, yellow } from "./look.ts";
-import { github, needsYou, Thread, threadName } from "./thread.ts";
+import { fullNameOf, needsYou, Thread, threadName } from "./thread.ts";
 
 // One row of the sidebar, with what the strip says of the agent too. The lead has no status of
 // its own, and a row's age is empty unless it shows a running time.
@@ -141,7 +141,7 @@ export function sidebarRows(
         // is only there for a field that stays null until the first submit.
         harness: word === "reviewing" ? (reviewer ?? "") : builderHarness,
         age: word === "working" && thread.started !== null ? threadAge(thread.started, now) : "",
-        github: github(thread),
+        github: fullNameOf(thread),
         title: thread.title,
         pr: thread.pr,
         checks: thread.checks,
