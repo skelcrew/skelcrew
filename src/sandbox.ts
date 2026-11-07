@@ -192,7 +192,7 @@ export function refuseCredentials(repository: string): void {
 // out, and so do CLAUDE_CODE_* variables inherited from a Claude Code session, which make
 // the agent misbehave, for example by writing no transcript. ANTHROPIC_API_KEY is for those
 // who use a key rather than a login.
-const passed = [
+const allowedEnv = [
   ...["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "COLORTERM", "LANG", "TZ"],
   "ANTHROPIC_API_KEY",
 ];
@@ -202,7 +202,8 @@ const passed = [
 export function keptEnv(env: Record<string, string | undefined>): Record<string, string> {
   const kept: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined && (passed.includes(key) || key.startsWith("LC_"))) kept[key] = value;
+    if (value !== undefined && (allowedEnv.includes(key) || key.startsWith("LC_")))
+      kept[key] = value;
   }
   return kept;
 }

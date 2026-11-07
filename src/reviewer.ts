@@ -39,7 +39,7 @@ const schema = JSON.stringify({
 // Only what a shell, the tests and the harness need gets in. The keys are for those who use
 // one rather than a login. codex exec reads CODEX_API_KEY: given only OPENAI_API_KEY, it
 // sent no key at all.
-const passed = [
+const allowedEnv = [
   ...["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "LANG", "TZ"],
   ...["OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY"],
 ];
@@ -214,7 +214,8 @@ async function reviewNow(given: {
         : claudeCommand(home, folder, model);
     const kept: Record<string, string> = { ...run.env };
     for (const [key, value] of Object.entries(env))
-      if (value !== undefined && (passed.includes(key) || key.startsWith("LC_"))) kept[key] = value;
+      if (value !== undefined && (allowedEnv.includes(key) || key.startsWith("LC_")))
+        kept[key] = value;
     // Tests and builds write in the clone, so it is seen as a throwaway folder too.
     const copy = join(folder, "clone");
     const { mounts, at } = await throwaway({ source: clone, copy, sprite, signal });
