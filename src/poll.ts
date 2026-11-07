@@ -2,20 +2,13 @@
 // PRs, and hands what each PR means for its thread to the code that acts on it.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
+import { threadConfig } from "./config.ts";
 import { ciChecks, decide, labeledToStart, newAuthors } from "./decide.ts";
 import { endThread, tellBuilder, typing } from "./events.ts";
 import { canPush, type Labeled, type OpenList, reactToIssue, readRepository } from "./github.ts";
 import { tellLead } from "./lead.ts";
 import { repositories } from "./repo.ts";
-import {
-  needsYou,
-  readThread,
-  record,
-  startThread,
-  Thread,
-  threadConfig,
-  threadName,
-} from "./thread.ts";
+import { needsYou, readThread, record, startThread, Thread, threadName } from "./thread.ts";
 import { runningSessions, screenSocket } from "./tmux.ts";
 
 // Starts a thread on each of the repository's issues labeled skel that has none, exactly as

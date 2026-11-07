@@ -3,13 +3,12 @@
 import { createConnection } from "node:net";
 import { z } from "zod";
 import { openDb } from "./db.ts";
-import { daemonLog, startLaunchAgent } from "./launchd.ts";
 import { RepositoryRow, TaskRow, TaskView, ThreadRow } from "./list.ts";
 import { Page } from "./page.ts";
 import { cliSocket } from "./paths.ts";
 import { parseJson, type Request } from "./requests.ts";
 import { openScreen } from "./screen.ts";
-import { onSprite, serviceLog, startSpriteService } from "./sprite.ts";
+import { startDaemon } from "./service.ts";
 import { findThread } from "./thread.ts";
 import { failedScreen, hasSession } from "./tmux.ts";
 
@@ -168,22 +167,11 @@ export async function attachToLead(tmux: string, from?: string): Promise<void> {
   // Asking for the lead brings it back if it ended while the daemon kept running.
   let reply = await ask(asked, 15_000);
   if (reply === null) {
-    const sprite = onSprite();
-    const mac = process.platform === "darwin";
-    if (sprite) startSpriteService();
-    else if (mac) startLaunchAgent();
-    else {
-      const start = Bun.spawnSync(["systemctl", "--user", "start", "skel"], {
-        stdio: ["inherit", "inherit", "inherit"],
-      });
-      if (!start.success) throw new Error("systemctl couldn't start skel's daemon");
-    }
+    const log = startDaemon();
     const deadline = Date.now() + 10_000;
     while (reply === null) {
       if (Date.now() > deadline)
-        throw new Error(
-          `skel's daemon didn't answer within 10 seconds: ${sprite ? serviceLog : mac ? daemonLog() : "journalctl --user -u skel"} shows why`,
-        );
+        throw new Error(`skel's daemon didn't answer within 10 seconds: ${log} shows why`);
       await Bun.sleep(100);
       reply = await ask(asked, 15_000);
     }

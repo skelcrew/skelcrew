@@ -6,12 +6,16 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
 import { agentCommand, hasTranscript } from "./claude.ts";
+import { threadConfig } from "./config.ts";
 import { fetchBranch, readIssue } from "./github.ts";
-import { cloneDir, configDir, threadSocket, threadsDir } from "./paths.ts";
+import { cloneDir, threadSocket, threadsDir } from "./paths.ts";
 import instructions from "./prompts/builder.md" with { type: "text" };
 import { findRepository, refreshClones } from "./repo.ts";
 import { refuseCredentials, setupCommand } from "./sandbox.ts";
 import { endSession, failedScreen, hasSession, startServer, startSession } from "./tmux.ts";
+
+// The sidebar reads the round limit from here, with the rest of what it knows about threads.
+export { threadConfig };
 
 export const Thread = z.object({
   owner: z.string(),
@@ -378,32 +382,6 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
     const { argv, env } = setupCommand(clone, command);
     await run(argv, `skel.yaml's setup command "${command}"`, env);
   }
-}
-
-const Config = z.looseObject({
-  builder: z.looseObject({ model: z.string().min(1).optional() }).optional(),
-  reviewer: z.looseObject({ harness: z.enum(["codex", "claude"]).optional() }).optional(),
-  max_rounds: z.number().int().positive().optional(),
-});
-
-// Returns what your config sets for threads: the builder's model (opus when it names none),
-// the reviewer's harness (none when it names none, so the reviewer picks), and the round
-// limit (3 when it names none). Throws when the config isn't valid, rather than run a thread
-// on settings you didn't pick.
-export function threadConfig(): {
-  model: string;
-  reviewer: "codex" | "claude" | undefined;
-  maxRounds: number;
-} {
-  const file = join(configDir(), "config.yaml");
-  const read = Config.safeParse(existsSync(file) ? (parse(readFileSync(file, "utf8")) ?? {}) : {});
-  if (!read.success) throw new Error(`${file} isn't valid: ${z.prettifyError(read.error)}`);
-  const { builder, reviewer, max_rounds } = read.data;
-  return {
-    model: builder?.model ?? "opus",
-    reviewer: reviewer?.harness,
-    maxRounds: max_rounds ?? 3,
-  };
 }
 
 // Starts the thread's builder in tmux, in the sandbox in its clone: with --resume when it
