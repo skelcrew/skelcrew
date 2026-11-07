@@ -23,7 +23,7 @@ import { readPage } from "./page.ts";
 import { daemonSocket, leadSocket, threadSocket } from "./paths.ts";
 import { pollGitHub } from "./poll.ts";
 import { bringInNamed, findRepository, refreshClones, repositories } from "./repo.ts";
-import { allowed, type Caller, parseJson, Request } from "./requests.ts";
+import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
 import { errorText } from "./say.ts";
 import { setupDone } from "./setup.ts";
@@ -184,7 +184,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   };
   // Carries out a request the caller may make, and returns the reply to send. The switch has
   // no default, so the typecheck fails if a request is left out.
-  const handle = async (request: Request, caller: Caller): Promise<object> => {
+  const handle = async (request: DaemonRequest, caller: Caller): Promise<object> => {
     switch (request.command) {
       case "status": {
         const thread = typeof caller === "object" ? { thread: threadName(db, caller) } : {};
@@ -268,7 +268,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   // Brings in a repository that task ls, task show, task create or start names by its full
   // GitHub name, when skel doesn't have it, then carries out the command. The reply says so,
   // so whoever asked learns its short name, and that its clone comes after.
-  const bringInFirst = async (request: Request, caller: Caller): Promise<object> => {
+  const bringInFirst = async (request: DaemonRequest, caller: Caller): Promise<object> => {
     const naming = ["task ls", "task show", "task create", "start"].includes(request.command);
     if (!naming || !("repo" in request) || !request.repo) return handle(request, caller);
     const brought = await bringInNamed(db, request.repo);
@@ -295,7 +295,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       if (end === -1) return;
       // One request per connection: more data while it runs must not run it again.
       connection.off("data", read);
-      const asked = Request.safeParse(parseJson(request.slice(0, end)));
+      const asked = DaemonRequest.safeParse(parseJson(request.slice(0, end)));
       const kind = typeof caller === "object" ? "builder" : caller;
       if (!asked.success || !allowed[kind].includes(asked.data.command))
         reply({ error: "the daemon doesn't know that request" });

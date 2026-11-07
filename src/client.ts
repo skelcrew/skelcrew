@@ -6,7 +6,7 @@ import { openDb } from "./db.ts";
 import { RepositoryRow, TaskRow, TaskView, ThreadRow } from "./list.ts";
 import { Page } from "./page.ts";
 import { cliSocket } from "./paths.ts";
-import { parseJson, type Request } from "./requests.ts";
+import { type DaemonRequest, parseJson } from "./requests.ts";
 import { openScreen } from "./screen.ts";
 import { startDaemon } from "./service.ts";
 import { findThread } from "./thread.ts";
@@ -16,7 +16,7 @@ const LeadReply = z.union([z.object({ lead: z.literal(true) }), z.object({ error
 
 // Sends a request to the daemon and returns its decoded reply, or null when nothing
 // answers. A socket file alone proves nothing: a daemon that was killed leaves it behind.
-function ask(request: Request, timeout: number): Promise<unknown> {
+function ask(request: DaemonRequest, timeout: number): Promise<unknown> {
   return new Promise((done) => {
     const connection = createConnection(cliSocket());
     const timer = setTimeout(() => connection.destroy(), timeout);
@@ -36,7 +36,7 @@ function ask(request: Request, timeout: number): Promise<unknown> {
 
 // Asks the daemon on behalf of a skel command, and returns its answer. Throws with the
 // daemon's error, or when nothing answers.
-async function request(asked: Request): Promise<unknown> {
+async function request(asked: DaemonRequest): Promise<unknown> {
   const reply = await ask(asked, 60_000);
   if (reply === null) throw new Error("the daemon didn't answer: run skel to start it");
   const failed = z.object({ error: z.string() }).safeParse(reply);
@@ -168,7 +168,7 @@ export async function pageOf(url: string): Promise<Page> {
 // with Ctrl-Q. The daemon keeps which repository you attached from, as owner/repo, or that
 // there is none, for the lead to hear with your next message.
 export async function attachToLead(tmux: string, from?: string): Promise<void> {
-  const asked: Request = { command: "lead", ...(from ? { from } : {}) };
+  const asked: DaemonRequest = { command: "lead", ...(from ? { from } : {}) };
   // Asking for the lead brings it back if it ended while the daemon kept running.
   let reply = await ask(asked, 15_000);
   if (reply === null) {

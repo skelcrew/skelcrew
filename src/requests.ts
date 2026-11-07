@@ -10,7 +10,7 @@ const Branch = z.string().regex(/^(?!-)(?!.*\.\.)[\w./-]+$/);
 
 // A request's `repo` names a repository the way a command does: by its name in skel or its
 // full GitHub name. It keeps that word because clients on other machines send it.
-export const Request = z.discriminatedUnion("command", [
+export const DaemonRequest = z.discriminatedUnion("command", [
   z.object({ command: z.literal("status") }),
   z.object({ command: z.literal("lead"), from: z.string().optional() }),
   z.object({ command: z.literal("repo ls") }),
@@ -50,7 +50,7 @@ export const Request = z.discriminatedUnion("command", [
   z.object({ command: z.literal("screen opened") }),
   z.object({ command: z.literal("page"), url: PageUrl }),
 ]);
-export type Request = z.infer<typeof Request>;
+export type DaemonRequest = z.infer<typeof DaemonRequest>;
 
 // Who is on the other end of a socket: you, the lead, or a thread's builder. An agent may ask
 // only for what its commands need. Trusting a repository is never a request: only you can,
