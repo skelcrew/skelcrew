@@ -10,8 +10,7 @@ import { onSprite, startTmuxService } from "./sprite.ts";
 // passes synchronized output on to terminals it knows have it, and without it Claude Code's
 // redraws arrive in pieces, so the prompt flickers over a slow link such as a Sprite's.
 // Terminals without it ignore the codes. A fixed index, since this runs again with each
-// new session and appending would add it every time. The key an older skel bound goes, since
-// a server keeps its keys while agents run.
+// new session and appending would add it every time.
 //
 // The wheel scrolls back through an agent's output. Claude Code draws in one of two ways. Its
 // classic drawing leaves its output in tmux's history, so copy mode shows it. Its full-screen
@@ -22,7 +21,6 @@ import { onSprite, startTmuxService } from "./sprite.ts";
 // reaches it too, as send-keys alone sends the key that ran it. mode-keys, since tmux picks
 // vi's table, and keeps these keys out of it, when $EDITOR says vi.
 const config = `set -g status off
-unbind -n C-]
 bind -n C-q detach-client
 set -g remain-on-exit failed
 set -s terminal-features[90] "*:sync"
