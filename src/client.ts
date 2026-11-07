@@ -5,11 +5,11 @@ import { z } from "zod";
 import { agentRuns } from "./agents/tmux.ts";
 import { openDb } from "./db.ts";
 import { RepositoryRow, TaskRow, TaskView, ThreadRow } from "./flow/list.ts";
+import { Page } from "./flow/page.ts";
 import { type DaemonRequest, parseJson } from "./flow/requests.ts";
 import { findThread } from "./flow/thread.ts";
 import { startDaemon } from "./machine/service.ts";
 import { cliSocket } from "./paths.ts";
-import { Page } from "./screen/page.ts";
 import { openScreen } from "./screen/screen.ts";
 
 const LeadReply = z.union([z.object({ lead: z.literal(true) }), z.object({ error: z.string() })]);
