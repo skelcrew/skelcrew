@@ -107,29 +107,7 @@ export function record(
   db: Database,
   folder: string,
   change: Partial<
-    Pick<
-      Thread,
-      | "status"
-      | "session"
-      | "rounds"
-      | "pr"
-      | "needs_you"
-      | "submitting"
-      | "reviewing"
-      | "telling"
-      | "held"
-      | "last_review"
-      | "last_comment"
-      | "last_check"
-      | "asking"
-      | "noting"
-      | "checks"
-      | "reviewer"
-      | "reviewed_by"
-      | "review_round"
-      | "verdict"
-      | "review_line"
-    >
+    Omit<Thread, "owner" | "repo" | "task" | "folder" | "branch" | "base" | "title" | "started">
   >,
   why?: string,
 ): Thread {
