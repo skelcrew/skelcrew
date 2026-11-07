@@ -381,6 +381,7 @@ test("the update keeps the old skel when the copy fails", async () => {
   writeFileSync(join(home, "scp-fails"), "");
   const run = await skel(["--remote", "simon@workbox", "ps"], "y\n");
   expect(run.code).toBe(1);
+  expect(run.err).toContain("scp couldn't copy skel to simon@workbox");
   expect(readFileSync(join(home, "server", ".local", "bin", "skel"), "utf8")).toBe(
     serverSkel("0000000"),
   );

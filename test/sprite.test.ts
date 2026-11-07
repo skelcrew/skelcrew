@@ -69,6 +69,7 @@ case "$1" in
     command -v "$1" > /dev/null || exit 1
     HOME=$PWD PATH="$PWD/.local/bin:${join(home, "bin")}:/usr/bin:/bin" exec "$@" ;;
   file) test -f "$HOME/push-fails" && exit 1; cp "$5" "$HOME/sprites/$4/$6" ;;
+  config) test ! -f "$HOME/config-fails" || { echo "no such option" >&2; exit 1; } ;;
 esac`,
   );
   // Like apt over sprite exec, which has no terminal for debconf's dialogs: it prints
@@ -285,6 +286,15 @@ test("shows apt's output only when installing bubblewrap fails", async () => {
   expect(calls()).not.toContain("sprite file push");
 });
 
+test("says why a Sprite's URL couldn't be made public", async () => {
+  writeFileSync(join(home, "config-fails"), "");
+  const run = await skel(["remote", "add", "sprite:demo"], "y\n");
+  expect(run.code).toBe(1);
+  expect(run.err).toContain(
+    "sprite couldn't make sprite:demo's URL public, so GitHub's webhooks can't wake it: no such option",
+  );
+});
+
 // sprite file push writes through a link, like scp, so a link left there would have the
 // file it points to overwritten.
 test("replaces a link at ~/.local/bin/skel instead of writing through it", async () => {
@@ -357,6 +367,7 @@ test("the update keeps the old skel on the Sprite when the copy fails", async ()
   writeFileSync(join(home, "push-fails"), "");
   const run = await skel(["--remote", "sprite:demo", "ps"], "y\n");
   expect(run.code).toBe(1);
+  expect(run.err).toContain("sprite couldn't copy skel to sprite:demo");
   const sprite = join(home, "sprites", "demo", ".local", "bin", "skel");
   expect(readFileSync(sprite, "utf8")).toBe(spriteSkel("0000000"));
   expect(calls()).not.toContain("services restart");
