@@ -28,6 +28,7 @@ import {
 const Lead = z.object({ session: z.string() }).nullable();
 const Told = z.object({ session: z.string(), note: z.string() }).nullable();
 const Note = z.object({ id: z.number(), text: z.string() }).nullable();
+// The column is called repo, but it holds the full GitHub name.
 const AttachedFrom = z.object({ repo: z.string().nullable() }).nullable();
 
 // Keeps a running lead or starts one, resuming its saved conversation when available. skel

@@ -49,7 +49,8 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 // Records a new thread on a task, with its folder and branch, and returns it. Refuses a
 // task that has a thread already, unless that one failed: then it starts over in the same
 // folder. Only records it, since the lead waits on the answer. Setting up its clone and
-// starting its builder come after, and can take minutes.
+// starting its builder come after, and can take minutes. `given` is a start request, so its
+// `repo` is the repository's name in skel or its full GitHub name.
 export async function startThread(
   db: Database,
   given: { repo: string; task: number; from?: string | undefined },

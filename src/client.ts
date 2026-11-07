@@ -71,30 +71,30 @@ export async function repos(): Promise<RepositoryRow[]> {
 
 // Asks the daemon for the threads, or one repository's, for skel ps. The daemon answers, as
 // the lead's sandbox hides skel's database.
-export async function threads(repo?: string): Promise<ThreadRow[]> {
-  const reply = await request({ command: "ps", ...(repo ? { repo } : {}) });
+export async function threads(repository?: string): Promise<ThreadRow[]> {
+  const reply = await request({ command: "ps", ...(repository ? { repo: repository } : {}) });
   return understood(z.object({ threads: z.array(ThreadRow) }), reply).threads;
 }
 
 // Asks the daemon for the open tasks of every repository, or of one, for skel task ls. The
 // daemon answers, as only it may call GitHub.
-export async function tasks(repo?: string): Promise<TaskRow[]> {
-  const reply = await request({ command: "task ls", ...(repo ? { repo } : {}) });
+export async function tasks(repository?: string): Promise<TaskRow[]> {
+  const reply = await request({ command: "task ls", ...(repository ? { repo: repository } : {}) });
   return understood(z.object({ tasks: z.array(TaskRow) }), reply).tasks;
 }
 
 // Asks the daemon for one task, for skel task show. The daemon answers, as only it may call
 // GitHub.
-export async function task(repo: string, number: number): Promise<TaskView> {
-  const reply = await request({ command: "task show", repo, task: number });
+export async function task(repository: string, number: number): Promise<TaskView> {
+  const reply = await request({ command: "task show", repo: repository, task: number });
   return understood(z.object({ task: TaskView }), reply).task;
 }
 
 // Has the daemon create a task, as a GitHub issue, for skel task create, and returns the
 // task's name, such as app-13. The daemon makes the call, since agents never hold a GitHub
 // login.
-export async function createTask(repo: string, title: string, body: string): Promise<string> {
-  const reply = await request({ command: "task create", repo, title, body });
+export async function createTask(repository: string, title: string, body: string): Promise<string> {
+  const reply = await request({ command: "task create", repo: repository, title, body });
   return understood(z.object({ task: z.string() }), reply).task;
 }
 
@@ -102,15 +102,20 @@ export async function createTask(repo: string, title: string, body: string): Pro
 // sentence: started a new thread, brought back a stopped one's builder, or let one past the
 // round limit go on. The daemon answers once the thread is recorded; its setup and builder
 // come after.
-export async function startOn(repo: string, task: number, from?: string): Promise<string> {
-  const reply = await request({ command: "start", repo, task, ...(from ? { from } : {}) });
+export async function startOn(repository: string, task: number, from?: string): Promise<string> {
+  const reply = await request({
+    command: "start",
+    repo: repository,
+    task,
+    ...(from ? { from } : {}),
+  });
   return understood(z.object({ started: z.string() }), reply).started;
 }
 
 // Has the daemon stop a thread, for skel stop, and returns the thread's name. The daemon
 // answers once the builder has exited.
-export async function stopOn(repo: string, task: number): Promise<string> {
-  const reply = await request({ command: "stop", repo, task });
+export async function stopOn(repository: string, task: number): Promise<string> {
+  const reply = await request({ command: "stop", repo: repository, task });
   return understood(z.object({ stopped: z.string() }), reply).stopped;
 }
 
@@ -124,8 +129,8 @@ export async function submitForReview(summary: string): Promise<string> {
 
 // Has the daemon review a thread's last submitted commit again, for skel review, and returns
 // the thread's name. The daemon answers at once, and the review runs after, as a round's.
-export async function reviewAgain(repo: string, task: number): Promise<string> {
-  const reply = await request({ command: "review", repo, task });
+export async function reviewAgain(repository: string, task: number): Promise<string> {
+  const reply = await request({ command: "review", repo: repository, task });
   return understood(z.object({ reviewing: z.string() }), reply).reviewing;
 }
 
@@ -185,10 +190,16 @@ export async function attachToLead(tmux: string, from?: string): Promise<void> {
 // Opens the screen with the builder of the thread named repo-task on the right, and returns
 // when you leave with Ctrl-Q. Only from your own terminal: it takes over the screen, which
 // the lead can't hand to you.
-export async function attachToThread(tmux: string, repo: string, task: number): Promise<void> {
-  const thread = findThread(openDb(), repo, task);
+export async function attachToThread(
+  tmux: string,
+  repository: string,
+  task: number,
+): Promise<void> {
+  const thread = findThread(openDb(), repository, task);
   // A builder that exited leaves its last screen behind, which would look like it still runs.
   if (!agentRuns(tmux, thread.folder))
-    throw new Error(`${repo}-${task}'s builder isn't running: the thread is ${thread.status}`);
+    throw new Error(
+      `${repository}-${task}'s builder isn't running: the thread is ${thread.status}`,
+    );
   await openScreen(tmux, thread.folder);
 }

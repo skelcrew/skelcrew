@@ -191,16 +191,16 @@ async function run(args: string[]): Promise<void> {
     printTask(await task(...shown), json);
     return;
   }
-  const [repo, title, body] = rest;
+  const [repository, title, body] = rest;
   if (
     command === "task" &&
     sub === "create" &&
-    repo &&
+    repository &&
     title &&
     body !== undefined &&
     rest.length === 3
   ) {
-    console.log(await createTask(repo, title, body));
+    console.log(await createTask(repository, title, body));
     return;
   }
   const thread = taskName(sub);

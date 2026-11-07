@@ -9,6 +9,7 @@ import { findRepository } from "./repo.ts";
 
 export const Thread = z.object({
   owner: z.string(),
+  // The repository's GitHub name, without the owner.
   repo: z.string(),
   task: z.number(),
   folder: z.string(),
@@ -136,19 +137,19 @@ export function threadName(db: Database, thread: Thread): string {
 
 // Returns the thread named repo-task, such as app-12, or null when the task has none. Throws
 // when skel doesn't have the repository.
-export function threadOn(db: Database, repo: string, task: number): Thread | null {
-  const { owner, repo: name } = findRepository(db, repo);
+export function threadOn(db: Database, repository: string, task: number): Thread | null {
+  const { owner, repo } = findRepository(db, repository);
   return Thread.nullable().parse(
     db
       .query("SELECT * FROM threads WHERE owner = ? AND repo = ? AND task = ?")
-      .get(owner, name, task),
+      .get(owner, repo, task),
   );
 }
 
 // Returns the thread named repo-task, such as app-12, and throws when there is none.
-export function findThread(db: Database, repo: string, task: number): Thread {
-  const thread = threadOn(db, repo, task);
-  if (!thread) throw new Error(`there is no thread ${repo}-${task}`);
+export function findThread(db: Database, repository: string, task: number): Thread {
+  const thread = threadOn(db, repository, task);
+  if (!thread) throw new Error(`there is no thread ${repository}-${task}`);
   return thread;
 }
 

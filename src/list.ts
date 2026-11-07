@@ -30,8 +30,8 @@ export type ThreadRow = z.infer<typeof ThreadRow>;
 
 // Returns the threads, or one repository's, newest first, for skel ps. A thread that starts
 // over gets a new row, so it counts as started when it last started.
-export function listThreads(db: Database, repo?: string): ThreadRow[] {
-  const one = repo ? findRepository(db, repo) : null;
+export function listThreads(db: Database, repository?: string): ThreadRow[] {
+  const one = repository ? findRepository(db, repository) : null;
   const all = one
     ? db
         .query("SELECT * FROM threads WHERE owner = ? AND repo = ? ORDER BY rowid DESC")
@@ -52,8 +52,8 @@ export type TaskRow = z.infer<typeof TaskRow>;
 
 // Returns the open tasks of every repository, or of one, newest first, with the thread on
 // each one that has one, for skel task ls. Tasks aren't kept: GitHub is asked each time.
-export async function listTasks(db: Database, repo?: string): Promise<TaskRow[]> {
-  const chosen = repo ? [findRepository(db, repo)] : repositories(db);
+export async function listTasks(db: Database, repository?: string): Promise<TaskRow[]> {
+  const chosen = repository ? [findRepository(db, repository)] : repositories(db);
   const each = await Promise.all(
     chosen.map(async (r) =>
       (await openIssues(`${r.owner}/${r.repo}`)).map((issue) => {
@@ -86,8 +86,8 @@ export type TaskView = z.infer<typeof TaskView>;
 
 // Returns one task's title and body, which is all its builder sees, with the thread on it if
 // it has one, for skel task show. Tasks aren't kept: GitHub is asked each time.
-export async function showTask(db: Database, repo: string, task: number): Promise<TaskView> {
-  const r = findRepository(db, repo);
+export async function showTask(db: Database, repository: string, task: number): Promise<TaskView> {
+  const r = findRepository(db, repository);
   const { title, body } = await readIssue(`${r.owner}/${r.repo}`, task);
   const row = db
     .query("SELECT * FROM threads WHERE owner = ? AND repo = ? AND task = ?")

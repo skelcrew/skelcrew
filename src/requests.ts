@@ -8,6 +8,8 @@ import type { Thread } from "./thread.ts";
 // for something else.
 const Branch = z.string().regex(/^(?!-)(?!.*\.\.)[\w./-]+$/);
 
+// A request's `repo` names a repository the way a command does: by its name in skel or its
+// full GitHub name. It keeps that word because clients on other machines send it.
 export const Request = z.discriminatedUnion("command", [
   z.object({ command: z.literal("status") }),
   z.object({ command: z.literal("lead"), from: z.string().optional() }),
