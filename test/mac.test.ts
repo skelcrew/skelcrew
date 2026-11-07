@@ -268,11 +268,23 @@ await stopSession(${JSON.stringify(socket)}, "agent");`;
 
 const codexHome = () => join(home, ".local", "share", "skel", "codex");
 
-// Writes a clone and a fake Codex that answers as told, after running `extra`.
+// Runs git in the clone and returns what it printed.
+const git = (clone: string, ...args: string[]) =>
+  Bun.spawnSync(["git", "-C", clone, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+    stdout: "pipe",
+  })
+    .stdout.toString()
+    .trim();
+
+// Writes a clone with a commit to review, and a fake Codex that answers as told, after
+// running `extra`.
 function reviewable(extra: string): string {
   const clone = join(home, ".local", "share", "skel", "threads", "app-12");
   mkdirSync(clone, { recursive: true });
   writeFileSync(join(clone, "README"), "app\n");
+  git(clone, "init", "-q");
+  git(clone, "add", ".");
+  git(clone, "commit", "-qm", "submitted");
   mkdirSync(codexHome(), { recursive: true });
   // Linux's cp doesn't know the word a Mac's has for sharing blocks.
   const cp = Bun.which("cp") ?? "cp";
@@ -291,7 +303,7 @@ printf '%s' '{"verdict":"approve","body":"Fine."}' > "$out"`,
 // Runs a review as a Mac would, and returns its verdict.
 async function reviewOnMac(clone: string, more = "") {
   const ran = await asMacRun(`import { review } from ${JSON.stringify(source("reviewer.ts"))};
-console.log(JSON.stringify(await review({ clone: ${JSON.stringify(clone)}, issue: { title: "t", body: "b" }, base: "origin/main", model: "opus", ${more} })));
+console.log(JSON.stringify(await review({ clone: ${JSON.stringify(clone)}, issue: { title: "t", body: "b" }, base: "origin/main", commit: ${JSON.stringify(git(clone, "rev-parse", "HEAD"))}, model: "opus", ${more} })));
 process.exit(0);`);
   expect(ran.err).toBe("");
   return JSON.parse(ran.out);

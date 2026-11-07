@@ -172,7 +172,7 @@ async function reviewNow(given: {
   clone: string;
   issue: { title: string; body: string };
   base: string;
-  commit?: string;
+  commit: string;
   model: string;
   harness?: "codex" | "claude" | undefined;
   signal?: AbortSignal;
@@ -223,15 +223,12 @@ async function reviewNow(given: {
     // as installed packages, stay for the tests. git runs in the sandbox, as the clone's
     // .git is the builder's to plant settings in.
     const checkout = 'git checkout -q -f --detach "$0" && git clean -q -fd && exec "$@"';
-    const command = given.commit
-      ? ["sh", "-c", checkout, given.commit, ...run.command]
-      : run.command;
     const argv = sandboxArgs({
       home,
       path,
       mounts: [...mounts, ...run.mounts],
       cwd: at,
-      command,
+      command: ["sh", "-c", checkout, given.commit, ...run.command],
       programs: run.command.slice(0, 1),
     });
     const before = stopped();

@@ -17,6 +17,7 @@ import { review } from "../src/reviewer.ts";
 
 let home = "";
 let clone = "";
+let commit = "";
 let bin = "";
 const codexHome = () => join(home, ".local", "share", "skel", "codex");
 const sessions = () => join(codexHome(), "sessions");
@@ -26,6 +27,14 @@ const issue = { title: "Fix the flaky test", body: "It fails one run in ten." };
 // of its own. So there the test's home is on the Sprite's own disk, as skel's is.
 const sprite = existsSync("/.sprite/api.sock");
 
+// Runs git in the clone and returns what it printed.
+const git = (...args: string[]) =>
+  Bun.spawnSync(["git", "-C", clone, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+    stdout: "pipe",
+  })
+    .stdout.toString()
+    .trim();
+
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(sprite ? homedir() : tmpdir(), "skel-reviewer-test-")));
   bin = join(home, "bin");
@@ -33,6 +42,10 @@ beforeEach(() => {
   clone = join(home, ".local", "share", "skel", "threads", "app-12");
   mkdirSync(clone, { recursive: true });
   writeFileSync(join(clone, "README"), "app\n");
+  git("init", "-q");
+  git("add", ".");
+  git("commit", "-qm", "submitted");
+  commit = git("rev-parse", "HEAD");
 });
 afterEach(() => {
   rmSync(home, { recursive: true, force: true });
@@ -65,7 +78,7 @@ function fakeCodex(answer: string, extra: string[] = []): void {
 
 const kept = (name: string) => readFileSync(join(sessions(), name), "utf8");
 const approve = '{"verdict":"approve","body":"Looks right."}';
-const given = () => ({ clone, issue, base: "origin/main", model: "opus", env: env() });
+const given = () => ({ clone, issue, base: "origin/main", commit, model: "opus", env: env() });
 const start = (more: { signal?: AbortSignal; limit?: number } = {}) =>
   review({ ...given(), ...more });
 
@@ -128,16 +141,6 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
   });
 
   test("reviews the commit it is given, whatever the builder changed since", async () => {
-    const git = (...args: string[]) =>
-      Bun.spawnSync(["git", "-C", clone, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
-        stdout: "pipe",
-      })
-        .stdout.toString()
-        .trim();
-    git("init", "-q");
-    git("add", ".");
-    git("commit", "-qm", "submitted");
-    const commit = git("rev-parse", "HEAD");
     writeFileSync(join(clone, "README"), "later\n");
     git("commit", "-qam", "later");
     writeFileSync(join(clone, "README"), "unsaved\n");
@@ -145,10 +148,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
     fakeCodex(approve, [
       '{ git rev-parse HEAD; cat README; test -e new || echo no-new; } > "$CODEX_HOME/sessions/seen"',
     ]);
-    expect(await review({ ...given(), commit })).toEqual({
-      verdict: "approve",
-      body: "Looks right.",
-    });
+    expect(await start()).toEqual({ verdict: "approve", body: "Looks right." });
     expect(kept("seen")).toBe(`${commit}\napp\nno-new\n`);
     expect(readFileSync(join(clone, "README"), "utf8")).toBe("unsaved\n");
   });
@@ -249,7 +249,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
     fakeClaude([
       'cat > /dev/null; echo "{\\"type\\":\\"result\\",\\"structured_output\\":{\\"verdict\\":\\"approve\\",\\"body\\":\\"$seen\\"}}"',
     ]);
-    const done = await review({ clone, issue, base: "origin/main", model: "sonnet", env: env() });
+    const done = await review({ ...given(), model: "sonnet" });
     expect(done.verdict).toBe("approve");
     const seen = Buffer.from(done.body, "base64").toString().split("\n");
     expect(seen.slice(0, 3)).toEqual(["-p", "--model", "sonnet"]);
