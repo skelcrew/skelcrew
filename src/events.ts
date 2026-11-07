@@ -40,12 +40,12 @@ async function freshBase(db: Database, thread: Thread, base: string): Promise<vo
 
 // Typing in progress per thread. A poll leaves a thread alone while its events are typed in,
 // so they are never typed twice, and a merge cancels the typing.
-export const typing = new Map<string, AbortController>();
+export const typingEvents = new Map<string, AbortController>();
 
 // Cancels the round and the typing under way for the thread, ends its builder's session, and
 // waits for the builder to exit, so nothing types into it or changes the thread afterwards.
 async function endBuilder(tmux: string, folder: string): Promise<void> {
-  typing.get(folder)?.abort();
+  typingEvents.get(folder)?.abort();
   endRound(folder);
   // Claude Code can outlive the end of its session for a few seconds, still writing in the
   // clone.
@@ -94,7 +94,7 @@ export async function tellBuilder(
   decision: Exclude<Decision, { end: string }>,
 ): Promise<void> {
   const cancel = new AbortController();
-  typing.set(thread.folder, cancel);
+  typingEvents.set(thread.folder, cancel);
   const { handled, change, why } = decision;
   try {
     if (decision.conflict !== null) await freshBase(db, thread, decision.conflict);
@@ -122,6 +122,6 @@ export async function tellBuilder(
     record(db, thread.folder, { ...handled, needs_you: true }, `couldn't tell: ${said}. ${why}`);
     tellLead(db, tmux);
   } finally {
-    typing.delete(thread.folder);
+    typingEvents.delete(thread.folder);
   }
 }

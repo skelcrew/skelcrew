@@ -5,7 +5,7 @@ import { z } from "zod";
 import { startThread } from "./builder.ts";
 import { threadConfig } from "./config.ts";
 import { ciChecks, decide, labeledToStart, newAuthors } from "./decide.ts";
-import { endThread, tellBuilder, typing } from "./events.ts";
+import { endThread, tellBuilder, typingEvents } from "./events.ts";
 import { canPush, type Labeled, type OpenList, reactToIssue, readRepository } from "./github.ts";
 import { tellLead } from "./lead.ts";
 import { fullNameIs, repositories } from "./repo.ts";
@@ -130,7 +130,7 @@ async function pollRepository(
       record(db, folder, { checks });
     if ("end" in decision) await endThread(db, tmux, thread, decision.end);
     // Left unhandled, so a stopped thread's events reach its builder once it starts again.
-    else if (thread.status === "stopped" || typing.has(folder) || stale) continue;
+    else if (thread.status === "stopped" || typingEvents.has(folder) || stale) continue;
     else if (decision.tell.length > 0 || decision.failed.length > 0)
       // Not waited on, so a busy builder holds up neither the other threads nor the next poll.
       tellBuilder(db, tmux, thread, decision);
