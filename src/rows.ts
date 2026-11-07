@@ -2,6 +2,7 @@
 // each thread, with the word that says what it is doing, and ISSUES and PRS as links.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
+import { pastLimit } from "./decide.ts";
 import { Name } from "./github.ts";
 import { green, grey, red, yellow } from "./look.ts";
 import { github, needsYou, Thread, threadName } from "./thread.ts";
@@ -77,7 +78,7 @@ export function threadWord(thread: Thread, maxRounds: number): string {
   const underWay = thread.submitting !== null || thread.reviewing !== null;
   if (thread.asking) return "question";
   if (thread.needs_you) {
-    if (thread.rounds > maxRounds) return "round limit";
+    if (pastLimit(thread, maxRounds)) return "round limit";
     if (underWay || verdict === "failed") return "review failed";
     if (verdict === "approve" && (checks === "passing" || checks === null)) return "approved";
     return "needs you";

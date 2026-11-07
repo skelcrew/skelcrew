@@ -2,7 +2,7 @@
 // its PR opened on the first round, reviewed by a fresh reviewer, and the review typed back
 // into the builder's session when it asks for changes.
 import type { Database } from "bun:sqlite";
-import { afterReview } from "./decide.ts";
+import { afterReview, pastLimit } from "./decide.ts";
 import {
   findPullRequest,
   openPullRequest,
@@ -222,7 +222,7 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
   if (thread.status === "stopped")
     throw new Error("this thread was stopped, so skel won't push it");
   // Past the round limit the thread still needs you, whatever the builder does.
-  const needs_you = thread.rounds > maxRounds;
+  const needs_you = pastLimit(thread, maxRounds);
   record(
     db,
     folder,
@@ -276,7 +276,7 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
     throw new Error(`${name} has no submitted commit to review yet`);
   const { maxRounds } = threadConfig();
   // Past the round limit the thread still needs you, whatever the review says.
-  const needs_you = thread.rounds > maxRounds;
+  const needs_you = pastLimit(thread, maxRounds);
   // The commit is saved as under review at once, so a second skel review asked before the
   // check is pending again is refused rather than cancelling this one.
   const change = {

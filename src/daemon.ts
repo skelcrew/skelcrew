@@ -6,6 +6,7 @@ import { mkdirSync, openSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import { openDb } from "./db.ts";
+import { pastLimit } from "./decide.ts";
 import { stopThread } from "./events.ts";
 import { createIssue } from "./github.ts";
 import { attachedNote, recordAttachedFrom, startLead, tellLead } from "./lead.ts";
@@ -268,7 +269,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
           return { started: `Started ${name} again: its builder is back where it was.` };
         }
         const live = before?.status === "working" || before?.status === "waiting";
-        if (before && live && before.rounds > threadConfig().maxRounds) {
+        if (before && live && pastLimit(before, threadConfig().maxRounds)) {
           goOn(db, tmux, before.folder);
           return { started: `${threadName(db, before)} goes on past the round limit.` };
         }
