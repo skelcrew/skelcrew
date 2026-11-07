@@ -1,7 +1,7 @@
 // What each event on a thread's PR means for the thread, decided from plain data: the
 // thread's row and what GitHub returned, with no clock, files or network.
 import { expect, test } from "bun:test";
-import { ciChecks, decide, labeledToStart } from "../src/events.ts";
+import { ciChecks, decide, labeledToStart } from "../src/decide.ts";
 import type { Check, PullRequest } from "../src/github.ts";
 import type { Thread } from "../src/thread.ts";
 
