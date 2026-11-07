@@ -24,7 +24,7 @@ const row = {
   running: true,
   harness: "claude",
   age: "",
-  github: null,
+  fullName: null,
 } satisfies Partial<Row>;
 const lead: Row = { ...row, name: "lead", session: "lead", status: null, word: "running" };
 const thread = (name: string, more: Partial<Row> = {}): Row => ({

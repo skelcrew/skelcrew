@@ -150,11 +150,11 @@ function trusted({ owner, repo, canPush, isFork }: GitHubRepo): boolean {
 // Checks trust, asking you when needed, refreshes the repository clone, records it for the
 // lead, and creates its skel label so you can start threads from GitHub. Runs only in your
 // own terminal, where a yes can't come from an injected instruction.
-async function bringIn(db: Database, github: GitHubRepo): Promise<void> {
-  const { owner, repo, canPush } = github;
+async function bringIn(db: Database, details: GitHubRepo): Promise<void> {
+  const { owner, repo, canPush } = details;
   const fullName = `${owner}/${repo}`;
   const known = repositories(db).some((r) => r.owner === owner && r.repo === repo);
-  if (!known && !trusted(github)) {
+  if (!known && !trusted(details)) {
     console.log(`Agents will run ${fullName}'s setup and test commands, and follow its AGENTS.md`);
     console.log("and settings as instructions.");
     const answer = prompt(`Do you trust ${fullName}? [y/N]`);
@@ -205,11 +205,11 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
   const known = (r: Repository) => fullNameIs(r, named);
   try {
     if (named && !repositories(db).some(known)) {
-      const github = await githubRepo(named);
+      const details = await githubRepo(named);
       // A checkout can still use a name the repository had before it was renamed or moved on
       // GitHub. skel keeps it under the name GitHub gives now, and the lead must hear that one.
-      named = `${github.owner}/${github.repo}`;
-      await bringIn(db, github);
+      named = `${details.owner}/${details.repo}`;
+      await bringIn(db, details);
     }
   } catch (error) {
     console.error(`skel: ${errorText(error)}`);
@@ -231,10 +231,10 @@ export async function bringInNamed(db: Database, given: string): Promise<Reposit
   // A name starting with a dash would reach gh as an option.
   if (!/^[\w.][\w.-]*\/[\w.-]+$/.test(given)) return undefined;
   if (repositories(db).some((r) => fullNameIs(r, given))) return undefined;
-  const github = await githubRepo(given);
-  const { owner, repo, canPush } = github;
+  const details = await githubRepo(given);
+  const { owner, repo, canPush } = details;
   const fullName = `${owner}/${repo}`;
-  if (!trusted(github))
+  if (!trusted(details))
     throw new Error(`${fullName} waits until you run skel repo trust ${fullName} in your terminal`);
   // GitHub can answer for a renamed repository under the name skel already has it by, and two
   // commands can bring in the same repository at once.
@@ -262,9 +262,9 @@ export async function trustRepo(given: string): Promise<void> {
   const known = repositories(db).find((r) => r.name === given);
   if (!known && !given.includes("/"))
     throw new Error(`there is no repository named ${given}. Name a new one as owner/repo`);
-  const github = await githubRepo(known ? `${known.owner}/${known.repo}` : given);
-  trust(`${github.owner}/${github.repo}`);
-  await bringIn(db, github);
+  const details = await githubRepo(known ? `${known.owner}/${known.repo}` : given);
+  trust(`${details.owner}/${details.repo}`);
+  await bringIn(db, details);
 }
 
 // Deletes skel's clone, registration and saved trust, then updates names that no longer
