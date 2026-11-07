@@ -1,6 +1,7 @@
 // The release build: makes skel for macOS and Linux, on arm64 and x64, from this one machine,
-// with the checksums and release notes, into dist/. Run by the release workflow on a version
-// tag, as bun scripts/build-release.ts 0.4.2. It publishes nothing.
+// with the release notes, into dist/. Run by the release workflow on a version tag, as
+// bun scripts/build-release.ts 0.4.2. It publishes nothing. It makes no checksums, as the
+// workflow signs the Mac binaries afterwards, and signing changes them.
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -39,15 +40,6 @@ function compile(version: string, file: string, target: string): void {
   if (!built.success) throw new Error(`bun build failed for ${target}`);
 }
 
-// Returns the checksums file, in the form sha256sum writes and the install script reads.
-async function checksums(): Promise<string> {
-  const lines = targets.map(async ([file]) => {
-    const bytes = await Bun.file(join(dist, file)).arrayBuffer();
-    return `${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}  ${file}\n`;
-  });
-  return (await Promise.all(lines)).join("");
-}
-
 // Returns the release notes: the subject of each commit since the last release. Each pull
 // request lands as one commit, so these read as what changed. The first release has no last
 // one, and all of history is no use to anyone.
@@ -60,19 +52,17 @@ function releaseNotes(): string {
 }
 
 // Builds a whole release into a clean dist/, so nothing from an earlier build gets published.
-// The checksums come last, so a failed build leaves no list that looks finished.
-async function build(version: string): Promise<void> {
+function build(version: string): void {
   if (!/^\d+\.\d+\.\d+$/.test(version))
     throw new Error(`a release is three numbers, such as 0.4.2, not "${version}"`);
   rmSync(dist, { recursive: true, force: true });
   mkdirSync(dist);
   for (const [file, target] of targets) compile(version, file, target);
   writeFileSync(join(dist, "notes.md"), releaseNotes());
-  writeFileSync(join(dist, "SHA256SUMS"), await checksums());
 }
 
 try {
-  await build(process.argv[2] ?? "");
+  build(process.argv[2] ?? "");
 } catch (error) {
   console.error(`skel: ${error instanceof Error ? error.message : String(error)}`);
   process.exit(1);
