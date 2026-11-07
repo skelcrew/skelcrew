@@ -1,9 +1,8 @@
 // The first run: what a plain skel sets up on a new machine, skipping each step already
 // done.
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { configFile, readConfig } from "./config.ts";
-import { codexHome, configDir } from "./paths.ts";
+import { claudeTokenFile, codexHome, configDir } from "./paths.ts";
 import { rule, skelLine } from "./say.ts";
 import { promptSecret } from "./secret.ts";
 import { installService, loginPath, serviceFile } from "./service.ts";
@@ -138,7 +137,7 @@ function saveClaudeToken(env: Env): void {
     if (problem === null) {
       mkdirSync(configDir(), { recursive: true });
       // Created readable only by you, so the token is never in a file others can read.
-      writeFileSync(tokenFile(), `${token}\n`, { mode: 0o600, flag: "wx" });
+      writeFileSync(claudeTokenFile(), `${token}\n`, { mode: 0o600, flag: "wx" });
       return;
     }
     question = `${problem}. Paste it again:`;
@@ -180,9 +179,6 @@ function connectGitHub(env: Env): void {
   console.log(skelLine("connected to GitHub."));
 }
 
-// Returns the private agent token file path used by setup and Claude Code sessions.
-const tokenFile = () => join(configDir(), "claude-token");
-
 // Asks for your harness choice and saves it.
 function pickHarness(): void {
   const { config } = readConfig();
@@ -203,7 +199,7 @@ function pickHarness(): void {
 // would require a GitHub call.
 export function setupDone(): boolean {
   const service = onSprite() ? spriteServiceInstalled() : existsSync(serviceFile());
-  return Boolean(readConfig().harness) && existsSync(tokenFile()) && service;
+  return Boolean(readConfig().harness) && existsSync(claudeTokenFile()) && service;
 }
 
 // Completes unfinished machine setup and keeps the daemon service current before attaching
@@ -260,7 +256,7 @@ function stepsToTake(env: Env): Step[] {
         "The harness is the coding agent that does the work. Claude Code is the only one for now.",
       take: pickHarness,
     });
-  if (!existsSync(tokenFile()))
+  if (!existsSync(claudeTokenFile()))
     steps.push({
       title: "log agents in to Claude",
       about: "Claude Code will print a long-lived token. Copy it, then come back here.",

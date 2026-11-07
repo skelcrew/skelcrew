@@ -5,12 +5,13 @@ import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync 
 import { join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
+import { agentCommand, hasTranscript } from "./claude.ts";
 import { threadConfig } from "./config.ts";
 import { fetchBranch, readIssue } from "./github.ts";
 import { cloneDir, threadSocket, threadsDir } from "./paths.ts";
 import instructions from "./prompts/builder.md" with { type: "text" };
 import { findRepository, refreshClones } from "./repo.ts";
-import { agentCommand, hasTranscript, refuseCredentials, setupCommand } from "./sandbox.ts";
+import { refuseCredentials, setupCommand } from "./sandbox.ts";
 import { endSession, failedScreen, hasSession, startServer, startSession } from "./tmux.ts";
 
 // The sidebar reads the round limit from here, with the rest of what it knows about threads.

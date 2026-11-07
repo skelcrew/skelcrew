@@ -3,6 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { z } from "zod";
+import { agentCommand, hasTranscript } from "./claude.ts";
 import { dataDir, leadSocket } from "./paths.ts";
 // What the lead is and how it hands work to threads. Without it, told "fix the flaky test",
 // it would try to edit the read-only clones rather than start a thread. It is a plain file so
@@ -10,7 +11,6 @@ import { dataDir, leadSocket } from "./paths.ts";
 // turn, so every line costs context: keep it short, and promise only what is built.
 import instructions from "./prompts/lead.md" with { type: "text" };
 import { refreshClones, repositories } from "./repo.ts";
-import { agentCommand, hasTranscript } from "./sandbox.ts";
 import { readThread, record, Thread, threadName } from "./thread.ts";
 import {
   endSession,

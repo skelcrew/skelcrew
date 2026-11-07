@@ -4,9 +4,14 @@ import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 
 // Returns the folder for your settings and saved logins, separate from repository files.
-export const configDir = () => join(homedir(), ".config", "skel");
-// Returns the folder for skel's clones, sessions and database on this machine.
-export const dataDir = () => join(homedir(), ".local", "share", "skel");
+// A caller that was handed an environment passes its HOME: homedir() goes by the HOME this
+// process started with, and ignores one set since or given to it.
+export const configDir = (home = homedir()) => join(home, ".config", "skel");
+// Returns the folder for skel's clones, sessions and database on this machine. Pass a home
+// for the same reason as for configDir.
+export const dataDir = (home = homedir()) => join(home, ".local", "share", "skel");
+// Returns the private agent token file path used by setup and Claude Code sessions.
+export const claudeTokenFile = (home = homedir()) => join(configDir(home), "claude-token");
 
 // Returns the socket folder shared by the CLI and daemon. Some terminals and multiplexers
 // start shells without XDG_RUNTIME_DIR, while the daemon, started by systemd, always has it
