@@ -11,8 +11,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { parseDocument } from "yaml";
-import { z } from "zod";
+import { configFile, readConfig } from "./config.ts";
 import { daemonLog, loadLaunchAgent, plistFile, plistText } from "./launchd.ts";
 import { codexHome, configDir } from "./paths.ts";
 import { rule, skelLine } from "./say.ts";
@@ -40,9 +39,6 @@ const macTools = [
   { command: "sandbox-exec", install: "it comes with macOS, and skel can't run agents without it" },
   claude,
 ];
-
-// Unknown keys pass through, so settings this version doesn't know survive a save.
-const Config = z.looseObject({ harness: z.enum(["claude"]).optional() });
 
 // Checks the programs a Mac needs and tries sandbox-exec, stopping setup with what to install
 // on failure. Homebrew's tools are named in one line that can be pasted as it is.
@@ -199,22 +195,8 @@ function connectGitHub(env: Env): void {
   console.log(skelLine("connected to GitHub."));
 }
 
-// Returns the settings file path used to remember your harness choice between runs.
-const configFile = () => join(configDir(), "config.yaml");
 // Returns the private agent token file path used by setup and Claude Code sessions.
 const tokenFile = () => join(configDir(), "claude-token");
-
-// Reads and validates settings, returning the YAML document and harness choice while
-// preserving unknown settings.
-function readConfig() {
-  const file = configFile();
-  const config = parseDocument(existsSync(file) ? readFileSync(file, "utf8") : "");
-  const [broken] = config.errors;
-  if (broken) throw new Error(`${file} isn't valid YAML: ${broken.message}`);
-  const read = Config.safeParse(config.toJS() ?? {});
-  if (!read.success) throw new Error(`${file} isn't valid: ${z.prettifyError(read.error)}`);
-  return { config, harness: read.data.harness };
-}
 
 // Asks for your harness choice and saves it.
 function pickHarness(): void {
