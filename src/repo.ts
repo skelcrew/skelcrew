@@ -24,6 +24,7 @@ import {
 import { onGitHub, originHere } from "./origin.ts";
 import { cloneDir, configDir, dataDir } from "./paths.ts";
 import { refuseCredentials } from "./sandbox.ts";
+import { errorText } from "./say.ts";
 import { onSprite, spriteUrl } from "./sprite.ts";
 import { hookRepository } from "./webhook.ts";
 
@@ -125,7 +126,7 @@ export function refreshClones(db: Database): Promise<void> {
         if (!repositories(db).some((r) => r.owner === owner && r.repo === repo))
           rmSync(cloneDir(owner, repo), { recursive: true, force: true });
       } catch (error) {
-        console.log(error instanceof Error ? error.message : String(error));
+        console.log(errorText(error));
       }
     }
   })().finally(() => {
@@ -169,7 +170,7 @@ async function bringIn(db: Database, github: GitHubRepo): Promise<void> {
   if (onSprite())
     await hookRepository(full).catch((error) =>
       console.error(
-        `skel: couldn't set the webhook that wakes this Sprite in ${full}: ${error instanceof Error ? error.message : String(error)}`,
+        `skel: couldn't set the webhook that wakes this Sprite in ${full}: ${errorText(error)}`,
       ),
     );
   const labeled = "UPDATE repositories SET labeled = 1 WHERE owner = ? AND repo = ?";
@@ -184,9 +185,7 @@ async function bringIn(db: Database, github: GitHubRepo): Promise<void> {
     db.run(labeled, [owner, repo]);
   } catch (error) {
     // The daemon tries again when it next refreshes the clone.
-    console.error(
-      `skel: couldn't create the skel label in ${full}: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    console.error(`skel: couldn't create the skel label in ${full}: ${errorText(error)}`);
   }
 }
 
@@ -209,7 +208,7 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
       await bringIn(db, github);
     }
   } catch (error) {
-    console.error(`skel: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`skel: ${errorText(error)}`);
   }
   if (repositories(db).length === 0) console.log(noRepositories);
   const found = repositories(db).find(known);
@@ -293,7 +292,7 @@ export async function removeRepo(name: string): Promise<void> {
   if (onSprite())
     await removeWebhook(full, spriteUrl()).catch((error) =>
       console.error(
-        `skel: couldn't remove the webhook that wakes this Sprite from ${full}, so remove it on GitHub: ${error instanceof Error ? error.message : String(error)}`,
+        `skel: couldn't remove the webhook that wakes this Sprite from ${full}, so remove it on GitHub: ${errorText(error)}`,
       ),
     );
   console.log(`Removed ${name} and skel's clone of it.`);

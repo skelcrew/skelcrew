@@ -7,6 +7,7 @@ import { endThread, tellBuilder, typing } from "./events.ts";
 import { canPush, type Labeled, type OpenList, reactToIssue, readRepository } from "./github.ts";
 import { tellLead } from "./lead.ts";
 import { repositories } from "./repo.ts";
+import { errorText } from "./say.ts";
 import {
   needsYou,
   readThread,
@@ -39,7 +40,7 @@ async function startLabeled(
   for (const issue of labeledToStart(threads, labeled)) {
     // An issue skel can't read, or one skel start took meanwhile, waits for the next poll.
     const thread = await startThread(db, { repo, task: issue.number }).catch((error) => {
-      console.log(`couldn't start #${issue.number} in ${repo}: ${message(error)}`);
+      console.log(`couldn't start #${issue.number} in ${repo}: ${errorText(error)}`);
       return null;
     });
     if (thread === null) continue;
@@ -49,13 +50,10 @@ async function startLabeled(
     // Not waited on, as for skel start: setup can take minutes.
     begin(thread);
     await reactToIssue(repo, issue.number).catch((error) =>
-      console.log(`couldn't react to #${issue.number} in ${repo}: ${message(error)}`),
+      console.log(`couldn't react to #${issue.number} in ${repo}: ${errorText(error)}`),
     );
   }
 }
-
-// Returns the text of anything thrown, for the daemon's log.
-const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 // Replaces what is saved of a repository's open issues and PRs with what GitHub just said, for
 // the sidebar, which only reads the database. All at once, so it never reads half a list.
@@ -196,7 +194,7 @@ export function pollGitHub(
     polling.add(repo);
     const threads = polled().filter((t) => t.owner === owner && t.repo === name);
     pollRepository(db, tmux, owner, name, threads, begin)
-      .catch((error) => console.log(`couldn't poll ${repo}: ${message(error)}`))
+      .catch((error) => console.log(`couldn't poll ${repo}: ${errorText(error)}`))
       .finally(() => {
         polling.delete(repo);
         if (again.delete(repo)) poll(owner, name);

@@ -4,7 +4,7 @@
 import { z } from "zod";
 import { originHere } from "./origin.ts";
 import { addMachine, type Machine, notSetUp, quoted, run, upToDate } from "./remote.ts";
-import { skelLine, windowTitle } from "./say.ts";
+import { errorText, skelLine, windowTitle } from "./say.ts";
 
 // Reports whether skel runs on a Sprite. It goes by sprite-env, the Sprite's own tool for
 // its services: every Sprite has it in /.sprite/bin, on the PATH its commands and services
@@ -160,9 +160,7 @@ export function keepAwake(
         held = null;
       }
     } catch (error) {
-      console.log(
-        `couldn't hold the Sprite awake or let it sleep: ${error instanceof Error ? error.message : error}`,
-      );
+      console.log(`couldn't hold the Sprite awake or let it sleep: ${errorText(error)}`);
     } finally {
       checking = false;
     }

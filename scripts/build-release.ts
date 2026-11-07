@@ -4,6 +4,7 @@
 // workflow signs the Mac binaries afterwards, and signing changes them.
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { errorText } from "../src/say.ts";
 
 // Each release file and the Bun target it is built for. On x64 the baseline build, which runs
 // on every CPU: the plain one stops with "Illegal instruction" on a CPU or virtual machine
@@ -65,6 +66,6 @@ function build(version: string): void {
 try {
   build(process.argv[2] ?? "");
 } catch (error) {
-  console.error(`skel: ${error instanceof Error ? error.message : String(error)}`);
+  console.error(`skel: ${errorText(error)}`);
   process.exit(1);
 }

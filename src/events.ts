@@ -8,6 +8,7 @@ import { tellLead } from "./lead.ts";
 import { cloneDir } from "./paths.ts";
 import { refreshClones } from "./repo.ts";
 import { endRound } from "./round.ts";
+import { errorText } from "./say.ts";
 import { baseOf, cloneOf, github, readThread, record, type Thread } from "./thread.ts";
 import { failedScreen, hasSession, stopSession, typeInto } from "./tmux.ts";
 
@@ -20,8 +21,7 @@ async function aboutChecks(repo: string, failed: Check[]): Promise<string[]> {
       const fix = 'Fix it, commit, and run skel submit "<summary>" again.';
       if (c.kind === "status") return `The check ${c.name} failed${link}. ${fix}`;
       const log = await failedLog(repo, c.id).catch(
-        (error) =>
-          `(skel couldn't read its log: ${error instanceof Error ? error.message : error})`,
+        (error) => `(skel couldn't read its log: ${errorText(error)})`,
       );
       return `The check ${c.name} failed${link}. The end of its log:\n\n${log}\n\n${fix}`;
     }),
@@ -110,7 +110,7 @@ export async function tellBuilder(
     // Ending the session for a stop or a merge can make typing fail, and a stopped thread's
     // events must stay unhandled for its builder to hear once it starts again.
     if (cancel.signal.aborted) return;
-    const said = error instanceof Error ? error.message : String(error);
+    const said = errorText(error);
     record(db, thread.folder, { ...handled, needs_you: true }, `couldn't tell: ${said}. ${why}`);
     tellLead(db, tmux);
   } finally {

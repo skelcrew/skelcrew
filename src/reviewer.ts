@@ -17,6 +17,7 @@ import { z } from "zod";
 import { claudeToken, settings } from "./claude.ts";
 import { dataDir } from "./paths.ts";
 import { sandboxArgs } from "./sandbox.ts";
+import { errorText } from "./say.ts";
 import { onSprite } from "./sprite.ts";
 
 export type Review = { verdict: "approve" | "changes" | "failed"; body: string };
@@ -275,7 +276,7 @@ async function reviewNow(given: {
     try {
       said = answer(harness, folder, out);
     } catch (error) {
-      const why = error instanceof Error ? error.message : String(error);
+      const why = errorText(error);
       return { verdict: "failed", body: `the reviewer answered outside the shape: ${why}` };
     }
     const verdict = Verdict.safeParse(said);
@@ -300,7 +301,7 @@ export function review(given: Parameters<typeof reviewNow>[0]): Promise<Review> 
   const turn = queue
     .then(() => reviewNow(given))
     .catch((error): Review => {
-      return { verdict: "failed", body: error instanceof Error ? error.message : String(error) };
+      return { verdict: "failed", body: errorText(error) };
     });
   queue = turn;
   return turn;

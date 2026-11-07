@@ -11,6 +11,7 @@ import { cloneDir, configDir, threadSocket, threadsDir } from "./paths.ts";
 import instructions from "./prompts/builder.md" with { type: "text" };
 import { findRepository, refreshClones } from "./repo.ts";
 import { refuseCredentials, setupCommand } from "./sandbox.ts";
+import { errorText } from "./say.ts";
 import { endSession, failedScreen, hasSession, startServer, startSession } from "./tmux.ts";
 
 export const Thread = z.object({
@@ -446,7 +447,7 @@ export async function bringBack(db: Database, tmux: string, thread: Thread): Pro
 // close ended, meanwhile stays as it is: its builder ended because of that, such as within
 // the moment skel watches it start.
 export function failThread(db: Database, thread: Thread, error: unknown): void {
-  const why = error instanceof Error ? error.message : String(error);
+  const why = errorText(error);
   const { status } = readThread(db, thread.folder);
   if (status === "stopped" || status === "done") {
     console.log(`${thread.folder} stays ${status}: ${why}`);

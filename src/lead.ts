@@ -11,6 +11,7 @@ import { dataDir, leadSocket } from "./paths.ts";
 // turn, so every line costs context: keep it short, and promise only what is built.
 import instructions from "./prompts/lead.md" with { type: "text" };
 import { refreshClones, repositories } from "./repo.ts";
+import { errorText } from "./say.ts";
 import { readThread, record, Thread, threadName } from "./thread.ts";
 import {
   endSession,
@@ -101,11 +102,7 @@ let telling: Promise<void> = Promise.resolve();
 export function tellLead(db: Database, tmux: string): void {
   telling = telling
     .then(() => typeNotes(db, tmux))
-    .catch((error) =>
-      console.log(
-        `couldn't tell the lead: ${error instanceof Error ? error.message : String(error)}`,
-      ),
-    );
+    .catch((error) => console.log(`couldn't tell the lead: ${errorText(error)}`));
 }
 
 // Keeps where you attached from, as owner/repo, or that there is none, for the lead to hear

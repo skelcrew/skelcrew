@@ -14,6 +14,7 @@ import {
 import { tellLead } from "./lead.ts";
 import { cloneDir } from "./paths.ts";
 import { review, reviewerHarness } from "./reviewer.ts";
+import { errorText } from "./say.ts";
 import {
   baseOf,
   cloneOf,
@@ -179,7 +180,7 @@ function follow(
 ): void {
   const done = rest.catch((error) => {
     if (cancel.signal.aborted) return;
-    const why = error instanceof Error ? error.message : String(error);
+    const why = errorText(error);
     // A review not yet typed in stays saved, so starting the daemon again can type it.
     record(db, folder, { needs_you: true, status: "waiting" }, `the round failed: ${why}`);
     tellLead(db, tmux);
