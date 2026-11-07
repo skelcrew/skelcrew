@@ -16,9 +16,10 @@ import {
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
+import { git, homeEnv, source, until as wait, writeScript } from "./harness.ts";
 
-const main = join(import.meta.dir, "..", "src", "main.ts");
-const daemon = join(import.meta.dir, "..", "src", "daemon.ts");
+const main = source("main.ts");
+const daemon = source("daemon.ts");
 let home = "";
 let socket = "";
 const running: Subprocess[] = [];
@@ -36,9 +37,8 @@ const read = (file: string) => {
 };
 const typed = () => read(join(builder(), "typed"));
 
-function script(name: string, body: string): void {
-  writeFileSync(join(home, "bin", name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
-}
+// Puts a program of the test's on its PATH.
+const script = (name: string, body: string) => writeScript(home, name, body);
 
 // Stands in for Claude Code. As the builder, it commits a round and runs skel submit, then
 // waits at a ❯ prompt, keeping what is typed into it. Told of a conflict, it fetches
@@ -145,11 +145,8 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-const env = () => ({
-  HOME: home,
-  XDG_RUNTIME_DIR: join(home, "run"),
-  PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
-});
+// What this test's processes run with.
+const env = () => homeEnv(home);
 
 // Runs the daemon, polling every 200 milliseconds rather than every 30 seconds, and every
 // 400 rather than every minute while threads only wait on you, unless a test says otherwise.
@@ -165,22 +162,8 @@ await serve(${JSON.stringify(socket)}, ${every});`;
   return run;
 }
 
-async function until(done: () => boolean, timeout = 15_000) {
-  const deadline = Date.now() + timeout;
-  while (!done()) {
-    if (Date.now() > deadline) throw new Error("gave up waiting");
-    await Bun.sleep(50);
-  }
-}
-
-function git(cwd: string, ...args: string[]): string {
-  const run = Bun.spawnSync(
-    ["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t", ...args],
-    { stdout: "pipe", stderr: "pipe" },
-  );
-  if (!run.success) throw new Error(run.stderr.toString());
-  return run.stdout.toString().trim();
-}
+// A daemon's work takes its time here, so a wait lasts 15 seconds unless a test says otherwise.
+const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout });
 
 // Puts simon/app on the fake GitHub and tells skel about it. Returns a checkout to push from.
 function addApp(): string {
@@ -191,7 +174,7 @@ function addApp(): string {
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");
   git(home, "clone", "-q", "--bare", work, join(home, "github", "simon", "app.git"));
-  const code = `import { openDb } from ${JSON.stringify(join(import.meta.dir, "..", "src", "db.ts"))};
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app')");`;
   const added = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   if (!added.success) throw new Error(added.stderr.toString());
@@ -396,7 +379,7 @@ test("a screen opening fills the lists at once, and no screen means no extra pol
   const terminal = `${socket}-terminal`;
   const screen = `${socket}-screen`;
   const script = join(home, "open.ts");
-  const screenFile = join(import.meta.dir, "..", "src", "screen.ts");
+  const screenFile = source("screen.ts");
   writeFileSync(
     script,
     `import { openScreen } from ${JSON.stringify(screenFile)};

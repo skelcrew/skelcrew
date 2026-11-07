@@ -6,6 +6,7 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listenForWebhooks, signedBy } from "../src/webhook.ts";
+import { source } from "./harness.ts";
 
 const secret = "a".repeat(64);
 const body = JSON.stringify({ action: "labeled", repository: { full_name: "simon/app" } });
@@ -39,7 +40,7 @@ afterEach(() => {
 
 // Runs webhookSecret in a skel whose home is the test's, and returns what it printed.
 function secretIn(): string {
-  const script = `import { webhookSecret } from ${JSON.stringify(join(import.meta.dir, "..", "src", "webhook.ts"))};
+  const script = `import { webhookSecret } from ${JSON.stringify(source("webhook.ts"))};
 process.stdout.write(webhookSecret());`;
   const run = Bun.spawnSync([process.execPath, "-e", script], {
     env: { HOME: home },

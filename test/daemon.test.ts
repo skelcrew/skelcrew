@@ -16,9 +16,10 @@ import { createConnection } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
+import { source, until as wait } from "./harness.ts";
 
-const main = join(import.meta.dir, "..", "src", "main.ts");
-const daemon = join(import.meta.dir, "..", "src", "daemon.ts");
+const main = source("main.ts");
+const daemon = source("daemon.ts");
 let home = "";
 let socket = "";
 const running: Subprocess[] = [];
@@ -100,13 +101,8 @@ async function stop(run: Subprocess): Promise<void> {
   await run.exited;
 }
 
-async function until(done: () => boolean) {
-  const deadline = Date.now() + 5000;
-  while (!done()) {
-    if (Date.now() > deadline) throw new Error("gave up waiting");
-    await Bun.sleep(20);
-  }
-}
+// Waits as long as this file's tests expect anything to take, looking often.
+const until = (done: () => boolean) => wait(done, { timeout: 5000, every: 20 });
 
 const hasServer = () =>
   Bun.spawnSync(["tmux", "-L", socket, "list-sessions"], { stderr: "pipe" }).success;
@@ -199,7 +195,7 @@ function onGitHub(name: string): string {
 // its clone.
 function addRepository(name: string): string {
   onGitHub(name);
-  const db = join(import.meta.dir, "..", "src", "db.ts");
+  const db = source("db.ts");
   const script = `import { openDb } from ${JSON.stringify(db)};
 openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?)", [${JSON.stringify(name)}, ${JSON.stringify(name)}]);`;
   const added = Bun.spawnSync([process.execPath, "-e", script], {
