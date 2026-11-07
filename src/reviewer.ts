@@ -208,11 +208,11 @@ async function reviewNow(given: {
   };
   try {
     await Bun.write(join(folder, "schema.json"), schema);
-    const run =
+    const launch =
       harness === "codex"
         ? await codexCommand(home, folder, sprite, signal)
         : claudeCommand(home, folder, model);
-    const kept: Record<string, string> = { ...run.env };
+    const kept: Record<string, string> = { ...launch.env };
     for (const [key, value] of Object.entries(env))
       if (value !== undefined && (allowedEnv.includes(key) || key.startsWith("LC_")))
         kept[key] = value;
@@ -228,10 +228,10 @@ async function reviewNow(given: {
     const argv = sandboxArgs({
       home,
       path,
-      mounts: [...mounts, ...run.mounts],
+      mounts: [...mounts, ...launch.mounts],
       cwd: at,
-      command: ["sh", "-c", checkout, given.commit, ...run.command],
-      programs: run.command.slice(0, 1),
+      command: ["sh", "-c", checkout, given.commit, ...launch.command],
+      programs: launch.command.slice(0, 1),
     });
     const before = stopped();
     if (before) return before;
