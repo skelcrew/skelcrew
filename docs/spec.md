@@ -8,7 +8,7 @@ skel is Claude Code, but always on, in parallel, isolated, and seeing each task 
 
 You run `skel` and talk to your lead: a Claude Code session on your server that knows all your repositories. The lead writes tasks and starts threads. Each thread works in one repository, as a builder agent in its own branch, clone and sandbox. It opens a PR, a fresh reviewer on another model, Codex by default, reviews it adversarially, and they go back and forth until it is ready. CI failures and your PR comments wake the builder again. You merge.
 
-There are no roles, phases or flows as files. We trust capable agents and add an adversarial review.
+The flow is built in, with no phases or flows as files. We trust capable agents and add an adversarial review. What you tune is the agents: the lead, the builder and the reviewer are roles, and each one's harness, model and instructions can be set in YAML.
 
 The repository starts with three documents: this spec, `AGENTS.md` for how to write code here, and `docs/learnings.md` for the traps to avoid. The code starts empty. Keep it small, plain and tested.
 
@@ -57,6 +57,7 @@ The repositories in the video are small real apps with fast CI and real issues, 
 | Thread | skel's core: the work on one task, from its first message to the merged PR. Its branch, clone, sandbox, builder session and history. One thread per task at a time. Named by the task's own ID in its tracker, with the repository added when that ID doesn't name one: GitHub issue #12 in app is `app-12`, since its number is only unique within app, while a tracker whose IDs are already unique, such as Linear's `JOTT-12`, would keep its own. A thread never gets a second number, so the name in skel is always the one in the tracker. A dash, because no shell reads a dash as anything special, so it never needs quoting. |
 | Builder | The thread's agent. A Claude Code session that stays alive from start until the PR merges or closes. |
 | Reviewer | A fresh agent for each review round, on Codex by default, reading the PR adversarially. It runs once and answers with a verdict, with no session to attach to. It never inherits the builder's context. |
+| Role | One of skel's three agents: the lead, the builder or the reviewer. skel ships a default for each, so you write only what you want to change. There are no other roles. |
 | Event | Something that happened to a thread: a review, a PR comment, a failed check, a merge. |
 | Needs you | A flag on a thread: the builder asked a question, review hit its round limit, or the PR is approved and green. |
 
@@ -140,7 +141,7 @@ Everything must work over a plain `ssh -t` or `sprite console`: no local display
 
 Before cloning, skel decides whether to trust the repository. It trusts it on its own when your GitHub login can push to it, unless it is a fork: agents will run its setup and test commands, and read its AGENTS.md and settings as instructions, and you already vouch for what is in it. For any other repository, `skel` run in a checkout of it asks you whether you trust it. Brought in any other way, it waits until you run `skel repo trust <name>` in your own terminal, since a yes passed on by the lead could come from an injected instruction. The answer is remembered in \~/.config/skel/, never in the repository, so a clone can't bring its own yes.
 
-A repository can say how to set up and test it in a committed `skel.yaml`. Without one, the builder works it out, as it would in any checkout.
+A repository can say how to set up and test it, and add notes for its builder and reviewer, in a committed `skel.yaml`. Without one, the builder works it out, as it would in any checkout.
 
 ## The daemon
 
@@ -161,9 +162,9 @@ One thread, from start to merge.
 
 1. **A task is started.** You add the `skel` label to an issue on GitHub, from anywhere, even your phone. Or the lead runs `skel task create app "<title>" "<body>"`, which creates a GitHub issue, then `skel start app-12`. You can run both yourself too.
 2. **skel sets up the thread.** A clone of its own at `~/.local/share/skel/threads/app-12/`, made from skel's clone of the repository, on branch `skel/12-<slug>` from `main` (or `--from <branch>`), with the repository's setup commands run once in it.
-3. **The builder starts.** A Claude Code session in the sandbox, in the thread's clone, with the task's title and body as its first message.
+3. **The builder starts.** A Claude Code session in the sandbox, in the thread's clone, with its role's prompt, and the task's title and body as its first message.
 4. **The builder finishes a round.** It commits and runs `skel submit "<summary>"`. skel fetches the branch from the thread's clone into its own and pushes it from there, never running git inside the thread's folder. On the first round skel opens the PR, with `Closes #12` in its body.
-5. **The reviewer reviews.** skel sets the `skel/review` status check on the commit to pending and runs a fresh reviewer once, in the sandbox, with `codex exec` (or `claude -p` without Codex). It is given the task, reads the diff against the base branch, runs the tests, and answers in a fixed JSON shape: approve or changes, and the review's body. skel posts it as a GitHub review and sets the check to success or failure, so branch protection can require it. Reviews run one at a time, since they share skel's Codex login, and a renewal by one could leave the others with a token that no longer works. A review covers the commit it started for: a newer `skel submit` cancels a review still waiting or running. A reviewer that fails, answers outside the shape, or runs past 30 minutes sets the check to failure with "review failed", and the thread needs you. You or the lead can rerun a review with `skel review`, such as after a review that failed.
+5. **The reviewer reviews.** skel sets the `skel/review` status check on the commit to pending and runs a fresh reviewer once, in the sandbox, with `codex exec` (or `claude -p` without Codex). It is given its role's prompt and the task, reads the diff against the base branch, runs the tests, and answers in a fixed JSON shape: approve or changes, and the review's body. skel posts it as a GitHub review and sets the check to success or failure, so branch protection can require it. Reviews run one at a time, since they share skel's Codex login, and a renewal by one could leave the others with a token that no longer works. A review covers the commit it started for: a newer `skel submit` cancels a review still waiting or running. A reviewer that fails, answers outside the shape, or runs past 30 minutes sets the check to failure with "review failed", and the thread needs you. You or the lead can rerun a review with `skel review`, such as after a review that failed.
 6. **Changes go back to the builder.** skel types the review into the builder's live session. The builder fixes, commits and runs `skel submit` again. Back to step 4.
 7. **After 3 rounds of changes, the thread needs you.** skel stops sending reviews to the builder until you say go on, with `skel start`.
 8. **Approved and CI green: the thread needs you.** Its status is `waiting`, on you.
@@ -211,6 +212,7 @@ For you, and for the lead:
 | `skel attach <repo>-<task>` | Opens the same screen as `skel`, with that builder on the right. Ctrl-Q detaches. |
 | `skel review <repo>-<task>` | Reviews the thread's last submitted commit again, as a round's review, such as after a review that failed. It refuses while a review of it is waiting or running. |
 | `skel stop <repo>-<task>` | Ends the session and keeps the clone, branch and PR. |
+| `skel role show <role> [<repo>]` | Shows a role as it would run now: its harness, its model and its whole prompt, marking where each part came from. It starts nothing, and says what is wrong if a file isn't valid. |
 
 For the builder inside a thread:
 
@@ -229,12 +231,69 @@ reviewer: { harness: codex }
 max_rounds: 3
 ```
 
-A repository's `skel.yaml` holds what that repository needs, and can override the defaults:
+A repository's `skel.yaml` holds what that repository needs:
 
 ```yaml
 setup: [bun install]
 test: [bun test]
 ```
+
+## Roles
+
+The lead, the builder and the reviewer are skel's three roles. With no YAML anywhere, each one runs exactly as this spec describes. You change a role to get better work out of it: a reviewer that looks harder at what breaks in your code, a builder that comes back to you sooner, a lead that cuts tasks your way, or a cheaper model where a strong one is wasted. The flow around them stays built in: what happens after `skel submit`, what each event means, and that you merge.
+
+**A role's prompt has two parts.** skel's protocol says how the role works with skel: `skel submit`, the lead's commands, that a review's changes are thrown away, the shape of a verdict. The flow depends on it, so it is fixed. The instructions say how to do the job well: how to cut a task, when to come back to you, what to look for and how hard. skel's default instructions live inside skel, and no file is written for them, so a new release improves them for everyone who hasn't changed them. `skel role show` prints them, as a place to start from.
+
+**On your machine,** a role in `~/.config/skel/config.yaml` can set three things:
+
+| Setting | What it does |
+| --- | --- |
+| `harness` | The harness that runs the role. |
+| `model` | The model it runs on. |
+| `instructions` | Replaces skel's default instructions for the role. Plain text: no placeholders, and nothing in it runs. |
+
+```yaml
+lead:
+  model: sonnet
+builder:
+  model: opus
+  instructions: |
+    For new behaviour, write your plan first, and ask me before you build it.
+    For a small fix, go straight on. Decide everything else yourself.
+reviewer:
+  harness: codex
+  instructions: |
+    Assume it is wrong until you have checked it yourself. Run the change the way
+    a user would. Ignore style: the linter has that.
+```
+
+A checkpoint of your own is instructions too. A builder told to ask you first asks as it would any question, and the thread needs you. That is an agent following its instructions, not a gate skel enforces. What skel enforces stays the same in every case: the review runs, and you merge.
+
+**In a repository,** `skel.yaml` can add `notes` for the builder and the reviewer, for what only that repository knows:
+
+```yaml
+builder:
+  notes: |
+    Amounts are in cents. Never use floats for them.
+reviewer:
+  notes: |
+    Every change under src/billing needs a test for rounding.
+```
+
+Notes go into the role's prompt under a heading that names the repository, whichever instructions the role has.
+
+**A repository adds, and never overrides.** Agents run in clones, and a clone must not be able to widen what they reach or skip the review without you saying so.
+
+- `notes` is the only role setting a repository has. It can't name a harness or a model, which spend your accounts, and it can't touch the lead, who works across all your repositories, or `max_rounds`. Anything else under a role in `skel.yaml` is an error.
+- No role setting, on your machine or in a repository, can change what an agent reaches. There is no setting for folders, variables, tools or the network: the sandbox alone draws that line.
+- The reviewer can't be turned off. `instructions` on your own machine can make it gentler, as that is you saying so. A repository's notes come with skel's words around them: they can add to what the reviewer checks, and can't lower the bar. Those words are an instruction, not a wall, so the check that holds is the one you make: you read the PR and you merge.
+- skel reads a repository's notes from its own clone, on the default branch, and never from the thread's clone. The builder controls its clone, so it could otherwise write its own reviewer's notes. A change to notes reaches agents only once you have merged it. skel reads them with your rights, so `skel.yaml` must be a plain file, not a link. Their control codes are removed before `skel role show` prints them.
+
+**Who changes what.** `config.yaml` sits outside every sandbox, so no agent can change it, the lead included. It belongs to the machine skel runs on: on a server or Sprite, that file is there, not on your laptop. A repository's notes change like any other file, by a PR you merge, so you can ask the lead for a task to change them.
+
+**When a change applies.** Nothing is copied into a thread. A reviewer is fresh each round, so it takes its role as it stands when the review starts, and `skel review` tries a change on the same commit. A live builder or lead keeps what it started with, and takes its role as it stands when it next starts, such as with `skel stop` and `skel start`. A thread saves nothing about its roles, so a saved thread needs no change after an upgrade: it goes on with the new release's protocol and defaults, and with your own instructions as they are.
+
+**A mistake in a file** stops only what needs that role, never the daemon, and polling goes on. A thread that starts fails with the reason, a review ends as `review failed`, and `skel` says why the lead can't start. A setting skel doesn't know under a role is a mistake too, since a misspelt one that did nothing would look like a tuning that didn't help.
 
 ## State and isolation
 
@@ -246,7 +305,7 @@ test: [bun test]
 
 **Surviving restarts.** When the daemon starts, it brings back the lead and every thread that was `working` or `waiting` with `claude --resume <session>`, runs again every review whose `skel/review` check is still pending, and polling picks up any event it missed.
 
-**Isolation.** Each thread gets its own branch and clone, so nothing a builder does in it reaches your checkouts, skel's clone or another thread. Each agent runs inside bubblewrap: its folder is writable, the rest of the system is read-only, your home folder and credentials are hidden. The lead works in its own folder in `~/.local/share/skel/lead/` and sees skel's clone of every repository read-only, including ones brought in while it runs, so it can plan across them while the work happens in threads. The reviewer sees the thread's clone through a throwaway layer, so it can run the tests but changes nothing.
+**Isolation.** Each thread gets its own branch and clone, so nothing a builder does in it reaches your checkouts, skel's clone or another thread. Each agent runs inside bubblewrap: its folder is writable, the rest of the system is read-only, your home folder and credentials are hidden. The lead works in its own folder in `~/.local/share/skel/lead/` and sees skel's clone of every repository read-only, including ones brought in while it runs, so it can plan across them while the work happens in threads. The reviewer sees the thread's clone through a throwaway layer, so it can run the tests but changes nothing. Roles change none of this.
 
 **Tokens stay out.** Agents never see your GitHub token. They don't push or call GitHub. They call skel commands, and the daemon, outside the sandbox, pushes and posts with your `gh` login. Commits are authored by you, with skel as co-author.
 
@@ -262,12 +321,13 @@ These are the parts that need care. `docs/learnings.md` explains the traps behin
 - **The sandbox.** bubblewrap with the agent's folder writable, the rest of the system read-only, and the home folder and credentials hidden. Each Claude Code session gets its own config folder in `~/.local/share/skel/claude/`, where its transcripts stay for `claude --resume`, and logs in with the token from the first run. Nothing renews the token, so your own login is never touched, and your `~/.claude` stays hidden like the rest of the home folder. Its own permission prompts and sandbox are turned off, since skel's sandbox draws the boundary. Codex gets skel's `CODEX_HOME` and runs with its own sandbox and approvals turned off too. On a Sprite, the sandbox also hides the Sprite's control socket, through which an agent could start a service outside the sandbox or restore a checkpoint.
 - **Starting Claude Code.** Remove inherited `CLAUDE_CODE_*` variables. Mark the folder as trusted in the session's copy of its settings, or it waits at a question nobody sees. Pass the first message on the command line.
 - **Agent commands.** Every command an agent can run answers quickly: Claude Code moves a shell command to the background after 2 minutes.
+- **Building a role's prompt.** Reading `config.yaml` and `skel.yaml` happens where a session or review starts, and is checked with Zod. Putting the prompt together from the protocol, instructions and notes is a plain function of those. Deciding what an event means never sees a role: it is given `max_rounds` as a number.
 - **Detaching.** skel's tmux config binds Ctrl-Q to detach with no prefix and hides the status bar, so attaching feels like being inside Claude Code.
 
 ## Not in this version
 
 - Reviewing pull requests skel didn't open (a likely early addition)
-- Roles, phases and flows as files
+- Phases and flows as files: steps of your own, more roles, or several reviewers in a round
 - Harnesses other than Claude Code, and Codex for the reviewer
 - Windows, and threads on other machines
 - Per-thread environments such as a database each (the `setup` commands only)
@@ -297,6 +357,10 @@ Launch milestones, in order:
 4. **The first two minutes.** From the install line to a picked up issue, without reading anything but what skel prints. The first run is short and every step says what comes next. Once it is done, the lead says how to start work: add the `skel` label to an issue. skel looks for labeled issues as soon as a repository comes in, then often enough that a label is picked up within 2 minutes.
 5. **Someone else installs it.** By Thursday 12 November, a developer who isn't Simon installs skel on their own machine and hands it a real issue, with no help. Everything that stops them is fixed before the launch.
 6. **The launch.** A README with the install line, a quickstart, what agents can and can't touch, which accounts the harness and reviewer use, the known limits, and where to report bugs: GitHub issues. Record the video. Make the repository public on 16 November.
+
+After the launch, as the first of the small launches:
+
+7. **Roles.** The lead, the builder and the reviewer can be tuned as Roles says, once harness profiles and plugins are in. None of it comes before the launch, as it serves neither moment, and the install path stays as it is until then. Someone with no YAML sees no change: a test holds each role's prompt to the words it has today. Its video changes a reviewer's instructions on a thread and runs `skel review` on the same commit, so you see the verdict change.
 
 ## Done when
 
