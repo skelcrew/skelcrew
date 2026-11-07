@@ -6,6 +6,7 @@ import { chmodSync, mkdtempSync, rmSync, writeSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { originHere } from "./origin.ts";
+import { quietly } from "./run.ts";
 import { skelLine } from "./say.ts";
 import {
   built,
@@ -148,34 +149,43 @@ export async function upToDate(
   return there([]);
 }
 
-// Copies a skel built for the host to its ~/.local/bin.
-async function copySkel(host: string, file: string): Promise<void> {
+// Puts a skel built for a server or Sprite in its ~/.local/bin. `shell` makes the command
+// that runs a line there, and `push` is the command that sends the file to
+// .local/bin/skel.new there. Throws, naming `where`, at the step that failed.
+export async function copySkel(
+  where: string,
+  shell: Machine["shell"],
+  push: string[],
+): Promise<void> {
   // The copy goes to a file beside skel and is renamed over it once complete, so a transfer
-  // that breaks off leaves the skel that works. scp writes through a link, so whatever
-  // is at the new file's name is removed first. A rename replaces a link at skel itself,
-  // such as one to a checkout's launcher, without touching the file it points to.
-  if ((await run(["ssh", host, "mkdir -p .local/bin && rm -f .local/bin/skel.new"])) !== 0)
-    throw new Error(`couldn't make ~/.local/bin on ${host}, so skel wasn't copied`);
-  if ((await run(["scp", file, `${host}:.local/bin/skel.new`])) !== 0)
-    throw new Error(`scp couldn't copy skel to ${host}`);
-  if ((await run(["ssh", host, "mv -f .local/bin/skel.new .local/bin/skel"])) !== 0)
-    throw new Error(`couldn't put the new skel in place on ${host}`);
+  // that breaks off leaves the skel that works. scp and sprite file push write through a
+  // link, so whatever is at the new file's name is removed first. A rename replaces a link
+  // at skel itself, such as one to a checkout's launcher, without touching the file it
+  // points to.
+  if ((await run(shell("mkdir -p .local/bin && rm -f .local/bin/skel.new"))) !== 0)
+    throw new Error(`couldn't make ~/.local/bin on ${where}, so skel wasn't copied`);
+  if ((await run(push)) !== 0) throw new Error(`${push[0]} couldn't copy skel to ${where}`);
+  if ((await run(shell("mv -f .local/bin/skel.new .local/bin/skel"))) !== 0)
+    throw new Error(`couldn't put the new skel in place on ${where}`);
 }
 
 // How update reaches a server over ssh, where systemd runs the daemon.
-const server = (host: string): Machine => ({
-  shell: (script) => ["ssh", host, script],
-  // The unit names the skel the daemon runs, with each % doubled for systemd.
-  daemonSkel: async () => {
-    const unit = ".config/systemd/user/skel.service";
-    const sed = `sed -n 's/%%/%/g; s/^ExecStart="\\(.*\\)" serve$/\\1/p' ${unit}`;
-    const read = await quietly(["ssh", host, sed]);
-    return read.ok && read.said !== "" ? read.said : null;
-  },
-  copy: (file) => copySkel(host, file),
-  restart: "systemctl --user restart skel",
-  updated: async () => {},
-});
+function server(host: string): Machine {
+  const shell = (script: string) => ["ssh", host, script];
+  return {
+    shell,
+    // The unit names the skel the daemon runs, with each % doubled for systemd.
+    daemonSkel: async () => {
+      const unit = ".config/systemd/user/skel.service";
+      const sed = `sed -n 's/%%/%/g; s/^ExecStart="\\(.*\\)" serve$/\\1/p' ${unit}`;
+      const read = await quietly(shell(sed));
+      return read.ok && read.said !== "" ? read.said : null;
+    },
+    copy: (file) => copySkel(host, shell, ["scp", file, `${host}:.local/bin/skel.new`]),
+    restart: "systemctl --user restart skel",
+    updated: async () => {},
+  };
+}
 
 // How update reaches a server or a Sprite: the command that runs a shell line there, the
 // skel the daemon's service starts there, or null without a service, how a built skel is
@@ -188,18 +198,6 @@ export type Machine = {
   restart: string;
   updated: () => Promise<void>;
 };
-
-// Runs a shell line on the machine and returns what it printed, quietly: the service
-// commands print their logs, which matter only when they fail.
-async function quietly(argv: string[]): Promise<{ said: string; ok: boolean }> {
-  const ran = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  const [out, err, code] = await Promise.all([
-    new Response(ran.stdout).text(),
-    new Response(ran.stderr).text(),
-    ran.exited,
-  ]);
-  return { said: `${out}${err}`.trim(), ok: code === 0 };
-}
 
 // Prints what you should know about the checkout skel is built from, and returns its folder
 // and commit as skel names them. The build is the checkout as it is, so changes not
@@ -247,6 +245,7 @@ else echo "elsewhere $f"; fi`;
     );
   const { folder, commit } = describeCheckout();
   await withLinuxSkel(machine);
+  // The service commands print their logs, which matter only when they fail.
   const restarted = await quietly(machine.shell(machine.restart));
   if (!restarted.ok)
     throw new Error(

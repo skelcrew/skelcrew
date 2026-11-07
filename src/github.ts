@@ -1,6 +1,7 @@
 // Every call skel makes to GitHub goes through here, with your gh login, so another tracker
 // or forge could be added in one place.
 import { z } from "zod";
+import { quietly } from "./run.ts";
 
 // Owner and name become folders, so neither may climb out of skel's.
 export const Name = z.string().regex(/^(?!\.\.?$)[\w.-]+$/);
@@ -17,18 +18,18 @@ export type GitHubRepo = { owner: string; repo: string; canPush: boolean; isFork
 // Returns the repository's GitHub name, push access and fork status so skel can judge
 // trust. Takes owner/repo, as skel names it from a checkout's origin: in a fork with an
 // upstream remote, gh on its own would answer for the upstream. The daemon asks while it
-// answers other commands, so it must not wait on gh.
+// answers other commands, so it must not wait on gh. Its failure has words of its own, so
+// it doesn't go through gh below.
 export async function githubRepo(given: string): Promise<GitHubRepo> {
-  const run = Bun.spawn(
-    ["gh", "repo", "view", given, "--json", "name,owner,viewerPermission,isFork"],
-    { stdout: "pipe", stderr: "pipe" },
-  );
-  const [out, err, code] = await Promise.all([
-    new Response(run.stdout).text(),
-    new Response(run.stderr).text(),
-    run.exited,
+  const { out, err, ok } = await quietly([
+    "gh",
+    "repo",
+    "view",
+    given,
+    "--json",
+    "name,owner,viewerPermission,isFork",
   ]);
-  if (code !== 0)
+  if (!ok)
     throw new Error(`${given} isn't on GitHub, or your gh login can't reach it: ${err.trim()}`);
   const view = View.parse(JSON.parse(out));
   const canPush = ["ADMIN", "MAINTAIN", "WRITE"].includes(view.viewerPermission);
@@ -40,13 +41,11 @@ export async function githubRepo(given: string): Promise<GitHubRepo> {
 // clone's .git/config, where the lead could read it. Nobody may be there to type a
 // password, so git fails rather than asks.
 async function git(args: string[]): Promise<void> {
-  const run = Bun.spawn(["git", "-c", "credential.helper=!gh auth git-credential", ...args], {
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-    stdout: "ignore",
-    stderr: "pipe",
-  });
-  const [err, code] = await Promise.all([new Response(run.stderr).text(), run.exited]);
-  if (code !== 0) throw new Error(`git ${args.join(" ")} failed: ${err.trim()}`);
+  const { err, ok } = await quietly(
+    ["git", "-c", "credential.helper=!gh auth git-credential", ...args],
+    { env: { ...process.env, GIT_TERMINAL_PROMPT: "0" }, stdout: "ignore" },
+  );
+  if (!ok) throw new Error(`git ${args.join(" ")} failed: ${err.trim()}`);
 }
 
 // Clones a GitHub repository into skel's chosen folder, away from your checkout.
@@ -117,18 +116,11 @@ export async function pushCommit(
 async function ghText(args: string[], doing: string, input?: object): Promise<string> {
   // Bun finds gh on the PATH skel started with unless given the env, so a PATH changed
   // since would be ignored.
-  const run = Bun.spawn(["gh", ...args], {
+  const { out, err, ok } = await quietly(["gh", ...args], {
     env: process.env,
     stdin: new Blob([input ? JSON.stringify(input) : ""]),
-    stdout: "pipe",
-    stderr: "pipe",
   });
-  const [out, err, code] = await Promise.all([
-    new Response(run.stdout).text(),
-    new Response(run.stderr).text(),
-    run.exited,
-  ]);
-  if (code !== 0) throw new Error(`Couldn't ${doing}: ${err.trim()}`);
+  if (!ok) throw new Error(`Couldn't ${doing}: ${err.trim()}`);
   return out;
 }
 
