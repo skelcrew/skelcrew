@@ -145,7 +145,7 @@ function trusted({ owner, repo, canPush, isFork }: GitHubRepo): boolean {
 // Checks trust, asking you when needed, refreshes the repository clone, records it for the
 // lead, and creates its skel label so you can start threads from GitHub. Runs only in your
 // own terminal, where a yes can't come from an injected instruction.
-export async function bringIn(db: Database, github: GitHubRepo): Promise<void> {
+async function bringIn(db: Database, github: GitHubRepo): Promise<void> {
   const { owner, repo, canPush } = github;
   const full = `${owner}/${repo}`;
   const known = repositories(db).some((r) => r.owner === owner && r.repo === repo);

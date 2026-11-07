@@ -186,7 +186,7 @@ export function newAuthors(
   return authors;
 }
 
-export type Outcome = {
+type Outcome = {
   check: "success" | "failure";
   description: string;
   rounds: number;

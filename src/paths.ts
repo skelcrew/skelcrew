@@ -40,7 +40,7 @@ export const threadSocket = (folder: string) => {
   return join(runtimeDir(), "skel", "threads", short, "skel.sock");
 };
 // Returns the parent folder of skel's repository clones, which the lead sees whole.
-export const reposDir = () => join(dataDir(), "repos");
+const reposDir = () => join(dataDir(), "repos");
 // Returns the folder for skel's own Codex login and sessions, shared by reviews.
 export const codexHome = () => join(dataDir(), "codex");
 // Returns a repository's clone folder so skel works away from your checkout.
