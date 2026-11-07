@@ -30,7 +30,7 @@ function taskName(word?: string): [string, number] | undefined {
 
 // Runs the requested CLI command, or prints usage and exits when its arguments are invalid.
 // With no command, sets up skel and opens the screen on the lead.
-async function run(args: string[]): Promise<void> {
+async function runCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
   // Before the check below, so a server whose skel differs from the laptop's still says what
   // it is.
@@ -70,21 +70,21 @@ async function run(args: string[]): Promise<void> {
   // Loaded only for commands that run here, so skel --remote starts quickly and loads no
   // part of the daemon on your laptop.
   const {
-    attached,
+    askForAttachedNote,
+    askForRepositories,
+    askForTask,
+    askForTasks,
+    askForThreads,
     attachToLead,
     attachToThread,
     createTask,
     pageOf,
-    question,
-    repos,
+    reportQuestion,
     reviewAgain,
     screenOpened,
     startOn,
     stopOn,
     submitForReview,
-    task,
-    tasks,
-    threads,
   } = await import("./client.ts");
   const { serve } = await import("./daemon.ts");
   const { openDb } = await import("./db.ts");
@@ -137,7 +137,7 @@ async function run(args: string[]): Promise<void> {
     // An agent's sandbox hides skel's database, so there the daemon answers. In your
     // terminal it is read here, so the list shows even while the daemon is down.
     printRepositories(
-      process.env.SKEL_SANDBOX === "1" ? await repos() : listRepositories(openDb()),
+      process.env.SKEL_SANDBOX === "1" ? await askForRepositories() : listRepositories(openDb()),
     );
     return;
   }
@@ -155,14 +155,14 @@ async function run(args: string[]): Promise<void> {
   // Run by a builder's Claude Code hooks, not by people, so usage leaves it out. It prints
   // nothing: Claude Code adds what a UserPromptSubmit hook prints to the builder's message.
   if (command === "question" && (sub === "asked" || sub === "answered") && rest.length === 0) {
-    await question(sub === "asked");
+    await reportQuestion(sub === "asked");
     return;
   }
   // Run by the lead's Claude Code hook with each message, not by people, so usage leaves it
   // out. What it prints goes into the message, unseen, so the lead hears where you attached
   // from without a turn of its own.
   if (command === "attached" && args.length === 1) {
-    process.stdout.write(await attached());
+    process.stdout.write(await askForAttachedNote());
     return;
   }
   if (command === "repo" && sub === "trust" && rest[0] && rest.length === 1) {
@@ -177,30 +177,30 @@ async function run(args: string[]): Promise<void> {
     const all = words.includes("--all");
     const rest = words.filter((word) => word !== "--all");
     if (rest.length <= 2) {
-      const rows = await threads(rest[1]);
+      const rows = await askForThreads(rest[1]);
       printThreads(all ? rows : rows.filter((row) => row.status !== "done"), json);
       return;
     }
   }
   if (command === "task" && sub === "ls" && words.length <= 3) {
-    printTasks(await tasks(words[2]), json);
+    printTasks(await askForTasks(words[2]), json);
     return;
   }
   const shown = taskName(words[2]);
   if (command === "task" && sub === "show" && shown && words.length === 3) {
-    printTask(await task(...shown), json);
+    printTask(await askForTask(...shown), json);
     return;
   }
-  const [repo, title, body] = rest;
+  const [repository, title, body] = rest;
   if (
     command === "task" &&
     sub === "create" &&
-    repo &&
+    repository &&
     title &&
     body !== undefined &&
     rest.length === 3
   ) {
-    console.log(await createTask(repo, title, body));
+    console.log(await createTask(repository, title, body));
     return;
   }
   const thread = taskName(sub);
@@ -242,7 +242,7 @@ async function run(args: string[]): Promise<void> {
 }
 
 try {
-  await run(process.argv.slice(2));
+  await runCommand(process.argv.slice(2));
 } catch (error) {
   console.error(`skel: ${errorText(error)}`);
   process.exit(1);

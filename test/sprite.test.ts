@@ -339,7 +339,7 @@ test("offers to update an out-of-date skel on the Sprite, updates it, then runs 
     "sprite exec -s demo --no-stdin -- sh -c mv -f .local/bin/skel.new .local/bin/skel",
   );
   // The daemon restarts only once the new skel is in place, so it runs the new build. A
-  // Sprite an older skel set up still wants a Fly.io login at its URL, which GitHub's
+  // Sprite whose URL was never made public wants a Fly.io login there, which GitHub's
   // webhooks can't give, so the URL goes public then, once the new daemon holds its port.
   // The command runs after that.
   expect(lines.at(-4)).toBe(

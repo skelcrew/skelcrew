@@ -31,7 +31,7 @@ export type Decision =
 const failing = ["FAILURE", "TIMED_OUT", "STARTUP_FAILURE"];
 
 // Returns whether a check passed, so a PR with every check passed is green.
-const passed = (check: Check) =>
+const checkPassed = (check: Check) =>
   check.kind === "run"
     ? check.status === "COMPLETED" &&
       ["SUCCESS", "NEUTRAL", "SKIPPED"].includes(check.conclusion ?? "")
@@ -51,8 +51,8 @@ const ciOf = (pr: PullRequest) => pr.checks.filter((c) => c.name !== "skel/revie
 export function ciChecks(pr: PullRequest): Thread["checks"] {
   const ci = ciOf(pr);
   if (ci.length === 0) return null;
-  if (ci.every(passed)) return "passing";
-  return ci.some((c) => !passed(c) && !running(c)) ? "failing" : "pending";
+  if (ci.every(checkPassed)) return "passing";
+  return ci.some((c) => !checkPassed(c) && !running(c)) ? "failing" : "pending";
 }
 
 // Returns the reviews after the last one handled, oldest first, up to the first one still
@@ -149,7 +149,7 @@ export function decide(
   const approved = pr.checks.some(
     (c) => c.kind === "status" && c.name === "skel/review" && c.state === "SUCCESS",
   );
-  if (quiet && !thread.needs_you && approved && pr.checks.every(passed))
+  if (quiet && !thread.needs_you && approved && pr.checks.every(checkPassed))
     return {
       handled,
       tell,

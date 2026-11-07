@@ -3,7 +3,15 @@
 // skel finds out it is on one, shapes the sandbox for it, and runs the daemon as a Sprite service.
 import { z } from "zod";
 import { originHere } from "./origin.ts";
-import { addMachine, copySkel, type Machine, notSetUp, quoted, run, upToDate } from "./remote.ts";
+import {
+  addMachine,
+  copySkel,
+  type Machine,
+  notSetUp,
+  quoted,
+  runInTerminal,
+  upToDate,
+} from "./remote.ts";
 import { quietly } from "./run.ts";
 import { errorText, skelLine, windowTitle } from "./say.ts";
 
@@ -287,9 +295,9 @@ function onTheSprite(name: string): Machine {
       }
     },
     restart: "sprite-env services restart skel",
-    // A Sprite an older skel set up still asks for a login at its URL. Made public only once
-    // the new daemon runs and holds the URL's port: until then, whatever else listens there
-    // would be on the internet.
+    // A Sprite whose URL was never made public asks for a login there, which GitHub's
+    // webhooks can't give. Made public only once the new daemon runs and holds the URL's
+    // port: until then, whatever else listens there would be on the internet.
     updated: () => makeUrlPublic(name),
   };
 }
@@ -314,7 +322,7 @@ function skelOnSprite(name: string, words: string[]) {
   const line = ["sh", "-c", `${title}exec skel "$@"`, "skel", ...words];
   const named = `SKEL_REMOTE_NAME=${where}`;
   return (env: string[]) =>
-    run(["sprite", "exec", "-s", name, "--tty", "--", "env", named, ...env, ...line]);
+    runInTerminal(["sprite", "exec", "-s", name, "--tty", "--", "env", named, ...env, ...line]);
 }
 
 // Sets up a Sprite for --remote and returns the exit code, for skel remote add. The Sprite is
@@ -335,7 +343,7 @@ export async function addSprite(name: string): Promise<number> {
       console.log(skelLine("no Sprite was created."));
       return 1;
     }
-    if ((await run(["sprite", "create", "--skip-console", name])) !== 0)
+    if ((await runInTerminal(["sprite", "create", "--skip-console", name])) !== 0)
       throw new Error(`sprite couldn't create ${where}`);
   }
   await prepare(name);

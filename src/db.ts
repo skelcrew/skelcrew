@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "./paths.ts";
 
+// `name` is the repository's name in skel, and `repo` its GitHub name without the owner.
 export const Repository = z.object({ name: z.string(), owner: z.string(), repo: z.string() });
 export type Repository = z.infer<typeof Repository>;
 

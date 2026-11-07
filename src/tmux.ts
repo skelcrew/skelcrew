@@ -7,7 +7,7 @@ import { onSprite, startTmuxService } from "./sprite.ts";
 export const screenSocket = (agents: string) => `${agents}-screen`;
 
 // Sent on stdin with each new session instead of kept in a file, so there is no file to
-// find or keep in step, and a server an older skel started picks up changes. Your own
+// find or keep in step, and a server that outlives an upgrade picks up changes. Your own
 // ~/.tmux.conf never applies: -f /dev/null replaces it. Ctrl-Q with no prefix and no status
 // bar make attaching feel like being inside Claude Code. A session whose command fails
 // keeps its last screen, so skel can say why it ended instead of finding it gone. tmux only
@@ -130,7 +130,7 @@ export function startSession(
   mustTmux(socket, ["source-file", "-"], config);
 }
 
-// Gives a running tmux server skel's settings, so one an older skel started scrolls too.
+// Gives a running tmux server skel's settings, so one that outlived an upgrade scrolls too.
 // Quietly does nothing without a server.
 export function applyConfig(socket: string): void {
   tmux(socket, ["source-file", "-"], config);
@@ -308,23 +308,23 @@ export async function isIdle(socket: string, name: string, waits: Waits = {}): P
 }
 
 // One message at a time per session, so two pastes can't land before either's Enter.
-const typing = new Map<string, Promise<void>>();
+const typingQueues = new Map<string, Promise<void>>();
 
 // Queues a message for the session and returns a promise that settles after its typing
 // attempt. Messages wait their turn so two pastes cannot arrive before either message's
 // Enter.
 export function typeInto(socket: string, name: string, text: string, waits: Waits = {}) {
   const key = `${socket}/${name}`;
-  const earlier = typing.get(key) ?? Promise.resolve();
+  const earlier = typingQueues.get(key) ?? Promise.resolve();
   const turn = earlier.then(() => typeNow(socket, name, text, waits));
   // The next message waits for this one whether or not it got through.
   const settled = turn.then(
     () => {},
     () => {},
   );
-  typing.set(key, settled);
+  typingQueues.set(key, settled);
   settled.then(() => {
-    if (typing.get(key) === settled) typing.delete(key);
+    if (typingQueues.get(key) === settled) typingQueues.delete(key);
   });
   return turn;
 }

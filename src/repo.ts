@@ -41,10 +41,10 @@ function trustLines(): string[] {
 }
 
 // Saves your trust in a repository once, so later commands can bring it in without asking.
-function trust(full: string): void {
-  if (trustLines().includes(full)) return;
+function trust(fullName: string): void {
+  if (trustLines().includes(fullName)) return;
   mkdirSync(configDir(), { recursive: true });
-  appendFileSync(trustFile(), `${full}\n`);
+  appendFileSync(trustFile(), `${fullName}\n`);
 }
 
 // Returns checked repository records in name order for commands and clone refreshes.
@@ -150,31 +150,31 @@ function trusted({ owner, repo, canPush, isFork }: GitHubRepo): boolean {
 // Checks trust, asking you when needed, refreshes the repository clone, records it for the
 // lead, and creates its skel label so you can start threads from GitHub. Runs only in your
 // own terminal, where a yes can't come from an injected instruction.
-async function bringIn(db: Database, github: GitHubRepo): Promise<void> {
-  const { owner, repo, canPush } = github;
-  const full = `${owner}/${repo}`;
+async function bringIn(db: Database, details: GitHubRepo): Promise<void> {
+  const { owner, repo, canPush } = details;
+  const fullName = `${owner}/${repo}`;
   const known = repositories(db).some((r) => r.owner === owner && r.repo === repo);
-  if (!known && !trusted(github)) {
-    console.log(`Agents will run ${full}'s setup and test commands, and follow its AGENTS.md`);
+  if (!known && !trusted(details)) {
+    console.log(`Agents will run ${fullName}'s setup and test commands, and follow its AGENTS.md`);
     console.log("and settings as instructions.");
-    const answer = prompt(`Do you trust ${full}? [y/N]`);
+    const answer = prompt(`Do you trust ${fullName}? [y/N]`);
     if (!["y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
-      console.log(`skel didn't clone ${full}, since you don't trust it.`);
+      console.log(`skel didn't clone ${fullName}, since you don't trust it.`);
       return;
     }
-    trust(full);
+    trust(fullName);
   }
-  if (!existsSync(cloneDir(owner, repo))) console.log(`Cloning ${full} for skel.`);
+  if (!existsSync(cloneDir(owner, repo))) console.log(`Cloning ${fullName} for skel.`);
   await refreshClone(owner, repo);
   if (known) return;
-  db.run("INSERT INTO repositories (owner, repo, name) VALUES (?, ?, ?)", [owner, repo, full]);
+  db.run("INSERT INTO repositories (owner, repo, name) VALUES (?, ?, ?)", [owner, repo, fullName]);
   nameRepositories(db);
   // The daemon sets it again when it next starts, so a failure here costs only the wake-ups
   // until then: polling sees every event once the Sprite is awake.
   if (onSprite())
-    await hookRepository(full).catch((error) =>
+    await hookRepository(fullName).catch((error) =>
       console.error(
-        `skel: couldn't set the webhook that wakes this Sprite in ${full}: ${errorText(error)}`,
+        `skel: couldn't set the webhook that wakes this Sprite in ${fullName}: ${errorText(error)}`,
       ),
     );
   const labeled = "UPDATE repositories SET labeled = 1 WHERE owner = ? AND repo = ?";
@@ -185,11 +185,11 @@ async function bringIn(db: Database, github: GitHubRepo): Promise<void> {
     return;
   }
   try {
-    await createLabel(full);
+    await createLabel(fullName);
     db.run(labeled, [owner, repo]);
   } catch (error) {
     // The daemon tries again when it next refreshes the clone.
-    console.error(`skel: couldn't create the skel label in ${full}: ${errorText(error)}`);
+    console.error(`skel: couldn't create the skel label in ${fullName}: ${errorText(error)}`);
   }
 }
 
@@ -205,11 +205,11 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
   const known = (r: Repository) => fullNameIs(r, named);
   try {
     if (named && !repositories(db).some(known)) {
-      const github = await githubRepo(named);
+      const details = await githubRepo(named);
       // A checkout can still use a name the repository had before it was renamed or moved on
       // GitHub. skel keeps it under the name GitHub gives now, and the lead must hear that one.
-      named = `${github.owner}/${github.repo}`;
-      await bringIn(db, github);
+      named = `${details.owner}/${details.repo}`;
+      await bringIn(db, details);
     }
   } catch (error) {
     console.error(`skel: ${errorText(error)}`);
@@ -231,29 +231,29 @@ export async function bringInNamed(db: Database, given: string): Promise<Reposit
   // A name starting with a dash would reach gh as an option.
   if (!/^[\w.][\w.-]*\/[\w.-]+$/.test(given)) return undefined;
   if (repositories(db).some((r) => fullNameIs(r, given))) return undefined;
-  const github = await githubRepo(given);
-  const { owner, repo, canPush } = github;
-  const named = `${owner}/${repo}`;
-  if (!trusted(github))
-    throw new Error(`${named} waits until you run skel repo trust ${named} in your terminal`);
+  const details = await githubRepo(given);
+  const { owner, repo, canPush } = details;
+  const fullName = `${owner}/${repo}`;
+  if (!trusted(details))
+    throw new Error(`${fullName} waits until you run skel repo trust ${fullName} in your terminal`);
   // GitHub can answer for a renamed repository under the name skel already has it by, and two
   // commands can bring in the same repository at once.
-  const fresh = !repositories(db).some((r) => fullNameIs(r, named));
+  const fresh = !repositories(db).some((r) => fullNameIs(r, fullName));
   if (fresh) {
     // Only people who can push or triage may add a label, so where you can't push, a label
     // would be of no use to you. A repository you can push to gets it with its clone.
     db.run("INSERT OR IGNORE INTO repositories (owner, repo, name, labeled) VALUES (?, ?, ?, ?)", [
       owner,
       repo,
-      named,
+      fullName,
       canPush ? 0 : 1,
     ]);
     nameRepositories(db);
     refreshClones(db).catch((error) => console.log(String(error)));
     // Not waited on, like the clone. The daemon sets it again when it next starts.
-    if (onSprite()) hookRepository(named).catch((error) => console.log(String(error)));
+    if (onSprite()) hookRepository(fullName).catch((error) => console.log(String(error)));
   }
-  return findRepository(db, named);
+  return findRepository(db, fullName);
 }
 
 // Records your trust from outside the sandbox and brings in the repository for the lead.
@@ -262,9 +262,9 @@ export async function trustRepo(given: string): Promise<void> {
   const known = repositories(db).find((r) => r.name === given);
   if (!known && !given.includes("/"))
     throw new Error(`there is no repository named ${given}. Name a new one as owner/repo`);
-  const github = await githubRepo(known ? `${known.owner}/${known.repo}` : given);
-  trust(`${github.owner}/${github.repo}`);
-  await bringIn(db, github);
+  const details = await githubRepo(known ? `${known.owner}/${known.repo}` : given);
+  trust(`${details.owner}/${details.repo}`);
+  await bringIn(db, details);
 }
 
 // Deletes skel's clone, registration and saved trust, then updates names that no longer
@@ -284,18 +284,18 @@ export async function removeRepo(name: string): Promise<void> {
     .map((row) => `${name}-${z.object({ task: z.number() }).parse(row).task}`);
   if (live.length > 0)
     throw new Error(`${name} has live threads: ${live.join(", ")}. Stop them first.`);
-  const full = `${found.owner}/${found.repo}`;
+  const fullName = `${found.owner}/${found.repo}`;
   rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });
   db.run("DELETE FROM repositories WHERE owner = ? AND repo = ?", [found.owner, found.repo]);
   nameRepositories(db);
-  const kept = trustLines().filter((line) => line !== "" && line !== full);
+  const kept = trustLines().filter((line) => line !== "" && line !== fullName);
   if (existsSync(trustFile())) writeFileSync(trustFile(), kept.map((line) => `${line}\n`).join(""));
   // Removed last, so a webhook GitHub couldn't remove never stops the rest. Left behind, it
   // only wakes the Sprite for a repository skel no longer polls.
   if (onSprite())
-    await removeWebhook(full, spriteUrl()).catch((error) =>
+    await removeWebhook(fullName, spriteUrl()).catch((error) =>
       console.error(
-        `skel: couldn't remove the webhook that wakes this Sprite from ${full}, so remove it on GitHub: ${errorText(error)}`,
+        `skel: couldn't remove the webhook that wakes this Sprite from ${fullName}, so remove it on GitHub: ${errorText(error)}`,
       ),
     );
   console.log(`Removed ${name} and skel's clone of it.`);

@@ -10,18 +10,18 @@ import { cloneDir } from "./paths.ts";
 import { refreshClones } from "./repo.ts";
 import { endRound } from "./round.ts";
 import { errorText } from "./say.ts";
-import { cloneOf, github, readThread, record, type Thread, threadName } from "./thread.ts";
+import { cloneOf, fullNameOf, readThread, record, type Thread, threadName } from "./thread.ts";
 import { agentRuns, stopSession, typeInto } from "./tmux.ts";
 
 // The message about failed checks, with the end of each one's log. A check that isn't a
 // GitHub Actions job has no log gh can read, so it gets its link instead.
-async function aboutChecks(repo: string, failed: Check[]): Promise<string[]> {
+async function aboutChecks(fullName: string, failed: Check[]): Promise<string[]> {
   return Promise.all(
     failed.map(async (c) => {
       const link = c.url ? ` (${c.url})` : "";
       const fix = 'Fix it, commit, and run skel submit "<summary>" again.';
       if (c.kind === "status") return `The check ${c.name} failed${link}. ${fix}`;
-      const log = await failedLog(repo, c.id).catch(
+      const log = await failedLog(fullName, c.id).catch(
         (error) => `(skel couldn't read its log: ${errorText(error)})`,
       );
       return `The check ${c.name} failed${link}. The end of its log:\n\n${log}\n\n${fix}`;
@@ -35,17 +35,17 @@ async function aboutChecks(repo: string, failed: Check[]): Promise<string[]> {
 async function freshBase(db: Database, thread: Thread, base: string): Promise<void> {
   await refreshClones(db);
   if (base !== baseOf({ ...thread, base: null }))
-    await fetchIntoClone(cloneDir(thread.owner, thread.repo), github(thread), base);
+    await fetchIntoClone(cloneDir(thread.owner, thread.repo), fullNameOf(thread), base);
 }
 
 // Typing in progress per thread. A poll leaves a thread alone while its events are typed in,
 // so they are never typed twice, and a merge cancels the typing.
-export const typing = new Map<string, AbortController>();
+export const typingEvents = new Map<string, AbortController>();
 
 // Cancels the round and the typing under way for the thread, ends its builder's session, and
 // waits for the builder to exit, so nothing types into it or changes the thread afterwards.
 async function endBuilder(tmux: string, folder: string): Promise<void> {
-  typing.get(folder)?.abort();
+  typingEvents.get(folder)?.abort();
   endRound(folder);
   // Claude Code can outlive the end of its session for a few seconds, still writing in the
   // clone.
@@ -94,11 +94,11 @@ export async function tellBuilder(
   decision: Exclude<Decision, { end: string }>,
 ): Promise<void> {
   const cancel = new AbortController();
-  typing.set(thread.folder, cancel);
+  typingEvents.set(thread.folder, cancel);
   const { handled, change, why } = decision;
   try {
     if (decision.conflict !== null) await freshBase(db, thread, decision.conflict);
-    const checks = await aboutChecks(github(thread), decision.failed);
+    const checks = await aboutChecks(fullNameOf(thread), decision.failed);
     const text = [...checks, ...decision.tell].join("\n\n---\n\n");
     if (!agentRuns(tmux, thread.folder)) throw new Error("its builder isn't running");
     // A builder can work long after an event, but one busy this long has likely hung.
@@ -122,6 +122,6 @@ export async function tellBuilder(
     record(db, thread.folder, { ...handled, needs_you: true }, `couldn't tell: ${said}. ${why}`);
     tellLead(db, tmux);
   } finally {
-    typing.delete(thread.folder);
+    typingEvents.delete(thread.folder);
   }
 }

@@ -23,7 +23,7 @@ import { readPage } from "./page.ts";
 import { daemonSocket, leadSocket, threadSocket } from "./paths.ts";
 import { pollGitHub } from "./poll.ts";
 import { bringInNamed, findRepository, refreshClones, repositories } from "./repo.ts";
-import { allowed, type Caller, parseJson, Request } from "./requests.ts";
+import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
 import { errorText } from "./say.ts";
 import { setupDone } from "./setup.ts";
@@ -103,22 +103,22 @@ function endWhatItStarted(sockets: string[]): void {
 // wakes a sleeping Sprite and polls its repository at once.
 // Without the listener, events wait until something else wakes the Sprite, and polling
 // still sees them then.
-function wakeOnWebhooks(db: Database, port: number, poll: (full: string) => void): void {
+function wakeOnWebhooks(db: Database, port: number, poll: (fullName: string) => void): void {
   // The Sprite sleeps again as soon as the delivery is answered, so it is held for a minute
   // first: long enough for the poll, and for keepAwake to hold it for any work the poll starts.
-  const wake = async (repo: string) => {
+  const wake = async (fullName: string) => {
     await holdAwhile(60).catch((error) =>
       console.log(`couldn't hold the Sprite awake: ${errorText(error)}`),
     );
-    poll(repo);
+    poll(fullName);
   };
   try {
     listenForWebhooks(port, webhookSecret(), wake);
   } catch (error) {
     console.log(`couldn't listen for GitHub's webhooks on port ${port}: ${errorText(error)}`);
   }
-  // Set again at each start, so a webhook deleted on GitHub, or one an older skel set with
-  // other events, is put right.
+  // Set again at each start, so a webhook deleted on GitHub, or one that asks for other
+  // events than this skel wants, is put right.
   for (const { owner, repo } of repositories(db))
     hookRepository(`${owner}/${repo}`).catch((error) => console.log(errorText(error)));
 }
@@ -149,7 +149,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   };
   // Polls one repository at once. Until polling starts it does nothing, as the first poll comes
   // as soon as it does.
-  let poll: (full: string) => void = () => {};
+  let poll: (fullName: string) => void = () => {};
   const listening = new Set<string>();
   // Opens a thread's own socket, so the daemon knows which thread calls on it. A thread that
   // starts over keeps the socket it has.
@@ -184,7 +184,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   };
   // Carries out a request the caller may make, and returns the reply to send. The switch has
   // no default, so the typecheck fails if a request is left out.
-  const handle = async (request: Request, caller: Caller): Promise<object> => {
+  const handle = async (request: DaemonRequest, caller: Caller): Promise<object> => {
     switch (request.command) {
       case "status": {
         const thread = typeof caller === "object" ? { thread: threadName(db, caller) } : {};
@@ -268,7 +268,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   // Brings in a repository that task ls, task show, task create or start names by its full
   // GitHub name, when skel doesn't have it, then carries out the command. The reply says so,
   // so whoever asked learns its short name, and that its clone comes after.
-  const bringInFirst = async (request: Request, caller: Caller): Promise<object> => {
+  const bringInFirst = async (request: DaemonRequest, caller: Caller): Promise<object> => {
     const naming = ["task ls", "task show", "task create", "start"].includes(request.command);
     if (!naming || !("repo" in request) || !request.repo) return handle(request, caller);
     const brought = await bringInNamed(db, request.repo);
@@ -295,7 +295,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       if (end === -1) return;
       // One request per connection: more data while it runs must not run it again.
       connection.off("data", read);
-      const asked = Request.safeParse(parseJson(request.slice(0, end)));
+      const asked = DaemonRequest.safeParse(parseJson(request.slice(0, end)));
       const kind = typeof caller === "object" ? "builder" : caller;
       if (!asked.success || !allowed[kind].includes(asked.data.command))
         reply({ error: "the daemon doesn't know that request" });

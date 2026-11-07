@@ -39,7 +39,7 @@ const schema = JSON.stringify({
 // Only what a shell, the tests and the harness need gets in. The keys are for those who use
 // one rather than a login. codex exec reads CODEX_API_KEY: given only OPENAI_API_KEY, it
 // sent no key at all.
-const passed = [
+const allowedEnv = [
   ...["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "LANG", "TZ"],
   ...["OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY"],
 ];
@@ -166,6 +166,76 @@ function answer(harness: "codex" | "claude", folder: string, out: string): unkno
   return JSON.parse(readFileSync(file, "utf8"));
 }
 
+// Starts the reviewer, waits for it to end, and returns what it printed and its exit code.
+// Ending bwrap ends everything inside: the reviewer runs as the first process of a process
+// list of its own, which the kernel empties when that process dies. On a Sprite, unshare
+// comes first and ignores SIGTERM, so the review is ended with SIGKILL. A Mac has no process
+// lists of their own, so the reviewer leads a group, which is ended when it ends. A process
+// left in it would also hold its output open, and the review would wait forever.
+async function spawnReviewer(given: {
+  argv: string[];
+  env: Record<string, string>;
+  input: string;
+  signal: AbortSignal;
+}): Promise<{ out: string; err: string; code: number }> {
+  const { argv, env, input, signal } = given;
+  const mac = process.platform === "darwin";
+  const proc = Bun.spawn(argv, {
+    env,
+    stdin: new Blob([input]),
+    stdout: "pipe",
+    stderr: "pipe",
+    signal,
+    killSignal: "SIGKILL",
+    detached: mac,
+  });
+  if (mac)
+    proc.exited.then(() => {
+      try {
+        process.kill(-proc.pid, "SIGKILL");
+      } catch {}
+    });
+  // A process that left the group can still hold the output open, and a Mac can't find it
+  // once its parent is gone. So there the output gets a moment after the reviewer ends, or
+  // the review, and every review queued after it, would wait forever.
+  const read = (output: ReadableStream<Uint8Array>) => {
+    const text = new Response(output).text();
+    if (!mac) return text;
+    return Promise.race([text, proc.exited.then(() => Bun.sleep(1000)).then(() => "")]);
+  };
+  const [out, err, code] = await Promise.all([read(proc.stdout), read(proc.stderr), proc.exited]);
+  return { out, err, code };
+}
+
+// Returns the verdict of a reviewer that has ended, or a failed one saying why there is none:
+// it exited with an error, or answered outside the shape.
+function readVerdict(
+  harness: "codex" | "claude",
+  folder: string,
+  finished: { out: string; err: string; code: number },
+): Review {
+  const { out, err, code } = finished;
+  if (code !== 0)
+    return {
+      verdict: "failed",
+      body: `${harness} exited with ${code}: ${err.trim().slice(-2000)}`,
+    };
+  let said: unknown;
+  try {
+    said = answer(harness, folder, out);
+  } catch (error) {
+    const why = errorText(error);
+    return { verdict: "failed", body: `the reviewer answered outside the shape: ${why}` };
+  }
+  const verdict = Verdict.safeParse(said);
+  if (!verdict.success)
+    return {
+      verdict: "failed",
+      body: `the reviewer answered outside the shape: ${z.prettifyError(verdict.error)}`,
+    };
+  return verdict.data;
+}
+
 // Runs a fresh reviewer against a throwaway view of the clone and returns its verdict or failure
 // reason. Enforces cancellation and a time limit, then removes the review's temporary
 // files.
@@ -208,13 +278,14 @@ async function reviewNow(given: {
   };
   try {
     await Bun.write(join(folder, "schema.json"), schema);
-    const run =
+    const launch =
       harness === "codex"
         ? await codexCommand(home, folder, sprite, signal)
         : claudeCommand(home, folder, model);
-    const kept: Record<string, string> = { ...run.env };
+    const kept: Record<string, string> = { ...launch.env };
     for (const [key, value] of Object.entries(env))
-      if (value !== undefined && (passed.includes(key) || key.startsWith("LC_"))) kept[key] = value;
+      if (value !== undefined && (allowedEnv.includes(key) || key.startsWith("LC_")))
+        kept[key] = value;
     // Tests and builds write in the clone, so it is seen as a throwaway folder too.
     const copy = join(folder, "clone");
     const { mounts, at } = await throwaway({ source: clone, copy, sprite, signal });
@@ -227,65 +298,17 @@ async function reviewNow(given: {
     const argv = sandboxArgs({
       home,
       path,
-      mounts: [...mounts, ...run.mounts],
+      mounts: [...mounts, ...launch.mounts],
       cwd: at,
-      command: ["sh", "-c", checkout, given.commit, ...run.command],
-      programs: run.command.slice(0, 1),
+      command: ["sh", "-c", checkout, given.commit, ...launch.command],
+      programs: launch.command.slice(0, 1),
     });
     const before = stopped();
     if (before) return before;
-    // Ending bwrap ends everything inside: the reviewer runs as the first process of a
-    // process list of its own, which the kernel empties when that process dies. On a
-    // Sprite, unshare comes first and ignores SIGTERM, so the review is ended with SIGKILL.
-    // A Mac has no process lists of their own, so the reviewer leads a group, which is ended
-    // when it ends. A process left in it would also hold its output open, and the review
-    // would wait forever.
-    const mac = process.platform === "darwin";
-    const proc = Bun.spawn(argv, {
-      env: kept,
-      stdin: new Blob([prompt(issue, base)]),
-      stdout: "pipe",
-      stderr: "pipe",
-      signal,
-      killSignal: "SIGKILL",
-      detached: mac,
-    });
-    if (mac)
-      proc.exited.then(() => {
-        try {
-          process.kill(-proc.pid, "SIGKILL");
-        } catch {}
-      });
-    // A process that left the group can still hold the output open, and a Mac can't find it
-    // once its parent is gone. So there the output gets a moment after the reviewer ends, or
-    // the review, and every review queued after it, would wait forever.
-    const read = (output: ReadableStream<Uint8Array>) => {
-      const text = new Response(output).text();
-      if (!mac) return text;
-      return Promise.race([text, proc.exited.then(() => Bun.sleep(1000)).then(() => "")]);
-    };
-    const [out, err, code] = await Promise.all([read(proc.stdout), read(proc.stderr), proc.exited]);
+    const finished = await spawnReviewer({ argv, env: kept, input: prompt(issue, base), signal });
     const after = stopped();
     if (after) return after;
-    if (code !== 0)
-      return {
-        verdict: "failed",
-        body: `${harness} exited with ${code}: ${err.trim().slice(-2000)}`,
-      };
-    let said: unknown;
-    try {
-      said = answer(harness, folder, out);
-    } catch (error) {
-      const why = errorText(error);
-      return { verdict: "failed", body: `the reviewer answered outside the shape: ${why}` };
-    }
-    const verdict = Verdict.safeParse(said);
-    if (!verdict.success)
-      return {
-        verdict: "failed",
-        body: `the reviewer answered outside the shape: ${z.prettifyError(verdict.error)}`,
-      };
-    return verdict.data;
+    return readVerdict(harness, folder, finished);
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }

@@ -9,6 +9,7 @@ import { findRepository } from "./repo.ts";
 
 export const Thread = z.object({
   owner: z.string(),
+  // The repository's GitHub name, without the owner.
   repo: z.string(),
   task: z.number(),
   folder: z.string(),
@@ -76,7 +77,7 @@ export const hasWork = (threads: Thread[]) =>
   );
 
 // Returns the thread's repository as owner/name, as GitHub calls want it.
-export const github = (thread: Thread) => `${thread.owner}/${thread.repo}`;
+export const fullNameOf = (thread: Thread) => `${thread.owner}/${thread.repo}`;
 // Returns the thread's clone folder. It comes from the folder name chosen at start, so it
 // stays put when the repository's name changes.
 export const cloneOf = (thread: Thread) => join(threadsDir(), thread.folder);
@@ -130,25 +131,25 @@ export function threadName(db: Database, thread: Thread): string {
   const row = db
     .query("SELECT name FROM repositories WHERE owner = ? AND repo = ?")
     .get(thread.owner, thread.repo);
-  const name = z.object({ name: z.string() }).nullable().parse(row)?.name ?? github(thread);
+  const name = z.object({ name: z.string() }).nullable().parse(row)?.name ?? fullNameOf(thread);
   return `${name}-${thread.task}`;
 }
 
 // Returns the thread named repo-task, such as app-12, or null when the task has none. Throws
 // when skel doesn't have the repository.
-export function threadOn(db: Database, repo: string, task: number): Thread | null {
-  const { owner, repo: name } = findRepository(db, repo);
+export function threadOn(db: Database, repository: string, task: number): Thread | null {
+  const { owner, repo } = findRepository(db, repository);
   return Thread.nullable().parse(
     db
       .query("SELECT * FROM threads WHERE owner = ? AND repo = ? AND task = ?")
-      .get(owner, name, task),
+      .get(owner, repo, task),
   );
 }
 
 // Returns the thread named repo-task, such as app-12, and throws when there is none.
-export function findThread(db: Database, repo: string, task: number): Thread {
-  const thread = threadOn(db, repo, task);
-  if (!thread) throw new Error(`there is no thread ${repo}-${task}`);
+export function findThread(db: Database, repository: string, task: number): Thread {
+  const thread = threadOn(db, repository, task);
+  if (!thread) throw new Error(`there is no thread ${repository}-${task}`);
   return thread;
 }
 

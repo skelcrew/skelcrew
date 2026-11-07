@@ -1,4 +1,4 @@
-// skel's database, opened over one an older skel left behind.
+// skel's database, opened over one that lacks the newer columns.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
@@ -14,7 +14,7 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-test("a thread an older skel recorded keeps working, with no rounds and no pull request yet", () => {
+test("a thread saved before the newer columns keeps working, with no rounds and no pull request yet", () => {
   const data = join(home, ".local", "share", "skel");
   mkdirSync(data, { recursive: true });
   const old = new Database(join(data, "skel.db"));

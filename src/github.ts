@@ -65,7 +65,7 @@ export async function updateClone(folder: string): Promise<void> {
 // holding it is saved in the folder's .git/config.
 export async function fetchBranch(
   folder: string,
-  repo: string,
+  fullName: string,
   branch: string | null,
 ): Promise<void> {
   await git([
@@ -73,7 +73,7 @@ export async function fetchBranch(
     folder,
     "fetch",
     "--quiet",
-    `https://github.com/${repo}.git`,
+    `https://github.com/${fullName}.git`,
     branch ? `refs/heads/${branch}` : "HEAD",
   ]);
 }
@@ -81,14 +81,18 @@ export async function fetchBranch(
 // Brings a branch of a GitHub repository into skel's clone in the folder, as a branch of its
 // own, so a builder whose clone has skel's as origin can fetch it. Never the branch skel's
 // clone has checked out, which updateClone keeps current with its files.
-export async function fetchIntoClone(folder: string, repo: string, branch: string): Promise<void> {
+export async function fetchIntoClone(
+  folder: string,
+  fullName: string,
+  branch: string,
+): Promise<void> {
   await git([
     "-C",
     folder,
     "fetch",
     "--quiet",
     "--no-write-fetch-head",
-    `https://github.com/${repo}.git`,
+    `https://github.com/${fullName}.git`,
     `+refs/heads/${branch}:refs/heads/${branch}`,
   ]);
 }
@@ -97,7 +101,7 @@ export async function fetchIntoClone(folder: string, repo: string, branch: strin
 // forced, so a push can only add to what the branch already holds.
 export async function pushCommit(
   folder: string,
-  repo: string,
+  fullName: string,
   sha: string,
   branch: string,
 ): Promise<void> {
@@ -106,7 +110,7 @@ export async function pushCommit(
     folder,
     "push",
     "--quiet",
-    `https://github.com/${repo}.git`,
+    `https://github.com/${fullName}.git`,
     `${sha}:refs/heads/${branch}`,
   ]);
 }
@@ -135,8 +139,11 @@ const api = (endpoint: string, doing: string, input?: object) =>
 const Numbered = z.object({ number: z.number() });
 
 // Creates an issue in owner/name and returns its number so the lead can start a thread.
-export async function createIssue(repo: string, title: string, body: string): Promise<number> {
-  const made = await api(`repos/${repo}/issues`, `create an issue in ${repo}`, { title, body });
+export async function createIssue(fullName: string, title: string, body: string): Promise<number> {
+  const made = await api(`repos/${fullName}/issues`, `create an issue in ${fullName}`, {
+    title,
+    body,
+  });
   return Numbered.parse(made).number;
 }
 
@@ -146,15 +153,15 @@ const Issue = z.object({ title: z.string(), body: z.string().nullable() });
 // empty text for no body. Says plainly when the issue doesn't exist, as gh's own words for
 // that are GitHub's HTTP status.
 export async function readIssue(
-  repo: string,
+  fullName: string,
   issue: number,
 ): Promise<{ title: string; body: string }> {
   let got: unknown;
   try {
-    got = await api(`repos/${repo}/issues/${issue}`, `read issue #${issue} in ${repo}`);
+    got = await api(`repos/${fullName}/issues/${issue}`, `read issue #${issue} in ${fullName}`);
   } catch (error) {
     if (error instanceof Error && error.message.includes("(HTTP 404)"))
-      throw new Error(`there is no issue #${issue} in ${repo}`);
+      throw new Error(`there is no issue #${issue} in ${fullName}`);
     throw error;
   }
   const { title, body } = Issue.parse(got);
@@ -170,8 +177,8 @@ const IssueDetails = z.object({
 });
 
 // Returns what an issue's page shows.
-export async function readIssueDetails(repo: string, issue: number) {
-  return IssueDetails.parse(await api(`repos/${repo}/issues/${issue}`, `read issue #${issue}`));
+export async function readIssueDetails(fullName: string, issue: number) {
+  return IssueDetails.parse(await api(`repos/${fullName}/issues/${issue}`, `read issue #${issue}`));
 }
 
 const OpenIssue = z.object({ number: z.number(), title: z.string(), createdAt: z.string() });
@@ -179,13 +186,13 @@ const OpenIssue = z.object({ number: z.number(), title: z.string(), createdAt: z
 // Returns the open issues in owner/name, newest first, for skel task ls. gh issue list leaves
 // out pull requests, which GitHub's API counts as issues. It lists 30 unless told more, and
 // a thousand open tasks is more than anyone reads in a terminal.
-export async function openIssues(repo: string): Promise<z.infer<typeof OpenIssue>[]> {
+export async function openIssues(fullName: string): Promise<z.infer<typeof OpenIssue>[]> {
   const listed = await gh(
     [
       "issue",
       "list",
       "--repo",
-      repo,
+      fullName,
       "--state",
       "open",
       "--limit",
@@ -193,16 +200,16 @@ export async function openIssues(repo: string): Promise<z.infer<typeof OpenIssue
       "--json",
       "number,title,createdAt",
     ],
-    `list the open issues in ${repo}`,
+    `list the open issues in ${fullName}`,
   );
   return z.array(OpenIssue).parse(listed);
 }
 
 // Creates the skel label in owner/name, so you can add it to an issue to start a thread.
 // GitHub answers 422 when the repository has the label already, which is fine as it is.
-export async function createLabel(repo: string): Promise<void> {
+export async function createLabel(fullName: string): Promise<void> {
   try {
-    await api(`repos/${repo}/labels`, `create the skel label in ${repo}`, {
+    await api(`repos/${fullName}/labels`, `create the skel label in ${fullName}`, {
       name: "skel",
       color: "5319e7",
       description: "skel starts a thread on this issue",
@@ -217,8 +224,11 @@ const Hook = z.object({ id: z.number(), config: z.object({ url: z.string().optio
 
 // Returns the IDs of the repository's webhooks to the URL. A repository with more than 100
 // webhooks is not one skel expects.
-async function hooksTo(repo: string, url: string): Promise<number[]> {
-  const listed = await api(`repos/${repo}/hooks?per_page=100`, `list the webhooks of ${repo}`);
+async function hooksTo(fullName: string, url: string): Promise<number[]> {
+  const listed = await api(
+    `repos/${fullName}/hooks?per_page=100`,
+    `list the webhooks of ${fullName}`,
+  );
   return z
     .array(Hook)
     .parse(listed)
@@ -229,7 +239,7 @@ async function hooksTo(repo: string, url: string): Promise<number[]> {
 // Makes the repository send GitHub's deliveries for the events a thread's poll reads to the
 // URL, signed with the secret. A webhook to the URL already there is updated, not added
 // again, which would send each delivery twice.
-export async function setWebhook(repo: string, url: string, secret: string): Promise<void> {
+export async function setWebhook(fullName: string, url: string, secret: string): Promise<void> {
   const hook = {
     config: { url, content_type: "json", secret, insecure_ssl: "0" },
     events: [
@@ -243,33 +253,33 @@ export async function setWebhook(repo: string, url: string, secret: string): Pro
     ],
     active: true,
   };
-  const [id] = await hooksTo(repo, url);
-  const doing = `set the webhook that wakes skel in ${repo}`;
+  const [id] = await hooksTo(fullName, url);
+  const doing = `set the webhook that wakes skel in ${fullName}`;
   if (id === undefined)
-    await ghText(["api", `repos/${repo}/hooks`, "--method", "POST", "--input", "-"], doing, {
+    await ghText(["api", `repos/${fullName}/hooks`, "--method", "POST", "--input", "-"], doing, {
       name: "web",
       ...hook,
     });
   else
     await ghText(
-      ["api", `repos/${repo}/hooks/${id}`, "--method", "PATCH", "--input", "-"],
+      ["api", `repos/${fullName}/hooks/${id}`, "--method", "PATCH", "--input", "-"],
       doing,
       hook,
     );
 }
 
 // Removes the repository's webhooks to the URL, for skel repo rm.
-export async function removeWebhook(repo: string, url: string): Promise<void> {
-  for (const id of await hooksTo(repo, url))
+export async function removeWebhook(fullName: string, url: string): Promise<void> {
+  for (const id of await hooksTo(fullName, url))
     await ghText(
-      ["api", `repos/${repo}/hooks/${id}`, "--method", "DELETE"],
-      `remove the webhook that wakes skel from ${repo}`,
+      ["api", `repos/${fullName}/hooks/${id}`, "--method", "DELETE"],
+      `remove the webhook that wakes skel from ${fullName}`,
     );
 }
 
 // Reacts to an issue with 👀, so you can see on GitHub that skel took it, without a comment.
-export async function reactToIssue(repo: string, issue: number): Promise<void> {
-  const reacted = await api(`repos/${repo}/issues/${issue}/reactions`, `react to #${issue}`, {
+export async function reactToIssue(fullName: string, issue: number): Promise<void> {
+  const reacted = await api(`repos/${fullName}/issues/${issue}/reactions`, `react to #${issue}`, {
     content: "eyes",
   });
   z.object({ content: z.string() }).parse(reacted);
@@ -277,22 +287,22 @@ export async function reactToIssue(repo: string, issue: number): Promise<void> {
 
 // Returns the open PR number for a branch, or null so skel knows it must open one. GitHub
 // only matches a branch named with its owner: "owner:branch".
-export async function findPullRequest(repo: string, branch: string): Promise<number | null> {
-  const owner = repo.split("/")[0];
+export async function findPullRequest(fullName: string, branch: string): Promise<number | null> {
+  const owner = fullName.split("/")[0];
   const head = encodeURIComponent(`${owner}:${branch}`);
   const found = await api(
-    `repos/${repo}/pulls?state=open&head=${head}`,
-    `look for a pull request from ${branch} in ${repo}`,
+    `repos/${fullName}/pulls?state=open&head=${head}`,
+    `look for a pull request from ${branch} in ${fullName}`,
   );
   return z.array(Numbered).parse(found)[0]?.number ?? null;
 }
 
 // Opens the thread's PR and returns its number, linking the issue so merging closes it.
 export async function openPullRequest(
-  repo: string,
+  fullName: string,
   pr: { branch: string; base: string; title: string; body: string; issue: number },
 ): Promise<number> {
-  const opened = await api(`repos/${repo}/pulls`, `open a pull request from ${pr.branch}`, {
+  const opened = await api(`repos/${fullName}/pulls`, `open a pull request from ${pr.branch}`, {
     head: pr.branch,
     base: pr.base,
     title: pr.title,
@@ -309,14 +319,14 @@ export async function openPullRequest(
 // posted with your login, it looks like your own review on GitHub, and skel must know it
 // wrote it.
 export async function postReview(
-  repo: string,
+  fullName: string,
   pr: number,
   commit: string,
   verdict: "approve" | "changes",
   body: string,
 ): Promise<number> {
   const said = verdict === "approve" ? "**Approved.**" : "**Changes requested.**";
-  const posted = await api(`repos/${repo}/pulls/${pr}/reviews`, `post a review on #${pr}`, {
+  const posted = await api(`repos/${fullName}/pulls/${pr}/reviews`, `post a review on #${pr}`, {
     event: "COMMENT",
     commit_id: commit,
     body: `${said}\n\n${body}`,
@@ -327,16 +337,20 @@ export async function postReview(
 // Sets the commit's skel/review check so branch protection can require the reviewer's
 // verdict. GitHub rejects a status whose description is longer than 140 characters.
 export async function setReviewStatus(
-  repo: string,
+  fullName: string,
   sha: string,
   state: "pending" | "success" | "failure",
   description: string,
 ): Promise<void> {
-  const set = await api(`repos/${repo}/statuses/${sha}`, `set the skel/review check on ${sha}`, {
-    state,
-    context: "skel/review",
-    description: description.slice(0, 140),
-  });
+  const set = await api(
+    `repos/${fullName}/statuses/${sha}`,
+    `set the skel/review check on ${sha}`,
+    {
+      state,
+      context: "skel/review",
+      description: description.slice(0, 140),
+    },
+  );
   z.object({ state: z.string() }).parse(set);
 }
 
@@ -456,8 +470,8 @@ const PullDetails = z.object({
 
 // Returns what a PR's page shows, from the same fields a poll reads, so the page says what the
 // strip says.
-export async function readPullDetails(repo: string, pr: number) {
-  const [owner, name] = repo.split("/");
+export async function readPullDetails(fullName: string, pr: number) {
+  const [owner, name] = fullName.split("/");
   const query = `query($owner: String!, $name: String!, $number: Int!) {
     repository(owner: $owner, name: $name) {
       pullRequest(number: $number) { title body headRefName ${pullFields} } } }`;
@@ -492,7 +506,7 @@ const openLists = `openIssues: issues(states: [OPEN], ${openFields}
 // doesn't find is left out. With `lists`, the same query brings the open issues and PRs the
 // sidebar shows, so showing them costs no request of its own.
 export async function readRepository(
-  repo: string,
+  fullName: string,
   numbers: number[],
   lists: boolean,
 ): Promise<{
@@ -501,7 +515,7 @@ export async function readRepository(
   prs: Map<number, PullRequest>;
   open: { issues: OpenList; prs: OpenList } | null;
 }> {
-  const [owner, name] = repo.split("/");
+  const [owner, name] = fullName.split("/");
   const pulls = numbers.map((n) => `pr${n}: pullRequest(number: ${n}) { ${pullFields} }`);
   // Issues with threads keep their label, so the oldest labeled issues could fill every
   // answer. Adding a label updates an issue, so one just labeled is always among the newest.
@@ -510,7 +524,7 @@ export async function readRepository(
   const query = `query($owner: String!, $name: String!) { viewer { login }
     repository(owner: $owner, name: $name) {
       ${labeled}\n${lists ? openLists : ""}\n${pulls.join("\n")} } }`;
-  const got = await gh(["api", "graphql", "--input", "-"], `poll ${repo}`, {
+  const got = await gh(["api", "graphql", "--input", "-"], `poll ${fullName}`, {
     query,
     variables: { owner, name },
   });
@@ -541,12 +555,12 @@ export async function readRepository(
 // Returns whether someone can push to the repository: write, maintain or admin access, which
 // GitHub reports as write or admin. Throws when GitHub can't be asked, so a failure is never
 // taken for a no.
-export async function canPush(repo: string, login: string): Promise<boolean> {
+export async function canPush(fullName: string, login: string): Promise<boolean> {
   let got: unknown;
   try {
     got = await api(
-      `repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`,
-      `check ${login}'s access to ${repo}`,
+      `repos/${fullName}/collaborators/${encodeURIComponent(login)}/permission`,
+      `check ${login}'s access to ${fullName}`,
     );
   } catch (error) {
     // GitHub answers 404 for a login that is no user, such as a deleted account's.
@@ -560,10 +574,10 @@ export async function canPush(repo: string, login: string): Promise<boolean> {
 // Returns the end of a failed GitHub Actions job's log: the failed steps only, without the
 // job and step names and the time gh puts before each line. Kept short, as it is typed into
 // the builder, which can ask for more by running the tests itself.
-export async function failedLog(repo: string, job: number): Promise<string> {
+export async function failedLog(fullName: string, job: number): Promise<string> {
   const log = await ghText(
-    ["run", "view", "--job", String(job), "--log-failed", "--repo", repo],
-    `read the log of job ${job} in ${repo}`,
+    ["run", "view", "--job", String(job), "--log-failed", "--repo", fullName],
+    `read the log of job ${job} in ${fullName}`,
   );
   const lines = log
     .trimEnd()
