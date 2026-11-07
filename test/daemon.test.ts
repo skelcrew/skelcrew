@@ -530,6 +530,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with the lead", () => {
     setUp();
     serve();
     await untilAnswers();
+    await until(() => claudeLines().length > 0);
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=lead"]);
     expect(await ask({ command: "lead" })).toEqual({ lead: true });
     expect(hasLead()).toBe(true);
@@ -604,7 +605,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with the lead", () => {
     setUp();
     const repo = addRepository("app");
     fakeClaude(
-      `while ! test -e ${repo}/README; do sleep 0.1; done; ls ${repo} > seen; test -S "$SKEL_SOCKET" && echo socket >> seen; test -e ${home}/.config/skel/claude-token || echo token-hidden >> seen; exec sleep 300`,
+      `for i in $(seq 600); do test -e ${repo}/README && break; sleep 0.1; done; ls ${repo} > seen; test -S "$SKEL_SOCKET" && echo socket >> seen; test -e ${home}/.config/skel/claude-token || echo token-hidden >> seen; exec sleep 300`,
     );
     serve();
     await until(() => existsSync(join(leadFolder(), "seen")));
@@ -631,6 +632,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with the lead", () => {
     setUp();
     const first = serve();
     await untilAnswers();
+    await until(() => claudeLines().length > 0);
     first.kill("SIGKILL");
     await first.exited;
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=lead"]);
@@ -650,7 +652,7 @@ c.on("data", (d) => process.stdout.write(d));
 c.on("error", () => process.exit(1));`;
     writeFileSync(join(home, "bin", "ask.js"), asker);
     fakeClaude(
-      `while true; do bun ${join(home, "bin", "ask.js")} > reply.new 2>/dev/null; mv reply.new reply; sleep 0.2; done`,
+      `for i in $(seq 300); do bun ${join(home, "bin", "ask.js")} > reply.new 2>/dev/null; mv reply.new reply; sleep 0.2; done`,
     );
     const reply = () =>
       existsSync(join(leadFolder(), "reply"))
@@ -666,7 +668,7 @@ c.on("error", () => process.exit(1));`;
     setUp();
     const clone = join(home, ".local", "share", "skel", "repos", "simon", "app");
     fakeClaude(
-      `while ! test -e ${clone}/README; do sleep 0.1; done; cat ${clone}/README > seen.new; mv seen.new seen; exec sleep 300`,
+      `for i in $(seq 600); do test -e ${clone}/README && break; sleep 0.1; done; cat ${clone}/README > seen.new; mv seen.new seen; exec sleep 300`,
     );
     serve();
     await until(hasLead);
@@ -753,7 +755,7 @@ c.on("error", () => process.exit(1));`;
 exec 3<&0
 while IFS= read -r line; do echo "$line" >> typed; done <&3 &
 echo "❯"
-while :; do
+for i in $(seq 6000); do
   if test -e talk; then
     rm talk
     bun -e 'for (const group of JSON.parse(process.argv[1]).hooks?.UserPromptSubmit ?? [])

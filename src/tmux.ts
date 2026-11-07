@@ -176,13 +176,19 @@ function processes(): { pid: number; parent: number; state: string }[] {
 
 // Returns a process and every process under it, so stopping a session can wait for all of
 // them: an agent in its sandbox runs a few levels down from the pane's own process.
-function processTree(root: number): number[] {
+export function processTree(root: number): number[] {
   const children = new Map<number, number[]>();
   for (const { pid, parent } of processes())
     children.set(parent, [...(children.get(parent) ?? []), pid]);
   const tree = [root];
   for (let i = 0; i < tree.length; i++) tree.push(...(children.get(tree[i] ?? 0) ?? []));
   return tree;
+}
+
+// Returns those of the given processes that haven't exited, to wait for them to end.
+export function stillRunning(tree: number[]): number[] {
+  const alive = processes().filter(({ state }) => state !== "Z");
+  return tree.filter((pid) => alive.some((process) => process.pid === pid));
 }
 
 // Ends the named session and returns once every process it ran has exited, so what it was
@@ -195,14 +201,10 @@ export async function stopSession(socket: string, name: string, timeout = 10_000
   if (!pane) return;
   const tree = processTree(pane);
   tmux(socket, ["kill-session", "-t", `=${name}`]);
-  const running = () => {
-    const alive = processes().filter(({ state }) => state !== "Z");
-    return tree.filter((pid) => alive.some((process) => process.pid === pid));
-  };
   const deadline = Date.now() + timeout;
-  while (running().length > 0) {
+  while (stillRunning(tree).length > 0) {
     if (Date.now() > deadline)
-      for (const pid of running())
+      for (const pid of stillRunning(tree))
         try {
           process.kill(pid, "SIGKILL");
         } catch {}

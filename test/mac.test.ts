@@ -15,6 +15,7 @@ import {
 import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import type { Subprocess } from "bun";
+import { stillRunning } from "../src/tmux.ts";
 
 const asMac = join(import.meta.dir, "as-mac.ts");
 const source = (file: string) => JSON.stringify(join(import.meta.dir, "..", "src", file));
@@ -233,9 +234,11 @@ test("the daemon takes its lock from a Mac's system library, and the lead reache
   writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\n");
   fake("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
   fake("gh", "exit 1");
+  // Ends when its terminal goes, as Claude Code does: the sandbox's wrapper stays for it, as it
+  // keeps going through a hangup to remove its folder once the agent has ended.
   fake(
     "claude",
-    'skel ps > "$CLAUDE_CONFIG_DIR/ps.new" 2>&1; mv "$CLAUDE_CONFIG_DIR/ps.new" "$CLAUDE_CONFIG_DIR/ps"; exec sleep 300',
+    'skel ps > "$CLAUDE_CONFIG_DIR/ps.new" 2>&1; mv "$CLAUDE_CONFIG_DIR/ps.new" "$CLAUDE_CONFIG_DIR/ps"; read -r line',
   );
   const script = `import { serve } from ${source("daemon.ts")};
 await serve(${JSON.stringify(socket)});`;
@@ -331,14 +334,7 @@ test("nothing a reviewer started outlives it, or keeps the review waiting", asyn
   const clone = reviewable(`sleep 300 &\necho $! > ${pid}`);
   expect((await reviewOnMac(clone)).verdict).toBe("approve");
   const left = Number(readFileSync(pid, "utf8"));
-  await until(() => {
-    try {
-      process.kill(left, 0);
-      return false;
-    } catch {
-      return true;
-    }
-  });
+  await until(() => stillRunning([left]).length === 0);
 });
 
 test("a process that left the reviewer's group can't keep the review waiting", async () => {

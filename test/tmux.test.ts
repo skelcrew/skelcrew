@@ -15,6 +15,7 @@ import {
   hasSession,
   isIdle,
   startSession,
+  stillRunning,
   stopSession,
   typeInto,
 } from "../src/tmux.ts";
@@ -217,21 +218,16 @@ test("stopping a session kills what won't exit", async () => {
   start("builder", [
     "sh",
     "-c",
-    "trap '' HUP TERM; echo $$ > pid.txt; while :; do sleep 0.1; done",
+    "trap '' HUP TERM; echo $$ > pid.txt; for i in $(seq 300); do sleep 0.1; done",
   ]);
   await until(() => read("pid.txt") !== "");
   await stopSession(socket, "builder", 500);
   expect(alive(Number(read("pid.txt").trim()))).toBe(false);
 });
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
+// Returns whether a process is still running. One that exited stays a zombie until the test
+// run ends, as the run adopts orphans, so asking the system for its ID would still find it.
+const alive = (pid: number) => stillRunning([pid]).length > 0;
 
 test("Ctrl-Q detaches with no prefix, and there is no status bar", () => {
   start("lead", ["sleep", "30"]);
@@ -256,7 +252,7 @@ test("a session that was never started doesn't exist", () => {
 test("idle means a quiet pane showing the prompt, and not busy", async () => {
   start("waiting", harness());
   start("busy", harness(30));
-  start("drawing", ["sh", "-c", 'echo "❯"; while :; do date +%N; sleep 0.02; done']);
+  start("drawing", ["sh", "-c", 'echo "❯"; for i in $(seq 1500); do date +%N; sleep 0.02; done']);
   start("other", ["sh", "-c", "echo ready; sleep 30"]);
   await Bun.sleep(moment * 3);
   expect(await isIdle(socket, "waiting", { moment })).toBe(true);
