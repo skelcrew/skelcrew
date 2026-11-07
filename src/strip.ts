@@ -3,7 +3,7 @@
 // has none, as the sidebar says it all.
 // Above the sidebar the same line says skel, its release and, on a remote, where it runs. A thin line runs under them all.
 import { clean, fitted } from "./look.ts";
-import type { Link, Row } from "./sidebar.ts";
+import type { Link, Row } from "./rows.ts";
 
 type Size = { left: number; width: number };
 
