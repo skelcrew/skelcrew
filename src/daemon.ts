@@ -65,6 +65,14 @@ function listen(server: Server, path: string): Promise<void> {
 // Returns the text of anything thrown, for replies and the daemon's log.
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+// Returns the thread whose builder is calling, for the requests only a builder may make.
+// `allowed` already refuses them from anyone else, so the throw never runs: it is what tells
+// the typecheck the caller is a thread.
+function callingThread(caller: Caller): Thread {
+  if (typeof caller !== "object") throw new Error("only a builder can ask that, from its thread");
+  return caller;
+}
+
 // Ends the daemon on a signal: removes its sockets, ends what it started, and exits.
 // The tmux sessions are left running: agents keep working while the daemon is down. They
 // aren't under the daemon. What is, such as a clone or a reviewer, is ended: the service
@@ -183,87 +191,94 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       failThread(db, thread, error);
     }
   };
-  // Carries out a request the caller may make, and returns the reply to send.
+  // Carries out a request the caller may make, and returns the reply to send. The switch has
+  // no default, so the typecheck fails if a request is left out.
   const handle = async (request: Request, caller: Caller): Promise<object> => {
-    if (request.command === "status") {
-      const thread = typeof caller === "object" ? { thread: threadName(db, caller) } : {};
-      return { running: true, pid: process.pid, ...thread };
+    switch (request.command) {
+      case "status": {
+        const thread = typeof caller === "object" ? { thread: threadName(db, caller) } : {};
+        return { running: true, pid: process.pid, ...thread };
+      }
+      case "lead":
+        await lead();
+        recordAttachedFrom(db, request.from);
+        // A lead that wasn't running kept its notes until now.
+        tellLead(db, tmux);
+        // Not waited on, so attaching never waits on GitHub.
+        refreshClones(db).catch((error) => console.log(String(error)));
+        return { lead: true };
+      case "attached":
+        return { note: attachedNote(db) };
+      case "screen opened":
+        for (const { owner, repo } of repositories(db)) poll(`${owner}/${repo}`);
+        return { polling: true };
+      case "page":
+        return { page: await readPage(request.url) };
+      case "repo ls":
+        return { repositories: listRepositories(db) };
+      case "ps":
+        return { threads: listThreads(db, request.repo) };
+      case "task ls":
+        return { tasks: await listTasks(db, request.repo) };
+      case "task show":
+        return { task: await showTask(db, request.repo, request.task) };
+      case "task create": {
+        const { owner, repo, name } = findRepository(db, request.repo);
+        const number = await createIssue(`${owner}/${repo}`, request.title, request.body);
+        return { task: `${name}-${number}` };
+      }
+      case "review": {
+        const thread = findThread(db, request.repo, request.task);
+        rerunReview(db, tmux, thread.folder);
+        return { reviewing: threadName(db, thread) };
+      }
+      case "stop": {
+        const thread = findThread(db, request.repo, request.task);
+        const name = threadName(db, thread);
+        if (thread.status === "stopped") throw new Error(`${name} is stopped already`);
+        if (thread.status !== "working" && thread.status !== "waiting")
+          throw new Error(`${name} is ${thread.status}, so it has no builder to stop`);
+        // Its setup would go on to start the builder after the stop.
+        if (thread.session === null)
+          throw new Error(`${name} is still setting up: stop it once its builder has started`);
+        await stopThread(db, tmux, thread);
+        return { stopped: name };
+      }
+      case "submit": {
+        const thread = callingThread(caller);
+        submitRound(db, tmux, thread.folder, request.summary);
+        return { submitted: threadName(db, thread) };
+      }
+      case "question asked":
+        record(db, callingThread(caller).folder, { asking: true }, "its builder asked a question");
+        tellLead(db, tmux);
+        return { asking: true };
+      case "question answered": {
+        const { folder } = callingThread(caller);
+        // Run before every message typed into the builder, so only a question that was open
+        // is logged.
+        if (readThread(db, folder).asking)
+          record(db, folder, { asking: false }, "its builder's question is over");
+        return { asking: false };
+      }
+      case "start": {
+        const before = threadOn(db, request.repo, request.task);
+        if (before?.status === "stopped") {
+          const name = threadName(db, before);
+          resume(before);
+          return { started: `Started ${name} again: its builder is back where it was.` };
+        }
+        const live = before?.status === "working" || before?.status === "waiting";
+        if (before && live && before.rounds > threadConfig().maxRounds) {
+          goOn(db, tmux, before.folder);
+          return { started: `${threadName(db, before)} goes on past the round limit.` };
+        }
+        const thread = await startThread(db, request);
+        // Not waited on: an agent's command must answer quickly, and setup can take minutes.
+        begin(thread);
+        return { started: `Started ${threadName(db, thread)}.` };
+      }
     }
-    if (request.command === "lead") {
-      await lead();
-      recordAttachedFrom(db, request.from);
-      // A lead that wasn't running kept its notes until now.
-      tellLead(db, tmux);
-      // Not waited on, so attaching never waits on GitHub.
-      refreshClones(db).catch((error) => console.log(String(error)));
-      return { lead: true };
-    }
-    if (request.command === "attached") return { note: attachedNote(db) };
-    if (request.command === "screen opened") {
-      for (const { owner, repo } of repositories(db)) poll(`${owner}/${repo}`);
-      return { polling: true };
-    }
-    if (request.command === "page") return { page: await readPage(request.url) };
-    if (request.command === "repo ls") return { repositories: listRepositories(db) };
-    if (request.command === "ps") return { threads: listThreads(db, request.repo) };
-    if (request.command === "task ls") return { tasks: await listTasks(db, request.repo) };
-    if (request.command === "task show")
-      return { task: await showTask(db, request.repo, request.task) };
-    if (request.command === "task create") {
-      const { owner, repo, name } = findRepository(db, request.repo);
-      const number = await createIssue(`${owner}/${repo}`, request.title, request.body);
-      return { task: `${name}-${number}` };
-    }
-    if (request.command === "review") {
-      const thread = findThread(db, request.repo, request.task);
-      rerunReview(db, tmux, thread.folder);
-      return { reviewing: threadName(db, thread) };
-    }
-    if (request.command === "stop") {
-      const thread = findThread(db, request.repo, request.task);
-      const name = threadName(db, thread);
-      if (thread.status === "stopped") throw new Error(`${name} is stopped already`);
-      if (thread.status !== "working" && thread.status !== "waiting")
-        throw new Error(`${name} is ${thread.status}, so it has no builder to stop`);
-      // Its setup would go on to start the builder after the stop.
-      if (thread.session === null)
-        throw new Error(`${name} is still setting up: stop it once its builder has started`);
-      await stopThread(db, tmux, thread);
-      return { stopped: name };
-    }
-    if (request.command === "submit" && typeof caller === "object") {
-      submitRound(db, tmux, caller.folder, request.summary);
-      return { submitted: threadName(db, caller) };
-    }
-    if (request.command === "question asked" && typeof caller === "object") {
-      record(db, caller.folder, { asking: true }, "its builder asked a question");
-      tellLead(db, tmux);
-      return { asking: true };
-    }
-    if (request.command === "question answered" && typeof caller === "object") {
-      // Run before every message typed into the builder, so only a question that was open
-      // is logged.
-      if (readThread(db, caller.folder).asking)
-        record(db, caller.folder, { asking: false }, "its builder's question is over");
-      return { asking: false };
-    }
-    if (request.command !== "start")
-      throw new Error("only a builder can ask that, from its thread");
-    const before = threadOn(db, request.repo, request.task);
-    if (before?.status === "stopped") {
-      const name = threadName(db, before);
-      resume(before);
-      return { started: `Started ${name} again: its builder is back where it was.` };
-    }
-    const live = before?.status === "working" || before?.status === "waiting";
-    if (before && live && before.rounds > threadConfig().maxRounds) {
-      goOn(db, tmux, before.folder);
-      return { started: `${threadName(db, before)} goes on past the round limit.` };
-    }
-    const thread = await startThread(db, request);
-    // Not waited on: an agent's command must answer quickly, and setup can take minutes.
-    begin(thread);
-    return { started: `Started ${threadName(db, thread)}.` };
   };
   // Brings in a repository that task ls, task show, task create or start names by its full
   // GitHub name, when skel doesn't have it, then carries out the command. The reply says so,
