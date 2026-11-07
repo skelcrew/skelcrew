@@ -1,7 +1,7 @@
 // What each event on a thread's PR means for the thread, decided from plain data: the
 // thread's row and what GitHub returned, with no clock, files or network.
 import { expect, test } from "bun:test";
-import { ciChecks, decide, labeledToStart } from "../src/decide.ts";
+import { ciChecks, decide, labeledToStart, newAuthors } from "../src/decide.ts";
 import type { Check, PullRequest } from "../src/github.ts";
 import type { Thread } from "../src/thread.ts";
 
@@ -371,4 +371,38 @@ test("a PR's CI reads as passing, failing or still running, and skel's own check
   expect(ciChecks(pr({ checks: [review, passed] }))).toBe("passing");
   expect(ciChecks(pr({ checks: [passed, going] }))).toBe("pending");
   expect(ciChecks(pr({ checks: [failed, going] }))).toBe("failing");
+});
+
+test("the authors of what is new are those skel asks GitHub about", () => {
+  const says = (id: number, author: typeof someone | null) => ({ id, author, body: "Hm" });
+  const reviewed = (id: number, author: typeof someone) => ({
+    ...says(id, author),
+    state: "COMMENTED",
+    comments: [],
+  });
+  const prs = new Map([
+    [7, pr({ reviews: [reviewed(5, stranger)], comments: [says(60, someone)] })],
+    [8, pr({ reviews: [reviewed(4, stranger)], comments: [says(50, stranger)] })],
+    [9, pr({ comments: [says(70, you), says(71, bot), says(72, null)] })],
+  ]);
+  const seen = { last_review: 4, last_comment: 50 };
+  const threads = [
+    thread({ pr: 7, ...seen }),
+    thread({ pr: 8, ...seen }),
+    thread({ pr: 9, ...seen }),
+  ];
+  expect([...newAuthors(threads, prs, "simon")]).toEqual(["mallory", "ana"]);
+});
+
+// A stopped thread's events aren't told, and one that hasn't read its PR's history yet counts
+// all of it as old, so neither is worth a question to GitHub.
+test("a stopped thread, a thread new to its PR or one with no PR asks about nobody", () => {
+  const prs = new Map([[7, pr({ comments: [{ id: 60, author: someone, body: "Hm" }] })]]);
+  const threads = [
+    thread({ status: "stopped" }),
+    thread({ last_comment: null }),
+    thread({ pr: null }),
+    thread({ pr: 8 }),
+  ];
+  expect([...newAuthors(threads, prs, "simon")]).toEqual([]);
 });

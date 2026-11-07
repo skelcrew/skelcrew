@@ -164,6 +164,28 @@ export function labeledToStart(threads: Thread[], labeled: Labeled[]): Labeled[]
   return labeled.filter((issue) => !threads.some((t) => t.task === issue.number));
 }
 
+// Returns who wrote the reviews and comments that are new on the threads' PRs, so a poll asks
+// GitHub whether they can push only about them. You and bots are left out, as decide never
+// needs the answer for either, and so are stopped threads, whose events wait for them to start
+// again, and threads that haven't taken in their PR's history yet.
+export function newAuthors(
+  threads: Thread[],
+  prs: Map<number, PullRequest>,
+  you: string,
+): Set<string> {
+  const authors = new Set<string>();
+  for (const t of threads) {
+    const pr = t.pr === null || t.status === "stopped" ? undefined : prs.get(t.pr);
+    for (const item of [
+      ...(pr?.reviews.filter((r) => r.id > (t.last_review ?? Number.POSITIVE_INFINITY)) ?? []),
+      ...(pr?.comments.filter((c) => c.id > (t.last_comment ?? Number.POSITIVE_INFINITY)) ?? []),
+    ])
+      if (item.author && !item.author.bot && item.author.login !== you)
+        authors.add(item.author.login);
+  }
+  return authors;
+}
+
 export type Outcome = {
   check: "success" | "failure";
   description: string;

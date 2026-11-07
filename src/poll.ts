@@ -2,7 +2,7 @@
 // PRs, and hands what each PR means for its thread to the code that acts on it.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
-import { ciChecks, decide, labeledToStart } from "./decide.ts";
+import { ciChecks, decide, labeledToStart, newAuthors } from "./decide.ts";
 import { endThread, tellBuilder, typing } from "./events.ts";
 import { canPush, type Labeled, type OpenList, reactToIssue, readRepository } from "./github.ts";
 import { tellLead } from "./lead.ts";
@@ -109,18 +109,9 @@ async function pollRepository(
   await startLabeled(db, tmux, repo, labeled, begin);
   const { maxRounds } = threadConfig();
   // Asked once per poll, and only about authors of what is new.
-  const authors = new Set<string>();
-  for (const t of threads) {
-    const pr = t.pr === null || t.status === "stopped" ? undefined : prs.get(t.pr);
-    for (const item of [
-      ...(pr?.reviews.filter((r) => r.id > (t.last_review ?? Number.POSITIVE_INFINITY)) ?? []),
-      ...(pr?.comments.filter((c) => c.id > (t.last_comment ?? Number.POSITIVE_INFINITY)) ?? []),
-    ])
-      if (item.author && !item.author.bot && item.author.login !== you)
-        authors.add(item.author.login);
-  }
   const pushers: string[] = [];
-  for (const login of authors) if (await canPush(repo, login)) pushers.push(login);
+  for (const login of newAuthors(threads, prs, you))
+    if (await canPush(repo, login)) pushers.push(login);
   for (const before of threads) {
     const { folder } = before;
     // Read together, with no wait between, so a review the thread's round has finished is
