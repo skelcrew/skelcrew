@@ -4,8 +4,7 @@
 import { z } from "zod";
 import { ciChecks } from "./decide.ts";
 import { Name, readIssueDetails, readPullDetails } from "./github.ts";
-import { grey, pad, paint, white } from "./sidebar.ts";
-import { clean, fitted } from "./strip.ts";
+import { clean, fitted, grey, pad, paint, white } from "./look.ts";
 
 // What the daemon hands the page, checked on both sides of its socket. Each fact is a short
 // label and what it says. All of it comes from GitHub, so none of it is safe to show yet.
