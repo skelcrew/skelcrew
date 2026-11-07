@@ -7,7 +7,7 @@ import { createConnection, createServer, type Server, type Socket } from "node:n
 import { dirname } from "node:path";
 import { z } from "zod";
 import { openDb } from "./db.ts";
-import { pollGitHub, stopThread } from "./events.ts";
+import { stopThread } from "./events.ts";
 import { createIssue } from "./github.ts";
 import { daemonLog, startLaunchAgent } from "./launchd.ts";
 import { attachedNote, recordAttachedFrom, startLead, tellLead } from "./lead.ts";
@@ -23,6 +23,7 @@ import {
 } from "./list.ts";
 import { Page, PageUrl, readPage } from "./page.ts";
 import { cliSocket, daemonSocket, leadSocket, threadSocket } from "./paths.ts";
+import { pollGitHub } from "./poll.ts";
 import { bringInNamed, findRepository, refreshClones, repositories } from "./repo.ts";
 import { goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
 import { openScreen } from "./screen.ts";
