@@ -109,9 +109,9 @@ const headed = (heading: string): Line[] => [
 ];
 
 // Returns a list's lines for a third of `height` lines: its heading and a blank line, as many
-// rows as fit, then a count of the rest. Rows come with the dim ones last, so those are the first to be left out.
-// A third with room for just one row keeps the row, and the count gives way. An empty list says
-// so, as its third stays either way.
+// rows as fit, then a count of the rest. Rows come with the dim ones last, so those are the
+// first to be left out. A third with room for just one row keeps the row, and the count gives
+// way. An empty list says so, as its third stays either way.
 function listLines(
   heading: string,
   list: List,
@@ -135,7 +135,7 @@ function listLines(
 }
 
 // Returns lines with blank ones added, out to a height.
-const held = (lines: Line[], height: number) => [
+const padded = (lines: Line[], height: number) => [
   ...lines,
   ...Array<Line>(height - lines.length).fill({ text: "" }),
 ];
@@ -179,10 +179,10 @@ function layout(
     return { lines: scrolled(blocks, here, room), room };
   const divider = { text: paint(edge, "─".repeat(Math.max(width, 0))), joins: true };
   const lines = [
-    ...held(listLines("Issues", lists.issues, shown, third, width), third),
+    ...padded(listLines("Issues", lists.issues, shown, third, width), third),
     divider,
     ...top,
-    ...held(scrolled(blocks, here, middle - top.length), middle - top.length),
+    ...padded(scrolled(blocks, here, middle - top.length), middle - top.length),
     divider,
     ...listLines("PRs", lists.prs, shown, third, width),
   ];
@@ -190,16 +190,16 @@ function layout(
 }
 
 // Returns the whole sidebar as lines, given the rows, the lists, what is on the right, as a
-// session or a link's url, and the sidebar's size. It reads nothing, so what you see can be tested without a terminal. Every
-// line fills the pane and ends with the sidebar's edge, in the last column. tmux's own border
-// beside it is blank, which leaves a gap before the agent.
+// session or a link's url, and the sidebar's size. It reads nothing, so what you see can be
+// tested without a terminal. Every line fills the pane and ends with the sidebar's edge, in the
+// last column. tmux's own border beside it is blank, which leaves a gap before the agent.
 export function draw(rows: Row[], lists: Lists, shown: string | null, size: Size): string {
   const { lines, room } = layout(rows, lists, shown, size);
   const width = size.width - 1;
   const keys = hints.map((hint) => ({
     text: paint(grey, hint.slice(0, Math.max(width - pad.length, 0))),
   }));
-  const all: Line[] = [...held(lines, room), ...(room < size.height ? keys : [])];
+  const all: Line[] = [...padded(lines, room), ...(room < size.height ? keys : [])];
   return all
     .map(({ text, joins }) => `${filled(text, width)}${paint(edge, joins ? "┤" : "│")}`)
     .join("\n");
