@@ -656,6 +656,20 @@ nameRepositories(db);`;
     expect(hasSession("app-12")).toBe(false);
   }, 30_000);
 
+  test("a builder that exits as soon as it starts fails the thread and says why", async () => {
+    fakeClaude("", "echo 'claude: not logged in'; exit 1");
+    addApp();
+    serve();
+    await untilCloned();
+    await skel("start", "app-12");
+    await until(() => thread().status === "failed");
+    await until(() => {
+      const log = read(join(data(), "threads", "app-12.log"));
+      return log.includes("the builder exited as soon as it started") && log.includes("logged in");
+    });
+    expect(hasSession("app-12")).toBe(false);
+  }, 30_000);
+
   test("skel stop refuses a thread still setting up, and one with no builder", async () => {
     addApp({ "skel.yaml": "setup: [sleep 2, exit 3]\n" });
     serve();

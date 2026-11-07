@@ -164,6 +164,18 @@ export function endSession(socket: string, name: string): void {
   mustTmux(socket, ["kill-session", "-t", `=${name}`]);
 }
 
+// Waits a moment after an agent's start, and throws with its last screen when it has ended.
+// One that can't start, such as one whose login is gone, ends within moments, and attaching
+// would only find it gone. A failed session is ended, so skel can start the agent again.
+// `who` names the agent in the error: the lead or the builder.
+export async function checkItLived(socket: string, name: string, who: string): Promise<void> {
+  await Bun.sleep(1000);
+  const failed = failedScreen(socket, name);
+  if (failed !== null) endSession(socket, name);
+  if (failed !== null || !hasSession(socket, name))
+    throw new Error(`the ${who} exited as soon as it started:\n${failed ?? ""}`);
+}
+
 // Returns every process with what started it and its state letter, Z for one that exited
 // but wasn't yet reaped. It asks ps, since a Mac has no /proc. Each column is its own -o: a
 // Mac's ps reads what follows an = as the column's title, commas and all.

@@ -16,8 +16,8 @@ import { errorText } from "./say.ts";
 import { cloneOf, folderName, github, log, readThread, record, Thread } from "./thread.ts";
 import {
   agentRuns,
+  checkItLived,
   endSession,
-  failedScreen,
   hasSession,
   startServer,
   startSession,
@@ -236,12 +236,7 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
   startServer(tmux);
   startSession(tmux, thread.folder, { folder: clone, command: argv, env });
   console.log(`${resume ? "Brought back" : "Started"} the builder of ${thread.folder}.`);
-  // A builder that can't start, such as one whose login is gone, ends within moments.
-  await Bun.sleep(1000);
-  const failed = failedScreen(tmux, thread.folder);
-  if (failed !== null) endSession(tmux, thread.folder);
-  if (failed !== null || !hasSession(tmux, thread.folder))
-    throw new Error(`the builder exited as soon as it started:\n${failed ?? ""}`);
+  await checkItLived(tmux, thread.folder, "builder");
 }
 
 // Brings back a thread's builder after the daemon restarts, or after skel stop for skel
