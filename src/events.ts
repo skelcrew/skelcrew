@@ -10,7 +10,7 @@ import { cloneDir } from "./paths.ts";
 import { refreshClones } from "./repo.ts";
 import { endRound } from "./round.ts";
 import { errorText } from "./say.ts";
-import { cloneOf, github, readThread, record, type Thread } from "./thread.ts";
+import { cloneOf, github, readThread, record, type Thread, threadName } from "./thread.ts";
 import { agentRuns, stopSession, typeInto } from "./tmux.ts";
 
 // The message about failed checks, with the end of each one's log. A check that isn't a
@@ -56,8 +56,16 @@ async function endBuilder(tmux: string, folder: string): Promise<void> {
 // but keeps its clone, branch and PR, so skel start can bring the builder back where it was.
 // A submit, review or review's changes under way stay saved and carry on once it starts
 // again. It no longer needs you: you stopped it, and its builder's question ended with it.
-// Marked first, so a builder that submits while it exits is refused.
+// Marked first, so a builder that submits while it exits is refused. Refuses a thread that
+// has no builder to stop, or whose builder hasn't started yet.
 export async function stopThread(db: Database, tmux: string, thread: Thread): Promise<void> {
+  const name = threadName(db, thread);
+  if (thread.status === "stopped") throw new Error(`${name} is stopped already`);
+  if (thread.status !== "working" && thread.status !== "waiting")
+    throw new Error(`${name} is ${thread.status}, so it has no builder to stop`);
+  // Its setup would go on to start the builder after the stop.
+  if (thread.session === null)
+    throw new Error(`${name} is still setting up: stop it once its builder has started`);
   record(db, thread.folder, { status: "stopped", needs_you: false, asking: false }, "stopped");
   await endBuilder(tmux, thread.folder);
 }

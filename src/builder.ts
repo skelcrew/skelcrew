@@ -7,6 +7,7 @@ import { parse } from "yaml";
 import { z } from "zod";
 import { agentCommand, hasTranscript } from "./claude.ts";
 import { threadConfig } from "./config.ts";
+import { pastLimit } from "./decide.ts";
 import { fetchBranch, readIssue } from "./github.ts";
 import { cloneDir, threadSocket } from "./paths.ts";
 import instructions from "./prompts/builder.md" with { type: "text" };
@@ -22,6 +23,27 @@ import {
   startServer,
   startSession,
 } from "./tmux.ts";
+
+// Returns what skel start means for a task, given its thread if it has one: bring back a
+// stopped thread, let a live one past the round limit go on, or else start a new thread, which
+// startThread refuses when the task's thread can't start over. The config is read only for a
+// live thread: a bad max_rounds must fail a thread with the reason, not refuse skel start.
+export function startChoice(thread: Thread | null): "bring back" | "go on" | "new thread" {
+  if (thread?.status === "stopped") return "bring back";
+  const live = thread?.status === "working" || thread?.status === "waiting";
+  if (thread && live && pastLimit(thread, threadConfig().maxRounds)) return "go on";
+  return "new thread";
+}
+
+// Returns the status of a stopped thread that skel start brings back. Its builder sits at its
+// prompt once back, as its turn ended with the stop. It waits when a round or its PR will wake
+// it: a submit or review under way, or the PR's checks, reviews and comments. It works when it
+// has a review's changes to be typed in, or no PR yet.
+export function statusOnceBack(stopped: Thread): "waiting" | "working" {
+  const { pr, submitting, reviewing, telling } = stopped;
+  const handed = telling === null && (pr !== null || submitting !== null || reviewing !== null);
+  return handed ? "waiting" : "working";
+}
 
 // Records a new thread on a task, with its folder and branch, and returns it. Refuses a
 // task that has a thread already, unless that one failed: then it starts over in the same
