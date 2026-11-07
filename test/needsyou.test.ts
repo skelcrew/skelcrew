@@ -4,23 +4,22 @@
 // Claude Code would around AskUserQuestion, and as the lead it waits at a ❯ prompt.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
-import { source, until as wait } from "./harness.ts";
+import {
+  git,
+  homeEnv,
+  read,
+  runSkel,
+  source,
+  startDaemon,
+  until as wait,
+  writeScript,
+} from "./harness.ts";
 
-const main = source("main.ts");
-const daemon = source("daemon.ts");
 let home = "";
 let socket = "";
 const running: Subprocess[] = [];
@@ -28,11 +27,9 @@ const running: Subprocess[] = [];
 const data = () => join(home, ".local", "share", "skel");
 const builder = () => join(data(), "claude", "app-12");
 const lead = () => join(data(), "claude", "lead");
-const read = (file: string) => (existsSync(file) ? readFileSync(file, "utf8") : "");
 
-function script(name: string, body: string): void {
-  writeFileSync(join(home, "bin", name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
-}
+// Puts a program of the test's on its PATH.
+const script = (name: string, body: string) => writeScript(home, name, body);
 
 // Stands in for Claude Code. As the lead, it waits at a ❯ prompt and keeps what is typed into
 // it, looking busy while the file busy is in its config folder. As the builder, it runs the
@@ -112,50 +109,18 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-const env = () => ({
-  HOME: home,
-  XDG_RUNTIME_DIR: join(home, "run"),
-  PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
-});
+// What this test's processes run with.
+const env = () => homeEnv(home);
 
-function serve(): Subprocess {
-  const code = `import { serve } from ${JSON.stringify(daemon)};
-await serve(${JSON.stringify(socket)});`;
-  const run = Bun.spawn([process.execPath, "-e", code], {
-    env: env(),
-    stdout: "ignore",
-    stderr: "ignore",
-  });
-  running.push(run);
-  return run;
-}
+// Runs this test's daemon, which the test's clean-up stops.
+const serve = () => startDaemon(socket, env(), running);
 
 // Runs skel as you would, or as a builder's hook would with its thread's socket.
-async function skel(args: string[], more: Record<string, string> = {}) {
-  const run = Bun.spawn([process.execPath, main, ...args], {
-    env: { ...env(), ...more },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [out, err, code] = await Promise.all([
-    new Response(run.stdout).text(),
-    new Response(run.stderr).text(),
-    run.exited,
-  ]);
-  return { out, err, code };
-}
+const skel = (args: string[], more: Record<string, string> = {}) =>
+  runSkel(args, { ...env(), ...more });
 
 // A daemon's work takes its time here, so a wait lasts 15 seconds unless a test says otherwise.
 const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout });
-
-function git(cwd: string, ...args: string[]): string {
-  const run = Bun.spawnSync(
-    ["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t", ...args],
-    { stdout: "pipe", stderr: "pipe" },
-  );
-  if (!run.success) throw new Error(run.stderr.toString());
-  return run.stdout.toString().trim();
-}
 
 // Puts simon/app on the fake GitHub and tells skel about it.
 function addApp(): void {

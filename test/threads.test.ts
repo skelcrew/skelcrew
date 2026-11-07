@@ -2,31 +2,21 @@
 // a fake gh, a fake Claude Code and a folder of bare repositories standing in for GitHub.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 import { stillRunning } from "../src/tmux.ts";
-import { source, until } from "./harness.ts";
+import { git, homeEnv, read, runSkel, source, startDaemon, until } from "./harness.ts";
 
 const main = source("main.ts");
-const daemon = source("daemon.ts");
 let home = "";
 let socket = "";
 const running: Subprocess[] = [];
 
 const data = () => join(home, ".local", "share", "skel");
 const config = (name: string) => join(data(), "claude", name);
-const read = (file: string) => (existsSync(file) ? readFileSync(file, "utf8") : "");
 
 function fake(name: string, body: string): void {
   writeFileSync(
@@ -109,42 +99,19 @@ function issue(number: number, title: string, body: string): void {
   writeFileSync(join(home, "issues", String(number)), JSON.stringify({ number, title, body }));
 }
 
-const env = () => ({
-  HOME: home,
-  XDG_RUNTIME_DIR: join(home, "run"),
-  PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
-});
+// What this test's processes run with.
+const env = () => homeEnv(home);
 
-function serve(): Subprocess {
-  const script = `import { serve } from ${JSON.stringify(daemon)};
-await serve(${JSON.stringify(socket)});`;
-  const run = Bun.spawn([process.execPath, "-e", script], {
-    env: env(),
-    stdout: "ignore",
-    stderr: "ignore",
-  });
-  running.push(run);
-  return run;
-}
+// Runs this test's daemon, which the test's clean-up stops.
+const serve = () => startDaemon(socket, env(), running);
 
 async function stop(run: Subprocess): Promise<void> {
   run.kill();
   await run.exited;
 }
 
-async function skel(...args: string[]) {
-  const run = Bun.spawn([process.execPath, main, ...args], {
-    env: env(),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [out, err, code] = await Promise.all([
-    new Response(run.stdout).text(),
-    new Response(run.stderr).text(),
-    run.exited,
-  ]);
-  return { out, err, code };
-}
+// Runs skel as you or the lead would.
+const skel = (...args: string[]) => runSkel(args, env());
 
 async function untilAnswers() {
   await until(() => existsSync(join(home, "run", "skel.sock")));
@@ -152,15 +119,6 @@ async function untilAnswers() {
 }
 
 const github = () => join(home, "github");
-
-function git(cwd: string, ...args: string[]): string {
-  const run = Bun.spawnSync(
-    ["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t", ...args],
-    { stdout: "pipe", stderr: "pipe" },
-  );
-  if (!run.success) throw new Error(run.stderr.toString());
-  return run.stdout.toString().trim();
-}
 
 // Puts simon/<repo> on the fake GitHub with the files given, with your permission on it.
 // Returns a checkout to push more from.
@@ -761,15 +719,7 @@ nameRepositories(db);`;
     addApp({ "skel.yaml": "setup: [cd . && X=1 tool --flag]\n" });
     mkdirSync(join(home, "tools"));
     writeFileSync(join(home, "tools", "tool"), '#!/bin/sh\necho "ran $1" > ran\n', { mode: 0o755 });
-    const script = `import { serve } from ${JSON.stringify(daemon)};
-await serve(${JSON.stringify(socket)});`;
-    running.push(
-      Bun.spawn([process.execPath, "-e", script], {
-        env: { ...env(), PATH: `${join(home, "tools")}:${env().PATH}` },
-        stdout: "ignore",
-        stderr: "ignore",
-      }),
-    );
+    startDaemon(socket, { ...env(), PATH: `${join(home, "tools")}:${env().PATH}` }, running);
     await untilCloned();
     await skel("start", "app-12");
     await until(() => read(join(config("app-12"), "args")) !== "" || thread().status === "failed");

@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { userInfo } from "node:os";
-import { join } from "node:path";
 import { cliSocket, threadSocket } from "../src/paths";
 import { dropCapabilities, onSprite } from "../src/sprite";
 import { source } from "./harness.ts";
