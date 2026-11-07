@@ -16,13 +16,6 @@ export function nameRepositories(db: Database): void {
     THEN owner || '/' || repo ELSE repo END`);
 }
 
-const createRepositories = `CREATE TABLE IF NOT EXISTS repositories (
-  owner TEXT NOT NULL,
-  repo TEXT NOT NULL,
-  name TEXT NOT NULL UNIQUE,
-  PRIMARY KEY (owner, repo)
-)`;
-
 // Opens skel's database and prepares its tables so repositories, the lead and threads
 // survive restarts.
 export function openDb(): Database {
@@ -31,20 +24,14 @@ export function openDb(): Database {
   // The daemon and skel run in your terminal can use the file at once. Without a wait, a
   // write that meets another one fails with "database is locked" at once.
   db.run("PRAGMA busy_timeout = 5000");
-  // Repositories once had a path to your checkout, and a name you chose. They keep their
-  // GitHub names, and the lead clones them when it next starts.
-  if (db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = 'path'").get())
-    db.transaction(() => {
-      db.run("ALTER TABLE repositories RENAME TO repositories_with_paths");
-      db.run(createRepositories);
-      db.run(`INSERT OR IGNORE INTO repositories (owner, repo, name)
-        SELECT owner, repo, owner || '/' || repo FROM repositories_with_paths`);
-      db.run("DROP TABLE repositories_with_paths");
-      nameRepositories(db);
-    })();
-  db.run(createRepositories);
-  // Whether skel made sure the repository has the skel label. Repositories an older skel
-  // brought in get it once, when the daemon next refreshes their clones.
+  db.run(`CREATE TABLE IF NOT EXISTS repositories (
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    name TEXT NOT NULL UNIQUE,
+    PRIMARY KEY (owner, repo)
+  )`);
+  // Whether skel made sure the repository has the skel label. A repository saved before this
+  // column existed gets it once, when the daemon next refreshes its clone.
   if (!db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = 'labeled'").get())
     db.run("ALTER TABLE repositories ADD COLUMN labeled INTEGER NOT NULL DEFAULT 0");
   // How many issues and PRs are open in all, as the sidebar counts those it doesn't show.
@@ -103,7 +90,8 @@ export function openDb(): Database {
     review_line TEXT,
     PRIMARY KEY (owner, repo, task)
   )`);
-  // Threads an older skel started lack some of these columns. `submitting`,
+  // Creating a table leaves one that exists as it is, so a release that gives threads a new
+  // column lists it here too, and databases already in use gain it. `submitting`,
   // `reviewing` and `telling` hold the round under way, so one the daemon's stop cut short
   // carries on when it starts again, and `noting` holds a note for the lead the same way.
   const added = {
