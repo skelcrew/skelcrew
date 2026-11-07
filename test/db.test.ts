@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { source } from "./harness.ts";
 
 let home = "";
 beforeEach(() => {
@@ -24,8 +25,8 @@ test("a thread an older skel recorded keeps working, with no rounds and no pull 
     `INSERT INTO threads VALUES ('simon', 'app', 12, 'app-12', 'skel/12', NULL, 'working', NULL)`,
   );
   old.close();
-  const code = `import { openDb } from ${JSON.stringify(join(import.meta.dir, "..", "src", "db.ts"))};
-import { liveThreads } from ${JSON.stringify(join(import.meta.dir, "..", "src", "thread.ts"))};
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { liveThreads } from ${JSON.stringify(source("thread.ts"))};
 console.log(JSON.stringify(liveThreads(openDb())));`;
   const run = Bun.spawnSync([process.execPath, "-e", code], {
     env: { ...process.env, HOME: home },
@@ -60,7 +61,7 @@ console.log(JSON.stringify(liveThreads(openDb())));`;
 
 // The daemon writes while skel run in your terminal, or a test, reads or writes too.
 test("a write waits for another process's write instead of failing", async () => {
-  const db = JSON.stringify(join(import.meta.dir, "..", "src", "db.ts"));
+  const db = JSON.stringify(source("db.ts"));
   const env = { ...process.env, HOME: home };
   const run = (code: string) =>
     Bun.spawn([process.execPath, "-e", code], { env, stdout: "pipe", stderr: "pipe" });

@@ -18,6 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentCommand, setupCommand } from "../src/sandbox.ts";
+import { source } from "./harness.ts";
 
 let home = "";
 let socket: ReturnType<typeof Bun.listen> | undefined;
@@ -386,7 +387,7 @@ describe("starting Claude Code", () => {
     const config = join(home, ".local", "share", "skel", "claude", "app-12");
     mkdirSync(config, { recursive: true });
     Bun.spawnSync(["mkfifo", join(config, ".claude.json")]);
-    const script = `import { agentCommand } from ${JSON.stringify(join(import.meta.dir, "..", "src", "sandbox.ts"))};
+    const script = `import { agentCommand } from ${JSON.stringify(source("sandbox.ts"))};
 agentCommand({ name: "app-12", socket: "x", model: "opus" });`;
     const proc = Bun.spawn(["bun", "-e", script], {
       env: { ...process.env, ...outside() },

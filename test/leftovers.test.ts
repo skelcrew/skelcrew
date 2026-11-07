@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
+import { until as wait } from "./harness.ts";
 
 const preload = join(import.meta.dir, "leftovers.ts");
 let home = "";
@@ -36,13 +37,9 @@ function running(pid: number): boolean {
   }
 }
 
-async function until(done: () => boolean, what: string, timeout = 10_000) {
-  const deadline = Date.now() + timeout;
-  while (!done()) {
-    if (Date.now() > deadline) throw new Error(`gave up waiting for ${what}`);
-    await Bun.sleep(50);
-  }
-}
+// Says what it waited for, if it gives up.
+const until = (done: () => boolean, what: string, timeout = 10_000) =>
+  wait(done, { timeout, what: () => what });
 
 // Starts a process that outlives what started it, as a daemon's child can, and notes its ID.
 // With no env of its own, nothing in it names the run, so only its parent tells it apart.

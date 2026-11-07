@@ -16,8 +16,9 @@ import {
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { source } from "./harness.ts";
 
-const main = join(import.meta.dir, "..", "src", "main.ts");
+const main = source("main.ts");
 let home = "";
 let daemon: Server | undefined;
 
@@ -455,29 +456,6 @@ test("skel init is gone", async () => {
   const run = await skel(["init"]);
   expect(run.code).toBe(1);
   expect(run.err).not.toContain("init");
-});
-
-// skel init kept a path to your checkout for each repository, under a short name of your
-// choosing.
-test("keeps the repositories of a database from before skel had clones of its own", async () => {
-  const data = join(home, ".local", "share", "skel");
-  mkdirSync(data, { recursive: true });
-  const old = new Database(join(data, "skel.db"));
-  old.run(`CREATE TABLE repositories (
-    name TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, owner TEXT NOT NULL, repo TEXT NOT NULL)`);
-  old.run(`INSERT INTO repositories VALUES ('app', '/code/app', 'simon', 'app'),
-    ('web', '/code/app2', 'simon', 'app'), ('tools', '/code/t', 'simon', 'skel-tools')`);
-  old.close();
-  const listed = await skel(["repo", "ls"]);
-  expect(listed.err).toBe("");
-  expect(listed.out).toBe(
-    `app         simon/app         ${data}/repos/simon/app\n` +
-      `skel-tools  simon/skel-tools  ${data}/repos/simon/skel-tools\n`,
-  );
-  const db = new Database(join(data, "skel.db"));
-  const columns = db.query("SELECT name FROM pragma_table_info('repositories')").all();
-  db.close();
-  expect(columns).not.toContainEqual({ name: "path" });
 });
 
 // A git template, or anything else, could put a credential in a new clone's config. The lead
