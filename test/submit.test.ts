@@ -15,7 +15,7 @@ import {
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
-import { source } from "./harness.ts";
+import { source, until as wait } from "./harness.ts";
 
 const main = source("main.ts");
 const daemon = source("daemon.ts");
@@ -186,13 +186,8 @@ const builderSocket = () => {
   return join(home, "run", "skel", "threads", short, "skel.sock");
 };
 
-async function until(done: () => boolean, timeout = 15_000) {
-  const deadline = Date.now() + timeout;
-  while (!done()) {
-    if (Date.now() > deadline) throw new Error("gave up waiting");
-    await Bun.sleep(50);
-  }
-}
+// A daemon's work takes its time here, so a wait lasts 15 seconds unless a test says otherwise.
+const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout });
 
 const github = () => join(home, "github");
 

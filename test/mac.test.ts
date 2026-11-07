@@ -16,7 +16,7 @@ import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import type { Subprocess } from "bun";
 import { stillRunning } from "../src/tmux.ts";
-import { source } from "./harness.ts";
+import { source, until as wait } from "./harness.ts";
 
 const asMac = join(import.meta.dir, "as-mac.ts");
 let home = "";
@@ -213,13 +213,7 @@ console.log(JSON.stringify(setupCommand(${JSON.stringify(clone)}, "pwd; echo \\"
 });
 
 // Waits until `done` holds, for what a daemon does in its own time.
-async function until(done: () => boolean, timeout = 15_000): Promise<void> {
-  const deadline = Date.now() + timeout;
-  while (!done()) {
-    if (Date.now() > deadline) throw new Error("gave up waiting");
-    await Bun.sleep(50);
-  }
-}
+const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout });
 
 test("the daemon takes its lock from a Mac's system library, and the lead reaches it", async () => {
   // A Mac's library name, standing for the C library here. With no such name to load, the

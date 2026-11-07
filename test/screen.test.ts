@@ -17,7 +17,7 @@ import { z } from "zod";
 import { drawPage, type Page } from "../src/page.ts";
 import { sidebarWidth } from "../src/screen.ts";
 import { startSession, stillRunning } from "../src/tmux.ts";
-import { source } from "./harness.ts";
+import { source, until as wait } from "./harness.ts";
 
 const dbFile = source("db.ts");
 const screenFile = source("screen.ts");
@@ -44,13 +44,9 @@ function tmux(socket: string, ...args: string[]) {
   return { ok: run.success, out: run.stdout.toString() };
 }
 
-async function until(done: () => boolean, what: string, window = "one") {
-  const deadline = Date.now() + 10_000;
-  while (!done()) {
-    if (Date.now() > deadline) throw new Error(`gave up waiting for ${what}:\n${seen(window)}`);
-    await Bun.sleep(30);
-  }
-}
+// Says what it waited for and shows the window it watched, if it gives up.
+const until = (done: () => boolean, what: string, window = "one") =>
+  wait(done, { every: 30, what: () => `${what}:\n${seen(window)}` });
 
 // What an agent's script logged in a file of the test's folder, or nothing before it has.
 const read = (file: string) => {

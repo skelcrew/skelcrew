@@ -19,7 +19,7 @@ import {
   stopSession,
   typeInto,
 } from "../src/tmux.ts";
-import { source } from "./harness.ts";
+import { source, until as wait } from "./harness.ts";
 
 const moment = 100;
 let home = "";
@@ -66,13 +66,8 @@ function start(name: string, command: string[], env: Record<string, string> = {}
   startSession(socket, name, { folder: home, command, env });
 }
 
-async function until(done: () => boolean) {
-  const deadline = Date.now() + 5000;
-  while (!done()) {
-    if (Date.now() > deadline) throw new Error("gave up waiting");
-    await Bun.sleep(20);
-  }
-}
+// Waits as long as this file's tests expect anything to take, looking often.
+const until = (done: () => boolean) => wait(done, { timeout: 5000, every: 20 });
 
 const read = (file: string) =>
   existsSync(join(home, file)) ? readFileSync(join(home, file), "utf8") : "";

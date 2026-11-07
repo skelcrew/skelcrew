@@ -16,7 +16,7 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 import { stillRunning } from "../src/tmux.ts";
-import { source } from "./harness.ts";
+import { source, until } from "./harness.ts";
 
 const main = source("main.ts");
 const daemon = source("daemon.ts");
@@ -144,14 +144,6 @@ async function skel(...args: string[]) {
     run.exited,
   ]);
   return { out, err, code };
-}
-
-async function until(done: () => boolean, timeout = 10_000) {
-  const deadline = Date.now() + timeout;
-  while (!done()) {
-    if (Date.now() > deadline) throw new Error("gave up waiting");
-    await Bun.sleep(50);
-  }
 }
 
 async function untilAnswers() {
