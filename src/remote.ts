@@ -51,7 +51,7 @@ export const quoted = (word: string) =>
 
 // Runs a program with your terminal, so ssh can ask for a password and attach, and returns
 // its exit code.
-export const run = (argv: string[]) =>
+export const runInTerminal = (argv: string[]) =>
   Bun.spawn(argv, { stdio: ["inherit", "inherit", "inherit"] }).exited;
 
 // Runs `go` and returns what it gives back, with your terminal's title saved before and put
@@ -72,7 +72,7 @@ export async function keepingTitle<T>(go: () => Promise<T>): Promise<T> {
 // Returns how to run skel on the host with these words. It takes the environment to add to
 // what it always passes, and gives back the exit code.
 const onServer = (host: string, words: string[]) => (env: string[]) =>
-  run([
+  runInTerminal([
     "ssh",
     "-t",
     host,
@@ -162,10 +162,11 @@ export async function copySkel(
   // link, so whatever is at the new file's name is removed first. A rename replaces a link
   // at skel itself, such as one to a checkout's launcher, without touching the file it
   // points to.
-  if ((await run(shell("mkdir -p .local/bin && rm -f .local/bin/skel.new"))) !== 0)
+  if ((await runInTerminal(shell("mkdir -p .local/bin && rm -f .local/bin/skel.new"))) !== 0)
     throw new Error(`couldn't make ~/.local/bin on ${where}, so skel wasn't copied`);
-  if ((await run(push)) !== 0) throw new Error(`${push[0]} couldn't copy skel to ${where}`);
-  if ((await run(shell("mv -f .local/bin/skel.new .local/bin/skel"))) !== 0)
+  if ((await runInTerminal(push)) !== 0)
+    throw new Error(`${push[0]} couldn't copy skel to ${where}`);
+  if ((await runInTerminal(shell("mv -f .local/bin/skel.new .local/bin/skel"))) !== 0)
     throw new Error(`couldn't put the new skel in place on ${where}`);
 }
 
@@ -294,7 +295,7 @@ async function buildLinuxSkel(file: string): Promise<void> {
   const build = laptopBuild();
   const stamp = build ? ["--define", `SKEL_BUILD=${JSON.stringify(build)}`] : [];
   const argv = ["bun", "build", "--compile", target, ...stamp, mainFile, "--outfile", file];
-  if ((await run(argv)) !== 0) throw new Error("bun build failed, so skel wasn't copied");
+  if ((await runInTerminal(argv)) !== 0) throw new Error("bun build failed, so skel wasn't copied");
 }
 
 // Gets the skel you run here for a server or Sprite, copies it there, and removes it after: your

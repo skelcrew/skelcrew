@@ -30,7 +30,7 @@ function taskName(word?: string): [string, number] | undefined {
 
 // Runs the requested CLI command, or prints usage and exits when its arguments are invalid.
 // With no command, sets up skel and opens the screen on the lead.
-async function run(args: string[]): Promise<void> {
+async function runCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
   // Before the check below, so a server whose skel differs from the laptop's still says what
   // it is.
@@ -242,7 +242,7 @@ async function run(args: string[]): Promise<void> {
 }
 
 try {
-  await run(process.argv.slice(2));
+  await runCommand(process.argv.slice(2));
 } catch (error) {
   console.error(`skel: ${errorText(error)}`);
   process.exit(1);

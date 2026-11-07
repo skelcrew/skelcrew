@@ -137,7 +137,7 @@ export async function startThread(
 // Runs a command and waits for it, throwing with the end of its output when it fails, so a
 // failed setup says why. `doing` names what failed, since a sandboxed command's own words
 // are mostly bwrap's.
-async function run(
+async function mustRun(
   argv: string[],
   doing = argv.join(" "),
   env: Record<string, string | undefined> = process.env,
@@ -185,7 +185,7 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   if (!existsSync(cloneDir(thread.owner, thread.repo))) await refreshClones(db);
   rmSync(clone, { recursive: true, force: true });
   // From skel's own clone on the same disk, so git links its files rather than copying them.
-  await run([
+  await mustRun([
     "git",
     "clone",
     "--quiet",
@@ -194,11 +194,11 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
     clone,
   ]);
   await fetchBranch(clone, fullNameOf(thread), thread.base);
-  await run(["git", "-C", clone, "checkout", "--quiet", "-b", thread.branch, "FETCH_HEAD"]);
+  await mustRun(["git", "-C", clone, "checkout", "--quiet", "-b", thread.branch, "FETCH_HEAD"]);
   // The reviewer reads the diff against origin/<base>, which must be where the branch
   // started. Cloned from skel's clone, the thread's clone has only the default branch there,
   // and as skel's clone last saw it, which can be older.
-  await run([
+  await mustRun([
     "git",
     "-C",
     clone,
@@ -211,12 +211,12 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   for (const key of ["user.name", "user.email"]) {
     const yours = Bun.spawnSync(["git", "config", "--global", "--get", key], { stdout: "pipe" });
     const value = yours.stdout.toString().trim();
-    if (yours.success && value) await run(["git", "-C", clone, "config", key, value]);
+    if (yours.success && value) await mustRun(["git", "-C", clone, "config", key, value]);
   }
   refuseCredentials(clone);
   for (const command of setupCommands(clone)) {
     const { argv, env } = setupCommand(clone, command);
-    await run(argv, `skel.yaml's setup command "${command}"`, env);
+    await mustRun(argv, `skel.yaml's setup command "${command}"`, env);
   }
 }
 
