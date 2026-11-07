@@ -3,6 +3,7 @@ import { userInfo } from "node:os";
 import { join } from "node:path";
 import { cliSocket, threadSocket } from "../src/paths";
 import { dropCapabilities, onSprite } from "../src/sprite";
+import { source } from "./harness.ts";
 
 const saved = { runtime: process.env.XDG_RUNTIME_DIR, socket: process.env.SKEL_SOCKET };
 // Inside an agent's sandbox, as when skel builds skel, SKEL_SOCKET is set already.
@@ -18,7 +19,7 @@ afterEach(() => {
 // Returns where skel looks for the daemon's socket without XDG_RUNTIME_DIR, run in a
 // sandbox whose /run holds only the given folders.
 async function socketWith(folders: string[]): Promise<string> {
-  const paths = join(import.meta.dir, "..", "src", "paths.ts");
+  const paths = source("paths.ts");
   const made = folders.flatMap((folder) => ["--dir", folder]);
   const argv = [...(onSprite() ? dropCapabilities : []), "bwrap", "--dev-bind", "/", "/"];
   argv.push("--tmpfs", "/run", ...made, "--", process.execPath, "-e");

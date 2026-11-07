@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { source } from "./harness.ts";
 
 let home = "";
 let laptop = { folder: "", main: "", commit: "" };
@@ -45,7 +46,7 @@ function fake(name: string, body: string): void {
 // what is built and from which commit.
 function laptopSkel(): { folder: string; main: string; commit: string } {
   const folder = join(home, "code", "skel");
-  cpSync(join(import.meta.dir, "..", "src"), join(folder, "src"), { recursive: true });
+  cpSync(source(), join(folder, "src"), { recursive: true });
   symlinkSync(join(import.meta.dir, "..", "node_modules"), join(folder, "node_modules"));
   writeFileSync(join(folder, ".gitignore"), "node_modules\n");
   const git = (...args: string[]) =>

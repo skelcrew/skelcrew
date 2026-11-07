@@ -16,9 +16,10 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 import { stillRunning } from "../src/tmux.ts";
+import { source } from "./harness.ts";
 
-const main = join(import.meta.dir, "..", "src", "main.ts");
-const daemon = join(import.meta.dir, "..", "src", "daemon.ts");
+const main = source("main.ts");
+const daemon = source("daemon.ts");
 let home = "";
 let socket = "";
 const running: Subprocess[] = [];
@@ -189,7 +190,7 @@ function onGitHub(files: Record<string, string>, repo: string, permission = "WRI
 // Returns a checkout to push more from.
 function addApp(files: Record<string, string> = {}, repo = "app"): string {
   const work = onGitHub(files, repo);
-  const script = `import { openDb } from ${JSON.stringify(join(import.meta.dir, "..", "src", "db.ts"))};
+  const script = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?)", [${JSON.stringify(repo)}, ${JSON.stringify(repo)}]);`;
   const added = Bun.spawnSync([process.execPath, "-e", script], { env: env(), stderr: "pipe" });
   if (!added.success) throw new Error(added.stderr.toString());
@@ -657,7 +658,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     await stop(first);
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
     // A second app comes in, so simon/app is named with its owner from now on.
-    const script = `import { nameRepositories, openDb } from ${JSON.stringify(join(import.meta.dir, "..", "src", "db.ts"))};
+    const script = `import { nameRepositories, openDb } from ${JSON.stringify(source("db.ts"))};
 const db = openDb();
 db.run("INSERT INTO repositories (name, owner, repo) VALUES ('bob/app', 'bob', 'app')");
 nameRepositories(db);`;
@@ -717,7 +718,7 @@ nameRepositories(db);`;
 
   test("gives two threads whose names would make the same folder a folder each", async () => {
     addApp();
-    const script = `import { nameRepositories, openDb } from ${JSON.stringify(join(import.meta.dir, "..", "src", "db.ts"))};
+    const script = `import { nameRepositories, openDb } from ${JSON.stringify(source("db.ts"))};
 const db = openDb();
 db.run("INSERT INTO repositories (name, owner, repo) VALUES ('x', 'bob', 'app'), ('y', 'bob', 'simon-app')");
 nameRepositories(db);`;

@@ -14,10 +14,11 @@ import {
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
+import { source } from "./harness.ts";
 
-const main = join(import.meta.dir, "..", "src", "main.ts");
-const daemon = join(import.meta.dir, "..", "src", "daemon.ts");
-const dbFile = join(import.meta.dir, "..", "src", "db.ts");
+const main = source("main.ts");
+const daemon = source("daemon.ts");
+const dbFile = source("db.ts");
 let home = "";
 let socket = "";
 const running: Subprocess[] = [];

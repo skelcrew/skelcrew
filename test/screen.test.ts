@@ -17,9 +17,10 @@ import { z } from "zod";
 import { drawPage, type Page } from "../src/page.ts";
 import { sidebarWidth } from "../src/screen.ts";
 import { startSession, stillRunning } from "../src/tmux.ts";
+import { source } from "./harness.ts";
 
-const dbFile = join(import.meta.dir, "..", "src", "db.ts");
-const screenFile = join(import.meta.dir, "..", "src", "screen.ts");
+const dbFile = source("db.ts");
+const screenFile = source("screen.ts");
 const pathNow = process.env.PATH ?? "";
 const sidebar = sidebarWidth;
 const leaving = "Your agents keep running. Run skel to come back.";

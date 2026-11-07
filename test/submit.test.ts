@@ -15,9 +15,10 @@ import {
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
+import { source } from "./harness.ts";
 
-const main = join(import.meta.dir, "..", "src", "main.ts");
-const daemon = join(import.meta.dir, "..", "src", "daemon.ts");
+const main = source("main.ts");
+const daemon = source("daemon.ts");
 let home = "";
 let socket = "";
 const running: Subprocess[] = [];
@@ -214,7 +215,7 @@ function addApp(): string {
   git(work, "commit", "-q", "-m", "start");
   git(home, "clone", "-q", "--bare", work, join(github(), "simon", "app.git"));
   git(work, "remote", "add", "origin", join(github(), "simon", "app.git"));
-  const code = `import { openDb } from ${JSON.stringify(join(import.meta.dir, "..", "src", "db.ts"))};
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app')");`;
   const added = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   if (!added.success) throw new Error(added.stderr.toString());
