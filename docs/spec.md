@@ -248,7 +248,7 @@ max_rounds: 3
 
 It holds the project's name, how to set up and test the repository, the harness and model for the lead, builder and reviewer, and the round limit. skel reads it from its own clone, at the latest default branch, so a change counts once it is pushed there.
 
-What is yours stays in `~/.config/skel/`: every login and token, and your own defaults, in `config.yaml`, used wherever `skel.yaml` says nothing. Which machine runs the daemon is yours too: it is where you run `skel`, or the host you give `--remote`. A secret never goes in a repository, and skel reads none from `skel.yaml`. Plugins and their settings stay with the machine, in `config.yaml`, never in `skel.yaml`. Your `config.yaml` can set the same defaults a project can:
+What is yours stays in `~/.config/skel/`: every login and token, and your own defaults, in your `skel.yaml` there, used wherever the repository's `skel.yaml` says nothing. Which machine runs the daemon is yours too: it is where you run `skel`, or the host you give `--remote`. A secret never goes in a repository, and skel reads none from the repository's `skel.yaml`. Plugins and their settings stay with the machine, in your `skel.yaml` in `~/.config/skel/`, never in the repository's. Yours can set the same defaults a project can:
 
 ```yaml
 harness: claude
@@ -310,7 +310,7 @@ These are the parts that need care. `docs/learnings.md` explains the traps behin
 - A picker for projects that have no tab, and listing threads across all projects
 - Team projects on a shared skel server, and a screen connected to several daemons at once
 - Secrets of a project's own: every project uses your one GitHub login and harness login
-- Plugin settings per project, in `skel.yaml`, such as a Slack channel and who may message the lead. Anyone who can push to the repository could then add themselves to who reaches your lead, so they stay with the machine
+- Plugin settings per project, in the repository's `skel.yaml`, such as a Slack channel and who may message the lead. Anyone who can push to the repository could then add themselves to who reaches your lead, so they stay with the machine
 - Where a project's settings live once it has several repositories, how a project is named across machines and people, and whether a thread can move between a project's repositories are open
 
 If something seems missing, ask instead of adding it.
