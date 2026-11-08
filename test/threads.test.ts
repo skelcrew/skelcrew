@@ -75,7 +75,7 @@ esac`,
   );
   issue(12, "Add export", "As JSON");
   mkdirSync(join(home, ".config", "skel"), { recursive: true });
-  writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\n");
+  writeFileSync(join(home, ".config", "skel", "skel.yaml"), "harness: claude\n");
   writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
   writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
@@ -458,7 +458,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a builder", () => {
     git(work, "commit", "-q", "-m", "next");
     git(work, "push", "-q", "origin", "next");
     writeFileSync(
-      join(home, ".config", "skel", "config.yaml"),
+      join(home, ".config", "skel", "skel.yaml"),
       "harness: claude\nbuilder: { model: sonnet }\n",
     );
     serve();
@@ -709,7 +709,7 @@ nameRepositories(db);`;
   // thread with the reason rather than refusing skel start.
   test("a bad max_rounds fails a new thread, and skel start still answers", async () => {
     addApp();
-    writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\nmax_rounds: 0\n");
+    writeFileSync(join(home, ".config", "skel", "skel.yaml"), "harness: claude\nmax_rounds: 0\n");
     serve();
     await untilCloned();
     expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");

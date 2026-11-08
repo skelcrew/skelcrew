@@ -72,7 +72,7 @@ The repository you attach from is the lead's default, as the folder is for `clau
 **The first run.** The first `skel` on a machine takes three steps before the lead starts:
 
 1. **Connect to GitHub.** If `gh auth status` fails, skel runs `gh auth login` in your terminal. skel uses that login for everything it does on GitHub, outside the sandbox.
-2. **Pick a harness.** skel asks whether agents run on Claude Code or Codex, checks that it is installed, and saves the choice as `harness` in `~/.config/skel/config.yaml`. Then it logs that harness in for agents. For Claude Code it runs `claude setup-token`, which gives a long-lived login token for agents, and saves the token you paste in `~/.config/skel/`, readable only by you. For Codex it runs the reviewer's login below, which the lead and builders then share.
+2. **Pick a harness.** skel asks whether agents run on Claude Code or Codex, checks that it is installed, and saves the choice as `harness` in your `skel.yaml` in `~/.config/skel/`. Then it logs that harness in for agents. For Claude Code it runs `claude setup-token`, which gives a long-lived login token for agents, and saves the token you paste in `~/.config/skel/`, readable only by you. For Codex it runs the reviewer's login below, which the lead and builders then share.
 3. **Log in the reviewer.** When `codex` is installed, skel runs `codex login --device-auth` with `CODEX_HOME` set to `~/.local/share/skel/codex/`. That is a login of skel's own, separate from yours in `~/.codex`, so a renewal on either side never breaks the other. Without `codex`, skel says reviews will run on Claude Code, on the builder's own model, so they lose the second view, and the step is skipped.
 
 Before the first step, skel checks that `tmux`, `bwrap`, `gh` and the harness are installed, and if one is missing, says exactly what to install instead of failing halfway. After the last step, it installs the daemon as a systemd user service and turns on lingering (`loginctl enable-linger`), so the daemon keeps running after you log out and starts again after a reboot. On a Sprite, which has no systemd, it installs the daemon as a Sprite service instead, which the Sprite starts at boot and restarts when it crashes.
@@ -221,7 +221,7 @@ For the builder inside a thread:
 
 Agents talk to the daemon over a socket mounted into their sandbox, which also tells skel which thread they belong to. The lead and the agents never call GitHub themselves.
 
-Settings come in two layers, and both are optional. `~/.config/skel/config.yaml` holds your defaults:
+Settings come in two layers, both in a file named `skel.yaml`, and both optional. Yours, in `~/.config/skel/`, holds your defaults:
 
 ```yaml
 harness: claude
@@ -232,7 +232,7 @@ max_rounds: 3
 
 `harness` is what the lead and builders run on, and `lead`, `builder` and `reviewer` can each name another, such as `builder: { harness: codex }`. A thread keeps the harness it started on, since a conversation can't move from one harness to another. Unless your config names one, the reviewer runs on the harness the builder isn't on, for the second view. Without Codex installed, it runs on Claude Code. A model name belongs to its harness: `opus` is Claude Code's default, and Codex picks its own.
 
-A repository's `skel.yaml` holds what that repository needs, and can override the defaults:
+The repository's `skel.yaml`, committed at its top, holds what that repository needs, and can override yours:
 
 ```yaml
 setup: [bun install]

@@ -147,16 +147,18 @@ async function mustRun(
 
 const SkelYaml = z.looseObject({ setup: z.array(z.string()).optional() }).nullable();
 
-// Returns the setup commands in the clone's skel.yaml, or none when it has no skel.yaml.
-// Throws when skel.yaml isn't valid, so the thread fails with the reason.
+// Returns the setup commands in the repository's skel.yaml, in the thread's clone, or none
+// when it has none. Throws when that file isn't valid, so the thread fails with the reason.
 function setupCommands(clone: string): string[] {
   const file = join(clone, "skel.yaml");
   const stat = lstatSync(file, { throwIfNoEntry: false });
   if (!stat) return [];
   // skel reads it with your rights, so a link could show it any file of yours.
-  if (!stat.isFile()) throw new Error("skel.yaml isn't a plain file, so skel won't read it");
+  if (!stat.isFile())
+    throw new Error("the repository's skel.yaml isn't a plain file, so skel won't read it");
   const read = SkelYaml.safeParse(parse(readFileSync(file, "utf8")));
-  if (!read.success) throw new Error(`skel.yaml isn't valid: ${z.prettifyError(read.error)}`);
+  if (!read.success)
+    throw new Error(`the repository's skel.yaml isn't valid: ${z.prettifyError(read.error)}`);
   return read.data?.setup ?? [];
 }
 
@@ -215,7 +217,7 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   refuseCredentials(clone);
   for (const command of setupCommands(clone)) {
     const { argv, env } = setupCommand(clone, command);
-    await mustRun(argv, `skel.yaml's setup command "${command}"`, env);
+    await mustRun(argv, `the repository's skel.yaml setup command "${command}"`, env);
   }
 }
 

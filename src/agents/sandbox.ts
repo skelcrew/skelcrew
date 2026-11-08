@@ -251,7 +251,8 @@ export function keptEnv(env: Record<string, string | undefined>): Record<string,
   return kept;
 }
 
-// Returns the sandboxed command and environment for one of skel.yaml's setup commands, to
+// Returns the sandboxed command and environment for one of the repository's skel.yaml setup
+// commands, to
 // run through a shell in the thread's clone. It comes from the repository, so it runs in
 // the sandbox like the agents, with no socket and no login.
 export function setupCommand(

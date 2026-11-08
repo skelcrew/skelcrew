@@ -1,4 +1,5 @@
-// Your settings in config.yaml: what the first run saves and reads, and what your config sets
+// Your settings, in your skel.yaml in ~/.config/skel: what the first run saves and reads, and
+// what your config sets
 // for threads.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -11,7 +12,7 @@ import { configDir } from "./paths.ts";
 const SetupConfig = z.looseObject({ harness: z.enum(["claude"]).optional() });
 
 // Returns the settings file path used to remember your harness choice between runs.
-export const configFile = () => join(configDir(), "config.yaml");
+export const configFile = () => join(configDir(), "skel.yaml");
 
 // Reads and validates settings, returning the YAML document and harness choice while
 // preserving unknown settings.

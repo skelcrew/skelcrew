@@ -39,7 +39,7 @@ It should resolve this issue:
 
 ${issue.body}
 
-The change is everything on HEAD since ${base}. Read the whole diff with \`git diff ${base}...HEAD\`, and the code around it. Run the tests, using the commands under test: in skel.yaml if there is one. Anything you change here is thrown away after the review, so run what you need, but don't fix the code.
+The change is everything on HEAD since ${base}. Read the whole diff with \`git diff ${base}...HEAD\`, and the code around it. Run the tests, using the commands under test: in the repository's skel.yaml if there is one. Anything you change here is thrown away after the review, so run what you need, but don't fix the code.
 
 Check that it does what the issue asks and nothing else, and look for bugs, edge cases it misses, missing tests and failing ones.
 

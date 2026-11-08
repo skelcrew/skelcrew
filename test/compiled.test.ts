@@ -80,7 +80,7 @@ test("runs commands with its state", async () => {
 test("points the daemon's service at itself", async () => {
   // As the first run leaves a machine, with a service skel then brings up to date.
   mkdirSync(join(home, ".config", "skel"), { recursive: true });
-  writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\n");
+  writeFileSync(join(home, ".config", "skel", "skel.yaml"), "harness: claude\n");
   writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
   const unit = join(home, ".config", "systemd", "user", "skel.service");
   mkdirSync(join(unit, ".."), { recursive: true });

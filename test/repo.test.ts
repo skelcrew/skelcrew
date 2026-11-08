@@ -76,7 +76,7 @@ echo "{\\"name\\":\\"\${full#*/}\\",\\"owner\\":{\\"login\\":\\"\${full%/*}\\"},
   );
   // As the first run leaves a machine, so plain skel goes straight to the repository.
   mkdirSync(join(home, ".config", "skel"), { recursive: true });
-  writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\n");
+  writeFileSync(join(home, ".config", "skel", "skel.yaml"), "harness: claude\n");
   writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
   writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
