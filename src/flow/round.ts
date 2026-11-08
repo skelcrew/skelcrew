@@ -2,6 +2,7 @@
 // its PR opened on the first round, reviewed by a fresh reviewer, and the review typed back
 // into the builder's session when it asks for changes.
 import type { Database } from "bun:sqlite";
+import { reviewerHarness } from "../agents/harness.ts";
 import { typeInto } from "../agents/tmux.ts";
 import { agentHarness, threadConfig } from "../config.ts";
 import {
@@ -18,7 +19,7 @@ import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
 import { afterReview, pastLimit } from "./decide.ts";
 import { tellLead } from "./lead.ts";
-import { review, reviewerHarness } from "./reviewer.ts";
+import { review } from "./reviewer.ts";
 import { cloneOf, fullNameOf, readThread, record, type Thread, threadName } from "./thread.ts";
 
 // Runs git in skel's own clone and returns what it printed, throwing with its error when it

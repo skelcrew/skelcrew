@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse, parseDocument } from "yaml";
 import { z } from "zod";
-import { harnessNamed } from "./agents/harness.ts";
+import { HarnessName, harnessNamed } from "./agents/harness.ts";
 import { configDir } from "./paths.ts";
 
 // Unknown keys pass through, so settings this version doesn't know survive a save.
@@ -33,7 +33,7 @@ export const agentHarness = () => harnessNamed(readConfig().harness ?? "claude")
 // bad max_rounds must stop a thread, not make setupDone throw.
 const ThreadConfig = z.looseObject({
   builder: z.looseObject({ model: z.string().min(1).optional() }).optional(),
-  reviewer: z.looseObject({ harness: z.enum(["codex", "claude"]).optional() }).optional(),
+  reviewer: z.looseObject({ harness: HarnessName.optional() }).optional(),
   max_rounds: z.number().int().positive().optional(),
 });
 
@@ -43,7 +43,7 @@ const ThreadConfig = z.looseObject({
 // on settings you didn't pick.
 export function threadConfig(): {
   model: string;
-  reviewer: "codex" | "claude" | undefined;
+  reviewer: HarnessName | undefined;
   maxRounds: number;
 } {
   const file = configFile();
