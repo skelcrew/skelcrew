@@ -51,9 +51,9 @@ The repositories in the video are small real apps with fast CI and real issues, 
 
 | Word | Meaning |
 | --- | --- |
-| Project | A named context with its own lead, threads and repositories, such as your company's product or a side project. Two projects never share a lead or its history. In this version a project has one repository, and is named after it. |
+| Project | A named context with its own lead, threads and repositories, such as your company's product or a side project. Two projects never share a lead or its history. In this version a project has one repository. Its name and shared settings are in the repository's `skel.yaml`. |
 | Lead | Your Claude Code session on the server. One per project, always running, across that project's repositories and nothing else. You talk to it; it writes tasks and starts threads. |
-| Repository | A GitHub repository skel works on, from a clone of its own. It belongs to exactly one project. It is named by its GitHub name, such as `app`, with the owner added (`simon/app`) only when two share a name. |
+| Repository | A git repository skel works on, from a clone of its own. It belongs to exactly one project. skel knows it by its remote, such as `github.com/simon/app`, and names it by the remote's last part, such as `app`, with the part before it added (`simon/app`) only when two share a name. |
 | Task | What you want done, in words, as an item in the tracker you connect skel to. skel is made to work from a tracker, and keeps no tasks of its own: you plan where you already do. Each tracker keeps its own word: in this version the tracker is GitHub, where a task is an open issue. A task can exist without a thread: one you create on GitHub shows up in skel, and nothing happens until it is started, with `skel start` or the `skel` label. |
 | Thread | skel's core: the work on one task, from its first message to the merged PR. Its branch, clone, sandbox, builder session and history. One thread per task at a time. Named by the task's own ID in its tracker, with the repository added when that ID doesn't name one: GitHub issue #12 in app is `app-12`, since its number is only unique within app, while a tracker whose IDs are already unique, such as Linear's `JOTT-12`, would keep its own. A thread never gets a second number, so the name in skel is always the one in the tracker. A dash, because no shell reads a dash as anything special, so it never needs quoting. |
 | Builder | The thread's agent. A Claude Code session that stays alive from start until the PR merges or closes. |
@@ -67,7 +67,7 @@ A thread's status is one of `working`, `waiting` (on review, CI or you), `failed
 
 skel runs on a Linux machine that stays on: a server of your own, or a Sprite, a Linux machine skel creates for you on Fly.io. `skel`, from any folder, attaches your terminal to a project's lead, and starts the daemon and that lead first if they are not running. Ctrl-Q detaches; the lead keeps running.
 
-The folder you run `skel` in picks the project, as the folder does for `claude` in a terminal. skel matches the repository by its GitHub name and opens its project. In a repository skel doesn't have yet, it brings it in, with a project of its own named after it, and says so in one line. With one repository per project there is nothing to choose, so it doesn't ask, beyond whether you trust the repository. Outside any repository, or in one that isn't on GitHub, `skel` opens the project you last opened. The folder only names the repository: skel never works in your checkout, and never sees changes you haven't pushed. While skel has no projects yet, `skel` outside a repository says so and attaches to nothing: "skel has no projects yet. Run skel in a checkout of a repository on GitHub."
+The folder you run `skel` in picks the project, as the folder does for `claude` in a terminal. skel matches the repository by its remote and opens its project. Outside any repository, `skel` opens the project you last opened. So does `skel` in a repository that is in no project, with one line saying how to add it: "app isn't in a project. Run skel init to add it." skel never makes a project you didn't ask for. While skel has no projects yet, `skel` says so and attaches to nothing: "skel has no projects yet. Run skel init in a checkout of a repository." The folder only names the repository: agents never work in your checkout, and skel never sees changes you haven't pushed. The one thing skel writes there is the starter `skel.yaml` of `skel init`, a command you run yourself.
 
 **The first run.** The first `skel` on a machine takes three steps before the lead starts:
 
@@ -77,9 +77,9 @@ The folder you run `skel` in picks the project, as the folder does for `claude` 
 
 Before the first step, skel checks that `tmux`, `bwrap`, `gh` and the harness are installed, and if one is missing, says exactly what to install instead of failing halfway. After the last step, it installs the daemon as a systemd user service and turns on lingering (`loginctl enable-linger`), so the daemon keeps running after you log out and starts again after a reboot. On a Sprite, which has no systemd, it installs the daemon as a Sprite service instead, which the Sprite starts at boot and restarts when it crashes.
 
-Each step is skipped when it is already done. Once the first run has finished, `skel` skips it entirely and goes straight to the lead: a tool or login that goes missing later shows up where it is used.
+Run in a checkout, the first run ends by running `skel init` for you, so a new user never lands on an empty screen. Each step is skipped when it is already done. Once the first run has finished, `skel` skips it entirely and goes straight to the lead: a tool or login that goes missing later shows up where it is used.
 
-On a server or Sprite, `skel remote add` runs these steps from your laptop and installs the daemon. The lead starts at the first `skel --remote`.
+On a server or Sprite, `skel remote add` runs these steps from your laptop and installs the daemon. Run in a checkout, it ends by adding that repository to a project there, as `skel init` does. The lead starts at the first `skel --remote`.
 
 **The sidebar.** `skel` puts a narrow sidebar on the left of your terminal, with the agent you are looking at on the right. The sidebar is the open project's: it lists its lead first, then every thread of the project that isn't done, each on two lines: a mark and its full name, then, dim, a word for what it is doing and the harness doing it, such as `approved · claude`. While a review runs that is `reviewing · codex`, so you can see which agent has the thread right now. A thread whose word is `working` also ends that line with how long ago it started: `<1m`, then `5m`, `2h`, `3d`, such as `working · claude · 5m`. No other row shows a time, the lead included, as a time would write to the terminal each minute, and on a Sprite a terminal that stays quiet lets it sleep. The row you are looking at has a grey background across the whole sidebar, on all its lines. Headings, marks and hints start two columns in, and all text stops two columns before the sidebar's edge, which matches the one blank row at the top, as a terminal cell is about twice as tall as wide. It updates on its own. At the bottom, four dim lines show the keys: `⌥↑↓ move`, `⌥⇧↑↓ list`, `⌥←→ project` and `⌃Q quit`. They are always there, except on a terminal too short for them and a whole row, where the row comes first.
 
@@ -122,7 +122,7 @@ The sidebar only shows, switches, links and opens pages. It has no commands of i
 
 **A new machine.** `skel remote add simon@workbox` is how a server joins skel. It first says what it will do. Then it puts skel there and runs the first run on that machine. It ends by printing the command that connects, and doesn't connect: `skel --remote simon@workbox`. The skel it puts there is the laptop's release, built for that machine, or one built from your checkout when you run skel from one. skel keeps no list of remotes, as the machine itself shows whether it is set up. Running it again is safe, and picks up whatever a run that stopped partway left undone.
 
-From a laptop, `skel --remote simon@workbox` runs `ssh -t simon@workbox skel --from <owner/repo>`, passing the GitHub name of the repository you are in on the laptop, so it opens that repository's project there. Any command works the same way: `skel --remote simon@workbox ls`. There is no protocol of our own; SSH (and Tailscale, if you use it) does the connecting.
+From a laptop, `skel --remote simon@workbox` runs `ssh -t simon@workbox skel --from <remote>`, passing the remote of the repository you are in on the laptop, so it opens that repository's project there. Any command works the same way: `skel --remote simon@workbox ls`. There is no protocol of our own; SSH (and Tailscale, if you use it) does the connecting.
 
 `--remote` only connects, and never sets a machine up. On a machine where skel is missing, or its first run hasn't finished, it says so and prints the `skel remote add` to run. A mistyped name never creates or installs anything.
 
@@ -139,11 +139,17 @@ After that, `skel --remote sprite:demo` attaches to a project's lead, and `skel 
 
 Everything must work over a plain `ssh -t` or `sprite console`: no local display, no browser on the same machine, no clipboard. Logins that need a browser, such as GitHub's and Claude's, use a code and a link you open on your laptop.
 
-**Repositories.** skel keeps its own clone of every repository it works on, in `~/.local/share/skel/repos/<owner>/<repo>/`, and keeps it at the latest default branch. A repository comes in, with its project, the first time you run `skel` in a checkout of it, or `skel --remote` from one. That is the only way in, so it always happens in your own terminal. After that its short name works everywhere. There is no command to add a repository, and the lead can't bring one in: a lead only works on its own project.
+**Repositories.** skel keeps its own clone of every repository it works on, in `~/.local/share/skel/repos/`, and keeps it at the latest default branch. skel knows a repository by its remote: `origin`, or the only remote a checkout has. It keeps it as host and path, such as `github.com/simon/app`, so the SSH and HTTPS forms of one remote name the same repository. A plugin claims a repository by its remote, and is then where its tasks and PRs come from. In this version GitHub is the only one, and claims remotes on `github.com`. A repository comes in when you add it to a project, with `skel init` or `skel project add`, in your own terminal. After that its short name works everywhere. The lead can't bring one in: a lead only works on its own project.
 
-Before cloning, skel decides whether to trust the repository. It trusts it on its own when your GitHub login can push to it, unless it is a fork: agents will run its setup and test commands, and read its AGENTS.md and settings as instructions, and you already vouch for what is in it. For any other repository, `skel` asks you whether you trust it, and makes no project unless you say yes. The answer is remembered in \~/.config/skel/, never in the repository, so a clone can't bring its own yes.
+Before cloning, skel decides whether to trust the repository. It trusts it on its own when your GitHub login can push to it, unless it is a fork: agents will run its setup and test commands, and read its AGENTS.md and settings as instructions, and you already vouch for what is in it. For any other repository, skel asks you whether you trust it, and adds it to no project unless you say yes. The answer is remembered in \~/.config/skel/, never in the repository, so a clone can't bring its own yes.
 
-**Projects.** A project holds one lead, its threads and, in this version, one repository. skel makes one each time a new repository comes in, named after the repository as skel names it, such as `app`, or `simon/app` when skel already has another app. A project's name is fixed when it is made: its lead's folder, session and socket go by it, so none of them move later. A repository can't belong to two projects. The lead of a project sees only that project: its repository's clone, its threads, and its issues and PRs. Asked about work in a repository of another project, it says so, and you switch to that project's tab. `skel project ls` lists the projects, with their repository and how many threads need you. `skel project rm <name>` removes one after you confirm: it ends its lead and deletes the lead's conversation, the project's thread records and logs, skel's clone of its repository and your trust in it. Your own checkouts are left as they are. It refuses while the project has live threads, and names them.
+**Projects.** A project holds one lead, its threads and, in this version, one repository. A repository can't belong to two projects. The lead of a project sees only that project: its repository's clone, its threads, and its issues and PRs. Asked about work in a repository of another project, it says so, and you switch to that project's tab.
+
+`skel init`, run in a checkout, sets the repository up for skel. It stops outside a git repository, and when the repository has no remote. It stops when no plugin claims the remote, with one line: "skel can't take gitlab.com/simon/app: in this version it works with repositories on GitHub." Then it runs `skel project add`, and writes a starter `skel.yaml` in your checkout, unless it has one. The starter names the project and leaves setup and test for you to fill in. skel reads `skel.yaml` from its own clone, so `skel init` ends by saying the file counts only once you commit it and push it to the default branch.
+
+`skel project add [<path>]` adds the repository at the path, or the one you are in, to a project. With `-p <name>`, it is that project. Without, it is a new project named as the checkout's `skel.yaml` says, or after the repository, such as `app`. In this version a project holds one repository, so adding to a project that has one is refused, with a line that says so. Adding checks the remote and your trust, as `skel init` does, and clones the repository. A project's name is fixed when it is made: its lead's folder, session and socket go by it, so none of them move later. Changing the name in `skel.yaml` after that renames nothing.
+
+`skel project ls` lists the projects, with their repository and how many threads need you. `skel project rm <name>` removes one after you confirm: it ends its lead and deletes the lead's conversation, the project's thread records and logs, skel's clone of its repository and your trust in it. Your own checkouts are left as they are. It refuses while the project has live threads, and names them.
 
 A command you run works on the project of the repository you run it in, or outside one, or over `--remote`, on the project you last opened. `--project <name>`, or `-p <name>`, names another. Only `skel ps` and `skel task ls` need a project: a thread's name, such as `app-12`, already names its repository, and so its project. The lead's commands always work on its own project, and it can't name another: the daemon knows which lead is calling from its socket, as it knows a builder's thread.
 
@@ -203,10 +209,12 @@ For you, and for the lead:
 
 | Command | What it does |
 | --- | --- |
-| `skel [--from <owner/repo>] [-p <project>]` | Attaches to the lead of the project of the repository you are in, starting the daemon and that lead if needed, and bringing the repository in with a project of its own first if it is new. Outside a repository, the project you last opened. `--remote` passes `--from` for you. |
+| `skel [--from <remote>] [-p <project>]` | Attaches to the lead of the project of the repository you are in, starting the daemon and that lead if needed. Outside a repository, or in one that is in no project, the project you last opened. `--remote` passes `--from` for you. |
+| `skel init [-p <project>]` | Run in a checkout: adds its repository to a project, as `skel project add` does, and writes a starter `skel.yaml` there, which you commit and push. Only you can run it. |
 | `skel --remote <host> [command]` | Runs any skel command on the server, over `ssh -t`. With `sprite:<name>` as the host, runs it on that Sprite instead. Keeps skel there up to date with your checkout, after asking. |
 | `skel remote add <host>` | Sets up a server, or with `sprite:<name>` a Sprite, creating it after asking if it doesn't exist. Runs the first run there and prints the `skel --remote` command that connects. Run it on your laptop. |
 | `skel serve` | Runs the daemon in the foreground, for systemd or a Sprite service. One per machine. |
+| `skel project add [<path>] [-p <project>]` | Adds the repository at the path, or the one you are in, to a project: the one `-p` names, or a new one named after it. Only you can run it. |
 | `skel project ls` | Lists the projects, with their repository and how many threads need you. Only you can run it: a lead never sees another project. |
 | `skel project rm <name>` | Removes a project after you confirm: its lead, its history and skel's clone of its repository. It refuses while the project has live threads, and names them. Only you can run it. |
 | `skel task ls [<repo>] [-p <project>]` | The project's open tasks, newest first, with the thread on each one if it has one. `--json` for tools. |
@@ -226,7 +234,21 @@ For the builder inside a thread:
 
 Agents talk to the daemon over a socket mounted into their sandbox, which also tells skel which thread they belong to. The lead and the agents never call GitHub themselves.
 
-Settings come in two layers, and both are optional. `~/.config/skel/config.yaml` holds your defaults:
+Settings come in two layers, and both are optional. A project's settings are shared, so they live in its repository's committed `skel.yaml`, and everyone who works on the repository gets them:
+
+```yaml
+project: app
+setup: [bun install]
+test: [bun test]
+lead:     { model: opus }
+builder:  { model: opus }
+reviewer: { harness: codex }
+max_rounds: 3
+```
+
+It holds the project's name, how to set up and test the repository, the harness and model for the lead, builder and reviewer, and the round limit. skel reads it from its own clone, at the latest default branch, so a change counts once it is pushed there.
+
+What is yours stays in `~/.config/skel/`: every login and token, and your own defaults, in `config.yaml`, used wherever `skel.yaml` says nothing. Which machine runs the daemon is yours too: it is where you run `skel`, or the host you give `--remote`. A secret never goes in a repository, and skel reads none from `skel.yaml`. Plugins and their settings stay with the machine, in `config.yaml`, never in `skel.yaml`. Your `config.yaml` can set the same defaults a project can:
 
 ```yaml
 harness: claude
@@ -235,22 +257,15 @@ reviewer: { harness: codex }
 max_rounds: 3
 ```
 
-A repository's `skel.yaml` holds what that repository needs, and can override the defaults:
-
-```yaml
-setup: [bun install]
-test: [bun test]
-```
-
 ## State and isolation
 
 **Sessions.** Every agent runs in tmux, on skel's own tmux server (`tmux -L skel`) with skel's own config: one session for each project's lead and one per builder. A reviewer runs once and needs no session. tmux keeps them alive, handles attach and detach, and answers the terminal's queries. skel never runs its own terminal emulator.
 
 **The screen.** The sidebar lives in a second tmux server, `tmux -L skel-screen`, one session per open terminal, ended when you leave. Its left pane runs the sidebar, on a server with terminal links turned on (the `hyperlinks` terminal feature), and draws the line at its own right edge, as tmux's border is blank. tmux has three status lines: the tabs are the first, the header above the sidebar and the strip share the second, and the thin line under them is the third. Its right pane is an ordinary tmux client attached to the agent's session on `tmux -L skel`, and picking a row switches that client to another session. Landing on an issue or PR replaces that client with a small `skel page` command, in the same pane, and moving back to a thread starts a client again. So a page lives and ends with the screen, on your side, outside any sandbox. Agents' sessions stay single-pane and know nothing of the screen: typing into them, reading them and checking them work as if it weren't there, and leaving the screen ends nothing.
 
-**State.** One SQLite file per machine, `~/.local/share/skel/skel.db`, with `bun:sqlite`. It holds projects (name, lead session ID, which one you opened last), repositories (name, GitHub owner and name, project, how many issues and PRs are open) and threads (repository, task, branch, status, needs you, round count, builder session ID, PR number, when it started), and the last handled ID per event kind. Every change is also appended to `~/.local/share/skel/threads/<repo>-<task>.log` as one JSON line, so a thread's history can be read and replayed. That includes each review's round, reviewer, verdict and first line. The strip shows all but the first line. skel keeps no tasks of its own. It saves only a copy of each repository's newest open issues and PRs for the sidebar, which it replaces at each poll while a screen is open. `skel task ls` asks GitHub. Repository clones live in `~/.local/share/skel/repos/` and thread clones in `~/.local/share/skel/threads/`, on one disk, so a thread's clone shares its files with the repository's.
+**State.** One SQLite file per machine, `~/.local/share/skel/skel.db`, with `bun:sqlite`. It holds projects (name, lead session ID, which one you opened last), repositories (remote, name, project, clone folder, how many issues and PRs are open) and threads (repository, task, branch, status, needs you, round count, builder session ID, PR number, when it started), and the last handled ID per event kind. Every change is also appended to `~/.local/share/skel/threads/<repo>-<task>.log` as one JSON line, so a thread's history can be read and replayed. That includes each review's round, reviewer, verdict and first line. The strip shows all but the first line. skel keeps no tasks of its own. It saves only a copy of each repository's newest open issues and PRs for the sidebar, which it replaces at each poll while a screen is open. `skel task ls` asks GitHub. Repository clones live in `~/.local/share/skel/repos/` and thread clones in `~/.local/share/skel/threads/`, on one disk, so a thread's clone shares its files with the repository's.
 
-A machine that ran skel before projects gets one project for each repository it had, the first time a release with projects opens its database. Threads keep their names, folders and sessions, and belong to their repository's project. The lead it had carries on, with its session, folder and conversation, as the lead of the project you last attached from, or of the first by name when there is none. skel types a note into it saying which project it now leads. Every other project starts a lead of its own. Notes still waiting for the lead go to that same project.
+A machine that ran skel before projects gets one project for each repository it had, the first time a release with projects opens its database. Each repository's GitHub owner and name become its remote, such as `github.com/simon/app`, and its clone stays in the folder it is in, so live threads keep fetching from it. Your saved trust is read the same way. Threads keep their names, folders and sessions, and belong to their repository's project. The lead it had carries on, with its session, folder and conversation, as the lead of the project you last attached from, or of the first by name when there is none. skel types a note into it saying which project it now leads. Every other project starts a lead of its own. Notes still waiting for the lead go to that same project.
 
 **Surviving restarts.** When the daemon starts, it brings back each project's lead and every thread that was `working` or `waiting` with `claude --resume <session>`, runs again every review whose `skel/review` check is still pending, and polling picks up any event it missed.
 
@@ -289,11 +304,14 @@ These are the parts that need care. `docs/learnings.md` explains the traps behin
 - Starting a thread by assigning an issue or mentioning skel on GitHub
 - A remote protocol of our own (SSH only), teams and permissions
 - Several repositories in one project, and threads that span them, with a clone and a linked PR in each. A lead would then pick the repository for a thread, and each row would carry a small repository label. The store already has projects above repositories, so this adds to it rather than changing it
-- Making, renaming or emptying a project by hand (`skel project new`, `rename`, `add` and `remove`), and `skel init`: a project is made by running `skel` in a checkout
+- Making an empty project, renaming one, or taking a repository out of one (`skel project new`, `rename` and `remove`)
+- Repositories no plugin claims, and threads without a tracker
 - Agents shown under their thread in the sidebar: a thread has one agent with a session, its builder, and its row already says which agent has it
 - A picker for projects that have no tab, and listing threads across all projects
 - Team projects on a shared skel server, and a screen connected to several daemons at once
-- Config, secrets and plugins of a project's own: every project uses your one GitHub login, harness login and `config.yaml`. Where a project's config would live, how a project is named across machines and people, and whether a thread can move between a project's repositories are open
+- Secrets of a project's own: every project uses your one GitHub login and harness login
+- Plugin settings per project, in `skel.yaml`, such as a Slack channel and who may message the lead. Anyone who can push to the repository could then add themselves to who reaches your lead, so they stay with the machine
+- Where a project's settings live once it has several repositories, how a project is named across machines and people, and whether a thread can move between a project's repositories are open
 
 If something seems missing, ask instead of adding it.
 
