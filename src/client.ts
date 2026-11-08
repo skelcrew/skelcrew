@@ -164,6 +164,13 @@ export async function pageOf(url: string): Promise<Page> {
   return understood(z.object({ page: Page }), reply).page;
 }
 
+// Has the daemon send the lead's answer, for skel reply, to the address a message's note named,
+// such as slack:U0123ABCD. The daemon sends it, as only it holds a plugin's token.
+export async function replyTo(to: string, text: string): Promise<void> {
+  const reply = await request({ command: "reply", to, text });
+  understood(z.object({ replied: z.string() }), reply);
+}
+
 // Ensures the daemon and lead are running, then opens the screen on the lead until you leave
 // with Ctrl-Q. The daemon keeps which repository you attached from, as owner/repo, or that
 // there is none, for the lead to hear with your next message.

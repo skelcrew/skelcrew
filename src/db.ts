@@ -145,6 +145,17 @@ function prepareTables(db: Database): void {
   // Notes for the lead that aren't about a thread needing you, such as a thread started from
   // GitHub, kept until they are typed in, since the lead may not be running.
   db.run("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)");
+  // A note that is a message from chat, such as Slack, isn't sent back out to it.
+  if (!db.query("SELECT 1 FROM pragma_table_info('notes') WHERE name = 'from_chat'").get())
+    db.run("ALTER TABLE notes ADD COLUMN from_chat INTEGER NOT NULL DEFAULT 0");
+  // How far skel has read each place a chat plugin hears from, such as a person's direct
+  // messages in Slack, so a restart neither loses a message nor hands one to the lead twice.
+  db.run(`CREATE TABLE IF NOT EXISTS heard (
+    plugin TEXT NOT NULL,
+    place TEXT NOT NULL,
+    last TEXT NOT NULL,
+    PRIMARY KEY (plugin, place)
+  )`);
   // The reviews skel posted. They go out with your gh login, so on GitHub they look like
   // reviews of yours, and polling must not type them back into the builder.
   db.run("CREATE TABLE IF NOT EXISTS posted (id INTEGER PRIMARY KEY)");

@@ -1,6 +1,6 @@
-// Your settings in config.yaml: what the first run saves and reads, and what your config sets
-// for threads.
-import { existsSync, readFileSync } from "node:fs";
+// Your settings in config.yaml: what the first run saves and reads, what your config sets
+// for threads, and each plugin's settings.
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse, parseDocument } from "yaml";
 import { z } from "zod";
@@ -52,4 +52,28 @@ export function threadConfig(): {
     reviewer: reviewer?.harness,
     maxRounds: max_rounds ?? 3,
   };
+}
+
+const Plugins = z.looseObject({ plugins: z.record(z.string(), z.unknown()).optional() });
+
+// Returns a plugin's settings under plugins: in config.yaml, for the plugin to check, or
+// undefined when there are none, which means the plugin is off. Read at each use, so a plugin
+// turned on or off reaches the daemon with no restart.
+export function pluginSettings(name: string): unknown {
+  const read = Plugins.safeParse(readConfig().config.toJS() ?? {});
+  if (!read.success) throw new Error(`${configFile()} isn't valid: ${z.prettifyError(read.error)}`);
+  return read.data.plugins?.[name];
+}
+
+// Saves a plugin's settings under plugins: in config.yaml, or removes them with undefined,
+// keeping everything else in the file as it was.
+export function savePluginSettings(name: string, settings: object | undefined): void {
+  const { config } = readConfig();
+  if (settings === undefined) config.deleteIn(["plugins", name]);
+  else config.setIn(["plugins", name], settings);
+  // An empty plugins: left behind would read as plugins with no settings at all.
+  const left = Plugins.parse(config.toJS() ?? {}).plugins;
+  if (left && Object.keys(left).length === 0) config.delete("plugins");
+  mkdirSync(configDir(), { recursive: true });
+  writeFileSync(configFile(), config.toString());
 }

@@ -22,12 +22,13 @@ import {
 } from "../agents/tmux.ts";
 import { dataDir, leadSocket } from "../paths.ts";
 import { errorText } from "../say.ts";
+import { tellChats } from "./chat.ts";
 import { fullNameIs, refreshClones, repositories } from "./repo.ts";
 import { readThread, record, Thread, threadName } from "./thread.ts";
 
 const Lead = z.object({ session: z.string() }).nullable();
 const Told = z.object({ session: z.string(), note: z.string() }).nullable();
-const Note = z.object({ id: z.number(), text: z.string() }).nullable();
+const Note = z.object({ id: z.number(), text: z.string(), from_chat: z.number() }).nullable();
 // The column is called repo, but it holds the full GitHub name.
 const AttachedFrom = z.object({ repo: z.string().nullable() }).nullable();
 
@@ -64,13 +65,13 @@ export async function startLead(db: Database, tmux: string): Promise<void> {
 
 // Types each saved note into the lead, one at a time, such as "started app-12 from GitHub:
 // Fix the login redirect" or "app-12 needs you: its builder asked a question", and forgets it
-// once typed. It waits as long as the lead is busy, checking again each time whether a note
-// about a thread needing you is still wanted, so a question you answered meanwhile is never
-// announced. A lead that isn't running gets nothing: its notes stay saved
-// until it starts again.
+// once typed. Each also goes to chat, such as Slack, unless it came from there. It waits as
+// long as the lead is busy, checking again each time whether a note about a thread needing
+// you is still wanted, so a question you answered meanwhile is never announced. A lead that
+// isn't running gets nothing: its notes stay saved until it starts again.
 async function typeNotes(db: Database, tmux: string): Promise<void> {
   for (;;) {
-    const note = Note.parse(db.query("SELECT id, text FROM notes ORDER BY id").get());
+    const note = Note.parse(db.query("SELECT id, text, from_chat FROM notes ORDER BY id").get());
     const row = db.query("SELECT * FROM threads WHERE noting IS NOT NULL ORDER BY rowid").get();
     const thread = Thread.nullable().parse(row);
     if (note === null && (thread === null || thread.noting === null)) return;
@@ -79,10 +80,13 @@ async function typeNotes(db: Database, tmux: string): Promise<void> {
     if (note !== null) {
       await typeInto(tmux, "lead", note.text);
       db.run("DELETE FROM notes WHERE id = ?", [note.id]);
+      if (!note.from_chat) tellChats(note.text);
       continue;
     }
     if (thread === null || thread.noting === null) return;
-    await typeInto(tmux, "lead", `${threadName(db, thread)} needs you: ${thread.noting}`);
+    const needs = `${threadName(db, thread)} needs you: ${thread.noting}`;
+    await typeInto(tmux, "lead", needs);
+    tellChats(needs);
     // The thread may have stopped needing you and started again while this was typed.
     if (readThread(db, thread.folder).noting === thread.noting)
       record(db, thread.folder, { noting: null }, "told the lead it needs you");

@@ -26,6 +26,7 @@ const yoursOnly: Record<string, string> = {
   page: "showing a page",
   "first-run": "setting up this machine",
   "remote add": "setting up a machine",
+  plugin: "turning plugins on and off",
 };
 
 // Returns the repository and task in a name such as app-13, or nothing when it isn't one.
@@ -38,7 +39,19 @@ function taskName(word?: string): [string, number] | undefined {
 // Prints why a command can't run as given, and ends skel with an error. People who mistype a
 // command skel knows hear to check its arguments, not that the command doesn't exist.
 function usage(command?: string): never {
-  const known = ["serve", "repo", "ps", "task", "start", "stop", "attach", "review", "submit"];
+  const known = [
+    "serve",
+    "repo",
+    "ps",
+    "task",
+    "start",
+    "stop",
+    "attach",
+    "review",
+    "submit",
+    "plugin",
+    "reply",
+  ];
   const first = command ?? "";
   console.error(
     first === "--remote"
@@ -195,6 +208,29 @@ async function taskCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
+// Lists the plugins, or turns one on or off, for skel plugin, in your own terminal. A plugin's
+// token and settings live with the daemon, so with --remote this runs on that machine.
+async function pluginCommand(args: string[]): Promise<void> {
+  const [command, sub, name, ...rest] = args;
+  const { isOn, pluginNamed, plugins, turnOff } = await import("./plugins.ts");
+  if (sub === "ls" && name === undefined) {
+    const width = Math.max(...plugins.map((p) => p.name.length)) + 2;
+    for (const plugin of plugins)
+      console.log(`${plugin.name.padEnd(width)}${isOn(plugin) ? "on " : "off"}  ${plugin.about}`);
+    return;
+  }
+  if (sub === "add" && name && rest.length === 0) {
+    console.log(await pluginNamed(name).add());
+    return;
+  }
+  if (sub === "rm" && name && rest.length === 0) {
+    const was = turnOff(pluginNamed(name));
+    console.log(was ? `${name} is off, and its token and settings are gone.` : `${name} was off.`);
+    return;
+  }
+  usage(command);
+}
+
 // Starts, stops, re-reviews or attaches to the thread on a task, named such as app-13.
 async function threadCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
@@ -295,6 +331,16 @@ async function runCommand(args: string[]): Promise<void> {
     case "question":
     case "attached":
       return agentCommand(args);
+    case "plugin":
+      return pluginCommand(args);
+    case "reply":
+      if (sub && rest[0] && rest.length === 1) {
+        const { replyTo } = await import("./client.ts");
+        await replyTo(sub, rest[0]);
+        console.log(`Sent to ${sub}.`);
+        return;
+      }
+      return usage(command);
     case "ps":
       return psCommand(args);
     case "task":

@@ -21,6 +21,7 @@ import {
   startThread,
   statusOnceBack,
 } from "./builder.ts";
+import { hearChats, replyInChat } from "./chat.ts";
 import { stopThread } from "./events.ts";
 import { attachedNote, recordAttachedFrom, startLead, tellLead } from "./lead.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
@@ -127,7 +128,7 @@ function wakeOnWebhooks(db: Database, port: number, poll: (fullName: string) => 
 // were running, so commands and agents can reach it. Leaves the sockets listening after
 // returning, and removes them when stopped, leaving every tmux session running. It never
 // asks questions: systemd has nobody to answer. Polls GitHub every `every` milliseconds while
-// a thread is active. On a Sprite, keeps the Sprite awake while there is work, and listens on
+// a thread is active, and chat plugins, such as Slack, half as often. On a Sprite, keeps the Sprite awake while there is work, and listens on
 // `port` for GitHub's webhooks, which wake it while it sleeps.
 export async function serve(tmux: string, every = 30_000, port = urlPort): Promise<void> {
   if (!setupDone()) throw new Error("the first run isn't done on this machine: run skel first");
@@ -205,6 +206,9 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         return { polling: true };
       case "page":
         return { page: await readPage(request.url) };
+      case "reply":
+        await replyInChat(request.to, request.text);
+        return { replied: request.to };
       case "repo ls":
         return { repositories: listRepositories(db) };
       case "ps":
@@ -330,6 +334,9 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
     );
   }
   poll = pollGitHub(db, tmux, every, begin);
+  // Chat is checked half as often as GitHub, which is every minute, as a message to the lead
+  // can wait that long and each check costs a request per person.
+  hearChats(db, tmux, every * 2);
   if (!onSprite()) return;
   keepAwake(() => hasWork(liveThreads(db)));
   wakeOnWebhooks(db, port, poll);

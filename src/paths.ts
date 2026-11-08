@@ -12,6 +12,9 @@ export const configDir = (home = homedir()) => join(home, ".config", "skel");
 export const dataDir = (home = homedir()) => join(home, ".local", "share", "skel");
 // Returns the private agent token file path used by setup and Claude Code sessions.
 export const claudeTokenFile = (home = homedir()) => join(configDir(home), "claude-token");
+// Returns the file that holds a plugin's token, such as Slack's, kept with your settings so
+// the sandbox hides it from every agent.
+export const pluginTokenFile = (name: string) => join(configDir(), "plugins", name);
 
 // Returns the socket folder shared by the CLI and daemon. Some terminals and multiplexers
 // start shells without XDG_RUNTIME_DIR, while the daemon, started by systemd, always has it

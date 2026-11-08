@@ -49,6 +49,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   z.object({ command: z.literal("attached") }),
   z.object({ command: z.literal("screen opened") }),
   z.object({ command: z.literal("page"), url: PageUrl }),
+  z.object({ command: z.literal("reply"), to: z.string().min(1), text: z.string().min(1) }),
 ]);
 export type DaemonRequest = z.infer<typeof DaemonRequest>;
 
@@ -70,6 +71,7 @@ export const allowed = {
     "stop",
     "screen opened",
     "page",
+    "reply",
   ],
   lead: [
     "status",
@@ -82,6 +84,7 @@ export const allowed = {
     "review",
     "stop",
     "attached",
+    "reply",
   ],
   builder: ["status", "submit", "question asked", "question answered"],
 };

@@ -14,6 +14,7 @@ const sections: [string, [string, string][]][] = [
       ["stop <task>", "End the builder, keeping its clone and PR"],
       ["attach <task>", "Open that builder, with the sidebar"],
       ["review <task>", "Run the thread's last review again"],
+      ['reply <to> "<text>"', "Answer a message that came through a plugin"],
     ],
   ],
   [
@@ -22,6 +23,14 @@ const sections: [string, [string, string][]][] = [
       ["repo ls", "Repositories skel works on"],
       ["repo rm <name>", "Remove skel's clone of one"],
       ["repo trust <name>", "Trust one your login can't push to"],
+    ],
+  ],
+  [
+    "PLUGINS",
+    [
+      ["plugin ls", "Plugins skel has, and which are on"],
+      ["plugin add <name>", "Turn one on, such as slack"],
+      ["plugin rm <name>", "Turn one off, removing its token"],
     ],
   ],
   [
