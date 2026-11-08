@@ -37,12 +37,13 @@ const ThreadConfig = z.looseObject({
   max_rounds: z.number().int().positive().optional(),
 });
 
-// Returns what your config sets for threads: the builder's model (opus when it names none),
+// Returns what your config sets for threads: the builder's model (none when it names none,
+// so the harness picks its own),
 // the reviewer's harness (none when it names none, so the reviewer picks), and the round
 // limit (3 when it names none). Throws when the config isn't valid, rather than run a thread
 // on settings you didn't pick.
 export function threadConfig(): {
-  model: string;
+  model: string | undefined;
   reviewer: HarnessName | undefined;
   maxRounds: number;
 } {
@@ -53,7 +54,7 @@ export function threadConfig(): {
   if (!read.success) throw new Error(`${file} isn't valid: ${z.prettifyError(read.error)}`);
   const { builder, reviewer, max_rounds } = read.data;
   return {
-    model: builder?.model ?? "opus",
+    model: builder?.model,
     reviewer: reviewer?.harness,
     maxRounds: max_rounds ?? 3,
   };

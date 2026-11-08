@@ -3,7 +3,6 @@
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { z } from "zod";
-import { agentCommand, hasTranscript } from "../agents/claude.ts";
 // What the lead is and how it hands work to threads. Without it, told "fix the flaky test",
 // it would try to edit the read-only clones rather than start a thread. It is a plain file so
 // it reads and changes like a doc, and Bun builds it into skel. It reaches the lead in every
@@ -45,13 +44,13 @@ export async function startLead(db: Database, tmux: string): Promise<void> {
   startServer(tmux);
   const folder = join(dataDir(), "lead");
   const stored = Lead.parse(db.query("SELECT session FROM lead").get());
-  const resume = stored !== null && hasTranscript("lead", folder, stored.session);
+  const harness = agentHarness();
+  const resume = stored !== null && harness.saved("lead", folder, stored.session);
   const session = resume ? stored.session : crypto.randomUUID();
   db.run("INSERT OR REPLACE INTO lead (one, session) VALUES (1, ?)", [session]);
-  const { argv, env } = agentCommand({
+  const { argv, env } = harness.start({
     name: "lead",
     socket: leadSocket(),
-    model: "opus",
     system: instructions,
     ...(resume ? { resume: session } : { sessionId: session }),
   });

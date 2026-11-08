@@ -66,9 +66,8 @@ const Command = (text: string) => {
 async function leadCommand() {
   const socket = join(home, "run", "skel", "lead", "skel.sock");
   mkdirSync(join(socket, ".."), { recursive: true });
-  const made =
-    await asMacRun(`import { agentCommand } from ${JSON.stringify(source("agents/claude.ts"))};
-console.log(JSON.stringify(agentCommand({ name: "lead", socket: ${JSON.stringify(socket)}, model: "opus" })));`);
+  const made = await asMacRun(`import { claude } from ${JSON.stringify(source("agents/claude.ts"))};
+console.log(JSON.stringify(claude.start({ name: "lead", socket: ${JSON.stringify(socket)}, model: "opus" })));`);
   expect(made.err).toBe("");
   return { socket, ...Command(made.out) };
 }
@@ -154,9 +153,8 @@ test("the agent's socket is never resolved itself, as a Mac can't open one to fi
   // of the path going unresolved is what keeps a Mac from failing with EOPNOTSUPP.
   symlinkSync(join(home, "elsewhere"), socket);
   writeFileSync(join(home, "elsewhere"), "");
-  const made =
-    await asMacRun(`import { agentCommand } from ${JSON.stringify(source("agents/claude.ts"))};
-console.log(JSON.stringify(agentCommand({ name: "lead", socket: ${JSON.stringify(socket)}, model: "opus" })));`);
+  const made = await asMacRun(`import { claude } from ${JSON.stringify(source("agents/claude.ts"))};
+console.log(JSON.stringify(claude.start({ name: "lead", socket: ${JSON.stringify(socket)}, model: "opus" })));`);
   expect(made.err).toBe("");
   const text = readFileSync(rules(Command(made.out).argv), "utf8");
   expect(text).toContain(`(remote unix-socket (subpath "${socket}"))`);

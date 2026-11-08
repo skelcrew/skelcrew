@@ -124,7 +124,7 @@ async function reviewNow(given: {
   issue: { title: string; body: string };
   base: string;
   commit: string;
-  model: string;
+  model?: string | undefined;
   harness?: HarnessName | undefined;
   signal?: AbortSignal;
   limit?: number;

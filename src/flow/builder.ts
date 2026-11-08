@@ -5,7 +5,6 @@ import { existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
-import { agentCommand, hasTranscript } from "../agents/claude.ts";
 import instructions from "../agents/prompts/builder.md" with { type: "text" };
 import { refuseCredentials, setupCommand } from "../agents/sandbox.ts";
 import {
@@ -16,7 +15,7 @@ import {
   startServer,
   startSession,
 } from "../agents/tmux.ts";
-import { threadConfig } from "../config.ts";
+import { agentHarness, threadConfig } from "../config.ts";
 import { fetchBranch, readIssue } from "../github.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { quietly } from "../run.ts";
@@ -228,7 +227,8 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
 export async function startBuilder(db: Database, tmux: string, thread: Thread): Promise<void> {
   const clone = cloneOf(thread);
   const stored = thread.session;
-  const resume = stored !== null && hasTranscript(thread.folder, clone, stored) ? stored : null;
+  const harness = agentHarness();
+  const resume = stored !== null && harness.saved(thread.folder, clone, stored) ? stored : null;
   const session = resume ?? crypto.randomUUID();
   let start: { resume: string } | { sessionId: string; prompt: string } = { resume: session };
   if (!resume) {
@@ -236,7 +236,7 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
     start = { sessionId: session, prompt: body ? `${title}\n\n${body}` : title };
   }
   record(db, thread.folder, { session });
-  const { argv, env } = agentCommand({
+  const { argv, env } = harness.start({
     name: thread.folder,
     socket: threadSocket(thread.folder),
     model: threadConfig().model,
