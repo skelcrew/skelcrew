@@ -14,6 +14,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { review } from "../src/flow/reviewer.ts";
+import { source } from "./harness.ts";
 
 let home = "";
 let clone = "";
@@ -78,8 +79,17 @@ function fakeCodex(answer: string, extra: string[] = []): void {
 
 const kept = (name: string) => readFileSync(join(sessions(), name), "utf8");
 const approve = '{"verdict":"approve","body":"Looks right."}';
-const given = () => ({ clone, issue, base: "origin/main", commit, model: "opus", env: env() });
-const start = (more: { signal?: AbortSignal; limit?: number } = {}) =>
+// A review on Codex, unless `more` names another harness.
+const given = () => ({
+  clone,
+  issue,
+  base: "origin/main",
+  commit,
+  model: "opus",
+  harness: "codex" as const,
+  env: env(),
+});
+const start = (more: { signal?: AbortSignal; limit?: number; harness?: "claude" } = {}) =>
   review({ ...given(), ...more });
 
 // bubblewrap can't start inside skel's own sandbox, so only there these tests can't run.
@@ -243,13 +253,13 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
     ]);
   }
 
-  test("reviews on Claude Code with the builder's model when Codex isn't installed", async () => {
+  test("reviews on Claude Code with the builder's model", async () => {
     mkdirSync(join(home, ".config", "skel"), { recursive: true });
     writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-tok\n");
     fakeClaude([
       'cat > /dev/null; echo "{\\"type\\":\\"result\\",\\"structured_output\\":{\\"verdict\\":\\"approve\\",\\"body\\":\\"$seen\\"}}"',
     ]);
-    const done = await review({ ...given(), model: "sonnet" });
+    const done = await review({ ...given(), harness: "claude", model: "sonnet" });
     expect(done.verdict).toBe("approve");
     const seen = Buffer.from(done.body, "base64").toString().split("\n");
     expect(seen.slice(0, 3)).toEqual(["-p", "--model", "sonnet"]);
@@ -279,7 +289,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
     fakeClaude([
       'echo \'{"type":"result","is_error":true,"result":"structured output retries exhausted"}\'',
     ]);
-    const done = await start();
+    const done = await start({ harness: "claude" });
     expect(done.verdict).toBe("failed");
     expect(done.body).toContain("shape");
   });
@@ -287,6 +297,23 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
 
 // These never start bubblewrap, so they run inside skel's sandbox too.
 describe("starting a review", () => {
+  // Returns the harness reviews run on with these settings in your skel.yaml, read in a
+  // process of its own, as homedir() keeps the HOME this one started with.
+  function reviewerFor(settings: string): string {
+    mkdirSync(join(home, ".config", "skel"), { recursive: true });
+    writeFileSync(join(home, ".config", "skel", "skel.yaml"), settings);
+    const code = `import { threadConfig } from ${JSON.stringify(source("config.ts"))};
+console.log(threadConfig().reviewer);`;
+    const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stdout: "pipe" });
+    return run.stdout.toString().trim();
+  }
+
+  test("reviews run on your harness, though Codex is installed, unless you name one for them", () => {
+    fakeCodex(approve);
+    expect(reviewerFor("harness: claude\n")).toBe("claude");
+    expect(reviewerFor("harness: claude\nreviewer: { harness: codex }\n")).toBe("codex");
+  });
+
   test("fails a review on a harness your config picks that isn't installed", async () => {
     const done = await review({ ...given(), harness: "codex" });
     expect(done).toEqual({
@@ -297,7 +324,7 @@ describe("starting a review", () => {
 
   test("fails a Claude Code review when no token is saved", async () => {
     script("claude", ["exit 0"]);
-    const done = await start();
+    const done = await start({ harness: "claude" });
     expect(done.verdict).toBe("failed");
     expect(done.body).toContain("run skel");
   });

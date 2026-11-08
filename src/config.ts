@@ -39,13 +39,13 @@ const ThreadConfig = z.looseObject({
 });
 
 // Returns what your config sets for threads: the builder's model (none when it names none,
-// so the harness picks its own),
-// the reviewer's harness (none when it names none, so the reviewer picks), and the round
-// limit (3 when it names none). Throws when the config isn't valid, rather than run a thread
-// on settings you didn't pick.
+// so the harness picks its own), the reviewer's harness (your harness when it names none,
+// as for the lead and builders), and the round limit (3 when it names none). Throws when the
+// config isn't valid, rather than run a thread on settings you didn't pick. A second view on
+// another model is yours to choose, such as with reviewer: { harness: codex }.
 export function threadConfig(): {
   model: string | undefined;
-  reviewer: HarnessName | undefined;
+  reviewer: HarnessName;
   maxRounds: number;
 } {
   const file = configFile();
@@ -56,7 +56,7 @@ export function threadConfig(): {
   const { builder, reviewer, max_rounds } = read.data;
   return {
     model: builder?.model,
-    reviewer: reviewer?.harness,
+    reviewer: reviewer?.harness ?? agentHarness().name,
     maxRounds: max_rounds ?? 3,
   };
 }

@@ -6,7 +6,7 @@ Nov 3, 2026 · @Simon · updated Nov 6 for the launch on Nov 16
 
 skel is Claude Code, but always on, in parallel, isolated, and seeing each task through to the merge.
 
-You run `skel` and talk to your lead: a Claude Code or Codex session on your server that knows all your repositories. The lead writes tasks and starts threads. Each thread works in one repository, as a builder agent in its own branch, clone and sandbox. It opens a PR, a fresh reviewer on another model, Codex by default, reviews it adversarially, and they go back and forth until it is ready. CI failures and your PR comments wake the builder again. You merge.
+You run `skel` and talk to your lead: a Claude Code or Codex session on your server that knows all your repositories. The lead writes tasks and starts threads. Each thread works in one repository, as a builder agent in its own branch, clone and sandbox. It opens a PR, a fresh reviewer, on another model if you choose one, reviews it adversarially, and they go back and forth until it is ready. CI failures and your PR comments wake the builder again. You merge.
 
 There are no roles, phases or flows as files. We trust capable agents and add an adversarial review.
 
@@ -21,7 +21,7 @@ The repository starts with three documents: this spec, `AGENTS.md` for how to wr
 | Parallel | Many threads at once, across repositories, without juggling chat windows. |
 | Isolated | Each thread gets a branch, clone and sandbox. Your own checkouts are never touched. No tokens inside. |
 | Connected | Tasks come from GitHub issues and PRs go back to it. More tools can be added behind the same seam. |
-| Build ⇄ review | A builder and a fresh adversarial reviewer on another model loop until the change is ready. A model reviewing its own work shares its blind spots. |
+| Build ⇄ review | A builder and a fresh adversarial reviewer loop until the change is ready. Put the reviewer on another model: a model reviewing its own work shares its blind spots. |
 | In your harness | You stay in Claude Code or Codex. There is no new app to live in. |
 
 ## The launch
@@ -57,7 +57,7 @@ The repositories in the video are small real apps with fast CI and real issues, 
 | Thread | skel's core: the work on one task, from its first message to the merged PR. Its branch, clone, sandbox, builder session and history. One thread per task at a time. Named by the task's own ID in its tracker, with the repository added when that ID doesn't name one: GitHub issue #12 in app is `app-12`, since its number is only unique within app, while a tracker whose IDs are already unique, such as Linear's `JOTT-12`, would keep its own. A thread never gets a second number, so the name in skel is always the one in the tracker. A dash, because no shell reads a dash as anything special, so it never needs quoting. |
 | Harness | The coding agent an agent runs on: Claude Code or Codex. |
 | Builder | The thread's agent. A session of its harness that stays alive from start until the PR merges or closes. |
-| Reviewer | A fresh agent for each review round, on Codex by default, reading the PR adversarially. It runs once and answers with a verdict, with no session to attach to. It never inherits the builder's context. |
+| Reviewer | A fresh agent for each review round, on the harness your config names for it, reading the PR adversarially. It runs once and answers with a verdict, with no session to attach to. It never inherits the builder's context. |
 | Event | Something that happened to a thread: a review, a PR comment, a failed check, a merge. |
 | Needs you | A flag on a thread: the builder asked a question, review hit its round limit, or the PR is approved and green. |
 
@@ -73,7 +73,7 @@ The repository you attach from is the lead's default, as the folder is for `clau
 
 1. **Connect to GitHub.** If `gh auth status` fails, skel runs `gh auth login` in your terminal. skel uses that login for everything it does on GitHub, outside the sandbox.
 2. **Pick a harness.** skel asks whether agents run on Claude Code or Codex, checks that it is installed, and saves the choice as `harness` in your `skel.yaml` in `~/.config/skel/`. Then it logs that harness in for agents. For Claude Code it runs `claude setup-token`, which gives a long-lived login token for agents, and saves the token you paste in `~/.config/skel/`, readable only by you. For Codex it runs the reviewer's login below, which the lead and builders then share.
-3. **Log in the reviewer.** When `codex` is installed, skel runs `codex login --device-auth` with `CODEX_HOME` set to `~/.local/share/skel/codex/`. That is a login of skel's own, separate from yours in `~/.codex`, so a renewal on either side never breaks the other. Without `codex`, skel says reviews will run on Claude Code, on the builder's own model, so they lose the second view, and the step is skipped.
+3. **Log in the reviewer.** When `codex` is installed, skel runs `codex login --device-auth` with `CODEX_HOME` set to `~/.local/share/skel/codex/`. That is a login of skel's own, separate from yours in `~/.codex`, so a renewal on either side never breaks the other. With it, `reviewer: { harness: codex }` in your `skel.yaml` gives reviews a second view on another model. Without `codex`, skel says reviews will run on your harness, with no second view, and the step is skipped.
 
 Before the first step, skel checks that `tmux`, `bwrap`, `gh` and the harness are installed, and if one is missing, says exactly what to install instead of failing halfway. After the last step, it installs the daemon as a systemd user service and turns on lingering (`loginctl enable-linger`), so the daemon keeps running after you log out and starts again after a reboot. On a Sprite, which has no systemd, it installs the daemon as a Sprite service instead, which the Sprite starts at boot and restarts when it crashes.
 
@@ -164,7 +164,7 @@ One thread, from start to merge.
 2. **skel sets up the thread.** A clone of its own at `~/.local/share/skel/threads/app-12/`, made from skel's clone of the repository, on branch `skel/12-<slug>` from `main` (or `--from <branch>`), with the repository's setup commands run once in it.
 3. **The builder starts.** A session of its harness in the sandbox, in the thread's clone, with the task's title and body as its first message.
 4. **The builder finishes a round.** It commits and runs `skel submit "<summary>"`. skel fetches the branch from the thread's clone into its own and pushes it from there, never running git inside the thread's folder. On the first round skel opens the PR, with `Closes #12` in its body.
-5. **The reviewer reviews.** skel sets the `skel/review` status check on the commit to pending and runs a fresh reviewer once, in the sandbox, with `codex exec` (or `claude -p` without Codex). It is given the task, reads the diff against the base branch, runs the tests, and answers in a fixed JSON shape: approve or changes, and the review's body. skel posts it as a GitHub review and sets the check to success or failure, so branch protection can require it. Reviews run one at a time, since they share skel's Codex login, and a renewal by one could leave the others with a token that no longer works. A review covers the commit it started for: a newer `skel submit` cancels a review still waiting or running. A reviewer that fails, answers outside the shape, or runs past 30 minutes sets the check to failure with "review failed", and the thread needs you. You or the lead can rerun a review with `skel review`, such as after a review that failed.
+5. **The reviewer reviews.** skel sets the `skel/review` status check on the commit to pending and runs a fresh reviewer once, in the sandbox, on its harness, such as with `codex exec` or `claude -p`. It is given the task, reads the diff against the base branch, runs the tests, and answers in a fixed JSON shape: approve or changes, and the review's body. skel posts it as a GitHub review and sets the check to success or failure, so branch protection can require it. Reviews run one at a time, since they share skel's Codex login, and a renewal by one could leave the others with a token that no longer works. A review covers the commit it started for: a newer `skel submit` cancels a review still waiting or running. A reviewer that fails, answers outside the shape, or runs past 30 minutes sets the check to failure with "review failed", and the thread needs you. You or the lead can rerun a review with `skel review`, such as after a review that failed.
 6. **Changes go back to the builder.** skel types the review into the builder's live session. The builder fixes, commits and runs `skel submit` again. Back to step 4.
 7. **After 3 rounds of changes, the thread needs you.** skel stops sending reviews to the builder until you say go on, with `skel start`.
 8. **Approved and CI green: the thread needs you.** Its status is `waiting`, on you.
@@ -230,7 +230,7 @@ reviewer: { harness: codex }
 max_rounds: 3
 ```
 
-`harness` is what the lead and builders run on, and `lead`, `builder` and `reviewer` can each name another, such as `builder: { harness: codex }`. A thread keeps the harness it started on, since a conversation can't move from one harness to another. Unless your config names one, the reviewer runs on the harness the builder isn't on, for the second view. Without Codex installed, it runs on Claude Code. A model name belongs to its harness: `opus` is Claude Code's default, and Codex picks its own.
+The lead, the builder and the reviewer each run on their own `harness` when your config gives one, such as `builder: { harness: codex }`, and otherwise on the top-level `harness`. A second view on another model is yours to choose, such as `reviewer: { harness: codex }`. A thread keeps the harness it started on, since a conversation can't move from one harness to another. A model name belongs to its harness: `opus` is Claude Code's default, and Codex picks its own.
 
 The repository's `skel.yaml`, committed at its top, holds what that repository needs, and can override yours:
 

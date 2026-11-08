@@ -305,7 +305,7 @@ printf '%s' '{"verdict":"approve","body":"Fine."}' > "$out"`,
 // Runs a review as a Mac would, and returns its verdict.
 async function reviewOnMac(clone: string, more = "") {
   const ran = await asMacRun(`import { review } from ${JSON.stringify(source("flow/reviewer.ts"))};
-console.log(JSON.stringify(await review({ clone: ${JSON.stringify(clone)}, issue: { title: "t", body: "b" }, base: "origin/main", commit: ${JSON.stringify(git(clone, "rev-parse", "HEAD"))}, model: "opus", ${more} })));
+console.log(JSON.stringify(await review({ clone: ${JSON.stringify(clone)}, issue: { title: "t", body: "b" }, base: "origin/main", commit: ${JSON.stringify(git(clone, "rev-parse", "HEAD"))}, model: "opus", harness: "codex", ${more} })));
 process.exit(0);`);
   expect(ran.err).toBe("");
   return JSON.parse(ran.out);

@@ -1,10 +1,10 @@
-// Runs a fresh adversarial reviewer in the sandbox for each thread's PR, on the harness
-// reviewerHarness picks.
+// Runs a fresh adversarial reviewer in the sandbox for each thread's PR, on the harness your
+// config names for reviews.
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { type HarnessName, harnessNamed, reviewerHarness } from "../agents/harness.ts";
+import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { sandboxArgs, throwaway } from "../agents/sandbox.ts";
 import { onSprite } from "../machine/sprite.ts";
 import { errorText } from "../say.ts";
@@ -125,19 +125,18 @@ async function reviewNow(given: {
   base: string;
   commit: string;
   model?: string | undefined;
-  harness?: HarnessName | undefined;
+  harness: HarnessName;
   signal?: AbortSignal;
   limit?: number;
   env?: Record<string, string | undefined>;
 }): Promise<Review> {
-  const { clone, issue, base, model, limit = 30 * 60_000, env = process.env } = given;
+  const { clone, issue, base, model, harness, limit = 30 * 60_000, env = process.env } = given;
   if (given.signal?.aborted) return { verdict: "failed", body: "the review was cancelled" };
   const home = env.HOME;
   if (!home)
     return { verdict: "failed", body: "HOME isn't set, so skel can't find its own folders" };
   const path = env.PATH ?? "";
-  const harness = reviewerHarness(given.harness, path);
-  if (given.harness && !Bun.which(harness, { PATH: path }))
+  if (!Bun.which(harness, { PATH: path }))
     return {
       verdict: "failed",
       body: `${harness} isn't installed, and your config picks it for reviews`,

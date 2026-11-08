@@ -2,7 +2,6 @@
 // its PR opened on the first round, reviewed by a fresh reviewer, and the review typed back
 // into the builder's session when it asks for changes.
 import type { Database } from "bun:sqlite";
-import { reviewerHarness } from "../agents/harness.ts";
 import { typeInto } from "../agents/tmux.ts";
 import { agentHarness, threadConfig } from "../config.ts";
 import {
@@ -87,8 +86,7 @@ async function reviewRound(
   const { model, reviewer, maxRounds } = threadConfig();
   await setReviewStatus(fullName, sha, "pending", "skel's reviewer is reviewing");
   if (signal.aborted) return;
-  const harness = reviewerHarness(reviewer, process.env.PATH ?? "");
-  record(db, folder, { reviewing: sha, submitting: null, reviewer: harness }, `reviewing ${sha}`);
+  record(db, folder, { reviewing: sha, submitting: null, reviewer }, `reviewing ${sha}`);
   const verdict = await review({
     clone: cloneOf(thread),
     issue: await readIssue(fullName, thread.task),
@@ -118,7 +116,7 @@ async function reviewRound(
     status,
     telling: tell,
     held,
-    reviewed_by: harness,
+    reviewed_by: reviewer,
     review_round: before + 1,
     verdict: verdict.verdict,
     review_line: verdict.body.trim().split("\n")[0]?.slice(0, 200) ?? "",
@@ -222,7 +220,7 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
       held: null,
       // What CI said was about the commit before this one.
       checks: null,
-      reviewer: reviewerHarness(reviewer, process.env.PATH ?? ""),
+      reviewer,
     },
     `submitted: ${summary}`,
   );
