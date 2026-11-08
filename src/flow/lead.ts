@@ -20,6 +20,7 @@ import {
   startSession,
   typeInto,
 } from "../agents/tmux.ts";
+import { agentHarness } from "../config.ts";
 import { dataDir, leadSocket } from "../paths.ts";
 import { errorText } from "../say.ts";
 import { fullNameIs, refreshClones, repositories } from "./repo.ts";
@@ -75,14 +76,15 @@ async function typeNotes(db: Database, tmux: string): Promise<void> {
     const thread = Thread.nullable().parse(row);
     if (note === null && (thread === null || thread.noting === null)) return;
     if (!agentRuns(tmux, "lead")) return;
-    if (!(await isIdle(tmux, "lead"))) continue;
+    const { marks } = agentHarness();
+    if (!(await isIdle(tmux, "lead", marks))) continue;
     if (note !== null) {
-      await typeInto(tmux, "lead", note.text);
+      await typeInto(tmux, "lead", marks, note.text);
       db.run("DELETE FROM notes WHERE id = ?", [note.id]);
       continue;
     }
     if (thread === null || thread.noting === null) return;
-    await typeInto(tmux, "lead", `${threadName(db, thread)} needs you: ${thread.noting}`);
+    await typeInto(tmux, "lead", marks, `${threadName(db, thread)} needs you: ${thread.noting}`);
     // The thread may have stopped needing you and started again while this was typed.
     if (readThread(db, thread.folder).noting === thread.noting)
       record(db, thread.folder, { noting: null }, "told the lead it needs you");

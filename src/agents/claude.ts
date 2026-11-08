@@ -207,3 +207,11 @@ export function agentCommand(given: {
   });
   return { argv, env: kept };
 }
+
+// Claude Code as skel knows it. While a turn runs it shows "esc to interrupt". It is ready for
+// a message once a line holding only its ❯ prompt shows and that is gone.
+export const claude = {
+  name: "claude",
+  title: "Claude Code",
+  marks: { busy: "esc to interrupt", prompt: "❯" },
+} as const;

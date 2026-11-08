@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse, parseDocument } from "yaml";
 import { z } from "zod";
+import { harnessNamed } from "./agents/harness.ts";
 import { configDir } from "./paths.ts";
 
 // Unknown keys pass through, so settings this version doesn't know survive a save.
@@ -23,6 +24,10 @@ export function readConfig() {
   if (!read.success) throw new Error(`${file} isn't valid: ${z.prettifyError(read.error)}`);
   return { config, harness: read.data.harness };
 }
+
+// Returns the harness the lead and builders run on: the one the first run saved, or Claude
+// Code when your config names none.
+export const agentHarness = () => harnessNamed(readConfig().harness ?? "claude");
 
 // Kept apart from SetupConfig on purpose: setupDone reads that one on every plain skel, and a
 // bad max_rounds must stop a thread, not make setupDone throw.
