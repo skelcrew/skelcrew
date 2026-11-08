@@ -72,7 +72,7 @@ The folder you run `skel` in picks the project, as the folder does for `claude` 
 **The first run.** The first `skel` on a machine takes three steps before the lead starts:
 
 1. **Connect to GitHub.** If `gh auth status` fails, skel runs `gh auth login` in your terminal. skel uses that login for everything it does on GitHub, outside the sandbox.
-2. **Pick a harness.** skel checks that the harness is installed, and saves the choice in your `skel.yaml` in `~/.config/skel/`. For Claude Code it then runs `claude setup-token`, which gives a long-lived login token for agents, and saves the token you paste in `~/.config/skel/`, readable only by you. In this version Claude Code is the only harness offered, but the question is asked so the choice is visible and stored.
+2. **Pick a harness.** skel checks that the harness is installed, and saves the choice in `~/.config/skel/config.yaml`. For Claude Code it then runs `claude setup-token`, which gives a long-lived login token for agents, and saves the token you paste in `~/.config/skel/`, readable only by you. In this version Claude Code is the only harness offered, but the question is asked so the choice is visible and stored.
 3. **Log in the reviewer.** When `codex` is installed, skel runs `codex login --device-auth` with `CODEX_HOME` set to `~/.local/share/skel/codex/`. That is a login of skel's own, separate from yours in `~/.codex`, so a renewal on either side never breaks the other. Without `codex`, skel says reviews will run on Claude Code, on the builder's own model, so they lose the second view, and the step is skipped.
 
 Before the first step, skel checks that `tmux`, `bwrap`, `gh` and the harness are installed, and if one is missing, says exactly what to install instead of failing halfway. After the last step, it installs the daemon as a systemd user service and turns on lingering (`loginctl enable-linger`), so the daemon keeps running after you log out and starts again after a reboot. On a Sprite, which has no systemd, it installs the daemon as a Sprite service instead, which the Sprite starts at boot and restarts when it crashes.
@@ -248,7 +248,7 @@ max_rounds: 3
 
 It holds the project's name, how to set up and test the repository, the harness and model for the lead, builder and reviewer, and the round limit. skel reads it from its own clone, at the latest default branch, so a change counts once it is pushed there.
 
-What is yours stays in `~/.config/skel/`: every login and token, and your own defaults, in your `skel.yaml` there, used wherever the repository's `skel.yaml` says nothing. Which machine runs the daemon is yours too: it is where you run `skel`, or the host you give `--remote`. A secret never goes in a repository, and skel reads none from the repository's `skel.yaml`. Plugins and their settings stay with the machine, in your `skel.yaml` in `~/.config/skel/`, never in the repository's. Yours can set the same defaults a project can:
+What is yours stays in `~/.config/skel/`: every login and token, and your own defaults, in `config.yaml`, used wherever `skel.yaml` says nothing. Which machine runs the daemon is yours too: it is where you run `skel`, or the host you give `--remote`. A secret never goes in a repository, and skel reads none from `skel.yaml`. Plugins and their settings stay with the machine, in `config.yaml`, never in `skel.yaml`. Your `config.yaml` can set the same defaults a project can:
 
 ```yaml
 harness: claude
@@ -310,7 +310,7 @@ These are the parts that need care. `docs/learnings.md` explains the traps behin
 - A picker for projects that have no tab, and listing threads across all projects
 - Team projects on a shared skel server, and a screen connected to several daemons at once
 - Secrets of a project's own: every project uses your one GitHub login and harness login
-- Plugin settings per project, in the repository's `skel.yaml`, such as a Slack channel and who may message the lead. Anyone who can push to the repository could then add themselves to who reaches your lead, so they stay with the machine
+- Plugin settings per project, in `skel.yaml`, such as a Slack channel and who may message the lead. Anyone who can push to the repository could then add themselves to who reaches your lead, so they stay with the machine
 - Where a project's settings live once it has several repositories, how a project is named across machines and people, and whether a thread can move between a project's repositories are open
 
 If something seems missing, ask instead of adding it.
