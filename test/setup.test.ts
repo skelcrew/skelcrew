@@ -102,7 +102,7 @@ function calls(): string {
     .replace(/tmux -L skel-screen .* sh skel (\S+) ;.*/g, "screen on $1");
 }
 
-const config = () => join(home, ".config", "skel", "skel.yaml");
+const config = () => join(home, ".config", "skel", "config.yaml");
 const token = () => join(home, ".config", "skel", "claude-token");
 const unit = () => join(home, ".config", "systemd", "user", "skel.service");
 
@@ -524,7 +524,7 @@ test("saves no token after Ctrl-D at the token question", async () => {
   expect(existsSync(token())).toBe(false);
 });
 
-test("keeps the other settings in your skel.yaml in ~/.config/skel", async () => {
+test("keeps the other settings in config.yaml", async () => {
   mkdirSync(join(home, ".config", "skel"), { recursive: true });
   writeFileSync(config(), "# mine\ncolor: blue\n");
   const run = await skel("1\nsk-ant-oat01-good\n");
@@ -536,13 +536,13 @@ test("keeps the other settings in your skel.yaml in ~/.config/skel", async () =>
 });
 
 for (const broken of ["a: b: c\n", "harness: claude\n  - x: [\n"]) {
-  test(`refuses your skel.yaml that isn't YAML: ${JSON.stringify(broken)}`, async () => {
+  test(`refuses a config.yaml that isn't YAML: ${JSON.stringify(broken)}`, async () => {
     mkdirSync(join(home, ".config", "skel"), { recursive: true });
     writeFileSync(config(), broken);
     writeFileSync(join(home, "gh-login"), "");
     const run = await skel("1\nsk-ant-oat01-good\n");
     expect(run.code).toBe(1);
-    expect(run.err).toContain(join(".config", "skel", "skel.yaml"));
+    expect(run.err).toContain("config.yaml");
     expect(readFileSync(config(), "utf8")).toBe(broken);
   });
 }
@@ -560,13 +560,13 @@ for (const [what, typed] of [
   });
 }
 
-test("refuses your skel.yaml it can't read", async () => {
+test("refuses a config.yaml it can't read", async () => {
   mkdirSync(join(home, ".config", "skel"), { recursive: true });
   writeFileSync(config(), "harness: [1, 2]\n");
   writeFileSync(join(home, "gh-login"), "");
   const run = await skel("1\nsk-ant-oat01-good\n");
   expect(run.code).toBe(1);
-  expect(run.err).toContain(join(".config", "skel", "skel.yaml"));
+  expect(run.err).toContain("config.yaml");
 });
 
 test("Enter at the harness question picks Claude Code", async () => {

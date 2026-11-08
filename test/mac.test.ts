@@ -227,7 +227,7 @@ test("the daemon takes its lock from a Mac's system library, and the lead reache
   if (process.platform === "linux") symlinkSync(libc ?? "", join(libraries, "libSystem.B.dylib"));
   mkdirSync(join(home, "Library", "LaunchAgents"), { recursive: true });
   writeFileSync(join(home, "Library", "LaunchAgents", "run.skel.daemon.plist"), "");
-  writeFileSync(join(home, ".config", "skel", "skel.yaml"), "harness: claude\n");
+  writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\n");
   fake("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
   fake("gh", "exit 1");
   // Ends when its terminal goes, as Claude Code does: the sandbox's wrapper stays for it, as it

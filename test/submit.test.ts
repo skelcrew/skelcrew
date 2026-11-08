@@ -139,7 +139,7 @@ afterEach(async () => {
 
 function config(more: string): void {
   writeFileSync(
-    join(home, ".config", "skel", "skel.yaml"),
+    join(home, ".config", "skel", "config.yaml"),
     `harness: claude\nreviewer: { harness: codex }\n${more}`,
   );
 }

@@ -297,11 +297,11 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
 
 // These never start bubblewrap, so they run inside skel's sandbox too.
 describe("starting a review", () => {
-  // Returns the harness reviews run on with these settings in your skel.yaml, read in a
+  // Returns the harness reviews run on with these settings in your config.yaml, read in a
   // process of its own, as homedir() keeps the HOME this one started with.
   function reviewerFor(settings: string): string {
     mkdirSync(join(home, ".config", "skel"), { recursive: true });
-    writeFileSync(join(home, ".config", "skel", "skel.yaml"), settings);
+    writeFileSync(join(home, ".config", "skel", "config.yaml"), settings);
     const code = `import { threadConfig } from ${JSON.stringify(source("config.ts"))};
 console.log(threadConfig().reviewer);`;
     const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stdout: "pipe" });

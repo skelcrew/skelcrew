@@ -123,7 +123,7 @@ esac`,
   );
   mkdirSync(join(home, ".config", "skel"), { recursive: true });
   writeFileSync(
-    join(home, ".config", "skel", "skel.yaml"),
+    join(home, ".config", "skel", "config.yaml"),
     "harness: claude\nreviewer: { harness: codex }\n",
   );
   writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
