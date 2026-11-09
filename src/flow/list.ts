@@ -113,8 +113,13 @@ function table(heading: string[], rows: string[][]): void {
     );
 }
 
-// Prints repositories for skel repo ls, or tells you how to bring in the first one.
-export function printRepositories(repositories: RepositoryRow[]): void {
+// Prints repositories for skel repo ls: as JSON for tools, or else one line each, or how to
+// bring in the first one.
+export function printRepositories(repositories: RepositoryRow[], json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(repositories));
+    return;
+  }
   const name = Math.max(...repositories.map((r) => r.name.length));
   const github = Math.max(...repositories.map((r) => r.github.length));
   if (repositories.length === 0) console.log(noRepositories);

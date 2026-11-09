@@ -414,6 +414,18 @@ test("names two repositories that share a GitHub name with their owners", async 
   expect((await skel(["repo", "ls"])).out).toBe(`app  simon/app  ${clone("simon/app")}\n`);
 });
 
+test("repo ls --json lists the repositories for tools, with the same facts as the text", async () => {
+  expect(JSON.parse((await skel(["repo", "ls", "--json"])).out)).toEqual([]);
+  await skel([], "", onGitHub("simon/app", "WRITE"));
+  await skel([], "", onGitHub("other/app", "WRITE"));
+  const listed = await skel(["repo", "ls", "--json"]);
+  expect(listed.err).toBe("");
+  expect(JSON.parse(listed.out)).toEqual([
+    { name: "other/app", github: "other/app", clone: clone("other/app") },
+    { name: "simon/app", github: "simon/app", clone: clone("simon/app") },
+  ]);
+});
+
 test("repo trust clones a repository you can't push to, named by its GitHub name", async () => {
   onGitHub("other/tool");
   const run = await skel(["repo", "trust", "other/tool"]);
