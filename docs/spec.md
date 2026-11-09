@@ -173,7 +173,7 @@ At any point the builder can ask you a question with Claude Code's own `AskUserQ
 
 **Telling you.** When a thread starts needing you, skel types a one line note into the lead's session (when the lead is idle), so you hear it where you already are.
 
-**Messages.** The lead and a builder can tell each other something with `skel tell`, such as a builder saying its task needs another thread's work first. skel types the message into the other's session once it is idle, as it does the lead's notes, saying who it is from and how to answer, so an agent's message never passes for yours. The lead can tell any thread's builder. A builder can tell only the lead, since its socket says which thread it is. A message to a builder that isn't running, or that is asking you a question, is refused, not kept. Messages stay in skel, never on GitHub, and each one goes in the thread's log.
+**Messages.** The lead and a builder can tell each other something with `skel tell`, such as a builder saying its task needs another thread's work first. skel types the message into the other's session once it is idle, as it does the lead's notes, under one fixed header that says who it is from and how to answer, so an agent's message never passes for yours: `From the lead (answer with skel tell lead "…"):` into a builder, and `From app-12's builder (answer with skel tell app-12 "…"):` into the lead. The lead can tell any thread's builder. A builder can tell only the lead, since its socket says which thread it is. A message to a builder that isn't running, or that is asking you a question, is refused, not kept. Messages stay in skel, never on GitHub, and each one goes in the thread's log.
 
 ## Events
 
