@@ -168,7 +168,7 @@ One thread, from start to merge.
 1. **A task is started.** You add the `skel` label to an issue on GitHub, from anywhere, even your phone. Or the lead runs `skel task create app "<title>" "<body>"`, which creates a GitHub issue, then `skel start app-12`. You can run both yourself too.
 2. **skel sets up the thread.** A clone of its own at `~/.local/share/skel/threads/app-12/`, made from skel's clone of the repository, on branch `skel/12-<slug>` from `main` (or `--from <branch>`), with the repository's setup commands run once in it.
 3. **The builder starts.** A session of its harness in the sandbox, in the thread's clone, with the task's title and body as its first message.
-4. **The builder finishes a round.** It commits and runs `skel submit "<summary>"`. skel fetches the branch from the thread's clone into its own and pushes it from there, never running git inside the thread's folder. On the first round skel opens the PR, with `Closes #12` in its body.
+4. **The builder finishes a round.** It commits and runs `skel submit "<summary>"`. skel fetches the branch from the thread's clone into its own and pushes it from there, never running git inside the thread's folder. On the first round skel opens the PR, with the line that closes its task in its body, such as `Closes #12`.
 5. **The reviewer reviews.** skel sets the `skel/review` status check on the commit to pending and runs a fresh reviewer once, in the sandbox, on its harness, such as with `codex exec` or `claude -p`. It is given the task, reads the diff against the base branch, runs the tests, and answers in a fixed JSON shape: approve or changes, and the review's body. skel posts it as a GitHub review and sets the check to success or failure, so branch protection can require it. Reviews run one at a time, since they share skel's Codex login, and a renewal by one could leave the others with a token that no longer works. A review covers the commit it started for: a newer `skel submit` cancels a review still waiting or running. A reviewer that fails, answers outside the shape, or runs past 30 minutes sets the check to failure with "review failed", and the thread needs you. You or the lead can rerun a review with `skel review`, such as after a review that failed.
 6. **Changes go back to the builder.** skel types the review into the builder's live session. The builder fixes, commits and runs `skel submit` again. Back to step 4.
 7. **After 3 rounds of changes, the thread needs you.** skel stops sending reviews to the builder until you say go on, with `skel start`.
@@ -177,7 +177,7 @@ One thread, from start to merge.
 
 At any point the builder can ask you a question. On Claude Code it uses Claude Code's own `AskUserQuestion`. Codex has no such tool, so there the builder ends its turn without `skel submit`, and Codex's `Stop` hook tells skel. Either way skel notices, and the thread needs you until you pick it in the sidebar and answer it.
 
-**Telling you.** When a thread starts needing you, skel types a one line note into the session of its repository's lead (when that lead is idle), so you hear it where you already are. A note for a repository whose lead hasn't started yet is kept until it starts, as notes already wait for a lead that isn't running. Every note skel types into a lead also goes to each plugin as an event, so the Slack plugin can tell you away from the terminal.
+**Telling you.** When a thread starts needing you, skel types a one line note into the session of its repository's lead (when that lead is idle), so you hear it where you already are. A note for a repository whose lead hasn't started yet is kept until it starts, as notes already wait for a lead that isn't running. Every note skel types into a lead also goes to each chat plugin as an event, so the Slack plugin can tell you away from the terminal.
 
 **Messages.** The lead and a builder can tell each other something with `skel tell`, such as a builder saying its task needs another thread's work first. skel types the message into the other's session once it is idle, as it does the lead's notes, wrapped in a tag that says who it is from and the command to answer with: `<skel from="lead" reply="skel tell lead">` into a builder, or `<skel from="app-12" reply="skel tell app-12">` into the lead, then the text on its own lines, then `</skel>`. The tag marks where a message starts and ends, so an agent's message never passes for yours, and the text inside stays plain and readable. skel removes `<skel` and `</skel>` from the text, so a message can't end its tag early. The lead can tell any of its repository's threads' builders. A builder can tell only its repository's lead, since its socket says which thread it is. A message to a builder that isn't running, or that is asking you a question, is refused, not kept. Messages stay in skel, never on GitHub, and each one goes in the thread's log.
 
@@ -202,7 +202,18 @@ The daemon asks each repository's tracker what changed since it last looked, and
 
 A plugin connects skel to one outside tool. It lives in a git repository of its own, with a `skel-plugin.yaml` at its root, and you install it with `skel plugin install`. GitHub is a plugin, `skelcrew/skel-plugin-github`, which the first run installs, and Slack is another, `skelcrew/skel-plugin-slack`. skel's flow holds nothing of either: it knows what a plugin does, never which plugin does it.
 
-**What a plugin does.** A plugin does one or more of three jobs. A **tracker** is where tasks come from: it claims repositories and says what changed in their issues and PRs. A **forge** is where code goes: it lends git its login to push, and opens PRs, posts reviews, sets the `skel/review` check and reads a failed check's log. **Chat** is where you hear that a thread needs you, and talk to the lead. A plugin can do several: GitHub is the tracker and the forge, and Slack is chat. A job grows only when a plugin needs it. Harnesses are never plugins: each stays built into skel, one module per harness, because that module draws the sandbox boundary around its agents.
+**What a plugin does.** A plugin does one or more of four jobs. Each job has its own commands, and is used at its own time:
+
+| Job | What it is | Commands | Used by |
+| --- | --- | --- | --- |
+| Tracker | Where tasks come from, such as GitHub issues or Linear. It says what changed in a repository's tasks, and creates one. | `call` | The daemon |
+| Forge | Where code goes, such as GitHub or GitLab. It claims repositories, lends git its login to push, opens PRs, posts reviews, sets the `skel/review` check, and says what changed in a repository's PRs. | `call`, `git_credentials` | The daemon |
+| Chat | Where you hear that a thread needs you, and talk to a lead, such as Slack. | `run` | The daemon, which keeps it running |
+| Machine | Where skel runs, such as a Sprite. It creates a machine, runs commands on it and copies files to it. | `add`, `exec`, `push` | `skel remote add` and `skel --remote`, on your laptop |
+
+A plugin can do several: GitHub is a tracker and a forge, and Slack is chat. A job grows only when a plugin needs it. Harnesses are never plugins: each stays built into skel, one module per harness, because that module draws the sandbox boundary around its agents.
+
+**A repository's tracker and forge.** Each repository has one forge and one tracker. Its forge is the plugin that claims its remote. Its tracker is its forge, when the forge is a tracker too, unless another tracker says the repository is its own. So Linear takes over a GitHub repository whose tasks you plan in Linear, and GitHub stays its forge. Each tracker keeps in its own settings which repositories are its, as its setup asks, since only it knows which team or project holds a repository's tasks. skel asks each tracker `tracks` when a repository comes in and at each daemon start. When two other trackers both say a repository is theirs, skel keeps its forge's and says so in `skel repo ls`.
 
 **The manifest.**
 
@@ -217,46 +228,57 @@ setup: [bun, setup.ts]
 run: [bun, run.ts]
 ```
 
-Each command is a list of words, run in the plugin's folder and never through a shell. All but `name`, `version`, `skel`, `about` and `jobs` are optional. `build` runs once, at install. `setup` runs in your terminal, at install, and asks for whatever the plugin needs, such as a token. A tracker or forge also has `call`, and a forge has `git_credentials`. A command whose first word is `bun` runs on the Bun inside skel, so a plugin written for Bun needs nothing else installed. Anything else it needs, you install yourself, as its README says.
+Each command is a list of words, run in the plugin's folder and never through a shell. `build` and `setup` are optional, and each job needs the commands the table gives it. `build` runs once, at install. `setup` runs in your terminal, at install, and asks for whatever the plugin needs, such as a token. A command whose first word is `bun` runs on the Bun inside skel, so a plugin written for Bun needs nothing else installed. Anything else it needs, you install yourself, as its README says.
 
-**Installing.** `skel plugin install <owner/repo>` clones the repository's newest version tag from GitHub into `~/.local/share/skel/plugins/<name>/<version>/`. It refuses a plugin that needs a newer skel. It shows the manifest and every command the plugin will run, and asks before going on. Then it runs `build` and `setup`, and the daemon starts the plugin. `skel plugin update [<name>]` moves one plugin, or all, to its newest tag the same way, and restarts it. `skel plugin rm <name>` stops it and removes its folders, with its settings and tokens. It refuses for a forge that claims repositories skel has. `skel plugin ls` lists what is installed, with each plugin's version and jobs, such as `github 0.1.0 tracker, forge`. A plugin belongs to the machine the daemon runs on, so for a server or Sprite you run `skel --remote sprite:demo plugin install skelcrew/skel-plugin-slack`.
+**Installing.** `skel plugin install <owner/repo>` clones the repository's newest version tag from GitHub into `~/.local/share/skel/plugins/<name>/<version>/`. It refuses a plugin that needs a newer skel. It shows the manifest and every command the plugin will run, and asks before going on. Then it runs `build` and `setup`, and the daemon starts a chat plugin's `run`. `skel plugin update [<name>]` moves one plugin, or all, to its newest tag the same way, and restarts it. `skel plugin rm <name>` stops it and removes its folders, with its settings and tokens. It refuses for the tracker or forge of a repository skel has. `skel plugin ls` lists what is installed, with each plugin's version and jobs, such as `github 0.1.0 tracker, forge`. A plugin belongs to the machine the daemon runs on, so for a server or Sprite you run `skel --remote sprite:demo plugin install skelcrew/skel-plugin-slack`. A machine plugin is the one exception: it belongs on your laptop, where you run `skel remote add` and `skel --remote`.
 
 **What a plugin is handed.** Each command gets `SKEL_BIN`, the path of the skel that runs it, `SKEL_PLUGIN`, its name, and `SKEL_PLUGIN_CONFIG`, a folder in `~/.config/skel/plugins/` for its settings and tokens, readable only by you. Their format is the plugin's own.
 
-**Events.** The daemon starts each plugin's `run` command when it starts, and stops it when it stops. If it ends, the daemon starts it again, waiting longer each time, up to 5 minutes. It writes skel's events to its stdin, one JSON line each. What it writes to stderr goes to `~/.local/share/skel/plugins/<name>.log`. There are two events in this version:
+**Events.** The daemon starts each chat plugin's `run` command when it starts, and stops it when it stops. It is the only plugin command that keeps running: every other one runs once and exits. If it ends, the daemon starts it again, waiting longer each time, up to 5 minutes. It writes skel's events to its stdin, one JSON line each. What it writes to stderr goes to `~/.local/share/skel/plugins/<name>.log`. There are two events in this version:
 
-- `{"event": "note", "text": "app-12 needs you: its builder asked a question", "thread": "app-12"}`: each note skel types into the lead, as it is typed, except notes a plugin made. `thread` is there when the note is about one.
-- `{"event": "reply", "to": "U0123ABCD", "text": "Yes, it is in review."}`: the lead ran `skel reply slack:U0123ABCD "…"`.
+- `{"event": "note", "repository": "app", "text": "app-12 needs you: its builder asked a question", "thread": "app-12"}`: each note skel types into a lead, as it is typed, except notes a plugin made. `repository` names that lead's repository. `thread` is there when the note is about one.
+- `{"event": "reply", "to": "U0123ABCD", "text": "Yes, it is in review."}`: a lead ran `skel reply slack:U0123ABCD "…"`. What follows `slack:` is the plugin's own, so it can say who to answer and where.
 
 An event for a plugin that isn't running is logged and dropped. `skel reply` then fails, so the lead knows.
 
-**Acting.** A plugin acts by running skel's own commands with `$SKEL_BIN`, as you. One command is made for plugins: `skel note "<text>"` types a note into the lead, such as a Slack message from someone you allowed, with the `skel reply` that answers it. A plugin has no caller kind of its own on the socket: it runs as you and can read what you can, so one would hold nothing back.
+**Acting.** A plugin acts by running skel's own commands with `$SKEL_BIN`, as you. One command is made for plugins: `skel note <repo> "<text>"` types a note into that repository's lead, such as a Slack message from someone you allowed, with the `skel reply` that answers it. A plugin has no caller kind of its own on the socket: it runs as you and can read what you can, so one would hold nothing back.
 
 **Calls.** skel asks a tracker or forge by running its `call` command with one JSON question on stdin. The command prints one JSON answer and exits within 60 seconds. If it exits with an error, its last line of stderr is the error. Every answer is checked before skel uses it.
 
 | Question | Job | Answer |
 | --- | --- | --- |
-| `claims` with a remote, such as `git@github.com:simon/app.git` | Tracker | The repository's key, short name, link and clone URL, whether you can push to it and whether it is a fork. Or `null` if it isn't this plugin's. |
-| `changed` with a repository, the last `next` (or none), and PR numbers to watch | Tracker | `items`, everything updated since, or everything open without a `next`, and the new `next` |
+| `claims` with a remote, such as `git@github.com:simon/app.git` | Forge | The repository's key, short name, link and clone URL, whether you can push to it and whether it is a fork. Or `null` if it isn't this plugin's. |
+| `tracks` with a repository | Tracker | Whether its tasks are in this tracker. GitHub says yes to its own repositories, and creates the `skel` label there if it is missing. |
+| `changed` with a repository, the last `next` (or none), and PR numbers to watch | Tracker, forge | `items`, everything updated since, or everything open without a `next`, and the new `next` |
 | `create task` with a repository, title and body | Tracker | The new item |
 | `took` with a repository and task | Tracker | Nothing. GitHub reacts with 👀 |
-| `open pr` with a repository, branch, base, title, body and task | Forge | Its number, of the PR already open from that branch if there is one |
+| `open pr` with a repository, branch, base, title and body | Forge | Its number, of the PR already open from that branch if there is one |
 | `review` with a repository, PR, commit, verdict and body | Forge | The review's ID |
 | `status` with a repository, commit, state and description | Forge | Nothing |
 | `log` with a repository and check ID | Forge | The end of the failed check's log |
-| `wake` and `unwake` with a repository and URL | Forge | Nothing. GitHub sets or removes the webhook to that URL |
+| `wake` and `unwake` with a repository and URL | Tracker, forge | Nothing. GitHub sets or removes the webhook to that URL. A plugin with no webhooks does nothing. |
 
-An **item** is an issue or a PR in skel's words: its kind, number, title, body, state (`open`, `closed` or `merged`), author, labels, link, and when it was created and updated. A PR adds its branch, base, whether it conflicts with the base, its checks, and its reviews and comments. A check has a name, an ID if it has a log, and a state: `running`, `passed`, `failed`, or `cancelled`, which isn't the builder's to fix. A review or comment has an ID, its text and its author, and a review its verdict and its comments on lines of code. An author says whether it is a bot, whether it is you, and whether it can push to the repository.
+skel asks `changed` once per repository of each plugin that is its tracker or its forge, and keeps tasks only from its tracker and PRs only from its forge. So GitHub, as both, answers both in one query, and with Linear as the tracker, GitHub's issues are left out.
+
+An **item** is a task or a PR in skel's words: its kind, ID, title, body, state (`open`, `closed` or `merged`), author, labels, link, and when it was created and updated. An ID is the tracker's own, such as `12` on GitHub or `JOTT-12` on Linear. One of only digits doesn't name its repository, so a thread on it gets the repository's short name in front, as `app-12`. A task adds the line a PR's body needs to close it on merge, such as `Closes #12`, which skel puts in the PR it opens. A PR adds its branch, base, whether it conflicts with the base, its checks, and its reviews and comments. A check has a name, an ID if it has a log, and a state: `running`, `passed`, `failed`, or `cancelled`, which isn't the builder's to fix. A review or comment has an ID, its text and its author, and a review its verdict and its comments on lines of code. An author says whether it is a bot, whether it is you, and whether it can push to the repository.
 
 skel runs git itself, for clones, fetches and pushes. `git_credentials` is a git credential helper, which skel hands to git for each command and never saves. GitHub's is `gh auth git-credential`.
 
-**The copy.** skel keeps a copy of each tracker's open issues and PRs, as items. At each poll the tracker's `changed` brings what changed since its last `next`. Each daemon start begins with no `next`, so the tracker sends everything open, and anything no longer there leaves the copy. A closed item leaves once no live thread points to it. The copy is the tracker's, not tasks of skel's own: you change tasks in the tracker, and skel follows. The sidebar, pages, `skel task ls` and `skel task show` read the copy, so none of them waits on the tracker. `skel start` polls its repository first, so a builder never starts from an old body.
+**The copy.** skel keeps a copy of each repository's open tasks, from its tracker, and open PRs, from its forge, as items. At each poll `changed` brings what changed since its last `next`. Each daemon start begins with no `next`, so the tracker and forge send everything open, and anything no longer there leaves the copy. A closed item leaves once no live thread points to it. The copy is the tracker's, not tasks of skel's own: you change tasks in the tracker, and skel follows. The sidebar, pages, `skel task ls` and `skel task show` read the copy, so none of them waits on the tracker. `skel start` polls its repository first, so a builder never starts from an old body.
 
-**Waking up.** A delivery to `/<name>` on the daemon's port brings that plugin's next poll forward, for every repository it claims. As for GitHub, a delivery only says "look now", so skel doesn't check who sent it, and acts on what the poll reads. A plugin's own `run` should hold no connection open for news, since a Sprite that sleeps drops it: it polls, or gets deliveries through the port.
+**Waking up.** A delivery to `/<name>` on the daemon's port brings that plugin's next poll forward, for every repository it tracks or forges. As for GitHub, a delivery only says "look now", so skel doesn't check who sent it, and acts on what the poll reads. A chat plugin's `run` should hold no connection open for news, since a Sprite that sleeps drops it: it polls.
 
 **Trust.** A plugin runs as you, outside the sandbox, with no sandbox of its own. It can read what you can, your GitHub login and other plugins' tokens included. You trust it when you install it, as you trust an extension in your editor, which is why install shows what it runs and asks first. Only you install, update or remove one: `skel plugin` is refused for the lead and every agent, and a repository's `skel.yaml` can't name a plugin. Plugins aren't agents. Agents never see a plugin's folders or tokens, which live in your home folder, which the sandbox hides. What a plugin brings in is outside text: its control codes are removed, and typed into the lead, it steers the lead. So each plugin decides who may reach the lead through it. Slack's only lets in the people you list.
 
-**Slack.** Its setup asks for the bot token of skel's Slack app, checks it with Slack, and asks for a channel and the people who may message the lead. Every note goes to the channel, so a team hears what needs you. A direct message to the app, from someone on your list, reaches the lead with `skel note`, with the `skel reply slack:<id> "<answer>"` that answers it. The plugin posts the answer back, and only to people on your list. It checks Slack every minute, through Slack's Web API, so it needs no public URL.
+**Slack.** Its setup asks for the bot token of skel's Slack app, checks it with Slack, and asks for a channel and the people who may message the lead. Every note goes to the channel, with its repository, so a team hears what needs you. A direct message to the app, from someone on your list, reaches a lead with `skel note`, with the `skel reply slack:<id> "<answer>"` that answers it. The message starts with the repository it is for, such as `app: is the login fix merged?`, and one that names none gets the list from `skel repo ls` back. The plugin posts the answer back, and only to people on your list. It checks Slack every minute, through Slack's Web API, so it needs no public URL. On a Sprite that sleeps, a message waits until the Sprite next wakes.
+
+**Machines.** `skel remote add <plugin>:<name>` and `skel --remote <plugin>:<name>` reach a machine through the machine plugin of that name. A host with no plugin in front, such as `simon@workbox`, goes over SSH, which stays built into skel, as git does while GitHub is a plugin. skel runs a machine's commands in your terminal, with the machine's name and any other words after them, and goes by their exit code:
+
+- `add <name>` checks that your laptop has what the machine needs, and lists what is missing with the command that fixes it. It asks before creating the machine, then readies it for skel, such as installing bubblewrap and making its URL public for webhooks. `skel remote add` runs it, then copies skel there with `push` and runs the first run there with `exec`.
+- `exec <name> <word>…` runs the words on the machine, as `ssh -t` does, waking it if it sleeps. It passes your terminal when skel has one.
+- `push <name> <file> <path>` copies a file to the machine, as `scp` does.
+
+`exec` and `push` never create a machine, so a mistyped name creates nothing. What skel does while it runs on a machine stays built in, since it decides what agents can reach, as a harness does. On a Sprite that is hiding the control socket in the sandbox, keeping the Sprite awake only while there is work, and the Sprite service. For the launch, Sprites stay built in too, and `sprite:<name>` needs no plugin. After the launch, the Sprite steps in `skel remote add` and `skel --remote` move into the first machine plugin, with the same `sprite:<name>`.
 
 ## Commands
 
@@ -278,12 +300,12 @@ For you, and for the lead:
 | `skel plugin install <owner/repo>` | Installs a plugin from its newest version tag on GitHub, after showing what it runs and asking. Runs its setup. Only you can run it. |
 | `skel plugin update [<name>]` | Moves a plugin, or all of them, to its newest tag and restarts it. Only you can run it. |
 | `skel plugin rm <name>` | Stops a plugin and removes it, with its settings and tokens. Only you can run it. |
-| `skel plugin ls` | Lists the plugins installed, with their versions and jobs: tracker, forge or chat. Only you can run it. |
+| `skel plugin ls` | Lists the plugins installed, with their versions and jobs: tracker, forge, chat or machine. Only you can run it. |
 | `skel reply <to> "<text>"` | Answers a message that came in through a plugin, such as a Slack message. The note that brought it names `<to>`. |
-| `skel note "<text>"` | Types a note into the lead, for plugins. |
+| `skel note <repo> "<text>"` | Types a note into the repository's lead, for plugins. |
 | `skel task ls [<repo>]` | Open tasks, newest first, from skel's copy of the tracker, with the thread on each one if it has one. `--json` for tools. |
 | `skel task show <repo>-<task>` | A task's title and body, which is all its builder sees, with its thread if it has one. `--json` for tools. |
-| `skel task create <repo> "<title>" "<body>"` | Creates a task, as a GitHub issue, and prints its name, such as `app-13`. It doesn't start a thread. |
+| `skel task create <repo> "<title>" "<body>"` | Creates a task in the repository's tracker, such as a GitHub issue, and prints its name, such as `app-13`. It doesn't start a thread. |
 | `skel ps [<repo>]` | Threads, with status and needs you, newest first. Done threads only with `--all`. `--json` for tools. |
 | `skel start <repo>-<task> [--from <branch>]` | Starts a thread on a task. On a stopped thread, resumes it: starts its builder again with `--resume` on its last session. On a thread past the round limit, lets it go on: counts its rounds from zero again and types the last review's changes into the builder. |
 | `skel attach <repo>-<task>` | Opens the same screen as `skel`, with that builder on the right. Ctrl-Q detaches. |
@@ -345,7 +367,7 @@ A machine that ran skel with one lead for all its repositories keeps that lead, 
 
 **One seam for harnesses.** Each harness lives in one module: how it starts, resumes and logs in, where its config folder is, and what its screen shows when it is busy or ready for a message. A small lookup finds it by the name your config uses. The flow never names a harness, so another one, such as opencode or pi, is one more module.
 
-**One seam for Sprites.** Creating a Sprite, running commands on it and keeping it awake live in one module, so other machines that skel creates or that sleep can be added later without touching the flow.
+**One seam for Sprites.** Creating a Sprite, running commands on it and keeping it awake live in one module. Its creating, running and copying are what the machine job asks of a plugin, so they can move into one after the launch without touching the flow.
 
 ## Building blocks
 
@@ -370,7 +392,7 @@ These are the parts that need care. `docs/learnings.md` explains the traps behin
 - Reaching you outside the lead's session other than through a plugin, such as a `notify` command for your phone
 - Linear, Jira or forges other than GitHub
 - A sandbox for plugins, plugins from anywhere but a GitHub repository, builds for each platform, and a list of plugins to browse
-- Machine as a fourth plugin job: where skel and its agents run. Sprites become the first machine plugin, after the launch. A machine plugin creates and wakes a machine and hands skel an SSH target, and skel does everything after that over SSH, as `skel remote add` and `skel --remote` do today with any host. SSH remotes stay built into skel, as git does while GitHub is a plugin. So does what skel does while it runs on a Sprite: hiding the control socket in the sandbox, keeping the Sprite awake only while there is work, and the Sprite service. Those decide what agents can reach, as a harness does
+- Machine plugins. Sprites stay built in, and become the first machine plugin after the launch
 - Errors from Sentry as tasks, planned as the launch after this one
 - Threads started from plain text, without a task. They would be named with a marker, such as `app-t1`, so they never clash with a task's name
 - Starting a thread by assigning an issue or mentioning skel on GitHub
