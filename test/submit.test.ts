@@ -99,8 +99,9 @@ beforeEach(() => {
   fakeClaude();
   fakeCodex();
   script("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
-  // The fake GitHub API: issue 12 in every poll, and asked for by number, once it is opened, and a log of the
-  // reviews and checks skel sets.
+  // The fake GitHub API: issue 12 in every poll, and as tasks.json says once it is there when
+  // asked for by number, pull request 7 once it is opened, and a log of the reviews and checks
+  // skel sets.
   writeFileSync(
     join(home, "poll.json"),
     JSON.stringify(pollAnswer([issueNode(12, "Add export", { body: "As JSON" })])),
@@ -110,7 +111,7 @@ beforeEach(() => {
     `echo "gh $*" >> "$HOME/gh/calls"
 case "$*" in
 "api graphql --input -") query=$(cat)
-  case "$query" in *"task12: issue("*) cat "$HOME/tasks.json" ;; *) cat "$HOME/poll.json" ;; esac ;;
+  case "$query" in *"task12: issue("*) cat "$HOME/tasks.json" 2>/dev/null || cat "$HOME/poll.json" ;; *) cat "$HOME/poll.json" ;; esac ;;
 "api repos/simon/app/pulls?state=open&head="*) if test -e "$HOME/gh/pr"; then echo '[{"number":7}]'; else echo '[]'; fi ;;
 "api repos/simon/app/pulls --method POST --input -") touch "$HOME/gh/opening"; while test -e "$HOME/gh/hold"; do sleep 0.1; done; cat > "$HOME/gh/pr"; echo '{"number":7}' ;;
 "api repos/simon/app/pulls/7/reviews --method POST --input -") touch "$HOME/gh/posting"; while test -e "$HOME/gh/hold-review"; do sleep 0.1; done; cat >> "$HOME/gh/reviews"; echo >> "$HOME/gh/reviews"; echo '{"id":1}' ;;
