@@ -93,6 +93,7 @@ function prepareTables(db: Database): void {
     review_round INTEGER,
     verdict TEXT,
     review_line TEXT,
+    harness TEXT,
     PRIMARY KEY (owner, repo, task)
   )`);
   // Creating a table leaves one that exists as it is, so a release that gives threads a new
@@ -120,6 +121,7 @@ function prepareTables(db: Database): void {
     review_round: "INTEGER",
     verdict: "TEXT",
     review_line: "TEXT",
+    harness: "TEXT",
   };
   for (const [column, type] of Object.entries(added))
     if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))

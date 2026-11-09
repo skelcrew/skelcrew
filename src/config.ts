@@ -32,18 +32,17 @@ export const agentHarness = () => harnessNamed(readConfig().harness ?? "claude")
 // A model is plain text, passed to the harness as written: skel keeps no list of names, and a
 // harness that names models as provider/model knows its own providers.
 const Model = z.string().min(1);
-// The lead and builders can run only on Claude Code for now, so naming another harness for
-// them is refused rather than ignored.
-const OnClaude = z.looseObject({ harness: z.enum(["claude"]).optional(), model: Model.optional() });
+// A role's own harness and model, either of them optional.
+const RoleSettings = z.looseObject({ harness: HarnessName.optional(), model: Model.optional() });
 
 // What your config sets for the agents. Kept apart from SetupConfig on purpose: setupDone
 // reads that one on every plain skel, and a bad setting here must stop an agent, not make
 // setupDone throw.
 const Roles = z.looseObject({
   model: Model.optional(),
-  lead: OnClaude.optional(),
-  builder: OnClaude.optional(),
-  reviewer: z.looseObject({ harness: HarnessName.optional(), model: Model.optional() }).optional(),
+  lead: RoleSettings.optional(),
+  builder: RoleSettings.optional(),
+  reviewer: RoleSettings.optional(),
 });
 // Apart from Roles, so a bad max_rounds stops a thread, not the lead.
 const Rounds = z.looseObject({ max_rounds: z.number().int().positive().optional() });

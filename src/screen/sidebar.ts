@@ -297,10 +297,13 @@ export async function runSidebar(
   let last = "";
   let lastStrip = "";
   // A config that isn't valid already stops rounds, with the reason, and mustn't also take the
-  // sidebar away. No thread then reads as past the limit.
+  // sidebar away. No thread then reads as past the limit, and the lead's row names no harness.
   let maxRounds = Number.POSITIVE_INFINITY;
+  let leadHarness = "";
   try {
-    maxRounds = threadConfig().maxRounds;
+    const config = threadConfig();
+    maxRounds = config.maxRounds;
+    leadHarness = config.lead.harness;
   } catch {}
   // Returns the pane's size now, as the terminal can change it at any time.
   const size = (): Size => ({
@@ -312,7 +315,10 @@ export async function runSidebar(
     [...lists.issues.links, ...lists.prs.links].find((link) => link.url === url) ?? null;
   // Looks at the database and tmux again, and redraws what that changed.
   const refresh = () => {
-    rows = sidebarRows(db, runningSessions(agents), maxRounds, Date.now(), lead);
+    rows = sidebarRows(db, runningSessions(agents), maxRounds, Date.now(), {
+      session: lead,
+      harness: leadHarness,
+    });
     // A row takes two lines, so the sidebar's height is more than any list can show.
     lists = sidebarLists(db, rows, size().height);
     // A page's row can go at a poll, and the page stays until you move, so it keeps its name.

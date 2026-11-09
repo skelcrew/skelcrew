@@ -145,6 +145,13 @@ export async function reportQuestion(asking: boolean): Promise<void> {
   await request({ command: asking ? "question asked" : "question answered" });
 }
 
+// Tells the daemon, for a Codex builder's hook, that its builder ended its turn, so the thread
+// needs you if the builder stopped without submitting. The builder's own socket says which
+// thread.
+export async function reportTurnEnded(): Promise<void> {
+  await request({ command: "turn ended" });
+}
+
 // Tells the daemon a screen just opened, for the sidebar as it starts, so ISSUES and PRS fill
 // within seconds and not at the next poll. Only a poll with a screen open asks for them, which
 // is why this comes from the sidebar: while you attach, no screen is open yet. A daemon that is

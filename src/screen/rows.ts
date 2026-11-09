@@ -42,8 +42,6 @@ export type Link = {
 export type List = { links: Link[]; total: number };
 export type Lists = { issues: List; prs: List };
 
-// Claude Code is the only harness offered for the lead and builders.
-const builderHarness = "claude";
 // Each thread's mark is a circle in its status's colour. Waiting and stopped look alike, and the
 // word under the name tells every status apart, so nothing is told by colour alone.
 const marks: Record<Thread["status"], Mark> = {
@@ -107,19 +105,19 @@ export function sidebarRows(
   running: string[],
   maxRounds: number,
   now: number,
-  lead: string,
+  lead: { session: string; harness: string },
 ): Row[] {
   const threads = db.query("SELECT * FROM threads WHERE status != 'done' ORDER BY rowid DESC");
-  const leadRuns = running.includes(lead);
+  const leadRuns = running.includes(lead.session);
   return [
     {
       name: "lead",
-      session: lead,
+      session: lead.session,
       status: null,
       needsYou: false,
       running: leadRuns,
       word: leadRuns ? "running" : "stopped",
-      harness: builderHarness,
+      harness: lead.harness,
       age: "",
       fullName: null,
       title: null,
@@ -140,7 +138,7 @@ export function sidebarRows(
         word,
         // Only a review is on another harness. A submit saves which one, so the empty text
         // is only there for a field that stays null until the first submit.
-        harness: word === "reviewing" ? (reviewer ?? "") : builderHarness,
+        harness: word === "reviewing" ? (reviewer ?? "") : (thread.harness ?? "claude"),
         age: word === "working" && thread.started !== null ? threadAge(thread.started, now) : "",
         fullName: fullNameOf(thread),
         title: thread.title,

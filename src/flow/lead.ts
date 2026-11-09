@@ -3,6 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { z } from "zod";
+import { harnessNamed } from "../agents/harness.ts";
 // What the lead is and how it hands work to threads. Without it, told "fix the flaky test",
 // it would try to edit the read-only clone rather than start a thread. It is a plain file so
 // it reads and changes like a doc, and Bun builds it into skel. It reaches the lead in every
@@ -19,7 +20,7 @@ import {
   startSession,
   typeInto,
 } from "../agents/tmux.ts";
-import { agentHarness, agentRoles } from "../config.ts";
+import { agentRoles } from "../config.ts";
 import { Repository } from "../db.ts";
 import { cloneDir, leadPlaces } from "../paths.ts";
 import { errorText } from "../say.ts";
@@ -59,9 +60,10 @@ export function lastOpened(db: Database): Repository | null {
   return Repository.nullable().parse(row);
 }
 
-// Keeps a repository's running lead or starts it, resuming its saved conversation when there
-// is one. skel picks the session id rather than the harness, so it is stored before the lead
-// starts and the lead can be brought back with --resume after its session is gone.
+// Keeps a repository's running lead or starts it on the harness your config names for leads,
+// resuming its saved conversation when there is one. The session id is stored before the lead
+// starts, so the lead can be brought back after its session is gone. Codex picks its own id,
+// and its module finds the conversation it saved.
 export async function startLead(db: Database, tmux: string, repository: Repository): Promise<void> {
   const { owner, repo } = repository;
   const lead = leadOf(db, owner, repo);
@@ -78,9 +80,10 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
   if (!existsSync(clone)) await refreshClones(db);
   if (!existsSync(clone))
     throw new Error(`skel couldn't clone ${owner}/${repo}, so its lead can't start yet`);
-  const harness = agentHarness();
+  const role = agentRoles().lead;
+  const harness = harnessNamed(role.harness);
   const stored = lead.session;
-  const resume = stored !== null && harness.saved(lead.name, lead.folder, stored) ? stored : null;
+  const resume = stored === null ? null : harness.saved(lead.name, lead.folder, stored);
   const session = resume ?? crypto.randomUUID();
   db.run("UPDATE repositories SET lead_session = ? WHERE owner = ? AND repo = ?", [
     session,
@@ -90,7 +93,7 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
   const { argv, env } = harness.start({
     name: lead.name,
     socket: lead.socket,
-    model: agentRoles().lead.model,
+    model: role.model,
     folder: lead.folder,
     origin: clone,
     // By its full GitHub name, which every command takes and which never changes, while its
@@ -126,7 +129,7 @@ async function typeNotes(db: Database, tmux: string, owner: string, repo: string
     const thread = Thread.nullable().parse(row);
     if (note === null && (thread === null || thread.noting === null)) return;
     if (!agentRuns(tmux, name)) return;
-    const { marks } = agentHarness();
+    const { marks } = harnessNamed(agentRoles().lead.harness);
     if (!(await isIdle(tmux, name, marks))) continue;
     if (note !== null) {
       await typeInto(tmux, name, marks, note.text);

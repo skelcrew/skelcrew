@@ -834,6 +834,7 @@ const state: Thread = {
   review_round: null,
   verdict: null,
   review_line: null,
+  harness: null,
 };
 const word = (more: Partial<Thread>) => threadWord({ ...state, ...more }, 3);
 const needing = { status: "waiting", needs_you: true } satisfies Partial<Thread>;
@@ -901,7 +902,7 @@ describe("the rows the database gives", () => {
 import { sidebarLists, sidebarRows } from ${JSON.stringify(source("screen/rows.ts"))};
 const db = openDb();
 db.run(${JSON.stringify(sql)});
-const rows = sidebarRows(db, ["lead", "app-12"], 3, ${now}, "lead");
+const rows = sidebarRows(db, ["lead", "app-12"], 3, ${now}, { session: "lead", harness: "claude" });
 console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5) }));`;
     const run = Bun.spawnSync([process.execPath, "-e", code], {
       env: { ...process.env, HOME: home },
@@ -922,6 +923,11 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5) }));`;
     return draw(rowsAfter(sql, now), "lead", size);
   }
   const hours = (n: number) => n * 3_600_000;
+
+  test("a thread shows the harness its builder runs on, and Claude Code for one from before", () => {
+    expect(shown("status, harness", "'working', 'codex'", 0)).toContain("· codex · <1m");
+    expect(shown("status", "'working'", 0)).toContain("· claude · <1m");
+  });
 
   // Adds two repositories' open issues and PRs, whose dates and numbers run in different
   // orders, with a total for each repository.
