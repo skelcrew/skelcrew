@@ -60,16 +60,27 @@ test("makes the secret once, and keeps it where only you can read it", () => {
   expect(secretIn()).toBe(made);
 });
 
-// Starts the listener on a free port, noting each repository it is told to poll. Each poll
-// is taken in after `takes` milliseconds.
-function listen(takes = 0): { url: string; polled: string[] } {
+// Starts the listener on a free port, noting each repository it is told to poll, and each
+// plugin it wakes. Each poll is taken in after `takes` milliseconds. The only plugin installed
+// is fake.
+function listen(takes = 0): { url: string; polled: string[]; woken: string[] } {
   const polled: string[] = [];
-  const server = listenForWebhooks(0, secret, async (repo) => {
-    await Bun.sleep(takes);
-    polled.push(repo);
-  });
+  const woken: string[] = [];
+  const server = listenForWebhooks(
+    0,
+    secret,
+    async (repo) => {
+      await Bun.sleep(takes);
+      polled.push(repo);
+    },
+    async (plugin) => {
+      if (plugin !== "fake") return false;
+      woken.push(plugin);
+      return true;
+    },
+  );
   stop = () => server.stop(true);
-  return { url: `http://127.0.0.1:${server.port}/`, polled };
+  return { url: `http://127.0.0.1:${server.port}/`, polled, woken };
 }
 
 const deliver = (url: string, event: string, text: string, signature: string | null) =>
@@ -117,5 +128,16 @@ test("answers GitHub's ping, which polls nothing", async () => {
 test("answers a plain request without polling", async () => {
   const { url, polled } = listen();
   expect((await fetch(url)).status).toBe(404);
+  expect(polled).toEqual([]);
+});
+
+// A plugin's delivery only says "look now", so it needs no signature and nothing in it is read.
+test("a delivery to a plugin's name wakes that plugin's polls", async () => {
+  const { url, polled, woken } = listen();
+  expect((await fetch(`${url}fake`, { method: "POST", body: "anything" })).status).toBe(202);
+  expect(woken).toEqual(["fake"]);
+  expect((await fetch(`${url}other`, { method: "POST", body: "anything" })).status).toBe(401);
+  expect((await fetch(`${url}fake`)).status).toBe(404);
+  expect(woken).toEqual(["fake"]);
   expect(polled).toEqual([]);
 });

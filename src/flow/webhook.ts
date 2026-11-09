@@ -51,16 +51,21 @@ const Delivery = z.object({ repository: z.object({ full_name: z.string() }) });
 // Listens on the port for GitHub's deliveries, and has `poll` poll the repository a signed
 // one names, by its full GitHub name. It answers once `poll` is done, which must be soon, as
 // GitHub gives up after 10 seconds. Anyone can reach a Sprite's URL, so anything unsigned or
-// signed with another secret is refused, and a delivery's content is never acted on.
+// signed with another secret is refused, and a delivery's content is never acted on. A
+// delivery to /<name> is a plugin's instead, and `wake` says whether a plugin has that name
+// and brings its polls forward. It only says "look now", so it isn't checked or read.
 export function listenForWebhooks(
   port: number,
   secret: string,
   poll: (fullName: string) => Promise<void>,
+  wake: (plugin: string) => Promise<boolean>,
 ): Bun.Server<undefined> {
   return Bun.serve({
     port,
     fetch: async (request) => {
       if (request.method !== "POST") return new Response("Not found\n", { status: 404 });
+      const plugin = new URL(request.url).pathname.slice(1);
+      if (plugin && (await wake(plugin))) return new Response("Polling\n", { status: 202 });
       const body = new Uint8Array(await request.arrayBuffer());
       if (!signedBy(secret, body, request.headers.get("X-Hub-Signature-256"))) {
         console.log("ignored a webhook delivery that wasn't signed with skel's secret");

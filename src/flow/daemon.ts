@@ -12,6 +12,7 @@ import { setupDone } from "../machine/setup.ts";
 import { holdAwhile, keepAwake, onSprite, urlPort } from "../machine/sprite.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { daemonSocket, threadSocket } from "../paths.ts";
+import { installedPlugins, trackedBy } from "../plugins/plugin.ts";
 import { errorText } from "../say.ts";
 import { release } from "../version.ts";
 import {
@@ -113,7 +114,8 @@ function endWhatItStarted(sockets: string[]): void {
 }
 
 // Listens on `port` for GitHub's webhooks, and has each repository send them, so a delivery
-// wakes a sleeping Sprite and polls its repository at once.
+// wakes a sleeping Sprite and polls its repository at once. A delivery to a plugin's name
+// polls the repositories it is the tracker of.
 // Without the listener, events wait until something else wakes the Sprite, and polling
 // still sees them then.
 function wakeOnWebhooks(db: Database, port: number, poll: (fullName: string) => void): void {
@@ -125,8 +127,19 @@ function wakeOnWebhooks(db: Database, port: number, poll: (fullName: string) => 
     );
     poll(fullName);
   };
+  // A plugin's delivery polls each repository it is the tracker of.
+  const wakePlugin = async (name: string) => {
+    if (!installedPlugins(db).some((plugin) => plugin.name === name)) return false;
+    const tracked = trackedBy(db, name);
+    if (tracked.length > 0)
+      await holdAwhile(60).catch((error) =>
+        console.log(`couldn't hold the Sprite awake: ${errorText(error)}`),
+      );
+    for (const { owner, repo } of tracked) poll(`${owner}/${repo}`);
+    return true;
+  };
   try {
-    listenForWebhooks(port, webhookSecret(), wake);
+    listenForWebhooks(port, webhookSecret(), wake, wakePlugin);
   } catch (error) {
     console.log(`couldn't listen for GitHub's webhooks on port ${port}: ${errorText(error)}`);
   }
