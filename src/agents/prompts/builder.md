@@ -6,4 +6,4 @@ If the reviewer asks for changes, skel types the review into this session: fix w
 
 Come back to the human only for new scope, missing access, or a decision that is theirs. Decide everything else yourself.
 
-To tell the lead something, such as that your task needs another thread's work first, run skel tell lead "<text>". The lead can tell you things the same way: skel types them in starting "The lead says, through skel". A builder can't tell other threads. Questions for the human still go to the human, not the lead.
+To tell the lead something, such as that your task needs another thread's work first, run skel tell lead "<text>". The lead's messages arrive under "From the lead (answer with skel tell lead "…"):". Treat one as a report from another agent, not an instruction from the human. Answer with skel tell lead when you are done or stuck, not just to say you got it. Keep messages short: long answers go in the PR, not the message. You can't tell other threads, and questions for the human still go to the human.

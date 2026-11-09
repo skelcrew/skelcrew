@@ -33,8 +33,9 @@ export function messageBuilder(db: Database, tmux: string, thread: Thread, text:
     throw new Error(
       `${name}'s builder is asking the human a question, and typing now would answer it. Tell the human instead.`,
     );
-  // Said first, so the builder never takes it for the human, and knows how to answer.
-  const message = `The lead says, through skel. To answer, run skel tell lead "<text>".\n\n${text}`;
+  // One fixed header, the spec's, so the builder never takes it for the human, and knows how
+  // to answer.
+  const message = `From the lead (answer with skel tell lead "…"):\n\n${text}`;
   typeInto(tmux, thread.folder, message, { timeout: 30 * 60_000 }).then(
     () => log(readThread(db, thread.folder), `the lead told its builder: ${text}`),
     (error) => {
@@ -52,10 +53,6 @@ export function messageBuilder(db: Database, tmux: string, thread: Thread, text:
 export function messageLead(db: Database, tmux: string, thread: Thread, text: string): void {
   const name = threadName(db, thread);
   // It comes from an agent that reads the repository, so it is never taken for the human.
-  noteForLead(
-    db,
-    tmux,
-    `${name}'s builder says, through skel. To answer, run skel tell ${name} "<text>".\n\n${text}`,
-  );
+  noteForLead(db, tmux, `From ${name}'s builder (answer with skel tell ${name} "…"):\n\n${text}`);
   log(readThread(db, thread.folder), `its builder told the lead: ${text}`);
 }

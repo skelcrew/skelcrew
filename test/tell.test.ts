@@ -157,8 +157,9 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel tell", () => {
     expect(typed(builder())).not.toContain("Use the v2 API.");
     rmSync(join(builder(), "busy"));
     await until(() => typed(builder()).includes("Use the v2 API."));
-    expect(typed(builder())).toContain("The lead says");
-    expect(typed(builder())).toContain('skel tell lead "');
+    expect(typed(builder())).toContain(
+      'From the lead (answer with skel tell lead "…"):\n\nUse the v2 API.',
+    );
     await until(() => threadLog().includes("Use the v2 API."));
   }, 60_000);
 
@@ -171,8 +172,9 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel tell", () => {
     expect(typed(lead())).not.toContain("app-9");
     rmSync(join(lead(), "busy"));
     await until(() => typed(lead()).includes("The export needs app-9 first."));
-    expect(typed(lead())).toContain("app-12's builder says");
-    expect(typed(lead())).toContain('skel tell app-12 "');
+    expect(typed(lead())).toContain(
+      'From app-12\'s builder (answer with skel tell app-12 "…"):\n\nThe export needs app-9 first.',
+    );
     expect(threadLog()).toContain("The export needs app-9 first.");
   }, 60_000);
 
