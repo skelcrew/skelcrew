@@ -299,6 +299,17 @@ await serve(${JSON.stringify(socket)});`;
   expect(await ask({ command: "status" })).toMatchObject({ running: true, release: "0.4.2" });
 });
 
+test("says which checkout and commit it started from, so skel can restart it after git pull", async () => {
+  setUp();
+  serve();
+  await until(() => existsSync(cliSocket()));
+  const checkout = join(source(), "..");
+  const commit = Bun.spawnSync(["git", "-C", checkout, "rev-parse", "--short", "HEAD"])
+    .stdout.toString()
+    .trim();
+  expect(await ask({ command: "status" })).toMatchObject({ folder: checkout, commit });
+});
+
 // skel takes a machine with sprite-env, the Sprite's own tool, on its PATH for a Sprite. Like
 // the real one, it starts a service as it creates it.
 function onSprite(): void {
