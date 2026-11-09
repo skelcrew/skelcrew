@@ -61,15 +61,17 @@ export function claudeToken(home: string): string {
   return Token.parse(readFileSync(tokenFile, "utf8"));
 }
 
-// Reports whether a session saved a conversation, so skel knows whether --resume can bring
-// it back. Claude Code saves a conversation only once it has a message, so a session nobody
-// talked to has nothing to resume, and its id can't start a new one either. It saves it in the
-// session's own config folder, under a folder named after the folder it runs in, with every
-// character but letters and digits made a dash. Names over 200 characters get a hash
-// instead, which skel's folders never come near.
-function hasTranscript(name: string, folder: string, session: string): boolean {
+// Returns the conversation a session saved, for --resume to bring back, or null when it saved
+// none. skel picks Claude Code's session ID, so that is `session` itself. Claude Code saves a
+// conversation only once it has a message, so a session nobody talked to has nothing to
+// resume, and its id can't start a new one either. It saves it in the session's own config
+// folder, under a folder named after the folder it runs in, with every character but letters
+// and digits made a dash. Names over 200 characters get a hash instead, which skel's folders
+// never come near.
+function savedConversation(name: string, folder: string, session: string): string | null {
   const project = folder.replace(/[^a-zA-Z0-9]/g, "-");
-  return existsSync(join(dataDir(), "claude", name, "projects", project, `${session}.jsonl`));
+  const file = join(dataDir(), "claude", name, "projects", project, `${session}.jsonl`);
+  return existsSync(file) ? session : null;
 }
 
 // Marks a folder trusted and the first launch done in a session's .claude.json, keeping all
@@ -227,7 +229,7 @@ export const claude = {
   marks: { busy: "esc to interrupt", prompt: "❯" },
   keys: ["ANTHROPIC_API_KEY"],
   start: startCommand,
-  saved: hasTranscript,
+  saved: savedConversation,
   review,
   answer,
 } as const;

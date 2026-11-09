@@ -49,12 +49,14 @@ function prepareTables(db: Database): void {
   // `lead_session` is the session ID of the repository's lead, kept so it comes back with its
   // conversation. `opened` is when you last opened the repository, in milliseconds since 1970,
   // and null until you first do: its lead starts then, and from then on the daemon brings it
-  // back. `kept_lead` marks the repository whose lead is the one this machine had before skel
+  // back. `lead_harness` is the harness the lead started on, which it keeps, as a conversation
+  // can't move to another harness. `kept_lead` marks the repository whose lead is the one this machine had before skel
   // gave each repository its own.
   const columns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
     lead_session: "TEXT",
+    lead_harness: "TEXT",
     opened: "INTEGER",
     kept_lead: "INTEGER NOT NULL DEFAULT 0",
   };
@@ -93,6 +95,7 @@ function prepareTables(db: Database): void {
     review_round INTEGER,
     verdict TEXT,
     review_line TEXT,
+    harness TEXT,
     PRIMARY KEY (owner, repo, task)
   )`);
   // Creating a table leaves one that exists as it is, so a release that gives threads a new
@@ -120,6 +123,7 @@ function prepareTables(db: Database): void {
     review_round: "INTEGER",
     verdict: "TEXT",
     review_line: "TEXT",
+    harness: "TEXT",
   };
   for (const [column, type] of Object.entries(added))
     if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))
