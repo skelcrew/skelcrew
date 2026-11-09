@@ -3,6 +3,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createConnection } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
@@ -82,14 +83,50 @@ openDb().run(${JSON.stringify(statements)});`;
   if (!run.success) throw new Error(run.stderr.toString());
 }
 
-// skel has app and site, and four threads, started in this order.
+// skel has app and site, and four threads, started in this order. The live ones have their
+// builders running, so the daemon leaves them be as it starts.
 function threads(): void {
   sql(`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app'), ('site', 'simon', 'site');
-INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you) VALUES
-  ('simon', 'app', 3, 'app-3', 'skel/3', 'done', 0),
-  ('simon', 'site', 7, 'site-7', 'skel/7', 'waiting', 1),
-  ('simon', 'app', 12, 'app-12', 'skel/12', 'working', 0),
-  ('simon', 'app', 9, 'app-9', 'skel/9', 'failed', 0);`);
+INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you, session) VALUES
+  ('simon', 'app', 3, 'app-3', 'skel/3', 'done', 0, NULL),
+  ('simon', 'site', 7, 'site-7', 'skel/7', 'waiting', 1, 's7'),
+  ('simon', 'app', 12, 'app-12', 'skel/12', 'working', 0, 's12'),
+  ('simon', 'app', 9, 'app-9', 'skel/9', 'failed', 0, NULL);`);
+  for (const live of ["site-7", "app-12"])
+    Bun.spawnSync([
+      "tmux",
+      "-L",
+      socket,
+      "-f",
+      "/dev/null",
+      "new-session",
+      "-d",
+      "-s",
+      live,
+      "sleep 300",
+    ]);
+}
+
+// The socket the daemon opens for a repository's lead, named by a short hash of its GitHub name.
+const leadSocket = (repo = "app") => {
+  const short = new Bun.CryptoHasher("sha256").update(`simon/${repo}`).digest("hex").slice(0, 16);
+  return join(home, "run", "skel", "leads", short, "skel.sock");
+};
+
+// Has the daemon open app, as plain skel in its checkout does, which opens its lead's socket and
+// starts its lead. skel's clone of it is there first, as adding it leaves one. Inside skel's own
+// sandbox the lead can't start, but its socket is open all the same.
+async function openApp(): Promise<void> {
+  const clone = join(data(), "repos", "simon", "app");
+  mkdirSync(clone, { recursive: true });
+  Bun.spawnSync(["git", "-C", clone, "init", "-q"]);
+  await new Promise<void>((done) => {
+    const connection = createConnection(join(home, "run", "skel.sock"));
+    connection.on("connect", () => connection.write('{"command":"lead","from":"simon/app"}\n'));
+    connection.on("data", () => {});
+    connection.on("error", () => done());
+    connection.on("close", () => done());
+  });
 }
 
 describe("skel ps", () => {
@@ -152,9 +189,22 @@ describe("skel ps", () => {
       folder TEXT NOT NULL UNIQUE, branch TEXT NOT NULL, base TEXT, status TEXT NOT NULL,
       session TEXT, PRIMARY KEY (owner, repo, task))`);
     old.run(
-      "INSERT INTO threads VALUES ('simon', 'app', 12, 'app-12', 'skel/12', NULL, 'working', NULL)",
+      "INSERT INTO threads VALUES ('simon', 'app', 12, 'app-12', 'skel/12', NULL, 'working', 's12')",
     );
     old.close();
+    // Its builder runs, so the daemon leaves it be as it starts.
+    Bun.spawnSync([
+      "tmux",
+      "-L",
+      socket,
+      "-f",
+      "/dev/null",
+      "new-session",
+      "-d",
+      "-s",
+      "app-12",
+      "sleep 300",
+    ]);
     sql("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app')");
     serve();
     await untilAnswers();
@@ -305,10 +355,8 @@ describe("skel task show", () => {
   test("the lead can show a task from its sandbox, and a builder can't", async () => {
     serve();
     await untilAnswers();
-    const lead = await asAgent(
-      ["task", "show", "app-12"],
-      join(home, "run", "skel", "lead", "skel.sock"),
-    );
+    await openApp();
+    const lead = await asAgent(["task", "show", "app-12"], leadSocket());
     expect(lead.err).toBe("");
     expect(lead.out).toBe((await skel(["task", "show", "app-12"])).out);
     const refused = await asAgent(["task", "show", "app-12"], await builderSocket());
@@ -318,15 +366,16 @@ describe("skel task show", () => {
 });
 
 describe("skel repo ls", () => {
-  test("the lead lists the daemon's repositories, as you see them in your terminal", async () => {
+  test("a lead lists only its own repository, as you see it in your terminal", async () => {
     threads();
     serve();
     await untilAnswers();
     const yours = await skel(["repo", "ls"]);
     expect(yours.out).toContain("site  simon/site");
-    const lead = await asAgent(["repo", "ls"], join(home, "run", "skel", "lead", "skel.sock"));
+    await openApp();
+    const lead = await asAgent(["repo", "ls"], leadSocket());
     expect(lead.err).toBe("");
-    expect(lead.out).toBe(yours.out);
+    expect(lead.out).toBe(`app  simon/app  ${data()}/repos/simon/app\n`);
   });
 
   test("a builder can't ask the daemon for the repositories", async () => {
@@ -366,7 +415,7 @@ esac`,
     expect(attached.err).toBe("");
     expect(attached.code).toBe(0);
     expect(calls()).toContain("tmux -L skel-screen -f /dev/null");
-    expect(calls()).toMatch(/new-session .* skel site-7 ;/);
+    expect(calls()).toMatch(/new-session .* skel site-7 lead-site-[a-p]+ ;/);
   });
 
   test("says when there is no such thread", async () => {
@@ -454,8 +503,10 @@ console.log(JSON.stringify(await pageOf(${JSON.stringify(url)})));`;
   });
 
   test("an agent can't ask for a page, nor run the page command", async () => {
-    const lead = join(home, "run", "skel", "lead", "skel.sock");
-    expect((await ask(url, { SKEL_SOCKET: lead })).err).toContain("doesn't know that request");
+    await openApp();
+    expect((await ask(url, { SKEL_SOCKET: leadSocket() })).err).toContain(
+      "doesn't know that request",
+    );
     const refused = await skel(["page", url], { SKEL_SANDBOX: "1" });
     expect(refused.err).toContain("your own terminal");
   });
@@ -463,7 +514,7 @@ console.log(JSON.stringify(await pageOf(${JSON.stringify(url)})));`;
 
 // bubblewrap can't start inside skel's own sandbox, so only there the lead can't start.
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("from the lead", () => {
-  test("the lead runs skel ps, skel task ls, skel task show and skel repo ls from its sandbox, but can't attach", async () => {
+  test("a lead runs skel ps, skel task ls, skel task show and skel repo ls from its sandbox, but can't attach", async () => {
     threads();
     issues("simon/app", [{ number: 12, title: "Add export", createdAt: "2026-11-03T12:00:00Z" }]);
     issue("simon/app", 12, "Add export", "As JSON");
@@ -472,25 +523,24 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("from the lead", () => {
       join(home, "bin", "claude"),
       `#!/bin/sh
 case "$CLAUDE_CONFIG_DIR" in
-*/lead) { skel ps app --json; skel task ls app --json; skel task show app-12 --json; skel repo ls; skel attach app-12; } > out.new 2>&1; mv out.new out ;;
+*/lead-*) { skel ps app --json; skel task ls app --json; skel task show app-12 --json; skel repo ls; skel attach app-12; } > out.new 2>&1; mv out.new out ;;
 esac
 exec sleep 300
 `,
       { mode: 0o755 },
     );
     serve();
-    const out = join(data(), "lead", "out");
+    await untilAnswers();
+    await openApp();
+    const out = join(data(), "leads", "simon", "app", "out");
     await until(() => read(out) !== "");
-    const [ps, tasks, shown, app, site, attach] = read(out).trim().split("\n");
+    const [ps, tasks, shown, app, attach] = read(out).trim().split("\n");
     expect(JSON.parse(ps ?? "")).toHaveLength(2);
     expect(JSON.parse(tasks ?? "")).toEqual([
       { task: "app-12", title: "Add export", thread: { status: "working", needsYou: false } },
     ]);
     expect(JSON.parse(shown ?? "")).toMatchObject({ task: "app-12", body: "As JSON" });
-    expect([app, site]).toEqual([
-      `app   simon/app   ${data()}/repos/simon/app`,
-      `site  simon/site  ${data()}/repos/simon/site`,
-    ]);
+    expect(app).toBe(`app  simon/app  ${data()}/repos/simon/app`);
     expect(attach).toBe(
       "skel: attaching to a thread is only for your own terminal, not for agents",
     );

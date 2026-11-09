@@ -16,6 +16,7 @@ import {
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
+import { leadPlaces } from "../src/paths.ts";
 import { git, homeEnv, source, until as wait, writeScript } from "./harness.ts";
 
 const main = source("main.ts");
@@ -47,7 +48,7 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 function fakeClaude(): void {
   script(
     "claude",
-    `case "$CLAUDE_CONFIG_DIR" in */lead) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
+    `case "$CLAUDE_CONFIG_DIR" in */lead-*) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
 echo 1 > change
 git add -A && git commit -qm "round 1"
 skel submit "Round 1" >> "$CLAUDE_CONFIG_DIR/submitted" 2>&1
@@ -162,10 +163,14 @@ await serve(${JSON.stringify(socket)}, ${every});`;
   return run;
 }
 
+// app's lead's session and config folder.
+const leadName = leadPlaces("simon", "app").name;
+
 // A daemon's work takes its time here, so a wait lasts 15 seconds unless a test says otherwise.
 const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout });
 
-// Puts simon/app on the fake GitHub and tells skel about it. Returns a checkout to push from.
+// Puts simon/app on the fake GitHub and tells skel about it, as a repository you have opened,
+// whose lead the daemon starts. Returns a checkout to push from.
 function addApp(): string {
   const work = join(home, "work", "app");
   mkdirSync(work, { recursive: true });
@@ -175,7 +180,7 @@ function addApp(): string {
   git(work, "commit", "-q", "-m", "start");
   git(home, "clone", "-q", "--bare", work, join(home, "github", "simon", "app.git"));
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app')");`;
+openDb().run("INSERT INTO repositories (name, owner, repo, opened) VALUES ('app', 'simon', 'app', 1)");`;
   const added = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   if (!added.success) throw new Error(added.stderr.toString());
   return work;
@@ -385,7 +390,7 @@ test("a screen opening fills the lists at once, and no screen means no extra pol
   writeFileSync(
     script,
     `import { openScreen } from ${JSON.stringify(screenFile)};
-await openScreen(${JSON.stringify(socket)}, "lead");`,
+await openScreen(${JSON.stringify(socket)}, ${JSON.stringify(leadName)}, ${JSON.stringify(leadName)});`,
   );
   // Runs tmux on one of the test's own servers.
   const on = (server: string, ...args: string[]) =>
@@ -494,8 +499,8 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     pr({ reviews: [skelReview], checks: [approved, check(900, "SUCCESS")] });
     await until(() => thread().needs_you === 1);
     expect(thread().last_review).toBe(1001);
-    await until(() => read(join(data(), "claude", "lead", "typed")).includes("app-12 needs you"));
-    expect(read(join(data(), "claude", "lead", "typed"))).toContain("ready to merge");
+    await until(() => read(join(data(), "claude", leadName, "typed")).includes("app-12 needs you"));
+    expect(read(join(data(), "claude", leadName, "typed"))).toContain("ready to merge");
     // Your own comment wakes the builder; skel's review, posted with your login, never does.
     // Waiting on you, it is polled every other time: every minute, at 30 seconds a poll.
     const before = polls();
@@ -627,7 +632,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     // A builder that can't start, so the thread fails.
     script(
       "claude",
-      `case "$CLAUDE_CONFIG_DIR" in */lead) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
+      `case "$CLAUDE_CONFIG_DIR" in */lead-*) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
 echo "Not logged in"; exit 1`,
     );
     addApp();
@@ -635,7 +640,7 @@ echo "Not logged in"; exit 1`,
     await until(() => read(join(home, "gh", "label")) !== "");
     expect(JSON.parse(read(join(home, "gh", "label")))).toMatchObject({ name: "skel" });
     pr({ labeled: [{ number: 12, title: "Add export" }] });
-    const lead = () => read(join(data(), "claude", "lead", "typed"));
+    const lead = () => read(join(data(), "claude", leadName, "typed"));
     await until(() => lead().includes("started app-12 from GitHub: Add export"));
     await until(() => read(join(home, "gh", "reacted")) !== "");
     expect(JSON.parse(read(join(home, "gh", "reacted")))).toEqual({ content: "eyes" });

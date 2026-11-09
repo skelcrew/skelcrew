@@ -69,12 +69,12 @@ const config = [
 
 // Returns the command for the right pane: an ordinary tmux client attached to the session.
 // When the client ends, because the agent you were looking at ended or you left its session
-// with its own keys, it comes back on the lead, trying again while the lead restarts. TMUX
-// must go, or tmux refuses to attach from inside tmux.
-export function agentClient(agents: string, session: string): string[] {
+// with its own keys, it comes back on the lead's session, trying again while the lead
+// restarts. TMUX must go, or tmux refuses to attach from inside tmux.
+export function agentClient(agents: string, session: string, lead: string): string[] {
   const client = `tmux -L "$1" -f /dev/null attach -t`;
-  const script = `unset TMUX; ${client} "=$2"; while sleep 1; do ${client} =lead; done`;
-  return ["sh", "-c", script, "sh", agents, session];
+  const script = `unset TMUX; ${client} "=$2"; while sleep 1; do ${client} "=$3"; done`;
+  return ["sh", "-c", script, "sh", agents, session, lead];
 }
 
 // Returns the command that runs the skel you are running, which is a single file on a server,
@@ -84,20 +84,21 @@ function skel(...words: string[]): string[] {
   return [process.execPath, ...checkout, ...words];
 }
 
-// Returns the command that runs skel's sidebar. Where skel runs goes along as a word, not in
-// the environment: a tmux server hands its panes the environment of whichever terminal started
-// it, and terminals on this server can come from different laptops.
-const sidebar = (agents: string, session: string, where: string) =>
-  skel("sidebar", agents, session, where);
+// Returns the command that runs skel's sidebar, with the session of the lead it shows. Where
+// skel runs goes along as a word, not in the environment: a tmux server hands its panes the
+// environment of whichever terminal started it, and terminals on this server can come from
+// different laptops.
+const sidebar = (agents: string, session: string, where: string, lead: string) =>
+  skel("sidebar", agents, session, where, lead);
 
 // Returns the command for the right pane while it shows a page.
 export const pageCommand = (url: string) => skel("page", url);
 
-// Opens the screen in your terminal on the named agent session, and returns when you leave
-// with Ctrl-Q, saying that nothing stopped. The name of the session here only has to differ from
+// Opens the screen in your terminal on the named agent session, with the session of the lead
+// the sidebar shows, and returns when you leave with Ctrl-Q, saying that nothing stopped. The name of the session here only has to differ from
 // other terminals', and this process runs as long as the terminal has it open. Agents' sessions
 // are never touched.
-export async function openScreen(agents: string, session: string): Promise<void> {
+export async function openScreen(agents: string, session: string, lead: string): Promise<void> {
   const env = cleanEnv();
   // Reports whether this machine knows the terminal, so opening can choose a fallback.
   // tmux refuses unknown terminals, such as Ghostty's xterm-ghostty over ssh.
@@ -110,11 +111,11 @@ export async function openScreen(agents: string, session: string): Promise<void>
   const name = `screen-${process.pid}`;
   // The name skel --remote passes along, such as sprite:demo. Empty on this machine.
   const where = env.SKEL_REMOTE_NAME ?? "";
-  const left = sidebar(agents, name, where);
+  const left = sidebar(agents, name, where, lead);
   // The title is the session's own: terminals on this server can come from different laptops.
   const open = [
     ...config,
-    ["new-session", "-s", name, "--", ...agentClient(agents, session)],
+    ["new-session", "-s", name, "--", ...agentClient(agents, session, lead)],
     ["set", "set-titles-string", windowTitle(env.SKEL_REMOTE_NAME)],
     ["split-window", "-hbd", "-l", String(sidebarWidth), "--", ...left],
     // Ctrl-C reaches a page until it has made its terminal raw, and Bun won't stay ignoring it.

@@ -8,7 +8,6 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
-  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -43,16 +42,6 @@ const builderSettings = JSON.stringify({
     PreToolUse: [{ matcher: "AskUserQuestion", hooks: [asked] }],
     PostToolUse: [{ matcher: "AskUserQuestion", hooks: [answered] }],
     UserPromptSubmit: [{ hooks: [answered] }],
-  },
-});
-
-// The lead hears where you attached from with your next message, through Claude Code's hook
-// for it, which adds what it prints to the message without showing it. Typed in, the note
-// would be a turn of its own, and the lead's answer to it the first thing you see.
-const leadSettings = JSON.stringify({
-  ...base,
-  hooks: {
-    UserPromptSubmit: [{ hooks: [{ type: "command", command: "skel attached", timeout: 10 }] }],
   },
 });
 
@@ -115,15 +104,16 @@ function trustFolder(config: string, cwd: string): void {
 
 // Prepares an agent's own config folder and trusted Claude Code settings, then returns its
 // sandbox command and environment. It starts afresh with `sessionId` and the first message
-// in `prompt`, or brings back a saved conversation with `resume`. A builder, given its thread's clone, works there and sees
-// nothing else but its origin, read-only; the lead works in its own folder and sees skel's
-// clone of every repository. Each session keeps its own transcripts and logs in with skel's
-// agent token, while your other credentials stay hidden.
+// in `prompt`, or brings back a saved conversation with `resume`. A builder, given its thread's
+// clone, works there; a lead works in its own `folder`. Each sees nothing else but `origin`,
+// skel's clone of its repository, read-only. Each session keeps its own transcripts and logs
+// in with skel's agent token, while your other credentials stay hidden.
 function startCommand(given: {
   name: string;
   socket: string;
   model?: string | undefined;
   thread?: string;
+  folder?: string;
   origin?: string;
   prompt?: string;
   system?: string;
@@ -136,6 +126,7 @@ function startCommand(given: {
     socket,
     model = defaultModel,
     thread,
+    folder,
     origin,
     prompt,
     system,
@@ -164,30 +155,22 @@ function startCommand(given: {
     if (lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink())
       throw new Error(`${p} is a link, so skel won't write through it`);
   mkdirSync(config, { recursive: true });
-  const cwd = thread ?? join(dataDir(home), "lead");
+  const cwd = thread ?? folder;
+  if (!cwd) throw new Error(`skel has no folder for ${name} to work in`);
+  mkdirSync(cwd, { recursive: true });
   const mounts = [...rw(cwd), ...rw(config)];
-  // A thread's clone has skel's clone of the repository as origin. Read-only at the same path,
-  // it lets the builder fetch the base branch and merge it to fix a conflict, with no token.
-  if (thread && origin) {
+  // Read-only at the same path. A lead reads its repository there. A thread's clone has it as
+  // origin, so the builder can fetch the base branch and merge it to fix a conflict, with no
+  // token.
+  if (origin) {
     refuseCredentials(origin);
     mounts.push(...ro(origin));
-  }
-  if (!thread) {
-    // The whole folder of clones is mounted, made first if need be, so a repository brought
-    // in while the lead runs shows up in its sandbox too.
-    const repos = join(dataDir(home), "repos");
-    mkdirSync(repos, { recursive: true });
-    for (const owner of readdirSync(repos))
-      for (const repo of readdirSync(join(repos, owner)))
-        refuseCredentials(join(repos, owner, repo));
-    mkdirSync(cwd, { recursive: true });
-    mounts.push(...ro(repos));
   }
 
   trustFolder(config, cwd);
 
   const command = ["claude", "--model", model, "--permission-mode", "bypassPermissions"];
-  command.push("--settings", thread ? builderSettings : leadSettings);
+  command.push("--settings", thread ? builderSettings : settings);
   if (resume) command.push("--resume", resume);
   if (sessionId) command.push("--session-id", sessionId);
   if (system) command.push("--append-system-prompt", system);

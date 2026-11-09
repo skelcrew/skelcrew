@@ -171,7 +171,7 @@ export function seatbeltArgs(given: {
   const [ownHome, ownTemp] = [join(own, "home"), join(own, "tmp")];
   for (const folder of [ownHome, ownTemp]) mkdirSync(folder);
   // What comes back of your home folder keeps its place under the agent's own, since agents
-  // are told of it by that path: the lead finds its repositories in ~/.local/share/skel/repos.
+  // are told of it by that path: a lead finds its repository in ~/.local/share/skel/repos.
   // Shortest first, so a folder inside one already linked is found there.
   const under = `${home}/`;
   for (const folder of [...shown, ...write].sort((a, b) => a.length - b.length)) {

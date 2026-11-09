@@ -9,12 +9,12 @@ import { errorText } from "../say.ts";
 import { startThread } from "./builder.ts";
 import { ciChecks, decide, labeledToStart, newAuthors } from "./decide.ts";
 import { endThread, tellBuilder, typingEvents } from "./events.ts";
-import { tellLead } from "./lead.ts";
+import { noteForLead, tellLead } from "./lead.ts";
 import { fullNameIs, repositories } from "./repo.ts";
 import { needsYou, readThread, record, Thread, threadName } from "./thread.ts";
 
 // Starts a thread on each of the repository's issues labeled skel that has none, exactly as
-// skel start does, then reacts to the issue with 👀 and tells the lead. Thread rows are read
+// skel start does, then reacts to the issue with 👀 and tells the repository's lead. Thread rows are read
 // after GitHub answers, so a thread skel start made meanwhile counts. The thread is recorded
 // before anything else, so neither a later poll nor a restart starts it again; a reaction
 // that fails is only logged, never retried.
@@ -39,8 +39,7 @@ async function startLabeled(
     });
     if (thread === null) continue;
     const note = `started ${threadName(db, thread)} from GitHub: ${issue.title}`;
-    db.run("INSERT INTO notes (text) VALUES (?)", [note.replace(/\s+/g, " ").slice(0, 200)]);
-    tellLead(db, tmux);
+    noteForLead(db, tmux, { owner, repo }, note.replace(/\s+/g, " ").slice(0, 200));
     // Not waited on, as for skel start: setup can take minutes.
     begin(thread);
     await reactToIssue(fullName, issue.number).catch((error) =>
