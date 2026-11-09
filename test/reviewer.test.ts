@@ -85,12 +85,12 @@ const given = () => ({
   issue,
   base: "origin/main",
   commit,
-  model: "opus",
   harness: "codex" as const,
   env: env(),
 });
-const start = (more: { signal?: AbortSignal; limit?: number; harness?: "claude" } = {}) =>
-  review({ ...given(), ...more });
+const start = (
+  more: { signal?: AbortSignal; limit?: number; harness?: "claude"; model?: string } = {},
+) => review({ ...given(), ...more });
 
 // bubblewrap can't start inside skel's own sandbox, so only there these tests can't run.
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
@@ -101,12 +101,21 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
     // --no-daemon is an option of codex itself, not of exec.
     expect(args.slice(0, 2)).toEqual(["--no-daemon", "exec"]);
     expect(args).toContain("--dangerously-bypass-approvals-and-sandbox");
+    // With no model named, Codex picks its own.
+    expect(args).not.toContain("-m");
     const prompt = kept("prompt");
     for (const part of [issue.title, issue.body, "origin/main", "adversarial", "tests"])
       expect(prompt).toContain(part);
     const schema = JSON.parse(kept("schema"));
     expect(schema.properties.verdict.enum).toEqual(["approve", "changes"]);
     expect(schema.additionalProperties).toBe(false);
+  });
+
+  test("reviews on the model your config names for Codex, as written", async () => {
+    fakeCodex(approve);
+    await start({ model: "gpt-5-codex" });
+    const args = kept("args").split("\n");
+    expect(args[args.indexOf("-m") + 1]).toBe("gpt-5-codex");
   });
 
   test("passes skel's Codex login and an API key in, and no other secrets", async () => {
@@ -253,7 +262,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
     ]);
   }
 
-  test("reviews on Claude Code with the builder's model", async () => {
+  test("reviews on Claude Code with the model it is given", async () => {
     mkdirSync(join(home, ".config", "skel"), { recursive: true });
     writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-tok\n");
     fakeClaude([
@@ -297,21 +306,51 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
 
 // These never start bubblewrap, so they run inside skel's sandbox too.
 describe("starting a review", () => {
-  // Returns the harness reviews run on with these settings in your config.yaml, read in a
-  // process of its own, as homedir() keeps the HOME this one started with.
-  function reviewerFor(settings: string): string {
+  // Returns what your config sets for one role, `lead`, `builder` or `reviewer`, with these
+  // settings in your config.yaml. Read in a process of its own, as homedir() keeps the HOME
+  // this one started with.
+  function roleFor(role: string, settings: string): unknown {
     mkdirSync(join(home, ".config", "skel"), { recursive: true });
     writeFileSync(join(home, ".config", "skel", "config.yaml"), settings);
     const code = `import { threadConfig } from ${JSON.stringify(source("config.ts"))};
-console.log(threadConfig().reviewer);`;
+console.log(JSON.stringify(threadConfig().${role}));`;
     const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stdout: "pipe" });
-    return run.stdout.toString().trim();
+    return JSON.parse(run.stdout.toString());
   }
 
   test("reviews run on your harness, though Codex is installed, unless you name one for them", () => {
     fakeCodex(approve);
-    expect(reviewerFor("harness: claude\n")).toBe("claude");
-    expect(reviewerFor("harness: claude\nreviewer: { harness: codex }\n")).toBe("codex");
+    expect(roleFor("reviewer", "harness: claude\n")).toEqual({ harness: "claude" });
+    expect(roleFor("reviewer", "harness: claude\nreviewer: { harness: codex }\n")).toEqual({
+      harness: "codex",
+    });
+  });
+
+  test("each role runs on its own model, else yours when it runs on your harness", () => {
+    const yours = "harness: claude\nmodel: sonnet\n";
+    expect(roleFor("lead", yours)).toEqual({ harness: "claude", model: "sonnet" });
+    expect(roleFor("lead", `${yours}lead: { model: haiku }\n`)).toEqual({
+      harness: "claude",
+      model: "haiku",
+    });
+    expect(
+      roleFor("builder", `${yours}builder: { model: openrouter/deepseek/deepseek-chat }\n`),
+    ).toEqual({
+      harness: "claude",
+      model: "openrouter/deepseek/deepseek-chat",
+    });
+    expect(roleFor("reviewer", yours)).toEqual({ harness: "claude", model: "sonnet" });
+  });
+
+  test("a role on another harness ignores your model, as a model name belongs to its harness", () => {
+    const settings = "harness: claude\nmodel: opus\nreviewer: { harness: codex }\n";
+    expect(roleFor("reviewer", settings)).toEqual({ harness: "codex" });
+    expect(roleFor("reviewer", settings.replace("codex }", "codex, model: gpt-5-codex }"))).toEqual(
+      {
+        harness: "codex",
+        model: "gpt-5-codex",
+      },
+    );
   });
 
   test("fails a review on a harness your config picks that isn't installed", async () => {

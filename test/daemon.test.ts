@@ -610,6 +610,18 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with the lead", () => {
     expect(claudeLines()[0]).toContain("--model opus");
   });
 
+  test("starts the lead on the model your config names for it", async () => {
+    setUp();
+    writeFileSync(
+      join(home, ".config", "skel", "config.yaml"),
+      "harness: claude\nmodel: sonnet\nlead: { model: haiku }\n",
+    );
+    fakeClaude("exec sleep 300");
+    serve();
+    await until(() => claudeLines().length > 0);
+    expect(claudeLines()[0]).toContain("--model haiku");
+  });
+
   test("a transcript in your own ~/.claude doesn't bring the lead back", async () => {
     setUp();
     const first = serve();

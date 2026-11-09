@@ -83,7 +83,8 @@ async function reviewRound(
   const { pr } = thread;
   if (pr === null) throw new Error("the thread has no pull request to review");
   const fullName = fullNameOf(thread);
-  const { model, reviewer, maxRounds } = threadConfig();
+  const { reviewer: on, maxRounds } = threadConfig();
+  const reviewer = on.harness;
   await setReviewStatus(fullName, sha, "pending", "skel's reviewer is reviewing");
   if (signal.aborted) return;
   record(db, folder, { reviewing: sha, submitting: null, reviewer }, `reviewing ${sha}`);
@@ -93,7 +94,7 @@ async function reviewRound(
     // Setting up the thread's clone put the base branch there under origin/.
     base: `origin/${baseOf(thread)}`,
     commit: sha,
-    model,
+    model: on.model,
     harness: reviewer,
     signal,
   });
@@ -220,7 +221,7 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
       held: null,
       // What CI said was about the commit before this one.
       checks: null,
-      reviewer,
+      reviewer: reviewer.harness,
     },
     `submitted: ${summary}`,
   );

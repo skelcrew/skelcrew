@@ -241,7 +241,7 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
   const { argv, env } = harness.start({
     name: thread.folder,
     socket: threadSocket(thread.folder),
-    model: threadConfig().model,
+    model: threadConfig().builder.model,
     thread: clone,
     // Gone once you remove the repository from skel, and bwrap can't mount what is missing.
     ...(existsSync(cloneDir(thread.owner, thread.repo))

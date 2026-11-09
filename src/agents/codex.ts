@@ -14,10 +14,11 @@ import { throwaway } from "./sandbox.ts";
 async function review(given: {
   home: string;
   folder: string;
+  model?: string | undefined;
   sprite: boolean;
   signal: AbortSignal;
 }) {
-  const { home, folder, sprite, signal } = given;
+  const { home, folder, model, sprite, signal } = given;
   const codexHome = join(dataDir(home), "codex");
   const sessions = join(codexHome, "sessions");
   mkdirSync(sessions, { recursive: true, mode: 0o700 });
@@ -40,6 +41,8 @@ async function review(given: {
   // --no-daemon belongs to codex itself, not to exec: without it Codex may start a
   // background server that outlives the review.
   const command = ["codex", "--no-daemon", "exec", "--dangerously-bypass-approvals-and-sandbox"];
+  // With none named, Codex runs on its own default.
+  if (model) command.push("-m", model);
   command.push("--output-schema", join(folder, "schema.json"), "-o", join(folder, "answer.json"));
   command.push("-");
   return { command, mounts, env: { CODEX_HOME: at } };

@@ -19,7 +19,7 @@ import {
   startSession,
   typeInto,
 } from "../agents/tmux.ts";
-import { agentHarness } from "../config.ts";
+import { agentHarness, agentRoles } from "../config.ts";
 import { dataDir, leadSocket } from "../paths.ts";
 import { errorText } from "../say.ts";
 import { fullNameIs, refreshClones, repositories } from "./repo.ts";
@@ -51,6 +51,7 @@ export async function startLead(db: Database, tmux: string): Promise<void> {
   const { argv, env } = harness.start({
     name: "lead",
     socket: leadSocket(),
+    model: agentRoles().lead.model,
     system: instructions,
     ...(resume ? { resume: session } : { sessionId: session }),
   });
