@@ -11,6 +11,8 @@ import { leadPlaces } from "../src/paths.ts";
 import {
   git,
   homeEnv,
+  issueNode,
+  pollAnswer,
   read,
   runSkel,
   source,
@@ -97,17 +99,17 @@ beforeEach(() => {
   fakeClaude();
   fakeCodex();
   script("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
-  // The fake GitHub API: issue 12, pull request 7 once it is opened, and a log of the
+  // The fake GitHub API: issue 12 in every poll, pull request 7 once it is opened, and a log of the
   // reviews and checks skel sets.
   writeFileSync(
-    join(home, "gh", "issue"),
-    JSON.stringify({ number: 12, title: "Add export", body: "As JSON" }),
+    join(home, "poll.json"),
+    JSON.stringify(pollAnswer([issueNode(12, "Add export", { body: "As JSON" })])),
   );
   script(
     "gh",
     `echo "gh $*" >> "$HOME/gh/calls"
 case "$*" in
-"api repos/simon/app/issues/12") cat "$HOME/gh/issue" ;;
+"api graphql --input -") cat > /dev/null; cat "$HOME/poll.json" ;;
 "api repos/simon/app/pulls?state=open&head="*) if test -e "$HOME/gh/pr"; then echo '[{"number":7}]'; else echo '[]'; fi ;;
 "api repos/simon/app/pulls --method POST --input -") touch "$HOME/gh/opening"; while test -e "$HOME/gh/hold"; do sleep 0.1; done; cat > "$HOME/gh/pr"; echo '{"number":7}' ;;
 "api repos/simon/app/pulls/7/reviews --method POST --input -") touch "$HOME/gh/posting"; while test -e "$HOME/gh/hold-review"; do sleep 0.1; done; cat >> "$HOME/gh/reviews"; echo >> "$HOME/gh/reviews"; echo '{"id":1}' ;;

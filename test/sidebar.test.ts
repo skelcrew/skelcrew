@@ -14,7 +14,7 @@ import {
   picked as pickedInLists,
   stepped as steppedInLists,
 } from "../src/screen/sidebar.ts";
-import { source } from "./harness.ts";
+import { itemSql, source } from "./harness.ts";
 
 const row = {
   title: null,
@@ -939,12 +939,11 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5) }));`;
   // orders, with a total for each repository.
   const open = `INSERT INTO repositories (name, owner, repo, open_issues, open_prs)
       VALUES ('app', 'simon', 'app', 212, 3), ('site', 'simon', 'site', 1, 0);
-    INSERT INTO open_items (owner, repo, kind, number, title, created) VALUES
-      ('simon', 'app', 'issue', 12, 'Fix login', '2026-11-05T10:00:00Z'),
-      ('simon', 'app', 'issue', 3, 'Add export', '2026-11-01T10:00:00Z'),
-      ('simon', 'site', 'issue', 8, 'Dark mode', '2026-11-03T10:00:00Z'),
-      ('simon', 'app', 'pr', 34, 'Fix the login', '2026-11-05T11:00:00Z'),
-      ('simon', 'app', 'pr', 40, 'Bump deps', '2026-11-05T09:00:00Z');`;
+    ${itemSql("app", "task", 12, "Fix login", "2026-11-05T10:00:00Z")}
+    ${itemSql("app", "task", 3, "Add export", "2026-11-01T10:00:00Z")}
+    ${itemSql("site", "task", 8, "Dark mode", "2026-11-03T10:00:00Z")}
+    ${itemSql("app", "pr", 34, "Fix the login", "2026-11-05T11:00:00Z")}
+    ${itemSql("app", "pr", 40, "Bump deps", "2026-11-05T09:00:00Z")}`;
   // Adds a thread on issue 12, with PR 34.
   const onTwelve = (status: string, needing = 0) =>
     `INSERT INTO threads (owner, repo, task, folder, branch, status, pr, needs_you)
@@ -1009,18 +1008,15 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5) }));`;
   });
 
   test("only as many rows as could show are read, as the sidebar reads each second", () => {
-    const rows = Array.from(
-      { length: 9 },
-      (_, n) => `('simon', 'app', 'issue', ${n + 1}, 't', '2026-11-0${n + 1}T10:00:00Z')`,
+    const rows = Array.from({ length: 9 }, (_, n) =>
+      itemSql("app", "task", n + 1, "t", `2026-11-0${n + 1}T10:00:00Z`),
     );
-    const sql = `${repository} INSERT INTO open_items
-      (owner, repo, kind, number, title, created) VALUES ${rows.join(", ")}`;
+    const sql = `${repository} ${rows.join(" ")}`;
     expect(after(sql, 0).lists.issues.links).toHaveLength(5);
   });
 
   test("a repository skel no longer works on shows nothing", () => {
-    const sql = `INSERT INTO open_items (owner, repo, kind, number, title, created)
-      VALUES ('simon', 'gone', 'issue', 1, 't', '2026-11-01T10:00:00Z')`;
+    const sql = itemSql("gone", "task", 1, "t", "2026-11-01T10:00:00Z");
     expect(after(sql, 0).lists).toEqual(nothing);
   });
 

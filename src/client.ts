@@ -6,7 +6,6 @@ import { agentRuns } from "./agents/tmux.ts";
 import { openDb } from "./db.ts";
 import { leadOf } from "./flow/lead.ts";
 import { RepositoryRow, TaskRow, TaskView, ThreadRow } from "./flow/list.ts";
-import { Page } from "./flow/page.ts";
 import { type DaemonRequest, parseJson } from "./flow/requests.ts";
 import { findThread } from "./flow/thread.ts";
 import { restartDaemon, startDaemon } from "./machine/service.ts";
@@ -145,21 +144,6 @@ export async function reviewAgain(repository: string, task: number): Promise<str
 // which thread it is. The daemon answers at once, as Claude Code waits on its hooks.
 export async function reportQuestion(asking: boolean): Promise<void> {
   await request({ command: asking ? "question asked" : "question answered" });
-}
-
-// Tells the daemon a screen just opened, for the sidebar as it starts, so ISSUES and PRS fill
-// within seconds and not at the next poll. Only a poll with a screen open asks for them, which
-// is why this comes from the sidebar: while you attach, no screen is open yet. A daemon that is
-// down has nothing to tell, and the sidebar goes on without it.
-export async function screenOpened(): Promise<void> {
-  await ask({ command: "screen opened" }, 2000);
-}
-
-// Asks the daemon for the page of an issue or PR, for the page command. The daemon answers, as
-// only it may call GitHub.
-export async function pageOf(url: string): Promise<Page> {
-  const reply = await request({ command: "page", url });
-  return understood(z.object({ page: Page }), reply).page;
 }
 
 // Returns the release the daemon runs, or null when no daemon answers. A daemon from a

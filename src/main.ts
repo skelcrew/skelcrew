@@ -100,20 +100,22 @@ async function machineCommand(args: string[]): Promise<void> {
 // usage leaves them out.
 async function screenCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
-  const { pageOf, screenOpened } = await import("./client.ts");
+  const { openDb } = await import("./db.ts");
+  const { readPage } = await import("./flow/page.ts");
   const { runPage } = await import("./screen/page.ts");
   const { runSidebar } = await import("./screen/sidebar.ts");
   // The third word is the remote skel runs on, and empty on this machine. The last is the
   // session of the lead the screen opened on.
   const [session, where, lead] = rest;
   if (command === "sidebar" && sub && session && where !== undefined && lead && rest.length === 3) {
-    // Not waited on, so the sidebar draws at once.
-    screenOpened();
     await runSidebar(sub, session, where, lead);
     return;
   }
   if (command === "page" && sub && rest.length === 0) {
-    await runPage(sub, pageOf(sub));
+    await runPage(
+      sub,
+      Promise.resolve().then(() => readPage(openDb(), sub)),
+    );
     return;
   }
   usage(command);

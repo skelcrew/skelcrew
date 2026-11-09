@@ -13,8 +13,9 @@ const wrapped = (text: string, columns: number) =>
 // Returns a page as lines for a pane of a given width, from the top: the title, then the facts
 // with the link to GitHub, whose text is the only part of a line that is a terminal link, then
 // the description, as plain text. It reads nothing, so what you see can be tested without a
-// terminal. The link is skel's own, from the sidebar, so it is never text from GitHub. It sits
-// with the facts, not under a description that could push it far out of view.
+// terminal. The link comes from skel's copy, which takes only a web address of printable
+// characters, so it can't end the terminal link early or hold a control code. It sits with the
+// facts, not under a description that could push it far out of view.
 export function drawPage(page: Page, url: string, width: number): string[] {
   const room = width - 2 * pad.length;
   const labels = [...page.facts.map(([label]) => label), "GitHub"];
@@ -84,7 +85,7 @@ export async function runPage(url: string, reading: Promise<Page>): Promise<void
     },
     (error) => {
       const why = errorText(error);
-      const about = { title: "Couldn't read this from GitHub", facts: [], body: why };
+      const about = { title: "Couldn't show this", facts: [], body: why };
       lines = (columns) => drawPage(about, url, columns);
       draw();
     },

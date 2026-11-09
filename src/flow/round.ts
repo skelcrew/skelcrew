@@ -9,13 +9,13 @@ import {
   openPullRequest,
   postReview,
   pushCommit,
-  readIssue,
   setReviewStatus,
 } from "../github.ts";
 import { cloneDir } from "../paths.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
+import { taskOf } from "./copy.ts";
 import { afterReview, pastLimit } from "./decide.ts";
 import { tellLead } from "./lead.ts";
 import { review } from "./reviewer.ts";
@@ -32,7 +32,8 @@ async function git(folder: string, ...args: string[]): Promise<string> {
 }
 
 // Fetches the thread's branch from its clone into skel's clone and pushes the commit it got
-// to the thread's branch on GitHub, then opens the PR if there is none yet. Returns the
+// to the thread's branch on GitHub, then opens the PR if there is none yet, with the line
+// that closes its task at the end of its body. Returns the
 // commit. git never runs inside the thread's clone: the builder controls everything there,
 // .git included, and a planted setting would run with your rights.
 async function push(db: Database, folder: string, summary: string): Promise<string> {
@@ -54,14 +55,13 @@ async function push(db: Database, folder: string, summary: string): Promise<stri
   // Found rather than opened when the daemon stopped between opening it and saving it.
   let pr = thread.pr ?? (await findPullRequest(fullName, thread.branch));
   if (pr === null) {
-    const { title } = await readIssue(fullName, thread.task);
+    const { title, closes } = taskOf(db, thread.owner, thread.repo, thread.task);
     const base = baseOf(thread);
     pr = await openPullRequest(fullName, {
       branch: thread.branch,
       base,
       title,
-      body: summary,
-      issue: thread.task,
+      body: `${summary}\n\n${closes}`,
     });
   }
   record(db, folder, { pr }, `pushed ${sha} to ${thread.branch}, for #${pr}`);
@@ -90,7 +90,7 @@ async function reviewRound(
   record(db, folder, { reviewing: sha, submitting: null, reviewer }, `reviewing ${sha}`);
   const verdict = await review({
     clone: cloneOf(thread),
-    issue: await readIssue(fullName, thread.task),
+    issue: taskOf(db, thread.owner, thread.repo, thread.task),
     // Setting up the thread's clone put the base branch there under origin/.
     base: `origin/${baseOf(thread)}`,
     commit: sha,
