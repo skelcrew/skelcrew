@@ -4,6 +4,7 @@
 import type { Page } from "../flow/page.ts";
 import { errorText } from "../say.ts";
 import { clean, fitted, grey, pad, paint, white } from "./look.ts";
+import { drawMarkdown } from "./markdown.ts";
 
 // Returns text from outside, safe to show, on as many lines as it takes to fit a number of
 // columns. Words that are too long are broken, so a line never wraps by itself.
@@ -11,11 +12,11 @@ const wrapped = (text: string, columns: number) =>
   Bun.wrapAnsi(clean(text), Math.max(columns, 1), { hard: true }).split("\n");
 
 // Returns a page as lines for a pane of a given width, from the top: the title, then the facts
-// with the link to GitHub, whose text is the only part of a line that is a terminal link, then
-// the description, as plain text. It reads nothing, so what you see can be tested without a
-// terminal. The link comes from skel's copy, which takes only a web address of printable
-// characters, so it can't end the terminal link early or hold a control code. It sits with the
-// facts, not under a description that could push it far out of view.
+// with the link to GitHub, then the description, drawn from its markdown. It reads nothing, so
+// what you see can be tested without a terminal. The link comes from skel's copy, which takes
+// only a web address of printable characters, so it can't end the terminal link early or hold
+// a control code. It sits with the facts, not under a description that could push it far out
+// of view.
 export function drawPage(page: Page, url: string, width: number): string[] {
   const room = width - 2 * pad.length;
   const labels = [...page.facts.map(([label]) => label), "GitHub"];
@@ -24,11 +25,11 @@ export function drawPage(page: Page, url: string, width: number): string[] {
   const fact = (label: string, lines: string[]) =>
     lines.map((line, i) => `${pad}${paint(grey, (i === 0 ? label : "").padEnd(gap))}${line}`);
   const link = `\x1b]8;;${url}\x1b\\${fitted(url, room - gap)}\x1b]8;;\x1b\\`;
+  // Already safe to show, so wrapped without cleaning, which would take its styles too.
   const body = page.body.trim()
-    ? page.body
-        .trim()
-        .split(/\r?\n/)
-        .flatMap((line) => wrapped(line, room))
+    ? drawMarkdown(page.body.trim()).flatMap((line) =>
+        Bun.wrapAnsi(line, Math.max(room, 1), { hard: true }).split("\n"),
+      )
     : [paint(grey, "No description.")];
   return [
     "",
