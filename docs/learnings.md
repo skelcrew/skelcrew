@@ -55,9 +55,16 @@ that covers the code you are about to write.
   past its checks, and `packages/` holds the program it runs. Reviews share skel's
   `CODEX_HOME`, so a reviewer that wrote any of them would steer every later review. Keep
   them read-only, and only the login and session files writable.
-- **Check how it saves `auth.json` before mounting it on its own.** If Codex writes a new
-  file and renames it over the old one, a renewal inside the sandbox never reaches skel's
-  copy, and skel's login goes stale.
+- **Never mount `auth.json` on its own.** From 0.167 Codex renews its login by writing a new
+  file and renaming it over the old one, and a file mounted on its own can't be renamed over
+  ("Device or resource busy"). By then the old refresh token is spent, so skel's login goes
+  stale for every session and review. Codex follows a link to the file and renames beside
+  its target, so link `auth.json` to a writable folder that holds only the login. Up to
+  0.163 it rewrote the file in place.
+- **Share `auth.lock` with the login.** From 0.167 Codex locks `auth.lock` in its own
+  `CODEX_HOME` while it renews. Folders of their own each get a lock of their own, so two
+  sessions could renew at once, and one spends the token the other is using. Link it beside
+  `auth.json`.
 
 ## The sandbox
 
