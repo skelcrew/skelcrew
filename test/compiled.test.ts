@@ -149,6 +149,9 @@ describe("a release setting up a server", () => {
   let released = "";
   const linux = "the Linux skel of 0.4.2";
   const sum = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
+  // ssh to a server that has no skel until scp brings one.
+  const newServer =
+    'case "$*" in *first-run*) test -f "$HOME/copied" || exit 127;; *uname*) cat "$HOME/cpu"; echo "** WARNING: this ssh is old" >&2;; esac';
 
   // Stands in for a new server: it has no skel until scp brings one.
   beforeAll(() => {
@@ -167,10 +170,7 @@ describe("a release setting up a server", () => {
       "--define",
       `SKEL_RELEASES="http://127.0.0.1:${server.port}"`,
     ]);
-    fake(
-      "ssh",
-      'case "$*" in *first-run*) test -f "$HOME/copied" || exit 127;; *uname*) cat "$HOME/cpu"; echo "** WARNING: this ssh is old" >&2;; esac',
-    );
+    fake("ssh", newServer);
     fake("scp", 'for word; do test -f "$word" && cp "$word" "$HOME/copied"; done; exit 0');
   });
   afterAll(() => {
@@ -227,6 +227,31 @@ describe("a release setting up a server", () => {
     expect(done.code).toBe(1);
     expect(done.err).toContain("checksum");
     expect(existsSync(join(home, "copied"))).toBe(false);
+  });
+
+  test("--remote keeps a server at the laptop's release, after asking", async () => {
+    // A server on 0.4.1, which says so to a laptop on another release, as skel there does.
+    fake(
+      "ssh",
+      `case "$*" in
+  *SKEL_LAPTOP_BUILD=0.4.2*) test -f "$HOME/copied" || { echo "skel on simon@workbox is from 0.4.1."; exit 98; };;
+  *readlink*) echo copied;;
+  *uname*) cat "$HOME/cpu";;
+esac
+exit 0`,
+    );
+    try {
+      const done = await run(["--remote", "simon@workbox", "ps"], released);
+      expect(done.err).toBe("");
+      expect(done.code).toBe(0);
+      expect(readFileSync(join(home, "copied"), "utf8")).toBe(linux);
+      expect(readFileSync(join(home, "calls"), "utf8")).toContain(
+        "ssh simon@workbox systemctl --user restart skel\n",
+      );
+      expect(done.out).toContain("updated simon@workbox to skel 0.4.2 and restarted its daemon");
+    } finally {
+      fake("ssh", newServer);
+    }
   });
 
   test("names the address when the download fails", async () => {

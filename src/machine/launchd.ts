@@ -75,6 +75,13 @@ export function loadLaunchAgent(): void {
     throw new Error(`launchctl couldn't load skel's daemon, so it isn't installed: ${loaded.said}`);
 }
 
+// Restarts the daemon, for a skel of a newer release than the daemon runs. launchd ends the
+// running daemon first, and agents keep running in tmux.
+export function restartLaunchAgent(): void {
+  const started = launchctl(["kickstart", "-k", `${domain()}/${label}`]);
+  if (!started.ok) throw new Error(`launchctl couldn't restart skel's daemon: ${started.said}`);
+}
+
 // Starts the daemon, for a skel that finds no daemon answering.
 export function startLaunchAgent(): void {
   const started = launchctl(["kickstart", `${domain()}/${label}`]);
