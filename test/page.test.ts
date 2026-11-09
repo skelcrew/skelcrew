@@ -229,3 +229,11 @@ test("control codes from GitHub never reach your terminal, on any line", () => {
 test("a page so narrow it has no room still draws", () => {
   expect(drawPage(page, issueUrl, 3).length).toBeGreaterThan(0);
 });
+
+test("the description is drawn from its markdown, and a long link still wraps", () => {
+  const body = "## Steps\n- **one** [the docs](https://example.com/docs) and more words";
+  const lines = drawPage({ ...page, body }, issueUrl, 24);
+  expect(read(lines).slice(-3)).toEqual(["  Steps", "  • one the docs and", "  more words"]);
+  expect(lines.join("\n")).toContain("\x1b[1mSteps\x1b[22m");
+  expect(lines.join("\n")).toContain("\x1b]8;;https://example.com/docs");
+});
