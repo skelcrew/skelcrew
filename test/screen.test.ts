@@ -140,7 +140,9 @@ beforeEach(() => {
   agents = `skel-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
   screen = `${agents}-screen`;
   terminal = `${agents}-terminal`;
-  sql(`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
+  // app's lead is the session named lead, which has started, so its row names its harness.
+  sql(`INSERT INTO repositories (name, owner, repo, kept_lead, lead_session)
+  VALUES ('app', 'simon', 'app', 1, 's');
 INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you) VALUES
   ('simon', 'app', 3, 'app-3', 'skel/3', 'done', 0),
   ('simon', 'app', 7, 'app-7', 'skel/7', 'working', 0),

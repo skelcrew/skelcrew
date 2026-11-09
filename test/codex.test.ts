@@ -256,6 +256,21 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("codex", () => {
     expect((await app12())?.needsYou).toBe(false);
   }, 60_000);
 
+  test("a lead keeps the harness it started on, for notes and when it comes back", async () => {
+    await startApp12();
+    // Your config moving leads to Claude Code doesn't move the lead already on Codex.
+    config("lead: { harness: claude }\nbuilder: { harness: codex }\n");
+    await act("stop");
+    await until(() => read(join(lead(), "typed")).includes("app-12 needs you"));
+    const name = leadPlaces("simon", "app").name;
+    Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", `=${name}`]);
+    rmSync(join(lead(), "args"));
+    expect(await askForLead()).toContain(name);
+    await until(() => read(join(lead(), "args")) !== "");
+    expect(args(lead())[0]).toBe("resume");
+    expect(args(lead()).at(-1)).toBe(conversation);
+  }, 60_000);
+
   test("a stopped builder comes back on Codex with its own conversation, not a sub-agent's", async () => {
     await startApp12();
     expect((await skel(["stop", "app-12"])).err).toBe("");

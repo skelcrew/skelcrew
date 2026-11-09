@@ -3,6 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { pastLimit } from "../flow/decide.ts";
+import { leadHarness } from "../flow/lead.ts";
 import { fullNameOf, needsYou, Thread, threadName } from "../flow/thread.ts";
 import { Name } from "../github.ts";
 import { green, grey, red, yellow } from "./look.ts";
@@ -105,19 +106,19 @@ export function sidebarRows(
   running: string[],
   maxRounds: number,
   now: number,
-  lead: { session: string; harness: string },
+  lead: string,
 ): Row[] {
   const threads = db.query("SELECT * FROM threads WHERE status != 'done' ORDER BY rowid DESC");
-  const leadRuns = running.includes(lead.session);
+  const leadRuns = running.includes(lead);
   return [
     {
       name: "lead",
-      session: lead.session,
+      session: lead,
       status: null,
       needsYou: false,
       running: leadRuns,
       word: leadRuns ? "running" : "stopped",
-      harness: lead.harness,
+      harness: leadHarness(db, lead),
       age: "",
       fullName: null,
       title: null,
