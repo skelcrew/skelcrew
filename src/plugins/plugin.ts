@@ -142,22 +142,36 @@ export async function callPlugin<T>(
   const { call } = readManifest(plugin.folder);
   if (!call) throw new Error(`${name} has no call command, so skel can't ask it anything`);
   const { argv, env } = commandFor(name, call);
+  // In a process group of its own, so a timeout ends whatever the call started too. Ending
+  // only the call would leave a program it started holding its output open, and the wait
+  // for that output would never end.
   const run = Bun.spawn(argv, {
     cwd: plugin.folder,
     env: { ...process.env, ...env },
     stdin: new Blob([`${JSON.stringify(question)}\n`]),
     stdout: "pipe",
     stderr: "pipe",
-    timeout,
-    killSignal: "SIGKILL",
+    detached: true,
   });
-  const [out, err, code] = await Promise.all([
-    new Response(run.stdout).text(),
-    new Response(run.stderr).text(),
-    run.exited,
+  let timer: Timer | undefined;
+  const late = new Promise<"late">((done) => {
+    timer = setTimeout(() => {
+      try {
+        process.kill(-run.pid, "SIGKILL");
+      } catch {}
+      done("late");
+    }, timeout);
+  });
+  // Raced against the deadline as well: a program that left the group could still hold the
+  // output open.
+  const finished = await Promise.race([
+    Promise.all([new Response(run.stdout).text(), new Response(run.stderr).text(), run.exited]),
+    late,
   ]);
-  if (run.signalCode === "SIGKILL")
+  clearTimeout(timer);
+  if (finished === "late")
     throw new Error(`${name} didn't answer within ${timeout / 1000} seconds`);
+  const [out, err, code] = finished;
   if (code !== 0) {
     const last = err.trim().split("\n").at(-1) || `its call exited with code ${code}`;
     throw new Error(`${name} failed: ${last}`);

@@ -59,6 +59,11 @@ if (question.ask === "fail") {
   process.exit(1);
 }
 if (question.ask === "slow") await Bun.sleep(30_000);
+// A plugin that hangs in a program it started, which keeps its output open after it ends.
+if (question.ask === "stuck") {
+  Bun.spawn(["sleep", "30"], { stdout: "inherit", stderr: "inherit" });
+  await Bun.sleep(30_000);
+}
 if (question.ask === "bad") console.log(JSON.stringify({ number: "twelve" }));
 else console.log(JSON.stringify({ number: 12, asked: question, folder: process.cwd(), plugin: process.env.SKEL_PLUGIN, config: process.env.SKEL_PLUGIN_CONFIG }));
 `,
@@ -312,7 +317,8 @@ test("a call hands the plugin one question and checks its one answer", async () 
   publish("skelcrew/skel-plugin-fake", "0.1.0");
   await skel(["plugin", "install", "skelcrew/skel-plugin-fake"], "y\n");
   const ask = (question: string, timeout = 60_000) =>
-    asDaemon(`import { z } from "zod";
+    // Zod by its path in skel's checkout, as the test's home has no node_modules to find it in.
+    asDaemon(`import { z } from ${JSON.stringify(Bun.resolveSync("zod", import.meta.dir))};
 import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { callPlugin } from ${JSON.stringify(source("plugins/plugin.ts"))};
 const Answer = z.looseObject({ number: z.number() });
@@ -340,6 +346,23 @@ try {
   );
   expect(Date.now() - started).toBeLessThan(10_000);
 });
+
+test("a call that hangs in a program it started still ends at its timeout, with that program", async () => {
+  publish("skelcrew/skel-plugin-fake", "0.1.0");
+  await skel(["plugin", "install", "skelcrew/skel-plugin-fake"], "y\n");
+  const started = Date.now();
+  const { out } =
+    await asDaemon(`import { z } from ${JSON.stringify(Bun.resolveSync("zod", import.meta.dir))};
+import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { callPlugin } from ${JSON.stringify(source("plugins/plugin.ts"))};
+try {
+  await callPlugin(openDb(), "fake", { ask: "stuck" }, z.object({}), 500);
+} catch (error) {
+  console.log("error: " + error.message);
+}`);
+  expect(out).toBe("error: fake didn't answer within 0.5 seconds\n");
+  expect(Date.now() - started).toBeLessThan(4000);
+}, 40_000);
 
 test("git asks a forge's git_credentials for its login, which is never saved", async () => {
   publish("skelcrew/skel-plugin-fake", "0.1.0");
