@@ -1,5 +1,6 @@
 // Updates: a release of skel installing a newer one in the background, from a fake release
-// server, and the sidebar's notice that it waits for a restart.
+// server, the sidebar's notice that it waits for a restart, and skel restarting the daemon on
+// the new release before you attach.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
   existsSync,
@@ -13,13 +14,15 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { homeEnv, source } from "./harness.ts";
+import type { Subprocess } from "bun";
+import { homeEnv, source, until, writeScript } from "./harness.ts";
 
 let home = "";
 let releases: ReturnType<typeof Bun.serve>;
 // What the fake release server has, by path, and the paths it was asked for.
 let files = new Map<string, string>();
 let asked: string[] = [];
+const running: Subprocess[] = [];
 
 // The release file for this machine, as the install script names it.
 const asset = `skel-${process.platform === "darwin" ? "darwin" : "linux"}-${process.arch === "arm64" ? "arm64" : "x64"}`;
@@ -52,8 +55,12 @@ beforeEach(() => {
     },
   });
 });
-afterEach(() => {
+afterEach(async () => {
   releases.stop(true);
+  for (const run of running.splice(0)) {
+    run.kill();
+    await run.exited;
+  }
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -139,3 +146,74 @@ test("the sidebar's notice says a newer release is installed until skel runs on 
   expect(await notice("0.4.2")).toBe("skel 0.4.3 installed · restart to use it\n");
   expect(await notice("0.4.3")).toBe("\n");
 });
+
+// Stands in for a daemon on the test's socket, answering which release it runs: `before`, or
+// `after` once the fake systemctl restarted it. In a process of its own, as one in the test's
+// process got no answer while the test waited on skel, and on Bun.listen, as a node:net server
+// refused connections for a moment after it said it was listening.
+async function daemon(before: string, after: string): Promise<void> {
+  writeScript(
+    home,
+    "systemctl",
+    `echo "systemctl $*" >> "$HOME/calls"\ntest "$*" = "--user restart skel" && touch "$HOME/restarted"\nexit 0`,
+  );
+  const socket = join(home, "run", "skel.sock");
+  // The socket's file comes a moment before it takes connections.
+  const ready = join(home, "listening");
+  const code = `import { existsSync } from "node:fs";
+Bun.listen({
+  unix: ${JSON.stringify(socket)},
+  socket: {
+    data(connection) {
+      const release = existsSync(${JSON.stringify(join(home, "restarted"))}) ? ${JSON.stringify(after)} : ${JSON.stringify(before)};
+      connection.end(JSON.stringify({ running: true, pid: 1, release }) + "\\n");
+    },
+  },
+});
+await Bun.write(${JSON.stringify(ready)}, "");`;
+  running.push(Bun.spawn([process.execPath, "-e", code], { stdout: "ignore", stderr: "ignore" }));
+  await until(() => existsSync(ready));
+}
+
+// Has skel, stamped with `build`, make sure the daemon runs its release, as it does before you
+// attach, and returns what it printed and what systemctl was asked.
+async function beforeAttaching(build?: string) {
+  const done = await inProcess(
+    `import { onThisRelease } from ${JSON.stringify(source("client.ts"))};
+await onThisRelease();`,
+    build,
+  );
+  const calls = existsSync(join(home, "calls")) ? readFileSync(join(home, "calls"), "utf8") : "";
+  return { ...done, calls };
+}
+
+test("restarts a daemon on an older release before you attach", async () => {
+  await daemon("0.4.2", "0.4.3");
+  const done = await beforeAttaching("0.4.3");
+  expect(done.err).toBe("");
+  expect(done.code).toBe(0);
+  expect(done.calls).toBe("systemctl --user restart skel\n");
+  expect(done.out).toContain("0.4.3");
+  expect(done.out).toContain("agents keep running");
+});
+
+test("leaves a daemon on this release running", async () => {
+  await daemon("0.4.3", "0.4.3");
+  const done = await beforeAttaching("0.4.3");
+  expect(done.code).toBe(0);
+  expect(done.calls).toBe("");
+});
+
+test("a build from a checkout never restarts the daemon", async () => {
+  await daemon("0.4.2", "0.4.2");
+  const done = await beforeAttaching();
+  expect(done.code).toBe(0);
+  expect(done.calls).toBe("");
+});
+
+test("says where to look when the daemon doesn't come back on the new release", async () => {
+  await daemon("0.4.2", "0.4.2");
+  const done = await beforeAttaching("0.4.3");
+  expect(done.code).toBe(1);
+  expect(done.err).toContain("journalctl --user -u skel");
+}, 15_000);

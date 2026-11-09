@@ -13,6 +13,7 @@ import { holdAwhile, keepAwake, onSprite, urlPort } from "../machine/sprite.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { daemonSocket, leadSocket, threadSocket } from "../paths.ts";
 import { errorText } from "../say.ts";
+import { release } from "../version.ts";
 import {
   bringBack,
   failThread,
@@ -190,7 +191,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
     switch (request.command) {
       case "status": {
         const thread = typeof caller === "object" ? { thread: threadName(db, caller) } : {};
-        return { running: true, pid: process.pid, ...thread };
+        return { running: true, pid: process.pid, release, ...thread };
       }
       case "lead":
         await lead();
