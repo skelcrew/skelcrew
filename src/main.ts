@@ -111,18 +111,22 @@ async function screenCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
-// Lists, removes or trusts a repository, for skel repo.
+// Lists, removes or trusts a repository, for skel repo. Only ls takes --json: to remove or
+// trust, it is a word like any other.
 async function repoCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
   const { askForRepositories } = await import("./client.ts");
   const { openDb } = await import("./db.ts");
   const { listRepositories, printRepositories } = await import("./flow/list.ts");
   const { removeRepo, trustRepo } = await import("./flow/repo.ts");
-  if (sub === "ls" && rest.length === 0) {
+  // --json can go anywhere, as tools add it last and people type it where they like.
+  const json = args.includes("--json");
+  if (sub === "ls" && rest.filter((arg) => arg !== "--json").length === 0) {
     // An agent's sandbox hides skel's database, so there the daemon answers. In your
     // terminal it is read here, so the list shows even while the daemon is down.
     printRepositories(
       process.env.SKEL_SANDBOX === "1" ? await askForRepositories() : listRepositories(openDb()),
+      json,
     );
     return;
   }
