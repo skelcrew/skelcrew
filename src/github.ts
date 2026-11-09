@@ -433,7 +433,7 @@ const pullFields = (reviews: number) => `state mergeable baseRefName headRefName
 
 // What an issue or a PR has as an item, besides what a poll reads of a PR.
 const itemFields = `number title body url createdAt updatedAt author { __typename login }
-  labels(first: 20) { nodes { name } }`;
+  labels(first: 100) { nodes { name } }`;
 
 const Head = z.object({
   number: z.number(),

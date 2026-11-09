@@ -17,14 +17,17 @@ import { needsYou, readThread, record, Thread, threadName } from "./thread.ts";
 // Starts a thread on each of the repository's open issues labeled skel in skel's copy that has
 // none, exactly as skel start does, then reacts to the issue with 👀 and tells the
 // repository's lead. Thread rows are read after GitHub answers, so a thread skel start made
-// meanwhile counts. The thread is recorded before anything else, so neither a later poll nor
-// a restart starts it again; a reaction that fails is only logged, never retried.
+// meanwhile counts. A task in `starting`, named as owner/repo#number, is left to the skel start
+// starting it, which has options of its own, such as the branch to start from. The thread is
+// recorded before anything else, so neither a later poll nor a restart starts it again; a
+// reaction that fails is only logged, never retried.
 async function startLabeled(
   db: Database,
   tmux: string,
   owner: string,
   repo: string,
   begin: (thread: Thread) => Promise<void>,
+  starting: Set<string>,
 ): Promise<void> {
   const fullName = `${owner}/${repo}`;
   const threads = db
@@ -32,7 +35,7 @@ async function startLabeled(
     .all(owner, repo)
     .map((row) => Thread.parse(row));
   const labeled = openTasks(db, owner, repo)
-    .filter((task) => task.labels.includes("skel"))
+    .filter((task) => task.labels.includes("skel") && !starting.has(`${fullName}#${task.id}`))
     .map((task) => ({ number: Number(task.id), title: task.title }));
   for (const issue of labeledToStart(threads, labeled)) {
     // One skel start took meanwhile waits for the next poll.
@@ -92,6 +95,7 @@ async function pollRepository(
   threads: Thread[],
   begin: (thread: Thread) => Promise<void>,
   since: string | null,
+  starting: Set<string>,
 ): Promise<string | null> {
   const fullName = `${owner}/${repo}`;
   const { you, items, prs, next } = await readRepository(
@@ -100,7 +104,7 @@ async function pollRepository(
     since,
   );
   saveItems(db, owner, repo, items, since === null);
-  await startLabeled(db, tmux, owner, repo, begin);
+  await startLabeled(db, tmux, owner, repo, begin, starting);
   // Asked once per poll, and only about authors of what is new.
   const pushers: string[] = [];
   for (const login of newAuthors(threads, prs, you))
@@ -160,7 +164,8 @@ async function pollRepository(
 // to pick up what happened while the daemon was down. A failed poll, such as GitHub answering
 // with an error, is logged and tried again at the next one. Polls run in the background, so
 // they never hold up the daemon. `begin` sets up a thread started from a label and starts its
-// builder, as the daemon does for skel start. Returns a function that polls one repository at
+// builder, as the daemon does for skel start. `starting` holds the tasks skel start is starting
+// right now, which no poll starts by their label. Returns a function that polls one repository at
 // once, named by its full GitHub name, for a webhook delivery about it or for skel start, and
 // settles once that poll is done, failing as it does.
 export function pollGitHub(
@@ -168,6 +173,7 @@ export function pollGitHub(
   tmux: string,
   every: number,
   begin: (thread: Thread) => Promise<void>,
+  starting: Set<string>,
 ): (fullName: string) => Promise<void> {
   const skipped = new Map<string, number>();
   // The poll under way for each repository, and the one that follows it.
@@ -203,7 +209,16 @@ export function pollGitHub(
       return next;
     }
     const threads = polled().filter((t) => t.owner === owner && t.repo === repo);
-    const done = pollRepository(db, tmux, owner, repo, threads, begin, since.get(fullName) ?? null)
+    const done = pollRepository(
+      db,
+      tmux,
+      owner,
+      repo,
+      threads,
+      begin,
+      since.get(fullName) ?? null,
+      starting,
+    )
       .then(
         (next) => {
           since.set(fullName, next);

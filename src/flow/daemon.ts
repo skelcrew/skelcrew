@@ -182,6 +182,8 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   // it, so a builder never starts from what an earlier daemon saved of its task.
   const polling = Promise.withResolvers<(fullName: string) => Promise<void>>();
   const listening = new Set<string>();
+  // The tasks skel start is starting, as owner/repo#number, which no poll starts by its label.
+  const startingTasks = new Set<string>();
   // Opens a thread's own socket, so the daemon knows which thread calls on it. A thread that
   // starts over keeps the socket it has.
   const listenFor = async (thread: Thread) => {
@@ -347,15 +349,23 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
           goOn(db, tmux, before.folder);
           return { started: `${threadName(db, before)} goes on past the round limit.` };
         }
-        // The task's title and body come from skel's copy, brought up to date first.
+        // The task's title and body come from skel's copy, brought up to date first. Meanwhile
+        // no poll starts the task by its label, which would leave out this start's options.
         const { owner, repo } = findRepository(db, request.repo);
-        await (await polling.promise)(`${owner}/${repo}`);
-        // That poll may have found the skel label on the task and started its thread itself.
-        const started = threadOn(db, request.repo, request.task);
-        if (!before && started) return { started: `Started ${threadName(db, started)}.` };
-        // A poll reads one page of changes, and the task may be past it, so it is read too.
-        saveItems(db, owner, repo, await readTasks(`${owner}/${repo}`, [request.task]), false);
-        const thread = await startThread(db, request);
+        const key = `${owner}/${repo}#${request.task}`;
+        startingTasks.add(key);
+        let thread: Thread;
+        try {
+          await (await polling.promise)(`${owner}/${repo}`);
+          // A poll already past its labels as this began may have started the thread itself.
+          const started = threadOn(db, request.repo, request.task);
+          if (!before && started) return { started: `Started ${threadName(db, started)}.` };
+          // A poll reads one page of changes, and the task may be past it, so it is read too.
+          saveItems(db, owner, repo, await readTasks(`${owner}/${repo}`, [request.task]), false);
+          thread = await startThread(db, request);
+        } finally {
+          startingTasks.delete(key);
+        }
         // Not waited on: an agent's command must answer quickly, and setup can take minutes.
         begin(thread);
         return { started: `Started ${threadName(db, thread)}.` };
@@ -416,7 +426,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       (error) => failThread(db, thread, error),
     );
   }
-  const poll = pollGitHub(db, tmux, every, begin);
+  const poll = pollGitHub(db, tmux, every, begin, startingTasks);
   polling.resolve(poll);
   keepUpToDate();
   if (!onSprite()) return;

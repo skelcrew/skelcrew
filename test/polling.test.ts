@@ -555,21 +555,23 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
   }, 60_000);
 
   // skel start polls first, and that poll can find the label and start the thread itself.
-  test("skel start on a labeled issue its own poll starts says it started", async () => {
-    addApp();
+  test("skel start on a labeled issue starts it itself, from the branch it names", async () => {
+    const work = addApp();
+    git(work, "checkout", "-q", "-b", "next");
+    git(work, "push", "-q", join(home, "github", "simon", "app.git"), "next");
     writeFileSync(join(home, "gh", "graphql"), JSON.stringify(pollAnswer([issue12()])));
     // An hour between polls, so only skel start brings another.
     serve(3_600_000);
     await until(() => copied().rows.includes("task 12"));
     writeFileSync(join(home, "gh", "graphql"), JSON.stringify(pollAnswer([issue12(true)])));
-    const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
+    const started = Bun.spawnSync([process.execPath, main, "start", "app-12", "--from", "next"], {
       env: env(),
       stdout: "pipe",
       stderr: "pipe",
     });
     expect(started.stderr.toString()).toBe("");
     expect(started.stdout.toString()).toBe("Started app-12.\n");
-    expect(thread()).toMatchObject({ task: 12, status: "working" });
+    expect(thread()).toMatchObject({ task: 12, status: "working", base: "next" });
   }, 30_000);
 
   // A poll reads one page of changes, so skel start reads its own task too.

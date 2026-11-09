@@ -388,6 +388,15 @@ test("a PR becomes an item with its branch, checks and reviews, in skel's words"
   expect(JSON.stringify(sent().input)).toContain("pr7: pullRequest(number: 7)");
 });
 
+// An issue can carry many labels, and skel must always see its own among them.
+test("asks for as many labels as GitHub gives in one answer", async () => {
+  gh(JSON.stringify(pollAnswer([])));
+  await readRepository("simon/app", [], null);
+  const query = JSON.stringify(sent().input);
+  expect(query).toContain("labels(first: 100)");
+  expect(query).not.toMatch(/labels\(first: (?!100\))/);
+});
+
 test("an issue in a shape skel doesn't expect is refused, not saved", async () => {
   gh(JSON.stringify(pollAnswer([issueNode(12, "x", { number: "12" })])));
   await expect(readRepository("simon/app", [], null)).rejects.toThrow();
