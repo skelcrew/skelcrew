@@ -18,7 +18,9 @@ function noteForLead(db: Database, tmux: string, text: string): void {
 // and ends, and the text inside stays plain. Any <skel or </skel> in the text is removed, so a
 // message can't close its tag early and pass the rest off as coming from outside it.
 function wrapped(from: string, reply: string, text: string): string {
-  const inside = text.replace(/<\/skel>|<skel/gi, "");
+  let inside = text;
+  // One pass isn't enough: removing the inner tag of </sk</skel>el> leaves a whole </skel>.
+  while (/<\/skel>|<skel/i.test(inside)) inside = inside.replace(/<\/skel>|<skel/gi, "");
   return `<skel from="${from}" reply="${reply}">\n${inside}\n</skel>`;
 }
 
