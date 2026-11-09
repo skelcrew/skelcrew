@@ -294,11 +294,17 @@ const esc = "\x1b";
 const input = new RegExp(`${esc}\\[1;([34])([AB])|${esc}\\[<0;\\d+;(\\d+)M`, "g");
 
 // Runs the sidebar until its pane goes. The session given is its own, on the screen's server,
-// and `where` says which remote skel runs on, if any, for the header above it.
+// `where` says which remote skel runs on, if any, for the header above it, and `lead` is the
+// session of the lead it shows.
 // tmux brings it the keys that move and clicks on its input. It looks again each second, and
 // writes only when something changed: over a slow link each write costs, and on a Sprite a
 // terminal that stays quiet lets it sleep.
-export async function runSidebar(agents: string, session: string, where: string): Promise<void> {
+export async function runSidebar(
+  agents: string,
+  session: string,
+  where: string,
+  lead: string,
+): Promise<void> {
   const db = openDb();
   const right = `=${session}:.1`;
   let tty = paneTty(screenSocket(agents), right);
@@ -328,7 +334,7 @@ export async function runSidebar(agents: string, session: string, where: string)
   // Looks at the database and tmux again, and redraws what that changed.
   const refresh = () => {
     notice = noticeLines(updateNotice(), size().width);
-    rows = sidebarRows(db, runningSessions(agents), maxRounds, Date.now());
+    rows = sidebarRows(db, runningSessions(agents), maxRounds, Date.now(), lead);
     // A row takes two lines, so the sidebar's height is more than any list can show.
     lists = sidebarLists(db, rows, size().height);
     // A page's row can go at a poll, and the page stays until you move, so it keeps its name.
@@ -355,7 +361,7 @@ export async function runSidebar(agents: string, session: string, where: string)
     const link = linkAt(next);
     if (link) respawnPane(screenSocket(agents), right, pageCommand(next));
     else if (page || shownSession(agents, tty) === null) {
-      respawnPane(screenSocket(agents), right, agentClient(agents, next));
+      respawnPane(screenSocket(agents), right, agentClient(agents, next, lead));
       tty = paneTty(screenSocket(agents), right);
     } else showSession(agents, tty, next);
     page = link;

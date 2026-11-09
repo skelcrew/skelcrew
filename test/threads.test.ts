@@ -35,7 +35,7 @@ function fakeClaude(lead: string, builder: string): void {
     `#!/bin/sh
 echo "claude $*" >> "$CLAUDE_CONFIG_DIR/calls"
 case "$CLAUDE_CONFIG_DIR" in
-*/lead) ${lead} ;;
+*/lead-*) ${lead} ;;
 *) env > "$CLAUDE_CONFIG_DIR/env"; pwd > "$CLAUDE_CONFIG_DIR/pwd"
 printf '%s\\n' "$@" > "$CLAUDE_CONFIG_DIR/args.new"; mv "$CLAUDE_CONFIG_DIR/args.new" "$CLAUDE_CONFIG_DIR/args"
 ${builder} ;;
@@ -147,7 +147,7 @@ openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?
   return work;
 }
 
-// skel's own clone, which the daemon makes when the lead starts.
+// skel's own clone, which the daemon makes as it starts.
 const untilCloned = () => until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
 
 // Holds every clone from GitHub until the test lets it go, so a test can see that skel
@@ -240,77 +240,25 @@ test("skel start refuses a repository skel doesn't have, and a task GitHub doesn
   expect(existsSync(join(data(), "threads", "app-99"))).toBe(false);
 });
 
-describe("a command naming a repository skel doesn't have by its full GitHub name", () => {
-  // Sends one request on the lead's socket, as the lead's skel does from its sandbox, and
-  // returns the reply.
-  const askAsLead = (request: object) =>
-    new Promise<Record<string, unknown>>((done, failed) => {
-      const connection = createConnection(join(home, "run", "skel", "lead", "skel.sock"));
-      let reply = "";
-      connection.on("error", failed);
-      connection.on("connect", () => connection.write(`${JSON.stringify(request)}\n`));
-      connection.on("data", (data) => {
-        reply += data.toString();
-      });
-      connection.on("close", () => done(JSON.parse(reply)));
-    });
-  const cloned = (repo: string) => existsSync(join(data(), "repos", "simon", repo));
-  const repositories = () => {
-    const db = new Database(join(data(), "skel.db"));
-    db.run("PRAGMA busy_timeout = 5000");
-    try {
-      return db.query("SELECT name, owner, repo FROM repositories ORDER BY name").all();
-    } finally {
-      db.close();
-    }
-  };
+// Bringing a repository in by naming it is gone: you add one in your own terminal.
+test("a repository skel doesn't have, named by its GitHub name, is no repository", async () => {
+  onGitHub({}, "site");
+  serve();
+  await untilAnswers();
+  for (const name of ["simon/site", "site", "-x/site"]) {
+    const listed = await skel("task", "ls", name);
+    expect(listed.code).not.toBe(0);
+    expect(listed.err).toBe(`skel: there is no repository named ${name}\n`);
+  }
+  expect(read(join(home, "calls"))).not.toContain("repo view");
+});
 
-  test("brings in one you can push to at once, cloning it after, and its short name works", async () => {
-    addApp();
-    onGitHub({}, "site");
-    serve();
-    await untilCloned();
-    await until(() => existsSync(join(home, "run", "skel", "lead", "skel.sock")));
-    holdClones();
-    const listed = await askAsLead({ command: "task ls", repo: "simon/site" });
-    expect(listed).toEqual({
-      tasks: [{ task: "site-12", title: "Add export", thread: null }],
-      broughtIn: { github: "simon/site", name: "site" },
-    });
-    expect(cloned("site")).toBe(false);
-    writeFileSync(join(home, "go"), "");
-    await until(() => existsSync(join(data(), "repos", "simon", "site", "README")));
-    await until(() => read(join(home, "calls")).includes("api repos/simon/site/labels"));
-    const shown = await skel("task", "show", "site-12");
-    expect(shown.err).toBe("");
-    expect(shown.out).toContain("site-12  Add export");
-    expect(repositories()).toEqual([
-      { name: "app", owner: "simon", repo: "app" },
-      { name: "site", owner: "simon", repo: "site" },
-    ]);
-  });
-
-  test("you are told it was brought in, and the task is made at once", async () => {
-    onGitHub({}, "site");
-    serve();
-    await untilAnswers();
-    holdClones();
-    const made = await skel("task", "create", "simon/site", "Add import", "From CSV");
-    expect(made.out).toBe("site-13\n");
-    expect(made.err).toBe(
-      "skel brought in simon/site, as site. It clones it in the background, and a thread started on it waits for the clone.\n",
-    );
-    expect(cloned("site")).toBe(false);
-    writeFileSync(join(home, "go"), "");
-  });
-
+describe("a clone the daemon makes as it starts", () => {
   // Left running, it would write into the folder the next daemon clones into.
   test("stopping the daemon stops a clone it started", async () => {
-    onGitHub({}, "site");
-    const run = serve();
-    await untilAnswers();
+    addApp({}, "site");
     holdClones();
-    await skel("task", "create", "simon/site", "Add import", "From CSV");
+    const run = serve();
     await until(() => existsSync(join(home, "held")));
     await stop(run);
     writeFileSync(join(home, "go"), "");
@@ -319,9 +267,7 @@ describe("a command naming a repository skel doesn't have by its full GitHub nam
   });
 
   test("the daemon waits for a clone it stops to end, so the next daemon can't meet it", async () => {
-    onGitHub({}, "site");
-    const run = serve();
-    await untilAnswers();
+    addApp({}, "site");
     writeFileSync(
       join(home, "bin", "git"),
       `#!/bin/sh
@@ -334,16 +280,14 @@ exec ${Bun.which("git") ?? "git"} "$@"
 `,
       { mode: 0o755 },
     );
-    await skel("task", "create", "simon/site", "Add import", "From CSV");
+    const run = serve();
     await until(() => existsSync(join(home, "held")));
     await stop(run);
     expect(existsSync(join(home, "ended"))).toBe(true);
   });
 
   test("a clone that ignores the daemon's stop is killed", async () => {
-    onGitHub({}, "site");
-    const run = serve();
-    await untilAnswers();
+    addApp({}, "site");
     writeFileSync(
       join(home, "bin", "git"),
       `#!/bin/sh
@@ -356,46 +300,11 @@ exec ${Bun.which("git") ?? "git"} "$@"
 `,
       { mode: 0o755 },
     );
-    await skel("task", "create", "simon/site", "Add import", "From CSV");
+    const run = serve();
     await until(() => read(join(home, "held")) !== "");
     await stop(run);
     expect(stillRunning([Number(read(join(home, "held")))])).toEqual([]);
   }, 20_000);
-
-  test("a fork, or one you can't push to, waits for skel repo trust and is never cloned", async () => {
-    onGitHub({}, "fork");
-    writeFileSync(join(github(), "simon", "fork.fork"), "");
-    onGitHub({}, "read", "READ");
-    serve();
-    await untilAnswers();
-    await until(() => existsSync(join(home, "run", "skel", "lead", "skel.sock")));
-    for (const repo of ["fork", "read"]) {
-      const asked = await askAsLead({ command: "start", repo: `simon/${repo}`, task: 12 });
-      expect(asked).toEqual({
-        error: `simon/${repo} waits until you run skel repo trust simon/${repo} in your terminal`,
-      });
-      const listed = await skel("task", "ls", `simon/${repo}`);
-      expect(listed.code).not.toBe(0);
-      expect(listed.err).toContain(`skel repo trust simon/${repo}`);
-    }
-    await Bun.sleep(300);
-    expect(repositories()).toEqual([]);
-    expect(cloned("fork") || cloned("read")).toBe(false);
-    expect(existsSync(join(data(), "cloning"))).toBe(false);
-    expect(read(join(home, "calls"))).not.toContain("labels");
-    expect(thread()).toEqual({});
-  });
-
-  test("a name that isn't owner/repo keeps saying there is no such repository", async () => {
-    serve();
-    await untilAnswers();
-    for (const name of ["site", "-x/site"]) {
-      const listed = await skel("task", "ls", name);
-      expect(listed.code).not.toBe(0);
-      expect(listed.err).toBe(`skel: there is no repository named ${name}\n`);
-    }
-    expect(read(join(home, "calls"))).not.toContain("repo view");
-  });
 });
 
 test("skel task create and skel start say when the daemon isn't running", async () => {
@@ -503,12 +412,15 @@ c.on("connect", () => c.write('{"command":"lead"}\\n'));
 c.on("data", (d) => process.stdout.write(d));`;
     writeFileSync(join(home, "bin", "ask.js"), asker);
     fakeClaude(
-      `while ! test -e ${data()}/repos/simon/app/README; do sleep 0.1; done
-{ skel task create app "Add import" "From CSV"; skel start app-12; skel repo trust simon/other; bun ${join(home, "bin", "ask.js")}; } > out.new 2>&1; mv out.new out`,
+      `{ skel task create app "Add import" "From CSV"; skel start app-12; skel repo trust simon/other; bun ${join(home, "bin", "ask.js")}; } > out.new 2>&1; mv out.new out`,
       "",
     );
+    // Opened before, so the daemon starts app's lead as it starts.
+    const db = new Database(join(data(), "skel.db"));
+    db.run("UPDATE repositories SET opened = 1");
+    db.close();
     serve();
-    const out = join(data(), "lead", "out");
+    const out = join(data(), "leads", "simon", "app", "out");
     await until(() => read(out) !== "");
     expect(read(out)).toBe(
       `app-13\nStarted app-12.\nskel: trusting a repository is only for your own terminal, not for agents\n{"error":"the daemon doesn't know that request"}\n`,
@@ -546,6 +458,10 @@ c.on("data", (d) => process.stdout.write(d));`;
 
   test("skel stop ends the builder and keeps its clone, a restart leaves it stopped, and skel start brings it back with --resume", async () => {
     addApp();
+    // Opened before, so the daemon starts app's lead, whose socket the stop comes from.
+    const db = new Database(join(data(), "skel.db"));
+    db.run("UPDATE repositories SET opened = 1");
+    db.close();
     const first = serve();
     await untilCloned();
     await skel("start", "app-12");
@@ -567,7 +483,8 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(fromBuilder.stderr.toString()).toContain("doesn't know that request");
     expect(hasSession("app-12")).toBe(true);
 
-    const fromLead = stopFrom(join(home, "run", "skel", "lead", "skel.sock"));
+    const lead = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
+    const fromLead = stopFrom(join(home, "run", "skel", "leads", lead, "skel.sock"));
     expect(fromLead.stderr.toString()).toBe("");
     expect(fromLead.stdout.toString()).toContain("Stopped app-12.");
     expect(hasSession("app-12")).toBe(false);
@@ -762,12 +679,12 @@ nameRepositories(db);`;
     expect(thread().status).toBe("working");
   }, 30_000);
 
-  test("a thread on a repository brought in by its GitHub name starts once skel's clone is there", async () => {
-    onGitHub({}, "site");
+  test("a thread on a repository whose clone isn't there yet starts once skel's clone is", async () => {
+    addApp({}, "site");
+    holdClones();
     serve();
     await untilAnswers();
-    holdClones();
-    const started = await skel("start", "simon/site-12");
+    const started = await skel("start", "site-12");
     expect(started.out).toBe("Started site-12.\n");
     expect(existsSync(join(data(), "repos", "simon", "site"))).toBe(false);
     writeFileSync(join(home, "go"), "");

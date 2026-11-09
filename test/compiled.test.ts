@@ -72,9 +72,7 @@ async function run(args: string[], file = skel) {
 test("runs commands with its state", async () => {
   const listed = await run(["repo", "ls"]);
   expect(listed.err).toBe("");
-  expect(listed.out).toBe(
-    "skel has no repositories yet. Run skel in a checkout of one, or ask the lead for one by its GitHub name.\n",
-  );
+  expect(listed.out).toBe("skel has no repositories yet. Run skel in a checkout of one.\n");
 });
 
 test("points the daemon's service at itself", async () => {
@@ -123,7 +121,7 @@ test("the sidebar's header shows the release of the skel that runs it", async ()
   try {
     tmux("new-session", "-d", "-s", "one", "-x", "120", "-y", "30", "sleep 60");
     const env = `env HOME=${home} XDG_RUNTIME_DIR=${join(home, "run")}`;
-    tmux("split-window", "-b", "-h", "-t", "=one:", `${env} ${file} sidebar ${agents} one ''`);
+    tmux("split-window", "-b", "-h", "-t", "=one:", `${env} ${file} sidebar ${agents} one '' lead`);
     const header = () => tmux("show", "-v", "-t", "=one:", "status-format[0]").stdout.toString();
     for (let tries = 0; tries < 100 && !header().includes("skel"); tries++) await Bun.sleep(100);
     expect(header()).toContain(" 0.4.2");

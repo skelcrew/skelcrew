@@ -181,8 +181,8 @@ export function baseOf(thread: Thread): string {
 // everything in the folder, .git included.
 export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   const clone = cloneOf(thread);
-  // skel's clone of the repository can still be on its way, as the daemon makes it once it
-  // has started the lead. Asking for a refresh joins the one under way.
+  // skel's clone of the repository can still be on its way, as the daemon refreshes clones
+  // as it starts. Asking for a refresh joins the one under way.
   if (!existsSync(cloneDir(thread.owner, thread.repo))) await refreshClones(db);
   rmSync(clone, { recursive: true, force: true });
   // From skel's own clone on the same disk, so git links its files rather than copying them.

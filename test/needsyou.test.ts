@@ -9,6 +9,7 @@ import { createConnection } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
+import { leadPlaces } from "../src/paths.ts";
 import {
   git,
   homeEnv,
@@ -26,7 +27,8 @@ const running: Subprocess[] = [];
 
 const data = () => join(home, ".local", "share", "skel");
 const builder = () => join(data(), "claude", "app-12");
-const lead = () => join(data(), "claude", "lead");
+// The config folder of a repository's lead, where the fake keeps what is typed into it.
+const lead = (repo = "app") => join(data(), "claude", leadPlaces("simon", repo).name);
 
 // Puts a program of the test's on its PATH.
 const script = (name: string, body: string) => writeScript(home, name, body);
@@ -40,7 +42,7 @@ function fakeClaude(): void {
   script(
     "claude",
     `printf '%s\\n' "$@" > "$CLAUDE_CONFIG_DIR/args"
-case "$CLAUDE_CONFIG_DIR" in */lead)
+case "$CLAUDE_CONFIG_DIR" in */lead-*)
   printf '\\033[?2004h'
   stty -echo
   # A shell gives a command run in the background /dev/null as its input, unless told.
@@ -122,17 +124,18 @@ const skel = (args: string[], more: Record<string, string> = {}) =>
 // A daemon's work takes its time here, so a wait lasts 15 seconds unless a test says otherwise.
 const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout });
 
-// Puts simon/app on the fake GitHub and tells skel about it.
-function addApp(): void {
-  const work = join(home, "work", "app");
+// Puts simon/app, or another of simon's repositories, on the fake GitHub and tells skel about
+// it.
+function addApp(name = "app"): void {
+  const work = join(home, "work", name);
   mkdirSync(work, { recursive: true });
-  writeFileSync(join(work, "README"), "app\n");
+  writeFileSync(join(work, "README"), `${name}\n`);
   git(work, "init", "-q", "-b", "main");
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");
-  git(home, "clone", "-q", "--bare", work, join(home, "github", "simon", "app.git"));
+  git(home, "clone", "-q", "--bare", work, join(home, "github", "simon", `${name}.git`));
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app')");`;
+openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?)", [${JSON.stringify(name)}, ${JSON.stringify(name)}]);`;
   const added = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   if (!added.success) throw new Error(added.stderr.toString());
 }
@@ -158,7 +161,7 @@ async function hook(step: "ask" | "answer" | "talk") {
   await until(() => read(join(builder(), "ran")).split("\n").length > before);
 }
 
-const notes = () => read(join(lead(), "typed")).split("\x1b[201~").length - 1;
+const notes = (repo = "app") => read(join(lead(repo), "typed")).split("\x1b[201~").length - 1;
 
 function setNeedsYou(): void {
   const db = new Database(join(data(), "skel.db"));
@@ -182,9 +185,12 @@ function askForLead(from?: string): Promise<string> {
   });
 }
 
-async function startApp12() {
+// Starts the daemon and app-12, opening app first, as plain skel in its checkout does, unless
+// told not to.
+async function startApp12(open = true) {
   serve();
   await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
+  if (open) expect(await askForLead("simon/app")).toContain(leadPlaces("simon", "app").name);
   expect((await skel(["start", "app-12"])).err).toBe("");
   await until(() => read(join(builder(), "args")) !== "", 30_000);
 }
@@ -252,30 +258,44 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("needs you", () => {
     expect(notes()).toBe(1);
   }, 60_000);
 
-  // A needs-you note must reach you when you haven't typed anything. Where you attached from
-  // waits for your next message instead.
-  test("a needs-you note is typed into the lead, and where you attached from is not", async () => {
+  // One repository's lead never mentions another's threads.
+  test("a needs-you note is typed into the lead of the thread's repository, and no other", async () => {
     addApp();
+    addApp("web");
     await startApp12();
-    expect(await askForLead("simon/app")).toContain('"lead":true');
+    await until(() => existsSync(join(data(), "repos", "simon", "web", "README")));
+    expect(await askForLead("simon/web")).toContain(leadPlaces("simon", "web").name);
     await hook("ask");
     await untilNeedsYou(true);
     await until(() => notes() === 1);
     await Bun.sleep(1000);
     expect(notes()).toBe(1);
     expect(read(join(lead(), "typed"))).toContain("app-12 needs you: its builder asked a question");
-    expect(read(join(lead(), "typed"))).not.toContain("attached");
+    expect(read(join(lead("web"), "typed"))).toBe("");
+  }, 60_000);
+
+  test("a note for a repository whose lead never started waits until you open it", async () => {
+    addApp();
+    await startApp12(false);
+    await hook("ask");
+    await untilNeedsYou(true);
+    await Bun.sleep(1000);
+    expect(notes()).toBe(0);
+    expect(await askForLead("simon/app")).toContain(leadPlaces("simon", "app").name);
+    await until(() => notes() === 1);
+    expect(read(join(lead(), "typed"))).toContain("app-12 needs you: its builder asked a question");
   }, 60_000);
 
   test("a note for a lead that isn't running is typed once the lead starts again", async () => {
     addApp();
     await startApp12();
-    Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=lead"]);
+    const name = leadPlaces("simon", "app").name;
+    Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", `=${name}`]);
     rmSync(join(lead(), "typed"), { force: true });
     await hook("ask");
     await untilNeedsYou(true);
     await Bun.sleep(1000);
-    expect(await askForLead()).toContain('"lead":true');
+    expect(await askForLead()).toContain(name);
     await until(() => notes() === 1);
     expect(read(join(lead(), "typed"))).toContain("app-12 needs you: its builder asked a question");
   }, 60_000);

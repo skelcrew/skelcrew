@@ -103,8 +103,8 @@ export const notSetUp = (where: string) =>
   `${where} isn't set up. Run this on your laptop:\n  skel remote add ${where}`;
 
 // Runs a skel command on the host and returns its exit code. Plain skel passes the
-// repository you are in on the laptop, so the lead knows it too. Stops when the host has no
-// skel.
+// repository you are in on the laptop, so it opens that repository's lead there. Stops when
+// the host has no skel.
 export async function remote(host: string, args: string[]): Promise<number> {
   const from = args.length === 0 ? originHere() : null;
   const there = onServer(host, from ? ["--from", from] : args);
