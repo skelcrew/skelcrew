@@ -10,6 +10,7 @@ import { sidebarWidth } from "../src/screen/screen.ts";
 import {
   draw as drawLists,
   jumped,
+  noticeLines,
   picked as pickedInLists,
   stepped as steppedInLists,
 } from "../src/screen/sidebar.ts";
@@ -255,6 +256,17 @@ test("four hints with the keys stay at the bottom, below however few rows there 
   expect(lines).toHaveLength(size.height);
   expect(lines.slice(-4)).toEqual(["  ⌥↑↓ move", "  ⌥⇧↑↓ list", "  ⌥←→ repo", "  ⌃Q quit"]);
   expect(draw([lead], "lead", size)).toContain("\x1b[90m  ⌥↑↓ move");
+});
+
+test("a release installed in the background shows as a notice, cut at words to fit", () => {
+  const lines = noticeLines("skel 0.4.3 installed · restart to use it", sidebarWidth);
+  expect(lines.map((line) => Bun.stripANSI(line).slice(0, -1).trimEnd())).toEqual([
+    "  skel 0.4.3 installed ·",
+    "  restart to use it",
+    "",
+  ]);
+  for (const line of lines) expect(Bun.stringWidth(line)).toBe(sidebarWidth);
+  expect(noticeLines("", sidebarWidth)).toEqual([]);
 });
 
 test("a list too long for the sidebar scrolls above the hints, and never runs into them", () => {

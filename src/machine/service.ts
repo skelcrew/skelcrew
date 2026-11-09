@@ -5,7 +5,14 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { skelLine } from "../say.ts";
 import { checkoutFolder, singleFile } from "../version.ts";
-import { daemonLog, loadLaunchAgent, plistFile, plistText, startLaunchAgent } from "./launchd.ts";
+import {
+  daemonLog,
+  loadLaunchAgent,
+  plistFile,
+  plistText,
+  restartLaunchAgent,
+  startLaunchAgent,
+} from "./launchd.ts";
 import { installSpriteService, onSprite, serviceLog, startSpriteService } from "./sprite.ts";
 
 // Returns the systemd user service path, which also marks daemon installation complete.
@@ -157,4 +164,25 @@ export function startDaemon(): string {
   });
   if (!start.success) throw new Error("systemctl couldn't start skel's daemon");
   return "journalctl --user -u skel";
+}
+
+// Restarts the daemon's service on this machine, so it runs the skel installed now, and returns
+// where its log is, for when it doesn't come back. Agents keep running, as their sessions live
+// in tmux and only the daemon restarts. Throws when the service manager refuses.
+export function restartDaemon(): string {
+  if (process.platform === "darwin") {
+    restartLaunchAgent();
+    return daemonLog();
+  }
+  const sprite = onSprite();
+  const argv = sprite
+    ? ["sprite-env", "services", "restart", "skel"]
+    : ["systemctl", "--user", "restart", "skel"];
+  // sprite-env prints the service's log for a few seconds after starting it.
+  const restart = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe" });
+  if (!restart.success)
+    throw new Error(
+      `${argv[0]} couldn't restart skel's daemon: ${restart.stderr.toString().trim()}`,
+    );
+  return sprite ? serviceLog : "journalctl --user -u skel";
 }

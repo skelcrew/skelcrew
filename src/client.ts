@@ -9,9 +9,11 @@ import { RepositoryRow, TaskRow, TaskView, ThreadRow } from "./flow/list.ts";
 import { Page } from "./flow/page.ts";
 import { type DaemonRequest, parseJson } from "./flow/requests.ts";
 import { findThread } from "./flow/thread.ts";
-import { startDaemon } from "./machine/service.ts";
+import { restartDaemon, startDaemon } from "./machine/service.ts";
 import { cliSocket } from "./paths.ts";
+import { skelLine } from "./say.ts";
 import { openScreen } from "./screen/screen.ts";
+import { release } from "./version.ts";
 
 const LeadReply = z.union([
   z.object({ lead: z.string(), repository: z.string() }),
@@ -170,10 +172,41 @@ export async function pageOf(url: string): Promise<Page> {
   return understood(z.object({ page: Page }), reply).page;
 }
 
+// Returns the release the daemon runs, or null when no daemon answers. A daemon from a
+// checkout, or from before daemons said, gives "".
+async function daemonRelease(): Promise<string | null> {
+  const reply = await ask({ command: "status" }, 2000);
+  if (reply === null) return null;
+  return z
+    .object({ release: z.string().catch("") })
+    .catch({ release: "" })
+    .parse(reply).release;
+}
+
+// Restarts the daemon when it runs another release than this skel, before you attach, so a
+// release installed in the background takes over once you leave and run skel again. A build
+// from a checkout never does: you update it with git pull and restart its daemon yourself.
+export async function onThisRelease(): Promise<void> {
+  if (!release) return;
+  const running = await daemonRelease();
+  if (running === null || running === release) return;
+  console.log(skelLine(`restarting the daemon on skel ${release}. Your agents keep running.`));
+  const log = restartDaemon();
+  const deadline = Date.now() + 10_000;
+  while ((await daemonRelease()) !== release) {
+    if (Date.now() > deadline)
+      throw new Error(
+        `skel's daemon didn't come back on ${release} within 10 seconds: ${log} shows why`,
+      );
+    await Bun.sleep(100);
+  }
+}
+
 // Ensures the daemon and the lead of the repository you attached from, as owner/repo, are
 // running, then opens the screen on that lead until you leave with Ctrl-Q. With none, the
 // daemon opens the repository you opened last.
 export async function attachToLead(tmux: string, from?: string): Promise<void> {
+  await onThisRelease();
   const asked: DaemonRequest = { command: "lead", ...(from ? { from } : {}) };
   // Asking for the lead brings it back if it ended while the daemon kept running.
   let reply = await ask(asked, 15_000);

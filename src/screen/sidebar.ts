@@ -19,6 +19,7 @@ import { threadConfig } from "../config.ts";
 import { openDb } from "../db.ts";
 import { leadOf } from "../flow/lead.ts";
 import type { Thread } from "../flow/thread.ts";
+import { updateNotice } from "../machine/update.ts";
 import { leadPlaces } from "../paths.ts";
 import { release } from "../version.ts";
 import { clean, edge, fitted, grey, onShade, pad, paint, shade, white, yellow } from "./look.ts";
@@ -226,6 +227,24 @@ function stops(rows: Row[], lists: Lists, shown: string | null, size: Size): Sto
   return [seen(lists.issues), threads, seen(lists.prs)];
 }
 
+// Returns the lines that go above the lists for a notice, such as a release installed in the
+// background, or none without one. Cut at words to fit a sidebar `width` columns wide, and
+// parted from the lists by a blank line. Each fills the pane and ends with the sidebar's edge.
+export function noticeLines(notice: string, width: number): string[] {
+  if (!notice) return [];
+  const room = Math.max(width - 1 - 2 * pad.length, 1);
+  const lines = [""];
+  for (const word of notice.split(" ")) {
+    const last = lines.length - 1;
+    const longer = lines[last] ? `${lines[last]} ${word}` : word;
+    if (Bun.stringWidth(longer) <= room || !lines[last]) lines[last] = longer;
+    else lines.push(word);
+  }
+  return [...lines.map((line) => `${pad}${line}`), ""].map(
+    (line) => `${filled(line, width - 1)}${paint(edge, "│")}`,
+  );
+}
+
 // Returns what is one row up or down, for Alt-Up and Alt-Down, as a session or a link's url, or
 // null at either end. Rows whose agent isn't running are stepped over: nothing could show on
 // the right. From a row that has gone, it goes to the lead.
@@ -320,6 +339,8 @@ export async function runSidebar(
   let page: Link | null = null;
   let last = "";
   let lastStrip = "";
+  // The notice's lines, above the lists, which have the height that is left.
+  let notice: string[] = [];
   // Returns a thread's round limit, from its repository's skel.yaml or your config. Settings
   // that aren't valid already stop rounds, with the reason, and mustn't also take the sidebar
   // away. Such a thread then reads as never past the limit.
@@ -330,10 +351,10 @@ export async function runSidebar(
       return Number.POSITIVE_INFINITY;
     }
   };
-  // Returns the pane's size now, as the terminal can change it at any time.
+  // Returns the size the lists have now, as the terminal can change it at any time.
   const size = (): Size => ({
     width: process.stdout.columns || sidebarWidth,
-    height: process.stdout.rows || 24,
+    height: (process.stdout.rows || 24) - notice.length,
   });
   // Returns the row of ISSUES or PRS with a link's url, if any.
   const linkAt = (url: string | null) =>
@@ -345,6 +366,7 @@ export async function runSidebar(
     const first = tabs[0];
     if (first && !tabs.some((tab) => tab.fullName === `${open.owner}/${open.repo}`))
       switchTo(first.fullName);
+    notice = noticeLines(updateNotice(), size().width);
     rows = sidebarRows(db, runningSessions(agents), maxRounds, Date.now(), open);
     // A row takes two lines, so the sidebar's height is more than any list can show.
     lists = sidebarLists(db, rows, size().height, open);
@@ -359,7 +381,7 @@ export async function runSidebar(
       lastStrip = lines.join("\n");
       showStrip(screenSocket(agents), session, lines);
     }
-    const frame = draw(rows, lists, shown, size());
+    const frame = [...notice, draw(rows, lists, shown, size())].join("\n");
     if (frame === last) return;
     last = frame;
     // Every line fills the pane, so nothing of the last frame is left to clear.
@@ -411,7 +433,7 @@ export async function runSidebar(
         const beside = kind === "3" ? besideOpen(arrow === "C" ? 1 : -1) : null;
         if (beside) switchTo(beside);
       } else if (arrow) show(move(rows, lists, shown, size(), arrow === "A" ? -1 : 1));
-      else if (y) show(picked(rows, lists, shown, size(), Number(y) - 1));
+      else if (y) show(picked(rows, lists, shown, size(), Number(y) - 1 - notice.length));
     }
     refresh();
   });

@@ -1,7 +1,7 @@
 // skel --remote and skel remote add: run a skel command on your server over ssh -t, from your
-// laptop, and set a server up for that. --remote offers to replace skel there when it was
-// built from another commit than yours. Your laptop can be a Mac, so this file loads nothing
-// of the skel that runs on the server.
+// laptop, and set a server up for that. --remote offers to replace skel there when it is an
+// older release than yours, or was built from another commit. Your laptop can be a Mac, so
+// this file loads nothing of the skel that runs on the server.
 import { chmodSync, mkdtempSync, rmSync, writeSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,7 @@ import {
   checkoutFolder,
   dirty,
   git,
+  isRelease,
   laptopBuild,
   mainFile,
   readable,
@@ -33,15 +34,25 @@ export const outdated = 98;
 
 // Reports whether this skel, copied to a server or Sprite, is from another build than the
 // laptop that runs it there with --remote, and says so. The laptop passes its build along
-// with the command, so the check costs no round trip of its own.
+// with the command, so the check costs no round trip of its own. A release newer than the
+// laptop's counts as up to date: it installed itself in the background, and the laptop
+// catches up on its own, so asking would only offer to go back.
 export function outOfDate(): boolean {
   const laptop = process.env.SKEL_LAPTOP_BUILD;
   if (!laptop || built === undefined || (laptop === built && !built.endsWith(dirty))) return false;
+  if (release && isRelease(laptop) && newer(release, laptop)) return false;
   const where = process.env.SKEL_REMOTE_NAME;
   console.log(
     skelLine(`skel on ${where} is from ${readable(built)}, yours is ${readable(laptop)}.`),
   );
   return true;
+}
+
+// Says whether release `a` comes after release `b`, by number, so 0.4.10 comes after 0.4.9.
+function newer(a: string, b: string): boolean {
+  const [x, y] = [a.split(".").map(Number), b.split(".").map(Number)];
+  const at = x.findIndex((part, i) => part !== y[i]);
+  return at !== -1 && (x[at] ?? 0) > (y[at] ?? 0);
 }
 
 // Returns a word the server's shell reads back exactly as given. ssh joins its words with
@@ -132,14 +143,15 @@ export async function addMachine(
 
 // Runs skel on a server or Sprite through `there`, which takes the environment to add to
 // what it always passes, and returns its exit code. A copied skel there from another build
-// than this laptop's runs nothing, so you are asked to replace it first. Either way the
-// command then runs, without the check, so a build with uncommitted changes can't ask twice.
+// than this laptop's, its release or its commit, runs nothing, so you are asked to replace it
+// first. Either way the command then runs, without the check, so a build with uncommitted
+// changes can't ask twice.
 export async function upToDate(
   where: string,
   there: (env: string[]) => Promise<number>,
   machine: Machine,
 ): Promise<number> {
-  const build = laptopBuild();
+  const build = release || laptopBuild();
   const code = await there(build ? [`SKEL_LAPTOP_BUILD=${build}`] : []);
   if (code !== outdated) return code;
   const answer = prompt(skelLine("Update it? [Y/n]"))?.trim().toLowerCase() ?? "";
@@ -200,23 +212,24 @@ export type Machine = {
   updated: () => Promise<void>;
 };
 
-// Prints what you should know about the checkout skel is built from, and returns its folder
-// and commit as skel names them. The build is the checkout as it is, so changes not
+// Prints what you should know about the checkout skel is built from, and returns what was
+// built, naming its folder and commit. The build is the checkout as it is, so changes not
 // committed, or a branch other than main, go along, which is allowed but worth a line.
-function describeCheckout(): { folder: string; commit: string } {
+function describeCheckout(): string {
   const folder = checkoutFolder;
   const shown = folder.startsWith(`${homedir()}/`) ? `~${folder.slice(homedir().length)}` : folder;
   if (git("status", "--porcelain") !== "")
     console.log(skelLine(`${shown} has uncommitted changes, and they are copied too.`));
   const branch = git("rev-parse", "--abbrev-ref", "HEAD");
   if (branch !== "main") console.log(skelLine(`${shown} is on ${branch}, not main.`));
-  return { folder: shown, commit: git("rev-parse", "--short", "HEAD") };
+  return `the skel in ${shown} (commit ${git("rev-parse", "--short", "HEAD")})`;
 }
 
-// Replaces skel on a server or Sprite with one built from this checkout, then restarts the
-// daemon's service there so it runs the new build. The tmux server outlives the daemon, so
-// the lead and builders keep their Claude Code running. A skel run from a checkout there is
-// left alone: a copy would leave the checkout behind while the daemon kept running it.
+// Replaces skel on a server or Sprite with this laptop's release, or one built from this
+// checkout, then restarts the daemon's service there so it runs the new build. The tmux
+// server outlives the daemon, so the lead and builders keep their Claude Code running. A skel
+// run from a checkout there is left alone: a copy would leave the checkout behind while the
+// daemon kept running it.
 async function update(where: string, machine: Machine): Promise<void> {
   // update only ever writes ~/.local/bin/skel, so it goes by the skel the daemon's service
   // starts, which can be elsewhere: a checkout skel once ran from, or a copy put somewhere
@@ -244,7 +257,7 @@ else echo "elsewhere $f"; fi`;
     throw new Error(
       `the daemon on ${where} runs skel from ${found[3]}, not ~/.local/bin/skel, where update puts it, so nothing was replaced`,
     );
-  const { folder, commit } = describeCheckout();
+  const now = release ? `skel ${release}` : describeCheckout();
   await withLinuxSkel(machine);
   // The service commands print their logs, which matter only when they fail.
   const restarted = await quietly(machine.shell(machine.restart));
@@ -255,7 +268,7 @@ else echo "elsewhere $f"; fi`;
   await machine.updated();
   console.log(
     skelLine(
-      `updated ${where} to the skel in ${folder} (commit ${commit}) and restarted its daemon. The lead and builders keep running, and the lead picks up new instructions when it's next started.`,
+      `updated ${where} to ${now} and restarted its daemon. The lead and builders keep running, and the lead picks up new instructions when it's next started.`,
     ),
   );
 }

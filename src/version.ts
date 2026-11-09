@@ -10,9 +10,12 @@ import { join, resolve } from "node:path";
 declare const SKEL_BUILD: string;
 export const built = typeof SKEL_BUILD === "string" ? SKEL_BUILD : undefined;
 
-// The release this skel is, or nothing for a build from a checkout. A commit has no dots, so
-// the stamp can't be mistaken.
-export const release = built !== undefined && /^\d+\.\d+\.\d+$/.test(built) ? built : "";
+// Says whether a build is a release, such as 0.4.2. A commit has no dots, so the two can't be
+// mistaken.
+export const isRelease = (build: string) => /^\d+\.\d+\.\d+$/.test(build);
+
+// The release this skel is, or nothing for a build from a checkout.
+export const release = built !== undefined && isRelease(built) ? built : "";
 
 // Where releases live, stamped in by the release build from the install script, the one place
 // that says so.
