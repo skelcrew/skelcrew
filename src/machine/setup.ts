@@ -2,7 +2,7 @@
 // done.
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { HarnessName } from "../agents/harness.ts";
+import { HarnessName } from "../agents/harness.ts";
 import { configFile, readConfig } from "../config.ts";
 import { claudeTokenFile, codexHome, configDir } from "../paths.ts";
 import { rule, skelLine } from "../say.ts";
@@ -220,6 +220,29 @@ function pickHarness(env: Env): void {
   writeFileSync(configFile(), config.toString());
 }
 
+// Returns the harness your config names for reviews, or none when reviews run on your harness.
+function reviewerSaved(): HarnessName | undefined {
+  const read = HarnessName.safeParse(readConfig().config.getIn(["reviewer", "harness"]));
+  return read.success ? read.data : undefined;
+}
+
+// Asks which harness reviews run on, offering the other one first, as a second model sees what
+// the builder's model misses. Saves it only when it isn't your harness, which reviews run on
+// anyway.
+function pickReviewer(harness: HarnessName): void {
+  const other = harnesses.filter((h) => h.name !== harness);
+  const choices = [...other, ...harnesses.filter((h) => h.name === harness)];
+  for (const [at, h] of choices.entries()) console.log(`  ${at + 1}) ${h.title}`);
+  const answer = prompt(skelLine("pick one by its number"), "1");
+  if (answer === null) throw new Error("no harness was picked for reviews, so none is saved");
+  const picked = choices[Number(answer.trim()) - 1];
+  if (!picked) throw new Error(`${answer.trim()} isn't one of the numbers, so none is saved`);
+  if (picked.name === harness) return;
+  const { config } = readConfig();
+  config.setIn(["reviewer", "harness"], picked.name);
+  writeFileSync(configFile(), config.toString());
+}
+
 // Reports whether agents on this harness have their login: Claude Code's token from the
 // first run, or skel's own Codex login, which reviews use too. Only files are looked at, as
 // plain skel checks this each time it starts.
@@ -235,7 +258,8 @@ function agentsLoggedIn(harness: HarnessName): boolean {
 export function setupDone(): boolean {
   const service = onSprite() ? spriteServiceInstalled() : existsSync(serviceFile());
   const { harness } = readConfig();
-  return harness !== undefined && agentsLoggedIn(harness) && service;
+  if (harness === undefined) return false;
+  return agentsLoggedIn(harness) && agentsLoggedIn(reviewerSaved() ?? harness) && service;
 }
 
 // Completes unfinished machine setup and keeps the daemon service current before attaching
@@ -252,8 +276,9 @@ export function firstRun(): void {
     // The steps left are worked out again after each one, as the harness you pick decides
     // which login comes next.
     let taken = "";
+    const asked = { reviewer: false };
     for (let at = 1; ; at++) {
-      const [step, ...rest] = stepsToTake(env);
+      const [step, ...rest] = stepsToTake(env, asked);
       if (!step) break;
       if (step.title === taken) throw new Error(`${step.title} didn't finish`);
       console.log(`\n${skelLine(`step ${at} of ${at + rest.length}: ${step.title}`)}`);
@@ -261,10 +286,12 @@ export function firstRun(): void {
       step.take();
       taken = step.title;
     }
-    if (!Bun.which("codex", { PATH: env.PATH }))
+    const yours = readConfig().harness;
+    const other = harnesses.find((h) => h.name !== yours);
+    if (other && !Bun.which(other.command, { PATH: env.PATH }))
       console.log(
         skelLine(
-          "Codex isn't installed, so reviews will run on your harness, with no second view on another model.",
+          `${other.title} isn't installed, so reviews will run on your harness, with no second view on another model.`,
         ),
       );
   }
@@ -282,8 +309,10 @@ export function firstRun(): void {
 type Step = { title: string; about: string; take: () => void };
 
 // Returns the first run's steps that aren't done yet, so their numbers count only what
-// runs this time.
-function stepsToTake(env: Env): Step[] {
+// runs this time. `asked` says whether you were asked about reviews in this run, as reviews on
+// your own harness save nothing to show it. Until you pick a harness, Claude Code's login is
+// counted, as Enter usually picks it.
+function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
   const steps: Step[] = [];
   if (!githubConnected(env))
     steps.push({
@@ -298,16 +327,29 @@ function stepsToTake(env: Env): Step[] {
       about: "The harness is the coding agent that does the work: Claude Code or Codex.",
       take: () => pickHarness(env),
     });
-  // Codex agents share the reviewer's login below.
-  if (harness !== "codex" && !existsSync(claudeTokenFile()))
+  const PATH = env.PATH ?? "";
+  const both = harnesses.every((h) => Bun.which(h.command, { PATH }));
+  if (harness && both && !reviewerSaved() && !asked.reviewer)
     steps.push({
-      title: "log agents in to Claude",
-      about: "Claude Code will print a long-lived token. Copy it, then come back here.",
-      take: () => saveClaudeToken(env),
+      title: "pick a harness for reviews",
+      about: "A reviewer on another model sees what the builder's model misses.",
+      take: () => {
+        pickReviewer(harness);
+        asked.reviewer = true;
+      },
     });
-  if (Bun.which("codex", { PATH: env.PATH ?? "" }) && !reviewerLoggedIn(env))
+  const reviewer = reviewerSaved() ?? harness;
+  if ((harness ?? "claude") !== "codex" || reviewer === "claude")
+    if (!existsSync(claudeTokenFile()))
+      steps.push({
+        title: harness === "codex" ? "log the reviewer in to Claude" : "log agents in to Claude",
+        about: "Claude Code will print a long-lived token. Copy it, then come back here.",
+        take: () => saveClaudeToken(env),
+      });
+  // Codex agents share the reviewer's login, skel's own.
+  if ((harness === "codex" || reviewer === "codex") && !reviewerLoggedIn(env))
     steps.push({
-      title: "log the reviewer in to Codex",
+      title: harness === "codex" ? "log agents in to Codex" : "log the reviewer in to Codex",
       about: "Codex will show a link and a code. Open the link on any device and enter the code.",
       take: () => loginReviewer(env),
     });

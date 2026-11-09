@@ -18,6 +18,7 @@ import {
 import { createServer, type Server } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
+import { parse } from "yaml";
 
 let home = "";
 let bin = "";
@@ -601,10 +602,10 @@ esac`,
 
 test("logs the reviewer in to Codex with a login of skel's own", async () => {
   fakeCodex();
-  const run = await skel("1\nsk-ant-oat01-good\n");
+  const run = await skel("1\n\nsk-ant-oat01-good\n");
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toContain("skel · step 4 of 4: log the reviewer in to Codex\n");
+  expect(run.out).toContain("skel · step 5 of 5: log the reviewer in to Codex\n");
   expect(run.out).toContain("skel · the reviewer is logged in to Codex.\n");
   expect(calls()).toContain(`codex login --device-auth\nCODEX_HOME=${codexHome()}\n`);
   expect(existsSync(join(codexHome(), "auth.json"))).toBe(true);
@@ -619,7 +620,7 @@ test("skips the reviewer's login when skel's Codex login works already", async (
   fakeCodex();
   mkdirSync(codexHome(), { recursive: true });
   writeFileSync(join(codexHome(), "auth.json"), "{}");
-  const run = await skel("1\nsk-ant-oat01-good\n");
+  const run = await skel("1\n\nsk-ant-oat01-good\n");
   expect(run.code).toBe(0);
   expect(calls()).toContain("codex login status");
   expect(calls()).not.toContain("codex login --device-auth");
@@ -628,6 +629,7 @@ test("skips the reviewer's login when skel's Codex login works already", async (
 test("says reviews run on your harness when Codex isn't installed", async () => {
   const run = await skel("1\nsk-ant-oat01-good\n");
   expect(run.code).toBe(0);
+  expect(run.out).not.toContain("for reviews");
   expect(run.out).toContain(
     "skel · Codex isn't installed, so reviews will run on your harness, with no second view",
   );
@@ -637,7 +639,7 @@ test("says reviews run on your harness when Codex isn't installed", async () => 
 
 test("finishes no setup when the reviewer's login fails, so the next skel tries again", async () => {
   fakeCodex("exit 1");
-  const run = await skel("1\nsk-ant-oat01-good\n");
+  const run = await skel("1\n\nsk-ant-oat01-good\n");
   expect(run.code).toBe(1);
   expect(run.err).toContain("codex login");
   // The way back is marked even when the tool fails.
@@ -660,7 +662,8 @@ test("on a machine with only Codex, Enter picks it, and its one login serves age
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(run.out).toContain("2) Codex");
-  expect(run.out).toContain("skel · step 3 of 3: log the reviewer in to Codex\n");
+  expect(run.out).toContain("skel · step 3 of 3: log agents in to Codex\n");
+  expect(run.out).not.toContain("for reviews");
   expect(readFileSync(config(), "utf8")).toContain("harness: codex");
   expect(calls()).toContain(`codex login --device-auth\nCODEX_HOME=${codexHome()}\n`);
   expect(calls()).not.toContain("claude");
@@ -673,12 +676,51 @@ test("on a machine with only Codex, Enter picks it, and its one login serves age
   expect(calls()).toBe("daemon lead\nscreen on lead\n");
 });
 
-test("picking Codex where Claude Code is installed too skips Claude's login", async () => {
+test("picking Codex for agents and reviews where Claude Code is installed too skips Claude's login", async () => {
   fakeCodex();
-  const run = await skel("2\n");
+  const run = await skel("2\n2\n");
   expect(run.code).toBe(0);
   expect(readFileSync(config(), "utf8")).toContain("harness: codex");
   expect(calls()).not.toContain("claude setup-token");
+  expect(calls()).toContain("codex login --device-auth");
+});
+
+test("asks which harness reviews, offering the other one first", async () => {
+  fakeCodex();
+  const run = await skel("1\n\nsk-ant-oat01-good\n");
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  const asked = run.out.slice(run.out.indexOf("pick a harness for reviews"));
+  expect(asked.indexOf("1) Codex")).toBeLessThan(asked.indexOf("2) Claude Code"));
+  expect(parse(readFileSync(config(), "utf8"))).toEqual({
+    harness: "claude",
+    reviewer: { harness: "codex" },
+  });
+});
+
+test("reviews on your own harness save nothing more, and need no other login", async () => {
+  fakeCodex();
+  const run = await skel("1\n2\nsk-ant-oat01-good\n");
+  expect(run.code).toBe(0);
+  expect(parse(readFileSync(config(), "utf8"))).toEqual({ harness: "claude" });
+  expect(calls()).not.toContain("codex login --device-auth");
+  writeFileSync(join(home, "calls"), "");
+  await skel();
+  expect(calls()).toBe("daemon lead\nscreen on lead\n");
+});
+
+test("Codex agents with Claude Code reviews log in to both", async () => {
+  fakeCodex();
+  const run = await skel("2\n\nsk-ant-oat01-good\n");
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("log the reviewer in to Claude");
+  expect(run.out).toContain("log agents in to Codex");
+  expect(parse(readFileSync(config(), "utf8"))).toEqual({
+    harness: "codex",
+    reviewer: { harness: "claude" },
+  });
+  expect(readFileSync(token(), "utf8").trim()).toBe("sk-ant-oat01-good");
   expect(calls()).toContain("codex login --device-auth");
 });
 
@@ -721,7 +763,7 @@ const servicePath = () =>
 test("finds the tools your login shell finds, on a first run over ssh", async () => {
   fakeCodex();
   const nvm = onlyLoginShellKnows(["claude", "codex"]);
-  const run = await skel("1\nsk-ant-oat01-good\n", bin, main(), home, { SHELL: "/bin/bash" });
+  const run = await skel("1\n\nsk-ant-oat01-good\n", bin, main(), home, { SHELL: "/bin/bash" });
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(calls()).toContain("claude setup-token");
@@ -734,7 +776,7 @@ test("finds the tools your login shell finds, on a first run over ssh", async ()
 test("keeps the login shell's folders in the service when skel runs over ssh again", async () => {
   fakeCodex();
   const nvm = onlyLoginShellKnows(["claude", "codex"]);
-  await skel("1\nsk-ant-oat01-good\n", bin, main(), home, { SHELL: "/bin/bash" });
+  await skel("1\n\nsk-ant-oat01-good\n", bin, main(), home, { SHELL: "/bin/bash" });
   writeFileSync(join(home, "calls"), "");
   const run = await skel("", bin, main(), home, { SHELL: "/bin/bash" });
   expect(run.code).toBe(0);
