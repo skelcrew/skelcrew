@@ -192,6 +192,8 @@ The daemon polls GitHub with one GraphQL query per repository, fetching every op
 
 ## Commands
 
+Every command that lists or shows something takes `--json`, for tools. Commands that do something, such as start, stop, review, submit, tell and task create, print one line or fail with a clear message and a non-zero exit, with or without `--json`.
+
 For you, and for the lead:
 
 | Command | What it does |
@@ -200,7 +202,7 @@ For you, and for the lead:
 | `skel --remote <host> [command]` | Runs any skel command on the server, over `ssh -t`. With `sprite:<name>` as the host, runs it on that Sprite instead. Keeps skel there up to date with your checkout, after asking. |
 | `skel remote add <host>` | Sets up a server, or with `sprite:<name>` a Sprite, creating it after asking if it doesn't exist. Runs the first run there and prints the `skel --remote` command that connects. Run it on your laptop. |
 | `skel serve` | Runs the daemon in the foreground, for systemd or a Sprite service. One per machine. |
-| `skel repo ls` | Lists the repositories skel works on, with their short names. |
+| `skel repo ls` | Lists the repositories skel works on, with their short names. `--json` for tools. |
 | `skel repo rm <name>` | Removes skel's clone of a repository. It refuses while the repository has live threads, and names them. Only you can run it: the lead never needs to, and asks you instead. |
 | `skel repo trust <name>` | Trusts a repository your login can't push to, so skel clones it. Only you can run it. |
 | `skel task ls [<repo>]` | Open tasks, newest first, with the thread on each one if it has one. `--json` for tools. |
