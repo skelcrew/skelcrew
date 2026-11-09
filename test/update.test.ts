@@ -12,8 +12,8 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { tmpdir, userInfo } from "node:os";
+import { dirname, join } from "node:path";
 import type { Subprocess } from "bun";
 import { homeEnv, source, until, writeScript } from "./harness.ts";
 
@@ -64,12 +64,21 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
+// The environment of skel in these tests. Its PATH holds the test's fakes, bun and the
+// system's own folders, and nothing else of this machine's, so the real sprite-env of a Sprite
+// is never found. systemctl and launchctl are in the system's folders, so every test that can
+// reach them puts fakes in front.
+const env = () => ({
+  ...homeEnv(home),
+  PATH: `${join(home, "bin")}:${dirname(process.execPath)}:/usr/bin:/bin`,
+});
+
 // Runs code that uses skel's modules in a process of its own with the test's home, as skel
 // stamped with `build` would run it, and returns what it printed.
 async function inProcess(code: string, build?: string) {
   const define = build === undefined ? [] : ["--define", `SKEL_BUILD=${JSON.stringify(build)}`];
   const run = Bun.spawn([process.execPath, ...define, "-e", code], {
-    env: homeEnv(home),
+    env: env(),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -147,16 +156,31 @@ test("the sidebar's notice says a newer release is installed until skel runs on 
   expect(await notice("0.4.3")).toBe("\n");
 });
 
+// How skel restarts the daemon's service on this machine, as the fakes note it, and where it
+// says the daemon's log is. A Mac restarts it with launchd, in your login session, which no HOME
+// of the test's can keep apart from your own daemon, so it must never reach the real launchctl.
+const mac = process.platform === "darwin";
+const restartCall = mac
+  ? `launchctl kickstart -k gui/${userInfo().uid}/run.skel.daemon\n`
+  : "systemctl --user restart skel\n";
+const daemonLog = () =>
+  mac ? join(home, "Library", "Logs", "skel.log") : "journalctl --user -u skel";
+
 // Stands in for a daemon on the test's socket, answering which release it runs: `before`, or
-// `after` once the fake systemctl restarted it. In a process of its own, as one in the test's
+// `after` once the fake systemctl or launchctl restarted it. In a process of its own, as one in the test's
 // process got no answer while the test waited on skel, and on Bun.listen, as a node:net server
 // refused connections for a moment after it said it was listening.
 async function daemon(before: string, after: string): Promise<void> {
-  writeScript(
-    home,
-    "systemctl",
-    `echo "systemctl $*" >> "$HOME/calls"\ntest "$*" = "--user restart skel" && touch "$HOME/restarted"\nexit 0`,
-  );
+  const managers: [string, string][] = [
+    ["systemctl", "--user restart skel"],
+    ["launchctl", `kickstart -k gui/${userInfo().uid}/run.skel.daemon`],
+  ];
+  for (const [name, restart] of managers)
+    writeScript(
+      home,
+      name,
+      `echo "${name} $*" >> "$HOME/calls"\ntest "$*" = "${restart}" && touch "$HOME/restarted"\nexit 0`,
+    );
   const socket = join(home, "run", "skel.sock");
   // The socket's file comes a moment before it takes connections.
   const ready = join(home, "listening");
@@ -176,7 +200,7 @@ await Bun.write(${JSON.stringify(ready)}, "");`;
 }
 
 // Has skel, stamped with `build`, make sure the daemon runs its release, as it does before you
-// attach, and returns what it printed and what systemctl was asked.
+// attach, and returns what it printed and what the service manager was asked.
 async function beforeAttaching(build?: string) {
   const done = await inProcess(
     `import { onThisRelease } from ${JSON.stringify(source("client.ts"))};
@@ -192,7 +216,7 @@ test("restarts a daemon on an older release before you attach", async () => {
   const done = await beforeAttaching("0.4.3");
   expect(done.err).toBe("");
   expect(done.code).toBe(0);
-  expect(done.calls).toBe("systemctl --user restart skel\n");
+  expect(done.calls).toBe(restartCall);
   expect(done.out).toContain("0.4.3");
   expect(done.out).toContain("agents keep running");
 });
@@ -215,7 +239,7 @@ test("says where to look when the daemon doesn't come back on the new release", 
   await daemon("0.4.2", "0.4.2");
   const done = await beforeAttaching("0.4.3");
   expect(done.code).toBe(1);
-  expect(done.err).toContain("journalctl --user -u skel");
+  expect(done.err).toContain(daemonLog());
 }, 15_000);
 
 // Runs skel stamped with `build` on a server, as --remote from a laptop on `laptop` runs it.
@@ -223,7 +247,7 @@ async function onServer(build: string, laptop: string) {
   const run = Bun.spawn(
     [process.execPath, "--define", `SKEL_BUILD="${build}"`, source("main.ts"), "--help"],
     {
-      env: { ...homeEnv(home), SKEL_LAPTOP_BUILD: laptop, SKEL_REMOTE_NAME: "simon@workbox" },
+      env: { ...env(), SKEL_LAPTOP_BUILD: laptop, SKEL_REMOTE_NAME: "simon@workbox" },
       stdout: "pipe",
       stderr: "pipe",
     },
