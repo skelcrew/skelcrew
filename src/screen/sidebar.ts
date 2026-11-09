@@ -428,10 +428,15 @@ export async function runSidebar(
     for (const [, kind, arrow, y, clicked] of bytes.toString().matchAll(input)) {
       const move = kind === "4" ? jumped : stepped;
       const tab = clicked === undefined ? null : (tabs[Number(clicked)]?.fullName ?? null);
-      if (tab) switchTo(tab);
-      else if (arrow === "C" || arrow === "D") {
-        const beside = kind === "3" ? besideOpen(arrow === "C" ? 1 : -1) : null;
-        if (beside) switchTo(beside);
+      const beside = kind === "3" && arrow === "C" ? besideOpen(1) : null;
+      const before = kind === "3" && arrow === "D" ? besideOpen(-1) : null;
+      const other = tab ?? beside ?? before;
+      if (other) {
+        switchTo(other);
+        // Keys that came with the switch, such as Alt-Down, move in the new repository's rows.
+        refresh();
+      } else if (arrow === "C" || arrow === "D") {
+        // Past the first or last tab there is nowhere to go.
       } else if (arrow) show(move(rows, lists, shown, size(), arrow === "A" ? -1 : 1));
       else if (y) show(picked(rows, lists, shown, size(), Number(y) - 1 - notice.length));
     }

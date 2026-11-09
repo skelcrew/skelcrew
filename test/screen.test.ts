@@ -1202,7 +1202,7 @@ test("Alt-Right and Alt-Left switch both sides to the repository beside, and ope
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
   await until(() => seen().includes("site-8") && !seen().includes("app-12"), "site's threads");
   expect(selected()).toBe("◆ lead");
-  expect(asked).toContain("open simon/site");
+  await until(() => asked.includes("open simon/site"), "the daemon to open site");
   type("hello\r");
   await until(() => existsSync(join(home, `${siteLead}.typed`)), "the typing");
   // There is no tab after the last.
@@ -1224,4 +1224,17 @@ test("a click on a tab switches to its repository", async () => {
   await until(() => seen().includes("site-8"), "site's threads");
   click(tabRow().indexOf("app") + 2, 1);
   await until(() => seen().includes("I am lead") && seen().includes("app-12"), "app again");
+});
+
+// A terminal can hand both keys over at once, and the second must move in the new repository.
+test("Alt-Right then Alt-Down, typed together, lands on the new repository's thread", async () => {
+  addSite();
+  agent("site-8");
+  daemon();
+  open("lead");
+  await ready("lead");
+  type("\x1b[1;3C\x1b[1;3B");
+  await until(() => seen().includes("I am site-8"), "site-8");
+  await until(() => selected() === "● site-8", "the sidebar to follow");
+  expect(seen()).not.toContain("app-12");
 });
