@@ -139,8 +139,15 @@ test("the sidebar's header shows the release of the skel that runs it", async ()
   try {
     tmux("new-session", "-d", "-s", "one", "-x", "120", "-y", "30", "sleep 60");
     const env = `env HOME=${home} XDG_RUNTIME_DIR=${join(home, "run")}`;
-    tmux("split-window", "-b", "-h", "-t", "=one:", `${env} ${file} sidebar ${agents} one '' lead`);
-    const header = () => tmux("show", "-v", "-t", "=one:", "status-format[0]").stdout.toString();
+    tmux(
+      "split-window",
+      "-b",
+      "-h",
+      "-t",
+      "=one:",
+      `${env} ${file} sidebar ${agents} one '' simon/app`,
+    );
+    const header = () => tmux("show", "-v", "-t", "=one:", "status-format[1]").stdout.toString();
     for (let tries = 0; tries < 100 && !header().includes("skel"); tries++) await Bun.sleep(100);
     expect(header()).toContain(" 0.4.2");
   } finally {
