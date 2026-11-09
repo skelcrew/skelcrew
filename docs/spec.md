@@ -251,7 +251,7 @@ What is yours stays in `~/.config/skel/`: every login and token, which machine r
 harness: claude
 model: opus
 lead:     { model: sonnet }
-builder:  { harness: codex, model: gpt-5-codex }
+builder:  { harness: codex, model: gpt-6.1-sol }
 reviewer: { harness: codex }
 max_rounds: 3
 ```
