@@ -31,6 +31,8 @@ test("the help names every command", () => {
     "--remote",
     "remote add",
     "serve",
+    "init",
+    "repo add",
     "repo ls",
     "repo rm",
     "repo trust",

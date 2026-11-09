@@ -16,6 +16,7 @@ import {
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse } from "yaml";
 import { source } from "./harness.ts";
 
 const main = source("main.ts");
@@ -468,10 +469,140 @@ test("repo trust asks for owner/repo for a repository skel doesn't know yet", as
   expect(run.err).toContain("owner/repo");
 });
 
-test("skel init is gone", async () => {
-  const run = await skel(["init"]);
-  expect(run.code).toBe(1);
-  expect(run.err).not.toContain("init");
+test("repo add adds the checkout you are in, and attaches to nothing", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  const run = await skel(["repo", "add"], "", checkout);
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).toBe("Cloning simon/app for skel.\nAdded simon/app, as app.\n");
+  expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
+  expect(calls()).not.toContain("daemon");
+});
+
+test("repo add takes a checkout's path, or a repository's GitHub name", async () => {
+  onGitHub("simon/app", "WRITE");
+  onGitHub("simon/site", "WRITE");
+  const byPath = await skel(["repo", "add", join("code", "simon", "app")]);
+  expect(byPath.err).toBe("");
+  expect(byPath.out).toContain("Added simon/app, as app.");
+  const byName = await skel(["repo", "add", "simon/site"]);
+  expect(byName.err).toBe("");
+  expect(byName.out).toContain("Added simon/site, as site.");
+  expect(existsSync(join(clone("simon/site"), "README"))).toBe(true);
+});
+
+test("repo add asks about a repository you can't push to, and a no adds nothing", async () => {
+  onGitHub("other/tool");
+  const no = await skel(["repo", "add", "other/tool"], "n\n");
+  expect(no.out).toContain("Do you trust other/tool?");
+  expect(no.out).not.toContain("Added");
+  expect(existsSync(clone("other/tool"))).toBe(false);
+  const yes = await skel(["repo", "add", "other/tool"], "y\n");
+  expect(yes.out).toContain("Added other/tool, as tool.");
+});
+
+test("repo add says so for a repository skel has, and fetches nothing", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  await skel(["repo", "add"], "", checkout);
+  writeFileSync(join(home, "calls"), "");
+  const again = await skel(["repo", "add", "simon/app"]);
+  expect(again.err).toBe("");
+  expect(again.out).toBe("skel has simon/app already, as app.\n");
+  expect(calls()).toBe("");
+});
+
+test("repo add says why outside a checkout of a repository on GitHub", async () => {
+  const outside = await skel(["repo", "add"]);
+  expect(outside.code).toBe(1);
+  expect(outside.err).toBe(
+    `skel: ${home} isn't a checkout of a repository on GitHub. Run skel repo add in one, or name it as owner/repo.\n`,
+  );
+  const checkout = onGitHub("simon/app", "WRITE");
+  git(checkout, "remote", "set-url", "origin", "https://gitlab.com/simon/app");
+  const elsewhere = await skel(["repo", "add", checkout]);
+  expect(elsewhere.code).toBe(1);
+  expect(elsewhere.err).toContain(`${checkout} isn't a checkout of a repository on GitHub`);
+});
+
+test("repo add and init refuse inside skel's sandbox, where a yes could come from an agent", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  for (const [args, what] of [
+    [["repo", "add"], "adding a repository"],
+    [["init"], "setting up a repository for skel"],
+  ] as const) {
+    const run = await skel([...args], "", checkout, { SKEL_SANDBOX: "1" });
+    expect(run.code).toBe(1);
+    expect(run.err).toBe(`skel: ${what} is only for your own terminal, not for agents\n`);
+  }
+  expect(existsSync(join(checkout, "skel.yaml"))).toBe(false);
+  expect(existsSync(clone("simon/app"))).toBe(false);
+});
+
+test("init writes a starter skel.yaml with your harness and model for each role, and adds the repository", async () => {
+  writeFileSync(
+    join(home, ".config", "skel", "config.yaml"),
+    "harness: claude\nmodel: sonnet\nlead: { model: opus }\nreviewer: { harness: codex }\n",
+  );
+  const checkout = onGitHub("simon/app", "WRITE");
+  mkdirSync(join(checkout, "src"));
+  const run = await skel(["init"], "", join(checkout, "src"));
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(readFileSync(join(checkout, "skel.yaml"), "utf8")).toBe(
+    `# Shared with everyone who works on this repository. Never put a secret here.
+lead:     { harness: claude, model: opus }
+builder:  { harness: claude, model: sonnet }
+reviewer: { harness: codex }
+# setup: [bun install]
+# test: [bun test]
+`,
+  );
+  expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
+  expect(run.out).toContain("Added simon/app, as app.");
+  expect(run.out).toContain(
+    "Wrote skel.yaml. skel reads it from its own clone, so it counts once you commit it and push it to the default branch.",
+  );
+});
+
+// YAML reads true, null or 123 as something other than text, which a model name must be.
+test("init writes model names that read back as the same text", async () => {
+  writeFileSync(
+    join(home, ".config", "skel", "config.yaml"),
+    'harness: claude\nmodel: "123"\nlead: { model: "true" }\nbuilder: { model: "null" }\n',
+  );
+  const checkout = onGitHub("simon/app", "WRITE");
+  expect((await skel(["init"], "", checkout)).err).toBe("");
+  expect(parse(readFileSync(join(checkout, "skel.yaml"), "utf8"))).toEqual({
+    lead: { harness: "claude", model: "true" },
+    builder: { harness: "claude", model: "null" },
+    reviewer: { harness: "claude", model: "123" },
+  });
+});
+
+test("init leaves a skel.yaml that is there alone", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  writeFileSync(join(checkout, "skel.yaml"), "setup: [make]\n");
+  const run = await skel(["init"], "", checkout);
+  expect(run.code).toBe(0);
+  expect(readFileSync(join(checkout, "skel.yaml"), "utf8")).toBe("setup: [make]\n");
+  expect(run.out).toContain("skel.yaml is there already, so skel left it as it is.");
+  expect(run.out).toContain("Added simon/app, as app.");
+});
+
+test("init stops outside a git repository, and in one with no remote", async () => {
+  const outside = await skel(["init"]);
+  expect(outside.code).toBe(1);
+  expect(outside.err).toBe(
+    "skel: skel init runs in a checkout of a git repository, and this folder isn't in one.\n",
+  );
+  const checkout = onGitHub("simon/app", "WRITE");
+  git(checkout, "remote", "remove", "origin");
+  const none = await skel(["init"], "", checkout);
+  expect(none.code).toBe(1);
+  expect(none.err).toBe(
+    "skel: skel init needs the repository on GitHub, and this checkout has no remote there. Push it to GitHub first.\n",
+  );
+  expect(existsSync(join(checkout, "skel.yaml"))).toBe(false);
 });
 
 // A git template, or anything else, could put a credential in a new clone's config. The lead

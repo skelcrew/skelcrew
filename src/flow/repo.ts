@@ -4,16 +4,19 @@ import type { Database } from "bun:sqlite";
 import {
   appendFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { stringify } from "yaml";
 import { z } from "zod";
 import { refuseCredentials } from "../agents/sandbox.ts";
 import { stopSession } from "../agents/tmux.ts";
+import { agentRoles } from "../config.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
 import {
   cloneRepo,
@@ -217,6 +220,87 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
   if (repositories(db).length === 0) console.log(noRepositories);
   const found = repositories(db).find(known);
   return found && `${found.owner}/${found.repo}`;
+}
+
+// Adds a repository for skel repo add: the checkout in the folder given, the repository named
+// as owner/repo, or with neither, the checkout you are in, and says what it did. A folder that
+// is there is taken as one, as a path such as simon/app reads like a name. Asks whether you
+// trust the repository when it needs to, so it runs only in your own terminal. One skel has
+// costs no call to GitHub.
+export async function addRepo(given?: string): Promise<void> {
+  const db = openDb();
+  const folder = given === undefined || existsSync(given) ? resolve(given ?? ".") : null;
+  const named = folder === null ? given : originHere(folder);
+  if (folder !== null && !named)
+    throw new Error(
+      `${folder} isn't a checkout of a repository on GitHub. Run skel repo add in one, or name it as owner/repo.`,
+    );
+  // A name starting with a dash would reach gh as an option.
+  if (!named || !/^[\w.][\w.-]*\/[\w.-]+$/.test(named))
+    throw new Error(`${given} is neither a folder nor a repository's GitHub name, as owner/repo`);
+  const had = repositories(db).find((r) => fullNameIs(r, named));
+  if (had) {
+    console.log(`skel has ${had.owner}/${had.repo} already, as ${had.name}.`);
+    return;
+  }
+  const details = await githubRepo(named);
+  await bringIn(db, details);
+  const added = repositories(db).find((r) => r.owner === details.owner && r.repo === details.repo);
+  if (added) console.log(`Added ${added.owner}/${added.repo}, as ${added.name}.`);
+}
+
+// Returns a setting's value as YAML that reads back as the same text: plain when it can be,
+// quoted when YAML would read it as something else, such as a model named true or 123.
+const yamlValue = (value: string) => stringify(value).trim();
+
+// Returns the starter skel.yaml: a line saying the file is shared and never holds a secret,
+// your harness and model for each role as real lines, from your config, and setup and test
+// as commented examples.
+function starter(): string {
+  const roles = agentRoles();
+  const line = (name: "lead" | "builder" | "reviewer") => {
+    const parts = Object.entries(roles[name]).map(([key, value]) => `${key}: ${yamlValue(value)}`);
+    return `${`${name}:`.padEnd(10)}{ ${parts.join(", ")} }`;
+  };
+  return [
+    "# Shared with everyone who works on this repository. Never put a secret here.",
+    line("lead"),
+    line("builder"),
+    line("reviewer"),
+    "# setup: [bun install]",
+    "# test: [bun test]",
+    "",
+  ].join("\n");
+}
+
+// Sets up the checkout you are in for skel, for skel init: writes the starter skel.yaml at its
+// top, unless one is there, then adds the repository as skel repo add does. Stops outside a
+// git repository, and in one with no remote on GitHub, as skel works from its own clone. That
+// clone is at the default branch, so it says the file counts only once pushed there.
+export async function initRepo(): Promise<void> {
+  const top = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (!top.success)
+    throw new Error(
+      "skel init runs in a checkout of a git repository, and this folder isn't in one.",
+    );
+  const root = top.stdout.toString().trim();
+  if (!originHere(root))
+    throw new Error(
+      "skel init needs the repository on GitHub, and this checkout has no remote there. Push it to GitHub first.",
+    );
+  const file = join(root, "skel.yaml");
+  // A link counts as there, so the write never goes through one.
+  const there = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
+  if (there) console.log("skel.yaml is there already, so skel left it as it is.");
+  else writeFileSync(file, starter(), { flag: "wx" });
+  await addRepo(root);
+  if (!there)
+    console.log(
+      "Wrote skel.yaml. skel reads it from its own clone, so it counts once you commit it and push it to the default branch.",
+    );
 }
 
 // Records your trust from outside the sandbox and brings in the repository.

@@ -90,7 +90,7 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
   const { argv, env } = harness.start({
     name: lead.name,
     socket: lead.socket,
-    model: agentRoles().lead.model,
+    model: agentRoles(repository).lead.model,
     folder: lead.folder,
     origin: clone,
     // By its full GitHub name, which every command takes and which never changes, while its

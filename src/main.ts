@@ -19,7 +19,9 @@ import { versionLine } from "./version.ts";
 const yoursOnly: Record<string, string> = {
   "": "attaching to the lead",
   serve: "running the daemon",
+  "repo add": "adding a repository",
   "repo rm": "removing a repository",
+  init: "setting up a repository for skel",
   "repo trust": "trusting a repository",
   attach: "attaching to a thread",
   sidebar: "showing the sidebar",
@@ -40,6 +42,7 @@ function taskName(word?: string): [string, number] | undefined {
 function usage(command?: string): never {
   const known = [
     "serve",
+    "init",
     "repo",
     "ps",
     "task",
@@ -116,14 +119,22 @@ async function screenCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
-// Lists, removes or trusts a repository, for skel repo. Only ls takes --json: to remove or
-// trust, it is a word like any other.
+// Adds, lists, removes or trusts a repository, for skel repo, or sets one up with skel init.
+// Only ls takes --json: to add, remove or trust, it is a word like any other.
 async function repoCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
   const { askForRepositories } = await import("./client.ts");
   const { openDb } = await import("./db.ts");
   const { listRepositories, printRepositories } = await import("./flow/list.ts");
-  const { removeRepo, trustRepo } = await import("./flow/repo.ts");
+  const { addRepo, initRepo, removeRepo, trustRepo } = await import("./flow/repo.ts");
+  if (command === "init" && args.length === 1) {
+    await initRepo();
+    return;
+  }
+  if (sub === "add" && rest.length <= 1) {
+    await addRepo(rest[0]);
+    return;
+  }
   // --json can go anywhere, as tools add it last and people type it where they like.
   const json = args.includes("--json");
   if (sub === "ls" && rest.filter((arg) => arg !== "--json").length === 0) {
@@ -331,6 +342,7 @@ async function runCommand(args: string[]): Promise<void> {
     case "page":
       return screenCommand(args);
     case "repo":
+    case "init":
       return repoCommand(args);
     case "submit":
     case "question":
