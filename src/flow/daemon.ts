@@ -10,8 +10,10 @@ import { openDb, type Repository } from "../db.ts";
 import { createIssue } from "../github.ts";
 import { setupDone } from "../machine/setup.ts";
 import { holdAwhile, keepAwake, onSprite, urlPort } from "../machine/sprite.ts";
+import { keepUpToDate } from "../machine/update.ts";
 import { daemonSocket, threadSocket } from "../paths.ts";
 import { errorText } from "../say.ts";
+import { release } from "../version.ts";
 import {
   bringBack,
   failThread,
@@ -229,7 +231,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       case "status": {
         const builder = builderOf(caller);
         const thread = builder ? { thread: threadName(db, builder) } : {};
-        return { running: true, pid: process.pid, ...thread };
+        return { running: true, pid: process.pid, release, ...thread };
       }
       case "lead": {
         // From outside any repository skel has, the one you opened last.
@@ -378,6 +380,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
     );
   }
   poll = pollGitHub(db, tmux, every, begin);
+  keepUpToDate();
   if (!onSprite()) return;
   keepAwake(() => hasWork(liveThreads(db)));
   wakeOnWebhooks(db, port, poll);

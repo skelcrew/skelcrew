@@ -280,6 +280,25 @@ test("makes the folder for its socket, which only you can open", async () => {
   expect(statSync(folder).mode & 0o777).toBe(0o700);
 });
 
+test("says which release it runs, so skel can restart one on an older release", async () => {
+  setUp();
+  const script = `import { serve } from ${JSON.stringify(daemon)};
+await serve(${JSON.stringify(socket)});`;
+  running.push(
+    Bun.spawn([process.execPath, "--define", 'SKEL_BUILD="0.4.2"', "-e", script], {
+      env: {
+        HOME: home,
+        XDG_RUNTIME_DIR: join(home, "run"),
+        PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
+      },
+      stdout: "ignore",
+      stderr: "ignore",
+    }),
+  );
+  await until(() => existsSync(cliSocket()));
+  expect(await ask({ command: "status" })).toMatchObject({ running: true, release: "0.4.2" });
+});
+
 // skel takes a machine with sprite-env, the Sprite's own tool, on its PATH for a Sprite. Like
 // the real one, it starts a service as it creates it.
 function onSprite(): void {
