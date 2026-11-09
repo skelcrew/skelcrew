@@ -34,7 +34,14 @@ const sections: [string, [string, string][]][] = [
       ["serve", "Run the daemon, for systemd or launchd"],
     ],
   ],
-  ["IN A THREAD", [['submit "<summary>"', "Hand in a round for review"]]],
+  [
+    "FOR AGENTS",
+    [
+      ['submit "<summary>"', "Hand in a round for review, as a builder"],
+      ['tell lead "<text>"', "Type a message into the lead, as a builder"],
+      ['tell <task> "<text>"', "Type a message into its builder, as the lead"],
+    ],
+  ],
   [
     "OPTIONS",
     [

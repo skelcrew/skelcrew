@@ -127,6 +127,19 @@ export async function submitForReview(summary: string): Promise<string> {
   return understood(z.object({ submitted: z.string() }), reply).submitted;
 }
 
+// Has the daemon type the lead's message into a thread's builder, for skel tell, and returns
+// the thread's name. The daemon answers at once, and types it in once the builder is idle.
+export async function tellOn(repository: string, task: number, text: string): Promise<string> {
+  const reply = await request({ command: "tell", repo: repository, task, text });
+  return understood(z.object({ told: z.string() }), reply).told;
+}
+
+// Has the daemon type a builder's message into the lead, for skel tell lead. The builder's
+// own socket tells the daemon which thread it comes from. The daemon answers at once.
+export async function tellTheLead(text: string): Promise<void> {
+  await request({ command: "tell lead", text });
+}
+
 // Has the daemon review a thread's last submitted commit again, for skel review, and returns
 // the thread's name. The daemon answers at once, and the review runs after, as a round's.
 export async function reviewAgain(repository: string, task: number): Promise<string> {

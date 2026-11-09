@@ -186,6 +186,8 @@ At any point the builder can ask you a question with Claude Code's own `AskUserQ
 
 **Telling you.** When a thread starts needing you, skel types a one line note into the session of its project's lead (when that lead is idle), so you hear it where you already are. A lead hears only of its own project's threads: the tabs tell you of the rest. A note for a project whose lead hasn't started yet is kept until it starts, as notes already wait for a lead that isn't running.
 
+**Messages.** The lead and a builder can tell each other something with `skel tell`, such as a builder saying its task needs another thread's work first. skel types the message into the other's session once it is idle, as it does the lead's notes, wrapped in a tag that says who it is from and the command to answer with: `<skel from="lead" reply="skel tell lead">` into a builder, or `<skel from="app-12" reply="skel tell app-12">` into the lead, then the text on its own lines, then `</skel>`. The tag marks where a message starts and ends, so an agent's message never passes for yours, and the text inside stays plain and readable. skel removes `<skel` and `</skel>` from the text, so a message can't end its tag early. The lead can tell any thread's builder. A builder can tell only the lead, since its socket says which thread it is. A message to a builder that isn't running, or that is asking you a question, is refused, not kept. Messages stay in skel, never on GitHub, and each one goes in the thread's log.
+
 ## Events
 
 The daemon polls GitHub with one GraphQL query per repository, fetching every open thread's PR with its reviews, comments, checks and merge state, so the number of requests doesn't grow with the number of threads. While a screen is open, the same query brings the open issues and PRs for the sidebar. It polls every 30 seconds while a thread is active, and less often for threads that only wait on you. Webhooks are a faster wake-up, never the only source, since deliveries are missed while the daemon is down. On a server they may be added later; on a Sprite they wake it from sleep. Calls go through `gh`. Each event is handled once: skel records the ID of the last review, comment and check run it acted on.
@@ -205,6 +207,8 @@ The daemon polls GitHub with one GraphQL query per repository, fetching every op
 
 ## Commands
 
+Every command that lists or shows something takes `--json`, for tools. Commands that do something, such as start, stop, review, submit, tell and task create, print one line or fail with a clear message and a non-zero exit, with or without `--json`.
+
 For you, and for the lead:
 
 | Command | What it does |
@@ -214,10 +218,10 @@ For you, and for the lead:
 | `skel --remote <host> [command]` | Runs any skel command on the server, over `ssh -t`. With `sprite:<name>` as the host, runs it on that Sprite instead. Keeps skel there up to date with your checkout, after asking. |
 | `skel remote add <host>` | Sets up a server, or with `sprite:<name>` a Sprite, creating it after asking if it doesn't exist. Runs the first run there and prints the `skel --remote` command that connects. Run it on your laptop. |
 | `skel serve` | Runs the daemon in the foreground, for systemd or a Sprite service. One per machine. |
-| `skel project add [<path>] [-p <project>]` | Adds the repository at the path, or the one you are in, as a new project, named as `-p` says or after the repository. Only you can run it. |
-| `skel project ls` | Lists the projects, with their repository and how many threads need you. Only you can run it: a lead never sees another project. |
-| `skel project rm <name>` | Removes a project after you confirm: its lead, its history and skel's clone of its repository. It refuses while the project has live threads, and names them. Only you can run it. |
-| `skel task ls [<repo>] [-p <project>]` | The project's open tasks, newest first, with the thread on each one if it has one. `--json` for tools. |
+| `skel repo ls` | Lists the repositories skel works on, with their short names. `--json` for tools. |
+| `skel repo rm <name>` | Removes skel's clone of a repository. It refuses while the repository has live threads, and names them. Only you can run it: the lead never needs to, and asks you instead. |
+| `skel repo trust <name>` | Trusts a repository your login can't push to, so skel clones it. Only you can run it. |
+| `skel task ls [<repo>]` | Open tasks, newest first, with the thread on each one if it has one. `--json` for tools. |
 | `skel task show <repo>-<task>` | A task's title and body, which is all its builder sees, with its thread if it has one. `--json` for tools. |
 | `skel task create <repo> "<title>" "<body>"` | Creates a task, as a GitHub issue, and prints its name, such as `app-13`. It doesn't start a thread. |
 | `skel ps [<repo>] [-p <project>]` | The project's threads, with status and needs you, newest first. Done threads only with `--all`. `--json` for tools. |
@@ -225,12 +229,14 @@ For you, and for the lead:
 | `skel attach <repo>-<task>` | Opens the same screen as `skel`, with that builder on the right. Ctrl-Q detaches. |
 | `skel review <repo>-<task>` | Reviews the thread's last submitted commit again, as a round's review, such as after a review that failed. It refuses while a review of it is waiting or running. |
 | `skel stop <repo>-<task>` | Ends the session and keeps the clone, branch and PR. |
+| `skel tell <repo>-<task> "<text>"` | Types a message into the thread's builder, once it is idle. Only the lead runs it: you type to a builder by picking it in the sidebar. |
 
 For the builder inside a thread:
 
 | Command | Who | What it does |
 | --- | --- | --- |
 | `skel submit "<summary>"` | Builder | Submits a round for review: skel pushes, opens the PR if needed, starts a review |
+| `skel tell lead "<text>"` | Builder | Types a message into the lead, once it is idle |
 
 Agents talk to the daemon over a socket mounted into their sandbox, which also tells skel which thread they belong to. The lead and the agents never call GitHub themselves.
 
@@ -294,8 +300,8 @@ These are the parts that need care. `docs/learnings.md` explains the traps behin
 - Harnesses other than Claude Code, and Codex for the reviewer
 - Windows, and threads on other machines
 - Per-thread environments such as a database each (the `setup` commands only)
-- A project's own memory beyond its repository's `AGENTS.md`
-- Agents talking to each other, beyond skel telling the lead
+- Projects with their own memory beyond `AGENTS.md`
+- Agents talking to each other, beyond the lead and a builder telling each other
 - Triggers, schedules or automations
 - Reaching you outside the lead's session, such as a `notify` command for your phone
 - Slack, Linear, Jira or forges other than GitHub

@@ -38,7 +38,18 @@ function taskName(word?: string): [string, number] | undefined {
 // Prints why a command can't run as given, and ends skel with an error. People who mistype a
 // command skel knows hear to check its arguments, not that the command doesn't exist.
 function usage(command?: string): never {
-  const known = ["serve", "repo", "ps", "task", "start", "stop", "attach", "review", "submit"];
+  const known = [
+    "serve",
+    "repo",
+    "ps",
+    "task",
+    "start",
+    "stop",
+    "attach",
+    "review",
+    "submit",
+    "tell",
+  ];
   const first = command ?? "";
   console.error(
     first === "--remote"
@@ -100,18 +111,22 @@ async function screenCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
-// Lists, removes or trusts a repository, for skel repo.
+// Lists, removes or trusts a repository, for skel repo. Only ls takes --json: to remove or
+// trust, it is a word like any other.
 async function repoCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
   const { askForRepositories } = await import("./client.ts");
   const { openDb } = await import("./db.ts");
   const { listRepositories, printRepositories } = await import("./flow/list.ts");
   const { removeRepo, trustRepo } = await import("./flow/repo.ts");
-  if (sub === "ls" && rest.length === 0) {
+  // --json can go anywhere, as tools add it last and people type it where they like.
+  const json = args.includes("--json");
+  if (sub === "ls" && rest.filter((arg) => arg !== "--json").length === 0) {
     // An agent's sandbox hides skel's database, so there the daemon answers. In your
     // terminal it is read here, so the list shows even while the daemon is down.
     printRepositories(
       process.env.SKEL_SANDBOX === "1" ? await askForRepositories() : listRepositories(openDb()),
+      json,
     );
     return;
   }
@@ -226,6 +241,30 @@ async function threadCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
+// Types a message into a thread's builder, for the lead, or into the lead, for a builder. Who
+// may tell whom is the daemon's to decide, from the socket the call comes in on. You type to
+// a builder yourself, so in your terminal it only says how.
+async function tellCommand(args: string[]): Promise<void> {
+  const [command, to, text, ...rest] = args;
+  const { tellOn, tellTheLead } = await import("./client.ts");
+  if (process.env.SKEL_SANDBOX !== "1")
+    throw new Error(
+      "skel tell is for the lead and builders. To type to a builder, pick it in the sidebar.",
+    );
+  const thread = taskName(to);
+  if (to === "lead" && text && rest.length === 0) {
+    await tellTheLead(text);
+    console.log("Telling the lead. skel types it in once the lead is idle.");
+    return;
+  }
+  if (thread && text && rest.length === 0) {
+    const name = await tellOn(...thread, text);
+    console.log(`Telling ${name}'s builder. skel types it in once the builder is idle.`);
+    return;
+  }
+  usage(command);
+}
+
 // Runs the requested CLI command, or prints usage and exits when its arguments are invalid.
 // With no command, sets up skel and opens the screen on the lead. The checks here come first,
 // in this order, and the functions above run the commands that are left.
@@ -304,6 +343,8 @@ async function runCommand(args: string[]): Promise<void> {
     case "review":
     case "attach":
       return threadCommand(args);
+    case "tell":
+      return tellCommand(args);
     default:
       usage(command);
   }
