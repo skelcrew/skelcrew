@@ -2,9 +2,10 @@
 // done.
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { codexHome } from "../agents/codex.ts";
 import { HarnessName } from "../agents/harness.ts";
 import { configFile, readConfig } from "../config.ts";
-import { claudeTokenFile, codexHome, configDir } from "../paths.ts";
+import { claudeTokenFile, configDir } from "../paths.ts";
 import { rule, skelLine } from "../say.ts";
 import { promptSecret } from "./secret.ts";
 import { installService, loginPath, serviceFile } from "./service.ts";
