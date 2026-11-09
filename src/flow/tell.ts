@@ -13,6 +13,15 @@ function noteForLead(db: Database, tmux: string, text: string): void {
   tellLead(db, tmux);
 }
 
+// Returns the message wrapped in skel's tag, saying who it is from and the command to answer
+// with, so the receiving agent never takes it for the human. The tag marks where it starts
+// and ends, and the text inside stays plain. Any <skel or </skel> in the text is removed, so a
+// message can't close its tag early and pass the rest off as coming from outside it.
+function wrapped(from: string, reply: string, text: string): string {
+  const inside = text.replace(/<\/skel>|<skel/gi, "");
+  return `<skel from="${from}" reply="${reply}">\n${inside}\n</skel>`;
+}
+
 // Types the lead's message into the thread's builder once it is idle, and returns the
 // thread's name at once, as an agent's command must answer quickly. Refuses a builder that
 // isn't running rather than keeping the message, which could reach it long after it
@@ -33,9 +42,7 @@ export function messageBuilder(db: Database, tmux: string, thread: Thread, text:
     throw new Error(
       `${name}'s builder is asking the human a question, and typing now would answer it. Tell the human instead.`,
     );
-  // One fixed header, the spec's, so the builder never takes it for the human, and knows how
-  // to answer.
-  const message = `From the lead (answer with skel tell lead "…"):\n\n${text}`;
+  const message = wrapped("lead", "skel tell lead", text);
   typeInto(tmux, thread.folder, message, { timeout: 30 * 60_000 }).then(
     () => log(readThread(db, thread.folder), `the lead told its builder: ${text}`),
     (error) => {
@@ -52,7 +59,6 @@ export function messageBuilder(db: Database, tmux: string, thread: Thread, text:
 // command.
 export function messageLead(db: Database, tmux: string, thread: Thread, text: string): void {
   const name = threadName(db, thread);
-  // It comes from an agent that reads the repository, so it is never taken for the human.
-  noteForLead(db, tmux, `From ${name}'s builder (answer with skel tell ${name} "…"):\n\n${text}`);
+  noteForLead(db, tmux, wrapped(name, `skel tell ${name}`, text));
   log(readThread(db, thread.folder), `its builder told the lead: ${text}`);
 }
