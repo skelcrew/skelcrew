@@ -25,10 +25,11 @@ const harnesses = [
 const tools = [
   { command: "tmux", install: "sudo apt install tmux" },
   { command: "bwrap", install: "sudo apt install bubblewrap" },
+  { command: "git", install: "sudo apt install git" },
   { command: "gh", install: "sudo apt install gh" },
 ];
 // On a Mac the sandbox comes with the system, and what Homebrew gives goes in one line.
-const brewed = ["tmux", "gh"];
+const brewed = ["tmux", "git", "gh"];
 const macTools = [
   { command: "sandbox-exec", install: "it comes with macOS, and skel can't run agents without it" },
 ];
