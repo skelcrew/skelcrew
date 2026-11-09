@@ -1,10 +1,7 @@
 // Starting work on a thread: recording it, setting up its clone, starting its builder or
 // bringing it back, and marking the thread failed when any of that goes wrong.
 import type { Database } from "bun:sqlite";
-import { existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { parse } from "yaml";
-import { z } from "zod";
+import { existsSync, rmSync } from "node:fs";
 import instructions from "../agents/prompts/builder.md" with { type: "text" };
 import { refuseCredentials, setupCommand } from "../agents/sandbox.ts";
 import {
@@ -15,7 +12,7 @@ import {
   startServer,
   startSession,
 } from "../agents/tmux.ts";
-import { agentHarness, threadConfig } from "../config.ts";
+import { agentHarness, repositorySetup, threadConfig } from "../config.ts";
 import { fetchBranch, readIssue } from "../github.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { quietly } from "../run.ts";
@@ -31,7 +28,7 @@ import { cloneOf, folderName, fullNameOf, log, readThread, record, Thread } from
 export function startChoice(thread: Thread | null): "bring back" | "go on" | "new thread" {
   if (thread?.status === "stopped") return "bring back";
   const live = thread?.status === "working" || thread?.status === "waiting";
-  if (thread && live && pastLimit(thread, threadConfig().maxRounds)) return "go on";
+  if (thread && live && pastLimit(thread, threadConfig(thread).maxRounds)) return "go on";
   return "new thread";
 }
 
@@ -145,23 +142,6 @@ async function mustRun(
   if (!ok) throw new Error(`${doing} failed: ${said.slice(-2000)}`);
 }
 
-const SkelYaml = z.looseObject({ setup: z.array(z.string()).optional() }).nullable();
-
-// Returns the setup commands in the repository's skel.yaml, in the thread's clone, or none
-// when it has none. Throws when that file isn't valid, so the thread fails with the reason.
-function setupCommands(clone: string): string[] {
-  const file = join(clone, "skel.yaml");
-  const stat = lstatSync(file, { throwIfNoEntry: false });
-  if (!stat) return [];
-  // skel reads it with your rights, so a link could show it any file of yours.
-  if (!stat.isFile())
-    throw new Error("the repository's skel.yaml isn't a plain file, so skel won't read it");
-  const read = SkelYaml.safeParse(parse(readFileSync(file, "utf8")));
-  if (!read.success)
-    throw new Error(`the repository's skel.yaml isn't valid: ${z.prettifyError(read.error)}`);
-  return read.data?.setup ?? [];
-}
-
 // Returns the branch the thread's PR goes into: the one it started from with --from, or else
 // the default branch, which skel's clone is on.
 export function baseOf(thread: Thread): string {
@@ -181,9 +161,10 @@ export function baseOf(thread: Thread): string {
 // everything in the folder, .git included.
 export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   const clone = cloneOf(thread);
-  // skel's clone of the repository can still be on its way, as the daemon refreshes clones
-  // as it starts. Asking for a refresh joins the one under way.
-  if (!existsSync(cloneDir(thread.owner, thread.repo))) await refreshClones(db);
+  // skel's clone of the repository can still be on its way, as the daemon refreshes clones as
+  // it starts, and its skel.yaml, which sets up the thread, must be the latest pushed. Asking
+  // for a refresh joins the one under way.
+  await refreshClones(db);
   rmSync(clone, { recursive: true, force: true });
   // From skel's own clone on the same disk, so git links its files rather than copying them.
   await mustRun([
@@ -215,7 +196,7 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
     if (yours.success && value) await mustRun(["git", "-C", clone, "config", key, value]);
   }
   refuseCredentials(clone);
-  for (const command of setupCommands(clone)) {
+  for (const command of repositorySetup(thread)) {
     const { argv, env } = setupCommand(clone, command);
     await mustRun(argv, `the repository's skel.yaml setup command "${command}"`, env);
   }
@@ -241,7 +222,7 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
   const { argv, env } = harness.start({
     name: thread.folder,
     socket: threadSocket(thread.folder),
-    model: threadConfig().builder.model,
+    model: threadConfig(thread).builder.model,
     thread: clone,
     // Gone once you remove the repository from skel, and bwrap can't mount what is missing.
     ...(existsSync(cloneDir(thread.owner, thread.repo))

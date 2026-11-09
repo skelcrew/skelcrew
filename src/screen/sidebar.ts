@@ -15,6 +15,7 @@ import {
 } from "../agents/tmux.ts";
 import { threadConfig } from "../config.ts";
 import { openDb } from "../db.ts";
+import type { Thread } from "../flow/thread.ts";
 import { release } from "../version.ts";
 import { clean, edge, fitted, grey, onShade, pad, paint, shade, white, yellow } from "./look.ts";
 import {
@@ -296,12 +297,16 @@ export async function runSidebar(
   let page: Link | null = null;
   let last = "";
   let lastStrip = "";
-  // A config that isn't valid already stops rounds, with the reason, and mustn't also take the
-  // sidebar away. No thread then reads as past the limit.
-  let maxRounds = Number.POSITIVE_INFINITY;
-  try {
-    maxRounds = threadConfig().maxRounds;
-  } catch {}
+  // Returns a thread's round limit, from its repository's skel.yaml or your config. Settings
+  // that aren't valid already stop rounds, with the reason, and mustn't also take the sidebar
+  // away. Such a thread then reads as never past the limit.
+  const maxRounds = (thread: Thread) => {
+    try {
+      return threadConfig(thread).maxRounds;
+    } catch {
+      return Number.POSITIVE_INFINITY;
+    }
+  };
   // Returns the pane's size now, as the terminal can change it at any time.
   const size = (): Size => ({
     width: process.stdout.columns || sidebarWidth,

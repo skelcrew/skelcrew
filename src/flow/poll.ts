@@ -99,7 +99,7 @@ async function pollRepository(
   );
   if (open) saveOpen(db, owner, repo, open);
   await startLabeled(db, tmux, owner, repo, labeled, begin);
-  const { maxRounds } = threadConfig();
+  const { maxRounds } = threadConfig({ owner, repo });
   // Asked once per poll, and only about authors of what is new.
   const pushers: string[] = [];
   for (const login of newAuthors(threads, prs, you))
