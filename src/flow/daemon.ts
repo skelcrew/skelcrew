@@ -10,6 +10,7 @@ import { openDb } from "../db.ts";
 import { createIssue } from "../github.ts";
 import { setupDone } from "../machine/setup.ts";
 import { holdAwhile, keepAwake, onSprite, urlPort } from "../machine/sprite.ts";
+import { keepUpToDate } from "../machine/update.ts";
 import { daemonSocket, leadSocket, threadSocket } from "../paths.ts";
 import { errorText } from "../say.ts";
 import {
@@ -338,6 +339,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
     );
   }
   poll = pollGitHub(db, tmux, every, begin);
+  keepUpToDate();
   if (!onSprite()) return;
   keepAwake(() => hasWork(liveThreads(db)));
   wakeOnWebhooks(db, port, poll);
