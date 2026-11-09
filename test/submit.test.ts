@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
+import { leadPlaces } from "../src/paths.ts";
 import {
   git,
   homeEnv,
@@ -25,7 +26,7 @@ const running: Subprocess[] = [];
 const data = () => join(home, ".local", "share", "skel");
 const codexHome = () => join(data(), "codex");
 const builder = () => join(data(), "claude", "app-12");
-const lead = () => join(data(), "claude", "lead");
+const lead = () => join(data(), "claude", leadPlaces("simon", "app").name);
 const clone = () => join(data(), "threads", "app-12");
 
 // Puts a program of the test's on its PATH.
@@ -40,7 +41,7 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 function fakeClaude(submits = true): void {
   script(
     "claude",
-    `case "$CLAUDE_CONFIG_DIR" in */lead) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
+    `case "$CLAUDE_CONFIG_DIR" in */lead-*) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
 printf '%s\\n' "$@" > "$CLAUDE_CONFIG_DIR/args"
 n=0
 round() {
@@ -165,7 +166,8 @@ const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout })
 
 const github = () => join(home, "github");
 
-// Puts simon/app on the fake GitHub and tells skel about it. Returns a checkout to push from.
+// Puts simon/app on the fake GitHub and tells skel about it, as a repository you have opened,
+// whose lead the daemon starts. Returns a checkout to push from.
 function addApp(): string {
   const work = join(home, "work", "app");
   mkdirSync(work, { recursive: true });
@@ -176,7 +178,7 @@ function addApp(): string {
   git(home, "clone", "-q", "--bare", work, join(github(), "simon", "app.git"));
   git(work, "remote", "add", "origin", join(github(), "simon", "app.git"));
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app')");`;
+openDb().run("INSERT INTO repositories (name, owner, repo, opened) VALUES ('app', 'simon', 'app', 1)");`;
   const added = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   if (!added.success) throw new Error(added.stderr.toString());
   return work;
@@ -624,7 +626,11 @@ function setThread(change: string): void {
   }
 }
 
-const leadSocketPath = () => join(home, "run", "skel", "lead", "skel.sock");
+// app's lead's socket, named by a short hash of its GitHub name.
+const leadSocketPath = () => {
+  const short = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
+  return join(home, "run", "skel", "leads", short, "skel.sock");
+};
 
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel review", () => {
   test("reviews a failed review's commit again: posts the verdict, sets the check, and types changes in as a round", async () => {

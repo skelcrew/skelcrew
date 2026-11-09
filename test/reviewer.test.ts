@@ -14,6 +14,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { review } from "../src/flow/reviewer.ts";
+import { source } from "./harness.ts";
 
 let home = "";
 let clone = "";
@@ -78,9 +79,18 @@ function fakeCodex(answer: string, extra: string[] = []): void {
 
 const kept = (name: string) => readFileSync(join(sessions(), name), "utf8");
 const approve = '{"verdict":"approve","body":"Looks right."}';
-const given = () => ({ clone, issue, base: "origin/main", commit, model: "opus", env: env() });
-const start = (more: { signal?: AbortSignal; limit?: number } = {}) =>
-  review({ ...given(), ...more });
+// A review on Codex, unless `more` names another harness.
+const given = () => ({
+  clone,
+  issue,
+  base: "origin/main",
+  commit,
+  harness: "codex" as const,
+  env: env(),
+});
+const start = (
+  more: { signal?: AbortSignal; limit?: number; harness?: "claude"; model?: string } = {},
+) => review({ ...given(), ...more });
 
 // bubblewrap can't start inside skel's own sandbox, so only there these tests can't run.
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
@@ -91,12 +101,21 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
     // --no-daemon is an option of codex itself, not of exec.
     expect(args.slice(0, 2)).toEqual(["--no-daemon", "exec"]);
     expect(args).toContain("--dangerously-bypass-approvals-and-sandbox");
+    // With no model named, Codex picks its own.
+    expect(args).not.toContain("-m");
     const prompt = kept("prompt");
     for (const part of [issue.title, issue.body, "origin/main", "adversarial", "tests"])
       expect(prompt).toContain(part);
     const schema = JSON.parse(kept("schema"));
     expect(schema.properties.verdict.enum).toEqual(["approve", "changes"]);
     expect(schema.additionalProperties).toBe(false);
+  });
+
+  test("reviews on the model your config names for Codex, as written", async () => {
+    fakeCodex(approve);
+    await start({ model: "gpt-5-codex" });
+    const args = kept("args").split("\n");
+    expect(args[args.indexOf("-m") + 1]).toBe("gpt-5-codex");
   });
 
   test("passes skel's Codex login and an API key in, and no other secrets", async () => {
@@ -169,10 +188,29 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
     for (const file of ["config.toml", "AGENTS.md", "rules/default.rules"])
       expect(readFileSync(join(codexHome(), file), "utf8")).toBe("mine\n");
     expect(existsSync(join(codexHome(), "prompts"))).toBe(false);
-    // Codex rewrites its login in place, so a renewal during a review reaches skel's copy.
+    // Codex up to 0.163 rewrites its login in place, and a renewal reaches skel's copy.
     expect(readFileSync(join(codexHome(), "auth.json"), "utf8")).toBe("renewed\n");
     expect(kept("rollout.jsonl")).toBe("transcript\n");
     expect(kept("yours")).toBe("hidden\n");
+  });
+
+  test("keeps a renewal Codex renames over its login, and its lock, for the next review", async () => {
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "auth.json"), "mine\n");
+    // As Codex does from 0.167: it follows a link to the login, writes the renewal beside it
+    // and renames it over the old one, holding auth.lock in its own folder meanwhile.
+    fakeCodex(approve, [
+      'login=$(readlink -f "$CODEX_HOME/auth.json"); next="$(dirname "$login")/.auth-next"',
+      'echo renewed > "$next" && mv "$next" "$login"',
+      'echo held > "$CODEX_HOME/auth.lock"',
+    ]);
+    await start();
+    expect(readFileSync(join(codexHome(), "auth.json"), "utf8")).toBe("renewed\n");
+    expect(readFileSync(join(codexHome(), "auth.lock"), "utf8")).toBe("held\n");
+    // The next review starts from the renewed login.
+    fakeCodex(approve, ['cat "$CODEX_HOME/auth.json" > "$CODEX_HOME/sessions/login"']);
+    await start();
+    expect(kept("login")).toBe("renewed\n");
   });
 
   for (const [what, answer] of [
@@ -243,13 +281,13 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
     ]);
   }
 
-  test("reviews on Claude Code with the builder's model when Codex isn't installed", async () => {
+  test("reviews on Claude Code with the model it is given", async () => {
     mkdirSync(join(home, ".config", "skel"), { recursive: true });
     writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-tok\n");
     fakeClaude([
       'cat > /dev/null; echo "{\\"type\\":\\"result\\",\\"structured_output\\":{\\"verdict\\":\\"approve\\",\\"body\\":\\"$seen\\"}}"',
     ]);
-    const done = await review({ ...given(), model: "sonnet" });
+    const done = await review({ ...given(), harness: "claude", model: "sonnet" });
     expect(done.verdict).toBe("approve");
     const seen = Buffer.from(done.body, "base64").toString().split("\n");
     expect(seen.slice(0, 3)).toEqual(["-p", "--model", "sonnet"]);
@@ -279,7 +317,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
     fakeClaude([
       'echo \'{"type":"result","is_error":true,"result":"structured output retries exhausted"}\'',
     ]);
-    const done = await start();
+    const done = await start({ harness: "claude" });
     expect(done.verdict).toBe("failed");
     expect(done.body).toContain("shape");
   });
@@ -287,6 +325,53 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
 
 // These never start bubblewrap, so they run inside skel's sandbox too.
 describe("starting a review", () => {
+  // Returns what your config sets for one role, `lead`, `builder` or `reviewer`, with these
+  // settings in your config.yaml. Read in a process of its own, as homedir() keeps the HOME
+  // this one started with.
+  function roleFor(role: string, settings: string): unknown {
+    mkdirSync(join(home, ".config", "skel"), { recursive: true });
+    writeFileSync(join(home, ".config", "skel", "config.yaml"), settings);
+    const code = `import { threadConfig } from ${JSON.stringify(source("config.ts"))};
+console.log(JSON.stringify(threadConfig().${role}));`;
+    const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stdout: "pipe" });
+    return JSON.parse(run.stdout.toString());
+  }
+
+  test("reviews run on your harness, though Codex is installed, unless you name one for them", () => {
+    fakeCodex(approve);
+    expect(roleFor("reviewer", "harness: claude\n")).toEqual({ harness: "claude" });
+    expect(roleFor("reviewer", "harness: claude\nreviewer: { harness: codex }\n")).toEqual({
+      harness: "codex",
+    });
+  });
+
+  test("each role runs on its own model, else yours when it runs on your harness", () => {
+    const yours = "harness: claude\nmodel: sonnet\n";
+    expect(roleFor("lead", yours)).toEqual({ harness: "claude", model: "sonnet" });
+    expect(roleFor("lead", `${yours}lead: { model: haiku }\n`)).toEqual({
+      harness: "claude",
+      model: "haiku",
+    });
+    expect(
+      roleFor("builder", `${yours}builder: { model: openrouter/deepseek/deepseek-chat }\n`),
+    ).toEqual({
+      harness: "claude",
+      model: "openrouter/deepseek/deepseek-chat",
+    });
+    expect(roleFor("reviewer", yours)).toEqual({ harness: "claude", model: "sonnet" });
+  });
+
+  test("a role on another harness ignores your model, as a model name belongs to its harness", () => {
+    const settings = "harness: claude\nmodel: opus\nreviewer: { harness: codex }\n";
+    expect(roleFor("reviewer", settings)).toEqual({ harness: "codex" });
+    expect(roleFor("reviewer", settings.replace("codex }", "codex, model: gpt-5-codex }"))).toEqual(
+      {
+        harness: "codex",
+        model: "gpt-5-codex",
+      },
+    );
+  });
+
   test("fails a review on a harness your config picks that isn't installed", async () => {
     const done = await review({ ...given(), harness: "codex" });
     expect(done).toEqual({
@@ -297,7 +382,7 @@ describe("starting a review", () => {
 
   test("fails a Claude Code review when no token is saved", async () => {
     script("claude", ["exit 0"]);
-    const done = await start();
+    const done = await start({ harness: "claude" });
     expect(done.verdict).toBe("failed");
     expect(done.body).toContain("run skel");
   });

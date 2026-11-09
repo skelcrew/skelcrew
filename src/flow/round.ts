@@ -3,7 +3,7 @@
 // into the builder's session when it asks for changes.
 import type { Database } from "bun:sqlite";
 import { typeInto } from "../agents/tmux.ts";
-import { threadConfig } from "../config.ts";
+import { agentHarness, threadConfig } from "../config.ts";
 import {
   findPullRequest,
   openPullRequest,
@@ -18,7 +18,7 @@ import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
 import { afterReview, pastLimit } from "./decide.ts";
 import { tellLead } from "./lead.ts";
-import { review, reviewerHarness } from "./reviewer.ts";
+import { review } from "./reviewer.ts";
 import { cloneOf, fullNameOf, readThread, record, type Thread, threadName } from "./thread.ts";
 
 // Runs git in skel's own clone and returns what it printed, throwing with its error when it
@@ -83,18 +83,18 @@ async function reviewRound(
   const { pr } = thread;
   if (pr === null) throw new Error("the thread has no pull request to review");
   const fullName = fullNameOf(thread);
-  const { model, reviewer, maxRounds } = threadConfig();
+  const { reviewer: on, maxRounds } = threadConfig();
+  const reviewer = on.harness;
   await setReviewStatus(fullName, sha, "pending", "skel's reviewer is reviewing");
   if (signal.aborted) return;
-  const harness = reviewerHarness(reviewer, process.env.PATH ?? "");
-  record(db, folder, { reviewing: sha, submitting: null, reviewer: harness }, `reviewing ${sha}`);
+  record(db, folder, { reviewing: sha, submitting: null, reviewer }, `reviewing ${sha}`);
   const verdict = await review({
     clone: cloneOf(thread),
     issue: await readIssue(fullName, thread.task),
     // Setting up the thread's clone put the base branch there under origin/.
     base: `origin/${baseOf(thread)}`,
     commit: sha,
-    model,
+    model: on.model,
     harness: reviewer,
     signal,
   });
@@ -117,7 +117,7 @@ async function reviewRound(
     status,
     telling: tell,
     held,
-    reviewed_by: harness,
+    reviewed_by: reviewer,
     review_round: before + 1,
     verdict: verdict.verdict,
     review_line: verdict.body.trim().split("\n")[0]?.slice(0, 200) ?? "",
@@ -138,7 +138,7 @@ async function deliver(
   signal: AbortSignal,
 ): Promise<void> {
   // A builder can work long after it submits, but one busy this long has likely hung.
-  await typeInto(tmux, folder, text, { timeout: 30 * 60_000, signal });
+  await typeInto(tmux, folder, agentHarness().marks, text, { timeout: 30 * 60_000, signal });
   if (!signal.aborted) record(db, folder, { telling: null }, "typed the review into the builder");
 }
 
@@ -221,7 +221,7 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
       held: null,
       // What CI said was about the commit before this one.
       checks: null,
-      reviewer: reviewerHarness(reviewer, process.env.PATH ?? ""),
+      reviewer: reviewer.harness,
     },
     `submitted: ${summary}`,
   );

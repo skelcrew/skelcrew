@@ -110,7 +110,7 @@ function open(
   writeFileSync(
     script,
     `import { openScreen } from ${JSON.stringify(screenFile)};
-await openScreen(${JSON.stringify(agents)}, ${JSON.stringify(session)});
+await openScreen(${JSON.stringify(agents)}, ${JSON.stringify(session)}, "lead");
 await Bun.write(${JSON.stringify(join(home, `left-${window}`))}, "left");`,
   );
   const named = where ? `SKEL_REMOTE_NAME=${where} ` : `${before}`;

@@ -44,7 +44,7 @@ function fakeDaemon(): Promise<Server> {
       const request = JSON.parse(data.toString());
       const asked = String(request.command);
       appendFileSync(join(home, "calls"), `daemon ${asked}\n`);
-      connection.end(asked === "lead" ? '{"lead":true}\n' : '{"running":true,"pid":1}\n');
+      connection.end(asked === "lead" ? '{"lead":"lead"}\n' : '{"running":true,"pid":1}\n');
     }),
   );
   return new Promise((listening) =>
@@ -86,6 +86,14 @@ esac`,
 esac`,
   );
   fake("loginctl", "exit 0");
+  // skel has a repository, so plain skel has a lead to open once set up.
+  const db = `import { openDb } from ${JSON.stringify(join(checkout, "src", "db.ts"))};
+openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app')");`;
+  const added = Bun.spawnSync([process.execPath, "-e", db], {
+    env: { HOME: home },
+    stderr: "pipe",
+  });
+  if (!added.success) throw new Error(added.stderr.toString());
   daemon = await fakeDaemon();
 });
 afterEach(() => {
@@ -99,7 +107,7 @@ function calls(): string {
   const said = existsSync(log) ? readFileSync(log, "utf8") : "";
   return said
     .replace(/tmux -L skel -f \/dev\/null source-file -\n/g, "")
-    .replace(/tmux -L skel-screen .* sh skel (\S+) ;.*/g, "screen on $1");
+    .replace(/tmux -L skel-screen .* sh skel (\S+) \S+ ;.*/g, "screen on $1");
 }
 
 const config = () => join(home, ".config", "skel", "config.yaml");
@@ -617,11 +625,11 @@ test("skips the reviewer's login when skel's Codex login works already", async (
   expect(calls()).not.toContain("codex login --device-auth");
 });
 
-test("says reviews run on Claude Code when Codex isn't installed", async () => {
+test("says reviews run on your harness when Codex isn't installed", async () => {
   const run = await skel("1\nsk-ant-oat01-good\n");
   expect(run.code).toBe(0);
   expect(run.out).toContain(
-    "skel · Codex isn't installed, so reviews will run on Claude Code, on the builder's own model",
+    "skel · Codex isn't installed, so reviews will run on your harness, with no second view",
   );
   expect(run.out).toContain("step 3 of 3");
   expect(run.out).toContain("second view");

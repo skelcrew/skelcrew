@@ -10,11 +10,13 @@ import {
 } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
+import { claude } from "../src/agents/claude.ts";
 import {
   agentRuns,
   endSession,
   hasSession,
   isIdle,
+  type Marks,
   startSession,
   stillRunning,
   stopSession,
@@ -38,24 +40,24 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// A stand-in for Claude Code: busy for a while (losing what is typed then, as the real one
-// can), then a ❯ prompt that logs every byte it receives. It turns on bracketed paste mode,
-// since tmux only sends the paste marks to an app that asked for them. The space in its name
-// would break it if tmux ran it through a shell.
-function harness(busySeconds = 0): string[] {
+// A stand-in for a harness, Claude Code unless other marks are given: busy for a while
+// (losing what is typed then, as the real one can), then its prompt, which logs every byte it
+// receives. It turns on bracketed paste mode, since tmux only sends the paste marks to an app
+// that asked for them. The space in its name would break it if tmux ran it through a shell.
+function harness(busySeconds = 0, marks: Marks = claude.marks): string[] {
   const script = join(home, `fake harness ${busySeconds}.sh`);
   writeFileSync(
     script,
     `#!/bin/sh
 if [ ${busySeconds} -gt 0 ]; then
-  echo "Thinking (esc to interrupt)"
+  echo "Thinking (${marks.busy})"
   timeout ${busySeconds} cat > lost.txt
   clear
 fi
 printf '\\033[?2004h'
 # Like Claude Code, it draws its own screen, which may not change at once when text arrives.
 stty -echo
-echo "❯"
+echo "${marks.prompt}"
 cat > received.txt
 `,
     { mode: 0o755 },
@@ -75,7 +77,7 @@ const read = (file: string) =>
 
 test("a typed message with several lines arrives whole, as one paste and one Enter", async () => {
   start("lead", harness());
-  await typeInto(socket, "lead", "fix the bug\nthen run the tests", { moment });
+  await typeInto(socket, "lead", claude.marks, "fix the bug\nthen run the tests", { moment });
   // The terminal turns the Enter tmux sends into a newline, so one newline means one Enter.
   await until(() => read("received.txt").endsWith("\n"));
   await Bun.sleep(moment * 3);
@@ -87,15 +89,24 @@ test("a message arrives whole while someone is scrolled back, and the agent read
   await until(() => Bun.spawnSync(["tmux", "-L", socket, "capture-pane", "-p"]).success);
   await Bun.sleep(moment * 2);
   Bun.spawnSync(["tmux", "-L", socket, "copy-mode", "-t", "=lead:"]);
-  expect(await isIdle(socket, "lead", { moment })).toBe(true);
-  await typeInto(socket, "lead", "fix the bug", { moment });
+  expect(await isIdle(socket, "lead", claude.marks, { moment })).toBe(true);
+  await typeInto(socket, "lead", claude.marks, "fix the bug", { moment });
   await until(() => read("received.txt").endsWith("\n"));
   expect(read("received.txt")).toBe("\x1b[200~fix the bug\x1b[201~\n");
 });
 
 test("typing waits while the harness is busy, then goes through", async () => {
   start("lead", harness(1));
-  await typeInto(socket, "lead", "hello", { moment });
+  await typeInto(socket, "lead", claude.marks, "hello", { moment });
+  await until(() => read("received.txt").endsWith("\n"));
+  expect(read("lost.txt")).toBe("");
+  expect(read("received.txt")).toBe("\x1b[200~hello\x1b[201~\n");
+});
+
+test("typing goes by the busy and ready marks of the harness it types into", async () => {
+  const marks = { busy: "esc to stop", prompt: "›" };
+  start("lead", harness(1, marks));
+  await typeInto(socket, "lead", marks, "hello", { moment });
   await until(() => read("received.txt").endsWith("\n"));
   expect(read("lost.txt")).toBe("");
   expect(read("received.txt")).toBe("\x1b[200~hello\x1b[201~\n");
@@ -103,7 +114,7 @@ test("typing waits while the harness is busy, then goes through", async () => {
 
 test("typing gives up when the harness stays busy", async () => {
   start("lead", harness(30));
-  const typing = typeInto(socket, "lead", "hello", { moment, timeout: 500 });
+  const typing = typeInto(socket, "lead", claude.marks, "hello", { moment, timeout: 500 });
   await expect(typing).rejects.toThrow("esc to interrupt");
   expect(read("lost.txt")).toBe("");
 });
@@ -111,26 +122,26 @@ test("typing gives up when the harness stays busy", async () => {
 test("a message cancelled while the harness is busy is never typed", async () => {
   start("lead", harness(1));
   const cancel = new AbortController();
-  const typing = typeInto(socket, "lead", "stale", { moment, signal: cancel.signal });
+  const typing = typeInto(socket, "lead", claude.marks, "stale", { moment, signal: cancel.signal });
   await Bun.sleep(300);
   cancel.abort();
   await typing;
-  typeInto(socket, "lead", "fresh", { moment });
+  typeInto(socket, "lead", claude.marks, "fresh", { moment });
   await until(() => read("received.txt").endsWith("\n"));
   expect(read("received.txt")).toBe("\x1b[200~fresh\x1b[201~\n");
 });
 
 test("typing says so when it gives up because there is no prompt", async () => {
   start("lead", ["sh", "-c", "echo starting; sleep 30"]);
-  const typing = typeInto(socket, "lead", "hello", { moment, timeout: 300 });
+  const typing = typeInto(socket, "lead", claude.marks, "hello", { moment, timeout: 300 });
   await expect(typing).rejects.toThrow("prompt");
 });
 
 test("two messages typed at once both arrive whole, in order, each sent", async () => {
   start("lead", harness());
   await Promise.all([
-    typeInto(socket, "lead", "first\nmessage", { moment }),
-    typeInto(socket, "lead", "second", { moment }),
+    typeInto(socket, "lead", claude.marks, "first\nmessage", { moment }),
+    typeInto(socket, "lead", claude.marks, "second", { moment }),
   ]);
   await until(() => read("received.txt").endsWith("second\x1b[201~\n"));
   expect(read("received.txt")).toBe("\x1b[200~first\nmessage\x1b[201~\n\x1b[200~second\x1b[201~\n");
@@ -263,8 +274,8 @@ test("idle means a quiet pane showing the prompt, and not busy", async () => {
   start("drawing", ["sh", "-c", 'echo "❯"; for i in $(seq 1500); do date +%N; sleep 0.02; done']);
   start("other", ["sh", "-c", "echo ready; sleep 30"]);
   await Bun.sleep(moment * 3);
-  expect(await isIdle(socket, "waiting", { moment })).toBe(true);
-  expect(await isIdle(socket, "busy", { moment })).toBe(false);
-  expect(await isIdle(socket, "drawing", { moment })).toBe(false);
-  expect(await isIdle(socket, "other", { moment })).toBe(false);
+  expect(await isIdle(socket, "waiting", claude.marks, { moment })).toBe(true);
+  expect(await isIdle(socket, "busy", claude.marks, { moment })).toBe(false);
+  expect(await isIdle(socket, "drawing", claude.marks, { moment })).toBe(false);
+  expect(await isIdle(socket, "other", claude.marks, { moment })).toBe(false);
 });

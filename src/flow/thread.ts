@@ -4,6 +4,7 @@ import type { Database } from "bun:sqlite";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { HarnessName } from "../agents/harness.ts";
 import { threadsDir } from "../paths.ts";
 import { findRepository } from "./repo.ts";
 
@@ -52,10 +53,10 @@ export const Thread = z.object({
   checks: z.enum(["passing", "failing", "pending"]).nullable(),
   // The harness of the review waiting or running, which can differ from the latest finished
   // one's once you change your config.
-  reviewer: z.enum(["codex", "claude"]).nullable(),
+  reviewer: HarnessName.nullable(),
   // The latest finished review: its round, reviewer, verdict and the first line of what it said.
   // Each one is saved here, so it reaches the thread's log with the rest of the thread.
-  reviewed_by: z.enum(["codex", "claude"]).nullable(),
+  reviewed_by: HarnessName.nullable(),
   review_round: z.number().nullable(),
   verdict: z.enum(["approve", "changes", "failed"]).nullable(),
   review_line: z.string().nullable(),

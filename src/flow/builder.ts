@@ -5,7 +5,6 @@ import { existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
-import { agentCommand, hasTranscript } from "../agents/claude.ts";
 import instructions from "../agents/prompts/builder.md" with { type: "text" };
 import { refuseCredentials, setupCommand } from "../agents/sandbox.ts";
 import {
@@ -16,7 +15,7 @@ import {
   startServer,
   startSession,
 } from "../agents/tmux.ts";
-import { threadConfig } from "../config.ts";
+import { agentHarness, threadConfig } from "../config.ts";
 import { fetchBranch, readIssue } from "../github.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { quietly } from "../run.ts";
@@ -148,16 +147,18 @@ async function mustRun(
 
 const SkelYaml = z.looseObject({ setup: z.array(z.string()).optional() }).nullable();
 
-// Returns the setup commands in the clone's skel.yaml, or none when it has no skel.yaml.
-// Throws when skel.yaml isn't valid, so the thread fails with the reason.
+// Returns the setup commands in the repository's skel.yaml, in the thread's clone, or none
+// when it has none. Throws when that file isn't valid, so the thread fails with the reason.
 function setupCommands(clone: string): string[] {
   const file = join(clone, "skel.yaml");
   const stat = lstatSync(file, { throwIfNoEntry: false });
   if (!stat) return [];
   // skel reads it with your rights, so a link could show it any file of yours.
-  if (!stat.isFile()) throw new Error("skel.yaml isn't a plain file, so skel won't read it");
+  if (!stat.isFile())
+    throw new Error("the repository's skel.yaml isn't a plain file, so skel won't read it");
   const read = SkelYaml.safeParse(parse(readFileSync(file, "utf8")));
-  if (!read.success) throw new Error(`skel.yaml isn't valid: ${z.prettifyError(read.error)}`);
+  if (!read.success)
+    throw new Error(`the repository's skel.yaml isn't valid: ${z.prettifyError(read.error)}`);
   return read.data?.setup ?? [];
 }
 
@@ -180,8 +181,8 @@ export function baseOf(thread: Thread): string {
 // everything in the folder, .git included.
 export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   const clone = cloneOf(thread);
-  // skel's clone of the repository can still be on its way, as the daemon makes it once it
-  // has started the lead. Asking for a refresh joins the one under way.
+  // skel's clone of the repository can still be on its way, as the daemon refreshes clones
+  // as it starts. Asking for a refresh joins the one under way.
   if (!existsSync(cloneDir(thread.owner, thread.repo))) await refreshClones(db);
   rmSync(clone, { recursive: true, force: true });
   // From skel's own clone on the same disk, so git links its files rather than copying them.
@@ -216,7 +217,7 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   refuseCredentials(clone);
   for (const command of setupCommands(clone)) {
     const { argv, env } = setupCommand(clone, command);
-    await mustRun(argv, `skel.yaml's setup command "${command}"`, env);
+    await mustRun(argv, `the repository's skel.yaml setup command "${command}"`, env);
   }
 }
 
@@ -228,7 +229,8 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
 export async function startBuilder(db: Database, tmux: string, thread: Thread): Promise<void> {
   const clone = cloneOf(thread);
   const stored = thread.session;
-  const resume = stored !== null && hasTranscript(thread.folder, clone, stored) ? stored : null;
+  const harness = agentHarness();
+  const resume = stored !== null && harness.saved(thread.folder, clone, stored) ? stored : null;
   const session = resume ?? crypto.randomUUID();
   let start: { resume: string } | { sessionId: string; prompt: string } = { resume: session };
   if (!resume) {
@@ -236,10 +238,10 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
     start = { sessionId: session, prompt: body ? `${title}\n\n${body}` : title };
   }
   record(db, thread.folder, { session });
-  const { argv, env } = agentCommand({
+  const { argv, env } = harness.start({
     name: thread.folder,
     socket: threadSocket(thread.folder),
-    model: threadConfig().model,
+    model: threadConfig().builder.model,
     thread: clone,
     // Gone once you remove the repository from skel, and bwrap can't mount what is missing.
     ...(existsSync(cloneDir(thread.owner, thread.repo))

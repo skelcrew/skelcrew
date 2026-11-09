@@ -16,6 +16,7 @@ import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import type { Subprocess } from "bun";
 import { stillRunning } from "../src/agents/tmux.ts";
+import { leadPlaces } from "../src/paths.ts";
 import { source, until as wait } from "./harness.ts";
 
 const asMac = join(import.meta.dir, "as-mac.ts");
@@ -62,13 +63,30 @@ const Command = (text: string) => {
   return { argv: [...argv].map(String), env: { ...env } };
 };
 
+// skel's clone of simon/app, which its lead sees, made as a repository is added.
+function appClone(): string {
+  const clone = join(home, ".local", "share", "skel", "repos", "simon", "app");
+  mkdirSync(clone, { recursive: true });
+  Bun.spawnSync(["git", "-C", clone, "init", "-q"]);
+  return clone;
+}
+
+// Returns what starts app's lead, with its folder and its clone, as skel gives them.
+const leadStart = (socket: string) =>
+  JSON.stringify({
+    name: "lead",
+    socket,
+    model: "opus",
+    folder: join(home, ".local", "share", "skel", "leads", "simon", "app"),
+    origin: appClone(),
+  });
+
 // Returns the command skel would start the lead with.
 async function leadCommand() {
   const socket = join(home, "run", "skel", "lead", "skel.sock");
   mkdirSync(join(socket, ".."), { recursive: true });
-  const made =
-    await asMacRun(`import { agentCommand } from ${JSON.stringify(source("agents/claude.ts"))};
-console.log(JSON.stringify(agentCommand({ name: "lead", socket: ${JSON.stringify(socket)}, model: "opus" })));`);
+  const made = await asMacRun(`import { claude } from ${JSON.stringify(source("agents/claude.ts"))};
+console.log(JSON.stringify(claude.start(${leadStart(socket)})));`);
   expect(made.err).toBe("");
   return { socket, ...Command(made.out) };
 }
@@ -132,7 +150,7 @@ test("an agent starts under sandbox-exec, in its folder, with a home of its own"
   const run = Bun.spawnSync(argv, { env: given, stderr: "pipe" });
   expect(run.stderr.toString()).toBe("");
   expect(readFileSync(join(out, "pwd"), "utf8").trim()).toBe(
-    join(home, ".local", "share", "skel", "lead"),
+    join(home, ".local", "share", "skel", "leads", "simon", "app"),
   );
   const seen = readFileSync(join(out, "env"), "utf8");
   expect(seen).toContain("SKEL_SANDBOX=1\n");
@@ -154,9 +172,8 @@ test("the agent's socket is never resolved itself, as a Mac can't open one to fi
   // of the path going unresolved is what keeps a Mac from failing with EOPNOTSUPP.
   symlinkSync(join(home, "elsewhere"), socket);
   writeFileSync(join(home, "elsewhere"), "");
-  const made =
-    await asMacRun(`import { agentCommand } from ${JSON.stringify(source("agents/claude.ts"))};
-console.log(JSON.stringify(agentCommand({ name: "lead", socket: ${JSON.stringify(socket)}, model: "opus" })));`);
+  const made = await asMacRun(`import { claude } from ${JSON.stringify(source("agents/claude.ts"))};
+console.log(JSON.stringify(claude.start(${leadStart(socket)})));`);
   expect(made.err).toBe("");
   const text = readFileSync(rules(Command(made.out).argv), "utf8");
   expect(text).toContain(`(remote unix-socket (subpath "${socket}"))`);
@@ -168,11 +185,12 @@ test("the profile hides your home folder and brings back the agent's folders", a
   const skel = join(home, ".local", "share", "skel");
   for (const folder of [home, `/System/Volumes/Data${home}`, "/private/tmp"])
     expect(text).toContain(`(deny file-read* (subpath "${folder}"))`);
-  expect(text).toContain(`(allow file-read* file-write* (subpath "${join(skel, "lead")}"))`);
+  const folder = join(skel, "leads", "simon", "app");
+  expect(text).toContain(`(allow file-read* file-write* (subpath "${folder}"))`);
   expect(text).toContain(
     `(allow file-read* file-write* (subpath "${join(skel, "claude", "lead")}"))`,
   );
-  expect(text).toContain(`(allow file-read* (subpath "${join(skel, "repos")}"))`);
+  expect(text).toContain(`(allow file-read* (subpath "${join(skel, "repos", "simon", "app")}"))`);
   expect(text).toContain(`(remote unix-socket (subpath "${socket}"))`);
   // Bun and claude are found on the PATH, and skel's own commands come back with them.
   expect(text).toContain(`(allow file-read* (subpath "${bin}"))`);
@@ -182,9 +200,9 @@ test("the profile hides your home folder and brings back the agent's folders", a
 test("what comes back of your home folder keeps its place under the agent's own", async () => {
   const { argv } = await leadCommand();
   const ownHome = join(rules(argv), "..", "home");
-  // The lead's instructions name its repositories by this path.
-  const repos = join(ownHome, ".local", "share", "skel", "repos");
-  expect(realpathSync(repos)).toBe(join(home, ".local", "share", "skel", "repos"));
+  // The lead's instructions name its repository's clone by this path.
+  const clone = join(ownHome, ".local", "share", "skel", "repos", "simon", "app");
+  expect(realpathSync(clone)).toBe(join(home, ".local", "share", "skel", "repos", "simon", "app"));
   // Nothing else of yours is put there.
   expect(existsSync(join(ownHome, ".config"))).toBe(false);
 });
@@ -232,6 +250,11 @@ test("the daemon takes its lock from a Mac's system library, and the lead reache
   writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\n");
   fake("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
   fake("gh", "exit 1");
+  // simon/app, opened before, so the daemon starts its lead as it starts.
+  appClone();
+  const opened = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb().run("INSERT INTO repositories (name, owner, repo, opened) VALUES ('app', 'simon', 'app', 1)");`;
+  expect((await asMacRun(opened)).err).toBe("");
   // Ends when its terminal goes, as Claude Code does: the sandbox's wrapper stays for it, as it
   // keeps going through a hangup to remove its folder once the agent has ended.
   fake(
@@ -250,7 +273,8 @@ await serve(${JSON.stringify(socket)});`;
   const daemon = join(home, "run", "skel.sock");
   await until(() => existsSync(daemon) || serve.exitCode !== null);
   expect(serve.exitCode).toBe(null);
-  const said = join(home, ".local", "share", "skel", "claude", "lead", "ps");
+  const lead = leadPlaces("simon", "app").name;
+  const said = join(home, ".local", "share", "skel", "claude", lead, "ps");
   await until(() => existsSync(said));
   expect(readFileSync(said, "utf8")).toBe("There are no threads.\n");
   expect(readFileSync(join(home, "calls"), "utf8")).toContain("sandbox-exec -f");
@@ -307,7 +331,7 @@ printf '%s' '{"verdict":"approve","body":"Fine."}' > "$out"`,
 // Runs a review as a Mac would, and returns its verdict.
 async function reviewOnMac(clone: string, more = "") {
   const ran = await asMacRun(`import { review } from ${JSON.stringify(source("flow/reviewer.ts"))};
-console.log(JSON.stringify(await review({ clone: ${JSON.stringify(clone)}, issue: { title: "t", body: "b" }, base: "origin/main", commit: ${JSON.stringify(git(clone, "rev-parse", "HEAD"))}, model: "opus", ${more} })));
+console.log(JSON.stringify(await review({ clone: ${JSON.stringify(clone)}, issue: { title: "t", body: "b" }, base: "origin/main", commit: ${JSON.stringify(git(clone, "rev-parse", "HEAD"))}, model: "opus", harness: "codex", ${more} })));
 process.exit(0);`);
   expect(ran.err).toBe("");
   return JSON.parse(ran.out);

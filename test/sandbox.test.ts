@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentCommand } from "../src/agents/claude.ts";
+import { claude } from "../src/agents/claude.ts";
 import { setupCommand } from "../src/agents/sandbox.ts";
 import { source } from "./harness.ts";
 
@@ -63,6 +63,14 @@ function repository() {
   return repo;
 }
 
+// What a lead's start is given: where app's lead works, and app's clone, which it sees. The
+// clone goes along only once a test made it, as bwrap can't mount a folder that is missing.
+function lead(): { folder: string; origin?: string } {
+  const folder = join(home, ".local", "share", "skel", "leads", "simon", "app");
+  const repo = join(home, ".local", "share", "skel", "repos", "simon", "app");
+  return existsSync(repo) ? { folder, origin: repo } : { folder };
+}
+
 // Stands in for Claude Code: reports what it was given, sees and may change.
 function fakeClaude(script: string[]) {
   mkdirSync(join(home, "bin"), { recursive: true });
@@ -89,7 +97,8 @@ const outside = () => ({
 function asLead(script: string) {
   saveToken();
   fakeClaude([script]);
-  const { argv, env } = agentCommand({
+  const { argv, env } = claude.start({
+    ...lead(),
     name: "lead",
     socket: socketPath,
     model: "opus",
@@ -102,13 +111,13 @@ function asLead(script: string) {
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
   test("the lead writes in its folder and nowhere else", async () => {
     const repo = repository();
-    const lead = join(home, ".local", "share", "skel", "lead");
+    const { folder } = lead();
     const done = await asLead(
       `pwd; echo hi > note && cat note; cat ${repo}/README; echo x > ${repo}/new; echo x > /usr/new; echo x > /tmp/ok && echo tmp-ok`,
     );
-    expect(done.out).toBe(`${lead}\nhi\napp\ntmp-ok\n`);
+    expect(done.out).toBe(`${folder}\nhi\napp\ntmp-ok\n`);
     expect(done.err).toContain("Read-only file system");
-    expect(readFileSync(join(lead, "note"), "utf8")).toBe("hi\n");
+    expect(readFileSync(join(folder, "note"), "utf8")).toBe("hi\n");
     expect(existsSync(join(repo, "new"))).toBe(false);
   });
 
@@ -125,8 +134,8 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
     const script = join(home, "start.ts");
     writeFileSync(
       script,
-      `import { agentCommand } from ${JSON.stringify(join(copy, "src", "agents", "claude.ts"))};
-console.log(JSON.stringify(agentCommand({ name: "lead",
+      `import { claude } from ${JSON.stringify(join(copy, "src", "agents", "claude.ts"))};
+console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead())},
   socket: ${JSON.stringify(socketPath)}, model: "opus", env: ${JSON.stringify(outside())} })));`,
     );
     const made = await run([process.execPath, script]);
@@ -153,7 +162,8 @@ console.log(JSON.stringify(agentCommand({ name: "lead",
     mkdirSync(join(home, "bin"));
     symlinkSync(join(pkg, "bin", "cli"), join(home, "bin", "claude"));
     writeFileSync(join(home, "nvm", "secret"), "x");
-    const { argv, env } = agentCommand({
+    const { argv, env } = claude.start({
+      ...lead(),
       name: "lead",
       socket: socketPath,
       model: "opus",
@@ -190,7 +200,8 @@ console.log(JSON.stringify(agentCommand({ name: "lead",
     // Without a mark of its own, the release would pass for part of this package.
     writeFileSync(join(codex, "package.json"), "{}");
     writeFileSync(join(standalone, "selection-history"), "secret");
-    const { argv, env } = agentCommand({
+    const { argv, env } = claude.start({
+      ...lead(),
       name: "lead",
       socket: socketPath,
       model: "opus",
@@ -198,8 +209,8 @@ console.log(JSON.stringify(agentCommand({ name: "lead",
     });
     argv.splice(argv.indexOf("--") + 1);
     // By its full path: with the link broken, a bare name would find your real claude.
-    const claude = join(home, "bin", "claude");
-    argv.push("sh", "-c", `${claude}; cd ${codex} && find . ! -type d | sort`);
+    const program = join(home, "bin", "claude");
+    argv.push("sh", "-c", `${program}; cd ${codex} && find . ! -type d | sort`);
     const done = await run(argv, env);
     expect(done.err).toBe("");
     expect(done.out.split("\n")).toEqual([
@@ -283,7 +294,8 @@ console.log(JSON.stringify(agentCommand({ name: "lead",
       "echo m > $CLAUDE_CONFIG_DIR/note && echo kept",
       "mkdir -p ~/.claude && echo x > ~/.claude/settings.json",
     ]);
-    const { argv, env } = agentCommand({
+    const { argv, env } = claude.start({
+      ...lead(),
       name: "app-12",
       socket: socketPath,
       model: "opus",
@@ -301,7 +313,7 @@ console.log(JSON.stringify(agentCommand({ name: "lead",
         "--permission-mode",
         "bypassPermissions",
         "--settings",
-        '{"skipDangerousModePermissionPrompt":true,"sandbox":{"enabled":false},"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"skel attached","timeout":10}]}]}}',
+        '{"skipDangerousModePermissionPrompt":true,"sandbox":{"enabled":false}}',
         "--resume",
         "abc-123",
         "Fix the bug",
@@ -321,8 +333,10 @@ console.log(JSON.stringify(agentCommand({ name: "lead",
       ].join("\n"),
     );
     const json = join(config, ".claude.json");
-    const lead = join(home, ".local", "share", "skel", "lead");
-    expect(JSON.parse(readFileSync(json, "utf8")).projects[lead].hasTrustDialogAccepted).toBe(true);
+    const { folder } = lead();
+    expect(JSON.parse(readFileSync(json, "utf8")).projects[folder].hasTrustDialogAccepted).toBe(
+      true,
+    );
     // Its first-launch questions, such as the theme, would wait with nobody to answer.
     expect(JSON.parse(readFileSync(json, "utf8")).hasCompletedOnboarding).toBe(true);
     expect(statSync(json).mode & 0o777).toBe(0o600);
@@ -334,13 +348,15 @@ console.log(JSON.stringify(agentCommand({ name: "lead",
     repository();
     saveToken();
     fakeClaude(["ls -A ~/.local/share/skel/claude"]);
-    const first = agentCommand({
+    const first = claude.start({
+      ...lead(),
       name: "app-12",
       socket: socketPath,
       model: "opus",
       env: outside(),
     });
-    const second = agentCommand({
+    const second = claude.start({
+      ...lead(),
       name: "app-12-review-1",
       socket: socketPath,
       model: "opus",
@@ -357,7 +373,8 @@ describe("starting Claude Code", () => {
     repository();
     saveToken();
     const start = () =>
-      agentCommand({
+      claude.start({
+        ...lead(),
         name: "app-12",
         socket: socketPath,
         model: "opus",
@@ -388,8 +405,8 @@ describe("starting Claude Code", () => {
     const config = join(home, ".local", "share", "skel", "claude", "app-12");
     mkdirSync(config, { recursive: true });
     Bun.spawnSync(["mkfifo", join(config, ".claude.json")]);
-    const script = `import { agentCommand } from ${JSON.stringify(source("agents/claude.ts"))};
-agentCommand({ name: "app-12", socket: "x", model: "opus" });`;
+    const script = `import { claude } from ${JSON.stringify(source("agents/claude.ts"))};
+claude.start({ name: "app-12", socket: "x", model: "opus", ...${JSON.stringify(lead())} });`;
     const proc = Bun.spawn(["bun", "-e", script], {
       env: { ...process.env, ...outside() },
       stdout: "pipe",
@@ -403,7 +420,8 @@ agentCommand({ name: "app-12", socket: "x", model: "opus" });`;
     rmSync(join(config, ".claude.json"));
     mkdirSync(join(config, ".claude.json"));
     expect(() =>
-      agentCommand({
+      claude.start({
+        ...lead(),
         name: "app-12",
         socket: socketPath,
         model: "opus",
@@ -417,7 +435,8 @@ agentCommand({ name: "app-12", socket: "x", model: "opus" });`;
     saveToken();
     const id = "6f1c2a7e-0b4d-4c3e-9a51-2d8e7f6a9b10";
     const start = (more: { sessionId?: string; resume?: string }) =>
-      agentCommand({
+      claude.start({
+        ...lead(),
         name: "app-12",
         socket: socketPath,
         model: "opus",
@@ -437,7 +456,8 @@ agentCommand({ name: "app-12", socket: "x", model: "opus" });`;
     const repo = repository();
     saveToken();
     const start = () =>
-      agentCommand({
+      claude.start({
+        ...lead(),
         name: "lead",
         socket: socketPath,
         model: "opus",
@@ -472,7 +492,8 @@ agentCommand({ name: "app-12", socket: "x", model: "opus" });`;
       '[remote "origin"\n\turl = https://x:ghp_secret@github.com/a/b\n',
     );
     expect(() =>
-      agentCommand({
+      claude.start({
+        ...lead(),
         name: "lead",
         socket: socketPath,
         model: "opus",
@@ -487,7 +508,8 @@ agentCommand({ name: "app-12", socket: "x", model: "opus" });`;
     saveToken();
     mkdirSync(join(home, "bin"), { recursive: true });
     writeFileSync(join(home, "bin", "sprite-env"), "#!/bin/sh\n", { mode: 0o755 });
-    const { argv } = agentCommand({
+    const { argv } = claude.start({
+      ...lead(),
       name: "lead",
       socket: socketPath,
       model: "opus",
@@ -520,7 +542,8 @@ agentCommand({ name: "app-12", socket: "x", model: "opus" });`;
     repository();
     saveToken();
     // Without the PATH this machine has, which on a Sprite holds sprite-env.
-    const { argv } = agentCommand({
+    const { argv } = claude.start({
+      ...lead(),
       name: "lead",
       socket: socketPath,
       model: "opus",
@@ -535,7 +558,8 @@ agentCommand({ name: "app-12", socket: "x", model: "opus" });`;
   test("says to run skel first when there is no token", () => {
     repository();
     expect(() =>
-      agentCommand({
+      claude.start({
+        ...lead(),
         name: "app-12",
         socket: socketPath,
         model: "opus",

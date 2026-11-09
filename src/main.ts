@@ -38,7 +38,18 @@ function taskName(word?: string): [string, number] | undefined {
 // Prints why a command can't run as given, and ends skel with an error. People who mistype a
 // command skel knows hear to check its arguments, not that the command doesn't exist.
 function usage(command?: string): never {
-  const known = ["serve", "repo", "ps", "task", "start", "stop", "attach", "review", "submit"];
+  const known = [
+    "serve",
+    "repo",
+    "ps",
+    "task",
+    "start",
+    "stop",
+    "attach",
+    "review",
+    "submit",
+    "tell",
+  ];
   const first = command ?? "";
   console.error(
     first === "--remote"
@@ -52,14 +63,17 @@ function usage(command?: string): never {
   process.exit(1);
 }
 
-// Sets up skel if it needs it and opens the screen on the lead, with the repository you ran
-// skel from as its default, or the one --from names.
+// Sets up skel if it needs it and opens the screen on the lead of the repository you ran skel
+// from, or the one --from names, or else the one you opened last. While skel has no
+// repositories, bringInFrom has said so, and there is no lead to open.
 async function leadCommand(from?: string): Promise<void> {
   const { attachToLead } = await import("./client.ts");
-  const { bringInFrom } = await import("./flow/repo.ts");
+  const { openDb } = await import("./db.ts");
+  const { bringInFrom, repositories } = await import("./flow/repo.ts");
   const { firstRun } = await import("./machine/setup.ts");
   firstRun();
-  await attachToLead("skel", await bringInFrom(from));
+  const found = await bringInFrom(from);
+  if (repositories(openDb()).length > 0) await attachToLead("skel", found);
 }
 
 // Runs what keeps this machine going: its setup, then the daemon.
@@ -86,11 +100,13 @@ async function screenCommand(args: string[]): Promise<void> {
   const { pageOf, screenOpened } = await import("./client.ts");
   const { runPage } = await import("./screen/page.ts");
   const { runSidebar } = await import("./screen/sidebar.ts");
-  // The last word is the remote skel runs on, and empty on this machine.
-  if (command === "sidebar" && sub && rest[0] && rest[1] !== undefined && rest.length === 2) {
+  // The third word is the remote skel runs on, and empty on this machine. The last is the
+  // session of the lead the screen opened on.
+  const [session, where, lead] = rest;
+  if (command === "sidebar" && sub && session && where !== undefined && lead && rest.length === 3) {
     // Not waited on, so the sidebar draws at once.
     screenOpened();
-    await runSidebar(sub, rest[0], rest[1]);
+    await runSidebar(sub, session, where, lead);
     return;
   }
   if (command === "page" && sub && rest.length === 0) {
@@ -100,23 +116,27 @@ async function screenCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
-// Lists, removes or trusts a repository, for skel repo.
+// Lists, removes or trusts a repository, for skel repo. Only ls takes --json: to remove or
+// trust, it is a word like any other.
 async function repoCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
   const { askForRepositories } = await import("./client.ts");
   const { openDb } = await import("./db.ts");
   const { listRepositories, printRepositories } = await import("./flow/list.ts");
   const { removeRepo, trustRepo } = await import("./flow/repo.ts");
-  if (sub === "ls" && rest.length === 0) {
+  // --json can go anywhere, as tools add it last and people type it where they like.
+  const json = args.includes("--json");
+  if (sub === "ls" && rest.filter((arg) => arg !== "--json").length === 0) {
     // An agent's sandbox hides skel's database, so there the daemon answers. In your
     // terminal it is read here, so the list shows even while the daemon is down.
     printRepositories(
       process.env.SKEL_SANDBOX === "1" ? await askForRepositories() : listRepositories(openDb()),
+      json,
     );
     return;
   }
   if (sub === "rm" && rest[0] && rest.length === 1) {
-    await removeRepo(rest[0]);
+    await removeRepo(rest[0], "skel");
     return;
   }
   if (sub === "trust" && rest[0] && rest.length === 1) {
@@ -127,10 +147,10 @@ async function repoCommand(args: string[]): Promise<void> {
 }
 
 // Runs what agents and their hooks call: a builder submitting its work, and the hooks that
-// tell the daemon about questions and bring back where you attached from.
+// tell the daemon about questions.
 async function agentCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
-  const { askForAttachedNote, reportQuestion, submitForReview } = await import("./client.ts");
+  const { reportQuestion, submitForReview } = await import("./client.ts");
   if (command === "submit" && sub && rest.length === 0) {
     const thread = await submitForReview(sub);
     console.log(
@@ -144,13 +164,10 @@ async function agentCommand(args: string[]): Promise<void> {
     await reportQuestion(sub === "asked");
     return;
   }
-  // Run by the lead's Claude Code hook with each message, not by people, so usage leaves it
-  // out. What it prints goes into the message, unseen, so the lead hears where you attached
-  // from without a turn of its own.
-  if (command === "attached" && args.length === 1) {
-    process.stdout.write(await askForAttachedNote());
-    return;
-  }
+  // A lead started before each repository had its own runs this hook with each message,
+  // until it restarts. It prints nothing, as Claude Code adds what it prints to the message,
+  // and a lead with one repository needs no note of where you are.
+  if (command === "attached" && args.length === 1) return;
   usage(command);
 }
 
@@ -221,6 +238,30 @@ async function threadCommand(args: string[]): Promise<void> {
   }
   if (command === "attach" && thread && rest.length === 0) {
     await attachToThread("skel", ...thread);
+    return;
+  }
+  usage(command);
+}
+
+// Types a message into a thread's builder, for the lead, or into the lead, for a builder. Who
+// may tell whom is the daemon's to decide, from the socket the call comes in on. You type to
+// a builder yourself, so in your terminal it only says how.
+async function tellCommand(args: string[]): Promise<void> {
+  const [command, to, text, ...rest] = args;
+  const { tellOn, tellTheLead } = await import("./client.ts");
+  if (process.env.SKEL_SANDBOX !== "1")
+    throw new Error(
+      "skel tell is for the lead and builders. To type to a builder, pick it in the sidebar.",
+    );
+  const thread = taskName(to);
+  if (to === "lead" && text && rest.length === 0) {
+    await tellTheLead(text);
+    console.log("Telling the lead. skel types it in once the lead is idle.");
+    return;
+  }
+  if (thread && text && rest.length === 0) {
+    const name = await tellOn(...thread, text);
+    console.log(`Telling ${name}'s builder. skel types it in once the builder is idle.`);
     return;
   }
   usage(command);
@@ -304,6 +345,8 @@ async function runCommand(args: string[]): Promise<void> {
     case "review":
     case "attach":
       return threadCommand(args);
+    case "tell":
+      return tellCommand(args);
     default:
       usage(command);
   }

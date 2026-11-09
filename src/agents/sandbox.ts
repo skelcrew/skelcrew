@@ -1,7 +1,7 @@
 // The sandbox every agent runs in. bubblewrap draws the boundary, or sandbox-exec on a Mac:
 // the agent's folder is writable, the rest of the system read-only, and your home folder and
 // credentials hidden.
-import { existsSync, lstatSync, readlinkSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { controlSocket, dropCapabilities, onSprite } from "../machine/sprite.ts";
 import { checkoutFolder, singleFile } from "../version.ts";
@@ -162,6 +162,49 @@ export function sandboxArgs(given: {
   return args;
 }
 
+// Returns the mounts that show the reviewer a folder whose changes are thrown away after the
+// review, and where it sees that folder. A copy leaves out the entries named in `kept`, which
+// the caller mounts writable over it, and bwrap makes their places in the copy.
+// bwrap's throwaway overlay does it, but on a Sprite an overlay can't be made on the
+// Sprite's own disk, which is an overlay already: bwrap fails with "Invalid argument". There
+// the reviewer gets a copy instead, made in the review's own folder so it goes with it. A Mac
+// has no overlay either, and can't show a folder at another path, so there the reviewer
+// works in the copy where it lies, which the review's folder already opens to it.
+export async function throwaway(given: {
+  source: string;
+  copy: string;
+  sprite: boolean;
+  signal: AbortSignal;
+  kept?: string[];
+}): Promise<{ mounts: string[]; at: string }> {
+  const { source, copy, sprite, signal, kept = [] } = given;
+  const mac = process.platform === "darwin";
+  if (!sprite && !mac)
+    return { mounts: ["--overlay-src", source, "--tmp-overlay", source], at: source };
+  mkdirSync(copy);
+  const entries = readdirSync(source).filter((entry) => !kept.includes(entry));
+  if (entries.length > 0) {
+    let copied = false;
+    let err = "";
+    // A copy of a clone with its installed packages is large, and cp shares the blocks
+    // where the disk allows it. A Mac's cp has its own word for that, and can fail on it
+    // across two disks, so it goes on to a plain copy.
+    const paths = entries.map((entry) => join(source, entry));
+    for (const share of mac ? [["-c"], []] : [["--reflink=auto"]]) {
+      const cp = ["cp", "-a", ...share, ...paths, copy];
+      const copying = Bun.spawn(cp, { stdout: "ignore", stderr: "pipe", signal });
+      const [said, code] = await Promise.all([new Response(copying.stderr).text(), copying.exited]);
+      err = said;
+      copied = code === 0;
+      if (copied) break;
+    }
+    // A copy cut short by a cancel is reported as the cancel, after the copy is removed.
+    if (!copied && !signal.aborted)
+      throw new Error(`couldn't copy ${source} for the reviewer: ${err.trim()}`);
+  }
+  return mac ? { mounts: [], at: copy } : { mounts: ["--bind", copy, source], at: source };
+}
+
 // Rejects clone settings containing credentials or unreadable settings, so agents cannot
 // receive your GitHub login. The lead reads each clone's .git/config, so a credential in it
 // would be the lead's.
@@ -208,7 +251,8 @@ export function keptEnv(env: Record<string, string | undefined>): Record<string,
   return kept;
 }
 
-// Returns the sandboxed command and environment for one of skel.yaml's setup commands, to
+// Returns the sandboxed command and environment for one of the repository's skel.yaml setup
+// commands, to
 // run through a shell in the thread's clone. It comes from the repository, so it runs in
 // the sandbox like the agents, with no socket and no login.
 export function setupCommand(

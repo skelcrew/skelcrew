@@ -17,7 +17,7 @@ export function nameRepositories(db: Database): void {
     THEN owner || '/' || repo ELSE repo END`);
 }
 
-// Opens skel's database and prepares its tables so repositories, the lead and threads
+// Opens skel's database and prepares its tables so repositories, their leads and threads
 // survive restarts.
 export function openDb(): Database {
   mkdirSync(dataDir(), { recursive: true });
@@ -46,27 +46,21 @@ function prepareTables(db: Database): void {
   if (!db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = 'labeled'").get())
     db.run("ALTER TABLE repositories ADD COLUMN labeled INTEGER NOT NULL DEFAULT 0");
   // How many issues and PRs are open in all, as the sidebar counts those it doesn't show.
-  for (const column of ["open_issues", "open_prs"])
+  // `lead_session` is the session ID of the repository's lead, kept so it comes back with its
+  // conversation. `opened` is when you last opened the repository, in milliseconds since 1970,
+  // and null until you first do: its lead starts then, and from then on the daemon brings it
+  // back. `kept_lead` marks the repository whose lead is the one this machine had before skel
+  // gave each repository its own.
+  const columns = {
+    open_issues: "INTEGER NOT NULL DEFAULT 0",
+    open_prs: "INTEGER NOT NULL DEFAULT 0",
+    lead_session: "TEXT",
+    opened: "INTEGER",
+    kept_lead: "INTEGER NOT NULL DEFAULT 0",
+  };
+  for (const [column, type] of Object.entries(columns))
     if (!db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = ?").get(column))
-      db.run(`ALTER TABLE repositories ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
-  // One row at most: there is one lead per machine.
-  db.run(`CREATE TABLE IF NOT EXISTS lead (
-    one INTEGER PRIMARY KEY CHECK (one = 1),
-    session TEXT NOT NULL
-  )`);
-  // Where you last attached from, as owner/repo, or null outside any repository on GitHub.
-  // The lead hears of it with your next message, which can come after a restart.
-  db.run(`CREATE TABLE IF NOT EXISTS attached_from (
-    one INTEGER PRIMARY KEY CHECK (one = 1),
-    repo TEXT
-  )`);
-  // The last note telling the lead where you attached from, and the lead's conversation it
-  // went to. Kept so the note comes only when it changes, even after a restart.
-  db.run(`CREATE TABLE IF NOT EXISTS attached (
-    one INTEGER PRIMARY KEY CHECK (one = 1),
-    session TEXT NOT NULL,
-    note TEXT NOT NULL
-  )`);
+      db.run(`ALTER TABLE repositories ADD COLUMN ${column} ${type}`);
   // A thread names its repository by GitHub owner and name, which never change, and is named
   // once, at start, for its folder: its clone, log, config folder, session and socket all
   // use it, so none of them move when the repository's short name gains its owner.
@@ -142,10 +136,58 @@ function prepareTables(db: Database): void {
     created TEXT NOT NULL,
     PRIMARY KEY (owner, repo, kind, number)
   )`);
-  // Notes for the lead that aren't about a thread needing you, such as a thread started from
-  // GitHub, kept until they are typed in, since the lead may not be running.
+  // Notes for a repository's lead that aren't about a thread needing you, such as a thread
+  // started from GitHub, kept until they are typed in, since the lead may not be running.
   db.run("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)");
+  for (const column of ["owner", "repo"])
+    if (!db.query("SELECT 1 FROM pragma_table_info('notes') WHERE name = ?").get(column))
+      db.run(`ALTER TABLE notes ADD COLUMN ${column} TEXT`);
+  if (db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lead'").get())
+    keepTheLead(db);
   // The reviews skel posted. They go out with your gh login, so on GitHub they look like
   // reviews of yours, and polling must not type them back into the builder.
   db.run("CREATE TABLE IF NOT EXISTS posted (id INTEGER PRIMARY KEY)");
+}
+
+// Makes the one lead a machine had before skel gave each repository its own the lead of the
+// repository you last attached from, or else of the first by name. It keeps its session, so
+// --resume still finds its conversation, and leadPlaces gives it its old name, folder and
+// socket, so a lead running through the upgrade carries on. Notes still waiting for it stay
+// its own, and one more tells it what it now leads. Runs once: the tables it reads go.
+function keepTheLead(db: Database): void {
+  const session = z
+    .object({ session: z.string() })
+    .nullable()
+    .parse(db.query("SELECT session FROM lead").get());
+  const hasFrom = db
+    .query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'attached_from'")
+    .get();
+  const from = hasFrom
+    ? z
+        .object({ repo: z.string().nullable() })
+        .nullable()
+        .parse(db.query("SELECT repo FROM attached_from").get())?.repo
+    : null;
+  const all = db
+    .query("SELECT name, owner, repo FROM repositories ORDER BY name")
+    .all()
+    .map((row) => Repository.parse(row));
+  const chosen =
+    all.find((r) => `${r.owner}/${r.repo}`.toLowerCase() === from?.toLowerCase()) ?? all[0];
+  if (chosen) {
+    const { name, owner, repo } = chosen;
+    db.run(
+      "UPDATE repositories SET kept_lead = 1, lead_session = ?, opened = ? WHERE owner = ? AND repo = ?",
+      [session?.session ?? null, Date.now(), owner, repo],
+    );
+    db.run("UPDATE notes SET owner = ?, repo = ? WHERE owner IS NULL", [owner, repo]);
+    db.run("INSERT INTO notes (owner, repo, text) VALUES (?, ?, ?)", [
+      owner,
+      repo,
+      `skel now gives each repository a lead of its own, and you are the lead of ${name} (${owner}/${repo}). Work only on ${name} from now on. For another repository, ask the human to open it with skel in a checkout of it: it gets a lead of its own.`,
+    ]);
+  }
+  db.run("DROP TABLE lead");
+  db.run("DROP TABLE IF EXISTS attached_from");
+  db.run("DROP TABLE IF EXISTS attached");
 }

@@ -222,7 +222,7 @@ export function firstRun(): void {
     if (!Bun.which("codex", { PATH: env.PATH }))
       console.log(
         skelLine(
-          "Codex isn't installed, so reviews will run on Claude Code, on the builder's own model, and lose the second view.",
+          "Codex isn't installed, so reviews will run on your harness, with no second view on another model.",
         ),
       );
   }

@@ -3,6 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 import { agentRuns, stopSession, typeInto } from "../agents/tmux.ts";
+import { agentHarness } from "../config.ts";
 import { type Check, failedLog, fetchIntoClone } from "../github.ts";
 import { cloneDir } from "../paths.ts";
 import { errorText } from "../say.ts";
@@ -102,7 +103,11 @@ export async function tellBuilder(
     const text = [...checks, ...decision.tell].join("\n\n---\n\n");
     if (!agentRuns(tmux, thread.folder)) throw new Error("its builder isn't running");
     // A builder can work long after an event, but one busy this long has likely hung.
-    await typeInto(tmux, thread.folder, text, { timeout: 30 * 60_000, signal: cancel.signal });
+    const { marks } = agentHarness();
+    await typeInto(tmux, thread.folder, marks, text, {
+      timeout: 30 * 60_000,
+      signal: cancel.signal,
+    });
     if (cancel.signal.aborted) return;
     // Typing can wait a long time, and a newer round may have moved the thread on meanwhile,
     // such as to approved. Its state then stands, and only the events count as handled.

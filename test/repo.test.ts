@@ -22,8 +22,7 @@ const main = source("main.ts");
 let home = "";
 let daemon: Server | undefined;
 
-const hint =
-  "skel has no repositories yet. Run skel in a checkout of one, or ask the lead for one by its GitHub name.";
+const hint = "skel has no repositories yet. Run skel in a checkout of one.";
 // What skel says once you leave the screen.
 const left = "Your agents keep running. Run skel to come back.\n";
 const clone = (full: string) => join(home, ".local", "share", "skel", "repos", full);
@@ -84,7 +83,7 @@ echo "{\\"name\\":\\"\${full#*/}\\",\\"owner\\":{\\"login\\":\\"\${full%/*}\\"},
     connection.on("data", (data) => {
       appendFileSync(join(home, "calls"), "daemon lead\n");
       writeFileSync(join(home, "asked"), data.toString());
-      connection.end('{"lead":true}\n');
+      connection.end('{"lead":"app-lead"}\n');
     }),
   );
   await new Promise<void>((listening) => daemon?.listen(join(home, "run", "skel.sock"), listening));
@@ -141,14 +140,14 @@ async function skel(args: string[], typed = "", cwd = home, more: Record<string,
 }
 
 // Returns what skel ran, with the long tmux line that opens the screen cut to the agent it
-// opens on.
+// opens on. The fake daemon names the lead's session app-lead.
 const calls = () =>
   existsSync(join(home, "calls"))
     ? readFileSync(join(home, "calls"), "utf8")
         .replace(/tmux -L skel -f \/dev\/null source-file -\n/g, "")
-        .replace(/tmux -L skel-screen .* sh skel (\S+) ;.*/g, "screen on $1")
+        .replace(/tmux -L skel-screen .* sh skel (\S+) \S+ ;.*/g, "screen on $1")
     : "";
-const attached = () => calls().endsWith("daemon lead\nscreen on lead\n");
+const attached = () => calls().endsWith("daemon lead\nscreen on app-lead\n");
 
 test("brings in a repository you can push to from its checkout, without asking", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
@@ -200,7 +199,7 @@ for (const [what, typed] of [
   ["a no", "n\n"],
   ["Ctrl-D", ""],
 ]) {
-  test(`after ${what} clones nothing, attaches anyway, and asks again next time`, async () => {
+  test(`after ${what} clones nothing, has nothing to attach to, and asks again next time`, async () => {
     const checkout = onGitHub("simon/app");
     const first = await skel([], typed, checkout);
     expect(first.code).toBe(0);
@@ -208,7 +207,7 @@ for (const [what, typed] of [
     expect(first.out).toContain(hint);
     expect(existsSync(clone("simon/app"))).toBe(false);
     expect(existsSync(trustFile())).toBe(false);
-    expect(attached()).toBe(true);
+    expect(calls()).not.toContain("daemon lead");
     expect((await skel([], "", checkout)).out).toContain("Do you trust simon/app?");
   });
 }
@@ -245,21 +244,21 @@ test("does nothing in a repository that isn't on GitHub, or has no origin", asyn
   git(checkout, "remote", "set-url", "origin", "https://gitlab.com/simon/app");
   const elsewhere = await skel([], "", checkout);
   expect(elsewhere.err).toBe("");
-  expect(elsewhere.out).toBe(`${hint}\n${left}`);
-  expect(attached()).toBe(true);
+  expect(elsewhere.out).toBe(`${hint}\n`);
+  expect(calls()).not.toContain("daemon lead");
   git(checkout, "remote", "remove", "origin");
   const none = await skel([], "", checkout);
   expect(none.err).toBe("");
-  expect(none.out).toBe(`${hint}\n${left}`);
+  expect(none.out).toBe(`${hint}\n`);
   expect(existsSync(clone("simon/app"))).toBe(false);
 });
 
-test("outside a repository, says how to bring one in only while skel has none", async () => {
+test("outside a repository, says how to bring one in, and attaches to nothing, while skel has none", async () => {
   const first = await skel([]);
   expect(first.err).toBe("");
-  expect(first.out).toBe(`${hint}\n${left}`);
+  expect(first.out).toBe(`${hint}\n`);
   expect(calls()).not.toContain("gh");
-  expect(attached()).toBe(true);
+  expect(calls()).not.toContain("daemon lead");
   await skel([], "", onGitHub("simon/app", "WRITE"));
   expect((await skel([])).out).toBe(left);
 });
@@ -272,14 +271,19 @@ test("--from brings in the repository it names, wherever skel runs", async () =>
   expect(attached()).toBe(true);
 });
 
-test("--from says why it can't bring a repository in, and attaches anyway", async () => {
+test("--from says why it can't bring a repository in, and attaches to the one you opened last", async () => {
+  const none = await skel(["--from", "nobody/none"]);
+  expect(none.code).toBe(0);
+  expect(none.err).toContain("nobody/none");
+  expect(calls()).not.toContain("daemon lead");
+  await skel([], "", onGitHub("simon/app", "WRITE"));
   const run = await skel(["--from", "nobody/none"]);
   expect(run.code).toBe(0);
   expect(run.err).toContain("nobody/none");
   expect(attached()).toBe(true);
 });
 
-// The daemon tells the lead, so "fix the flaky test" means that repository's.
+// The daemon opens that repository's lead, or the one you opened last when it names none.
 test("tells the daemon the repository you attached from, once skel has it", async () => {
   const asked = () => JSON.parse(readFileSync(join(home, "asked"), "utf8"));
   const app = onGitHub("simon/app", "WRITE");
@@ -412,6 +416,18 @@ test("names two repositories that share a GitHub name with their owners", async 
   );
   await skel(["repo", "rm", "other/app"]);
   expect((await skel(["repo", "ls"])).out).toBe(`app  simon/app  ${clone("simon/app")}\n`);
+});
+
+test("repo ls --json lists the repositories for tools, with the same facts as the text", async () => {
+  expect(JSON.parse((await skel(["repo", "ls", "--json"])).out)).toEqual([]);
+  await skel([], "", onGitHub("simon/app", "WRITE"));
+  await skel([], "", onGitHub("other/app", "WRITE"));
+  const listed = await skel(["repo", "ls", "--json"]);
+  expect(listed.err).toBe("");
+  expect(JSON.parse(listed.out)).toEqual([
+    { name: "other/app", github: "other/app", clone: clone("other/app") },
+    { name: "simon/app", github: "simon/app", clone: clone("simon/app") },
+  ]);
 });
 
 test("repo trust clones a repository you can't push to, named by its GitHub name", async () => {
