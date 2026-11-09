@@ -53,8 +53,8 @@ const read = (screen: string) =>
   plain(screen)
     .split("\n")
     .map((text) => text.slice(0, -1).trimEnd());
-// The sidebar's rows, with the empty lines and the three hints at the bottom left out.
-const listed = (screen: string) => read(screen).slice(0, -3).filter(Boolean);
+// The sidebar's rows, with the empty lines and the four hints at the bottom left out.
+const listed = (screen: string) => read(screen).slice(0, -4).filter(Boolean);
 
 test("lists the lead first, then each thread on two lines: a mark and name, then word and harness", () => {
   const rows = [
@@ -78,7 +78,7 @@ test("rows and hints sit two columns in, and the word two further", () => {
   expect(lines[1]?.indexOf("running")).toBe(4);
   expect(lines[2]?.indexOf("●")).toBe(2);
   expect(lines[2]?.indexOf("app-12")).toBe(4);
-  expect(lines.at(-3)?.indexOf("⌥")).toBe(2);
+  expect(lines.at(-4)?.indexOf("⌥")).toBe(2);
 });
 
 test("the word and harness are grey, so the names stand out", () => {
@@ -224,7 +224,7 @@ test("a name too long for a line goes on to the next, whole", () => {
 test("a pane narrower than the sidebar keeps every name whole, at any width", () => {
   const rows = [lead, thread("a-very-long-repository-name-1234")];
   for (let width = 0; width < sidebarWidth; width++) {
-    const text = plain(draw(rows, "lead", { width, height: 120 })).replace(/[\s\n│]/g, "");
+    const text = plain(draw(rows, "lead", { width, height: 121 })).replace(/[\s\n│]/g, "");
     expect(text).toContain("a-very-long-repository-name-1234");
   }
 });
@@ -251,10 +251,10 @@ test("the grey stops at the line, which keeps its own background", () => {
   expect(first).toEndWith("\x1b[49m\x1b[38;5;237m│\x1b[22;39m");
 });
 
-test("three hints with the keys stay at the bottom, below however few rows there are", () => {
+test("four hints with the keys stay at the bottom, below however few rows there are", () => {
   const lines = read(draw([lead], "lead", size));
   expect(lines).toHaveLength(size.height);
-  expect(lines.slice(-3)).toEqual(["  ⌥↑↓ move", "  ⌥⇧↑↓ list", "  ⌃Q quit"]);
+  expect(lines.slice(-4)).toEqual(["  ⌥↑↓ move", "  ⌥⇧↑↓ list", "  ⌥←→ repo", "  ⌃Q quit"]);
   expect(draw([lead], "lead", size)).toContain("\x1b[90m  ⌥↑↓ move");
 });
 
@@ -271,7 +271,7 @@ test("a release installed in the background shows as a notice, cut at words to f
 
 test("a list too long for the sidebar scrolls above the hints, and never runs into them", () => {
   const rows = [lead, ...[1, 2, 3, 4, 5].map((n) => thread(`app-${n}`))];
-  const short = { width: sidebarWidth, height: 8 };
+  const short = { width: sidebarWidth, height: 9 };
   expect(read(draw(rows, "app-4", short))).toEqual([
     "  ● app-3",
     "    working · claude",
@@ -280,30 +280,31 @@ test("a list too long for the sidebar scrolls above the hints, and never runs in
     "  ● app-5",
     "  ⌥↑↓ move",
     "  ⌥⇧↑↓ list",
+    "  ⌥←→ repo",
     "  ⌃Q quit",
   ]);
 });
 
 test("a sidebar too short for a row and the hints drops the hints, as the row matters more", () => {
   const rows = [lead, thread("app-1")];
-  for (const height of [1, 2, 3, 4]) {
+  for (const height of [1, 2, 3, 4, 5]) {
     const lines = plain(draw(rows, "app-1", { width: sidebarWidth, height })).split("\n");
     expect(lines.length).toBeLessThanOrEqual(height);
     expect(lines.join("\n")).not.toContain("⌥");
     expect(lines.join("\n")).toContain("  ● app-1");
   }
-  expect(plain(draw(rows, "app-1", { width: sidebarWidth, height: 5 }))).toContain("⌥");
+  expect(plain(draw(rows, "app-1", { width: sidebarWidth, height: 6 }))).toContain("⌥");
 });
 
 test("the hints also give way to a row whose name takes more lines", () => {
   const name = "a-very-long-repository-name-1234";
   const rows = [lead, thread(name)];
-  const tight = { width: sidebarWidth, height: 5 };
+  const tight = { width: sidebarWidth, height: 6 };
   const text = plain(draw(rows, name, tight));
   expect(text).toContain("working · claude");
   expect(text).not.toContain("⌥");
   expect(picked(rows, name, tight, 2)).toBe(name);
-  expect(plain(draw(rows, name, { width: sidebarWidth, height: 6 }))).toContain("⌥");
+  expect(plain(draw(rows, name, { width: sidebarWidth, height: 7 }))).toContain("⌥");
 });
 
 test("the row you are looking at stays on screen however far down the list it is", () => {
@@ -340,7 +341,7 @@ test("a click on either line of a row picks it, but no row, nor an agent that is
 
 test("a click follows the list as it scrolls, and on a hint picks nothing", () => {
   const rows = [lead, ...[1, 2, 3, 4, 5].map((n) => thread(`app-${n}`))];
-  const short = { width: sidebarWidth, height: 8 };
+  const short = { width: sidebarWidth, height: 9 };
   expect(picked(rows, "app-4", short, 0)).toBe("app-3");
   expect(picked(rows, "app-4", short, 2)).toBe("app-4");
   expect(picked(rows, "app-4", short, 3)).toBe("app-4");
@@ -384,7 +385,7 @@ test("ISSUES, THREADS and PRS sit in that order, with rows together and a line b
   expect(
     read(drawLists(threads, lists, "lead", tall))
       .filter(Boolean)
-      .slice(0, -3),
+      .slice(0, -4),
   ).toEqual([
     "  Issues",
     "  Add CSV export",
@@ -538,8 +539,8 @@ test("a title keeps as much room as a thread's name, and the grey still runs pas
 });
 
 test("on a narrow pane the hints are cut two columns before the edge", () => {
-  const lines = plain(draw([lead], "lead", { width: 10, height: 6 })).split("\n");
-  expect(lines.at(-3)).toBe("  ⌥↑↓ m  │");
+  const lines = plain(draw([lead], "lead", { width: 10, height: 7 })).split("\n");
+  expect(lines.at(-4)).toBe("  ⌥↑↓ m  │");
 });
 
 test("control codes in a title never reach your terminal", () => {
@@ -569,14 +570,14 @@ test("a list shows as many rows as fit its third, then a count of the rest", () 
 });
 
 test("a list that just fits its third has no count", () => {
-  const room = { width: sidebarWidth, height: 41 };
+  const room = { width: sidebarWidth, height: 42 };
   const lines = read(drawLists(threads, { ...nothing, prs: list(links(5)) }, "lead", room));
   expect(third(lines, "PRs")).toHaveLength(11);
   expect(lines.join("\n")).not.toContain("more");
 });
 
 test("the count gives way to the row in a third that only has room for one", () => {
-  const room = { width: sidebarWidth, height: 17 };
+  const room = { width: sidebarWidth, height: 18 };
   const lines = read(drawLists(threads, { ...nothing, issues: list(links(9)) }, "lead", room));
   expect(third(lines, "Issues")).toEqual(["  Issues", "  An issue", "  app-1"]);
 });
@@ -601,16 +602,16 @@ test("each list has a third of the sidebar above the hints, and THREADS has what
   const places = (height: number) => {
     const lines = read(drawLists(threads, lists, "lead", { width: sidebarWidth, height }));
     const at = (text: string) => lines.indexOf(text);
-    return [at("  Issues"), at("  Threads"), at("  PRs"), lines.length - 3];
+    return [at("  Issues"), at("  Threads"), at("  PRs"), lines.length - 4];
   };
-  expect(places(41)).toEqual([0, 13, 26, 38]);
-  expect(places(42)).toEqual([0, 13, 27, 39]);
-  expect(places(43)).toEqual([0, 13, 28, 40]);
-  expect(places(44)).toEqual([0, 14, 28, 41]);
+  expect(places(42)).toEqual([0, 13, 26, 38]);
+  expect(places(43)).toEqual([0, 13, 27, 39]);
+  expect(places(44)).toEqual([0, 13, 28, 40]);
+  expect(places(45)).toEqual([0, 14, 28, 41]);
 });
 
 test("each list stays in its place, however full any of them is", () => {
-  const room = { width: sidebarWidth, height: 41 };
+  const room = { width: sidebarWidth, height: 42 };
   const crowded: Lists = { issues: list(links(9), 240), prs: list(links(9), 240) };
   const moreThreads = [lead, ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => thread(`app-${n}`))];
   const places = (rows: Row[], shownLists: Lists) => {
@@ -629,7 +630,7 @@ const full: Lists = { issues: list(many, 40), prs: list(many, 40) };
 const busy = [lead, ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => thread(`app-${n}`))];
 
 test("THREADS scrolls inside its third, and the lists around it stay", () => {
-  const room = { width: sidebarWidth, height: 25 };
+  const room = { width: sidebarWidth, height: 26 };
   for (const { session } of busy) {
     const lines = read(drawLists(busy, full, session, room));
     expect(lines.indexOf("  Threads")).toBe(7);
@@ -640,20 +641,20 @@ test("THREADS scrolls inside its third, and the lists around it stay", () => {
 });
 
 test("a third too short for a heading and one row leaves THREADS the whole sidebar", () => {
-  const short = { width: sidebarWidth, height: 16 };
+  const short = { width: sidebarWidth, height: 17 };
   const whole = read(drawLists(busy, full, "app-7", short));
   expect(whole.join("\n")).not.toContain("Issues");
   expect(whole.join("\n")).not.toContain("Threads");
   expect(whole.join("\n")).toContain("● app-7");
   expect(read(drawLists(busy, nothing, "app-7", short))).toEqual(whole);
-  const enough = read(drawLists(busy, full, "app-7", { width: sidebarWidth, height: 17 }));
+  const enough = read(drawLists(busy, full, "app-7", { width: sidebarWidth, height: 18 }));
   expect(enough).toContain("  Issues");
 });
 
 test("a row too tall for THREADS' third leaves THREADS the whole sidebar, as it must stay whole", () => {
   const name = "a-very-long-repository-name-1234";
   const rows = [lead, thread(name)];
-  const room = { width: sidebarWidth, height: 17 };
+  const room = { width: sidebarWidth, height: 18 };
   const lines = read(drawLists(rows, full, name, room));
   expect(lines.join("\n")).not.toContain("Issues");
   expect(lines.join("\n")).toContain("working · claude");
@@ -730,7 +731,7 @@ test("moving steps over a thread whose agent isn't running, into the next list",
 test("moving lands only on rows you can see, and skips what is under the count", () => {
   const links = [31, 30, 29, 28, 27, 26].map((n) => link(`app-${n}`, `Issue ${n}`));
   const crowded: Lists = { issues: list(links), prs: nothing.prs };
-  const room = { width: sidebarWidth, height: 26 };
+  const room = { width: sidebarWidth, height: 27 };
   const lines = read(drawLists(threads, crowded, "lead", room)).join("\n");
   expect(lines).toContain("app-30");
   expect(lines).not.toContain("app-29");
@@ -914,8 +915,9 @@ describe("the rows the database gives", () => {
 import { sidebarLists, sidebarRows } from ${JSON.stringify(source("screen/rows.ts"))};
 const db = openDb();
 db.run(${JSON.stringify(sql)});
-const rows = sidebarRows(db, ["lead", "app-12"], () => 3, ${now}, "lead");
-console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5) }));`;
+const app = { owner: "simon", repo: "app", lead: "lead" };
+const rows = sidebarRows(db, ["lead", "app-12"], () => 3, ${now}, app);
+console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5, app) }));`;
     const run = Bun.spawnSync([process.execPath, "-e", code], {
       env: { ...process.env, HOME: home },
       stdout: "pipe",
@@ -967,14 +969,26 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5) }));`;
     `INSERT INTO threads (owner, repo, task, folder, branch, status, pr, needs_you)
       VALUES ('simon', 'app', 12, 'app-12', 'skel/12', '${status}', 34, ${needing});`;
 
-  test("issues come newest first across repositories, with those on a thread dim and last", () => {
+  test("issues come newest first, with those on a thread dim and last", () => {
     const { issues } = after(`${open} ${onTwelve("working")}`, 0).lists;
     expect(issues.links.map(({ name, dim }) => [name, dim])).toEqual([
-      ["site-8", false],
       ["app-3", false],
       ["app-12", true],
     ]);
-    expect(issues.total).toBe(213);
+    expect(issues.total).toBe(212);
+  });
+
+  // One repository's lead never mentions another's work, and neither does its sidebar.
+  test("only the open repository's threads, issues and PRs show", () => {
+    const sql = `${open} ${onTwelve("working")}
+      INSERT INTO threads (owner, repo, task, folder, branch, status)
+        VALUES ('simon', 'site', 8, 'site-8', 'skel/8', 'working');
+      INSERT INTO open_items (owner, repo, kind, number, title, created)
+        VALUES ('simon', 'site', 'pr', 9, 'Dark mode', '2026-11-06T10:00:00Z');`;
+    const { rows, lists } = after(sql, 0);
+    expect(rows.map((shown) => shown.name)).toEqual(["lead", "app-12"]);
+    expect(lists.issues.links.map((link) => link.name)).toEqual(["app-3", "app-12"]);
+    expect(lists.prs.links.map((link) => link.name)).toEqual(["app#34", "app#40"]);
   });
 
   test("a thread that is done no longer dims its issue, as it is gone from THREADS", () => {
@@ -1065,6 +1079,31 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5) }));`;
       expect(plain(frame)).not.toMatch(/ · \d/);
       expect(shown(columns, values, hours(30))).toBe(frame);
     }
+  });
+
+  test("each repository's tab counts its threads that need you or failed", () => {
+    const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { repositoryTabs } from ${JSON.stringify(source("screen/rows.ts"))};
+const db = openDb();
+db.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site'), ('app', 'simon', 'app');
+INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you, asking) VALUES
+  ('simon', 'site', 1, 'site-1', 'b', 'waiting', 1, 0),
+  ('simon', 'site', 2, 'site-2', 'b', 'working', 0, 1),
+  ('simon', 'site', 3, 'site-3', 'b', 'failed', 1, 0),
+  ('simon', 'site', 4, 'site-4', 'b', 'working', 0, 0),
+  ('simon', 'site', 5, 'site-5', 'b', 'done', 1, 0),
+  ('simon', 'app', 6, 'app-6', 'b', 'stopped', 0, 0)\`);
+console.log(JSON.stringify(repositoryTabs(db)));`;
+    const run = Bun.spawnSync([process.execPath, "-e", code], {
+      env: { ...process.env, HOME: home },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(run.stderr.toString()).toBe("");
+    expect(JSON.parse(run.stdout.toString())).toEqual([
+      { name: "app", fullName: "simon/app", count: 0 },
+      { name: "site", fullName: "simon/site", count: 3 },
+    ]);
   });
 
   test("a thread with no start time saved shows none", () => {

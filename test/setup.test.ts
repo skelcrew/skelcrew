@@ -45,7 +45,8 @@ function fakeDaemon(): Promise<Server> {
       const request = JSON.parse(data.toString());
       const asked = String(request.command);
       appendFileSync(join(home, "calls"), `daemon ${asked}\n`);
-      connection.end(asked === "lead" ? '{"lead":"lead"}\n' : '{"running":true,"pid":1}\n');
+      const lead = '{"lead":"lead","repository":"simon/app"}\n';
+      connection.end(asked === "lead" ? lead : '{"running":true,"pid":1}\n');
     }),
   );
   return new Promise((listening) =>

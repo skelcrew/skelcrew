@@ -50,16 +50,6 @@ export function leadOf(db: Database, owner: string, repo: string) {
   return { ...leadPlaces(owner, repo, kept_lead), session: lead_session, harness };
 }
 
-// Returns the harness of the lead whose session is named, for the sidebar's row, or nothing
-// for a lead that never started.
-export function leadHarness(db: Database, name: string): string {
-  for (const { owner, repo } of repositories(db)) {
-    const lead = leadOf(db, owner, repo);
-    if (lead.name === name) return lead.harness ?? "";
-  }
-  return "";
-}
-
 // Returns the repositories you have opened, whose leads the daemon keeps running.
 export const openedRepositories = (db: Database) =>
   db

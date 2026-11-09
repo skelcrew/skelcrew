@@ -1,9 +1,10 @@
-// The rows: what the sidebar and the strip have to show, read from the database. The lead and
-// each thread, with the word that says what it is doing, and ISSUES and PRS as links.
+// The rows: what the sidebar, the strip and the tabs have to show, read from the database. The
+// open repository's lead and threads, with the word that says what each is doing, its ISSUES
+// and PRS as links, and a tab for each repository.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { pastLimit } from "../flow/decide.ts";
-import { leadHarness } from "../flow/lead.ts";
+import { leadOf } from "../flow/lead.ts";
 import { fullNameOf, needsYou, Thread, threadName } from "../flow/thread.ts";
 import { Name } from "../github.ts";
 import { green, grey, red, yellow } from "./look.ts";
@@ -39,6 +40,11 @@ export type Link = {
   dim: boolean;
   mark: Mark | null;
 };
+// The repository open in the sidebar, by its GitHub owner and name, and its lead's session.
+export type Open = { owner: string; repo: string; lead: string };
+// A repository's tab: its name in skel, its GitHub name, and how many of its threads need you
+// or failed.
+export type Tab = { name: string; fullName: string; count: number };
 // The rows to show, and how many are open in all, which can be far more.
 export type List = { links: Link[]; total: number };
 export type Lists = { issues: List; prs: List };
@@ -96,8 +102,8 @@ export function threadAge(started: number, now: number): string {
   return minutes < 24 * 60 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 1440)}d`;
 }
 
-// Returns the rows as the database and tmux have them now: the lead in the session given,
-// then each thread that isn't done, newest first as in skel ps, each with its word by its
+// Returns the open repository's rows as the database and tmux have them now: its lead, then
+// each of its threads that isn't done, newest first as in skel ps, each with its word by its
 // round limit, which `maxRounds` gives. It runs each second, so it reads only what shows.
 // Only a thread whose word is working shows its running time. A time on any other row would
 // write to the terminal each minute, and on a Sprite a terminal that stays quiet lets it sleep.
@@ -107,19 +113,24 @@ export function sidebarRows(
   running: string[],
   maxRounds: (thread: Thread) => number,
   now: number,
-  lead: string,
+  open: Open,
 ): Row[] {
-  const threads = db.query("SELECT * FROM threads WHERE status != 'done' ORDER BY rowid DESC");
-  const leadRuns = running.includes(lead);
+  const threads = db.query(
+    "SELECT * FROM threads WHERE status != 'done' AND owner = ? AND repo = ? ORDER BY rowid DESC",
+  );
+  const leadRuns = running.includes(open.lead);
+  // A repository skel no longer works on has no lead to name a harness for.
+  const known = db.query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ?");
+  const lead = known.get(open.owner, open.repo) ? leadOf(db, open.owner, open.repo) : null;
   return [
     {
       name: "lead",
-      session: lead,
+      session: open.lead,
       status: null,
       needsYou: false,
       running: leadRuns,
       word: leadRuns ? "running" : "stopped",
-      harness: leadHarness(db, lead),
+      harness: lead?.harness ?? "",
       age: "",
       fullName: null,
       title: null,
@@ -127,7 +138,7 @@ export function sidebarRows(
       checks: null,
       review: null,
     },
-    ...threads.all().map((row) => {
+    ...threads.all(open.owner, open.repo).map((row) => {
       const thread = Thread.parse(row);
       const { review_round: round, reviewer, reviewed_by: by, verdict } = thread;
       const word = threadWord(thread, maxRounds(thread));
@@ -161,20 +172,21 @@ const OpenRow = z.object({
   threaded: z.coerce.boolean(),
 });
 
-// Returns ISSUES and PRS as the daemon's last poll saved them, up to `most` rows of each: it
-// reads the database and never asks GitHub, as it runs each second. Newest first, across
-// repositories, with issues that have a thread last. A thread that is done has left THREADS,
+// Returns the open repository's ISSUES and PRS as the daemon's last poll saved them, up to
+// `most` rows of each: it reads the database and never asks GitHub, as it runs each second.
+// Newest first, with issues that have a thread last. A thread that is done has left THREADS,
 // so its issue counts as waiting again. A PR from a thread takes the word and mark of its row.
 // GitHub numbers issues and PRs from one counter, so no issue can be taken for a thread's PR.
-export function sidebarLists(db: Database, rows: Row[], most: number): Lists {
+export function sidebarLists(db: Database, rows: Row[], most: number, open: Open): Lists {
   // Returns one list, of the kind saved in the database, with the path GitHub shows it at.
   const read = (kind: string, path: string, column: string): List => {
     const found = db.query(`SELECT i.owner, i.repo, r.name, i.number, i.title,
         EXISTS (SELECT 1 FROM threads t WHERE i.kind = 'issue' AND t.owner = i.owner
           AND t.repo = i.repo AND t.task = i.number AND t.status != 'done') AS threaded
       FROM open_items i JOIN repositories r ON r.owner = i.owner AND r.repo = i.repo
-      WHERE i.kind = ? ORDER BY threaded, i.created DESC, i.number DESC LIMIT ?`);
-    const links = found.all(kind, most).map((saved) => {
+      WHERE i.kind = ? AND i.owner = ? AND i.repo = ?
+      ORDER BY threaded, i.created DESC, i.number DESC LIMIT ?`);
+    const links = found.all(kind, open.owner, open.repo, most).map((saved) => {
       const { owner, repo, name, number, title, threaded } = OpenRow.parse(saved);
       const thread = rows.find((row) => row.fullName === `${owner}/${repo}` && row.pr === number);
       return {
@@ -187,8 +199,37 @@ export function sidebarLists(db: Database, rows: Row[], most: number): Lists {
         mark: kind === "issue" ? null : thread ? threadMark(thread) : noThread,
       };
     });
-    const sum = db.query(`SELECT COALESCE(SUM(${column}), 0) AS total FROM repositories`).get();
+    const sum = db
+      .query(
+        `SELECT COALESCE(SUM(${column}), 0) AS total FROM repositories WHERE owner = ? AND repo = ?`,
+      )
+      .get(open.owner, open.repo);
     return { links, total: z.object({ total: z.number() }).parse(sum).total };
   };
   return { issues: read("issue", "issues", "open_issues"), prs: read("pr", "pull", "open_prs") };
+}
+
+const TabRow = z.object({
+  name: z.string(),
+  owner: z.string(),
+  repo: z.string(),
+  count: z.number(),
+});
+
+// Returns a tab for each repository, in name order, with how many of its threads need you or
+// failed, which its badge shows. The badges are how you hear of other repositories, as one
+// repository's lead never mentions another's threads.
+export function repositoryTabs(db: Database): Tab[] {
+  return db
+    .query(
+      `SELECT r.name, r.owner, r.repo, (SELECT COUNT(*) FROM threads t
+        WHERE t.owner = r.owner AND t.repo = r.repo AND t.status != 'done'
+          AND (t.status = 'failed' OR t.needs_you = 1 OR t.asking = 1)) AS count
+      FROM repositories r ORDER BY r.name`,
+    )
+    .all()
+    .map((row) => {
+      const { name, owner, repo, count } = TabRow.parse(row);
+      return { name, fullName: `${owner}/${repo}`, count };
+    });
 }

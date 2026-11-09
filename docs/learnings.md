@@ -265,6 +265,11 @@ that covers the code you are about to write.
   server loses its screen, and agents keep running. The sidebar's own commands hit this about
   once in 500 leavings on a loaded machine, so a screen test can fail with `server exited
   unexpectedly`.
+- **A click on a status line reaches no pane.** `MouseDown1Status` fires, and a range drawn
+  with `#[range=user|X]` names what was clicked in `#{mouse_status_range}`. `send-keys -F`
+  doesn't expand that in the text it types, so `run-shell -C` must expand the whole
+  `send-keys` first. A second click soon after the first comes as `DoubleClick1Status`, not
+  `MouseDown1Status`, so bind both.
 - **`capture-pane -e` shows a terminal link with an id tmux made up**, as `ESC]8;id=...;url`.
   A test that looks for `ESC]8;;url` finds nothing.
 
