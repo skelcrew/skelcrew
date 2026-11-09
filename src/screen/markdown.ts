@@ -26,14 +26,23 @@ const drawInline = (line: string) =>
 // link that shows only its text. Control codes are removed from each line first, so text from
 // outside can't reach your terminal as one, nor pass for skel's own styles.
 export function drawMarkdown(markdown: string): string[] {
-  let inCode = false;
+  // The fence that opened the code block we are in, or empty outside one. Only a fence of the
+  // same character, at least as long and with nothing after it, closes it, so a block can show
+  // shorter fences, or the other kind, as code. A block that never closes runs to the end.
+  let open = "";
   return markdown.split(/\r?\n/).flatMap((raw) => {
     const line = clean(raw);
-    if (/^\s*(```|~~~)/.test(line)) {
-      inCode = !inCode;
+    const fence = line.match(/^\s*(`{3,}|~{3,})(.*)$/)?.slice(1) ?? [];
+    const [marks = "", after = ""] = fence;
+    if (!open && marks) {
+      open = marks;
       return [];
     }
-    if (inCode) return [line ? dim(line) : ""];
+    if (open && marks.startsWith(open) && !after.trim()) {
+      open = "";
+      return [];
+    }
+    if (open) return [line ? dim(line) : ""];
     const heading = line.match(/^#{1,6}\s+(.*)$/);
     if (heading) return [bold(heading[1] ?? "")];
     const item = line.match(/^(\s*)[-*+]\s+(.*)$/);

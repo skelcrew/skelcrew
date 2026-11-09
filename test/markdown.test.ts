@@ -21,6 +21,21 @@ const cases: [string, string, string[]][] = [
     ["Before:", dim("const a = **1**;"), "", "After."],
   ],
   ["a code block with no end runs to the end", "```\nx", [dim("x")]],
+  [
+    "a longer fence holds shorter ones as code",
+    "````md\n```\n**x**\n```\n````\nafter **y**",
+    [dim("```"), dim("**x**"), dim("```"), `after ${bold("y")}`],
+  ],
+  [
+    "a fence closes only with its own character",
+    "~~~\n```\n# not a heading\n~~~\n# Heading",
+    [dim("```"), dim("# not a heading"), bold("Heading")],
+  ],
+  [
+    "a fence that never closes keeps the rest as code",
+    "Before\n```\n- not a list\n**not bold**",
+    ["Before", dim("- not a list"), dim("**not bold**")],
+  ],
   ["a list item gets a bullet", "- one\n* two\n+ three", ["• one", "• two", "• three"]],
   ["a nested list item keeps its indent", "- one\n  - inner", ["• one", "  • inner"]],
   ["a list item's text is drawn too", "- **Done**", [`• ${bold("Done")}`]],
