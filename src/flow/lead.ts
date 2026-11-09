@@ -98,7 +98,7 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
     "UPDATE repositories SET lead_session = ?, lead_harness = ? WHERE owner = ? AND repo = ?",
     [session, harness.name, owner, repo],
   );
-  const { argv, env } = harness.start({
+  const { argv, env } = await harness.start({
     name: lead.name,
     socket: lead.socket,
     // A model name belongs to its harness, so a lead on another one than your config now names

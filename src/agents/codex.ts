@@ -117,22 +117,26 @@ const builderHooks = [
 
 // Throws when Codex doesn't offer the model, saying which it does. An unknown model only shows
 // an error inside the session, which then waits at its prompt with no hook to tell skel. Asked
-// with skel's own CODEX_HOME, which reviews can't change, outside the sandbox.
-function checkModel(home: string, model: string, env: Record<string, string | undefined>) {
-  const asked = Bun.spawnSync(["codex", "debug", "models"], {
+// with skel's own CODEX_HOME, which reviews can't change, outside the sandbox. It can take
+// seconds, and the daemon must keep answering builders' hooks meanwhile, so it never blocks.
+async function checkModel(home: string, model: string, env: Record<string, string | undefined>) {
+  const asked = Bun.spawn(["codex", "debug", "models"], {
     env: { ...env, CODEX_HOME: join(dataDir(home), "codex") },
     stdout: "pipe",
     stderr: "pipe",
     timeout: 30_000,
   });
+  const [out, err] = await Promise.all([
+    new Response(asked.stdout).text(),
+    new Response(asked.stderr).text(),
+    asked.exited,
+  ]);
   const Models = z.object({ models: z.array(z.looseObject({ slug: z.string() })) });
   let models: string[];
   try {
-    models = Models.parse(JSON.parse(asked.stdout.toString())).models.map((m) => m.slug);
+    models = Models.parse(JSON.parse(out)).models.map((m) => m.slug);
   } catch {
-    throw new Error(
-      `codex debug models didn't list Codex's models: ${asked.stderr.toString().trim()}`,
-    );
+    throw new Error(`codex debug models didn't list Codex's models: ${err.trim()}`);
   }
   if (!models.includes(model))
     throw new Error(`Codex doesn't offer the model ${model}. It offers ${models.join(", ")}`);
@@ -148,7 +152,7 @@ function checkModel(home: string, model: string, env: Record<string, string | un
 // own .codex/config.toml wins over that file, and could turn the hooks off. Codex's own
 // sandbox and approvals are off, since skel's sandbox draws the boundary. Codex picks its own
 // session ID, so `sessionId` is not passed on.
-function startCommand(given: {
+async function startCommand(given: {
   name: string;
   socket: string;
   model?: string | undefined;
@@ -160,14 +164,14 @@ function startCommand(given: {
   resume?: string;
   sessionId?: string;
   env?: Record<string, string | undefined>;
-}): { argv: string[]; env: Record<string, string> } {
+}): Promise<{ argv: string[]; env: Record<string, string> }> {
   const { name, socket, model, thread, folder, origin, prompt, system, resume } = given;
   const env = given.env ?? process.env;
   const home = env.HOME;
   if (!home) throw new Error("HOME isn't set, so skel can't find its own folders");
   // The name becomes a folder, so it must not climb out of skel's.
   if (!/^[a-zA-Z0-9][\w.-]*$/.test(name)) throw new Error(`"${name}" can't name a session`);
-  if (model) checkModel(home, model, env);
+  if (model) await checkModel(home, model, env);
 
   // A folder of its own per session, never your ~/.codex: an agent could write instructions
   // that another session loads. It stays, so codex resume finds the conversation.

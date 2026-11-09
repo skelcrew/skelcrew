@@ -232,7 +232,7 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
     start = { sessionId: session, prompt: body ? `${title}\n\n${body}` : title };
   }
   record(db, thread.folder, { session, harness: harness.name });
-  const { argv, env } = harness.start({
+  const { argv, env } = await harness.start({
     name: thread.folder,
     socket: threadSocket(thread.folder),
     // A model name belongs to its harness, so a thread on another one than your config now

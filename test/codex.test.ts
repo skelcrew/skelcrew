@@ -37,7 +37,8 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 const conversation = "01a1c003-09b8-7380-b6d9-c7ec08342361";
 const subagent = "01a1c003-ffff-7380-b6d9-c7ec08342361";
 
-// Stands in for Codex. codex debug models lists one model. Otherwise it keeps its arguments,
+// Stands in for Codex. codex debug models lists two models, slowly while the home folder
+// holds a file named slow. Otherwise it keeps its arguments,
 // environment and folder, and a new session saves its conversation. As the lead, it waits at
 // Codex's prompt and keeps what is typed into it. As a builder, it runs the hook commands the
 // command line gives for an event when the test leaves a file named for it: stop for Stop and
@@ -47,7 +48,12 @@ const subagent = "01a1c003-ffff-7380-b6d9-c7ec08342361";
 function fakeCodex(): void {
   script(
     "codex",
-    `[ "$1" = debug ] && { echo '{"models":[{"slug":"gpt-6.1-sol"},{"slug":"gpt-6-luna"}]}'; exit 0; }
+    `if [ "$1" = debug ]; then
+  : > "$HOME/listing"
+  # Slow while the test leaves a file named slow, for 15 seconds at most.
+  for i in $(seq 150); do [ -e "$HOME/slow" ] || break; sleep 0.1; done
+  echo '{"models":[{"slug":"gpt-6.1-sol"},{"slug":"gpt-6-luna"}]}'; exit 0
+fi
 cd "$CODEX_HOME"
 printf '%s\\n' "$@" > args; env > env; echo "$OLDPWD" > pwd
 if [ "$1" != resume ]; then
@@ -284,6 +290,19 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("codex", () => {
     expect(given.at(-1)).toBe(conversation);
     // A model named for Claude Code isn't Codex's.
     expect(given).not.toContain("-m");
+  }, 60_000);
+
+  test("the daemon keeps answering while Codex lists its models", async () => {
+    writeFileSync(join(home, "slow"), "");
+    startDaemon(socket, env(), running);
+    await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
+    expect((await skel(["start", "app-12"])).err).toBe("");
+    await until(() => existsSync(join(home, "listing")), 30_000);
+    const asked = Date.now();
+    expect((await app12())?.status).toBe("working");
+    expect(Date.now() - asked).toBeLessThan(3000);
+    rmSync(join(home, "slow"));
+    await until(() => read(join(builder(), "args")) !== "", 30_000);
   }, 60_000);
 
   test("a model Codex doesn't offer fails the thread, saying which it does", async () => {
