@@ -12,6 +12,17 @@ const cases: [string, string, string[]][] = [
   ["plain text stays as it is", "Sign-in landed on a 404.", ["Sign-in landed on a 404."]],
   ["a heading is bold, without its marks", "## Steps to reproduce", [bold("Steps to reproduce")]],
   ["every heading level", "# One\n###### Six", [bold("One"), bold("Six")]],
+  ["a heading's code is dim and stays bold", "## Run `bun test`", [bold(`Run ${dim("bun test")}`)]],
+  [
+    "a heading's link is a terminal link",
+    "# See [the docs](https://example.com/docs)",
+    [bold(`See ${link("https://example.com/docs", "the docs")}`)],
+  ],
+  [
+    "a heading stays bold after bold inside it",
+    "## A **big** step",
+    [bold(`A ${bold("big")}\x1b[1m step`)],
+  ],
   ["bold text", "It **must** stay small.", [`It ${bold("must")} stay small.`]],
   ["inline code is dim", "Run `bun test` first.", [`Run ${dim("bun test")} first.`]],
   ["bold marks inside code stay code", "`a **b** c`", [dim("a **b** c")]],

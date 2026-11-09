@@ -23,7 +23,8 @@ const drawInline = (line: string) =>
 
 // Returns markdown as lines for your terminal: headings bold without their marks, **bold**,
 // code dim, a code block's fences gone, a list item with a bullet, and a link as a terminal
-// link that shows only its text. Control codes are removed from each line first, so text from
+// link that shows only its text. Headings, list items and plain lines all get their bold,
+// code and links drawn, and only a code block shows its text as written. Control codes are removed from each line first, so text from
 // outside can't reach your terminal as one, nor pass for skel's own styles.
 export function drawMarkdown(markdown: string): string[] {
   // The fence that opened the code block we are in, or empty outside one. Only a fence of the
@@ -44,7 +45,9 @@ export function drawMarkdown(markdown: string): string[] {
     }
     if (open) return [line ? dim(line) : ""];
     const heading = line.match(/^#{1,6}\s+(.*)$/);
-    if (heading) return [bold(heading[1] ?? "")];
+    // Bold inside a heading ends with its own end of bold, so the heading's bold starts again.
+    if (heading)
+      return [bold(drawInline(heading[1] ?? "").replaceAll("\x1b[22m", "\x1b[22m\x1b[1m"))];
     const item = line.match(/^(\s*)[-*+]\s+(.*)$/);
     if (item) return [`${item[1] ?? ""}• ${drawInline(item[2] ?? "")}`];
     return [drawInline(line)];
