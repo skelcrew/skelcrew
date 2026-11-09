@@ -259,7 +259,7 @@ export function setupDone(): boolean {
   const service = onSprite() ? spriteServiceInstalled() : existsSync(serviceFile());
   const { harness } = readConfig();
   if (harness === undefined) return false;
-  return agentsLoggedIn(harness) && agentsLoggedIn(reviewerSaved() ?? harness) && service;
+  return agentsLoggedIn(harness) && service;
 }
 
 // Completes unfinished machine setup and keeps the daemon service current before attaching
