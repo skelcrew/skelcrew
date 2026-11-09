@@ -97,14 +97,15 @@ export function threadAge(started: number, now: number): string {
 }
 
 // Returns the rows as the database and tmux have them now: the lead in the session given,
-// then each thread that isn't done, newest first as in skel ps. It runs each second, so it reads only what shows.
+// then each thread that isn't done, newest first as in skel ps, each with its word by its
+// round limit, which `maxRounds` gives. It runs each second, so it reads only what shows.
 // Only a thread whose word is working shows its running time. A time on any other row would
 // write to the terminal each minute, and on a Sprite a terminal that stays quiet lets it sleep.
 // Such a thread keeps the Sprite awake anyway, so its time costs nothing.
 export function sidebarRows(
   db: Database,
   running: string[],
-  maxRounds: number,
+  maxRounds: (thread: Thread) => number,
   now: number,
   lead: string,
 ): Row[] {
@@ -129,7 +130,7 @@ export function sidebarRows(
     ...threads.all().map((row) => {
       const thread = Thread.parse(row);
       const { review_round: round, reviewer, reviewed_by: by, verdict } = thread;
-      const word = threadWord(thread, maxRounds);
+      const word = threadWord(thread, maxRounds(thread));
       return {
         name: threadName(db, thread),
         session: thread.folder,

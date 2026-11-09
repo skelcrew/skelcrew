@@ -99,7 +99,7 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
   if (!existsSync(clone)) await refreshClones(db);
   if (!existsSync(clone))
     throw new Error(`skel couldn't clone ${owner}/${repo}, so its lead can't start yet`);
-  const role = agentRoles().lead;
+  const role = agentRoles(repository).lead;
   const harness = harnessNamed(lead.harness ?? role.harness);
   const stored = lead.session;
   const resume = stored === null ? null : harness.saved(lead.name, lead.folder, stored);
