@@ -53,6 +53,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   z.object({ command: z.literal("submit"), summary: z.string().min(1) }),
   z.object({ command: z.literal("question asked") }),
   z.object({ command: z.literal("question answered") }),
+  z.object({ command: z.literal("turn ended") }),
   z.object({ command: z.literal("screen opened") }),
   z.object({ command: z.literal("page"), url: PageUrl }),
 ]);
@@ -90,7 +91,7 @@ export const allowed = {
     "stop",
     "tell",
   ],
-  builder: ["status", "submit", "tell lead", "question asked", "question answered"],
+  builder: ["status", "submit", "tell lead", "question asked", "question answered", "turn ended"],
 };
 
 // Returns a decoded socket message, or undefined so invalid JSON can be rejected without

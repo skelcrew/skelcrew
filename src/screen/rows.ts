@@ -4,6 +4,7 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { pastLimit } from "../flow/decide.ts";
+import { leadOf } from "../flow/lead.ts";
 import { fullNameOf, needsYou, Thread, threadName } from "../flow/thread.ts";
 import { Name } from "../github.ts";
 import { green, grey, red, yellow } from "./look.ts";
@@ -48,8 +49,6 @@ export type Tab = { name: string; fullName: string; count: number };
 export type List = { links: Link[]; total: number };
 export type Lists = { issues: List; prs: List };
 
-// Claude Code is the only harness offered for the lead and builders.
-const builderHarness = "claude";
 // Each thread's mark is a circle in its status's colour. Waiting and stopped look alike, and the
 // word under the name tells every status apart, so nothing is told by colour alone.
 const marks: Record<Thread["status"], Mark> = {
@@ -120,6 +119,9 @@ export function sidebarRows(
     "SELECT * FROM threads WHERE status != 'done' AND owner = ? AND repo = ? ORDER BY rowid DESC",
   );
   const leadRuns = running.includes(open.lead);
+  // A repository skel no longer works on has no lead to name a harness for.
+  const known = db.query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ?");
+  const lead = known.get(open.owner, open.repo) ? leadOf(db, open.owner, open.repo) : null;
   return [
     {
       name: "lead",
@@ -128,7 +130,7 @@ export function sidebarRows(
       needsYou: false,
       running: leadRuns,
       word: leadRuns ? "running" : "stopped",
-      harness: builderHarness,
+      harness: lead?.harness ?? "",
       age: "",
       fullName: null,
       title: null,
@@ -149,7 +151,7 @@ export function sidebarRows(
         word,
         // Only a review is on another harness. A submit saves which one, so the empty text
         // is only there for a field that stays null until the first submit.
-        harness: word === "reviewing" ? (reviewer ?? "") : builderHarness,
+        harness: word === "reviewing" ? (reviewer ?? "") : (thread.harness ?? "claude"),
         age: word === "working" && thread.started !== null ? threadAge(thread.started, now) : "",
         fullName: fullNameOf(thread),
         title: thread.title,

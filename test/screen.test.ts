@@ -145,8 +145,10 @@ beforeEach(() => {
   agents = `skel-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
   screen = `${agents}-screen`;
   terminal = `${agents}-terminal`;
-  // app's lead is the one skel kept from before, as its session is named lead.
-  sql(`INSERT INTO repositories (name, owner, repo, kept_lead) VALUES ('app', 'simon', 'app', 1);
+  // app's lead is the one skel kept from before, as its session is named lead. It has started,
+  // so its row names its harness.
+  sql(`INSERT INTO repositories (name, owner, repo, kept_lead, lead_session)
+  VALUES ('app', 'simon', 'app', 1, 's');
 INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you) VALUES
   ('simon', 'app', 3, 'app-3', 'skel/3', 'done', 0),
   ('simon', 'app', 7, 'app-7', 'skel/7', 'working', 0),

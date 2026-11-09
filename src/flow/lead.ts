@@ -3,6 +3,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { z } from "zod";
+import { HarnessName, harnessNamed } from "../agents/harness.ts";
 // What the lead is and how it hands work to threads. Without it, told "fix the flaky test",
 // it would try to edit the read-only clone rather than start a thread. It is a plain file so
 // it reads and changes like a doc, and Bun builds it into skel. It reaches the lead in every
@@ -19,26 +20,34 @@ import {
   startSession,
   typeInto,
 } from "../agents/tmux.ts";
-import { agentHarness, agentRoles } from "../config.ts";
+import { agentRoles } from "../config.ts";
 import { Repository } from "../db.ts";
 import { cloneDir, leadPlaces } from "../paths.ts";
 import { errorText } from "../say.ts";
 import { refreshClones, repositories } from "./repo.ts";
 import { readThread, record, Thread, threadName } from "./thread.ts";
 
-const LeadRow = z.object({ lead_session: z.string().nullable(), kept_lead: z.coerce.boolean() });
+const LeadRow = z.object({
+  lead_session: z.string().nullable(),
+  lead_harness: HarnessName.nullable(),
+  kept_lead: z.coerce.boolean(),
+});
 const Note = z.object({ id: z.number(), text: z.string() }).nullable();
 
-// Returns a repository's lead: where it lives, as leadPlaces gives it, and the session ID of
-// its conversation, or null before it first started. Throws when skel doesn't have the
-// repository.
+// Returns a repository's lead: where it lives, as leadPlaces gives it, the session ID of its
+// conversation, and the harness it started on, both null before it first started. A lead that
+// started before skel saved its harness ran on Claude Code, the only one then. Throws when
+// skel doesn't have the repository.
 export function leadOf(db: Database, owner: string, repo: string) {
   const row = db
-    .query("SELECT lead_session, kept_lead FROM repositories WHERE owner = ? AND repo = ?")
+    .query(
+      "SELECT lead_session, lead_harness, kept_lead FROM repositories WHERE owner = ? AND repo = ?",
+    )
     .get(owner, repo);
   if (!row) throw new Error(`skel doesn't have ${owner}/${repo}`);
-  const { lead_session, kept_lead } = LeadRow.parse(row);
-  return { ...leadPlaces(owner, repo, kept_lead), session: lead_session };
+  const { lead_session, lead_harness, kept_lead } = LeadRow.parse(row);
+  const harness = lead_harness ?? (lead_session === null ? null : "claude");
+  return { ...leadPlaces(owner, repo, kept_lead), session: lead_session, harness };
 }
 
 // Returns the repositories you have opened, whose leads the daemon keeps running.
@@ -60,8 +69,10 @@ export function lastOpened(db: Database): Repository | null {
 }
 
 // Keeps a repository's running lead or starts it, resuming its saved conversation when there
-// is one. skel picks the session id rather than the harness, so it is stored before the lead
-// starts and the lead can be brought back with --resume after its session is gone.
+// is one. A lead's first start picks the harness your config names for leads, and the lead
+// keeps it from then on, as a conversation can't move to another harness. The session id and
+// harness are stored before the lead starts, so the lead can be brought back after its session
+// is gone. Codex picks its own id, and its module finds the conversation it saved.
 export async function startLead(db: Database, tmux: string, repository: Repository): Promise<void> {
   const { owner, repo } = repository;
   const lead = leadOf(db, owner, repo);
@@ -78,19 +89,21 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
   if (!existsSync(clone)) await refreshClones(db);
   if (!existsSync(clone))
     throw new Error(`skel couldn't clone ${owner}/${repo}, so its lead can't start yet`);
-  const harness = agentHarness();
+  const role = agentRoles(repository).lead;
+  const harness = harnessNamed(lead.harness ?? role.harness);
   const stored = lead.session;
-  const resume = stored !== null && harness.saved(lead.name, lead.folder, stored) ? stored : null;
+  const resume = stored === null ? null : harness.saved(lead.name, lead.folder, stored);
   const session = resume ?? crypto.randomUUID();
-  db.run("UPDATE repositories SET lead_session = ? WHERE owner = ? AND repo = ?", [
-    session,
-    owner,
-    repo,
-  ]);
-  const { argv, env } = harness.start({
+  db.run(
+    "UPDATE repositories SET lead_session = ?, lead_harness = ? WHERE owner = ? AND repo = ?",
+    [session, harness.name, owner, repo],
+  );
+  const { argv, env } = await harness.start({
     name: lead.name,
     socket: lead.socket,
-    model: agentRoles(repository).lead.model,
+    // A model name belongs to its harness, so a lead on another one than your config now names
+    // for leads gets that harness's default.
+    model: role.harness === harness.name ? role.model : undefined,
     folder: lead.folder,
     origin: clone,
     // By its full GitHub name, which every command takes and which never changes, while its
@@ -114,7 +127,7 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
 // answered meanwhile is never announced. A lead that isn't running, or never started, gets
 // nothing: its notes stay saved until it starts.
 async function typeNotes(db: Database, tmux: string, owner: string, repo: string): Promise<void> {
-  const { name } = leadOf(db, owner, repo);
+  const { name, harness } = leadOf(db, owner, repo);
   const where = "owner = ? AND repo = ?";
   for (;;) {
     const note = Note.parse(
@@ -126,7 +139,8 @@ async function typeNotes(db: Database, tmux: string, owner: string, repo: string
     const thread = Thread.nullable().parse(row);
     if (note === null && (thread === null || thread.noting === null)) return;
     if (!agentRuns(tmux, name)) return;
-    const { marks } = agentHarness();
+    // A lead that is running has started, so it has a harness.
+    const { marks } = harnessNamed(harness ?? "claude");
     if (!(await isIdle(tmux, name, marks))) continue;
     if (note !== null) {
       await typeInto(tmux, name, marks, note.text);
