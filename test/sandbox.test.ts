@@ -18,6 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claude } from "../src/agents/claude.ts";
+import { codex } from "../src/agents/codex.ts";
 import { setupCommand } from "../src/agents/sandbox.ts";
 import { source } from "./harness.ts";
 
@@ -567,6 +568,39 @@ claude.start({ name: "app-12", socket: "x", model: "opus", ...${JSON.stringify(l
       }),
     ).toThrow("run skel");
   });
+});
+
+// A key for one harness's model is yours to spend, so only that harness's agents get it.
+const withKeys = () => ({ ...outside(), ANTHROPIC_API_KEY: "sk-ant", OPENAI_API_KEY: "sk-openai" });
+
+test("a setup command from the repository gets no API key", () => {
+  const { env } = setupCommand(join(home, "work"), "bun install", withKeys());
+  expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+  expect(env.OPENAI_API_KEY).toBeUndefined();
+});
+
+test("a Codex session gets Codex's key and not Claude Code's", async () => {
+  const { env } = await codex.start({
+    ...lead(),
+    name: "lead",
+    socket: socketPath,
+    env: withKeys(),
+  });
+  expect(env.OPENAI_API_KEY).toBe("sk-openai");
+  expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+});
+
+test("a Claude Code session gets Claude Code's key and not Codex's", () => {
+  saveToken();
+  const { env } = claude.start({
+    ...lead(),
+    name: "lead",
+    socket: socketPath,
+    model: "opus",
+    env: withKeys(),
+  });
+  expect(env.ANTHROPIC_API_KEY).toBe("sk-ant");
+  expect(env.OPENAI_API_KEY).toBeUndefined();
 });
 
 // Only a Sprite has its control socket, so these run only there, as when checking skel on a

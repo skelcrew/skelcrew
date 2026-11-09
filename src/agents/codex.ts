@@ -213,11 +213,7 @@ async function startCommand(given: {
   // After --, so a message that starts with - is never taken for an option.
   else if (prompt) command.push("--", prompt);
 
-  const kept = keptEnv(env);
-  for (const key of codex.keys) {
-    const value = env[key];
-    if (value) kept[key] = value;
-  }
+  const kept = keptEnv(env, codex.keys);
   kept.CODEX_HOME = codexHome;
   const argv = sandboxArgs({ home, path: env.PATH ?? "", mounts, socket, cwd, command });
   return { argv, env: kept };
