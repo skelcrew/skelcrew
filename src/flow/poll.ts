@@ -4,10 +4,10 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { threadConfig } from "../config.ts";
-import { canPush, reactToIssue, readRepository } from "../github.ts";
+import { canPush, reactToIssue, readRepository, readTasks } from "../github.ts";
 import { errorText } from "../say.ts";
 import { startThread } from "./builder.ts";
-import { openTasks, saveItems } from "./copy.ts";
+import { openTasks, saveItems, taskOf } from "./copy.ts";
 import { ciChecks, decide, labeledToStart, newAuthors } from "./decide.ts";
 import { endThread, tellBuilder, typingEvents } from "./events.ts";
 import { noteForLead, tellLead } from "./lead.ts";
@@ -48,6 +48,34 @@ async function startLabeled(
     await reactToIssue(fullName, issue.number).catch((error) =>
       console.log(`couldn't react to #${issue.number} in ${fullName}: ${errorText(error)}`),
     );
+  }
+}
+
+// Brings into skel's copy the task of each working, waiting or stopped thread that it lacks,
+// closed ones too, before the daemon resumes their rounds, which read the task. A database from
+// before the copy has none of them, and the first poll brings only open issues. A repository
+// GitHub can't answer for is logged, and its rounds fail as they read the task.
+export async function keepThreadsTasks(db: Database): Promise<void> {
+  const missing = db
+    .query("SELECT * FROM threads WHERE status IN ('working', 'waiting', 'stopped')")
+    .all()
+    .map((row) => Thread.parse(row))
+    .filter((t) => {
+      try {
+        taskOf(db, t.owner, t.repo, t.task);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+  for (const { owner, repo } of repositories(db)) {
+    const numbers = missing.filter((t) => t.owner === owner && t.repo === repo).map((t) => t.task);
+    if (numbers.length === 0) continue;
+    await readTasks(`${owner}/${repo}`, numbers)
+      .then((tasks) => saveItems(db, owner, repo, tasks, false))
+      .catch((error) =>
+        console.log(`couldn't read the tasks of ${owner}/${repo}: ${errorText(error)}`),
+      );
   }
 }
 

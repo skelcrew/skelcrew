@@ -27,7 +27,7 @@ import { saveItems } from "./copy.ts";
 import { stopThread } from "./events.ts";
 import { lastOpened, leadOf, openedRepositories, startLead, tellLead } from "./lead.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
-import { pollGitHub } from "./poll.ts";
+import { keepThreadsTasks, pollGitHub } from "./poll.ts";
 import { findRepository, fullNameIs, noRepositories, refreshClones, repositories } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
@@ -337,6 +337,9 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         // The task's title and body come from skel's copy, brought up to date first.
         const { owner, repo } = findRepository(db, request.repo);
         await (await polling.promise)(`${owner}/${repo}`);
+        // That poll may have found the skel label on the task and started its thread itself.
+        const started = threadOn(db, request.repo, request.task);
+        if (!before && started) return { started: `Started ${threadName(db, started)}.` };
         const thread = await startThread(db, request);
         // Not waited on: an agent's command must answer quickly, and setup can take minutes.
         begin(thread);
@@ -388,6 +391,8 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   refreshClones(db).catch((error) => console.log(String(error)));
   // Notes the daemon's stop kept from the leads.
   tellLead(db, tmux);
+  // A round about to resume reads its thread's task from skel's copy.
+  await keepThreadsTasks(db);
   for (const thread of before) {
     await listenFor(thread);
     // After the builder is back, since the round may type into its session.

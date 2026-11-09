@@ -552,6 +552,24 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     expect(thread()).toMatchObject({ status: "stopped", needs_you: 0, last_comment: 0 });
   }, 60_000);
 
+  // skel start polls first, and that poll can find the label and start the thread itself.
+  test("skel start on a labeled issue its own poll starts says it started", async () => {
+    addApp();
+    writeFileSync(join(home, "gh", "graphql"), JSON.stringify(pollAnswer([issue12()])));
+    // An hour between polls, so only skel start brings another.
+    serve(3_600_000);
+    await until(() => copied().rows.includes("task 12"));
+    writeFileSync(join(home, "gh", "graphql"), JSON.stringify(pollAnswer([issue12(true)])));
+    const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
+      env: env(),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(started.stderr.toString()).toBe("");
+    expect(started.stdout.toString()).toBe("Started app-12.\n");
+    expect(thread()).toMatchObject({ task: 12, status: "working" });
+  }, 30_000);
+
   test("an issue labeled skel starts a thread once, and one that failed isn't started again", async () => {
     // A builder that can't start, so the thread fails.
     script(

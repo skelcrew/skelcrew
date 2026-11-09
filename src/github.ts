@@ -633,6 +633,33 @@ export async function readRepository(
   };
 }
 
+// Returns the given issues as tasks, open or closed, for threads whose task skel's copy lacks,
+// such as after an upgrade, as a poll brings only open ones at first. One query for them all.
+// An issue GitHub doesn't find is left out.
+export async function readTasks(fullName: string, numbers: number[]): Promise<Task[]> {
+  const [owner, name] = fullName.split("/");
+  const asked = numbers.map((n) => `task${n}: issue(number: ${n}) { ${itemFields} state }`);
+  const got = await gh(["api", "graphql", "--input", "-"], `read the tasks of ${fullName}`, {
+    query: `query($owner: String!, $name: String!) { viewer { login }
+      repository(owner: $owner, name: $name) { ${asked.join("\n")} } }`,
+    variables: { owner, name },
+  });
+  const { data } = z
+    .object({
+      data: z.object({
+        viewer: z.object({ login: z.string() }),
+        repository: z.record(z.string(), IssueNode.nullable()),
+      }),
+    })
+    .parse(got);
+  const tasks = Object.values(data.repository).flatMap((node) =>
+    node ? [issueItem(node, data.viewer.login)] : [],
+  );
+  // Checked as skel's copy will read them back, so one it can't take fails here, not later.
+  for (const task of tasks) Item.parse(task);
+  return tasks;
+}
+
 // Returns whether someone can push to the repository: write, maintain or admin access, which
 // GitHub reports as write or admin. Throws when GitHub can't be asked, so a failure is never
 // taken for a no.
