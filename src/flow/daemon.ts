@@ -29,6 +29,7 @@ import { pollGitHub } from "./poll.ts";
 import { bringInNamed, findRepository, refreshClones, repositories } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
+import { messageBuilder, messageLead } from "./tell.ts";
 import {
   findThread,
   hasWork,
@@ -229,6 +230,13 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         await stopThread(db, tmux, thread);
         return { stopped: name };
       }
+      case "tell": {
+        const thread = findThread(db, request.repo, request.task);
+        return { told: messageBuilder(db, tmux, thread, request.text) };
+      }
+      case "tell lead":
+        messageLead(db, tmux, callingThread(caller), request.text);
+        return { told: "lead" };
       case "submit": {
         const thread = callingThread(caller);
         submitRound(db, tmux, thread.folder, request.summary);
