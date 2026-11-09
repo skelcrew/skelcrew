@@ -1,5 +1,5 @@
-// skel's tmux sessions: one each for the lead and builders, on skel's own tmux server
-// (`tmux -L skel`; tests pass a socket of their own).
+// skel's tmux sessions: one for each repository's lead and one per builder, on skel's own tmux
+// server (`tmux -L skel`; tests pass a socket of their own).
 import { onSprite, startTmuxService } from "../machine/sprite.ts";
 
 // Returns the screen's tmux server beside the agents': skel-screen beside skel, and a test's
@@ -101,8 +101,9 @@ export function startServer(socket: string): void {
       stdout: "pipe",
       stderr: "pipe",
     });
-  // On a Sprite the server runs as a service, and then only takes skel's options. Never
-  // plainly there: the daemon's service would end it.
+  // On a Sprite the server runs as a Sprite service of its own, as one the daemon started would
+  // end with the daemon's service. The plain start below then finds it running, and only gives
+  // it skel's options.
   if (onSprite()) startTmuxService(socket);
   else if (Bun.which("systemd-run") && run([...scope, ...start]).success) return;
   const plain = run(start);

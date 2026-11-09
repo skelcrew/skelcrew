@@ -227,7 +227,7 @@ function describeCheckout(): string {
 
 // Replaces skel on a server or Sprite with this laptop's release, or one built from this
 // checkout, then restarts the daemon's service there so it runs the new build. The tmux
-// server outlives the daemon, so the lead and builders keep their Claude Code running. A skel
+// server outlives the daemon, so the leads and builders keep running on their harness. A skel
 // run from a checkout there is left alone: a copy would leave the checkout behind while the
 // daemon kept running it.
 async function update(where: string, machine: Machine): Promise<void> {
@@ -248,7 +248,7 @@ else echo "elsewhere $f"; fi`;
   if (found[2]) {
     console.log(
       skelLine(
-        `skel on ${where} runs from a checkout at ${found[2]}, so it wasn't replaced. git pull there updates it, and ${machine.restart} there restarts its daemon with it.`,
+        `skel on ${where} runs from a checkout at ${found[2]}, so it wasn't replaced. git pull there updates it, and the next skel there restarts its daemon on it.`,
       ),
     );
     return;
@@ -268,7 +268,7 @@ else echo "elsewhere $f"; fi`;
   await machine.updated();
   console.log(
     skelLine(
-      `updated ${where} to ${now} and restarted its daemon. The lead and builders keep running, and the lead picks up new instructions when it's next started.`,
+      `updated ${where} to ${now} and restarted its daemon. The leads and builders keep running, and each lead picks up new instructions when it's next started.`,
     ),
   );
 }

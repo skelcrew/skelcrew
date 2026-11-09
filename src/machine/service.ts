@@ -73,7 +73,7 @@ function lastingPath(given: string): string[] {
 // Returns the daemon's service definition with a lasting tool PATH and sessions that
 // survive daemon stops.
 function unitText(skel: string, given: string): string {
-  // systemd starts services with a bare PATH, which misses bun, claude and gh where they
+  // systemd starts services with a bare PATH, which misses bun, your harness and gh where they
   // usually live, so the daemon gets yours.
   const path = lastingPath(given).map(unitValue).join(":");
   // Where tmux couldn't get a scope of its own, stopping the service would otherwise end
@@ -95,7 +95,7 @@ WantedBy=default.target
 // Installs or updates the daemon service, enabling it and lingering on the first
 // installation. On a Sprite, which has no systemd, it is a Sprite service instead, and on a
 // Mac a launchd agent. Checked on every plain skel, but only by comparing files, so a moved
-// bun, claude or checkout reaches the daemon at its next start without a systemctl call each
+// bun, harness or checkout reaches the daemon at its next start without a systemctl call each
 // time.
 export function installService(): void {
   const mac = process.platform === "darwin";
