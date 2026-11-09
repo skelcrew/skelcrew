@@ -50,6 +50,9 @@ const Rounds = z.looseObject({ max_rounds: z.number().int().positive().optional(
 // commands from the file itself.
 const Setup = z.looseObject({ setup: z.array(z.string()).optional() });
 
+// The plugin that holds the repository's tasks. Only the name: settings for it stay yours.
+const Tracker = z.looseObject({ tracker: z.string().optional() });
+
 // A repository skel works on, by its GitHub owner and name.
 type Repository = { owner: string; repo: string };
 
@@ -133,3 +136,8 @@ export function threadConfig(
 // Returns the setup commands in the repository's skel.yaml, or none when it has none.
 export const repositorySetup = (repository: Repository): string[] =>
   sharedAgainst(Setup, repository).setup ?? [];
+
+// Returns the plugin the repository's skel.yaml names as its tracker, or nothing when it
+// names none.
+export const repositoryTracker = (repository: Repository): string | undefined =>
+  sharedAgainst(Tracker, repository).tracker;
