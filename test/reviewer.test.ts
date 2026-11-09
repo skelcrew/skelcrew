@@ -188,10 +188,29 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
     for (const file of ["config.toml", "AGENTS.md", "rules/default.rules"])
       expect(readFileSync(join(codexHome(), file), "utf8")).toBe("mine\n");
     expect(existsSync(join(codexHome(), "prompts"))).toBe(false);
-    // Codex rewrites its login in place, so a renewal during a review reaches skel's copy.
+    // Codex up to 0.163 rewrites its login in place, and a renewal reaches skel's copy.
     expect(readFileSync(join(codexHome(), "auth.json"), "utf8")).toBe("renewed\n");
     expect(kept("rollout.jsonl")).toBe("transcript\n");
     expect(kept("yours")).toBe("hidden\n");
+  });
+
+  test("keeps a renewal Codex renames over its login, and its lock, for the next review", async () => {
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "auth.json"), "mine\n");
+    // As Codex does from 0.167: it follows a link to the login, writes the renewal beside it
+    // and renames it over the old one, holding auth.lock in its own folder meanwhile.
+    fakeCodex(approve, [
+      'login=$(readlink -f "$CODEX_HOME/auth.json"); next="$(dirname "$login")/.auth-next"',
+      'echo renewed > "$next" && mv "$next" "$login"',
+      'echo held > "$CODEX_HOME/auth.lock"',
+    ]);
+    await start();
+    expect(readFileSync(join(codexHome(), "auth.json"), "utf8")).toBe("renewed\n");
+    expect(readFileSync(join(codexHome(), "auth.lock"), "utf8")).toBe("held\n");
+    // The next review starts from the renewed login.
+    fakeCodex(approve, ['cat "$CODEX_HOME/auth.json" > "$CODEX_HOME/sessions/login"']);
+    await start();
+    expect(kept("login")).toBe("renewed\n");
   });
 
   for (const [what, answer] of [
