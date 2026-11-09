@@ -426,19 +426,19 @@ export async function runSidebar(
   process.stdout.write("\x1b[?25l\x1b[?1000h\x1b[?1006h");
   process.stdin.on("data", (bytes) => {
     for (const [, kind, arrow, y, clicked] of bytes.toString().matchAll(input)) {
-      const move = kind === "4" ? jumped : stepped;
-      const tab = clicked === undefined ? null : (tabs[Number(clicked)]?.fullName ?? null);
-      const beside = kind === "3" && arrow === "C" ? besideOpen(1) : null;
-      const before = kind === "3" && arrow === "D" ? besideOpen(-1) : null;
-      const other = tab ?? beside ?? before;
-      if (other) {
-        switchTo(other);
+      if (clicked !== undefined || arrow === "C" || arrow === "D") {
+        // A click on a tab, or Alt-Right or Alt-Left for the tab after or before. Past either
+        // end, and with Shift, there is nowhere to go.
+        const sideways = kind === "3" ? besideOpen(arrow === "C" ? 1 : -1) : null;
+        const tab = clicked === undefined ? sideways : tabs[Number(clicked)]?.fullName;
+        if (!tab) continue;
+        switchTo(tab);
         // Keys that came with the switch, such as Alt-Down, move in the new repository's rows.
         refresh();
-      } else if (arrow === "C" || arrow === "D") {
-        // Past the first or last tab there is nowhere to go.
-      } else if (arrow) show(move(rows, lists, shown, size(), arrow === "A" ? -1 : 1));
-      else if (y) show(picked(rows, lists, shown, size(), Number(y) - 1 - notice.length));
+      } else if (arrow) {
+        const move = kind === "4" ? jumped : stepped;
+        show(move(rows, lists, shown, size(), arrow === "A" ? -1 : 1));
+      } else if (y) show(picked(rows, lists, shown, size(), Number(y) - 1 - notice.length));
     }
     refresh();
   });

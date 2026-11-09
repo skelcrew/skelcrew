@@ -54,7 +54,7 @@ const defaultModel = "opus";
 // reviewers all log in with. Throws if setup hasn't saved one. A token from claude setup-token
 // never renews. A shared login would: renewing makes the old refresh token stop working, so
 // your own login or the agent's would go stale.
-export function claudeToken(home: string): string {
+function claudeToken(home: string): string {
   const tokenFile = claudeTokenFile(home);
   if (!existsSync(tokenFile))
     throw new Error("Claude Code's login token for agents isn't saved yet: run skel to set it up");
