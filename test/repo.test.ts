@@ -16,6 +16,7 @@ import {
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse } from "yaml";
 import { source } from "./harness.ts";
 
 const main = source("main.ts");
@@ -561,6 +562,21 @@ reviewer: { harness: codex }
   expect(run.out).toContain(
     "Wrote skel.yaml. skel reads it from its own clone, so it counts once you commit it and push it to the default branch.",
   );
+});
+
+// YAML reads true, null or 123 as something other than text, which a model name must be.
+test("init writes model names that read back as the same text", async () => {
+  writeFileSync(
+    join(home, ".config", "skel", "config.yaml"),
+    'harness: claude\nmodel: "123"\nlead: { model: "true" }\nbuilder: { model: "null" }\n',
+  );
+  const checkout = onGitHub("simon/app", "WRITE");
+  expect((await skel(["init"], "", checkout)).err).toBe("");
+  expect(parse(readFileSync(join(checkout, "skel.yaml"), "utf8"))).toEqual({
+    lead: { harness: "claude", model: "true" },
+    builder: { harness: "claude", model: "null" },
+    reviewer: { harness: "claude", model: "123" },
+  });
 });
 
 test("init leaves a skel.yaml that is there alone", async () => {

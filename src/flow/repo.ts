@@ -12,6 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { stringify } from "yaml";
 import { z } from "zod";
 import { refuseCredentials } from "../agents/sandbox.ts";
 import { stopSession } from "../agents/tmux.ts";
@@ -248,8 +249,9 @@ export async function addRepo(given?: string): Promise<void> {
   if (added) console.log(`Added ${added.owner}/${added.repo}, as ${added.name}.`);
 }
 
-// Returns a setting's value as YAML reads it back: plain when it can be, quoted otherwise.
-const yamlValue = (value: string) => (/^[\w./-]+$/.test(value) ? value : JSON.stringify(value));
+// Returns a setting's value as YAML that reads back as the same text: plain when it can be,
+// quoted when YAML would read it as something else, such as a model named true or 123.
+const yamlValue = (value: string) => stringify(value).trim();
 
 // Returns the starter skel.yaml: a line saying the file is shared and never holds a secret,
 // your harness and model for each role as real lines, from your config, and setup and test
