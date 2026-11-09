@@ -83,7 +83,7 @@ async function reviewRound(
   const { pr } = thread;
   if (pr === null) throw new Error("the thread has no pull request to review");
   const fullName = fullNameOf(thread);
-  const { reviewer: on, maxRounds } = threadConfig();
+  const { reviewer: on, maxRounds } = threadConfig(thread);
   const reviewer = on.harness;
   await setReviewStatus(fullName, sha, "pending", "skel's reviewer is reviewing");
   if (signal.aborted) return;
@@ -201,11 +201,12 @@ function pushAndReview(
 // way, and returns at once: a shell command can't block long, so pushing and the review go on
 // in the background. The submit is saved first, so a stop of the daemon can't lose it. A
 // review still waiting to be typed in, or held past the round limit, is dropped, as it is
-// about an older commit. Throws when your config isn't valid, so the builder hears why, and
+// about an older commit. Throws when your config or the repository's skel.yaml isn't valid,
+// so the builder hears why, and
 // for a thread skel stop is ending, whose builder may submit while it exits.
 export function submitRound(db: Database, tmux: string, folder: string, summary: string): void {
-  const { maxRounds, reviewer } = threadConfig();
   const thread = readThread(db, folder);
+  const { maxRounds, reviewer } = threadConfig(thread);
   if (thread.status === "stopped")
     throw new Error("this thread was stopped, so skel won't push it");
   // Past the round limit the thread still needs you, whatever the builder does.
@@ -261,7 +262,7 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
   const sha = submitting === null && thread.pr !== null ? lastPushed(thread) : null;
   if (submitting === null && sha === null)
     throw new Error(`${name} has no submitted commit to review yet`);
-  const { maxRounds } = threadConfig();
+  const { maxRounds } = threadConfig(thread);
   // Past the round limit the thread still needs you, whatever the review says.
   const needs_you = pastLimit(thread, maxRounds);
   // The commit is saved as under review at once, so a second skel review asked before the
