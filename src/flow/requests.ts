@@ -43,6 +43,13 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     repo: z.string(),
     task: z.number().int().positive(),
   }),
+  z.object({
+    command: z.literal("tell"),
+    repo: z.string(),
+    task: z.number().int().positive(),
+    text: z.string().min(1),
+  }),
+  z.object({ command: z.literal("tell lead"), text: z.string().min(1) }),
   z.object({ command: z.literal("submit"), summary: z.string().min(1) }),
   z.object({ command: z.literal("question asked") }),
   z.object({ command: z.literal("question answered") }),
@@ -54,7 +61,8 @@ export type DaemonRequest = z.infer<typeof DaemonRequest>;
 
 // Who is on the other end of a socket: you, the lead, or a thread's builder. An agent may ask
 // only for what its commands need. Trusting a repository is never a request: only you can,
-// in your own terminal.
+// in your own terminal. A builder may tell only the lead, never another thread, and
+// you type to a builder yourself in the sidebar, so you have no tell.
 export type Caller = "you" | "lead" | Thread;
 export const allowed = {
   you: [
@@ -81,9 +89,10 @@ export const allowed = {
     "start",
     "review",
     "stop",
+    "tell",
     "attached",
   ],
-  builder: ["status", "submit", "question asked", "question answered"],
+  builder: ["status", "submit", "tell lead", "question asked", "question answered"],
 };
 
 // Returns a decoded socket message, or undefined so invalid JSON can be rejected without
