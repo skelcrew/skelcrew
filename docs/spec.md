@@ -195,7 +195,7 @@ The daemon asks each repository's tracker what changed since it last looked, and
 
 A plugin connects skel to one outside tool. It lives in a git repository of its own, with a `skel-plugin.yaml` at its root, and you install it with `skel plugin install`. GitHub is a plugin, `skelcrew/skel-plugin-github`, which the first run installs, and Slack is another, `skelcrew/skel-plugin-slack`. skel's flow holds nothing of either: it knows what a plugin does, never which plugin does it.
 
-**What a plugin does.** A plugin does one or more of three jobs. A **tracker** is where tasks come from: it claims repositories and says what changed in their issues and PRs. A **forge** is where code lands: it lends git its login, and opens PRs, posts reviews, sets the `skel/review` check and reads a failed check's log. **Chat** carries notes and messages between you and the lead. GitHub is the tracker and the forge, and Slack is chat. A job grows only when a plugin needs it.
+**What a plugin does.** A plugin does one or more of three jobs. A **tracker** is where tasks come from: it claims repositories and says what changed in their issues and PRs. A **forge** is where code goes: it lends git its login to push, and opens PRs, posts reviews, sets the `skel/review` check and reads a failed check's log. **Chat** is where you hear that a thread needs you, and talk to the lead. A plugin can do several: GitHub is the tracker and the forge, and Slack is chat. A job grows only when a plugin needs it. Harnesses are never plugins: each stays built into skel, one module per harness, because that module draws the sandbox boundary around its agents.
 
 **The manifest.**
 
@@ -212,7 +212,7 @@ run: [bun, run.ts]
 
 Each command is a list of words, run in the plugin's folder and never through a shell. All but `name`, `version`, `skel`, `about` and `jobs` are optional. `build` runs once, at install. `setup` runs in your terminal, at install, and asks for whatever the plugin needs, such as a token. A tracker or forge also has `call`, and a forge has `git_credentials`. A command whose first word is `bun` runs on the Bun inside skel, so a plugin written for Bun needs nothing else installed. Anything else it needs, you install yourself, as its README says.
 
-**Installing.** `skel plugin install <owner/repo>` clones the repository's newest version tag from GitHub into `~/.local/share/skel/plugins/<name>/<version>/`. It refuses a plugin that needs a newer skel. It shows the manifest and every command the plugin will run, and asks before going on. Then it runs `build` and `setup`, and the daemon starts the plugin. `skel plugin update [<name>]` moves one plugin, or all, to its newest tag the same way, and restarts it. `skel plugin rm <name>` stops it and removes its folders, with its settings and tokens. It refuses for a forge that claims repositories skel has. `skel plugin ls` lists what is installed, with versions. A plugin belongs to the machine the daemon runs on, so for a server or Sprite you run `skel --remote sprite:demo plugin install skelcrew/skel-plugin-slack`.
+**Installing.** `skel plugin install <owner/repo>` clones the repository's newest version tag from GitHub into `~/.local/share/skel/plugins/<name>/<version>/`. It refuses a plugin that needs a newer skel. It shows the manifest and every command the plugin will run, and asks before going on. Then it runs `build` and `setup`, and the daemon starts the plugin. `skel plugin update [<name>]` moves one plugin, or all, to its newest tag the same way, and restarts it. `skel plugin rm <name>` stops it and removes its folders, with its settings and tokens. It refuses for a forge that claims repositories skel has. `skel plugin ls` lists what is installed, with each plugin's version and jobs, such as `github 0.1.0 tracker, forge`. A plugin belongs to the machine the daemon runs on, so for a server or Sprite you run `skel --remote sprite:demo plugin install skelcrew/skel-plugin-slack`.
 
 **What a plugin is handed.** Each command gets `SKEL_BIN`, the path of the skel that runs it, `SKEL_PLUGIN`, its name, and `SKEL_PLUGIN_CONFIG`, a folder in `~/.config/skel/plugins/` for its settings and tokens, readable only by you. Their format is the plugin's own.
 
@@ -267,7 +267,7 @@ For you, and for the lead:
 | `skel plugin install <owner/repo>` | Installs a plugin from its newest version tag on GitHub, after showing what it runs and asking. Runs its setup. Only you can run it. |
 | `skel plugin update [<name>]` | Moves a plugin, or all of them, to its newest tag and restarts it. Only you can run it. |
 | `skel plugin rm <name>` | Stops a plugin and removes it, with its settings and tokens. Only you can run it. |
-| `skel plugin ls` | Lists the plugins installed, with their versions. Only you can run it. |
+| `skel plugin ls` | Lists the plugins installed, with their versions and jobs: tracker, forge or chat. Only you can run it. |
 | `skel reply <to> "<text>"` | Answers a message that came in through a plugin, such as a Slack message. The note that brought it names `<to>`. |
 | `skel note "<text>"` | Types a note into the lead, for plugins. |
 | `skel task ls [<repo>]` | Open tasks, newest first, from skel's copy of the tracker, with the thread on each one if it has one. `--json` for tools. |
@@ -344,6 +344,7 @@ These are the parts that need care. `docs/learnings.md` explains the traps behin
 - Reaching you outside the lead's session other than through a plugin, such as a `notify` command for your phone
 - Linear, Jira or forges other than GitHub
 - A sandbox for plugins, plugins from anywhere but a GitHub repository, builds for each platform, and a list of plugins to browse
+- Machine as a fourth plugin job: where skel and its agents run, beyond servers and Sprites. It comes once a second kind of machine that skel creates is needed
 - Errors from Sentry as tasks, planned as the launch after this one
 - Threads started from plain text, without a task. They would be named with a marker, such as `app-t1`, so they never clash with a task's name
 - Starting a thread by assigning an issue or mentioning skel on GitHub
