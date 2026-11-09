@@ -49,7 +49,7 @@ afterAll(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-async function run(args: string[], file = skel) {
+async function run(args: string[], file = skel, typed = "") {
   const proc = Bun.spawn([file, ...args], {
     cwd: home,
     env: {
@@ -57,7 +57,7 @@ async function run(args: string[], file = skel) {
       HOME: home,
       XDG_RUNTIME_DIR: join(home, "run"),
     },
-    stdin: new Blob([""]),
+    stdin: new Blob([typed]),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -73,6 +73,24 @@ test("runs commands with its state", async () => {
   const listed = await run(["repo", "ls"]);
   expect(listed.err).toBe("");
   expect(listed.out).toBe("skel has no repositories yet. Run skel in a checkout of one.\n");
+});
+
+test("runs a plugin's bun commands on the Bun inside it", async () => {
+  // No bun on the PATH, so only skel itself can run the build.
+  const folder = join(home, "skel-plugin-fake");
+  mkdirSync(folder);
+  writeFileSync(
+    join(folder, "skel-plugin.yaml"),
+    "name: fake\nversion: 0.1.0\nskel: 0.4.0\nabout: x\njobs: [tracker]\nbuild: [[bun, build.ts]]\ncall: [bun, call.ts]\n",
+  );
+  writeFileSync(
+    join(folder, "build.ts"),
+    'await Bun.write("built", process.env.SKEL_PLUGIN ?? "");\n',
+  );
+  const installed = await run(["plugin", "install", folder], skel, "y\n");
+  expect(installed.err).toBe("");
+  expect(readFileSync(join(folder, "built"), "utf8")).toBe("fake");
+  expect((await run(["plugin", "ls"])).out).toBe("fake 0.1.0 tracker\n");
 });
 
 test("points the daemon's service at itself", async () => {

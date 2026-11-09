@@ -28,6 +28,10 @@ const yoursOnly: Record<string, string> = {
   page: "showing a page",
   "first-run": "setting up this machine",
   "remote add": "setting up a machine",
+  "plugin install": "installing a plugin",
+  "plugin update": "updating a plugin",
+  "plugin rm": "removing a plugin",
+  "plugin ls": "listing plugins",
 };
 
 // Returns the repository and task in a name such as app-13, or nothing when it isn't one.
@@ -52,6 +56,7 @@ function usage(command?: string): never {
     "review",
     "submit",
     "tell",
+    "plugin",
   ];
   const first = command ?? "";
   console.error(
@@ -154,6 +159,20 @@ async function repoCommand(args: string[]): Promise<void> {
     await trustRepo(rest[0]);
     return;
   }
+  usage(command);
+}
+
+// Installs, updates, removes or lists plugins, for skel plugin. Only ls takes --json.
+async function pluginCommand(args: string[]): Promise<void> {
+  const [command, sub, ...rest] = args;
+  const { installPlugin, listPlugins, removePlugin, updatePlugins } = await import(
+    "./plugins/install.ts"
+  );
+  if (sub === "install" && rest[0] && rest.length === 1) return installPlugin(rest[0]);
+  if (sub === "update" && rest.length <= 1) return updatePlugins(rest[0]);
+  if (sub === "rm" && rest[0] && rest.length === 1) return removePlugin(rest[0]);
+  if (sub === "ls" && rest.filter((arg) => arg !== "--json").length === 0)
+    return listPlugins(rest.includes("--json"));
   usage(command);
 }
 
@@ -307,7 +326,11 @@ async function runCommand(args: string[]): Promise<void> {
     );
   const named = command === undefined || command === "--from" ? "" : command;
   const refused =
-    yoursOnly[command === "repo" || command === "remote" ? `${command} ${sub}` : named];
+    yoursOnly[
+      command === "repo" || command === "remote" || command === "plugin"
+        ? `${command} ${sub}`
+        : named
+    ];
   if (process.env.SKEL_SANDBOX === "1" && refused)
     throw new Error(`${refused} is only for your own terminal, not for agents`);
   if (command === "remote" && sub === "add" && rest[0] && rest.length === 1) {
@@ -359,6 +382,8 @@ async function runCommand(args: string[]): Promise<void> {
       return threadCommand(args);
     case "tell":
       return tellCommand(args);
+    case "plugin":
+      return pluginCommand(args);
     default:
       usage(command);
   }
