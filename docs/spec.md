@@ -225,12 +225,14 @@ Settings come in two layers, and both are optional. `~/.config/skel/config.yaml`
 
 ```yaml
 harness: claude
-builder:  { model: opus }
+model: opus
+lead:     { model: sonnet }
+builder:  { harness: codex, model: gpt-5-codex }
 reviewer: { harness: codex }
 max_rounds: 3
 ```
 
-The lead, the builder and the reviewer each run on their own `harness` when your config gives one, such as `builder: { harness: codex }`, and otherwise on the top-level `harness`. A second view on another model is yours to choose, such as `reviewer: { harness: codex }`. A thread keeps the harness it started on, since a conversation can't move from one harness to another. A model name belongs to its harness: `opus` is Claude Code's default, and Codex picks its own.
+The lead, the builder and the reviewer each run on their own `harness` when your config gives one, such as `builder: { harness: codex }`, and otherwise on the top-level `harness`. A second view on another model is yours to choose, such as `reviewer: { harness: codex }`. A thread keeps the harness it started on, since a conversation can't move from one harness to another. Each role takes a `model` the same way. A model name belongs to its harness, so the top-level `model` applies only to a role on the top-level harness. A role on another harness with no `model` of its own gets that harness's default: `opus` for Claude Code, and Codex's own pick for Codex. skel passes a model to the harness as written and keeps no list of names, so a harness that names models as `provider/model` gets exactly that.
 
 A repository's `skel.yaml` holds what that repository needs, and can override the defaults:
 
