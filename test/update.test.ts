@@ -217,3 +217,28 @@ test("says where to look when the daemon doesn't come back on the new release", 
   expect(done.code).toBe(1);
   expect(done.err).toContain("journalctl --user -u skel");
 }, 15_000);
+
+// Runs skel stamped with `build` on a server, as --remote from a laptop on `laptop` runs it.
+async function onServer(build: string, laptop: string) {
+  const run = Bun.spawn(
+    [process.execPath, "--define", `SKEL_BUILD="${build}"`, source("main.ts"), "--help"],
+    {
+      env: { ...homeEnv(home), SKEL_LAPTOP_BUILD: laptop, SKEL_REMOTE_NAME: "simon@workbox" },
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  const [out, code] = await Promise.all([new Response(run.stdout).text(), run.exited]);
+  return { out, code };
+}
+
+test("a server on an older release than the laptop asks to be updated, and a newer one doesn't", async () => {
+  const older = await onServer("0.4.2", "0.4.3");
+  expect(older.code).toBe(98);
+  expect(older.out).toContain("skel on simon@workbox is from 0.4.2, yours is 0.4.3.");
+  // It updates itself in the background, and the laptop catches up on its own.
+  expect((await onServer("0.4.4", "0.4.3")).code).toBe(0);
+  expect((await onServer("0.4.3", "0.4.3")).code).toBe(0);
+  // From a checkout, the laptop's commit still differs from any release.
+  expect((await onServer("0.4.3", "abc1234")).code).toBe(98);
+});
