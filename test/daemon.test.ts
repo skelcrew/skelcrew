@@ -516,7 +516,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", 
     await untilAnswers();
     await Bun.sleep(500);
     expect(hasLead()).toBe(false);
-    expect(await open()).toEqual({ lead: leadName() });
+    expect(await open()).toEqual({ lead: leadName(), repository: "simon/app" });
     const id = storedSession();
     expect(id).toMatch(/^[0-9a-f-]{36}$/);
     expect(claudeCalls()).toBe(`--session-id ${id}\n`);
@@ -532,8 +532,8 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", 
     );
     serve();
     await untilAnswers();
-    expect(await open("app")).toEqual({ lead: leadName("app") });
-    expect(await open("web")).toEqual({ lead: leadName("web") });
+    expect(await open("app")).toEqual({ lead: leadName("app"), repository: "simon/app" });
+    expect(await open("web")).toEqual({ lead: leadName("web"), repository: "simon/web" });
     expect(leadName("app")).not.toBe(leadName("web"));
     expect(hasLead(leadName("app")) && hasLead(leadName("web"))).toBe(true);
     const seen = (folder: string) => readFileSync(join(folder, "seen"), "utf8");
@@ -615,7 +615,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", 
     await untilAnswers();
     await open();
     endLead();
-    expect(await open()).toEqual({ lead: leadName() });
+    expect(await open()).toEqual({ lead: leadName(), repository: "simon/app" });
     expect(hasLead()).toBe(true);
   });
 
@@ -639,11 +639,20 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", 
     serve();
     await untilAnswers();
     // Before you have opened any, the first by name.
-    expect(await ask({ command: "lead" })).toEqual({ lead: leadName("app") });
+    expect(await ask({ command: "lead" })).toEqual({
+      lead: leadName("app"),
+      repository: "simon/app",
+    });
     await open("web");
-    expect(await ask({ command: "lead" })).toEqual({ lead: leadName("web") });
+    expect(await ask({ command: "lead" })).toEqual({
+      lead: leadName("web"),
+      repository: "simon/web",
+    });
     // One skel doesn't have, such as one waiting for skel repo trust, is no repository to open.
-    expect(await ask({ command: "lead", from: "other/tool" })).toEqual({ lead: leadName("web") });
+    expect(await ask({ command: "lead", from: "other/tool" })).toEqual({
+      lead: leadName("web"),
+      repository: "simon/web",
+    });
   });
 
   test("with no repositories, there is no lead to open", async () => {
@@ -893,7 +902,7 @@ c.on("error", () => process.exit(1));`;
       { mode: 0o755 },
     );
     const asked = Date.now();
-    expect(await open()).toEqual({ lead: leadName() });
+    expect(await open()).toEqual({ lead: leadName(), repository: "simon/app" });
     expect(Date.now() - asked).toBeLessThan(1500);
     expect(existsSync(join(clone, "NEWS"))).toBe(false);
     const deadline = Date.now() + 10_000;
@@ -972,10 +981,10 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("the lead from before", () => 
     // It kept running: skel started no other.
     expect(claudeCalls(keptLead())).toBe("--resume old\n");
     expect(storedSession("web")).toBe(id);
-    expect(await ask({ command: "lead" })).toEqual({ lead: "lead" });
-    expect(await open("web")).toEqual({ lead: "lead" });
+    expect(await ask({ command: "lead" })).toEqual({ lead: "lead", repository: "simon/web" });
+    expect(await open("web")).toEqual({ lead: "lead", repository: "simon/web" });
     // Every other repository gets a lead of its own, in a folder of its own.
-    expect(await open("app")).toEqual({ lead: leadName("app") });
+    expect(await open("app")).toEqual({ lead: leadName("app"), repository: "simon/app" });
     expect(claudeLines(leadFolder("app"))).toHaveLength(1);
   }, 20_000);
 

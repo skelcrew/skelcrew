@@ -84,7 +84,7 @@ echo "{\\"name\\":\\"\${full#*/}\\",\\"owner\\":{\\"login\\":\\"\${full%/*}\\"},
     connection.on("data", (data) => {
       appendFileSync(join(home, "calls"), "daemon lead\n");
       writeFileSync(join(home, "asked"), data.toString());
-      connection.end('{"lead":"app-lead"}\n');
+      connection.end('{"lead":"app-lead","repository":"simon/app"}\n');
     }),
   );
   await new Promise<void>((listening) => daemon?.listen(join(home, "run", "skel.sock"), listening));
