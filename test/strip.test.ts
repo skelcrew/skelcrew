@@ -1,7 +1,7 @@
 // What the strip above the agent says, given the rows it was handed.
 import { expect, test } from "bun:test";
 import type { Link, Row } from "../src/screen/rows.ts";
-import { drawStrip } from "../src/screen/strip.ts";
+import { drawStrip, drawTabs } from "../src/screen/strip.ts";
 
 const lead: Row = {
   name: "lead",
@@ -247,4 +247,44 @@ test("what a page's title says is shown, never run or read as a format", () => {
   });
   expect(line).toContain("##(touch owned) 100%%");
   expect(line).not.toContain("\x1b");
+});
+
+// The tab row as you read it: tmux's styles and click ranges left out.
+const tabText = (line: string) => line.replace(/#\[[^\]]*\]/g, "");
+const tab = (name: string, count = 0) => ({ name, fullName: `simon/${name}`, count });
+
+test("tabs name each repository in order, from the marks' column, with a badge for what needs you", () => {
+  const tabs = [tab("app"), tab("site", 1)];
+  const line = drawTabs(tabs, "simon/app", 120);
+  expect(tabText(line)).toBe("  app  site •1 ");
+  expect(tabText(line).indexOf("app")).toBe(2);
+  // The open one is bold white on a picked row's grey, the others dim, and the badge yellow.
+  expect(line).toContain("#[bg=colour238,fg=colour231,bold] app #[default]");
+  expect(line).toContain("#[fg=brightblack] site #[fg=yellow]•1 #[default]");
+  expect(drawTabs(tabs, "simon/site", 120)).toContain(
+    "#[bg=colour238,fg=colour231,bold] site #[fg=colour221]•1 #[default]",
+  );
+});
+
+test("a click on a tab is told apart by its place in the row", () => {
+  const line = drawTabs([tab("app"), tab("site")], "simon/app", 120);
+  expect(line).toContain("#[range=user|0]");
+  expect(line).toContain("#[range=user|1]");
+});
+
+test("the row is there with one repository too, so the agent's height never changes", () => {
+  expect(tabText(drawTabs([tab("app")], "simon/app", 120))).toBe("  app ");
+});
+
+test("tabs furthest from the open one give way first, and a dim count says how many", () => {
+  const tabs = ["one", "two", "three", "four", "five", "six", "seven"].map((name) => tab(name));
+  const line = drawTabs(tabs, "simon/four", 30);
+  expect(tabText(line)).toBe("  three  four  five  six   +3");
+  expect(Bun.stringWidth(tabText(line))).toBeLessThanOrEqual(30);
+  expect(line).toContain("#[fg=brightblack]  +3");
+  expect(tabText(drawTabs(tabs, "simon/one", 30))).toBe("  one  two  three  four   +3");
+});
+
+test("a repository's name is shown, never read as a format", () => {
+  expect(drawTabs([tab("a#[fg=red]b")], "simon/a#[fg=red]b", 120)).toContain(" a##[fg=red]b ");
 });

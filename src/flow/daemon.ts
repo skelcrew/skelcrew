@@ -249,7 +249,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         tellLead(db, tmux);
         // Not waited on, so attaching never waits on GitHub.
         refreshClones(db).catch((error) => console.log(String(error)));
-        return { lead: leadOf(db, owner, repo).name };
+        return { lead: leadOf(db, owner, repo).name, repository: `${owner}/${repo}` };
       }
       case "screen opened":
         for (const { owner, repo } of repositories(db)) poll(`${owner}/${repo}`);

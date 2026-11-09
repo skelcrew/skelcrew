@@ -15,7 +15,10 @@ import { skelLine } from "./say.ts";
 import { openScreen } from "./screen/screen.ts";
 import { release } from "./version.ts";
 
-const LeadReply = z.union([z.object({ lead: z.string() }), z.object({ error: z.string() })]);
+const LeadReply = z.union([
+  z.object({ lead: z.string(), repository: z.string() }),
+  z.object({ error: z.string() }),
+]);
 
 // Sends a request to the daemon and returns its decoded reply, or null when nothing
 // answers. A socket file alone proves nothing: a daemon that was killed leaves it behind.
@@ -155,6 +158,13 @@ export async function screenOpened(): Promise<void> {
   await ask({ command: "screen opened" }, 2000);
 }
 
+// Has the daemon open a repository, by its GitHub name, for the sidebar switching to its tab:
+// it starts the repository's lead if it never has, and marks it as the one you opened last.
+// The sidebar goes on without waiting, and a daemon that is down has nothing to start.
+export async function openRepository(fullName: string): Promise<void> {
+  await ask({ command: "lead", from: fullName }, 60_000);
+}
+
 // Asks the daemon for the page of an issue or PR, for the page command. The daemon answers, as
 // only it may call GitHub.
 export async function pageOf(url: string): Promise<Page> {
@@ -213,7 +223,7 @@ export async function attachToLead(tmux: string, from?: string): Promise<void> {
   const lead = LeadReply.safeParse(reply);
   if (!lead.success) throw new Error("the daemon answered in a way this skel doesn't understand");
   if ("error" in lead.data) throw new Error(lead.data.error);
-  await openScreen(tmux, lead.data.lead, lead.data.lead);
+  await openScreen(tmux, lead.data.lead, lead.data.lead, lead.data.repository);
 }
 
 // Opens the screen with the builder of the thread named repo-task on the right, and returns
@@ -231,5 +241,6 @@ export async function attachToThread(
     throw new Error(
       `${repository}-${task}'s builder isn't running: the thread is ${thread.status}`,
     );
-  await openScreen(tmux, thread.folder, leadOf(db, thread.owner, thread.repo).name);
+  const { name } = leadOf(db, thread.owner, thread.repo);
+  await openScreen(tmux, thread.folder, name, `${thread.owner}/${thread.repo}`);
 }
