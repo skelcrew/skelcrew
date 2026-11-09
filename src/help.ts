@@ -27,6 +27,15 @@ const sections: [string, [string, string][]][] = [
     ],
   ],
   [
+    "PLUGINS",
+    [
+      ["plugin install <owner/repo> | <path>", "Install a plugin, after showing what it runs"],
+      ["plugin update [<name>]", "Move one, or all, to its newest version"],
+      ["plugin rm <name>", "Remove one, with its settings and tokens"],
+      ["plugin ls", "Plugins installed, with their jobs"],
+    ],
+  ],
+  [
     "ELSEWHERE",
     [
       ["remote add <host>", "Set up a server, over ssh"],

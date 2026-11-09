@@ -44,6 +44,10 @@ test("the help names every command", () => {
     "stop",
     "attach",
     "review",
+    "plugin install",
+    "plugin update",
+    "plugin rm",
+    "plugin ls",
   ])
     expect(out).toContain(`  ${command} `);
 });

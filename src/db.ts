@@ -153,6 +153,13 @@ function prepareTables(db: Database): void {
   // The reviews skel posted. They go out with your gh login, so on GitHub they look like
   // reviews of yours, and polling must not type them back into the builder.
   db.run("CREATE TABLE IF NOT EXISTS posted (id INTEGER PRIMARY KEY)");
+  // The plugins you installed: the folder each runs from, and the GitHub repository it came
+  // from, or null for a folder of yours, used where it is.
+  db.run(`CREATE TABLE IF NOT EXISTS plugins (
+    name TEXT PRIMARY KEY,
+    folder TEXT NOT NULL,
+    source TEXT
+  )`);
 }
 
 // Makes the one lead a machine had before skel gave each repository its own the lead of the
