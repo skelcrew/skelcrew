@@ -5,9 +5,11 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createConnection } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
+import { leadPlaces } from "../src/paths.ts";
 import {
   git,
   homeEnv,
@@ -25,7 +27,7 @@ const running: Subprocess[] = [];
 
 const data = () => join(home, ".local", "share", "skel");
 const builder = () => join(data(), "claude", "app-12");
-const lead = () => join(data(), "claude", "lead");
+const lead = () => join(data(), "claude", leadPlaces("simon", "app").name);
 
 // Puts a program of the test's on its PATH.
 const script = (name: string, body: string) => writeScript(home, name, body);
@@ -92,44 +94,63 @@ const env = () => homeEnv(home);
 // Runs this test's daemon, which the test's clean-up stops.
 const serve = () => startDaemon(socket, env(), running);
 
-// The sockets the daemon opens for the lead and for app-12's builder, which tell it who calls.
-const leadSocket = () => join(home, "run", "skel", "lead", "skel.sock");
-const builderSocket = () => {
-  const short = new Bun.CryptoHasher("sha256").update("app-12").digest("hex").slice(0, 16);
-  return join(home, "run", "skel", "threads", short, "skel.sock");
+// The sockets the daemon opens for a repository's lead and for app-12's builder, which tell
+// it who calls. Each is named by a short hash.
+const short = (text: string) =>
+  new Bun.CryptoHasher("sha256").update(text).digest("hex").slice(0, 16);
+const leadSocket = (repo = "app") =>
+  join(home, "run", "skel", "leads", short(`simon/${repo}`), "skel.sock");
+const builderSocket = () => join(home, "run", "skel", "threads", short("app-12"), "skel.sock");
+
+// Runs skel as you would, or as a lead or a builder would, from its own socket.
+const skel = (args: string[], as?: "lead" | "web's lead" | "builder") => {
+  const sockets = { lead: leadSocket(), "web's lead": leadSocket("web"), builder: builderSocket() };
+  return runSkel(args, {
+    ...env(),
+    ...(as ? { SKEL_SANDBOX: "1", SKEL_SOCKET: sockets[as] } : {}),
+  });
 };
 
-// Runs skel as you would, or as the lead or a builder would, from its own socket.
-const skel = (args: string[], as?: "lead" | "builder") =>
-  runSkel(args, {
-    ...env(),
-    ...(as
-      ? { SKEL_SANDBOX: "1", SKEL_SOCKET: as === "lead" ? leadSocket() : builderSocket() }
-      : {}),
+// Has the daemon open a repository and start its lead, as plain skel in a checkout of it does.
+function open(repo: string): Promise<string> {
+  return new Promise((done) => {
+    const connection = createConnection(join(home, "run", "skel.sock"));
+    let reply = "";
+    connection.on("connect", () =>
+      connection.write(`${JSON.stringify({ command: "lead", from: `simon/${repo}` })}\n`),
+    );
+    connection.on("data", (more) => {
+      reply += more.toString();
+    });
+    connection.on("close", () => done(reply));
   });
+}
 
 // A daemon's work takes its time here, so a wait lasts 15 seconds unless a test says otherwise.
 const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout });
 
-// Puts simon/app on the fake GitHub and tells skel about it.
-function addApp(): void {
-  const work = join(home, "work", "app");
+// Puts simon/app, or another of simon's repositories, on the fake GitHub and tells skel about
+// it.
+function addApp(name = "app"): void {
+  const work = join(home, "work", name);
   mkdirSync(work, { recursive: true });
-  writeFileSync(join(work, "README"), "app\n");
+  writeFileSync(join(work, "README"), `${name}\n`);
   git(work, "init", "-q", "-b", "main");
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");
-  git(home, "clone", "-q", "--bare", work, join(home, "github", "simon", "app.git"));
+  git(home, "clone", "-q", "--bare", work, join(home, "github", "simon", `${name}.git`));
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app')");`;
+openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?)", [${JSON.stringify(name)}, ${JSON.stringify(name)}]);`;
   const added = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   if (!added.success) throw new Error(added.stderr.toString());
 }
 
+// Starts the daemon, opens app, as plain skel in its checkout does, and starts app-12.
 async function startApp12() {
   addApp();
   serve();
   await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
+  expect(await open("app")).toContain(leadPlaces("simon", "app").name);
   expect((await skel(["start", "app-12"])).err).toBe("");
   await until(() => read(join(builder(), "args")) !== "", 30_000);
 }
@@ -192,6 +213,18 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel tell", () => {
     const youToThread = await skel(["tell", "app-12", "Hello."]);
     expect(youToThread.code).not.toBe(0);
     expect(youToThread.err).toContain("pick it in the sidebar");
+    await Bun.sleep(1000);
+    expect(typed(builder())).not.toContain("Hello.");
+  }, 60_000);
+
+  // A lead sees only its own repository's threads.
+  test("another repository's lead can't tell app's builders", async () => {
+    addApp("web");
+    await startApp12();
+    expect(await open("web")).toContain(leadPlaces("simon", "web").name);
+    const told = await skel(["tell", "app-12", "Hello."], "web's lead");
+    expect(told.code).not.toBe(0);
+    expect(told.err).toContain("you are the lead of simon/web only, so app isn't yours");
     await Bun.sleep(1000);
     expect(typed(builder())).not.toContain("Hello.");
   }, 60_000);

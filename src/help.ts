@@ -5,7 +5,7 @@ const sections: [string, [string, string][]][] = [
   [
     "COMMANDS",
     [
-      ["(no command)", "Open the lead, with the sidebar"],
+      ["(no command)", "Open this repository's lead, with the sidebar"],
       ["ps [<repo>]", "Threads and whether they need you"],
       ["task ls [<repo>]", "Open tasks, with the thread on each"],
       ["task show <task>", "A task's title and body"],
@@ -38,7 +38,7 @@ const sections: [string, [string, string][]][] = [
     "FOR AGENTS",
     [
       ['submit "<summary>"', "Hand in a round for review, as a builder"],
-      ['tell lead "<text>"', "Type a message into the lead, as a builder"],
+      ['tell lead "<text>"', "Type a message into its repository's lead, as a builder"],
       ['tell <task> "<text>"', "Type a message into its builder, as the lead"],
     ],
   ],

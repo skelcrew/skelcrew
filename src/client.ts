@@ -1,9 +1,10 @@
-// What skel's commands ask the daemon, over its socket, and attaching you to the lead or a
-// thread's builder. Plain skel makes sure the daemon runs, then attaches to the lead.
+// What skel's commands ask the daemon, over its socket, and attaching you to a repository's
+// lead or a thread's builder. Plain skel makes sure the daemon runs, then attaches to a lead.
 import { createConnection } from "node:net";
 import { z } from "zod";
 import { agentRuns } from "./agents/tmux.ts";
 import { openDb } from "./db.ts";
+import { leadOf } from "./flow/lead.ts";
 import { RepositoryRow, TaskRow, TaskView, ThreadRow } from "./flow/list.ts";
 import { Page } from "./flow/page.ts";
 import { type DaemonRequest, parseJson } from "./flow/requests.ts";
@@ -12,7 +13,7 @@ import { startDaemon } from "./machine/service.ts";
 import { cliSocket } from "./paths.ts";
 import { openScreen } from "./screen/screen.ts";
 
-const LeadReply = z.union([z.object({ lead: z.literal(true) }), z.object({ error: z.string() })]);
+const LeadReply = z.union([z.object({ lead: z.string() }), z.object({ error: z.string() })]);
 
 // Sends a request to the daemon and returns its decoded reply, or null when nothing
 // answers. A socket file alone proves nothing: a daemon that was killed leaves it behind.
@@ -41,16 +42,6 @@ async function request(asked: DaemonRequest): Promise<unknown> {
   if (reply === null) throw new Error("the daemon didn't answer: run skel to start it");
   const failed = z.object({ error: z.string() }).safeParse(reply);
   if (failed.success) throw new Error(failed.data.error);
-  // On stderr, so a tool reading --json from stdout still gets only JSON.
-  const brought = z
-    .object({ broughtIn: z.object({ github: z.string(), name: z.string() }) })
-    .safeParse(reply);
-  if (brought.success) {
-    const { github, name } = brought.data.broughtIn;
-    console.error(
-      `skel brought in ${github}, as ${name}. It clones it in the background, and a thread started on it waits for the clone.`,
-    );
-  }
   return reply;
 }
 
@@ -154,14 +145,6 @@ export async function reportQuestion(asking: boolean): Promise<void> {
   await request({ command: asking ? "question asked" : "question answered" });
 }
 
-// Returns the note telling the lead where you attached from, for the lead's hook, or nothing
-// when it has nothing new. Claude Code holds your message until the hook ends, so it gives
-// up quickly, and never throws: a daemon that is down must not stop your message.
-export async function askForAttachedNote(): Promise<string> {
-  const reply = z.object({ note: z.string() }).safeParse(await ask({ command: "attached" }, 2000));
-  return reply.success ? reply.data.note : "";
-}
-
 // Tells the daemon a screen just opened, for the sidebar as it starts, so ISSUES and PRS fill
 // within seconds and not at the next poll. Only a poll with a screen open asks for them, which
 // is why this comes from the sidebar: while you attach, no screen is open yet. A daemon that is
@@ -177,9 +160,9 @@ export async function pageOf(url: string): Promise<Page> {
   return understood(z.object({ page: Page }), reply).page;
 }
 
-// Ensures the daemon and lead are running, then opens the screen on the lead until you leave
-// with Ctrl-Q. The daemon keeps which repository you attached from, as owner/repo, or that
-// there is none, for the lead to hear with your next message.
+// Ensures the daemon and the lead of the repository you attached from, as owner/repo, are
+// running, then opens the screen on that lead until you leave with Ctrl-Q. With none, the
+// daemon opens the repository you opened last.
 export async function attachToLead(tmux: string, from?: string): Promise<void> {
   const asked: DaemonRequest = { command: "lead", ...(from ? { from } : {}) };
   // Asking for the lead brings it back if it ended while the daemon kept running.
@@ -197,22 +180,23 @@ export async function attachToLead(tmux: string, from?: string): Promise<void> {
   const lead = LeadReply.safeParse(reply);
   if (!lead.success) throw new Error("the daemon answered in a way this skel doesn't understand");
   if ("error" in lead.data) throw new Error(lead.data.error);
-  await openScreen(tmux, "lead");
+  await openScreen(tmux, lead.data.lead, lead.data.lead);
 }
 
 // Opens the screen with the builder of the thread named repo-task on the right, and returns
-// when you leave with Ctrl-Q. Only from your own terminal: it takes over the screen, which
-// the lead can't hand to you.
+// when you leave with Ctrl-Q, with its repository's lead in the sidebar. Only from your own
+// terminal: it takes over the screen, which the lead can't hand to you.
 export async function attachToThread(
   tmux: string,
   repository: string,
   task: number,
 ): Promise<void> {
-  const thread = findThread(openDb(), repository, task);
+  const db = openDb();
+  const thread = findThread(db, repository, task);
   // A builder that exited leaves its last screen behind, which would look like it still runs.
   if (!agentRuns(tmux, thread.folder))
     throw new Error(
       `${repository}-${task}'s builder isn't running: the thread is ${thread.status}`,
     );
-  await openScreen(tmux, thread.folder);
+  await openScreen(tmux, thread.folder, leadOf(db, thread.owner, thread.repo).name);
 }

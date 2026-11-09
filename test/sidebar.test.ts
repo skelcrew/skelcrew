@@ -901,7 +901,7 @@ describe("the rows the database gives", () => {
 import { sidebarLists, sidebarRows } from ${JSON.stringify(source("screen/rows.ts"))};
 const db = openDb();
 db.run(${JSON.stringify(sql)});
-const rows = sidebarRows(db, ["lead", "app-12"], 3, ${now});
+const rows = sidebarRows(db, ["lead", "app-12"], 3, ${now}, "lead");
 console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5) }));`;
     const run = Bun.spawnSync([process.execPath, "-e", code], {
       env: { ...process.env, HOME: home },
