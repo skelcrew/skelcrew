@@ -33,6 +33,7 @@ import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
 import { messageBuilder, messageLead } from "./tell.ts";
 import {
+  endedTurnAsks,
   findThread,
   hasWork,
   liveThreads,
@@ -305,6 +306,13 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         record(db, callingThread(caller).folder, { asking: true }, "its builder asked a question");
         tellLead(db, tmux);
         return { asking: true };
+      case "turn ended": {
+        const { folder } = callingThread(caller);
+        if (!endedTurnAsks(readThread(db, folder))) return { asking: false };
+        record(db, folder, { asking: true }, "its builder stopped without submitting");
+        tellLead(db, tmux);
+        return { asking: true };
+      }
       case "question answered": {
         const { folder } = callingThread(caller);
         // Run before every message typed into the builder, so only a question that was open

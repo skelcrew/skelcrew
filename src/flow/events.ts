@@ -3,7 +3,6 @@
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 import { agentRuns, stopSession, typeInto } from "../agents/tmux.ts";
-import { agentHarness } from "../config.ts";
 import { type Check, failedLog, fetchIntoClone } from "../github.ts";
 import { cloneDir } from "../paths.ts";
 import { errorText } from "../say.ts";
@@ -12,7 +11,15 @@ import type { Decision } from "./decide.ts";
 import { tellLead } from "./lead.ts";
 import { refreshClones } from "./repo.ts";
 import { endRound } from "./round.ts";
-import { cloneOf, fullNameOf, readThread, record, type Thread, threadName } from "./thread.ts";
+import {
+  builderHarness,
+  cloneOf,
+  fullNameOf,
+  readThread,
+  record,
+  type Thread,
+  threadName,
+} from "./thread.ts";
 
 // The message about failed checks, with the end of each one's log. A check that isn't a
 // GitHub Actions job has no log gh can read, so it gets its link instead.
@@ -103,7 +110,7 @@ export async function tellBuilder(
     const text = [...checks, ...decision.tell].join("\n\n---\n\n");
     if (!agentRuns(tmux, thread.folder)) throw new Error("its builder isn't running");
     // A builder can work long after an event, but one busy this long has likely hung.
-    const { marks } = agentHarness();
+    const { marks } = builderHarness(thread);
     await typeInto(tmux, thread.folder, marks, text, {
       timeout: 30 * 60_000,
       signal: cancel.signal,

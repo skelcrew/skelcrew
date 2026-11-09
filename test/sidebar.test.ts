@@ -847,6 +847,7 @@ const state: Thread = {
   review_round: null,
   verdict: null,
   review_line: null,
+  harness: null,
 };
 const word = (more: Partial<Thread>) => threadWord({ ...state, ...more }, 3);
 const needing = { status: "waiting", needs_you: true } satisfies Partial<Thread>;
@@ -927,7 +928,10 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5, app) }));`;
     return JSON.parse(run.stdout.toString());
   }
   const rowsAfter = (sql: string, now: number) => after(sql, now).rows;
-  const repository = "INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');";
+  // app, whose lead is the session named lead, as for a machine whose one lead skel kept. It has
+  // started, so it shows a harness.
+  const repository = `INSERT INTO repositories (name, owner, repo, kept_lead, lead_session)
+    VALUES ('app', 'simon', 'app', 1, 's');`;
   // Returns the sidebar with one thread that started at 0, in the state given, at a moment.
   function shown(columns: string, values: string, now: number): string {
     const sql = `${repository} INSERT INTO threads
@@ -936,6 +940,19 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5, app) }));`;
     return draw(rowsAfter(sql, now), "lead", size);
   }
   const hours = (n: number) => n * 3_600_000;
+
+  test("the lead shows the harness it started on", () => {
+    const sql = `${repository} UPDATE repositories SET lead_harness = 'codex'`;
+    expect(listed(draw(rowsAfter(sql, 0), "lead", size)).slice(0, 2)).toEqual([
+      "  ◆ lead",
+      "    running · codex",
+    ]);
+  });
+
+  test("a thread shows the harness its builder runs on, and Claude Code for one from before", () => {
+    expect(shown("status, harness", "'working', 'codex'", 0)).toContain("· codex · <1m");
+    expect(shown("status", "'working'", 0)).toContain("· claude · <1m");
+  });
 
   // Adds two repositories' open issues and PRs, whose dates and numbers run in different
   // orders, with a total for each repository.

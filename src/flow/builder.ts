@@ -2,6 +2,7 @@
 // bringing it back, and marking the thread failed when any of that goes wrong.
 import type { Database } from "bun:sqlite";
 import { existsSync, rmSync } from "node:fs";
+import { harnessNamed } from "../agents/harness.ts";
 import instructions from "../agents/prompts/builder.md" with { type: "text" };
 import { refuseCredentials, setupCommand } from "../agents/sandbox.ts";
 import {
@@ -12,14 +13,23 @@ import {
   startServer,
   startSession,
 } from "../agents/tmux.ts";
-import { agentHarness, repositorySetup, threadConfig } from "../config.ts";
+import { repositorySetup, threadConfig } from "../config.ts";
 import { fetchBranch, readIssue } from "../github.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { pastLimit } from "./decide.ts";
 import { findRepository, refreshClones } from "./repo.ts";
-import { cloneOf, folderName, fullNameOf, log, readThread, record, Thread } from "./thread.ts";
+import {
+  builderHarness,
+  cloneOf,
+  folderName,
+  fullNameOf,
+  log,
+  readThread,
+  record,
+  Thread,
+} from "./thread.ts";
 
 // Returns what skel start means for a task, given its thread if it has one: bring back a
 // stopped thread, let a live one past the round limit go on, or else start a new thread, which
@@ -106,6 +116,7 @@ export async function startThread(
       review_round: null,
       verdict: null,
       review_line: null,
+      harness: null,
     };
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run(
@@ -202,27 +213,31 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   }
 }
 
-// Starts the thread's builder in tmux, in the sandbox in its clone: with --resume when it
-// saved a conversation, or else afresh with the task's title and body as its first message.
-// Throws when it exits as soon as it starts. skel picks the session id rather than Claude
-// Code, so it is stored before the builder starts and the builder can be brought back with
-// --resume after its session is gone.
+// Starts the thread's builder in tmux, in the sandbox in its clone: bringing back the
+// conversation it saved, or else afresh with the task's title and body as its first message.
+// Throws when it exits as soon as it starts. A builder's first start picks the harness your
+// config names, and saves it with the thread, which keeps it from then on: a conversation
+// can't move to another harness. The session id is stored before the builder starts, so the
+// builder can be brought back after its session is gone.
 export async function startBuilder(db: Database, tmux: string, thread: Thread): Promise<void> {
   const clone = cloneOf(thread);
   const stored = thread.session;
-  const harness = agentHarness();
-  const resume = stored !== null && harness.saved(thread.folder, clone, stored) ? stored : null;
+  const role = threadConfig(thread).builder;
+  const harness = stored === null ? harnessNamed(role.harness) : builderHarness(thread);
+  const resume = stored === null ? null : harness.saved(thread.folder, clone, stored);
   const session = resume ?? crypto.randomUUID();
   let start: { resume: string } | { sessionId: string; prompt: string } = { resume: session };
   if (!resume) {
     const { title, body } = await readIssue(fullNameOf(thread), thread.task);
     start = { sessionId: session, prompt: body ? `${title}\n\n${body}` : title };
   }
-  record(db, thread.folder, { session });
-  const { argv, env } = harness.start({
+  record(db, thread.folder, { session, harness: harness.name });
+  const { argv, env } = await harness.start({
     name: thread.folder,
     socket: threadSocket(thread.folder),
-    model: threadConfig(thread).builder.model,
+    // A model name belongs to its harness, so a thread on another one than your config now
+    // names for builders gets that harness's default.
+    model: role.harness === harness.name ? role.model : undefined,
     thread: clone,
     // Gone once you remove the repository from skel, and bwrap can't mount what is missing.
     ...(existsSync(cloneDir(thread.owner, thread.repo))
