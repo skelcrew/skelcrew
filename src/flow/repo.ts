@@ -28,8 +28,7 @@ import { cloneDir, configDir, dataDir } from "../paths.ts";
 import { errorText } from "../say.ts";
 import { hookRepository } from "./webhook.ts";
 
-export const noRepositories =
-  "skel has no repositories yet. Run skel in a checkout of one, or ask the lead for one by its GitHub name.";
+export const noRepositories = "skel has no repositories yet. Run skel in a checkout of one.";
 
 // Returns the file of trusted repositories, kept with your settings so a clone can't bring
 // its own yes.
@@ -69,9 +68,9 @@ export function findRepository(db: Database, given: string): Repository {
   return found;
 }
 
-// Creates or updates skel's repository clone so the lead can read its latest default
-// branch. The lead reads every clone in skel's folder, so a clone whose config holds a
-// credential is deleted rather than left there for it.
+// Creates or updates skel's repository clone so its lead can read its latest default
+// branch. The lead reads the clone, so a clone whose config holds a credential is deleted
+// rather than left there for it.
 async function refreshClone(owner: string, repo: string): Promise<void> {
   const clone = cloneDir(owner, repo);
   if (existsSync(clone)) {
@@ -79,8 +78,8 @@ async function refreshClone(owner: string, repo: string): Promise<void> {
     checkOrDelete(clone);
     return;
   }
-  // Cloned outside the folder the lead sees, checked, and moved in once whole, so neither a
-  // clone stopped halfway nor one holding a credential ever shows up there.
+  // Cloned outside the clone's folder, checked, and moved in once whole, so neither a clone
+  // stopped halfway nor one holding a credential ever shows up where a lead or thread looks.
   const part = join(dataDir(), "cloning", owner, repo);
   rmSync(part, { recursive: true, force: true });
   mkdirSync(dirname(part), { recursive: true });
@@ -102,11 +101,11 @@ function checkOrDelete(clone: string): void {
 
 let refreshing: Promise<void> | null = null;
 
-// Refreshes every registered clone so the lead reads current repositories, and creates the
+// Refreshes every registered clone so leads read current repositories, and creates the
 // skel label in a repository skel hasn't made it in yet, so you can start threads from
 // GitHub. A second call joins the refresh running, so two git commands never fight over a
 // clone. A clone or label that fails only gets a line in the log and is tried again at the
-// next refresh, since an old clone still lets the lead read the repository.
+// next refresh, since an old clone still lets a lead read its repository.
 export function refreshClones(db: Database): Promise<void> {
   refreshing ??= (async () => {
     const done = new Set<string>();
@@ -126,7 +125,7 @@ export function refreshClones(db: Database): Promise<void> {
           db.run(`UPDATE repositories SET labeled = 1 ${where}`, [owner, repo]);
         }
         // skel repo rm can run while a clone is still being made, and the clone would then
-        // land after the removal, where the lead could still read it.
+        // land after the removal, where nothing would remove it.
         if (!repositories(db).some((r) => r.owner === owner && r.repo === repo))
           rmSync(cloneDir(owner, repo), { recursive: true, force: true });
       } catch (error) {
@@ -147,8 +146,8 @@ function trusted({ owner, repo, canPush, isFork }: GitHubRepo): boolean {
   return (canPush && !isFork) || trustLines().includes(`${owner}/${repo}`);
 }
 
-// Checks trust, asking you when needed, refreshes the repository clone, records it for the
-// lead, and creates its skel label so you can start threads from GitHub. Runs only in your
+// Checks trust, asking you when needed, refreshes the repository clone, records it, and
+// creates its skel label so you can start threads from GitHub. Runs only in your
 // own terminal, where a yes can't come from an injected instruction.
 async function bringIn(db: Database, details: GitHubRepo): Promise<void> {
   const { owner, repo, canPush } = details;
@@ -194,8 +193,8 @@ async function bringIn(db: Database, details: GitHubRepo): Promise<void> {
 }
 
 // Brings in the repository you attached from, reporting failures without blocking the lead.
-// Returns its owner/repo once skel has it, so the lead takes it as the default; one waiting
-// for trust isn't a default yet. Plain skel must stay fast, so a repository skel has costs
+// Returns its owner/repo once skel has it, so skel opens its lead; one waiting for trust
+// isn't in yet. Plain skel must stay fast, so a repository skel has costs
 // no call to GitHub: the daemon keeps its clone current. A folder that isn't on GitHub,
 // such as your dotfiles, gets no complaint.
 export async function bringInFrom(from: string | undefined): Promise<string | undefined> {
@@ -207,7 +206,7 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
     if (named && !repositories(db).some(known)) {
       const details = await githubRepo(named);
       // A checkout can still use a name the repository had before it was renamed or moved on
-      // GitHub. skel keeps it under the name GitHub gives now, and the lead must hear that one.
+      // GitHub. skel keeps it under the name GitHub gives now, and opens it by that one.
       named = `${details.owner}/${details.repo}`;
       await bringIn(db, details);
     }
@@ -219,44 +218,7 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
   return found && `${found.owner}/${found.repo}`;
 }
 
-// Brings in a repository a command names by its full GitHub name, such as skel task ls
-// skelcrew/skel-github, when skel doesn't have it, and returns it. Returns nothing when skel
-// has it, or the name isn't owner/repo, so the command answers as for any name. The daemon
-// runs this for the lead and agents, so it never asks: a repository that isn't trusted waits
-// for skel repo trust, since a yes passed on by the lead could come from an injected
-// instruction. Recorded at once, so its short name works, and cloned in the background,
-// since an agent's command can't wait minutes for a clone. A thread started on it waits for
-// the clone.
-export async function bringInNamed(db: Database, given: string): Promise<Repository | undefined> {
-  // A name starting with a dash would reach gh as an option.
-  if (!/^[\w.][\w.-]*\/[\w.-]+$/.test(given)) return undefined;
-  if (repositories(db).some((r) => fullNameIs(r, given))) return undefined;
-  const details = await githubRepo(given);
-  const { owner, repo, canPush } = details;
-  const fullName = `${owner}/${repo}`;
-  if (!trusted(details))
-    throw new Error(`${fullName} waits until you run skel repo trust ${fullName} in your terminal`);
-  // GitHub can answer for a renamed repository under the name skel already has it by, and two
-  // commands can bring in the same repository at once.
-  const fresh = !repositories(db).some((r) => fullNameIs(r, fullName));
-  if (fresh) {
-    // Only people who can push or triage may add a label, so where you can't push, a label
-    // would be of no use to you. A repository you can push to gets it with its clone.
-    db.run("INSERT OR IGNORE INTO repositories (owner, repo, name, labeled) VALUES (?, ?, ?, ?)", [
-      owner,
-      repo,
-      fullName,
-      canPush ? 0 : 1,
-    ]);
-    nameRepositories(db);
-    refreshClones(db).catch((error) => console.log(String(error)));
-    // Not waited on, like the clone. The daemon sets it again when it next starts.
-    if (onSprite()) hookRepository(fullName).catch((error) => console.log(String(error)));
-  }
-  return findRepository(db, fullName);
-}
-
-// Records your trust from outside the sandbox and brings in the repository for the lead.
+// Records your trust from outside the sandbox and brings in the repository.
 export async function trustRepo(given: string): Promise<void> {
   const db = openDb();
   const known = repositories(db).find((r) => r.name === given);

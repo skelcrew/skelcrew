@@ -63,14 +63,17 @@ function usage(command?: string): never {
   process.exit(1);
 }
 
-// Sets up skel if it needs it and opens the screen on the lead, with the repository you ran
-// skel from as its default, or the one --from names.
+// Sets up skel if it needs it and opens the screen on the lead of the repository you ran skel
+// from, or the one --from names, or else the one you opened last. While skel has no
+// repositories, bringInFrom has said so, and there is no lead to open.
 async function leadCommand(from?: string): Promise<void> {
   const { attachToLead } = await import("./client.ts");
-  const { bringInFrom } = await import("./flow/repo.ts");
+  const { openDb } = await import("./db.ts");
+  const { bringInFrom, repositories } = await import("./flow/repo.ts");
   const { firstRun } = await import("./machine/setup.ts");
   firstRun();
-  await attachToLead("skel", await bringInFrom(from));
+  const found = await bringInFrom(from);
+  if (repositories(openDb()).length > 0) await attachToLead("skel", found);
 }
 
 // Runs what keeps this machine going: its setup, then the daemon.
@@ -97,11 +100,13 @@ async function screenCommand(args: string[]): Promise<void> {
   const { pageOf, screenOpened } = await import("./client.ts");
   const { runPage } = await import("./screen/page.ts");
   const { runSidebar } = await import("./screen/sidebar.ts");
-  // The last word is the remote skel runs on, and empty on this machine.
-  if (command === "sidebar" && sub && rest[0] && rest[1] !== undefined && rest.length === 2) {
+  // The third word is the remote skel runs on, and empty on this machine. The last is the
+  // session of the lead the screen opened on.
+  const [session, where, lead] = rest;
+  if (command === "sidebar" && sub && session && where !== undefined && lead && rest.length === 3) {
     // Not waited on, so the sidebar draws at once.
     screenOpened();
-    await runSidebar(sub, rest[0], rest[1]);
+    await runSidebar(sub, session, where, lead);
     return;
   }
   if (command === "page" && sub && rest.length === 0) {
@@ -142,10 +147,10 @@ async function repoCommand(args: string[]): Promise<void> {
 }
 
 // Runs what agents and their hooks call: a builder submitting its work, and the hooks that
-// tell the daemon about questions and bring back where you attached from.
+// tell the daemon about questions.
 async function agentCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
-  const { askForAttachedNote, reportQuestion, submitForReview } = await import("./client.ts");
+  const { reportQuestion, submitForReview } = await import("./client.ts");
   if (command === "submit" && sub && rest.length === 0) {
     const thread = await submitForReview(sub);
     console.log(
@@ -159,13 +164,10 @@ async function agentCommand(args: string[]): Promise<void> {
     await reportQuestion(sub === "asked");
     return;
   }
-  // Run by the lead's Claude Code hook with each message, not by people, so usage leaves it
-  // out. What it prints goes into the message, unseen, so the lead hears where you attached
-  // from without a turn of its own.
-  if (command === "attached" && args.length === 1) {
-    process.stdout.write(await askForAttachedNote());
-    return;
-  }
+  // A lead started before each repository had its own runs this hook with each message,
+  // until it restarts. It prints nothing, as Claude Code adds what it prints to the message,
+  // and a lead with one repository needs no note of where you are.
+  if (command === "attached" && args.length === 1) return;
   usage(command);
 }
 

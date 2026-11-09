@@ -1,18 +1,11 @@
-// Messages between the lead and a thread's builder, for skel tell: typed into the other's
-// session once it is idle, and kept in the thread's log. They never go to GitHub.
+// Messages between a repository's lead and its threads' builders, for skel tell: typed into
+// the other's session once it is idle, and kept in the thread's log. They never go to GitHub.
 import type { Database } from "bun:sqlite";
 import { agentRuns, typeInto } from "../agents/tmux.ts";
 import { agentHarness } from "../config.ts";
 import { errorText } from "../say.ts";
-import { tellLead } from "./lead.ts";
+import { noteForLead } from "./lead.ts";
 import { log, readThread, type Thread, threadName } from "./thread.ts";
-
-// Saves a note for the lead and has the daemon type it in. Notes already wait while the lead
-// is busy, and stay saved while it isn't running, so a message to it is never lost.
-function noteForLead(db: Database, tmux: string, text: string): void {
-  db.run("INSERT INTO notes (text) VALUES (?)", [text]);
-  tellLead(db, tmux);
-}
 
 // Returns the message wrapped in skel's tag, saying who it is from and the command to answer
 // with, so the receiving agent never takes it for the human. The tag marks where it starts
@@ -51,17 +44,17 @@ export function messageBuilder(db: Database, tmux: string, thread: Thread, text:
     (error) => {
       const said = errorText(error);
       log(readThread(db, thread.folder), `couldn't tell its builder what the lead said: ${said}`);
-      noteForLead(db, tmux, `${name}'s builder didn't get your message: ${said}`);
+      noteForLead(db, tmux, thread, `${name}'s builder didn't get your message: ${said}`);
     },
   );
   return name;
 }
 
-// Has the daemon type a builder's message into the lead, naming the thread it comes from
-// and how to answer, and logs it in the thread's log. Returns at once, like any agent
-// command.
+// Has the daemon type a builder's message into its repository's lead, naming the thread it
+// comes from and how to answer, and logs it in the thread's log. Returns at once, like any
+// agent command.
 export function messageLead(db: Database, tmux: string, thread: Thread, text: string): void {
   const name = threadName(db, thread);
-  noteForLead(db, tmux, wrapped(name, `skel tell ${name}`, text));
+  noteForLead(db, tmux, thread, wrapped(name, `skel tell ${name}`, text));
   log(readThread(db, thread.folder), `its builder told the lead: ${text}`);
 }

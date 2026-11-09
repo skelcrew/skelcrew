@@ -352,8 +352,8 @@ export async function addSprite(name: string): Promise<number> {
 }
 
 // Runs a skel command on the Sprite and returns its exit code. Plain skel passes the
-// repository you are in on the laptop, so the lead knows it too. Stops at a Sprite that doesn't
-// exist or has no skel.
+// repository you are in on the laptop, so it opens that repository's lead there. Stops at a
+// Sprite that doesn't exist or has no skel.
 export async function remoteSprite(name: string, args: string[]): Promise<number> {
   checkName(name);
   // A sleeping Sprite can take a while to answer, which looks like a hang with nothing on
