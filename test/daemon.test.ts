@@ -484,6 +484,18 @@ function askAsLead(request: object, path = leadSocket()): Promise<unknown> {
   });
 }
 
+// Removes a repository as skel repo rm does, but on the test's own tmux server, never skel's.
+// Returns what it said on stderr.
+function removeRepo(name: string): string {
+  const script = `import { removeRepo } from ${JSON.stringify(source("flow/repo.ts"))};
+await removeRepo(${JSON.stringify(name)}, ${JSON.stringify(socket)});`;
+  const removed = Bun.spawnSync([process.execPath, "-e", script], {
+    env: { HOME: home, PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}` },
+    stderr: "pipe",
+  });
+  return removed.stderr.toString();
+}
+
 // A stopped thread of the repository, for what lists threads.
 function addThread(repo: string, task: number): void {
   onDb((db) =>
@@ -673,6 +685,20 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", 
     expect(await askAsLead({ command: "task ls", repo: "simon/site" })).toEqual({
       error: "there is no repository named simon/site",
     });
+  });
+
+  // Left running, it would go on with no repository behind it, and nothing would end it.
+  test("removing a repository ends its lead, and leaves another's running", async () => {
+    setUp();
+    addRepository("app");
+    addRepository("web");
+    serve();
+    await untilAnswers();
+    await open("app");
+    await open("web");
+    expect(removeRepo("app")).toBe("");
+    expect(hasLead(leadName("app"))).toBe(false);
+    expect(hasLead(leadName("web"))).toBe(true);
   });
 
   // Its own scope keeps tmux out of skel.service's cgroup, so stopping or OOM-killing the
@@ -888,11 +914,7 @@ c.on("error", () => process.exit(1));`;
     );
     serve();
     await untilAnswers();
-    const removed = Bun.spawnSync([process.execPath, main, "repo", "rm", "app"], {
-      env: { HOME: home, PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}` },
-      stderr: "pipe",
-    });
-    expect(removed.stderr.toString()).toBe("");
+    expect(removeRepo("app")).toBe("");
     // Long enough for the slow clone to finish and be moved in, had nothing stopped it.
     await Bun.sleep(4000);
     expect(existsSync(clone)).toBe(false);

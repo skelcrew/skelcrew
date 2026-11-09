@@ -136,7 +136,7 @@ async function repoCommand(args: string[]): Promise<void> {
     return;
   }
   if (sub === "rm" && rest[0] && rest.length === 1) {
-    await removeRepo(rest[0]);
+    await removeRepo(rest[0], "skel");
     return;
   }
   if (sub === "trust" && rest[0] && rest.length === 1) {

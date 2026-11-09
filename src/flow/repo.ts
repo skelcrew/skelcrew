@@ -13,6 +13,7 @@ import {
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { refuseCredentials } from "../agents/sandbox.ts";
+import { stopSession } from "../agents/tmux.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
 import {
   cloneRepo,
@@ -24,7 +25,7 @@ import {
 } from "../github.ts";
 import { onGitHub, originHere } from "../machine/origin.ts";
 import { onSprite, spriteUrl } from "../machine/sprite.ts";
-import { cloneDir, configDir, dataDir } from "../paths.ts";
+import { cloneDir, configDir, dataDir, leadPlaces } from "../paths.ts";
 import { errorText } from "../say.ts";
 import { hookRepository } from "./webhook.ts";
 
@@ -229,10 +230,12 @@ export async function trustRepo(given: string): Promise<void> {
   await bringIn(db, details);
 }
 
-// Deletes skel's clone, registration and saved trust, then updates names that no longer
-// clash, and on a Sprite removes the webhook that wakes it. Refuses while the repository has
-// live threads, naming them.
-export async function removeRepo(name: string): Promise<void> {
+// Ends the repository's lead, on skel's tmux server `tmux`, deletes skel's clone,
+// registration and saved trust, then updates names that no longer clash, and on a Sprite
+// removes the webhook that wakes it. Refuses while the repository has live threads, naming
+// them. Left running, the lead would go on with no repository behind it, and the daemon would
+// never bring it back or end it.
+export async function removeRepo(name: string, tmux: string): Promise<void> {
   const db = openDb();
   const found = repositories(db).find((r) => r.name === name);
   if (!found) throw new Error(`there is no repository named ${name}`);
@@ -247,11 +250,21 @@ export async function removeRepo(name: string): Promise<void> {
   if (live.length > 0)
     throw new Error(`${name} has live threads: ${live.join(", ")}. Stop them first.`);
   const fullName = `${found.owner}/${found.repo}`;
+  const kept = z
+    .object({ kept_lead: z.coerce.boolean() })
+    .parse(
+      db
+        .query("SELECT kept_lead FROM repositories WHERE owner = ? AND repo = ?")
+        .get(found.owner, found.repo),
+    ).kept_lead;
+  // Ended as a thread's builder is, and waited for, as the lead reads the clone removed next.
+  await stopSession(tmux, leadPlaces(found.owner, found.repo, kept).name);
   rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });
   db.run("DELETE FROM repositories WHERE owner = ? AND repo = ?", [found.owner, found.repo]);
   nameRepositories(db);
-  const kept = trustLines().filter((line) => line !== "" && line !== fullName);
-  if (existsSync(trustFile())) writeFileSync(trustFile(), kept.map((line) => `${line}\n`).join(""));
+  const trusted = trustLines().filter((line) => line !== "" && line !== fullName);
+  if (existsSync(trustFile()))
+    writeFileSync(trustFile(), trusted.map((line) => `${line}\n`).join(""));
   // Removed last, so a webhook GitHub couldn't remove never stops the rest. Left behind, it
   // only wakes the Sprite for a repository skel no longer polls.
   if (onSprite())
