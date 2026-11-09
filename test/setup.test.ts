@@ -653,6 +653,52 @@ test("finishes no setup when the reviewer's login fails, so the next skel tries 
   expect(existsSync(unit())).toBe(true);
 });
 
+test("on a machine with only Codex, Enter picks it, and its one login serves agents and reviews", async () => {
+  unlinkSync(join(bin, "claude"));
+  fakeCodex();
+  const run = await skel("\n");
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("2) Codex");
+  expect(run.out).toContain("skel · step 3 of 3: log the reviewer in to Codex\n");
+  expect(readFileSync(config(), "utf8")).toContain("harness: codex");
+  expect(calls()).toContain(`codex login --device-auth\nCODEX_HOME=${codexHome()}\n`);
+  expect(calls()).not.toContain("claude");
+  expect(existsSync(token())).toBe(false);
+
+  writeFileSync(join(home, "calls"), "");
+  const second = await skel();
+  expect(second.code).toBe(0);
+  expect(second.out).not.toContain("setup is done");
+  expect(calls()).toBe("daemon lead\nscreen on lead\n");
+});
+
+test("picking Codex where Claude Code is installed too skips Claude's login", async () => {
+  fakeCodex();
+  const run = await skel("2\n");
+  expect(run.code).toBe(0);
+  expect(readFileSync(config(), "utf8")).toContain("harness: codex");
+  expect(calls()).not.toContain("claude setup-token");
+  expect(calls()).toContain("codex login --device-auth");
+});
+
+test("refuses a harness that isn't installed, saying how to install it", async () => {
+  writeFileSync(join(home, "gh-login"), "");
+  const run = await skel("2\n");
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("npm install -g @openai/codex");
+  expect(existsSync(config())).toBe(false);
+});
+
+test("needs Claude Code or Codex, and names how to install either", async () => {
+  unlinkSync(join(bin, "claude"));
+  const run = await skel();
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("curl -fsSL https://claude.ai/install.sh | bash");
+  expect(run.err).toContain("npm install -g @openai/codex");
+  expect(calls()).toBe("");
+});
+
 // Ubuntu's ~/.bashrc stops early in a shell nobody types into, so a folder it adds, such as
 // nvm's, is known to your terminal but not to a command run over ssh, as skel --remote runs.
 function onlyLoginShellKnows(tools: string[]): string {

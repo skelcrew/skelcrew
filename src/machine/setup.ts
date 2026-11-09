@@ -1,6 +1,8 @@
 // The first run: what a plain skel sets up on a new machine, skipping each step already
 // done.
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { HarnessName } from "../agents/harness.ts";
 import { configFile, readConfig } from "../config.ts";
 import { claudeTokenFile, codexHome, configDir } from "../paths.ts";
 import { rule, skelLine } from "../say.ts";
@@ -10,19 +12,36 @@ import { dropCapabilities, onSprite, spriteServiceInstalled } from "./sprite.ts"
 
 type Env = Record<string, string | undefined>;
 
-const claude = { command: "claude", install: "curl -fsSL https://claude.ai/install.sh | bash" };
+// The harnesses agents can run on, in the order the first run offers them.
+const harnesses = [
+  {
+    name: "claude",
+    title: "Claude Code",
+    command: "claude",
+    install: "curl -fsSL https://claude.ai/install.sh | bash",
+  },
+  { name: "codex", title: "Codex", command: "codex", install: "npm install -g @openai/codex" },
+] as const;
 const tools = [
   { command: "tmux", install: "sudo apt install tmux" },
   { command: "bwrap", install: "sudo apt install bubblewrap" },
   { command: "gh", install: "sudo apt install gh" },
-  claude,
 ];
 // On a Mac the sandbox comes with the system, and what Homebrew gives goes in one line.
 const brewed = ["tmux", "gh"];
 const macTools = [
   { command: "sandbox-exec", install: "it comes with macOS, and skel can't run agents without it" },
-  claude,
 ];
+
+// Returns what to install for agents to have a harness: the one your config saved, or else
+// either one, when neither is installed. Each line says how to install it.
+function missingHarness(env: Env): string[] {
+  const PATH = env.PATH ?? "";
+  const saved = readConfig().harness;
+  const wanted = harnesses.filter((h) => saved === undefined || h.name === saved);
+  if (wanted.some((h) => Bun.which(h.command, { PATH }))) return [];
+  return wanted.map((h) => `  ${h.command}: ${h.install}`);
+}
 
 // Checks the programs a Mac needs and tries sandbox-exec, stopping setup with what to install
 // on failure. Homebrew's tools are named in one line that can be pasted as it is.
@@ -31,6 +50,7 @@ function checkMacTools(env: Env): void {
   const brew = brewed.filter((command) => !Bun.which(command, { PATH }));
   const missing = macTools.filter((tool) => !Bun.which(tool.command, { PATH }));
   const lines = missing.map((tool) => `  ${tool.command}: ${tool.install}`);
+  lines.push(...missingHarness(env));
   if (brew.length > 0) lines.unshift(`  brew install ${brew.join(" ")}`);
   if (brew.length > 0 && !Bun.which("brew", { PATH }))
     lines.unshift("  Homebrew, for the line below: https://brew.sh");
@@ -49,8 +69,9 @@ function checkTools(env: Env): void {
   const PATH = env.PATH ?? "";
   const bwrap = Bun.which("bwrap", { PATH });
   const missing = tools.filter((tool) => !Bun.which(tool.command, { PATH }));
-  if (missing.length > 0 || !bwrap) {
-    const lines = missing.map((tool) => `  ${tool.command}: ${tool.install}`);
+  const lines = missing.map((tool) => `  ${tool.command}: ${tool.install}`);
+  lines.push(...missingHarness(env));
+  if (lines.length > 0 || !bwrap) {
     throw new Error(`install these first:\n${lines.join("\n")}`);
   }
   // Being installed isn't being allowed: on Ubuntu 24.04 and later, AppArmor stops bwrap
@@ -179,18 +200,32 @@ function connectGitHub(env: Env): void {
   console.log(skelLine("connected to GitHub."));
 }
 
-// Asks for your harness choice and saves it.
-function pickHarness(): void {
+// Asks whether agents run on Claude Code or Codex, refuses one that isn't installed, and saves
+// the choice. Enter picks the first one installed.
+function pickHarness(env: Env): void {
   const { config } = readConfig();
-  console.log("  1) Claude Code");
+  const PATH = env.PATH ?? "";
+  for (const [at, h] of harnesses.entries()) console.log(`  ${at + 1}) ${h.title}`);
+  const installed = harnesses.findIndex((h) => Bun.which(h.command, { PATH }));
   // Bun's prompt answers null both for Ctrl-D and for a bare Enter, unless it has a
   // default: then Enter gives the default and only Ctrl-D gives null.
-  const answer = prompt(skelLine("pick one by its number"), "1");
+  const answer = prompt(skelLine("pick one by its number"), String(installed + 1));
   if (answer === null) throw new Error("no harness was picked, so none is saved");
-  if (answer.trim() !== "1") throw new Error("Claude Code is the only harness for now");
-  config.set("harness", "claude");
+  const picked = harnesses[Number(answer.trim()) - 1];
+  if (!picked) throw new Error(`${answer.trim()} isn't one of the numbers, so no harness is saved`);
+  if (!Bun.which(picked.command, { PATH }))
+    throw new Error(`${picked.title} isn't installed. Install it first: ${picked.install}`);
+  config.set("harness", picked.name);
   mkdirSync(configDir(), { recursive: true });
   writeFileSync(configFile(), config.toString());
+}
+
+// Reports whether agents on this harness have their login: Claude Code's token from the
+// first run, or skel's own Codex login, which reviews use too. Only files are looked at, as
+// plain skel checks this each time it starts.
+function agentsLoggedIn(harness: HarnessName): boolean {
+  if (harness === "claude") return existsSync(claudeTokenFile());
+  return existsSync(join(codexHome(), "auth.json"));
 }
 
 // Reports whether saved settings, token and service show that setup finished, avoiding
@@ -199,7 +234,8 @@ function pickHarness(): void {
 // would require a GitHub call.
 export function setupDone(): boolean {
   const service = onSprite() ? spriteServiceInstalled() : existsSync(serviceFile());
-  return Boolean(readConfig().harness) && existsSync(claudeTokenFile()) && service;
+  const { harness } = readConfig();
+  return harness !== undefined && agentsLoggedIn(harness) && service;
 }
 
 // Completes unfinished machine setup and keeps the daemon service current before attaching
@@ -213,11 +249,17 @@ export function firstRun(): void {
     const env = { ...process.env, PATH: loginPath() };
     if (process.platform === "darwin") checkMacTools(env);
     else checkTools(env);
-    const steps = stepsToTake(env);
-    for (const [at, step] of steps.entries()) {
-      console.log(`\n${skelLine(`step ${at + 1} of ${steps.length}: ${step.title}`)}`);
+    // The steps left are worked out again after each one, as the harness you pick decides
+    // which login comes next.
+    let taken = "";
+    for (let at = 1; ; at++) {
+      const [step, ...rest] = stepsToTake(env);
+      if (!step) break;
+      if (step.title === taken) throw new Error(`${step.title} didn't finish`);
+      console.log(`\n${skelLine(`step ${at} of ${at + rest.length}: ${step.title}`)}`);
       console.log(`  ${step.about}`);
       step.take();
+      taken = step.title;
     }
     if (!Bun.which("codex", { PATH: env.PATH }))
       console.log(
@@ -249,14 +291,15 @@ function stepsToTake(env: Env): Step[] {
       about: "gh will log you in. skel uses this login for everything it does on GitHub.",
       take: () => connectGitHub(env),
     });
-  if (!readConfig().harness)
+  const { harness } = readConfig();
+  if (!harness)
     steps.push({
       title: "pick a harness",
-      about:
-        "The harness is the coding agent that does the work. Claude Code is the only one for now.",
-      take: pickHarness,
+      about: "The harness is the coding agent that does the work: Claude Code or Codex.",
+      take: () => pickHarness(env),
     });
-  if (!existsSync(claudeTokenFile()))
+  // Codex agents share the reviewer's login below.
+  if (harness !== "codex" && !existsSync(claudeTokenFile()))
     steps.push({
       title: "log agents in to Claude",
       about: "Claude Code will print a long-lived token. Copy it, then come back here.",

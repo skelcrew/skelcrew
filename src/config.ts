@@ -8,7 +8,7 @@ import { HarnessName, harnessNamed } from "./agents/harness.ts";
 import { cloneDir, configDir } from "./paths.ts";
 
 // Unknown keys pass through, so settings this version doesn't know survive a save.
-const SetupConfig = z.looseObject({ harness: z.enum(["claude"]).optional() });
+const SetupConfig = z.looseObject({ harness: HarnessName.optional() });
 
 // Returns the settings file path used to remember your harness choice between runs.
 export const configFile = () => join(configDir(), "config.yaml");
