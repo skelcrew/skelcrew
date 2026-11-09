@@ -13,7 +13,7 @@ import { holdAwhile, keepAwake, onSprite, urlPort } from "../machine/sprite.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { daemonSocket, threadSocket } from "../paths.ts";
 import { errorText } from "../say.ts";
-import { release } from "../version.ts";
+import { checkoutFolder, git, release, singleFile } from "../version.ts";
 import {
   bringBack,
   failThread,
@@ -145,6 +145,11 @@ function wakeOnWebhooks(db: Database, port: number, poll: (fullName: string) => 
 export async function serve(tmux: string, every = 30_000, port = urlPort): Promise<void> {
   if (!setupDone()) throw new Error("the first run isn't done on this machine: run skel first");
   const db = openDb();
+  // The checkout and commit this daemon's code came from, read once, as it loaded that code
+  // when it started: a git pull since doesn't change what runs.
+  const started = singleFile
+    ? {}
+    : { folder: checkoutFolder, commit: git("rev-parse", "--short", "HEAD") };
   const sockets: string[] = [];
   // Opens a socket that answers the given caller, removing one a killed daemon left behind,
   // and keeps its path so stopping removes it.
@@ -231,7 +236,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       case "status": {
         const builder = builderOf(caller);
         const thread = builder ? { thread: threadName(db, builder) } : {};
-        return { running: true, pid: process.pid, release, ...thread };
+        return { running: true, pid: process.pid, release, ...started, ...thread };
       }
       case "lead": {
         // From outside any repository skel has, the one you opened last.

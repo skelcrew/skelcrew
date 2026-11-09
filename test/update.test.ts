@@ -15,7 +15,7 @@ import {
 import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import type { Subprocess } from "bun";
-import { homeEnv, source, until, writeScript } from "./harness.ts";
+import { git, homeEnv, source, until, writeScript } from "./harness.ts";
 
 let home = "";
 let releases: ReturnType<typeof Bun.serve>;
@@ -166,11 +166,12 @@ const restartCall = mac
 const daemonLog = () =>
   mac ? join(home, "Library", "Logs", "skel.log") : "journalctl --user -u skel";
 
-// Stands in for a daemon on the test's socket, answering which release it runs: `before`, or
-// `after` once the fake systemctl or launchctl restarted it. In a process of its own, as one in the test's
-// process got no answer while the test waited on skel, and on Bun.listen, as a node:net server
-// refused connections for a moment after it said it was listening.
-async function daemon(before: string, after: string): Promise<void> {
+// Stands in for a daemon on the test's socket, answering what it runs, its release or the
+// checkout and commit it started from: `before`, or `after` once the fake systemctl or
+// launchctl restarted it. In a process of its own, as one in the test's process got no answer
+// while the test waited on skel, and on Bun.listen, as a node:net server refused connections
+// for a moment after it said it was listening.
+async function daemon(before: object, after: object): Promise<void> {
   const managers: [string, string][] = [
     ["systemctl", "--user restart skel"],
     ["launchctl", `kickstart -k gui/${userInfo().uid}/run.skel.daemon`],
@@ -189,8 +190,8 @@ Bun.listen({
   unix: ${JSON.stringify(socket)},
   socket: {
     data(connection) {
-      const release = existsSync(${JSON.stringify(join(home, "restarted"))}) ? ${JSON.stringify(after)} : ${JSON.stringify(before)};
-      connection.end(JSON.stringify({ running: true, pid: 1, release }) + "\\n");
+      const runs = existsSync(${JSON.stringify(join(home, "restarted"))}) ? ${JSON.stringify(after)} : ${JSON.stringify(before)};
+      connection.end(JSON.stringify({ running: true, pid: 1, ...runs }) + "\\n");
     },
   },
 });
@@ -199,12 +200,13 @@ await Bun.write(${JSON.stringify(ready)}, "");`;
   await until(() => existsSync(ready));
 }
 
-// Has skel, stamped with `build`, make sure the daemon runs its release, as it does before you
-// attach, and returns what it printed and what the service manager was asked.
+// Has skel, stamped with `build`, or run from this checkout without one, make sure the daemon
+// runs what it does, as it does before you attach, and returns what it printed and what the
+// service manager was asked.
 async function beforeAttaching(build?: string) {
   const done = await inProcess(
-    `import { onThisRelease } from ${JSON.stringify(source("client.ts"))};
-await onThisRelease();`,
+    `import { onThisSkel } from ${JSON.stringify(source("client.ts"))};
+await onThisSkel();`,
     build,
   );
   const calls = existsSync(join(home, "calls")) ? readFileSync(join(home, "calls"), "utf8") : "";
@@ -212,7 +214,7 @@ await onThisRelease();`,
 }
 
 test("restarts a daemon on an older release before you attach", async () => {
-  await daemon("0.4.2", "0.4.3");
+  await daemon({ release: "0.4.2" }, { release: "0.4.3" });
   const done = await beforeAttaching("0.4.3");
   expect(done.err).toBe("");
   expect(done.code).toBe(0);
@@ -222,21 +224,47 @@ test("restarts a daemon on an older release before you attach", async () => {
 });
 
 test("leaves a daemon on this release running", async () => {
-  await daemon("0.4.3", "0.4.3");
+  await daemon({ release: "0.4.3" }, { release: "0.4.3" });
   const done = await beforeAttaching("0.4.3");
   expect(done.code).toBe(0);
   expect(done.calls).toBe("");
 });
 
-test("a build from a checkout never restarts the daemon", async () => {
-  await daemon("0.4.2", "0.4.2");
+// The checkout these tests run from, and the commit it is on, as skel run from it sees them.
+const checkout = join(source(), "..");
+const head = () => git(checkout, "rev-parse", "--short", "HEAD");
+
+test("after git pull, skel from a checkout restarts a daemon still on the old commit", async () => {
+  await daemon({ folder: checkout, commit: "0000000" }, { folder: checkout, commit: head() });
+  const done = await beforeAttaching();
+  expect(done.err).toBe("");
+  expect(done.code).toBe(0);
+  expect(done.calls).toBe(restartCall);
+  expect(done.out).toContain(`commit ${head()}`);
+  expect(done.out).toContain("agents keep running");
+});
+
+test("leaves a daemon on this checkout's commit running", async () => {
+  await daemon({ folder: checkout, commit: head() }, { folder: checkout, commit: head() });
   const done = await beforeAttaching();
   expect(done.code).toBe(0);
   expect(done.calls).toBe("");
 });
 
+// A restart would only bring back the daemon of the checkout its service runs, such as your
+// main one while you run skel from a worktree, so waiting for this one would never end.
+test("leaves alone a daemon that runs from another checkout", async () => {
+  await daemon({ folder: "/elsewhere/skel", commit: "0000000" }, {});
+  expect((await beforeAttaching()).calls).toBe("");
+});
+
+test("a checkout leaves alone a daemon that runs a release", async () => {
+  await daemon({ release: "0.4.2" }, {});
+  expect((await beforeAttaching()).calls).toBe("");
+});
+
 test("says where to look when the daemon doesn't come back on the new release", async () => {
-  await daemon("0.4.2", "0.4.2");
+  await daemon({ release: "0.4.2" }, { release: "0.4.2" });
   const done = await beforeAttaching("0.4.3");
   expect(done.code).toBe(1);
   expect(done.err).toContain(daemonLog());

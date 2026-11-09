@@ -43,7 +43,8 @@ function fakeDaemon(): Promise<Server> {
       if (!existsSync(join(home, "started"))) return connection.destroy();
       const request = JSON.parse(data.toString());
       const asked = String(request.command);
-      appendFileSync(join(home, "calls"), `daemon ${asked}\n`);
+      // skel asks which commit the daemon runs before every attach, which update.test.ts covers.
+      if (asked !== "status") appendFileSync(join(home, "calls"), `daemon ${asked}\n`);
       const lead = '{"lead":"lead","repository":"simon/app"}\n';
       connection.end(asked === "lead" ? lead : '{"running":true,"pid":1}\n');
     }),

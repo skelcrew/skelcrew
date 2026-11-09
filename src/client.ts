@@ -13,7 +13,7 @@ import { restartDaemon, startDaemon } from "./machine/service.ts";
 import { cliSocket } from "./paths.ts";
 import { skelLine } from "./say.ts";
 import { openScreen } from "./screen/screen.ts";
-import { release } from "./version.ts";
+import { checkoutFolder, git, release, singleFile } from "./version.ts";
 
 const LeadReply = z.union([
   z.object({ lead: z.string(), repository: z.string() }),
@@ -172,31 +172,53 @@ export async function pageOf(url: string): Promise<Page> {
   return understood(z.object({ page: Page }), reply).page;
 }
 
-// Returns the release the daemon runs, or null when no daemon answers. A daemon from a
-// checkout, or from before daemons said, gives "".
-async function daemonRelease(): Promise<string | null> {
+// What the daemon says it runs: its release, or for a daemon from a checkout, that checkout's
+// folder and the commit it started on. A field the daemon doesn't give, as one from before it
+// said, is empty.
+const Running = z
+  .object({
+    release: z.string().catch(""),
+    folder: z.string().catch(""),
+    commit: z.string().catch(""),
+  })
+  .catch({ release: "", folder: "", commit: "" });
+
+// Returns what the daemon runs, or null when no daemon answers.
+async function daemonRuns(): Promise<z.infer<typeof Running> | null> {
   const reply = await ask({ command: "status" }, 2000);
-  if (reply === null) return null;
-  return z
-    .object({ release: z.string().catch("") })
-    .catch({ release: "" })
-    .parse(reply).release;
+  return reply === null ? null : Running.parse(reply);
 }
 
-// Restarts the daemon when it runs another release than this skel, before you attach, so a
-// release installed in the background takes over once you leave and run skel again. A build
-// from a checkout never does: you update it with git pull and restart its daemon yourself.
-export async function onThisRelease(): Promise<void> {
-  if (!release) return;
-  const running = await daemonRelease();
-  if (running === null || running === release) return;
-  console.log(skelLine(`restarting the daemon on skel ${release}. Your agents keep running.`));
+// Returns what this skel would have the daemon run, in words, or null when the daemon already
+// runs it, or a restart couldn't change what it runs. A release wants the daemon on the same
+// release. A checkout wants it on its current commit, after a git pull, but only a daemon that
+// runs from this same checkout: the service starts one checkout, so restarting a daemon of
+// another, such as your main one while you run skel from a worktree, would change nothing.
+// Changes not committed don't count: the daemon can't say what it loaded, and asking for a
+// restart at every skel while you edit would only get in the way.
+function wanted(running: z.infer<typeof Running>): string | null {
+  if (release) return running.release === release ? null : `skel ${release}`;
+  if (singleFile || running.folder !== checkoutFolder) return null;
+  const commit = git("rev-parse", "--short", "HEAD");
+  return commit === "" || running.commit === commit ? null : `commit ${commit}`;
+}
+
+// Restarts the daemon when it runs another release than this skel, or another commit of this
+// checkout, before you attach. So a release installed in the background, or a git pull, takes
+// over once you run skel again. Agents keep running, as only the daemon restarts.
+export async function onThisSkel(): Promise<void> {
+  const running = await daemonRuns();
+  const want = running && wanted(running);
+  if (!want) return;
+  console.log(skelLine(`restarting the daemon on ${want}. Your agents keep running.`));
   const log = restartDaemon();
   const deadline = Date.now() + 10_000;
-  while ((await daemonRelease()) !== release) {
+  for (;;) {
+    const now = await daemonRuns();
+    if (now && !wanted(now)) return;
     if (Date.now() > deadline)
       throw new Error(
-        `skel's daemon didn't come back on ${release} within 10 seconds: ${log} shows why`,
+        `skel's daemon didn't come back on ${want} within 10 seconds: ${log} shows why`,
       );
     await Bun.sleep(100);
   }
@@ -206,7 +228,7 @@ export async function onThisRelease(): Promise<void> {
 // running, then opens the screen on that lead until you leave with Ctrl-Q. With none, the
 // daemon opens the repository you opened last.
 export async function attachToLead(tmux: string, from?: string): Promise<void> {
-  await onThisRelease();
+  await onThisSkel();
   const asked: DaemonRequest = { command: "lead", ...(from ? { from } : {}) };
   // Asking for the lead brings it back if it ended while the daemon kept running.
   let reply = await ask(asked, 15_000);
