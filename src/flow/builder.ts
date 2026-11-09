@@ -55,7 +55,7 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 
 // Records a new thread on a task, with its folder and branch, and returns it. The task's title
 // comes from skel's copy, which skel start brings up to date first. Refuses a task the copy
-// doesn't have, and a task that has a thread already, unless that one failed: then it starts
+// doesn't have open, and a task that has a thread already, unless that one failed: then it starts
 // over in the same folder. Only records it, since the lead waits on the answer. Setting up its clone and
 // starting its builder come after, and can take minutes. `given` is a start request, so its
 // `repo` is the repository's name in skel or its full GitHub name.
@@ -65,7 +65,8 @@ export async function startThread(
 ): Promise<Thread> {
   const { owner, repo, name } = findRepository(db, given.repo);
   const { task } = given;
-  const { title } = taskOf(db, owner, repo, task);
+  const { title, state } = taskOf(db, owner, repo, task);
+  if (state !== "open") throw new Error(`there is no open task #${task} in ${owner}/${repo}`);
   const slug = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")

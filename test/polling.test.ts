@@ -99,26 +99,28 @@ beforeEach(() => {
   fakeCodex();
   script("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
   // The fake GitHub: issue 12, the skel label and reactions, kept in files, PR 7 once opened,
-  // reviews numbered from 1001, the poll answered from the file graphql, failing as GitHub
+  // reviews numbered from 1001, issue 12 asked for by number answered from the file tasks
+  // when it is there, the poll answered from the file graphql, failing as GitHub
   // does today while it is missing, and slow to answer, with what the file held when asked,
   // while hold-graphql is there, and ana, who can push, and mallory, who can't.
   script(
     "gh",
     `case "$*" in
-"api repos/simon/app/issues/12") echo '{"number":12,"title":"Add export","body":"As JSON"}' ;;
-"api repos/simon/app/pulls?state=open&head="*) echo '[]' ;;
-"api repos/simon/app/pulls --method POST --input -") cat > /dev/null; echo '{"number":7}' ;;
-"api repos/simon/app/pulls/7/reviews --method POST --input -") cat > /dev/null
-  n=$(( $(cat "$HOME/gh/review-id" 2>/dev/null || echo 1000) + 1 )); echo $n > "$HOME/gh/review-id"
-  echo "{\\"id\\":$n}" ;;
-"api repos/simon/app/statuses/"*) cat > /dev/null; echo '{"state":"set"}' ;;
-"api graphql --input -") cat > "$HOME/gh/query"; echo >> "$HOME/gh/polls"
+"api graphql --input -") query=$(cat)
+  case "$query" in *"task12: issue("*) if test -e "$HOME/gh/tasks"; then cat "$HOME/gh/tasks"; exit 0; fi ;; esac
+  printf '%s' "$query" > "$HOME/gh/query"; echo >> "$HOME/gh/polls"
   test -e "$HOME/gh/graphql" || { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
   cp "$HOME/gh/graphql" "$HOME/gh/answer.$$"
   if test -e "$HOME/gh/hold-graphql"; then
     touch "$HOME/gh/graphql-held"; while test -e "$HOME/gh/hold-graphql"; do sleep 0.1; done
   fi
   cat "$HOME/gh/answer.$$"; rm "$HOME/gh/answer.$$" ;;
+"api repos/simon/app/pulls?state=open&head="*) echo '[]' ;;
+"api repos/simon/app/pulls --method POST --input -") cat > /dev/null; echo '{"number":7}' ;;
+"api repos/simon/app/pulls/7/reviews --method POST --input -") cat > /dev/null
+  n=$(( $(cat "$HOME/gh/review-id" 2>/dev/null || echo 1000) + 1 )); echo $n > "$HOME/gh/review-id"
+  echo "{\\"id\\":$n}" ;;
+"api repos/simon/app/statuses/"*) cat > /dev/null; echo '{"state":"set"}' ;;
 "api repos/simon/app/labels --method POST --input -") cat >> "$HOME/gh/label"; echo >> "$HOME/gh/label"
   echo '{"name":"skel"}' ;;
 "api repos/simon/app/issues/12/reactions --method POST --input -") cat >> "$HOME/gh/reacted"
@@ -568,6 +570,33 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     expect(started.stderr.toString()).toBe("");
     expect(started.stdout.toString()).toBe("Started app-12.\n");
     expect(thread()).toMatchObject({ task: 12, status: "working" });
+  }, 30_000);
+
+  // A poll reads one page of changes, so skel start reads its own task too.
+  test("skel start reads its task as it is now, though more changed than a poll reads", async () => {
+    addApp();
+    writeFileSync(join(home, "gh", "graphql"), JSON.stringify(pollAnswer([issue12()])));
+    // An hour between polls, so only skel start brings another.
+    serve(3_600_000);
+    await until(() => copied().rows.includes("task 12"));
+    // A hundred other issues changed since, more than one answer holds.
+    const others = Array.from({ length: 100 }, (_, n) =>
+      issueNode(200 + n, "Other", { updatedAt: "2026-11-07T10:00:00Z" }),
+    );
+    const page = pollAnswer(others);
+    page.data.repository.issues.pageInfo = { hasNextPage: true, endCursor: "c1" };
+    writeFileSync(join(home, "gh", "graphql"), JSON.stringify(page));
+    const renamed = issueNode(12, "Add export as CSV", { updatedAt: "2026-11-07T09:00:00Z" });
+    writeFileSync(
+      join(home, "gh", "tasks"),
+      JSON.stringify({ data: { viewer: { login: "simon" }, repository: { task12: renamed } } }),
+    );
+    const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
+      env: env(),
+      stderr: "pipe",
+    });
+    expect(started.stderr.toString()).toBe("");
+    expect(thread()).toMatchObject({ task: 12, title: "Add export as CSV" });
   }, 30_000);
 
   test("an issue labeled skel starts a thread once, and one that failed isn't started again", async () => {

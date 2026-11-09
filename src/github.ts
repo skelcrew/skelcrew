@@ -633,9 +633,10 @@ export async function readRepository(
   };
 }
 
-// Returns the given issues as tasks, open or closed, for threads whose task skel's copy lacks,
-// such as after an upgrade, as a poll brings only open ones at first. One query for them all.
-// An issue GitHub doesn't find is left out.
+// Returns the given issues as tasks, open or closed, in one query: for threads whose task
+// skel's copy lacks, such as after an upgrade, as a poll brings only open ones at first, and
+// for skel start, as a poll reads only one page of changes. An issue GitHub doesn't find is
+// left out.
 export async function readTasks(fullName: string, numbers: number[]): Promise<Task[]> {
   const [owner, name] = fullName.split("/");
   const asked = numbers.map((n) => `task${n}: issue(number: ${n}) { ${itemFields} state }`);
@@ -648,13 +649,15 @@ export async function readTasks(fullName: string, numbers: number[]): Promise<Ta
     .object({
       data: z.object({
         viewer: z.object({ login: z.string() }),
-        repository: z.record(z.string(), IssueNode.nullable()),
+        repository: z.record(z.string(), z.unknown()),
       }),
     })
     .parse(got);
-  const tasks = Object.values(data.repository).flatMap((node) =>
-    node ? [issueItem(node, data.viewer.login)] : [],
-  );
+  // Only what was asked for is read.
+  const tasks = numbers.flatMap((n) => {
+    const node = IssueNode.nullish().parse(data.repository[`task${n}`]);
+    return node ? [issueItem(node, data.viewer.login)] : [];
+  });
   // Checked as skel's copy will read them back, so one it can't take fails here, not later.
   for (const task of tasks) Item.parse(task);
   return tasks;

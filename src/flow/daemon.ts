@@ -7,7 +7,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import { processTree, stillRunning } from "../agents/tmux.ts";
 import { openDb, type Repository } from "../db.ts";
-import { createIssue } from "../github.ts";
+import { createIssue, readTasks } from "../github.ts";
 import { setupDone } from "../machine/setup.ts";
 import { holdAwhile, keepAwake, onSprite, urlPort } from "../machine/sprite.ts";
 import { keepUpToDate } from "../machine/update.ts";
@@ -353,6 +353,8 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         // That poll may have found the skel label on the task and started its thread itself.
         const started = threadOn(db, request.repo, request.task);
         if (!before && started) return { started: `Started ${threadName(db, started)}.` };
+        // A poll reads one page of changes, and the task may be past it, so it is read too.
+        saveItems(db, owner, repo, await readTasks(`${owner}/${repo}`, [request.task]), false);
         const thread = await startThread(db, request);
         // Not waited on: an agent's command must answer quickly, and setup can take minutes.
         begin(thread);
