@@ -344,7 +344,7 @@ These are the parts that need care. `docs/learnings.md` explains the traps behin
 - Reaching you outside the lead's session other than through a plugin, such as a `notify` command for your phone
 - Linear, Jira or forges other than GitHub
 - A sandbox for plugins, plugins from anywhere but a GitHub repository, builds for each platform, and a list of plugins to browse
-- Machine as a fourth plugin job: where skel and its agents run, beyond servers and Sprites. It comes once a second kind of machine that skel creates is needed
+- Machine as a fourth plugin job: where skel and its agents run. Sprites become the first machine plugin, after the launch. A machine plugin creates and wakes a machine and hands skel an SSH target, and skel does everything after that over SSH, as `skel remote add` and `skel --remote` do today with any host. SSH remotes stay built into skel, as git does while GitHub is a plugin. So does what skel does while it runs on a Sprite: hiding the control socket in the sandbox, keeping the Sprite awake only while there is work, and the Sprite service. Those decide what agents can reach, as a harness does
 - Errors from Sentry as tasks, planned as the launch after this one
 - Threads started from plain text, without a task. They would be named with a marker, such as `app-t1`, so they never clash with a task's name
 - Starting a thread by assigning an issue or mentioning skel on GitHub
