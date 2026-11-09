@@ -21,6 +21,7 @@ import {
   singleFile,
 } from "../version.ts";
 import { originHere } from "./origin.ts";
+import { downloadRelease, releaseSum } from "./update.ts";
 
 // A command over ssh gets a bare PATH: no login shell reads ~/.profile, and Ubuntu's
 // ~/.bashrc stops early when nobody types into it. So ~/.local/bin, where skel copies
@@ -282,21 +283,10 @@ async function downloadLinuxSkel(file: string, machine: Machine): Promise<void> 
   const { said } = await quietly(machine.shell("uname -m"));
   const cpu = cpus[said.match(/\b(x86_64|aarch64|arm64)\b/)?.[1] ?? ""];
   if (!cpu) throw new Error(`skel runs on arm64 and x64 CPUs, not on "${said}"`);
-  const name = `skel-linux-${cpu}`;
-  const fetched = async (asset: string) => {
-    const address = `${releases}/download/v${release}/${asset}`;
-    const response = await fetch(address);
-    if (!response.ok) throw new Error(`couldn't download ${address} (${response.status})`);
-    return response;
-  };
   console.log(`Downloading skel ${release} for Linux.`);
-  const sums = await (await fetched("SHA256SUMS")).text();
-  const listed = sums.split("\n").find((line) => line.endsWith(`  ${name}`));
-  const bytes = await (await fetched(name)).arrayBuffer();
-  const sum = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
-  if (listed !== `${sum}  ${name}`)
-    throw new Error(`the download failed its checksum, so skel wasn't copied`);
-  await Bun.write(file, bytes);
+  const at = `${releases}/download/v${release}`;
+  const name = `skel-linux-${cpu}`;
+  await Bun.write(file, await downloadRelease(at, name, await releaseSum(at, name)));
   chmodSync(file, 0o755);
 }
 
