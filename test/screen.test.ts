@@ -10,10 +10,13 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 import { startSession, stillRunning } from "../src/agents/tmux.ts";
 import type { Page } from "../src/flow/page.ts";
+import { leadPlaces } from "../src/paths.ts";
 import { drawPage } from "../src/screen/page.ts";
 import { sidebarWidth } from "../src/screen/screen.ts";
 import { itemSql, source, until as wait } from "./harness.ts";
@@ -26,6 +29,7 @@ const leaving = "Your agents keep running. Run skel to come back.";
 // Longer than the waits below, so a test that fails says what it waited for.
 setDefaultTimeout(20_000);
 let home = "";
+let standIn: Server | null = null;
 let agents = "";
 let screen = "";
 let terminal = "";
@@ -54,11 +58,15 @@ const read = (file: string) => {
 
 // What you see in the first terminal, or a second one.
 const seen = (window = "one") => tmux(terminal, "capture-pane", "-p", "-t", `=${window}:`).out;
-// The row you are looking at, as the name line with the grey background shows it. Empty
-// until the sidebar has drawn one.
+// The row you are looking at, as the name line with the grey background shows it, below the
+// three status lines, where the open tab has the same grey. Empty until the sidebar has drawn
+// one.
 function selected(window = "one"): string {
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", `=${window}:`).out;
-  const line = colours.split("\n").find((text) => text.includes("48;5;238"));
+  const line = colours
+    .split("\n")
+    .slice(3)
+    .find((text) => text.includes("48;5;238"));
   return Bun.stripANSI(line ?? "")
     .slice(0, sidebar - 1)
     .trim();
@@ -107,7 +115,7 @@ function open(
   writeFileSync(
     script,
     `import { openScreen } from ${JSON.stringify(screenFile)};
-await openScreen(${JSON.stringify(agents)}, ${JSON.stringify(session)}, "lead");
+await openScreen(${JSON.stringify(agents)}, ${JSON.stringify(session)}, "lead", "simon/app");
 await Bun.write(${JSON.stringify(join(home, `left-${window}`))}, "left");`,
   );
   const named = where ? `SKEL_REMOTE_NAME=${where} ` : `${before}`;
@@ -137,7 +145,10 @@ beforeEach(() => {
   agents = `skel-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
   screen = `${agents}-screen`;
   terminal = `${agents}-terminal`;
-  sql(`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
+  // app's lead is the one skel kept from before, as its session is named lead. It has started,
+  // so its row names its harness.
+  sql(`INSERT INTO repositories (name, owner, repo, kept_lead, lead_session)
+  VALUES ('app', 'simon', 'app', 1, 's');
 INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you) VALUES
   ('simon', 'app', 3, 'app-3', 'skel/3', 'done', 0),
   ('simon', 'app', 7, 'app-7', 'skel/7', 'working', 0),
@@ -147,6 +158,9 @@ INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you) VALUE
   agent("app-12");
 });
 afterEach(() => {
+  standIn?.close();
+  standIn = null;
+  asked.length = 0;
   for (const socket of [terminal, screen, agents]) {
     tmux(socket, "kill-server");
     // tmux leaves the socket file behind after kill-server.
@@ -171,7 +185,7 @@ test("shows the lead and every thread that isn't done, beside the agent", async 
   const y = lines.findIndex((line) => line.includes("◆ lead"));
   expect(y).toBeGreaterThan(2);
   expect(selected()).toBe("◆ lead");
-  expect(lines[2]).toContain("I am lead");
+  expect(lines[3]).toContain("I am lead");
   expect(lines[y + 1]).toContain("running · claude");
   expect(lines[y + 2]).toContain("● app-12");
   expect(lines[y + 3]).toContain("working · claude");
@@ -218,13 +232,15 @@ test("skel attach's screen starts on the agent it names, marked in the sidebar",
 test("updates on its own, with needs you in the sidebar", async () => {
   open("lead");
   await ready("lead");
-  sql("UPDATE threads SET needs_you = 1 WHERE task = 7");
+  sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
   const colours = () => tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
   await until(() => colours().includes("\x1b[33m●"), "needs you");
-  expect(seen()).toContain("● app-7");
+  expect(seen()).toContain("● app-12");
   expect(seen()).toContain("needs you");
-  sql("UPDATE threads SET status = 'done' WHERE task = 12");
-  await until(() => !seen().includes("app-12"), "the done thread to go");
+  // Its tab says so too, as other repositories' tabs would.
+  expect(seen().split("\n")[0]?.trimEnd()).toBe("  app •1");
+  sql("UPDATE threads SET status = 'done' WHERE task = 7");
+  await until(() => !seen().includes("app-7"), "the done thread to go");
 });
 
 test("Ctrl-Q leaves the whole screen, ends no agent, and says so", async () => {
@@ -349,7 +365,7 @@ test("an agent drawing the full screen with the mouse gets the wheel itself", as
   wheel(64);
   await until(() => existsSync(join(home, "drawn.bytes")), "the wheel");
   await until(
-    () => readFileSync(join(home, "drawn.bytes"), "utf8").startsWith("\x1b[<64;28;3M"),
+    () => readFileSync(join(home, "drawn.bytes"), "utf8").startsWith("\x1b[<64;28;2M"),
     "the wheel at its place in the agent's window",
   );
   expect(scrolledBack()).not.toContain("1");
@@ -384,12 +400,12 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
   open("lead");
   await ready("lead");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "28 88\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "27 88\n",
     "the agent's size",
   );
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "40");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "38 118\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "37 118\n",
     "the agent to resize",
   );
   const widths = tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out.trim().split("\n");
@@ -403,20 +419,20 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
   await until(() => selected() === "● app-7", "the sidebar to scroll");
 });
 
-// The columns at the sidebar's edge, on each line below the strip: the sidebar's line, where
+// The columns at the sidebar's edge, on each line below the thin line: the sidebar's line, where
 // the lines between lists join it, then tmux's border. Blank past the end of a line that holds
 // nothing else.
 const edge = (height: number) =>
   seen()
     .split("\n")
-    .slice(2, height)
+    .slice(3, height)
     .map((line) => `${line[sidebar - 1]}${line[sidebar] ?? " "}`);
 
 test("the sidebar's line runs to the bottom, with a blank column before the agent", async () => {
   open("lead");
   await ready("lead");
   expect(new Set(edge(30))).toEqual(new Set(["│ ", "┤ "]));
-  expect(seen().split("\n")[2]?.indexOf("I am lead")).toBe(sidebar + 1);
+  expect(seen().split("\n")[3]?.indexOf("I am lead")).toBe(sidebar + 1);
 });
 
 test("the sidebar's line stays whole however the terminal is resized", async () => {
@@ -478,16 +494,16 @@ test("the strip sits above the agent, and the agent's height stays as you switch
   press("M-Down");
   const line = "app-7  Fix the login  #34  checks passing  round 2 · codex · changes";
   await until(() => seen().includes(line), "the strip");
-  const [first = ""] = seen().split("\n");
+  const [, first = ""] = seen().split("\n");
   expect(first.indexOf("app-7")).toBe(sidebar + 1);
   expect(seen()).not.toContain("A test is missing.");
   expect(readFileSync(join(home, "app-7.size"), "utf8")).toBe(height);
   press("M-Up");
-  await until(() => seen().split("\n")[0]?.trimEnd().endsWith("app-12") === true, "app-12's strip");
+  await until(() => seen().split("\n")[1]?.trimEnd().endsWith("app-12") === true, "app-12's strip");
   expect(readFileSync(join(home, "app-12.size"), "utf8")).toBe(height);
 });
 
-test("the header is the first row and the thin line the second, with no blank rows", async () => {
+test("under the tabs, the header is the second row and the thin line the third, with no blank rows", async () => {
   sql("UPDATE threads SET title = 'Fix the login', pr = 34 WHERE task = 7");
   open("lead");
   await ready("lead");
@@ -495,18 +511,19 @@ test("the header is the first row and the thin line the second, with no blank ro
   press("M-Down");
   await until(() => seen().includes("#34"), "the strip");
   const lines = seen().split("\n");
-  expect(lines[0]).toStartWith("  skel");
-  expect(lines[0]).toContain("#34");
-  expect(lines[1]).toStartWith("───");
-  expect(lines[2]).toContain("I am app-7");
+  expect(lines[0]?.trimEnd()).toBe("  app");
+  expect(lines[1]).toStartWith("  skel");
+  expect(lines[1]).toContain("#34");
+  expect(lines[2]).toStartWith("───");
+  expect(lines[3]).toContain("I am app-7");
 });
 
 test("above the sidebar it says just skel, in white, when no laptop sent you here", async () => {
   open("lead");
   await ready("lead");
-  await until(() => seen().split("\n")[0]?.trimEnd() === "  skel", "the header");
+  await until(() => seen().split("\n")[1]?.trimEnd() === "  skel", "the header");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
-  const header = colours.split("\n")[0];
+  const header = colours.split("\n")[1];
   expect(header).toContain("\x1b[1m");
   expect(header).toContain("38;5;231m");
 });
@@ -516,13 +533,13 @@ test("each terminal says where it came from, as they can come from different lap
   await ready("lead");
   open("lead", "two");
   await ready("lead", "two");
-  const place = (window: string) => seen(window).split("\n")[0] ?? "";
+  const place = (window: string) => seen(window).split("\n")[1] ?? "";
   await until(() => place("one").startsWith("  skel · sprite:demo"), "the first place");
   await until(() => place("two").trimEnd() === "  skel", "the second header", "two");
 });
 
 // The divider under the strip, as you see it.
-const divider = () => (seen().split("\n")[1] ?? "").trimEnd();
+const divider = () => (seen().split("\n")[2] ?? "").trimEnd();
 
 test("a thin line runs under the strip, meeting the sidebar's edge, at every width", async () => {
   open("lead");
@@ -530,7 +547,7 @@ test("a thin line runs under the strip, meeting the sidebar's edge, at every wid
   await until(() => divider().length === 120, "the divider");
   expect(divider().indexOf("┬")).toBe(sidebar - 1);
   expect(divider().replace("┬", "")).toMatch(/^─+$/);
-  expect(seen().split("\n")[2]?.[sidebar - 1]).toBe("│");
+  expect(seen().split("\n")[3]?.[sidebar - 1]).toBe("│");
   for (const width of [150, 90, 120]) {
     tmux(terminal, "resize-window", "-t", "=one:", "-x", String(width), "-y", "30");
     // tmux stretches the sidebar for a moment before the screen's hook sets its width back.
@@ -544,7 +561,7 @@ test("a thin line runs under the strip, meeting the sidebar's edge, at every wid
 test("a thread's strip follows it as it changes", async () => {
   open("app-7");
   await ready("app-7");
-  await until(() => seen().split("\n")[0]?.trimEnd().endsWith("app-7") === true, "the strip");
+  await until(() => seen().split("\n")[1]?.trimEnd().endsWith("app-7") === true, "the strip");
   sql(`UPDATE threads SET review_round = 1, reviewed_by = 'codex', verdict = 'approve',
     review_line = 'Looks right.' WHERE task = 7`);
   await until(() => seen().includes("app-7  round 1 · codex · approved"), "the review");
@@ -566,9 +583,9 @@ test("what a title says is shown, never run or read as a format", async () => {
 test("clicking the strip, or turning the wheel over it, does nothing", async () => {
   open("lead");
   await ready("lead");
-  click(60, 1);
   click(60, 2);
-  type("\x1b[<64;60;1M");
+  click(60, 3);
+  type("\x1b[<64;60;2M");
   await Bun.sleep(200);
   const modes = tmux(screen, "list-panes", "-a", "-F", "#{pane_in_mode}").out.trim().split("\n");
   expect(modes).toEqual(["0", "0"]);
@@ -617,6 +634,22 @@ test("the screen's server turns terminal links on, whatever your terminal says i
   await ready("lead");
   expect(tmux(screen, "show", "-s", "terminal-features").out).toContain("hyperlinks");
 });
+
+// Stands in for the daemon on the test's own socket: it logs each repository asked to open, and
+// answers with nothing to say.
+const asked: string[] = [];
+function daemon(): void {
+  const answer = (connection: Socket) =>
+    connection.on("data", (data) => {
+      const { command, from } = z
+        .object({ command: z.string(), from: z.string().default("") })
+        .parse(JSON.parse(data.toString()));
+      if (command === "lead") asked.push(`open ${from}`);
+      connection.end("{}\n");
+    });
+  mkdirSync(join(home, "run"), { recursive: true, mode: 0o700 });
+  standIn = createServer(answer).listen(join(home, "run", "skel.sock"));
+}
 
 const issueUrl = "https://github.com/simon/app/issues/31";
 // What the issue's page says, as drawn from skel's copy.
@@ -671,7 +704,7 @@ test("a click on an issue shows its page on the right, marks its row, and fills 
   expect(lines).toContain("State");
   expect(lines).toContain("ana");
   expect(lines).not.toContain("I am lead");
-  expect(seen().split("\n")[0]).toContain("app-31  Add CSV export");
+  expect(seen().split("\n")[1]).toContain("app-31  Add CSV export");
 });
 
 test("a PR's page shows its branch, checks and latest review", async () => {
@@ -758,7 +791,7 @@ test("a pane too narrow for a page's lines cuts them, so every line keeps its ow
   const panes = tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out.trim().split("\n");
   const width = Number(panes.at(-1));
   expect(width).toBeLessThan(11);
-  const rows = right().split("\n").slice(2, 20);
+  const rows = right().split("\n").slice(3, 21);
   const lines = drawPage(issuePage, issueUrl, width).map((line) =>
     Bun.stripANSI(line).slice(0, width).trimEnd(),
   );
@@ -954,8 +987,9 @@ test("the hints stay at the bottom, and a click there picks nothing", async () =
   open("lead");
   await ready("lead");
   const lines = seen().trimEnd().split("\n");
-  expect(lines.at(-3)).toContain("⌥↑↓ move");
-  expect(lines.at(-2)).toContain("⌥⇧↑↓ list");
+  expect(lines.at(-4)).toContain("⌥↑↓ move");
+  expect(lines.at(-3)).toContain("⌥⇧↑↓ list");
+  expect(lines.at(-2)).toContain("⌥←→ repo");
   expect(lines.at(-1)).toContain("⌃Q quit");
   click(5, 30);
   await Bun.sleep(200);
@@ -1121,4 +1155,73 @@ await openScreen(${JSON.stringify(agents)}, "lead");`,
   expect(run.success).toBe(false);
   expect(run.stderr.toString()).toContain("terminal");
   expect(tmux(screen, "list-sessions").ok).toBe(false);
+});
+
+// site, a second repository, whose thread needs you, and whose lead runs.
+const siteLead = leadPlaces("simon", "site").name;
+function addSite(): void {
+  sql(`INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site');
+INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you) VALUES
+  ('simon', 'site', 8, 'site-8', 'skel/8', 'waiting', 1);`);
+  agent(siteLead);
+}
+// The row of tabs, as you see it.
+const tabRow = () => (seen().split("\n")[0] ?? "").trimEnd();
+
+test("a tab for each repository runs across the top, with a badge for what needs you", async () => {
+  addSite();
+  open("lead");
+  await ready("lead");
+  await until(() => tabRow() === "  app  site •1", "the tabs");
+  const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out.split("\n")[0];
+  // The open one is on a picked row's grey.
+  expect(colours).toContain("48;5;238");
+  // The sidebar shows only app's threads.
+  expect(seen()).not.toContain("site-8");
+});
+
+test("Alt-Right and Alt-Left switch both sides to the repository beside, and open it", async () => {
+  addSite();
+  daemon();
+  open("lead");
+  await ready("lead");
+  press("M-Right");
+  await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
+  await until(() => seen().includes("site-8") && !seen().includes("app-12"), "site's threads");
+  expect(selected()).toBe("◆ lead");
+  await until(() => asked.includes("open simon/site"), "the daemon to open site");
+  type("hello\r");
+  await until(() => existsSync(join(home, `${siteLead}.typed`)), "the typing");
+  // There is no tab after the last.
+  press("M-Right");
+  await Bun.sleep(300);
+  expect(seen()).toContain(`I am ${siteLead}`);
+  press("M-Left");
+  await until(() => seen().includes("I am lead") && seen().includes("app-12"), "app again");
+});
+
+test("a click on a tab switches to its repository", async () => {
+  addSite();
+  daemon();
+  open("lead");
+  await ready("lead");
+  await until(() => tabRow().includes("site"), "the tabs");
+  click(tabRow().indexOf("site") + 2, 1);
+  await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
+  await until(() => seen().includes("site-8"), "site's threads");
+  click(tabRow().indexOf("app") + 2, 1);
+  await until(() => seen().includes("I am lead") && seen().includes("app-12"), "app again");
+});
+
+// A terminal can hand both keys over at once, and the second must move in the new repository.
+test("Alt-Right then Alt-Down, typed together, lands on the new repository's thread", async () => {
+  addSite();
+  agent("site-8");
+  daemon();
+  open("lead");
+  await ready("lead");
+  type("\x1b[1;3C\x1b[1;3B");
+  await until(() => seen().includes("I am site-8"), "site-8");
+  await until(() => selected() === "● site-8", "the sidebar to follow");
+  expect(seen()).not.toContain("app-12");
 });

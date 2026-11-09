@@ -2,10 +2,9 @@
 // the other's session once it is idle, and kept in the thread's log. They never go to GitHub.
 import type { Database } from "bun:sqlite";
 import { agentRuns, typeInto } from "../agents/tmux.ts";
-import { agentHarness } from "../config.ts";
 import { errorText } from "../say.ts";
 import { noteForLead } from "./lead.ts";
-import { log, readThread, type Thread, threadName } from "./thread.ts";
+import { builderHarness, log, readThread, type Thread, threadName } from "./thread.ts";
 
 // Returns the message wrapped in skel's tag, saying who it is from and the command to answer
 // with, so the receiving agent never takes it for the human. The tag marks where it starts
@@ -39,7 +38,9 @@ export function messageBuilder(db: Database, tmux: string, thread: Thread, text:
       `${name}'s builder is asking the human a question, and typing now would answer it. Tell the human instead.`,
     );
   const message = wrapped("lead", "skel tell lead", text);
-  typeInto(tmux, thread.folder, agentHarness().marks, message, { timeout: 30 * 60_000 }).then(
+  typeInto(tmux, thread.folder, builderHarness(thread).marks, message, {
+    timeout: 30 * 60_000,
+  }).then(
     () => log(readThread(db, thread.folder), `the lead told its builder: ${text}`),
     (error) => {
       const said = errorText(error);

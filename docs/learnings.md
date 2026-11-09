@@ -65,6 +65,32 @@ that covers the code you are about to write.
   `CODEX_HOME` while it renews. Folders of their own each get a lock of their own, so two
   sessions could renew at once, and one spends the token the other is using. Link it beside
   `auth.json`.
+- **Mark the folder trusted, or the session waits.** Without `trust_level = "trusted"` for
+  the folder under `projects`, Codex asks first. `"untrusted"` asks too.
+- **Hooks wait for a person to trust them.** Codex shows "Hooks need review" at start for
+  any hook not trusted yet, even one skel wrote. `--dangerously-bypass-hook-trust` skips the
+  question. A `trusted_hash` per hook does too, but then a repository's own
+  `.codex/hooks.json` still asks.
+- **A repository's own `.codex/config.toml` wins over `CODEX_HOME`'s.** In a trusted folder,
+  `[features] hooks = false` there silenced skel's `Stop` hook. A `-c` on the command line
+  wins over both, so pass what skel needs that way.
+- **An error ends a turn with no `Stop` hook.** An unknown model prints a 400 error and sits
+  at its prompt, and nothing tells skel. Check the model against `codex debug models` first.
+- **Its empty input always shows "› Ask Codex to do anything"**, even while a turn runs. So
+  a line holding only `›` never shows. It is busy while "esc to interrupt" shows, as Claude
+  Code is.
+- **Put the first message after `--`**, so a message that starts with `-` is never read as
+  an option.
+- **Codex picks its own session ID.** It has no `--session-id`. The first line of each file
+  in `sessions/`, `session_meta`, holds it, and `codex resume <id>` brings the conversation
+  back.
+- **Other agents write their own files in `sessions/`.** A review or a sub-agent started from
+  a session saves its conversation there too, with `{"subagent": ...}` as the `source` of its
+  `session_meta`. Pick the one whose `source` is `cli`, not the newest file.
+- **Codex from npm needs its platform package.** `codex` is a launcher that runs the program
+  from `@openai/codex-linux-x64`, or the Mac's. A global install puts that inside Codex's own
+  package, but a local one puts it beside it, and a sandbox that brings back only Codex's
+  package fails with "Missing optional dependency".
 
 ## The sandbox
 
@@ -239,6 +265,11 @@ that covers the code you are about to write.
   server loses its screen, and agents keep running. The sidebar's own commands hit this about
   once in 500 leavings on a loaded machine, so a screen test can fail with `server exited
   unexpectedly`.
+- **A click on a status line reaches no pane.** `MouseDown1Status` fires, and a range drawn
+  with `#[range=user|X]` names what was clicked in `#{mouse_status_range}`. `send-keys -F`
+  doesn't expand that in the text it types, so `run-shell -C` must expand the whole
+  `send-keys` first. A second click soon after the first comes as `DoubleClick1Status`, not
+  `MouseDown1Status`, so bind both.
 - **`capture-pane -e` shows a terminal link with an id tmux made up**, as `ESC]8;id=...;url`.
   A test that looks for `ESC]8;;url` finds nothing.
 

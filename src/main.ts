@@ -105,10 +105,17 @@ async function screenCommand(args: string[]): Promise<void> {
   const { runPage } = await import("./screen/page.ts");
   const { runSidebar } = await import("./screen/sidebar.ts");
   // The third word is the remote skel runs on, and empty on this machine. The last is the
-  // session of the lead the screen opened on.
-  const [session, where, lead] = rest;
-  if (command === "sidebar" && sub && session && where !== undefined && lead && rest.length === 3) {
-    await runSidebar(sub, session, where, lead);
+  // GitHub name of the repository the screen opened on.
+  const [session, where, repository] = rest;
+  if (
+    command === "sidebar" &&
+    sub &&
+    session &&
+    where !== undefined &&
+    repository &&
+    rest.length === 3
+  ) {
+    await runSidebar(sub, session, where, repository);
     return;
   }
   if (command === "page" && sub && rest.length === 0) {
@@ -163,7 +170,7 @@ async function repoCommand(args: string[]): Promise<void> {
 // tell the daemon about questions.
 async function agentCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
-  const { reportQuestion, submitForReview } = await import("./client.ts");
+  const { reportQuestion, reportTurnEnded, submitForReview } = await import("./client.ts");
   if (command === "submit" && sub && rest.length === 0) {
     const thread = await submitForReview(sub);
     console.log(
@@ -175,6 +182,12 @@ async function agentCommand(args: string[]): Promise<void> {
   // nothing: Claude Code adds what a UserPromptSubmit hook prints to the builder's message.
   if (command === "question" && (sub === "asked" || sub === "answered") && rest.length === 0) {
     await reportQuestion(sub === "asked");
+    return;
+  }
+  // Run by a Codex builder's Stop hook, not by people, so usage leaves it out. It prints
+  // nothing, as Codex reads what a Stop hook prints.
+  if (command === "turn" && sub === "ended" && rest.length === 0) {
+    await reportTurnEnded();
     return;
   }
   // A lead started before each repository had its own runs this hook with each message,
@@ -348,6 +361,7 @@ async function runCommand(args: string[]): Promise<void> {
       return repoCommand(args);
     case "submit":
     case "question":
+    case "turn":
     case "attached":
       return agentCommand(args);
     case "ps":

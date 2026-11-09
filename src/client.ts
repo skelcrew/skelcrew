@@ -14,7 +14,10 @@ import { skelLine } from "./say.ts";
 import { openScreen } from "./screen/screen.ts";
 import { release } from "./version.ts";
 
-const LeadReply = z.union([z.object({ lead: z.string() }), z.object({ error: z.string() })]);
+const LeadReply = z.union([
+  z.object({ lead: z.string(), repository: z.string() }),
+  z.object({ error: z.string() }),
+]);
 
 // Sends a request to the daemon and returns its decoded reply, or null when nothing
 // answers. A socket file alone proves nothing: a daemon that was killed leaves it behind.
@@ -146,6 +149,20 @@ export async function reportQuestion(asking: boolean): Promise<void> {
   await request({ command: asking ? "question asked" : "question answered" });
 }
 
+// Tells the daemon, for a Codex builder's hook, that its builder ended its turn, so the thread
+// needs you if the builder stopped without submitting. The builder's own socket says which
+// thread.
+export async function reportTurnEnded(): Promise<void> {
+  await request({ command: "turn ended" });
+}
+
+// Has the daemon open a repository, by its GitHub name, for the sidebar switching to its tab:
+// it starts the repository's lead if it never has, and marks it as the one you opened last.
+// The sidebar goes on without waiting, and a daemon that is down has nothing to start.
+export async function openRepository(fullName: string): Promise<void> {
+  await ask({ command: "lead", from: fullName }, 60_000);
+}
+
 // Returns the release the daemon runs, or null when no daemon answers. A daemon from a
 // checkout, or from before daemons said, gives "".
 async function daemonRelease(): Promise<string | null> {
@@ -197,7 +214,7 @@ export async function attachToLead(tmux: string, from?: string): Promise<void> {
   const lead = LeadReply.safeParse(reply);
   if (!lead.success) throw new Error("the daemon answered in a way this skel doesn't understand");
   if ("error" in lead.data) throw new Error(lead.data.error);
-  await openScreen(tmux, lead.data.lead, lead.data.lead);
+  await openScreen(tmux, lead.data.lead, lead.data.lead, lead.data.repository);
 }
 
 // Opens the screen with the builder of the thread named repo-task on the right, and returns
@@ -215,5 +232,6 @@ export async function attachToThread(
     throw new Error(
       `${repository}-${task}'s builder isn't running: the thread is ${thread.status}`,
     );
-  await openScreen(tmux, thread.folder, leadOf(db, thread.owner, thread.repo).name);
+  const { name } = leadOf(db, thread.owner, thread.repo);
+  await openScreen(tmux, thread.folder, name, `${thread.owner}/${thread.repo}`);
 }

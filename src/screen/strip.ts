@@ -1,10 +1,10 @@
-// The strip: one line above the agent saying what you are looking at. For a thread, its name,
-// task, PR and checks, then its latest review. For a page, its row's name and title. The lead
-// has none, as the sidebar says it all.
-// Above the sidebar the same line says skel, its release and, on a remote, where it runs. A thin
-// line runs under them all.
+// The lines above the agent. First a row of tabs, one per repository. Then the strip, which
+// says what you are looking at: for a thread, its name, task, PR and checks, then its latest
+// review, and for a page, its row's name and title. The lead has none, as the sidebar says it
+// all. Above the sidebar the strip's line says skel, its release and, on a remote, where it
+// runs. A thin line runs under them all.
 import { clean, fitted } from "./look.ts";
-import type { Link, Row } from "./rows.ts";
+import type { Link, Row, Tab } from "./rows.ts";
 
 type Size = { left: number; width: number };
 
@@ -94,4 +94,43 @@ export function drawStrip(
   const row = rows.find((candidate) => candidate.session === session);
   if (!row || row.status === null) return [top, line];
   return [`${top}${aboutThread(row, width)}`, line];
+}
+
+// Returns the row of tabs as a tmux format, given each repository's tab, the open one's GitHub
+// name, and the terminal's width. Each tab is the repository's name, with a yellow dot and a
+// count when threads in it need you or failed, such as site •1. The open one is bold white on
+// the grey a picked row has, and the others dim. The names start in line with the sidebar's
+// marks. When they don't fit, those furthest from the open one give way, and a dim count says
+// how many. Each tab is a range of its own, named by its place in the list, so a click on it
+// can say which it was. It reads nothing, so what you see can be tested without a terminal.
+export function drawTabs(tabs: Tab[], open: string, width: number): string {
+  const at = Math.max(
+    tabs.findIndex((tab) => tab.fullName === open),
+    0,
+  );
+  const label = (tab: Tab) => ` ${tab.name}${tab.count ? ` •${tab.count}` : ""} `;
+  const wide = (index: number) => {
+    const tab = tabs[index];
+    return tab ? Bun.stringWidth(label(tab)) : 0;
+  };
+  const all = tabs.reduce((sum, tab) => sum + Bun.stringWidth(label(tab)), 1);
+  // The count of those left out goes at the end, and needs its room kept.
+  const room = all <= width ? width : width - `  +${tabs.length}`.length;
+  let [first, last, used] = [at, at, 1 + wide(at)];
+  let [left, right] = [true, true];
+  while (left || right) {
+    if (right && last + 1 < tabs.length && used + wide(last + 1) <= room) used += wide(++last);
+    else right = false;
+    if (left && first > 0 && used + wide(first - 1) <= room) used += wide(--first);
+    else left = false;
+  }
+  const shown = tabs.slice(first, last + 1).map((tab, offset) => {
+    const here = first + offset === at;
+    const style = here ? "#[bg=colour238,fg=colour231,bold]" : "#[fg=brightblack]";
+    const dot = here ? "#[fg=colour221]" : "#[fg=yellow]";
+    const badge = tab.count ? `${dot}•${tab.count} ` : "";
+    return `#[range=user|${first + offset}]${style} ${escaped(tab.name)} ${badge}#[default]#[norange]`;
+  });
+  const out = tabs.length - shown.length;
+  return ` ${shown.join("")}${out > 0 ? `#[fg=brightblack]  +${out}#[default]` : ""}`;
 }
