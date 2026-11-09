@@ -3,7 +3,7 @@
 // into the builder's session when it asks for changes.
 import type { Database } from "bun:sqlite";
 import { typeInto } from "../agents/tmux.ts";
-import { agentHarness, threadConfig } from "../config.ts";
+import { threadConfig } from "../config.ts";
 import {
   findPullRequest,
   openPullRequest,
@@ -19,7 +19,15 @@ import { baseOf } from "./builder.ts";
 import { afterReview, pastLimit } from "./decide.ts";
 import { tellLead } from "./lead.ts";
 import { review } from "./reviewer.ts";
-import { cloneOf, fullNameOf, readThread, record, type Thread, threadName } from "./thread.ts";
+import {
+  builderHarness,
+  cloneOf,
+  fullNameOf,
+  readThread,
+  record,
+  type Thread,
+  threadName,
+} from "./thread.ts";
 
 // Runs git in skel's own clone and returns what it printed, throwing with its error when it
 // fails.
@@ -138,7 +146,10 @@ async function deliver(
   signal: AbortSignal,
 ): Promise<void> {
   // A builder can work long after it submits, but one busy this long has likely hung.
-  await typeInto(tmux, folder, agentHarness().marks, text, { timeout: 30 * 60_000, signal });
+  await typeInto(tmux, folder, builderHarness(readThread(db, folder)).marks, text, {
+    timeout: 30 * 60_000,
+    signal,
+  });
   if (!signal.aborted) record(db, folder, { telling: null }, "typed the review into the builder");
 }
 

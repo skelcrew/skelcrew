@@ -4,7 +4,7 @@ import type { Database } from "bun:sqlite";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { HarnessName } from "../agents/harness.ts";
+import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { threadsDir } from "../paths.ts";
 import { findRepository } from "./repo.ts";
 
@@ -60,12 +60,25 @@ export const Thread = z.object({
   review_round: z.number().nullable(),
   verdict: z.enum(["approve", "changes", "failed"]).nullable(),
   review_line: z.string().nullable(),
+  // The harness its builder runs on, saved when the builder first starts, since a conversation
+  // can't move to another harness. Null before then, and in a row from before skel saved it,
+  // when every builder ran on Claude Code.
+  harness: HarnessName.nullable(),
 });
 export type Thread = z.infer<typeof Thread>;
+
+// Returns the harness the thread's builder runs on, for starting it again and typing into it.
+export const builderHarness = (thread: Thread) => harnessNamed(thread.harness ?? "claude");
 
 // Returns whether the thread needs you: for a review, the round limit or an approval, or for
 // the builder's question.
 export const needsYou = (thread: Thread) => thread.needs_you || thread.asking;
+
+// Returns whether a builder that just ended its turn is waiting on you, for a harness with no
+// tool for asking, such as Codex. A builder that works and stops without skel submit has a
+// question for you, or is stuck. One that submitted waits on its review, and one already asking
+// has nothing new to say.
+export const endedTurnAsks = (thread: Thread) => thread.status === "working" && !thread.asking;
 
 // Returns whether any thread has work under way that the machine must stay awake for: a
 // builder working, a review waiting or running, or a PR waiting on CI. A thread that only
