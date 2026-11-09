@@ -617,11 +617,11 @@ test("skips the reviewer's login when skel's Codex login works already", async (
   expect(calls()).not.toContain("codex login --device-auth");
 });
 
-test("says reviews run on Claude Code when Codex isn't installed", async () => {
+test("says reviews run on your harness when Codex isn't installed", async () => {
   const run = await skel("1\nsk-ant-oat01-good\n");
   expect(run.code).toBe(0);
   expect(run.out).toContain(
-    "skel · Codex isn't installed, so reviews will run on Claude Code, on the builder's own model",
+    "skel · Codex isn't installed, so reviews will run on your harness, with no second view",
   );
   expect(run.out).toContain("step 3 of 3");
   expect(run.out).toContain("second view");

@@ -3,7 +3,6 @@
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { z } from "zod";
-import { agentCommand, hasTranscript } from "../agents/claude.ts";
 // What the lead is and how it hands work to threads. Without it, told "fix the flaky test",
 // it would try to edit the read-only clones rather than start a thread. It is a plain file so
 // it reads and changes like a doc, and Bun builds it into skel. It reaches the lead in every
@@ -20,6 +19,7 @@ import {
   startSession,
   typeInto,
 } from "../agents/tmux.ts";
+import { agentHarness, agentRoles } from "../config.ts";
 import { dataDir, leadSocket } from "../paths.ts";
 import { errorText } from "../say.ts";
 import { fullNameIs, refreshClones, repositories } from "./repo.ts";
@@ -44,13 +44,14 @@ export async function startLead(db: Database, tmux: string): Promise<void> {
   startServer(tmux);
   const folder = join(dataDir(), "lead");
   const stored = Lead.parse(db.query("SELECT session FROM lead").get());
-  const resume = stored !== null && hasTranscript("lead", folder, stored.session);
+  const harness = agentHarness();
+  const resume = stored !== null && harness.saved("lead", folder, stored.session);
   const session = resume ? stored.session : crypto.randomUUID();
   db.run("INSERT OR REPLACE INTO lead (one, session) VALUES (1, ?)", [session]);
-  const { argv, env } = agentCommand({
+  const { argv, env } = harness.start({
     name: "lead",
     socket: leadSocket(),
-    model: "opus",
+    model: agentRoles().lead.model,
     system: instructions,
     ...(resume ? { resume: session } : { sessionId: session }),
   });
@@ -75,14 +76,15 @@ async function typeNotes(db: Database, tmux: string): Promise<void> {
     const thread = Thread.nullable().parse(row);
     if (note === null && (thread === null || thread.noting === null)) return;
     if (!agentRuns(tmux, "lead")) return;
-    if (!(await isIdle(tmux, "lead"))) continue;
+    const { marks } = agentHarness();
+    if (!(await isIdle(tmux, "lead", marks))) continue;
     if (note !== null) {
-      await typeInto(tmux, "lead", note.text);
+      await typeInto(tmux, "lead", marks, note.text);
       db.run("DELETE FROM notes WHERE id = ?", [note.id]);
       continue;
     }
     if (thread === null || thread.noting === null) return;
-    await typeInto(tmux, "lead", `${threadName(db, thread)} needs you: ${thread.noting}`);
+    await typeInto(tmux, "lead", marks, `${threadName(db, thread)} needs you: ${thread.noting}`);
     // The thread may have stopped needing you and started again while this was typed.
     if (readThread(db, thread.folder).noting === thread.noting)
       record(db, thread.folder, { noting: null }, "told the lead it needs you");

@@ -28,7 +28,7 @@ const ClaudeJson = z.looseObject({
 // Bypass mode shows a warning first, which nobody is there to accept. Claude Code's own
 // sandbox fails inside skel's, so it stays off even if your settings turn it on.
 const base = { skipDangerousModePermissionPrompt: true, sandbox: { enabled: false } };
-export const settings = JSON.stringify(base);
+const settings = JSON.stringify(base);
 
 // A builder's AskUserQuestion waits on a screen nobody watches, so Claude Code's hooks tell
 // skel when the builder asks, and the thread needs you until the question is over. Answering
@@ -58,6 +58,9 @@ const leadSettings = JSON.stringify({
 
 const Token = z.string().trim().min(1);
 
+// The model an agent runs on when your config names none.
+const defaultModel = "opus";
+
 // Returns the Claude Code login token skel saved for agents, which the lead, builders and
 // reviewers all log in with. Throws if setup hasn't saved one. A token from claude setup-token
 // never renews. A shared login would: renewing makes the old refresh token stop working, so
@@ -75,7 +78,7 @@ export function claudeToken(home: string): string {
 // session's own config folder, under a folder named after the folder it runs in, with every
 // character but letters and digits made a dash. Names over 200 characters get a hash
 // instead, which skel's folders never come near.
-export function hasTranscript(name: string, folder: string, session: string): boolean {
+function hasTranscript(name: string, folder: string, session: string): boolean {
   const project = folder.replace(/[^a-zA-Z0-9]/g, "-");
   return existsSync(join(dataDir(), "claude", name, "projects", project, `${session}.jsonl`));
 }
@@ -111,14 +114,15 @@ function trustFolder(config: string, cwd: string): void {
 }
 
 // Prepares an agent's own config folder and trusted Claude Code settings, then returns its
-// sandbox command and environment. A builder, given its thread's clone, works there and sees
+// sandbox command and environment. It starts afresh with `sessionId` and the first message
+// in `prompt`, or brings back a saved conversation with `resume`. A builder, given its thread's clone, works there and sees
 // nothing else but its origin, read-only; the lead works in its own folder and sees skel's
 // clone of every repository. Each session keeps its own transcripts and logs in with skel's
 // agent token, while your other credentials stay hidden.
-export function agentCommand(given: {
+function startCommand(given: {
   name: string;
   socket: string;
-  model: string;
+  model?: string | undefined;
   thread?: string;
   origin?: string;
   prompt?: string;
@@ -130,7 +134,7 @@ export function agentCommand(given: {
   const {
     name,
     socket,
-    model,
+    model = defaultModel,
     thread,
     origin,
     prompt,
@@ -207,3 +211,40 @@ export function agentCommand(given: {
   });
   return { argv, env: kept };
 }
+
+// Returns Claude Code's review command and a config folder of the review's own, so a review
+// leaves no transcript behind. The command reads the review's prompt on stdin and holds the
+// answer to `schema`.
+function review(given: {
+  home: string;
+  folder: string;
+  model?: string | undefined;
+  schema: string;
+}) {
+  const { home, folder, model = defaultModel, schema } = given;
+  const token = claudeToken(home);
+  const command = ["claude", "-p", "--model", model, "--output-format", "json"];
+  command.push("--json-schema", schema, "--no-session-persistence");
+  command.push("--permission-mode", "bypassPermissions", "--settings", settings);
+  const env = { CLAUDE_CONFIG_DIR: join(folder, "claude"), CLAUDE_CODE_OAUTH_TOKEN: token };
+  return { command, mounts: [], env };
+}
+
+// Returns the reviewer's answer from what Claude Code printed, for the reviewer to check
+// against the shape.
+const answer = (_folder: string, out: string): unknown =>
+  z.looseObject({ structured_output: z.unknown() }).parse(JSON.parse(out)).structured_output;
+
+// Claude Code as skel knows it. While a turn runs it shows "esc to interrupt". It is ready for
+// a message once that is gone and a line holding only its ❯ prompt shows. The key is for those
+// who use one rather than a login.
+export const claude = {
+  name: "claude",
+  title: "Claude Code",
+  marks: { busy: "esc to interrupt", prompt: "❯" },
+  keys: ["ANTHROPIC_API_KEY"],
+  start: startCommand,
+  saved: hasTranscript,
+  review,
+  answer,
+} as const;

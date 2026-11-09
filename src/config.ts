@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse, parseDocument } from "yaml";
 import { z } from "zod";
+import { HarnessName, harnessNamed } from "./agents/harness.ts";
 import { configDir } from "./paths.ts";
 
 // Unknown keys pass through, so settings this version doesn't know survive a save.
@@ -24,32 +25,67 @@ export function readConfig() {
   return { config, harness: read.data.harness };
 }
 
-// Kept apart from SetupConfig on purpose: setupDone reads that one on every plain skel, and a
-// bad max_rounds must stop a thread, not make setupDone throw.
-const ThreadConfig = z.looseObject({
-  builder: z.looseObject({ model: z.string().min(1).optional() }).optional(),
-  reviewer: z.looseObject({ harness: z.enum(["codex", "claude"]).optional() }).optional(),
-  max_rounds: z.number().int().positive().optional(),
-});
+// Returns the harness the lead and builders run on: the one the first run saved, or Claude
+// Code when your config names none.
+export const agentHarness = () => harnessNamed(readConfig().harness ?? "claude");
 
-// Returns what your config sets for threads: the builder's model (opus when it names none),
-// the reviewer's harness (none when it names none, so the reviewer picks), and the round
-// limit (3 when it names none). Throws when the config isn't valid, rather than run a thread
-// on settings you didn't pick.
-export function threadConfig(): {
-  model: string;
-  reviewer: "codex" | "claude" | undefined;
-  maxRounds: number;
-} {
+// A model is plain text, passed to the harness as written: skel keeps no list of names, and a
+// harness that names models as provider/model knows its own providers.
+const Model = z.string().min(1);
+// The lead and builders can run only on Claude Code for now, so naming another harness for
+// them is refused rather than ignored.
+const OnClaude = z.looseObject({ harness: z.enum(["claude"]).optional(), model: Model.optional() });
+
+// What your config sets for the agents. Kept apart from SetupConfig on purpose: setupDone
+// reads that one on every plain skel, and a bad setting here must stop an agent, not make
+// setupDone throw.
+const Roles = z.looseObject({
+  model: Model.optional(),
+  lead: OnClaude.optional(),
+  builder: OnClaude.optional(),
+  reviewer: z.looseObject({ harness: HarnessName.optional(), model: Model.optional() }).optional(),
+});
+// Apart from Roles, so a bad max_rounds stops a thread, not the lead.
+const Rounds = z.looseObject({ max_rounds: z.number().int().positive().optional() });
+
+type Role = { harness: HarnessName; model?: string };
+
+// Returns the harness and model a role runs on, given what your config sets for it and your
+// top-level harness and model. The role's own harness, else yours. Its own model, else yours
+// only when it runs on your harness, else none, so the harness picks its default: a model name
+// belongs to its harness, and reviewer: { harness: codex } must never run Codex on opus.
+function roleOn(
+  role: { harness?: HarnessName | undefined; model?: string | undefined } | undefined,
+  yours: { harness: HarnessName; model: string | undefined },
+): Role {
+  const harness = role?.harness ?? yours.harness;
+  const model = role?.model ?? (harness === yours.harness ? yours.model : undefined);
+  return model === undefined ? { harness } : { harness, model };
+}
+
+// Returns your config read against `schema`, or throws when it isn't valid, rather than run an
+// agent on settings you didn't pick.
+function readAgainst<T extends z.ZodType>(schema: T): z.infer<T> {
   const file = configFile();
-  const read = ThreadConfig.safeParse(
-    existsSync(file) ? (parse(readFileSync(file, "utf8")) ?? {}) : {},
-  );
+  const read = schema.safeParse(existsSync(file) ? (parse(readFileSync(file, "utf8")) ?? {}) : {});
   if (!read.success) throw new Error(`${file} isn't valid: ${z.prettifyError(read.error)}`);
-  const { builder, reviewer, max_rounds } = read.data;
+  return read.data;
+}
+
+// Returns the harness and model of the lead, builders and reviews, each by roleOn's rule. A
+// second view on another model is yours to choose, such as with reviewer: { harness: codex }.
+export function agentRoles(): { lead: Role; builder: Role; reviewer: Role } {
+  const { model, lead, builder, reviewer } = readAgainst(Roles);
+  const yours = { harness: agentHarness().name, model };
   return {
-    model: builder?.model ?? "opus",
-    reviewer: reviewer?.harness,
-    maxRounds: max_rounds ?? 3,
+    lead: roleOn(lead, yours),
+    builder: roleOn(builder, yours),
+    reviewer: roleOn(reviewer, yours),
   };
+}
+
+// Returns what your config sets for threads: each agent's harness and model, as agentRoles
+// gives them, and the round limit (3 when it names none).
+export function threadConfig(): ReturnType<typeof agentRoles> & { maxRounds: number } {
+  return { ...agentRoles(), maxRounds: readAgainst(Rounds).max_rounds ?? 3 };
 }
