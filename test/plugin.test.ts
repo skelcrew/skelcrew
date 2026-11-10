@@ -231,6 +231,17 @@ test("a repository with no version tag, or a manifest that isn't valid, is refus
   expect(invalid.err).toContain("skelcrew-plugin.yaml isn't valid");
   expect(invalid.err).toContain("git_credentials");
 
+  // skelcrew.yaml's tracker: none means no tracker, so no plugin may take that name.
+  const named = join(home, "none");
+  fakePlugin(named, "0.1.0");
+  writeFileSync(
+    join(named, "skelcrew-plugin.yaml"),
+    "name: none\nversion: 0.1.0\nskelcrew: 0.4.0\nabout: x\njobs: [tracker]\ncall: [bun, call.ts]\n",
+  );
+  const reserved = await skel(["plugin", "install", named], "y\n");
+  expect(reserved.code).toBe(1);
+  expect(reserved.err).toContain("can't be none, which skelcrew.yaml uses for no tracker");
+
   // The tag says which version is installed, so a manifest that says otherwise is wrong.
   publish("simon/mislabeled", "0.1.0");
   git(onGitHub("simon/mislabeled"), "tag", "v0.2.0");

@@ -351,7 +351,8 @@ const yamlValue = (value: string) => stringify(value).trim();
 
 // Returns the starter skelcrew.yaml: a line saying the file is shared and never holds a secret,
 // your harness and model for each role as real lines, from your config, and setup and test as
-// commented examples. It names no tracker, so a repository on GitHub keeps its issues as tasks.
+// commented examples. It names no tracker, so a repository on GitHub keeps its issues as tasks,
+// and shows tracker: none commented out, so you can find how to turn that off.
 function starter(): string {
   // Each role is one line of { key: value } pairs, its name padded so the three line up.
   const roles = agentRoles();
@@ -366,6 +367,8 @@ function starter(): string {
     line("reviewer"),
     "# setup: [bun install]",
     "# test: [bun test]",
+    "# Keeps this repository on git alone, with no tracker.",
+    "# tracker: none",
     "",
   ].join("\n");
 }

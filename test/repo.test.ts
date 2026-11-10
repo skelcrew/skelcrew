@@ -658,6 +658,8 @@ builder:  { harness: claude, model: sonnet }
 reviewer: { harness: codex }
 # setup: [bun install]
 # test: [bun test]
+# Keeps this repository on git alone, with no tracker.
+# tracker: none
 `,
   );
   expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);

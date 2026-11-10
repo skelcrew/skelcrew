@@ -22,10 +22,14 @@ const needs = {
 } as const;
 
 // What a plugin's skelcrew-plugin.yaml says. Its name becomes a folder and an environment value,
-// so it is only lowercase letters, digits and dashes.
+// so it is only lowercase letters, digits and dashes. It is never none, so tracker: none in a
+// repository's skelcrew.yaml always means no tracker.
 export const Manifest = z
   .object({
-    name: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, "must be lowercase letters, digits and dashes"),
+    name: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9-]*$/, "must be lowercase letters, digits and dashes")
+      .refine((name) => name !== "none", "can't be none, which skelcrew.yaml uses for no tracker"),
     version: Version,
     skelcrew: Version,
     about: z.string().min(1),
