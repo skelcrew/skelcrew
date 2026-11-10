@@ -13,6 +13,7 @@ import { singleFile } from "../version.ts";
 
 // A command is a list of words, never one line for a shell.
 const Command = z.array(z.string().min(1)).min(1);
+// A plugin's version, and the Skelcrew it needs, as three numbers. Its tag is this with a v.
 export const Version = z.string().regex(/^\d+\.\d+\.\d+$/, "must be a version such as 0.1.0");
 
 // The commands each job needs. Chat has none in this version: they come with its first plugin.
@@ -40,6 +41,7 @@ export const Manifest = z
     exec: Command.optional(),
     push: Command.optional(),
   })
+  // A plugin that names a job must have each command that job needs.
   .superRefine((manifest, context) => {
     for (const job of manifest.jobs)
       for (const command of needs[job])
@@ -56,6 +58,7 @@ export type Manifest = z.infer<typeof Manifest>;
 // folder is the plugin's, so a link, which could point Skelcrew at any file of yours, is refused.
 export function readManifest(folder: string): Manifest {
   const file = join(folder, "skelcrew-plugin.yaml");
+  // lstat, so a link is seen as one and refused, not followed.
   const stat = lstatSync(file, { throwIfNoEntry: false });
   if (!stat?.isFile())
     throw new Error(`${folder} has no skelcrew-plugin.yaml, so it isn't a plugin`);
@@ -119,6 +122,8 @@ export function settingsDir(name: string): string {
 // installed. A single-file Skelcrew is Bun too, and acts as Bun when BUN_BE_BUN is set.
 export function commandFor(name: string, words: string[]) {
   const [first, ...rest] = words;
+  // Only a first word of exactly bun is Skelcrew's own Bun. Any other program is found on
+  // your PATH.
   const argv = first === "bun" ? [process.execPath, ...rest] : words;
   const env: Record<string, string> = {
     ...(first === "bun" && singleFile ? { BUN_BE_BUN: "1" } : {}),
@@ -141,6 +146,7 @@ export async function callPlugin<T>(
   timeout = 60_000,
 ): Promise<T> {
   const plugin = findPlugin(db, name);
+  // The manifest is read each time, so a plugin updated meanwhile is asked as it is now.
   const { call } = readManifest(plugin.folder);
   if (!call) throw new Error(`${name} has no call command, so Skelcrew can't ask it anything`);
   const { argv, env } = commandFor(name, call);
@@ -155,6 +161,7 @@ export async function callPlugin<T>(
     stderr: "pipe",
     detached: true,
   });
+  // At the deadline the whole group is killed, and the race below ends as late.
   let timer: Timer | undefined;
   const late = new Promise<"late">((done) => {
     timer = setTimeout(() => {
@@ -182,6 +189,7 @@ export async function callPlugin<T>(
       throw new Error(`${name} failed: ${last}. Run sc plugin setup ${name} to set it up again.`);
     throw new Error(`${name} failed: ${last}`);
   }
+  // Output that isn't JSON fails the check below, with the same error as a wrong answer.
   let answer: unknown;
   try {
     answer = JSON.parse(out);
@@ -206,6 +214,7 @@ export function gitCredentials(db: Database, name: string): string[] {
   if (!git_credentials)
     throw new Error(`${name} has no git_credentials, so it can't lend git a login`);
   const { argv, env } = commandFor(name, git_credentials);
+  // One line for sh: go to the plugin's folder, set its environment, and run the command.
   const assignments = Object.entries(env).map(([key, value]) => `${key}=${quoted(value)}`);
   const helper = `cd ${quoted(plugin.folder)} && ${assignments.join(" ")} exec ${argv.map(quoted).join(" ")}`;
   // The empty helper first clears any you set, such as gh's, so git asks only this plugin.
