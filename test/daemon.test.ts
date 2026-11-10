@@ -285,7 +285,7 @@ test("says which release it runs, so skel can restart one on an older release", 
   const script = `import { serve } from ${JSON.stringify(daemon)};
 await serve(${JSON.stringify(socket)});`;
   running.push(
-    Bun.spawn([process.execPath, "--define", 'SKEL_BUILD="0.4.2"', "-e", script], {
+    Bun.spawn([process.execPath, "--define", 'SKELCREW_BUILD="0.4.2"', "-e", script], {
       env: {
         HOME: home,
         XDG_RUNTIME_DIR: join(home, "run"),

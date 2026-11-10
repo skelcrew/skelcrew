@@ -76,7 +76,7 @@ const env = () => ({
 // Runs code that uses skel's modules in a process of its own with the test's home, as skel
 // stamped with `build` would run it, and returns what it printed.
 async function inProcess(code: string, build?: string) {
-  const define = build === undefined ? [] : ["--define", `SKEL_BUILD=${JSON.stringify(build)}`];
+  const define = build === undefined ? [] : ["--define", `SKELCREW_BUILD=${JSON.stringify(build)}`];
   const run = Bun.spawn([process.execPath, ...define, "-e", code], {
     env: env(),
     stdout: "pipe",
@@ -273,7 +273,7 @@ test("says where to look when the daemon doesn't come back on the new release", 
 // Runs skel stamped with `build` on a server, as --remote from a laptop on `laptop` runs it.
 async function onServer(build: string, laptop: string) {
   const run = Bun.spawn(
-    [process.execPath, "--define", `SKEL_BUILD="${build}"`, source("main.ts"), "--help"],
+    [process.execPath, "--define", `SKELCREW_BUILD="${build}"`, source("main.ts"), "--help"],
     {
       env: { ...env(), SKEL_LAPTOP_BUILD: laptop, SKEL_REMOTE_NAME: "simon@workbox" },
       stdout: "pipe",

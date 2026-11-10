@@ -313,7 +313,7 @@ async function buildLinuxSkel(file: string, cpu: string): Promise<void> {
   console.log("Building skel for Linux.");
   const target = `--target=bun-linux-${cpu}`;
   const build = laptopBuild();
-  const stamp = build ? ["--define", `SKEL_BUILD=${JSON.stringify(build)}`] : [];
+  const stamp = build ? ["--define", `SKELCREW_BUILD=${JSON.stringify(build)}`] : [];
   const argv = ["bun", "build", "--compile", target, ...stamp, mainFile, "--outfile", file];
   if ((await runInTerminal(argv)) !== 0) throw new Error("bun build failed, so skel wasn't copied");
 }

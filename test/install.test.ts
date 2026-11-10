@@ -77,7 +77,7 @@ async function install(shell: string[], path = `${join(home, "fakes")}:/usr/bin:
     env: {
       PATH: path,
       HOME: home,
-      SKEL_DOWNLOAD_BASE: `http://127.0.0.1:${server.port}`,
+      SKELCREW_DOWNLOAD_BASE: `http://127.0.0.1:${server.port}`,
     },
     stdin: new Blob([readFileSync(script, "utf8")]),
     stdout: "pipe",

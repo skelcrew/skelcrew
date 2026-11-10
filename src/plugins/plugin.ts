@@ -23,7 +23,7 @@ const needs = {
   machine: ["add", "exec", "push"],
 } as const;
 
-// What a plugin's skel-plugin.yaml says. Its name becomes a folder and an environment value,
+// What a plugin's skelcrew-plugin.yaml says. Its name becomes a folder and an environment value,
 // so it is only lowercase letters, digits and dashes.
 export const Manifest = z
   .object({
@@ -55,9 +55,10 @@ export type Manifest = z.infer<typeof Manifest>;
 // Returns the manifest in a plugin's folder, or throws saying what is wrong with it. The
 // folder is the plugin's, so a link, which could point skel at any file of yours, is refused.
 export function readManifest(folder: string): Manifest {
-  const file = join(folder, "skel-plugin.yaml");
+  const file = join(folder, "skelcrew-plugin.yaml");
   const stat = lstatSync(file, { throwIfNoEntry: false });
-  if (!stat?.isFile()) throw new Error(`${folder} has no skel-plugin.yaml, so it isn't a plugin`);
+  if (!stat?.isFile())
+    throw new Error(`${folder} has no skelcrew-plugin.yaml, so it isn't a plugin`);
   let read: unknown;
   try {
     read = parse(readFileSync(file, "utf8"));
@@ -121,8 +122,8 @@ export function commandFor(name: string, words: string[]) {
   const argv = first === "bun" ? [process.execPath, ...rest] : words;
   const env: Record<string, string> = {
     ...(first === "bun" && singleFile ? { BUN_BE_BUN: "1" } : {}),
-    SKEL_PLUGIN: name,
-    SKEL_PLUGIN_CONFIG: settingsDir(name),
+    SKELCREW_PLUGIN: name,
+    SKELCREW_PLUGIN_CONFIG: settingsDir(name),
   };
   return { argv, env };
 }

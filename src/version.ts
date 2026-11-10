@@ -7,8 +7,8 @@ import { join, resolve } from "node:path";
 // What skel was built from. The release build stamps its release, such as 0.4.2, and
 // withLinuxSkel the commit of the copy it builds for a server or Sprite. A skel run from a
 // checkout has none, and updates with git pull.
-declare const SKEL_BUILD: string;
-export const built = typeof SKEL_BUILD === "string" ? SKEL_BUILD : undefined;
+declare const SKELCREW_BUILD: string;
+export const built = typeof SKELCREW_BUILD === "string" ? SKELCREW_BUILD : undefined;
 
 // Says whether a build is a release, such as 0.4.2. A commit has no dots, so the two can't be
 // mistaken.
@@ -19,8 +19,8 @@ export const release = built !== undefined && isRelease(built) ? built : "";
 
 // Where releases live, stamped in by the release build from the install script, the one place
 // that says so.
-declare const SKEL_RELEASES: string;
-export const releases = typeof SKEL_RELEASES === "string" ? SKEL_RELEASES : "";
+declare const SKELCREW_RELEASES: string;
+export const releases = typeof SKELCREW_RELEASES === "string" ? SKELCREW_RELEASES : "";
 
 // Follows the commit of a build made with changes not committed. Such a build can't say
 // what it holds, so it never counts as up to date.

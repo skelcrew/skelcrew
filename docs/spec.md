@@ -208,7 +208,7 @@ Without a forge, only the reviews and the end of the branch happen, as the flow 
 
 ## Plugins
 
-A plugin connects Skelcrew to one outside tool. It lives in a git repository of its own, with a `skel-plugin.yaml` at its root, and you install it with `skel plugin install`. GitHub is a plugin, `skelcrew/skel-plugin-github`, which the first run offers. Skelcrew's flow holds nothing of it: it knows what a plugin does, never which plugin does it.
+A plugin connects Skelcrew to one outside tool. It lives in a git repository of its own, with a `skelcrew-plugin.yaml` at its root, and you install it with `skel plugin install`. GitHub is a plugin, `skelcrew/skel-plugin-github`, which the first run offers. Skelcrew's flow holds nothing of it: it knows what a plugin does, never which plugin does it.
 
 **What a plugin does.** A plugin does one or more of four jobs. Each job has its own commands, and is used at its own time:
 
@@ -243,7 +243,7 @@ Each command is a list of words, run in the plugin's folder and never through a 
 
 For a plugin you are writing, `skel plugin install <path>`, such as `./skel-plugin-linear`, uses that folder where it is, with no tag, and shows and asks as any install does. `skel plugin update <name>` then runs its `build` again, so your edits count. `skel plugin rm <name>` removes its settings and tokens, and never your folder. A plugin belongs to the machine the daemon runs on, so for a server or Sprite you run `skel --remote sprite:demo plugin install skelcrew/skel-plugin-github`. A machine plugin is the one exception: it belongs on your laptop, where you run `skel remote add` and `skel --remote`.
 
-**What a plugin is handed.** Each command gets `SKEL_PLUGIN`, its name, and `SKEL_PLUGIN_CONFIG`, a folder in `~/.config/skel/plugins/` for its settings and tokens, readable only by you. Their format is the plugin's own.
+**What a plugin is handed.** Each command gets `SKELCREW_PLUGIN`, its name, and `SKELCREW_PLUGIN_CONFIG`, a folder in `~/.config/skel/plugins/` for its settings and tokens, readable only by you. Their format is the plugin's own.
 
 **Calls.** Skelcrew asks a tracker or forge by running its `call` command with one JSON question on stdin. The command prints one JSON answer and exits within 60 seconds. If it exits with an error, its last line of stderr is the error. Every answer is checked before Skelcrew uses it.
 

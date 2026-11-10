@@ -86,7 +86,7 @@ exit 0`,
     "bun",
     `while [ $# -gt 1 ]; do
   test "$1" = --outfile && out=$2
-  test "$1" = --define && built=$(echo "$2" | sed 's/^SKEL_BUILD="\\(.*\\)"$/\\1/')
+  test "$1" = --define && built=$(echo "$2" | sed 's/^SKELCREW_BUILD="\\(.*\\)"$/\\1/')
   shift
 done
 sed "s/@BUILT@/$built/g" > "$out" <<'EOF'
@@ -423,7 +423,7 @@ test("skel remote add creates the Sprite after asking, sets it up, and prints ho
   expect(lines[8]).toBe("sprite exec -s demo --no-stdin -- sh -c uname -m");
   expect(lines[9]).toMatch(
     new RegExp(
-      `^bun build --compile --target=bun-linux-x64 --define SKEL_BUILD="${laptop.commit}" ${laptop.main} --outfile ${home}/tmp/\\S+/skel$`,
+      `^bun build --compile --target=bun-linux-x64 --define SKELCREW_BUILD="${laptop.commit}" ${laptop.main} --outfile ${home}/tmp/\\S+/skel$`,
     ),
   );
   expect(lines[10]).toBe(

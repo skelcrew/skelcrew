@@ -69,7 +69,7 @@ function cloneTag(source: string, tag: string): { staged: string; manifest: Mani
     const manifest = readManifest(staged);
     if (`v${manifest.version}` !== tag)
       throw new Error(
-        `${source} isn't installable: its tag ${tag} says ${tag.slice(1)}, and its skel-plugin.yaml ${manifest.version}`,
+        `${source} isn't installable: its tag ${tag} says ${tag.slice(1)}, and its skelcrew-plugin.yaml ${manifest.version}`,
       );
     return { staged, manifest };
   } catch (error) {
