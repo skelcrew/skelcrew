@@ -331,7 +331,7 @@ test("skel task create and skel start say when the daemon isn't running", async 
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a builder", () => {
   test("starts the builder in the sandbox, in a clone of its own, on a branch of its own", async () => {
     addApp({
-      "skel.yaml":
+      "skelcrew.yaml":
         "setup:\n  - echo set up > setup-ran\n  - test -e $HOME/.config/skel/claude-token || echo token-hidden >> setup-ran\n",
     });
     fakeClaude(
@@ -443,7 +443,7 @@ c.on("data", (d) => process.stdout.write(d));`;
   }, 20_000);
 
   test("a thread whose setup fails is marked failed, and starting it again starts over", async () => {
-    const work = addApp({ "skel.yaml": "setup: [echo fine, echo broken >&2 && exit 3]\n" });
+    const work = addApp({ "skelcrew.yaml": "setup: [echo fine, echo broken >&2 && exit 3]\n" });
     serve();
     await untilCloned();
     expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
@@ -451,7 +451,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     // The daemon saves a thread before it appends the thread to its log.
     await until(() => read(join(data(), "threads", "app-12.log")).includes("broken"));
     expect(hasSession("app-12")).toBe(false);
-    writeFileSync(join(work, "skel.yaml"), "setup: [echo fixed > fixed]\n");
+    writeFileSync(join(work, "skelcrew.yaml"), "setup: [echo fixed > fixed]\n");
     git(work, "commit", "-q", "-am", "fix setup");
     git(work, "push", "-q", "origin", "main");
     expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
@@ -575,11 +575,11 @@ nameRepositories(db);`;
   }, 30_000);
 
   test("a thread whose setup the daemon's stop cut short is marked failed when it comes back", async () => {
-    addApp({ "skel.yaml": "setup: [sleep 30]\n" });
+    addApp({ "skelcrew.yaml": "setup: [sleep 30]\n" });
     const first = serve();
     await untilCloned();
     await skel("start", "app-12");
-    await until(() => existsSync(join(clone(), "skel.yaml")));
+    await until(() => existsSync(join(clone(), "skelcrew.yaml")));
     await stop(first);
     serve();
     await until(() => thread().status === "failed");
@@ -602,7 +602,7 @@ nameRepositories(db);`;
   }, 30_000);
 
   test("skel stop refuses a thread still setting up, and one with no builder", async () => {
-    addApp({ "skel.yaml": "setup: [sleep 2, exit 3]\n" });
+    addApp({ "skelcrew.yaml": "setup: [sleep 2, exit 3]\n" });
     serve();
     await untilCloned();
     await skel("start", "app-12");
@@ -650,7 +650,7 @@ nameRepositories(db);`;
 
   // The daemon brings back threads once the lead has started, which takes a moment.
   test("a thread started while the daemon starts the lead isn't taken for one cut short", async () => {
-    addApp({ "skel.yaml": "setup: [sleep 3]\n" });
+    addApp({ "skelcrew.yaml": "setup: [sleep 3]\n" });
     serve();
     await untilAnswers();
     expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
@@ -708,7 +708,7 @@ nameRepositories(db);`;
 
   // Programs often live under the home folder, which the sandbox hides, as npm does under nvm.
   test("a setup command finds its program under your home folder", async () => {
-    addApp({ "skel.yaml": "setup: [cd . && X=1 tool --flag]\n" });
+    addApp({ "skelcrew.yaml": "setup: [cd . && X=1 tool --flag]\n" });
     mkdirSync(join(home, "tools"));
     writeFileSync(join(home, "tools", "tool"), '#!/bin/sh\necho "ran $1" > ran\n', { mode: 0o755 });
     startDaemon(socket, { ...env(), PATH: `${join(home, "tools")}:${env().PATH}` }, running);
@@ -721,7 +721,7 @@ nameRepositories(db);`;
   test("a setup command can't bring back a folder of yours by naming a program in it", async () => {
     mkdirSync(join(home, "tools"));
     writeFileSync(join(home, "tools", "tool"), "#!/bin/sh\necho ran > ran\n", { mode: 0o755 });
-    addApp({ "skel.yaml": `setup: ["${join(home, "tools", "tool")} || echo hidden > ran"]\n` });
+    addApp({ "skelcrew.yaml": `setup: ["${join(home, "tools", "tool")} || echo hidden > ran"]\n` });
     serve();
     await untilCloned();
     await skel("start", "app-12");

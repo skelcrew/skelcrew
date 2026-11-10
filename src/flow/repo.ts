@@ -106,7 +106,7 @@ function checkOrDelete(clone: string): void {
 let refreshing: Promise<void> | null = null;
 
 // Refreshes every registered clone so leads read current repositories, and creates the
-// skel label in a repository skel hasn't made it in yet, so you can start threads from
+// skelcrew label in a repository skel hasn't made it in yet, so you can start threads from
 // GitHub. A second call joins the refresh running, so two git commands never fight over a
 // clone. A clone or label that fails only gets a line in the log and is tried again at the
 // next refresh, since an old clone still lets a lead read its repository.
@@ -151,7 +151,7 @@ function trusted({ owner, repo, canPush, isFork }: GitHubRepo): boolean {
 }
 
 // Checks trust, asking you when needed, refreshes the repository clone, records it, and
-// creates its skel label so you can start threads from GitHub. Runs only in your
+// creates its skelcrew label so you can start threads from GitHub. Runs only in your
 // own terminal, where a yes can't come from an injected instruction.
 async function bringIn(db: Database, details: GitHubRepo): Promise<void> {
   const { owner, repo, canPush } = details;
@@ -192,7 +192,7 @@ async function bringIn(db: Database, details: GitHubRepo): Promise<void> {
     db.run(labeled, [owner, repo]);
   } catch (error) {
     // The daemon tries again when it next refreshes the clone.
-    console.error(`skel: couldn't create the skel label in ${fullName}: ${errorText(error)}`);
+    console.error(`skel: couldn't create the skelcrew label in ${fullName}: ${errorText(error)}`);
   }
 }
 
@@ -253,7 +253,7 @@ export async function addRepo(given?: string): Promise<void> {
 // quoted when YAML would read it as something else, such as a model named true or 123.
 const yamlValue = (value: string) => stringify(value).trim();
 
-// Returns the starter skel.yaml: a line saying the file is shared and never holds a secret,
+// Returns the starter skelcrew.yaml: a line saying the file is shared and never holds a secret,
 // your harness and model for each role as real lines, from your config, and setup and test
 // as commented examples.
 function starter(): string {
@@ -273,7 +273,7 @@ function starter(): string {
   ].join("\n");
 }
 
-// Sets up the checkout you are in for skel, for skel init: writes the starter skel.yaml at its
+// Sets up the checkout you are in for skel, for skel init: writes the starter skelcrew.yaml at its
 // top, unless one is there, then adds the repository as skel repo add does. Stops outside a
 // git repository, and in one with no remote on GitHub, as skel works from its own clone. That
 // clone is at the default branch, so it says the file counts only once pushed there.
@@ -291,15 +291,15 @@ export async function initRepo(): Promise<void> {
     throw new Error(
       "skel init needs the repository on GitHub, and this checkout has no remote there. Push it to GitHub first.",
     );
-  const file = join(root, "skel.yaml");
+  const file = join(root, "skelcrew.yaml");
   // A link counts as there, so the write never goes through one.
   const there = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
-  if (there) console.log("skel.yaml is there already, so skel left it as it is.");
+  if (there) console.log("skelcrew.yaml is there already, so skel left it as it is.");
   else writeFileSync(file, starter(), { flag: "wx" });
   await addRepo(root);
   if (!there)
     console.log(
-      "Wrote skel.yaml. skel reads it from its own clone, so it counts once you commit it and push it to the default branch.",
+      "Wrote skelcrew.yaml. skel reads it from its own clone, so it counts once you commit it and push it to the default branch.",
     );
 }
 

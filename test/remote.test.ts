@@ -90,7 +90,7 @@ cd "$HOME/server" && HOME="$HOME/server" PATH="$bin:/usr/bin:/bin" exec sh -c "$
     "bun",
     `while [ $# -gt 1 ]; do
   test "$1" = --outfile && out=$2
-  test "$1" = --define && built=$(echo "$2" | sed 's/^SKEL_BUILD="\\(.*\\)"$/\\1/')
+  test "$1" = --define && built=$(echo "$2" | sed 's/^SKELCREW_BUILD="\\(.*\\)"$/\\1/')
   shift
 done
 sed "s/@BUILT@/$built/g" > "$out" <<'EOF'
@@ -300,7 +300,7 @@ test("a laptop with uncommitted changes always offers, and says what it copies",
   expect(calls().split("\n")[0]).toBe(onServer(" ps", `${laptop.commit}-dirty`));
   expect(run.out).toContain("skel · ~/code/skel has uncommitted changes, and they are copied too.");
   expect(run.out).toContain("skel · ~/code/skel is on try, not main.");
-  expect(calls()).toContain(`--define SKEL_BUILD="${laptop.commit}-dirty"`);
+  expect(calls()).toContain(`--define SKELCREW_BUILD="${laptop.commit}-dirty"`);
   expect(calls()).toContain("systemctl --user restart skel");
 });
 
@@ -393,7 +393,7 @@ test("the update keeps the old skel when the copy fails", async () => {
 // Runs main.ts as the skel on a server or Sprite would run it, built from the given commit
 // or from a checkout, asked for its help by a laptop with the given build.
 function farSkel(built: string | null, laptopBuild?: string, args = ["--help"]) {
-  const define = built === null ? [] : ["--define", `SKEL_BUILD="${built}"`];
+  const define = built === null ? [] : ["--define", `SKELCREW_BUILD="${built}"`];
   const env: Record<string, string> = { PATH: "/usr/bin:/bin", HOME: home };
   if (laptopBuild) Object.assign(env, { SKEL_LAPTOP_BUILD: laptopBuild, SKEL_REMOTE_NAME: "x" });
   const run = Bun.spawnSync([process.execPath, ...define, laptop.main, ...args], { env });
@@ -461,7 +461,7 @@ test("skel remote add copies skel to a server, runs the first run, and prints ho
   // from, so the server can tell when the laptop has moved on.
   expect(lines[2]).toMatch(
     new RegExp(
-      `^bun build --compile --target=bun-linux-x64 --define SKEL_BUILD="${laptop.commit}" ${laptop.main} --outfile ${home}/tmp/\\S+/skel$`,
+      `^bun build --compile --target=bun-linux-x64 --define SKELCREW_BUILD="${laptop.commit}" ${laptop.main} --outfile ${home}/tmp/\\S+/skel$`,
     ),
   );
   expect(lines[3]).toBe("ssh simon@workbox mkdir -p .local/bin && rm -f .local/bin/skel.new");

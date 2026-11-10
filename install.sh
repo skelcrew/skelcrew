@@ -8,7 +8,7 @@ set -eu
 # is how GitHub lays them out. The release build reads this line, so that skel can fetch its own
 # release for a server. To move releases, change this line and RELEASES_REPO in
 # .github/workflows/release.yml, and keep that layout.
-base="${SKEL_DOWNLOAD_BASE:-https://github.com/skelcrew/skel/releases}"
+base="${SKELCREW_DOWNLOAD_BASE:-https://github.com/skelcrew/skelcrew/releases}"
 
 # Says why skel can't be installed and stops, leaving things as they were.
 fail() {

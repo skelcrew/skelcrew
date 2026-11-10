@@ -1,5 +1,5 @@
 // Polling GitHub: the daemon brings skel's copy of each repository's issues and PRs up to
-// date, starts threads on issues labeled skel, and hands what each thread's PR means for it to
+// date, starts threads on issues labeled skelcrew, and hands what each thread's PR means for it to
 // the code that acts on it.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
@@ -14,7 +14,7 @@ import { noteForLead, tellLead } from "./lead.ts";
 import { fullNameIs, repositories } from "./repo.ts";
 import { needsYou, readThread, record, Thread, threadName } from "./thread.ts";
 
-// Starts a thread on each of the repository's open issues labeled skel in skel's copy that has
+// Starts a thread on each of the repository's open issues labeled skelcrew in skel's copy that has
 // none, exactly as skel start does, then reacts to the issue with 👀 and tells the
 // repository's lead. Thread rows are read after GitHub answers, so a thread skel start made
 // meanwhile counts. A task in `starting`, named as owner/repo#number, is left to the skel start
@@ -35,7 +35,7 @@ async function startLabeled(
     .all(owner, repo)
     .map((row) => Thread.parse(row));
   const labeled = openTasks(db, owner, repo)
-    .filter((task) => task.labels.includes("skel") && !starting.has(`${fullName}#${task.id}`))
+    .filter((task) => task.labels.includes("skelcrew") && !starting.has(`${fullName}#${task.id}`))
     .map((task) => ({ number: Number(task.id), title: task.title }));
   for (const issue of labeledToStart(threads, labeled)) {
     // One skel start took meanwhile waits for the next poll.
@@ -84,7 +84,7 @@ export async function keepThreadsTasks(db: Database): Promise<void> {
 
 // Polls one repository: brings skel's copy of its issues and PRs up to date with what
 // changed since `since`, or with everything open without it, starts threads on its issues
-// labeled skel, then acts on what each of its threads' PRs means for the thread. Returns the
+// labeled skelcrew, then acts on what each of its threads' PRs means for the thread. Returns the
 // `since` of the next poll. Thread rows are read again after GitHub answers, since a round can
 // change them while it waits.
 async function pollRepository(

@@ -30,7 +30,7 @@ const onGitHub = (full: string) => join(home, "github", full);
 function fakePlugin(folder: string, version: string, more = ""): void {
   mkdirSync(folder, { recursive: true });
   writeFileSync(
-    join(folder, "skel-plugin.yaml"),
+    join(folder, "skelcrew-plugin.yaml"),
     `name: fake
 version: ${version}
 skel: 0.4.0
@@ -44,11 +44,11 @@ ${more}`,
   );
   writeFileSync(
     join(folder, "build.ts"),
-    `await Bun.write("built", JSON.stringify({ plugin: process.env.SKEL_PLUGIN, config: process.env.SKEL_PLUGIN_CONFIG, version: ${JSON.stringify(version)} }));\n`,
+    `await Bun.write("built", JSON.stringify({ plugin: process.env.SKELCREW_PLUGIN, config: process.env.SKELCREW_PLUGIN_CONFIG, version: ${JSON.stringify(version)} }));\n`,
   );
   writeFileSync(
     join(folder, "setup.sh"),
-    'echo "setting up $SKEL_PLUGIN"\necho secret > "$SKEL_PLUGIN_CONFIG/token"\n',
+    'echo "setting up $SKELCREW_PLUGIN"\necho secret > "$SKELCREW_PLUGIN_CONFIG/token"\n',
   );
   writeFileSync(
     join(folder, "call.ts"),
@@ -65,12 +65,12 @@ if (question.ask === "stuck") {
   await Bun.sleep(30_000);
 }
 if (question.ask === "bad") console.log(JSON.stringify({ number: "twelve" }));
-else console.log(JSON.stringify({ number: 12, asked: question, folder: process.cwd(), plugin: process.env.SKEL_PLUGIN, config: process.env.SKEL_PLUGIN_CONFIG }));
+else console.log(JSON.stringify({ number: 12, asked: question, folder: process.cwd(), plugin: process.env.SKELCREW_PLUGIN, config: process.env.SKELCREW_PLUGIN_CONFIG }));
 `,
   );
   writeFileSync(
     join(folder, "credentials.sh"),
-    'test "$1" = get || exit 0\ncat > /dev/null\necho username=x-access-token\necho "password=token-of-$SKEL_PLUGIN"\n',
+    'test "$1" = get || exit 0\ncat > /dev/null\necho username=x-access-token\necho "password=token-of-$SKELCREW_PLUGIN"\n',
   );
 }
 
@@ -102,7 +102,7 @@ afterEach(() => {
 
 // Runs skel as the release given, or as a build from a checkout, with what you type.
 async function skel(args: string[], typed = "", release = "", more: Record<string, string> = {}) {
-  const stamp = release ? ["--define", `SKEL_BUILD=${JSON.stringify(release)}`] : [];
+  const stamp = release ? ["--define", `SKELCREW_BUILD=${JSON.stringify(release)}`] : [];
   const run = Bun.spawn([process.execPath, ...stamp, source("main.ts"), ...args], {
     cwd: home,
     env: {
@@ -212,12 +212,12 @@ test("a repository with no version tag, or a manifest that isn't valid, is refus
   const broken = join(home, "broken");
   fakePlugin(broken, "0.1.0");
   writeFileSync(
-    join(broken, "skel-plugin.yaml"),
+    join(broken, "skelcrew-plugin.yaml"),
     "name: broken\nversion: 0.1.0\nskel: 0.4.0\nabout: x\njobs: [forge]\ncall: [bun, call.ts]\n",
   );
   const invalid = await skel(["plugin", "install", broken], "y\n");
   expect(invalid.code).toBe(1);
-  expect(invalid.err).toContain("skel-plugin.yaml isn't valid");
+  expect(invalid.err).toContain("skelcrew-plugin.yaml isn't valid");
   expect(invalid.err).toContain("git_credentials");
 
   // The tag says which version is installed, so a manifest that says otherwise is wrong.
@@ -225,7 +225,7 @@ test("a repository with no version tag, or a manifest that isn't valid, is refus
   git(onGitHub("simon/mislabeled"), "tag", "v0.2.0");
   const mislabeled = await skel(["plugin", "install", "simon/mislabeled"], "y\n");
   expect(mislabeled.code).toBe(1);
-  expect(mislabeled.err).toContain("its tag v0.2.0 says 0.2.0, and its skel-plugin.yaml 0.1.0");
+  expect(mislabeled.err).toContain("its tag v0.2.0 says 0.2.0, and its skelcrew-plugin.yaml 0.1.0");
 });
 
 test("a plugin from a folder is used where it is, and update builds it again", async () => {
@@ -285,19 +285,19 @@ test("update moves a plugin to its newest tag after asking, and removes the old 
 test("rm removes a plugin's folders and settings, and refuses for a repository's tracker", async () => {
   publish("skelcrew/skel-plugin-fake", "0.1.0");
   await skel(["plugin", "install", "skelcrew/skel-plugin-fake"], "y\n");
-  // A repository skel has, whose skel.yaml names fake as its tracker.
+  // A repository skel has, whose skelcrew.yaml names fake as its tracker.
   const db = new Database(join(home, ".local", "share", "skel", "skel.db"));
   db.run("INSERT INTO repositories (owner, repo, name) VALUES ('simon', 'app', 'app')");
   db.close();
   const clone = join(home, ".local", "share", "skel", "repos", "simon", "app");
   mkdirSync(clone, { recursive: true });
-  writeFileSync(join(clone, "skel.yaml"), "tracker: fake\n");
+  writeFileSync(join(clone, "skelcrew.yaml"), "tracker: fake\n");
   const refused = await skel(["plugin", "rm", "fake"]);
   expect(refused.code).toBe(1);
   expect(refused.err).toContain("fake is the tracker of app");
   expect(existsSync(join(plugins(), "fake", "0.1.0"))).toBe(true);
 
-  writeFileSync(join(clone, "skel.yaml"), "tracker: github\n");
+  writeFileSync(join(clone, "skelcrew.yaml"), "tracker: github\n");
   const removed = await skel(["plugin", "rm", "fake"]);
   expect(removed.err).toBe("");
   expect(removed.out).toContain("Removed fake, with its settings and tokens.");

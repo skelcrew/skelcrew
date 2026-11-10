@@ -82,7 +82,7 @@ export async function runSidebar(
   let lastStrip = "";
   // The notice's lines, above the lists, which have the height that is left.
   let notice: string[] = [];
-  // Returns a thread's round limit, from its repository's skel.yaml or your config. Settings
+  // Returns a thread's round limit, from its repository's skelcrew.yaml or your config. Settings
   // that aren't valid already stop rounds, with the reason, and mustn't also take the sidebar
   // away. Such a thread then reads as never past the limit.
   const maxRounds = (thread: Thread) => {

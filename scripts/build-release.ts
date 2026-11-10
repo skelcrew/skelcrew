@@ -23,7 +23,7 @@ const main = join(import.meta.dir, "..", "src", "main.ts");
 // stays a change to that one line.
 function releases(): string {
   const install = readFileSync(join(import.meta.dir, "..", "install.sh"), "utf8");
-  const found = install.match(/SKEL_DOWNLOAD_BASE:-([^}]+)}/)?.[1];
+  const found = install.match(/SKELCREW_DOWNLOAD_BASE:-([^}]+)}/)?.[1];
   if (!found) throw new Error("install.sh doesn't say where releases live");
   return found;
 }
@@ -35,8 +35,8 @@ function releases(): string {
 function compile(version: string, file: string, target: string): void {
   const argv = ["bun", "build", "--compile", `--target=${target}`];
   argv.push("--no-compile-autoload-dotenv", "--no-compile-autoload-bunfig");
-  argv.push("--define", `SKEL_BUILD=${JSON.stringify(version)}`);
-  argv.push("--define", `SKEL_RELEASES=${JSON.stringify(releases())}`);
+  argv.push("--define", `SKELCREW_BUILD=${JSON.stringify(version)}`);
+  argv.push("--define", `SKELCREW_RELEASES=${JSON.stringify(releases())}`);
   argv.push(main, "--outfile", join(dist, file));
   const built = Bun.spawnSync(argv, { stdout: "inherit", stderr: "inherit" });
   if (!built.success) throw new Error(`bun build failed for ${target}`);

@@ -77,16 +77,16 @@ test("builds all four binaries, stamped with the release", () => {
     expect(calls).toMatch(new RegExp(`--target=bun-${target}\\S* `));
     expect(existsSync(join(home, "dist", `skel-${target}`))).toBe(true);
   }
-  expect(calls.match(/--define SKEL_BUILD="0\.4\.2"/g)).toHaveLength(4);
+  expect(calls.match(/--define SKELCREW_BUILD="0\.4\.2"/g)).toHaveLength(4);
   expect(calls.match(/ \S+\/src\/main\.ts /g)).toHaveLength(4);
 });
 
 test("each binary knows where releases live, from the one line in the install script", () => {
   build("0.4.2");
   const install = readFileSync(join(root, "install.sh"), "utf8");
-  const releases = install.match(/SKEL_DOWNLOAD_BASE:-([^}]+)}/)?.[1];
+  const releases = install.match(/SKELCREW_DOWNLOAD_BASE:-([^}]+)}/)?.[1];
   const calls = readFileSync(join(home, "calls"), "utf8");
-  expect(calls.split(`--define SKEL_RELEASES="${releases}"`)).toHaveLength(5);
+  expect(calls.split(`--define SKELCREW_RELEASES="${releases}"`)).toHaveLength(5);
 });
 
 test("a stray .env or bunfig.toml beside a user's project can't reach the binaries", () => {

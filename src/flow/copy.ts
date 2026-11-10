@@ -117,7 +117,7 @@ export function taskOf(db: Database, owner: string, repo: string, task: number):
 }
 
 // Returns a repository's open tasks, newest first, for skel task ls and for starting a thread
-// on each one labeled skel.
+// on each one labeled skelcrew.
 export function openTasks(db: Database, owner: string, repo: string): Task[] {
   return parsed(
     db

@@ -11,7 +11,7 @@ env:
   # The one place that says where releases are published. The install script and skel itself
   # download from the `base` line in install.sh, so to move releases change both. A repository
   # other than this one also needs a RELEASES_TOKEN secret that can write to it.
-  RELEASES_REPO: skelcrew/skel
+  RELEASES_REPO: skelcrew/skelcrew
 
 permissions:
   contents: write

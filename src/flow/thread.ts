@@ -24,7 +24,7 @@ export const Thread = z.object({
   needs_you: z.coerce.boolean(),
   // The summary of a submit not yet pushed and reviewed.
   submitting: z.string().nullable(),
-  // The commit whose skel/review check is pending, while its review waits or runs.
+  // The commit whose skelcrew/check check is pending, while its review waits or runs.
   reviewing: z.string().nullable(),
   // A posted review's changes, until they are typed into the builder.
   telling: z.string().nullable(),

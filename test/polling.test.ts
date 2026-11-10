@@ -98,7 +98,7 @@ beforeEach(() => {
   fakeClaude();
   fakeCodex();
   script("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
-  // The fake GitHub: issue 12, the skel label and reactions, kept in files, PR 7 once opened,
+  // The fake GitHub: issue 12, the skelcrew label and reactions, kept in files, PR 7 once opened,
   // reviews numbered from 1001, issue 12 asked for by number answered from the file tasks
   // when it is there, the poll answered from the file graphql, failing as GitHub
   // does today while it is missing, and slow to answer, with what the file held when asked,
@@ -229,11 +229,11 @@ async function morePolls(n = 3) {
 const you = { __typename: "User", login: "simon" };
 const skelReview = { id: 1001, state: "COMMENTED", author: you, body: "**Approved.**\n\nReady." };
 
-// Issue 12, as GitHub's GraphQL API sends it in a poll, labeled skel when told.
+// Issue 12, as GitHub's GraphQL API sends it in a poll, labeled skelcrew when told.
 const issue12 = (labeled = false) =>
   issueNode(12, "Add export", {
     body: "As JSON",
-    labels: { nodes: labeled ? [{ name: "skel" }] : [] },
+    labels: { nodes: labeled ? [{ name: "skelcrew" }] : [] },
   });
 
 // Has the fake GitHub answer the next polls with issue 12, and PR 7 in the given state, in the
@@ -268,7 +268,7 @@ function pr(given: {
 
 const approved = {
   __typename: "StatusContext",
-  context: "skel/review",
+  context: "skelcrew/check",
   state: "SUCCESS",
   targetUrl: null,
 };
@@ -601,7 +601,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     expect(thread()).toMatchObject({ task: 12, title: "Add export as CSV" });
   }, 30_000);
 
-  test("an issue labeled skel starts a thread once, and one that failed isn't started again", async () => {
+  test("an issue labeled skelcrew starts a thread once, and one that failed isn't started again", async () => {
     // A builder that can't start, so the thread fails.
     script(
       "claude",
@@ -611,7 +611,7 @@ echo "Not logged in"; exit 1`,
     addApp();
     serve();
     await until(() => read(join(home, "gh", "label")) !== "");
-    expect(JSON.parse(read(join(home, "gh", "label")))).toMatchObject({ name: "skel" });
+    expect(JSON.parse(read(join(home, "gh", "label")))).toMatchObject({ name: "skelcrew" });
     pr({ labeled: true });
     const lead = () => read(join(data(), "claude", leadName, "typed"));
     await until(() => lead().includes("started app-12 from GitHub: Add export"));

@@ -134,12 +134,12 @@ test("posts a review asking for changes as a comment that states the verdict", a
   });
 });
 
-test("sets the skel/review check on a commit", async () => {
+test("sets the skelcrew/check status on a commit", async () => {
   gh('{"id":3,"state":"pending"}');
   await setReviewStatus("simon/app", "abc123", "pending", "Reviewing");
   expect(sent()).toEqual({
     args: ["api", "repos/simon/app/statuses/abc123", "--method", "POST", "--input", "-"],
-    input: { state: "pending", context: "skel/review", description: "Reviewing" },
+    input: { state: "pending", context: "skelcrew/check", description: "Reviewing" },
   });
 });
 
@@ -147,7 +147,7 @@ test("cuts a long check description to what GitHub accepts", async () => {
   gh('{"id":3,"state":"failure"}');
   await setReviewStatus("simon/app", "abc123", "failure", "x".repeat(200));
   const input = sent().input;
-  expect(input).toMatchObject({ state: "failure", context: "skel/review" });
+  expect(input).toMatchObject({ state: "failure", context: "skelcrew/check" });
   expect(JSON.stringify(input)).toContain(`"description":"${"x".repeat(140)}"`);
   expect(JSON.stringify(input)).not.toContain("x".repeat(141));
 });
@@ -203,16 +203,16 @@ test("a failure to ask GitHub is an error, not a no", async () => {
   await expect(canPush("simon/app", "ana")).rejects.toThrow("HTTP 502");
 });
 
-test("creates the skel label in a repository", async () => {
-  gh('{"name":"skel"}');
+test("creates the skelcrew label in a repository", async () => {
+  gh('{"name":"skelcrew"}');
   await createLabel("simon/app");
   expect(sent()).toMatchObject({
     args: ["api", "repos/simon/app/labels", "--method", "POST", "--input", "-"],
-    input: { name: "skel" },
+    input: { name: "skelcrew" },
   });
 });
 
-test("a skel label the repository already has is fine", async () => {
+test("a skelcrew label the repository already has is fine", async () => {
   gh("gh: Validation Failed (HTTP 422)", 1);
   await createLabel("simon/app");
 });
@@ -235,7 +235,7 @@ test("without a since, reads every open issue and PR as items, page by page", as
   const first = pollAnswer([
     issueNode(12, "Add export", {
       body: "As JSON",
-      labels: { nodes: [{ name: "skel" }] },
+      labels: { nodes: [{ name: "skelcrew" }] },
       updatedAt: "2026-11-06T10:00:00Z",
     }),
   ]);
@@ -261,7 +261,7 @@ cat "${home}/page$n"
     body: "As JSON",
     state: "open",
     author: { login: "simon", bot: false, you: true },
-    labels: ["skel"],
+    labels: ["skelcrew"],
     link: "https://github.com/simon/app/issues/12",
     created: "2026-11-05T10:00:00Z",
     updated: "2026-11-06T10:00:00Z",
@@ -346,7 +346,7 @@ test("a PR becomes an item with its branch, checks and reviews, in skel's words"
                   },
                   {
                     __typename: "StatusContext",
-                    context: "skel/review",
+                    context: "skelcrew/check",
                     state: "PENDING",
                     targetUrl: null,
                   },
@@ -371,7 +371,7 @@ test("a PR becomes an item with its branch, checks and reviews, in skel's words"
       author: { login: "skel", bot: true, you: false },
       checks: [
         { name: "test", id: "900", state: "failed" },
-        { name: "skel/review", id: null, state: "running" },
+        { name: "skelcrew/check", id: null, state: "running" },
       ],
       reviews: [
         {

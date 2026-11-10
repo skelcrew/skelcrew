@@ -44,7 +44,7 @@ const running = (check: Check) =>
     : ["PENDING", "EXPECTED"].includes(check.state);
 
 // Returns CI's checks, without skel's own review check, which its rounds look after.
-const ciOf = (pr: PullRequest) => pr.checks.filter((c) => c.name !== "skel/review");
+const ciOf = (pr: PullRequest) => pr.checks.filter((c) => c.name !== "skelcrew/check");
 
 // Returns what the PR's CI says, for the strip, or null when it has none. One failure is enough
 // to say so, while the rest still run.
@@ -144,10 +144,10 @@ export function decide(
     const why = `told the builder: ${told.join("; ")}`;
     return { handled, tell, failed, conflict, change, why };
   }
-  // skel's reviewer approves by setting its skel/review check, so an approved PR with every
+  // skel's reviewer approves by setting its skelcrew/check check, so an approved PR with every
   // check passed, its own included, is ready. With no CI, that check is the only one.
   const approved = pr.checks.some(
-    (c) => c.kind === "status" && c.name === "skel/review" && c.state === "SUCCESS",
+    (c) => c.kind === "status" && c.name === "skelcrew/check" && c.state === "SUCCESS",
   );
   if (quiet && !thread.needs_you && approved && pr.checks.every(checkPassed))
     return {
@@ -163,7 +163,7 @@ export function decide(
 
 type Labeled = { number: number; title: string };
 
-// Returns the issues labeled skel that get a thread: those with no thread at all. A thread
+// Returns the issues labeled skelcrew that get a thread: those with no thread at all. A thread
 // that failed, was stopped or is done keeps its row, so its label never starts it again;
 // only skel start does.
 export function labeledToStart(threads: Thread[], labeled: Labeled[]): Labeled[] {
@@ -205,7 +205,7 @@ type Outcome = {
 };
 
 // Decides what a finished review means for a thread that has had `rounds` rounds of changes:
-// the skel/review check to set, the thread's new state, and what to type into the builder,
+// the skelcrew/check check to set, the thread's new state, and what to type into the builder,
 // if anything. The builder gets max_rounds rounds of changes to fix. A review asking for
 // changes after those is posted but not typed in, only held for skel start to let the thread
 // go on, and, like a failed review, the thread then needs you. An approved thread waits on

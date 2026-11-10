@@ -80,12 +80,12 @@ test("runs a plugin's bun commands on the Bun inside it", async () => {
   const folder = join(home, "skel-plugin-fake");
   mkdirSync(folder);
   writeFileSync(
-    join(folder, "skel-plugin.yaml"),
+    join(folder, "skelcrew-plugin.yaml"),
     "name: fake\nversion: 0.1.0\nskel: 0.4.0\nabout: x\njobs: [tracker]\nbuild: [[bun, build.ts]]\ncall: [bun, call.ts]\n",
   );
   writeFileSync(
     join(folder, "build.ts"),
-    'await Bun.write("built", process.env.SKEL_PLUGIN ?? "");\n',
+    'await Bun.write("built", process.env.SKELCREW_PLUGIN ?? "");\n',
   );
   const installed = await run(["plugin", "install", folder], skel, "y\n");
   expect(installed.err).toBe("");
@@ -110,7 +110,7 @@ test("says which release it is, or which commit a build from a checkout came fro
   const main = source("main.ts");
   const said = (build: string) => {
     const file = join(home, "stamped", build, "skel");
-    compile(main, file, ["--define", `SKEL_BUILD=${JSON.stringify(build)}`]);
+    compile(main, file, ["--define", `SKELCREW_BUILD=${JSON.stringify(build)}`]);
     return Bun.spawnSync([file, "--version"]).stdout.toString();
   };
   expect(said("0.4.2")).toBe("skel 0.4.2\n");
@@ -129,7 +129,7 @@ test("a build nobody stamped doesn't pretend to know what it is", () => {
 test("the sidebar's header shows the release of the skel that runs it", async () => {
   const file = join(home, "released", "skel");
   const main = source("main.ts");
-  compile(main, file, ["--define", 'SKEL_BUILD="0.4.2"']);
+  compile(main, file, ["--define", 'SKELCREW_BUILD="0.4.2"']);
   const agents = `skel-compiled-test-${process.pid}`;
   const tmux = (...args: string[]) =>
     Bun.spawnSync(["tmux", "-L", `${agents}-screen`, "-f", "/dev/null", ...args], {
@@ -191,9 +191,9 @@ describe("a release setting up a server", () => {
     const main = source("main.ts");
     compile(main, released, [
       "--define",
-      'SKEL_BUILD="0.4.2"',
+      'SKELCREW_BUILD="0.4.2"',
       "--define",
-      `SKEL_RELEASES="http://127.0.0.1:${server.port}"`,
+      `SKELCREW_RELEASES="http://127.0.0.1:${server.port}"`,
     ]);
     fake("ssh", newServer);
     fake("scp", 'for word; do test -f "$word" && cp "$word" "$HOME/copied"; done; exit 0');

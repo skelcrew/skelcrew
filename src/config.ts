@@ -1,5 +1,5 @@
 // Settings, in two layers: your own in config.yaml, which the first run saves, and what a
-// repository's committed skel.yaml shares with everyone who works on it, which comes first.
+// repository's committed skelcrew.yaml shares with everyone who works on it, which comes first.
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse, parseDocument } from "yaml";
@@ -80,22 +80,22 @@ function yoursAgainst<T extends z.ZodType>(schema: T): z.infer<T> {
   return read.data;
 }
 
-// Returns the repository's skel.yaml, read from skel's own clone against `schema`, as nothing
+// Returns the repository's skelcrew.yaml, read from skel's own clone against `schema`, as nothing
 // when it has none, or throws when it isn't valid. skel's clone is at the default branch, so a
 // change counts once it is pushed there. The file comes from the repository and skel reads it
 // with your rights, so a link, which could show it any file of yours, is refused.
 function sharedAgainst<T extends z.ZodType>(schema: T, repository: Repository): z.infer<T> {
-  const file = join(cloneDir(repository.owner, repository.repo), "skel.yaml");
+  const file = join(cloneDir(repository.owner, repository.repo), "skelcrew.yaml");
   const stat = lstatSync(file, { throwIfNoEntry: false });
   if (stat && !stat.isFile())
-    throw new Error("the repository's skel.yaml isn't a plain file, so skel won't read it");
+    throw new Error("the repository's skelcrew.yaml isn't a plain file, so skel won't read it");
   const read = schema.safeParse(stat ? (parse(readFileSync(file, "utf8")) ?? {}) : {});
   if (!read.success)
-    throw new Error(`the repository's skel.yaml isn't valid: ${z.prettifyError(read.error)}`);
+    throw new Error(`the repository's skelcrew.yaml isn't valid: ${z.prettifyError(read.error)}`);
   return read.data;
 }
 
-// Returns a role's harness and model, as the repository's skel.yaml sets them over yours, with
+// Returns a role's harness and model, as the repository's skelcrew.yaml sets them over yours, with
 // `top` your top-level harness. Your model goes along only while the role stays on the harness
 // your config gives it, as a model name belongs to its harness.
 function layered(
@@ -110,7 +110,7 @@ function layered(
 }
 
 // Returns the harness and model of the lead, builders and reviews, each by roleOn's rule: for a
-// repository, with its skel.yaml over your config, and with none, from your config alone. A
+// repository, with its skelcrew.yaml over your config, and with none, from your config alone. A
 // second view on another model is yours to choose, such as with reviewer: { harness: codex }.
 export function agentRoles(repository?: Repository): { lead: Role; builder: Role; reviewer: Role } {
   const yours = yoursAgainst(Roles);
@@ -124,7 +124,7 @@ export function agentRoles(repository?: Repository): { lead: Role; builder: Role
 }
 
 // Returns what a repository's threads run with: each agent's harness and model, as agentRoles
-// gives them, and the round limit, from its skel.yaml, else your config, else 3.
+// gives them, and the round limit, from its skelcrew.yaml, else your config, else 3.
 export function threadConfig(
   repository: Repository,
 ): ReturnType<typeof agentRoles> & { maxRounds: number } {
@@ -133,11 +133,11 @@ export function threadConfig(
   return { ...agentRoles(repository), maxRounds };
 }
 
-// Returns the setup commands in the repository's skel.yaml, or none when it has none.
+// Returns the setup commands in the repository's skelcrew.yaml, or none when it has none.
 export const repositorySetup = (repository: Repository): string[] =>
   sharedAgainst(Setup, repository).setup ?? [];
 
-// Returns the plugin the repository's skel.yaml names as its tracker, or nothing when it
+// Returns the plugin the repository's skelcrew.yaml names as its tracker, or nothing when it
 // names none.
 export const repositoryTracker = (repository: Repository): string | undefined =>
   sharedAgainst(Tracker, repository).tracker;

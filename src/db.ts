@@ -41,7 +41,7 @@ function prepareTables(db: Database): void {
     name TEXT NOT NULL UNIQUE,
     PRIMARY KEY (owner, repo)
   )`);
-  // Whether skel made sure the repository has the skel label. A repository saved before this
+  // Whether skel made sure the repository has the skelcrew label. A repository saved before this
   // column existed gets it once, when the daemon next refreshes its clone.
   if (!db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = 'labeled'").get())
     db.run("ALTER TABLE repositories ADD COLUMN labeled INTEGER NOT NULL DEFAULT 0");
