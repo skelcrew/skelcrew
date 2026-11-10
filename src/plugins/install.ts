@@ -1,5 +1,5 @@
 // skel plugin: installing a plugin from its newest version tag on GitHub or from a folder of
-// yours, updating, removing and listing plugins. Only you run these, in your own terminal.
+// yours, updating, setting up again, removing and listing plugins. Only you run these, in your own terminal.
 import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -109,22 +109,37 @@ function agreed(manifest: Manifest, from: string, verb: string): boolean {
   return ["y", "yes"].includes(answer?.trim().toLowerCase() ?? "");
 }
 
-// Runs a plugin's build commands, then its setup in your terminal, in the plugin's folder.
-// Throws when one fails.
+// Runs one of a plugin's commands in your terminal, in the plugin's folder, so a setup can ask
+// you things. Throws when it fails.
+function runInTerminal(manifest: Manifest, folder: string, words: string[]): void {
+  const { argv, env } = commandFor(manifest.name, words);
+  const run = Bun.spawnSync(argv, {
+    cwd: folder,
+    env: { ...process.env, ...env },
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  if (!run.success) throw new Error(`${manifest.name}'s ${clean(words.join(" "))} failed`);
+}
+
+// Runs a plugin's build commands, then its setup, in the plugin's folder. Throws when one
+// fails.
 function buildAndSetUp(manifest: Manifest, folder: string, setup: boolean): void {
   const commands = [
     ...(manifest.build ?? []),
     ...(setup && manifest.setup ? [manifest.setup] : []),
   ];
-  for (const words of commands) {
-    const { argv, env } = commandFor(manifest.name, words);
-    const run = Bun.spawnSync(argv, {
-      cwd: folder,
-      env: { ...process.env, ...env },
-      stdio: ["inherit", "inherit", "inherit"],
-    });
-    if (!run.success) throw new Error(`${manifest.name}'s ${clean(words.join(" "))} failed`);
-  }
+  for (const words of commands) runInTerminal(manifest, folder, words);
+}
+
+// Runs an installed plugin's setup again in your terminal, for skel plugin setup, such as to
+// sign in again once its sign-in has lapsed. Reinstalling would do it too, but would fetch and
+// build the plugin again for nothing.
+export function setUpPlugin(name: string): void {
+  const { folder } = findPlugin(openDb(), name);
+  const manifest = readManifest(folder);
+  if (!manifest.setup) throw new Error(`${name} has no setup to run`);
+  runInTerminal(manifest, folder, manifest.setup);
+  console.log(`Ran ${name}'s setup.`);
 }
 
 // Has skel ask again which forge claims each repository that has none, once a forge is

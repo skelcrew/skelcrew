@@ -30,6 +30,7 @@ const yoursOnly: Record<string, string> = {
   "remote add": "setting up a machine",
   "plugin install": "installing a plugin",
   "plugin update": "updating a plugin",
+  "plugin setup": "setting up a plugin",
   "plugin rm": "removing a plugin",
   "plugin ls": "listing plugins",
 };
@@ -172,14 +173,16 @@ async function repoCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
-// Installs, updates, removes or lists plugins, for skel plugin. Only ls takes --json.
+// Installs, updates, sets up again, removes or lists plugins, for skel plugin. Only ls takes
+// --json.
 async function pluginCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
-  const { installPlugin, listPlugins, removePlugin, updatePlugins } = await import(
+  const { installPlugin, listPlugins, removePlugin, setUpPlugin, updatePlugins } = await import(
     "./plugins/install.ts"
   );
   if (sub === "install" && rest[0] && rest.length === 1) return installPlugin(rest[0]);
   if (sub === "update" && rest.length <= 1) return updatePlugins(rest[0]);
+  if (sub === "setup" && rest[0] && rest.length === 1) return setUpPlugin(rest[0]);
   if (sub === "rm" && rest[0] && rest.length === 1) return removePlugin(rest[0]);
   if (sub === "ls" && rest.filter((arg) => arg !== "--json").length === 0)
     return listPlugins(rest.includes("--json"));

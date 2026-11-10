@@ -58,6 +58,11 @@ if (question.ask === "fail") {
   console.error("the token expired");
   process.exit(1);
 }
+// A plugin whose sign-in lapsed says so with its own exit code.
+if (question.ask === "lapsed") {
+  console.error("your sign-in ran out");
+  process.exit(2);
+}
 if (question.ask === "slow") await Bun.sleep(30_000);
 // A plugin that hangs in a program it started, which keeps its output open after it ends.
 if (question.ask === "stuck") {
@@ -314,8 +319,41 @@ test("rm removes a plugin's folders and settings, and refuses for a repository's
   expect(existsSync(settings("fake"))).toBe(false);
 });
 
+test("setup runs an installed plugin's setup again in your terminal, and nothing else", async () => {
+  publish("skelcrew/skel-plugin-fake", "0.1.0");
+  await skel(["plugin", "install", "skelcrew/skel-plugin-fake"], "y\n");
+  const built = join(plugins(), "fake", "0.1.0", "built");
+  rmSync(built);
+  rmSync(join(settings("fake"), "token"));
+  const { out, err, code } = await skel(["plugin", "setup", "fake"]);
+  expect(err).toBe("");
+  expect(code).toBe(0);
+  expect(out).toBe("setting up fake\nRan fake's setup.\n");
+  expect(readFileSync(join(settings("fake"), "token"), "utf8")).toBe("secret\n");
+  // Its build ran once, at install, and setup doesn't run it again.
+  expect(existsSync(built)).toBe(false);
+  const none = await skel(["plugin", "setup", "nothing"]);
+  expect(none.code).toBe(1);
+  expect(none.err).toContain("no plugin named nothing");
+});
+
+test("setup says so for a plugin with no setup, and when its setup fails", async () => {
+  const folder = join(home, "skel-plugin-fake");
+  fakePlugin(folder, "0.1.0");
+  await skel(["plugin", "install", "./skel-plugin-fake"], "y\n");
+  writeFileSync(join(folder, "setup.sh"), "exit 1\n");
+  const failed = await skel(["plugin", "setup", "fake"]);
+  expect(failed.code).toBe(1);
+  expect(failed.err).toBe("skel: fake's sh setup.sh failed\n");
+  const manifest = join(folder, "skel-plugin.yaml");
+  writeFileSync(manifest, readFileSync(manifest, "utf8").replace("setup: [sh, setup.sh]\n", ""));
+  const none = await skel(["plugin", "setup", "fake"]);
+  expect(none.code).toBe(1);
+  expect(none.err).toBe("skel: fake has no setup to run\n");
+});
+
 test("agents can't run skel plugin", async () => {
-  for (const sub of ["install", "update", "rm", "ls"]) {
+  for (const sub of ["install", "update", "setup", "rm", "ls"]) {
     const { err, code } = await skel(["plugin", sub, "x"], "", "", { SKEL_SANDBOX: "1" });
     expect(code).toBe(1);
     expect(err).toContain("is only for your own terminal, not for agents");
@@ -346,6 +384,9 @@ try {
     config: settings("fake"),
   });
   expect((await ask('{ ask: "fail" }')).out).toBe("error: fake failed: the token expired\n");
+  expect((await ask('{ ask: "lapsed" }')).out).toBe(
+    "error: fake failed: your sign-in ran out. Run skel plugin setup fake to set it up again.\n",
+  );
   expect((await ask('{ ask: "bad" }')).out).toContain(
     "error: fake answered in a way skel doesn't understand",
   );

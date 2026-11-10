@@ -239,13 +239,13 @@ git_credentials: [bun, credentials.ts]
 
 Each command is a list of words, run in the plugin's folder and never through a shell. `build` and `setup` are optional, and each job needs the commands the table gives it. `build` runs once, at install. `setup` runs in your terminal, at install, and asks for whatever the plugin needs, such as a token. A command whose first word is `bun` runs on the Bun inside skel, so a plugin written for Bun needs nothing else installed. Anything else it needs, you install yourself, as its README says.
 
-**Installing.** `skel plugin install <owner/repo>` clones the repository's newest version tag from GitHub into `~/.local/share/skel/plugins/<name>/<version>/`. It refuses a plugin that needs a newer skel. It shows the manifest and every command the plugin will run, and asks before going on. Then it runs `build` and `setup`. `skel plugin update [<name>]` moves one plugin, or all, to its newest tag the same way. `skel plugin rm <name>` removes its folders, with its settings and tokens. It refuses for the tracker or forge of a repository skel has. `skel plugin ls` lists what is installed, with each plugin's version and jobs, such as `github 0.1.0 tracker, forge`.
+**Installing.** `skel plugin install <owner/repo>` clones the repository's newest version tag from GitHub into `~/.local/share/skel/plugins/<name>/<version>/`. It refuses a plugin that needs a newer skel. It shows the manifest and every command the plugin will run, and asks before going on. Then it runs `build` and `setup`. `skel plugin update [<name>]` moves one plugin, or all, to its newest tag the same way. `skel plugin setup <name>` runs an installed plugin's `setup` again in your terminal, as install does, such as to sign in again when its sign-in has lapsed, without fetching or building it again. `skel plugin rm <name>` removes its folders, with its settings and tokens. It refuses for the tracker or forge of a repository skel has. `skel plugin ls` lists what is installed, with each plugin's version and jobs, such as `github 0.1.0 tracker, forge`.
 
 For a plugin you are writing, `skel plugin install <path>`, such as `./skel-plugin-linear`, uses that folder where it is, with no tag, and shows and asks as any install does. `skel plugin update <name>` then runs its `build` again, so your edits count. `skel plugin rm <name>` removes its settings and tokens, and never your folder. A plugin belongs to the machine the daemon runs on, so for a server or Sprite you run `skel --remote sprite:demo plugin install skelcrew/skel-plugin-github`. A machine plugin is the one exception: it belongs on your laptop, where you run `skel remote add` and `skel --remote`.
 
 **What a plugin is handed.** Each command gets `SKEL_PLUGIN`, its name, and `SKEL_PLUGIN_CONFIG`, a folder in `~/.config/skel/plugins/` for its settings and tokens, readable only by you. Their format is the plugin's own.
 
-**Calls.** skel asks a tracker or forge by running its `call` command with one JSON question on stdin. The command prints one JSON answer and exits within 60 seconds. If it exits with an error, its last line of stderr is the error. Every answer is checked before skel uses it.
+**Calls.** skel asks a tracker or forge by running its `call` command with one JSON question on stdin. The command prints one JSON answer and exits within 60 seconds. If it exits with an error, its last line of stderr is the error. Exit code 2 means the plugin needs its setup again, such as after its sign-in lapsed, and skel's error then names `skel plugin setup <name>`, the command that fixes it. Every answer is checked before skel uses it.
 
 | Question | Job | Answer |
 | --- | --- | --- |
@@ -309,6 +309,7 @@ For you, and for the lead:
 | `skel repo trust <name>` | Trusts a repository your login can't push to, so skel clones it. Only you can run it. |
 | `skel plugin install <owner/repo> \| <path>` | Installs a plugin from its newest version tag on GitHub, or from a folder of yours as it is, after showing what it runs and asking. Runs its setup. Only you can run it. |
 | `skel plugin update [<name>]` | Moves a plugin, or all of them, to its newest tag. One from a folder is built again from it. Only you can run it. |
+| `skel plugin setup <name>` | Runs an installed plugin's setup again, such as to sign in again. Only you can run it. |
 | `skel plugin rm <name>` | Removes a plugin, with its settings and tokens. A folder you installed from stays. Only you can run it. |
 | `skel plugin ls` | Lists the plugins installed, with their versions and jobs: tracker, forge, chat or machine. Only you can run it. |
 | `skel task ls [<repo>]` | Open tasks, newest first, from skel's copy of the tracker, with the thread on each one if it has one. `--json` for tools. |
