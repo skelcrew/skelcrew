@@ -121,8 +121,9 @@ export async function runSidebar(
     // The tabs and the strip go to tmux's status lines, and only when they changed.
     const width = paneWidth(screenSocket(agents), right);
     const left = size().width + 1;
-    const strip = drawStrip(rows, shown, { left, width }, where, release, page);
-    const lines = [drawTabs(tabs, `${open.owner}/${open.repo}`, left + width), ...strip];
+    // The header above the sidebar and the tabs above the agent share the first line.
+    const [top, about, line] = drawStrip(rows, shown, { left, width }, where, release, page);
+    const lines = [`${top}${drawTabs(tabs, `${open.owner}/${open.repo}`, width)}`, about, line];
     if (lines.join("\n") !== lastStrip) {
       lastStrip = lines.join("\n");
       showStrip(screenSocket(agents), session, lines);

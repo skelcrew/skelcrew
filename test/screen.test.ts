@@ -243,7 +243,7 @@ test("updates on its own, with needs you in the sidebar", async () => {
   expect(seen()).toContain("● app-12");
   expect(seen()).toContain("needs you");
   // Its tab says so too, as other repositories' tabs would.
-  expect(seen().split("\n")[0]?.trimEnd()).toBe("  app •1");
+  expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^ {2}Skelcrew +app •1$/);
   sql("UPDATE threads SET status = 'done' WHERE task = 7");
   await until(() => !seen().includes("app-7"), "the done thread to go");
 });
@@ -508,7 +508,7 @@ test("the strip sits above the agent, and the agent's height stays as you switch
   expect(readFileSync(join(home, "app-12.size"), "utf8")).toBe(height);
 });
 
-test("under the tabs, the header is the second row and the thin line the third, with no blank rows", async () => {
+test("the header and the tabs share the first row, the strip is the second and the thin line the third", async () => {
   sql("UPDATE threads SET title = 'Fix the login', pr = 34 WHERE task = 7");
   open("lead");
   await ready("lead");
@@ -516,8 +516,12 @@ test("under the tabs, the header is the second row and the thin line the third, 
   press("M-Down");
   await until(() => seen().includes("#34"), "the strip");
   const lines = seen().split("\n");
-  expect(lines[0]?.trimEnd()).toBe("  app");
-  expect(lines[1]).toStartWith("  Skelcrew");
+  // Skelcrew above the sidebar, and the tab above the agent, where the agent's text starts.
+  expect(lines[0]?.trimEnd()).toMatch(/^ {2}Skelcrew +app$/);
+  // The open tab's grey starts where the agent's text does, with its name one column in.
+  expect(lines[0]?.indexOf("app")).toBe((lines[3]?.indexOf("I am") ?? 0) + 1);
+  // The strip is above the agent, with nothing above the sidebar.
+  expect(lines[1]?.slice(0, sidebar).trim()).toBe("");
   expect(lines[1]).toContain("#34");
   expect(lines[2]).toStartWith("───");
   expect(lines[3]).toContain("I am app-7");
@@ -526,9 +530,10 @@ test("under the tabs, the header is the second row and the thin line the third, 
 test("above the sidebar it says just Skelcrew, in white, when no laptop sent you here", async () => {
   open("lead");
   await ready("lead");
-  await until(() => seen().split("\n")[1]?.trimEnd() === "  Skelcrew", "the header");
+  const above = () => (seen().split("\n")[0] ?? "").slice(0, sidebar).trimEnd();
+  await until(() => above() === "  Skelcrew", "the header");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
-  const header = colours.split("\n")[1];
+  const header = colours.split("\n")[0];
   expect(header).toContain("\x1b[1m");
   expect(header).toContain("38;5;231m");
 });
@@ -538,7 +543,7 @@ test("each terminal says where it came from, as they can come from different lap
   await ready("lead");
   open("lead", "two");
   await ready("lead", "two");
-  const place = (window: string) => seen(window).split("\n")[1] ?? "";
+  const place = (window: string) => (seen(window).split("\n")[0] ?? "").slice(0, sidebar);
   await until(() => place("one").startsWith("  Skelcrew · sprite:demo"), "the first place");
   await until(() => place("two").trimEnd() === "  Skelcrew", "the second header", "two");
 });
@@ -1173,14 +1178,14 @@ INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you) VALUE
   ('simon', 'site', 8, 'site-8', 'skelcrew/8', 'waiting', 1);`);
   agent(siteLead);
 }
-// The row of tabs, as you see it.
+// The top row as you see it: Skelcrew above the sidebar, then the tabs above the agent.
 const tabRow = () => (seen().split("\n")[0] ?? "").trimEnd();
 
 test("a tab for each repository runs across the top, with a badge for what needs you", async () => {
   addSite();
   open("lead");
   await ready("lead");
-  await until(() => tabRow() === "  app  site •1", "the tabs");
+  await until(() => /^ {2}Skelcrew +app {2}site •1$/.test(tabRow()), "the tabs");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out.split("\n")[0];
   // The open one is on a picked row's grey.
   expect(colours).toContain("48;5;238");
