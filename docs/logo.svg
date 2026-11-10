@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="150 110 760 800" role="img" aria-label="Skelcrew">
+  <style>
+    .mark { fill: #1f2328; }
+    .edge { stroke: #1f2328; }
+    @media (prefers-color-scheme: dark) {
+      .mark { fill: #e6edf3; }
+      .edge { stroke: #e6edf3; }
+    }
+  </style>
+  <g class="mark">
+    <rect x="362" y="128" width="524" height="146"/>
+    <rect x="287" y="252" width="151" height="146"/>
+    <rect x="362" y="376" width="449" height="146"/>
+    <rect x="736" y="500" width="150" height="146"/>
+    <rect x="287" y="624" width="524" height="146"/>
+  </g>
+  <path class="edge" stroke-opacity="0.4" stroke-width="14" fill="none" d="M350 155 300 252M275 278l-50 100M176 398v122M225 525l50 102M275 650l-50 100M176 770v122M215 889h521M800 773l-54 102M873 650l-53 100M873 278l-53 100"/>
+</svg>
