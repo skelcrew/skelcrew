@@ -4,6 +4,7 @@ import type { Item } from "./copy.ts";
 import type { Review } from "./reviewer.ts";
 import type { Thread } from "./thread.ts";
 
+// How an event changes the thread's status and its needs you flag.
 type Change = Partial<Pick<Thread, "status" | "needs_you">>;
 export type PullRequest = Extract<Item, { kind: "pr" }>;
 export type Check = PullRequest["checks"][number];
@@ -17,6 +18,8 @@ export const reviewCheck = "skelcrew/check";
 // you, whatever its builder or reviewer does, until you let it go on.
 export const pastLimit = (thread: Thread, maxRounds: number) => thread.rounds > maxRounds;
 
+// What decide says to do with a thread: end it, with the reason, or tell its builder what is
+// new and change the thread.
 export type Decision =
   | { end: string }
   | {
@@ -51,6 +54,7 @@ export function ciChecks(pr: PullRequest): Thread["checks"] {
 // to those counts as handled. One that never took in its PR's history has neither.
 function handledBefore(thread: Thread, pr: PullRequest): Set<string> | null {
   if (thread.seen !== null) return new Set(thread.seen);
+  // An older thread: count as handled every numeric ID up to the last of its kind.
   const { last_review, last_comment, last_check } = thread;
   if (last_review === null || last_comment === null || last_check === null) return null;
   const upTo = (last: number) => (id: string) => /^\d+$/.test(id) && Number(id) <= last;
@@ -69,8 +73,11 @@ function handledBefore(thread: Thread, pr: PullRequest): Set<string> | null {
 // anyone can comment, and what is typed in steers the builder. Skelcrew's own reviews come from
 // its forge's app, a bot.
 export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: number }): Decision {
+  // A merged or closed PR ends the thread.
   if (pr.state === "merged") return { end: `PR #${thread.pr} was merged` };
   if (pr.state === "closed") return { end: `PR #${thread.pr} was closed without merging` };
+  // A thread with nothing to go on takes in everything the PR shows as handled, so its whole
+  // history isn't typed into the builder at once.
   const runs = pr.checks.flatMap((check) => (check.id === null ? [] : [check.id]));
   const shown = [...pr.reviews.map((r) => r.id), ...pr.comments.map((c) => c.id), ...runs];
   const before = handledBefore(thread, pr);
@@ -83,6 +90,8 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
   const wakes = (author: Author) =>
     author !== null && !author.bot && (author.you || (!past && author.push === true));
   const who = (author: Author) => author?.login ?? "someone";
+  // New reviews and comments from those who may wake the builder are typed in, a review with
+  // its comments on lines.
   const tell: string[] = [];
   const reviews = pr.reviews.filter((r) => !before.has(r.id));
   for (const r of reviews) {
@@ -107,6 +116,7 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
   const failed = finished
     ? ci.filter((c) => c.state === "failed" && (c.id === null ? quiet : !before.has(c.id)))
     : [];
+  // A conflict with the base is told with how to fix it.
   const conflict = quiet && pr.conflicts ? pr.base : null;
   if (conflict !== null)
     tell.push(
@@ -120,6 +130,7 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
       comments.some((c) => c.id === id) ||
       (finished && runs.includes(id)),
   );
+  // Anything to tell sets the builder working again.
   if (tell.length > 0 || failed.length > 0) {
     const told = [...failed.map((r) => `${r.name} failed`), ...tell.map((t) => t.split("\n")[0])];
     // Past the round limit the thread still needs you, as the builder's next round would.
@@ -176,6 +187,7 @@ export function afterReview(
   maxRounds: number,
   ready: string | null,
 ): Outcome {
+  // A review that failed to give a verdict needs you, and counts no round.
   if (given.verdict === "failed")
     return {
       check: "failure",
@@ -209,6 +221,8 @@ export function afterReview(
       held: null,
       why: "approved by Skelcrew's reviewer, so it waits on CI",
     };
+  // Asking for changes counts a round. Within the limit the changes are typed in; past it they
+  // are held and the thread needs you.
   const counted = rounds + 1;
   const changes: Pick<Outcome, "check" | "description" | "rounds"> = {
     check: "failure",
