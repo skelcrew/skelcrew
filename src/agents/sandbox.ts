@@ -255,7 +255,7 @@ export function keptEnv(
   return kept;
 }
 
-// Returns the sandboxed command and environment for one of the repository's skel.yaml setup
+// Returns the sandboxed command and environment for one of the repository's skelcrew.yaml setup
 // commands, to run through a shell in the thread's clone. It comes from the repository, so it
 // runs in the sandbox like the agents, with no socket, no login and no API key.
 export function setupCommand(

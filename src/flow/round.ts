@@ -212,7 +212,7 @@ function pushAndReview(
 // way, and returns at once: a shell command can't block long, so pushing and the review go on
 // in the background. The submit is saved first, so a stop of the daemon can't lose it. A
 // review still waiting to be typed in, or held past the round limit, is dropped, as it is
-// about an older commit. Throws when your config or the repository's skel.yaml isn't valid,
+// about an older commit. Throws when your config or the repository's skelcrew.yaml isn't valid,
 // so the builder hears why, and
 // for a thread skel stop is ending, whose builder may submit while it exits.
 export function submitRound(db: Database, tmux: string, folder: string, summary: string): void {

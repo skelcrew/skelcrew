@@ -92,8 +92,8 @@ export function findPlugin(db: Database, name: string): Plugin {
   return found;
 }
 
-// Returns the repositories whose skel.yaml names the plugin as their tracker. One whose
-// skel.yaml can't be read has no tracker.
+// Returns the repositories whose skelcrew.yaml names the plugin as their tracker. One whose
+// skelcrew.yaml can't be read has no tracker.
 export function trackedBy(db: Database, name: string): Repository[] {
   return repositories(db).filter((repository) => {
     try {

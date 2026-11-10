@@ -534,11 +534,11 @@ test("repo add and init refuse inside skel's sandbox, where a yes could come fro
     expect(run.code).toBe(1);
     expect(run.err).toBe(`skel: ${what} is only for your own terminal, not for agents\n`);
   }
-  expect(existsSync(join(checkout, "skel.yaml"))).toBe(false);
+  expect(existsSync(join(checkout, "skelcrew.yaml"))).toBe(false);
   expect(existsSync(clone("simon/app"))).toBe(false);
 });
 
-test("init writes a starter skel.yaml with your harness and model for each role, and adds the repository", async () => {
+test("init writes a starter skelcrew.yaml with your harness and model for each role, and adds the repository", async () => {
   writeFileSync(
     join(home, ".config", "skel", "config.yaml"),
     "harness: claude\nmodel: sonnet\nlead: { model: opus }\nreviewer: { harness: codex }\n",
@@ -548,7 +548,7 @@ test("init writes a starter skel.yaml with your harness and model for each role,
   const run = await skel(["init"], "", join(checkout, "src"));
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(readFileSync(join(checkout, "skel.yaml"), "utf8")).toBe(
+  expect(readFileSync(join(checkout, "skelcrew.yaml"), "utf8")).toBe(
     `# Shared with everyone who works on this repository. Never put a secret here.
 lead:     { harness: claude, model: opus }
 builder:  { harness: claude, model: sonnet }
@@ -560,7 +560,7 @@ reviewer: { harness: codex }
   expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
   expect(run.out).toContain("Added simon/app, as app.");
   expect(run.out).toContain(
-    "Wrote skel.yaml. skel reads it from its own clone, so it counts once you commit it and push it to the default branch.",
+    "Wrote skelcrew.yaml. skel reads it from its own clone, so it counts once you commit it and push it to the default branch.",
   );
 });
 
@@ -572,20 +572,20 @@ test("init writes model names that read back as the same text", async () => {
   );
   const checkout = onGitHub("simon/app", "WRITE");
   expect((await skel(["init"], "", checkout)).err).toBe("");
-  expect(parse(readFileSync(join(checkout, "skel.yaml"), "utf8"))).toEqual({
+  expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8"))).toEqual({
     lead: { harness: "claude", model: "true" },
     builder: { harness: "claude", model: "null" },
     reviewer: { harness: "claude", model: "123" },
   });
 });
 
-test("init leaves a skel.yaml that is there alone", async () => {
+test("init leaves a skelcrew.yaml that is there alone", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
-  writeFileSync(join(checkout, "skel.yaml"), "setup: [make]\n");
+  writeFileSync(join(checkout, "skelcrew.yaml"), "setup: [make]\n");
   const run = await skel(["init"], "", checkout);
   expect(run.code).toBe(0);
-  expect(readFileSync(join(checkout, "skel.yaml"), "utf8")).toBe("setup: [make]\n");
-  expect(run.out).toContain("skel.yaml is there already, so skel left it as it is.");
+  expect(readFileSync(join(checkout, "skelcrew.yaml"), "utf8")).toBe("setup: [make]\n");
+  expect(run.out).toContain("skelcrew.yaml is there already, so skel left it as it is.");
   expect(run.out).toContain("Added simon/app, as app.");
 });
 
@@ -602,7 +602,7 @@ test("init stops outside a git repository, and in one with no remote", async () 
   expect(none.err).toBe(
     "skel: skel init needs the repository on GitHub, and this checkout has no remote there. Push it to GitHub first.\n",
   );
-  expect(existsSync(join(checkout, "skel.yaml"))).toBe(false);
+  expect(existsSync(join(checkout, "skelcrew.yaml"))).toBe(false);
 });
 
 // A git template, or anything else, could put a credential in a new clone's config. The lead

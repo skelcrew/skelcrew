@@ -176,7 +176,7 @@ export function baseOf(thread: Thread): string {
 export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   const clone = cloneOf(thread);
   // skel's clone of the repository can still be on its way, as the daemon refreshes clones as
-  // it starts, and its skel.yaml, which sets up the thread, must be the latest pushed. Asking
+  // it starts, and its skelcrew.yaml, which sets up the thread, must be the latest pushed. Asking
   // for a refresh joins the one under way.
   await refreshClones(db);
   rmSync(clone, { recursive: true, force: true });
@@ -212,7 +212,7 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   refuseCredentials(clone);
   for (const command of repositorySetup(thread)) {
     const { argv, env } = setupCommand(clone, command);
-    await mustRun(argv, `the repository's skel.yaml setup command "${command}"`, env);
+    await mustRun(argv, `the repository's skelcrew.yaml setup command "${command}"`, env);
   }
 }
 

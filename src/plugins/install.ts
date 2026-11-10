@@ -239,7 +239,7 @@ export function updatePlugins(name?: string): void {
 
 // Removes a plugin with its settings and tokens, for skel plugin rm. A plugin from GitHub
 // loses its folders too, and a folder of yours stays. It refuses while a repository skel has
-// names the plugin as its tracker in skel.yaml, as that repository would lose its tasks.
+// names the plugin as its tracker in skelcrew.yaml, as that repository would lose its tasks.
 export function removePlugin(name: string): void {
   const db = openDb();
   const plugin = findPlugin(db, name);

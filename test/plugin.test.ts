@@ -285,19 +285,19 @@ test("update moves a plugin to its newest tag after asking, and removes the old 
 test("rm removes a plugin's folders and settings, and refuses for a repository's tracker", async () => {
   publish("skelcrew/skel-plugin-fake", "0.1.0");
   await skel(["plugin", "install", "skelcrew/skel-plugin-fake"], "y\n");
-  // A repository skel has, whose skel.yaml names fake as its tracker.
+  // A repository skel has, whose skelcrew.yaml names fake as its tracker.
   const db = new Database(join(home, ".local", "share", "skel", "skel.db"));
   db.run("INSERT INTO repositories (owner, repo, name) VALUES ('simon', 'app', 'app')");
   db.close();
   const clone = join(home, ".local", "share", "skel", "repos", "simon", "app");
   mkdirSync(clone, { recursive: true });
-  writeFileSync(join(clone, "skel.yaml"), "tracker: fake\n");
+  writeFileSync(join(clone, "skelcrew.yaml"), "tracker: fake\n");
   const refused = await skel(["plugin", "rm", "fake"]);
   expect(refused.code).toBe(1);
   expect(refused.err).toContain("fake is the tracker of app");
   expect(existsSync(join(plugins(), "fake", "0.1.0"))).toBe(true);
 
-  writeFileSync(join(clone, "skel.yaml"), "tracker: github\n");
+  writeFileSync(join(clone, "skelcrew.yaml"), "tracker: github\n");
   const removed = await skel(["plugin", "rm", "fake"]);
   expect(removed.err).toBe("");
   expect(removed.out).toContain("Removed fake, with its settings and tokens.");
