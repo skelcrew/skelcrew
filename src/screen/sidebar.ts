@@ -2,7 +2,7 @@
 // THREADS has its lead and every thread that isn't done, with what each is doing. ISSUES and PRS
 // show what is open in its tracker and forge, as links. It only shows, switches, links and opens
 // pages. Picking a thread switches the client in the right pane, and picking an issue or PR puts
-// its page there. It also keeps the tabs and the strip above that pane up to date, and switches to
+// its page there. It also keeps the row above it all up to date, with the tabs and the strip, and switches to
 // another repository's tab.
 import {
   paneTty,
@@ -34,7 +34,7 @@ import {
   sidebarRows,
 } from "./rows.ts";
 import { agentClient, pageCommand, sidebarWidth } from "./screen.ts";
-import { drawStrip, drawTabs } from "./strip.ts";
+import { drawTop } from "./strip.ts";
 
 // What the sidebar reads: Alt with an arrow as tmux sends it, 3 without Shift and 4 with it,
 // the left button going down, with its place on screen, and a click on a tab, which the
@@ -118,15 +118,15 @@ export async function runSidebar(
     // A page's row can go at a poll, and the page stays until you move, so it keeps its name.
     if (page) page = linkAt(shown) ?? page;
     else shown = shownSession(agents, tty) ?? shown;
-    // The tabs and the strip go to tmux's status lines, and only when they changed.
+    // The header, the tabs and the strip go to tmux's status line, and only when they changed.
     const width = paneWidth(screenSocket(agents), right);
     const left = size().width + 1;
-    // The header above the sidebar and the tabs above the agent share the first line.
-    const [top, about, line] = drawStrip(rows, shown, { left, width }, where, release, page);
-    const lines = [`${top}${drawTabs(tabs, `${open.owner}/${open.repo}`, width)}`, about, line];
-    if (lines.join("\n") !== lastStrip) {
-      lastStrip = lines.join("\n");
-      showStrip(screenSocket(agents), session, lines);
+    const fullName = `${open.owner}/${open.repo}`;
+    const look = { rows, shown, page, tabs, open: fullName, where, release };
+    const top = drawTop(look, { left, width });
+    if (top !== lastStrip) {
+      lastStrip = top;
+      showStrip(screenSocket(agents), session, top);
     }
     // Then the sidebar itself, the notice above its lists, also only when it changed.
     const frame = [...notice, draw(rows, lists, shown, size())].join("\n");
