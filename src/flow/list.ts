@@ -3,22 +3,43 @@
 // or JSON for tools.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
+import { repositoryTracker } from "../config.ts";
 import { cloneDir } from "../paths.ts";
+import { forgeOf, trackerOf } from "../plugins/ask.ts";
 import { openTasks, taskOf } from "./copy.ts";
 import { findRepository, noRepositories, repositories } from "./repo.ts";
 import { needsYou, Thread, threadName } from "./thread.ts";
 
-export const RepositoryRow = z.object({ name: z.string(), github: z.string(), clone: z.string() });
+// A repository as sc repo ls shows it. `missing` is a tracker its skelcrew.yaml names that
+// isn't installed, so it has none until you install that plugin.
+export const RepositoryRow = z.object({
+  name: z.string(),
+  repository: z.string(),
+  tracker: z.string().nullable(),
+  forge: z.string().nullable(),
+  missing: z.string().nullable(),
+  clone: z.string(),
+});
 export type RepositoryRow = z.infer<typeof RepositoryRow>;
 
-// Returns the repositories Skelcrew works on, in name order, with where Skelcrew keeps each clone,
-// for sc repo ls.
+// Returns the repositories Skelcrew works on, in name order, with each one's tracker and forge
+// and where Skelcrew keeps its clone, for sc repo ls.
 export function listRepositories(db: Database): RepositoryRow[] {
-  return repositories(db).map(({ name, owner, repo }) => ({
-    name,
-    github: `${owner}/${repo}`,
-    clone: cloneDir(owner, repo),
-  }));
+  return repositories(db).map((r) => {
+    const tracker = trackerOf(db, r);
+    let named: string | null = null;
+    try {
+      named = repositoryTracker(r) ?? null;
+    } catch {}
+    return {
+      name: r.name,
+      repository: `${r.owner}/${r.repo}`,
+      tracker,
+      forge: forgeOf(db, r),
+      missing: tracker === null ? named : null,
+      clone: cloneDir(r.owner, r.repo),
+    };
+  });
 }
 
 export const ThreadRow = z.object({
@@ -51,7 +72,7 @@ export const TaskRow = z.object({
 export type TaskRow = z.infer<typeof TaskRow>;
 
 // Returns how the thread on a task stands, or null when it has none.
-function threadOf(db: Database, owner: string, repo: string, task: number): TaskRow["thread"] {
+function threadOf(db: Database, owner: string, repo: string, task: string): TaskRow["thread"] {
   const row = db
     .query("SELECT * FROM threads WHERE owner = ? AND repo = ? AND task = ?")
     .get(owner, repo, task);
@@ -60,7 +81,8 @@ function threadOf(db: Database, owner: string, repo: string, task: number): Task
 }
 
 // Returns the open tasks of every repository, or of one, newest first, with the thread on
-// each one that has one, for sc task ls. They come from Skelcrew's copy, so GitHub isn't asked.
+// each one that has one, for sc task ls. They come from Skelcrew's copy, so the tracker isn't
+// asked.
 export function listTasks(db: Database, repository?: string): TaskRow[] {
   const chosen = repository ? [findRepository(db, repository)] : repositories(db);
   return chosen
@@ -69,7 +91,7 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
         created: task.created,
         task: `${r.name}-${task.id}`,
         title: task.title,
-        thread: threadOf(db, r.owner, r.repo, Number(task.id)),
+        thread: threadOf(db, r.owner, r.repo, task.id),
       })),
     )
     .sort((a, b) => b.created.localeCompare(a.created))
@@ -85,8 +107,8 @@ export const TaskView = z.object({
 export type TaskView = z.infer<typeof TaskView>;
 
 // Returns one task's title and body, which is all its builder sees, with the thread on it if
-// it has one, for sc task show. It comes from Skelcrew's copy, so GitHub isn't asked.
-export function showTask(db: Database, repository: string, task: number): TaskView {
+// it has one, for sc task show. It comes from Skelcrew's copy, so the tracker isn't asked.
+export function showTask(db: Database, repository: string, task: string): TaskView {
   const r = findRepository(db, repository);
   const { title, body } = taskOf(db, r.owner, r.repo, task);
   return { task: `${r.name}-${task}`, title, body, thread: threadOf(db, r.owner, r.repo, task) };
@@ -104,18 +126,23 @@ function table(heading: string[], rows: string[][]): void {
     );
 }
 
-// Prints repositories for sc repo ls: as JSON for tools, or else one line each, or how to
-// bring in the first one.
+// Prints repositories for sc repo ls: as JSON for tools, or else as a table, with the
+// plugin to install for a tracker a repository's skelcrew.yaml names that isn't installed, or
+// how to bring in the first one.
 export function printRepositories(repositories: RepositoryRow[], json: boolean): void {
-  if (json) {
-    console.log(JSON.stringify(repositories));
-    return;
-  }
-  const name = Math.max(...repositories.map((r) => r.name.length));
-  const github = Math.max(...repositories.map((r) => r.github.length));
-  if (repositories.length === 0) console.log(noRepositories);
-  for (const r of repositories)
-    console.log(`${r.name.padEnd(name)}  ${r.github.padEnd(github)}  ${r.clone}`);
+  if (json) console.log(JSON.stringify(repositories));
+  else if (repositories.length === 0) console.log(noRepositories);
+  else
+    table(
+      ["NAME", "REPOSITORY", "TRACKER", "FORGE", "CLONE"],
+      repositories.map((r) => [
+        r.name,
+        r.repository,
+        r.tracker ?? (r.missing ? `${r.missing}, not installed` : "none"),
+        r.forge ?? "none",
+        r.clone,
+      ]),
+    );
 }
 
 // Prints threads for sc ps: as JSON for tools, or else as a table.

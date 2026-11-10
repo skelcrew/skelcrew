@@ -1,5 +1,6 @@
 // sc task create and sc start, run as you or the lead would run them, against a running daemon,
-// a fake gh, a fake Claude Code and a folder of bare repositories standing in for GitHub.
+// a fake tracker and forge, a fake Claude Code and a folder of bare repositories standing in
+// for GitHub.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -9,20 +10,24 @@ import { join } from "node:path";
 import type { Subprocess } from "bun";
 import { stillRunning } from "../src/agents/tmux.ts";
 import {
+  answer,
+  asked,
+  fakePlugin,
   git,
   homeEnv,
-  issueNode,
-  pollAnswer,
   read,
   runSkel,
   source,
   startDaemon,
+  taskItem,
   until,
 } from "./harness.ts";
 
 const main = source("main.ts");
 let home = "";
 let socket = "";
+// The fake plugin's settings folder, where it keeps what it is asked and its answers.
+let plugin = "";
 const running: Subprocess[] = [];
 
 const data = () => join(home, ".local", "share", "skelcrew");
@@ -65,25 +70,10 @@ beforeEach(() => {
   fake("systemctl", "exit 0");
   fake("loginctl", "exit 0");
   fake("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
-  // The fake GitHub answers a poll with the issues in ~/issues/poll, and makes issue 13. It
-  // reports your permission on a repository, and whether it is a fork, from the files beside
-  // its bare repository.
-  mkdirSync(join(home, "issues"));
+  // The fake tracker answers a poll with the issues added, and makes issue 13.
   known.length = 0;
-  fake(
-    "gh",
-    `case "$*" in
-"api repos/"*"/issues --method POST --input -") cat > "$HOME/issues/sent"
-  echo '{"number":13,"title":"Add import","body":"From CSV","user":null,"labels":[],"html_url":"https://github.com/simon/app/issues/13","created_at":"2026-11-05T10:00:00Z","updated_at":"2026-11-05T10:00:00Z"}' ;;
-"api graphql --input -") cat > /dev/null; cat "$HOME/issues/poll" ;;
-"api repos/"*"/labels --method POST --input -") cat > /dev/null; echo '{"name":"Skelcrew"}' ;;
-"repo view "*) full=$3
-  test -e "$HOME/github/$full.permission" || { echo "Could not resolve to a Repository" >&2; exit 1; }
-  fork=$(test -e "$HOME/github/$full.fork" && echo true || echo false)
-  echo "{\\"name\\":\\"\${full#*/}\\",\\"owner\\":{\\"login\\":\\"\${full%/*}\\"},\\"viewerPermission\\":\\"$(cat "$HOME/github/$full.permission")\\",\\"isFork\\":$fork}" ;;
-*) exit 1 ;;
-esac`,
-  );
+  plugin = fakePlugin(home);
+  answer(plugin, "create task", taskItem("13", "Add import", { body: "From CSV", author: null }));
   issue(12, "Add export", "As JSON");
   mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: claude\n");
@@ -106,11 +96,11 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// The issues on the fake GitHub. Each one added answers the next poll along with the others.
+// The issues in the fake tracker. Each one added answers the next poll along with the others.
 const known: object[] = [];
 function issue(number: number, title: string, body: string): void {
-  known.push(issueNode(number, title, { body }));
-  writeFileSync(join(home, "issues", "poll"), JSON.stringify(pollAnswer(known)));
+  known.push(taskItem(String(number), title, { body }));
+  answer(plugin, "changed", { items: known, next: null });
 }
 
 // What this test's processes run with.
@@ -134,19 +124,20 @@ async function untilAnswers() {
 
 const github = () => join(home, "github");
 
-// Puts simon/<repo> on the fake GitHub with the files given, with your permission on it.
-// Returns a checkout to push more from.
-function onGitHub(files: Record<string, string>, repo: string, permission = "WRITE"): string {
-  const work = join(home, "work", repo);
+// Puts <owner>/<repo> on the fake GitHub with the files given. Returns a checkout to push more
+// from.
+function onGitHub(files: Record<string, string>, repo: string, owner = "simon"): string {
+  const work = join(home, "work", owner, repo);
   mkdirSync(work, { recursive: true });
   writeFileSync(join(work, "README"), "app\n");
-  for (const [name, text] of Object.entries(files)) writeFileSync(join(work, name), text);
+  // The fake plugin is the tracker, whatever else skelcrew.yaml says.
+  const shared = { ...files, "skelcrew.yaml": `tracker: github\n${files["skelcrew.yaml"] ?? ""}` };
+  for (const [name, text] of Object.entries(shared)) writeFileSync(join(work, name), text);
   git(work, "init", "-q", "-b", "main");
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");
-  git(home, "clone", "-q", "--bare", work, join(github(), "simon", `${repo}.git`));
-  git(work, "remote", "add", "origin", join(github(), "simon", `${repo}.git`));
-  writeFileSync(join(github(), "simon", `${repo}.permission`), permission);
+  git(home, "clone", "-q", "--bare", work, join(github(), owner, `${repo}.git`));
+  git(work, "remote", "add", "origin", join(github(), owner, `${repo}.git`));
   return work;
 }
 
@@ -155,7 +146,8 @@ function onGitHub(files: Record<string, string>, repo: string, permission = "WRI
 function addApp(files: Record<string, string> = {}, repo = "app"): string {
   const work = onGitHub(files, repo);
   const script = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?)", [${JSON.stringify(repo)}, ${JSON.stringify(repo)}]);`;
+openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?)", [${JSON.stringify(repo)}, ${JSON.stringify(repo)}]);
+openDb().run("UPDATE repositories SET forge = 'github', claimed = 1, remote = 'https://github.com/' || owner || '/' || repo || '.git'");`;
   const added = Bun.spawnSync([process.execPath, "-e", script], { env: env(), stderr: "pipe" });
   if (!added.success) throw new Error(added.stderr.toString());
   return work;
@@ -204,28 +196,25 @@ const hasSession = (name: string) =>
 
 const clone = () => join(data(), "threads", "app-12");
 
-test("sc task create creates a GitHub issue and prints the task's name", async () => {
+test("sc task create creates a task in the repository's tracker and prints its name", async () => {
   addApp();
   serve();
   await untilAnswers();
   const made = await skel("task", "create", "app", "Add import", "From CSV");
   expect(made.err).toBe("");
   expect(made.out).toBe("app-13\n");
-  expect(JSON.parse(read(join(home, "issues", "sent")))).toEqual({
-    title: "Add import",
-    body: "From CSV",
-  });
+  expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([
+    { ask: "create task", repository: "simon/app", title: "Add import", body: "From CSV" },
+  ]);
 });
 
 test("more data on a connection doesn't run its request again", async () => {
   addApp();
   serve();
   await untilAnswers();
-  const real = read(join(home, "bin", "gh"));
-  writeFileSync(
-    join(home, "bin", "gh"),
-    real.replace('"$HOME/calls"\n', '"$HOME/calls"\nsleep 1\n'),
-  );
+  // The tracker takes a moment, so more data comes while the request runs.
+  writeFileSync(join(plugin, "hold-create-task"), "");
+  setTimeout(() => rmSync(join(plugin, "hold-create-task"), { force: true }), 1000);
   // An error with nobody listening would be thrown outside the test, failing a run without
   // saying which test it came from.
   await new Promise<void>((done, failed) => {
@@ -238,10 +227,10 @@ test("more data on a connection doesn't run its request again", async () => {
     connection.on("data", () => {});
     connection.on("close", () => done());
   });
-  expect(read(join(home, "calls")).match(/issues --method POST/g)).toHaveLength(1);
+  expect(asked(plugin).filter((q) => q.ask === "create task")).toHaveLength(1);
 });
 
-test("sc start refuses a repository Skelcrew doesn't have, and a task GitHub doesn't have", async () => {
+test("sc start refuses a repository Skelcrew doesn't have, and a task its tracker doesn't have", async () => {
   addApp();
   serve();
   await untilAnswers();
@@ -250,12 +239,12 @@ test("sc start refuses a repository Skelcrew doesn't have, and a task GitHub doe
   expect(unknown.err).toContain("no repository named site");
   const missing = await skel("start", "app-99");
   expect(missing.code).not.toBe(0);
-  expect(missing.err).toContain("there is no open task #99 in simon/app");
+  expect(missing.err).toContain("there is no open task 99 in simon/app");
   expect(existsSync(join(data(), "threads", "app-99"))).toBe(false);
 });
 
 // Bringing a repository in by naming it is gone: you add one in your own terminal.
-test("a repository Skelcrew doesn't have, named by its GitHub name, is no repository", async () => {
+test("a repository Skelcrew doesn't have, named by its owner/name, is no repository", async () => {
   onGitHub({}, "site");
   serve();
   await untilAnswers();
@@ -264,7 +253,7 @@ test("a repository Skelcrew doesn't have, named by its GitHub name, is no reposi
     expect(listed.code).not.toBe(0);
     expect(listed.err).toBe(`Skelcrew: there is no repository named ${name}\n`);
   }
-  expect(read(join(home, "calls"))).not.toContain("repo view");
+  expect(asked(plugin).filter((q) => q.ask === "claims")).toEqual([]);
 });
 
 describe("a clone the daemon makes as it starts", () => {
@@ -460,13 +449,32 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(thread().status).toBe("working");
   }, 20_000);
 
+  // Setup deletes the thread's folder before it clones, outside the sandbox, so a folder name
+  // that climbs out of Skelcrew's threads folder must never be deleted, however it was saved.
+  test("starting over refuses a thread folder outside Skelcrew's threads folder, and deletes nothing", async () => {
+    addApp();
+    const victim = join(data(), "victim");
+    mkdirSync(victim, { recursive: true });
+    writeFileSync(join(victim, "keep"), "mine\n");
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run(
+      "INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES ('simon', 'app', '12', '../victim', 'skelcrew/12', 'failed')",
+    );
+    db.close();
+    serve();
+    await untilCloned();
+    await skel("start", "app-12");
+    await until(() => thread().status === "failed" && thread().started !== null);
+    expect(read(join(victim, "keep"))).toBe("mine\n");
+  }, 20_000);
+
   test("refuses a second thread on a task that has one", async () => {
     addApp();
     serve();
     await untilCloned();
     await skel("start", "app-12");
-    // GitHub is down now, and the refusal needs nothing from it.
-    rmSync(join(home, "issues", "poll"));
+    // The tracker is failing now, and the refusal needs nothing from it.
+    writeFileSync(join(plugin, "fail-changed"), "HTTP 502: Bad Gateway");
     const again = await skel("start", "app-12");
     expect(again.code).not.toBe(0);
     expect(again.err).toBe("Skelcrew: app-12 has a thread already\n");
@@ -665,9 +673,12 @@ nameRepositories(db);`;
 
   test("gives two threads whose names would make the same folder a folder each", async () => {
     addApp();
+    onGitHub({}, "app", "bob");
+    onGitHub({}, "simon-app", "bob");
     const script = `import { nameRepositories, openDb } from ${JSON.stringify(source("db.ts"))};
 const db = openDb();
 db.run("INSERT INTO repositories (name, owner, repo) VALUES ('x', 'bob', 'app'), ('y', 'bob', 'simon-app')");
+db.run("UPDATE repositories SET forge = 'github', claimed = 1, remote = 'https://github.com/' || owner || '/' || repo || '.git'");
 nameRepositories(db);`;
     expect(Bun.spawnSync([process.execPath, "-e", script], { env: env() }).success).toBe(true);
     serve();
@@ -698,17 +709,38 @@ nameRepositories(db);`;
     expect(thread().status).toBe("working");
   }, 30_000);
 
-  test("a thread on a repository whose clone isn't there yet starts once Skelcrew's clone is", async () => {
+  // Its skelcrew.yaml, which names its tracker, is in Skelcrew's clone.
+  test("sc start on a repository whose clone isn't there yet waits for Skelcrew's clone", async () => {
     addApp({}, "site");
     holdClones();
     serve();
     await untilAnswers();
-    const started = await skel("start", "site-12");
-    expect(started.out).toBe("Started site-12.\n");
+    const started = skel("start", "site-12");
+    await until(() => existsSync(join(home, "held")));
+    await Bun.sleep(300);
     expect(existsSync(join(data(), "repos", "simon", "site"))).toBe(false);
     writeFileSync(join(home, "go"), "");
+    expect((await started).out).toBe("Started site-12.\n");
     await until(() => read(join(config("site-12"), "args")) !== "");
     expect(thread()).toMatchObject({ owner: "simon", repo: "site", status: "working" });
+  }, 30_000);
+
+  // Without the clone, its skelcrew.yaml can't say the repository has a tracker, and a
+  // thread with no tracker would start in a repository whose tasks belong in one.
+  test("sc start on what you said waits for Skelcrew's clone too, and then finds the tracker", async () => {
+    addApp({}, "site");
+    holdClones();
+    serve();
+    await untilAnswers();
+    const started = skel("start", "site", "Add export", "As JSON");
+    await until(() => existsSync(join(home, "held")));
+    await Bun.sleep(300);
+    expect(existsSync(join(data(), "repos", "simon", "site"))).toBe(false);
+    writeFileSync(join(home, "go"), "");
+    const run = await started;
+    expect(run.code).not.toBe(0);
+    expect(run.err).toContain("site has a tracker, so its tasks belong there");
+    expect(existsSync(join(data(), "repos", "simon", "site"))).toBe(true);
   }, 30_000);
 
   // Programs often live under the home folder, which the sandbox hides, as npm does under nvm.

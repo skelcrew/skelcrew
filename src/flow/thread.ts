@@ -10,9 +10,10 @@ import { findRepository } from "./repo.ts";
 
 export const Thread = z.object({
   owner: z.string(),
-  // The repository's GitHub name, without the owner.
+  // The repository's name on its forge, or its remote's path, without the owner.
   repo: z.string(),
-  task: z.number(),
+  // The task's ID in its tracker, such as 12, or, with no tracker, Skelcrew's own, such as t1.
+  task: z.coerce.string(),
   folder: z.string(),
   branch: z.string(),
   base: z.string().nullable(),
@@ -24,16 +25,21 @@ export const Thread = z.object({
   needs_you: z.coerce.boolean(),
   // The summary of a submit not yet pushed and reviewed.
   submitting: z.string().nullable(),
-  // The commit whose skelcrew/check check is pending, while its review waits or runs.
+  // The commit whose review check is pending, while its review waits or runs.
   reviewing: z.string().nullable(),
   // A posted review's changes, until they are typed into the builder.
   telling: z.string().nullable(),
   // The changes of a review past the round limit, which aren't typed in, kept for when you
   // let the thread go on with sc start.
   held: z.string().nullable(),
-  // The ID of the last review, PR comment and check run handled, so each event is handled
-  // once, across restarts too. A new thread starts them at 0. An old row can hold null: the
-  // PR's first poll then starts after its history rather than replaying it.
+  // The IDs of the reviews, PR comments and check runs handled, among those its PR shows, so
+  // each event is handled once, across restarts too. A new thread starts with none. A row from
+  // before Skelcrew kept them has the last ID of each kind handled instead, or, older still, null
+  // for those too: the PR's first poll then starts after its history rather than replaying it.
+  seen: z
+    .string()
+    .nullable()
+    .transform((saved) => (saved === null ? null : z.array(z.string()).parse(JSON.parse(saved)))),
   last_review: z.number().nullable(),
   last_comment: z.number().nullable(),
   last_check: z.number().nullable(),
@@ -42,14 +48,16 @@ export const Thread = z.object({
   asking: z.coerce.boolean(),
   // Why the thread started needing you, until a note saying so is typed into the lead.
   noting: z.string().nullable(),
-  // The task's title when the thread started, for the strip, which looks each second and so
-  // can't ask GitHub. An old row can hold null.
+  // The task's title and body when the thread started, for the strip, which looks each second
+  // and so can't ask the tracker, and for a task that has left Skelcrew's copy. With no tracker,
+  // they are the task itself. An old row can hold null.
   title: z.string().nullable(),
+  body: z.string().nullable(),
   // When the thread started, in milliseconds since 1970, for its running time in the sidebar.
   // An old row can hold null.
   started: z.number().nullable(),
-  // What the PR's CI says, without Skelcrew's own review check, as last polled. Null with no CI,
-  // or while the commit it would be about is still on its way to GitHub.
+  // What the PR's CI says, without Skelcrew's own check, as last polled. Null with no CI, or
+  // while the commit it would be about is still on its way to the forge.
   checks: z.enum(["passing", "failing", "pending"]).nullable(),
   // The harness of the review waiting or running, which can differ from the latest finished
   // one's once you change your config.
@@ -90,11 +98,21 @@ export const hasWork = (threads: Thread[]) =>
     (t) => (t.status === "working" && !t.asking) || (t.status === "waiting" && !needsYou(t)),
   );
 
-// Returns the thread's repository as owner/name, as GitHub calls want it.
+// Returns the thread's repository as owner/name.
 export const fullNameOf = (thread: Thread) => `${thread.owner}/${thread.repo}`;
+// Returns the thread's repository, or throws once Skelcrew no longer has it.
+export const repositoryOf = (db: Database, thread: Thread) =>
+  findRepository(db, fullNameOf(thread));
+
 // Returns the thread's clone folder. It comes from the folder name chosen at start, so it
-// stays put when the repository's name changes.
-export const cloneOf = (thread: Thread) => join(threadsDir(), thread.folder);
+// stays put when the repository's name changes. Setup and a thread's end delete this folder,
+// so it throws for a name that isn't one plain folder inside Skelcrew's threads folder, such
+// as one with a / or a .., however it got into the database.
+export function cloneOf(thread: Thread): string {
+  if (!/^[A-Za-z0-9][\w.-]*$/.test(thread.folder) || thread.folder.includes(".."))
+    throw new Error(`a thread's folder must be a plain name, not ${thread.folder}`);
+  return join(threadsDir(), thread.folder);
+}
 
 // Appends the whole thread as it now is, with the reason when there is one, as a line to
 // its log. Every change goes there too, so the thread's history can be read and replayed.
@@ -131,7 +149,8 @@ export function record(
   if (set.length > 0)
     db.run(
       `UPDATE threads SET ${set.map(([column]) => `${column} = ?`).join(", ")} WHERE folder = ?`,
-      [...set.map(([, value]) => value), folder],
+      // The IDs seen are a list, kept as JSON.
+      [...set.map(([, value]) => (Array.isArray(value) ? JSON.stringify(value) : value)), folder],
     );
   const thread = readThread(db, folder);
   log(thread, why);
@@ -151,7 +170,7 @@ export function threadName(db: Database, thread: Thread): string {
 
 // Returns the thread named repo-task, such as app-12, or null when the task has none. Throws
 // when Skelcrew doesn't have the repository.
-export function threadOn(db: Database, repository: string, task: number): Thread | null {
+export function threadOn(db: Database, repository: string, task: string): Thread | null {
   const { owner, repo } = findRepository(db, repository);
   return Thread.nullable().parse(
     db
@@ -161,7 +180,7 @@ export function threadOn(db: Database, repository: string, task: number): Thread
 }
 
 // Returns the thread named repo-task, such as app-12, and throws when there is none.
-export function findThread(db: Database, repository: string, task: number): Thread {
+export function findThread(db: Database, repository: string, task: string): Thread {
   const thread = threadOn(db, repository, task);
   if (!thread) throw new Error(`there is no thread ${repository}-${task}`);
   return thread;

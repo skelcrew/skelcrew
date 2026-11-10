@@ -101,8 +101,8 @@ export function drawStrip(
   return [`${top}${aboutThread(row, width)}`, line];
 }
 
-// Returns the row of tabs as a tmux format, given each repository's tab, the open one's GitHub
-// name, and the terminal's width. Each tab is the repository's name, with a yellow dot and a
+// Returns the row of tabs as a tmux format, given each repository's tab, the open one's
+// owner/name, and the terminal's width. Each tab is the repository's name, with a yellow dot and a
 // count when threads in it need you or failed, such as site •1. The open one is bold white on
 // the grey a picked row has, and the others dim. The names start in line with the sidebar's
 // marks. When they don't fit, those furthest from the open one give way, and a dim count says

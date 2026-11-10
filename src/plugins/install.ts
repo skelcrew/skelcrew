@@ -1,9 +1,11 @@
-// sc plugin: installing a plugin from its newest version tag on GitHub or from a folder of
-// yours, updating, removing and listing plugins. Only you run these, in your own terminal.
+// sc plugin: installing a plugin from its newest version tag on GitHub or from a folder of yours,
+// updating, setting up again, removing and listing plugins. Only you run these, in your own
+// terminal.
 import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { openDb } from "../db.ts";
+import { repositories } from "../flow/repo.ts";
 import { configDir, dataDir } from "../paths.ts";
 import { clean } from "../screen/look.ts";
 import { release } from "../version.ts";
@@ -108,22 +110,44 @@ function agreed(manifest: Manifest, from: string, verb: string): boolean {
   return ["y", "yes"].includes(answer?.trim().toLowerCase() ?? "");
 }
 
-// Runs a plugin's build commands, then its setup in your terminal, in the plugin's folder.
-// Throws when one fails.
+// Runs one of a plugin's commands in your terminal, in the plugin's folder, so a setup can ask
+// you things. Throws when it fails.
+function runInTerminal(manifest: Manifest, folder: string, words: string[]): void {
+  const { argv, env } = commandFor(manifest.name, words);
+  const run = Bun.spawnSync(argv, {
+    cwd: folder,
+    env: { ...process.env, ...env },
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  if (!run.success) throw new Error(`${manifest.name}'s ${clean(words.join(" "))} failed`);
+}
+
+// Runs a plugin's build commands, then its setup, in the plugin's folder. Throws when one
+// fails.
 function buildAndSetUp(manifest: Manifest, folder: string, setup: boolean): void {
   const commands = [
     ...(manifest.build ?? []),
     ...(setup && manifest.setup ? [manifest.setup] : []),
   ];
-  for (const words of commands) {
-    const { argv, env } = commandFor(manifest.name, words);
-    const run = Bun.spawnSync(argv, {
-      cwd: folder,
-      env: { ...process.env, ...env },
-      stdio: ["inherit", "inherit", "inherit"],
-    });
-    if (!run.success) throw new Error(`${manifest.name}'s ${clean(words.join(" "))} failed`);
-  }
+  for (const words of commands) runInTerminal(manifest, folder, words);
+}
+
+// Runs an installed plugin's setup again in your terminal, for sc plugin setup, such as to
+// sign in again once its sign-in has lapsed. Reinstalling would do it too, but would fetch and
+// build the plugin again for nothing.
+export function setUpPlugin(name: string): void {
+  const { folder } = findPlugin(openDb(), name);
+  const manifest = readManifest(folder);
+  if (!manifest.setup) throw new Error(`${name} has no setup to run`);
+  runInTerminal(manifest, folder, manifest.setup);
+  console.log(`Ran ${name}'s setup.`);
+}
+
+// Has Skelcrew ask again which forge claims each repository that has none, once a forge is
+// installed, so a repository added before it gains it.
+function askAgain(db: Database, manifest: Manifest): void {
+  if (manifest.jobs.includes("forge"))
+    db.run("UPDATE repositories SET claimed = 0 WHERE forge IS NULL");
 }
 
 // Throws when a plugin of that name is installed already, as one name can't be two plugins.
@@ -152,6 +176,7 @@ export function installPlugin(given: string): void {
       manifest.name,
       folder,
     ]);
+    askAgain(db, manifest);
     console.log(`Installed ${manifest.name} ${manifest.version}.`);
     return;
   }
@@ -181,6 +206,7 @@ export function installPlugin(given: string): void {
       folder,
       given,
     ]);
+    askAgain(db, manifest);
     console.log(`Installed ${manifest.name} ${manifest.version}.`);
   } finally {
     rmSync(staged, { recursive: true, force: true });
@@ -239,15 +265,19 @@ export function updatePlugins(name?: string): void {
 
 // Removes a plugin with its settings and tokens, for sc plugin rm. A plugin from GitHub
 // loses its folders too, and a folder of yours stays. It refuses while a repository Skelcrew has
-// names the plugin as its tracker in skelcrew.yaml, as that repository would lose its tasks.
+// names the plugin as its tracker in skelcrew.yaml, as that repository would lose its tasks, and
+// while it is the forge of one, which would lose its PRs and its login for pushing.
 export function removePlugin(name: string): void {
   const db = openDb();
   const plugin = findPlugin(db, name);
-  const tracked = trackedBy(db, name);
-  if (tracked.length > 0)
-    throw new Error(
-      `${name} is the tracker of ${tracked.map((r) => r.name).join(", ")}, so Skelcrew keeps it`,
-    );
+  for (const [job, those] of [
+    ["tracker", trackedBy(db, name)],
+    ["forge", repositories(db).filter((r) => r.forge === name)],
+  ] as const)
+    if (those.length > 0)
+      throw new Error(
+        `${name} is the ${job} of ${those.map((r) => r.name).join(", ")}, so Skelcrew keeps it`,
+      );
   db.run("DELETE FROM plugins WHERE name = ?", [name]);
   rmSync(join(configDir(), "plugins", name), { recursive: true, force: true });
   if (plugin.source !== null) rmSync(join(pluginsDir(), name), { recursive: true, force: true });

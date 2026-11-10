@@ -1,7 +1,7 @@
 // What Skelcrew's tests share: finding Skelcrew's source files, waiting, and running sc and its
 // daemon as a user would. Each test file keeps its own home folder and tmux socket and hands
 // them in, so a test that outlives its file can never reach another file's home.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 
@@ -87,57 +87,91 @@ export async function runSkel(args: string[], env: Record<string, string>) {
   return { out, err, code };
 }
 
-// Returns an issue as GitHub's GraphQL API sends it in a poll, open and labeled as given.
-export function issueNode(number: number, title: string, more: object = {}): object {
-  return {
-    number,
-    title,
-    body: "",
-    url: `https://github.com/simon/app/issues/${number}`,
-    createdAt: "2026-11-05T10:00:00Z",
-    updatedAt: "2026-11-05T10:00:00Z",
-    author: { __typename: "User", login: "simon" },
-    labels: { nodes: [] },
-    state: "OPEN",
-    ...more,
-  };
-}
-
-// Returns a PR as GitHub's GraphQL API sends it in a poll, open with no reviews, comments or
-// checks unless given.
-export function pullNode(number: number, title: string, more: object = {}): object {
-  return {
-    number,
-    title,
-    body: "",
-    url: `https://github.com/simon/app/pull/${number}`,
-    createdAt: "2026-11-05T10:00:00Z",
-    updatedAt: "2026-11-05T10:00:00Z",
-    author: { __typename: "User", login: "simon" },
-    labels: { nodes: [] },
-    state: "OPEN",
-    mergeable: "MERGEABLE",
-    baseRefName: "main",
-    headRefName: `skelcrew/${number}`,
-    reviews: { nodes: [] },
-    comments: { nodes: [] },
-    commits: { nodes: [{ commit: { statusCheckRollup: null } }] },
-    ...more,
-  };
-}
-
-// Returns GitHub's answer to a poll, as its GraphQL API sends it: one page holding the issues
-// and PRs given, and `more`, such as a thread's PR as pr7.
-export function pollAnswer(issues: object[], pulls: object[] = [], more: object = {}) {
-  const page = (nodes: object[]) => ({
-    pageInfo: { hasNextPage: false, endCursor: null as string | null },
-    nodes,
+// Installs the fake tracker and forge as a plugin named `name`, doing `jobs`, for a test with
+// this home, and returns its settings folder, where it keeps the questions it is asked and
+// reads its answers. Its git_credentials lend nothing, as the tests' remotes are folders.
+export function fakePlugin(
+  home: string,
+  name = "github",
+  jobs: string[] = ["tracker", "forge"],
+): string {
+  const folder = join(home, `plugin-${name}`);
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(
+    join(folder, "skelcrew-plugin.yaml"),
+    `name: ${name}
+version: 0.1.0
+skelcrew: 0.1.0
+about: A tracker and forge for tests
+jobs: [${jobs.join(", ")}]
+call: [bun, ${JSON.stringify(join(import.meta.dir, "fake-plugin.ts"))}]
+git_credentials: ["true"]
+`,
+  );
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb().run("INSERT INTO plugins (name, folder) VALUES (?, ?)", [${JSON.stringify(name)}, ${JSON.stringify(folder)}]);`;
+  const added = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...process.env, ...homeEnv(home) },
+    stderr: "pipe",
   });
+  if (!added.success) throw new Error(added.stderr.toString());
+  const settings = join(home, ".config", "skelcrew", "plugins", name);
+  mkdirSync(settings, { recursive: true });
+  return settings;
+}
+
+// Has the fake plugin give this answer to a question from now on, such as the items of
+// "changed".
+export function answer(settings: string, ask: string, value: unknown): void {
+  writeFileSync(join(settings, `${ask.replaceAll(" ", "-")}.json`), JSON.stringify(value));
+}
+
+// Returns the questions the fake plugin was asked, oldest first.
+export function asked(settings: string): Record<string, unknown>[] {
+  return read(join(settings, "asked"))
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
+// Returns an open task as a tracker answers it, unlabeled unless given.
+export function taskItem(id: string, title: string, more: object = {}): object {
   return {
-    data: {
-      viewer: { login: "simon" },
-      repository: { issues: page(issues), pulls: page(pulls), ...more },
-    },
+    kind: "task",
+    id,
+    title,
+    body: "",
+    state: "open",
+    author: { login: "simon", bot: false, you: true, push: true },
+    labels: [],
+    link: `https://github.com/simon/app/issues/${id}`,
+    created: "2026-11-05T10:00:00Z",
+    updated: "2026-11-05T10:00:00Z",
+    closes: `Closes #${id}`,
+    ...more,
+  };
+}
+
+// Returns an open PR as a forge answers it, with no reviews, comments or checks unless given.
+export function prItem(id: string, title: string, more: object = {}): object {
+  return {
+    kind: "pr",
+    id,
+    title,
+    body: "",
+    state: "open",
+    author: { login: "skelcrew[bot]", bot: true, you: false, push: false },
+    labels: [],
+    link: `https://github.com/simon/app/pull/${id}`,
+    created: "2026-11-05T10:00:00Z",
+    updated: "2026-11-05T10:00:00Z",
+    branch: `skelcrew/${id}`,
+    base: "main",
+    conflicts: false,
+    checks: [],
+    reviews: [],
+    comments: [],
+    ...more,
   };
 }
 

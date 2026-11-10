@@ -130,7 +130,8 @@ export function commandFor(name: string, words: string[]) {
 
 // Asks a tracker or forge one question, as Skelcrew's flow does, and returns its answer checked
 // against `Answer`. The call command gets the question as one JSON line on stdin and prints
-// one JSON answer. A plugin that fails throws its last line of stderr, and one that takes
+// one JSON answer. A plugin that fails throws its last line of stderr, naming sc plugin
+// setup when it exits with code 2, which means it needs its setup again. One that takes
 // longer than `timeout` milliseconds is ended, so a hung plugin can't hold up the daemon.
 export async function callPlugin<T>(
   db: Database,
@@ -175,6 +176,10 @@ export async function callPlugin<T>(
   const [out, err, code] = finished;
   if (code !== 0) {
     const last = err.trim().split("\n").at(-1) || `its call exited with code ${code}`;
+    // Code 2 is how a plugin says it needs its setup again, such as when its sign-in lapsed,
+    // so the error says what fixes it.
+    if (code === 2)
+      throw new Error(`${name} failed: ${last}. Run sc plugin setup ${name} to set it up again.`);
     throw new Error(`${name} failed: ${last}`);
   }
   let answer: unknown;
@@ -204,5 +209,14 @@ export function gitCredentials(db: Database, name: string): string[] {
   const assignments = Object.entries(env).map(([key, value]) => `${key}=${quoted(value)}`);
   const helper = `cd ${quoted(plugin.folder)} && ${assignments.join(" ")} exec ${argv.map(quoted).join(" ")}`;
   // The empty helper first clears any you set, such as gh's, so git asks only this plugin.
-  return ["-c", "credential.helper=", "-c", `credential.helper=!${helper}`];
+  // git leaves out the repository's path unless told, and the forge's login can be for one
+  // repository alone.
+  return [
+    "-c",
+    "credential.helper=",
+    "-c",
+    `credential.helper=!${helper}`,
+    "-c",
+    "credential.useHttpPath=true",
+  ];
 }

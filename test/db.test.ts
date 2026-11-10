@@ -157,7 +157,7 @@ import { saveItems, taskOf } from ${JSON.stringify(source("flow/copy.ts"))};
 import { liveThreads } from ${JSON.stringify(source("flow/thread.ts"))};
 const db = openDb();
 const before = db.query("SELECT COUNT(*) AS n FROM items").get();
-saveItems(db, "simon", "app", [${JSON.stringify(task)}], true);
+saveItems(db, "simon", "app", [${JSON.stringify(task)}], ["task"]);
 const counts = db.query("SELECT open_issues, open_prs FROM repositories").get();
 console.log(JSON.stringify({ before, task: taskOf(db, "simon", "app", 12), counts,
   threads: liveThreads(db).map((t) => t.folder) }));`;

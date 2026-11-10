@@ -173,8 +173,10 @@ test("the terminal's title is saved before the server is reached and put back af
 test("runs sc on the server with the repository you are in", async () => {
   installed();
   const run = await skel(["--remote", "simon@workbox"], "", checkout("simon/app"));
-  expect(calls()).toBe(`${onServer(" --from simon/app")}\n`);
-  expect(run.out).toBe("Skelcrew on the server got 2 arguments\n[--from]\n[simon/app]\n");
+  expect(calls()).toBe(`${onServer(" --from git@github.com:simon/app.git")}\n`);
+  expect(run.out).toBe(
+    "Skelcrew on the server got 2 arguments\n[--from]\n[git@github.com:simon/app.git]\n",
+  );
   // What Skelcrew exits with on the server is what Skelcrew exits with here.
   expect(run.code).toBe(3);
 });

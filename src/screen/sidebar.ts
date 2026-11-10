@@ -1,8 +1,8 @@
 // The sidebar: the live left pane of the screen, with three lists, all of the open repository's.
-// THREADS has its lead and every thread that isn't done, with what each is doing. ISSUES and
-// PRS show what is open on GitHub, as links. It only shows, switches, links and opens pages.
-// Picking a thread switches the client in the right pane, and picking an issue or PR puts its
-// page there. It also keeps the tabs and the strip above that pane up to date, and switches to
+// THREADS has its lead and every thread that isn't done, with what each is doing. ISSUES and PRS
+// show what is open in its tracker and forge, as links. It only shows, switches, links and opens
+// pages. Picking a thread switches the client in the right pane, and picking an issue or PR puts
+// its page there. It also keeps the tabs and the strip above that pane up to date, and switches to
 // another repository's tab.
 import {
   paneTty,
@@ -45,7 +45,7 @@ const input = new RegExp(
   "g",
 );
 
-// Returns the repository open in the sidebar, given its GitHub name, with its lead's session.
+// Returns the repository open in the sidebar, given its owner/name, with its lead's session.
 // One Skelcrew no longer has, such as one removed this moment, has the name a new lead would.
 function opening(db: ReturnType<typeof openDb>, fullName: string): Open {
   const [owner = "", repo = ""] = fullName.split("/");
@@ -58,7 +58,7 @@ function opening(db: ReturnType<typeof openDb>, fullName: string): Open {
 
 // Runs the sidebar until its pane goes. The session given is its own, on the screen's server,
 // `where` says which remote Skelcrew runs on, if any, for the header above it, and `repository`
-// is the GitHub name of the repository it opens on.
+// is the owner/name of the repository it opens on.
 // tmux brings it the keys that move and clicks on its input. It looks again each second, and
 // writes only when something changed: over a slow link each write costs, and on a Sprite a
 // terminal that stays quiet lets it sleep.
@@ -99,7 +99,9 @@ export async function runSidebar(
   });
   // Returns the row of ISSUES or PRS with a link's url, if any.
   const linkAt = (url: string | null) =>
-    [...lists.issues.links, ...lists.prs.links].find((link) => link.url === url) ?? null;
+    [...(lists.issues?.links ?? []), ...(lists.prs?.links ?? [])].find(
+      (link) => link.url === url,
+    ) ?? null;
   // Looks at the database and tmux again, and redraws what that changed.
   const refresh = () => {
     tabs = repositoryTabs(db);
@@ -156,7 +158,7 @@ export async function runSidebar(
     page = null;
     shown = open.lead;
   }
-  // Returns the GitHub name of the tab before or after the open one, or null at either end.
+  // Returns the owner/name of the tab before or after the open one, or null at either end.
   const besideOpen = (by: 1 | -1) => {
     const here = tabs.findIndex((tab) => tab.fullName === `${open.owner}/${open.repo}`);
     return tabs[here + by]?.fullName ?? null;

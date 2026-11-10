@@ -52,36 +52,36 @@ ${code}`;
 }
 
 test("open tasks read newest first", () => {
-  const saved = `saveItems(db, "simon", "app", ${JSON.stringify([task(3), task(5), task(4)])}, true);
+  const saved = `saveItems(db, "simon", "app", ${JSON.stringify([task(3), task(5), task(4)])}, ["task"]);
 console.log(JSON.stringify(ids()));`;
   expect(run(saved)).toEqual(["5", "4", "3"]);
 });
 
 test("everything open replaces the copy, keeping a thread's task, now closed", () => {
-  run(`saveItems(db, "simon", "app", ${JSON.stringify([task(12), task(13), task(14)])}, true);
+  run(`saveItems(db, "simon", "app", ${JSON.stringify([task(12), task(13), task(14)])}, ["task"]);
 console.log("{}");`);
   expect(
-    run(`saveItems(db, "simon", "app", ${JSON.stringify([task(14)])}, true);
-console.log(JSON.stringify({ open: ids(), kept: taskOf(db, "simon", "app", 12).state,
+    run(`saveItems(db, "simon", "app", ${JSON.stringify([task(14)])}, ["task"]);
+console.log(JSON.stringify({ open: ids(), kept: taskOf(db, "simon", "app", "12").state,
   counts: db.query("SELECT open_issues FROM repositories").get() }));`),
   ).toEqual({ open: ["14"], kept: "closed", counts: { open_issues: 1 } });
-  expect(() => run(`taskOf(db, "simon", "app", 13);`)).toThrow(
-    "there is no open task #13 in simon/app",
+  expect(() => run(`taskOf(db, "simon", "app", "13");`)).toThrow(
+    "there is no open task 13 in simon/app",
   );
 });
 
 test("a change brings an item in or updates it, and a closed one leaves once no thread has it", () => {
-  run(`saveItems(db, "simon", "app", ${JSON.stringify([task(12), task(13)])}, true);
+  run(`saveItems(db, "simon", "app", ${JSON.stringify([task(12), task(13)])}, ["task"]);
 console.log("{}");`);
   const changes = [task(13, { state: "closed" }), task(15, { title: "New" })];
   expect(
-    run(`saveItems(db, "simon", "app", ${JSON.stringify(changes)}, false);
-console.log(JSON.stringify({ open: ids(), title: taskOf(db, "simon", "app", 15).title }));`),
+    run(`saveItems(db, "simon", "app", ${JSON.stringify(changes)}, []);
+console.log(JSON.stringify({ open: ids(), title: taskOf(db, "simon", "app", "15").title }));`),
   ).toEqual({ open: ["15", "12"], title: "New" });
   // Once its thread is done, a closed task leaves at the next change.
   expect(
     run(`db.run("UPDATE threads SET status = 'done'");
-saveItems(db, "simon", "app", ${JSON.stringify([task(12, { state: "closed" })])}, false);
+saveItems(db, "simon", "app", ${JSON.stringify([task(12, { state: "closed" })])}, []);
 console.log(JSON.stringify(db.query("SELECT id FROM items ORDER BY id").all()));`),
   ).toEqual([{ id: "15" }]);
 });

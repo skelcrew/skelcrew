@@ -46,6 +46,7 @@ test("the help names every command", () => {
     "review",
     "plugin install",
     "plugin update",
+    "plugin setup",
     "plugin rm",
     "plugin ls",
   ])

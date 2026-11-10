@@ -1,6 +1,7 @@
 // The requests the daemon takes on its sockets, and who may make which. The daemon and the
 // commands that ask it both go by these.
 import { z } from "zod";
+import { TaskId } from "./copy.ts";
 import type { Thread } from "./thread.ts";
 
 // Only what a branch name holds: it goes into what git fetches, where a : or * would ask
@@ -8,7 +9,7 @@ import type { Thread } from "./thread.ts";
 const Branch = z.string().regex(/^(?!-)(?!.*\.\.)[\w./-]+$/);
 
 // A request's `repo` names a repository the way a command does: by its name in Skelcrew or its
-// full GitHub name. It keeps that word because clients on other machines send it.
+// owner/name. It keeps that word because clients on other machines send it.
 export const DaemonRequest = z.discriminatedUnion("command", [
   z.object({ command: z.literal("status") }),
   z.object({ command: z.literal("lead"), from: z.string().optional() }),
@@ -18,7 +19,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   z.object({
     command: z.literal("task show"),
     repo: z.string(),
-    task: z.number().int().positive(),
+    task: TaskId,
   }),
   z.object({
     command: z.literal("task create"),
@@ -29,23 +30,29 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   z.object({
     command: z.literal("start"),
     repo: z.string(),
-    task: z.number().int().positive(),
+    task: TaskId,
     from: Branch.optional(),
+  }),
+  z.object({
+    command: z.literal("start new"),
+    repo: z.string(),
+    title: z.string().min(1),
+    body: z.string(),
   }),
   z.object({
     command: z.literal("review"),
     repo: z.string(),
-    task: z.number().int().positive(),
+    task: TaskId,
   }),
   z.object({
     command: z.literal("stop"),
     repo: z.string(),
-    task: z.number().int().positive(),
+    task: TaskId,
   }),
   z.object({
     command: z.literal("tell"),
     repo: z.string(),
-    task: z.number().int().positive(),
+    task: TaskId,
     text: z.string().min(1),
   }),
   z.object({ command: z.literal("tell lead"), text: z.string().min(1) }),
@@ -71,6 +78,7 @@ export const allowed = {
     "task show",
     "task create",
     "start",
+    "start new",
     "review",
     "stop",
   ],
@@ -82,6 +90,7 @@ export const allowed = {
     "task show",
     "task create",
     "start",
+    "start new",
     "review",
     "stop",
     "tell",

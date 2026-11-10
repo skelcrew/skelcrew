@@ -219,8 +219,10 @@ test("keeps the connecting line out of a pipe, so a command's output stays its o
 test("runs sc on the Sprite with the repository you are in", async () => {
   existing("demo");
   const run = await skel(["--remote", "sprite:demo"], "", checkout("simon/app"));
-  expect(calls()).toBe(`sprite list --json\n${exec("demo")} --from simon/app\n`);
-  expect(run.out).toBe("Skelcrew on the Sprite got 2 arguments\n[--from]\n[simon/app]\n");
+  expect(calls()).toBe(`sprite list --json\n${exec("demo")} --from git@github.com:simon/app.git\n`);
+  expect(run.out).toBe(
+    "Skelcrew on the Sprite got 2 arguments\n[--from]\n[git@github.com:simon/app.git]\n",
+  );
   // What Skelcrew exits with on the Sprite is what Skelcrew exits with here.
   expect(run.code).toBe(3);
 });

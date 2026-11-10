@@ -125,10 +125,11 @@ function scrolled(blocks: Line[][], here: number, room: number): Line[] {
 // Returns the lines above the hints, and how many there can be. The hints take the bottom four,
 // until the sidebar can't hold them and the whole row you are looking at: then they give way, as
 // the rows are what you pick from and the keys are also in Skelcrew's help.
-// ISSUES, THREADS and PRS each have a third of those lines, however full, so each list stays in
-// the same place on screen, and what doesn't divide goes to THREADS. On a terminal too short for
-// a heading and a row in each third, or for the row you are looking at in THREADS, ISSUES and PRS
-// go, and THREADS has the whole sidebar, as it is the list you move through.
+// The lists the repository has, of ISSUES, THREADS and PRS, share those lines evenly, however
+// full, so each list stays in the same place on screen, and what doesn't divide goes to THREADS.
+// On a terminal too short for a heading and a row in each share, or for the row you are looking
+// at in THREADS, ISSUES and PRS go, and THREADS has the whole sidebar, as it is the list you
+// move through. With neither of them, THREADS has it too, with no heading.
 export function layout(
   rows: Row[],
   lists: Lists,
@@ -142,20 +143,32 @@ export function layout(
   const here = rows.findIndex((row) => row.session === shown);
   const tallest = blocks[here]?.length ?? 2;
   const room = size.height >= tallest + hints.length ? size.height - hints.length : size.height;
-  const third = Math.floor((room - 2) / 3);
-  const middle = room - 2 - 2 * third;
+  const others = [
+    ...(lists.issues ? [["Issues", lists.issues] as const] : []),
+    ...(lists.prs ? [["PRs", lists.prs] as const] : []),
+  ];
+  // One line parts each list from the next.
+  const share = Math.floor((room - others.length) / (others.length + 1));
+  const middle = room - others.length - others.length * share;
   const top = headed("Threads");
-  if (third < top.length + 2 || middle < top.length + tallest)
+  if (others.length === 0 || share < top.length + 2 || middle < top.length + tallest)
     return { lines: scrolled(blocks, here, room), room };
   const divider = { text: paint(edge, "─".repeat(Math.max(width, 0))), joins: true };
-  const lines = [
-    ...padded(listLines("Issues", lists.issues, shown, third, width), third),
-    divider,
+  const threads = [
     ...top,
     ...padded(scrolled(blocks, here, middle - top.length), middle - top.length),
-    divider,
-    ...listLines("PRs", lists.prs, shown, third, width),
   ];
+  const listed = ([heading, list]: (typeof others)[number]) =>
+    padded(listLines(heading, list, shown, share, width), share);
+  const [first, second] = others;
+  const lines = lists.issues
+    ? [
+        ...(first ? listed(first) : []),
+        divider,
+        ...threads,
+        ...(second ? [divider, ...listed(second)] : []),
+      ]
+    : [...threads, divider, ...(first ? listed(first) : [])];
   return { lines, room };
 }
 

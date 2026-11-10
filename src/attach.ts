@@ -104,7 +104,7 @@ export async function attachToLead(tmux: string, from?: string): Promise<void> {
 export async function attachToThread(
   tmux: string,
   repository: string,
-  task: number,
+  task: string,
 ): Promise<void> {
   const db = openDb();
   const thread = findThread(db, repository, task);

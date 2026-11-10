@@ -1,8 +1,9 @@
 // What a page says: the issue or PR behind a row of ISSUES or PRS, read from Skelcrew's copy, so it
-// opens at once and asks GitHub nothing.
+// opens at once and asks the tracker nothing.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { type Item, itemAt } from "./copy.ts";
+import { reviewCheck } from "./decide.ts";
 
 // What the page draws. Each fact is a short label and what it says. All of it comes from the
 // tracker or forge, so none of it is safe to show yet.
@@ -44,18 +45,18 @@ export function pageOf(item: Item): Page {
   return { title: item.title, facts, body: item.body };
 }
 
-// Returns what a PR's CI says, as the strip does: Skelcrew's own review check isn't CI, and one
+// Returns what a PR's CI says, as the strip does: Skelcrew's own check isn't CI, and one
 // failure is enough to say so while the rest still run.
 function checksOf(pr: Extract<Item, { kind: "pr" }>): string {
-  const ci = pr.checks.filter((check) => check.name !== "skelcrew/check");
+  const ci = pr.checks.filter((check) => check.name !== reviewCheck);
   if (ci.length === 0) return "none";
   if (ci.every((check) => check.state === "passed")) return "passing";
   return ci.some((check) => !["passed", "running"].includes(check.state)) ? "failing" : "running";
 }
 
-// Returns what a review said and who said it. GitHub won't let Skelcrew approve its own PR, so
-// Skelcrew's verdict is a comment whose first line says it: for those, that line is what you want
-// to read.
+// Returns what a review said and who said it. A forge such as GitHub won't let Skelcrew approve its
+// own PR, so Skelcrew's verdict is a comment whose first line says it: for those, that line is what
+// you want to read.
 function aboutReview(review: Extract<Item, { kind: "pr" }>["reviews"][number]) {
   const [first = ""] = review.text.split("\n");
   const said = review.verdict === "commented" ? first.replaceAll("*", "").trim() : "";

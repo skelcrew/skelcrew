@@ -1,5 +1,6 @@
-// Messages between a repository's lead and its threads' builders, for sc tell: typed into
-// the other's session once it is idle, and kept in the thread's log. They never go to GitHub.
+// Messages between a repository's lead and its threads' builders, for sc tell: typed into the
+// other's session once it is idle, and kept in the thread's log. They never go to a tracker or
+// forge.
 import type { Database } from "bun:sqlite";
 import { agentRuns } from "../agents/tmux.ts";
 import { typeInto } from "../agents/typing.ts";

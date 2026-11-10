@@ -5,11 +5,19 @@ import { join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "./paths.ts";
 
-// `name` is the repository's name in Skelcrew, and `repo` its GitHub name without the owner.
-export const Repository = z.object({ name: z.string(), owner: z.string(), repo: z.string() });
+// `name` is the repository's name in Skelcrew. `owner` and `repo` are its name on its forge, or
+// without a forge its remote's path. `forge` is the plugin that claims its remote, or null
+// when none does, and `remote` is the URL git clones and pushes it from.
+export const Repository = z.object({
+  name: z.string(),
+  owner: z.string(),
+  repo: z.string(),
+  forge: z.string().nullable(),
+  remote: z.string(),
+});
 export type Repository = z.infer<typeof Repository>;
 
-// Updates repository names, adding the owner only when repositories share a GitHub name.
+// Updates repository names, adding the owner only when repositories share a name.
 // Names are unique in the end, and no row ever takes a name another row still holds.
 export function nameRepositories(db: Database): void {
   db.run(`UPDATE repositories SET name = CASE
@@ -42,9 +50,7 @@ function prepareTables(db: Database): void {
     PRIMARY KEY (owner, repo)
   )`);
   // Creating a table leaves one that exists as it is, so the columns past the first few are
-  // added here, to new databases and to ones from an earlier release alike. `labeled` says
-  // whether Skelcrew made sure the repository has the skelcrew label: one saved before it
-  // existed gets the label once, when the daemon next refreshes its clone. `open_issues` and
+  // added here, to new databases and to ones from an earlier release alike. `open_issues` and
   // `open_prs` count the tasks and PRs open in Skelcrew's copy, as the sidebar counts those it
   // doesn't show.
   // `lead_session` is the session ID of the repository's lead, kept so it comes back with its
@@ -52,20 +58,31 @@ function prepareTables(db: Database): void {
   // and null until you first do: its lead starts then, and from then on the daemon brings it
   // back. `lead_harness` is the harness the lead started on, which it keeps, as a conversation
   // can't move to another harness. `kept_lead` marks the repository whose lead is the one this
-  // machine had before Skelcrew gave each repository its own.
+  // machine had before Skelcrew gave each repository its own. `claimed` is whether Skelcrew has
+  // asked the forges installed which of them claims the repository's remote, `forge` is the one
+  // that does, or null, and `author` is who commits in its name, as git writes an author.
   const columns = {
-    labeled: "INTEGER NOT NULL DEFAULT 0",
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
     lead_session: "TEXT",
     lead_harness: "TEXT",
     opened: "INTEGER",
     kept_lead: "INTEGER NOT NULL DEFAULT 0",
+    forge: "TEXT",
+    claimed: "INTEGER NOT NULL DEFAULT 0",
+    author: "TEXT",
   };
   for (const [column, type] of Object.entries(columns))
     if (!db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = ?").get(column))
       db.run(`ALTER TABLE repositories ADD COLUMN ${column} ${type}`);
-  // A thread names its repository by GitHub owner and name, which never change, and is named
+  // Every repository Skelcrew had before it kept remotes came from GitHub, by its GitHub name.
+  if (!db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = 'remote'").get()) {
+    db.run("ALTER TABLE repositories ADD COLUMN remote TEXT NOT NULL DEFAULT ''");
+    db.run(
+      "UPDATE repositories SET remote = 'https://github.com/' || owner || '/' || repo || '.git'",
+    );
+  }
+  // A thread names its repository by its owner and name, which never change, and is named
   // once, at start, for its folder: its clone, log, config folder, session and socket all
   // use it, so none of them move when the repository's short name gains its owner.
   db.run(`CREATE TABLE IF NOT EXISTS threads (
@@ -104,6 +121,8 @@ function prepareTables(db: Database): void {
     verdict: "TEXT",
     review_line: "TEXT",
     harness: "TEXT",
+    body: "TEXT",
+    seen: "TEXT",
   };
   for (const [column, type] of Object.entries(added))
     if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))
@@ -123,16 +142,15 @@ function prepareTables(db: Database): void {
     PRIMARY KEY (owner, repo, kind, id)
   )`);
   // Notes for a repository's lead that aren't about a thread needing you, such as a thread
-  // started from GitHub, kept until they are typed in, since the lead may not be running.
+  // started from a tracker, kept until they are typed in, since the lead may not be running.
   db.run("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)");
   for (const column of ["owner", "repo"])
     if (!db.query("SELECT 1 FROM pragma_table_info('notes') WHERE name = ?").get(column))
       db.run(`ALTER TABLE notes ADD COLUMN ${column} TEXT`);
   if (db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lead'").get())
     keepTheLead(db);
-  // The reviews Skelcrew posted. They go out with your gh login, so on GitHub they look like
-  // reviews of yours, and polling must not type them back into the builder.
-  db.run("CREATE TABLE IF NOT EXISTS posted (id INTEGER PRIMARY KEY)");
+  // The reviews Skelcrew posted with your gh login, before its forge posted them as its own app.
+  db.run("DROP TABLE IF EXISTS posted");
   // The plugins you installed: the folder each runs from, and the GitHub repository it came
   // from, or null for a folder of yours, used where it is.
   db.run(`CREATE TABLE IF NOT EXISTS plugins (
@@ -162,7 +180,7 @@ function keepTheLead(db: Database): void {
         .parse(db.query("SELECT repo FROM attached_from").get())?.repo
     : null;
   const all = db
-    .query("SELECT name, owner, repo FROM repositories ORDER BY name")
+    .query("SELECT * FROM repositories ORDER BY name")
     .all()
     .map((row) => Repository.parse(row));
   const chosen =

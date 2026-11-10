@@ -4,27 +4,22 @@
 import type { Database } from "bun:sqlite";
 import { typeInto } from "../agents/typing.ts";
 import { threadConfig } from "../config.ts";
-import {
-  findPullRequest,
-  openPullRequest,
-  postReview,
-  pushCommit,
-  setReviewStatus,
-} from "../github.ts";
 import { cloneDir } from "../paths.ts";
+import { forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
-import { taskOf } from "./copy.ts";
+import { threadTask } from "./copy.ts";
 import { afterReview, pastLimit } from "./decide.ts";
+import { pushCommit } from "./git.ts";
 import { tellLead } from "./lead.ts";
 import { review } from "./reviewer.ts";
 import {
   builderHarness,
   cloneOf,
-  fullNameOf,
   readThread,
   record,
+  repositoryOf,
   type Thread,
   threadName,
 } from "./thread.ts";
@@ -40,13 +35,13 @@ async function git(folder: string, ...args: string[]): Promise<string> {
 }
 
 // Fetches the thread's branch from its clone into Skelcrew's clone and pushes the commit it got
-// to the thread's branch on GitHub, then opens the PR if there is none yet, with the line
-// that closes its task at the end of its body. Returns the
-// commit. git never runs inside the thread's clone: the builder controls everything there,
-// .git included, and a planted setting would run with your rights.
+// to the thread's branch on the repository's remote, then, with a forge, opens the PR if there
+// is none yet, with the line that closes its task at the end of its body. Returns the commit.
+// git never runs inside the thread's clone: the builder controls everything there, .git
+// included, and a planted setting would run with your rights.
 async function push(db: Database, folder: string, summary: string): Promise<string> {
   const thread = readThread(db, folder);
-  const fullName = fullNameOf(thread);
+  const repository = repositoryOf(db, thread);
   const ours = cloneDir(thread.owner, thread.repo);
   // A ref of the thread's own, not FETCH_HEAD, which refreshing Skelcrew's clone also writes.
   const ref = `refs/skelcrew/threads/${thread.folder}`;
@@ -59,26 +54,31 @@ async function push(db: Database, folder: string, summary: string): Promise<stri
     `+refs/heads/${thread.branch}:${ref}`,
   );
   const sha = await git(ours, "rev-parse", "--verify", `${ref}^{commit}`);
-  await pushCommit(ours, fullName, sha, thread.branch);
-  // Found rather than opened when the daemon stopped between opening it and saving it.
-  let pr = thread.pr ?? (await findPullRequest(fullName, thread.branch));
+  await pushCommit(db, repository, ours, sha, thread.branch);
+  if (forgeOf(db, repository) === null) {
+    record(db, folder, {}, `pushed ${sha} to ${thread.branch}`);
+    return sha;
+  }
+  // The forge answers with the PR already open from the branch, such as one opened before the
+  // daemon stopped and could save it.
+  let { pr } = thread;
   if (pr === null) {
-    const { title, closes } = taskOf(db, thread.owner, thread.repo, thread.task);
-    const base = baseOf(thread);
-    pr = await openPullRequest(fullName, {
+    const { title, closes } = threadTask(db, thread);
+    pr = await openPr(db, repository, {
       branch: thread.branch,
-      base,
+      base: baseOf(thread),
       title,
-      body: `${summary}\n\n${closes}`,
+      body: closes ? `${summary}\n\n${closes}` : summary,
     });
   }
   record(db, folder, { pr }, `pushed ${sha} to ${thread.branch}, for #${pr}`);
   return sha;
 }
 
-// Reviews the commit and acts on the verdict: posts it on the PR, sets the skelcrew/check
-// check, saves what it means for the thread, and types changes into the builder. Stops
-// without a word once a newer round cancels it, since that round now owns the thread.
+// Reviews the commit and acts on the verdict: with a forge, posts it on the PR and sets Skelcrew's
+// check; saves what it means for the thread, and types changes into the builder. Without a
+// forge the review stays in Skelcrew, and an approved branch needs you at once. Stops without a
+// word once a newer round cancels it, since that round now owns the thread.
 async function reviewRound(
   db: Database,
   tmux: string,
@@ -88,17 +88,21 @@ async function reviewRound(
 ): Promise<void> {
   if (signal.aborted) return;
   const thread = readThread(db, folder);
+  const repository = repositoryOf(db, thread);
   const { pr } = thread;
-  if (pr === null) throw new Error("the thread has no pull request to review");
-  const fullName = fullNameOf(thread);
+  const forged = forgeOf(db, repository) !== null;
+  if (forged && pr === null) throw new Error("the thread has no pull request to review");
   const { reviewer: on, maxRounds } = threadConfig(thread);
   const reviewer = on.harness;
-  await setReviewStatus(fullName, sha, "pending", "Skelcrew's reviewer is reviewing");
+  const setCheck = async (state: "pending" | "success" | "failure", description: string) => {
+    if (forged) await setStatus(db, repository, { commit: sha, state, description });
+  };
+  await setCheck("pending", "Skelcrew's reviewer is reviewing");
   if (signal.aborted) return;
   record(db, folder, { reviewing: sha, submitting: null, reviewer }, `reviewing ${sha}`);
   const verdict = await review({
     clone: cloneOf(thread),
-    issue: taskOf(db, thread.owner, thread.repo, thread.task),
+    issue: threadTask(db, thread),
     // Setting up the thread's clone put the base branch there under origin/.
     base: `origin/${baseOf(thread)}`,
     commit: sha,
@@ -108,14 +112,18 @@ async function reviewRound(
   });
   if (signal.aborted) return;
   const before = readThread(db, folder).rounds;
-  const outcome = afterReview(before, verdict, maxRounds);
-  if (verdict.verdict !== "failed") {
-    const id = await postReview(fullName, pr, sha, verdict.verdict, verdict.body);
-    db.run("INSERT OR IGNORE INTO posted (id) VALUES (?)", [id]);
-  }
+  const ready = forged ? null : `${threadName(db, thread)} is ready on branch ${thread.branch}`;
+  const outcome = afterReview(before, verdict, maxRounds, ready);
+  if (verdict.verdict !== "failed" && pr !== null)
+    await postReview(db, repository, {
+      pr,
+      commit: sha,
+      verdict: verdict.verdict,
+      body: verdict.body,
+    });
   // A newer round may be reviewing the same commit, and its check must stay pending.
   if (signal.aborted) return;
-  await setReviewStatus(fullName, sha, outcome.check, outcome.description);
+  await setCheck(outcome.check, outcome.description);
   if (signal.aborted) return;
   const { rounds, needsYou, status, tell, held } = outcome;
   const change = {
@@ -155,7 +163,7 @@ async function deliver(
 
 // The latest round of each thread. Cancelling it cancels its review. The next round's push
 // waits for its push, so two pushes or two PRs never race, and the next round's review
-// waits for it to end, so its last write to the skelcrew/check check comes before the next
+// waits for it to end, so its last write to the Skelcrew's check comes before the next
 // round's pending one. `ended` tells a round still under way from one that failed.
 type Round = {
   cancel: AbortController;
@@ -270,7 +278,7 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
   const { submitting, reviewing } = thread;
   if ((submitting !== null || reviewing !== null) && earlier && !earlier.ended)
     throw new Error(`a review of ${name}'s last commit is already waiting or running`);
-  const sha = submitting === null && thread.pr !== null ? lastPushed(thread) : null;
+  const sha = submitting === null ? lastPushed(thread) : null;
   if (submitting === null && sha === null)
     throw new Error(`${name} has no submitted commit to review yet`);
   const { maxRounds } = threadConfig(thread);
@@ -298,8 +306,8 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
 }
 
 // Carries on with a round the daemon's stop cut short: a submit not yet pushed and
-// reviewed, a review whose skelcrew/check check was left pending, or changes not yet typed
-// into the builder. Pushing again is harmless: GitHub has the commit, or gets it now. A
+// reviewed, a review whose Skelcrew's check was left pending, or changes not yet typed
+// into the builder. Pushing again is harmless: the remote has the commit, or gets it now. A
 // builder brought back can submit before this runs, and then its newer round wins.
 export function resumeRound(db: Database, tmux: string, folder: string): void {
   if (latest.has(folder)) return;

@@ -30,15 +30,17 @@ const yoursOnly: Record<string, string> = {
   "remote add": "setting up a machine",
   "plugin install": "installing a plugin",
   "plugin update": "updating a plugin",
+  "plugin setup": "setting up a plugin",
   "plugin rm": "removing a plugin",
   "plugin ls": "listing plugins",
 };
 
-// Returns the repository and task in a name such as app-13, or nothing when it isn't one.
-// Repository names can hold dashes, so the task is the number after the last one.
-function taskName(word?: string): [string, number] | undefined {
-  const parts = word?.match(/^(.+)-(\d+)$/);
-  return parts?.[1] ? [parts[1], Number(parts[2])] : undefined;
+// Returns the repository and task in a name such as app-13, or app-t1 for a thread with no
+// tracker, or nothing when it isn't one. Repository names can hold dashes, so the task is what
+// follows the last one.
+function taskName(word?: string): [string, string] | undefined {
+  const parts = word?.match(/^(.+)-(t?\d+)$/);
+  return parts?.[1] && parts[2] ? [parts[1], parts[2]] : undefined;
 }
 
 // Prints why a command can't run as given, and ends Skelcrew with an error. People who mistype a
@@ -79,7 +81,7 @@ async function leadCommand(from?: string): Promise<void> {
   const { openDb } = await import("./db.ts");
   const { bringInFrom, repositories } = await import("./flow/repo.ts");
   const { firstRun } = await import("./machine/setup.ts");
-  firstRun();
+  await firstRun();
   const found = await bringInFrom(from);
   if (repositories(openDb()).length > 0) await attachToLead("skelcrew", found);
 }
@@ -91,7 +93,7 @@ async function machineCommand(args: string[]): Promise<void> {
   const { firstRun } = await import("./machine/setup.ts");
   // Run by sc remote add on the machine it sets up, not by people, so usage leaves it out.
   if (command === "first-run" && args.length === 1) {
-    firstRun();
+    await firstRun();
     return;
   }
   if (command === "serve" && args.length === 1) {
@@ -110,7 +112,7 @@ async function screenCommand(args: string[]): Promise<void> {
   const { runPage } = await import("./screen/page.ts");
   const { runSidebar } = await import("./screen/sidebar.ts");
   // The third word is the remote Skelcrew runs on, and empty on this machine. The last is the
-  // GitHub name of the repository the screen opened on.
+  // owner/name of the repository the screen opened on.
   const [session, where, repository] = rest;
   if (
     command === "sidebar" &&
@@ -168,15 +170,16 @@ async function repoCommand(args: string[], json: boolean): Promise<void> {
   usage(command);
 }
 
-// Installs, updates, removes or lists plugins, for sc plugin. --json changes only what ls
-// prints.
+// Installs, updates, sets up again, removes or lists plugins, for sc plugin. --json changes
+// only what ls prints.
 async function pluginCommand(args: string[], json: boolean): Promise<void> {
   const [command, sub, ...rest] = args;
-  const { installPlugin, listPlugins, removePlugin, updatePlugins } = await import(
+  const { installPlugin, listPlugins, removePlugin, setUpPlugin, updatePlugins } = await import(
     "./plugins/install.ts"
   );
   if (sub === "install" && rest[0] && rest.length === 1) return installPlugin(rest[0]);
   if (sub === "update" && rest.length <= 1) return updatePlugins(rest[0]);
+  if (sub === "setup" && rest[0] && rest.length === 1) return setUpPlugin(rest[0]);
   if (sub === "rm" && rest[0] && rest.length === 1) return removePlugin(rest[0]);
   if (sub === "ls" && rest.length === 0) return listPlugins(json);
   usage(command);
@@ -252,11 +255,16 @@ async function taskCommand(args: string[], json: boolean): Promise<void> {
 async function threadCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
   const { attachToThread } = await import("./attach.ts");
-  const { reviewAgain, startOn, stopOn } = await import("./client.ts");
+  const { reviewAgain, startNew, startOn, stopOn } = await import("./client.ts");
   const thread = taskName(sub);
   const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
   if (command === "start" && thread && (rest.length === 0 || from)) {
     console.log(await startOn(...thread, from));
+    return;
+  }
+  const [title, body] = rest;
+  if (command === "start" && sub && !thread && title && body !== undefined && rest.length === 2) {
+    console.log(await startNew(sub, title, body));
     return;
   }
   if (command === "stop" && thread && rest.length === 0) {

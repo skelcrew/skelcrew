@@ -4,16 +4,33 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 
-// Who wrote an item, review or comment. `you` is whether it is the login Skelcrew acts as.
-const Author = z.object({ login: z.string(), bot: z.boolean(), you: z.boolean() });
+// Who wrote an item, review or comment. `you` is whether it is you, as signed in to the
+// tracker or forge. `push` is whether they can push to the repository, or null where the
+// plugin didn't ask, which an item saved before Skelcrew asked holds too.
+const Author = z.object({
+  login: z.string(),
+  bot: z.boolean(),
+  you: z.boolean(),
+  push: z.boolean().nullable().default(null),
+});
 
 const Comment = z.object({ id: z.string(), text: z.string(), author: Author.nullable() });
 
-// What an item has whatever its kind. An ID is the tracker's own, such as "12" on GitHub.
+// A task's ID in its tracker, or Skelcrew's own for a thread with no tracker, such as t1. It
+// names the thread's folder, which setup deletes, and its branch, so it holds only letters,
+// digits, underscores and dashes, starting with a letter or digit: never a / or a .. that
+// would reach outside Skelcrew's threads folder.
+export const TaskId = z
+  .string()
+  .max(64)
+  .regex(/^[A-Za-z0-9][\w-]*$/);
+
+// What an item has whatever its kind. An ID is the tracker's own, such as "12" on GitHub, and
+// is checked as the plugin answers, so one that isn't a plain name is refused once, there.
 // Times are as the tracker wrote them, which for GitHub sort as text. The link becomes a
 // terminal link, so it may hold only printable characters, with no space.
 const common = {
-  id: z.string(),
+  id: TaskId,
   title: z.string(),
   body: z.string(),
   state: z.enum(["open", "closed", "merged"]),
@@ -55,24 +72,24 @@ export const Item = z.discriminatedUnion("kind", [
 export type Item = z.infer<typeof Item>;
 export type Task = Extract<Item, { kind: "task" }>;
 
-// Brings the copy of a repository up to date with what its tracker and forge just said. With
-// `everything`, the items are all that is open, so one the copy has that isn't among them is
-// no longer open. A closed item stays while a thread that isn't over points to it, as its
-// builder and reviewer still read its task. Also saves how many tasks and PRs are open, for
-// the sidebar's count of the rows it has no room for. All at once, so no reader sees half.
+// Brings the copy of a repository up to date with what its tracker or forge just said. For each
+// kind in `everything`, the items are all of that kind that is open, so one the copy has that isn't
+// among them is no longer open. A closed item stays while a thread that isn't over points to it, as
+// its builder and reviewer still read its task. Also saves how many tasks and PRs are open, for the
+// sidebar's count of the rows it has no room for. All at once, so no reader sees half.
 export function saveItems(
   db: Database,
   owner: string,
   repo: string,
   items: Item[],
-  everything: boolean,
+  everything: Item["kind"][],
 ): void {
   db.transaction(() => {
-    if (everything)
+    for (const kind of everything)
       db.run(
         `UPDATE items SET state = 'closed', item = json_set(item, '$.state', 'closed')
-          WHERE owner = ? AND repo = ? AND state = 'open'`,
-        [owner, repo],
+          WHERE owner = ? AND repo = ? AND kind = ? AND state = 'open'`,
+        [owner, repo, kind],
       );
     for (const item of items)
       db.run(
@@ -84,7 +101,7 @@ export function saveItems(
       `DELETE FROM items WHERE owner = ? AND repo = ? AND state != 'open' AND NOT EXISTS (
         SELECT 1 FROM threads t WHERE t.owner = items.owner AND t.repo = items.repo
           AND t.status IN ('working', 'waiting', 'stopped')
-          AND CAST(items.id AS INTEGER) = (CASE items.kind WHEN 'task' THEN t.task ELSE t.pr END))`,
+          AND items.id = CAST((CASE items.kind WHEN 'task' THEN t.task ELSE t.pr END) AS TEXT))`,
       [owner, repo],
     );
     db.run(
@@ -106,23 +123,40 @@ const parsed = (rows: unknown[]) =>
 
 // Returns a task from the copy, open or kept for its thread, for its builder, its reviewer and
 // sc task show. Throws when the copy doesn't have it.
-export function taskOf(db: Database, owner: string, repo: string, task: number): Task {
+export function taskOf(db: Database, owner: string, repo: string, task: string): Task {
   const [found] = parsed(
     db
       .query("SELECT item FROM items WHERE owner = ? AND repo = ? AND kind = 'task' AND id = ?")
-      .all(owner, repo, String(task)),
+      .all(owner, repo, task),
   );
-  if (found?.kind !== "task") throw new Error(`there is no open task #${task} in ${owner}/${repo}`);
+  if (found?.kind !== "task") throw new Error(`there is no open task ${task} in ${owner}/${repo}`);
   return found;
 }
 
+// Returns a thread's PR from the copy, as its forge last answered it, or null when the copy
+// doesn't have it. A forge answers only what changed since the last poll, so a PR whose events
+// were held back, such as for a stopped thread, comes from here until it changes again.
+export function prOf(
+  db: Database,
+  owner: string,
+  repo: string,
+  pr: number,
+): Extract<Item, { kind: "pr" }> | null {
+  const [found] = parsed(
+    db
+      .query("SELECT item FROM items WHERE owner = ? AND repo = ? AND kind = 'pr' AND id = ?")
+      .all(owner, repo, String(pr)),
+  );
+  return found?.kind === "pr" ? found : null;
+}
+
 // Returns a repository's open tasks, newest first, for sc task ls and for starting a thread
-// on each one labeled skelcrew.
+// on each one labeled to start.
 export function openTasks(db: Database, owner: string, repo: string): Task[] {
   return parsed(
     db
       .query(`SELECT item FROM items WHERE owner = ? AND repo = ? AND kind = 'task'
-        AND state = 'open' ORDER BY created DESC, CAST(id AS INTEGER) DESC`)
+        AND state = 'open' ORDER BY created DESC, length(id) DESC, id DESC`)
       .all(owner, repo),
   ).flatMap((item) => (item.kind === "task" ? [item] : []));
 }
@@ -131,4 +165,19 @@ export function openTasks(db: Database, owner: string, repo: string): Task[] {
 export function itemAt(db: Database, link: string): Item | null {
   const rows = db.query("SELECT item FROM items WHERE json_extract(item, '$.link') = ?").all(link);
   return parsed(rows)[0] ?? null;
+}
+
+// Returns the task a thread works on, for its reviewer and its PR: its item in Skelcrew's copy,
+// where the tracker's latest words are, or else what the thread saved as it started, as for a
+// thread with no tracker. Only a task from the copy has a line that closes it.
+export function threadTask(
+  db: Database,
+  thread: { owner: string; repo: string; task: string; title: string | null; body: string | null },
+): { title: string; body: string; closes: string | null } {
+  try {
+    const { title, body, closes } = taskOf(db, thread.owner, thread.repo, thread.task);
+    return { title, body, closes };
+  } catch {
+    return { title: thread.title ?? "", body: thread.body ?? "", closes: null };
+  }
 }
