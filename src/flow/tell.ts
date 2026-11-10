@@ -28,6 +28,8 @@ function wrapped(from: string, reply: string, text: string): string {
 // A message that can't be typed in, such as to a builder busy for half an hour, is logged,
 // and the lead hears that it didn't arrive.
 export function messageBuilder(db: Database, tmux: string, thread: Thread, text: string): string {
+  // Refuse first, while the lead's command still waits for an answer: a stopped thread gets
+  // the command that brings it back, any other one without a session gets its status.
   const name = threadName(db, thread);
   const live = thread.status === "working" || thread.status === "waiting";
   if (thread.status === "stopped")
@@ -41,6 +43,9 @@ export function messageBuilder(db: Database, tmux: string, thread: Thread, text:
     throw new Error(
       `${name}'s builder is asking the human a question, and typing now would answer it. Tell the human instead.`,
     );
+  // Typing waits until the builder is idle, up to half an hour, so it runs on without being
+  // awaited. Either way the thread's log says what happened, and the lead hears of a failure,
+  // since by then its command has long returned.
   const message = wrapped("lead", "sc tell lead", text);
   typeInto(tmux, thread.folder, builderHarness(thread).marks, message, {
     timeout: 30 * 60_000,

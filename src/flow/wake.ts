@@ -18,6 +18,9 @@ export function listenForWakeUps(
   return Bun.serve({
     port,
     fetch: async (request) => {
+      // The path names the plugin, and the body is left unread: only that a delivery came
+      // matters. Anything else gets the same answer as an unknown plugin, so a stranger learns
+      // nothing about which plugins run here.
       if (request.method !== "POST") return new Response("Not found\n", { status: 404 });
       const plugin = new URL(request.url).pathname.slice(1);
       if (plugin && (await wakePlugin(plugin))) return new Response("Polling\n", { status: 202 });

@@ -8,6 +8,9 @@ import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { threadsDir } from "../paths.ts";
 import { findRepository } from "./repo.ts";
 
+// A thread as Skelcrew's database keeps it, one row per thread. It is checked on every read,
+// since the row comes back from disk. Its folder names it inside Skelcrew: its clone, session
+// and log are all named after it.
 export const Thread = z.object({
   owner: z.string(),
   // The repository's name on its forge, or its remote's path, without the owner.
@@ -138,6 +141,9 @@ export function record(
   >,
   why?: string,
 ): Thread {
+  // Work out the note for the lead. A thread that stops needing you drops its note, and one
+  // that starts needing you keeps why, short enough to type as one line. A thread that already
+  // needed you keeps the note it had, so a later change doesn't hide the first reason.
   const before = readThread(db, folder);
   let { noting } = change;
   if (!needsYou({ ...before, ...change })) noting = null;
@@ -152,6 +158,8 @@ export function record(
       // The IDs seen are a list, kept as JSON.
       [...set.map(([, value]) => (Array.isArray(value) ? JSON.stringify(value) : value)), folder],
     );
+  // Read the thread back rather than merging the change in memory, so the log and the caller
+  // see exactly what the database holds.
   const thread = readThread(db, folder);
   log(thread, why);
   return thread;
@@ -201,6 +209,7 @@ export function liveThreads(db: Database): Thread[] {
 // short: Claude Code hashes the name of the folder it saves a conversation in once the path
 // passes 200 characters, and Skelcrew would then miss it when bringing the builder back.
 export function folderName(repository: string): string {
+  // Anything but a letter, digit, _ or - becomes a dash, and leading dashes and underscores go.
   const name = repository
     .replace(/[^\w-]/g, "-")
     .replace(/^[^a-zA-Z0-9]+/, "")

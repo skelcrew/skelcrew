@@ -26,6 +26,8 @@ export function readPage(db: Database, link: string): Page {
 // state, branch, checks and latest review, then its description.
 export function pageOf(item: Item): Page {
   const author = item.author?.login ?? "unknown";
+  // An issue says who wrote it and how it is labeled, since a label such as skelcrew is what
+  // starts a thread.
   if (item.kind === "task") {
     const labels = item.labels.join(", ") || "none";
     const facts: Page["facts"] = [
@@ -35,6 +37,8 @@ export function pageOf(item: Item): Page {
     ];
     return { title: item.title, facts, body: item.body };
   }
+  // A PR says where its branch merges and how close it is to merging: its CI and only its
+  // latest review, as that is the one that says where the PR stands now.
   const latest = item.reviews.at(-1);
   const facts: Page["facts"] = [
     ["State", item.state],
@@ -51,6 +55,7 @@ function checksOf(pr: Extract<Item, { kind: "pr" }>): string {
   const ci = pr.checks.filter((check) => check.name !== reviewCheck);
   if (ci.length === 0) return "none";
   if (ci.every((check) => check.state === "passed")) return "passing";
+  // Anything neither passed nor running, such as failed or cancelled, counts as failing.
   return ci.some((check) => !["passed", "running"].includes(check.state)) ? "failing" : "running";
 }
 
