@@ -3,7 +3,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { skelLine } from "../say.ts";
 import { checkoutFolder, singleFile } from "../version.ts";
 import {
   daemonLog,
@@ -133,11 +132,8 @@ export function installService(): void {
     runServiceCommand(["systemctl", "--user", "daemon-reload"]);
     if (before !== null) return;
     runServiceCommand(["systemctl", "--user", "enable", "--now", "skelcrew"]);
-    console.log(
-      skelLine(
-        "turning on lingering, so the daemon keeps running after you log out and starts after a reboot.",
-      ),
-    );
+    // Lingering keeps the daemon running after you log out, and starts it after a reboot.
+    console.log("Keeping Skelcrew running after you log out or restart.");
     runServiceCommand(["loginctl", "enable-linger"]);
   } catch (error) {
     // The unit file marks the service installed, so the old one comes back, or none, and

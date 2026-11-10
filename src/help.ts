@@ -30,7 +30,7 @@ const sections: [string, [string, string][]][] = [
   [
     "PLUGINS",
     [
-      ["plugin install <owner/repo> | <path>", "Install a plugin, after showing what it runs"],
+      ["plugin install <owner/repo> | <path>", "Install a plugin, after asking"],
       ["plugin update [<name>]", "Move one, or all, to its newest version"],
       ["plugin setup <name>", "Run its setup again, such as to sign in again"],
       ["plugin rm <name>", "Remove one, with its settings and tokens"],

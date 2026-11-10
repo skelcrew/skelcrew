@@ -456,8 +456,8 @@ export async function initRepo(tracker?: string): Promise<void> {
   else console.log("skelcrew.yaml is there already, so Skelcrew left it as it is.");
   // Bring the repository in, then say what was written and when Skelcrew will read it.
   await addRepo(root);
-  const counts =
-    "Skelcrew reads it from its own clone, so it counts once you commit it and push it to the default branch.";
+  // Skelcrew reads it from its own clone, so it counts once it is pushed to the default branch.
+  const counts = "Commit and push it to start.";
   if (!there) console.log(`Wrote skelcrew.yaml. ${counts}`);
   else if (picked) console.log(`Added tracker: ${picked} to skelcrew.yaml. ${counts}`);
 }

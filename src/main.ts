@@ -81,7 +81,7 @@ async function leadCommand(from?: string): Promise<void> {
   const { openDb } = await import("./db.ts");
   const { bringInFrom, repositories } = await import("./flow/repo.ts");
   const { firstRun } = await import("./machine/setup.ts");
-  await firstRun();
+  await firstRun(from);
   const found = await bringInFrom(from);
   if (repositories(openDb()).length > 0) await attachToLead("skelcrew", found);
 }

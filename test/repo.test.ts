@@ -651,9 +651,7 @@ reviewer: { harness: codex }
   );
   expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
   expect(run.out).toContain("Added simon/app, as app.");
-  expect(run.out).toContain(
-    "Wrote skelcrew.yaml. Skelcrew reads it from its own clone, so it counts once you commit it and push it to the default branch.",
-  );
+  expect(run.out).toContain("Wrote skelcrew.yaml. Commit and push it to start.");
 });
 
 // YAML reads true, null or 123 as something other than text, which a model name must be.
@@ -686,9 +684,7 @@ test("init only adds the tracker to a skelcrew.yaml that is there, and leaves on
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(readFileSync(file, "utf8")).toBe("# How to build it.\nsetup: [make]\ntracker: github\n");
-  expect(run.out).toContain(
-    "Added tracker: github to skelcrew.yaml. Skelcrew reads it from its own clone, so it counts once you commit it and push it to the default branch.",
-  );
+  expect(run.out).toContain("Added tracker: github to skelcrew.yaml. Commit and push it to start.");
 
   const again = await skel(["init"], "", checkout);
   expect(again.code).toBe(0);

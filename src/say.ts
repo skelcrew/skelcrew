@@ -17,11 +17,3 @@ export const errorText = (error: unknown) =>
 // Returns the title of your terminal's window while Skelcrew runs in it, naming the server or
 // Sprite you reached with --remote, if any.
 export const windowTitle = (where?: string) => (where ? `Skelcrew · ${where}` : "Skelcrew");
-
-// Returns a rule across the terminal with a name in it, to mark where an outside tool takes
-// over the terminal and where Skelcrew takes it back. 80 wide when the output isn't a terminal.
-export function rule(name: string): string {
-  const width = (process.stdout.isTTY && process.stdout.columns) || 80;
-  const start = `──── ${name} `;
-  return start + "─".repeat(Math.max(0, width - start.length));
-}

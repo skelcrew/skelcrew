@@ -8,13 +8,18 @@ import { HarnessName, harnessNamed } from "./agents/harness.ts";
 import { cloneDir, configDir } from "./paths.ts";
 
 // Unknown keys pass through, so settings this version doesn't know survive a save.
-const SetupConfig = z.looseObject({ harness: HarnessName.optional() });
+// github_declined lists the repositories, by full name, whose checkouts are never offered the
+// GitHub plugin again, as you said no in one.
+const SetupConfig = z.looseObject({
+  harness: HarnessName.optional(),
+  github_declined: z.array(z.string()).optional(),
+});
 
 // Returns the settings file path used to remember your harness choice between runs.
 export const configFile = () => join(configDir(), "config.yaml");
 
-// Reads and validates settings, returning the YAML document and harness choice while
-// preserving unknown settings.
+// Reads and validates settings, returning the YAML document, the harness choice and the
+// repositories you declined the GitHub plugin for, while preserving unknown settings.
 export function readConfig() {
   const file = configFile();
   const config = parseDocument(existsSync(file) ? readFileSync(file, "utf8") : "");
@@ -22,7 +27,7 @@ export function readConfig() {
   if (broken) throw new Error(`${file} isn't valid YAML: ${broken.message}`);
   const read = SetupConfig.safeParse(config.toJS() ?? {});
   if (!read.success) throw new Error(`${file} isn't valid: ${z.prettifyError(read.error)}`);
-  return { config, harness: read.data.harness };
+  return { config, harness: read.data.harness, declined: read.data.github_declined ?? [] };
 }
 
 // Returns the harness the lead and builders run on: the one the first run saved, or Claude
