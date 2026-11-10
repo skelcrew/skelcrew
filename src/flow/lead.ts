@@ -15,11 +15,10 @@ import {
   endSession,
   failedScreen,
   hasSession,
-  isIdle,
   startServer,
   startSession,
-  typeInto,
 } from "../agents/tmux.ts";
+import { isIdle, typeInto } from "../agents/typing.ts";
 import { agentRoles } from "../config.ts";
 import { Repository } from "../db.ts";
 import { cloneDir, leadPlaces } from "../paths.ts";

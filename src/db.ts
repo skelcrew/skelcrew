@@ -41,18 +41,20 @@ function prepareTables(db: Database): void {
     name TEXT NOT NULL UNIQUE,
     PRIMARY KEY (owner, repo)
   )`);
-  // Whether Skelcrew made sure the repository has the skelcrew label. A repository saved before
-  // this column existed gets it once, when the daemon next refreshes its clone.
-  if (!db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = 'labeled'").get())
-    db.run("ALTER TABLE repositories ADD COLUMN labeled INTEGER NOT NULL DEFAULT 0");
-  // How many tasks and PRs are open in Skelcrew's copy, as the sidebar counts those it doesn't
-  // show. `lead_session` is the session ID of the repository's lead, kept so it comes back with its
-  // conversation. `opened` is when you last opened the repository, in milliseconds since 1970, and
-  // null until you first do: its lead starts then, and from then on the daemon brings it back.
-  // `lead_harness` is the harness the lead started on, which it keeps, as a conversation can't move
-  // to another harness. `kept_lead` marks the repository whose lead is the one this machine had
-  // before Skelcrew gave each repository its own.
+  // Creating a table leaves one that exists as it is, so the columns past the first few are
+  // added here, to new databases and to ones from an earlier release alike. `labeled` says
+  // whether Skelcrew made sure the repository has the skelcrew label: one saved before it
+  // existed gets the label once, when the daemon next refreshes its clone. `open_issues` and
+  // `open_prs` count the tasks and PRs open in Skelcrew's copy, as the sidebar counts those it
+  // doesn't show.
+  // `lead_session` is the session ID of the repository's lead, kept so it comes back with its
+  // conversation. `opened` is when you last opened the repository, in milliseconds since 1970,
+  // and null until you first do: its lead starts then, and from then on the daemon brings it
+  // back. `lead_harness` is the harness the lead started on, which it keeps, as a conversation
+  // can't move to another harness. `kept_lead` marks the repository whose lead is the one this
+  // machine had before Skelcrew gave each repository its own.
   const columns = {
+    labeled: "INTEGER NOT NULL DEFAULT 0",
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
     lead_session: "TEXT",
@@ -75,31 +77,9 @@ function prepareTables(db: Database): void {
     base TEXT,
     status TEXT NOT NULL,
     session TEXT,
-    rounds INTEGER NOT NULL DEFAULT 0,
-    pr INTEGER,
-    needs_you INTEGER NOT NULL DEFAULT 0,
-    reviewing TEXT,
-    submitting TEXT,
-    telling TEXT,
-    held TEXT,
-    last_review INTEGER,
-    last_comment INTEGER,
-    last_check INTEGER,
-    asking INTEGER NOT NULL DEFAULT 0,
-    noting TEXT,
-    title TEXT,
-    started INTEGER,
-    checks TEXT,
-    reviewer TEXT,
-    reviewed_by TEXT,
-    review_round INTEGER,
-    verdict TEXT,
-    review_line TEXT,
-    harness TEXT,
     PRIMARY KEY (owner, repo, task)
   )`);
-  // Creating a table leaves one that exists as it is, so a release that gives threads a new
-  // column lists it here too, and databases already in use gain it. `submitting`,
+  // The rest of a thread's columns, added as the repositories' are. `submitting`,
   // `reviewing` and `telling` hold the round under way, so one the daemon's stop cut short
   // carries on when it starts again, and `noting` holds a note for the lead the same way.
   const added = {

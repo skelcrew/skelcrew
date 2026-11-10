@@ -2,7 +2,8 @@
 // builder for a merge or for sc stop, as both must cancel the events still being typed in.
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
-import { agentRuns, stopSession, typeInto } from "../agents/tmux.ts";
+import { agentRuns, stopSession } from "../agents/tmux.ts";
+import { typeInto } from "../agents/typing.ts";
 import { type Check, failedLog, fetchIntoClone } from "../github.ts";
 import { cloneDir } from "../paths.ts";
 import { errorText } from "../say.ts";

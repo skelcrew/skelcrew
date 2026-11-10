@@ -344,17 +344,18 @@ function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
         asked.reviewer = true;
       },
     });
-  const reviewer = reviewerSaved() ?? harness;
-  if ((harness ?? "claude") !== "codex" || reviewer === "claude")
-    if (!existsSync(claudeTokenFile()))
-      steps.push({
-        title: harness === "codex" ? "log the reviewer in to Claude" : "log agents in to Claude",
-        about: "Claude Code will print a long-lived token. Copy it, then come back here.",
-        take: () => saveClaudeToken(env),
-      });
+  // Whether agents or reviews run on the harness, and so need its login.
+  const agents = harness ?? "claude";
+  const uses = (name: HarnessName) => agents === name || (reviewerSaved() ?? agents) === name;
+  if (uses("claude") && !existsSync(claudeTokenFile()))
+    steps.push({
+      title: harness === "codex" ? "log the reviewer in to Claude" : "log agents in to Claude",
+      about: "Claude Code will print a long-lived token. Copy it, then come back here.",
+      take: () => saveClaudeToken(env),
+    });
   // Every Codex agent and review shares Skelcrew's own Codex login.
   const onCodex = harness === "codex" ? "agents" : "the reviewer";
-  if ((harness === "codex" || reviewer === "codex") && !codexLoggedIn(env))
+  if (uses("codex") && !codexLoggedIn(env))
     steps.push({
       title: `log ${onCodex} in to Codex`,
       about: "Codex will show a link and a code. Open the link on any device and enter the code.",
