@@ -133,7 +133,9 @@ export async function openScreen(
     !Bun.which("infocmp") ||
     Bun.spawnSync(["infocmp", term], { stdout: "ignore", stderr: "ignore" }).success;
   if (env.TERM && !known(env.TERM)) env.TERM = "xterm-256color";
+  // The agents' server may have started under an older Skelcrew, so it gets today's settings.
   applyConfig(agents);
+  // This screen's session, named by this process, and the sidebar that opens on it.
   const name = `screen-${process.pid}`;
   // The name sc --remote passes along, such as sprite:demo. Empty on this machine.
   const where = env.SKELCREW_REMOTE_NAME ?? "";
@@ -152,6 +154,7 @@ export async function openScreen(
   // The lone ";" separates tmux commands.
   const commands = open.flatMap((command) => [...command, ";"]).slice(0, -1);
   const argv = ["tmux", "-L", screenSocket(agents), "-f", "/dev/null", ...commands];
+  // tmux runs in your terminal until you leave. Only a screen that couldn't open is an error.
   const code = await Bun.spawn(argv, { env, stdio: ["inherit", "inherit", "inherit"] }).exited;
   if (code !== 0) throw new Error(`couldn't open the screen: tmux exited with ${code}`);
   console.log("Your agents keep running. Run sc to come back.");

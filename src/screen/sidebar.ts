@@ -68,6 +68,8 @@ export async function runSidebar(
   where: string,
   repository: string,
 ): Promise<void> {
+  // What the sidebar keeps between redraws: the open repository and its tabs, the right pane and
+  // its terminal, and what it last drew.
   const db = openDb();
   let open = opening(db, repository);
   let tabs = repositoryTabs(db);
@@ -116,6 +118,7 @@ export async function runSidebar(
     // A page's row can go at a poll, and the page stays until you move, so it keeps its name.
     if (page) page = linkAt(shown) ?? page;
     else shown = shownSession(agents, tty) ?? shown;
+    // The tabs and the strip go to tmux's status lines, and only when they changed.
     const width = paneWidth(screenSocket(agents), right);
     const left = size().width + 1;
     const strip = drawStrip(rows, shown, { left, width }, where, release, page);
@@ -124,6 +127,7 @@ export async function runSidebar(
       lastStrip = lines.join("\n");
       showStrip(screenSocket(agents), session, lines);
     }
+    // Then the sidebar itself, the notice above its lists, also only when it changed.
     const frame = [...notice, draw(rows, lists, shown, size())].join("\n");
     if (frame === last) return;
     last = frame;
@@ -136,6 +140,8 @@ export async function runSidebar(
   // are does nothing, so a page isn't asked for again.
   const show = (next: string | null) => {
     if (next === null || next === shown) return;
+    // A link's page runs in the pane in place of what was there. Coming from a page, or onto a
+    // client still attaching, a new client starts on the agent. Otherwise the client switches.
     const link = linkAt(next);
     if (link) respawnPane(screenSocket(agents), right, pageCommand(next));
     else if (page || shownSession(agents, tty) === null) {
@@ -151,7 +157,8 @@ export async function runSidebar(
   function switchTo(fullName: string) {
     if (fullName === `${open.owner}/${open.repo}`) return;
     open = opening(db, fullName);
-    // Not waited on, so the sidebar draws at once.
+    // Not waited on, so the sidebar draws at once. The right pane starts a client on the new
+    // lead, and no page shows.
     openRepository(fullName);
     respawnPane(screenSocket(agents), right, agentClient(agents, open.lead, open.lead));
     tty = paneTty(screenSocket(agents), right);
@@ -167,6 +174,8 @@ export async function runSidebar(
   // Without the cursor hidden it would blink at the end of the list. 1000 and 1006 ask for
   // clicks, in the form tmux can give a place of any size.
   process.stdout.write("\x1b[?25l\x1b[?1000h\x1b[?1006h");
+  // Acts on each key and click that came together, then redraws. A click on a row picks it by
+  // its line, counted from the top of the lists, below the notice.
   process.stdin.on("data", (bytes) => {
     for (const [, kind, arrow, y, clicked] of bytes.toString().matchAll(input)) {
       if (clicked !== undefined || arrow === "C" || arrow === "D") {
@@ -179,12 +188,14 @@ export async function runSidebar(
         // Keys that came with the switch, such as Alt-Down, move in the new repository's rows.
         refresh();
       } else if (arrow) {
+        // Alt-Up or Alt-Down moves a row, and with Shift a list.
         const move = kind === "4" ? jumped : stepped;
         show(move(rows, lists, shown, size(), arrow === "A" ? -1 : 1));
       } else if (y) show(picked(rows, lists, shown, size(), Number(y) - 1 - notice.length));
     }
     refresh();
   });
+  // Draws now, on each resize and each second, until the pane goes and its input closes.
   process.on("SIGWINCH", refresh);
   refresh();
   setInterval(refresh, 1000);
