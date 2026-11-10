@@ -115,8 +115,8 @@ async function screenCommand(args: string[]): Promise<void> {
   const { readPage } = await import("./flow/page.ts");
   const { runPage } = await import("./screen/page.ts");
   const { runSidebar } = await import("./screen/sidebar.ts");
-  // The third word is the remote Skelcrew runs on, and empty on this machine. The last is the
-  // owner/name of the repository the screen opened on.
+  // A sidebar's third word, and a page's second, is the remote Skelcrew runs on, and empty on
+  // this machine. A sidebar's last is the owner/name of the repository the screen opened on.
   const [session, where, repository] = rest;
   if (
     command === "sidebar" &&
@@ -129,8 +129,8 @@ async function screenCommand(args: string[]): Promise<void> {
     await runSidebar(sub, session, where, repository);
     return;
   }
-  if (command === "page" && sub && rest.length === 0) {
-    await runPage(sub, () => readPage(openDb(), sub));
+  if (command === "page" && sub && session !== undefined && rest.length === 1) {
+    await runPage(sub, session, () => readPage(openDb(), sub));
     return;
   }
   usage(command);

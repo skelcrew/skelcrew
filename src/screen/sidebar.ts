@@ -144,7 +144,7 @@ export async function runSidebar(
     // A link's page runs in the pane in place of what was there. Coming from a page, or onto a
     // client still attaching, a new client starts on the agent. Otherwise the client switches.
     const link = linkAt(next);
-    if (link) respawnPane(screenSocket(agents), right, pageCommand(next));
+    if (link) respawnPane(screenSocket(agents), right, pageCommand(next, where));
     else if (page || shownSession(agents, tty) === null) {
       respawnPane(screenSocket(agents), right, agentClient(agents, next, open.lead));
       tty = paneTty(screenSocket(agents), right);

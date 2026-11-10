@@ -105,13 +105,13 @@ const page: Page = {
 const read = (lines: string[]) => lines.map((line) => Bun.stripANSI(line).trimEnd());
 
 test("a page reads from the title down, two columns in, with the link among the facts", () => {
-  expect(read(drawPage(page, issueUrl, 60))).toEqual([
+  expect(read(drawPage(page, issueUrl, 80, "click to open"))).toEqual([
     "",
     "  Add CSV export",
     "",
     "  State   open",
     "  Labels  skelcrew",
-    `  GitHub  ${issueUrl}`,
+    `  GitHub  ${issueUrl}  click to open`,
     "",
     "  Export threads.",
     "",
@@ -119,14 +119,26 @@ test("a page reads from the title down, two columns in, with the link among the 
   ]);
 });
 
-test("the link to GitHub is a terminal link, with only its text inside", () => {
-  const line = drawPage(page, issueUrl, 60).find((text) => text.includes("GitHub"));
-  expect(line).toContain(`\x1b]8;;${issueUrl}\x1b\\`);
-  expect(line).toEndWith("\x1b]8;;\x1b\\");
+test("the link to GitHub is a terminal link, with only its text inside, and the hint dim after it", () => {
+  const line = drawPage(page, issueUrl, 80, "click to copy").find((text) =>
+    text.includes("GitHub"),
+  );
+  expect(line).toContain(
+    `\x1b]8;;${issueUrl}\x1b\\${issueUrl}\x1b]8;;\x1b\\  \x1b[90mclick to copy`,
+  );
+});
+
+test("the hint gives way when the link wouldn't fit whole beside it", () => {
+  const line = read(drawPage(page, issueUrl, 60, "click to open")).find((text) =>
+    text.includes("GitHub"),
+  );
+  expect(line).toBe(`  GitHub  ${issueUrl}`);
 });
 
 test("a page with no description says so", () => {
-  expect(read(drawPage({ ...page, body: "" }, issueUrl, 60)).at(-1)).toBe("  No description.");
+  expect(read(drawPage({ ...page, body: "" }, issueUrl, 60, "click to open")).at(-1)).toBe(
+    "  No description.",
+  );
 });
 
 test("every line stops two columns before the edge, wide letters and long words too", () => {
@@ -135,13 +147,13 @@ test("every line stops two columns before the edge, wide letters and long words 
     facts: [["Labels", "a-rather-long-label ".repeat(8)] satisfies [string, string]],
     body: `${"word ".repeat(40)}\n${"x".repeat(120)}`,
   };
-  for (const line of drawPage(long, issueUrl, 40))
+  for (const line of drawPage(long, issueUrl, 40, "click to open"))
     expect(Bun.stringWidth(line)).toBeLessThanOrEqual(38);
 });
 
 test("a fact too long for a line goes on under its value", () => {
   const facts: [string, string][] = [["Labels", "one two three four five six seven eight"]];
-  const lines = read(drawPage({ ...page, facts }, issueUrl, 30));
+  const lines = read(drawPage({ ...page, facts }, issueUrl, 30, "click to open"));
   expect(lines[3]).toBe("  Labels  one two three four");
   expect(lines[4]).toBe("          five six seven");
 });
@@ -152,6 +164,7 @@ test("control codes from GitHub never reach your terminal, on any line", () => {
     { title: evil, facts: [["Author", evil]], body: `${evil}\nnext line` },
     issueUrl,
     200,
+    "click to open",
   ).join("\n");
   const ours = shown
     .replaceAll(new RegExp(`${esc}\\[[\\d;]*m`, "g"), "")
@@ -162,12 +175,12 @@ test("control codes from GitHub never reach your terminal, on any line", () => {
 });
 
 test("a page so narrow it has no room still draws", () => {
-  expect(drawPage(page, issueUrl, 3).length).toBeGreaterThan(0);
+  expect(drawPage(page, issueUrl, 3, "click to open").length).toBeGreaterThan(0);
 });
 
 test("the description is drawn from its markdown, and a long link still wraps", () => {
   const body = "## Steps\n- **one** [the docs](https://example.com/docs) and more words";
-  const lines = drawPage({ ...page, body }, issueUrl, 24);
+  const lines = drawPage({ ...page, body }, issueUrl, 24, "click to open");
   expect(read(lines).slice(-3)).toEqual(["  Steps", "  • one the docs and", "  more words"]);
   expect(lines.join("\n")).toContain("\x1b[1mSteps\x1b[22m");
   expect(lines.join("\n")).toContain("\x1b]8;;https://example.com/docs");
