@@ -157,7 +157,11 @@ test("takes every step on the first run, and none on the second", async () => {
       "  1) Claude Code",
       "  2) Codex",
       "Number: [1] ",
-      "Sign in to Claude: run claude setup-token in another terminal, then paste the token here.",
+      "Sign in to Claude. In another terminal, run:",
+      "",
+      "  claude setup-token",
+      "",
+      "Then paste the token here.",
       "Token: ",
       "Codex isn't installed, so reviews run on Claude Code.",
       "Keeping Skelcrew running after you log out or restart.",
@@ -745,7 +749,7 @@ test("asks for a token when the harness is saved but no token is", async () => {
   writeFileSync(config(), "harness: claude\n");
   const run = await skel("sk-ant-oat01-good\n");
   expect(run.code).toBe(0);
-  expect(run.out).toContain("Sign in to Claude: run claude setup-token in another terminal");
+  expect(run.out).toContain("In another terminal, run:\n\n  claude setup-token\n");
   expect(readFileSync(token(), "utf8").trim()).toBe("sk-ant-oat01-good");
 });
 
@@ -1004,7 +1008,7 @@ test("Codex agents with Claude Code reviews log in to both", async () => {
   const run = await skel("2\n\nsk-ant-oat01-good\n");
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toContain("Sign in to Claude for reviews: run claude setup-token");
+  expect(run.out).toContain("Sign in to Claude for reviews. In another terminal, run:\n\n  claude setup-token\n");
   expect(run.out).toContain("Sign in to Codex. Press Enter to start.");
   expect(parse(readFileSync(config(), "utf8"))).toEqual({
     harness: "codex",
