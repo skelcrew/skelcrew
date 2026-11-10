@@ -704,6 +704,24 @@ nameRepositories(db);`;
     expect(thread()).toMatchObject({ owner: "simon", repo: "site", status: "working" });
   }, 30_000);
 
+  // Without the clone, its skelcrew.yaml can't say the repository has a tracker, and a
+  // thread with no tracker would start in a repository whose tasks belong in one.
+  test("sc start on what you said waits for Skelcrew's clone too, and then finds the tracker", async () => {
+    addApp({}, "site");
+    holdClones();
+    serve();
+    await untilAnswers();
+    const started = skel("start", "site", "Add export", "As JSON");
+    await until(() => existsSync(join(home, "held")));
+    await Bun.sleep(300);
+    expect(existsSync(join(data(), "repos", "simon", "site"))).toBe(false);
+    writeFileSync(join(home, "go"), "");
+    const run = await started;
+    expect(run.code).not.toBe(0);
+    expect(run.err).toContain("site has a tracker, so its tasks belong there");
+    expect(existsSync(join(data(), "repos", "simon", "site"))).toBe(true);
+  }, 30_000);
+
   // Programs often live under the home folder, which the sandbox hides, as npm does under nvm.
   test("a setup command finds its program under your home folder", async () => {
     addApp({ "skelcrew.yaml": "setup: [cd . && X=1 tool --flag]\n" });
