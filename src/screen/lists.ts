@@ -10,8 +10,8 @@ type Line = { text: string; row?: Row; link?: Link; joins?: boolean };
 
 // Where a name starts, past its mark.
 const indent = `${pad}  `;
-// The keys you need most, at the bottom of the sidebar.
-const hints = [`${pad}⌥↑↓ move`, `${pad}⌥⇧↑↓ list`, `${pad}⌥←→ repo`, `${pad}⌃Q quit`];
+// The keys you need most, at the bottom of the sidebar. The others are in Skelcrew's help.
+const hints = [`${pad}⌥↑↓ move`, `${pad}⌃Q quit`];
 
 // Returns a line with spaces added out to a width.
 const filled = (line: string, width: number) =>

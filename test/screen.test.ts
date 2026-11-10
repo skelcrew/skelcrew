@@ -426,7 +426,7 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
   press("M-Down");
   press("M-Down");
   await until(() => selected() === "● app-7", "app-7");
-  tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "5");
+  tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "4");
   await until(() => !seen().includes("⌥↑↓ move"), "the hints to give way");
   await until(() => selected() === "● app-7", "the sidebar to scroll");
 });
@@ -1015,10 +1015,10 @@ test("the hints stay at the bottom, and a click there picks nothing", async () =
   open("lead");
   await ready("lead");
   const lines = seen().trimEnd().split("\n");
-  expect(lines.at(-4)).toContain("⌥↑↓ move");
-  expect(lines.at(-3)).toContain("⌥⇧↑↓ list");
-  expect(lines.at(-2)).toContain("⌥←→ repo");
+  expect(lines.at(-2)).toContain("⌥↑↓ move");
   expect(lines.at(-1)).toContain("⌃Q quit");
+  expect(seen()).not.toContain("⌥⇧↑↓");
+  expect(seen()).not.toContain("⌥←→");
   click(5, 30);
   await Bun.sleep(200);
   expect(selected()).toBe("◆ lead");

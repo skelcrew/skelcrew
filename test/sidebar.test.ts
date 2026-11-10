@@ -50,11 +50,11 @@ const read = (screen: string) =>
     .map((text) => text.slice(0, -1).trimEnd());
 // The line between lists, as you read it.
 const rule = "─".repeat(sidebarWidth - 1);
-// The sidebar's rows, with the empty lines, the headings, the lines between lists and the four
+// The sidebar's rows, with the empty lines, the headings, the lines between lists and the two
 // hints at the bottom left out.
 const listed = (screen: string) =>
   read(screen)
-    .slice(0, -4)
+    .slice(0, -2)
     .filter((line) => line && line !== rule && !["  Issues", "  Threads", "  PRs"].includes(line));
 
 test("lists the lead first, then each thread on two lines: a mark and name, then word and harness", () => {
@@ -81,7 +81,7 @@ test("rows and hints sit two columns in, and the word two further", () => {
   expect(lines[y]?.indexOf("●")).toBe(2);
   expect(lines[y]?.indexOf("app-12")).toBe(4);
   expect(lines[y + 1]?.indexOf("working")).toBe(4);
-  expect(lines.at(-4)?.indexOf("⌥")).toBe(2);
+  expect(lines.at(-2)?.indexOf("⌥")).toBe(2);
 });
 
 test("the word and harness are grey, so the names stand out", () => {
@@ -254,10 +254,10 @@ test("the grey stops at the line, which keeps its own background", () => {
   expect(first).toEndWith("\x1b[49m\x1b[38;5;237m│\x1b[22;39m");
 });
 
-test("four hints with the keys stay at the bottom, below however few rows there are", () => {
+test("two hints with the keys stay at the bottom, below however few rows there are", () => {
   const lines = read(draw([lead], "lead", size));
   expect(lines).toHaveLength(size.height);
-  expect(lines.slice(-4)).toEqual(["  ⌥↑↓ move", "  ⌥⇧↑↓ list", "  ⌥←→ repo", "  ⌃Q quit"]);
+  expect(lines.slice(-3)).toEqual(["", "  ⌥↑↓ move", "  ⌃Q quit"]);
   expect(draw([lead], "lead", size)).toContain("\x1b[90m  ⌥↑↓ move");
 });
 
@@ -274,7 +274,7 @@ test("a release installed in the background shows as a notice, cut at words to f
 
 test("a list too long for the sidebar scrolls above the hints, and never runs into them", () => {
   const rows = [lead, ...[1, 2, 3, 4, 5].map((n) => thread(`app-${n}`))];
-  const short = { width: sidebarWidth, height: 9 };
+  const short = { width: sidebarWidth, height: 7 };
   expect(read(draw(rows, "app-4", short))).toEqual([
     "  ● app-3",
     "    working · claude",
@@ -282,32 +282,30 @@ test("a list too long for the sidebar scrolls above the hints, and never runs in
     "    working · claude",
     "  ● app-5",
     "  ⌥↑↓ move",
-    "  ⌥⇧↑↓ list",
-    "  ⌥←→ repo",
     "  ⌃Q quit",
   ]);
 });
 
 test("a sidebar too short for a row and the hints drops the hints, as the row matters more", () => {
   const rows = [lead, thread("app-1")];
-  for (const height of [1, 2, 3, 4, 5]) {
+  for (const height of [1, 2, 3]) {
     const lines = plain(draw(rows, "app-1", { width: sidebarWidth, height })).split("\n");
     expect(lines.length).toBeLessThanOrEqual(height);
     expect(lines.join("\n")).not.toContain("⌥");
     expect(lines.join("\n")).toContain("  ● app-1");
   }
-  expect(plain(draw(rows, "app-1", { width: sidebarWidth, height: 6 }))).toContain("⌥");
+  expect(plain(draw(rows, "app-1", { width: sidebarWidth, height: 4 }))).toContain("⌥");
 });
 
 test("the hints also give way to a row whose name takes more lines", () => {
   const name = "a-very-long-repository-name-1234";
   const rows = [lead, thread(name)];
-  const tight = { width: sidebarWidth, height: 6 };
+  const tight = { width: sidebarWidth, height: 4 };
   const text = plain(draw(rows, name, tight));
   expect(text).toContain("working · claude");
   expect(text).not.toContain("⌥");
   expect(picked(rows, name, tight, 2)).toBe(name);
-  expect(plain(draw(rows, name, { width: sidebarWidth, height: 7 }))).toContain("⌥");
+  expect(plain(draw(rows, name, { width: sidebarWidth, height: 5 }))).toContain("⌥");
 });
 
 test("the row you are looking at stays on screen however far down the list it is", () => {
@@ -348,7 +346,7 @@ test("a click on either line of a row picks it, but no row, nor an agent that is
 
 test("a click follows the list as it scrolls, and on a hint picks nothing", () => {
   const rows = [lead, ...[1, 2, 3, 4, 5].map((n) => thread(`app-${n}`))];
-  const short = { width: sidebarWidth, height: 9 };
+  const short = { width: sidebarWidth, height: 7 };
   expect(picked(rows, "app-4", short, 0)).toBe("app-3");
   expect(picked(rows, "app-4", short, 2)).toBe("app-4");
   expect(picked(rows, "app-4", short, 3)).toBe("app-4");
@@ -391,7 +389,7 @@ test("the lead sits on top, then ISSUES, THREADS and PRS, with rows together and
   expect(
     read(drawLists(threads, lists, "lead", tall))
       .filter(Boolean)
-      .slice(0, -4),
+      .slice(0, -2),
   ).toEqual([
     "  ◆ lead",
     "    running · claude",
@@ -547,7 +545,7 @@ test("a title keeps as much room as a thread's name, and the grey still runs pas
 
 test("on a narrow pane the hints are cut two columns before the edge", () => {
   const lines = plain(draw([lead], "lead", { width: 10, height: 7 })).split("\n");
-  expect(lines.at(-4)).toBe("  ⌥↑↓ m  │");
+  expect(lines.at(-2)).toBe("  ⌥↑↓ m  │");
 });
 
 test("control codes in a title never reach your terminal", () => {
@@ -628,17 +626,17 @@ test("each list has a third of the sidebar above the hints, and THREADS has what
   const places = (height: number) => {
     const lines = read(drawLists(threads, lists, "lead", { width: sidebarWidth, height }));
     const at = (text: string) => lines.indexOf(text);
-    return [at("  Issues"), at("  Threads"), at("  PRs"), lines.length - 4];
+    return [at("  Issues"), at("  Threads"), at("  PRs"), lines.length - 2];
   };
   // The lead takes the first two lines, and a line goes under it.
-  expect(places(42)).toEqual([3, 15, 27, 38]);
-  expect(places(43)).toEqual([3, 15, 28, 39]);
-  expect(places(44)).toEqual([3, 15, 29, 40]);
-  expect(places(45)).toEqual([3, 16, 29, 41]);
+  expect(places(40)).toEqual([3, 15, 27, 38]);
+  expect(places(41)).toEqual([3, 15, 28, 39]);
+  expect(places(42)).toEqual([3, 15, 29, 40]);
+  expect(places(43)).toEqual([3, 16, 29, 41]);
 });
 
 test("each list stays in its place, however full any of them is", () => {
-  const room = { width: sidebarWidth, height: 42 };
+  const room = { width: sidebarWidth, height: 40 };
   const crowded: Lists = { issues: list(links(9), 240), prs: list(links(9), 240) };
   const moreThreads = [lead, ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => thread(`app-${n}`))];
   const places = (rows: Row[], shownLists: Lists) => {
@@ -658,7 +656,7 @@ const full: Lists = { issues: list(many, 40), prs: list(many, 40) };
 const busy = [lead, ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => thread(`app-${n}`))];
 
 test("THREADS scrolls inside its third, and the lists around it stay", () => {
-  const room = { width: sidebarWidth, height: 26 };
+  const room = { width: sidebarWidth, height: 24 };
   for (const { session } of busy) {
     const lines = read(drawLists(busy, full, session, room));
     expect(lines[0]).toBe("  ◆ lead");
@@ -669,7 +667,7 @@ test("THREADS scrolls inside its third, and the lists around it stay", () => {
 });
 
 test("a third too short for a heading and one row leaves the lead and threads the whole sidebar", () => {
-  const short = { width: sidebarWidth, height: 20 };
+  const short = { width: sidebarWidth, height: 18 };
   const whole = read(drawLists(busy, full, "app-7", short));
   for (const text of ["Issues", "Threads", "PRs", "───"])
     expect(whole.join("\n")).not.toContain(text);
@@ -680,14 +678,14 @@ test("a third too short for a heading and one row leaves the lead and threads th
     "    running · claude",
     "  ● app-1",
   ]);
-  const enough = read(drawLists(busy, full, "app-7", { width: sidebarWidth, height: 21 }));
+  const enough = read(drawLists(busy, full, "app-7", { width: sidebarWidth, height: 19 }));
   expect(enough).toContain("  Issues");
 });
 
 test("a row too tall for THREADS' third leaves THREADS the whole sidebar, as it must stay whole", () => {
   const name = "a-very-long-repository-name-1234";
   const rows = [lead, thread(name)];
-  const room = { width: sidebarWidth, height: 21 };
+  const room = { width: sidebarWidth, height: 19 };
   const lines = read(drawLists(rows, full, name, room));
   expect(lines.join("\n")).not.toContain("Issues");
   expect(lines.join("\n")).toContain("working · claude");
