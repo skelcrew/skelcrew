@@ -1,6 +1,6 @@
-// The sidebar: the live left pane of the screen, with three lists, all of the open repository's.
-// THREADS has its lead and every thread that isn't done, with what each is doing. ISSUES and PRS
-// show what is open in its tracker and forge, as links. It only shows, switches, links and opens
+// The sidebar: the live left pane of the screen, all of the open repository's. Its lead is on
+// top, then up to three lists. THREADS has every thread that isn't done, with what each is doing.
+// ISSUES and PRS show what is open in its tracker and forge, as links. It only shows, switches, links and opens
 // pages. Picking a thread switches the client in the right pane, and picking an issue or PR puts
 // its page there. It also keeps the row above it all up to date, with the tabs and the strip, and switches to
 // another repository's tab.

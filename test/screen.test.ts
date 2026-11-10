@@ -192,13 +192,16 @@ test("shows the lead and every thread that isn't done, beside the agent", async 
   await ready("lead");
   const lines = seen().split("\n");
   const y = lines.findIndex((line) => line.includes("◆ lead"));
-  expect(y).toBeGreaterThan(0);
+  // The lead is at the very top of the sidebar, then a line, then THREADS.
+  expect(y).toBe(1);
   expect(selected()).toBe("◆ lead");
   expect(lines[1]).toContain("I am lead");
   expect(lines[y + 1]).toContain("running · claude");
-  expect(lines[y + 2]).toContain("● app-12");
-  expect(lines[y + 3]).toContain("working · claude");
-  expect(lines[y + 4]).toContain("● app-7");
+  expect(lines[y + 2]?.slice(0, sidebar - 1)).toMatch(/^─+$/);
+  expect(lines[y + 3]).toContain("Threads");
+  expect(lines[y + 5]).toContain("● app-12");
+  expect(lines[y + 6]).toContain("working · claude");
+  expect(lines[y + 7]).toContain("● app-7");
   expect(seen()).not.toContain("app-3");
   // Nothing of the screen is left in agents' sessions: each stays one pane.
   const panes = tmux(agents, "list-panes", "-a", "-F", "#{session_name}").out.trim().split("\n");
@@ -440,7 +443,7 @@ const edge = (height: number) =>
 test("the sidebar's line runs to the bottom, with a blank column before the agent", async () => {
   open("lead");
   await ready("lead");
-  expect(new Set(edge(30))).toEqual(new Set(["│ "]));
+  expect(new Set(edge(30))).toEqual(new Set(["│ ", "┤ "]));
   expect(seen().split("\n")[1]?.indexOf("I am lead")).toBe(sidebar + 1);
 });
 
@@ -472,7 +475,7 @@ test("the sidebar is whole after the terminal goes narrower than it and straight
     tmux(terminal, "resize-window", "-t", "=one:", "-x", "120", "-y", "30");
   }
   await Bun.sleep(1500);
-  expect(new Set(edge(30))).toEqual(new Set(["│ "]));
+  expect(new Set(edge(30))).toEqual(new Set(["│ ", "┤ "]));
   expect(seen().split("◆ lead")).toHaveLength(2);
   expect(selected()).toBe("◆ lead");
 });
@@ -741,13 +744,13 @@ test("the page's link reaches your terminal as a terminal link, through tmux", a
   expect(seen()).toContain(`GitHub  ${issueUrl}`);
 });
 
-test("Alt-Up moves from the lead into ISSUES, and Alt-Down back puts you in the agent", async () => {
+test("Alt-Down moves from the lead into ISSUES, and Alt-Up back puts you in the agent", async () => {
   await openWithPages();
-  press("M-Up");
-  await onPage("Add CSV export");
-  await until(() => right().includes("Author"), "the page");
-  expect(selected()).toContain("Fix login");
   press("M-Down");
+  await onPage("line 1 of the description");
+  await until(() => right().includes("Author"), "the page");
+  expect(selected()).toContain("Add CSV export");
+  press("M-Up");
   await until(() => seen().includes("I am lead"), "the lead");
   await until(() => selected() === "◆ lead", "the lead's row");
   type("straight back\r");
@@ -757,16 +760,24 @@ test("Alt-Up moves from the lead into ISSUES, and Alt-Down back puts you in the 
 test("Alt-Shift-Down and Alt-Shift-Up jump from list to list, through tmux", async () => {
   await openWithPages();
   press("M-S-Down");
+  await until(() => right().includes("Author"), "the first row of ISSUES");
+  press("M-S-Down");
+  await until(() => selected() === "● app-12", "the first row of THREADS");
+  press("M-S-Down");
   await onPage("All of them.");
   press("M-S-Up");
-  await until(() => seen().includes("I am lead"), "the first row of THREADS");
+  await until(() => selected() === "● app-12", "THREADS again");
   press("M-S-Up");
-  await until(() => right().includes("Author"), "the first row of ISSUES");
+  await until(() => right().includes("Author"), "ISSUES again");
+  press("M-S-Up");
+  await until(() => seen().includes("I am lead"), "the lead");
 });
 
 test("moving from a thread to a page and back returns to that thread, not the lead", async () => {
   await openWithPages();
-  press("M-Down");
+  press("M-S-Down");
+  await until(() => right().includes("Author"), "the first issue");
+  press("M-S-Down");
   await until(() => selected() === "● app-12", "the thread");
   press("M-S-Down");
   await onPage("All of them.");
@@ -788,13 +799,15 @@ test("keys pressed together when leaving a page all count, however slowly the cl
   );
   before = `PATH=${join(home, "slow")}:$PATH `;
   await openWithPages();
-  press("M-Up");
-  await until(() => right().includes("Author"), "the page");
+  press("M-Down");
+  await until(() => right().includes("Author"), "the first page");
+  press("M-Down");
+  await until(() => selected().includes("Fix login"), "the last page");
   type("\x1b[1;3B\x1b[1;3B");
-  await until(() => seen().includes("I am app-12"), "the second row's agent");
+  await until(() => seen().includes("I am app-7"), "the second row's agent");
   await Bun.sleep(1200);
-  expect(selected()).toBe("● app-12");
-  expect(seen()).toContain("I am app-12");
+  expect(selected()).toBe("● app-7");
+  expect(seen()).toContain("I am app-7");
 });
 
 test("a pane too narrow for a page's lines cuts them, so every line keeps its own row", async () => {
@@ -821,7 +834,7 @@ test("a page leaves none of its terminal's modes behind on the agent", async () 
   clickRow("app-31");
   await onPage("line 1 of the description");
   expect(modes()).not.toBe(before);
-  press("M-S-Down");
+  press("M-S-Up");
   await until(() => seen().includes("I am lead"), "the lead");
   await until(() => modes() === before, "the modes to come back");
 });
@@ -855,7 +868,7 @@ test("typing on a page goes nowhere, and the agent never gets it", async () => {
   press("C-\\");
   await Bun.sleep(300);
   expect(right()).toBe(before);
-  press("M-S-Down");
+  press("M-S-Up");
   await until(() => seen().includes("I am lead"), "the agent");
   await Bun.sleep(300);
   expect(read("lead.typed")).toBe("");
@@ -865,7 +878,7 @@ test("Ctrl-C pressed the moment a page opens can't take the right side away", as
   await openWithPages();
   const running = () => tmux(screen, "list-panes", "-a", "-F", "#{pane_pid}").out;
   const before = running();
-  press("M-Up");
+  press("M-Down");
   await until(() => running() !== before, "the pane to start the page");
   for (let i = 0; i < 10; i++) {
     press("C-c");
@@ -873,7 +886,7 @@ test("Ctrl-C pressed the moment a page opens can't take the right side away", as
   }
   await Bun.sleep(500);
   expect(running().trim().split("\n")).toHaveLength(2);
-  press("M-Down");
+  press("M-Up");
   await until(() => seen().includes("I am lead"), "the lead");
   type("still here\r");
   await until(() => read("lead.typed").includes("still here"), "what you typed");
@@ -956,7 +969,7 @@ test("leaving a page for an agent ends the page, and no client is left behind it
   await openWithPages();
   clickRow("app-31");
   await onPage("line 1 of the description");
-  press("M-S-Down");
+  press("M-S-Up");
   await until(() => seen().includes("I am lead"), "the lead");
   await until(() => pagesRunning() === 0, "the page to end");
   expect(tmux(agents, "list-clients").out.trim().split("\n")).toHaveLength(1);
