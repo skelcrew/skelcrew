@@ -10,6 +10,7 @@ import { callPlugin, installedPlugins, readManifest } from "./plugin.ts";
 
 // Returns the installed plugins that do the job.
 export function pluginsFor(db: Database, job: "tracker" | "forge"): string[] {
+  // A plugin whose manifest can't be read does no job, so one broken plugin stops nothing else.
   return installedPlugins(db)
     .filter((plugin) => {
       try {
@@ -48,6 +49,7 @@ export function pluginsOf(
 ): { plugin: string; jobs: ("tracker" | "forge")[] }[] {
   const tracker = trackerOf(db, repository);
   const forge = forgeOf(db, repository);
+  // Such as GitHub, which holds both the issues and the PRs.
   if (tracker !== null && tracker === forge)
     return [{ plugin: tracker, jobs: ["tracker", "forge"] }];
   return [
@@ -59,6 +61,8 @@ export function pluginsOf(
 // The key a forge gives a repository is owner/name, which becomes folders, so neither part
 // may climb out of Skelcrew's.
 const Part = z.string().regex(/^(?!\.\.?$)[\w.-]+$/);
+// A forge's answer when the remote is its own: the repository's key, short name, link and
+// clone URL, whether you can push to it and whether it is a fork.
 const Claimed = z.object({
   key: z.string().refine((key) => {
     const parts = key.split("/");
@@ -80,6 +84,7 @@ export type Claimed = z.infer<typeof Claimed> & { forge: string };
 // answer, with its name, or null when none claims it. A forge that claims it but fails, such
 // as one whose app isn't installed there, throws its reason, as the repository is its own.
 export async function claims(db: Database, remote: string): Promise<Claimed | null> {
+  // Asked in name order, so the same forge wins each time two would claim one remote.
   for (const forge of pluginsFor(db, "forge")) {
     const claimed = await callPlugin(db, forge, { ask: "claims", remote }, Claimed.nullable());
     if (claimed) return { ...claimed, forge };
@@ -90,6 +95,8 @@ export async function claims(db: Database, remote: string): Promise<Claimed | nu
 // The repository as a plugin knows it: the key its forge gave it.
 const keyOf = (repository: Repository) => `${repository.owner}/${repository.repo}`;
 
+// A plugin's answer to what changed: the issues and PRs, and what to pass as `next` the next
+// time, or null to ask for everything open again.
 const Changed = z.object({ items: z.array(Item), next: z.string().nullable() });
 
 // Asks a plugin what changed in the repository since `next`, or everything open without it,
@@ -140,6 +147,7 @@ export async function createTask(
     { ask: "create task", repository: keyOf(repository), title, body },
     Item,
   );
+  // Item also covers PRs, and only a task is right here.
   if (task.kind !== "task")
     throw new Error("the tracker answered with something that isn't a task");
   return task;

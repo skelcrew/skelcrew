@@ -27,6 +27,7 @@ const pluginsDir = () => join(dataDir(), "plugins");
 // Returns whether version a comes after version b, both such as 0.10.0.
 function newer(a: string, b: string): boolean {
   const [x, y] = [a.split(".").map(Number), b.split(".").map(Number)];
+  // The first part that differs decides.
   for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0);
   return false;
 }
@@ -34,12 +35,15 @@ function newer(a: string, b: string): boolean {
 // Returns the newest version tag of a GitHub repository, such as v0.2.0, asking GitHub only
 // for its tags. Tags that aren't versions are passed over.
 function newestTag(source: string): string {
+  // With no terminal prompt, a repository that doesn't exist fails at once, where git would
+  // otherwise ask for a login.
   const listed = Bun.spawnSync(
     ["git", "ls-remote", "--tags", "--refs", `https://github.com/${source}`],
     { stdout: "pipe", stderr: "pipe", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },
   );
   if (!listed.success)
     throw new Error(`git couldn't reach ${source} on GitHub: ${listed.stderr.toString().trim()}`);
+  // Each line ends with the tag's ref, such as refs/tags/v0.2.0.
   const versions = listed.stdout
     .toString()
     .split("\n")
@@ -54,6 +58,8 @@ function newestTag(source: string): string {
 // folder and its manifest, checked against the tag. A clone stopped halfway must not look like
 // a plugin, so it is moved into place only once you agree.
 function cloneTag(source: string, tag: string): { staged: string; manifest: Manifest } {
+  // Staged beside the plugins, so a rename moves it into place. A name starting with a dot
+  // can't be a plugin's.
   const staged = join(pluginsDir(), `.cloning-${process.pid}`);
   mkdirSync(pluginsDir(), { recursive: true });
   rmSync(staged, { recursive: true, force: true });
@@ -68,6 +74,8 @@ function cloneTag(source: string, tag: string): { staged: string; manifest: Mani
   );
   if (!cloned.success)
     throw new Error(`git couldn't clone ${source} at ${tag}: ${cloned.stderr.toString().trim()}`);
+  // A tag that disagrees with its manifest is refused, so the version you were told is the
+  // one that runs.
   try {
     const manifest = readManifest(staged);
     if (`v${manifest.version}` !== tag)
@@ -95,6 +103,7 @@ function fitsThisSkel(manifest: Manifest): void {
 // nothing of it runs before you have said yes.
 function agreed(manifest: Manifest, from: string, verb: string): boolean {
   const { name, version } = manifest;
+  // Bun's prompt answers a bare Enter with null, which is no, as the question says.
   const answer = prompt(
     `${name} ${version} from ${clean(from)} runs as you, outside Skelcrew's sandbox. ${verb} it? [y/N]`,
   );
@@ -167,6 +176,8 @@ function refuseInstalled(db: Database, name: string): void {
 export function installPlugin(given: string, remote = originHere(), ask = true): void {
   const db = openDb();
   const isPath = given.startsWith(".") || given.startsWith("/");
+  // A folder of yours is used where it is, found by its real path so a link that moves later
+  // doesn't move the plugin.
   if (isPath) {
     const folder = realpathSync(resolve(given));
     const manifest = readManifest(folder);
@@ -188,6 +199,7 @@ export function installPlugin(given: string, remote = originHere(), ask = true):
   // A name starting with a dash would reach git as an option.
   if (!/^[\w.][\w.-]*\/[\w.-]+$/.test(given))
     throw new Error(`${given} is neither a folder, such as ./skel-plugin-linear, nor owner/repo`);
+  // Nothing of the clone runs before the checks and your yes.
   const { staged, manifest } = cloneTag(given, newestTag(given));
   try {
     refuseInstalled(db, manifest.name);
@@ -197,10 +209,13 @@ export function installPlugin(given: string, remote = originHere(), ask = true):
       console.log(`Skelcrew didn't install ${manifest.name}.`);
       return;
     }
+    // Anything left of an earlier install of the name goes, as the plugin isn't installed.
     const folder = join(pluginsDir(), manifest.name, manifest.version);
     rmSync(dirname(folder), { recursive: true, force: true });
     mkdirSync(dirname(folder), { recursive: true });
     renameSync(staged, folder);
+    // A build or setup that fails takes the plugin's folder with it, so nothing half
+    // installed stays.
     try {
       buildAndSetUp(manifest, folder, true, remote);
     } catch (error) {
@@ -215,6 +230,7 @@ export function installPlugin(given: string, remote = originHere(), ask = true):
     askAgain(db, manifest);
     console.log(`Installed ${manifest.name} ${manifest.version}.`);
   } finally {
+    // Only a clone that never moved into place is still there.
     rmSync(staged, { recursive: true, force: true });
   }
 }
@@ -225,6 +241,7 @@ export function installPlugin(given: string, remote = originHere(), ask = true):
 function updatePlugin(db: Database, plugin: Plugin): void {
   const { name, folder, source } = plugin;
   const current = readManifest(folder);
+  // A folder of yours gets only its build again. Its setup is for sc plugin setup.
   if (source === null) {
     buildAndSetUp(current, folder, false, originHere());
     console.log(`Built ${name} ${current.version} again from ${folder}.`);
@@ -244,6 +261,8 @@ function updatePlugin(db: Database, plugin: Plugin): void {
       console.log(`Skelcrew didn't update ${name}.`);
       return;
     }
+    // The new version gets a folder beside the old one, which keeps working until the new
+    // one is built and set up, and only then goes.
     const moved = join(pluginsDir(), name, manifest.version);
     rmSync(moved, { recursive: true, force: true });
     renameSync(staged, moved);
@@ -276,6 +295,7 @@ export function updatePlugins(name?: string): void {
 export function removePlugin(name: string): void {
   const db = openDb();
   const plugin = findPlugin(db, name);
+  // The repositories that use it as their tracker, then as their forge.
   for (const [job, those] of [
     ["tracker", trackedBy(db, name)],
     ["forge", repositories(db).filter((r) => r.forge === name)],
@@ -285,6 +305,7 @@ export function removePlugin(name: string): void {
         `${name} is the ${job} of ${those.map((r) => r.name).join(", ")}, so Skelcrew keeps it`,
       );
   db.run("DELETE FROM plugins WHERE name = ?", [name]);
+  // The settings folder is the one settingsDir makes.
   rmSync(join(configDir(), "plugins", name), { recursive: true, force: true });
   if (plugin.source !== null) rmSync(join(pluginsDir(), name), { recursive: true, force: true });
   console.log(`Removed ${name}, with its settings and tokens.`);
@@ -303,6 +324,7 @@ export function listPlugins(json: boolean): void {
       from: plugin.source ?? plugin.folder,
     };
   });
+  // Plain text gives only what you read. JSON adds where each came from, for tools.
   if (json) console.log(JSON.stringify(rows));
   else if (rows.length === 0) console.log("No plugins installed.");
   else for (const row of rows) console.log(`${row.name} ${row.version} ${row.jobs.join(", ")}`);
