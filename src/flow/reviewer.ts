@@ -9,8 +9,12 @@ import { keptEnv, sandboxArgs, throwaway } from "../agents/sandbox.ts";
 import { onSprite } from "../machine/sprite.ts";
 import { errorText } from "../say.ts";
 
+// What a review round ends with: the reviewer's verdict and what it said, or a failed review
+// and why, such as a reviewer that ran out of time.
 export type Review = { verdict: "approve" | "changes" | "failed"; body: string };
 
+// The answer a reviewer must give, checked as any outside input is. A failed verdict is never
+// the reviewer's to give: only Skelcrew says a review failed.
 const Verdict = z.strictObject({ verdict: z.enum(["approve", "changes"]), body: z.string() });
 
 // Every harness holds the model to this shape. OpenAI's strict mode asks for
@@ -25,8 +29,9 @@ const schema = JSON.stringify({
   additionalProperties: false,
 });
 
-// Builds the reviewer's instructions from the issue and base branch, asking for actionable
-// findings.
+// Returns what the reviewer is told: the task it checks the PR against, where the change
+// starts, and to answer with problems the builder can act on. It tells the reviewer to assume
+// the change is wrong, since a reviewer that trusts the builder misses what the builder missed.
 function prompt(issue: { title: string; body: string }, base: string): string {
   return `Review this pull request as an adversarial reviewer. Another agent wrote it. Assume it is wrong until you have checked it yourself.
 
@@ -56,6 +61,8 @@ async function spawnReviewer(given: {
   signal: AbortSignal;
 }): Promise<{ out: string; err: string; code: number }> {
   const { argv, env, input, signal } = given;
+  // On a Mac the reviewer starts a group of its own, and when it ends, whatever it left in that
+  // group is ended too. Elsewhere bwrap's own process list does that.
   const mac = process.platform === "darwin";
   const proc = Bun.spawn(argv, {
     env,
@@ -91,12 +98,16 @@ function readVerdict(
   folder: string,
   finished: { out: string; err: string; code: number },
 ): Review {
+  // A reviewer that exited with an error says why at the end of what it printed, so the
+  // verdict keeps that end.
   const { out, err, code } = finished;
   if (code !== 0)
     return {
       verdict: "failed",
       body: `${name} exited with ${code}: ${err.trim().slice(-2000)}`,
     };
+  // Each harness gives its answer in its own way, so the harness reads it, and the answer is
+  // then checked against the shape the reviewer was asked for.
   let said: unknown;
   try {
     said = harnessNamed(name).answer(folder, out);
@@ -128,6 +139,8 @@ async function reviewNow(given: {
   env?: Record<string, string | undefined>;
 }): Promise<Review> {
   const { clone, issue, base, model, harness, limit = 30 * 60_000, env = process.env } = given;
+  // Fail at once, with a reason you can act on, when the review was cancelled before its turn
+  // or can't run on this machine.
   if (given.signal?.aborted) return { verdict: "failed", body: "the review was cancelled" };
   const home = env.HOME;
   if (!home)
@@ -153,6 +166,8 @@ async function reviewNow(given: {
     return null;
   };
   try {
+    // The harness gets the answer's shape from a file, and says how to start the reviewer
+    // and what it needs from outside the sandbox.
     await Bun.write(join(folder, "schema.json"), schema);
     const { keys } = harnessNamed(harness);
     const launch = await harnessNamed(harness).review({
@@ -182,6 +197,8 @@ async function reviewNow(given: {
       command: ["sh", "-c", checkout, given.commit, ...launch.command],
       programs: launch.command.slice(0, 1),
     });
+    // Check for cancellation and the time limit on both sides of the run, so a review that was
+    // stopped says so rather than reading half an answer.
     const before = stopped();
     if (before) return before;
     const finished = await spawnReviewer({ argv, env: kept, input: prompt(issue, base), signal });
