@@ -11,6 +11,8 @@ import { skelLine } from "./say.ts";
 import { openScreen } from "./screen/screen.ts";
 import { checkoutFolder, git, release, singleFile } from "./version.ts";
 
+// The daemon's answer when asked for a lead: the lead's tmux session and its repository's
+// owner/name, or why it has none.
 const LeadReply = z.union([
   z.object({ lead: z.string(), repository: z.string() }),
   z.object({ error: z.string() }),
@@ -42,6 +44,7 @@ async function daemonRuns(): Promise<z.infer<typeof Running> | null> {
 // restart at every sc while you edit would only get in the way.
 function wanted(running: z.infer<typeof Running>): string | null {
   if (release) return running.release === release ? null : `Skelcrew ${release}`;
+  // A single file that isn't a release has no checkout to compare.
   if (singleFile || running.folder !== checkoutFolder) return null;
   const commit = git("rev-parse", "--short", "HEAD");
   return commit === "" || running.commit === commit ? null : `commit ${commit}`;
@@ -56,6 +59,8 @@ export async function onThisSkel(): Promise<void> {
   if (!want) return;
   console.log(skelLine(`restarting the daemon on ${want}. Your agents keep running.`));
   const log = restartDaemon();
+  // Done once a daemon answers that runs what this Skelcrew wants. The old one can still
+  // answer for a moment while it stops.
   const deadline = Date.now() + 10_000;
   for (;;) {
     const now = await daemonRuns();
@@ -74,6 +79,7 @@ async function daemonUp(): Promise<void> {
   await onThisSkel();
   if (await daemonRuns()) return;
   const log = startDaemon();
+  // The service manager returns before the daemon listens, so wait until it answers.
   const deadline = Date.now() + 10_000;
   while (!(await daemonRuns())) {
     if (Date.now() > deadline)
@@ -87,7 +93,8 @@ async function daemonUp(): Promise<void> {
 // daemon opens the repository you opened last.
 export async function attachToLead(tmux: string, from?: string): Promise<void> {
   await daemonUp();
-  // Asking for the lead brings it back if it ended while the daemon kept running.
+  // Asking for the lead brings it back if it ended while the daemon kept running. Starting it
+  // takes longer than a status, hence the longer wait.
   const reply = await ask({ command: "lead", ...(from ? { from } : {}) }, 15_000);
   if (reply === null) throw new Error("the daemon didn't answer: run sc to start it");
   const lead = LeadReply.safeParse(reply);

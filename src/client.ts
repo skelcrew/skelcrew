@@ -10,13 +10,16 @@ import { cliSocket } from "./paths.ts";
 export function ask(request: DaemonRequest, timeout: number): Promise<unknown> {
   return new Promise((done) => {
     const connection = createConnection(cliSocket());
+    // A daemon that doesn't answer in time is treated as one that isn't there.
     const timer = setTimeout(() => connection.destroy(), timeout);
+    // A request and its reply are one JSON line each, so the reply is complete at its line end.
     let reply = "";
     connection.on("connect", () => connection.write(`${JSON.stringify(request)}\n`));
     connection.on("data", (data) => {
       reply += data.toString();
       if (reply.includes("\n")) connection.end();
     });
+    // A refused or broken connection is followed by close, which answers null.
     connection.on("error", () => {});
     connection.on("close", () => {
       clearTimeout(timer);
@@ -28,6 +31,7 @@ export function ask(request: DaemonRequest, timeout: number): Promise<unknown> {
 // Asks the daemon on behalf of a Skelcrew command, and returns its answer. Throws with the
 // daemon's error, or when nothing answers.
 async function request(asked: DaemonRequest): Promise<unknown> {
+  // A minute, as some requests wait on the daemon's own work, such as stopping a builder.
   const reply = await ask(asked, 60_000);
   if (reply === null) throw new Error("the daemon didn't answer: run sc to start it");
   const failed = z.object({ error: z.string() }).safeParse(reply);

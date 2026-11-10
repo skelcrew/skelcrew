@@ -20,6 +20,8 @@ export const claudeTokenFile = (home = homedir()) => join(configDir(home), "clau
 // you alone.
 function runtimeDir(): string {
   const systemd = join("/run/user", String(userInfo().uid));
+  // Without XDG_RUNTIME_DIR, the folder systemd makes stands in for it, so your terminal and
+  // the daemon still agree on where the sockets are.
   return process.env.XDG_RUNTIME_DIR || (existsSync(systemd) ? systemd : join(dataDir(), "run"));
 }
 
@@ -49,9 +51,13 @@ export function leadPlaces(owner: string, repo: string, kept = false) {
       socket: join(runtimeDir(), "skelcrew", "lead", "skelcrew.sock"),
     };
   const hash = short(`${owner}/${repo}`);
+  // Each of the hash's first eight hex digits becomes one of the letters a to p, so the name
+  // ends in a letter.
   const letters = hash
     .slice(0, 8)
     .replace(/./g, (c) => "abcdefghijklmnop"[Number.parseInt(c, 16)] ?? "");
+  // The name keeps only what tmux and a folder take as is, cut short so a long repository
+  // name leaves room for the rest.
   return {
     name: `lead-${repo.replace(/[^\w-]/g, "-").slice(0, 40)}-${letters}`,
     folder: join(dataDir(), "leads", owner, repo),
