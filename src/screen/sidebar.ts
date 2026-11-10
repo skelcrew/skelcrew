@@ -21,7 +21,7 @@ import { leadOf } from "../flow/lead.ts";
 import type { Thread } from "../flow/thread.ts";
 import { updateNotice } from "../machine/update.ts";
 import { leadPlaces } from "../paths.ts";
-import { release } from "../version.ts";
+import { version } from "../version.ts";
 import { draw, noticeLines, type Size } from "./lists.ts";
 import { jumped, picked, stepped } from "./moves.ts";
 import {
@@ -122,7 +122,7 @@ export async function runSidebar(
     const width = paneWidth(screenSocket(agents), right);
     const left = size().width + 1;
     const fullName = `${open.owner}/${open.repo}`;
-    const look = { rows, shown, page, tabs, open: fullName, where, release };
+    const look = { rows, shown, page, tabs, open: fullName, where, version };
     const top = drawTop(look, { left, width });
     if (top !== lastStrip) {
       lastStrip = top;

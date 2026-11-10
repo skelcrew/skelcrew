@@ -48,6 +48,8 @@ function fake(name: string, body: string): void {
 function laptopSkel(): { folder: string; main: string; commit: string } {
   const folder = join(home, "code", "skel");
   cpSync(source(), join(folder, "src"), { recursive: true });
+  // The header reads its version from package.json, as in any checkout.
+  cpSync(join(import.meta.dir, "..", "package.json"), join(folder, "package.json"));
   symlinkSync(join(import.meta.dir, "..", "node_modules"), join(folder, "node_modules"));
   writeFileSync(join(folder, ".gitignore"), "node_modules\n");
   const git = (...args: string[]) =>

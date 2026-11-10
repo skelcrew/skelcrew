@@ -14,6 +14,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import checkout from "../package.json";
 import { startSession, stillRunning } from "../src/agents/tmux.ts";
 import type { Page } from "../src/flow/page.ts";
 import { leadPlaces } from "../src/paths.ts";
@@ -246,7 +247,7 @@ test("updates on its own, with needs you in the sidebar", async () => {
   expect(seen()).toContain("● app-12");
   expect(seen()).toContain("needs you");
   // Its tab says so too, as other repositories' tabs would.
-  expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^ {2}Skelcrew +│ {3}app •1$/);
+  expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^ {2}Skelcrew v[\d.]+ +│ {3}app •1$/);
   sql("UPDATE threads SET status = 'done' WHERE task = 7");
   await until(() => !seen().includes("app-7"), "the done thread to go");
 });
@@ -518,17 +519,19 @@ test("the header, the tabs and the strip share one row, and the agent starts rig
   await until(() => seen().includes("#34"), "the strip");
   const lines = seen().split("\n");
   // Skelcrew above the sidebar, its edge, and the tab above the agent, then the strip.
-  expect(lines[0]?.trimEnd()).toMatch(/^ {2}Skelcrew +│ {3}app +app-7 {2}Fix the login {2}#34$/);
+  expect(lines[0]?.trimEnd()).toMatch(
+    /^ {2}Skelcrew v[\d.]+ +│ {3}app +app-7 {2}Fix the login {2}#34$/,
+  );
   // The open tab's grey starts where the agent's text does, with its name two columns in.
   expect(lines[0]?.indexOf("app")).toBe((lines[1]?.indexOf("I am") ?? 0) + 2);
   expect(lines[1]).toContain("I am app-7");
 });
 
-test("above the sidebar it says just Skelcrew, in white, when no laptop sent you here", async () => {
+test("above the sidebar it says Skelcrew, in white, and the checkout's version when no laptop sent you here", async () => {
   open("lead");
   await ready("lead");
   const above = () => (seen().split("\n")[0] ?? "").slice(0, sidebar - 1).trimEnd();
-  await until(() => above() === "  Skelcrew", "the header");
+  await until(() => above() === `  Skelcrew v${checkout.version}`, "the header");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
   const header = colours.split("\n")[0];
   expect(header).toContain("\x1b[1m");
@@ -541,8 +544,15 @@ test("each terminal says where it came from, as they can come from different lap
   open("lead", "two");
   await ready("lead", "two");
   const place = (window: string) => (seen(window).split("\n")[0] ?? "").slice(0, sidebar - 1);
-  await until(() => place("one").startsWith("  Skelcrew · sprite:demo"), "the first place");
-  await until(() => place("two").trimEnd() === "  Skelcrew", "the second header", "two");
+  await until(
+    () => place("one").startsWith(`  Skelcrew v${checkout.version} · sprite:`),
+    "the first place",
+  );
+  await until(
+    () => place("two").trimEnd() === `  Skelcrew v${checkout.version}`,
+    "the second header",
+    "two",
+  );
 });
 
 test("the sidebar's edge runs from the top row to the bottom, at every width", async () => {
@@ -1178,7 +1188,7 @@ test("a tab for each repository runs across the top, with a badge for what needs
   addSite();
   open("lead");
   await ready("lead");
-  await until(() => /^ {2}Skelcrew +│ {3}app {4}site •1$/.test(tabRow()), "the tabs");
+  await until(() => /^ {2}Skelcrew v[\d.]+ +│ {3}app {4}site •1$/.test(tabRow()), "the tabs");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out.split("\n")[0];
   // The open one is on a picked row's grey.
   expect(colours).toContain("48;5;238");

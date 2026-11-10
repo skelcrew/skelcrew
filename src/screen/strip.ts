@@ -1,4 +1,4 @@
-// The top row of the screen. Above the sidebar, the header says Skelcrew, its release and, on a
+// The top row of the screen. Above the sidebar, the header says Skelcrew, its version and, on a
 // remote, where it runs. Above the agent, a tab for each repository, then the strip, which says
 // what you are looking at: for a thread, its name, task, PR and checks, then its latest review,
 // and for a page, its row's name and title. The lead has none, as the sidebar says it all.
@@ -59,20 +59,21 @@ function aboutPage(page: Link, width: number): [string, string] {
 const skelName = "#[bold,fg=colour231]Skelcrew#[default]";
 
 // Returns the header above the sidebar: Skelcrew's name, in line with the sidebar's marks, then dim
-// the release, if any, then, on a remote, a dot and where it runs, then spaces out to the
+// its version, such as v0.4.2, then, on a remote, a dot and where it runs, then spaces out to the
 // sidebar's edge. `where` is empty on this machine. It comes from outside, so it is made safe as a
 // title is, and cut to stop two columns before the sidebar's edge, as all the sidebar's text does.
-// The place gives way first. A release is never cut, as half a number would be a different release.
-function header(where: string, left: number, release: string): string {
+// The place gives way first. A version is never cut, as half a number would be a different one.
+function header(where: string, left: number, version: string): string {
   // "  Skelcrew" takes ten columns. The sidebar's edge is two columns left of the agent, and text
   // stops two before it, so what follows the name has `room`.
   const named = 10;
   const room = Math.max(left - 4 - named, 0);
-  const taken = release ? Bun.stringWidth(release) + 1 : 0;
-  const version = release && room >= taken ? ` ${release}` : "";
+  const shown = `v${version}`;
+  const taken = Bun.stringWidth(shown) + 1;
+  const number = room >= taken ? ` ${shown}` : "";
   // " · " before the place takes three columns.
   const place = fitted(clean(where), Math.max(room - 3 - taken, 0));
-  const about = `${version}${place && ` · ${place}`}`;
+  const about = `${number}${place && ` · ${place}`}`;
   const spare = " ".repeat(Math.max(left - 2 - named - Bun.stringWidth(about), 0));
   const dim = about && `#[fg=brightblack]${escaped(about)}#[default]`;
   return `  ${skelName}${dim}${spare}`;
@@ -130,7 +131,7 @@ function drawTabs(tabs: Tab[], open: string, width: number): [string, number] {
 
 // What the top row shows: the rows, the session on the right, the row of the page there, if that
 // is what shows, the tabs and the open one's owner/name, the remote Skelcrew runs on, if any, and
-// the release of the Skelcrew running here, if it is one.
+// the version of the Skelcrew running here.
 export type Top = {
   rows: Row[];
   shown: string | null;
@@ -138,7 +139,7 @@ export type Top = {
   tabs: Tab[];
   open: string;
   where: string;
-  release: string;
+  version: string;
 };
 
 // Returns the top row of the screen as a tmux format, given what it shows and where the agent's
@@ -162,5 +163,5 @@ export function drawTop(top: Top, size: Size): string {
   const spare = " ".repeat(Math.max(width - taken - Bun.stringWidth(`${name}${rest}`), 0));
   const strip = name && `#[fg=brightblack,bold]${escaped(name)}#[nobold]${escaped(rest)}#[default]`;
   const edge = "#[fg=colour237]│#[default] ";
-  return `${header(top.where, left, top.release)}${edge}${tabs}${spare}${strip}`;
+  return `${header(top.where, left, top.version)}${edge}${tabs}${spare}${strip}`;
 }

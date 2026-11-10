@@ -40,7 +40,7 @@ const base: Top = {
   tabs: [tab("app")],
   open: "simon/app",
   where: "",
-  release: "",
+  version: "0.1.0",
 };
 // Returns the top row as a tmux format, for the base with some of it changed.
 const top = (more: Partial<Top> = {}, given = size) => drawTop({ ...base, ...more }, given);
@@ -132,47 +132,51 @@ test("the tabs come first: the strip gives way before any tab does", () => {
   expect(seen(top({ tabs }, { left: 30, width: 40 }))).toMatch(/ {2}app {4}site •1 +app-12$/);
 });
 
+// A sidebar wide enough for the version and a whole place after it.
+const roomy = { left: 40, width: 99 };
+
 test("above the sidebar, Skelcrew in white in line with the marks, then dim a dot and where it runs", () => {
-  const line = top({ where: "sprite:demo" });
-  expect(above({ where: "sprite:demo" })).toStartWith("  Skelcrew · sprite:demo");
+  const line = top({ where: "sprite:demo" }, roomy);
+  expect(above({ where: "sprite:demo" }, roomy)).toStartWith("  Skelcrew v0.1.0 · sprite:demo");
   expect(line).toContain("#[bold,fg=colour231]Skelcrew#[default]");
-  expect(line).toContain("#[fg=brightblack] · sprite:demo#[default]");
+  expect(line).toContain("#[fg=brightblack] v0.1.0 · sprite:demo#[default]");
 });
 
-test("on this machine the header is just Skelcrew, with no dot and no place", () => {
-  expect(above().trimEnd()).toBe("  Skelcrew");
+test("on this machine the header is Skelcrew and its version, with no dot and no place", () => {
+  expect(above().trimEnd()).toBe("  Skelcrew v0.1.0");
   expect(top({ shown: "lead" })).not.toContain("·");
+  expect(top({ shown: "lead" })).toContain("#[fg=brightblack] v0.1.0#[default]");
 });
 
-test("a release shows dim right after the name, here and on a remote", () => {
-  expect(above({ release: "0.4.2" }).trimEnd()).toBe("  Skelcrew 0.4.2");
-  expect(top({ release: "0.4.2" })).toContain(
-    "#[bold,fg=colour231]Skelcrew#[default]#[fg=brightblack] 0.4.2#[default]",
+test("the version shows dim right after the name, here and on a remote", () => {
+  expect(above({ version: "0.4.2" }).trimEnd()).toBe("  Skelcrew v0.4.2");
+  expect(top({ version: "0.4.2" })).toContain(
+    "#[bold,fg=colour231]Skelcrew#[default]#[fg=brightblack] v0.4.2#[default]",
   );
-  const there = { release: "0.4.2", where: "workbox" };
-  expect(above(there).trimEnd()).toBe("  Skelcrew 0.4.2 · workbox");
-  expect(top(there)).toContain("#[fg=brightblack] 0.4.2 · workbox#[default]");
+  const there = { version: "0.4.2", where: "workbox" };
+  expect(above(there, roomy).trimEnd()).toBe("  Skelcrew v0.4.2 · workbox");
+  expect(top(there, roomy)).toContain("#[fg=brightblack] v0.4.2 · workbox#[default]");
 });
 
-test("the place is cut before the release, which stays whole", () => {
+test("the place is cut before the version, which stays whole", () => {
   const where = "simon@a-very-long-server-name.example.com";
-  expect(above({ where, release: "0.4.2" })).toBe("  Skelcrew 0.4.2 · simon@…  ");
+  expect(above({ where, version: "0.4.2" })).toBe("  Skelcrew v0.4.2 · simon…  ");
 });
 
-test("with no room for both, the place goes first, and then the release, never half of it", () => {
+test("with no room for both, the place goes first, and then the version, never half of it", () => {
   const line = (left: number) =>
-    above({ shown: "lead", where: "workbox", release: "0.4.2" }, { left, width: 40 }).trimEnd();
-  expect(line(24)).toBe("  Skelcrew 0.4.2 · …");
-  expect(line(23)).toBe("  Skelcrew 0.4.2");
-  expect(line(20)).toBe("  Skelcrew 0.4.2");
-  expect(line(19)).toBe("  Skelcrew");
+    above({ shown: "lead", where: "workbox", version: "0.4.2" }, { left, width: 40 }).trimEnd();
+  expect(line(25)).toBe("  Skelcrew v0.4.2 · …");
+  expect(line(24)).toBe("  Skelcrew v0.4.2");
+  expect(line(21)).toBe("  Skelcrew v0.4.2");
+  expect(line(20)).toBe("  Skelcrew");
 });
 
 test("the sidebar's edge runs up through the row, and the tabs start where the agent does", () => {
   for (const shown of ["lead", "app-12", "gone", null])
     for (const more of [
       {},
-      { where: "simon@a-very-long-server-name.example.com", release: "0.4.2" },
+      { where: "simon@a-very-long-server-name.example.com", version: "0.4.2" },
     ]) {
       const line = seen(top({ shown, ...more }));
       expect(line[size.left - 2]).toBe("│");
@@ -182,7 +186,7 @@ test("the sidebar's edge runs up through the row, and the tabs start where the a
 });
 
 test("where Skelcrew runs can't run commands, restyle the row or reach your terminal", () => {
-  const line = top({ where: "#(id) 5%\x1b[2J" });
+  const line = top({ where: "#(id) 5%\x1b[2J" }, roomy);
   expect(line).toContain("##(id) 5%% [2J");
   expect(line).not.toMatch(/\p{Cc}/u);
 });

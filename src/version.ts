@@ -3,6 +3,7 @@
 // where this Skelcrew lives, worked out only here, as a moved source file would quietly break any
 // second copy of that.
 import { join, resolve } from "node:path";
+import checkout from "../package.json";
 
 // What Skelcrew was built from. The release build stamps its release, such as 0.4.2, and
 // withLinuxSkel the commit of the copy it builds for a server or Sprite. A Skelcrew run from a
@@ -16,6 +17,10 @@ export const isRelease = (build: string) => /^\d+\.\d+\.\d+$/.test(build);
 
 // The release this Skelcrew is, or nothing for a build from a checkout.
 export const release = built !== undefined && isRelease(built) ? built : "";
+
+// The version the header shows: the release, or for a build from a checkout, the version its
+// package.json gives, so a screenshot always says which Skelcrew it came from.
+export const version = release || checkout.version;
 
 // Where releases live, stamped in by the release build from the install script, the one place
 // that says so.
