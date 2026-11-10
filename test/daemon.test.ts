@@ -429,6 +429,24 @@ test("on a Sprite, a delivery for a plugin has the daemon poll its repositories 
   await until(() => polls() === 2);
 });
 
+// A wake-up comes while the forge may be failing, and the daemon must outlive the poll it
+// starts.
+test("on a Sprite, a plugin's wake-up whose poll fails leaves the daemon running", async () => {
+  setUp();
+  onSprite();
+  addRepository("app");
+  fakeForge();
+  const port = freePort();
+  const run = serve(undefined, port);
+  await until(() => polls() === 1);
+  await untilListening(port);
+  expect((await deliver(port, "github")).status).toBe(202);
+  await until(() => polls() === 2);
+  await Bun.sleep(500);
+  expect(run.exitCode).toBeNull();
+  expect(await answers()).toBe(true);
+});
+
 test("on a Sprite, a delivery for no plugin of a repository polls nothing", async () => {
   setUp();
   onSprite();

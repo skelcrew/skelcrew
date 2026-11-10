@@ -139,7 +139,8 @@ function wakeOnDeliveries(
     await holdAwhile(60).catch((error) =>
       console.log(`couldn't hold the Sprite awake: ${errorText(error)}`),
     );
-    // A poll that fails is logged, and the next one tries again.
+    // Not waited on, so the plugin hears back at once. A poll that fails is logged, and the
+    // next one tries again, but left uncaught it would end the daemon.
     for (const { owner, repo } of theirs) poll(`${owner}/${repo}`).catch(() => {});
     return true;
   };
@@ -351,6 +352,10 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
           goOn(db, tmux, before.folder);
           return { started: `${threadName(db, before)} goes on past the round limit.` };
         }
+        // Refused before the poll, which only a new thread needs, so a slow or failing remote
+        // can't hold up the answer. startThread refuses it again, for a thread started meanwhile.
+        if (before && before.status !== "failed")
+          throw new Error(`${threadName(db, before)} has a thread already`);
         // The task's title and body come from Skelcrew's copy, brought up to date first. Meanwhile
         // no poll starts the task by its label, which would leave out this start's options.
         const repository = findRepository(db, request.repo);
