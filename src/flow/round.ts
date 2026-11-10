@@ -76,7 +76,7 @@ async function push(db: Database, folder: string, summary: string): Promise<stri
   return sha;
 }
 
-// Reviews the commit and acts on the verdict: posts it on the PR, sets the skel/review
+// Reviews the commit and acts on the verdict: posts it on the PR, sets the skelcrew/check
 // check, saves what it means for the thread, and types changes into the builder. Stops
 // without a word once a newer round cancels it, since that round now owns the thread.
 async function reviewRound(
@@ -155,7 +155,7 @@ async function deliver(
 
 // The latest round of each thread. Cancelling it cancels its review. The next round's push
 // waits for its push, so two pushes or two PRs never race, and the next round's review
-// waits for it to end, so its last write to the skel/review check comes before the next
+// waits for it to end, so its last write to the skelcrew/check check comes before the next
 // round's pending one. `ended` tells a round still under way from one that failed.
 type Round = {
   cancel: AbortController;
@@ -298,7 +298,7 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
 }
 
 // Carries on with a round the daemon's stop cut short: a submit not yet pushed and
-// reviewed, a review whose skel/review check was left pending, or changes not yet typed
+// reviewed, a review whose skelcrew/check check was left pending, or changes not yet typed
 // into the builder. Pushing again is harmless: GitHub has the commit, or gets it now. A
 // builder brought back can submit before this runs, and then its newer round wins.
 export function resumeRound(db: Database, tmux: string, folder: string): void {

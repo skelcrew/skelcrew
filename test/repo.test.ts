@@ -445,12 +445,12 @@ test("repo trust clones a repository you can't push to, named by its GitHub name
 
 // skel has the repository all the same, and the daemon tries the label again when it next
 // refreshes the clone.
-test("brings in a repository whose skel label GitHub fails to create, saying so", async () => {
+test("brings in a repository whose skelcrew label GitHub fails to create, saying so", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
   writeFileSync(join(home, "github", "simon/app.nolabel"), "");
   const run = await skel([], "", checkout);
   expect(run.code).toBe(0);
-  expect(run.err).toContain("couldn't create the skel label in simon/app");
+  expect(run.err).toContain("couldn't create the skelcrew label in simon/app");
   expect((await skel(["repo", "ls"])).out).toContain("app  simon/app");
 });
 

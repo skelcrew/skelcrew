@@ -47,7 +47,7 @@ export function pageOf(item: Item): Page {
 // Returns what a PR's CI says, as the strip does: skel's own review check isn't CI, and one
 // failure is enough to say so while the rest still run.
 function checksOf(pr: Extract<Item, { kind: "pr" }>): string {
-  const ci = pr.checks.filter((check) => check.name !== "skel/review");
+  const ci = pr.checks.filter((check) => check.name !== "skelcrew/check");
   if (ci.length === 0) return "none";
   if (ci.every((check) => check.state === "passed")) return "passing";
   return ci.some((check) => !["passed", "running"].includes(check.state)) ? "failing" : "running";

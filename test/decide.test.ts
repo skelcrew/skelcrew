@@ -45,7 +45,7 @@ const you = { login: "simon", bot: false };
 const someone = { login: "ana", bot: false };
 const stranger = { login: "mallory", bot: false };
 const bot = { login: "dependabot", bot: true };
-const approved: Check = { kind: "status", name: "skel/review", state: "SUCCESS", url: null };
+const approved: Check = { kind: "status", name: "skelcrew/check", state: "SUCCESS", url: null };
 const run = (
   id: number,
   name: string,
@@ -130,7 +130,7 @@ test("failed checks are told once every check has finished, whatever order they 
 
 test("skel's own review check doesn't hold back failed checks", () => {
   const failing = run(30, "test", "COMPLETED", "FAILURE");
-  const pending: Check = { kind: "status", name: "skel/review", state: "PENDING", url: null };
+  const pending: Check = { kind: "status", name: "skelcrew/check", state: "PENDING", url: null };
   expect(acted(thread(), pr({ checks: [pending, failing] })).failed).toEqual([failing]);
 });
 
@@ -149,7 +149,7 @@ test("a failed commit status is told while the thread waits, then not again", ()
 });
 
 test("skel's reviewer asking for changes isn't a failed check for polling to tell", () => {
-  const changes: Check = { kind: "status", name: "skel/review", state: "FAILURE", url: null };
+  const changes: Check = { kind: "status", name: "skelcrew/check", state: "FAILURE", url: null };
   expect(acted(thread(), pr({ checks: [changes] })).failed).toEqual([]);
 });
 
@@ -363,7 +363,7 @@ test("a labeled issue whose thread failed or is done gets no new thread", () => 
 });
 
 test("a PR's CI reads as passing, failing or still running, and skel's own check doesn't count", () => {
-  const review: Check = { kind: "status", name: "skel/review", state: "FAILURE", url: null };
+  const review: Check = { kind: "status", name: "skelcrew/check", state: "FAILURE", url: null };
   const passed = run(30, "test", "COMPLETED", "SUCCESS");
   const failed = run(31, "build", "COMPLETED", "FAILURE");
   const going = run(32, "lint", "IN_PROGRESS", null);

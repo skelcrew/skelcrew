@@ -106,7 +106,7 @@ function checkOrDelete(clone: string): void {
 let refreshing: Promise<void> | null = null;
 
 // Refreshes every registered clone so leads read current repositories, and creates the
-// skel label in a repository skel hasn't made it in yet, so you can start threads from
+// skelcrew label in a repository skel hasn't made it in yet, so you can start threads from
 // GitHub. A second call joins the refresh running, so two git commands never fight over a
 // clone. A clone or label that fails only gets a line in the log and is tried again at the
 // next refresh, since an old clone still lets a lead read its repository.
@@ -151,7 +151,7 @@ function trusted({ owner, repo, canPush, isFork }: GitHubRepo): boolean {
 }
 
 // Checks trust, asking you when needed, refreshes the repository clone, records it, and
-// creates its skel label so you can start threads from GitHub. Runs only in your
+// creates its skelcrew label so you can start threads from GitHub. Runs only in your
 // own terminal, where a yes can't come from an injected instruction.
 async function bringIn(db: Database, details: GitHubRepo): Promise<void> {
   const { owner, repo, canPush } = details;
@@ -192,7 +192,7 @@ async function bringIn(db: Database, details: GitHubRepo): Promise<void> {
     db.run(labeled, [owner, repo]);
   } catch (error) {
     // The daemon tries again when it next refreshes the clone.
-    console.error(`skel: couldn't create the skel label in ${fullName}: ${errorText(error)}`);
+    console.error(`skel: couldn't create the skelcrew label in ${fullName}: ${errorText(error)}`);
   }
 }
 

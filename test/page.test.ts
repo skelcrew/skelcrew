@@ -122,7 +122,7 @@ test("a PR with no checks or reviews says so", async () => {
 
 test("checks read as the strip reads them, leaving out skel's own review check", async () => {
   const running = [check("test", "SUCCESS"), check("lint", null)];
-  const pr = pull(rolledUp(...running, check("skel/review", "FAILURE")));
+  const pr = pull(rolledUp(...running, check("skelcrew/check", "FAILURE")));
   expect((await pageFor(pr, "pr")).facts).toContainEqual(["Checks", "running"]);
   const failing = pull(rolledUp(check("test", "FAILURE"), check("lint", null)));
   expect((await pageFor(failing, "pr")).facts).toContainEqual(["Checks", "failing"]);

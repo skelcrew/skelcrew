@@ -171,14 +171,14 @@ export async function createIssue(fullName: string, title: string, body: string)
   };
 }
 
-// Creates the skel label in owner/name, so you can add it to an issue to start a thread.
+// Creates the skelcrew label in owner/name, so you can add it to an issue to start a thread.
 // GitHub answers 422 when the repository has the label already, which is fine as it is.
 export async function createLabel(fullName: string): Promise<void> {
   try {
-    await api(`repos/${fullName}/labels`, `create the skel label in ${fullName}`, {
-      name: "skel",
+    await api(`repos/${fullName}/labels`, `create the skelcrew label in ${fullName}`, {
+      name: "skelcrew",
       color: "5319e7",
-      description: "skel starts a thread on this issue",
+      description: "Skelcrew starts a thread on this issue",
     });
   } catch (error) {
     if (error instanceof Error && error.message.includes("(HTTP 422)")) return;
@@ -280,7 +280,7 @@ export async function openPullRequest(
 // Posts the reviewer's verdict and explanation on the PR for you and the builder to read.
 // GitHub refuses to let you approve or request changes on your own pull request, and skel
 // opens and reviews it with the same gh login. So the verdict goes in a comment review, and
-// the skel/review check is what branch protection can require. The review names the commit
+// the skelcrew/check check is what branch protection can require. The review names the commit
 // it covers, since a newer one can reach the PR while it is posted. Returns the review's ID:
 // posted with your login, it looks like your own review on GitHub, and skel must know it
 // wrote it.
@@ -300,7 +300,7 @@ export async function postReview(
   return z.object({ id: z.number() }).parse(posted).id;
 }
 
-// Sets the commit's skel/review check so branch protection can require the reviewer's
+// Sets the commit's skelcrew/check check so branch protection can require the reviewer's
 // verdict. GitHub rejects a status whose description is longer than 140 characters.
 export async function setReviewStatus(
   fullName: string,
@@ -310,10 +310,10 @@ export async function setReviewStatus(
 ): Promise<void> {
   const set = await api(
     `repos/${fullName}/statuses/${sha}`,
-    `set the skel/review check on ${sha}`,
+    `set the skelcrew/check check on ${sha}`,
     {
       state,
-      context: "skel/review",
+      context: "skelcrew/check",
       description: description.slice(0, 140),
     },
   );

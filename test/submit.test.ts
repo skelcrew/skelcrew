@@ -282,10 +282,10 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     const second = pushed();
     const first = git(join(github(), "simon", "app.git"), "rev-parse", `${second}^`);
     expect(statuses().map((s) => [s.sha, s.state, s.context])).toEqual([
-      [first, "pending", "skel/review"],
-      [first, "failure", "skel/review"],
-      [second, "pending", "skel/review"],
-      [second, "success", "skel/review"],
+      [first, "pending", "skelcrew/check"],
+      [first, "failure", "skelcrew/check"],
+      [second, "pending", "skelcrew/check"],
+      [second, "success", "skelcrew/check"],
     ]);
     expect(reviews()).toEqual([
       {
