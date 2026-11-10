@@ -18,12 +18,15 @@ const wrapped = (text: string, columns: number) =>
 // a control code. It sits with the facts, not under a description that could push it far out
 // of view.
 export function drawPage(page: Page, url: string, width: number): string[] {
+  // Text stops at the padding on each side, and every fact's text starts in one column, past
+  // the longest label.
   const room = width - 2 * pad.length;
   const labels = [...page.facts.map(([label]) => label), "GitHub"];
   const gap = Math.max(...labels.map((label) => label.length)) + 2;
   // Returns a label and what it says, with any more lines lined up under the first.
   const fact = (label: string, lines: string[]) =>
     lines.map((line, i) => `${pad}${paint(grey, (i === 0 ? label : "").padEnd(gap))}${line}`);
+  // The link to GitHub is a terminal link, cut to fit beside its label.
   const link = `\x1b]8;;${url}\x1b\\${fitted(url, room - gap)}\x1b]8;;\x1b\\`;
   // Already safe to show, so wrapped without cleaning, which would take its styles too.
   const body = page.body.trim()
@@ -31,6 +34,7 @@ export function drawPage(page: Page, url: string, width: number): string[] {
         Bun.wrapAnsi(line, Math.max(room, 1), { hard: true }).split("\n"),
       )
     : [paint(grey, "No description.")];
+  // A blank line parts the title, in white, from the facts, and the facts from the description.
   return [
     "",
     ...wrapped(page.title, room).map((line) => `${pad}${paint(white, line)}`),
@@ -53,12 +57,15 @@ const notch = 5;
 // writes only when you scroll or resize: it never asks again and has no clock, as on a Sprite a
 // terminal that stays quiet lets it sleep.
 export async function runPage(url: string, read: () => Page): Promise<void> {
+  // A page that can't be read shows why, in place of its description.
   let page: Page;
   try {
     page = read();
   } catch (error) {
     page = { title: "Couldn't show this", facts: [], body: errorText(error) };
   }
+  // The page is drawn again for each frame, at the pane's size then, as you can resize it at any
+  // moment. `top` is the line it starts at, as far as you scrolled.
   const lines = (columns: number) => drawPage(page, url, columns);
   let top = 0;
   const width = () => process.stdout.columns || 80;
@@ -76,12 +83,15 @@ export async function runPage(url: string, read: () => Page): Promise<void> {
   // tmux hands it here. ?7l cuts a line at the edge: a pane too narrow for a label would
   // otherwise wrap it, and rows the page doesn't count would throw its scrolling off.
   process.stdout.write("\x1b[?25l\x1b[?1000h\x1b[?1006h\x1b[?7l");
+  // Each notch of the wheel scrolls up or down, kept between the top and the end. Only a
+  // scroll that moved the page draws it again.
   process.stdin.on("data", (bytes) => {
     const before = top;
     for (const [, button] of bytes.toString().matchAll(wheel))
       top = Math.min(Math.max(top + (button === "64" ? -notch : notch), 0), lastTop());
     if (top !== before) draw();
   });
+  // Draws now and on each resize, until the pane goes and its input closes.
   process.on("SIGWINCH", draw);
   draw();
   await new Promise((gone) => process.stdin.on("close", gone));

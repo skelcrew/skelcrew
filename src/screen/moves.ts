@@ -11,12 +11,15 @@ type Stop = { place: string; open: boolean };
 // scrolls to keep you in view. Of ISSUES and PRS only the rows on screen do, since they have
 // no scrolling, and a row you can't see would be a page you can't place.
 function stops(rows: Row[], lists: Lists, shown: string | null, size: Size): Stop[][] {
+  // The layout says which rows of ISSUES and PRS are on screen now.
   const { lines } = layout(rows, lists, shown, size);
   // Returns the rows of a list that the sidebar shows.
   const seen = ({ links }: List) =>
     links
       .filter((link) => lines.some((line) => line.link === link))
       .map((link) => ({ place: link.url, open: true }));
+  // Every row of THREADS is a stop, open only while its agent runs. The lists come in the order
+  // the sidebar draws them: ISSUES above THREADS and PRS below, each only when it is there.
   const threads = rows.map((row) => ({ place: row.session, open: row.running }));
   return [
     ...(lists.issues ? [seen(lists.issues)] : []),
@@ -35,9 +38,11 @@ export function stepped(
   size: Size,
   by: 1 | -1,
 ): string | null {
+  // All the stops in one run, top to bottom, and where you are in it.
   const all = stops(rows, lists, shown, size).flat();
   const here = all.findIndex((stop) => stop.place === shown);
   if (here === -1) return rows[0]?.session ?? null;
+  // Walks the way asked to the first stop that can show something.
   for (let i = here + by; i >= 0 && i < all.length; i += by)
     if (all[i]?.open) return all[i]?.place ?? null;
   return null;
@@ -52,9 +57,12 @@ export function jumped(
   size: Size,
   by: 1 | -1,
 ): string | null {
+  // A list counts when it has a row to land on, or holds the row you are on, so you can leave
+  // a list of stopped threads but never land in one.
   const landable = stops(rows, lists, shown, size).filter(
     (list) => list.some((stop) => stop.open) || list.some((stop) => stop.place === shown),
   );
+  // Lands on the first open row of the list next to yours.
   const here = landable.findIndex((list) => list.some((stop) => stop.place === shown));
   if (here === -1) return rows[0]?.session ?? null;
   return landable[here + by]?.find((stop) => stop.open)?.place ?? null;
@@ -70,6 +78,8 @@ export function picked(
   size: Size,
   y: number,
 ): string | null {
+  // The line clicked, in the layout drawn now. A link's line opens its page, and a row's line its
+  // agent, only while that runs.
   const line = layout(rows, lists, shown, size).lines[y];
   if (line?.link) return line.link.url;
   return line?.row?.running ? line.row.session : null;
