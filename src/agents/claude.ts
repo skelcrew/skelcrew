@@ -178,7 +178,7 @@ function startCommand(given: {
   if (system) command.push("--append-system-prompt", system);
   if (prompt) command.push(prompt);
 
-  const kept = keptEnv(env);
+  const kept = keptEnv(env, claude.keys);
   kept.CLAUDE_CONFIG_DIR = config;
   kept.CLAUDE_CODE_OAUTH_TOKEN = token;
   // Its greyed-out suggestions propose steps, such as pushing, that belong to skel.

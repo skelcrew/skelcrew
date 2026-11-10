@@ -274,15 +274,21 @@ else echo "elsewhere $f"; fi`;
   );
 }
 
-// Downloads this release's Linux skel for the machine's CPU to a file, so a skel installed from
-// a release can set up a server. It has no sources to build from, and is often on a Mac. Stops
-// on a download that doesn't match the release's checksums, as the install script does.
-async function downloadLinuxSkel(file: string, machine: Machine): Promise<void> {
+// Returns the CPU of a server or Sprite in the words of skel's builds, x64 or arm64, so the
+// skel it gets runs there.
+async function machineCpu(machine: Machine): Promise<string> {
   const cpus: Record<string, string> = { x86_64: "x64", aarch64: "arm64", arm64: "arm64" };
   // ssh's warnings arrive in the same text, so the CPU is picked out of it.
   const { said } = await quietly(machine.shell("uname -m"));
   const cpu = cpus[said.match(/\b(x86_64|aarch64|arm64)\b/)?.[1] ?? ""];
   if (!cpu) throw new Error(`skel runs on arm64 and x64 CPUs, not on "${said}"`);
+  return cpu;
+}
+
+// Downloads this release's Linux skel for the machine's CPU to a file, so a skel installed from
+// a release can set up a server. It has no sources to build from, and is often on a Mac. Stops
+// on a download that doesn't match the release's checksums, as the install script does.
+async function downloadLinuxSkel(file: string, cpu: string): Promise<void> {
   console.log(`Downloading skel ${release} for Linux.`);
   const at = `${releases}/download/v${release}`;
   const name = `skel-linux-${cpu}`;
@@ -290,11 +296,12 @@ async function downloadLinuxSkel(file: string, machine: Machine): Promise<void> 
   chmodSync(file, 0o755);
 }
 
-// Builds skel from this checkout as one file for a server or Sprite, which is Linux on x64
-// whatever the laptop runs, stamped with its build so it can tell when yours moves on.
-async function buildLinuxSkel(file: string): Promise<void> {
+// Builds skel from this checkout as one file for a server or Sprite, which is Linux whatever
+// the laptop runs, on the machine's CPU, stamped with its build so it can tell when yours
+// moves on.
+async function buildLinuxSkel(file: string, cpu: string): Promise<void> {
   console.log("Building skel for Linux.");
-  const target = "--target=bun-linux-x64";
+  const target = `--target=bun-linux-${cpu}`;
   const build = laptopBuild();
   const stamp = build ? ["--define", `SKEL_BUILD=${JSON.stringify(build)}`] : [];
   const argv = ["bun", "build", "--compile", target, ...stamp, mainFile, "--outfile", file];
@@ -311,7 +318,8 @@ async function withLinuxSkel(machine: Machine): Promise<void> {
   const folder = mkdtempSync(join(tmpdir(), "skel-"));
   try {
     const file = join(folder, "skel");
-    await (singleFile ? downloadLinuxSkel(file, machine) : buildLinuxSkel(file));
+    const cpu = await machineCpu(machine);
+    await (singleFile ? downloadLinuxSkel(file, cpu) : buildLinuxSkel(file, cpu));
     await machine.copy(file);
   } finally {
     rmSync(folder, { recursive: true, force: true });

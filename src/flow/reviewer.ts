@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
-import { sandboxArgs, throwaway } from "../agents/sandbox.ts";
+import { keptEnv, sandboxArgs, throwaway } from "../agents/sandbox.ts";
 import { onSprite } from "../machine/sprite.ts";
 import { errorText } from "../say.ts";
 
@@ -24,9 +24,6 @@ const schema = JSON.stringify({
   required: ["verdict", "body"],
   additionalProperties: false,
 });
-
-// Only what a shell and the tests need gets in, with the harness's own keys added.
-const allowedEnv = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "LANG", "TZ"];
 
 // Builds the reviewer's instructions from the issue and base branch, asking for actionable
 // findings.
@@ -166,11 +163,8 @@ async function reviewNow(given: {
       sprite,
       signal,
     });
-    const kept: Record<string, string> = { ...launch.env };
-    const allowed: string[] = [...allowedEnv, ...keys];
-    for (const [key, value] of Object.entries(env))
-      if (value !== undefined && (allowed.includes(key) || key.startsWith("LC_")))
-        kept[key] = value;
+    // Only what a shell and the tests need gets in, with the harness's own keys added.
+    const kept = { ...launch.env, ...keptEnv(env, keys) };
     // Tests and builds write in the clone, so it is seen as a throwaway folder too.
     const copy = join(folder, "clone");
     const { mounts, at } = await throwaway({ source: clone, copy, sprite, signal });

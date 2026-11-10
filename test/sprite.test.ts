@@ -399,6 +399,8 @@ test("the update goes by what the Sprite service runs, not by ~/.local/bin", asy
 });
 
 test("skel remote add creates the Sprite after asking, sets it up, and prints how to connect", async () => {
+  // The Sprite is x64, whatever CPU this machine has.
+  writeFileSync(join(home, "bin", "uname"), "#!/bin/sh\necho x86_64\n", { mode: 0o755 });
   const run = await skel(["remote", "add", "sprite:demo"], "y\n");
   expect(run.code).toBe(0);
   expect(run.out).toContain("skel · setting up sprite:demo: installing bubblewrap,");
@@ -417,25 +419,26 @@ test("skel remote add creates the Sprite after asking, sets it up, and prints ho
   expect(lines[4]).toBe("sprite exec -s demo --no-stdin -- node --version");
   // GitHub's webhooks wake the Sprite through its URL, and GitHub has no Fly.io login.
   expect(lines[6]).toBe("sprite config update --url-auth public -s demo");
-  // Built for the Sprite, which is Linux on x64, whatever the laptop runs. A first attempt
-  // comes first, which finds no skel.
+  // A first attempt comes first, which finds no skel. Then skel asks the Sprite's CPU, and
+  // builds for Linux on it, whatever the laptop runs.
   expect(lines[7]).toBe(`${exec("demo")} first-run`);
-  expect(lines[8]).toMatch(
+  expect(lines[8]).toBe("sprite exec -s demo --no-stdin -- sh -c uname -m");
+  expect(lines[9]).toMatch(
     new RegExp(
       `^bun build --compile --target=bun-linux-x64 --define SKEL_BUILD="${laptop.commit}" ${laptop.main} --outfile ${home}/tmp/\\S+/skel$`,
     ),
   );
-  expect(lines[9]).toBe(
+  expect(lines[10]).toBe(
     "sprite exec -s demo --no-stdin -- sh -c mkdir -p .local/bin && rm -f .local/bin/skel.new",
   );
-  expect(lines[10]).toMatch(
+  expect(lines[11]).toMatch(
     new RegExp(`^sprite file push -s demo ${home}/tmp/\\S+/skel .local/bin/skel.new$`),
   );
-  expect(lines[11]).toBe(
+  expect(lines[12]).toBe(
     "sprite exec -s demo --no-stdin -- sh -c mv -f .local/bin/skel.new .local/bin/skel",
   );
   // A fresh copy is the laptop's build, so it runs without the check.
-  expect(lines[12]).toBe(`${exec("demo", null)} first-run`);
+  expect(lines[13]).toBe(`${exec("demo", null)} first-run`);
   // The build is removed once copied.
   expect(readdirSync(join(home, "tmp"))).toEqual([]);
   expect(readFileSync(join(home, "sprites", "demo", ".local", "bin", "skel"), "utf8")).toBe(

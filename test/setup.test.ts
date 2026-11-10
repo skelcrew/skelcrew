@@ -682,7 +682,9 @@ test("on a machine with only Codex, Enter picks it, and its one login serves age
   expect(run.code).toBe(0);
   expect(run.out).toContain("2) Codex");
   expect(run.out).toContain("skel · step 3 of 3: log agents in to Codex\n");
+  expect(run.out).toContain("skel · agents are logged in to Codex.\n");
   expect(run.out).not.toContain("for reviews");
+  expect(run.out).not.toContain("the reviewer");
   expect(readFileSync(config(), "utf8")).toContain("harness: codex");
   expect(calls()).toContain(`codex login --device-auth\nCODEX_HOME=${codexHome()}\n`);
   expect(calls()).not.toContain("claude");

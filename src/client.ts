@@ -6,7 +6,6 @@ import { agentRuns } from "./agents/tmux.ts";
 import { openDb } from "./db.ts";
 import { leadOf } from "./flow/lead.ts";
 import { RepositoryRow, TaskRow, TaskView, ThreadRow } from "./flow/list.ts";
-import { Page } from "./flow/page.ts";
 import { type DaemonRequest, parseJson } from "./flow/requests.ts";
 import { findThread } from "./flow/thread.ts";
 import { restartDaemon, startDaemon } from "./machine/service.ts";
@@ -157,26 +156,11 @@ export async function reportTurnEnded(): Promise<void> {
   await request({ command: "turn ended" });
 }
 
-// Tells the daemon a screen just opened, for the sidebar as it starts, so ISSUES and PRS fill
-// within seconds and not at the next poll. Only a poll with a screen open asks for them, which
-// is why this comes from the sidebar: while you attach, no screen is open yet. A daemon that is
-// down has nothing to tell, and the sidebar goes on without it.
-export async function screenOpened(): Promise<void> {
-  await ask({ command: "screen opened" }, 2000);
-}
-
 // Has the daemon open a repository, by its GitHub name, for the sidebar switching to its tab:
 // it starts the repository's lead if it never has, and marks it as the one you opened last.
 // The sidebar goes on without waiting, and a daemon that is down has nothing to start.
 export async function openRepository(fullName: string): Promise<void> {
   await ask({ command: "lead", from: fullName }, 60_000);
-}
-
-// Asks the daemon for the page of an issue or PR, for the page command. The daemon answers, as
-// only it may call GitHub.
-export async function pageOf(url: string): Promise<Page> {
-  const reply = await request({ command: "page", url });
-  return understood(z.object({ page: Page }), reply).page;
 }
 
 // What the daemon says it runs: its release, or for a daemon from a checkout, that checkout's

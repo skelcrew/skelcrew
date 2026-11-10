@@ -7,7 +7,7 @@ import { createConnection } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
-import { homeEnv, read, runSkel, source, startDaemon, until } from "./harness.ts";
+import { homeEnv, itemSql, read, runSkel, source, startDaemon, until } from "./harness.ts";
 
 const dbFile = source("db.ts");
 let home = "";
@@ -32,17 +32,9 @@ beforeEach(() => {
   writeFileSync(join(home, "bin", "claude"), "#!/bin/sh\nexec sleep 300\n", { mode: 0o755 });
   fake("systemctl", "exit 0");
   fake("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
-  // The fake GitHub lists a repository's open issues from ~/issues/<owner>/<repo>.json, and
-  // reads one from ~/issues/<owner>/<repo>/issues/<number>.json.
-  mkdirSync(join(home, "issues"));
-  fake(
-    "gh",
-    `case "$*" in
-"issue list --repo "*" --state open "*) cat "$HOME/issues/$4.json" 2>/dev/null || { echo "Could not resolve to a Repository" >&2; exit 1; } ;;
-"api repos/"*"/issues/"*) cat "$HOME/issues/\${2#repos/}.json" 2>/dev/null || { echo '{"message":"Not Found"}'; echo "gh: Not Found (HTTP 404)" >&2; exit 1; } ;;
-*) exit 1 ;;
-esac`,
-  );
+  // The fake GitHub answers nothing, so the daemon's polls fail and skel's copy keeps what
+  // each test puts in it.
+  fake("gh", "exit 1");
   mkdirSync(join(home, ".config", "skel"), { recursive: true });
   writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\n");
   writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
@@ -220,22 +212,20 @@ describe("skel ps", () => {
   });
 });
 
-// Puts open issues on the fake GitHub, as gh issue list answers: newest first.
-function issues(full: string, list: { number: number; title: string; createdAt: string }[]) {
-  mkdirSync(join(home, "issues", full.split("/")[0] ?? ""), { recursive: true });
-  writeFileSync(join(home, "issues", `${full}.json`), JSON.stringify(list));
+// Puts open issues in skel's copy of simon's repository, as a poll would.
+function issues(repo: string, list: { number: number; title: string; createdAt: string }[]) {
+  for (const { number, title, createdAt } of list)
+    sql(itemSql(repo, "task", number, title, createdAt));
 }
 
 describe("skel task ls", () => {
   beforeEach(() => {
     threads();
-    issues("simon/app", [
+    issues("app", [
       { number: 12, title: "Add export", createdAt: "2026-11-03T12:00:00Z" },
       { number: 10, title: "Fix login", createdAt: "2026-11-01T12:00:00Z" },
     ]);
-    issues("simon/site", [
-      { number: 7, title: "New landing page", createdAt: "2026-11-02T12:00:00Z" },
-    ]);
+    issues("site", [{ number: 7, title: "New landing page", createdAt: "2026-11-02T12:00:00Z" }]);
   });
 
   test("lists every repository's open tasks newest first, with the thread on each", async () => {
@@ -249,9 +239,8 @@ describe("skel task ls", () => {
         "site-7  waiting, needs you  New landing page\n" +
         "app-10                      Fix login\n",
     );
-    expect(read(join(home, "calls"))).toContain(
-      "gh issue list --repo simon/app --state open --limit 1000 --json number,title,createdAt",
-    );
+    // They come from skel's copy, with no call to GitHub.
+    expect(read(join(home, "calls"))).not.toContain("issue");
   });
 
   test("lists one repository's open tasks, as JSON for tools", async () => {
@@ -265,15 +254,11 @@ describe("skel task ls", () => {
     ]);
   });
 
-  test("says when there are no open tasks, and why GitHub couldn't list them", async () => {
-    issues("simon/app", []);
+  test("says when there are no open tasks", async () => {
+    sql("DELETE FROM items WHERE repo = 'app'");
     serve();
     await untilAnswers();
     expect((await skel(["task", "ls", "app"])).out).toBe("There are no open tasks.\n");
-    rmSync(join(home, "issues", "simon", "site.json"));
-    const failed = await skel(["task", "ls"]);
-    expect(failed.code).not.toBe(0);
-    expect(failed.err).toContain("Could not resolve to a Repository");
   });
 });
 
@@ -293,21 +278,17 @@ async function builderSocket(): Promise<string> {
   return builder;
 }
 
-// Puts one issue on the fake GitHub, as GitHub's API answers for it.
-function issue(full: string, number: number, title: string, body: string | null) {
-  mkdirSync(join(home, "issues", full, "issues"), { recursive: true });
-  writeFileSync(
-    join(home, "issues", full, "issues", `${number}.json`),
-    JSON.stringify({ number, title, body, state: "open" }),
-  );
+// Puts one open issue in skel's copy of simon's repository, with its body, as a poll would.
+function issue(repo: string, number: number, title: string, body: string) {
+  sql(itemSql(repo, "task", number, title, "2026-11-01T12:00:00Z", { body }));
 }
 
 describe("skel task show", () => {
   beforeEach(() => {
     threads();
-    issue("simon/app", 12, "Add export", "Export threads as JSON.\n\nKeep it small.");
-    issue("simon/app", 10, "Fix login", null);
-    issue("simon/site", 7, "New landing page", "Make it calm.");
+    issue("app", 12, "Add export", "Export threads as JSON.\n\nKeep it small.");
+    issue("app", 10, "Fix login", "");
+    issue("site", 7, "New landing page", "Make it calm.");
   });
 
   test("shows a task's title and body, and the thread on it", async () => {
@@ -318,7 +299,7 @@ describe("skel task show", () => {
     expect(shown.out).toBe(
       "site-7  New landing page\nThread: waiting, needs you\n\nMake it calm.\n",
     );
-    expect(read(join(home, "calls"))).toContain("gh api repos/simon/site/issues/7");
+    expect(read(join(home, "calls"))).not.toContain("issues");
     expect((await skel(["task", "show", "app-10"])).out).toBe("app-10  Fix login\n");
   });
 
@@ -346,7 +327,7 @@ describe("skel task show", () => {
     await untilAnswers();
     const missing = await skel(["task", "show", "app-99"]);
     expect(missing.code).not.toBe(0);
-    expect(missing.err).toBe("skel: there is no issue #99 in simon/app\n");
+    expect(missing.err).toBe("skel: there is no open task #99 in simon/app\n");
     const unknown = await skel(["task", "show", "web-1"]);
     expect(unknown.code).not.toBe(0);
     expect(unknown.err).toContain("no repository named web");
@@ -447,78 +428,19 @@ esac`,
   });
 });
 
-describe("the page of an issue or PR", () => {
-  // Asks the daemon for a page as the page command does, over the socket given, if any.
-  async function ask(url: string, more: Record<string, string> = {}) {
-    const script = `import { pageOf } from ${JSON.stringify(source("client.ts"))};
-console.log(JSON.stringify(await pageOf(${JSON.stringify(url)})));`;
-    const run = Bun.spawn([process.execPath, "-e", script], {
-      env: { ...env(), ...more },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [out, err] = await Promise.all([
-      new Response(run.stdout).text(),
-      new Response(run.stderr).text(),
-      run.exited,
-    ]);
-    return { out, err };
-  }
-  const url = "https://github.com/simon/app/issues/31";
-
-  beforeEach(async () => {
-    threads();
-    mkdirSync(join(home, "issues", "simon", "app", "issues"), { recursive: true });
-    writeFileSync(
-      join(home, "issues", "simon", "app", "issues", "31.json"),
-      JSON.stringify({
-        title: "Add CSV export",
-        body: "Export threads.",
-        state: "open",
-        user: { login: "ana" },
-        labels: [],
-      }),
-    );
-    serve();
-    await untilAnswers();
+// A page reads skel's copy in your own terminal, so an agent has nothing to ask the daemon.
+test("an agent can't run the page command", async () => {
+  const refused = await skel(["page", "https://github.com/simon/app/issues/31"], {
+    SKEL_SANDBOX: "1",
   });
-
-  test("the daemon asks GitHub, and hands you the page", async () => {
-    expect(JSON.parse((await ask(url)).out)).toEqual({
-      title: "Add CSV export",
-      facts: [
-        ["State", "open"],
-        ["Author", "ana"],
-        ["Labels", "none"],
-      ],
-      body: "Export threads.",
-    });
-    expect(read(join(home, "calls"))).toContain("gh api repos/simon/app/issues/31");
-  });
-
-  test("the daemon reads nothing but a page on GitHub", async () => {
-    const asked = await ask("https://github.com/simon/app/issues/31 --hostname evil");
-    expect(asked.err).toContain("doesn't know that request");
-    expect(read(join(home, "calls"))).not.toContain("evil");
-  });
-
-  test("an agent can't ask for a page, nor run the page command", async () => {
-    await openApp();
-    expect((await ask(url, { SKEL_SOCKET: leadSocket() })).err).toContain(
-      "doesn't know that request",
-    );
-    const refused = await skel(["page", url], { SKEL_SANDBOX: "1" });
-    expect(refused.err).toContain("your own terminal");
-  });
+  expect(refused.err).toContain("your own terminal");
 });
 
 // bubblewrap can't start inside skel's own sandbox, so only there the lead can't start.
 describe.skipIf(process.env.SKEL_SANDBOX === "1")("from the lead", () => {
   test("a lead runs skel ps, skel task ls, skel task show and skel repo ls from its sandbox, but can't attach", async () => {
     threads();
-    issues("simon/app", [{ number: 12, title: "Add export", createdAt: "2026-11-03T12:00:00Z" }]);
-    issue("simon/app", 12, "Add export", "As JSON");
-    issues("simon/site", []);
+    issue("app", 12, "Add export", "As JSON");
     writeFileSync(
       join(home, "bin", "claude"),
       `#!/bin/sh

@@ -1,6 +1,6 @@
 // Deciding what an event means: given a thread and what GitHub returned, these functions say
 // what to do. They read no clock, files or network, so they can be tested without them.
-import type { Check, Labeled, PullRequest } from "../github.ts";
+import type { Check, PullRequest } from "../github.ts";
 import type { Review } from "./reviewer.ts";
 import type { Thread } from "./thread.ts";
 
@@ -160,6 +160,8 @@ export function decide(
     };
   return { handled, tell, failed, conflict, change: {}, why: "" };
 }
+
+type Labeled = { number: number; title: string };
 
 // Returns the issues labeled skel that get a thread: those with no thread at all. A thread
 // that failed, was stopped or is done keeps its row, so its label never starts it again;
