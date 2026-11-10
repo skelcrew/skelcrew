@@ -3,8 +3,8 @@
 // or JSON for tools.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
-import { openIssues, readIssue } from "../github.ts";
 import { cloneDir } from "../paths.ts";
+import { openTasks, taskOf } from "./copy.ts";
 import { findRepository, noRepositories, repositories } from "./repo.ts";
 import { needsYou, Thread, threadName } from "./thread.ts";
 
@@ -50,30 +50,30 @@ export const TaskRow = z.object({
 });
 export type TaskRow = z.infer<typeof TaskRow>;
 
+// Returns how the thread on a task stands, or null when it has none.
+function threadOf(db: Database, owner: string, repo: string, task: number): TaskRow["thread"] {
+  const row = db
+    .query("SELECT * FROM threads WHERE owner = ? AND repo = ? AND task = ?")
+    .get(owner, repo, task);
+  const thread = Thread.nullable().parse(row);
+  return thread && { status: thread.status, needsYou: needsYou(thread) };
+}
+
 // Returns the open tasks of every repository, or of one, newest first, with the thread on
-// each one that has one, for skel task ls. Tasks aren't kept: GitHub is asked each time.
-export async function listTasks(db: Database, repository?: string): Promise<TaskRow[]> {
+// each one that has one, for skel task ls. They come from skel's copy, so GitHub isn't asked.
+export function listTasks(db: Database, repository?: string): TaskRow[] {
   const chosen = repository ? [findRepository(db, repository)] : repositories(db);
-  const each = await Promise.all(
-    chosen.map(async (r) =>
-      (await openIssues(`${r.owner}/${r.repo}`)).map((issue) => {
-        const row = db
-          .query("SELECT * FROM threads WHERE owner = ? AND repo = ? AND task = ?")
-          .get(r.owner, r.repo, issue.number);
-        const thread = Thread.nullable().parse(row);
-        return {
-          createdAt: issue.createdAt,
-          task: `${r.name}-${issue.number}`,
-          title: issue.title,
-          thread: thread && { status: thread.status, needsYou: needsYou(thread) },
-        };
-      }),
-    ),
-  );
-  return each
-    .flat()
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .map(({ createdAt, ...task }) => task);
+  return chosen
+    .flatMap((r) =>
+      openTasks(db, r.owner, r.repo).map((task) => ({
+        created: task.created,
+        task: `${r.name}-${task.id}`,
+        title: task.title,
+        thread: threadOf(db, r.owner, r.repo, Number(task.id)),
+      })),
+    )
+    .sort((a, b) => b.created.localeCompare(a.created))
+    .map(({ created, ...task }) => task);
 }
 
 export const TaskView = z.object({
@@ -85,20 +85,11 @@ export const TaskView = z.object({
 export type TaskView = z.infer<typeof TaskView>;
 
 // Returns one task's title and body, which is all its builder sees, with the thread on it if
-// it has one, for skel task show. Tasks aren't kept: GitHub is asked each time.
-export async function showTask(db: Database, repository: string, task: number): Promise<TaskView> {
+// it has one, for skel task show. It comes from skel's copy, so GitHub isn't asked.
+export function showTask(db: Database, repository: string, task: number): TaskView {
   const r = findRepository(db, repository);
-  const { title, body } = await readIssue(`${r.owner}/${r.repo}`, task);
-  const row = db
-    .query("SELECT * FROM threads WHERE owner = ? AND repo = ? AND task = ?")
-    .get(r.owner, r.repo, task);
-  const thread = Thread.nullable().parse(row);
-  return {
-    task: `${r.name}-${task}`,
-    title,
-    body,
-    thread: thread && { status: thread.status, needsYou: needsYou(thread) },
-  };
+  const { title, body } = taskOf(db, r.owner, r.repo, task);
+  return { task: `${r.name}-${task}`, title, body, thread: threadOf(db, r.owner, r.repo, task) };
 }
 
 // Prints rows as columns lined up under their headings, with no spaces left at line ends.

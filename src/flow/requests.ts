@@ -1,7 +1,6 @@
 // The requests the daemon takes on its sockets, and who may make which. The daemon and the
 // commands that ask it both go by these.
 import { z } from "zod";
-import { PageUrl } from "./page.ts";
 import type { Thread } from "./thread.ts";
 
 // Only what a branch name holds: it goes into what git fetches, where a : or * would ask
@@ -54,8 +53,6 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   z.object({ command: z.literal("question asked") }),
   z.object({ command: z.literal("question answered") }),
   z.object({ command: z.literal("turn ended") }),
-  z.object({ command: z.literal("screen opened") }),
-  z.object({ command: z.literal("page"), url: PageUrl }),
 ]);
 export type DaemonRequest = z.infer<typeof DaemonRequest>;
 
@@ -76,8 +73,6 @@ export const allowed = {
     "start",
     "review",
     "stop",
-    "screen opened",
-    "page",
   ],
   lead: [
     "status",

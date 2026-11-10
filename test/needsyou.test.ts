@@ -13,6 +13,8 @@ import { leadPlaces } from "../src/paths.ts";
 import {
   git,
   homeEnv,
+  issueNode,
+  pollAnswer,
   read,
   runSkel,
   source,
@@ -83,10 +85,15 @@ beforeEach(() => {
   mkdirSync(join(home, "gh"));
   fakeClaude();
   script("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
+  // The fake GitHub answers every poll with issue 12.
+  writeFileSync(
+    join(home, "poll.json"),
+    JSON.stringify(pollAnswer([issueNode(12, "Add export", { body: "As JSON" })])),
+  );
   script(
     "gh",
     `case "$*" in
-"api repos/simon/app/issues/12") echo '{"number":12,"title":"Add export","body":"As JSON"}' ;;
+"api graphql --input -") cat > /dev/null; cat "$HOME/poll.json" ;;
 *) echo "the fake gh doesn't know $*" >&2; exit 1 ;;
 esac`,
   );

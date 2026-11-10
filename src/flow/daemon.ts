@@ -7,7 +7,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import { processTree, stillRunning } from "../agents/tmux.ts";
 import { openDb, type Repository } from "../db.ts";
-import { createIssue } from "../github.ts";
+import { createIssue, readTasks } from "../github.ts";
 import { setupDone } from "../machine/setup.ts";
 import { holdAwhile, keepAwake, onSprite, urlPort } from "../machine/sprite.ts";
 import { keepUpToDate } from "../machine/update.ts";
@@ -24,11 +24,11 @@ import {
   startThread,
   statusOnceBack,
 } from "./builder.ts";
+import { saveItems } from "./copy.ts";
 import { stopThread } from "./events.ts";
 import { lastOpened, leadOf, openedRepositories, startLead, tellLead } from "./lead.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
-import { readPage } from "./page.ts";
-import { pollGitHub } from "./poll.ts";
+import { keepThreadsTasks, pollGitHub } from "./poll.ts";
 import { findRepository, fullNameIs, noRepositories, refreshClones, repositories } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
@@ -119,14 +119,19 @@ function endWhatItStarted(sockets: string[]): void {
 // polls the repositories it is the tracker of.
 // Without the listener, events wait until something else wakes the Sprite, and polling
 // still sees them then.
-function wakeOnWebhooks(db: Database, port: number, poll: (fullName: string) => void): void {
+function wakeOnWebhooks(
+  db: Database,
+  port: number,
+  poll: (fullName: string) => Promise<void>,
+): void {
   // The Sprite sleeps again as soon as the delivery is answered, so it is held for a minute
   // first: long enough for the poll, and for keepAwake to hold it for any work the poll starts.
   const wake = async (fullName: string) => {
     await holdAwhile(60).catch((error) =>
       console.log(`couldn't hold the Sprite awake: ${errorText(error)}`),
     );
-    poll(fullName);
+    // A poll that fails is logged, and the next one tries again.
+    await poll(fullName).catch(() => {});
   };
   // A plugin's delivery polls each repository it is the tracker of.
   const wakePlugin = async (name: string) => {
@@ -173,10 +178,12 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
     await listen(createServer(answer(caller)), socket);
     sockets.push(socket);
   };
-  // Polls one repository at once. Until polling starts it does nothing, as the first poll comes
-  // as soon as it does.
-  let poll: (fullName: string) => void = () => {};
+  // Polls one repository at once, for skel start. Until polling starts, skel start waits for
+  // it, so a builder never starts from what an earlier daemon saved of its task.
+  const polling = Promise.withResolvers<(fullName: string) => Promise<void>>();
   const listening = new Set<string>();
+  // The tasks skel start is starting, as owner/repo#number, which no poll starts by its label.
+  const startingTasks = new Set<string>();
   // Opens a thread's own socket, so the daemon knows which thread calls on it. A thread that
   // starts over keeps the socket it has.
   const listenFor = async (thread: Thread) => {
@@ -270,11 +277,6 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         refreshClones(db).catch((error) => console.log(String(error)));
         return { lead: leadOf(db, owner, repo).name, repository: `${owner}/${repo}` };
       }
-      case "screen opened":
-        for (const { owner, repo } of repositories(db)) poll(`${owner}/${repo}`);
-        return { polling: true };
-      case "page":
-        return { page: await readPage(request.url) };
       case "repo ls": {
         const yours = leadOfCaller(caller);
         const all = listRepositories(db);
@@ -284,13 +286,14 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       case "ps":
         return { threads: listThreads(db, request.repo) };
       case "task ls":
-        return { tasks: await listTasks(db, request.repo) };
+        return { tasks: listTasks(db, request.repo) };
       case "task show":
-        return { task: await showTask(db, request.repo, request.task) };
+        return { task: showTask(db, request.repo, request.task) };
       case "task create": {
         const { owner, repo, name } = findRepository(db, request.repo);
-        const number = await createIssue(`${owner}/${repo}`, request.title, request.body);
-        return { task: `${name}-${number}` };
+        const task = await createIssue(`${owner}/${repo}`, request.title, request.body);
+        saveItems(db, owner, repo, [task], false);
+        return { task: `${name}-${task.id}` };
       }
       case "review": {
         const thread = findThread(db, request.repo, request.task);
@@ -346,7 +349,23 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
           goOn(db, tmux, before.folder);
           return { started: `${threadName(db, before)} goes on past the round limit.` };
         }
-        const thread = await startThread(db, request);
+        // The task's title and body come from skel's copy, brought up to date first. Meanwhile
+        // no poll starts the task by its label, which would leave out this start's options.
+        const { owner, repo } = findRepository(db, request.repo);
+        const key = `${owner}/${repo}#${request.task}`;
+        startingTasks.add(key);
+        let thread: Thread;
+        try {
+          await (await polling.promise)(`${owner}/${repo}`);
+          // A poll already past its labels as this began may have started the thread itself.
+          const started = threadOn(db, request.repo, request.task);
+          if (!before && started) return { started: `Started ${threadName(db, started)}.` };
+          // A poll reads one page of changes, and the task may be past it, so it is read too.
+          saveItems(db, owner, repo, await readTasks(`${owner}/${repo}`, [request.task]), false);
+          thread = await startThread(db, request);
+        } finally {
+          startingTasks.delete(key);
+        }
         // Not waited on: an agent's command must answer quickly, and setup can take minutes.
         begin(thread);
         return { started: `Started ${threadName(db, thread)}.` };
@@ -397,6 +416,8 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   refreshClones(db).catch((error) => console.log(String(error)));
   // Notes the daemon's stop kept from the leads.
   tellLead(db, tmux);
+  // A round about to resume reads its thread's task from skel's copy.
+  await keepThreadsTasks(db);
   for (const thread of before) {
     await listenFor(thread);
     // After the builder is back, since the round may type into its session.
@@ -405,7 +426,8 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       (error) => failThread(db, thread, error),
     );
   }
-  poll = pollGitHub(db, tmux, every, begin);
+  const poll = pollGitHub(db, tmux, every, begin, startingTasks);
+  polling.resolve(poll);
   keepUpToDate();
   if (!onSprite()) return;
   keepAwake(() => hasWork(liveThreads(db)));

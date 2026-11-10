@@ -14,10 +14,11 @@ import {
   startSession,
 } from "../agents/tmux.ts";
 import { repositorySetup, threadConfig } from "../config.ts";
-import { fetchBranch, readIssue } from "../github.ts";
+import { fetchBranch } from "../github.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
+import { taskOf } from "./copy.ts";
 import { pastLimit } from "./decide.ts";
 import { findRepository, refreshClones } from "./repo.ts";
 import {
@@ -52,9 +53,10 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
   return handed ? "waiting" : "working";
 }
 
-// Records a new thread on a task, with its folder and branch, and returns it. Refuses a
-// task that has a thread already, unless that one failed: then it starts over in the same
-// folder. Only records it, since the lead waits on the answer. Setting up its clone and
+// Records a new thread on a task, with its folder and branch, and returns it. The task's title
+// comes from skel's copy, which skel start brings up to date first. Refuses a task the copy
+// doesn't have open, and a task that has a thread already, unless that one failed: then it starts
+// over in the same folder. Only records it, since the lead waits on the answer. Setting up its clone and
 // starting its builder come after, and can take minutes. `given` is a start request, so its
 // `repo` is the repository's name in skel or its full GitHub name.
 export async function startThread(
@@ -63,7 +65,8 @@ export async function startThread(
 ): Promise<Thread> {
   const { owner, repo, name } = findRepository(db, given.repo);
   const { task } = given;
-  const { title } = await readIssue(`${owner}/${repo}`, task);
+  const { title, state } = taskOf(db, owner, repo, task);
+  if (state !== "open") throw new Error(`there is no open task #${task} in ${owner}/${repo}`);
   const slug = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -214,8 +217,8 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
 }
 
 // Starts the thread's builder in tmux, in the sandbox in its clone: bringing back the
-// conversation it saved, or else afresh with the task's title and body as its first message.
-// Throws when it exits as soon as it starts. A builder's first start picks the harness your
+// conversation it saved, or else afresh with the task's title and body from skel's copy as its first
+// message. Throws when it exits as soon as it starts. A builder's first start picks the harness your
 // config names, and saves it with the thread, which keeps it from then on: a conversation
 // can't move to another harness. The session id is stored before the builder starts, so the
 // builder can be brought back after its session is gone.
@@ -228,7 +231,7 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
   const session = resume ?? crypto.randomUUID();
   let start: { resume: string } | { sessionId: string; prompt: string } = { resume: session };
   if (!resume) {
-    const { title, body } = await readIssue(fullNameOf(thread), thread.task);
+    const { title, body } = taskOf(db, thread.owner, thread.repo, thread.task);
     start = { sessionId: session, prompt: body ? `${title}\n\n${body}` : title };
   }
   record(db, thread.folder, { session, harness: harness.name });

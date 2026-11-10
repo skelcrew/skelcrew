@@ -11,12 +11,12 @@ import {
   openPullRequest,
   postReview,
   reactToIssue,
-  readIssue,
   readRepository,
   removeWebhook,
   setReviewStatus,
   setWebhook,
 } from "../src/github.ts";
+import { issueNode, pollAnswer, pullNode } from "./harness.ts";
 
 let home = "";
 const path = process.env.PATH;
@@ -49,24 +49,36 @@ function sent(): { args: string[]; input: unknown } {
   return { args, input: stdin ? JSON.parse(stdin) : null };
 }
 
-test("creates an issue and returns its number", async () => {
-  gh('{"number":12,"title":"Add export"}');
-  expect(await createIssue("simon/app", "Add export", "As JSON")).toBe(12);
+test("creates an issue and returns it as a task for skel's copy", async () => {
+  gh(
+    JSON.stringify({
+      number: 12,
+      title: "Add export",
+      body: "As JSON",
+      user: { login: "simon", type: "User" },
+      labels: [],
+      html_url: "https://github.com/simon/app/issues/12",
+      created_at: "2026-11-05T10:00:00Z",
+      updated_at: "2026-11-05T10:00:00Z",
+    }),
+  );
+  expect(await createIssue("simon/app", "Add export", "As JSON")).toEqual({
+    kind: "task",
+    id: "12",
+    title: "Add export",
+    body: "As JSON",
+    state: "open",
+    author: { login: "simon", bot: false, you: true },
+    labels: [],
+    link: "https://github.com/simon/app/issues/12",
+    created: "2026-11-05T10:00:00Z",
+    updated: "2026-11-05T10:00:00Z",
+    closes: "Closes #12",
+  });
   expect(sent()).toEqual({
     args: ["api", "repos/simon/app/issues", "--method", "POST", "--input", "-"],
     input: { title: "Add export", body: "As JSON" },
   });
-});
-
-test("reads an issue's title and body", async () => {
-  gh('{"number":12,"title":"Add export","body":"As JSON"}');
-  expect(await readIssue("simon/app", 12)).toEqual({ title: "Add export", body: "As JSON" });
-  expect(sent().args).toEqual(["api", "repos/simon/app/issues/12"]);
-});
-
-test("reads an issue with no body as an empty body", async () => {
-  gh('{"number":12,"title":"Add export","body":null}');
-  expect(await readIssue("simon/app", 12)).toEqual({ title: "Add export", body: "" });
 });
 
 test("finds the open pull request for a branch", async () => {
@@ -83,14 +95,13 @@ test("finds no pull request for a branch without one", async () => {
   expect(await findPullRequest("simon/app", "skel/12-add-export")).toBeNull();
 });
 
-test("opens a pull request that closes the issue", async () => {
+test("opens a pull request", async () => {
   gh('{"number":40}');
   const number = await openPullRequest("simon/app", {
     branch: "skel/12-add-export",
     base: "main",
     title: "Add export",
-    body: "Exports as JSON.",
-    issue: 12,
+    body: "Exports as JSON.\n\nCloses #12",
   });
   expect(number).toBe(40);
   expect(sent()).toEqual({
@@ -143,8 +154,8 @@ test("cuts a long check description to what GitHub accepts", async () => {
 
 test("says what it tried and what gh said when gh fails", async () => {
   gh("HTTP 404: Not Found", 1);
-  await expect(readIssue("simon/app", 99)).rejects.toThrow(
-    "Couldn't read issue #99 in simon/app: HTTP 404: Not Found",
+  await expect(findPullRequest("simon/app", "skel/99")).rejects.toThrow(
+    "Couldn't look for a pull request from skel/99 in simon/app: HTTP 404: Not Found",
   );
 });
 
@@ -220,54 +231,181 @@ test("reacts to an issue with eyes", async () => {
   });
 });
 
-// Issues with threads keep their label, so the oldest labeled issues could fill every answer.
-// Adding a label updates an issue, so one just labeled is always among the newest.
-test("asks for the labeled issues updated last", async () => {
-  gh(
-    '{"data":{"viewer":{"login":"simon"},"repository":{"labeled":{"nodes":[{"number":12,"title":"Add export"}]}}}}',
-  );
-  const read = await readRepository("simon/app", [], false);
-  expect(read.labeled).toEqual([{ number: 12, title: "Add export" }]);
-  expect(JSON.stringify(sent().input)).toContain("orderBy: { field: UPDATED_AT, direction: DESC }");
+test("without a since, reads every open issue and PR as items, page by page", async () => {
+  const first = pollAnswer([
+    issueNode(12, "Add export", {
+      body: "As JSON",
+      labels: { nodes: [{ name: "skel" }] },
+      updatedAt: "2026-11-06T10:00:00Z",
+    }),
+  ]);
+  // The first answer says more issues follow, and the second brings them.
+  first.data.repository.issues.pageInfo = { hasNextPage: true, endCursor: "c1" };
+  const second = pollAnswer([issueNode(13, "Fix login")]);
+  writeFileSync(join(home, "pages"), "");
+  writeFileSync(join(home, "page1"), JSON.stringify(first));
+  writeFileSync(join(home, "page2"), JSON.stringify(second));
+  const script = `#!/bin/sh
+cat >> "${home}/stdin"
+echo >> "${home}/stdin"
+n=$(( $(wc -l < "${home}/pages") + 1 )); echo >> "${home}/pages"
+cat "${home}/page$n"
+`;
+  writeFileSync(join(home, "gh"), script, { mode: 0o755 });
+  const read = await readRepository("simon/app", [], null);
+  expect(read.items.map((item) => item.id)).toEqual(["12", "13"]);
+  expect(read.items[0]).toEqual({
+    kind: "task",
+    id: "12",
+    title: "Add export",
+    body: "As JSON",
+    state: "open",
+    author: { login: "simon", bot: false, you: true },
+    labels: ["skel"],
+    link: "https://github.com/simon/app/issues/12",
+    created: "2026-11-05T10:00:00Z",
+    updated: "2026-11-06T10:00:00Z",
+    closes: "Closes #12",
+  });
+  expect(read.next).toBe("2026-11-06T10:00:00Z");
+  const [asked, more] = readFileSync(join(home, "stdin"), "utf8").trim().split("\n");
+  expect(asked).toContain("issues(first: 100, states: [OPEN]");
+  expect(asked).toContain("pullRequests(first: 50, states: [OPEN]");
+  // The second page asks only for the list that goes on, from where the first stopped.
+  expect(more).toContain('after: \\"c1\\"');
+  expect(more).not.toContain("pullRequests");
 });
 
-const repository = (more: object) =>
-  JSON.stringify({
-    data: { viewer: { login: "simon" }, repository: { labeled: { nodes: [] }, ...more } },
-  });
-
-test("asks for open issues and PRs in the same query, only when told to", async () => {
-  gh(repository({}));
-  const quiet = await readRepository("simon/app", [], false);
-  expect(quiet.open).toBeNull();
-  expect(JSON.stringify(sent().input)).not.toContain("totalCount");
-  const issue = { number: 12, title: "Add export", createdAt: "2026-11-05T10:00:00Z" };
-  const pull = { number: 34, title: "Bump deps", createdAt: "2026-11-04T10:00:00Z" };
+test("with a since, reads only what changed, closed issues and merged PRs too", async () => {
   gh(
-    repository({
-      openIssues: { totalCount: 240, nodes: [issue] },
-      openPulls: { totalCount: 1, nodes: [pull] },
-    }),
+    JSON.stringify(
+      pollAnswer(
+        [issueNode(12, "Add export", { state: "CLOSED", updatedAt: "2026-11-07T10:00:00Z" })],
+        [pullNode(34, "Bump deps", { state: "MERGED", updatedAt: "2026-11-07T11:00:00Z" })],
+      ),
+    ),
   );
-  const read = await readRepository("simon/app", [], true);
-  expect(read.open).toEqual({
-    issues: { total: 240, items: [issue] },
-    prs: { total: 1, items: [pull] },
-  });
+  const read = await readRepository("simon/app", [], "2026-11-06T10:00:00Z");
+  expect(read.items.map((item) => [item.id, item.state])).toEqual([
+    ["12", "closed"],
+    ["34", "merged"],
+  ]);
+  expect(read.next).toBe("2026-11-07T11:00:00Z");
   const query = JSON.stringify(sent().input);
-  expect(query).toContain("issues(states: [OPEN], first: 100");
-  expect(query).toContain("pullRequests(states: [OPEN], first: 100");
-  expect(query).toContain("orderBy: { field: CREATED_AT, direction: DESC }");
+  expect(query).toContain('filterBy: { since: \\"2026-11-06T10:00:00Z\\" }');
+  expect(query).not.toContain("states: [OPEN]");
 });
 
-test("an open issue in a shape skel doesn't expect is refused, not saved", async () => {
-  gh(
-    repository({
-      openIssues: { totalCount: 1, nodes: [{ number: "12", title: "x", createdAt: "y" }] },
-      openPulls: { totalCount: 0, nodes: [] },
-    }),
+// A list that has more pages may hold changes the answer didn't bring, so the next poll asks
+// for everything open again.
+test("with a since, a full page of changes means the next poll reads everything", async () => {
+  const answer = pollAnswer([], [pullNode(34, "Bump deps", { updatedAt: "2026-11-07T11:00:00Z" })]);
+  answer.data.repository.pulls.pageInfo = { hasNextPage: true, endCursor: "c1" };
+  gh(JSON.stringify(answer));
+  expect((await readRepository("simon/app", [], "2026-11-06T10:00:00Z")).next).toBeNull();
+  // Older PRs beyond the page didn't change, so nothing was missed.
+  const older = pollAnswer([], [pullNode(34, "Bump deps", { updatedAt: "2026-11-01T11:00:00Z" })]);
+  older.data.repository.pulls.pageInfo = { hasNextPage: true, endCursor: "c1" };
+  gh(JSON.stringify(older));
+  expect((await readRepository("simon/app", [], "2026-11-06T10:00:00Z")).next).toBe(
+    "2026-11-06T10:00:00Z",
   );
-  await expect(readRepository("simon/app", [], true)).rejects.toThrow();
+});
+
+test("a PR becomes an item with its branch, checks and reviews, in skel's words", async () => {
+  const pr = pullNode(7, "Add export", {
+    headRefName: "skel/12-add-export",
+    mergeable: "CONFLICTING",
+    author: { __typename: "Bot", login: "skel" },
+    reviews: {
+      nodes: [
+        {
+          databaseId: 1,
+          state: "CHANGES_REQUESTED",
+          body: "No.",
+          author: { __typename: "User", login: "ana" },
+          comments: { nodes: [{ path: "a.ts", line: 3, body: "Here." }] },
+        },
+        { databaseId: 2, state: "PENDING", body: "", author: null, comments: { nodes: [] } },
+      ],
+    },
+    commits: {
+      nodes: [
+        {
+          commit: {
+            statusCheckRollup: {
+              contexts: {
+                nodes: [
+                  {
+                    __typename: "CheckRun",
+                    databaseId: 900,
+                    name: "test",
+                    status: "COMPLETED",
+                    conclusion: "FAILURE",
+                    detailsUrl: null,
+                  },
+                  {
+                    __typename: "StatusContext",
+                    context: "skel/review",
+                    state: "PENDING",
+                    targetUrl: null,
+                  },
+                ],
+              },
+            },
+          },
+        },
+      ],
+    },
+  });
+  gh(JSON.stringify(pollAnswer([], [], { pr7: pr })));
+  const read = await readRepository("simon/app", [7], "2026-11-06T10:00:00Z");
+  expect(read.prs.get(7)?.mergeable).toBe("CONFLICTING");
+  expect(read.items).toEqual([
+    expect.objectContaining({
+      kind: "pr",
+      id: "7",
+      branch: "skel/12-add-export",
+      base: "main",
+      conflicts: true,
+      author: { login: "skel", bot: true, you: false },
+      checks: [
+        { name: "test", id: "900", state: "failed" },
+        { name: "skel/review", id: null, state: "running" },
+      ],
+      reviews: [
+        {
+          id: "1",
+          text: "No.",
+          author: { login: "ana", bot: false, you: false },
+          verdict: "changes requested",
+          lines: [{ path: "a.ts", line: 3, text: "Here." }],
+        },
+      ],
+      comments: [],
+    }),
+  ]);
+  expect(JSON.stringify(sent().input)).toContain("pr7: pullRequest(number: 7)");
+});
+
+// An issue can carry many labels, and skel must always see its own among them.
+test("asks for as many labels as GitHub gives in one answer", async () => {
+  gh(JSON.stringify(pollAnswer([])));
+  await readRepository("simon/app", [], null);
+  const query = JSON.stringify(sent().input);
+  expect(query).toContain("labels(first: 100)");
+  expect(query).not.toMatch(/labels\(first: (?!100\))/);
+});
+
+test("an issue in a shape skel doesn't expect is refused, not saved", async () => {
+  gh(JSON.stringify(pollAnswer([issueNode(12, "x", { number: "12" })])));
+  await expect(readRepository("simon/app", [], null)).rejects.toThrow();
+});
+
+test("a link that could end a terminal link early is refused", async () => {
+  const url = "https://github.com/simon/app/issues/12\u001b]8;;";
+  gh(JSON.stringify(pollAnswer([issueNode(12, "x", { url })])));
+  await expect(readRepository("simon/app", [], null)).rejects.toThrow();
 });
 
 const hookUrl = "https://demo-simon.sprites.app";

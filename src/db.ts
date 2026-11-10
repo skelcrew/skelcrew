@@ -45,7 +45,7 @@ function prepareTables(db: Database): void {
   // column existed gets it once, when the daemon next refreshes its clone.
   if (!db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = 'labeled'").get())
     db.run("ALTER TABLE repositories ADD COLUMN labeled INTEGER NOT NULL DEFAULT 0");
-  // How many issues and PRs are open in all, as the sidebar counts those it doesn't show.
+  // How many tasks and PRs are open in skel's copy, as the sidebar counts those it doesn't show.
   // `lead_session` is the session ID of the repository's lead, kept so it comes back with its
   // conversation. `opened` is when you last opened the repository, in milliseconds since 1970,
   // and null until you first do: its lead starts then, and from then on the daemon brings it
@@ -128,17 +128,19 @@ function prepareTables(db: Database): void {
   for (const [column, type] of Object.entries(added))
     if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))
       db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
-  // The newest open issues and PRs of each repository, as the last poll with a screen open
-  // found them. Only a copy for the sidebar, which looks each second and so can't ask GitHub.
-  // Tasks stay in the tracker.
-  db.run(`CREATE TABLE IF NOT EXISTS open_items (
+  // skel's copy of each repository's open tasks and PRs, as items, kept as JSON. The columns
+  // are what readers pick and sort by. A database from an earlier release also has an
+  // open_items table, which nothing reads now. It stays, as a daemon of that release may still
+  // write to it until it restarts on this one.
+  db.run(`CREATE TABLE IF NOT EXISTS items (
     owner TEXT NOT NULL,
     repo TEXT NOT NULL,
     kind TEXT NOT NULL,
-    number INTEGER NOT NULL,
-    title TEXT NOT NULL,
+    id TEXT NOT NULL,
+    state TEXT NOT NULL,
     created TEXT NOT NULL,
-    PRIMARY KEY (owner, repo, kind, number)
+    item TEXT NOT NULL,
+    PRIMARY KEY (owner, repo, kind, id)
   )`);
   // Notes for a repository's lead that aren't about a thread needing you, such as a thread
   // started from GitHub, kept until they are typed in, since the lead may not be running.

@@ -11,6 +11,8 @@ import { leadPlaces } from "../src/paths.ts";
 import {
   git,
   homeEnv,
+  issueNode,
+  pollAnswer,
   read,
   runSkel,
   source,
@@ -97,17 +99,19 @@ beforeEach(() => {
   fakeClaude();
   fakeCodex();
   script("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
-  // The fake GitHub API: issue 12, pull request 7 once it is opened, and a log of the
-  // reviews and checks skel sets.
+  // The fake GitHub API: issue 12 in every poll, and as tasks.json says once it is there when
+  // asked for by number, pull request 7 once it is opened, and a log of the reviews and checks
+  // skel sets.
   writeFileSync(
-    join(home, "gh", "issue"),
-    JSON.stringify({ number: 12, title: "Add export", body: "As JSON" }),
+    join(home, "poll.json"),
+    JSON.stringify(pollAnswer([issueNode(12, "Add export", { body: "As JSON" })])),
   );
   script(
     "gh",
     `echo "gh $*" >> "$HOME/gh/calls"
 case "$*" in
-"api repos/simon/app/issues/12") cat "$HOME/gh/issue" ;;
+"api graphql --input -") query=$(cat)
+  case "$query" in *"task12: issue("*) cat "$HOME/tasks.json" 2>/dev/null || cat "$HOME/poll.json" ;; *) cat "$HOME/poll.json" ;; esac ;;
 "api repos/simon/app/pulls?state=open&head="*) if test -e "$HOME/gh/pr"; then echo '[{"number":7}]'; else echo '[]'; fi ;;
 "api repos/simon/app/pulls --method POST --input -") touch "$HOME/gh/opening"; while test -e "$HOME/gh/hold"; do sleep 0.1; done; cat > "$HOME/gh/pr"; echo '{"number":7}' ;;
 "api repos/simon/app/pulls/7/reviews --method POST --input -") touch "$HOME/gh/posting"; while test -e "$HOME/gh/hold-review"; do sleep 0.1; done; cat >> "$HOME/gh/reviews"; echo >> "$HOME/gh/reviews"; echo '{"id":1}' ;;
@@ -428,6 +432,33 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
       { event: "COMMENT", commit_id: pushed(), body: "**Approved.**\n\nLooks right." },
     ]);
     await until(() => thread().reviewing === null);
+  }, 60_000);
+
+  // A release before skel's copy has no task saved for a thread, and the first poll brings only
+  // open issues, while the thread's task may have closed.
+  test("runs again a review cut short by an upgrade, though the thread's task is closed", async () => {
+    addApp();
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "slow-1"), "");
+    verdict(2, "approve", "Looks right.");
+    const first = serve();
+    await untilCloned();
+    await skel(["start", "app-12"]);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    first.kill();
+    await first.exited;
+    const db = new Database(join(data(), "skel.db"));
+    db.run("DELETE FROM items");
+    db.close();
+    const closed = issueNode(12, "Add export", { body: "As JSON", state: "CLOSED" });
+    writeFileSync(join(home, "poll.json"), JSON.stringify(pollAnswer([])));
+    writeFileSync(
+      join(home, "tasks.json"),
+      JSON.stringify({ data: { viewer: { login: "simon" }, repository: { task12: closed } } }),
+    );
+    serve();
+    await until(() => finished("success").length + finished("failure").length === 1, 30_000);
+    expect(finished("success")[0]?.sha).toBe(pushed());
   }, 60_000);
 
   test("finishes a submit the daemon's stop cut short while opening the PR", async () => {
