@@ -141,7 +141,9 @@ function wakeOnWebhooks(
       await holdAwhile(60).catch((error) =>
         console.log(`couldn't hold the Sprite awake: ${errorText(error)}`),
       );
-    for (const { owner, repo } of tracked) poll(`${owner}/${repo}`);
+    // Not waited on, so the plugin hears back at once. A poll that fails is logged, and the
+    // next one tries again, but left uncaught it would end the daemon.
+    for (const { owner, repo } of tracked) poll(`${owner}/${repo}`).catch(() => {});
     return true;
   };
   try {
