@@ -20,6 +20,7 @@ import { keptEnv, refuseCredentials, ro, rw, sandboxArgs } from "./sandbox.ts";
 
 const { O_NONBLOCK, O_NOFOLLOW, O_RDONLY } = constants;
 
+// The part of a session's .claude.json Skelcrew changes. The rest is kept as it was.
 const ClaudeJson = z.looseObject({
   projects: z.record(z.string(), z.looseObject({})).optional(),
 });
@@ -45,6 +46,7 @@ const builderSettings = JSON.stringify({
   },
 });
 
+// A saved login token: any text but blank, without the newline a paste leaves.
 const Token = z.string().trim().min(1);
 
 // The model an agent runs on when your config names none.
@@ -78,6 +80,7 @@ function savedConversation(name: string, folder: string, session: string): strin
 // else in the file. Claude Code asks whether to trust the folder even in bypass mode, and on
 // its first launch asks for a theme and more, and would wait there with nobody to answer.
 function trustFolder(config: string, cwd: string): void {
+  // Read what is there now, if anything, refusing anything but a plain file of sane size.
   const file = join(config, ".claude.json");
   let json: z.infer<typeof ClaudeJson> = {};
   if (existsSync(file)) {
@@ -93,6 +96,7 @@ function trustFolder(config: string, cwd: string): void {
       closeSync(fd);
     }
   }
+  // Trust the agent's folder, keeping whatever else Claude Code saved for it.
   const projects = json.projects ?? {};
   projects[cwd] = { ...projects[cwd], hasTrustDialogAccepted: true };
   // Written beside it and renamed over it, so even a link made since the check is replaced,
@@ -136,6 +140,7 @@ function startCommand(given: {
     sessionId,
     env = process.env,
   } = given;
+  // Refuse what would start the wrong agent or write outside Skelcrew's folders.
   if (sessionId && resume) throw new Error("a session can't be both new and resumed");
   if (sessionId && !z.uuid().safeParse(sessionId).success)
     throw new Error(`Claude Code needs a UUID as a session ID, not "${sessionId}"`);
@@ -156,6 +161,8 @@ function startCommand(given: {
   for (const p of [configs, config, join(config, ".claude.json")])
     if (lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink())
       throw new Error(`${p} is a link, so Skelcrew won't write through it`);
+  // The agent sees its own folder and its config folder, both writable, and nothing else of
+  // yours.
   mkdirSync(config, { recursive: true });
   const cwd = thread ?? folder;
   if (!cwd) throw new Error(`Skelcrew has no folder for ${name} to work in`);
@@ -171,6 +178,8 @@ function startCommand(given: {
 
   trustFolder(config, cwd);
 
+  // Bypass mode, since nobody is there to approve each tool. Only a builder gets the hooks
+  // that tell Skelcrew it asked you a question.
   const command = ["claude", "--model", model, "--permission-mode", "bypassPermissions"];
   command.push("--settings", thread ? builderSettings : settings);
   if (resume) command.push("--resume", resume);
@@ -178,6 +187,7 @@ function startCommand(given: {
   if (system) command.push("--append-system-prompt", system);
   if (prompt) command.push(prompt);
 
+  // Only the environment the agent needs, plus its own config folder and login.
   const kept = keptEnv(env, claude.keys);
   kept.CLAUDE_CONFIG_DIR = config;
   kept.CLAUDE_CODE_OAUTH_TOKEN = token;
@@ -208,6 +218,7 @@ function review(given: {
 }) {
   const { home, folder, model = defaultModel, schema } = given;
   const token = claudeToken(home);
+  // One turn in print mode, answering as JSON held to the schema, saving no conversation.
   const command = ["claude", "-p", "--model", model, "--output-format", "json"];
   command.push("--json-schema", schema, "--no-session-persistence");
   command.push("--permission-mode", "bypassPermissions", "--settings", settings);
