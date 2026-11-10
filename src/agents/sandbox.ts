@@ -47,6 +47,8 @@ function linksTo(program: string): Map<string, string> {
   const links = new Map<string, string>();
   const rest = [basename(program)];
   let at = dirname(program);
+  // `rest` holds the names still to walk. A link puts its target's names in front of them,
+  // starting again from / when the target is absolute.
   for (let name = rest.shift(); name !== undefined; name = rest.shift()) {
     const next = join(at, name);
     if (lstatSync(next).isSymbolicLink()) {
@@ -98,6 +100,7 @@ export function sandboxArgs(given: {
     : ["bin", "src", "node_modules", "package.json"]
         .map((part) => join(checkoutFolder, part))
         .filter((part) => existsSync(part));
+  // On a Mac, sandbox-exec draws the same boundary from the same lists.
   if (process.platform === "darwin")
     return seatbeltArgs({
       home,
@@ -117,6 +120,7 @@ export function sandboxArgs(given: {
   const args = sprite
     ? [...ownProcesses, ...dropCapabilities, "bwrap", "--die-with-parent"]
     : ["bwrap", "--die-with-parent", "--unshare-pid"];
+  // The whole system read-only, with a /dev, /tmp and /proc of the sandbox's own.
   args.push("--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp");
   args.push(...(sprite ? ro("/proc") : ["--proc", "/proc"]));
   if (sprite) {
@@ -147,6 +151,8 @@ export function sandboxArgs(given: {
   for (const [link, target] of links)
     if (![...programs, ...mounts].some((p) => p.startsWith(`${link}/`)))
       args.push("--symlink", target, link);
+  // Then the programs and Skelcrew read-only, and the caller's own mounts, inside the hidden
+  // home folder.
   for (const p of programs) args.push(...ro(p));
   for (const p of skel) args.push(...ro(p));
   args.push(...mounts);
@@ -157,6 +163,7 @@ export function sandboxArgs(given: {
     args.push(...["--ro-bind", dirname(socket), socketsInside]);
     args.push("--setenv", "SKELCREW_SOCKET", join(socketsInside, basename(socket)));
   }
+  // SKELCREW_SANDBOX tells Skelcrew's own commands, and its tests, that they run inside.
   args.push("--setenv", "SKELCREW_SANDBOX", "1", "--setenv", "PATH", `${bin}:${path}`);
   args.push("--chdir", cwd, "--", ...command);
   return args;
@@ -178,9 +185,11 @@ export async function throwaway(given: {
   kept?: string[];
 }): Promise<{ mounts: string[]; at: string }> {
   const { source, copy, sprite, signal, kept = [] } = given;
+  // Plain Linux: an overlay shows the folder in place, and drops every change at the end.
   const mac = process.platform === "darwin";
   if (!sprite && !mac)
     return { mounts: ["--overlay-src", source, "--tmp-overlay", source], at: source };
+  // Elsewhere: copy every entry the caller doesn't mount itself.
   mkdirSync(copy);
   const entries = readdirSync(source).filter((entry) => !kept.includes(entry));
   if (entries.length > 0) {
@@ -202,6 +211,7 @@ export async function throwaway(given: {
     if (!copied && !signal.aborted)
       throw new Error(`couldn't copy ${source} for the reviewer: ${err.trim()}`);
   }
+  // On a Sprite the copy is shown at the folder's own path; on a Mac it stays where it is.
   return mac ? { mounts: [], at: copy } : { mounts: ["--bind", copy, source], at: source };
 }
 
@@ -222,6 +232,8 @@ export function refuseCredentials(repository: string): void {
     throw new Error(
       `git can't read ${repository}/.git/config, so Skelcrew can't check it for credentials: ${read.stderr.toString().trim()}`,
     );
+  // Each line is a key and its value. A header sent with every request, or a URL with a
+  // login before its host, is a credential.
   for (const line of read.stdout.toString().split("\n")) {
     const key = line.split(" ")[0] ?? "";
     if (/^http\..*extraheader$/i.test(key) || /https?:\/\/[^/\s]*@/i.test(line))
