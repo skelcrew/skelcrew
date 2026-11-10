@@ -215,24 +215,28 @@ export async function onThisSkel(): Promise<void> {
   }
 }
 
+// Makes sure the daemon runs, on this skel's code, before you attach to an agent it keeps.
+// One on another release or commit is restarted, and one that doesn't answer is started.
+async function daemonUp(): Promise<void> {
+  await onThisSkel();
+  if (await daemonRuns()) return;
+  const log = startDaemon();
+  const deadline = Date.now() + 10_000;
+  while (!(await daemonRuns())) {
+    if (Date.now() > deadline)
+      throw new Error(`skel's daemon didn't answer within 10 seconds: ${log} shows why`);
+    await Bun.sleep(100);
+  }
+}
+
 // Ensures the daemon and the lead of the repository you attached from, as owner/repo, are
 // running, then opens the screen on that lead until you leave with Ctrl-Q. With none, the
 // daemon opens the repository you opened last.
 export async function attachToLead(tmux: string, from?: string): Promise<void> {
-  await onThisSkel();
-  const asked: DaemonRequest = { command: "lead", ...(from ? { from } : {}) };
+  await daemonUp();
   // Asking for the lead brings it back if it ended while the daemon kept running.
-  let reply = await ask(asked, 15_000);
-  if (reply === null) {
-    const log = startDaemon();
-    const deadline = Date.now() + 10_000;
-    while (reply === null) {
-      if (Date.now() > deadline)
-        throw new Error(`skel's daemon didn't answer within 10 seconds: ${log} shows why`);
-      await Bun.sleep(100);
-      reply = await ask(asked, 15_000);
-    }
-  }
+  const reply = await ask({ command: "lead", ...(from ? { from } : {}) }, 15_000);
+  if (reply === null) throw new Error("the daemon didn't answer: run skel to start it");
   const lead = LeadReply.safeParse(reply);
   if (!lead.success) throw new Error("the daemon answered in a way this skel doesn't understand");
   if ("error" in lead.data) throw new Error(lead.data.error);
@@ -241,7 +245,8 @@ export async function attachToLead(tmux: string, from?: string): Promise<void> {
 
 // Opens the screen with the builder of the thread named repo-task on the right, and returns
 // when you leave with Ctrl-Q, with its repository's lead in the sidebar. Only from your own
-// terminal: it takes over the screen, which the lead can't hand to you.
+// terminal: it takes over the screen, which the lead can't hand to you. The daemon is made
+// sure of as for a lead, once the thread is known to be there.
 export async function attachToThread(
   tmux: string,
   repository: string,
@@ -254,6 +259,7 @@ export async function attachToThread(
     throw new Error(
       `${repository}-${task}'s builder isn't running: the thread is ${thread.status}`,
     );
+  await daemonUp();
   const { name } = leadOf(db, thread.owner, thread.repo);
   await openScreen(tmux, thread.folder, name, `${thread.owner}/${thread.repo}`);
 }
