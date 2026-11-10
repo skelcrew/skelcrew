@@ -75,7 +75,7 @@ function usage(command?: string): never {
 // from, or the one --from names, or else the one you opened last. While Skelcrew has no
 // repositories, bringInFrom has said so, and there is no lead to open.
 async function leadCommand(from?: string): Promise<void> {
-  const { attachToLead } = await import("./client.ts");
+  const { attachToLead } = await import("./attach.ts");
   const { openDb } = await import("./db.ts");
   const { bringInFrom, repositories } = await import("./flow/repo.ts");
   const { firstRun } = await import("./machine/setup.ts");
@@ -134,8 +134,8 @@ async function screenCommand(args: string[]): Promise<void> {
 }
 
 // Adds, lists, removes or trusts a repository, for sc repo, or sets one up with sc init.
-// Only ls takes --json: to add, remove or trust, it is a word like any other.
-async function repoCommand(args: string[]): Promise<void> {
+// --json changes only what ls prints.
+async function repoCommand(args: string[], json: boolean): Promise<void> {
   const [command, sub, ...rest] = args;
   const { askForRepositories } = await import("./client.ts");
   const { openDb } = await import("./db.ts");
@@ -149,9 +149,7 @@ async function repoCommand(args: string[]): Promise<void> {
     await addRepo(rest[0]);
     return;
   }
-  // --json can go anywhere, as tools add it last and people type it where they like.
-  const json = args.includes("--json");
-  if (sub === "ls" && rest.filter((arg) => arg !== "--json").length === 0) {
+  if (sub === "ls" && rest.length === 0) {
     // An agent's sandbox hides Skelcrew's database, so there the daemon answers. In your
     // terminal it is read here, so the list shows even while the daemon is down.
     printRepositories(
@@ -173,8 +171,9 @@ async function repoCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
-// Installs, updates, removes or lists plugins, for sc plugin. Only ls takes --json.
-async function pluginCommand(args: string[]): Promise<void> {
+// Installs, updates, removes or lists plugins, for sc plugin. --json changes only what ls
+// prints.
+async function pluginCommand(args: string[], json: boolean): Promise<void> {
   const [command, sub, ...rest] = args;
   const { installPlugin, listPlugins, removePlugin, updatePlugins } = await import(
     "./plugins/install.ts"
@@ -182,8 +181,7 @@ async function pluginCommand(args: string[]): Promise<void> {
   if (sub === "install" && rest[0] && rest.length === 1) return installPlugin(rest[0]);
   if (sub === "update" && rest.length <= 1) return updatePlugins(rest[0]);
   if (sub === "rm" && rest[0] && rest.length === 1) return removePlugin(rest[0]);
-  if (sub === "ls" && rest.filter((arg) => arg !== "--json").length === 0)
-    return listPlugins(rest.includes("--json"));
+  if (sub === "ls" && rest.length === 0) return listPlugins(json);
   usage(command);
 }
 
@@ -219,35 +217,29 @@ async function agentCommand(args: string[]): Promise<void> {
 }
 
 // Prints the threads, or one repository's, for sc ps.
-async function psCommand(args: string[]): Promise<void> {
+async function psCommand(args: string[], json: boolean): Promise<void> {
   const { askForThreads } = await import("./client.ts");
   const { printThreads } = await import("./flow/list.ts");
-  // --json can go anywhere, as tools add it last and people type it where they like.
-  const json = args.includes("--json");
-  const words = args.filter((arg) => arg !== "--json");
   // Done threads pile up forever and would bury the live ones, so only --all shows them.
-  const all = words.includes("--all");
-  const rest = words.filter((word) => word !== "--all");
+  const all = args.includes("--all");
+  const rest = args.filter((word) => word !== "--all");
   if (rest.length > 2) usage("ps");
   const rows = await askForThreads(rest[1]);
   printThreads(all ? rows : rows.filter((row) => row.status !== "done"), json);
 }
 
-// Lists tasks, shows one or creates one, for sc task. Only ls and show take --json: to
-// create, it is a word like any other.
-async function taskCommand(args: string[]): Promise<void> {
+// Lists tasks, shows one or creates one, for sc task. --json changes only what ls and show
+// print.
+async function taskCommand(args: string[], json: boolean): Promise<void> {
   const [command, sub, ...rest] = args;
   const { askForTask, askForTasks, createTask } = await import("./client.ts");
   const { printTask, printTasks } = await import("./flow/list.ts");
-  // --json can go anywhere, as tools add it last and people type it where they like.
-  const json = args.includes("--json");
-  const words = args.filter((arg) => arg !== "--json");
-  if (sub === "ls" && words.length <= 3) {
-    printTasks(await askForTasks(words[2]), json);
+  if (sub === "ls" && rest.length <= 1) {
+    printTasks(await askForTasks(rest[0]), json);
     return;
   }
-  const shown = taskName(words[2]);
-  if (sub === "show" && shown && words.length === 3) {
+  const shown = taskName(rest[0]);
+  if (sub === "show" && shown && rest.length === 1) {
     printTask(await askForTask(...shown), json);
     return;
   }
@@ -262,7 +254,8 @@ async function taskCommand(args: string[]): Promise<void> {
 // Starts, stops, re-reviews or attaches to the thread on a task, named such as app-13.
 async function threadCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
-  const { attachToThread, reviewAgain, startOn, stopOn } = await import("./client.ts");
+  const { attachToThread } = await import("./attach.ts");
+  const { reviewAgain, startOn, stopOn } = await import("./client.ts");
   const thread = taskName(sub);
   const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
   if (command === "start" && thread && (rest.length === 0 || from)) {
@@ -341,17 +334,21 @@ async function runCommand(args: string[]): Promise<void> {
           : remote(sub, rest),
       ),
     );
-  const named = command === undefined || command === "--from" ? "" : command;
+  // --json can go anywhere, as tools add it last and people type it where they like. Every
+  // command takes it, and one that only does something prints the same line with it. It is
+  // left in above, so sc --remote hands it on to the sc it runs.
+  const json = args.includes("--json");
+  const words = args.filter((arg) => arg !== "--json");
+  const [first, second] = words;
+  const named = first === undefined || first === "--from" ? "" : first;
   const refused =
     yoursOnly[
-      command === "repo" || command === "remote" || command === "plugin"
-        ? `${command} ${sub}`
-        : named
+      first === "repo" || first === "remote" || first === "plugin" ? `${first} ${second}` : named
     ];
   if (process.env.SKELCREW_SANDBOX === "1" && refused)
     throw new Error(`${refused} is only for your own terminal, not for agents`);
-  if (command === "remote" && sub === "add" && rest[0] && rest.length === 1) {
-    const host = rest[0];
+  const host = words[2];
+  if (first === "remote" && second === "add" && host && words.length === 3) {
     process.exit(
       await keepingTitle(() =>
         host.startsWith("sprite:") ? addSprite(host.slice("sprite:".length)) : addServer(host),
@@ -366,44 +363,44 @@ async function runCommand(args: string[]): Promise<void> {
   const remoteName = process.env.SKELCREW_REMOTE_NAME;
   if (
     remoteName &&
-    command !== "first-run" &&
+    first !== "first-run" &&
     !onScreen &&
     process.env.SKELCREW_SANDBOX !== "1" &&
     !setupDone()
   )
     throw new Error(notSetUp(remoteName));
-  if (args.length === 0 || (command === "--from" && sub && rest.length === 0))
-    return leadCommand(sub);
-  switch (command) {
+  if (words.length === 0 || (first === "--from" && second && words.length === 2))
+    return leadCommand(second);
+  switch (first) {
     case "first-run":
     case "serve":
-      return machineCommand(args);
+      return machineCommand(words);
     case "sidebar":
     case "page":
-      return screenCommand(args);
+      return screenCommand(words);
     case "repo":
     case "init":
-      return repoCommand(args);
+      return repoCommand(words, json);
     case "submit":
     case "question":
     case "turn":
     case "attached":
-      return agentCommand(args);
+      return agentCommand(words);
     case "ps":
-      return psCommand(args);
+      return psCommand(words, json);
     case "task":
-      return taskCommand(args);
+      return taskCommand(words, json);
     case "start":
     case "stop":
     case "review":
     case "attach":
-      return threadCommand(args);
+      return threadCommand(words);
     case "tell":
-      return tellCommand(args);
+      return tellCommand(words);
     case "plugin":
-      return pluginCommand(args);
+      return pluginCommand(words, json);
     default:
-      usage(command);
+      usage(first);
   }
 }
 

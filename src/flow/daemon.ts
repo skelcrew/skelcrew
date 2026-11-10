@@ -141,7 +141,9 @@ function wakeOnWebhooks(
       await holdAwhile(60).catch((error) =>
         console.log(`couldn't hold the Sprite awake: ${errorText(error)}`),
       );
-    for (const { owner, repo } of tracked) poll(`${owner}/${repo}`);
+    // Not waited on, so the plugin hears back at once. A poll that fails is logged, and the
+    // next one tries again, but left uncaught it would end the daemon.
+    for (const { owner, repo } of tracked) poll(`${owner}/${repo}`).catch(() => {});
     return true;
   };
   try {
@@ -274,7 +276,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         // A lead that wasn't running kept its notes until now.
         tellLead(db, tmux);
         // Not waited on, so attaching never waits on GitHub.
-        refreshClones(db).catch((error) => console.log(String(error)));
+        refreshClones(db).catch((error) => console.log(errorText(error)));
         return { lead: leadOf(db, owner, repo).name, repository: `${owner}/${repo}` };
       }
       case "repo ls": {
@@ -349,6 +351,10 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
           goOn(db, tmux, before.folder);
           return { started: `${threadName(db, before)} goes on past the round limit.` };
         }
+        // Refused before the poll, which only a new thread needs, so GitHub being slow or down
+        // can't hold up the answer. startThread refuses it again, for a thread started meanwhile.
+        if (before && before.status !== "failed")
+          throw new Error(`${threadName(db, before)} has a thread already`);
         // The task's title and body come from Skelcrew's copy, brought up to date first. Meanwhile
         // no poll starts the task by its label, which would leave out this start's options.
         const { owner, repo } = findRepository(db, request.repo);
@@ -413,7 +419,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   for (const repository of openedRepositories(db))
     await lead(repository).catch((error) => console.log(errorText(error)));
   // A lead keeps its clone current as it starts, and a repository with no lead needs it too.
-  refreshClones(db).catch((error) => console.log(String(error)));
+  refreshClones(db).catch((error) => console.log(errorText(error)));
   // Notes the daemon's stop kept from the leads.
   tellLead(db, tmux);
   // A round about to resume reads its thread's task from Skelcrew's copy.

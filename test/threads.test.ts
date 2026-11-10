@@ -465,9 +465,11 @@ c.on("data", (d) => process.stdout.write(d));`;
     serve();
     await untilCloned();
     await skel("start", "app-12");
+    // GitHub is down now, and the refusal needs nothing from it.
+    rmSync(join(home, "issues", "poll"));
     const again = await skel("start", "app-12");
     expect(again.code).not.toBe(0);
-    expect(again.err).toContain("app-12 has a thread already");
+    expect(again.err).toBe("Skelcrew: app-12 has a thread already\n");
   }, 20_000);
 
   test("sc stop ends the builder and keeps its clone, a restart leaves it stopped, and sc start brings it back with --resume", async () => {

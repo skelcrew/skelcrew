@@ -72,6 +72,18 @@ test("a command Skelcrew doesn't know gets one line on stderr pointing to the he
   expect(wrong.err).toBe("Skelcrew: that isn't a Skelcrew command. Run sc --help to see them.\n");
 });
 
+// Tools add --json to every command they run, and one that only does something prints the same
+// line with it. No daemon runs here, so the command gets as far as asking one.
+test("a command that does something takes --json, and does the same", () => {
+  const run = mkdtempSync(join(tmpdir(), "skel-help-test-"));
+  try {
+    const stop = skel(["stop", "app-99", "--json"], { XDG_RUNTIME_DIR: run });
+    expect(stop.err).toBe("Skelcrew: the daemon didn't answer: run sc to start it\n");
+  } finally {
+    rmSync(run, { recursive: true, force: true });
+  }
+});
+
 test("sc --version from a checkout says so, with its commit", () => {
   const home = mkdtempSync(join(tmpdir(), "skel-version-test-"));
   try {

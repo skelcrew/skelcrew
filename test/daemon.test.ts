@@ -443,6 +443,31 @@ test("on a Sprite, a delivery GitHub signed has the daemon poll its repository a
   await until(() => polls() === 2);
 });
 
+// A wake-up comes while GitHub may be failing, and the daemon must outlive the poll it starts.
+test("on a Sprite, a plugin's wake-up whose poll fails leaves the daemon running", async () => {
+  setUp();
+  onSprite();
+  fakeGitHub();
+  addRepository("app");
+  const work = join(home, "work", "app");
+  writeFileSync(join(work, "skelcrew.yaml"), "tracker: fake\n");
+  git(work, "add", ".");
+  git(work, "commit", "-q", "-m", "tracker");
+  git(work, "push", "-q", "origin", "main");
+  onDb((db) => db.run("INSERT INTO plugins (name, folder) VALUES ('fake', '/nowhere')"));
+  const port = freePort();
+  const run = serve(undefined, port);
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
+  await until(() => polls() === 1 && existsSync(join(clone, "skelcrew.yaml")));
+  await untilListening(port);
+  const woken = await fetch(`http://127.0.0.1:${port}/fake`, { method: "POST", body: "" });
+  expect(woken.status).toBe(202);
+  await until(() => polls() === 2);
+  await Bun.sleep(500);
+  expect(run.exitCode).toBeNull();
+  expect(await answers()).toBe(true);
+});
+
 test("on a Sprite, a delivery with another secret polls nothing", async () => {
   setUp();
   onSprite();

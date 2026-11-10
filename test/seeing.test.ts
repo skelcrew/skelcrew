@@ -3,7 +3,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { createConnection } from "node:net";
+import { createConnection, createServer } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
@@ -392,7 +392,12 @@ esac`,
   test("opens the screen on the builder's session, named when the thread started", async () => {
     writeFileSync(join(home, "sessions", "site-7"), "");
     sql("UPDATE repositories SET name = 'web' WHERE repo = 'site'");
-    const attached = await skel(["attach", "web-7"]);
+    // Attaching makes sure the daemon runs, so one answers here, as a daemon would.
+    const daemon = createServer((connection) =>
+      connection.on("data", () => connection.end('{"running":true,"pid":1}\n')),
+    );
+    await new Promise<void>((done) => daemon.listen(join(home, "run", "skelcrew.sock"), done));
+    const attached = await skel(["attach", "web-7"]).finally(() => daemon.close());
     expect(attached.err).toBe("");
     expect(attached.code).toBe(0);
     expect(calls()).toContain("tmux -L skelcrew-screen -f /dev/null");
