@@ -6,7 +6,6 @@ import { codexHome } from "../agents/codex.ts";
 import { HarnessName } from "../agents/harness.ts";
 import { configFile, readConfig } from "../config.ts";
 import { openDb } from "../db.ts";
-import { checkoutSettings, checkoutTop, initRepo } from "../flow/repo.ts";
 import { claudeTokenFile, configDir } from "../paths.ts";
 import { installPlugin } from "../plugins/install.ts";
 import { installedPlugins } from "../plugins/plugin.ts";
@@ -227,12 +226,11 @@ function gitHubToOffer(remote: string | null): string | null {
   return declined.includes(repository.toLowerCase()) ? null : repository;
 }
 
-// Offers the GitHub plugin for a checkout of the repository at `remote`, and reports whether it
-// is installed after. Your yes is all the install asks for, as you said yes to this plugin by
+// Offers the GitHub plugin for a checkout of the repository at `remote`. Your yes is all the install asks for, as you said yes to this plugin by
 // name. A no is saved in config.yaml for the repository, so no checkout of it asks again, and
 // you can undo it there. One that fails to install is only reported: Skelcrew works from git
 // alone until you install it with sc plugin install.
-function offerGitHub(repository: string, remote: string): boolean {
+function offerGitHub(repository: string, remote: string): void {
   console.log("GitHub detected.\n");
   const answer = prompt(
     "The GitHub plugin lets Skelcrew work with issues, pull requests\nand CI on your repositories. Install the GitHub plugin? [Y/n]",
@@ -246,7 +244,7 @@ function offerGitHub(repository: string, remote: string): boolean {
     console.log(
       `Skelcrew won't ask again for ${repository}. To install it: sc plugin install ${githubPlugin}`,
     );
-    return false;
+    return;
   }
   // The plugin's setup is handed the remote, so it can set itself up for this repository.
   try {
@@ -254,35 +252,6 @@ function offerGitHub(repository: string, remote: string): boolean {
   } catch (error) {
     console.log(`Couldn't install the GitHub plugin: ${errorText(error)}`);
   }
-  return hasGitHubPlugin();
-}
-
-// Offers sc init in the checkout you ran Skelcrew from, once you said yes to the GitHub plugin and
-// the checkout's skelcrew.yaml names no tracker, so GitHub's issues become the repository's tasks.
-// A yes names GitHub as its tracker without asking which. Outside a checkout with a remote, or
-// where skelcrew.yaml can't be read, it offers nothing, and sc init says why when you run it. A
-// sc init that fails is only reported, as the machine is set up either way.
-async function offerInit(): Promise<void> {
-  const root = checkoutTop();
-  if (!hasGitHubPlugin() || root === null || !originHere(root)) return;
-  // A skelcrew.yaml that names a tracker already, or can't be read, means nothing to offer.
-  try {
-    const { there, settings } = checkoutSettings(root);
-    if (there && (settings === null || settings.has("tracker"))) return;
-  } catch {
-    return;
-  }
-  console.log("");
-  const answer = prompt(
-    "Use this repository's GitHub issues as tasks? This adds skelcrew.yaml here. [Y/n]",
-  );
-  if (!["", "y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
-    console.log("To do it later, run sc init here.");
-    return;
-  }
-  await initRepo("github").catch((error) =>
-    console.log(`Couldn't run sc init: ${errorText(error)}`),
-  );
 }
 
 // Asks whether agents run on Claude Code or Codex, refuses one that isn't installed, and saves
@@ -353,10 +322,10 @@ export function setupDone(): boolean {
 }
 
 // Completes unfinished machine setup and keeps the daemon service current before attaching
-// to the lead. In a checkout of a GitHub repository it offers the GitHub plugin, on any run, and
-// a yes ends with the offer of sc init there, once setup is done. `from` is the remote sc
-// --remote brings from your laptop, as the checkout is there.
-export async function firstRun(from?: string): Promise<void> {
+// to the lead. In a checkout of a GitHub repository it offers the GitHub plugin, on any run. A yes
+// makes GitHub the repository's tracker too, with nothing written into the checkout. `from` is
+// the remote sc --remote brings from your laptop, as the checkout is there.
+export function firstRun(from?: string): void {
   const done = setupDone();
   // The tools are found where your login shell finds them, even over ssh, so a codex
   // under nvm isn't taken for missing. Passed to each one, since Bun looks programs up in
@@ -370,7 +339,7 @@ export async function firstRun(from?: string): Promise<void> {
   // Read once git is known to be there.
   const remote = from ?? originHere();
   const github = gitHubToOffer(remote);
-  const installed = github !== null && remote !== null && offerGitHub(github, remote);
+  if (github !== null && remote !== null) offerGitHub(github, remote);
   if (!done) {
     // The steps left are worked out again after each one, as the harness you pick decides
     // which login comes next.
@@ -400,10 +369,6 @@ export async function firstRun(from?: string): Promise<void> {
     if (process.platform === "darwin")
       console.log("Work stops while your laptop sleeps. sc remote add keeps it going on a server.");
   }
-  // A first run that stopped after the yes, such as at a sign-in, left the plugin in with no
-  // offer of sc init, so the run that finishes setup offers it. offerInit asks only with the
-  // plugin in, in a checkout whose skelcrew.yaml names no tracker.
-  if (installed || (!done && hasGitHubPlugin())) await offerInit();
 }
 
 // A step of the first run: `title` names it, and `take` asks what it needs, starting with a line

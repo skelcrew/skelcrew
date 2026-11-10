@@ -84,7 +84,7 @@ async function leadCommand(from?: string): Promise<void> {
   const { openDb } = await import("./db.ts");
   const { bringInFrom, repositories } = await import("./flow/repo.ts");
   const { firstRun } = await import("./machine/setup.ts");
-  await firstRun(from);
+  firstRun(from);
   // Adds the repository you ran sc from if Skelcrew doesn't have it yet.
   const found = await bringInFrom(from);
   if (repositories(openDb()).length > 0) await attachToLead("skelcrew", found);
@@ -97,7 +97,7 @@ async function machineCommand(args: string[]): Promise<void> {
   const { firstRun } = await import("./machine/setup.ts");
   // Run by sc remote add on the machine it sets up, not by people, so usage leaves it out.
   if (command === "first-run" && args.length === 1) {
-    await firstRun();
+    firstRun();
     return;
   }
   if (command === "serve" && args.length === 1) {

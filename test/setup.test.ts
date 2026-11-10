@@ -612,13 +612,12 @@ function siteOnGitHub(): string {
   return site;
 }
 
-const initOffer =
-  "Use this repository's GitHub issues as tasks? This adds skelcrew.yaml here. [Y/n]";
-
 // Enter takes the offer. You said yes to this plugin by name, so the install asks nothing more.
-test("a yes installs the GitHub plugin with no second question, then offers sc init once set up", async () => {
+// GitHub is then the repository's tracker, so nothing is written into the checkout, and the
+// line saying Skelcrew is set up goes straight on to bringing the repository in.
+test("a yes installs the GitHub plugin with no second question, writes nothing here, and the lead opens", async () => {
   const site = siteOnGitHub();
-  const run = await skel("\n1\nsk-ant-oat01-good\n\n", bin, main(), site);
+  const run = await skel("\n1\nsk-ant-oat01-good\n", bin, main(), site);
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(run.out).toContain(
@@ -626,65 +625,22 @@ test("a yes installs the GitHub plugin with no second question, then offers sc i
   );
   expect(run.out).not.toContain("[y/N]");
   expect(readFileSync(join(home, "handed"), "utf8")).toBe("https://github.com/simon/site\n");
-  expect(run.out.indexOf("Skelcrew is set up.")).toBeLessThan(run.out.indexOf(initOffer));
-  expect(run.out).not.toContain("Which tracker");
-  expect(readFileSync(join(site, "skelcrew.yaml"), "utf8")).toContain("\ntracker: github\n");
-  expect(run.out).toContain("Added simon/site, as site.");
-  expect(run.out).toContain("Wrote skelcrew.yaml. Commit and push it to start.");
+  expect(run.out).not.toContain("sc init");
+  expect(run.out).toContain("Skelcrew is set up.\nCloning simon/site for Skelcrew.\n");
+  expect(existsSync(join(site, "skelcrew.yaml"))).toBe(false);
   expect(calls()).toEndWith("daemon lead\nscreen on lead\n");
 });
 
-test("on a run after setup, a yes goes straight on to sc init", async () => {
+test("on a run after setup, a yes installs the plugin and the lead opens, with nothing written here", async () => {
   const site = siteOnGitHub();
   await skel("1\nsk-ant-oat01-good\n");
-  const run = await skel("\n\n", bin, main(), site);
+  const run = await skel("\n", bin, main(), site);
   expect(run.err).toBe("");
   expect(run.out).toStartWith("GitHub detected.");
   expect(run.out).toContain("Installed github 0.1.0.");
-  expect(run.out).toContain(initOffer);
-  expect(readFileSync(join(site, "skelcrew.yaml"), "utf8")).toContain("\ntracker: github\n");
-});
-
-// The yes came in a first run that stopped later, such as at a sign-in, so sc init is offered
-// once the first run is done.
-test("after a first run that stopped once the plugin was in, the run that finishes offers sc init", async () => {
-  const site = siteOnGitHub();
-  const stopped = await skel("\n1\n", bin, main(), site);
-  expect(stopped.code).toBe(1);
-  expect(stopped.out).toContain("Installed github 0.1.0.");
-  expect(stopped.out).not.toContain(initOffer);
-  const finished = await skel("sk-ant-oat01-good\n\n", bin, main(), site);
-  expect(finished.err).toBe("");
-  expect(finished.out).not.toContain("GitHub detected");
-  expect(finished.out.indexOf("Skelcrew is set up.")).toBeLessThan(finished.out.indexOf(initOffer));
-  expect(readFileSync(join(site, "skelcrew.yaml"), "utf8")).toContain("\ntracker: github\n");
-});
-
-test("a no to sc init writes nothing, and the lead opens", async () => {
-  const site = siteOnGitHub();
-  const run = await skel("\n1\nsk-ant-oat01-good\nn\n", bin, main(), site);
-  expect(run.err).toBe("");
-  expect(run.out).toContain(initOffer);
-  expect(run.out).toContain("To do it later, run sc init here.");
+  expect(run.out).not.toContain("sc init");
   expect(existsSync(join(site, "skelcrew.yaml"))).toBe(false);
   expect(calls()).toEndWith("daemon lead\nscreen on lead\n");
-});
-
-test("offers no sc init where skelcrew.yaml names a tracker, or after a no to the plugin", async () => {
-  const site = siteOnGitHub();
-  writeFileSync(join(site, "skelcrew.yaml"), "tracker: linear\n");
-  const named = await skel("\n1\nsk-ant-oat01-good\n", bin, main(), site);
-  expect(named.err).toBe("");
-  expect(named.out).toContain("Installed github 0.1.0.");
-  expect(named.out).not.toContain("sc init");
-  expect(readFileSync(join(site, "skelcrew.yaml"), "utf8")).toBe("tracker: linear\n");
-
-  rmSync(join(site, "skelcrew.yaml"));
-  noGitHubPlugin();
-  const without = await skel("n\n", bin, main(), site);
-  expect(without.out).toContain("Skelcrew won't ask again for simon/site.");
-  expect(without.out).not.toContain("sc init");
-  expect(existsSync(join(site, "skelcrew.yaml"))).toBe(false);
 });
 
 test("names each missing tool with what to install, and runs nothing else", async () => {

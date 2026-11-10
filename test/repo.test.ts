@@ -634,23 +634,20 @@ test("repo add and init refuse inside Skelcrew's sandbox, where a yes could come
   expect(existsSync(clone("simon/app"))).toBe(false);
 });
 
-test("init writes a starter skelcrew.yaml with the tracker you pick and your harness and model for each role, and adds the repository", async () => {
+test("init writes a starter skelcrew.yaml with your harness and model for each role, and adds the repository", async () => {
   writeFileSync(
     join(home, ".config", "skelcrew", "config.yaml"),
     "harness: claude\nmodel: sonnet\nlead: { model: opus }\nreviewer: { harness: codex }\n",
   );
   const checkout = onGitHub("simon/app", "WRITE");
   mkdirSync(join(checkout, "src"));
-  // Enter picks the first tracker installed.
-  const run = await skel(["init"], "\n", join(checkout, "src"));
+  // It names no tracker, so the repository keeps its forge as its tracker, and asks nothing.
+  const run = await skel(["init"], "", join(checkout, "src"));
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toContain(
-    "Which tracker holds this repository's tasks?\n  1) github\n  2) none\n",
-  );
+  expect(run.out).not.toContain("tracker");
   expect(readFileSync(join(checkout, "skelcrew.yaml"), "utf8")).toBe(
     `# Shared with everyone who works on this repository. Never put a secret here.
-tracker: github
 lead:     { harness: claude, model: opus }
 builder:  { harness: claude, model: sonnet }
 reviewer: { harness: codex }
@@ -670,8 +667,7 @@ test("init writes model names that read back as the same text", async () => {
     'harness: claude\nmodel: "123"\nlead: { model: "true" }\nbuilder: { model: "null" }\n',
   );
   const checkout = onGitHub("simon/app", "WRITE");
-  // 2 picks no tracker, so the file names none.
-  expect((await skel(["init"], "2\n", checkout)).err).toBe("");
+  expect((await skel(["init"], "", checkout)).err).toBe("");
   expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8"))).toEqual({
     lead: { harness: "claude", model: "true" },
     builder: { harness: "claude", model: "null" },
@@ -679,37 +675,16 @@ test("init writes model names that read back as the same text", async () => {
   });
 });
 
-test("init only adds the tracker to a skelcrew.yaml that is there, and leaves one naming a tracker alone", async () => {
+test("init leaves a skelcrew.yaml that is there as it is, and adds the repository", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
   const file = join(checkout, "skelcrew.yaml");
   writeFileSync(file, "# How to build it.\nsetup: [make]\n");
-  const none = await skel(["init"], "2\n", checkout);
-  expect(none.code).toBe(0);
-  expect(readFileSync(file, "utf8")).toBe("# How to build it.\nsetup: [make]\n");
-  expect(none.out).toContain("skelcrew.yaml is there already, so Skelcrew left it as it is.");
-  expect(none.out).toContain("Added simon/app, as app.");
-
-  const run = await skel(["init"], "1\n", checkout);
+  const run = await skel(["init"], "", checkout);
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(readFileSync(file, "utf8")).toBe("# How to build it.\nsetup: [make]\ntracker: github\n");
-  expect(run.out).toContain("Added tracker: github to skelcrew.yaml. Commit and push it to start.");
-
-  const again = await skel(["init"], "", checkout);
-  expect(again.code).toBe(0);
-  expect(again.out).not.toContain("Which tracker");
-  expect(readFileSync(file, "utf8")).toBe("# How to build it.\nsetup: [make]\ntracker: github\n");
-  expect(again.out).toContain("skelcrew.yaml is there already, so Skelcrew left it as it is.");
-});
-
-test("init writes nothing when no tracker is picked", async () => {
-  const checkout = onGitHub("simon/app", "WRITE");
-  const run = await skel(["init"], "", checkout);
-  expect(run.code).toBe(1);
-  expect(run.err).toBe("Skelcrew: no tracker was picked, so sc init wrote nothing\n");
-  const wrong = await skel(["init"], "3\n", checkout);
-  expect(wrong.err).toBe("Skelcrew: 3 isn't one of the numbers, so sc init wrote nothing\n");
-  expect(existsSync(join(checkout, "skelcrew.yaml"))).toBe(false);
+  expect(readFileSync(file, "utf8")).toBe("# How to build it.\nsetup: [make]\n");
+  expect(run.out).toContain("skelcrew.yaml is there already, so Skelcrew left it as it is.");
+  expect(run.out).toContain("Added simon/app, as app.");
 });
 
 test("init stops outside a git repository, and in one with no remote", async () => {
