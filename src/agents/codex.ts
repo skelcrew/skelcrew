@@ -15,30 +15,34 @@ import {
   rmSync,
   symlinkSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "../paths.ts";
 import { keptEnv, refuseCredentials, ro, rw, sandboxArgs, throwaway } from "./sandbox.ts";
 
+// Returns skel's own CODEX_HOME, where the first run's codex login goes and reviews run: a
+// login of skel's own, apart from yours in ~/.codex, so a renewal on either side never breaks
+// the other. A caller that was handed an environment passes its HOME, as for dataDir.
+export const codexHome = (home = homedir()) => join(dataDir(home), "codex");
+
 // Puts skel's Codex login in a folder of its own, holding only auth.json and auth.lock, and
-// links them from the CODEX_HOME given, the folder skel's reviews and codex login use unless
-// another is named. Returns the login folder, which every Codex sandbox gets writable. From
-// 0.167 Codex renews its login by renaming a new auth.json over the old one, beside the file a
-// link leads to. A file mounted on its own can't be renamed over, and by then the old refresh
-// token is spent, which would leave skel's login stale. Its lock is shared the same way, so
-// two renewals take turns.
-function shareLogin(home: string, codexHome = join(dataDir(home), "codex")): string {
-  const shared = join(dataDir(home), "codex");
+// links them from `folder`, a CODEX_HOME: skel's own unless another is named. Returns the
+// login folder, which every Codex sandbox gets writable. From 0.167 Codex renews its login by
+// renaming a new auth.json over the old one, beside the file a link leads to. A file mounted
+// on its own can't be renamed over, and by then the old refresh token is spent, which would
+// leave skel's login stale. Its lock is shared the same way, so two renewals take turns.
+function shareLogin(home: string, folder = codexHome(home)): string {
   const login = join(dataDir(home), "codex-login");
-  mkdirSync(codexHome, { recursive: true, mode: 0o700 });
+  mkdirSync(folder, { recursive: true, mode: 0o700 });
   mkdirSync(login, { recursive: true, mode: 0o700 });
   for (const file of ["auth.json", "auth.lock"]) {
-    const at = join(codexHome, file);
+    const at = join(folder, file);
     const found = lstatSync(at, { throwIfNoEntry: false });
     if (found?.isSymbolicLink() && readlinkSync(at) === join(login, file)) continue;
     // The first run's codex login writes a plain auth.json in skel's own folder. Anywhere
     // else the agent can write what is there, so it is never taken for skel's login.
-    if (found?.isFile() && codexHome === shared) renameSync(at, join(login, file));
+    if (found?.isFile() && folder === codexHome(home)) renameSync(at, join(login, file));
     else rmSync(at, { force: true });
     symlinkSync(join(login, file), at);
   }
@@ -121,7 +125,7 @@ const builderHooks = [
 // seconds, and the daemon must keep answering builders' hooks meanwhile, so it never blocks.
 async function checkModel(home: string, model: string, env: Record<string, string | undefined>) {
   const asked = Bun.spawn(["codex", "debug", "models"], {
-    env: { ...env, CODEX_HOME: join(dataDir(home), "codex") },
+    env: { ...env, CODEX_HOME: codexHome(home) },
     stdout: "pipe",
     stderr: "pipe",
     timeout: 30_000,
@@ -176,21 +180,21 @@ async function startCommand(given: {
   // A folder of its own per session, never your ~/.codex: an agent could write instructions
   // that another session loads. It stays, so codex resume finds the conversation.
   const sessions = join(dataDir(home), "codex-sessions");
-  const codexHome = join(sessions, name);
+  const own = join(sessions, name);
   // skel writes here with your rights, and the agent can change what is in its folder. A
   // link it left would send that write to any file of yours.
-  for (const p of [sessions, codexHome])
+  for (const p of [sessions, own])
     if (lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink())
       throw new Error(`${p} is a link, so skel won't write through it`);
-  mkdirSync(codexHome, { recursive: true, mode: 0o700 });
+  mkdirSync(own, { recursive: true, mode: 0o700 });
   // skel's own folder first, so a login the first run just saved there moves to the shared
   // folder before this session links to it.
   shareLogin(home);
-  const login = shareLogin(home, codexHome);
+  const login = shareLogin(home, own);
   const cwd = thread ?? folder;
   if (!cwd) throw new Error(`skel has no folder for ${name} to work in`);
   mkdirSync(cwd, { recursive: true });
-  const mounts = [...rw(cwd), ...rw(codexHome), ...rw(login)];
+  const mounts = [...rw(cwd), ...rw(own), ...rw(login)];
   // Read-only at the same path, as for Claude Code.
   if (origin) {
     refuseCredentials(origin);
@@ -213,12 +217,8 @@ async function startCommand(given: {
   // After --, so a message that starts with - is never taken for an option.
   else if (prompt) command.push("--", prompt);
 
-  const kept = keptEnv(env);
-  for (const key of codex.keys) {
-    const value = env[key];
-    if (value) kept[key] = value;
-  }
-  kept.CODEX_HOME = codexHome;
+  const kept = keptEnv(env, codex.keys);
+  kept.CODEX_HOME = own;
   const argv = sandboxArgs({ home, path: env.PATH ?? "", mounts, socket, cwd, command });
   return { argv, env: kept };
 }
@@ -236,13 +236,13 @@ async function review(given: {
   signal: AbortSignal;
 }) {
   const { home, folder, model, sprite, signal } = given;
-  const codexHome = join(dataDir(home), "codex");
+  const shared = codexHome(home);
   const login = shareLogin(home);
-  const sessions = join(codexHome, "sessions");
+  const sessions = join(shared, "sessions");
   mkdirSync(sessions, { recursive: true, mode: 0o700 });
   const copy = join(folder, "codex");
   const { mounts, at } = await throwaway({
-    source: codexHome,
+    source: shared,
     copy,
     sprite,
     signal,
@@ -250,7 +250,7 @@ async function review(given: {
   });
   mounts.push("--bind", sessions, sessions, "--bind", login, login);
   // A copy at another path can't have the real one mounted into it, so it links to it.
-  if (at !== codexHome) symlinkSync(sessions, join(at, "sessions"));
+  if (at !== shared) symlinkSync(sessions, join(at, "sessions"));
   // --no-daemon belongs to codex itself, not to exec: without it Codex may start a
   // background server that outlives the review.
   const command = ["codex", "--no-daemon", "exec", "--dangerously-bypass-approvals-and-sandbox"];

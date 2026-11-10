@@ -8,7 +8,17 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 import { stillRunning } from "../src/agents/tmux.ts";
-import { git, homeEnv, read, runSkel, source, startDaemon, until } from "./harness.ts";
+import {
+  git,
+  homeEnv,
+  issueNode,
+  pollAnswer,
+  read,
+  runSkel,
+  source,
+  startDaemon,
+  until,
+} from "./harness.ts";
 
 const main = source("main.ts");
 let home = "";
@@ -55,17 +65,18 @@ beforeEach(() => {
   fake("systemctl", "exit 0");
   fake("loginctl", "exit 0");
   fake("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
-  // The fake GitHub answers for issues from the files in ~/issues, and makes issue 13. It
+  // The fake GitHub answers a poll with the issues in ~/issues/poll, and makes issue 13. It
   // reports your permission on a repository, and whether it is a fork, from the files beside
   // its bare repository.
   mkdirSync(join(home, "issues"));
+  known.length = 0;
   fake(
     "gh",
     `case "$*" in
-"api repos/"*"/issues --method POST --input -") cat > "$HOME/issues/sent"; echo '{"number":13}' ;;
-"api repos/"*"/issues/"*) cat "$HOME/issues/\${2##*/}" 2>/dev/null || { echo "Not Found" >&2; exit 1; } ;;
+"api repos/"*"/issues --method POST --input -") cat > "$HOME/issues/sent"
+  echo '{"number":13,"title":"Add import","body":"From CSV","user":null,"labels":[],"html_url":"https://github.com/simon/app/issues/13","created_at":"2026-11-05T10:00:00Z","updated_at":"2026-11-05T10:00:00Z"}' ;;
+"api graphql --input -") cat > /dev/null; cat "$HOME/issues/poll" ;;
 "api repos/"*"/labels --method POST --input -") cat > /dev/null; echo '{"name":"skel"}' ;;
-"issue list --repo "*) echo '[{"number":12,"title":"Add export","createdAt":"2026-11-01T00:00:00Z"}]' ;;
 "repo view "*) full=$3
   test -e "$HOME/github/$full.permission" || { echo "Could not resolve to a Repository" >&2; exit 1; }
   fork=$(test -e "$HOME/github/$full.fork" && echo true || echo false)
@@ -95,8 +106,11 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
+// The issues on the fake GitHub. Each one added answers the next poll along with the others.
+const known: object[] = [];
 function issue(number: number, title: string, body: string): void {
-  writeFileSync(join(home, "issues", String(number)), JSON.stringify({ number, title, body }));
+  known.push(issueNode(number, title, { body }));
+  writeFileSync(join(home, "issues", "poll"), JSON.stringify(pollAnswer(known)));
 }
 
 // What this test's processes run with.
@@ -236,7 +250,7 @@ test("skel start refuses a repository skel doesn't have, and a task GitHub doesn
   expect(unknown.err).toContain("no repository named site");
   const missing = await skel("start", "app-99");
   expect(missing.code).not.toBe(0);
-  expect(missing.err).toContain("Not Found");
+  expect(missing.err).toContain("there is no open task #99 in simon/app");
   expect(existsSync(join(data(), "threads", "app-99"))).toBe(false);
 });
 

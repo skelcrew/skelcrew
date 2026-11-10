@@ -21,6 +21,7 @@ import {
   singleFile,
 } from "../version.ts";
 import { originHere } from "./origin.ts";
+import { downloadRelease, releaseSum } from "./update.ts";
 
 // A command over ssh gets a bare PATH: no login shell reads ~/.profile, and Ubuntu's
 // ~/.bashrc stops early when nobody types into it. So ~/.local/bin, where skel copies
@@ -227,7 +228,7 @@ function describeCheckout(): string {
 
 // Replaces skel on a server or Sprite with this laptop's release, or one built from this
 // checkout, then restarts the daemon's service there so it runs the new build. The tmux
-// server outlives the daemon, so the lead and builders keep their Claude Code running. A skel
+// server outlives the daemon, so the leads and builders keep running on their harness. A skel
 // run from a checkout there is left alone: a copy would leave the checkout behind while the
 // daemon kept running it.
 async function update(where: string, machine: Machine): Promise<void> {
@@ -248,7 +249,7 @@ else echo "elsewhere $f"; fi`;
   if (found[2]) {
     console.log(
       skelLine(
-        `skel on ${where} runs from a checkout at ${found[2]}, so it wasn't replaced. git pull there updates it, and ${machine.restart} there restarts its daemon with it.`,
+        `skel on ${where} runs from a checkout at ${found[2]}, so it wasn't replaced. git pull there updates it, and the next skel there restarts its daemon on it.`,
       ),
     );
     return;
@@ -268,43 +269,39 @@ else echo "elsewhere $f"; fi`;
   await machine.updated();
   console.log(
     skelLine(
-      `updated ${where} to ${now} and restarted its daemon. The lead and builders keep running, and the lead picks up new instructions when it's next started.`,
+      `updated ${where} to ${now} and restarted its daemon. The leads and builders keep running, and each lead picks up new instructions when it's next started.`,
     ),
   );
 }
 
-// Downloads this release's Linux skel for the machine's CPU to a file, so a skel installed from
-// a release can set up a server. It has no sources to build from, and is often on a Mac. Stops
-// on a download that doesn't match the release's checksums, as the install script does.
-async function downloadLinuxSkel(file: string, machine: Machine): Promise<void> {
+// Returns the CPU of a server or Sprite in the words of skel's builds, x64 or arm64, so the
+// skel it gets runs there.
+async function machineCpu(machine: Machine): Promise<string> {
   const cpus: Record<string, string> = { x86_64: "x64", aarch64: "arm64", arm64: "arm64" };
   // ssh's warnings arrive in the same text, so the CPU is picked out of it.
   const { said } = await quietly(machine.shell("uname -m"));
   const cpu = cpus[said.match(/\b(x86_64|aarch64|arm64)\b/)?.[1] ?? ""];
   if (!cpu) throw new Error(`skel runs on arm64 and x64 CPUs, not on "${said}"`);
-  const name = `skel-linux-${cpu}`;
-  const fetched = async (asset: string) => {
-    const address = `${releases}/download/v${release}/${asset}`;
-    const response = await fetch(address);
-    if (!response.ok) throw new Error(`couldn't download ${address} (${response.status})`);
-    return response;
-  };
+  return cpu;
+}
+
+// Downloads this release's Linux skel for the machine's CPU to a file, so a skel installed from
+// a release can set up a server. It has no sources to build from, and is often on a Mac. Stops
+// on a download that doesn't match the release's checksums, as the install script does.
+async function downloadLinuxSkel(file: string, cpu: string): Promise<void> {
   console.log(`Downloading skel ${release} for Linux.`);
-  const sums = await (await fetched("SHA256SUMS")).text();
-  const listed = sums.split("\n").find((line) => line.endsWith(`  ${name}`));
-  const bytes = await (await fetched(name)).arrayBuffer();
-  const sum = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
-  if (listed !== `${sum}  ${name}`)
-    throw new Error(`the download failed its checksum, so skel wasn't copied`);
-  await Bun.write(file, bytes);
+  const at = `${releases}/download/v${release}`;
+  const name = `skel-linux-${cpu}`;
+  await Bun.write(file, await downloadRelease(at, name, await releaseSum(at, name)));
   chmodSync(file, 0o755);
 }
 
-// Builds skel from this checkout as one file for a server or Sprite, which is Linux on x64
-// whatever the laptop runs, stamped with its build so it can tell when yours moves on.
-async function buildLinuxSkel(file: string): Promise<void> {
+// Builds skel from this checkout as one file for a server or Sprite, which is Linux whatever
+// the laptop runs, on the machine's CPU, stamped with its build so it can tell when yours
+// moves on.
+async function buildLinuxSkel(file: string, cpu: string): Promise<void> {
   console.log("Building skel for Linux.");
-  const target = "--target=bun-linux-x64";
+  const target = `--target=bun-linux-${cpu}`;
   const build = laptopBuild();
   const stamp = build ? ["--define", `SKEL_BUILD=${JSON.stringify(build)}`] : [];
   const argv = ["bun", "build", "--compile", target, ...stamp, mainFile, "--outfile", file];
@@ -321,7 +318,8 @@ async function withLinuxSkel(machine: Machine): Promise<void> {
   const folder = mkdtempSync(join(tmpdir(), "skel-"));
   try {
     const file = join(folder, "skel");
-    await (singleFile ? downloadLinuxSkel(file, machine) : buildLinuxSkel(file));
+    const cpu = await machineCpu(machine);
+    await (singleFile ? downloadLinuxSkel(file, cpu) : buildLinuxSkel(file, cpu));
     await machine.copy(file);
   } finally {
     rmSync(folder, { recursive: true, force: true });

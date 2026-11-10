@@ -476,6 +476,23 @@ test("names each missing tool with what to install, and runs nothing else", asyn
   expect(calls()).toBe("");
 });
 
+test("names git when it is missing, as skel clones and pushes with it", async () => {
+  unlinkSync(join(bin, "git"));
+  const run = await skel();
+  expect(run.code).toBe(1);
+  expect(run.err).toStartWith("skel: install these first:\n");
+  expect(run.err).toContain("  git: sudo apt install git\n");
+  expect(calls()).toBe("");
+});
+
+test("on a Mac, names git with what Homebrew installs", async () => {
+  asMac();
+  rmSync(join(bin, "git"));
+  const run = await skelOnMac();
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("  brew install git\n");
+});
+
 test("gives the AppArmor advice when bwrap can't run", async () => {
   // AppArmor matches the file a link points to, so the advice must name that file.
   const real = join(home, "opt", "bwrap");
@@ -665,7 +682,9 @@ test("on a machine with only Codex, Enter picks it, and its one login serves age
   expect(run.code).toBe(0);
   expect(run.out).toContain("2) Codex");
   expect(run.out).toContain("skel · step 3 of 3: log agents in to Codex\n");
+  expect(run.out).toContain("skel · agents are logged in to Codex.\n");
   expect(run.out).not.toContain("for reviews");
+  expect(run.out).not.toContain("the reviewer");
   expect(readFileSync(config(), "utf8")).toContain("harness: codex");
   expect(calls()).toContain(`codex login --device-auth\nCODEX_HOME=${codexHome()}\n`);
   expect(calls()).not.toContain("claude");

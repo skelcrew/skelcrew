@@ -82,6 +82,8 @@ cd "$HOME/server" && HOME="$HOME/server" PATH="$bin:/usr/bin:/bin" exec sh -c "$
     `#!/bin/sh\necho "systemctl $*" >> "${join(home, "calls")}"\n`,
     { mode: 0o755 },
   );
+  // The server is x64, whatever CPU this machine has, unless a test says otherwise.
+  writeFileSync(join(home, "serverbin", "uname"), "#!/bin/sh\necho x86_64\n", { mode: 0o755 });
   fake("scp", `test -f "$HOME/scp-fails" && exit 1\ncp "$1" "$HOME/server/\${2#*:}"`);
   // Builds the stand-in skel with the commit skel stamps into the build.
   fake(
@@ -261,7 +263,7 @@ test("offers to update an out-of-date skel, updates it, then runs the command", 
   expect(run.out).toContain(
     `skel · updated simon@workbox to the skel in ~/code/skel (commit ${laptop.commit}) and restarted its daemon.`,
   );
-  expect(run.out).toContain("the lead picks up new instructions when it's next started");
+  expect(run.out).toContain("each lead picks up new instructions when it's next started");
   expect(run.out).not.toContain("uncommitted");
   expect(run.out).toEndWith("skel on the server got 1 arguments\n[ps]\n");
   expect(run.code).toBe(3);
@@ -454,25 +456,33 @@ test("skel remote add copies skel to a server, runs the first run, and prints ho
   );
   const lines = calls().split("\n");
   expect(lines[0]).toBe(onServer(" first-run"));
+  expect(lines[1]).toBe("ssh simon@workbox uname -m");
   // Built for the server, which is Linux, whatever the laptop runs, with the commit it came
   // from, so the server can tell when the laptop has moved on.
-  expect(lines[1]).toMatch(
+  expect(lines[2]).toMatch(
     new RegExp(
       `^bun build --compile --target=bun-linux-x64 --define SKEL_BUILD="${laptop.commit}" ${laptop.main} --outfile ${home}/tmp/\\S+/skel$`,
     ),
   );
-  expect(lines[2]).toBe("ssh simon@workbox mkdir -p .local/bin && rm -f .local/bin/skel.new");
-  expect(lines[3]).toMatch(
+  expect(lines[3]).toBe("ssh simon@workbox mkdir -p .local/bin && rm -f .local/bin/skel.new");
+  expect(lines[4]).toMatch(
     new RegExp(`^scp ${home}/tmp/\\S+/skel simon@workbox:.local/bin/skel.new$`),
   );
-  expect(lines[4]).toBe("ssh simon@workbox mv -f .local/bin/skel.new .local/bin/skel");
+  expect(lines[5]).toBe("ssh simon@workbox mv -f .local/bin/skel.new .local/bin/skel");
   // A fresh copy is the laptop's build, so it runs without the check.
-  expect(lines[5]).toBe(onServer(" first-run", null));
+  expect(lines[6]).toBe(onServer(" first-run", null));
   // The build is removed once copied.
   expect(readdirSync(join(home, "tmp"))).toEqual([]);
   expect(readFileSync(join(home, "server", ".local", "bin", "skel"), "utf8")).toBe(
     serverSkel(laptop.commit),
   );
+});
+
+test("skel remote add builds skel for the server's CPU", async () => {
+  writeFileSync(join(home, "serverbin", "uname"), "#!/bin/sh\necho aarch64\n", { mode: 0o755 });
+  const run = await skel(["remote", "add", "simon@workbox"]);
+  expect(run.code).toBe(0);
+  expect(calls()).toContain("bun build --compile --target=bun-linux-arm64 ");
 });
 
 // A setup that stopped partway is finished by running it again, so this must be safe.

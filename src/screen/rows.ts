@@ -3,6 +3,7 @@
 // and PRS as links, and a tab for each repository.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
+import { Item } from "../flow/copy.ts";
 import { pastLimit } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
 import { fullNameOf, needsYou, Thread, threadName } from "../flow/thread.ts";
@@ -28,9 +29,9 @@ export type Row = {
 };
 // A sign, and the colour it is drawn in.
 type Mark = [string, number];
-// One row of ISSUES or PRS: a link to GitHub, and a page you can land on. `word` is the word of
-// the thread a PR comes from, and `needing` says whether that thread needs you. A PR has
-// a mark, and an issue has none, so it starts where the headings do.
+// One row of ISSUES or PRS: a link to the issue or PR, and a page you can land on. `word` is
+// the word of the thread a PR comes from, and `needing` says whether that thread needs you. A
+// PR has a mark, and an issue has none, so it starts where the headings do.
 export type Link = {
   name: string;
   title: string;
@@ -163,40 +164,42 @@ export function sidebarRows(
   ];
 }
 
-const OpenRow = z.object({
+const ListRow = z.object({
   owner: Name,
   repo: Name,
   name: z.string(),
-  number: z.number(),
-  title: z.string(),
   threaded: z.coerce.boolean(),
+  item: z.string(),
 });
 
-// Returns the open repository's ISSUES and PRS as the daemon's last poll saved them, up to
-// `most` rows of each: it reads the database and never asks GitHub, as it runs each second.
-// Newest first, with issues that have a thread last. A thread that is done has left THREADS,
-// so its issue counts as waiting again. A PR from a thread takes the word and mark of its row.
-// GitHub numbers issues and PRs from one counter, so no issue can be taken for a thread's PR.
+// Returns the open repository's ISSUES and PRS from skel's copy, up to `most` rows of each: it
+// reads the database and never asks GitHub, as it runs each second. Newest first, with issues
+// that have a thread last. A thread that is done has left THREADS, so its issue counts as
+// waiting again. A PR from a thread takes the word and mark of its row. GitHub numbers issues
+// and PRs from one counter, so no issue can be taken for a thread's PR.
 export function sidebarLists(db: Database, rows: Row[], most: number, open: Open): Lists {
-  // Returns one list, of the kind saved in the database, with the path GitHub shows it at.
-  const read = (kind: string, path: string, column: string): List => {
-    const found = db.query(`SELECT i.owner, i.repo, r.name, i.number, i.title,
-        EXISTS (SELECT 1 FROM threads t WHERE i.kind = 'issue' AND t.owner = i.owner
-          AND t.repo = i.repo AND t.task = i.number AND t.status != 'done') AS threaded
-      FROM open_items i JOIN repositories r ON r.owner = i.owner AND r.repo = i.repo
-      WHERE i.kind = ? AND i.owner = ? AND i.repo = ?
-      ORDER BY threaded, i.created DESC, i.number DESC LIMIT ?`);
+  // Returns one list, of tasks or PRs, with the column that counts all of its kind.
+  const read = (kind: "task" | "pr", column: string): List => {
+    const found = db.query(`SELECT i.owner, i.repo, r.name, i.item,
+        EXISTS (SELECT 1 FROM threads t WHERE i.kind = 'task' AND t.owner = i.owner
+          AND t.repo = i.repo AND t.task = CAST(i.id AS INTEGER) AND t.status != 'done') AS threaded
+      FROM items i JOIN repositories r ON r.owner = i.owner AND r.repo = i.repo
+      WHERE i.kind = ? AND i.state = 'open' AND i.owner = ? AND i.repo = ?
+      ORDER BY threaded, i.created DESC, CAST(i.id AS INTEGER) DESC LIMIT ?`);
     const links = found.all(kind, open.owner, open.repo, most).map((saved) => {
-      const { owner, repo, name, number, title, threaded } = OpenRow.parse(saved);
-      const thread = rows.find((row) => row.fullName === `${owner}/${repo}` && row.pr === number);
+      const { owner, repo, name, threaded, item } = ListRow.parse(saved);
+      const { id, title, link } = Item.parse(JSON.parse(item));
+      const thread = rows.find(
+        (row) => row.fullName === `${owner}/${repo}` && row.pr === Number(id),
+      );
       return {
-        name: kind === "pr" ? `${name}#${number}` : `${name}-${number}`,
+        name: kind === "pr" ? `${name}#${id}` : `${name}-${id}`,
         title,
-        url: `https://github.com/${owner}/${repo}/${path}/${number}`,
+        url: link,
         word: thread?.word ?? "",
         needing: thread !== undefined && needing(thread),
         dim: threaded,
-        mark: kind === "issue" ? null : thread ? threadMark(thread) : noThread,
+        mark: kind === "task" ? null : thread ? threadMark(thread) : noThread,
       };
     });
     const sum = db
@@ -206,7 +209,7 @@ export function sidebarLists(db: Database, rows: Row[], most: number, open: Open
       .get(open.owner, open.repo);
     return { links, total: z.object({ total: z.number() }).parse(sum).total };
   };
-  return { issues: read("issue", "issues", "open_issues"), prs: read("pr", "pull", "open_prs") };
+  return { issues: read("task", "open_issues"), prs: read("pr", "open_prs") };
 }
 
 const TabRow = z.object({

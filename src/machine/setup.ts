@@ -2,9 +2,10 @@
 // done.
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { codexHome } from "../agents/codex.ts";
 import { HarnessName } from "../agents/harness.ts";
 import { configFile, readConfig } from "../config.ts";
-import { claudeTokenFile, codexHome, configDir } from "../paths.ts";
+import { claudeTokenFile, configDir } from "../paths.ts";
 import { rule, skelLine } from "../say.ts";
 import { promptSecret } from "./secret.ts";
 import { installService, loginPath, serviceFile } from "./service.ts";
@@ -25,10 +26,11 @@ const harnesses = [
 const tools = [
   { command: "tmux", install: "sudo apt install tmux" },
   { command: "bwrap", install: "sudo apt install bubblewrap" },
+  { command: "git", install: "sudo apt install git" },
   { command: "gh", install: "sudo apt install gh" },
 ];
 // On a Mac the sandbox comes with the system, and what Homebrew gives goes in one line.
-const brewed = ["tmux", "gh"];
+const brewed = ["tmux", "git", "gh"];
 const macTools = [
   { command: "sandbox-exec", install: "it comes with macOS, and skel can't run agents without it" },
 ];
@@ -165,26 +167,27 @@ function saveClaudeToken(env: Env): void {
   }
 }
 
-// Returns the reviewer's Codex settings: a login of skel's own, apart from yours in
-// ~/.codex, so a renewal on either side never breaks the other.
-const reviewerEnv = (env: Env): Env => ({ ...env, CODEX_HOME: codexHome() });
+// Returns the settings for skel's own Codex login, which every Codex agent and review shares:
+// apart from yours in ~/.codex, so a renewal on either side never breaks the other.
+const codexEnv = (env: Env): Env => ({ ...env, CODEX_HOME: codexHome() });
 
-// Reports whether the reviewer has a Codex login in skel's folder. Reviews can change only
-// the login and session files in this folder, so running codex on it with your rights runs
-// nothing a reviewer left there. codex login status reads only the saved login: a key in
-// your environment doesn't count.
-function reviewerLoggedIn(env: Env): boolean {
+// Reports whether skel's own Codex login exists. Reviews can change only the login and session
+// files in its folder, so running codex on it with your rights runs nothing a reviewer left
+// there. codex login status reads only the saved login: a key in your environment doesn't
+// count.
+function codexLoggedIn(env: Env): boolean {
   const status = ["codex", "login", "status"];
-  return Bun.spawnSync(status, { env: reviewerEnv(env), stdout: "pipe", stderr: "pipe" }).success;
+  return Bun.spawnSync(status, { env: codexEnv(env), stdout: "pipe", stderr: "pipe" }).success;
 }
 
-// Logs the reviewer in to Codex in skel's own folder, with a code you enter on any device,
-// since the machine may have no browser. Then says so, to mark where Codex's output ends.
-function loginReviewer(env: Env): void {
+// Logs skel in to Codex in its own folder, with a code you enter on any device, since the
+// machine may have no browser. Then says who now has the login, `who` as the step named them,
+// to mark where Codex's output ends.
+function logInCodex(env: Env, who: "agents" | "the reviewer"): void {
   mkdirSync(codexHome(), { recursive: true, mode: 0o700 });
-  if (!handOver("Codex", ["codex", "login", "--device-auth"], reviewerEnv(env)))
-    throw new Error("codex login didn't finish, so reviews have no login");
-  console.log(skelLine("the reviewer is logged in to Codex."));
+  if (!handOver("Codex", ["codex", "login", "--device-auth"], codexEnv(env)))
+    throw new Error(`codex login didn't finish, so Codex has no login for ${who}`);
+  console.log(skelLine(`${who} ${who === "agents" ? "are" : "is"} logged in to Codex.`));
 }
 
 // Reports whether gh is logged in to GitHub, which the daemon needs to clone repositories
@@ -252,7 +255,7 @@ function agentsLoggedIn(harness: HarnessName): boolean {
 }
 
 // Reports whether saved settings, token and service show that setup finished, avoiding
-// repeated login checks. Setup saves the service last, after the reviewer login, so these
+// repeated login checks. Setup saves the service last, after the logins, so these
 // files show every step ran. Missing tools or logins fail where used; checking each attach
 // would require a GitHub call.
 export function setupDone(): boolean {
@@ -346,12 +349,13 @@ function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
         about: "Claude Code will print a long-lived token. Copy it, then come back here.",
         take: () => saveClaudeToken(env),
       });
-  // Codex agents share the reviewer's login, skel's own.
-  if ((harness === "codex" || reviewer === "codex") && !reviewerLoggedIn(env))
+  // Every Codex agent and review shares skel's own Codex login.
+  const onCodex = harness === "codex" ? "agents" : "the reviewer";
+  if ((harness === "codex" || reviewer === "codex") && !codexLoggedIn(env))
     steps.push({
-      title: harness === "codex" ? "log agents in to Codex" : "log the reviewer in to Codex",
+      title: `log ${onCodex} in to Codex`,
       about: "Codex will show a link and a code. Open the link on any device and enter the code.",
-      take: () => loginReviewer(env),
+      take: () => logInCodex(env, onCodex),
     });
   return steps;
 }

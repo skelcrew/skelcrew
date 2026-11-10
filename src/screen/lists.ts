@@ -122,7 +122,7 @@ function scrolled(blocks: Line[][], here: number, room: number): Line[] {
   return blocks.slice(first).flat().slice(0, room);
 }
 
-// Returns the lines above the hints, and how many there can be. The hints take the bottom three,
+// Returns the lines above the hints, and how many there can be. The hints take the bottom four,
 // until the sidebar can't hold them and the whole row you are looking at: then they give way, as
 // the rows are what you pick from and the keys are also in skel's help.
 // ISSUES, THREADS and PRS each have a third of those lines, however full, so each list stays in

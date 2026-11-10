@@ -31,24 +31,40 @@ async function fileSum(file: string): Promise<string> {
   return hasher.digest("hex");
 }
 
-// Installs the latest release over the skel at `file`, from the releases at `base`, laid out
-// as the install script expects, and returns the release it installed. Returns null when that
-// file already is the latest, which costs only the small checksums file. Like the install
-// script, it checks the download against the release's checksums and starts it once before
-// it goes in, so a broken download never replaces a skel that works. It is staged beside
-// `file` and renamed over it: macOS kills a program whose file was written over in place, and
-// the running daemon keeps the old file until it restarts.
-export async function installLatest(file: string, base: string): Promise<string | null> {
-  const sums = await (await download(`${base}/latest/download/SHA256SUMS`)).text();
+// Returns the SHA-256 the release at `at`, the folder its files are in, such as
+// .../download/v0.4.2, lists for its file `name`. Read just before the download, so a new
+// release can't slip between.
+export async function releaseSum(at: string, name: string): Promise<string> {
+  const sums = await (await download(`${at}/SHA256SUMS`)).text();
   const want = sums
     .split("\n")
-    .find((line) => line.endsWith(`  ${asset}`))
+    .find((line) => line.endsWith(`  ${name}`))
     ?.split("  ")[0];
-  if (!want) throw new Error(`the latest release has no checksum for ${asset}`);
-  if ((await fileSum(file)) === want) return null;
-  const bytes = await (await download(`${base}/latest/download/${asset}`)).arrayBuffer();
+  if (!want) throw new Error(`the release has no checksum for ${name}`);
+  return want;
+}
+
+// Downloads the file `name` of the release at `at` and checks it against `want`, its
+// checksum, as the install script does, so a broken or changed download is never used.
+export async function downloadRelease(at: string, name: string, want: string) {
+  const bytes = await (await download(`${at}/${name}`)).arrayBuffer();
   if (new Bun.CryptoHasher("sha256").update(bytes).digest("hex") !== want)
-    throw new Error("the latest release failed its checksum, so it wasn't installed");
+    throw new Error(`the download of ${name} failed its checksum, so it wasn't used`);
+  return bytes;
+}
+
+// Installs the latest release over the skel at `file`, from the releases at `base`, laid out
+// as the install script expects, and returns the release it installed. Returns null when that
+// file already is the latest. Like the install script, it starts the download once before it
+// goes in, so a broken download never replaces a skel that works. It is staged beside `file`
+// and renamed over it: macOS kills a program whose file was written over in place, and the
+// running daemon keeps the old file until it restarts.
+export async function installLatest(file: string, base: string): Promise<string | null> {
+  const at = `${base}/latest/download`;
+  const want = await releaseSum(at, asset);
+  // Comparing sums costs only the small checksums file.
+  if ((await fileSum(file)) === want) return null;
+  const bytes = await downloadRelease(at, asset, want);
   const staged = join(dirname(file), `.skel-update-${process.pid}`);
   try {
     await Bun.write(staged, bytes);

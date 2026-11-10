@@ -231,30 +231,33 @@ export function refuseCredentials(repository: string): void {
   }
 }
 
-// Only what a shell and Claude Code need gets in. Tokens and keys in your environment stay
-// out, and so do CLAUDE_CODE_* variables inherited from a Claude Code session, which make
-// the agent misbehave, for example by writing no transcript. ANTHROPIC_API_KEY is for those
-// who use a key rather than a login.
-const allowedEnv = [
-  ...["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "COLORTERM", "LANG", "TZ"],
-  "ANTHROPIC_API_KEY",
-];
+// Only what a shell needs gets in. Tokens and keys in your environment stay out, and so do
+// CLAUDE_CODE_* variables inherited from a Claude Code session, which make the agent
+// misbehave, for example by writing no transcript.
+const allowedEnv = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "COLORTERM", "LANG", "TZ"];
 
-// Returns only the environment a shell and Claude Code need, so tokens and keys in yours
-// stay out of every sandbox.
-export function keptEnv(env: Record<string, string | undefined>): Record<string, string> {
+// Returns only the environment a shell needs, plus the harness's own API keys in `keys`, for
+// those who use a key rather than a login. So tokens and keys in yours stay out of every
+// sandbox, and a key for one harness's model never reaches another harness or a setup
+// command, which comes from the repository.
+export function keptEnv(
+  env: Record<string, string | undefined>,
+  keys: readonly string[] = [],
+): Record<string, string> {
   const kept: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined && (allowedEnv.includes(key) || key.startsWith("LC_")))
+    if (
+      value !== undefined &&
+      (allowedEnv.includes(key) || keys.includes(key) || key.startsWith("LC_"))
+    )
       kept[key] = value;
   }
   return kept;
 }
 
 // Returns the sandboxed command and environment for one of the repository's skel.yaml setup
-// commands, to
-// run through a shell in the thread's clone. It comes from the repository, so it runs in
-// the sandbox like the agents, with no socket and no login.
+// commands, to run through a shell in the thread's clone. It comes from the repository, so it
+// runs in the sandbox like the agents, with no socket, no login and no API key.
 export function setupCommand(
   folder: string,
   command: string,

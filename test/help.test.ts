@@ -102,6 +102,20 @@ test("skel --version answers on a server whose skel differs from the laptop's", 
   expect(seen.out).toStartWith("skel ");
 });
 
+test("the help names the sidebar's keys, switching repositories included", () => {
+  const out = skel(["--help"]).out.replace(/\s+/g, " ");
+  for (const key of [
+    "Alt-Up",
+    "Alt-Down",
+    "Alt-Shift-Up",
+    "Alt-Shift-Down",
+    "Alt-Left",
+    "Alt-Right",
+    "Ctrl-Q",
+  ])
+    expect(out).toContain(key);
+});
+
 test("the help names --version", () => {
   expect(skel(["--help"]).out).toContain("--version");
 });
