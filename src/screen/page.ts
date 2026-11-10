@@ -49,12 +49,17 @@ const wheel = new RegExp(`${esc}\\[<(64|65);\\d+;\\d+M`, "g");
 // How many lines a notch of the wheel moves, as an agent's history does.
 const notch = 5;
 
-// Shows the page at a link until its pane goes, drawing what `reading` brings once it comes, or
-// why it couldn't. It writes only when you scroll or resize: it never asks again and has no
-// clock, as on a Sprite a terminal that stays quiet lets it sleep.
-export async function runPage(url: string, reading: Promise<Page>): Promise<void> {
-  // Returns what to show at a width, until the page has come.
-  let lines = (_width: number) => ["", `${pad}${paint(grey, "Loading…")}`];
+// Shows the page at a link until its pane goes, as `read` gives it, or why it couldn't. It
+// writes only when you scroll or resize: it never asks again and has no clock, as on a Sprite a
+// terminal that stays quiet lets it sleep.
+export async function runPage(url: string, read: () => Page): Promise<void> {
+  let page: Page;
+  try {
+    page = read();
+  } catch (error) {
+    page = { title: "Couldn't show this", facts: [], body: errorText(error) };
+  }
+  const lines = (columns: number) => drawPage(page, url, columns);
   let top = 0;
   const width = () => process.stdout.columns || 80;
   const height = () => process.stdout.rows || 24;
@@ -79,18 +84,6 @@ export async function runPage(url: string, reading: Promise<Page>): Promise<void
   });
   process.on("SIGWINCH", draw);
   draw();
-  reading.then(
-    (page) => {
-      lines = (columns) => drawPage(page, url, columns);
-      draw();
-    },
-    (error) => {
-      const why = errorText(error);
-      const about = { title: "Couldn't show this", facts: [], body: why };
-      lines = (columns) => drawPage(about, url, columns);
-      draw();
-    },
-  );
   await new Promise((gone) => process.stdin.on("close", gone));
   process.exit(0);
 }

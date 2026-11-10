@@ -124,10 +124,7 @@ async function screenCommand(args: string[]): Promise<void> {
     return;
   }
   if (command === "page" && sub && rest.length === 0) {
-    await runPage(
-      sub,
-      Promise.resolve().then(() => readPage(openDb(), sub)),
-    );
+    await runPage(sub, () => readPage(openDb(), sub));
     return;
   }
   usage(command);
