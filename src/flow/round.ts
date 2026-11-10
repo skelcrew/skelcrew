@@ -53,6 +53,9 @@ async function push(db: Database, folder: string, summary: string): Promise<stri
     cloneOf(thread),
     `+refs/heads/${thread.branch}:${ref}`,
   );
+  // Push the exact commit fetched, by its hash, so a builder that commits again meanwhile
+  // can't change what this round reviews. Without a forge the push is the whole round's
+  // delivery, and there is no PR to open.
   const sha = await git(ours, "rev-parse", "--verify", `${ref}^{commit}`);
   await pushCommit(db, repository, ours, sha, thread.branch);
   if (forgeOf(db, repository) === null) {
@@ -86,6 +89,8 @@ async function reviewRound(
   sha: string,
   signal: AbortSignal,
 ): Promise<void> {
+  // Read what the round needs: the thread's PR, whether there is a forge to post on, and the
+  // reviewer and round limit your config names.
   if (signal.aborted) return;
   const thread = readThread(db, folder);
   const repository = repositoryOf(db, thread);
@@ -97,6 +102,8 @@ async function reviewRound(
   const setCheck = async (state: "pending" | "success" | "failure", description: string) => {
     if (forged) await setStatus(db, repository, { commit: sha, state, description });
   };
+  // Show the review under way, on the PR and in the thread, before it starts. The check on
+  // each await is there because a newer round may have taken over while it waited.
   await setCheck("pending", "Skelcrew's reviewer is reviewing");
   if (signal.aborted) return;
   record(db, folder, { reviewing: sha, submitting: null, reviewer }, `reviewing ${sha}`);
@@ -110,6 +117,8 @@ async function reviewRound(
     harness: reviewer,
     signal,
   });
+  // Decide what the verdict means for the thread, then post it on the PR. A failed review is
+  // Skelcrew's problem, not the PR's, so it is never posted.
   if (signal.aborted) return;
   const before = readThread(db, folder).rounds;
   const ready = forged ? null : `${threadName(db, thread)} is ready on branch ${thread.branch}`;
@@ -125,6 +134,8 @@ async function reviewRound(
   if (signal.aborted) return;
   await setCheck(outcome.check, outcome.description);
   if (signal.aborted) return;
+  // Save the outcome, tell the lead if the thread now needs you, and type any changes into
+  // the builder.
   const { rounds, needsYou, status, tell, held } = outcome;
   const change = {
     reviewing: null,
@@ -163,7 +174,7 @@ async function deliver(
 
 // The latest round of each thread. Cancelling it cancels its review. The next round's push
 // waits for its push, so two pushes or two PRs never race, and the next round's review
-// waits for it to end, so its last write to the Skelcrew's check comes before the next
+// waits for it to end, so its last write to Skelcrew's check comes before the next
 // round's pending one. `ended` tells a round still under way from one that failed.
 type Round = {
   cancel: AbortController;
@@ -184,6 +195,8 @@ function follow(
   pushed: Promise<unknown>,
   rest: Promise<void>,
 ): void {
+  // A failure of a round no newer one replaced leaves the thread needing you, so it never
+  // sits waiting on a review that will never come.
   const done = rest.catch((error) => {
     if (cancel.signal.aborted) return;
     const why = errorText(error);
@@ -207,6 +220,8 @@ function pushAndReview(
   summary: string,
   earlier: Round | undefined,
 ): void {
+  // The earlier round's failure is already handled by its own follow, so here it only sets
+  // the order.
   const cancel = new AbortController();
   const before = earlier?.pushed.catch(() => {}) ?? Promise.resolve();
   const pushed = before.then(() => push(db, folder, summary));
@@ -221,8 +236,8 @@ function pushAndReview(
 // in the background. The submit is saved first, so a stop of the daemon can't lose it. A
 // review still waiting to be typed in, or held past the round limit, is dropped, as it is
 // about an older commit. Throws when your config or the repository's skelcrew.yaml isn't valid,
-// so the builder hears why, and
-// for a thread sc stop is ending, whose builder may submit while it exits.
+// so the builder hears why, and for a thread sc stop is ending, whose builder may submit while
+// it exits.
 export function submitRound(db: Database, tmux: string, folder: string, summary: string): void {
   const thread = readThread(db, folder);
   const { maxRounds, reviewer } = threadConfig(thread);
@@ -245,6 +260,8 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
     },
     `submitted: ${summary}`,
   );
+  // The older round is cancelled, but its push still runs first, so the branch ends on this
+  // round's commit.
   const before = latest.get(folder);
   before?.cancel.abort();
   pushAndReview(db, tmux, folder, summary, before);
@@ -269,6 +286,8 @@ function lastPushed(thread: Thread): string | null {
 // submitted, and one whose review is still waiting or running, since that review answers
 // already.
 export function rerunReview(db: Database, tmux: string, folder: string): void {
+  // Refuse what there is nothing to do for: a thread that ended, a review already under way,
+  // or no commit yet. A submit that was saved but never pushed counts as a commit.
   const thread = readThread(db, folder);
   const name = threadName(db, thread);
   if (thread.status === "done") throw new Error(`${name} is done, so there is nothing to review`);
@@ -294,6 +313,8 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
     reviewing: sha,
   } satisfies Partial<Thread>;
   record(db, folder, change, "asked to review again");
+  // A submit not yet pushed goes through the whole round. A commit already pushed only needs
+  // its review, after the earlier round has ended.
   earlier?.cancel.abort();
   if (submitting !== null) pushAndReview(db, tmux, folder, submitting, earlier);
   else if (sha !== null) {
@@ -310,6 +331,8 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
 // into the builder. Pushing again is harmless: the remote has the commit, or gets it now. A
 // builder brought back can submit before this runs, and then its newer round wins.
 export function resumeRound(db: Database, tmux: string, folder: string): void {
+  // A thread with a round of its own already is past this. Otherwise carry on from the
+  // furthest the round got: its push, its review, or typing its changes in.
   if (latest.has(folder)) return;
   const { submitting, reviewing, telling } = readThread(db, folder);
   const cancel = new AbortController();
@@ -333,6 +356,8 @@ export function goOn(db: Database, tmux: string, folder: string): void {
     held === null ? change : { ...change, status: "working" },
     "you let it go on past the round limit",
   );
+  // The held changes are saved as to be typed in first, so a stop of the daemon before
+  // they reach the builder doesn't lose them.
   if (held === null) return;
   const cancel = new AbortController();
   follow(
