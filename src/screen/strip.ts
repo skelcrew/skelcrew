@@ -81,13 +81,15 @@ function header(where: string, left: number, release: string): string {
   return `  ${skelName}${dim}${spare}`;
 }
 
-// Returns the strip's two lines as tmux formats, given the rows, the session on the right,
+// Returns the strip's three lines as tmux formats, given the rows, the session on the right,
 // where the agent's pane is, `left` columns in and `width` wide, the remote Skelcrew runs on, if
 // any, the release of the Skelcrew running here, if it is one, and the row of the page on the
-// right, if that is what shows. tmux's status lines span the whole terminal, so the first starts
-// with the header, and the second meets the line at the sidebar's edge, two columns left of the
-// agent, with a ┬. It reads nothing, so what you see can be tested without a terminal. Always
-// two lines, so the agent's height never changes.
+// right, if that is what shows. tmux's status lines span the whole terminal. The first is the
+// header above the sidebar, exactly `left` wide, so the tabs that follow it start above the
+// agent. The second is what the agent on the right is working on, above the agent. The third
+// meets the line at the sidebar's edge, two columns left of the agent, with a ┬. It reads
+// nothing, so what you see can be tested without a terminal. Always three lines, so the agent's
+// height never changes.
 export function drawStrip(
   rows: Row[],
   session: string | null,
@@ -95,24 +97,25 @@ export function drawStrip(
   where: string,
   release = "",
   page: Link | null = null,
-): [string, string] {
+): [string, string, string] {
   const { left, width } = size;
   // The second line is the thin line, meeting the sidebar's edge with a ┬.
   const top = header(where, left, release);
   const line = `#[fg=colour237]${"─".repeat(Math.max(left - 2, 0))}┬${"─".repeat(width + 1)}`;
-  // A page shows its row, a thread its own line, and the lead only the header.
-  if (page) return [`${top}${aboutPage(page, width)}`, line];
+  // The second line is blank above the sidebar, so what follows starts above the agent.
+  const blank = " ".repeat(left);
+  // A page shows its row, a thread its own line, and the lead nothing.
+  if (page) return [top, `${blank}${aboutPage(page, width)}`, line];
   const row = rows.find((candidate) => candidate.session === session);
-  if (!row || row.status === null) return [top, line];
-  return [`${top}${aboutThread(row, width)}`, line];
+  if (!row || row.status === null) return [top, blank, line];
+  return [top, `${blank}${aboutThread(row, width)}`, line];
 }
 
-// Returns the row of tabs as a tmux format, given each repository's tab, the open one's
-// owner/name, and the terminal's width. Each tab is the repository's name, with a yellow dot and a
-// count when threads in it need you or failed, such as site •1. The open one is bold white on
-// the grey a picked row has, and the others dim. The names start in line with the sidebar's
-// marks. When they don't fit, those furthest from the open one give way, and a dim count says
-// how many. Each tab is a range of its own, named by its place in the list, so a click on it
+// Returns the tabs as a tmux format, given each repository's tab, the open one's owner/name, and
+// the agent's width. They follow the header on the first line, above the agent. Each tab is the
+// repository's name, with a yellow dot and a count when threads in it need you or failed, such
+// as site •1. The open one is bold white on the grey a picked row has, and the others dim. When
+// they don't fit, those furthest from the open one give way, and a dim count says how many. Each tab is a range of its own, named by its place in the list, so a click on it
 // can say which it was. It reads nothing, so what you see can be tested without a terminal.
 export function drawTabs(tabs: Tab[], open: string, width: number): string {
   // Starts from the open tab, or the first when none is open.
@@ -127,12 +130,12 @@ export function drawTabs(tabs: Tab[], open: string, width: number): string {
     const tab = tabs[index];
     return tab ? Bun.stringWidth(label(tab)) : 0;
   };
-  const all = tabs.reduce((sum, tab) => sum + Bun.stringWidth(label(tab)), 1);
+  const all = tabs.reduce((sum, tab) => sum + Bun.stringWidth(label(tab)), 0);
   // The count of those left out goes at the end, and needs its room kept.
   const room = all <= width ? width : width - `  +${tabs.length}`.length;
   // Takes in tabs out from the open one, one on each side at a time, until neither side fits
   // another. The open tab always shows.
-  let [first, last, used] = [at, at, 1 + wide(at)];
+  let [first, last, used] = [at, at, wide(at)];
   let [left, right] = [true, true];
   while (left || right) {
     if (right && last + 1 < tabs.length && used + wide(last + 1) <= room) used += wide(++last);
@@ -150,5 +153,5 @@ export function drawTabs(tabs: Tab[], open: string, width: number): string {
     return `#[range=user|${first + offset}]${style} ${escaped(tab.name)} ${badge}#[default]#[norange]`;
   });
   const out = tabs.length - shown.length;
-  return ` ${shown.join("")}${out > 0 ? `#[fg=brightblack]  +${out}#[default]` : ""}`;
+  return `${shown.join("")}${out > 0 ? `#[fg=brightblack]  +${out}#[default]` : ""}`;
 }

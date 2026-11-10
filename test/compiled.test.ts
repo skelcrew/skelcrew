@@ -147,7 +147,7 @@ test("the sidebar's header shows the release of the Skelcrew that runs it", asyn
       "=one:",
       `${env} ${file} sidebar ${agents} one '' simon/app`,
     );
-    const header = () => tmux("show", "-v", "-t", "=one:", "status-format[1]").stdout.toString();
+    const header = () => tmux("show", "-v", "-t", "=one:", "status-format[0]").stdout.toString();
     for (let tries = 0; tries < 100 && !header().includes("Skelcrew"); tries++)
       await Bun.sleep(100);
     expect(header()).toContain(" 0.4.2");

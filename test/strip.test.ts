@@ -35,7 +35,7 @@ const size = { left: 30, width: 90 };
 const seen = (line: string) => line.replace(/#\[[^\]]*\]/g, "").replaceAll("##", "#");
 // The strip above the agent as text, without what is above the sidebar.
 const read = (rows: Row[], shown: string | null, given = size) =>
-  seen(drawStrip(rows, shown, given, "")[0]).slice(given.left);
+  seen(drawStrip(rows, shown, given, "")[1]).slice(given.left);
 const whole = "app-12  Fix the login redirect  #34  checks passing  round 2 · codex · approved";
 
 test("a thread's line has its name, title, PR, checks and latest review", () => {
@@ -51,7 +51,7 @@ test("a thread's line has its name, title, PR, checks and latest review", () => 
 });
 
 test("the review is dim, and the rest isn't", () => {
-  const [first] = drawStrip([thread()], "app-12", size, "");
+  const [, first] = drawStrip([thread()], "app-12", size, "");
   expect(first).toEndWith("checks passing#[fg=brightblack]  round 2 · codex · approved");
 });
 
@@ -101,7 +101,7 @@ test("too narrow for anything else, it still shows what fits and never fails", (
 });
 
 test("the strip starts past the sidebar, so it sits above the agent", () => {
-  const [first = ""] = drawStrip([thread()], "app-12", size, "");
+  const [, first = ""] = drawStrip([thread()], "app-12", size, "");
   expect(seen(first).indexOf("app-12")).toBe(30);
 });
 
@@ -128,14 +128,14 @@ test("a release shows dim right after the name, here and on a remote", () => {
 });
 
 test("a release leaves the strip above the agent where it was", () => {
-  const [first = ""] = drawStrip([thread()], "app-12", size, "workbox", "0.4.2");
+  const [, first = ""] = drawStrip([thread()], "app-12", size, "workbox", "0.4.2");
   expect(seen(first).indexOf("app-12")).toBe(30);
 });
 
 test("the place is cut before the release, which stays whole", () => {
   const where = "simon@a-very-long-server-name.example.com";
-  const [first = ""] = drawStrip([thread()], "app-12", size, where, "0.4.2");
-  expect(seen(first).slice(0, 30)).toBe("  Skelcrew 0.4.2 · simon@…    ");
+  const [head = "", first = ""] = drawStrip([thread()], "app-12", size, where, "0.4.2");
+  expect(seen(head)).toBe("  Skelcrew 0.4.2 · simon@…    ");
   expect(seen(first).indexOf("app-12")).toBe(30);
 });
 
@@ -150,25 +150,26 @@ test("with no room for both, the place goes first, and then the release, never h
 
 test("the header stays whatever you are looking at", () => {
   for (const shown of ["lead", "app-12", "gone", null]) {
-    const [first = ""] = drawStrip([lead, thread()], shown, size, "");
-    expect(seen(first).slice(0, 30).trimEnd()).toBe("  Skelcrew");
-    expect(seen(first).slice(0, 30)).toHaveLength(30);
+    const [head = ""] = drawStrip([lead, thread()], shown, size, "");
+    expect(seen(head).trimEnd()).toBe("  Skelcrew");
+    expect(seen(head)).toHaveLength(30);
   }
 });
 
-test("it is always two lines, so the agent's height never changes as you switch", () => {
+test("it is always three lines, so the agent's height never changes as you switch", () => {
   for (const shown of ["lead", "app-12", "gone", null])
-    expect(drawStrip([lead, thread()], shown, size, "")).toHaveLength(2);
+    expect(drawStrip([lead, thread()], shown, size, "")).toHaveLength(3);
 });
 
 test("a long place is cut to fit above the sidebar, and the strip stays above the agent", () => {
   const where = "simon@a-very-long-server-name.example.com";
-  const first = drawStrip([thread()], "app-12", size, where)[0];
-  const text = seen(first);
-  expect(text.slice(0, 30).trimEnd()).toEndWith("…");
+  const [head = "", first = ""] = drawStrip([thread()], "app-12", size, where);
+  const text = seen(head);
+  expect(text).toHaveLength(30);
+  expect(text.trimEnd()).toEndWith("…");
   // Two columns short of the sidebar's edge, which is in column 28.
-  expect(Bun.stringWidth(text.slice(0, 30).trimEnd())).toBe(26);
-  expect(text.indexOf("app-12")).toBe(30);
+  expect(Bun.stringWidth(text.trimEnd())).toBe(26);
+  expect(seen(first).indexOf("app-12")).toBe(30);
 });
 
 test("where Skelcrew runs can't run commands, restyle the strip or reach your terminal", () => {
@@ -177,14 +178,14 @@ test("where Skelcrew runs can't run commands, restyle the strip or reach your te
   expect(first).not.toMatch(/\p{Cc}/u);
 });
 
-test("the second line is a thin line across the whole width, joining the sidebar's edge", () => {
+test("the third line is a thin line across the whole width, joining the sidebar's edge", () => {
   for (const given of [size, { left: 30, width: 50 }, { left: 12, width: 8 }]) {
-    const line = seen(drawStrip([thread()], "app-12", given, "")[1]);
+    const line = seen(drawStrip([thread()], "app-12", given, "")[2]);
     expect(Bun.stringWidth(line)).toBe(given.left + given.width);
     expect(line.indexOf("┬")).toBe(given.left - 2);
     expect(line.replace("┬", "")).toMatch(/^─+$/);
   }
-  expect(drawStrip([], null, size, "")[1]).toStartWith("#[fg=colour237]─");
+  expect(drawStrip([], null, size, "")[2]).toStartWith("#[fg=colour237]─");
 });
 
 test("the lead's strip is empty, as the sidebar already shows what needs you", () => {
@@ -199,13 +200,13 @@ test("an agent that isn't listed shows an empty strip", () => {
 
 test("a title can't run commands or restyle the strip, as tmux reads the strip as a format", () => {
   const title = "#(touch /tmp/pwned) #[fg=red] #{pane_pid}";
-  const line = drawStrip([thread({ title, review: null })], "app-12", size, "")[0];
+  const line = drawStrip([thread({ title, review: null })], "app-12", size, "")[1];
   expect(line).toContain("##(touch /tmp/pwned) ##[fg=red] ##{pane_pid}");
 });
 
 test("a review can't run commands or restyle the strip either", () => {
   const review = { round: 1, reviewer: "#(id) 5%", verdict: "#[fg=red]" };
-  const line = drawStrip([thread({ review })], "app-12", size, "")[0];
+  const line = drawStrip([thread({ review })], "app-12", size, "")[1];
   expect(line).toContain("##(id) 5%% · ##[fg=red]");
 });
 
@@ -227,11 +228,11 @@ const issue: Link = {
 };
 // The strip's first line above the agent, as tmux would show it, without its styles.
 const aboutPage = (link: Link, width = size.width) =>
-  seen(drawStrip([lead], link.url, { ...size, width }, "", "", link)[0]).slice(size.left);
+  seen(drawStrip([lead], link.url, { ...size, width }, "", "", link)[1]).slice(size.left);
 
 test("while a page shows, the strip has the row's name and title", () => {
   expect(aboutPage(issue)).toBe("app-31  Add CSV export");
-  expect(drawStrip([lead], issue.url, size, "", "", issue)[0]).toContain("#[bold]app-31#[default]");
+  expect(drawStrip([lead], issue.url, size, "", "", issue)[1]).toContain("#[bold]app-31#[default]");
 });
 
 test("a page's long title is cut to the strip", () => {
@@ -241,7 +242,7 @@ test("a page's long title is cut to the strip", () => {
 });
 
 test("what a page's title says is shown, never run or read as a format", () => {
-  const [line] = drawStrip([lead], issue.url, size, "", "", {
+  const [, line] = drawStrip([lead], issue.url, size, "", "", {
     ...issue,
     title: "#(touch owned) 100%\x1b[31m",
   });
@@ -253,11 +254,13 @@ test("what a page's title says is shown, never run or read as a format", () => {
 const tabText = (line: string) => line.replace(/#\[[^\]]*\]/g, "");
 const tab = (name: string, count = 0) => ({ name, fullName: `simon/${name}`, count });
 
-test("tabs name each repository in order, from the marks' column, with a badge for what needs you", () => {
+test("tabs name each repository in order, above the agent, with a badge for what needs you", () => {
   const tabs = [tab("app"), tab("site", 1)];
   const line = drawTabs(tabs, "simon/app", 120);
-  expect(tabText(line)).toBe("  app  site •1 ");
-  expect(tabText(line).indexOf("app")).toBe(2);
+  expect(tabText(line)).toBe(" app  site •1 ");
+  // The tabs follow the header, which ends where the agent starts, so the names line up
+  // with the agent's text.
+  expect(tabText(line).indexOf("app")).toBe(1);
   // The open one is bold white on a picked row's grey, the others dim, and the badge yellow.
   expect(line).toContain("#[bg=colour238,fg=colour231,bold] app #[default]");
   expect(line).toContain("#[fg=brightblack] site #[fg=yellow]•1 #[default]");
@@ -273,16 +276,16 @@ test("a click on a tab is told apart by its place in the row", () => {
 });
 
 test("the row is there with one repository too, so the agent's height never changes", () => {
-  expect(tabText(drawTabs([tab("app")], "simon/app", 120))).toBe("  app ");
+  expect(tabText(drawTabs([tab("app")], "simon/app", 120))).toBe(" app ");
 });
 
 test("tabs furthest from the open one give way first, and a dim count says how many", () => {
   const tabs = ["one", "two", "three", "four", "five", "six", "seven"].map((name) => tab(name));
   const line = drawTabs(tabs, "simon/four", 30);
-  expect(tabText(line)).toBe("  three  four  five  six   +3");
+  expect(tabText(line)).toBe(" three  four  five  six   +3");
   expect(Bun.stringWidth(tabText(line))).toBeLessThanOrEqual(30);
   expect(line).toContain("#[fg=brightblack]  +3");
-  expect(tabText(drawTabs(tabs, "simon/one", 30))).toBe("  one  two  three  four   +3");
+  expect(tabText(drawTabs(tabs, "simon/one", 30))).toBe(" one  two  three  four   +3");
 });
 
 test("a repository's name is shown, never read as a format", () => {
