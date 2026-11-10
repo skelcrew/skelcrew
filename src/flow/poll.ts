@@ -109,6 +109,9 @@ async function actOnBranch(db: Database, tmux: string, repository: Repository, t
   const ours = cloneDir(thread.owner, thread.repo);
   const ref = (kind: string) => `refs/skel/${kind}/${thread.folder}`;
   const git = (...args: string[]) => quietly(["git", "-C", ours, ...args]);
+  // A push under way has saved its local ref before the remote has the branch, and a failed
+  // one keeps its submit, so only a thread with nothing being pushed counts.
+  if (thread.submitting !== null) return;
   if (!(await git("rev-parse", "--verify", "--quiet", ref("threads"))).ok) return;
   if (!(await onRemote(db, repository, thread.branch))) {
     await endThread(db, tmux, thread, `its branch ${thread.branch} was deleted`);

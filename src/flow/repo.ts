@@ -144,13 +144,17 @@ async function findForge(db: Database, repository: Repository): Promise<Reposito
   if (forgeKnown(db, repository)) return repository;
   const claimed = await claims(db, repository.remote);
   const forge = claimed?.forge ?? null;
-  db.run(`UPDATE repositories SET forge = ?, author = ?, claimed = 1 ${where}`, [
+  // The forge's clone URL, as its login works for that one, such as https where your checkout
+  // had ssh.
+  const remote = claimed?.clone ?? repository.remote;
+  db.run(`UPDATE repositories SET forge = ?, author = ?, remote = ?, claimed = 1 ${where}`, [
     forge,
     authorOf(claimed),
+    remote,
     repository.owner,
     repository.repo,
   ]);
-  return { ...repository, forge };
+  return { ...repository, forge, remote };
 }
 
 let refreshing: Promise<void> | null = null;
