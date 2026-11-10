@@ -43,6 +43,7 @@ function unitValue(value: string): string {
 export function loginPath(): string {
   const here = (process.env.PATH ?? "").split(":");
   const shell = process.env.SHELL;
+  // The timeout keeps a startup file that waits for input, or hangs, from stopping sc.
   const asked = shell
     ? Bun.spawnSync([shell, "-l", "-i", "-c", 'printf "\\nskel-path=%s\\n" "$PATH"'], {
         stdin: "ignore",
@@ -52,6 +53,7 @@ export function loginPath(): string {
         timeout: 10_000,
       })
     : null;
+  // Your shell's folders come first, and a folder in both is kept once, where the shell put it.
   const found =
     asked?.stdout
       .toString()
@@ -63,6 +65,7 @@ export function loginPath(): string {
 // Returns the folders of a PATH that will still be there when the daemon starts. Folders a
 // tool runner or a temporary folder added are left out.
 function lastingPath(given: string): string[] {
+  // bun run and npx add a package's node_modules/.bin, which means nothing outside that run.
   const temporary = tmpdir();
   return given
     .split(":")
@@ -115,6 +118,8 @@ export function installService(): void {
     installSpriteService(skel);
     return;
   }
+  // The service's file as it would be written for a PATH, so it can be compared with the one
+  // installed.
   const text = (path: string) =>
     mac ? plistText(skel, lastingPath(path).join(":"), daemonLog()) : unitText(skel, path);
   // Asking your login shell takes a moment, so only when the PATH here would change the
@@ -129,6 +134,8 @@ export function installService(): void {
       loadLaunchAgent();
       return;
     }
+    // An installed service only needs systemd to read its file again. It runs the new one
+    // from the daemon's next start.
     runServiceCommand(["systemctl", "--user", "daemon-reload"]);
     if (before !== null) return;
     runServiceCommand(["systemctl", "--user", "enable", "--now", "skelcrew"]);
@@ -155,6 +162,7 @@ export function startDaemon(): string {
     startLaunchAgent();
     return daemonLog();
   }
+  // In your terminal, so systemd's own reason shows when it refuses.
   const start = Bun.spawnSync(["systemctl", "--user", "start", "skelcrew"], {
     stdio: ["inherit", "inherit", "inherit"],
   });

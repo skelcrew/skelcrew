@@ -5,6 +5,8 @@
 // github.com and simon/app for git@github.com:simon/app.git, or null for one with no owner in
 // it. A repository with no forge is named by this.
 export function pathOf(url: string): { host: string; owner: string; repo: string } | null {
+  // A URL with a scheme, such as https://github.com/simon/app or ssh://git@host:22/simon/app,
+  // or else the short form scp uses, such as git@github.com:simon/app.git.
   const found =
     url.match(/^[\w+.-]+:\/\/(?:[^@/]*@)?([^/:]*)(?::\d+)?\/(.*)$/) ??
     url.match(/^(?:[^@/:]*@)?([^/:]+):(.*)$/);
@@ -13,7 +15,9 @@ export function pathOf(url: string): { host: string; owner: string; repo: string
       ?.replace(/\/+$/, "")
       .replace(/\.git$/, "")
       .split("/") ?? [];
+  // A path deeper than two parts, as some forges allow, is named by its last two.
   const [owner, repo] = parts.slice(-2);
+  // A part such as .. or one with a space can't name an owner or repository.
   const part = /^(?!\.\.?$)[\w.-]+$/;
   if (!owner || !repo || !part.test(owner) || !part.test(repo)) return null;
   return { host: (found?.[1] ?? "").toLowerCase(), owner, repo };
