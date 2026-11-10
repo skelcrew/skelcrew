@@ -16,6 +16,7 @@ const screen = (socket: string, name: string) =>
 // accept a message. A quiet pane alone isn't enough: Claude Code can sit still mid-turn while
 // a tool runs.
 async function notIdle(socket: string, name: string, marks: Marks, moment: number) {
+  // Look twice, a moment apart, so a screen still drawing shows as busy.
   const before = screen(socket, name);
   await Bun.sleep(moment);
   const after = screen(socket, name);
@@ -50,6 +51,7 @@ export function typeInto(
   text: string,
   waits: Waits = {},
 ) {
+  // This message's typing starts once the one queued before it for the same session settles.
   const key = `${socket}/${name}`;
   const earlier = typingQueues.get(key) ?? Promise.resolve();
   const turn = earlier.then(() => typeNow(socket, name, marks, text, waits));
@@ -58,6 +60,8 @@ export function typeInto(
     () => {},
     () => {},
   );
+  // The queue's end is now this message. Once it settles with nothing queued after it, the
+  // session's entry goes, so the map doesn't keep one per session ever typed into.
   typingQueues.set(key, settled);
   settled.then(() => {
     if (typingQueues.get(key) === settled) typingQueues.delete(key);
@@ -74,7 +78,8 @@ async function typeNow(socket: string, name: string, marks: Marks, text: string,
   const moment = waits.moment ?? 500;
   const timeout = waits.timeout ?? 60_000;
   const deadline = Date.now() + timeout;
-  // Text typed while Claude Code is starting or busy can be lost.
+  // Text typed while Claude Code is starting or busy can be lost, so wait until it is idle.
+  // Check the signal after each wait too: the thread may have stopped meanwhile.
   for (;;) {
     if (waits.signal?.aborted) return;
     const why = await notIdle(socket, name, marks, moment);
@@ -83,6 +88,7 @@ async function typeNow(socket: string, name: string, marks: Marks, text: string,
     if (Date.now() > deadline)
       throw new Error(`${name} wasn't idle for ${timeout / 1000}s (${why}), so nothing was typed`);
   }
+  // A paste buffer of its own, so two daemons or two messages never paste each other's text.
   const buffer = `skelcrew-${process.pid}-${buffers++}`;
   // Someone scrolled back would swallow the Enter below, and the message would never be
   // sent. Being scrolled back shows in neither the check above nor the pane's text, so it

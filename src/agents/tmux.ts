@@ -83,6 +83,7 @@ export function mustTmux(socket: string, args: string[], input = ""): string {
 // exit-empty off keeps it up until its first session, and the config applies to that
 // session too.
 export function startServer(socket: string): void {
+  // A server that answers is already up, and keeps its sessions.
   if (tmux(socket, ["list-sessions"]).ok) return;
   // The lone ";" separates tmux commands, so these words skip literal().
   const start = ["tmux", "-L", socket, "-f", "/dev/null", "start-server", ";"];
@@ -152,6 +153,7 @@ export function hasSession(socket: string, name: string): boolean {
 // Returns a failed session's last screen so Skelcrew can explain why the agent ended. Returns
 // null while the command runs or no dead pane is found.
 export function failedScreen(socket: string, name: string): string | null {
+  // A pane still running its command, or no pane at all, has no last screen to give.
   if (tmux(socket, ["display-message", "-p", "-t", `=${name}:`, "#{pane_dead}"]).out.trim() !== "1")
     return null;
   // The visible screen can come back blank once the pane is dead; its history keeps the
@@ -176,6 +178,8 @@ export function endSession(socket: string, name: string): void {
 // `who` names the agent in the error: the lead or the builder.
 export async function checkItLived(socket: string, name: string, who: string): Promise<void> {
   await Bun.sleep(1000);
+  // A failed agent leaves its session behind with its last screen; one that is simply gone
+  // left nothing to show.
   const failed = failedScreen(socket, name);
   if (failed !== null) endSession(socket, name);
   if (failed !== null || !hasSession(socket, name))
@@ -190,6 +194,8 @@ function processes(): { pid: number; parent: number; state: string }[] {
     stdout: "pipe",
     stderr: "ignore",
   });
+  // Each line holds a pid, its parent and its state, padded with spaces. A line missing any
+  // of them, such as the empty one at the end, is skipped.
   return ps.stdout
     .toString()
     .split("\n")
@@ -204,9 +210,12 @@ function processes(): { pid: number; parent: number; state: string }[] {
 // Returns a process and every process under it, so stopping a session can wait for all of
 // them: an agent in its sandbox runs a few levels down from the pane's own process.
 export function processTree(root: number): number[] {
+  // List each process's children, from one look at every process.
   const children = new Map<number, number[]>();
   for (const { pid, parent } of processes())
     children.set(parent, [...(children.get(parent) ?? []), pid]);
+  // Walk down from the root: each process found adds its children to the end of the list,
+  // so the loop reaches them in turn.
   const tree = [root];
   for (let i = 0; i < tree.length; i++) tree.push(...(children.get(tree[i] ?? 0) ?? []));
   return tree;
@@ -222,12 +231,17 @@ export function stillRunning(tree: number[]): number[] {
 // using, such as a thread's clone, can be removed. Claude Code can outlive the end of its
 // session for a few seconds, so it gets `timeout` milliseconds before being killed.
 export async function stopSession(socket: string, name: string, timeout = 10_000): Promise<void> {
+  // Find the pane's process first, as its processes can't be listed once the session is gone.
+  // No pane means no session, so there is nothing to stop.
   const pane = Number(
     tmux(socket, ["display-message", "-p", "-t", `=${name}:`, "#{pane_pid}"]).out,
   );
   if (!pane) return;
+  // Note every process under the pane, then end the session.
   const tree = processTree(pane);
   tmux(socket, ["kill-session", "-t", `=${name}`]);
+  // Wait for them all to exit. Past the deadline, kill those left on each pass; one may have
+  // exited in between, so a failed kill is fine.
   const deadline = Date.now() + timeout;
   while (stillRunning(tree).length > 0) {
     if (Date.now() > deadline)
@@ -243,6 +257,8 @@ export async function stopSession(socket: string, name: string, timeout = 10_000
 // its session and last screen, which would look like it still runs. Nothing when the server
 // isn't up.
 export function runningSessions(socket: string): string[] {
+  // Each line starts with 0 for a pane whose agent runs and 1 for a dead one, then the
+  // session's name.
   const panes = tmux(socket, ["list-panes", "-a", "-F", "#{pane_dead} #{session_name}"]).out;
   return panes.split("\n").flatMap((pane) => (pane.startsWith("0 ") ? [pane.slice(2)] : []));
 }
@@ -260,6 +276,7 @@ export const paneWidth = (socket: string, target: string) =>
 // it. Each set makes tmux redraw the whole screen, so all go in one run, for one redraw, and
 // only when a line changed. The lone ";" separates tmux commands, so it skips literal().
 export function showStrip(socket: string, session: string, lines: string[]): void {
+  // One `set` per line, joined by ";" into a single tmux run.
   const sets = lines.flatMap((line, index) => [
     ...(index > 0 ? [";"] : []),
     "set",
@@ -275,6 +292,8 @@ export function showStrip(socket: string, session: string, lines: string[]): voi
 // Returns the session a client on the given terminal is showing, or null while it has none,
 // such as the moment between an agent ending and the client attaching to the lead.
 export function shownSession(socket: string, tty: string): string | null {
+  // Each line is a client's terminal and its session; the session is what follows the
+  // terminal and a space.
   const clients = tmux(socket, ["list-clients", "-F", "#{client_tty} #{session_name}"]).out;
   const line = clients.split("\n").find((client) => client.startsWith(`${tty} `));
   return line ? line.slice(tty.length + 1) : null;
