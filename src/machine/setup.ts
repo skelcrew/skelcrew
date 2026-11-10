@@ -369,11 +369,7 @@ export async function firstRun(from?: string): Promise<void> {
       console.log(`\n${other.title} isn't installed, so reviews run on ${yours.title}.`);
   }
   installService();
-  if (!done) {
-    console.log("\nSkelcrew is set up.");
-    if (process.platform === "darwin")
-      console.log("Work stops while your laptop sleeps. sc remote add keeps it going on a server.");
-  }
+  if (!done) console.log("\nSkelcrew is set up.");
   // A first run that stopped after the yes, such as at a sign-in, left the plugin in with no
   // offer of sc init, so the run that finishes setup offers it. offerInit asks only with the
   // plugin in, in a checkout whose skelcrew.yaml names no tracker.

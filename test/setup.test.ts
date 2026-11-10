@@ -385,19 +385,14 @@ test("on a Mac, installs the daemon as a launchd agent, with no systemd", async 
   expect(calls()).toContain("daemon lead");
 });
 
-test("on a Mac, says once that work stops while the laptop sleeps", async () => {
+test("says nothing about a laptop sleeping, on a Mac or on Linux", async () => {
+  const onLinux = await skel("1\nsk-ant-oat01-good\n");
+  expect(onLinux.out).toContain("Skelcrew is set up.\n");
+  expect(onLinux.out).not.toContain("sleeps");
   asMac();
-  const first = await skelOnMac("1\nsk-ant-oat01-good\n");
-  expect(first.out).toContain(
-    "Skelcrew is set up.\nWork stops while your laptop sleeps. sc remote add keeps it going on a server.\n",
-  );
-  const second = await skelOnMac();
-  expect(second.out).not.toContain("sleeps");
-});
-
-test("says nothing about a laptop sleeping on Linux", async () => {
-  const first = await skel("1\nsk-ant-oat01-good\n");
-  expect(first.out).not.toContain("sleeps");
+  const onMac = await skelOnMac("1\nsk-ant-oat01-good\n");
+  expect(onMac.out).toContain("Skelcrew is set up.\n");
+  expect(onMac.out).not.toContain("sleeps");
 });
 
 test("on a Mac, installs no agent when launchctl fails, so the next sc tries again", async () => {
@@ -1008,7 +1003,9 @@ test("Codex agents with Claude Code reviews log in to both", async () => {
   const run = await skel("2\n\nsk-ant-oat01-good\n");
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toContain("Sign in to Claude for reviews. In another terminal, run:\n\n  claude setup-token\n");
+  expect(run.out).toContain(
+    "Sign in to Claude for reviews. In another terminal, run:\n\n  claude setup-token\n",
+  );
   expect(run.out).toContain("Sign in to Codex. Press Enter to start.");
   expect(parse(readFileSync(config(), "utf8"))).toEqual({
     harness: "codex",
