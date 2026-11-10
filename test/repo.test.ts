@@ -450,6 +450,11 @@ test("repo ls lists each repository with its tracker and forge, as text and for 
   expect((await skel(["repo", "ls"])).out).toBe(
     `NAME  REPOSITORY  TRACKER  FORGE   CLONE\napp   simon/app   github   github  ${clone("simon/app")}\n`,
   );
+  // A bare tracker: is YAML's null, which reads as no line at all, so the forge stays its tracker.
+  writeFileSync(join(clone("simon/app"), "skelcrew.yaml"), "tracker:\n");
+  expect(JSON.parse((await skel(["repo", "ls", "--json"])).out)).toMatchObject([
+    { tracker: "github", forge: "github", missing: null },
+  ]);
   // tracker: none keeps it on git alone, with nothing missing.
   writeFileSync(join(clone("simon/app"), "skelcrew.yaml"), "tracker: none\n");
   expect(JSON.parse((await skel(["repo", "ls", "--json"])).out)).toMatchObject([
