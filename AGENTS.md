@@ -1,6 +1,6 @@
-# skel
+# Skelcrew
 
-skel is Claude Code, but always on, in parallel, isolated, and seeing each task through
+Skelcrew is Claude Code, but always on, in parallel, isolated, and seeing each task through
 to the merge. The design is in `docs/spec.md`. Read it before changing anything it covers.
 The traps earlier versions found are in `docs/learnings.md`. Read the part that covers
 typing into a session, starting Claude Code or the sandbox before touching them.
@@ -35,7 +35,7 @@ These are correctness requirements. If a task asks you to break one, stop and sa
 - **Every change lands through a pull request.** Never push to `main`, never force push.
 - **The human decides what merges.** Never merge unless asked for that pull request.
 - **Never skip or weaken a check, test or assertion** to get green. One exception, decided
-  by Simon: tests that start real sandboxes skip when they run inside skel's own sandbox,
+  by Simon: tests that start real sandboxes skip when they run inside Skelcrew's own sandbox,
   where bubblewrap can't nest. Anywhere else they must run.
 - **The spec is never edited to match the code.** If they disagree, stop and report it.
 - **Ask before adding a dependency.** The expected ones are `yaml` and `zod`. State uses
@@ -49,7 +49,7 @@ These are correctness requirements. If a task asks you to break one, stop and sa
 - **Deciding what an event means is pure.** Given a thread and what GitHub returned, it
   returns what to do. It never reads the clock, files or the network, so it can be tested
   without them.
-- **Check every outside input with Zod**: `skel.yaml`, requests over the socket, what `gh`
+- **Check every outside input with Zod**: `skelcrew.yaml`, requests over the socket, what `gh`
   returns, and anything read back from disk.
 
 ## Test first
@@ -58,11 +58,11 @@ These are correctness requirements. If a task asks you to break one, stop and sa
   the smallest code that passes.
 - Tests check what a user of the code sees, never private helpers.
 - **Tests never call a real model, a real harness or real GitHub.** A short shell script
-  stands in for the harness and runs `skel submit` like an agent would. A fake `gh` stands
+  stands in for the harness and runs `sc submit` like an agent would. A fake `gh` stands
   in for GitHub.
 - **Tests clean up what they start.** Every session, daemon and temporary folder a test
-  creates ends with the test. Tests run tmux on a socket of their own, never skel's
-  (`tmux -L skel`). Never kill processes by name: Simon runs real threads on this machine.
+  creates ends with the test. Tests run tmux on a socket of their own, never Skelcrew's
+  (`tmux -L skelcrew`). Never kill processes by name: Simon runs real threads on this machine.
 
 ## Definition of done
 
@@ -95,7 +95,7 @@ Comments are for a human reading the code for the first time.
 
 **Every function gets a comment** saying what it does and what it is for, in plain words.
 A reader should understand the function from its comment without reading its body. Say what
-it gives back or changes, and why skel needs it. Add the reason behind anything surprising:
+it gives back or changes, and why Skelcrew needs it. Add the reason behind anything surprising:
 a trap, a harness quirk, a limit someone hit before. One to four lines is usually enough.
 
 Inside a function, comment only what the code can't say: why it is this way, when it looks
@@ -113,8 +113,8 @@ Examples:
 
 ```
 Bad:  // Brings in from.
-Good: // Brings in the repository you ran skel from, so the lead can work on it. A
-      // repository skel already has costs no call to GitHub, since skel must start fast
+Good: // Brings in the repository you ran sc from, so the lead can work on it. A
+      // repository Skelcrew already has costs no call to GitHub, since Skelcrew must start fast
       // and the daemon keeps its clone current. A folder that isn't on GitHub, such as
       // your dotfiles, is skipped without a complaint.
 
