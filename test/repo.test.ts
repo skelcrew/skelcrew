@@ -446,6 +446,15 @@ test("names two repositories that share a name with their owners", async () => {
 test("repo ls lists each repository with its tracker and forge, as text and for tools", async () => {
   expect(JSON.parse((await skel(["repo", "ls", "--json"])).out)).toEqual([]);
   await skel([], "", onGitHub("simon/app", "WRITE"));
+  // With no skelcrew.yaml, its forge is its tracker too, as GitHub can be one.
+  expect((await skel(["repo", "ls"])).out).toBe(
+    `NAME  REPOSITORY  TRACKER  FORGE   CLONE\napp   simon/app   github   github  ${clone("simon/app")}\n`,
+  );
+  // tracker: none keeps it on git alone, with nothing missing.
+  writeFileSync(join(clone("simon/app"), "skelcrew.yaml"), "tracker: none\n");
+  expect(JSON.parse((await skel(["repo", "ls", "--json"])).out)).toMatchObject([
+    { tracker: null, forge: "github", missing: null },
+  ]);
   // Its skelcrew.yaml names a tracker that isn't installed, so it has none.
   writeFileSync(join(clone("simon/app"), "skelcrew.yaml"), "tracker: linear\n");
   const json = await skel(["repo", "ls", "--json"]);

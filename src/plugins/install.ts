@@ -10,6 +10,7 @@ import { originHere } from "../machine/origin.ts";
 import { configDir, dataDir } from "../paths.ts";
 import { clean } from "../screen/look.ts";
 import { release } from "../version.ts";
+import { trackerOf } from "./ask.ts";
 import {
   commandFor,
   findPlugin,
@@ -17,7 +18,6 @@ import {
   type Manifest,
   type Plugin,
   readManifest,
-  trackedBy,
   Version,
 } from "./plugin.ts";
 
@@ -289,15 +289,15 @@ export function updatePlugins(name?: string): void {
 }
 
 // Removes a plugin with its settings and tokens, for sc plugin rm. A plugin from GitHub
-// loses its folders too, and a folder of yours stays. It refuses while a repository Skelcrew has
-// names the plugin as its tracker in skelcrew.yaml, as that repository would lose its tasks, and
-// while it is the forge of one, which would lose its PRs and its login for pushing.
+// loses its folders too, and a folder of yours stays. It refuses while the plugin is the tracker
+// of a repository Skelcrew has, as that repository would lose its tasks, and while it is the forge
+// of one, which would lose its PRs and its login for pushing.
 export function removePlugin(name: string): void {
   const db = openDb();
   const plugin = findPlugin(db, name);
   // The repositories that use it as their tracker, then as their forge.
   for (const [job, those] of [
-    ["tracker", trackedBy(db, name)],
+    ["tracker", repositories(db).filter((r) => trackerOf(db, r) === name)],
     ["forge", repositories(db).filter((r) => r.forge === name)],
   ] as const)
     if (those.length > 0)

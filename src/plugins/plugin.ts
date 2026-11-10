@@ -5,9 +5,6 @@ import { lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
-import { repositoryTracker } from "../config.ts";
-import type { Repository } from "../db.ts";
-import { repositories } from "../flow/repo.ts";
 import { configDir } from "../paths.ts";
 import { singleFile } from "../version.ts";
 
@@ -94,18 +91,6 @@ export function findPlugin(db: Database, name: string): Plugin {
   const found = installedPlugins(db).find((plugin) => plugin.name === name);
   if (!found) throw new Error(`there is no plugin named ${name}: sc plugin ls lists them`);
   return found;
-}
-
-// Returns the repositories whose skelcrew.yaml names the plugin as their tracker. One whose
-// skelcrew.yaml can't be read has no tracker.
-export function trackedBy(db: Database, name: string): Repository[] {
-  return repositories(db).filter((repository) => {
-    try {
-      return repositoryTracker(repository) === name;
-    } catch {
-      return false;
-    }
-  });
 }
 
 // Returns the folder where a plugin keeps its settings and tokens. It is made readable only
