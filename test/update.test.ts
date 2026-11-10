@@ -275,7 +275,7 @@ async function onServer(build: string, laptop: string) {
   const run = Bun.spawn(
     [process.execPath, "--define", `SKELCREW_BUILD="${build}"`, source("main.ts"), "--help"],
     {
-      env: { ...env(), SKEL_LAPTOP_BUILD: laptop, SKEL_REMOTE_NAME: "simon@workbox" },
+      env: { ...env(), SKELCREW_LAPTOP_BUILD: laptop, SKELCREW_REMOTE_NAME: "simon@workbox" },
       stdout: "pipe",
       stderr: "pipe",
     },

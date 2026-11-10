@@ -118,7 +118,7 @@ function open(
 await openScreen(${JSON.stringify(agents)}, ${JSON.stringify(session)}, "lead", "simon/app");
 await Bun.write(${JSON.stringify(join(home, `left-${window}`))}, "left");`,
   );
-  const named = where ? `SKEL_REMOTE_NAME=${where} ` : `${before}`;
+  const named = where ? `SKELCREW_REMOTE_NAME=${where} ` : `${before}`;
   const title = `printf '\\033]2;my shell\\007'`;
   const command = `${title}; ${named}TERM=${term} ${process.execPath} ${script}; sleep 300`;
   tmux(terminal, "new-session", "-d", "-s", window, "-x", width, "-y", "30", command);

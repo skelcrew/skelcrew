@@ -267,7 +267,7 @@ describe("skel task ls", () => {
 async function asAgent(args: string[], socket: string) {
   const empty = join(home, "sandbox-home");
   mkdirSync(empty, { recursive: true });
-  return skel(args, { HOME: empty, SKEL_SANDBOX: "1", SKEL_SOCKET: socket });
+  return skel(args, { HOME: empty, SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: socket });
 }
 
 // The socket the daemon opens for app-12's builder, once its thread is live.
@@ -419,11 +419,11 @@ esac`,
 
   test("refuses inside skel's sandbox, since it takes over your terminal", async () => {
     writeFileSync(join(home, "sessions", "app-12"), "");
-    const refused = await skel(["attach", "app-12"], { SKEL_SANDBOX: "1" });
+    const refused = await skel(["attach", "app-12"], { SKELCREW_SANDBOX: "1" });
     expect(refused.code).not.toBe(0);
     expect(refused.err).toContain("your own terminal");
     expect(calls()).toBe("");
-    const sidebar = await skel(["sidebar", "skel", "screen-1", "local"], { SKEL_SANDBOX: "1" });
+    const sidebar = await skel(["sidebar", "skel", "screen-1", "local"], { SKELCREW_SANDBOX: "1" });
     expect(sidebar.err).toContain("your own terminal");
   });
 });
@@ -431,13 +431,13 @@ esac`,
 // A page reads skel's copy in your own terminal, so an agent has nothing to ask the daemon.
 test("an agent can't run the page command", async () => {
   const refused = await skel(["page", "https://github.com/simon/app/issues/31"], {
-    SKEL_SANDBOX: "1",
+    SKELCREW_SANDBOX: "1",
   });
   expect(refused.err).toContain("your own terminal");
 });
 
 // bubblewrap can't start inside skel's own sandbox, so only there the lead can't start.
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("from the lead", () => {
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("from the lead", () => {
   test("a lead runs skel ps, skel task ls, skel task show and skel repo ls from its sandbox, but can't attach", async () => {
     threads();
     issue("app", 12, "Add export", "As JSON");

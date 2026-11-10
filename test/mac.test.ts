@@ -153,8 +153,8 @@ test("an agent starts under sandbox-exec, in its folder, with a home of its own"
     join(home, ".local", "share", "skel", "leads", "simon", "app"),
   );
   const seen = readFileSync(join(out, "env"), "utf8");
-  expect(seen).toContain("SKEL_SANDBOX=1\n");
-  expect(seen).toContain(`SKEL_SOCKET=${socket}\n`);
+  expect(seen).toContain("SKELCREW_SANDBOX=1\n");
+  expect(seen).toContain(`SKELCREW_SOCKET=${socket}\n`);
   expect(seen).toContain("CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-good\n");
   expect(seen).not.toContain("SECRET_TOKEN");
   // Your home folder is denied, and git refuses a ~/.gitconfig it may not read.

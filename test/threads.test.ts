@@ -328,7 +328,7 @@ test("skel task create and skel start say when the daemon isn't running", async 
 });
 
 // bubblewrap can't start inside skel's own sandbox, so only there builders can't start.
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a builder", () => {
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a builder", () => {
   test("starts the builder in the sandbox, in a clone of its own, on a branch of its own", async () => {
     addApp({
       "skelcrew.yaml":
@@ -359,7 +359,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a builder", () => {
     expect(args.endsWith("Add export\n\nAs JSON\n")).toBe(true);
     const env = read(join(config("app-12"), "env"));
     expect(env).toContain("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false\n");
-    expect(env).toContain("SKEL_SANDBOX=1\n");
+    expect(env).toContain("SKELCREW_SANDBOX=1\n");
     expect(hasSession("app-12")).toBe(true);
     const row = thread();
     expect(row).toMatchObject({ owner: "simon", repo: "app", task: 12, status: "working" });
@@ -395,7 +395,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a builder", () => {
   test("the builder's socket tells skel which thread calls, and answers nothing else", async () => {
     addApp();
     const asker = `const [request] = process.argv.slice(2);
-const c = require("node:net").createConnection(process.env.SKEL_SOCKET);
+const c = require("node:net").createConnection(process.env.SKELCREW_SOCKET);
 c.on("connect", () => c.write(request + "\\n"));
 c.on("data", (d) => process.stdout.write(d));`;
     writeFileSync(join(home, "bin", "ask.js"), asker);
@@ -421,7 +421,7 @@ c.on("data", (d) => process.stdout.write(d));`;
 
   test("the lead runs skel task create and skel start from its sandbox, but can't trust", async () => {
     addApp();
-    const asker = `const c = require("node:net").createConnection(process.env.SKEL_SOCKET);
+    const asker = `const c = require("node:net").createConnection(process.env.SKELCREW_SOCKET);
 c.on("connect", () => c.write('{"command":"lead"}\\n'));
 c.on("data", (d) => process.stdout.write(d));`;
     writeFileSync(join(home, "bin", "ask.js"), asker);
@@ -488,7 +488,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     // Runs skel stop as an agent would, with its own socket.
     const stopFrom = (agent: string) =>
       Bun.spawnSync([process.execPath, main, "stop", "app-12"], {
-        env: { ...env(), SKEL_SOCKET: agent },
+        env: { ...env(), SKELCREW_SOCKET: agent },
         stderr: "pipe",
         stdout: "pipe",
       });

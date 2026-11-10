@@ -28,7 +28,7 @@ let laptop = { main: "", commit: "" };
 // skel does when the laptop's build differs. Without one, it is a skel from before builds
 // carried their commit.
 const spriteSkel = (built?: string) => `#!/bin/sh
-${built === undefined ? "" : `test -n "$SKEL_LAPTOP_BUILD" && test "$SKEL_LAPTOP_BUILD" != "${built}" && { echo "skel on $SKEL_REMOTE_NAME is from ${built}"; exit 98; }\n`}test "$1" = first-run && { echo "the first run on the Sprite"; test ! -f first-run-fails; exit; }
+${built === undefined ? "" : `test -n "$SKELCREW_LAPTOP_BUILD" && test "$SKELCREW_LAPTOP_BUILD" != "${built}" && { echo "skel on $SKELCREW_REMOTE_NAME is from ${built}"; exit 98; }\n`}test "$1" = first-run && { echo "the first run on the Sprite"; test ! -f first-run-fails; exit; }
 echo "skel on the Sprite got $# arguments"
 for word in "$@"; do echo "[$word]"; done
 exit 3
@@ -164,7 +164,7 @@ const calls = () =>
 // How skel runs itself on the Sprite: with the laptop's build, so a copied skel can tell it
 // is out of date, or without, to run whatever skel is there. Always with the Sprite's name.
 const exec = (name: string, build: string | null = laptop.commit) =>
-  `sprite exec -s ${name} --tty -- env SKEL_REMOTE_NAME=sprite:${name} ${build ? `SKEL_LAPTOP_BUILD=${build} ` : ""}sh -c exec skel "$@" skel`;
+  `sprite exec -s ${name} --tty -- env SKELCREW_REMOTE_NAME=sprite:${name} ${build ? `SKELCREW_LAPTOP_BUILD=${build} ` : ""}sh -c exec skel "$@" skel`;
 
 // Runs skel in a terminal, and returns all it wrote there, escape codes included.
 async function skelInTerminal(args: string[]): Promise<string> {

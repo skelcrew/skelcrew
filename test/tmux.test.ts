@@ -148,8 +148,8 @@ test("two messages typed at once both arrive whole, in order, each sent", async 
 });
 
 test("a session runs its command in its folder, with its environment", async () => {
-  start("builder", ["sh", "-c", 'echo "$SKEL_THREAD $(pwd)" > seen.txt; sleep 30'], {
-    SKEL_THREAD: "app-12",
+  start("builder", ["sh", "-c", 'echo "$SKELCREW_THREAD $(pwd)" > seen.txt; sleep 30'], {
+    SKELCREW_THREAD: "app-12",
   });
   await until(() => read("seen.txt") !== "");
   expect(read("seen.txt")).toBe(`app-12 ${home}\n`);

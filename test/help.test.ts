@@ -97,7 +97,7 @@ test("skel --version from a checkout says so, with its commit", () => {
 });
 
 test("skel --version answers on a server whose skel differs from the laptop's", () => {
-  const seen = skel(["--version"], { SKEL_LAPTOP_BUILD: "other", SKEL_REMOTE_NAME: "x" });
+  const seen = skel(["--version"], { SKELCREW_LAPTOP_BUILD: "other", SKELCREW_REMOTE_NAME: "x" });
   expect(seen.code).toBe(0);
   expect(seen.out).toStartWith("skel ");
 });

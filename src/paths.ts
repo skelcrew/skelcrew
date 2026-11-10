@@ -28,7 +28,7 @@ function runtimeDir(): string {
 export const daemonSocket = () => join(runtimeDir(), "skel.sock");
 // Returns the socket path where this skel reaches the daemon. Inside an agent's sandbox
 // that is the agent's own socket, mounted there, which tells the daemon who is calling.
-export const cliSocket = () => process.env.SKEL_SOCKET || daemonSocket();
+export const cliSocket = () => process.env.SKELCREW_SOCKET || daemonSocket();
 // Returns a short hash of the text, for a name that must stay short or tell apart names that
 // read alike.
 const short = (text: string) =>

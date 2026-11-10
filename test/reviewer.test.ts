@@ -93,7 +93,7 @@ const start = (
 ) => review({ ...given(), ...more });
 
 // bubblewrap can't start inside skel's own sandbox, so only there these tests can't run.
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("reviewer", () => {
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("reviewer", () => {
   test("answers with Codex's verdict, given the issue and the base branch", async () => {
     fakeCodex('{"verdict":"changes","body":"The retry has no test."}');
     expect(await start()).toEqual({ verdict: "changes", body: "The retry has no test." });

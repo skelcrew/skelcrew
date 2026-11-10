@@ -320,7 +320,7 @@ function skelOnSprite(name: string, words: string[]) {
   const where = `sprite:${name}`;
   const title = process.stdout.isTTY ? `printf '\\033]2;${windowTitle(where)}\\007'; ` : "";
   const line = ["sh", "-c", `${title}exec skel "$@"`, "skel", ...words];
-  const named = `SKEL_REMOTE_NAME=${where}`;
+  const named = `SKELCREW_REMOTE_NAME=${where}`;
   return (env: string[]) =>
     runInTerminal(["sprite", "exec", "-s", name, "--tty", "--", "env", named, ...env, ...line]);
 }

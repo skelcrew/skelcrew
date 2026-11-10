@@ -259,7 +259,7 @@ describe("a release setting up a server", () => {
     fake(
       "ssh",
       `case "$*" in
-  *SKEL_LAPTOP_BUILD=0.4.2*) test -f "$HOME/copied" || { echo "skel on simon@workbox is from 0.4.1."; exit 98; };;
+  *SKELCREW_LAPTOP_BUILD=0.4.2*) test -f "$HOME/copied" || { echo "skel on simon@workbox is from 0.4.1."; exit 98; };;
   *readlink*) echo copied;;
   *uname*) cat "$HOME/cpu";;
 esac
@@ -287,7 +287,7 @@ exit 0`,
   });
 });
 
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("in the sandbox", () => {
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("in the sandbox", () => {
   test("agents run skel itself", async () => {
     // A program built like skel that starts a sandbox and runs itself in it, standing in
     // for the daemon starting an agent that runs skel.

@@ -260,7 +260,7 @@ test("skel serve refuses inside skel's sandbox, where skel's state is hidden", a
       HOME: home,
       XDG_RUNTIME_DIR: join(home, "run"),
       PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
-      SKEL_SANDBOX: "1",
+      SKELCREW_SANDBOX: "1",
     },
     stderr: "pipe",
   });
@@ -538,7 +538,7 @@ function addThread(repo: string, task: number): void {
 }
 
 // bubblewrap can't start inside skel's own sandbox, so only there a lead can't start.
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", () => {
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a lead per repository", () => {
   test("starts a repository's lead the first time you open it, in its own folder, with a session id it stores", async () => {
     setUp();
     addRepository("app");
@@ -804,7 +804,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", 
     setUp();
     const repo = addRepository("app");
     fakeClaude(
-      `ls ${repo} > seen; test -S "$SKEL_SOCKET" && echo socket >> seen; test -e ${home}/.config/skel/claude-token || echo token-hidden >> seen; exec sleep 300`,
+      `ls ${repo} > seen; test -S "$SKELCREW_SOCKET" && echo socket >> seen; test -e ${home}/.config/skel/claude-token || echo token-hidden >> seen; exec sleep 300`,
     );
     serve();
     await untilAnswers();
@@ -866,7 +866,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", 
     setUp();
     addRepository("app");
     openedBefore();
-    const asker = `const c = require("node:net").createConnection(process.env.SKEL_SOCKET);
+    const asker = `const c = require("node:net").createConnection(process.env.SKELCREW_SOCKET);
 c.on("connect", () => c.write('{"command":"status"}\\n'));
 c.on("data", (d) => process.stdout.write(d));
 c.on("error", () => process.exit(1));`;
@@ -990,7 +990,7 @@ while IFS= read -r line; do echo "$line" >> typed; done <&3 &
 echo "❯"
 exec sleep 300`;
 
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("the lead from before", () => {
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("the lead from before", () => {
   test("a lead running through the upgrade becomes the lead of the repository you last attached from", async () => {
     setUp();
     const id = crypto.randomUUID();

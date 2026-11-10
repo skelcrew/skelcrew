@@ -27,7 +27,7 @@ let laptop = { folder: "", main: "", commit: "" };
 // skel does when the laptop's build differs. Without one, it is a skel from before builds
 // carried their commit.
 const serverSkel = (built?: string) => `#!/bin/sh
-${built === undefined ? "" : `test -n "$SKEL_LAPTOP_BUILD" && test "$SKEL_LAPTOP_BUILD" != "${built}" && { echo "skel on $SKEL_REMOTE_NAME is from ${built}"; exit 98; }\n`}test "$1" = first-run && { echo "the first run on the server"; test ! -f first-run-fails; exit; }
+${built === undefined ? "" : `test -n "$SKELCREW_LAPTOP_BUILD" && test "$SKELCREW_LAPTOP_BUILD" != "${built}" && { echo "skel on $SKELCREW_REMOTE_NAME is from ${built}"; exit 98; }\n`}test "$1" = first-run && { echo "the first run on the server"; test ! -f first-run-fails; exit; }
 echo "skel on the server got $# arguments"
 for word in "$@"; do echo "[$word]"; done
 exit 3
@@ -143,7 +143,7 @@ const calls = () =>
 // out of date, or without, to run whatever skel is there. Always with the server's name, for
 // the title of your terminal.
 const onServer = (words: string, build: string | null = laptop.commit) =>
-  `ssh -t simon@workbox env PATH="$HOME/.local/bin:$PATH" SKEL_REMOTE_NAME=simon@workbox ${build ? `SKEL_LAPTOP_BUILD=${build} ` : ""}skel${words}`;
+  `ssh -t simon@workbox env PATH="$HOME/.local/bin:$PATH" SKELCREW_REMOTE_NAME=simon@workbox ${build ? `SKELCREW_LAPTOP_BUILD=${build} ` : ""}skel${words}`;
 
 // Runs skel in a terminal, and returns all it wrote there, escape codes included.
 async function skelInTerminal(args: string[]): Promise<string> {
@@ -395,7 +395,8 @@ test("the update keeps the old skel when the copy fails", async () => {
 function farSkel(built: string | null, laptopBuild?: string, args = ["--help"]) {
   const define = built === null ? [] : ["--define", `SKELCREW_BUILD="${built}"`];
   const env: Record<string, string> = { PATH: "/usr/bin:/bin", HOME: home };
-  if (laptopBuild) Object.assign(env, { SKEL_LAPTOP_BUILD: laptopBuild, SKEL_REMOTE_NAME: "x" });
+  if (laptopBuild)
+    Object.assign(env, { SKELCREW_LAPTOP_BUILD: laptopBuild, SKELCREW_REMOTE_NAME: "x" });
   const run = Bun.spawnSync([process.execPath, ...define, laptop.main, ...args], { env });
   return { code: run.exitCode, out: run.stdout.toString() };
 }
@@ -509,7 +510,7 @@ test("skel remote add needs a host", async () => {
 });
 
 test("an agent can't set up a machine", () => {
-  const env = { PATH: "/usr/bin:/bin", HOME: home, SKEL_SANDBOX: "1" };
+  const env = { PATH: "/usr/bin:/bin", HOME: home, SKELCREW_SANDBOX: "1" };
   const said = (args: string[]) =>
     Bun.spawnSync([process.execPath, laptop.main, ...args], { env }).stderr.toString();
   expect(said(["remote", "add", "simon@workbox"])).toContain("only for your own terminal");

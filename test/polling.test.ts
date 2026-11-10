@@ -348,7 +348,7 @@ test("the first poll brings everything open into skel's copy, and later ones wha
 });
 
 // bubblewrap can't start inside skel's own sandbox, so only there builders can't start.
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling GitHub", () => {
   test("a PR's checks are saved for the strip, without skel's own review check", async () => {
     await approvedApp12();
     await morePolls();

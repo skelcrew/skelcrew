@@ -39,10 +39,10 @@ export const outdated = 98;
 // laptop's counts as up to date: it installed itself in the background, and the laptop
 // catches up on its own, so asking would only offer to go back.
 export function outOfDate(): boolean {
-  const laptop = process.env.SKEL_LAPTOP_BUILD;
+  const laptop = process.env.SKELCREW_LAPTOP_BUILD;
   if (!laptop || built === undefined || (laptop === built && !built.endsWith(dirty))) return false;
   if (release && isRelease(laptop) && newer(release, laptop)) return false;
-  const where = process.env.SKEL_REMOTE_NAME;
+  const where = process.env.SKELCREW_REMOTE_NAME;
   console.log(
     skelLine(`skel on ${where} is from ${readable(built)}, yours is ${readable(laptop)}.`),
   );
@@ -91,7 +91,7 @@ const onServer = (host: string, words: string[]) => (env: string[]) =>
     [
       "env",
       pathOnServer,
-      quoted(`SKEL_REMOTE_NAME=${host}`),
+      quoted(`SKELCREW_REMOTE_NAME=${host}`),
       ...env.map(quoted),
       "skel",
       ...words.map(quoted),
@@ -153,7 +153,7 @@ export async function upToDate(
   machine: Machine,
 ): Promise<number> {
   const build = release || laptopBuild();
-  const code = await there(build ? [`SKEL_LAPTOP_BUILD=${build}`] : []);
+  const code = await there(build ? [`SKELCREW_LAPTOP_BUILD=${build}`] : []);
   if (code !== outdated) return code;
   const answer = prompt(skelLine("Update it? [Y/n]"))?.trim().toLowerCase() ?? "";
   if (["n", "no"].includes(answer))

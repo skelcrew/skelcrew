@@ -307,7 +307,7 @@ test("rm removes a plugin's folders and settings, and refuses for a repository's
 
 test("agents can't run skel plugin", async () => {
   for (const sub of ["install", "update", "rm", "ls"]) {
-    const { err, code } = await skel(["plugin", sub, "x"], "", "", { SKEL_SANDBOX: "1" });
+    const { err, code } = await skel(["plugin", sub, "x"], "", "", { SKELCREW_SANDBOX: "1" });
     expect(code).toBe(1);
     expect(err).toContain("is only for your own terminal, not for agents");
   }

@@ -6,7 +6,7 @@ import { quietly } from "../src/run.ts";
 const sh = (line: string) => ["sh", "-c", line];
 
 afterEach(() => {
-  delete process.env.SKEL_RUN_TEST;
+  delete process.env.SKELCREW_RUN_TEST;
 });
 
 test("gives back what a program printed, apart and together", async () => {
@@ -26,16 +26,20 @@ test("gives a program no input unless handed some", async () => {
 });
 
 test("hands on the environment it is given", async () => {
-  const ran = await quietly(sh('echo "$SKEL_RUN_TEST"'), { env: { SKEL_RUN_TEST: "given" } });
+  const ran = await quietly(sh('echo "$SKELCREW_RUN_TEST"'), {
+    env: { SKELCREW_RUN_TEST: "given" },
+  });
   expect(ran.out).toBe("given\n");
 });
 
 // Some commands depend on this: they run with the environment skel started with, and a
 // default of process.env would change what they see.
 test("hands on no change to process.env unless given the environment", async () => {
-  process.env.SKEL_RUN_TEST = "changed";
-  expect((await quietly(sh('echo "$SKEL_RUN_TEST"'))).out).toBe("\n");
-  expect((await quietly(sh('echo "$SKEL_RUN_TEST"'), { env: process.env })).out).toBe("changed\n");
+  process.env.SKELCREW_RUN_TEST = "changed";
+  expect((await quietly(sh('echo "$SKELCREW_RUN_TEST"'))).out).toBe("\n");
+  expect((await quietly(sh('echo "$SKELCREW_RUN_TEST"'), { env: process.env })).out).toBe(
+    "changed\n",
+  );
 });
 
 test("drops an output it is told to ignore", async () => {

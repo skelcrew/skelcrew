@@ -233,7 +233,7 @@ async function startApp12() {
 }
 
 // bubblewrap can't start inside skel's own sandbox, so only there builders can't start.
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("skel submit", () => {
   test("each review's round, reviewer, verdict and first line go in the thread's log, and the task's title too", async () => {
     addApp();
     verdict(1, "changes", "\n  The export has no test.\n\nMore detail here.");
@@ -395,7 +395,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     const older = pushed();
     writeFileSync(join(clone(), "change"), "newer\n");
     git(clone(), "commit", "-qam", "newer");
-    const again = await skel(["submit", "Newer"], { SKEL_SOCKET: builderSocket() });
+    const again = await skel(["submit", "Newer"], { SKELCREW_SOCKET: builderSocket() });
     expect(again.err).toBe("");
     await until(() => finished("success").length === 1, 30_000);
     expect(finished("success")[0]?.sha).toBe(git(clone(), "rev-parse", "HEAD"));
@@ -573,7 +573,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     await until(() => thread().telling !== null, 30_000);
     writeFileSync(join(clone(), "change"), "newer\n");
     git(clone(), "commit", "-qam", "newer");
-    expect((await skel(["submit", "Newer"], { SKEL_SOCKET: builderSocket() })).err).toBe("");
+    expect((await skel(["submit", "Newer"], { SKELCREW_SOCKET: builderSocket() })).err).toBe("");
     expect(thread().telling).toBeNull();
     await until(() => finished("success").length === 1, 30_000);
     rmSync(join(builder(), "busy"));
@@ -606,7 +606,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     writeFileSync(join(home, "gh", "hold-status"), "");
     await startApp12();
     await until(() => existsSync(join(home, "gh", "finishing")), 30_000);
-    expect((await skel(["submit", "Again"], { SKEL_SOCKET: builderSocket() })).err).toBe("");
+    expect((await skel(["submit", "Again"], { SKELCREW_SOCKET: builderSocket() })).err).toBe("");
     await Bun.sleep(1000);
     rmSync(join(home, "gh", "hold-status"));
     await until(() => statuses().length === 3);
@@ -622,7 +622,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     writeFileSync(join(home, "gh", "hold-review"), "");
     await startApp12();
     await until(() => existsSync(join(home, "gh", "posting")), 30_000);
-    expect((await skel(["submit", "Again"], { SKEL_SOCKET: builderSocket() })).err).toBe("");
+    expect((await skel(["submit", "Again"], { SKELCREW_SOCKET: builderSocket() })).err).toBe("");
     await Bun.sleep(1000);
     rmSync(join(home, "gh", "hold-review"));
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 30_000);
@@ -663,7 +663,7 @@ const leadSocketPath = () => {
   return join(home, "run", "skel", "leads", short, "skel.sock");
 };
 
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel review", () => {
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("skel review", () => {
   test("reviews a failed review's commit again: posts the verdict, sets the check, and types changes in as a round", async () => {
     addApp();
     verdict(2, "changes", "The export has no test.");
@@ -717,12 +717,12 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel review", () => {
     writeFileSync(join(codexHome(), "slow-1"), "");
     await startApp12();
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
-    const fromLead = await skel(["review", "app-12"], { SKEL_SOCKET: leadSocketPath() });
+    const fromLead = await skel(["review", "app-12"], { SKELCREW_SOCKET: leadSocketPath() });
     expect(fromLead.code).not.toBe(0);
     expect(fromLead.err).toContain(
       "a review of app-12's last commit is already waiting or running",
     );
-    const fromBuilder = await skel(["review", "app-12"], { SKEL_SOCKET: builderSocket() });
+    const fromBuilder = await skel(["review", "app-12"], { SKELCREW_SOCKET: builderSocket() });
     expect(fromBuilder.code).not.toBe(0);
     expect(fromBuilder.err).toContain("doesn't know that request");
   }, 60_000);
@@ -738,14 +738,14 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel review", () => {
     const older = pushed();
     // Held so the second ask comes before the check is pending again.
     writeFileSync(join(home, "gh", "hold-pending"), "");
-    expect((await skel(["review", "app-12"], { SKEL_SOCKET: leadSocketPath() })).err).toBe("");
+    expect((await skel(["review", "app-12"], { SKELCREW_SOCKET: leadSocketPath() })).err).toBe("");
     const twice = await skel(["review", "app-12"]);
     expect(twice.err).toContain("a review of app-12's last commit is already waiting or running");
     rmSync(join(home, "gh", "hold-pending"));
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 30_000);
     writeFileSync(join(clone(), "change"), "newer\n");
     git(clone(), "commit", "-qam", "newer");
-    expect((await skel(["submit", "Newer"], { SKEL_SOCKET: builderSocket() })).err).toBe("");
+    expect((await skel(["submit", "Newer"], { SKELCREW_SOCKET: builderSocket() })).err).toBe("");
     await until(() => finished("success").length === 1, 30_000);
     expect(finished("success")[0]?.sha).toBe(git(clone(), "rev-parse", "HEAD"));
     expect(

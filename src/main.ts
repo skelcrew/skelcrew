@@ -155,7 +155,9 @@ async function repoCommand(args: string[]): Promise<void> {
     // An agent's sandbox hides skel's database, so there the daemon answers. In your
     // terminal it is read here, so the list shows even while the daemon is down.
     printRepositories(
-      process.env.SKEL_SANDBOX === "1" ? await askForRepositories() : listRepositories(openDb()),
+      process.env.SKELCREW_SANDBOX === "1"
+        ? await askForRepositories()
+        : listRepositories(openDb()),
       json,
     );
     return;
@@ -294,7 +296,7 @@ async function threadCommand(args: string[]): Promise<void> {
 async function tellCommand(args: string[]): Promise<void> {
   const [command, to, text, ...rest] = args;
   const { tellOn, tellTheLead } = await import("./client.ts");
-  if (process.env.SKEL_SANDBOX !== "1")
+  if (process.env.SKELCREW_SANDBOX !== "1")
     throw new Error(
       "skel tell is for the lead and builders. To type to a builder, pick it in the sidebar.",
     );
@@ -346,7 +348,7 @@ async function runCommand(args: string[]): Promise<void> {
         ? `${command} ${sub}`
         : named
     ];
-  if (process.env.SKEL_SANDBOX === "1" && refused)
+  if (process.env.SKELCREW_SANDBOX === "1" && refused)
     throw new Error(`${refused} is only for your own terminal, not for agents`);
   if (command === "remote" && sub === "add" && rest[0] && rest.length === 1) {
     const host = rest[0];
@@ -361,12 +363,12 @@ async function runCommand(args: string[]): Promise<void> {
   const { setupDone } = await import("./machine/setup.ts");
   // A sidebar, a page or an agent can inherit this name from whoever started tmux, and its
   // sandbox hides what setupDone reads.
-  const remoteName = process.env.SKEL_REMOTE_NAME;
+  const remoteName = process.env.SKELCREW_REMOTE_NAME;
   if (
     remoteName &&
     command !== "first-run" &&
     !onScreen &&
-    process.env.SKEL_SANDBOX !== "1" &&
+    process.env.SKELCREW_SANDBOX !== "1" &&
     !setupDone()
   )
     throw new Error(notSetUp(remoteName));

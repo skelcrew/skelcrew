@@ -193,10 +193,10 @@ export function seatbeltArgs(given: {
     ...(socket ? { socket: realSocket(socket) } : {}),
   });
   writeFileSync(profile, text);
-  const vars = [`HOME=${ownHome}`, `TMPDIR=${ownTemp}`, "SKEL_SANDBOX=1", `PATH=${path}`];
+  const vars = [`HOME=${ownHome}`, `TMPDIR=${ownTemp}`, "SKELCREW_SANDBOX=1", `PATH=${path}`];
   // Claude Code keeps its working files in /tmp unless told otherwise.
   vars.push(`CLAUDE_CODE_TMPDIR=${ownTemp}`);
-  if (socket) vars.push(`SKEL_SOCKET=${socket}`);
+  if (socket) vars.push(`SKELCREW_SOCKET=${socket}`);
   const enter = 'cd "$1" && shift && exec /usr/bin/env "$@"';
   const sandboxed = ["sandbox-exec", "-f", profile, "/bin/sh", "-c", enter, "sh", cwd];
   // Outside the sandbox, a shell waits for it and then removes its folders, or every review

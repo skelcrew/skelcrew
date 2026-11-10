@@ -821,7 +821,7 @@ test("skel first-run takes the steps and installs the service, without attaching
 
 // Logging in on a machine is what skel remote add is for, so --remote never starts it.
 test("over --remote, a machine whose first run isn't done says so and takes no step", async () => {
-  const run = await skel("", bin, main(), home, { SKEL_REMOTE_NAME: "simon@workbox" });
+  const run = await skel("", bin, main(), home, { SKELCREW_REMOTE_NAME: "simon@workbox" });
   expect(run.err).toBe(
     "skel: simon@workbox isn't set up. Run this on your laptop:\n  skel remote add simon@workbox\n",
   );
@@ -831,7 +831,7 @@ test("over --remote, a machine whose first run isn't done says so and takes no s
 
 test("over --remote, a machine that finished its first run attaches as usual", async () => {
   await skel("1\nsk-ant-oat01-good\n");
-  const run = await skel("", bin, main(), home, { SKEL_REMOTE_NAME: "simon@workbox" });
+  const run = await skel("", bin, main(), home, { SKELCREW_REMOTE_NAME: "simon@workbox" });
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
 });

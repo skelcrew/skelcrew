@@ -390,7 +390,7 @@ test("repo rm refuses while the repository has live threads, and names them", as
 
 test("repo rm refuses inside skel's sandbox, where skel's database is hidden", async () => {
   await skel([], "", onGitHub("simon/app", "WRITE"));
-  const run = await skel(["repo", "rm", "app"], "", home, { SKEL_SANDBOX: "1" });
+  const run = await skel(["repo", "rm", "app"], "", home, { SKELCREW_SANDBOX: "1" });
   expect(run.code).toBe(1);
   expect(run.err).toBe(
     "skel: removing a repository is only for your own terminal, not for agents\n",
@@ -400,7 +400,7 @@ test("repo rm refuses inside skel's sandbox, where skel's database is hidden", a
 
 test("plain skel refuses inside skel's sandbox, and brings in nothing", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
-  const run = await skel([], "", checkout, { SKEL_SANDBOX: "1" });
+  const run = await skel([], "", checkout, { SKELCREW_SANDBOX: "1" });
   expect(run.code).toBe(1);
   expect(run.err).toBe(
     "skel: attaching to the lead is only for your own terminal, not for agents\n",
@@ -456,7 +456,7 @@ test("brings in a repository whose skelcrew label GitHub fails to create, saying
 
 test("repo trust refuses inside skel's sandbox, where a yes could come from an agent", async () => {
   onGitHub("other/tool");
-  const run = await skel(["repo", "trust", "other/tool"], "", home, { SKEL_SANDBOX: "1" });
+  const run = await skel(["repo", "trust", "other/tool"], "", home, { SKELCREW_SANDBOX: "1" });
   expect(run.code).toBe(1);
   expect(run.err).toContain("your own terminal");
   expect(existsSync(clone("other/tool"))).toBe(false);
@@ -530,7 +530,7 @@ test("repo add and init refuse inside skel's sandbox, where a yes could come fro
     [["repo", "add"], "adding a repository"],
     [["init"], "setting up a repository for skel"],
   ] as const) {
-    const run = await skel([...args], "", checkout, { SKEL_SANDBOX: "1" });
+    const run = await skel([...args], "", checkout, { SKELCREW_SANDBOX: "1" });
     expect(run.code).toBe(1);
     expect(run.err).toBe(`skel: ${what} is only for your own terminal, not for agents\n`);
   }

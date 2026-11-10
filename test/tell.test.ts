@@ -114,7 +114,7 @@ const skel = (args: string[], as?: "lead" | "web's lead" | "builder") => {
   const sockets = { lead: leadSocket(), "web's lead": leadSocket("web"), builder: builderSocket() };
   return runSkel(args, {
     ...env(),
-    ...(as ? { SKEL_SANDBOX: "1", SKEL_SOCKET: sockets[as] } : {}),
+    ...(as ? { SKELCREW_SANDBOX: "1", SKELCREW_SOCKET: sockets[as] } : {}),
   });
 };
 
@@ -174,7 +174,7 @@ const typed = (agent: string) => read(join(agent, "typed"));
 const threadLog = () => read(join(data(), "threads", "app-12.log"));
 
 // bubblewrap can't start inside skel's own sandbox, so only there builders can't start.
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel tell", () => {
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("skel tell", () => {
   test("the lead's message is typed into the builder once it is idle, and logged", async () => {
     await startApp12();
     writeFileSync(join(builder(), "busy"), "");

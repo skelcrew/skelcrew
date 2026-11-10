@@ -136,13 +136,13 @@ export async function openScreen(
   applyConfig(agents);
   const name = `screen-${process.pid}`;
   // The name skel --remote passes along, such as sprite:demo. Empty on this machine.
-  const where = env.SKEL_REMOTE_NAME ?? "";
+  const where = env.SKELCREW_REMOTE_NAME ?? "";
   const left = sidebar(agents, name, where, repository);
   // The title is the session's own: terminals on this server can come from different laptops.
   const open = [
     ...config,
     ["new-session", "-s", name, "--", ...agentClient(agents, session, lead)],
-    ["set", "set-titles-string", windowTitle(env.SKEL_REMOTE_NAME)],
+    ["set", "set-titles-string", windowTitle(env.SKELCREW_REMOTE_NAME)],
     ["split-window", "-hbd", "-l", String(sidebarWidth), "--", ...left],
     // Ctrl-C reaches a page until it has made its terminal raw, and Bun won't stay ignoring it.
     // A pane that ended would give the whole screen to the sidebar. A dead one stays in its

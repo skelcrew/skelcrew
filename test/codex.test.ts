@@ -226,7 +226,7 @@ function setThread(sql: string): void {
 }
 
 // bubblewrap can't start inside skel's own sandbox, so only there agents can't start.
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("codex", () => {
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("codex", () => {
   test("a builder starts on Codex in a folder of its own, with the task after -- and skel's settings", async () => {
     await startApp12();
     const given = args();

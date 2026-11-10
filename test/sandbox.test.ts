@@ -91,7 +91,7 @@ const outside = () => ({
   TERM: "xterm",
   CLAUDE_CODE_CHILD_SESSION: "1",
   GH_TOKEN: "secret",
-  SKEL_GITHUB_APP_KEY: "secret",
+  SKELCREW_GITHUB_APP_KEY: "secret",
 });
 
 // Runs a shell script as the lead's Claude Code, inside its sandbox.
@@ -109,7 +109,7 @@ function asLead(script: string) {
 }
 
 // bubblewrap can't start inside skel's own sandbox, so only there these tests can't run.
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("sandbox", () => {
   test("the lead writes in its folder and nowhere else", async () => {
     const repo = repository();
     const { folder } = lead();
@@ -251,7 +251,7 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
     mkdirSync(join(home, ".config", "gh"), { recursive: true });
     writeFileSync(join(home, ".config", "gh", "hosts.yml"), "oauth_token: secret\n");
     const done = await asLead(
-      `test -e ${home}/.config/gh/hosts.yml || echo hidden; ls /run; ls /run/systemd 2>/dev/null; ls /run/skel; test -S "$SKEL_SOCKET" && echo socket; echo $SKEL_SANDBOX`,
+      `test -e ${home}/.config/gh/hosts.yml || echo hidden; ls /run; ls /run/systemd 2>/dev/null; ls /run/skel; test -S "$SKELCREW_SOCKET" && echo socket; echo $SKELCREW_SANDBOX`,
     );
     // Only the DNS resolver comes back into /run, on machines that have one there.
     const resolver = existsSync("/run/systemd/resolve") ? "systemd\nresolve\n" : "";
@@ -287,7 +287,7 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
     mkdirSync(join(home, ".local", "share", "skel", "claude", "other"), { recursive: true });
     fakeClaude([
       'printf "%s\\n" "$@"',
-      "env | grep -E '^(CLAUDE_|DISABLE_AUTOUPDATER|SKEL_|GH_TOKEN|TERM)' | sort",
+      "env | grep -E '^(CLAUDE_|DISABLE_AUTOUPDATER|SKEL|GH_TOKEN|TERM)' | sort",
       "test -e ~/.claude || echo no-claude",
       "test -e ~/.claude.json || echo no-claude-json",
       "test -e ~/.config/skel/claude-token || echo no-token-file",
@@ -322,8 +322,8 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
         "CLAUDE_CODE_OAUTH_TOKEN=tok-123",
         `CLAUDE_CONFIG_DIR=${config}`,
         "DISABLE_AUTOUPDATER=1",
-        "SKEL_SANDBOX=1",
-        "SKEL_SOCKET=/run/skel/skel.sock",
+        "SKELCREW_SANDBOX=1",
+        "SKELCREW_SOCKET=/run/skel/skel.sock",
         "TERM=xterm",
         "no-claude",
         "no-claude-json",
@@ -605,7 +605,7 @@ test("a Claude Code session gets Claude Code's key and not Codex's", () => {
 
 // Only a Sprite has its control socket, so these run only there, as when checking skel on a
 // test Sprite, and never inside skel's own sandbox, where bubblewrap can't start.
-describe.if(existsSync("/.sprite/api.sock") && process.env.SKEL_SANDBOX !== "1")(
+describe.if(existsSync("/.sprite/api.sock") && process.env.SKELCREW_SANDBOX !== "1")(
   "on a Sprite",
   () => {
     test("the agent can't reach the control socket or sprite-env, but runs the Sprite's tools", async () => {

@@ -155,9 +155,9 @@ export function sandboxArgs(given: {
   // so the agent can't replace it. The folder must hold nothing else.
   if (socket) {
     args.push(...["--ro-bind", dirname(socket), socketsInside]);
-    args.push("--setenv", "SKEL_SOCKET", join(socketsInside, basename(socket)));
+    args.push("--setenv", "SKELCREW_SOCKET", join(socketsInside, basename(socket)));
   }
-  args.push("--setenv", "SKEL_SANDBOX", "1", "--setenv", "PATH", `${bin}:${path}`);
+  args.push("--setenv", "SKELCREW_SANDBOX", "1", "--setenv", "PATH", `${bin}:${path}`);
   args.push("--chdir", cwd, "--", ...command);
   return args;
 }
