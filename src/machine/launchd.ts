@@ -3,6 +3,7 @@
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 
+// The name launchd knows the daemon's agent by.
 const label = "dev.skelcrew.daemon";
 
 // Returns the agent's definition file, which also marks the daemon as installed.

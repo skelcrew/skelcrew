@@ -37,6 +37,7 @@ async function fileSum(file: string): Promise<string> {
 // release can't slip between.
 export async function releaseSum(at: string, name: string): Promise<string> {
   const sums = await (await download(`${at}/SHA256SUMS`)).text();
+  // Each line is a checksum, two spaces and a file's name, as sha256sum writes it.
   const want = sums
     .split("\n")
     .find((line) => line.endsWith(`  ${name}`))
@@ -66,10 +67,13 @@ export async function installLatest(file: string, base: string): Promise<string 
   // Comparing sums costs only the small checksums file.
   if ((await fileSum(file)) === want) return null;
   const bytes = await downloadRelease(at, asset, want);
+  // Staged in the same folder, as a rename can't cross disks.
   const staged = join(dirname(file), `.sc-update-${process.pid}`);
   try {
     await Bun.write(staged, bytes);
     chmodSync(staged, 0o755);
+    // Starting it proves it runs on this machine, and its version line gives the release
+    // for the note.
     const started = await quietly([staged, "--version"]);
     const version = started.out.match(/^skelcrew (\d+\.\d+\.\d+)$/m)?.[1];
     if (!started.ok || !version)
@@ -77,10 +81,13 @@ export async function installLatest(file: string, base: string): Promise<string 
         `the latest release won't start here, so it wasn't installed: ${started.said}`,
       );
     renameSync(staged, file);
+    // Noted only once it is in place, so the sidebar never offers a restart into a release
+    // that isn't there.
     mkdirSync(dataDir(), { recursive: true });
     await Bun.write(installedFile(), `${version}\n`);
     return version;
   } finally {
+    // Only a staged file that never went in is still there.
     rmSync(staged, { force: true });
   }
 }
@@ -92,6 +99,7 @@ export async function installLatest(file: string, base: string): Promise<string 
 export function keepUpToDate(): void {
   rmSync(installedFile(), { force: true });
   if (!release || !singleFile) return;
+  // A failed look is only logged, as the next one an hour later tries again.
   const look = () =>
     installLatest(process.execPath, releases).then(
       (installed) => {
@@ -111,6 +119,7 @@ export function updateNotice(): string {
   try {
     text = readFileSync(installedFile(), "utf8").trim();
   } catch {}
+  // A note that isn't a release number, such as one half written, shows nothing.
   const installed = z.string().refine(isRelease).safeParse(text);
   if (!installed.success || installed.data === release) return "";
   return `Skelcrew ${installed.data} installed · restart to use it`;

@@ -2,6 +2,8 @@
 // typed or pasted, so you can see the paste arrived without the secret showing on screen.
 import { readSync, writeSync } from "node:fs";
 
+// The token typed so far, whether Enter or Ctrl-C ended the question, and the start of an
+// escape sequence a read cut off.
 type Typed = { token: string; end: "enter" | "stop" | null; pending: string };
 
 // What a terminal sends for keys that aren't characters, such as an arrow key, and the marks
@@ -18,8 +20,11 @@ const cutOff = /\x1b(\[[0-?]*[ -/]*|O)?$/;
 // sequence cut off at the end comes back as pending, to put before the next read.
 export function typeKeys(before: string, keys: string): Typed {
   let token = before;
+  // A cut-off sequence is held back whole, so the next read can finish it.
   const pending = keys.match(cutOff)?.[0] ?? "";
   const whole = keys.slice(0, keys.length - pending.length);
+  // Control characters other than Enter, Ctrl-C and backspace are dropped, as none belongs
+  // in a token.
   for (const key of whole.replace(escapes, "")) {
     if (key === "\r" || key === "\n") return { token, end: "enter", pending: "" };
     if (key === "\x03") return { token, end: "stop", pending: "" };
@@ -52,10 +57,12 @@ export function promptSecret(question: string): string | null {
   if (!process.stdin.isTTY) return prompt(question);
   // The answer goes on a line of its own, so redrawing it never touches the question.
   writeSync(1, `${question}\n  `);
+  // The terminal's settings, saved to put back once the question ends.
   const saved = stty(["-g"]);
   stty(["raw", "-echo"]);
   let typed: Typed = { token: "", end: null, pending: "" };
   try {
+    // Each read can bring one key or a whole paste, and the count is redrawn after each.
     const buffer = Buffer.alloc(4096);
     while (typed.end === null) {
       const read = readSync(0, buffer);
@@ -67,6 +74,7 @@ export function promptSecret(question: string): string | null {
     stty([saved]);
     writeSync(1, "\n");
   }
+  // 130 is what a shell reports for a program Ctrl-C stopped.
   if (typed.end === "stop") process.exit(130);
   return typed.token;
 }
