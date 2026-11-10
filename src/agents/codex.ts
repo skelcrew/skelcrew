@@ -34,10 +34,12 @@ export const codexHome = (home = homedir()) => join(dataDir(home), "codex");
 // leave Skelcrew's login stale. Its lock is shared the same way, so two renewals take turns.
 function shareLogin(home: string, folder = codexHome(home)): string {
   const login = join(dataDir(home), "codex-login");
+  // Both folders are yours alone, as they hold a login.
   mkdirSync(folder, { recursive: true, mode: 0o700 });
   mkdirSync(login, { recursive: true, mode: 0o700 });
   for (const file of ["auth.json", "auth.lock"]) {
     const at = join(folder, file);
+    // A link already leading to the shared login is left as it is.
     const found = lstatSync(at, { throwIfNoEntry: false });
     if (found?.isSymbolicLink() && readlinkSync(at) === join(login, file)) continue;
     // The first run's codex login writes a plain auth.json in Skelcrew's own folder. Anywhere
@@ -49,6 +51,8 @@ function shareLogin(home: string, folder = codexHome(home)): string {
   return login;
 }
 
+// The first line of a Codex conversation file: its ID, the folder it ran in, and what
+// started it, such as the interactive CLI or a review.
 const SessionMeta = z.object({
   type: z.literal("session_meta"),
   payload: z.looseObject({
@@ -90,6 +94,9 @@ function savedConversation(name: string, folder: string, _session: string): stri
         files.push(join(at, entry.name));
   };
   if (lstatSync(sessions, { throwIfNoEntry: false })?.isDirectory()) walk(sessions);
+  // Newest first, by file name alone, as the folders above it only repeat the date. The first
+  // from the interactive CLI in this folder is the one to resume; a line that isn't JSON is
+  // skipped.
   files.sort((a, b) => (a.split("/").at(-1) ?? "").localeCompare(b.split("/").at(-1) ?? ""));
   for (const file of files.reverse()) {
     let meta: unknown;
@@ -130,11 +137,13 @@ async function checkModel(home: string, model: string, env: Record<string, strin
     stderr: "pipe",
     timeout: 30_000,
   });
+  // Read both outputs while waiting, so a full pipe can't stall Codex.
   const [out, err] = await Promise.all([
     new Response(asked.stdout).text(),
     new Response(asked.stderr).text(),
     asked.exited,
   ]);
+  // The answer is JSON listing each model by its slug, the name -m takes.
   const Models = z.object({ models: z.array(z.looseObject({ slug: z.string() })) });
   let models: string[];
   try {
@@ -171,6 +180,8 @@ async function startCommand(given: {
 }): Promise<{ argv: string[]; env: Record<string, string> }> {
   const { name, socket, model, thread, folder, origin, prompt, system, resume } = given;
   const env = given.env ?? process.env;
+  // Refuse what would start the wrong agent or write outside Skelcrew's folders, and a model
+  // Codex doesn't offer.
   const home = env.HOME;
   if (!home) throw new Error("HOME isn't set, so Skelcrew can't find its own folders");
   // The name becomes a folder, so it must not climb out of Skelcrew's.
@@ -191,6 +202,8 @@ async function startCommand(given: {
   // folder before this session links to it.
   shareLogin(home);
   const login = shareLogin(home, own);
+  // The agent sees its own folder, its CODEX_HOME and the shared login, all writable, and
+  // nothing else of yours.
   const cwd = thread ?? folder;
   if (!cwd) throw new Error(`Skelcrew has no folder for ${name} to work in`);
   mkdirSync(cwd, { recursive: true });
@@ -217,6 +230,7 @@ async function startCommand(given: {
   // After --, so a message that starts with - is never taken for an option.
   else if (prompt) command.push("--", prompt);
 
+  // Only the environment the agent needs, plus its own CODEX_HOME.
   const kept = keptEnv(env, codex.keys);
   kept.CODEX_HOME = own;
   const argv = sandboxArgs({ home, path: env.PATH ?? "", mounts, socket, cwd, command });
@@ -236,10 +250,12 @@ async function review(given: {
   signal: AbortSignal;
 }) {
   const { home, folder, model, sprite, signal } = given;
+  // Skelcrew's own CODEX_HOME, with its login shared out and a sessions folder to keep.
   const shared = codexHome(home);
   const login = shareLogin(home);
   const sessions = join(shared, "sessions");
   mkdirSync(sessions, { recursive: true, mode: 0o700 });
+  // The reviewer gets a throwaway copy of it, with the real sessions and login mounted in.
   const copy = join(folder, "codex");
   const { mounts, at } = await throwaway({
     source: shared,

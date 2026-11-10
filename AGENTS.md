@@ -98,16 +98,17 @@ A reader should understand the function from its comment without reading its bod
 it gives back or changes, and why Skelcrew needs it. Add the reason behind anything surprising:
 a trap, a harness quirk, a limit someone hit before. One to four lines is usually enough.
 
-Inside a function, comment only what the code can't say: why it is this way, when it looks
-wrong or roundabout but is right, or when a reader might "simplify" it and break something.
+Inside a function, comment each step: a few lines of code at a time, say what the step does
+and why. Don't restate a single line in words. Say why it is this way when it looks wrong or
+roundabout but is right, or when a reader might "simplify" it and break something.
 
 Each file starts with one or two lines saying what the file is for, in the spec's words.
 
 Never write:
 - the name again as a sentence ("parseConfig parses the config")
-- each line again in words, inside a function ("loop over the threads")
+- a single line again in words, inside a function ("loop over the threads")
 - history or chat ("fixed after review", "now handles X", "as discussed")
-- references to tasks, steps, spec sections or numbers
+- references to tasks, plan steps, spec sections or numbers
 
 Examples:
 
