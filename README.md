@@ -54,3 +54,7 @@ Each task gets its own agent, in its own clone and sandbox, with no tokens insid
 ## Status
 
 Skelcrew is in beta. The full design is in [docs/spec.md](docs/spec.md).
+
+## License
+
+Skelcrew is licensed under the [Apache License 2.0](LICENSE).
