@@ -5,15 +5,10 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Thread } from "../src/flow/thread.ts";
+import { draw as drawLists, noticeLines } from "../src/screen/lists.ts";
+import { jumped, picked as pickedInLists, stepped as steppedInLists } from "../src/screen/moves.ts";
 import { type Link, type Lists, type Row, threadAge, threadWord } from "../src/screen/rows.ts";
 import { sidebarWidth } from "../src/screen/screen.ts";
-import {
-  draw as drawLists,
-  jumped,
-  noticeLines,
-  picked as pickedInLists,
-  stepped as steppedInLists,
-} from "../src/screen/sidebar.ts";
 import { itemSql, source } from "./harness.ts";
 
 const row = {
