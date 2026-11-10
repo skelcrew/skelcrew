@@ -68,6 +68,7 @@ export type DaemonRequest = z.infer<typeof DaemonRequest>;
 // only you can, in your own terminal. A builder may tell only its repository's lead, never
 // another thread, and you type to a builder yourself in the sidebar, so you have no tell.
 export type Caller = "you" | { lead: { owner: string; repo: string } } | Thread;
+// The requests each kind of caller may make. The daemon refuses any other before acting.
 export const allowed = {
   you: [
     "status",
