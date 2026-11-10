@@ -481,7 +481,7 @@ test("a yes to the GitHub plugin installs it from GitHub, after showing what it 
   mkdirSync(plugin, { recursive: true });
   writeFileSync(
     join(plugin, "skelcrew-plugin.yaml"),
-    "name: github\nversion: 0.1.0\nskel: 0.1.0\nabout: GitHub\njobs: [tracker, forge]\ncall: [bun, call.ts]\ngit_credentials: [bun, credentials.ts]\n",
+    "name: github\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: GitHub\njobs: [tracker, forge]\ncall: [bun, call.ts]\ngit_credentials: [bun, credentials.ts]\n",
   );
   const git = (...args: string[]) =>
     Bun.spawnSync(["git", "-C", plugin, "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
