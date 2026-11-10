@@ -113,7 +113,7 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
   });
   startSession(tmux, lead.name, { folder: lead.folder, command: argv, env });
   // GitHub can be slow or away, and attaching waits on this.
-  refreshClones(db).catch((error) => console.log(String(error)));
+  refreshClones(db).catch((error) => console.log(errorText(error)));
   console.log(
     `${resume ? "Brought back" : "Started"} ${owner}/${repo}'s lead, session ${session}.`,
   );
