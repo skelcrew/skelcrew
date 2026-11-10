@@ -1,6 +1,7 @@
 // Every call skel makes to GitHub goes through here, with your gh login, so another tracker
 // or forge could be added in one place.
 import { z } from "zod";
+import { Item, type Task } from "./flow/copy.ts";
 import { quietly } from "./run.ts";
 
 // Owner and name become folders, so neither may climb out of skel's.
@@ -138,71 +139,36 @@ const api = (endpoint: string, doing: string, input?: object) =>
 
 const Numbered = z.object({ number: z.number() });
 
-// Creates an issue in owner/name and returns its number so the lead can start a thread.
-export async function createIssue(fullName: string, title: string, body: string): Promise<number> {
-  const made = await api(`repos/${fullName}/issues`, `create an issue in ${fullName}`, {
-    title,
-    body,
-  });
-  return Numbered.parse(made).number;
-}
-
-const Issue = z.object({ title: z.string(), body: z.string().nullable() });
-
-// Returns an issue's title and body for the builder, the reviewer and skel task show, using
-// empty text for no body. Says plainly when the issue doesn't exist, as gh's own words for
-// that are GitHub's HTTP status.
-export async function readIssue(
-  fullName: string,
-  issue: number,
-): Promise<{ title: string; body: string }> {
-  let got: unknown;
-  try {
-    got = await api(`repos/${fullName}/issues/${issue}`, `read issue #${issue} in ${fullName}`);
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("(HTTP 404)"))
-      throw new Error(`there is no issue #${issue} in ${fullName}`);
-    throw error;
-  }
-  const { title, body } = Issue.parse(got);
-  return { title, body: body ?? "" };
-}
-
-const IssueDetails = z.object({
+const Made = z.object({
+  number: z.number(),
   title: z.string(),
   body: z.string().nullable(),
-  state: z.string(),
-  user: z.object({ login: z.string() }).nullable(),
+  user: z.object({ login: z.string(), type: z.string() }).nullable(),
   labels: z.array(z.object({ name: z.string() })),
+  html_url: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
 });
 
-// Returns what an issue's page shows.
-export async function readIssueDetails(fullName: string, issue: number) {
-  return IssueDetails.parse(await api(`repos/${fullName}/issues/${issue}`, `read issue #${issue}`));
-}
-
-const OpenIssue = z.object({ number: z.number(), title: z.string(), createdAt: z.string() });
-
-// Returns the open issues in owner/name, newest first, for skel task ls. gh issue list leaves
-// out pull requests, which GitHub's API counts as issues. It lists 30 unless told more, and
-// a thousand open tasks is more than anyone reads in a terminal.
-export async function openIssues(fullName: string): Promise<z.infer<typeof OpenIssue>[]> {
-  const listed = await gh(
-    [
-      "issue",
-      "list",
-      "--repo",
-      fullName,
-      "--state",
-      "open",
-      "--limit",
-      "1000",
-      "--json",
-      "number,title,createdAt",
-    ],
-    `list the open issues in ${fullName}`,
+// Creates an issue in owner/name and returns it as a task, for skel's copy, so the lead sees it
+// in skel task ls at once and can start a thread on it. Your login wrote it.
+export async function createIssue(fullName: string, title: string, body: string): Promise<Task> {
+  const made = Made.parse(
+    await api(`repos/${fullName}/issues`, `create an issue in ${fullName}`, { title, body }),
   );
-  return z.array(OpenIssue).parse(listed);
+  return {
+    kind: "task",
+    id: String(made.number),
+    title: made.title,
+    body: made.body ?? "",
+    state: "open",
+    author: made.user && { login: made.user.login, bot: made.user.type === "Bot", you: true },
+    labels: made.labels.map((label) => label.name),
+    link: made.html_url,
+    created: made.created_at,
+    updated: made.updated_at,
+    closes: `Closes #${made.number}`,
+  };
 }
 
 // Creates the skel label in owner/name, so you can add it to an issue to start a thread.
@@ -297,16 +263,16 @@ export async function findPullRequest(fullName: string, branch: string): Promise
   return z.array(Numbered).parse(found)[0]?.number ?? null;
 }
 
-// Opens the thread's PR and returns its number, linking the issue so merging closes it.
+// Opens the thread's PR and returns its number.
 export async function openPullRequest(
   fullName: string,
-  pr: { branch: string; base: string; title: string; body: string; issue: number },
+  pr: { branch: string; base: string; title: string; body: string },
 ): Promise<number> {
   const opened = await api(`repos/${fullName}/pulls`, `open a pull request from ${pr.branch}`, {
     head: pr.branch,
     base: pr.base,
     title: pr.title,
-    body: `${pr.body}\n\nCloses #${pr.issue}`,
+    body: pr.body,
   });
   return Numbered.parse(opened).number;
 }
@@ -453,9 +419,11 @@ const Pull = z
 export type PullRequest = z.infer<typeof Pull>;
 
 // Enough of each list for what can happen between two polls. Only the newest are asked for,
-// as events older than the last one skel handled mean nothing to it.
-const pullFields = `state mergeable baseRefName
-  reviews(last: 50) { nodes { databaseId state body author { __typename login }
+// as events older than the last one skel handled mean nothing to it. A thread's PR is asked
+// for with its last 50 reviews. Other PRs, which skel only shows, are asked for with their
+// last 10: GitHub charges a poll for every review it may send, times the PRs asked for.
+const pullFields = (reviews: number) => `state mergeable baseRefName headRefName
+  reviews(last: ${reviews}) { nodes { databaseId state body author { __typename login }
     comments(first: 50) { nodes { path line body } } } }
   comments(last: 50) { nodes { databaseId body author { __typename login } } }
   commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
@@ -463,93 +431,236 @@ const pullFields = `state mergeable baseRefName
     ... on CheckRun { databaseId name status conclusion detailsUrl }
     ... on StatusContext { context state targetUrl } } } } } } }`;
 
-const PullHead = z.object({ title: z.string(), body: z.string(), headRefName: z.string() });
-const PullDetails = z.object({
-  data: z.object({ repository: z.object({ pullRequest: PullHead.and(Pull) }) }),
-});
+// What an issue or a PR has as an item, besides what a poll reads of a PR.
+const itemFields = `number title body url createdAt updatedAt author { __typename login }
+  labels(first: 100) { nodes { name } }`;
 
-// Returns what a PR's page shows, from the same fields a poll reads, so the page says what the
-// strip says.
-export async function readPullDetails(fullName: string, pr: number) {
-  const [owner, name] = fullName.split("/");
-  const query = `query($owner: String!, $name: String!, $number: Int!) {
-    repository(owner: $owner, name: $name) {
-      pullRequest(number: $number) { title body headRefName ${pullFields} } } }`;
-  const got = await gh(["api", "graphql", "--input", "-"], `read PR #${pr}`, {
-    query,
-    variables: { owner, name, number: pr },
+const Head = z.object({
+  number: z.number(),
+  title: z.string(),
+  body: z.string(),
+  url: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  author: Author,
+  labels: nodes(z.object({ name: z.string() })),
+});
+const IssueNode = Head.extend({ state: z.enum(["OPEN", "CLOSED"]) });
+const PullNode = Head.extend({ headRefName: z.string() }).and(Pull);
+
+// A page of issues or PRs, and where the next page starts if there is one.
+const page = <T extends z.ZodType>(node: T) =>
+  z.object({
+    pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }),
+    nodes: z.array(node),
   });
-  return PullDetails.parse(got).data.repository.pullRequest;
+
+type Verdict = Extract<Item, { kind: "pr" }>["reviews"][number]["verdict"];
+// A review still being written isn't one yet, so it has no verdict and is left out.
+const verdicts = new Map<string, Verdict>([
+  ["APPROVED", "approved"],
+  ["CHANGES_REQUESTED", "changes requested"],
+  ["COMMENTED", "commented"],
+  ["DISMISSED", "dismissed"],
+]);
+
+// Returns how a check stands in skel's words. A check run cancelled, or left stale by a newer
+// commit, is no failure for the builder to fix.
+function checkState(check: Check): "running" | "passed" | "failed" | "cancelled" {
+  if (check.kind === "status") {
+    if (["PENDING", "EXPECTED"].includes(check.state)) return "running";
+    return check.state === "SUCCESS" ? "passed" : "failed";
+  }
+  if (check.status !== "COMPLETED") return "running";
+  if (["SUCCESS", "NEUTRAL", "SKIPPED"].includes(check.conclusion ?? "")) return "passed";
+  return ["CANCELLED", "STALE"].includes(check.conclusion ?? "") ? "cancelled" : "failed";
 }
 
-const Labeled = z.object({ number: z.number(), title: z.string() });
-export type Labeled = z.infer<typeof Labeled>;
+// Returns who wrote something, in skel's words. `you` is your gh login.
+const authorOf = (a: { login: string; bot: boolean } | null, you: string) =>
+  a && { ...a, you: a.login === you };
 
-// The newest open issues or PRs, and how many there are in all, which can be far more.
-const OpenList = z
-  .object({
-    totalCount: z.number(),
-    nodes: z.array(z.object({ number: z.number(), title: z.string(), createdAt: z.string() })),
-  })
-  .transform((list) => ({ total: list.totalCount, items: list.nodes }));
-export type OpenList = z.infer<typeof OpenList>;
+// Returns what an issue and a PR share as items, in skel's words.
+const itemOf = (node: z.infer<typeof Head>, you: string) => ({
+  id: String(node.number),
+  title: node.title,
+  body: node.body,
+  author: authorOf(node.author, you),
+  labels: node.labels.map((label) => label.name),
+  link: node.url,
+  created: node.createdAt,
+  updated: node.updatedAt,
+});
 
-// A hundred is the most GitHub gives in one answer, and more than a sidebar can show.
-const openFields = `first: 100, orderBy: { field: CREATED_AT, direction: DESC }) {
-  totalCount nodes { number title createdAt } }`;
-const openLists = `openIssues: issues(states: [OPEN], ${openFields}
-  openPulls: pullRequests(states: [OPEN], ${openFields}`;
+// Returns an issue as a task, for skel's copy.
+function issueItem(node: z.infer<typeof IssueNode>, you: string): Task {
+  const state = node.state === "OPEN" ? "open" : "closed";
+  return { kind: "task", ...itemOf(node, you), state, closes: `Closes #${node.number}` };
+}
 
-// Returns your gh login, the repository's open issues labeled skel, and each of
-// its given PRs, with their reviews, comments, head checks and merge state, in one GraphQL
-// query, so the number of requests doesn't grow with the number of threads. A PR GitHub
-// doesn't find is left out. With `lists`, the same query brings the open issues and PRs the
-// sidebar shows, so showing them costs no request of its own.
+// Returns a PR as an item, for skel's copy.
+function pullItem(node: z.infer<typeof PullNode>, you: string): Item {
+  return {
+    kind: "pr",
+    ...itemOf(node, you),
+    state: node.state === "OPEN" ? "open" : node.state === "MERGED" ? "merged" : "closed",
+    branch: node.headRefName,
+    base: node.base,
+    conflicts: node.mergeable === "CONFLICTING",
+    checks: node.checks.map((check) => ({
+      name: check.name,
+      id: check.kind === "run" ? String(check.id) : null,
+      state: checkState(check),
+    })),
+    reviews: node.reviews.flatMap((review) => {
+      const verdict = verdicts.get(review.state);
+      if (!verdict) return [];
+      const lines = review.comments.map(({ body, ...line }) => ({ ...line, text: body }));
+      const author = authorOf(review.author, you);
+      return [{ id: String(review.id), text: review.body, author, verdict, lines }];
+    }),
+    comments: node.comments.map((c) => ({
+      id: String(c.id),
+      text: c.body,
+      author: authorOf(c.author, you),
+    })),
+  };
+}
+
+// Returns the query for one page of the repository's issues and PRs, newest updated first:
+// with `since`, those updated since then, closed ones too; without, every open one. Each list
+// goes on from its cursor, starts at its beginning with null, and isn't asked for with false.
+// Values go in the query itself, as GitHub refuses a query declaring one it doesn't use.
+function listsQuery(
+  since: string | null,
+  issues: string | null | false,
+  pulls: string | null | false,
+): string {
+  const order = "orderBy: { field: UPDATED_AT, direction: DESC }";
+  const from = (cursor: string | null) => (cursor ? `, after: ${JSON.stringify(cursor)}` : "");
+  const states = since ? "" : ", states: [OPEN]";
+  const filter = since ? `, filterBy: { since: ${JSON.stringify(since)} }` : "";
+  const info = "pageInfo { hasNextPage endCursor }";
+  // Each PR asked for costs more than an issue, and few change between two polls.
+  const many = since ? 10 : 50;
+  return [
+    issues === false
+      ? ""
+      : `issues: issues(first: 100${from(issues)}${states}${filter}, ${order}) {
+        ${info} nodes { ${itemFields} state } }`,
+    pulls === false
+      ? ""
+      : `pulls: pullRequests(first: ${many}${from(pulls)}${states}, ${order}) {
+        ${info} nodes { ${itemFields} ${pullFields(10)} } }`,
+  ].join("\n");
+}
+
+// Returns what changed in the repository since `since`, as items for skel's copy, or with no
+// `since` everything open, page by page. Also returns your gh login, and each of the given PRs
+// with its reviews, comments, head checks and merge state, whether it changed or not: a check
+// that finished doesn't count as a change to its PR. They come in the same GraphQL query, so
+// the number of requests doesn't grow with the number of threads. A PR GitHub doesn't find is
+// left out. `next` is the `since` of the next poll: the newest change seen, or null when more
+// may have changed than one answer brings, so the next poll asks for everything open again.
 export async function readRepository(
   fullName: string,
   numbers: number[],
-  lists: boolean,
-): Promise<{
-  you: string;
-  labeled: Labeled[];
-  prs: Map<number, PullRequest>;
-  open: { issues: OpenList; prs: OpenList } | null;
-}> {
+  since: string | null,
+): Promise<{ you: string; prs: Map<number, PullRequest>; items: Item[]; next: string | null }> {
   const [owner, name] = fullName.split("/");
-  const pulls = numbers.map((n) => `pr${n}: pullRequest(number: ${n}) { ${pullFields} }`);
-  // Issues with threads keep their label, so the oldest labeled issues could fill every
-  // answer. Adding a label updates an issue, so one just labeled is always among the newest.
-  const labeled = `labeled: issues(labels: ["skel"], states: [OPEN], first: 100,
-    orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { number title } }`;
-  const query = `query($owner: String!, $name: String!) { viewer { login }
-    repository(owner: $owner, name: $name) {
-      ${labeled}\n${lists ? openLists : ""}\n${pulls.join("\n")} } }`;
-  const got = await gh(["api", "graphql", "--input", "-"], `poll ${fullName}`, {
-    query,
+  const threads = numbers.map(
+    (n) => `pr${n}: pullRequest(number: ${n}) { ${itemFields} ${pullFields(50)} }`,
+  );
+  const prs = new Map<number, PullRequest>();
+  const items: Item[] = [];
+  const theirs: Item[] = [];
+  let you = "";
+  let more = false;
+  // Returns where a list goes on, or false once it is done. Without `since` every page is
+  // read. With it, a full page whose oldest change is still new may hide more beyond it.
+  const goesOn = (list?: {
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+    nodes: { updatedAt: string }[];
+  }) => {
+    if (!list?.pageInfo.hasNextPage) return false;
+    if (since === null) return list.pageInfo.endCursor ?? false;
+    if ((list.nodes.at(-1)?.updatedAt ?? "") >= since) more = true;
+    return false;
+  };
+  let issues: string | null | false = null;
+  let pulls: string | null | false = null;
+  for (let first = true; issues !== false || pulls !== false; first = false) {
+    const query = `query($owner: String!, $name: String!) { viewer { login }
+      repository(owner: $owner, name: $name) {
+        ${listsQuery(since, issues, pulls)}\n${first ? threads.join("\n") : ""} } }`;
+    const got = await gh(["api", "graphql", "--input", "-"], `poll ${fullName}`, {
+      query,
+      variables: { owner, name },
+    });
+    const { data } = z
+      .object({
+        data: z.object({
+          viewer: z.object({ login: z.string() }),
+          repository: z
+            .object({ issues: page(IssueNode).optional(), pulls: page(PullNode).optional() })
+            .catchall(PullNode.nullable()),
+        }),
+      })
+      .parse(got);
+    const { issues: issuePage, pulls: pullPage, ...found } = data.repository;
+    you = data.viewer.login;
+    items.push(...(issuePage?.nodes ?? []).map((node) => issueItem(node, you)));
+    items.push(...(pullPage?.nodes ?? []).map((node) => pullItem(node, you)));
+    if (first)
+      for (const n of numbers) {
+        const pr = found[`pr${n}`];
+        if (!pr) continue;
+        prs.set(n, pr);
+        theirs.push(pullItem(pr, you));
+      }
+    issues = issues === false ? false : goesOn(issuePage);
+    pulls = pulls === false ? false : goesOn(pullPage);
+  }
+  // Each thread's PR comes last, so it wins over the same PR read with fewer reviews.
+  items.push(...theirs);
+  const newest = [since ?? "", ...items.map((item) => item.updated)].sort().at(-1) ?? "";
+  // Checked as skel's copy will read them back, so one it can't take fails here, not later.
+  return {
+    you,
+    prs,
+    items: items.map((item) => Item.parse(item)),
+    next: more || newest === "" ? null : newest,
+  };
+}
+
+// Returns the given issues as tasks, open or closed, in one query: for threads whose task
+// skel's copy lacks, such as after an upgrade, as a poll brings only open ones at first, and
+// for skel start, as a poll reads only one page of changes. An issue GitHub doesn't find is
+// left out.
+export async function readTasks(fullName: string, numbers: number[]): Promise<Task[]> {
+  const [owner, name] = fullName.split("/");
+  const asked = numbers.map((n) => `task${n}: issue(number: ${n}) { ${itemFields} state }`);
+  const got = await gh(["api", "graphql", "--input", "-"], `read the tasks of ${fullName}`, {
+    query: `query($owner: String!, $name: String!) { viewer { login }
+      repository(owner: $owner, name: $name) { ${asked.join("\n")} } }`,
     variables: { owner, name },
   });
   const { data } = z
     .object({
       data: z.object({
         viewer: z.object({ login: z.string() }),
-        repository: z
-          .object({
-            labeled: nodes(Labeled),
-            openIssues: OpenList.optional(),
-            openPulls: OpenList.optional(),
-          })
-          .catchall(Pull.nullable()),
+        repository: z.record(z.string(), z.unknown()),
       }),
     })
     .parse(got);
-  const { labeled: issues, openIssues, openPulls, ...found } = data.repository;
-  const prs = new Map<number, PullRequest>();
-  for (const n of numbers) {
-    const pr = found[`pr${n}`];
-    if (pr) prs.set(n, pr);
-  }
-  const open = openIssues && openPulls ? { issues: openIssues, prs: openPulls } : null;
-  return { you: data.viewer.login, labeled: issues, prs, open };
+  // Only what was asked for is read.
+  const tasks = numbers.flatMap((n) => {
+    const node = IssueNode.nullish().parse(data.repository[`task${n}`]);
+    return node ? [issueItem(node, data.viewer.login)] : [];
+  });
+  // Checked as skel's copy will read them back, so one it can't take fails here, not later.
+  for (const task of tasks) Item.parse(task);
+  return tasks;
 }
 
 // Returns whether someone can push to the repository: write, maintain or admin access, which

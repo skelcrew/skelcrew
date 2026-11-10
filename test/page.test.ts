@@ -1,15 +1,16 @@
-// The page shown for an issue or PR: what the daemon makes of a fake gh's answer, and how it
-// is drawn, given that answer.
+// The page shown for an issue or PR: what it says of an item, as a poll brings it into skel's
+// copy from a fake gh's answer, and how it is drawn.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Page, readPage } from "../src/flow/page.ts";
+import { type Page, pageOf } from "../src/flow/page.ts";
+import { readRepository } from "../src/github.ts";
 import { drawPage } from "../src/screen/page.ts";
+import { issueNode, pollAnswer, pullNode } from "./harness.ts";
 
 const esc = "\x1b";
 const issueUrl = "https://github.com/simon/app/issues/31";
-const pullUrl = "https://github.com/simon/app/pull/34";
 let home = "";
 const path = process.env.PATH;
 
@@ -33,13 +34,10 @@ cat "${home}/answer"
   writeFileSync(join(home, "gh"), script, { mode: 0o755 });
 }
 
-const issue = {
-  title: "Add CSV export",
+const issue = issueNode(31, "Add CSV export", {
   body: "Export threads.\n\nKeep it small.",
-  state: "open",
-  user: { login: "simon" },
-  labels: [{ name: "skel" }, { name: "good first issue" }],
-};
+  labels: { nodes: [{ name: "skel" }, { name: "good first issue" }] },
+});
 
 const check = (name: string, conclusion: string | null) => ({
   __typename: "CheckRun",
@@ -56,31 +54,26 @@ const review = (state: string, body: string, login = "codex-bot") => ({
   author: { __typename: "User", login },
   comments: { nodes: [] },
 });
-const pull = (more: object = {}) => ({
-  data: {
-    repository: {
-      pullRequest: {
-        title: "Fix the login redirect",
-        body: "Sign-in landed on a 404.",
-        headRefName: "skel/12",
-        baseRefName: "main",
-        state: "OPEN",
-        mergeable: "MERGEABLE",
-        reviews: { nodes: [] },
-        comments: { nodes: [] },
-        commits: { nodes: [{ commit: { statusCheckRollup: null } }] },
-        ...more,
-      },
-    },
-  },
-});
+const pull = (more: object = {}) =>
+  pullNode(34, "Fix the login redirect", {
+    body: "Sign-in landed on a 404.",
+    headRefName: "skel/12",
+    ...more,
+  });
 const rolledUp = (...nodes: object[]) => ({
   commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes } } } }] },
 });
 
+// Returns the page of an issue or PR, as GitHub sends it in a poll and skel's copy keeps it.
+async function pageFor(node: object, kind: "issue" | "pr"): Promise<Page> {
+  gh(kind === "issue" ? pollAnswer([node]) : pollAnswer([], [node]));
+  const [item] = (await readRepository("simon/app", [], null)).items;
+  if (!item) throw new Error("the poll brought no item");
+  return pageOf(item);
+}
+
 test("an issue's page has its title, state, author, labels and description", async () => {
-  gh(issue);
-  expect(await readPage(issueUrl)).toEqual({
+  expect(await pageFor(issue, "issue")).toEqual({
     title: "Add CSV export",
     facts: [
       ["State", "open"],
@@ -89,12 +82,11 @@ test("an issue's page has its title, state, author, labels and description", asy
     ],
     body: "Export threads.\n\nKeep it small.",
   });
-  expect(readFileSync(join(home, "args"), "utf8")).toContain("repos/simon/app/issues/31");
 });
 
 test("an issue with no description, labels or author still has a page", async () => {
-  gh({ ...issue, body: null, labels: [], user: null });
-  expect(await readPage(issueUrl)).toEqual({
+  const bare = { ...issue, body: "", labels: { nodes: [] }, author: null };
+  expect(await pageFor(bare, "issue")).toEqual({
     title: "Add CSV export",
     facts: [
       ["State", "open"],
@@ -106,13 +98,11 @@ test("an issue with no description, labels or author still has a page", async ()
 });
 
 test("a PR's page has its title, state, branch, checks, latest review and description", async () => {
-  gh(
-    pull({
-      ...rolledUp(check("test", "SUCCESS")),
-      reviews: { nodes: [review("CHANGES_REQUESTED", "No."), review("APPROVED", "Fine.", "ana")] },
-    }),
-  );
-  expect(await readPage(pullUrl)).toEqual({
+  const pr = pull({
+    ...rolledUp(check("test", "SUCCESS")),
+    reviews: { nodes: [review("CHANGES_REQUESTED", "No."), review("APPROVED", "Fine.", "ana")] },
+  });
+  expect(await pageFor(pr, "pr")).toEqual({
     title: "Fix the login redirect",
     facts: [
       ["State", "open"],
@@ -122,41 +112,31 @@ test("a PR's page has its title, state, branch, checks, latest review and descri
     ],
     body: "Sign-in landed on a 404.",
   });
-  const { variables } = JSON.parse(readFileSync(join(home, "stdin"), "utf8"));
-  expect(variables).toEqual({ owner: "simon", name: "app", number: 34 });
 });
 
 test("a PR with no checks or reviews says so", async () => {
-  gh(pull());
-  const { facts } = await readPage(pullUrl);
+  const { facts } = await pageFor(pull(), "pr");
   expect(facts).toContainEqual(["Checks", "none"]);
   expect(facts).toContainEqual(["Review", "none"]);
 });
 
 test("checks read as the strip reads them, leaving out skel's own review check", async () => {
   const running = [check("test", "SUCCESS"), check("lint", null)];
-  gh(pull(rolledUp(...running, check("skel/review", "FAILURE"))));
-  expect((await readPage(pullUrl)).facts).toContainEqual(["Checks", "running"]);
-  gh(pull(rolledUp(check("test", "FAILURE"), check("lint", null))));
-  expect((await readPage(pullUrl)).facts).toContainEqual(["Checks", "failing"]);
+  const pr = pull(rolledUp(...running, check("skel/review", "FAILURE")));
+  expect((await pageFor(pr, "pr")).facts).toContainEqual(["Checks", "running"]);
+  const failing = pull(rolledUp(check("test", "FAILURE"), check("lint", null)));
+  expect((await pageFor(failing, "pr")).facts).toContainEqual(["Checks", "failing"]);
 });
 
 test("a review skel posted says its verdict, as GitHub only has it as a comment", async () => {
-  gh(pull({ reviews: { nodes: [review("COMMENTED", "**Approved.**\n\nLooks right.")] } }));
-  expect((await readPage(pullUrl)).facts).toContainEqual(["Review", "Approved. · codex-bot"]);
+  const pr = pull({ reviews: { nodes: [review("COMMENTED", "**Approved.**\n\nLooks right.")] } });
+  expect((await pageFor(pr, "pr")).facts).toContainEqual(["Review", "Approved. · codex-bot"]);
 });
 
 test("a review still being written isn't the latest one", async () => {
   const nodes = [review("APPROVED", ""), review("PENDING", "half a thought", "ana")];
-  gh(pull({ reviews: { nodes } }));
-  expect((await readPage(pullUrl)).facts).toContainEqual(["Review", "approved · codex-bot"]);
-});
-
-test("an answer from gh in an unexpected shape is refused", async () => {
-  gh({ title: 7 });
-  await expect(readPage(issueUrl)).rejects.toThrow();
-  gh({ data: { repository: { pullRequest: null } } });
-  await expect(readPage(pullUrl)).rejects.toThrow();
+  const pr = pull({ reviews: { nodes } });
+  expect((await pageFor(pr, "pr")).facts).toContainEqual(["Review", "approved · codex-bot"]);
 });
 
 const page: Page = {

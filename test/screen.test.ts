@@ -19,7 +19,7 @@ import type { Page } from "../src/flow/page.ts";
 import { leadPlaces } from "../src/paths.ts";
 import { drawPage } from "../src/screen/page.ts";
 import { sidebarWidth } from "../src/screen/screen.ts";
-import { source, until as wait } from "./harness.ts";
+import { itemSql, source, until as wait } from "./harness.ts";
 
 const dbFile = source("db.ts");
 const screenFile = source("screen/screen.ts");
@@ -29,10 +29,10 @@ const leaving = "Your agents keep running. Run skel to come back.";
 // Longer than the waits below, so a test that fails says what it waited for.
 setDefaultTimeout(20_000);
 let home = "";
+let standIn: Server | null = null;
 let agents = "";
 let screen = "";
 let terminal = "";
-let standIn: Server | null = null;
 
 // The sockets are the test's own too, as a sidebar tells whatever daemon it finds that it opened.
 const env = () => ({ ...process.env, HOME: home, XDG_RUNTIME_DIR: join(home, "run") });
@@ -160,7 +160,6 @@ INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you) VALUE
 afterEach(() => {
   standIn?.close();
   standIn = null;
-  pages.clear();
   asked.length = 0;
   for (const socket of [terminal, screen, agents]) {
     tmux(socket, "kill-server");
@@ -594,12 +593,28 @@ test("clicking the strip, or turning the wheel over it, does nothing", async () 
   expect(seen()).toContain("I am lead");
 });
 
-// Puts two open issues and a PR in the database, as a poll would.
+// Puts two open issues and a PR in skel's copy, as a poll would, with what their pages say.
 const openOnGitHub = () =>
-  sql(`INSERT INTO open_items (owner, repo, kind, number, title, created) VALUES
-  ('simon', 'app', 'issue', 31, 'Add CSV export', '2026-11-05T10:00:00Z'),
-  ('simon', 'app', 'issue', 12, 'Fix login', '2026-11-04T10:00:00Z'),
-  ('simon', 'app', 'pr', 34, 'Bump deps', '2026-11-05T10:00:00Z');
+  sql(`${itemSql("app", "task", 31, "Add CSV export", "2026-11-05T10:00:00Z", {
+    author: { login: "ana", bot: false, you: false },
+    labels: ["skel"],
+    body: Array.from({ length: 80 }, (_, i) => `line ${i + 1} of the description`).join("\n"),
+  })}
+${itemSql("app", "task", 12, "Fix login", "2026-11-04T10:00:00Z", { author: { login: "ana", bot: false, you: false } })}
+${itemSql("app", "pr", 34, "Bump deps", "2026-11-05T10:00:00Z", {
+  body: "All of them.",
+  branch: "skel/12",
+  checks: [{ name: "test", id: "1", state: "passed" }],
+  reviews: [
+    {
+      id: "1",
+      text: "**Approved.**\n\nFine.",
+      author: { login: "codex", bot: false, you: false },
+      verdict: "commented",
+      lines: [],
+    },
+  ],
+})}
 UPDATE repositories SET open_issues = 2, open_prs = 1;`);
 
 test("open issues and PRs reach your terminal as links, through both tmux servers", async () => {
@@ -620,31 +635,24 @@ test("the screen's server turns terminal links on, whatever your terminal says i
   expect(tmux(screen, "show", "-s", "terminal-features").out).toContain("hyperlinks");
 });
 
-// Stands in for the daemon on the test's own socket: it answers a page from `pages`, or with
-// an error, logs each page and each repository asked for, and answers all else with nothing to
-// say.
-const pages = new Map<string, object>();
+// Stands in for the daemon on the test's own socket: it logs each repository asked to open, and
+// answers with nothing to say.
 const asked: string[] = [];
 function daemon(): void {
   const answer = (connection: Socket) =>
     connection.on("data", (data) => {
-      const { command, url, from } = z
-        .object({ command: z.string(), url: z.string().default(""), from: z.string().default("") })
+      const { command, from } = z
+        .object({ command: z.string(), from: z.string().default("") })
         .parse(JSON.parse(data.toString()));
-      if (command === "page") asked.push(url);
       if (command === "lead") asked.push(`open ${from}`);
-      const page = pages.get(url);
-      connection.end(
-        `${JSON.stringify(command !== "page" ? {} : page ? { page } : { error: "GitHub is down" })}\n`,
-      );
+      connection.end("{}\n");
     });
   mkdirSync(join(home, "run"), { recursive: true, mode: 0o700 });
   standIn = createServer(answer).listen(join(home, "run", "skel.sock"));
 }
 
 const issueUrl = "https://github.com/simon/app/issues/31";
-const nearestUrl = "https://github.com/simon/app/issues/12";
-const pullUrl = "https://github.com/simon/app/pull/34";
+// What the issue's page says, as drawn from skel's copy.
 const issuePage: Page = {
   title: "Add CSV export",
   facts: [
@@ -654,23 +662,9 @@ const issuePage: Page = {
   ],
   body: Array.from({ length: 80 }, (_, i) => `line ${i + 1} of the description`).join("\n"),
 };
-const pullPage = {
-  title: "Bump deps",
-  facts: [
-    ["State", "open"],
-    ["Branch", "skel/12 → main"],
-    ["Checks", "passing"],
-    ["Review", "Approved. · codex"],
-  ],
-  body: "All of them.",
-};
 
 // Opens the screen on the lead with the lists filled, ready to land on their rows.
 async function openWithPages(width = "120"): Promise<void> {
-  pages.set(issueUrl, issuePage);
-  pages.set(nearestUrl, { ...issuePage, title: "Fix login" });
-  pages.set(pullUrl, pullPage);
-  daemon();
   openOnGitHub();
   open("lead", "one", "xterm-256color", width);
   await ready("lead");
@@ -789,8 +783,6 @@ test("keys pressed together when leaving a page all count, however slowly the cl
 });
 
 test("a pane too narrow for a page's lines cuts them, so every line keeps its own row", async () => {
-  pages.set(issueUrl, issuePage);
-  daemon();
   openOnGitHub();
   open("lead", "one", "xterm-256color", "42");
   await until(() => seen().includes("app-31"), "the issue");
@@ -872,7 +864,7 @@ test("Ctrl-C pressed the moment a page opens can't take the right side away", as
   await until(() => read("lead.typed").includes("still here"), "what you typed");
 });
 
-test("a page is asked for once on landing, and a page left open writes nothing", async () => {
+test("a page left open writes nothing", async () => {
   sql("UPDATE threads SET status = 'waiting' WHERE status = 'working'");
   await openWithPages();
   clickRow("app-31");
@@ -882,35 +874,30 @@ test("a page is asked for once on landing, and a page left open writes nothing",
   tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
   await Bun.sleep(3000);
   expect(existsSync(written) ? readFileSync(written, "utf8") : "").toBe("");
-  expect(asked).toEqual([issueUrl]);
 });
 
-test("clicking the row of the page you are on doesn't read it again", async () => {
+// Returns the process running the right pane, which is the page while one shows.
+const rightPane = () =>
+  tmux(screen, "list-panes", "-a", "-F", "#{pane_pid}").out.trim().split("\n").at(-1);
+
+test("clicking the row of the page you are on doesn't open it again", async () => {
   await openWithPages();
   clickRow("app-31");
   await onPage("line 1 of the description");
+  const page = rightPane();
   clickRow("app-31");
   await Bun.sleep(300);
-  expect(asked).toEqual([issueUrl]);
+  expect(rightPane()).toBe(page);
 });
 
-test("a page GitHub won't give says why, and you can still move on", async () => {
+test("a page skel's copy no longer has says so, and you can still move on", async () => {
   await openWithPages();
-  pages.delete(issueUrl);
+  sql("DELETE FROM items WHERE id = '31'");
   clickRow("app-31");
-  await onPage("GitHub is down");
+  await onPage("skel has no open issue or PR at this link now");
   expect(seen()).toContain(`GitHub  ${issueUrl}`);
   press("M-S-Down");
   await until(() => seen().includes("I am lead"), "the lead");
-});
-
-test("a page with no daemon to ask says so", async () => {
-  openOnGitHub();
-  open("lead");
-  await ready("lead");
-  await until(() => seen().includes("Add CSV export"), "the issue");
-  clickRow("app-31");
-  await onPage("the daemon didn't answer");
 });
 
 test("a page follows a resize, and the sidebar stays as wide", async () => {
@@ -924,8 +911,6 @@ test("a page follows a resize, and the sidebar stays as wide", async () => {
 });
 
 test("the wheel over an agent still scrolls it after a page came and went", async () => {
-  daemon();
-  pages.set(issueUrl, issuePage);
   openOnGitHub();
   agent("app-5", "seq 1 200");
   sql(`INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you) VALUES
