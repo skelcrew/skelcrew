@@ -27,7 +27,7 @@ let home = "";
 let socket = "";
 const running: Subprocess[] = [];
 
-const data = () => join(home, ".local", "share", "skel");
+const data = () => join(home, ".local", "share", "skelcrew");
 const builder = () => join(data(), "claude", "app-12");
 // The config folder of a repository's lead, where the fake keeps what is typed into it.
 const lead = (repo = "app") => join(data(), "claude", leadPlaces("simon", repo).name);
@@ -97,11 +97,11 @@ beforeEach(() => {
 *) echo "the fake gh doesn't know $*" >&2; exit 1 ;;
 esac`,
   );
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
-  writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\n");
-  writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: claude\n");
+  writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
-  writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
+  writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
   writeFileSync(
     join(home, ".gitconfig"),
     `[url "file://${join(home, "github")}/"]\n\tinsteadOf = https://github.com/\n[user]\n\tname = Simon\n\temail = simon@example.com\n`,
@@ -171,7 +171,7 @@ async function hook(step: "ask" | "answer" | "talk") {
 const notes = (repo = "app") => read(join(lead(repo), "typed")).split("\x1b[201~").length - 1;
 
 function setNeedsYou(): void {
-  const db = new Database(join(data(), "skel.db"));
+  const db = new Database(join(data(), "skelcrew.db"));
   db.run("PRAGMA busy_timeout = 5000");
   db.run("UPDATE threads SET needs_you = 1");
   db.close();
@@ -180,7 +180,7 @@ function setNeedsYou(): void {
 // Asks the daemon for the lead, as plain skel does before attaching, without attaching.
 function askForLead(from?: string): Promise<string> {
   return new Promise((done) => {
-    const connection = createConnection(join(home, "run", "skel.sock"));
+    const connection = createConnection(join(home, "run", "skelcrew.sock"));
     let reply = "";
     connection.on("connect", () =>
       connection.write(`${JSON.stringify({ command: "lead", from })}\n`),
@@ -310,7 +310,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("needs you", () => {
 
 test("only a builder can say it is asking you a question", async () => {
   serve();
-  await until(() => existsSync(join(home, "run", "skel.sock")));
+  await until(() => existsSync(join(home, "run", "skelcrew.sock")));
   await Bun.sleep(100);
   for (const args of [
     ["question", "asked"],

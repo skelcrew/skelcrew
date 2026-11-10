@@ -30,7 +30,7 @@ beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-sandbox-test-")));
   // Alone in a folder of its own, as the sandbox mounts the folder.
   mkdirSync(join(home, "socket"));
-  socketPath = join(home, "socket", "skel.sock");
+  socketPath = join(home, "socket", "skelcrew.sock");
   socket = Bun.listen({ unix: socketPath, socket: { data() {} } });
 });
 afterEach(() => {
@@ -57,7 +57,7 @@ function git(cwd: string, ...args: string[]) {
 
 // skel's clone of a repository, with one file in it.
 function repository() {
-  const repo = join(home, ".local", "share", "skel", "repos", "simon", "app");
+  const repo = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
   mkdirSync(repo, { recursive: true });
   writeFileSync(join(repo, "README"), "app\n");
   git(repo, "init", "-q");
@@ -67,8 +67,8 @@ function repository() {
 // What a lead's start is given: where app's lead works, and app's clone, which it sees. The
 // clone goes along only once a test made it, as bwrap can't mount a folder that is missing.
 function lead(): { folder: string; origin?: string } {
-  const folder = join(home, ".local", "share", "skel", "leads", "simon", "app");
-  const repo = join(home, ".local", "share", "skel", "repos", "simon", "app");
+  const folder = join(home, ".local", "share", "skelcrew", "leads", "simon", "app");
+  const repo = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
   return existsSync(repo) ? { folder, origin: repo } : { folder };
 }
 
@@ -81,8 +81,8 @@ function fakeClaude(script: string[]) {
 }
 
 function saveToken() {
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
-  writeFileSync(join(home, ".config", "skel", "claude-token"), "tok-123\n", { mode: 0o600 });
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "tok-123\n", { mode: 0o600 });
 }
 
 const outside = () => ({
@@ -251,11 +251,11 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
     mkdirSync(join(home, ".config", "gh"), { recursive: true });
     writeFileSync(join(home, ".config", "gh", "hosts.yml"), "oauth_token: secret\n");
     const done = await asLead(
-      `test -e ${home}/.config/gh/hosts.yml || echo hidden; ls /run; ls /run/systemd 2>/dev/null; ls /run/skel; test -S "$SKELCREW_SOCKET" && echo socket; echo $SKELCREW_SANDBOX`,
+      `test -e ${home}/.config/gh/hosts.yml || echo hidden; ls /run; ls /run/systemd 2>/dev/null; ls /run/skelcrew; test -S "$SKELCREW_SOCKET" && echo socket; echo $SKELCREW_SANDBOX`,
     );
     // Only the DNS resolver comes back into /run, on machines that have one there.
     const resolver = existsSync("/run/systemd/resolve") ? "systemd\nresolve\n" : "";
-    expect(done.out).toBe(`hidden\nskel\n${resolver}skel.sock\nsocket\n1\n`);
+    expect(done.out).toBe(`hidden\nskelcrew\n${resolver}skelcrew.sock\nsocket\n1\n`);
   });
 
   test("the agent runs skel from this checkout", async () => {
@@ -284,14 +284,14 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
       snapshot(join(home, ".claude")) + readFileSync(join(home, ".claude.json"), "utf8");
     const before = yours();
     saveToken();
-    mkdirSync(join(home, ".local", "share", "skel", "claude", "other"), { recursive: true });
+    mkdirSync(join(home, ".local", "share", "skelcrew", "claude", "other"), { recursive: true });
     fakeClaude([
       'printf "%s\\n" "$@"',
       "env | grep -E '^(CLAUDE_|DISABLE_AUTOUPDATER|SKEL|GH_TOKEN|TERM)' | sort",
       "test -e ~/.claude || echo no-claude",
       "test -e ~/.claude.json || echo no-claude-json",
-      "test -e ~/.config/skel/claude-token || echo no-token-file",
-      "test -e ~/.local/share/skel/claude/other || echo no-other-session",
+      "test -e ~/.config/skelcrew/claude-token || echo no-token-file",
+      "test -e ~/.local/share/skelcrew/claude/other || echo no-other-session",
       "echo m > $CLAUDE_CONFIG_DIR/note && echo kept",
       "mkdir -p ~/.claude && echo x > ~/.claude/settings.json",
     ]);
@@ -304,7 +304,7 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
       resume: "abc-123",
       env: outside(),
     });
-    const config = join(home, ".local", "share", "skel", "claude", "app-12");
+    const config = join(home, ".local", "share", "skelcrew", "claude", "app-12");
     const done = await run(argv, env);
     expect(done.err).toBe("");
     expect(done.out).toBe(
@@ -323,7 +323,7 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
         `CLAUDE_CONFIG_DIR=${config}`,
         "DISABLE_AUTOUPDATER=1",
         "SKELCREW_SANDBOX=1",
-        "SKELCREW_SOCKET=/run/skel/skel.sock",
+        "SKELCREW_SOCKET=/run/skelcrew/skelcrew.sock",
         "TERM=xterm",
         "no-claude",
         "no-claude-json",
@@ -348,7 +348,7 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
   test("each session gets a config folder of its own", async () => {
     repository();
     saveToken();
-    fakeClaude(["ls -A ~/.local/share/skel/claude"]);
+    fakeClaude(["ls -A ~/.local/share/skelcrew/claude"]);
     const first = claude.start({
       ...lead(),
       name: "app-12",
@@ -382,7 +382,7 @@ describe("starting Claude Code", () => {
         env: outside(),
       });
     start();
-    const config = join(home, ".local", "share", "skel", "claude", "app-12");
+    const config = join(home, ".local", "share", "skelcrew", "claude", "app-12");
     const yours = join(home, ".claude.json");
     writeFileSync(yours, '{"projects":{}}\n');
     rmSync(join(config, ".claude.json"));
@@ -403,7 +403,7 @@ describe("starting Claude Code", () => {
   test("refuses a session settings file that isn't a plain file, without hanging", async () => {
     repository();
     saveToken();
-    const config = join(home, ".local", "share", "skel", "claude", "app-12");
+    const config = join(home, ".local", "share", "skelcrew", "claude", "app-12");
     mkdirSync(config, { recursive: true });
     Bun.spawnSync(["mkfifo", join(config, ".claude.json")]);
     const script = `import { claude } from ${JSON.stringify(source("agents/claude.ts"))};

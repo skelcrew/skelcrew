@@ -27,7 +27,7 @@ let home = "";
 let socket = "";
 const running: Subprocess[] = [];
 
-const data = () => join(home, ".local", "share", "skel");
+const data = () => join(home, ".local", "share", "skelcrew");
 const builder = () => join(data(), "claude", "app-12");
 const lead = () => join(data(), "claude", leadPlaces("simon", "app").name);
 
@@ -74,11 +74,11 @@ beforeEach(() => {
 *) echo "the fake gh doesn't know $*" >&2; exit 1 ;;
 esac`,
   );
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
-  writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\n");
-  writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: claude\n");
+  writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
-  writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
+  writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
   writeFileSync(
     join(home, ".gitconfig"),
     `[url "file://${join(home, "github")}/"]\n\tinsteadOf = https://github.com/\n[user]\n\tname = Simon\n\temail = simon@example.com\n`,
@@ -106,8 +106,9 @@ const serve = () => startDaemon(socket, env(), running);
 const short = (text: string) =>
   new Bun.CryptoHasher("sha256").update(text).digest("hex").slice(0, 16);
 const leadSocket = (repo = "app") =>
-  join(home, "run", "skel", "leads", short(`simon/${repo}`), "skel.sock");
-const builderSocket = () => join(home, "run", "skel", "threads", short("app-12"), "skel.sock");
+  join(home, "run", "skelcrew", "leads", short(`simon/${repo}`), "skelcrew.sock");
+const builderSocket = () =>
+  join(home, "run", "skelcrew", "threads", short("app-12"), "skelcrew.sock");
 
 // Runs skel as you would, or as a lead or a builder would, from its own socket.
 const skel = (args: string[], as?: "lead" | "web's lead" | "builder") => {
@@ -121,7 +122,7 @@ const skel = (args: string[], as?: "lead" | "web's lead" | "builder") => {
 // Has the daemon open a repository and start its lead, as plain skel in a checkout of it does.
 function open(repo: string): Promise<string> {
   return new Promise((done) => {
-    const connection = createConnection(join(home, "run", "skel.sock"));
+    const connection = createConnection(join(home, "run", "skelcrew.sock"));
     let reply = "";
     connection.on("connect", () =>
       connection.write(`${JSON.stringify({ command: "lead", from: `simon/${repo}` })}\n`),
@@ -164,7 +165,7 @@ async function startApp12() {
 
 // Marks the builder as asking you a question, as its hook would.
 function setAsking(): void {
-  const db = new Database(join(data(), "skel.db"));
+  const db = new Database(join(data(), "skelcrew.db"));
   db.run("PRAGMA busy_timeout = 5000");
   db.run("UPDATE threads SET asking = 1");
   db.close();

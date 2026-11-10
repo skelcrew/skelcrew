@@ -648,7 +648,7 @@ function daemon(): void {
       connection.end("{}\n");
     });
   mkdirSync(join(home, "run"), { recursive: true, mode: 0o700 });
-  standIn = createServer(answer).listen(join(home, "run", "skel.sock"));
+  standIn = createServer(answer).listen(join(home, "run", "skelcrew.sock"));
 }
 
 const issueUrl = "https://github.com/simon/app/issues/31";

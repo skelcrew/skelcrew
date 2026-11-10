@@ -29,7 +29,7 @@ let home = "";
 let socket = "";
 
 beforeEach(() => {
-  home = realpathSync(mkdtempSync(join(tmpdir(), "skel-tmux-test-")));
+  home = realpathSync(mkdtempSync(join(tmpdir(), "skelcrew-tmux-test-")));
   socket = `skel-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
 });
 afterEach(() => {

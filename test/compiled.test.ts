@@ -95,10 +95,10 @@ test("runs a plugin's bun commands on the Bun inside it", async () => {
 
 test("points the daemon's service at itself", async () => {
   // As the first run leaves a machine, with a service skel then brings up to date.
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
-  writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\n");
-  writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
-  const unit = join(home, ".config", "systemd", "user", "skel.service");
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: claude\n");
+  writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-good\n");
+  const unit = join(home, ".config", "systemd", "user", "skelcrew.service");
   mkdirSync(join(unit, ".."), { recursive: true });
   writeFileSync(unit, "");
   fake("systemctl", 'test "$2" = daemon-reload');
@@ -271,7 +271,7 @@ exit 0`,
       expect(done.code).toBe(0);
       expect(readFileSync(join(home, "copied"), "utf8")).toBe(linux);
       expect(readFileSync(join(home, "calls"), "utf8")).toContain(
-        "ssh simon@workbox systemctl --user restart skel\n",
+        "ssh simon@workbox systemctl --user restart skelcrew\n",
       );
       expect(done.out).toContain("updated simon@workbox to skel 0.4.2 and restarted its daemon");
     } finally {

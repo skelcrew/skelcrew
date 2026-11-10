@@ -20,7 +20,7 @@ let home = "";
 let clone = "";
 let commit = "";
 let bin = "";
-const codexHome = () => join(home, ".local", "share", "skel", "codex");
+const codexHome = () => join(home, ".local", "share", "skelcrew", "codex");
 const sessions = () => join(codexHome(), "sessions");
 const issue = { title: "Fix the flaky test", body: "It fails one run in ten." };
 
@@ -40,7 +40,7 @@ beforeEach(() => {
   home = realpathSync(mkdtempSync(join(sprite ? homedir() : tmpdir(), "skel-reviewer-test-")));
   bin = join(home, "bin");
   mkdirSync(bin);
-  clone = join(home, ".local", "share", "skel", "threads", "app-12");
+  clone = join(home, ".local", "share", "skelcrew", "threads", "app-12");
   mkdirSync(clone, { recursive: true });
   writeFileSync(join(clone, "README"), "app\n");
   git("init", "-q");
@@ -282,8 +282,8 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("reviewer", () => {
   }
 
   test("reviews on Claude Code with the model it is given", async () => {
-    mkdirSync(join(home, ".config", "skel"), { recursive: true });
-    writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-tok\n");
+    mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+    writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-tok\n");
     fakeClaude([
       'cat > /dev/null; echo "{\\"type\\":\\"result\\",\\"structured_output\\":{\\"verdict\\":\\"approve\\",\\"body\\":\\"$seen\\"}}"',
     ]);
@@ -301,8 +301,8 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("reviewer", () => {
   });
 
   test("reviews on Claude Code when your config picks it, though Codex is installed", async () => {
-    mkdirSync(join(home, ".config", "skel"), { recursive: true });
-    writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-tok\n");
+    mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+    writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-tok\n");
     fakeCodex('{"verdict":"changes","body":"From Codex."}');
     fakeClaude([
       'cat > /dev/null; echo \'{"type":"result","structured_output":{"verdict":"approve","body":"From Claude Code."}}\'',
@@ -312,8 +312,8 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("reviewer", () => {
   });
 
   test("fails a Claude Code review that answers outside the shape", async () => {
-    mkdirSync(join(home, ".config", "skel"), { recursive: true });
-    writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-tok\n");
+    mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+    writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-tok\n");
     fakeClaude([
       'echo \'{"type":"result","is_error":true,"result":"structured output retries exhausted"}\'',
     ]);
@@ -329,8 +329,8 @@ describe("starting a review", () => {
   // settings in your config.yaml. Read in a process of its own, as homedir() keeps the HOME
   // this one started with.
   function roleFor(role: string, settings: string): unknown {
-    mkdirSync(join(home, ".config", "skel"), { recursive: true });
-    writeFileSync(join(home, ".config", "skel", "config.yaml"), settings);
+    mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+    writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), settings);
     const code = `import { agentRoles } from ${JSON.stringify(source("config.ts"))};
 console.log(JSON.stringify(agentRoles().${role}));`;
     const run = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stdout: "pipe" });

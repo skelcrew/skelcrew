@@ -51,7 +51,7 @@ function fakeDaemon(): Promise<Server> {
     }),
   );
   return new Promise((listening) =>
-    server.listen(join(home, "run", "skel.sock"), () => listening(server)),
+    server.listen(join(home, "run", "skelcrew.sock"), () => listening(server)),
   );
 }
 
@@ -85,7 +85,7 @@ esac`,
   fake(
     "systemctl",
     `case "$*" in
-  "--user start skel"|"--user enable --now skel") : > "$HOME/started" ;;
+  "--user start skelcrew"|"--user enable --now skelcrew") : > "$HOME/started" ;;
 esac`,
   );
   fake("loginctl", "exit 0");
@@ -109,13 +109,13 @@ function calls(): string {
   // The long tmux line that opens the screen is cut to the agent it opens on.
   const said = existsSync(log) ? readFileSync(log, "utf8") : "";
   return said
-    .replace(/tmux -L skel -f \/dev\/null source-file -\n/g, "")
-    .replace(/tmux -L skel-screen .* sh skel (\S+) \S+ ;.*/g, "screen on $1");
+    .replace(/tmux -L skelcrew -f \/dev\/null source-file -\n/g, "")
+    .replace(/tmux -L skelcrew-screen .* sh skelcrew (\S+) \S+ ;.*/g, "screen on $1");
 }
 
-const config = () => join(home, ".config", "skel", "config.yaml");
-const token = () => join(home, ".config", "skel", "claude-token");
-const unit = () => join(home, ".config", "systemd", "user", "skel.service");
+const config = () => join(home, ".config", "skelcrew", "config.yaml");
+const token = () => join(home, ".config", "skelcrew", "claude-token");
+const unit = () => join(home, ".config", "systemd", "user", "skelcrew.service");
 
 async function skel(
   typed = "",
@@ -200,7 +200,7 @@ test("installs the daemon as a systemd user service with lingering, once", async
   expect(written).toContain("KillMode=process");
   expect(written).toContain(`Environment="PATH=${bin}"`);
   expect(calls()).toContain(
-    "systemctl --user daemon-reload\nsystemctl --user enable --now skel\nloginctl enable-linger\n",
+    "systemctl --user daemon-reload\nsystemctl --user enable --now skelcrew\nloginctl enable-linger\n",
   );
   expect(first.out).toContain("log out");
 
@@ -216,9 +216,9 @@ function onSprite(): void {
   fake(
     "sprite-env",
     `case "$*" in
-  "services get skel") test -f "$HOME/service" ;;
-  "services create skel "*) : > "$HOME/service"; : > "$HOME/started" ;;
-  "services start skel") : > "$HOME/started" ;;
+  "services get skelcrew") test -f "$HOME/service" ;;
+  "services create skelcrew "*) : > "$HOME/service"; : > "$HOME/started" ;;
+  "services start skelcrew") : > "$HOME/started" ;;
 esac`,
   );
   fake("setpriv", 'while case "$1" in --*) true ;; *) false ;; esac; do shift; done; exec "$@"');
@@ -233,7 +233,7 @@ test("on a Sprite, installs the daemon as a Sprite service, not with systemd", a
     `setpriv --inh-caps=-all --ambient-caps=-all --bounding-set=-all ${bin}/bwrap --ro-bind / / true\n`,
   );
   expect(calls()).toContain(
-    `sprite-env services create skel --cmd ${join(checkout, "bin", "skel")} --args serve --no-stream\n`,
+    `sprite-env services create skelcrew --cmd ${join(checkout, "bin", "skel")} --args serve --no-stream\n`,
   );
   expect(calls()).not.toContain("systemctl");
   expect(calls()).not.toContain("loginctl");
@@ -246,18 +246,18 @@ test("on a Sprite, installs the daemon as a Sprite service, not with systemd", a
   expect(again.code).toBe(0);
   expect(again.out).not.toContain("setup is done");
   expect(calls()).not.toContain("services create");
-  expect(calls()).toContain("sprite-env services start skel\ndaemon lead\n");
+  expect(calls()).toContain("sprite-env services start skelcrew\ndaemon lead\n");
 });
 
 test("installs the service on a machine set up before skel had one", async () => {
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   writeFileSync(config(), "harness: claude\n");
   writeFileSync(token(), "sk-ant-oat01-good\n");
   writeFileSync(join(home, "gh-login"), "");
   const run = await skel();
   expect(run.code).toBe(0);
   expect(existsSync(unit())).toBe(true);
-  expect(calls()).toContain("systemctl --user enable --now skel");
+  expect(calls()).toContain("systemctl --user enable --now skelcrew");
   expect(calls()).not.toContain("claude setup-token");
 });
 
@@ -275,7 +275,7 @@ test("starts the daemon through systemd when it doesn't answer, then attaches to
   writeFileSync(join(home, "calls"), "");
   const run = await skel();
   expect(run.code).toBe(0);
-  expect(calls()).toBe("systemctl --user start skel\ndaemon lead\nscreen on lead\n");
+  expect(calls()).toBe("systemctl --user start skelcrew\ndaemon lead\nscreen on lead\n");
 });
 
 test("shows why when the daemon can't start the lead", async () => {
@@ -285,7 +285,9 @@ test("shows why when the daemon can't start the lead", async () => {
   daemon = createServer((connection) =>
     connection.on("data", () => connection.end('{"error":"the lead exited: no login"}\n')),
   );
-  await new Promise<void>((listening) => daemon?.listen(join(home, "run", "skel.sock"), listening));
+  await new Promise<void>((listening) =>
+    daemon?.listen(join(home, "run", "skelcrew.sock"), listening),
+  );
   const run = await skel();
   expect(run.code).toBe(1);
   expect(run.err).toContain("no login");
@@ -347,7 +349,7 @@ esac`,
   fake("brew", "exit 0");
 }
 
-const plist = () => join(home, "Library", "LaunchAgents", "run.skel.daemon.plist");
+const plist = () => join(home, "Library", "LaunchAgents", "dev.skelcrew.daemon.plist");
 const uid = userInfo().uid;
 
 test("on a Mac, installs the daemon as a launchd agent, with no systemd", async () => {
@@ -357,12 +359,12 @@ test("on a Mac, installs the daemon as a launchd agent, with no systemd", async 
   expect(first.code).toBe(0);
   expect(calls()).toContain(`launchctl bootstrap gui/${uid} ${plist()}\n`);
   const text = readFileSync(plist(), "utf8");
-  expect(text).toContain("<string>run.skel.daemon</string>");
+  expect(text).toContain("<string>dev.skelcrew.daemon</string>");
   expect(text).toContain(
     `<string>${join(checkout, "bin", "skel")}</string>\n    <string>serve</string>`,
   );
   expect(text).toContain("<key>AbandonProcessGroup</key>\n  <true/>");
-  expect(text).toContain(`<string>${join(home, "Library", "Logs", "skel.log")}</string>`);
+  expect(text).toContain(`<string>${join(home, "Library", "Logs", "skelcrew.log")}</string>`);
   expect(calls()).toContain("daemon lead");
 });
 
@@ -399,7 +401,7 @@ test("on a Mac, starts the daemon through launchd when it doesn't answer", async
   writeFileSync(join(home, "calls"), "");
   const run = await skelOnMac();
   expect(run.err).toBe("");
-  expect(calls()).toContain(`launchctl kickstart gui/${uid}/run.skel.daemon\n`);
+  expect(calls()).toContain(`launchctl kickstart gui/${uid}/dev.skelcrew.daemon\n`);
 });
 
 test("on a Mac, reloads the agent when the PATH it needs moved", async () => {
@@ -408,7 +410,7 @@ test("on a Mac, reloads the agent when the PATH it needs moved", async () => {
   writeFileSync(join(home, "calls"), "");
   await skelOnMac("", `${bin}:/usr/bin`);
   expect(readFileSync(plist(), "utf8")).toContain(`<string>${bin}:/usr/bin</string>`);
-  expect(calls()).toContain(`launchctl bootout gui/${uid}/run.skel.daemon\n`);
+  expect(calls()).toContain(`launchctl bootout gui/${uid}/dev.skelcrew.daemon\n`);
   expect(calls()).toContain(`launchctl bootstrap gui/${uid} ${plist()}\n`);
 });
 
@@ -510,15 +512,15 @@ test("gives the AppArmor advice when bwrap can't run", async () => {
   expect(run.code).toBe(1);
   expect(run.err).toContain("Permission denied");
   expect(run.err).toContain("AppArmor");
-  expect(run.err).toContain(`profile skel-bwrap ${real} `);
-  expect(run.err).toContain("include if exists <local/skel-bwrap>");
-  expect(run.err).toContain("/etc/apparmor.d/skel-bwrap");
+  expect(run.err).toContain(`profile skelcrew-bwrap ${real} `);
+  expect(run.err).toContain("include if exists <local/skelcrew-bwrap>");
+  expect(run.err).toContain("/etc/apparmor.d/skelcrew-bwrap");
   expect(run.err).not.toContain("/etc/apparmor.d/bwrap ");
   expect(calls()).not.toContain("gh");
 });
 
 test("asks for a token when the harness is saved but no token is", async () => {
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   writeFileSync(config(), "harness: claude\n");
   const run = await skel("sk-ant-oat01-good\n");
   expect(run.code).toBe(0);
@@ -553,7 +555,7 @@ test("saves no token after Ctrl-D at the token question", async () => {
 });
 
 test("keeps the other settings in config.yaml", async () => {
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   writeFileSync(config(), "# mine\ncolor: blue\n");
   const run = await skel("1\nsk-ant-oat01-good\n");
   expect(run.code).toBe(0);
@@ -565,7 +567,7 @@ test("keeps the other settings in config.yaml", async () => {
 
 for (const broken of ["a: b: c\n", "harness: claude\n  - x: [\n"]) {
   test(`refuses a config.yaml that isn't YAML: ${JSON.stringify(broken)}`, async () => {
-    mkdirSync(join(home, ".config", "skel"), { recursive: true });
+    mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
     writeFileSync(config(), broken);
     writeFileSync(join(home, "gh-login"), "");
     const run = await skel("1\nsk-ant-oat01-good\n");
@@ -589,7 +591,7 @@ for (const [what, typed] of [
 }
 
 test("refuses a config.yaml it can't read", async () => {
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   writeFileSync(config(), "harness: [1, 2]\n");
   writeFileSync(join(home, "gh-login"), "");
   const run = await skel("1\nsk-ant-oat01-good\n");
@@ -605,7 +607,7 @@ test("Enter at the harness question picks Claude Code", async () => {
   expect(readFileSync(config(), "utf8")).toContain("harness: claude");
 });
 
-const codexHome = () => join(home, ".local", "share", "skel", "codex");
+const codexHome = () => join(home, ".local", "share", "skelcrew", "codex");
 
 // A login counts once Codex saved one in skel's own folder, never yours in ~/.codex.
 function fakeCodex(login = ': > "$CODEX_HOME/auth.json"'): void {

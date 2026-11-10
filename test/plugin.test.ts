@@ -20,8 +20,8 @@ import { git, source } from "./harness.ts";
 
 let home = "";
 
-const plugins = () => join(home, ".local", "share", "skel", "plugins");
-const settings = (name: string) => join(home, ".config", "skel", "plugins", name);
+const plugins = () => join(home, ".local", "share", "skelcrew", "plugins");
+const settings = (name: string) => join(home, ".config", "skelcrew", "plugins", name);
 const onGitHub = (full: string) => join(home, "github", full);
 
 // The fake plugin's files. Its build runs on Bun and its setup in your terminal, and each
@@ -286,10 +286,10 @@ test("rm removes a plugin's folders and settings, and refuses for a repository's
   publish("skelcrew/skel-plugin-fake", "0.1.0");
   await skel(["plugin", "install", "skelcrew/skel-plugin-fake"], "y\n");
   // A repository skel has, whose skelcrew.yaml names fake as its tracker.
-  const db = new Database(join(home, ".local", "share", "skel", "skel.db"));
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
   db.run("INSERT INTO repositories (owner, repo, name) VALUES ('simon', 'app', 'app')");
   db.close();
-  const clone = join(home, ".local", "share", "skel", "repos", "simon", "app");
+  const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
   mkdirSync(clone, { recursive: true });
   writeFileSync(join(clone, "skelcrew.yaml"), "tracker: fake\n");
   const refused = await skel(["plugin", "rm", "fake"]);

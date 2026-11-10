@@ -3,12 +3,12 @@
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 
-const label = "run.skel.daemon";
+const label = "dev.skelcrew.daemon";
 
 // Returns the agent's definition file, which also marks the daemon as installed.
 export const plistFile = () => join(homedir(), "Library", "LaunchAgents", `${label}.plist`);
 // Returns where the daemon's log goes, as a Mac has no journal.
-export const daemonLog = () => join(homedir(), "Library", "Logs", "skel.log");
+export const daemonLog = () => join(homedir(), "Library", "Logs", "skelcrew.log");
 
 // The login session's domain, not the user's: only there can the daemon reach the Keychain,
 // where gh keeps your GitHub login on a Mac.

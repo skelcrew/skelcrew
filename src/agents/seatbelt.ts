@@ -20,7 +20,7 @@ import { basename, dirname, join } from "node:path";
 // Local sockets are denied here and opened one by one below: tmux's and the ssh agent's would
 // run commands with your rights, and a Mac has no /run to hide them in.
 const base = `(version 1)
-(deny default (with message "skel"))
+(deny default (with message "skelcrew"))
 
 (allow process-exec)
 (allow process-fork)
@@ -167,11 +167,11 @@ export function seatbeltArgs(given: {
       throw new Error(`a Mac's sandbox can't mount ${mounts.join(" ")}`);
     (kind === "--bind" ? write : shown).push(from);
   }
-  const own = realpathSync(mkdtempSync(join(tmpdir(), "skel-sandbox-")));
+  const own = realpathSync(mkdtempSync(join(tmpdir(), "skelcrew-sandbox-")));
   const [ownHome, ownTemp] = [join(own, "home"), join(own, "tmp")];
   for (const folder of [ownHome, ownTemp]) mkdirSync(folder);
   // What comes back of your home folder keeps its place under the agent's own, since agents
-  // are told of it by that path: a lead finds its repository in ~/.local/share/skel/repos.
+  // are told of it by that path: a lead finds its repository in ~/.local/share/skelcrew/repos.
   // Shortest first, so a folder inside one already linked is found there.
   const under = `${home}/`;
   for (const folder of [...shown, ...write].sort((a, b) => a.length - b.length)) {

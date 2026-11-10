@@ -26,7 +26,7 @@ let home = "";
 let socket = "";
 const running: Subprocess[] = [];
 
-const data = () => join(home, ".local", "share", "skel");
+const data = () => join(home, ".local", "share", "skelcrew");
 // The CODEX_HOME of app-12's builder, and of app's lead.
 const builder = () => join(data(), "codex-sessions", "app-12");
 const lead = () => join(data(), "codex-sessions", leadPlaces("simon", "app").name);
@@ -118,9 +118,9 @@ beforeEach(() => {
 esac`,
   );
   config("lead: { harness: codex }\nbuilder: { harness: codex, model: gpt-6.1-sol }\n");
-  writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
+  writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
-  writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
+  writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
   writeFileSync(
     join(home, ".gitconfig"),
     `[url "file://${join(home, "github")}/"]\n\tinsteadOf = https://github.com/\n[user]\n\tname = Simon\n\temail = simon@example.com\n`,
@@ -140,8 +140,8 @@ afterEach(async () => {
 
 // Writes your config.yaml, with Claude Code as your harness and what `roles` adds.
 function config(roles: string): void {
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
-  writeFileSync(join(home, ".config", "skel", "config.yaml"), `harness: claude\n${roles}`);
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), `harness: claude\n${roles}`);
 }
 
 // What this test's processes run with.
@@ -196,7 +196,7 @@ const args = (folder = builder()) => read(join(folder, "args")).trimEnd().split(
 // Asks the daemon for app's lead, as plain skel does before attaching, without attaching.
 function askForLead(): Promise<string> {
   return new Promise((done) => {
-    const connection = createConnection(join(home, "run", "skel.sock"));
+    const connection = createConnection(join(home, "run", "skelcrew.sock"));
     let reply = "";
     connection.on("connect", () =>
       connection.write(`${JSON.stringify({ command: "lead", from: "simon/app" })}\n`),
@@ -219,7 +219,7 @@ async function startApp12() {
 
 // Changes app-12 in the database, as a round would.
 function setThread(sql: string): void {
-  const db = new Database(join(data(), "skel.db"));
+  const db = new Database(join(data(), "skelcrew.db"));
   db.run("PRAGMA busy_timeout = 5000");
   db.run(sql);
   db.close();

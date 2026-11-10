@@ -30,7 +30,7 @@ const sum = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest
 // A stand-in for a skel binary that says which release it is.
 const binary = (version: string) => `#!/bin/sh\necho "skelcrew ${version}"\n`;
 const installed = () => join(home, "bin", "skel");
-const marker = () => join(home, ".local", "share", "skel", "installed");
+const marker = () => join(home, ".local", "share", "skelcrew", "installed");
 
 // Puts a release on the fake server as the latest, as GitHub lays one out.
 function latest(text: string, listed = sum(text)): void {
@@ -150,7 +150,7 @@ console.log(updateNotice());`,
 
 test("the sidebar's notice says a newer release is installed until skel runs on it", async () => {
   expect(await notice("0.4.2")).toBe("\n");
-  mkdirSync(join(home, ".local", "share", "skel"), { recursive: true });
+  mkdirSync(join(home, ".local", "share", "skelcrew"), { recursive: true });
   writeFileSync(marker(), "0.4.3\n");
   expect(await notice("0.4.2")).toBe("skel 0.4.3 installed · restart to use it\n");
   expect(await notice("0.4.3")).toBe("\n");
@@ -161,10 +161,10 @@ test("the sidebar's notice says a newer release is installed until skel runs on 
 // of the test's can keep apart from your own daemon, so it must never reach the real launchctl.
 const mac = process.platform === "darwin";
 const restartCall = mac
-  ? `launchctl kickstart -k gui/${userInfo().uid}/run.skel.daemon\n`
-  : "systemctl --user restart skel\n";
+  ? `launchctl kickstart -k gui/${userInfo().uid}/dev.skelcrew.daemon\n`
+  : "systemctl --user restart skelcrew\n";
 const daemonLog = () =>
-  mac ? join(home, "Library", "Logs", "skel.log") : "journalctl --user -u skel";
+  mac ? join(home, "Library", "Logs", "skelcrew.log") : "journalctl --user -u skelcrew";
 
 // Stands in for a daemon on the test's socket, answering what it runs, its release or the
 // checkout and commit it started from: `before`, or `after` once the fake systemctl or
@@ -173,8 +173,8 @@ const daemonLog = () =>
 // for a moment after it said it was listening.
 async function daemon(before: object, after: object): Promise<void> {
   const managers: [string, string][] = [
-    ["systemctl", "--user restart skel"],
-    ["launchctl", `kickstart -k gui/${userInfo().uid}/run.skel.daemon`],
+    ["systemctl", "--user restart skelcrew"],
+    ["launchctl", `kickstart -k gui/${userInfo().uid}/dev.skelcrew.daemon`],
   ];
   for (const [name, restart] of managers)
     writeScript(
@@ -182,7 +182,7 @@ async function daemon(before: object, after: object): Promise<void> {
       name,
       `echo "${name} $*" >> "$HOME/calls"\ntest "$*" = "${restart}" && touch "$HOME/restarted"\nexit 0`,
     );
-  const socket = join(home, "run", "skel.sock");
+  const socket = join(home, "run", "skelcrew.sock");
   // The socket's file comes a moment before it takes connections.
   const ready = join(home, "listening");
   const code = `import { existsSync } from "node:fs";

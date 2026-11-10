@@ -25,7 +25,7 @@ let home = "";
 let socket = "";
 const running: Subprocess[] = [];
 
-const data = () => join(home, ".local", "share", "skel");
+const data = () => join(home, ".local", "share", "skelcrew");
 const config = (name: string) => join(data(), "claude", name);
 
 function fake(name: string, body: string): void {
@@ -85,11 +85,11 @@ beforeEach(() => {
 esac`,
   );
   issue(12, "Add export", "As JSON");
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
-  writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\n");
-  writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: claude\n");
+  writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
-  writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
+  writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
   writeFileSync(
     join(home, ".gitconfig"),
     `[url "file://${github()}/"]\n\tinsteadOf = https://github.com/\n[user]\n\tname = Simon\n\temail = simon@example.com\n`,
@@ -128,7 +128,7 @@ async function stop(run: Subprocess): Promise<void> {
 const skel = (...args: string[]) => runSkel(args, env());
 
 async function untilAnswers() {
-  await until(() => existsSync(join(home, "run", "skel.sock")));
+  await until(() => existsSync(join(home, "run", "skelcrew.sock")));
   await Bun.sleep(100);
 }
 
@@ -187,7 +187,7 @@ exec ${Bun.which("git") ?? "git"} "$@"
 }
 
 function thread(): Record<string, unknown> {
-  const db = new Database(join(data(), "skel.db"));
+  const db = new Database(join(data(), "skelcrew.db"));
   // The daemon may be writing, and a read that meets a write fails without a wait.
   db.run("PRAGMA busy_timeout = 5000");
   try {
@@ -229,7 +229,7 @@ test("more data on a connection doesn't run its request again", async () => {
   // An error with nobody listening would be thrown outside the test, failing a run without
   // saying which test it came from.
   await new Promise<void>((done, failed) => {
-    const connection = createConnection(join(home, "run", "skel.sock"));
+    const connection = createConnection(join(home, "run", "skelcrew.sock"));
     connection.on("error", failed);
     connection.on("connect", () => {
       connection.write('{"command":"task create","repo":"app","title":"t","body":"b"}\n');
@@ -332,7 +332,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a builder", () => {
   test("starts the builder in the sandbox, in a clone of its own, on a branch of its own", async () => {
     addApp({
       "skelcrew.yaml":
-        "setup:\n  - echo set up > setup-ran\n  - test -e $HOME/.config/skel/claude-token || echo token-hidden >> setup-ran\n",
+        "setup:\n  - echo set up > setup-ran\n  - test -e $HOME/.config/skelcrew/claude-token || echo token-hidden >> setup-ran\n",
     });
     fakeClaude(
       "",
@@ -381,7 +381,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a builder", () => {
     git(work, "commit", "-q", "-m", "next");
     git(work, "push", "-q", "origin", "next");
     writeFileSync(
-      join(home, ".config", "skel", "config.yaml"),
+      join(home, ".config", "skelcrew", "config.yaml"),
       "harness: claude\nbuilder: { model: sonnet }\n",
     );
     serve();
@@ -430,7 +430,7 @@ c.on("data", (d) => process.stdout.write(d));`;
       "",
     );
     // Opened before, so the daemon starts app's lead as it starts.
-    const db = new Database(join(data(), "skel.db"));
+    const db = new Database(join(data(), "skelcrew.db"));
     db.run("UPDATE repositories SET opened = 1");
     db.close();
     serve();
@@ -473,7 +473,7 @@ c.on("data", (d) => process.stdout.write(d));`;
   test("skel stop ends the builder and keeps its clone, a restart leaves it stopped, and skel start brings it back with --resume", async () => {
     addApp();
     // Opened before, so the daemon starts app's lead, whose socket the stop comes from.
-    const db = new Database(join(data(), "skel.db"));
+    const db = new Database(join(data(), "skelcrew.db"));
     db.run("UPDATE repositories SET opened = 1");
     db.close();
     const first = serve();
@@ -493,12 +493,12 @@ c.on("data", (d) => process.stdout.write(d));`;
         stdout: "pipe",
       });
     const short = new Bun.CryptoHasher("sha256").update("app-12").digest("hex").slice(0, 16);
-    const fromBuilder = stopFrom(join(home, "run", "skel", "threads", short, "skel.sock"));
+    const fromBuilder = stopFrom(join(home, "run", "skelcrew", "threads", short, "skelcrew.sock"));
     expect(fromBuilder.stderr.toString()).toContain("doesn't know that request");
     expect(hasSession("app-12")).toBe(true);
 
     const lead = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
-    const fromLead = stopFrom(join(home, "run", "skel", "leads", lead, "skel.sock"));
+    const fromLead = stopFrom(join(home, "run", "skelcrew", "leads", lead, "skelcrew.sock"));
     expect(fromLead.stderr.toString()).toBe("");
     expect(fromLead.stdout.toString()).toContain("Stopped app-12.");
     expect(hasSession("app-12")).toBe(false);
@@ -625,7 +625,7 @@ nameRepositories(db);`;
     await until(() => read(join(config("app-12"), "args")) !== "");
     const stoppedWith = async (columns: string) => {
       await skel("stop", "app-12");
-      const db = new Database(join(data(), "skel.db"));
+      const db = new Database(join(data(), "skelcrew.db"));
       db.run("PRAGMA busy_timeout = 5000");
       db.run(`UPDATE threads SET ${columns}`);
       db.close();
@@ -640,7 +640,10 @@ nameRepositories(db);`;
   // thread with the reason rather than refusing skel start.
   test("a bad max_rounds fails a new thread, and skel start still answers", async () => {
     addApp();
-    writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\nmax_rounds: 0\n");
+    writeFileSync(
+      join(home, ".config", "skelcrew", "config.yaml"),
+      "harness: claude\nmax_rounds: 0\n",
+    );
     serve();
     await untilCloned();
     expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
@@ -669,7 +672,7 @@ nameRepositories(db);`;
     await untilAnswers();
     expect((await skel("start", "simon/app-12")).err).toBe("");
     expect((await skel("start", "simon-app-12")).err).toBe("");
-    const db = new Database(join(data(), "skel.db"));
+    const db = new Database(join(data(), "skelcrew.db"));
     // The daemon may be writing, and a read that meets a write fails without a wait.
     db.run("PRAGMA busy_timeout = 5000");
     const folders = db.query("SELECT folder FROM threads ORDER BY owner DESC").values();

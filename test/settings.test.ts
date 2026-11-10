@@ -16,12 +16,12 @@ afterEach(() => {
 });
 
 // skel's clone of simon/app, where skel reads its skelcrew.yaml.
-const clone = () => join(home, ".local", "share", "skel", "repos", "simon", "app");
+const clone = () => join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
 
 // Writes your config.yaml and, unless it is null, app's skelcrew.yaml in skel's clone.
 function settings(yours: string, shared: string | null): void {
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
-  writeFileSync(join(home, ".config", "skel", "config.yaml"), yours);
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), yours);
   mkdirSync(clone(), { recursive: true });
   rmSync(join(clone(), "skelcrew.yaml"), { force: true });
   if (shared !== null) writeFileSync(join(clone(), "skelcrew.yaml"), shared);

@@ -15,9 +15,9 @@ afterEach(() => {
 });
 
 test("a thread saved before the newer columns keeps working, with no rounds and no pull request yet", () => {
-  const data = join(home, ".local", "share", "skel");
+  const data = join(home, ".local", "share", "skelcrew");
   mkdirSync(data, { recursive: true });
-  const old = new Database(join(data, "skel.db"));
+  const old = new Database(join(data, "skelcrew.db"));
   old.run(`CREATE TABLE threads (owner TEXT NOT NULL, repo TEXT NOT NULL, task INTEGER NOT NULL,
     folder TEXT NOT NULL UNIQUE, branch TEXT NOT NULL, base TEXT, status TEXT NOT NULL,
     session TEXT, PRIMARY KEY (owner, repo, task))`);
@@ -66,7 +66,7 @@ test("a write waits for another process's write instead of failing", async () =>
   const run = (code: string) =>
     Bun.spawn([process.execPath, "-e", code], { env, stdout: "pipe", stderr: "pipe" });
   await run(`import { openDb } from ${db}; openDb();`).exited;
-  const file = JSON.stringify(join(home, ".local", "share", "skel", "skel.db"));
+  const file = JSON.stringify(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
   const held = JSON.stringify(join(home, "held"));
   const holder = run(`import { Database } from "bun:sqlite";
 const db = new Database(${file});
@@ -85,9 +85,9 @@ openDb().run("INSERT INTO repositories (owner, repo, name) VALUES ('simon', 'sit
 });
 
 test("a process that opens the database while another is adding the newer columns still starts", async () => {
-  const data = join(home, ".local", "share", "skel");
+  const data = join(home, ".local", "share", "skelcrew");
   mkdirSync(data, { recursive: true });
-  const other = new Database(join(data, "skel.db"));
+  const other = new Database(join(data, "skelcrew.db"));
   // The waiting process keeps looking at the file, and a commit that meets one of those looks
   // fails at once without a wait of its own.
   other.run("PRAGMA busy_timeout = 5000");
@@ -117,9 +117,9 @@ openDb().close();`;
 // A database from the release before skel kept a copy of issues and PRs: it had only the
 // newest open ones' numbers and titles, for the sidebar.
 test("a database from before the copy gains it, and keeps its repositories and threads", () => {
-  const data = join(home, ".local", "share", "skel");
+  const data = join(home, ".local", "share", "skelcrew");
   mkdirSync(data, { recursive: true });
-  const old = new Database(join(data, "skel.db"));
+  const old = new Database(join(data, "skelcrew.db"));
   old.run(`CREATE TABLE repositories (owner TEXT NOT NULL, repo TEXT NOT NULL,
     name TEXT NOT NULL UNIQUE, labeled INTEGER NOT NULL DEFAULT 0,
     open_issues INTEGER NOT NULL DEFAULT 0, open_prs INTEGER NOT NULL DEFAULT 0,

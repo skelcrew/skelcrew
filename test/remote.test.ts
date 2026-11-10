@@ -272,8 +272,8 @@ test("offers to update an out-of-date skel, updates it, then runs the command", 
   expect(lines).toContain("ssh simon@workbox mv -f .local/bin/skel.new .local/bin/skel");
   // The daemon restarts only once the new skel is in place, so it runs the new build, and
   // the command runs after that.
-  expect(lines.at(-3)).toBe("ssh simon@workbox systemctl --user restart skel");
-  expect(lines.at(-2)).toBe("systemctl --user restart skel");
+  expect(lines.at(-3)).toBe("ssh simon@workbox systemctl --user restart skelcrew");
+  expect(lines.at(-2)).toBe("systemctl --user restart skelcrew");
   expect(lines.at(-1)).toBe(onServer(" ps", null));
   expect(readFileSync(join(home, "server", ".local", "bin", "skel"), "utf8")).toBe(
     serverSkel(laptop.commit),
@@ -301,7 +301,7 @@ test("a laptop with uncommitted changes always offers, and says what it copies",
   expect(run.out).toContain("skel · ~/code/skel has uncommitted changes, and they are copied too.");
   expect(run.out).toContain("skel · ~/code/skel is on try, not main.");
   expect(calls()).toContain(`--define SKELCREW_BUILD="${laptop.commit}-dirty"`);
-  expect(calls()).toContain("systemctl --user restart skel");
+  expect(calls()).toContain("systemctl --user restart skelcrew");
 });
 
 // Returns a skel checkout on the server, with its launcher and sources.
@@ -318,7 +318,7 @@ function serverCheckout(name = "skel"): string {
 function unit(skel: string): void {
   const units = join(home, "server", ".config", "systemd", "user");
   mkdirSync(units, { recursive: true });
-  writeFileSync(join(units, "skel.service"), `[Service]\nExecStart="${skel}" serve\n`);
+  writeFileSync(join(units, "skelcrew.service"), `[Service]\nExecStart="${skel}" serve\n`);
 }
 
 // skel run once from a checkout points the daemon's service at it, and a copy left in

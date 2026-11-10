@@ -34,24 +34,24 @@ async function socketWith(folders: string[]): Promise<string> {
 describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("without XDG_RUNTIME_DIR", () => {
   test("finds the daemon's socket where systemd puts it", async () => {
     const uid = userInfo().uid;
-    expect(await socketWith([`/run/user/${uid}`])).toBe(`/run/user/${uid}/skel.sock`);
+    expect(await socketWith([`/run/user/${uid}`])).toBe(`/run/user/${uid}/skelcrew.sock`);
   });
 
   // As on a Sprite, which has no systemd to make /run/user/<uid>, nor a /run you can write to.
   test("uses a folder in skel's own data folder where systemd made none", async () => {
-    expect(await socketWith([])).toBe("/home/someone/.local/share/skel/run/skel.sock");
+    expect(await socketWith([])).toBe("/home/someone/.local/share/skelcrew/run/skelcrew.sock");
   });
 });
 
 test("uses XDG_RUNTIME_DIR when it is set", () => {
   process.env.XDG_RUNTIME_DIR = "/somewhere";
-  expect(cliSocket()).toBe("/somewhere/skel.sock");
+  expect(cliSocket()).toBe("/somewhere/skelcrew.sock");
 });
 
 test("inside an agent's sandbox, uses the socket mounted there", () => {
   process.env.XDG_RUNTIME_DIR = "/somewhere";
-  process.env.SKELCREW_SOCKET = "/run/skel/skel.sock";
-  expect(cliSocket()).toBe("/run/skel/skel.sock");
+  process.env.SKELCREW_SOCKET = "/run/skelcrew/skelcrew.sock";
+  expect(cliSocket()).toBe("/run/skelcrew/skelcrew.sock");
 });
 
 // Linux refuses a socket whose path is longer than 108 bytes, and GitHub allows repository

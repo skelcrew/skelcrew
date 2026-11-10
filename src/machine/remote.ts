@@ -190,13 +190,13 @@ function server(host: string): Machine {
     shell,
     // The unit names the skel the daemon runs, with each % doubled for systemd.
     daemonSkel: async () => {
-      const unit = ".config/systemd/user/skel.service";
+      const unit = ".config/systemd/user/skelcrew.service";
       const sed = `sed -n 's/%%/%/g; s/^ExecStart="\\(.*\\)" serve$/\\1/p' ${unit}`;
       const read = await quietly(shell(sed));
       return read.ok && read.said !== "" ? read.said : null;
     },
     copy: (file) => copySkel(host, shell, ["scp", file, `${host}:.local/bin/skel.new`]),
-    restart: "systemctl --user restart skel",
+    restart: "systemctl --user restart skelcrew",
     updated: async () => {},
   };
 }
@@ -315,7 +315,7 @@ async function withLinuxSkel(machine: Machine): Promise<void> {
   // build from.
   if (singleFile && !release)
     throw new Error("this skel is a single file and can't build one: run skel from a checkout");
-  const folder = mkdtempSync(join(tmpdir(), "skel-"));
+  const folder = mkdtempSync(join(tmpdir(), "skelcrew-"));
   try {
     const file = join(folder, "skel");
     const cpu = await machineCpu(machine);

@@ -34,7 +34,8 @@ function fake(name: string, body: string): void {
 
 // The name of a repository's lead's session and config folder, and the folder it works in.
 const leadName = (repo = "app") => leadPlaces("simon", repo).name;
-const leadFolder = (repo = "app") => join(home, ".local", "share", "skel", "leads", "simon", repo);
+const leadFolder = (repo = "app") =>
+  join(home, ".local", "share", "skelcrew", "leads", "simon", repo);
 
 // Stands in for Claude Code, staying up like the real one until its session ends. It runs in
 // the lead's sandbox, where the home folder is hidden, so it notes its calls in the folder it
@@ -72,11 +73,11 @@ afterEach(async () => {
 });
 
 function setUp(): void {
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
-  writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\n");
-  writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: claude\n");
+  writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
-  writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
+  writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
 }
 
 // Runs the daemon as skel serve would, but on the test's own tmux server. Given a port, a
@@ -125,7 +126,7 @@ const claudeCalls = (folder = leadFolder()) =>
   claudeLines(folder)
     .map((line) => `${line.match(/--(session-id|resume) \S+/)?.[0] ?? line}\n`)
     .join("");
-const cliSocket = () => join(home, "run", "skel.sock");
+const cliSocket = () => join(home, "run", "skelcrew.sock");
 
 // What the daemon replies on the CLI socket, or null when nothing answers.
 function ask(request: object): Promise<unknown> {
@@ -156,7 +157,7 @@ async function untilAnswers() {
 
 // Runs SQL on skel's database, as the daemon may be using it at the same time.
 function onDb<T>(use: (db: Database) => T): T {
-  const db = new Database(join(home, ".local", "share", "skel", "skel.db"));
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
   // The daemon may be writing, and a read that meets a write fails without a wait.
   db.run("PRAGMA busy_timeout = 5000");
   try {
@@ -220,14 +221,14 @@ openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?
     stderr: "pipe",
   });
   if (!added.success) throw new Error(added.stderr.toString());
-  return join(home, ".local", "share", "skel", "repos", "simon", name);
+  return join(home, ".local", "share", "skelcrew", "repos", "simon", name);
 }
 
 // Claude Code saves a conversation once it has a message, which a fake can't send. It keeps
 // it in the session's own config folder, under projects/, in a folder named after the
 // session's folder with every character but letters and digits made a dash.
 function saveTranscript(id: string, name = leadName(), lead = leadFolder()): void {
-  const projects = join(home, ".local", "share", "skel", "claude", name, "projects");
+  const projects = join(home, ".local", "share", "skelcrew", "claude", name, "projects");
   const folder = join(projects, lead.replace(/[^a-zA-Z0-9]/g, "-"));
   mkdirSync(folder, { recursive: true });
   writeFileSync(join(folder, `${id}.jsonl`), "{}\n");
@@ -268,7 +269,7 @@ test("skel serve refuses inside skel's sandbox, where skel's state is hidden", a
   expect(run.stderr.toString()).toBe(
     "skel: running the daemon is only for your own terminal, not for agents\n",
   );
-  expect(existsSync(join(home, "run", "skel.sock"))).toBe(false);
+  expect(existsSync(join(home, "run", "skelcrew.sock"))).toBe(false);
 });
 
 // As on a Sprite, where the socket's folder is one of skel's own, not one systemd made.
@@ -276,7 +277,7 @@ test("makes the folder for its socket, which only you can open", async () => {
   setUp();
   const folder = join(home, "fresh", "run");
   serve(folder);
-  await until(() => existsSync(join(folder, "skel.sock")));
+  await until(() => existsSync(join(folder, "skelcrew.sock")));
   expect(statSync(folder).mode & 0o777).toBe(0o700);
 });
 
@@ -316,14 +317,14 @@ function onSprite(): void {
   fake(
     "sprite-env",
     `case "$*" in
-  "services get skel") exit 0 ;;
+  "services get skelcrew") exit 0 ;;
   info) echo '{"sprite_name":"demo","sprite_url":"https://demo-simon.sprites.app"}'; exit 0 ;;
-  "services create skel-tmux-${socket} --cmd tmux --args -L,${socket},-f,/dev/null,-D --no-stream")
+  "services create skelcrew-tmux-${socket} --cmd tmux --args -L,${socket},-f,/dev/null,-D --no-stream")
     test -f "$HOME/tmux-service" && exit 0
     : > "$HOME/tmux-service"
     setsid tmux -L ${socket} -f /dev/null -D < /dev/null > /dev/null 2>&1 &
     exit 0 ;;
-  "services start skel-tmux-${socket}")
+  "services start skelcrew-tmux-${socket}")
     setsid tmux -L ${socket} -f /dev/null -D < /dev/null > /dev/null 2>&1 &
     exit 0 ;;
 esac
@@ -349,7 +350,7 @@ test("on a Sprite, starts skel's tmux service again when it has stopped", async 
   openedBefore();
   writeFileSync(join(home, "tmux-service"), "");
   serve();
-  await until(() => calls().includes("services start skel-tmux"));
+  await until(() => calls().includes("services start skelcrew-tmux"));
   await until(hasServer);
   expect(calls()).not.toContain("systemd-run");
 });
@@ -365,7 +366,7 @@ test("on a Sprite, starts skel's tmux server as a Sprite service of its own", as
   await until(() => calls().includes("tmux"));
   await until(hasServer);
   expect(calls()).toContain(
-    `sprite-env services create skel-tmux-${socket} --cmd tmux --args -L,${socket},-f,/dev/null,-D --no-stream\n`,
+    `sprite-env services create skelcrew-tmux-${socket} --cmd tmux --args -L,${socket},-f,/dev/null,-D --no-stream\n`,
   );
 });
 
@@ -437,7 +438,7 @@ test("on a Sprite, a delivery GitHub signed has the daemon poll its repository a
   serve(undefined, port);
   await until(() => polls() === 1);
   await untilListening(port);
-  const secret = readFileSync(join(home, ".config", "skel", "webhook-secret"), "utf8");
+  const secret = readFileSync(join(home, ".config", "skelcrew", "webhook-secret"), "utf8");
   expect((await deliver(port, secret)).status).toBe(202);
   await until(() => polls() === 2);
 });
@@ -466,7 +467,7 @@ test("on a Sprite, sets the webhook to the Sprite on each repository it has", as
     () => existsSync(join(home, "hook")) && readFileSync(join(home, "hook"), "utf8") !== "",
   );
   const hook = JSON.parse(readFileSync(join(home, "hook"), "utf8"));
-  const secret = readFileSync(join(home, ".config", "skel", "webhook-secret"), "utf8");
+  const secret = readFileSync(join(home, ".config", "skelcrew", "webhook-secret"), "utf8");
   expect(hook.config).toEqual({
     url: "https://demo-simon.sprites.app",
     content_type: "json",
@@ -486,7 +487,7 @@ test("on a server, neither listens for webhooks nor sets them", async () => {
   await Bun.sleep(500);
   expect(await listening(port)).toBe(false);
   expect(calls()).not.toContain("hooks");
-  expect(existsSync(join(home, ".config", "skel", "webhook-secret"))).toBe(false);
+  expect(existsSync(join(home, ".config", "skelcrew", "webhook-secret"))).toBe(false);
 });
 
 // Asks the daemon to open a repository, as plain skel in a checkout of it does.
@@ -496,9 +497,9 @@ const open = (repo = "app") => ask({ command: "lead", from: `simon/${repo}` });
 // lead from before keeps its own.
 const leadSocket = (repo = "app") => {
   const short = new Bun.CryptoHasher("sha256").update(`simon/${repo}`).digest("hex").slice(0, 16);
-  return join(home, "run", "skel", "leads", short, "skel.sock");
+  return join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
 };
-const keptSocket = () => join(home, "run", "skel", "lead", "skel.sock");
+const keptSocket = () => join(home, "run", "skelcrew", "lead", "skelcrew.sock");
 
 // What the daemon replies on a lead's socket, or null when nothing answers.
 function askAsLead(request: object, path = leadSocket()): Promise<unknown> {
@@ -740,7 +741,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a lead per repositor
     expect(hasLead(leadName("web"))).toBe(true);
   });
 
-  // Its own scope keeps tmux out of skel.service's cgroup, so stopping or OOM-killing the
+  // Its own scope keeps tmux out of skelcrew.service's cgroup, so stopping or OOM-killing the
   // service can't take the agents down.
   test("starts skel's tmux server in a systemd scope of its own", async () => {
     setUp();
@@ -749,7 +750,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a lead per repositor
     await untilAnswers();
     await open();
     expect(calls()).toContain(
-      `systemd-run --user --scope --quiet --unit=skel-tmux-${socket} -- tmux -L ${socket} `,
+      `systemd-run --user --scope --quiet --unit=skelcrew-tmux-${socket} -- tmux -L ${socket} `,
     );
   });
 
@@ -804,7 +805,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a lead per repositor
     setUp();
     const repo = addRepository("app");
     fakeClaude(
-      `ls ${repo} > seen; test -S "$SKELCREW_SOCKET" && echo socket >> seen; test -e ${home}/.config/skel/claude-token || echo token-hidden >> seen; exec sleep 300`,
+      `ls ${repo} > seen; test -S "$SKELCREW_SOCKET" && echo socket >> seen; test -e ${home}/.config/skelcrew/claude-token || echo token-hidden >> seen; exec sleep 300`,
     );
     serve();
     await untilAnswers();
@@ -819,7 +820,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a lead per repositor
     setUp();
     addRepository("app");
     writeFileSync(
-      join(home, ".config", "skel", "config.yaml"),
+      join(home, ".config", "skelcrew", "config.yaml"),
       "harness: claude\nmodel: sonnet\nlead: { model: haiku }\n",
     );
     serve();
@@ -964,7 +965,7 @@ c.on("error", () => process.exit(1));`;
 // per repository left it: the lead's session, where you last attached from, and a note still
 // waiting for the lead.
 function oneLeadBefore(session: string, from: string | null): void {
-  mkdirSync(join(home, ".local", "share", "skel"), { recursive: true });
+  mkdirSync(join(home, ".local", "share", "skelcrew"), { recursive: true });
   onDb((db) => {
     db.run(`CREATE TABLE repositories (owner TEXT NOT NULL, repo TEXT NOT NULL,
       name TEXT NOT NULL UNIQUE, PRIMARY KEY (owner, repo))`);
@@ -982,7 +983,7 @@ function oneLeadBefore(session: string, from: string | null): void {
 }
 
 // The lead from before keeps its name, folder and socket.
-const keptLead = () => join(home, ".local", "share", "skel", "lead");
+const keptLead = () => join(home, ".local", "share", "skelcrew", "lead");
 
 // A Claude Code at its prompt, which keeps what is typed into it in typed.
 const atPrompt = `exec 3<&0

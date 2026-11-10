@@ -35,12 +35,12 @@ export const dropCapabilities = [
 ];
 
 // Where a Sprite service writes what it prints, so the daemon's log is here.
-export const serviceLog = "/.sprite/logs/services/skel.log";
+export const serviceLog = "/.sprite/logs/services/skelcrew.log";
 
 // Reports whether the daemon's Sprite service exists. The service marks the first run as
 // finished on a Sprite, as the systemd unit does on a server.
 export function spriteServiceInstalled(): boolean {
-  const get = ["sprite-env", "services", "get", "skel"];
+  const get = ["sprite-env", "services", "get", "skelcrew"];
   return Bun.spawnSync(get, { stdout: "pipe", stderr: "pipe" }).success;
 }
 
@@ -49,7 +49,7 @@ export function spriteServiceInstalled(): boolean {
 // it, and --no-stream keeps its log out of your terminal.
 export function installSpriteService(skel: string): void {
   if (spriteServiceInstalled()) return;
-  const create = ["sprite-env", "services", "create", "skel", "--cmd", skel, "--args", "serve"];
+  const create = ["sprite-env", "services", "create", "skelcrew", "--cmd", skel, "--args", "serve"];
   const made = Bun.spawnSync([...create, "--no-stream"], { stdout: "pipe", stderr: "pipe" });
   if (!made.success)
     throw new Error(
@@ -60,7 +60,7 @@ export function installSpriteService(skel: string): void {
 // Starts the daemon's Sprite service, for a skel that finds no daemon answering. It is quiet,
 // since sprite-env prints the service's log for a few seconds after starting it.
 export function startSpriteService(): void {
-  const start = ["sprite-env", "services", "start", "skel"];
+  const start = ["sprite-env", "services", "start", "skelcrew"];
   const started = Bun.spawnSync(start, { stdout: "pipe", stderr: "pipe" });
   if (!started.success)
     throw new Error(`sprite-env couldn't start skel's daemon: ${started.stderr.toString().trim()}`);
@@ -73,7 +73,7 @@ export function startSpriteService(): void {
 // keep a crashed daemon from starting again. -D keeps tmux in the foreground for the service,
 // and running with no sessions.
 export function startTmuxService(socket: string): void {
-  const name = `skel-tmux-${socket}`;
+  const name = `skelcrew-tmux-${socket}`;
   const quiet: { stdout: "pipe"; stderr: "pipe" } = { stdout: "pipe", stderr: "pipe" };
   const answers = (tries: number) => {
     for (let tried = 0; tried < tries; tried++) {
@@ -123,7 +123,7 @@ const holdFor = 300;
 async function holdTask(
   socket: string,
   method: "PUT" | "DELETE",
-  { task = "skel", expire = holdFor } = {},
+  { task = "skelcrew", expire = holdFor } = {},
 ): Promise<void> {
   const answer = await fetch(`http://sprite/v1/tasks/${task}`, {
     unix: socket,
@@ -184,7 +184,7 @@ export function keepAwake(
 // before keepAwake's next check sees any work the poll started. The hold has a name of its
 // own, so keepAwake never lets go of it, and it simply expires.
 export const holdAwhile = (seconds: number, socket = controlSocket) =>
-  holdTask(socket, "PUT", { task: "skel-webhook", expire: seconds });
+  holdTask(socket, "PUT", { task: "skelcrew-webhook", expire: seconds });
 
 const Service = z.object({ cmd: z.string() });
 
@@ -282,7 +282,7 @@ function onTheSprite(name: string): Machine {
       ]),
     // A Sprite service keeps the command it was made with, even after skel moves.
     daemonSkel: async () => {
-      const { out, ok } = await quietly(shell("sprite-env services get skel"), {
+      const { out, ok } = await quietly(shell("sprite-env services get skelcrew"), {
         stderr: "ignore",
       });
       if (!ok) return null;
@@ -294,7 +294,7 @@ function onTheSprite(name: string): Machine {
         );
       }
     },
-    restart: "sprite-env services restart skel",
+    restart: "sprite-env services restart skelcrew",
     // A Sprite whose URL was never made public asks for a login there, which GitHub's
     // webhooks can't give. Made public only once the new daemon runs and holds the URL's
     // port: until then, whatever else listens there would be on the internet.

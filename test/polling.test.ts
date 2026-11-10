@@ -34,7 +34,7 @@ let home = "";
 let socket = "";
 const running: Subprocess[] = [];
 
-const data = () => join(home, ".local", "share", "skel");
+const data = () => join(home, ".local", "share", "skelcrew");
 const codexHome = () => join(data(), "codex");
 const builder = () => join(data(), "claude", "app-12");
 const clone = () => join(data(), "threads", "app-12");
@@ -133,14 +133,14 @@ beforeEach(() => {
 *) echo "the fake gh doesn't know $*" >&2; exit 1 ;;
 esac`,
   );
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   writeFileSync(
-    join(home, ".config", "skel", "config.yaml"),
+    join(home, ".config", "skelcrew", "config.yaml"),
     "harness: claude\nreviewer: { harness: codex }\n",
   );
-  writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
+  writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
-  writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
+  writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
   writeFileSync(
     join(home, ".gitconfig"),
     `[url "file://${join(home, "github")}/"]\n\tinsteadOf = https://github.com/\n[user]\n\tname = Simon\n\temail = simon@example.com\n`,
@@ -198,7 +198,7 @@ openDb().run("INSERT INTO repositories (name, owner, repo, opened) VALUES ('app'
 }
 
 function thread(): Record<string, unknown> {
-  const db = new Database(join(data(), "skel.db"));
+  const db = new Database(join(data(), "skelcrew.db"));
   // The daemon may be writing, and a read that meets a write fails without a wait.
   db.run("PRAGMA busy_timeout = 5000");
   try {
@@ -312,7 +312,7 @@ async function approvedApp12(from?: string): Promise<string> {
 
 // What skel's copy holds open, as kind and ID, and the totals the sidebar counts with.
 function copied(): { rows: string[]; totals: unknown } {
-  const db = new Database(join(data(), "skel.db"), { readonly: true });
+  const db = new Database(join(data(), "skelcrew.db"), { readonly: true });
   // The daemon can be saving a poll just as this reads, which would otherwise fail the test.
   db.run("PRAGMA busy_timeout = 5000");
   const rows = db.query("SELECT kind, id FROM items WHERE state = 'open' ORDER BY kind, id").all();
@@ -383,7 +383,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling GitHub", () => {
     pr({ reviews: [skelReview], comments: [{ id: 50, author: you, body: "Also CSV." }] });
     await morePolls();
     // As a newer round would leave it, approved and ready, while the comment waits.
-    const db = new Database(join(data(), "skel.db"));
+    const db = new Database(join(data(), "skelcrew.db"));
     db.run("PRAGMA busy_timeout = 5000");
     db.run("UPDATE threads SET rounds = 1, needs_you = 1");
     db.close();
@@ -396,7 +396,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling GitHub", () => {
   test("a poll GitHub answered slowly, while a newer round was pushed, isn't acted on", async () => {
     await approvedApp12();
     const db = (sql: string) => {
-      const opened = new Database(join(data(), "skel.db"));
+      const opened = new Database(join(data(), "skelcrew.db"));
       opened.run("PRAGMA busy_timeout = 5000");
       opened.run(sql);
       opened.close();

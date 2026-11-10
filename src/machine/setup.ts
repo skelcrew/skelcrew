@@ -105,8 +105,8 @@ function apparmorAdvice(bwrap: string): string {
   sudo cp ${shipped} /etc/apparmor.d/
   sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict`;
   return `${intro} This adds a profile for ${bwrap}:
-  printf 'abi <abi/4.0>,\\ninclude <tunables/global>\\nprofile skel-bwrap ${bwrap} flags=(unconfined) {\\n  userns,\\n  include if exists <local/skel-bwrap>\\n}\\n' | sudo tee /etc/apparmor.d/skel-bwrap
-  sudo apparmor_parser -r /etc/apparmor.d/skel-bwrap`;
+  printf 'abi <abi/4.0>,\\ninclude <tunables/global>\\nprofile skelcrew-bwrap ${bwrap} flags=(unconfined) {\\n  userns,\\n  include if exists <local/skelcrew-bwrap>\\n}\\n' | sudo tee /etc/apparmor.d/skelcrew-bwrap
+  sudo apparmor_parser -r /etc/apparmor.d/skelcrew-bwrap`;
 }
 
 // Hands your terminal to an outside login and reports whether it succeeded. Rules naming

@@ -8,7 +8,7 @@ import { checkoutFolder, singleFile } from "../version.ts";
 import { seatbeltArgs } from "./seatbelt.ts";
 
 // Where the folder of the agent's socket appears inside, whatever its path outside.
-const socketsInside = "/run/skel";
+const socketsInside = "/run/skelcrew";
 
 // On a Sprite, unshare gives the agent a process list of its own, with a /proc to match,
 // before capabilities are dropped. bwrap can't: it runs without capabilities, and the

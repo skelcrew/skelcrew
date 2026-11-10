@@ -25,7 +25,7 @@ let home = "";
 let socket = "";
 const running: Subprocess[] = [];
 
-const data = () => join(home, ".local", "share", "skel");
+const data = () => join(home, ".local", "share", "skelcrew");
 const codexHome = () => join(data(), "codex");
 const builder = () => join(data(), "claude", "app-12");
 const lead = () => join(data(), "claude", leadPlaces("simon", "app").name);
@@ -121,11 +121,11 @@ case "$*" in
 *) echo "the fake gh doesn't know $*" >&2; exit 1 ;;
 esac`,
   );
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   config("");
-  writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
+  writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
-  writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
+  writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
   writeFileSync(
     join(home, ".gitconfig"),
     `[url "file://${github()}/"]\n\tinsteadOf = https://github.com/\n[user]\n\tname = Simon\n\temail = simon@example.com\n`,
@@ -144,7 +144,7 @@ afterEach(async () => {
 
 function config(more: string): void {
   writeFileSync(
-    join(home, ".config", "skel", "config.yaml"),
+    join(home, ".config", "skelcrew", "config.yaml"),
     `harness: claude\nreviewer: { harness: codex }\n${more}`,
   );
 }
@@ -162,7 +162,7 @@ const skel = (args: string[], more: Record<string, string> = {}) =>
 // The socket the daemon opens for app-12's builder.
 const builderSocket = () => {
   const short = new Bun.CryptoHasher("sha256").update("app-12").digest("hex").slice(0, 16);
-  return join(home, "run", "skel", "threads", short, "skel.sock");
+  return join(home, "run", "skelcrew", "threads", short, "skelcrew.sock");
 };
 
 // A daemon's work takes its time here, so a wait lasts 15 seconds unless a test says otherwise.
@@ -191,7 +191,7 @@ openDb().run("INSERT INTO repositories (name, owner, repo, opened) VALUES ('app'
 const untilCloned = () => until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
 
 function thread(): Record<string, unknown> {
-  const db = new Database(join(data(), "skel.db"));
+  const db = new Database(join(data(), "skelcrew.db"));
   // The daemon may be writing, and a read that meets a write fails without a wait.
   db.run("PRAGMA busy_timeout = 5000");
   try {
@@ -447,7 +447,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("skel submit", () => {
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
     first.kill();
     await first.exited;
-    const db = new Database(join(data(), "skel.db"));
+    const db = new Database(join(data(), "skelcrew.db"));
     db.run("DELETE FROM items");
     db.close();
     const closed = issueNode(12, "Add export", { body: "As JSON", state: "CLOSED" });
@@ -648,7 +648,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("skel submit", () => {
 
 // Lets a test change a thread as merging its PR would, without polling GitHub.
 function setThread(change: string): void {
-  const db = new Database(join(data(), "skel.db"));
+  const db = new Database(join(data(), "skelcrew.db"));
   db.run("PRAGMA busy_timeout = 5000");
   try {
     db.run(`UPDATE threads SET ${change}`);
@@ -660,7 +660,7 @@ function setThread(change: string): void {
 // app's lead's socket, named by a short hash of its GitHub name.
 const leadSocketPath = () => {
   const short = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
-  return join(home, "run", "skel", "leads", short, "skel.sock");
+  return join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
 };
 
 describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("skel review", () => {
@@ -760,7 +760,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("skel review", () => {
 test("only a builder can submit, from its thread", async () => {
   addApp();
   serve();
-  await until(() => existsSync(join(home, "run", "skel.sock")));
+  await until(() => existsSync(join(home, "run", "skelcrew.sock")));
   await Bun.sleep(100);
   const submitted = await skel(["submit", "Done"]);
   expect(submitted.code).not.toBe(0);

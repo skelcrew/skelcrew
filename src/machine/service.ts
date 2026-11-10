@@ -16,7 +16,7 @@ import {
 import { installSpriteService, onSprite, serviceLog, startSpriteService } from "./sprite.ts";
 
 // Returns the systemd user service path, which also marks daemon installation complete.
-const unitFile = () => join(homedir(), ".config", "systemd", "user", "skel.service");
+const unitFile = () => join(homedir(), ".config", "systemd", "user", "skelcrew.service");
 
 // Returns the file that defines the daemon's service here and marks it as installed.
 export const serviceFile = () => (process.platform === "darwin" ? plistFile() : unitFile());
@@ -79,7 +79,7 @@ function unitText(skel: string, given: string): string {
   // Where tmux couldn't get a scope of its own, stopping the service would otherwise end
   // the tmux server, and every agent with it.
   return `[Unit]
-Description=skel daemon
+Description=Skelcrew daemon
 
 [Service]
 ExecStart="${unitValue(skel)}" serve
@@ -132,7 +132,7 @@ export function installService(): void {
     }
     runServiceCommand(["systemctl", "--user", "daemon-reload"]);
     if (before !== null) return;
-    runServiceCommand(["systemctl", "--user", "enable", "--now", "skel"]);
+    runServiceCommand(["systemctl", "--user", "enable", "--now", "skelcrew"]);
     console.log(
       skelLine(
         "turning on lingering, so the daemon keeps running after you log out and starts after a reboot.",
@@ -159,11 +159,11 @@ export function startDaemon(): string {
     startLaunchAgent();
     return daemonLog();
   }
-  const start = Bun.spawnSync(["systemctl", "--user", "start", "skel"], {
+  const start = Bun.spawnSync(["systemctl", "--user", "start", "skelcrew"], {
     stdio: ["inherit", "inherit", "inherit"],
   });
   if (!start.success) throw new Error("systemctl couldn't start skel's daemon");
-  return "journalctl --user -u skel";
+  return "journalctl --user -u skelcrew";
 }
 
 // Restarts the daemon's service on this machine, so it runs the skel installed now, and returns
@@ -176,13 +176,13 @@ export function restartDaemon(): string {
   }
   const sprite = onSprite();
   const argv = sprite
-    ? ["sprite-env", "services", "restart", "skel"]
-    : ["systemctl", "--user", "restart", "skel"];
+    ? ["sprite-env", "services", "restart", "skelcrew"]
+    : ["systemctl", "--user", "restart", "skelcrew"];
   // sprite-env prints the service's log for a few seconds after starting it.
   const restart = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe" });
   if (!restart.success)
     throw new Error(
       `${argv[0]} couldn't restart skel's daemon: ${restart.stderr.toString().trim()}`,
     );
-  return sprite ? serviceLog : "journalctl --user -u skel";
+  return sprite ? serviceLog : "journalctl --user -u skelcrew";
 }

@@ -97,7 +97,7 @@ chmod +x "$out"`,
   // when there is none.
   fake(
     "sprite-env",
-    `test "$1 $2 $3" = "services get skel" && { cat "$HOME/service.json" 2>/dev/null || exit 1; }
+    `test "$1 $2 $3" = "services get skelcrew" && { cat "$HOME/service.json" 2>/dev/null || exit 1; }
 exit 0`,
   );
   laptop = laptopSkel();
@@ -343,9 +343,9 @@ test("offers to update an out-of-date skel on the Sprite, updates it, then runs 
   // webhooks can't give, so the URL goes public then, once the new daemon holds its port.
   // The command runs after that.
   expect(lines.at(-4)).toBe(
-    "sprite exec -s demo --no-stdin -- sh -c sprite-env services restart skel",
+    "sprite exec -s demo --no-stdin -- sh -c sprite-env services restart skelcrew",
   );
-  expect(lines.at(-3)).toBe("sprite-env services restart skel");
+  expect(lines.at(-3)).toBe("sprite-env services restart skelcrew");
   expect(lines.at(-2)).toBe("sprite config update --url-auth public -s demo");
   expect(lines.at(-1)).toBe(`${exec("demo", null)} ps`);
   expect(calls()).not.toContain("apt-get");

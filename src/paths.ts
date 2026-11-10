@@ -6,10 +6,10 @@ import { join } from "node:path";
 // Returns the folder for your settings and saved logins, separate from repository files.
 // A caller that was handed an environment passes its HOME: homedir() goes by the HOME this
 // process started with, and ignores one set since or given to it.
-export const configDir = (home = homedir()) => join(home, ".config", "skel");
+export const configDir = (home = homedir()) => join(home, ".config", "skelcrew");
 // Returns the folder for skel's clones, sessions and database on this machine. Pass a home
 // for the same reason as for configDir.
-export const dataDir = (home = homedir()) => join(home, ".local", "share", "skel");
+export const dataDir = (home = homedir()) => join(home, ".local", "share", "skelcrew");
 // Returns the private agent token file path used by setup and Claude Code sessions.
 export const claudeTokenFile = (home = homedir()) => join(configDir(home), "claude-token");
 
@@ -25,7 +25,7 @@ function runtimeDir(): string {
 
 // Returns the socket path where the daemon listens for your commands, and where it takes
 // the lock that keeps a second daemon from starting.
-export const daemonSocket = () => join(runtimeDir(), "skel.sock");
+export const daemonSocket = () => join(runtimeDir(), "skelcrew.sock");
 // Returns the socket path where this skel reaches the daemon. Inside an agent's sandbox
 // that is the agent's own socket, mounted there, which tells the daemon who is calling.
 export const cliSocket = () => process.env.SKELCREW_SOCKET || daemonSocket();
@@ -46,7 +46,7 @@ export function leadPlaces(owner: string, repo: string, kept = false) {
     return {
       name: "lead",
       folder: join(dataDir(), "lead"),
-      socket: join(runtimeDir(), "skel", "lead", "skel.sock"),
+      socket: join(runtimeDir(), "skelcrew", "lead", "skelcrew.sock"),
     };
   const hash = short(`${owner}/${repo}`);
   const letters = hash
@@ -55,14 +55,14 @@ export function leadPlaces(owner: string, repo: string, kept = false) {
   return {
     name: `lead-${repo.replace(/[^\w-]/g, "-").slice(0, 40)}-${letters}`,
     folder: join(dataDir(), "leads", owner, repo),
-    socket: join(runtimeDir(), "skel", "leads", hash, "skel.sock"),
+    socket: join(runtimeDir(), "skelcrew", "leads", hash, "skelcrew.sock"),
   };
 }
 // Returns a thread's daemon socket path, alone in its folder like a lead's. Linux refuses a
 // socket path over 108 bytes, and a Mac over 104, which a long repository name would make,
 // so the folder is named by a short hash of the thread's folder.
 export const threadSocket = (folder: string) =>
-  join(runtimeDir(), "skel", "threads", short(folder), "skel.sock");
+  join(runtimeDir(), "skelcrew", "threads", short(folder), "skelcrew.sock");
 // Returns the parent folder of skel's repository clones.
 const reposDir = () => join(dataDir(), "repos");
 // Returns a repository's clone folder so skel works away from your checkout.

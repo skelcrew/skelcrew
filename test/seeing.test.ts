@@ -14,7 +14,7 @@ let home = "";
 let socket = "";
 const running: Subprocess[] = [];
 
-const data = () => join(home, ".local", "share", "skel");
+const data = () => join(home, ".local", "share", "skelcrew");
 
 function fake(name: string, body: string): void {
   writeFileSync(
@@ -35,11 +35,11 @@ beforeEach(() => {
   // The fake GitHub answers nothing, so the daemon's polls fail and skel's copy keeps what
   // each test puts in it.
   fake("gh", "exit 1");
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
-  writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\n");
-  writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: claude\n");
+  writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
-  writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
+  writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
 });
 afterEach(async () => {
   for (const serve of running.splice(0)) {
@@ -63,7 +63,7 @@ const skel = (args: string[], more: Record<string, string> = {}) =>
   runSkel(args, { ...env(), ...more });
 
 async function untilAnswers() {
-  await until(() => existsSync(join(home, "run", "skel.sock")));
+  await until(() => existsSync(join(home, "run", "skelcrew.sock")));
   await Bun.sleep(100);
 }
 
@@ -102,7 +102,7 @@ INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you, sessi
 // The socket the daemon opens for a repository's lead, named by a short hash of its GitHub name.
 const leadSocket = (repo = "app") => {
   const short = new Bun.CryptoHasher("sha256").update(`simon/${repo}`).digest("hex").slice(0, 16);
-  return join(home, "run", "skel", "leads", short, "skel.sock");
+  return join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
 };
 
 // Has the daemon open app, as plain skel in its checkout does, which opens its lead's socket and
@@ -113,7 +113,7 @@ async function openApp(): Promise<void> {
   mkdirSync(clone, { recursive: true });
   Bun.spawnSync(["git", "-C", clone, "init", "-q"]);
   await new Promise<void>((done) => {
-    const connection = createConnection(join(home, "run", "skel.sock"));
+    const connection = createConnection(join(home, "run", "skelcrew.sock"));
     connection.on("connect", () => connection.write('{"command":"lead","from":"simon/app"}\n'));
     connection.on("data", () => {});
     connection.on("error", () => done());
@@ -176,7 +176,7 @@ describe("skel ps", () => {
 
   test("shows threads from a database made before threads could need you", async () => {
     mkdirSync(data(), { recursive: true });
-    const old = new Database(join(data(), "skel.db"));
+    const old = new Database(join(data(), "skelcrew.db"));
     old.run(`CREATE TABLE threads (owner TEXT NOT NULL, repo TEXT NOT NULL, task INTEGER NOT NULL,
       folder TEXT NOT NULL UNIQUE, branch TEXT NOT NULL, base TEXT, status TEXT NOT NULL,
       session TEXT, PRIMARY KEY (owner, repo, task))`);
@@ -273,7 +273,7 @@ async function asAgent(args: string[], socket: string) {
 // The socket the daemon opens for app-12's builder, once its thread is live.
 async function builderSocket(): Promise<string> {
   const short = new Bun.CryptoHasher("sha256").update("app-12").digest("hex").slice(0, 16);
-  const builder = join(home, "run", "skel", "threads", short, "skel.sock");
+  const builder = join(home, "run", "skelcrew", "threads", short, "skelcrew.sock");
   await until(() => existsSync(builder));
   return builder;
 }
@@ -395,8 +395,8 @@ esac`,
     const attached = await skel(["attach", "web-7"]);
     expect(attached.err).toBe("");
     expect(attached.code).toBe(0);
-    expect(calls()).toContain("tmux -L skel-screen -f /dev/null");
-    expect(calls()).toMatch(/new-session .* skel site-7 lead-site-[a-p]+ ;/);
+    expect(calls()).toContain("tmux -L skelcrew-screen -f /dev/null");
+    expect(calls()).toMatch(/new-session .* skelcrew site-7 lead-site-[a-p]+ ;/);
   });
 
   test("says when there is no such thread", async () => {

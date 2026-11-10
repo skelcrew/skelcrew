@@ -26,8 +26,8 @@ let daemon: Server | undefined;
 const hint = "skel has no repositories yet. Run skel in a checkout of one.";
 // What skel says once you leave the screen.
 const left = "Your agents keep running. Run skel to come back.\n";
-const clone = (full: string) => join(home, ".local", "share", "skel", "repos", full);
-const trustFile = () => join(home, ".config", "skel", "trusted");
+const clone = (full: string) => join(home, ".local", "share", "skelcrew", "repos", full);
+const trustFile = () => join(home, ".config", "skelcrew", "trusted");
 
 function fake(name: string, body: string): void {
   writeFileSync(
@@ -75,11 +75,11 @@ echo "{\\"name\\":\\"\${full#*/}\\",\\"owner\\":{\\"login\\":\\"\${full%/*}\\"},
     `[url "file://${home}/github/"]\n\tinsteadOf = https://github.com/\n`,
   );
   // As the first run leaves a machine, so plain skel goes straight to the repository.
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
-  writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\n");
-  writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: claude\n");
+  writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
-  writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
+  writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
   daemon = createServer((connection) =>
     connection.on("data", (data) => {
       appendFileSync(join(home, "calls"), "daemon lead\n");
@@ -87,7 +87,9 @@ echo "{\\"name\\":\\"\${full#*/}\\",\\"owner\\":{\\"login\\":\\"\${full%/*}\\"},
       connection.end('{"lead":"app-lead","repository":"simon/app"}\n');
     }),
   );
-  await new Promise<void>((listening) => daemon?.listen(join(home, "run", "skel.sock"), listening));
+  await new Promise<void>((listening) =>
+    daemon?.listen(join(home, "run", "skelcrew.sock"), listening),
+  );
 });
 afterEach(() => {
   daemon?.close();
@@ -145,8 +147,8 @@ async function skel(args: string[], typed = "", cwd = home, more: Record<string,
 const calls = () =>
   existsSync(join(home, "calls"))
     ? readFileSync(join(home, "calls"), "utf8")
-        .replace(/tmux -L skel -f \/dev\/null source-file -\n/g, "")
-        .replace(/tmux -L skel-screen .* sh skel (\S+) \S+ ;.*/g, "screen on $1")
+        .replace(/tmux -L skelcrew -f \/dev\/null source-file -\n/g, "")
+        .replace(/tmux -L skelcrew-screen .* sh skelcrew (\S+) \S+ ;.*/g, "screen on $1")
     : "";
 const attached = () => calls().endsWith("daemon lead\nscreen on app-lead\n");
 
@@ -343,7 +345,7 @@ function onSprite(): void {
   fake(
     "sprite-env",
     `case "$*" in
-  "services get skel") exit 0 ;;
+  "services get skelcrew") exit 0 ;;
   info) echo '{"sprite_name":"demo","sprite_url":"https://demo-simon.sprites.app"}' ;;
   *) exit 1 ;;
 esac`,
@@ -371,7 +373,7 @@ test("on a Sprite, repo rm removes the webhook that wakes the Sprite", async () 
 
 test("repo rm refuses while the repository has live threads, and names them", async () => {
   await skel([], "y\n", onGitHub("simon/app"));
-  const db = new Database(join(home, ".local", "share", "skel", "skel.db"));
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
   db.run(`INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES
     ('simon', 'app', 12, 'app-12', 'skel/12', 'working'),
     ('simon', 'app', 15, 'app-15', 'skel/15', 'waiting'),
@@ -540,7 +542,7 @@ test("repo add and init refuse inside skel's sandbox, where a yes could come fro
 
 test("init writes a starter skelcrew.yaml with your harness and model for each role, and adds the repository", async () => {
   writeFileSync(
-    join(home, ".config", "skel", "config.yaml"),
+    join(home, ".config", "skelcrew", "config.yaml"),
     "harness: claude\nmodel: sonnet\nlead: { model: opus }\nreviewer: { harness: codex }\n",
   );
   const checkout = onGitHub("simon/app", "WRITE");
@@ -567,7 +569,7 @@ reviewer: { harness: codex }
 // YAML reads true, null or 123 as something other than text, which a model name must be.
 test("init writes model names that read back as the same text", async () => {
   writeFileSync(
-    join(home, ".config", "skel", "config.yaml"),
+    join(home, ".config", "skelcrew", "config.yaml"),
     'harness: claude\nmodel: "123"\nlead: { model: "true" }\nbuilder: { model: "null" }\n',
   );
   const checkout = onGitHub("simon/app", "WRITE");
@@ -619,6 +621,8 @@ test("refuses a clone whose config holds a credential, before the lead could see
   const run = await skel(["--from", "simon/app"]);
   expect(run.err).toContain("credential");
   expect(existsSync(clone("simon/app"))).toBe(false);
-  expect(existsSync(join(home, ".local", "share", "skel", "cloning", "simon", "app"))).toBe(false);
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "cloning", "simon", "app"))).toBe(
+    false,
+  );
   expect((await skel(["repo", "ls"])).out).toBe(`${hint}\n`);
 });

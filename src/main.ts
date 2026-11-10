@@ -81,7 +81,7 @@ async function leadCommand(from?: string): Promise<void> {
   const { firstRun } = await import("./machine/setup.ts");
   firstRun();
   const found = await bringInFrom(from);
-  if (repositories(openDb()).length > 0) await attachToLead("skel", found);
+  if (repositories(openDb()).length > 0) await attachToLead("skelcrew", found);
 }
 
 // Runs what keeps this machine going: its setup, then the daemon.
@@ -95,7 +95,7 @@ async function machineCommand(args: string[]): Promise<void> {
     return;
   }
   if (command === "serve" && args.length === 1) {
-    await serve("skel");
+    await serve("skelcrew");
     return;
   }
   usage(command);
@@ -163,7 +163,7 @@ async function repoCommand(args: string[]): Promise<void> {
     return;
   }
   if (sub === "rm" && rest[0] && rest.length === 1) {
-    await removeRepo(rest[0], "skel");
+    await removeRepo(rest[0], "skelcrew");
     return;
   }
   if (sub === "trust" && rest[0] && rest.length === 1) {
@@ -284,7 +284,7 @@ async function threadCommand(args: string[]): Promise<void> {
     return;
   }
   if (command === "attach" && thread && rest.length === 0) {
-    await attachToThread("skel", ...thread);
+    await attachToThread("skelcrew", ...thread);
     return;
   }
   usage(command);

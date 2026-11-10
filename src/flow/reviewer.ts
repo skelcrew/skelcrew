@@ -138,7 +138,7 @@ async function reviewNow(given: {
       verdict: "failed",
       body: `${harness} isn't installed, and your config picks it for reviews`,
     };
-  const folder = mkdtempSync(join(tmpdir(), "skel-review-"));
+  const folder = mkdtempSync(join(tmpdir(), "skelcrew-review-"));
   const timeout = AbortSignal.timeout(limit);
   // Never the timeout itself, even alone: Bun cancels a timeout's timer when a process given
   // it ends, so the copying before the review would leave the review with no limit.

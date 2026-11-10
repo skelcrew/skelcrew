@@ -1,8 +1,8 @@
 // skel's tmux sessions: one for each repository's lead and one per builder, on skel's own tmux
-// server (`tmux -L skel`; tests pass a socket of their own).
+// server (`tmux -L skelcrew`; tests pass a socket of their own).
 import { onSprite, startTmuxService } from "../machine/sprite.ts";
 
-// Returns the screen's tmux server beside the agents': skel-screen beside skel, and a test's
+// Returns the screen's tmux server beside the agents': skelcrew-screen beside skelcrew, and a test's
 // own beside the test's.
 export const screenSocket = (agents: string) => `${agents}-screen`;
 
@@ -82,7 +82,7 @@ function mustTmux(socket: string, args: string[], input = ""): string {
 }
 
 // Starts skel's tmux server if needed, keeping agent sessions alive independently of the
-// daemon. A server started by the daemon would live in skel.service's cgroup, so stopping
+// daemon. A server started by the daemon would live in skelcrew.service's cgroup, so stopping
 // or OOM-killing the service would take every agent with it. A systemd scope of its own
 // keeps it apart, as a Sprite service does on a Sprite; without either it starts plainly.
 // exit-empty off keeps it up until its first session, and the config applies to that
@@ -92,7 +92,14 @@ export function startServer(socket: string): void {
   // The lone ";" separates tmux commands, so these words skip literal().
   const start = ["tmux", "-L", socket, "-f", "/dev/null", "start-server", ";"];
   start.push("set-option", "-g", "exit-empty", "off", ";", "source-file", "-");
-  const scope = ["systemd-run", "--user", "--scope", "--quiet", `--unit=skel-tmux-${socket}`, "--"];
+  const scope = [
+    "systemd-run",
+    "--user",
+    "--scope",
+    "--quiet",
+    `--unit=skelcrew-tmux-${socket}`,
+    "--",
+  ];
   // Starts the server with skel's configuration, either in its own scope or directly.
   const run = (command: string[]) =>
     Bun.spawnSync(command, {
@@ -365,7 +372,7 @@ async function typeNow(socket: string, name: string, marks: Marks, text: string,
     if (Date.now() > deadline)
       throw new Error(`${name} wasn't idle for ${timeout / 1000}s (${why}), so nothing was typed`);
   }
-  const buffer = `skel-${process.pid}-${buffers++}`;
+  const buffer = `skelcrew-${process.pid}-${buffers++}`;
   // Someone scrolled back would swallow the Enter below, and the message would never be
   // sent. Being scrolled back shows in neither the check above nor the pane's text, so it
   // is left here, whether or not anyone is. It fails when nobody is, which is fine.
