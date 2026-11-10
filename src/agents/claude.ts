@@ -25,17 +25,17 @@ const ClaudeJson = z.looseObject({
 });
 
 // Bypass mode shows a warning first, which nobody is there to accept. Claude Code's own
-// sandbox fails inside skel's, so it stays off even if your settings turn it on.
+// sandbox fails inside Skelcrew's, so it stays off even if your settings turn it on.
 const base = { skipDangerousModePermissionPrompt: true, sandbox: { enabled: false } };
 const settings = JSON.stringify(base);
 
 // A builder's AskUserQuestion waits on a screen nobody watches, so Claude Code's hooks tell
-// skel when the builder asks, and the thread needs you until the question is over. Answering
+// Skelcrew when the builder asks, and the thread needs you until the question is over. Answering
 // runs PostToolUse, but setting it aside with Esc or "Chat about this" runs no hook at all, so
 // whatever is typed into the builder next also ends it. The commands answer at once, and
 // print nothing, since UserPromptSubmit adds what a hook prints to the message.
-const asked = { type: "command", command: "skel question asked", timeout: 10 };
-const answered = { ...asked, command: "skel question answered" };
+const asked = { type: "command", command: "sc question asked", timeout: 10 };
+const answered = { ...asked, command: "sc question answered" };
 const builderSettings = JSON.stringify({
   ...base,
   hooks: {
@@ -50,23 +50,23 @@ const Token = z.string().trim().min(1);
 // The model an agent runs on when your config names none.
 const defaultModel = "opus";
 
-// Returns the Claude Code login token skel saved for agents, which the lead, builders and
+// Returns the Claude Code login token Skelcrew saved for agents, which the lead, builders and
 // reviewers all log in with. Throws if setup hasn't saved one. A token from claude setup-token
 // never renews. A shared login would: renewing makes the old refresh token stop working, so
 // your own login or the agent's would go stale.
 function claudeToken(home: string): string {
   const tokenFile = claudeTokenFile(home);
   if (!existsSync(tokenFile))
-    throw new Error("Claude Code's login token for agents isn't saved yet: run skel to set it up");
+    throw new Error("Claude Code's login token for agents isn't saved yet: run sc to set it up");
   return Token.parse(readFileSync(tokenFile, "utf8"));
 }
 
 // Returns the conversation a session saved, for --resume to bring back, or null when it saved
-// none. skel picks Claude Code's session ID, so that is `session` itself. Claude Code saves a
+// none. Skelcrew picks Claude Code's session ID, so that is `session` itself. Claude Code saves a
 // conversation only once it has a message, so a session nobody talked to has nothing to
 // resume, and its id can't start a new one either. It saves it in the session's own config
 // folder, under a folder named after the folder it runs in, with every character but letters
-// and digits made a dash. Names over 200 characters get a hash instead, which skel's folders
+// and digits made a dash. Names over 200 characters get a hash instead, which Skelcrew's folders
 // never come near.
 function savedConversation(name: string, folder: string, session: string): string | null {
   const project = folder.replace(/[^a-zA-Z0-9]/g, "-");
@@ -87,7 +87,7 @@ function trustFolder(config: string, cwd: string): void {
     try {
       const stat = fstatSync(fd);
       if (!stat.isFile() || stat.size > 64 * 1024 * 1024)
-        throw new Error(`${file} isn't a plain file, so skel won't use it`);
+        throw new Error(`${file} isn't a plain file, so Skelcrew won't use it`);
       json = ClaudeJson.parse(JSON.parse(readFileSync(fd, "utf8")));
     } finally {
       closeSync(fd);
@@ -108,8 +108,8 @@ function trustFolder(config: string, cwd: string): void {
 // sandbox command and environment. It starts afresh with `sessionId` and the first message
 // in `prompt`, or brings back a saved conversation with `resume`. A builder, given its thread's
 // clone, works there; a lead works in its own `folder`. Each sees nothing else but `origin`,
-// skel's clone of its repository, read-only. Each session keeps its own transcripts and logs
-// in with skel's agent token, while your other credentials stay hidden.
+// Skelcrew's clone of its repository, read-only. Each session keeps its own transcripts and logs
+// in with Skelcrew's agent token, while your other credentials stay hidden.
 function startCommand(given: {
   name: string;
   socket: string;
@@ -140,8 +140,8 @@ function startCommand(given: {
   if (sessionId && !z.uuid().safeParse(sessionId).success)
     throw new Error(`Claude Code needs a UUID as a session ID, not "${sessionId}"`);
   const home = env.HOME;
-  if (!home) throw new Error("HOME isn't set, so skel can't find its own folders");
-  // The name becomes a folder, so it must not climb out of skel's.
+  if (!home) throw new Error("HOME isn't set, so Skelcrew can't find its own folders");
+  // The name becomes a folder, so it must not climb out of Skelcrew's.
   if (!/^[a-zA-Z0-9][\w.-]*$/.test(name)) throw new Error(`"${name}" can't name a session`);
 
   const token = claudeToken(home);
@@ -151,14 +151,14 @@ function startCommand(given: {
   // transcripts.
   const configs = join(dataDir(home), "claude");
   const config = join(configs, name);
-  // skel writes here with your rights, and the agent can change what is in its folder. A
+  // Skelcrew writes here with your rights, and the agent can change what is in its folder. A
   // link it left would send that write to any file of yours.
   for (const p of [configs, config, join(config, ".claude.json")])
     if (lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink())
-      throw new Error(`${p} is a link, so skel won't write through it`);
+      throw new Error(`${p} is a link, so Skelcrew won't write through it`);
   mkdirSync(config, { recursive: true });
   const cwd = thread ?? folder;
-  if (!cwd) throw new Error(`skel has no folder for ${name} to work in`);
+  if (!cwd) throw new Error(`Skelcrew has no folder for ${name} to work in`);
   mkdirSync(cwd, { recursive: true });
   const mounts = [...rw(cwd), ...rw(config)];
   // Read-only at the same path. A lead reads its repository there. A thread's clone has it as
@@ -181,10 +181,10 @@ function startCommand(given: {
   const kept = keptEnv(env, claude.keys);
   kept.CLAUDE_CONFIG_DIR = config;
   kept.CLAUDE_CODE_OAUTH_TOKEN = token;
-  // Its greyed-out suggestions propose steps, such as pushing, that belong to skel.
+  // Its greyed-out suggestions propose steps, such as pushing, that belong to Skelcrew.
   kept.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = "false";
   // Its install folder is read-only in the sandbox, so an update only fails, with a red line
-  // in every session. You update claude outside skel, and agents start on that version.
+  // in every session. You update claude outside Skelcrew, and agents start on that version.
   kept.DISABLE_AUTOUPDATER = "1";
   const argv = sandboxArgs({
     home,
@@ -220,7 +220,7 @@ function review(given: {
 const answer = (_folder: string, out: string): unknown =>
   z.looseObject({ structured_output: z.unknown() }).parse(JSON.parse(out)).structured_output;
 
-// Claude Code as skel knows it. While a turn runs it shows "esc to interrupt". It is ready for
+// Claude Code as Skelcrew knows it. While a turn runs it shows "esc to interrupt". It is ready for
 // a message once that is gone and a line holding only its ❯ prompt shows. The key is for those
 // who use one rather than a login.
 export const claude = {

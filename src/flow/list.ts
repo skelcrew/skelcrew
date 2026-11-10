@@ -1,5 +1,5 @@
-// What skel shows you about its work: repositories for skel repo ls, threads for skel ps,
-// open tasks for skel task ls and one task for skel task show, as short text for a terminal
+// What Skelcrew shows you about its work: repositories for sc repo ls, threads for sc ps,
+// open tasks for sc task ls and one task for sc task show, as short text for a terminal
 // or JSON for tools.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
@@ -11,8 +11,8 @@ import { needsYou, Thread, threadName } from "./thread.ts";
 export const RepositoryRow = z.object({ name: z.string(), github: z.string(), clone: z.string() });
 export type RepositoryRow = z.infer<typeof RepositoryRow>;
 
-// Returns the repositories skel works on, in name order, with where skel keeps each clone,
-// for skel repo ls.
+// Returns the repositories Skelcrew works on, in name order, with where Skelcrew keeps each clone,
+// for sc repo ls.
 export function listRepositories(db: Database): RepositoryRow[] {
   return repositories(db).map(({ name, owner, repo }) => ({
     name,
@@ -28,7 +28,7 @@ export const ThreadRow = z.object({
 });
 export type ThreadRow = z.infer<typeof ThreadRow>;
 
-// Returns the threads, or one repository's, newest first, for skel ps. A thread that starts
+// Returns the threads, or one repository's, newest first, for sc ps. A thread that starts
 // over gets a new row, so it counts as started when it last started.
 export function listThreads(db: Database, repository?: string): ThreadRow[] {
   const one = repository ? findRepository(db, repository) : null;
@@ -60,7 +60,7 @@ function threadOf(db: Database, owner: string, repo: string, task: number): Task
 }
 
 // Returns the open tasks of every repository, or of one, newest first, with the thread on
-// each one that has one, for skel task ls. They come from skel's copy, so GitHub isn't asked.
+// each one that has one, for sc task ls. They come from Skelcrew's copy, so GitHub isn't asked.
 export function listTasks(db: Database, repository?: string): TaskRow[] {
   const chosen = repository ? [findRepository(db, repository)] : repositories(db);
   return chosen
@@ -85,7 +85,7 @@ export const TaskView = z.object({
 export type TaskView = z.infer<typeof TaskView>;
 
 // Returns one task's title and body, which is all its builder sees, with the thread on it if
-// it has one, for skel task show. It comes from skel's copy, so GitHub isn't asked.
+// it has one, for sc task show. It comes from Skelcrew's copy, so GitHub isn't asked.
 export function showTask(db: Database, repository: string, task: number): TaskView {
   const r = findRepository(db, repository);
   const { title, body } = taskOf(db, r.owner, r.repo, task);
@@ -104,7 +104,7 @@ function table(heading: string[], rows: string[][]): void {
     );
 }
 
-// Prints repositories for skel repo ls: as JSON for tools, or else one line each, or how to
+// Prints repositories for sc repo ls: as JSON for tools, or else one line each, or how to
 // bring in the first one.
 export function printRepositories(repositories: RepositoryRow[], json: boolean): void {
   if (json) {
@@ -118,7 +118,7 @@ export function printRepositories(repositories: RepositoryRow[], json: boolean):
     console.log(`${r.name.padEnd(name)}  ${r.github.padEnd(github)}  ${r.clone}`);
 }
 
-// Prints threads for skel ps: as JSON for tools, or else as a table.
+// Prints threads for sc ps: as JSON for tools, or else as a table.
 export function printThreads(threads: ThreadRow[], json: boolean): void {
   if (json) console.log(JSON.stringify(threads));
   else if (threads.length === 0) console.log("There are no threads.");
@@ -129,7 +129,7 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
     );
 }
 
-// Prints open tasks for skel task ls: as JSON for tools, or else as a table whose thread
+// Prints open tasks for sc task ls: as JSON for tools, or else as a table whose thread
 // column is empty for a task with no thread.
 export function printTasks(tasks: TaskRow[], json: boolean): void {
   if (json) console.log(JSON.stringify(tasks));
@@ -144,7 +144,7 @@ export function printTasks(tasks: TaskRow[], json: boolean): void {
     );
 }
 
-// Prints one task for skel task show: as JSON for tools, or else its name and title, the
+// Prints one task for sc task show: as JSON for tools, or else its name and title, the
 // thread on it if it has one, and its body after a blank line.
 export function printTask(task: TaskView, json: boolean): void {
   if (json) {

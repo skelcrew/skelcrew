@@ -1,10 +1,10 @@
-// skel's copy of each repository's open tasks, from its tracker, and open PRs, from its forge,
-// as items. The sidebar, pages, skel task and a builder's first message read it, so none of
+// Skelcrew's copy of each repository's open tasks, from its tracker, and open PRs, from its forge,
+// as items. The sidebar, pages, sc task and a builder's first message read it, so none of
 // them waits on the tracker.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 
-// Who wrote an item, review or comment. `you` is whether it is the login skel acts as.
+// Who wrote an item, review or comment. `you` is whether it is the login Skelcrew acts as.
 const Author = z.object({ login: z.string(), bot: z.boolean(), you: z.boolean() });
 
 const Comment = z.object({ id: z.string(), text: z.string(), author: Author.nullable() });
@@ -24,7 +24,7 @@ const common = {
   updated: z.string(),
 };
 
-// A task or a PR in skel's words, whichever tracker or forge it came from. A task has the line
+// A task or a PR in Skelcrew's words, whichever tracker or forge it came from. A task has the line
 // that closes it when a PR's body holds it. A cancelled check isn't the builder's to fix.
 export const Item = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("task"), ...common, closes: z.string() }),
@@ -100,12 +100,12 @@ export function saveItems(
 }
 
 // Returns the items that the query's rows hold, checked, as what was saved could come from an
-// older skel.
+// older Skelcrew.
 const parsed = (rows: unknown[]) =>
   rows.map((row) => Item.parse(JSON.parse(z.object({ item: z.string() }).parse(row).item)));
 
 // Returns a task from the copy, open or kept for its thread, for its builder, its reviewer and
-// skel task show. Throws when the copy doesn't have it.
+// sc task show. Throws when the copy doesn't have it.
 export function taskOf(db: Database, owner: string, repo: string, task: number): Task {
   const [found] = parsed(
     db
@@ -116,8 +116,8 @@ export function taskOf(db: Database, owner: string, repo: string, task: number):
   return found;
 }
 
-// Returns a repository's open tasks, newest first, for skel task ls and for starting a thread
-// on each one labeled skel.
+// Returns a repository's open tasks, newest first, for sc task ls and for starting a thread
+// on each one labeled skelcrew.
 export function openTasks(db: Database, owner: string, repo: string): Task[] {
   return parsed(
     db

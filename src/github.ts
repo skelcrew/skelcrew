@@ -1,10 +1,10 @@
-// Every call skel makes to GitHub goes through here, with your gh login, so another tracker
+// Every call Skelcrew makes to GitHub goes through here, with your gh login, so another tracker
 // or forge could be added in one place.
 import { z } from "zod";
 import { Item, type Task } from "./flow/copy.ts";
 import { quietly } from "./run.ts";
 
-// Owner and name become folders, so neither may climb out of skel's.
+// Owner and name become folders, so neither may climb out of Skelcrew's.
 export const Name = z.string().regex(/^(?!\.\.?$)[\w.-]+$/);
 
 const View = z.object({
@@ -16,8 +16,8 @@ const View = z.object({
 
 export type GitHubRepo = { owner: string; repo: string; canPush: boolean; isFork: boolean };
 
-// Returns the repository's GitHub name, push access and fork status so skel can judge
-// trust. Takes owner/repo, as skel names it from a checkout's origin: in a fork with an
+// Returns the repository's GitHub name, push access and fork status so Skelcrew can judge
+// trust. Takes owner/repo, as Skelcrew names it from a checkout's origin: in a fork with an
 // upstream remote, gh on its own would answer for the upstream. The daemon asks while it
 // answers other commands, so it must not wait on gh. Its failure has words of its own, so
 // it doesn't go through gh below.
@@ -49,12 +49,12 @@ async function git(args: string[]): Promise<void> {
   if (!ok) throw new Error(`git ${args.join(" ")} failed: ${err.trim()}`);
 }
 
-// Clones a GitHub repository into skel's chosen folder, away from your checkout.
+// Clones a GitHub repository into Skelcrew's chosen folder, away from your checkout.
 export async function cloneRepo(owner: string, repo: string, folder: string): Promise<void> {
   await git(["clone", "--quiet", `https://github.com/${owner}/${repo}.git`, folder]);
 }
 
-// Resets skel's clone to the latest default branch so the lead reads current code. Fetching
+// Resets Skelcrew's clone to the latest default branch so the lead reads current code. Fetching
 // HEAD follows the default branch even after it is renamed.
 export async function updateClone(folder: string): Promise<void> {
   await git(["-C", folder, "fetch", "--quiet", "origin", "HEAD"]);
@@ -79,8 +79,8 @@ export async function fetchBranch(
   ]);
 }
 
-// Brings a branch of a GitHub repository into skel's clone in the folder, as a branch of its
-// own, so a builder whose clone has skel's as origin can fetch it. Never the branch skel's
+// Brings a branch of a GitHub repository into Skelcrew's clone in the folder, as a branch of its
+// own, so a builder whose clone has Skelcrew's as origin can fetch it. Never the branch Skelcrew's
 // clone has checked out, which updateClone keeps current with its files.
 export async function fetchIntoClone(
   folder: string,
@@ -98,7 +98,7 @@ export async function fetchIntoClone(
   ]);
 }
 
-// Pushes a commit from skel's clone in the folder to a branch of a GitHub repository. Never
+// Pushes a commit from Skelcrew's clone in the folder to a branch of a GitHub repository. Never
 // forced, so a push can only add to what the branch already holds.
 export async function pushCommit(
   folder: string,
@@ -116,10 +116,10 @@ export async function pushCommit(
   ]);
 }
 
-// Returns what gh printed, sending a body when supplied. Failures name what skel was trying,
+// Returns what gh printed, sending a body when supplied. Failures name what Skelcrew was trying,
 // so you can tell which GitHub operation failed.
 async function ghText(args: string[], doing: string, input?: object): Promise<string> {
-  // Bun finds gh on the PATH skel started with unless given the env, so a PATH changed
+  // Bun finds gh on the PATH Skelcrew started with unless given the env, so a PATH changed
   // since would be ignored.
   const { out, err, ok } = await quietly(["gh", ...args], {
     env: process.env,
@@ -150,8 +150,8 @@ const Made = z.object({
   updated_at: z.string(),
 });
 
-// Creates an issue in owner/name and returns it as a task, for skel's copy, so the lead sees it
-// in skel task ls at once and can start a thread on it. Your login wrote it.
+// Creates an issue in owner/name and returns it as a task, for Skelcrew's copy, so the lead sees it
+// in sc task ls at once and can start a thread on it. Your login wrote it.
 export async function createIssue(fullName: string, title: string, body: string): Promise<Task> {
   const made = Made.parse(
     await api(`repos/${fullName}/issues`, `create an issue in ${fullName}`, { title, body }),
@@ -171,14 +171,14 @@ export async function createIssue(fullName: string, title: string, body: string)
   };
 }
 
-// Creates the skel label in owner/name, so you can add it to an issue to start a thread.
+// Creates the skelcrew label in owner/name, so you can add it to an issue to start a thread.
 // GitHub answers 422 when the repository has the label already, which is fine as it is.
 export async function createLabel(fullName: string): Promise<void> {
   try {
-    await api(`repos/${fullName}/labels`, `create the skel label in ${fullName}`, {
-      name: "skel",
+    await api(`repos/${fullName}/labels`, `create the skelcrew label in ${fullName}`, {
+      name: "skelcrew",
       color: "5319e7",
-      description: "skel starts a thread on this issue",
+      description: "Skelcrew starts a thread on this issue",
     });
   } catch (error) {
     if (error instanceof Error && error.message.includes("(HTTP 422)")) return;
@@ -189,7 +189,7 @@ export async function createLabel(fullName: string): Promise<void> {
 const Hook = z.object({ id: z.number(), config: z.object({ url: z.string().optional() }) });
 
 // Returns the IDs of the repository's webhooks to the URL. A repository with more than 100
-// webhooks is not one skel expects.
+// webhooks is not one Skelcrew expects.
 async function hooksTo(fullName: string, url: string): Promise<number[]> {
   const listed = await api(
     `repos/${fullName}/hooks?per_page=100`,
@@ -220,7 +220,7 @@ export async function setWebhook(fullName: string, url: string, secret: string):
     active: true,
   };
   const [id] = await hooksTo(fullName, url);
-  const doing = `set the webhook that wakes skel in ${fullName}`;
+  const doing = `set the webhook that wakes Skelcrew in ${fullName}`;
   if (id === undefined)
     await ghText(["api", `repos/${fullName}/hooks`, "--method", "POST", "--input", "-"], doing, {
       name: "web",
@@ -234,16 +234,16 @@ export async function setWebhook(fullName: string, url: string, secret: string):
     );
 }
 
-// Removes the repository's webhooks to the URL, for skel repo rm.
+// Removes the repository's webhooks to the URL, for sc repo rm.
 export async function removeWebhook(fullName: string, url: string): Promise<void> {
   for (const id of await hooksTo(fullName, url))
     await ghText(
       ["api", `repos/${fullName}/hooks/${id}`, "--method", "DELETE"],
-      `remove the webhook that wakes skel from ${fullName}`,
+      `remove the webhook that wakes Skelcrew from ${fullName}`,
     );
 }
 
-// Reacts to an issue with 👀, so you can see on GitHub that skel took it, without a comment.
+// Reacts to an issue with 👀, so you can see on GitHub that Skelcrew took it, without a comment.
 export async function reactToIssue(fullName: string, issue: number): Promise<void> {
   const reacted = await api(`repos/${fullName}/issues/${issue}/reactions`, `react to #${issue}`, {
     content: "eyes",
@@ -251,7 +251,7 @@ export async function reactToIssue(fullName: string, issue: number): Promise<voi
   z.object({ content: z.string() }).parse(reacted);
 }
 
-// Returns the open PR number for a branch, or null so skel knows it must open one. GitHub
+// Returns the open PR number for a branch, or null so Skelcrew knows it must open one. GitHub
 // only matches a branch named with its owner: "owner:branch".
 export async function findPullRequest(fullName: string, branch: string): Promise<number | null> {
   const owner = fullName.split("/")[0];
@@ -278,11 +278,11 @@ export async function openPullRequest(
 }
 
 // Posts the reviewer's verdict and explanation on the PR for you and the builder to read.
-// GitHub refuses to let you approve or request changes on your own pull request, and skel
+// GitHub refuses to let you approve or request changes on your own pull request, and Skelcrew
 // opens and reviews it with the same gh login. So the verdict goes in a comment review, and
-// the skel/review check is what branch protection can require. The review names the commit
+// the skelcrew/check check is what branch protection can require. The review names the commit
 // it covers, since a newer one can reach the PR while it is posted. Returns the review's ID:
-// posted with your login, it looks like your own review on GitHub, and skel must know it
+// posted with your login, it looks like your own review on GitHub, and Skelcrew must know it
 // wrote it.
 export async function postReview(
   fullName: string,
@@ -300,7 +300,7 @@ export async function postReview(
   return z.object({ id: z.number() }).parse(posted).id;
 }
 
-// Sets the commit's skel/review check so branch protection can require the reviewer's
+// Sets the commit's skelcrew/check check so branch protection can require the reviewer's
 // verdict. GitHub rejects a status whose description is longer than 140 characters.
 export async function setReviewStatus(
   fullName: string,
@@ -310,10 +310,10 @@ export async function setReviewStatus(
 ): Promise<void> {
   const set = await api(
     `repos/${fullName}/statuses/${sha}`,
-    `set the skel/review check on ${sha}`,
+    `set the skelcrew/check check on ${sha}`,
     {
       state,
-      context: "skel/review",
+      context: "skelcrew/check",
       description: description.slice(0, 140),
     },
   );
@@ -419,8 +419,8 @@ const Pull = z
 export type PullRequest = z.infer<typeof Pull>;
 
 // Enough of each list for what can happen between two polls. Only the newest are asked for,
-// as events older than the last one skel handled mean nothing to it. A thread's PR is asked
-// for with its last 50 reviews. Other PRs, which skel only shows, are asked for with their
+// as events older than the last one Skelcrew handled mean nothing to it. A thread's PR is asked
+// for with its last 50 reviews. Other PRs, which Skelcrew only shows, are asked for with their
 // last 10: GitHub charges a poll for every review it may send, times the PRs asked for.
 const pullFields = (reviews: number) => `state mergeable baseRefName headRefName
   reviews(last: ${reviews}) { nodes { databaseId state body author { __typename login }
@@ -464,7 +464,7 @@ const verdicts = new Map<string, Verdict>([
   ["DISMISSED", "dismissed"],
 ]);
 
-// Returns how a check stands in skel's words. A check run cancelled, or left stale by a newer
+// Returns how a check stands in Skelcrew's words. A check run cancelled, or left stale by a newer
 // commit, is no failure for the builder to fix.
 function checkState(check: Check): "running" | "passed" | "failed" | "cancelled" {
   if (check.kind === "status") {
@@ -476,11 +476,11 @@ function checkState(check: Check): "running" | "passed" | "failed" | "cancelled"
   return ["CANCELLED", "STALE"].includes(check.conclusion ?? "") ? "cancelled" : "failed";
 }
 
-// Returns who wrote something, in skel's words. `you` is your gh login.
+// Returns who wrote something, in Skelcrew's words. `you` is your gh login.
 const authorOf = (a: { login: string; bot: boolean } | null, you: string) =>
   a && { ...a, you: a.login === you };
 
-// Returns what an issue and a PR share as items, in skel's words.
+// Returns what an issue and a PR share as items, in Skelcrew's words.
 const itemOf = (node: z.infer<typeof Head>, you: string) => ({
   id: String(node.number),
   title: node.title,
@@ -492,13 +492,13 @@ const itemOf = (node: z.infer<typeof Head>, you: string) => ({
   updated: node.updatedAt,
 });
 
-// Returns an issue as a task, for skel's copy.
+// Returns an issue as a task, for Skelcrew's copy.
 function issueItem(node: z.infer<typeof IssueNode>, you: string): Task {
   const state = node.state === "OPEN" ? "open" : "closed";
   return { kind: "task", ...itemOf(node, you), state, closes: `Closes #${node.number}` };
 }
 
-// Returns a PR as an item, for skel's copy.
+// Returns a PR as an item, for Skelcrew's copy.
 function pullItem(node: z.infer<typeof PullNode>, you: string): Item {
   return {
     kind: "pr",
@@ -555,7 +555,7 @@ function listsQuery(
   ].join("\n");
 }
 
-// Returns what changed in the repository since `since`, as items for skel's copy, or with no
+// Returns what changed in the repository since `since`, as items for Skelcrew's copy, or with no
 // `since` everything open, page by page. Also returns your gh login, and each of the given PRs
 // with its reviews, comments, head checks and merge state, whether it changed or not: a check
 // that finished doesn't count as a change to its PR. They come in the same GraphQL query, so
@@ -624,7 +624,7 @@ export async function readRepository(
   // Each thread's PR comes last, so it wins over the same PR read with fewer reviews.
   items.push(...theirs);
   const newest = [since ?? "", ...items.map((item) => item.updated)].sort().at(-1) ?? "";
-  // Checked as skel's copy will read them back, so one it can't take fails here, not later.
+  // Checked as Skelcrew's copy will read them back, so one it can't take fails here, not later.
   return {
     you,
     prs,
@@ -634,8 +634,8 @@ export async function readRepository(
 }
 
 // Returns the given issues as tasks, open or closed, in one query: for threads whose task
-// skel's copy lacks, such as after an upgrade, as a poll brings only open ones at first, and
-// for skel start, as a poll reads only one page of changes. An issue GitHub doesn't find is
+// Skelcrew's copy lacks, such as after an upgrade, as a poll brings only open ones at first, and
+// for sc start, as a poll reads only one page of changes. An issue GitHub doesn't find is
 // left out.
 export async function readTasks(fullName: string, numbers: number[]): Promise<Task[]> {
   const [owner, name] = fullName.split("/");
@@ -658,7 +658,7 @@ export async function readTasks(fullName: string, numbers: number[]): Promise<Ta
     const node = IssueNode.nullish().parse(data.repository[`task${n}`]);
     return node ? [issueItem(node, data.viewer.login)] : [];
   });
-  // Checked as skel's copy will read them back, so one it can't take fails here, not later.
+  // Checked as Skelcrew's copy will read them back, so one it can't take fails here, not later.
   for (const task of tasks) Item.parse(task);
   return tasks;
 }

@@ -254,9 +254,9 @@ test("four hints with the keys stay at the bottom, below however few rows there 
 });
 
 test("a release installed in the background shows as a notice, cut at words to fit", () => {
-  const lines = noticeLines("skel 0.4.3 installed · restart to use it", sidebarWidth);
+  const lines = noticeLines("Skelcrew 0.4.3 installed · restart to use it", sidebarWidth);
   expect(lines.map((line) => Bun.stripANSI(line).slice(0, -1).trimEnd())).toEqual([
-    "  skel 0.4.3 installed ·",
+    "  Skelcrew 0.4.3 installed ·",
     "  restart to use it",
     "",
   ]);
@@ -818,7 +818,7 @@ const state: Thread = {
   repo: "app",
   task: 12,
   folder: "app-12",
-  branch: "skel/12",
+  branch: "skelcrew/12",
   base: null,
   status: "working",
   session: null,
@@ -923,15 +923,15 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5, app) }));`;
     return JSON.parse(run.stdout.toString());
   }
   const rowsAfter = (sql: string, now: number) => after(sql, now).rows;
-  // app, whose lead is the session named lead, as for a machine whose one lead skel kept. It has
-  // started, so it shows a harness.
+  // app, whose lead is the session named lead, as for a machine whose one lead Skelcrew kept. It
+  // has started, so it shows a harness.
   const repository = `INSERT INTO repositories (name, owner, repo, kept_lead, lead_session)
     VALUES ('app', 'simon', 'app', 1, 's');`;
   // Returns the sidebar with one thread that started at 0, in the state given, at a moment.
   function shown(columns: string, values: string, now: number): string {
     const sql = `${repository} INSERT INTO threads
       (owner, repo, task, folder, branch, started, ${columns})
-      VALUES ('simon', 'app', 12, 'app-12', 'skel/12', 0, ${values})`;
+      VALUES ('simon', 'app', 12, 'app-12', 'skelcrew/12', 0, ${values})`;
     return draw(rowsAfter(sql, now), "lead", size);
   }
   const hours = (n: number) => n * 3_600_000;
@@ -961,7 +961,7 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5, app) }));`;
   // Adds a thread on issue 12, with PR 34.
   const onTwelve = (status: string, needing = 0) =>
     `INSERT INTO threads (owner, repo, task, folder, branch, status, pr, needs_you)
-      VALUES ('simon', 'app', 12, 'app-12', 'skel/12', '${status}', 34, ${needing});`;
+      VALUES ('simon', 'app', 12, 'app-12', 'skelcrew/12', '${status}', 34, ${needing});`;
 
   test("issues come newest first, with those on a thread dim and last", () => {
     const { issues } = after(`${open} ${onTwelve("working")}`, 0).lists;
@@ -976,7 +976,7 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5, app) }));`;
   test("only the open repository's threads, issues and PRs show", () => {
     const sql = `${open} ${onTwelve("working")}
       INSERT INTO threads (owner, repo, task, folder, branch, status)
-        VALUES ('simon', 'site', 8, 'site-8', 'skel/8', 'working');
+        VALUES ('simon', 'site', 8, 'site-8', 'skelcrew/8', 'working');
       ${itemSql("site", "pr", 9, "Dark mode", "2026-11-06T10:00:00Z")}`;
     const { rows, lists } = after(sql, 0);
     expect(rows.map((shown) => shown.name)).toEqual(["lead", "app-12"]);
@@ -1040,7 +1040,7 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5, app) }));`;
     expect(after(sql, 0).lists.issues.links).toHaveLength(5);
   });
 
-  test("a repository skel no longer works on shows nothing", () => {
+  test("a repository Skelcrew no longer works on shows nothing", () => {
     const sql = itemSql("gone", "task", 1, "t", "2026-11-01T10:00:00Z");
     expect(after(sql, 0).lists).toEqual(nothing);
   });
@@ -1098,7 +1098,7 @@ console.log(JSON.stringify(repositoryTabs(db)));`;
 
   test("a thread with no start time saved shows none", () => {
     const sql = `${repository} INSERT INTO threads (owner, repo, task, folder, branch, status)
-      VALUES ('simon', 'app', 12, 'app-12', 'skel/12', 'working')`;
+      VALUES ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'working')`;
     const [, older] = rowsAfter(sql, 5_000);
     expect(older?.word).toBe("working");
     expect(older?.age).toBe("");

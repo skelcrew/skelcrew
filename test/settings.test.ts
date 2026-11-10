@@ -1,5 +1,5 @@
-// Settings in two layers: the repository's committed skel.yaml, read from skel's clone of it,
-// over your own config.yaml.
+// Settings in two layers: the repository's committed skelcrew.yaml, read from Skelcrew's clone of
+// it, over your own config.yaml.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,16 +15,16 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// skel's clone of simon/app, where skel reads its skel.yaml.
-const clone = () => join(home, ".local", "share", "skel", "repos", "simon", "app");
+// Skelcrew's clone of simon/app, where Skelcrew reads its skelcrew.yaml.
+const clone = () => join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
 
-// Writes your config.yaml and, unless it is null, app's skel.yaml in skel's clone.
+// Writes your config.yaml and, unless it is null, app's skelcrew.yaml in Skelcrew's clone.
 function settings(yours: string, shared: string | null): void {
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
-  writeFileSync(join(home, ".config", "skel", "config.yaml"), yours);
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), yours);
   mkdirSync(clone(), { recursive: true });
-  rmSync(join(clone(), "skel.yaml"), { force: true });
-  if (shared !== null) writeFileSync(join(clone(), "skel.yaml"), shared);
+  rmSync(join(clone(), "skelcrew.yaml"), { force: true });
+  if (shared !== null) writeFileSync(join(clone(), "skelcrew.yaml"), shared);
 }
 
 // Runs code against config.ts in a process of its own, as homedir() keeps the HOME this one
@@ -44,7 +44,7 @@ ${code}`;
 // Returns what a thread of app runs with: each role's harness and model, and the round limit.
 const forApp = () => JSON.parse(run("console.log(JSON.stringify(threadConfig(app)));").out);
 
-test("the repository's skel.yaml sets each role and the round limit, over your config", () => {
+test("the repository's skelcrew.yaml sets each role and the round limit, over your config", () => {
   settings(
     "harness: claude\nmodel: sonnet\nmax_rounds: 5\n",
     "lead: { model: opus }\nreviewer: { harness: codex }\nmax_rounds: 2\n",
@@ -57,7 +57,7 @@ test("the repository's skel.yaml sets each role and the round limit, over your c
   });
 });
 
-test("without a skel.yaml, your config decides", () => {
+test("without a skelcrew.yaml, your config decides", () => {
   settings("harness: claude\nmodel: sonnet\nmax_rounds: 5\nreviewer: { harness: codex }\n", null);
   expect(forApp()).toEqual({
     lead: { harness: "claude", model: "sonnet" },
@@ -68,14 +68,14 @@ test("without a skel.yaml, your config decides", () => {
 });
 
 // A model name belongs to its harness.
-test("your model for a role doesn't follow it onto the harness skel.yaml picks", () => {
+test("your model for a role doesn't follow it onto the harness skelcrew.yaml picks", () => {
   settings("harness: claude\nreviewer: { model: sonnet }\n", "reviewer: { harness: codex }\n");
   expect(forApp().reviewer).toEqual({ harness: "codex" });
   settings("harness: claude\nreviewer: { model: sonnet }\n", "reviewer: { harness: claude }\n");
   expect(forApp().reviewer).toEqual({ harness: "claude", model: "sonnet" });
 });
 
-test("setup comes from the skel.yaml in skel's clone", () => {
+test("setup comes from the skelcrew.yaml in Skelcrew's clone", () => {
   settings("harness: claude\n", "setup: [bun install, make]\ntest: [bun test]\n");
   expect(run("console.log(JSON.stringify(repositorySetup(app)));").out).toBe(
     '["bun install","make"]\n',
@@ -84,11 +84,11 @@ test("setup comes from the skel.yaml in skel's clone", () => {
   expect(run("console.log(JSON.stringify(repositorySetup(app)));").out).toBe("[]\n");
 });
 
-test("a skel.yaml that isn't valid, or isn't a plain file, says so rather than be ignored", () => {
+test("a skelcrew.yaml that isn't valid, or isn't a plain file, says so rather than be ignored", () => {
   settings("harness: claude\n", "max_rounds: -1\n");
-  expect(run("threadConfig(app);").err).toContain("the repository's skel.yaml isn't valid");
+  expect(run("threadConfig(app);").err).toContain("the repository's skelcrew.yaml isn't valid");
   settings("harness: claude\n", null);
   writeFileSync(join(home, "secret"), "setup: [cat secret]\n");
-  symlinkSync(join(home, "secret"), join(clone(), "skel.yaml"));
+  symlinkSync(join(home, "secret"), join(clone(), "skelcrew.yaml"));
   expect(run("repositorySetup(app);").err).toContain("isn't a plain file");
 });

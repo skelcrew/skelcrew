@@ -7,7 +7,7 @@ type Waits = { moment?: number; timeout?: number; signal?: AbortSignal };
 // once it is ready for a message.
 export type Marks = { busy: string; prompt: string };
 
-// Returns the visible pane text so skel can check whether the agent is ready for a
+// Returns the visible pane text so Skelcrew can check whether the agent is ready for a
 // message.
 const screen = (socket: string, name: string) =>
   mustTmux(socket, ["capture-pane", "-p", "-t", `=${name}:`]);
@@ -26,7 +26,7 @@ async function notIdle(socket: string, name: string, marks: Marks, moment: numbe
   return "";
 }
 
-// Reports whether the agent shows a quiet, ready prompt, by its harness's marks, so skel can
+// Reports whether the agent shows a quiet, ready prompt, by its harness's marks, so Skelcrew can
 // avoid interrupting work.
 export async function isIdle(
   socket: string,
@@ -83,7 +83,7 @@ async function typeNow(socket: string, name: string, marks: Marks, text: string,
     if (Date.now() > deadline)
       throw new Error(`${name} wasn't idle for ${timeout / 1000}s (${why}), so nothing was typed`);
   }
-  const buffer = `skel-${process.pid}-${buffers++}`;
+  const buffer = `skelcrew-${process.pid}-${buffers++}`;
   // Someone scrolled back would swallow the Enter below, and the message would never be
   // sent. Being scrolled back shows in neither the check above nor the pane's text, so it
   // is left here, whether or not anyone is. It fails when nobody is, which is fine.

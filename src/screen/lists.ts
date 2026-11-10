@@ -52,7 +52,7 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
 // Returns a row of ISSUES or PRS as two lines, each a terminal link and cut to stop at the
 // padding: its title, then, dim, its name and a PR's word, in the colours a thread gives that
 // word. A PR's mark comes before its title, outside the link. An issue has none, so its lines
-// start at the padding. skel may run on another machine than your browser, so your terminal
+// start at the padding. Skelcrew may run on another machine than your browser, so your terminal
 // opens the link. The title comes from outside, so it is made safe. The one you are looking at
 // is shaded as a thread's row is.
 function linkLines(link: Link, here: boolean, width: number): string[] {
@@ -124,7 +124,7 @@ function scrolled(blocks: Line[][], here: number, room: number): Line[] {
 
 // Returns the lines above the hints, and how many there can be. The hints take the bottom four,
 // until the sidebar can't hold them and the whole row you are looking at: then they give way, as
-// the rows are what you pick from and the keys are also in skel's help.
+// the rows are what you pick from and the keys are also in Skelcrew's help.
 // ISSUES, THREADS and PRS each have a third of those lines, however full, so each list stays in
 // the same place on screen, and what doesn't divide goes to THREADS. On a terminal too short for
 // a heading and a row in each third, or for the row you are looking at in THREADS, ISSUES and PRS

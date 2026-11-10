@@ -1,4 +1,4 @@
-// The page shown for an issue or PR: what it says of an item, as a poll brings it into skel's
+// The page shown for an issue or PR: what it says of an item, as a poll brings it into Skelcrew's
 // copy from a fake gh's answer, and how it is drawn.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -36,7 +36,7 @@ cat "${home}/answer"
 
 const issue = issueNode(31, "Add CSV export", {
   body: "Export threads.\n\nKeep it small.",
-  labels: { nodes: [{ name: "skel" }, { name: "good first issue" }] },
+  labels: { nodes: [{ name: "skelcrew" }, { name: "good first issue" }] },
 });
 
 const check = (name: string, conclusion: string | null) => ({
@@ -57,14 +57,14 @@ const review = (state: string, body: string, login = "codex-bot") => ({
 const pull = (more: object = {}) =>
   pullNode(34, "Fix the login redirect", {
     body: "Sign-in landed on a 404.",
-    headRefName: "skel/12",
+    headRefName: "skelcrew/12",
     ...more,
   });
 const rolledUp = (...nodes: object[]) => ({
   commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes } } } }] },
 });
 
-// Returns the page of an issue or PR, as GitHub sends it in a poll and skel's copy keeps it.
+// Returns the page of an issue or PR, as GitHub sends it in a poll and Skelcrew's copy keeps it.
 async function pageFor(node: object, kind: "issue" | "pr"): Promise<Page> {
   gh(kind === "issue" ? pollAnswer([node]) : pollAnswer([], [node]));
   const [item] = (await readRepository("simon/app", [], null)).items;
@@ -78,7 +78,7 @@ test("an issue's page has its title, state, author, labels and description", asy
     facts: [
       ["State", "open"],
       ["Author", "simon"],
-      ["Labels", "skel, good first issue"],
+      ["Labels", "skelcrew, good first issue"],
     ],
     body: "Export threads.\n\nKeep it small.",
   });
@@ -106,7 +106,7 @@ test("a PR's page has its title, state, branch, checks, latest review and descri
     title: "Fix the login redirect",
     facts: [
       ["State", "open"],
-      ["Branch", "skel/12 → main"],
+      ["Branch", "skelcrew/12 → main"],
       ["Checks", "passing"],
       ["Review", "approved · ana"],
     ],
@@ -120,15 +120,15 @@ test("a PR with no checks or reviews says so", async () => {
   expect(facts).toContainEqual(["Review", "none"]);
 });
 
-test("checks read as the strip reads them, leaving out skel's own review check", async () => {
+test("checks read as the strip reads them, leaving out Skelcrew's own review check", async () => {
   const running = [check("test", "SUCCESS"), check("lint", null)];
-  const pr = pull(rolledUp(...running, check("skel/review", "FAILURE")));
+  const pr = pull(rolledUp(...running, check("skelcrew/check", "FAILURE")));
   expect((await pageFor(pr, "pr")).facts).toContainEqual(["Checks", "running"]);
   const failing = pull(rolledUp(check("test", "FAILURE"), check("lint", null)));
   expect((await pageFor(failing, "pr")).facts).toContainEqual(["Checks", "failing"]);
 });
 
-test("a review skel posted says its verdict, as GitHub only has it as a comment", async () => {
+test("a review Skelcrew posted says its verdict, as GitHub only has it as a comment", async () => {
   const pr = pull({ reviews: { nodes: [review("COMMENTED", "**Approved.**\n\nLooks right.")] } });
   expect((await pageFor(pr, "pr")).facts).toContainEqual(["Review", "Approved. · codex-bot"]);
 });
@@ -143,7 +143,7 @@ const page: Page = {
   title: "Add CSV export",
   facts: [
     ["State", "open"],
-    ["Labels", "skel"],
+    ["Labels", "skelcrew"],
   ],
   body: "Export threads.\n\nKeep it small.",
 };
@@ -155,7 +155,7 @@ test("a page reads from the title down, two columns in, with the link among the 
     "  Add CSV export",
     "",
     "  State   open",
-    "  Labels  skel",
+    "  Labels  skelcrew",
     `  GitHub  ${issueUrl}`,
     "",
     "  Export threads.",

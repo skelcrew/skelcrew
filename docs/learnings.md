@@ -20,7 +20,7 @@ that covers the code you are about to write.
 ## Starting and stopping Claude Code
 
 - **Remove inherited `CLAUDE_CODE_*` variables**, such as `CLAUDE_CODE_CHILD_SESSION`. If
-  skel is started from inside a Claude Code session, the agent inherits them and
+  Skelcrew is started from inside a Claude Code session, the agent inherits them and
   misbehaves, for example by writing no transcript.
 - **Mark the folder trusted, or the session waits forever.** Claude Code asks whether to
   trust a folder even in bypass mode, and nobody is watching to answer. Set
@@ -35,14 +35,14 @@ that covers the code you are about to write.
 - **Check a login with `claude auth status --json`.** `.claude.json` exists after any
   launch, logged in or not, so finding it proves nothing.
 - **`AskUserQuestion` waits on a screen nobody watches.** A builder that asks with it
-  stops until someone answers, and nothing tells you. skel must notice the question and
+  stops until someone answers, and nothing tells you. Skelcrew must notice the question and
   mark the thread needs you.
 - **Turn off Claude Code's own sandbox and permission prompts.** A prompt stalls a session
-  nobody watches. Its sandbox fails inside skel's, so keep it off even if your own settings
+  nobody watches. Its sandbox fails inside Skelcrew's, so keep it off even if your own settings
   turn it on. Skip the warning bypass mode shows first, in the session's settings.
 - **Turn off Claude Code's prompt suggestions** with
   `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`. Its greyed-out suggestions propose steps,
-  such as pushing, that belong to skel.
+  such as pushing, that belong to Skelcrew.
 - **Claude Code can outlive SIGTERM for a few seconds.** Wait for it to exit before
   removing the thread's clone or anything else it uses.
 
@@ -52,12 +52,12 @@ that covers the code you are about to write.
   the run.
 - **Its folder holds what it reads as instructions.** `config.toml`, `AGENTS.md`,
   `prompts/`, `rules/`, `skills/` and `plugins/` steer every run, `rules/` can let commands
-  past its checks, and `packages/` holds the program it runs. Reviews share skel's
+  past its checks, and `packages/` holds the program it runs. Reviews share Skelcrew's
   `CODEX_HOME`, so a reviewer that wrote any of them would steer every later review. Keep
   them read-only, and only the login and session files writable.
 - **Never mount `auth.json` on its own.** From 0.167 Codex renews its login by writing a new
   file and renaming it over the old one, and a file mounted on its own can't be renamed over
-  ("Device or resource busy"). By then the old refresh token is spent, so skel's login goes
+  ("Device or resource busy"). By then the old refresh token is spent, so Skelcrew's login goes
   stale for every session and review. Codex follows a link to the file and renames beside
   its target, so link `auth.json` to a writable folder that holds only the login. Up to
   0.163 it rewrote the file in place.
@@ -68,14 +68,14 @@ that covers the code you are about to write.
 - **Mark the folder trusted, or the session waits.** Without `trust_level = "trusted"` for
   the folder under `projects`, Codex asks first. `"untrusted"` asks too.
 - **Hooks wait for a person to trust them.** Codex shows "Hooks need review" at start for
-  any hook not trusted yet, even one skel wrote. `--dangerously-bypass-hook-trust` skips the
+  any hook not trusted yet, even one Skelcrew wrote. `--dangerously-bypass-hook-trust` skips the
   question. A `trusted_hash` per hook does too, but then a repository's own
   `.codex/hooks.json` still asks.
 - **A repository's own `.codex/config.toml` wins over `CODEX_HOME`'s.** In a trusted folder,
-  `[features] hooks = false` there silenced skel's `Stop` hook. A `-c` on the command line
-  wins over both, so pass what skel needs that way.
+  `[features] hooks = false` there silenced Skelcrew's `Stop` hook. A `-c` on the command line
+  wins over both, so pass what Skelcrew needs that way.
 - **An error ends a turn with no `Stop` hook.** An unknown model prints a 400 error and sits
-  at its prompt, and nothing tells skel. Check the model against `codex debug models` first.
+  at its prompt, and nothing tells Skelcrew. Check the model against `codex debug models` first.
 - **Its empty input always shows "› Ask Codex to do anything"**, even while a turn runs. So
   a line holding only `›` never shows. It is busy while "esc to interrupt" shows, as Claude
   Code is.
@@ -96,11 +96,11 @@ that covers the code you are about to write.
 
 - **The boundary holds against mistakes and overreach, not an agent set on escaping.**
   Decided by Simon. A race that needs an agent to change a file in the instant between
-  skel's check and git's read is out of scope; one a careless agent could trip is not.
+  Skelcrew's check and git's read is out of scope; one a careless agent could trip is not.
 - **bwrap being installed doesn't mean it can run.** On Ubuntu 24.04 and later, AppArmor
   blocks the namespaces it needs unless a profile allows them. Check by running
   `bwrap --ro-bind / / true`, not by finding the binary.
-- **bwrap can't start inside skel's own sandbox.** Once skel builds skel, tests that start a
+- **bwrap can't start inside Skelcrew's own sandbox.** Once Skelcrew builds Skelcrew, tests that start a
   real sandbox can't run there. That is the one place they may skip.
 - **Hide the home folder, then put back only what the agent needs.** Programs often live
   under it: Claude Code under nvm keeps node beside it, and its package where its link
@@ -112,12 +112,12 @@ that covers the code you are about to write.
 - **The daemon never runs git in a thread's clone.** The builder controls everything in
   it, `.git` included: `git status` or `git diff` there runs a planted `core.fsmonitor`,
   and a link left in `refs` or `objects` sends a write anywhere. Fetch the branch from the
-  clone into skel's own clone, and push from there the commit it recorded, to the thread's
+  clone into Skelcrew's own clone, and push from there the commit it recorded, to the thread's
   branch only. Remove the clone by deleting its folder.
 - **Never use a session's config folder outside the sandbox.** The agent can put commands
   in its `settings.json`, so `claude auth status` run there with your rights would run them.
 - **Agents read `.git/config`.** A remote URL with a token in it, or an `extraheader`, would
-  be visible to them, so skel refuses to start the lead while a clone holds one. Hand git
+  be visible to them, so Skelcrew refuses to start the lead while a clone holds one. Hand git
   your gh login for each command, as a credential helper, rather than saving it.
 - **Agents share the network.** They can reach ports on localhost and abstract sockets.
 - **Mount the folder of clones, not each clone.** A mount per clone, made when the sandbox
@@ -139,8 +139,8 @@ that covers the code you are about to write.
   `--unshare-pid`. Mask again what the container masked, since the new `/proc` shows it.
 - **A `/proc` borrowed from outside a process list breaks programs inside it.** Its numbers
   are the outside ones, so a program that looks itself up by its own number, as setpriv
-  and bwrap do, finds another process or none, and so do `ps`, `kill` and skel's own
-  stopping of a session. A builder running skel's tests on a Sprite failed this way.
+  and bwrap do, finds another process or none, and so do `ps`, `kill` and Skelcrew's own
+  stopping of a session. A builder running Skelcrew's tests on a Sprite failed this way.
 - **`unshare --fork` ignores SIGTERM.** It waits for its child instead. End it with SIGKILL,
   and `--kill-child` takes the sandbox down with it.
 - **An overlay can't be laid over the Sprite's own disk.** That disk is an overlay already,
@@ -148,7 +148,7 @@ that covers the code you are about to write.
   disk of its own, so a test in `/tmp` passes and proves nothing. A reviewer gets a copy
   of the folder instead, made in the review's own folder and removed with it.
 - **Hide `sprite-env` in the sandbox too.** Without the control socket it only fails, and
-  anything inside that checks for a Sprite, skel's tests included, takes the sandbox for a
+  anything inside that checks for a Sprite, Skelcrew's tests included, takes the sandbox for a
   Sprite whose services it can't reach.
 - **The Sprite's `node` writes to `/etc/profile.d` the first time it runs.** It is a script
   that adds a line to `languages_env`, and with `set -e` it fails where `/etc` is
@@ -173,7 +173,7 @@ that covers the code you are about to write.
   lets go, and answers 404 once the task has expired. `sprite-env curl /v1/tasks` lists them.
 - **DNS comes from `/etc/resolv.conf`.** There is no `/run/systemd/resolve`, and no systemd.
 - **There is no `/run/user/<uid>`, and no `XDG_RUNTIME_DIR`.** `/run` belongs to root, so
-  skel's sockets go in a folder of its own data folder, made readable only by you.
+  Skelcrew's sockets go in a folder of its own data folder, made readable only by you.
 - **Tell a Sprite by `sprite-env`.** Every Sprite has it in `/.sprite/bin`, on the PATH that
   commands and services get. No environment variable says you are on one.
 - **Services get the same PATH as `sprite exec`**, with `~/.local/bin` and `/.sprite/bin`,
@@ -182,11 +182,11 @@ that covers the code you are about to write.
 - **A Sprite service ends everything it started when it stops.** Each service is a cgroup,
   so a tmux server the daemon starts, even in a session of its own, ends with every
   restart. And while any process is left in it, the Sprite takes a crashed service for a
-  running one and never starts it again. skel's tmux server is a Sprite service of its own.
+  running one and never starts it again. Skelcrew's tmux server is a Sprite service of its own.
 - **`sprite exec` exits 1 when it can't find the program**, as for any failure. Run the
   command through `sh -c` to get 127 for a missing one.
 - **`sprite exec --tty` forwards your keyboard**, including what was typed ahead. An
-  answer meant for skel on the laptop is lost if a command on the Sprite runs first.
+  answer meant for Skelcrew on the laptop is lost if a command on the Sprite runs first.
 - **`sprite exec --tty` puts the raw command in your terminal's title** as it connects, and
   writes nothing back at the end. It then writes the Sprite's name in front of any title sent
   as OSC 0, which is tmux's usual way, and leaves OSC 2 alone. It gives the Sprite a terminal
@@ -260,7 +260,7 @@ that covers the code you are about to write.
   it again. It also resets the pane, so the mouse modes a page asked for go with it.
 - **tmux 3.6 can crash when a client leaves under `destroy-unattached`.** The server segfaults
   if another client, even a one-off command, disconnects at that moment. The session is
-  destroyed while the leaving client still points at it. It needs nothing of skel's: a plain
+  destroyed while the leaving client still points at it. It needs nothing of Skelcrew's: a plain
   server with a busy `list-clients` loop crashed within 8 rounds. Every terminal on that
   server loses its screen, and agents keep running. The sidebar's own commands hit this about
   once in 500 leavings on a loaded machine, so a screen test can fail with `server exited
@@ -298,13 +298,13 @@ that covers the code you are about to write.
 ## The agent's shell commands
 
 - **A shell command can't block for long.** After 2 minutes Claude Code moves a running
-  command to the background and ends the agent's turn. So `skel submit` must answer
+  command to the background and ends the agent's turn. So `sc submit` must answer
   quickly, and leave slow work, such as starting a review, to the daemon.
 
 ## Bringing in a repository
 
-- **Trust what skel clones, not the folder.** Whoever can edit `.git/config` controls
-  `origin`, and anyone can put files in a checkout. skel judges push access on the GitHub
+- **Trust what Skelcrew clones, not the folder.** Whoever can edit `.git/config` controls
+  `origin`, and anyone can put files in a checkout. Skelcrew judges push access on the GitHub
   repository `origin` names and clones from GitHub, never from the folder, so the trust
   covers exactly what agents will read.
 - **A yes from the lead proves nothing.** It could come from an injected instruction, so a
@@ -329,4 +329,4 @@ that covers the code you are about to write.
   people look.
 - **A webhook says only "look now".** Anyone can reach a Sprite's public URL, and deliveries
   are lost while the daemon is down. So a delivery, even a signed one, only brings the next
-  poll forward, and skel acts on what the poll reads.
+  poll forward, and Skelcrew acts on what the poll reads.

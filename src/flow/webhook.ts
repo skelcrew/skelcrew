@@ -14,8 +14,8 @@ const secretFile = () => join(configDir(), "webhook-secret");
 
 const Secret = z.string().regex(/^[0-9a-f]{64}$/);
 
-// Returns the secret GitHub signs skel's webhook deliveries with, made the first time and
-// kept readable only by you. The daemon and skel in your terminal can both ask for it first,
+// Returns the secret GitHub signs Skelcrew's webhook deliveries with, made the first time and
+// kept readable only by you. The daemon and Skelcrew in your terminal can both ask for it first,
 // so it is written beside the file and linked into place, which fails if the other won.
 export function webhookSecret(): string {
   mkdirSync(configDir(), { recursive: true });
@@ -24,14 +24,14 @@ export function webhookSecret(): string {
   try {
     linkSync(part, secretFile());
   } catch {
-    // Already made, by an earlier skel or the other one.
+    // Already made, by an earlier Skelcrew or the other one.
   } finally {
     rmSync(part, { force: true });
   }
   const read = Secret.safeParse(readFileSync(secretFile(), "utf8"));
   if (!read.success)
     throw new Error(
-      `${secretFile()} doesn't hold a secret skel made: remove it, and skel makes a new one`,
+      `${secretFile()} doesn't hold a secret Skelcrew made: remove it, and Skelcrew makes a new one`,
     );
   return read.data;
 }
@@ -68,7 +68,7 @@ export function listenForWebhooks(
       if (plugin && (await wake(plugin))) return new Response("Polling\n", { status: 202 });
       const body = new Uint8Array(await request.arrayBuffer());
       if (!signedBy(secret, body, request.headers.get("X-Hub-Signature-256"))) {
-        console.log("ignored a webhook delivery that wasn't signed with skel's secret");
+        console.log("ignored a webhook delivery that wasn't signed with Skelcrew's secret");
         return new Response("Wrong signature\n", { status: 401 });
       }
       // GitHub pings a webhook once it is created, to see it answer.
@@ -86,7 +86,7 @@ export function listenForWebhooks(
 }
 
 // Sets the webhook that wakes this Sprite on a repository, owner/name, so a label, your
-// comment or your merge there reaches skel while the Sprite sleeps.
+// comment or your merge there reaches Skelcrew while the Sprite sleeps.
 export async function hookRepository(fullName: string): Promise<void> {
   await setWebhook(fullName, spriteUrl(), webhookSecret());
 }

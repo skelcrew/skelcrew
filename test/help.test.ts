@@ -1,4 +1,4 @@
-// skel's help: what you see with skel --help, and with a command skel doesn't know.
+// Skelcrew's help: what you see with sc --help, and with a command Skelcrew doesn't know.
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,7 +14,7 @@ function skel(args: string[], env: Record<string, string> = {}) {
   return { code: run.exitCode, out: run.stdout.toString(), err: run.stderr.toString() };
 }
 
-test("skel --help, -h and help print the help to stdout and succeed", () => {
+test("sc --help, -h and help print the help to stdout and succeed", () => {
   for (const flag of ["--help", "-h", "help"]) {
     const help = skel([flag]);
     expect(help.code).toBe(0);
@@ -52,8 +52,8 @@ test("the help names every command", () => {
     expect(out).toContain(`  ${command} `);
 });
 
-// --remote keeps skel on the other side up to date, so there is no command for it.
-test("the help names no update command, and says --remote keeps skel up to date", () => {
+// --remote keeps Skelcrew on the other side up to date, so there is no command for it.
+test("the help names no update command, and says --remote keeps Skelcrew up to date", () => {
   const out = skel(["--help"]).out;
   expect(out).not.toContain("update --remote");
   expect(out).not.toMatch(/^ {2}update/m);
@@ -65,14 +65,14 @@ test("the help has no color when stdout isn't a terminal, or with NO_COLOR", () 
   expect(skel(["--help"]).out).not.toContain("\x1b[");
 });
 
-test("a command skel doesn't know gets one line on stderr pointing to the help", () => {
+test("a command Skelcrew doesn't know gets one line on stderr pointing to the help", () => {
   const wrong = skel(["frobnicate"]);
   expect(wrong.code).toBe(1);
   expect(wrong.out).toBe("");
-  expect(wrong.err).toBe("skel: that isn't a skel command. Run skel --help to see them.\n");
+  expect(wrong.err).toBe("Skelcrew: that isn't a Skelcrew command. Run sc --help to see them.\n");
 });
 
-test("skel --version from a checkout says so, with its commit", () => {
+test("sc --version from a checkout says so, with its commit", () => {
   const home = mkdtempSync(join(tmpdir(), "skel-version-test-"));
   try {
     const git = (status: string) => {
@@ -84,22 +84,22 @@ test("skel --version from a checkout says so, with its commit", () => {
     const clean = skel(["--version"], { PATH: path });
     expect(clean).toEqual({
       code: 0,
-      out: "skel from a checkout, at commit 39939b0\n",
+      out: "skelcrew from a checkout, at commit 39939b0\n",
       err: "",
     });
     git(" M src/main.ts");
     expect(skel(["--version"], { PATH: path }).out).toBe(
-      "skel from a checkout, at commit 39939b0 with uncommitted changes\n",
+      "skelcrew from a checkout, at commit 39939b0 with uncommitted changes\n",
     );
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
 });
 
-test("skel --version answers on a server whose skel differs from the laptop's", () => {
-  const seen = skel(["--version"], { SKEL_LAPTOP_BUILD: "other", SKEL_REMOTE_NAME: "x" });
+test("sc --version answers on a server whose Skelcrew differs from the laptop's", () => {
+  const seen = skel(["--version"], { SKELCREW_LAPTOP_BUILD: "other", SKELCREW_REMOTE_NAME: "x" });
   expect(seen.code).toBe(0);
-  expect(seen.out).toStartWith("skel ");
+  expect(seen.out).toStartWith("skelcrew ");
 });
 
 test("the help names the sidebar's keys, switching repositories included", () => {
