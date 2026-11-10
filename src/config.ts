@@ -22,6 +22,7 @@ export const configFile = () => join(configDir(), "config.yaml");
 // repositories you declined the GitHub plugin for, while preserving unknown settings.
 export function readConfig() {
   const file = configFile();
+  // Read as a document, not plain data, so a save keeps your comments and layout.
   const config = parseDocument(existsSync(file) ? readFileSync(file, "utf8") : "");
   const [broken] = config.errors;
   if (broken) throw new Error(`${file} isn't valid YAML: ${broken.message}`);
@@ -61,6 +62,7 @@ const Tracker = z.looseObject({ tracker: z.string().optional() });
 // A repository Skelcrew works on, by its owner and name.
 type Repository = { owner: string; repo: string };
 
+// The harness a role runs on, and its model, or none for the harness's default.
 type Role = { harness: HarnessName; model?: string };
 
 // Returns the harness and model a role runs on, given what your config sets for it and your
@@ -80,6 +82,7 @@ function roleOn(
 // agent on settings you didn't pick.
 function yoursAgainst<T extends z.ZodType>(schema: T): z.infer<T> {
   const file = configFile();
+  // An empty file, or none, sets nothing.
   const read = schema.safeParse(existsSync(file) ? (parse(readFileSync(file, "utf8")) ?? {}) : {});
   if (!read.success) throw new Error(`${file} isn't valid: ${z.prettifyError(read.error)}`);
   return read.data;
@@ -91,6 +94,7 @@ function yoursAgainst<T extends z.ZodType>(schema: T): z.infer<T> {
 // Skelcrew reads it with your rights, so a link, which could show it any file of yours, is refused.
 function sharedAgainst<T extends z.ZodType>(schema: T, repository: Repository): z.infer<T> {
   const file = join(cloneDir(repository.owner, repository.repo), "skelcrew.yaml");
+  // lstat, so a link is seen as one and refused, not followed.
   const stat = lstatSync(file, { throwIfNoEntry: false });
   if (stat && !stat.isFile())
     throw new Error("the repository's skelcrew.yaml isn't a plain file, so Skelcrew won't read it");
@@ -109,6 +113,7 @@ function layered(
   top: HarnessName,
 ): z.infer<typeof Roles>["reviewer"] {
   const harness = shared?.harness ?? yours?.harness;
+  // A role with no harness of its own runs on `top`, on either side.
   const stays = (harness ?? top) === (yours?.harness ?? top);
   const model = shared?.model ?? (stays ? yours?.model : undefined);
   return { ...(harness ? { harness } : {}), ...(model ? { model } : {}) };
@@ -119,6 +124,8 @@ function layered(
 // second view on another model is yours to choose, such as with reviewer: { harness: codex }.
 export function agentRoles(repository?: Repository): { lead: Role; builder: Role; reviewer: Role } {
   const yours = yoursAgainst(Roles);
+  // Without a repository, such as for the starter skelcrew.yaml sc init writes, only your
+  // config counts.
   const shared = repository ? sharedAgainst(Roles, repository) : {};
   const top = { harness: agentHarness().name, model: yours.model };
   return {
