@@ -1,15 +1,12 @@
 // The requests the daemon takes on its sockets, and who may make which. The daemon and the
 // commands that ask it both go by these.
 import { z } from "zod";
+import { TaskId } from "./copy.ts";
 import type { Thread } from "./thread.ts";
 
 // Only what a branch name holds: it goes into what git fetches, where a : or * would ask
 // for something else.
 const Branch = z.string().regex(/^(?!-)(?!.*\.\.)[\w./-]+$/);
-
-// A task's ID in its tracker, or Skelcrew's own for a thread with no tracker, such as t1. It names
-// folders and branches, so it holds only letters, digits and dashes.
-const TaskId = z.string().regex(/^[A-Za-z0-9][\w-]*$/);
 
 // A request's `repo` names a repository the way a command does: by its name in Skelcrew or its
 // owner/name. It keeps that word because clients on other machines send it.

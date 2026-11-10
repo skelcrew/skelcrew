@@ -592,4 +592,22 @@ echo "Not logged in"; exit 1`,
     expect(took()).toHaveLength(1);
     expect(lead().split("started app-12").length - 1).toBe(1);
   }, 60_000);
+
+  // A task's ID names the thread's folder, which setup deletes before it clones, so an ID
+  // from a tracker that climbs out of Skelcrew's threads folder must never reach it.
+  test("a task ID from the tracker that isn't a plain name is refused, and nothing is deleted", async () => {
+    addApp();
+    const victim = join(data(), "victim");
+    mkdirSync(victim, { recursive: true });
+    writeFileSync(join(victim, "keep"), "mine\n");
+    changes([
+      taskItem("../../victim", "Climb out", { labels: ["skelcrew"] }),
+      taskItem("13", "Fix login"),
+    ]);
+    serve();
+    await morePolls();
+    expect(thread()).toEqual({});
+    expect(copied().rows).toEqual([]);
+    expect(read(join(victim, "keep"))).toBe("mine\n");
+  }, 30_000);
 });

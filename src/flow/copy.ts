@@ -16,11 +16,21 @@ const Author = z.object({
 
 const Comment = z.object({ id: z.string(), text: z.string(), author: Author.nullable() });
 
-// What an item has whatever its kind. An ID is the tracker's own, such as "12" on GitHub.
+// A task's ID in its tracker, or Skelcrew's own for a thread with no tracker, such as t1. It
+// names the thread's folder, which setup deletes, and its branch, so it holds only letters,
+// digits, underscores and dashes, starting with a letter or digit: never a / or a .. that
+// would reach outside Skelcrew's threads folder.
+export const TaskId = z
+  .string()
+  .max(64)
+  .regex(/^[A-Za-z0-9][\w-]*$/);
+
+// What an item has whatever its kind. An ID is the tracker's own, such as "12" on GitHub, and
+// is checked as the plugin answers, so one that isn't a plain name is refused once, there.
 // Times are as the tracker wrote them, which for GitHub sort as text. The link becomes a
 // terminal link, so it may hold only printable characters, with no space.
 const common = {
-  id: z.string(),
+  id: TaskId,
   title: z.string(),
   body: z.string(),
   state: z.enum(["open", "closed", "merged"]),

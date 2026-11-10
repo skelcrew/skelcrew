@@ -449,6 +449,25 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(thread().status).toBe("working");
   }, 20_000);
 
+  // Setup deletes the thread's folder before it clones, outside the sandbox, so a folder name
+  // that climbs out of Skelcrew's threads folder must never be deleted, however it was saved.
+  test("starting over refuses a thread folder outside Skelcrew's threads folder, and deletes nothing", async () => {
+    addApp();
+    const victim = join(data(), "victim");
+    mkdirSync(victim, { recursive: true });
+    writeFileSync(join(victim, "keep"), "mine\n");
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run(
+      "INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES ('simon', 'app', '12', '../victim', 'skelcrew/12', 'failed')",
+    );
+    db.close();
+    serve();
+    await untilCloned();
+    await skel("start", "app-12");
+    await until(() => thread().status === "failed" && thread().started !== null);
+    expect(read(join(victim, "keep"))).toBe("mine\n");
+  }, 20_000);
+
   test("refuses a second thread on a task that has one", async () => {
     addApp();
     serve();

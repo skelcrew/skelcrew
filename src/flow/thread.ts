@@ -105,8 +105,14 @@ export const repositoryOf = (db: Database, thread: Thread) =>
   findRepository(db, fullNameOf(thread));
 
 // Returns the thread's clone folder. It comes from the folder name chosen at start, so it
-// stays put when the repository's name changes.
-export const cloneOf = (thread: Thread) => join(threadsDir(), thread.folder);
+// stays put when the repository's name changes. Setup and a thread's end delete this folder,
+// so it throws for a name that isn't one plain folder inside Skelcrew's threads folder, such
+// as one with a / or a .., however it got into the database.
+export function cloneOf(thread: Thread): string {
+  if (!/^[A-Za-z0-9][\w.-]*$/.test(thread.folder) || thread.folder.includes(".."))
+    throw new Error(`a thread's folder must be a plain name, not ${thread.folder}`);
+  return join(threadsDir(), thread.folder);
+}
 
 // Appends the whole thread as it now is, with the reason when there is one, as a line to
 // its log. Every change goes there too, so the thread's history can be read and replayed.
