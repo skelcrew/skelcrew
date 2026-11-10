@@ -205,7 +205,7 @@ await Bun.write(${JSON.stringify(ready)}, "");`;
 // service manager was asked.
 async function beforeAttaching(build?: string) {
   const done = await inProcess(
-    `import { onThisSkel } from ${JSON.stringify(source("client.ts"))};
+    `import { onThisSkel } from ${JSON.stringify(source("attach.ts"))};
 await onThisSkel();`,
     build,
   );

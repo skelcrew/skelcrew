@@ -75,7 +75,7 @@ function usage(command?: string): never {
 // from, or the one --from names, or else the one you opened last. While skel has no
 // repositories, bringInFrom has said so, and there is no lead to open.
 async function leadCommand(from?: string): Promise<void> {
-  const { attachToLead } = await import("./client.ts");
+  const { attachToLead } = await import("./attach.ts");
   const { openDb } = await import("./db.ts");
   const { bringInFrom, repositories } = await import("./flow/repo.ts");
   const { firstRun } = await import("./machine/setup.ts");
@@ -260,7 +260,8 @@ async function taskCommand(args: string[]): Promise<void> {
 // Starts, stops, re-reviews or attaches to the thread on a task, named such as app-13.
 async function threadCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
-  const { attachToThread, reviewAgain, startOn, stopOn } = await import("./client.ts");
+  const { attachToThread } = await import("./attach.ts");
+  const { reviewAgain, startOn, stopOn } = await import("./client.ts");
   const thread = taskName(sub);
   const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
   if (command === "start" && thread && (rest.length === 0 || from)) {
