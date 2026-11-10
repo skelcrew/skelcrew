@@ -93,8 +93,8 @@ export function threadWord(thread: Thread, maxRounds: number): string {
     if (verdict === "approve" && (checks === "passing" || checks === null)) return "approved";
     return "needs you";
   }
-  // Not needing you: a round under way is a review, a review still being typed into the
-  // builder is changes, and otherwise it works or waits on checks.
+  // Not needing you: a round under way shows as reviewing, and a review's changes still waiting
+  // to be typed into the builder as changes. Otherwise it works or waits on checks.
   if (underWay) return "reviewing";
   if (thread.telling !== null) return "changes";
   return status === "working" ? "working" : "checks";
