@@ -511,6 +511,25 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
     expect(existsSync(clone())).toBe(false);
   }, 60_000);
 
+  // A forge answers what changed since the last poll, and nothing changes on the PR while
+  // the thread is stopped, so the comment held back must come from Skelcrew's copy.
+  test("a comment held for a stopped thread reaches it once it starts, though the forge never sends it again", async () => {
+    await approvedApp12();
+    Bun.spawnSync([process.execPath, main, "stop", "app-12"], { env: env() });
+    expect(thread().status).toBe("stopped");
+    pr({ reviews: [skelReview], comments: [{ id: "50", author: you, text: "Also CSV." }] });
+    await morePolls(1);
+    changes([]);
+    await morePolls();
+    expect(handled("50")).toBe(false);
+    const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
+      env: env(),
+      stderr: "pipe",
+    });
+    expect(started.stderr.toString()).toBe("");
+    await until(() => typed().includes("Also CSV."), 30_000);
+  }, 60_000);
+
   test("a comment still waiting for a busy builder when it is stopped stays unhandled", async () => {
     mkdirSync(builder(), { recursive: true });
     writeFileSync(join(builder(), "busy"), "");

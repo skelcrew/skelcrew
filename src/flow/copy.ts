@@ -133,6 +133,23 @@ export function taskOf(db: Database, owner: string, repo: string, task: string):
   return found;
 }
 
+// Returns a thread's PR from the copy, as its forge last answered it, or null when the copy
+// doesn't have it. A forge answers only what changed since the last poll, so a PR whose events
+// were held back, such as for a stopped thread, comes from here until it changes again.
+export function prOf(
+  db: Database,
+  owner: string,
+  repo: string,
+  pr: number,
+): Extract<Item, { kind: "pr" }> | null {
+  const [found] = parsed(
+    db
+      .query("SELECT item FROM items WHERE owner = ? AND repo = ? AND kind = 'pr' AND id = ?")
+      .all(owner, repo, String(pr)),
+  );
+  return found?.kind === "pr" ? found : null;
+}
+
 // Returns a repository's open tasks, newest first, for sc task ls and for starting a thread
 // on each one labeled to start.
 export function openTasks(db: Database, owner: string, repo: string): Task[] {

@@ -10,7 +10,7 @@ import { changed, forgeOf, pluginsOf, took, trackerOf } from "../plugins/ask.ts"
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { baseOf, startThread } from "./builder.ts";
-import { type Item, openTasks, saveItems } from "./copy.ts";
+import { type Item, openTasks, prOf, saveItems } from "./copy.ts";
 import { ciChecks, decide, labeledToStart, type PullRequest } from "./decide.ts";
 import { endThread, tellBuilder, typingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
@@ -142,7 +142,6 @@ async function pollRepository(
   starting: Set<string>,
 ): Promise<void> {
   const { owner, repo } = repository;
-  const prs = new Map<number, PullRequest>();
   for (const { plugin, jobs } of pluginsOf(db, repository)) {
     const next = nexts.get(plugin) ?? null;
     const watched = jobs.includes("forge")
@@ -155,7 +154,6 @@ async function pollRepository(
     ];
     const items = answer.items.filter((item) => kinds.includes(item.kind));
     saveItems(db, owner, repo, items, next === null ? kinds : []);
-    for (const item of items) if (item.kind === "pr") prs.set(Number(item.id), item);
     nexts.set(plugin, answer.next);
   }
   if (trackerOf(db, repository) !== null) await startLabeled(db, tmux, repository, begin, starting);
@@ -163,7 +161,10 @@ async function pollRepository(
   for (const before of threads) {
     if (!forged) await actOnBranch(db, tmux, repository, readThread(db, before.folder));
     else {
-      const pr = before.pr === null ? undefined : prs.get(before.pr);
+      // From the copy, just brought up to date, rather than from the answer: a forge answers
+      // only what changed, and events held back for a thread, such as one stopped, were left
+      // out of its `seen`, so its PR is acted on again until they are handed over.
+      const pr = before.pr === null ? null : prOf(db, owner, repo, before.pr);
       if (pr) await actOnPr(db, tmux, before, pr);
     }
   }
