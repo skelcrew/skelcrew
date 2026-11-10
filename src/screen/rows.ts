@@ -82,8 +82,8 @@ export function threadMark(row: Row): Mark {
 // couldn't be told about an event, and that says just so rather than something untrue.
 export function threadWord(thread: Thread, maxRounds: number): string {
   const { status, verdict, checks } = thread;
-  // A thread that ended or stopped says just that. Otherwise a question from its builder comes
-  // first, then why it needs you, then what it is doing.
+  // A thread that failed, stopped or is done says just that. Otherwise a question from its builder
+  // comes first, then why it needs you, then what it is doing.
   if (status === "failed" || status === "stopped" || status === "done") return status;
   const underWay = thread.submitting !== null || thread.reviewing !== null;
   if (thread.asking) return "question";
