@@ -31,6 +31,7 @@ export const clean = (text: string) => text.replace(/\p{Cc}/gu, " ");
 // as a Japanese title takes two for each.
 export function fitted(text: string, width: number): string {
   if (Bun.stringWidth(text) <= width) return text;
+  // Takes letters while they and the … still fit. With no room at all, not even the … shows.
   let cut = "";
   for (const letter of text) {
     if (Bun.stringWidth(`${cut}${letter}…`) > width) break;

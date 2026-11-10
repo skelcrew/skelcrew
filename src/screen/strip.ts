@@ -32,6 +32,8 @@ function aboutReview(row: Row): string {
 // takes what room is left and the title what the review leaves: the title is what is longest,
 // and you have it from the task. A name too long for all that is shown alone.
 function aboutThread(row: Row, width: number): string {
+  // The name, then the PR and checks at the end. With no room left after them, the name shows
+  // alone.
   const name = fitted(clean(row.name), width);
   const tail = [row.pr === null ? "" : `#${row.pr}`, row.checks ? said[row.checks] : ""]
     .filter(Boolean)
@@ -39,6 +41,8 @@ function aboutThread(row: Row, width: number): string {
   const end = tail ? `  ${tail}` : "";
   const spare = width - Bun.stringWidth(name) - Bun.stringWidth(end);
   if (spare < 0) return `#[bold]${escaped(name)}#[default]`;
+  // The review takes what room is left, then the title what the review leaves. The name is
+  // bold, the review dim.
   const review = fitted(aboutReview(row), spare);
   const room = spare - Bun.stringWidth(review);
   const title = row.title ? fitted(`  ${clean(row.title)}`, room) : "";
@@ -93,8 +97,10 @@ export function drawStrip(
   page: Link | null = null,
 ): [string, string] {
   const { left, width } = size;
+  // The second line is the thin line, meeting the sidebar's edge with a ┬.
   const top = header(where, left, release);
   const line = `#[fg=colour237]${"─".repeat(Math.max(left - 2, 0))}┬${"─".repeat(width + 1)}`;
+  // A page shows its row, a thread its own line, and the lead only the header.
   if (page) return [`${top}${aboutPage(page, width)}`, line];
   const row = rows.find((candidate) => candidate.session === session);
   if (!row || row.status === null) return [top, line];
@@ -109,11 +115,14 @@ export function drawStrip(
 // how many. Each tab is a range of its own, named by its place in the list, so a click on it
 // can say which it was. It reads nothing, so what you see can be tested without a terminal.
 export function drawTabs(tabs: Tab[], open: string, width: number): string {
+  // Starts from the open tab, or the first when none is open.
   const at = Math.max(
     tabs.findIndex((tab) => tab.fullName === open),
     0,
   );
+  // Returns a tab's text: its name, with its count when threads in it need you or failed.
   const label = (tab: Tab) => ` ${tab.name}${tab.count ? ` •${tab.count}` : ""} `;
+  // Returns how many columns the tab at a place in the list takes, or none past either end.
   const wide = (index: number) => {
     const tab = tabs[index];
     return tab ? Bun.stringWidth(label(tab)) : 0;
@@ -121,6 +130,8 @@ export function drawTabs(tabs: Tab[], open: string, width: number): string {
   const all = tabs.reduce((sum, tab) => sum + Bun.stringWidth(label(tab)), 1);
   // The count of those left out goes at the end, and needs its room kept.
   const room = all <= width ? width : width - `  +${tabs.length}`.length;
+  // Takes in tabs out from the open one, one on each side at a time, until neither side fits
+  // another. The open tab always shows.
   let [first, last, used] = [at, at, 1 + wide(at)];
   let [left, right] = [true, true];
   while (left || right) {
@@ -129,6 +140,8 @@ export function drawTabs(tabs: Tab[], open: string, width: number): string {
     if (left && first > 0 && used + wide(first - 1) <= room) used += wide(--first);
     else left = false;
   }
+  // The open tab's dot is the yellow that shows on its grey. A dim count of those left out ends
+  // the row.
   const shown = tabs.slice(first, last + 1).map((tab, offset) => {
     const here = first + offset === at;
     const style = here ? "#[bg=colour238,fg=colour231,bold]" : "#[fg=brightblack]";

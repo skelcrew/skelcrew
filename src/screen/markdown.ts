@@ -2,8 +2,8 @@
 // lists and links. Anything else stays the plain text it was written as.
 import { clean } from "./look.ts";
 
-// Each style is ended on its own, not with a reset, as the page's wrapping carries a style
-// over to the next line only when it knows where that style ends.
+// Return text bold, or dim as code is. Each style is ended on its own, not with a reset, as the
+// page's wrapping carries a style over to the next line only when it knows where that style ends.
 const bold = (text: string) => `\x1b[1m${text}\x1b[22m`;
 const dim = (text: string) => `\x1b[90m${text}\x1b[39m`;
 
@@ -33,9 +33,12 @@ export function drawMarkdown(markdown: string): string[] {
   // shorter fences, or the other kind, as code. A block that never closes runs to the end.
   let open = "";
   return markdown.split(/\r?\n/).flatMap((raw) => {
+    // Cleans the line, then reads whether it is a fence: its marks, and what follows them.
     const line = clean(raw);
     const fence = line.match(/^\s*(`{3,}|~{3,})(.*)$/)?.slice(1) ?? [];
     const [marks = "", after = ""] = fence;
+    // A fence opens a code block or closes it, and shows as nothing either way. Inside a
+    // block, a line shows dim and as written, with no marks drawn.
     if (!open && marks) {
       open = marks;
       return [];
@@ -49,6 +52,7 @@ export function drawMarkdown(markdown: string): string[] {
     // Bold inside a heading ends with its own end of bold, so the heading's bold starts again.
     if (heading)
       return [bold(drawInline(heading[1] ?? "").replaceAll("\x1b[22m", "\x1b[22m\x1b[1m"))];
+    // A list item keeps its indent, with a bullet for its mark. Any other line is plain text.
     const item = line.match(/^(\s*)[-*+]\s+(.*)$/);
     if (item) return [`${item[1] ?? ""}• ${drawInline(item[2] ?? "")}`];
     return [drawInline(line)];
