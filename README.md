@@ -9,7 +9,7 @@ You run `sc` in a checkout and talk to that repository's lead, an agent that wri
 ## Install
 
 ```sh
-curl -fsSL https://skelcrew.dev/install | sh
+curl -fsSL https://skelcrew.dev/install.sh | sh
 ```
 
 It runs on macOS and Linux, needs no sudo, and puts `sc` in `~/.local/bin`.
