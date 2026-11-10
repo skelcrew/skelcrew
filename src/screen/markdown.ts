@@ -26,7 +26,7 @@ const drawInline = (line: string) =>
 // link that shows only its text. Headings, list items and plain lines all get their bold,
 // code and links drawn, and only a code block shows its text as written. Control codes are
 // removed from each line first, so text from outside can't reach your terminal as one, nor pass
-// for skel's own styles.
+// for Skelcrew's own styles.
 export function drawMarkdown(markdown: string): string[] {
   // The fence that opened the code block we are in, or empty outside one. Only a fence of the
   // same character, at least as long and with nothing after it, closes it, so a block can show

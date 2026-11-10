@@ -1,7 +1,7 @@
-// skel --remote and skel remote add: run a skel command on your server over ssh -t, from your
-// laptop, and set a server up for that. --remote offers to replace skel there when it is an
+// sc --remote and sc remote add: run a Skelcrew command on your server over ssh -t, from your
+// laptop, and set a server up for that. --remote offers to replace Skelcrew there when it is an
 // older release than yours, or was built from another commit. Your laptop can be a Mac, so
-// this file loads nothing of the skel that runs on the server.
+// this file loads nothing of the Skelcrew that runs on the server.
 import { chmodSync, mkdtempSync, rmSync, writeSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,16 +24,16 @@ import { originHere } from "./origin.ts";
 import { downloadRelease, releaseSum } from "./update.ts";
 
 // A command over ssh gets a bare PATH: no login shell reads ~/.profile, and Ubuntu's
-// ~/.bashrc stops early when nobody types into it. So ~/.local/bin, where skel copies
+// ~/.bashrc stops early when nobody types into it. So ~/.local/bin, where Skelcrew copies
 // itself and where Claude Code installs, is added here. env, since every shell runs it the
 // same way.
 const pathOnServer = 'PATH="$HOME/.local/bin:$PATH"';
 
-// What a copied skel exits with when the laptop's build differs. skel otherwise exits 0 or
-// 1, and the server's shell 127 when it finds no skel.
+// What a copied Skelcrew exits with when the laptop's build differs. Skelcrew otherwise exits 0 or
+// 1, and the server's shell 127 when it finds no Skelcrew.
 export const outdated = 98;
 
-// Reports whether this skel, copied to a server or Sprite, is from another build than the
+// Reports whether this Skelcrew, copied to a server or Sprite, is from another build than the
 // laptop that runs it there with --remote, and says so. The laptop passes its build along
 // with the command, so the check costs no round trip of its own. A release newer than the
 // laptop's counts as up to date: it installed itself in the background, and the laptop
@@ -44,7 +44,7 @@ export function outOfDate(): boolean {
   if (release && isRelease(laptop) && newer(release, laptop)) return false;
   const where = process.env.SKELCREW_REMOTE_NAME;
   console.log(
-    skelLine(`skel on ${where} is from ${readable(built)}, yours is ${readable(laptop)}.`),
+    skelLine(`Skelcrew on ${where} is from ${readable(built)}, yours is ${readable(laptop)}.`),
   );
   return true;
 }
@@ -67,7 +67,7 @@ export const runInTerminal = (argv: string[]) =>
   Bun.spawn(argv, { stdio: ["inherit", "inherit", "inherit"] }).exited;
 
 // Runs `go` and returns what it gives back, with your terminal's title saved before and put
-// back after, for skel --remote. The screen's tmux saves it too, but on a Sprite that is too
+// back after, for sc --remote. The screen's tmux saves it too, but on a Sprite that is too
 // late: sprite has already put the raw command there, and writes nothing back. Ghostty and
 // some others keep no saved title and ignore this, so there your shell's prompt puts its own
 // back. Written straight to the terminal, as process.exit can drop what stdout still holds.
@@ -81,7 +81,7 @@ export async function keepingTitle<T>(go: () => Promise<T>): Promise<T> {
   }
 }
 
-// Returns how to run skel on the host with these words. It takes the environment to add to
+// Returns how to run sc on the host with these words. It takes the environment to add to
 // what it always passes, and gives back the exit code.
 const onServer = (host: string, words: string[]) => (env: string[]) =>
   runInTerminal([
@@ -93,7 +93,7 @@ const onServer = (host: string, words: string[]) => (env: string[]) =>
       pathOnServer,
       quoted(`SKELCREW_REMOTE_NAME=${host}`),
       ...env.map(quoted),
-      "skel",
+      "sc",
       ...words.map(quoted),
     ].join(" "),
   ]);
@@ -101,28 +101,28 @@ const onServer = (host: string, words: string[]) => (env: string[]) =>
 // Says a machine isn't set up, and how to do that. --remote only connects, as setting up
 // means logins and can mean a Sprite you pay for, which nobody expects from a mistyped name.
 export const notSetUp = (where: string) =>
-  `${where} isn't set up. Run this on your laptop:\n  skel remote add ${where}`;
+  `${where} isn't set up. Run this on your laptop:\n  sc remote add ${where}`;
 
-// Runs a skel command on the host and returns its exit code. Plain skel passes the
+// Runs a Skelcrew command on the host and returns its exit code. Plain Skelcrew passes the
 // repository you are in on the laptop, so it opens that repository's lead there. Stops when
-// the host has no skel.
+// the host has no Skelcrew.
 export async function remote(host: string, args: string[]): Promise<number> {
   const from = args.length === 0 ? originHere() : null;
   const there = onServer(host, from ? ["--from", from] : args);
   const code = await upToDate(host, there, server(host));
-  // The server's shell exits 127 when it finds no skel to run. skel itself never does: it
+  // The server's shell exits 127 when it finds no Skelcrew to run. Skelcrew itself never does: it
   // exits 1 on any error.
   if (code === 127) throw new Error(notSetUp(host));
   return code;
 }
 
-// Sets up your server for --remote and returns the exit code, for skel remote add.
+// Sets up your server for --remote and returns the exit code, for sc remote add.
 export async function addServer(host: string): Promise<number> {
-  console.log(skelLine(`setting up ${host}: copying skel there and running the first run.`));
+  console.log(skelLine(`setting up ${host}: copying Skelcrew there and running the first run.`));
   return addMachine(host, onServer(host, ["first-run"]), server(host));
 }
 
-// Puts skel on a server or Sprite if it isn't there, and runs the first run through `there`,
+// Puts Skelcrew on a server or Sprite if it isn't there, and runs the first run through `there`,
 // without attaching, so that logging in there stays separate from starting to work. Ends
 // with the command that connects. Running it again is safe, as the first run skips what is
 // done, which is how a setup that stopped partway gets finished.
@@ -138,12 +138,12 @@ export async function addMachine(
   }
   if (code !== 0) return code;
   console.log(skelLine(`${where} is ready. Connect to it with:`));
-  console.log(`  skel --remote ${where}`);
+  console.log(`  sc --remote ${where}`);
   return 0;
 }
 
-// Runs skel on a server or Sprite through `there`, which takes the environment to add to
-// what it always passes, and returns its exit code. A copied skel there from another build
+// Runs sc on a server or Sprite through `there`, which takes the environment to add to
+// what it always passes, and returns its exit code. A copied Skelcrew there from another build
 // than this laptop's, its release or its commit, runs nothing, so you are asked to replace it
 // first. Either way the command then runs, without the check, so a build with uncommitted
 // changes can't ask twice.
@@ -157,30 +157,30 @@ export async function upToDate(
   if (code !== outdated) return code;
   const answer = prompt(skelLine("Update it? [Y/n]"))?.trim().toLowerCase() ?? "";
   if (["n", "no"].includes(answer))
-    console.log(skelLine(`running it on the old skel on ${where}.`));
+    console.log(skelLine(`running it on the old Skelcrew on ${where}.`));
   else await update(where, machine);
   return there([]);
 }
 
-// Puts a skel built for a server or Sprite in its ~/.local/bin. `shell` makes the command
+// Puts a Skelcrew built for a server or Sprite in its ~/.local/bin. `shell` makes the command
 // that runs a line there, and `push` is the command that sends the file to
-// .local/bin/skel.new there. Throws, naming `where`, at the step that failed.
+// .local/bin/sc.new there. Throws, naming `where`, at the step that failed.
 export async function copySkel(
   where: string,
   shell: Machine["shell"],
   push: string[],
 ): Promise<void> {
-  // The copy goes to a file beside skel and is renamed over it once complete, so a transfer
-  // that breaks off leaves the skel that works. scp and sprite file push write through a
+  // The copy goes to a file beside Skelcrew and is renamed over it once complete, so a transfer
+  // that breaks off leaves the Skelcrew that works. scp and sprite file push write through a
   // link, so whatever is at the new file's name is removed first. A rename replaces a link
-  // at skel itself, such as one to a checkout's launcher, without touching the file it
+  // at Skelcrew itself, such as one to a checkout's launcher, without touching the file it
   // points to.
-  if ((await runInTerminal(shell("mkdir -p .local/bin && rm -f .local/bin/skel.new"))) !== 0)
-    throw new Error(`couldn't make ~/.local/bin on ${where}, so skel wasn't copied`);
+  if ((await runInTerminal(shell("mkdir -p .local/bin && rm -f .local/bin/sc.new"))) !== 0)
+    throw new Error(`couldn't make ~/.local/bin on ${where}, so Skelcrew wasn't copied`);
   if ((await runInTerminal(push)) !== 0)
-    throw new Error(`${push[0]} couldn't copy skel to ${where}`);
-  if ((await runInTerminal(shell("mv -f .local/bin/skel.new .local/bin/skel"))) !== 0)
-    throw new Error(`couldn't put the new skel in place on ${where}`);
+    throw new Error(`${push[0]} couldn't copy Skelcrew to ${where}`);
+  if ((await runInTerminal(shell("mv -f .local/bin/sc.new .local/bin/sc"))) !== 0)
+    throw new Error(`couldn't put the new Skelcrew in place on ${where}`);
 }
 
 // How update reaches a server over ssh, where systemd runs the daemon.
@@ -188,21 +188,21 @@ function server(host: string): Machine {
   const shell = (script: string) => ["ssh", host, script];
   return {
     shell,
-    // The unit names the skel the daemon runs, with each % doubled for systemd.
+    // The unit names the Skelcrew the daemon runs, with each % doubled for systemd.
     daemonSkel: async () => {
       const unit = ".config/systemd/user/skelcrew.service";
       const sed = `sed -n 's/%%/%/g; s/^ExecStart="\\(.*\\)" serve$/\\1/p' ${unit}`;
       const read = await quietly(shell(sed));
       return read.ok && read.said !== "" ? read.said : null;
     },
-    copy: (file) => copySkel(host, shell, ["scp", file, `${host}:.local/bin/skel.new`]),
+    copy: (file) => copySkel(host, shell, ["scp", file, `${host}:.local/bin/sc.new`]),
     restart: "systemctl --user restart skelcrew",
     updated: async () => {},
   };
 }
 
 // How update reaches a server or a Sprite: the command that runs a shell line there, the
-// skel the daemon's service starts there, or null without a service, how a built skel is
+// Skelcrew the daemon's service starts there, or null without a service, how a built Skelcrew is
 // copied there, the line that restarts the daemon's service there, and what else the
 // machine needs once its new daemon runs.
 export type Machine = {
@@ -213,7 +213,7 @@ export type Machine = {
   updated: () => Promise<void>;
 };
 
-// Prints what you should know about the checkout skel is built from, and returns what was
+// Prints what you should know about the checkout Skelcrew is built from, and returns what was
 // built, naming its folder and commit. The build is the checkout as it is, so changes not
 // committed, or a branch other than main, go along, which is allowed but worth a line.
 function describeCheckout(): string {
@@ -223,48 +223,49 @@ function describeCheckout(): string {
     console.log(skelLine(`${shown} has uncommitted changes, and they are copied too.`));
   const branch = git("rev-parse", "--abbrev-ref", "HEAD");
   if (branch !== "main") console.log(skelLine(`${shown} is on ${branch}, not main.`));
-  return `the skel in ${shown} (commit ${git("rev-parse", "--short", "HEAD")})`;
+  return `the Skelcrew in ${shown} (commit ${git("rev-parse", "--short", "HEAD")})`;
 }
 
-// Replaces skel on a server or Sprite with this laptop's release, or one built from this
+// Replaces Skelcrew on a server or Sprite with this laptop's release, or one built from this
 // checkout, then restarts the daemon's service there so it runs the new build. The tmux
-// server outlives the daemon, so the leads and builders keep running on their harness. A skel
+// server outlives the daemon, so the leads and builders keep running on their harness. A Skelcrew
 // run from a checkout there is left alone: a copy would leave the checkout behind while the
 // daemon kept running it.
 async function update(where: string, machine: Machine): Promise<void> {
-  // update only ever writes ~/.local/bin/skel, so it goes by the skel the daemon's service
-  // starts, which can be elsewhere: a checkout skel once ran from, or a copy put somewhere
-  // else. A checkout's launcher, linked or not, is bin/skel beside its sources. The rename
-  // replaces ~/.local/bin/skel itself, so a service starting the file a link there points
+  // update only ever writes ~/.local/bin/sc, so it goes by the Skelcrew the daemon's service
+  // starts, which can be elsewhere: a checkout Skelcrew once ran from, or a copy put somewhere
+  // else. A checkout's launcher, linked or not, is bin/sc beside its sources. The rename
+  // replaces ~/.local/bin/sc itself, so a service starting the file a link there points
   // to counts as elsewhere.
   const daemon = await machine.daemonSkel();
-  const script = `f=${quoted(daemon ?? ".local/bin/skel")}
+  const script = `f=${quoted(daemon ?? ".local/bin/sc")}
 d=$(dirname "$(readlink -f "$f")")/..
 if [ -f "$d/src/main.ts" ]; then echo "checkout $(cd "$d" && pwd)"
-elif [ "$f" = .local/bin/skel ] || [ "$f" = "$HOME/.local/bin/skel" ]; then echo copied
+elif [ "$f" = .local/bin/sc ] || [ "$f" = "$HOME/.local/bin/sc" ]; then echo copied
 else echo "elsewhere $f"; fi`;
   const asked = await quietly(machine.shell(script));
   const found = asked.said.match(/^(checkout (.+)|copied|elsewhere (.+))$/m);
-  if (!found) throw new Error(`couldn't tell how skel is installed on ${where}:\n${asked.said}`);
+  if (!found)
+    throw new Error(`couldn't tell how Skelcrew is installed on ${where}:\n${asked.said}`);
   if (found[2]) {
     console.log(
       skelLine(
-        `skel on ${where} runs from a checkout at ${found[2]}, so it wasn't replaced. git pull there updates it, and the next skel there restarts its daemon on it.`,
+        `Skelcrew on ${where} runs from a checkout at ${found[2]}, so it wasn't replaced. git pull there updates it, and the next sc there restarts its daemon on it.`,
       ),
     );
     return;
   }
   if (found[3])
     throw new Error(
-      `the daemon on ${where} runs skel from ${found[3]}, not ~/.local/bin/skel, where update puts it, so nothing was replaced`,
+      `the daemon on ${where} runs sc from ${found[3]}, not ~/.local/bin/sc, where update puts it, so nothing was replaced`,
     );
-  const now = release ? `skel ${release}` : describeCheckout();
+  const now = release ? `Skelcrew ${release}` : describeCheckout();
   await withLinuxSkel(machine);
   // The service commands print their logs, which matter only when they fail.
   const restarted = await quietly(machine.shell(machine.restart));
   if (!restarted.ok)
     throw new Error(
-      `the new skel is on ${where}, but its daemon didn't restart, so it still runs the old one:\n${restarted.said}`,
+      `the new Skelcrew is on ${where}, but its daemon didn't restart, so it still runs the old one:\n${restarted.said}`,
     );
   await machine.updated();
   console.log(
@@ -274,50 +275,51 @@ else echo "elsewhere $f"; fi`;
   );
 }
 
-// Returns the CPU of a server or Sprite in the words of skel's builds, x64 or arm64, so the
-// skel it gets runs there.
+// Returns the CPU of a server or Sprite in the words of Skelcrew's builds, x64 or arm64, so the
+// Skelcrew it gets runs there.
 async function machineCpu(machine: Machine): Promise<string> {
   const cpus: Record<string, string> = { x86_64: "x64", aarch64: "arm64", arm64: "arm64" };
   // ssh's warnings arrive in the same text, so the CPU is picked out of it.
   const { said } = await quietly(machine.shell("uname -m"));
   const cpu = cpus[said.match(/\b(x86_64|aarch64|arm64)\b/)?.[1] ?? ""];
-  if (!cpu) throw new Error(`skel runs on arm64 and x64 CPUs, not on "${said}"`);
+  if (!cpu) throw new Error(`Skelcrew runs on arm64 and x64 CPUs, not on "${said}"`);
   return cpu;
 }
 
-// Downloads this release's Linux skel for the machine's CPU to a file, so a skel installed from
-// a release can set up a server. It has no sources to build from, and is often on a Mac. Stops
+// Downloads this release's Linux Skelcrew for the machine's CPU to a file, so a Skelcrew installed
+// from a release can set up a server. It has no sources to build from, and is often on a Mac. Stops
 // on a download that doesn't match the release's checksums, as the install script does.
 async function downloadLinuxSkel(file: string, cpu: string): Promise<void> {
-  console.log(`Downloading skel ${release} for Linux.`);
+  console.log(`Downloading Skelcrew ${release} for Linux.`);
   const at = `${releases}/download/v${release}`;
   const name = `skelcrew-linux-${cpu}`;
   await Bun.write(file, await downloadRelease(at, name, await releaseSum(at, name)));
   chmodSync(file, 0o755);
 }
 
-// Builds skel from this checkout as one file for a server or Sprite, which is Linux whatever
+// Builds Skelcrew from this checkout as one file for a server or Sprite, which is Linux whatever
 // the laptop runs, on the machine's CPU, stamped with its build so it can tell when yours
 // moves on.
 async function buildLinuxSkel(file: string, cpu: string): Promise<void> {
-  console.log("Building skel for Linux.");
+  console.log("Building Skelcrew for Linux.");
   const target = `--target=bun-linux-${cpu}`;
   const build = laptopBuild();
   const stamp = build ? ["--define", `SKELCREW_BUILD=${JSON.stringify(build)}`] : [];
   const argv = ["bun", "build", "--compile", target, ...stamp, mainFile, "--outfile", file];
-  if ((await runInTerminal(argv)) !== 0) throw new Error("bun build failed, so skel wasn't copied");
+  if ((await runInTerminal(argv)) !== 0)
+    throw new Error("bun build failed, so Skelcrew wasn't copied");
 }
 
-// Gets the skel you run here for a server or Sprite, copies it there, and removes it after: your
-// release when you run one, or else one built from this checkout.
+// Gets the Skelcrew you run here for a server or Sprite, copies it there, and removes it after:
+// your release when you run one, or else one built from this checkout.
 async function withLinuxSkel(machine: Machine): Promise<void> {
-  // A single-file skel runs its modules from a folder only it sees, with no sources to
+  // A single-file Skelcrew runs its modules from a folder only it sees, with no sources to
   // build from.
   if (singleFile && !release)
-    throw new Error("this skel is a single file and can't build one: run skel from a checkout");
+    throw new Error("this Skelcrew is a single file and can't build one: run sc from a checkout");
   const folder = mkdtempSync(join(tmpdir(), "skelcrew-"));
   try {
-    const file = join(folder, "skel");
+    const file = join(folder, "sc");
     const cpu = await machineCpu(machine);
     await (singleFile ? downloadLinuxSkel(file, cpu) : buildLinuxSkel(file, cpu));
     await machine.copy(file);

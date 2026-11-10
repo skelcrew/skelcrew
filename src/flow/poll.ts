@@ -1,4 +1,4 @@
-// Polling GitHub: the daemon brings skel's copy of each repository's issues and PRs up to
+// Polling GitHub: the daemon brings Skelcrew's copy of each repository's issues and PRs up to
 // date, starts threads on issues labeled skelcrew, and hands what each thread's PR means for it to
 // the code that acts on it.
 import type { Database } from "bun:sqlite";
@@ -14,13 +14,13 @@ import { noteForLead, tellLead } from "./lead.ts";
 import { fullNameIs, repositories } from "./repo.ts";
 import { needsYou, readThread, record, Thread, threadName } from "./thread.ts";
 
-// Starts a thread on each of the repository's open issues labeled skelcrew in skel's copy that has
-// none, exactly as skel start does, then reacts to the issue with 👀 and tells the
-// repository's lead. Thread rows are read after GitHub answers, so a thread skel start made
-// meanwhile counts. A task in `starting`, named as owner/repo#number, is left to the skel start
-// starting it, which has options of its own, such as the branch to start from. The thread is
-// recorded before anything else, so neither a later poll nor a restart starts it again; a
-// reaction that fails is only logged, never retried.
+// Starts a thread on each of the repository's open issues labeled skelcrew in Skelcrew's copy that
+// has none, exactly as sc start does, then reacts to the issue with 👀 and tells the repository's
+// lead. Thread rows are read after GitHub answers, so a thread sc start made meanwhile counts. A
+// task in `starting`, named as owner/repo#number, is left to the sc start starting it, which has
+// options of its own, such as the branch to start from. The thread is recorded before anything
+// else, so neither a later poll nor a restart starts it again; a reaction that fails is only
+// logged, never retried.
 async function startLabeled(
   db: Database,
   tmux: string,
@@ -38,7 +38,7 @@ async function startLabeled(
     .filter((task) => task.labels.includes("skelcrew") && !starting.has(`${fullName}#${task.id}`))
     .map((task) => ({ number: Number(task.id), title: task.title }));
   for (const issue of labeledToStart(threads, labeled)) {
-    // One skel start took meanwhile waits for the next poll.
+    // One sc start took meanwhile waits for the next poll.
     const thread = await startThread(db, { repo: fullName, task: issue.number }).catch((error) => {
       console.log(`couldn't start #${issue.number} in ${fullName}: ${errorText(error)}`);
       return null;
@@ -46,7 +46,7 @@ async function startLabeled(
     if (thread === null) continue;
     const note = `started ${threadName(db, thread)} from GitHub: ${issue.title}`;
     noteForLead(db, tmux, { owner, repo }, note.replace(/\s+/g, " ").slice(0, 200));
-    // Not waited on, as for skel start: setup can take minutes.
+    // Not waited on, as for sc start: setup can take minutes.
     begin(thread);
     await reactToIssue(fullName, issue.number).catch((error) =>
       console.log(`couldn't react to #${issue.number} in ${fullName}: ${errorText(error)}`),
@@ -54,7 +54,7 @@ async function startLabeled(
   }
 }
 
-// Brings into skel's copy the task of each working, waiting or stopped thread that it lacks,
+// Brings into Skelcrew's copy the task of each working, waiting or stopped thread that it lacks,
 // closed ones too, before the daemon resumes their rounds, which read the task. A database from
 // before the copy has none of them, and the first poll brings only open issues. A repository
 // GitHub can't answer for is logged, and its rounds fail as they read the task.
@@ -82,7 +82,7 @@ export async function keepThreadsTasks(db: Database): Promise<void> {
   }
 }
 
-// Polls one repository: brings skel's copy of its issues and PRs up to date with what
+// Polls one repository: brings Skelcrew's copy of its issues and PRs up to date with what
 // changed since `since`, or with everything open without it, starts threads on its issues
 // labeled skelcrew, then acts on what each of its threads' PRs means for the thread. Returns the
 // `since` of the next poll. Thread rows are read again after GitHub answers, since a round can
@@ -112,7 +112,7 @@ async function pollRepository(
   for (const before of threads) {
     const { folder } = before;
     // Read together, with no wait between, so a review the thread's round has finished is
-    // always among those skel posted.
+    // always among those Skelcrew posted.
     const thread = readThread(db, folder);
     const posted = db
       .query("SELECT id FROM posted")
@@ -121,7 +121,7 @@ async function pollRepository(
     const pr = thread.pr === null ? undefined : prs.get(thread.pr);
     if (!pr || !["working", "waiting", "stopped"].includes(thread.status)) continue;
     // Read only for a thread with a PR, so a bad max_rounds never fails the copy's update, nor
-    // skel start, which polls first.
+    // sc start, which polls first.
     const { maxRounds } = threadConfig({ owner, repo });
     const decision = decide(thread, pr, { you, maxRounds, posted, pushers });
     // A round that moved on while GitHub answered may have pushed a newer commit, and what
@@ -164,9 +164,9 @@ async function pollRepository(
 // to pick up what happened while the daemon was down. A failed poll, such as GitHub answering
 // with an error, is logged and tried again at the next one. Polls run in the background, so
 // they never hold up the daemon. `begin` sets up a thread started from a label and starts its
-// builder, as the daemon does for skel start. `starting` holds the tasks skel start is starting
+// builder, as the daemon does for sc start. `starting` holds the tasks sc start is starting
 // right now, which no poll starts by their label. Returns a function that polls one repository at
-// once, named by its full GitHub name, for a webhook delivery about it or for skel start, and
+// once, named by its full GitHub name, for a webhook delivery about it or for sc start, and
 // settles once that poll is done, failing as it does.
 export function pollGitHub(
   db: Database,
@@ -195,7 +195,7 @@ export function pollGitHub(
     const now = running.get(fullName);
     if (now) {
       // A delivery that comes in while its repository is being polled may be about an event
-      // the poll's query was too early to see, and skel start must see every change up to its
+      // the poll's query was too early to see, and sc start must see every change up to its
       // asking, so one more poll follows. Everyone who asks meanwhile shares it.
       const next =
         following.get(fullName) ??

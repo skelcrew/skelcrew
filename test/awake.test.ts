@@ -14,7 +14,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     repo: "app",
     task: 12,
     folder: "app-12",
-    branch: "skel/12-add-export",
+    branch: "skelcrew/12-add-export",
     base: null,
     status: "working",
     session: "s",

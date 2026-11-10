@@ -15,7 +15,7 @@ import { basename, dirname, join } from "node:path";
 // What every program needs, and nothing else. All else stays denied, so a Mac service nobody
 // thought of stays closed. Two services are left out on purpose: com.apple.SecurityServer
 // and com.apple.securityd.xpc are the Keychain, where gh keeps your GitHub token and Claude
-// Code your login. Agents log in with skel's token, so they never need it. lsopen and
+// Code your login. Agents log in with Skelcrew's token, so they never need it. lsopen and
 // appleevent-send stay denied too, as open and osascript start programs outside the sandbox.
 // Local sockets are denied here and opened one by one below: tmux's and the ssh agent's would
 // run commands with your rights, and a Mac has no /run to hide them in.

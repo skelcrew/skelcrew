@@ -1,4 +1,4 @@
-// skel task create and skel start, run as you or the lead would run them, against a running daemon,
+// sc task create and sc start, run as you or the lead would run them, against a running daemon,
 // a fake gh, a fake Claude Code and a folder of bare repositories standing in for GitHub.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -76,7 +76,7 @@ beforeEach(() => {
 "api repos/"*"/issues --method POST --input -") cat > "$HOME/issues/sent"
   echo '{"number":13,"title":"Add import","body":"From CSV","user":null,"labels":[],"html_url":"https://github.com/simon/app/issues/13","created_at":"2026-11-05T10:00:00Z","updated_at":"2026-11-05T10:00:00Z"}' ;;
 "api graphql --input -") cat > /dev/null; cat "$HOME/issues/poll" ;;
-"api repos/"*"/labels --method POST --input -") cat > /dev/null; echo '{"name":"skel"}' ;;
+"api repos/"*"/labels --method POST --input -") cat > /dev/null; echo '{"name":"Skelcrew"}' ;;
 "repo view "*) full=$3
   test -e "$HOME/github/$full.permission" || { echo "Could not resolve to a Repository" >&2; exit 1; }
   fork=$(test -e "$HOME/github/$full.fork" && echo true || echo false)
@@ -124,7 +124,7 @@ async function stop(run: Subprocess): Promise<void> {
   await run.exited;
 }
 
-// Runs skel as you or the lead would.
+// Runs sc as you or the lead would.
 const skel = (...args: string[]) => runSkel(args, env());
 
 async function untilAnswers() {
@@ -150,7 +150,7 @@ function onGitHub(files: Record<string, string>, repo: string, permission = "WRI
   return work;
 }
 
-// Puts simon/<repo> on the fake GitHub with the files given, and tells skel about it.
+// Puts simon/<repo> on the fake GitHub with the files given, and tells Skelcrew about it.
 // Returns a checkout to push more from.
 function addApp(files: Record<string, string> = {}, repo = "app"): string {
   const work = onGitHub(files, repo);
@@ -161,10 +161,10 @@ openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?
   return work;
 }
 
-// skel's own clone, which the daemon makes as it starts.
+// Skelcrew's own clone, which the daemon makes as it starts.
 const untilCloned = () => until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
 
-// Holds every clone from GitHub until the test lets it go, so a test can see that skel
+// Holds every clone from GitHub until the test lets it go, so a test can see that Skelcrew
 // answered before the clone was there. It notes in held that it started and in released that
 // it went on. The test can remove the folder in the moment between two looks for the file go,
 // so the wait also ends when the folder goes, and in any case after a minute.
@@ -204,7 +204,7 @@ const hasSession = (name: string) =>
 
 const clone = () => join(data(), "threads", "app-12");
 
-test("skel task create creates a GitHub issue and prints the task's name", async () => {
+test("sc task create creates a GitHub issue and prints the task's name", async () => {
   addApp();
   serve();
   await untilAnswers();
@@ -241,7 +241,7 @@ test("more data on a connection doesn't run its request again", async () => {
   expect(read(join(home, "calls")).match(/issues --method POST/g)).toHaveLength(1);
 });
 
-test("skel start refuses a repository skel doesn't have, and a task GitHub doesn't have", async () => {
+test("sc start refuses a repository Skelcrew doesn't have, and a task GitHub doesn't have", async () => {
   addApp();
   serve();
   await untilAnswers();
@@ -255,14 +255,14 @@ test("skel start refuses a repository skel doesn't have, and a task GitHub doesn
 });
 
 // Bringing a repository in by naming it is gone: you add one in your own terminal.
-test("a repository skel doesn't have, named by its GitHub name, is no repository", async () => {
+test("a repository Skelcrew doesn't have, named by its GitHub name, is no repository", async () => {
   onGitHub({}, "site");
   serve();
   await untilAnswers();
   for (const name of ["simon/site", "site", "-x/site"]) {
     const listed = await skel("task", "ls", name);
     expect(listed.code).not.toBe(0);
-    expect(listed.err).toBe(`skel: there is no repository named ${name}\n`);
+    expect(listed.err).toBe(`Skelcrew: there is no repository named ${name}\n`);
   }
   expect(read(join(home, "calls"))).not.toContain("repo view");
 });
@@ -321,13 +321,13 @@ exec ${Bun.which("git") ?? "git"} "$@"
   }, 20_000);
 });
 
-test("skel task create and skel start say when the daemon isn't running", async () => {
+test("sc task create and sc start say when the daemon isn't running", async () => {
   const made = await skel("task", "create", "app", "Add import", "From CSV");
   expect(made.code).not.toBe(0);
-  expect(made.err).toContain("run skel");
+  expect(made.err).toContain("run sc");
 });
 
-// bubblewrap can't start inside skel's own sandbox, so only there builders can't start.
+// bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
 describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a builder", () => {
   test("starts the builder in the sandbox, in a clone of its own, on a branch of its own", async () => {
     addApp({
@@ -347,10 +347,10 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a builder", () => {
     expect(started.err).toBe("");
     expect(started.out).toBe("Started app-12.\n");
     await until(() => read(join(config("app-12"), "seen")) !== "");
-    expect(git(clone(), "rev-parse", "--abbrev-ref", "HEAD")).toBe("skel/12-add-export");
+    expect(git(clone(), "rev-parse", "--abbrev-ref", "HEAD")).toBe("skelcrew/12-add-export");
     expect(read(join(clone(), "setup-ran"))).toBe("set up\ntoken-hidden\n");
     expect(read(join(config("app-12"), "pwd"))).toBe(`${clone()}\n`);
-    // Its own repository's clone is its origin, read-only; skel's other clones stay hidden.
+    // Its own repository's clone is its origin, read-only; Skelcrew's other clones stay hidden.
     expect(read(join(config("app-12"), "seen"))).toBe(
       "others-hidden\norigin-read-only\nSimon\n0\n",
     );
@@ -392,7 +392,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a builder", () => {
     expect(read(join(config("app-12"), "args"))).toContain("--model\nsonnet\n");
   }, 20_000);
 
-  test("the builder's socket tells skel which thread calls, and answers nothing else", async () => {
+  test("the builder's socket tells Skelcrew which thread calls, and answers nothing else", async () => {
     addApp();
     const asker = `const [request] = process.argv.slice(2);
 const c = require("node:net").createConnection(process.env.SKELCREW_SOCKET);
@@ -419,14 +419,14 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(existsSync(join(home, "issues", "sent"))).toBe(false);
   }, 20_000);
 
-  test("the lead runs skel task create and skel start from its sandbox, but can't trust", async () => {
+  test("the lead runs sc task create and sc start from its sandbox, but can't trust", async () => {
     addApp();
     const asker = `const c = require("node:net").createConnection(process.env.SKELCREW_SOCKET);
 c.on("connect", () => c.write('{"command":"lead"}\\n'));
 c.on("data", (d) => process.stdout.write(d));`;
     writeFileSync(join(home, "bin", "ask.js"), asker);
     fakeClaude(
-      `{ skel task create app "Add import" "From CSV"; skel start app-12; skel repo trust simon/other; bun ${join(home, "bin", "ask.js")}; } > out.new 2>&1; mv out.new out`,
+      `{ sc task create app "Add import" "From CSV"; sc start app-12; sc repo trust simon/other; bun ${join(home, "bin", "ask.js")}; } > out.new 2>&1; mv out.new out`,
       "",
     );
     // Opened before, so the daemon starts app's lead as it starts.
@@ -437,7 +437,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     const out = join(data(), "leads", "simon", "app", "out");
     await until(() => read(out) !== "");
     expect(read(out)).toBe(
-      `app-13\nStarted app-12.\nskel: trusting a repository is only for your own terminal, not for agents\n{"error":"the daemon doesn't know that request"}\n`,
+      `app-13\nStarted app-12.\nSkelcrew: trusting a repository is only for your own terminal, not for agents\n{"error":"the daemon doesn't know that request"}\n`,
     );
     await until(() => read(join(config("app-12"), "args")) !== "");
   }, 20_000);
@@ -470,7 +470,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(again.err).toContain("app-12 has a thread already");
   }, 20_000);
 
-  test("skel stop ends the builder and keeps its clone, a restart leaves it stopped, and skel start brings it back with --resume", async () => {
+  test("sc stop ends the builder and keeps its clone, a restart leaves it stopped, and sc start brings it back with --resume", async () => {
     addApp();
     // Opened before, so the daemon starts app's lead, whose socket the stop comes from.
     const db = new Database(join(data(), "skelcrew.db"));
@@ -485,7 +485,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     const project = clone().replace(/[^a-zA-Z0-9]/g, "-");
     mkdirSync(join(config("app-12"), "projects", project), { recursive: true });
     writeFileSync(join(config("app-12"), "projects", project, `${session}.jsonl`), "{}\n");
-    // Runs skel stop as an agent would, with its own socket.
+    // Runs sc stop as an agent would, with its own socket.
     const stopFrom = (agent: string) =>
       Bun.spawnSync([process.execPath, main, "stop", "app-12"], {
         env: { ...env(), SKELCREW_SOCKET: agent },
@@ -583,7 +583,7 @@ nameRepositories(db);`;
     await stop(first);
     serve();
     await until(() => thread().status === "failed");
-    await until(() => read(join(data(), "threads", "app-12.log")).includes("run skel start again"));
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("run sc start again"));
     expect(hasSession("app-12")).toBe(false);
   }, 30_000);
 
@@ -601,7 +601,7 @@ nameRepositories(db);`;
     expect(hasSession("app-12")).toBe(false);
   }, 30_000);
 
-  test("skel stop refuses a thread still setting up, and one with no builder", async () => {
+  test("sc stop refuses a thread still setting up, and one with no builder", async () => {
     addApp({ "skelcrew.yaml": "setup: [sleep 2, exit 3]\n" });
     serve();
     await untilCloned();
@@ -615,7 +615,7 @@ nameRepositories(db);`;
     );
   }, 30_000);
 
-  // A stopped thread's builder sits at its prompt once back, so skel start must say whether
+  // A stopped thread's builder sits at its prompt once back, so sc start must say whether
   // something will wake it. Sets the row while the thread is stopped, as a round would have.
   test("a stopped thread comes back waiting on its PR, or working on a review's changes", async () => {
     addApp();
@@ -637,8 +637,8 @@ nameRepositories(db);`;
   }, 30_000);
 
   // The round limit is read only for a thread it can matter to, so a bad one fails the new
-  // thread with the reason rather than refusing skel start.
-  test("a bad max_rounds fails a new thread, and skel start still answers", async () => {
+  // thread with the reason rather than refusing sc start.
+  test("a bad max_rounds fails a new thread, and sc start still answers", async () => {
     addApp();
     writeFileSync(
       join(home, ".config", "skelcrew", "config.yaml"),
@@ -680,7 +680,7 @@ nameRepositories(db);`;
     expect(folders).toEqual([["simon-app-12"], ["simon-app-12-2"]]);
   }, 30_000);
 
-  test("a thread started before skel's clone of its repository is made waits for it", async () => {
+  test("a thread started before Skelcrew's clone of its repository is made waits for it", async () => {
     addApp();
     const real = Bun.which("git") ?? "git";
     writeFileSync(
@@ -696,7 +696,7 @@ nameRepositories(db);`;
     expect(thread().status).toBe("working");
   }, 30_000);
 
-  test("a thread on a repository whose clone isn't there yet starts once skel's clone is", async () => {
+  test("a thread on a repository whose clone isn't there yet starts once Skelcrew's clone is", async () => {
     addApp({}, "site");
     holdClones();
     serve();
@@ -734,7 +734,7 @@ nameRepositories(db);`;
 
   // A builder's config folder and session are named after the thread's folder, which must
   // start with a letter or digit. A long folder would make Claude Code hash the name of
-  // the folder its conversations are saved in, and skel would miss them when bringing the
+  // the folder its conversations are saved in, and Skelcrew would miss them when bringing the
   // builder back.
   test("names a thread's folder so its builder starts, whatever the repository's name", async () => {
     const long = `x${"y".repeat(98)}`;

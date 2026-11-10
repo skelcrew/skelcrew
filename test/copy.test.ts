@@ -1,5 +1,5 @@
-// skel's copy of a repository's issues and PRs, as polls bring it up to date, and as the
-// sidebar's readers, skel task and a builder read it.
+// Skelcrew's copy of a repository's issues and PRs, as polls bring it up to date, and as the
+// sidebar's readers, sc task and a builder read it.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,7 +14,7 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// Returns a task as a tracker hands it to skel.
+// Returns a task as a tracker hands it to Skelcrew.
 const task = (id: number, more: object = {}) => ({
   kind: "task",
   id: String(id),
@@ -30,7 +30,7 @@ const task = (id: number, more: object = {}) => ({
   ...more,
 });
 
-// Runs code against the database in this test's home, with skel's copy and an app repository
+// Runs code against the database in this test's home, with Skelcrew's copy and an app repository
 // whose thread works on task 12, and returns what it printed as JSON. It takes a process of its
 // own, as the database's folder comes from the HOME a process started with.
 function run(code: string): unknown {
@@ -39,7 +39,7 @@ import { saveItems, openTasks, taskOf } from ${JSON.stringify(source("flow/copy.
 const db = openDb();
 db.run("INSERT OR IGNORE INTO repositories (owner, repo, name) VALUES ('simon', 'app', 'app')");
 db.run(\`INSERT OR IGNORE INTO threads (owner, repo, task, folder, branch, status)
-  VALUES ('simon', 'app', 12, 'app-12', 'skel/12', 'working')\`);
+  VALUES ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'working')\`);
 const ids = () => openTasks(db, "simon", "app").map((t) => t.id);
 ${code}`;
   const ran = Bun.spawnSync([process.execPath, "-e", script], {

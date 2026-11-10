@@ -46,7 +46,7 @@ const input = new RegExp(
 );
 
 // Returns the repository open in the sidebar, given its GitHub name, with its lead's session.
-// One skel no longer has, such as one removed this moment, has the name a new lead would.
+// One Skelcrew no longer has, such as one removed this moment, has the name a new lead would.
 function opening(db: ReturnType<typeof openDb>, fullName: string): Open {
   const [owner = "", repo = ""] = fullName.split("/");
   try {
@@ -57,7 +57,7 @@ function opening(db: ReturnType<typeof openDb>, fullName: string): Open {
 }
 
 // Runs the sidebar until its pane goes. The session given is its own, on the screen's server,
-// `where` says which remote skel runs on, if any, for the header above it, and `repository`
+// `where` says which remote Skelcrew runs on, if any, for the header above it, and `repository`
 // is the GitHub name of the repository it opens on.
 // tmux brings it the keys that move and clicks on its input. It looks again each second, and
 // writes only when something changed: over a slow link each write costs, and on a Sprite a

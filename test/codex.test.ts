@@ -1,6 +1,6 @@
 // Codex as the lead and a builder, against a running daemon. A shell script stands in for
 // Codex: it keeps what it was started with in its CODEX_HOME, saves a conversation as Codex
-// does, waits at Codex's prompt, and runs the hook commands skel gives it on the command line.
+// does, waits at Codex's prompt, and runs the hook commands Skelcrew gives it on the command line.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -147,13 +147,13 @@ function config(roles: string): void {
 // What this test's processes run with.
 const env = () => homeEnv(home);
 
-// Runs skel as you would.
+// Runs sc as you would.
 const skel = (args: string[]) => runSkel(args, env());
 
 // A daemon's work takes its time here, so a wait lasts 15 seconds unless a test says otherwise.
 const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout });
 
-// Puts simon/app on the fake GitHub and tells skel about it.
+// Puts simon/app on the fake GitHub and tells Skelcrew about it.
 function addApp(): void {
   const work = join(home, "work", "app");
   mkdirSync(work, { recursive: true });
@@ -168,7 +168,7 @@ openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon
   if (!added.success) throw new Error(added.stderr.toString());
 }
 
-// What skel ps --json shows you about app-12.
+// What sc ps --json shows you about app-12.
 async function app12(): Promise<{ status: string; needsYou: boolean } | undefined> {
   const ps = await skel(["ps", "--json"]);
   return JSON.parse(ps.out).find((t: { thread: string }) => t.thread === "app-12");
@@ -193,7 +193,7 @@ async function act(step: "stop" | "talk" | "renew") {
 // The fake builder's arguments, one to a line.
 const args = (folder = builder()) => read(join(folder, "args")).trimEnd().split("\n");
 
-// Asks the daemon for app's lead, as plain skel does before attaching, without attaching.
+// Asks the daemon for app's lead, as plain sc does before attaching, without attaching.
 function askForLead(): Promise<string> {
   return new Promise((done) => {
     const connection = createConnection(join(home, "run", "skelcrew.sock"));
@@ -225,9 +225,9 @@ function setThread(sql: string): void {
   db.close();
 }
 
-// bubblewrap can't start inside skel's own sandbox, so only there agents can't start.
+// bubblewrap can't start inside Skelcrew's own sandbox, so only there agents can't start.
 describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("codex", () => {
-  test("a builder starts on Codex in a folder of its own, with the task after -- and skel's settings", async () => {
+  test("a builder starts on Codex in a folder of its own, with the task after -- and Skelcrew's settings", async () => {
     await startApp12();
     const given = args();
     const clone = join(data(), "threads", "app-12");
@@ -325,7 +325,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("codex", () => {
     expect(existsSync(join(builder(), "args"))).toBe(false);
   }, 60_000);
 
-  test("a session renewing the login renews skel's own, which every session shares", async () => {
+  test("a session renewing the login renews Skelcrew's own, which every session shares", async () => {
     mkdirSync(join(data(), "codex"), { recursive: true });
     writeFileSync(join(data(), "codex", "auth.json"), "mine\n");
     await startApp12();

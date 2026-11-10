@@ -72,19 +72,21 @@ export function loadLaunchAgent(): void {
   launchctl(["bootout", `${domain()}/${label}`]);
   const loaded = launchctl(["bootstrap", domain(), plistFile()]);
   if (!loaded.ok)
-    throw new Error(`launchctl couldn't load skel's daemon, so it isn't installed: ${loaded.said}`);
+    throw new Error(
+      `launchctl couldn't load Skelcrew's daemon, so it isn't installed: ${loaded.said}`,
+    );
 }
 
-// Restarts the daemon, for a skel newer than the one the daemon runs: a newer release, or a
+// Restarts the daemon, for a Skelcrew newer than the one the daemon runs: a newer release, or a
 // checkout on another commit. launchd ends the running daemon first, and agents keep running in
 // tmux.
 export function restartLaunchAgent(): void {
   const started = launchctl(["kickstart", "-k", `${domain()}/${label}`]);
-  if (!started.ok) throw new Error(`launchctl couldn't restart skel's daemon: ${started.said}`);
+  if (!started.ok) throw new Error(`launchctl couldn't restart Skelcrew's daemon: ${started.said}`);
 }
 
-// Starts the daemon, for a skel that finds no daemon answering.
+// Starts the daemon, for a Skelcrew that finds no daemon answering.
 export function startLaunchAgent(): void {
   const started = launchctl(["kickstart", `${domain()}/${label}`]);
-  if (!started.ok) throw new Error(`launchctl couldn't start skel's daemon: ${started.said}`);
+  if (!started.ok) throw new Error(`launchctl couldn't start Skelcrew's daemon: ${started.said}`);
 }

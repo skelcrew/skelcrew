@@ -1,4 +1,4 @@
-# Publishes a release when a version tag such as v0.4.2 is pushed: runs the checks, builds skel
+# Publishes a release when a version tag such as v0.4.2 is pushed: runs the checks, builds Skelcrew
 # for macOS and Linux on arm64 and x64, signs the Mac binaries on Macs, and only then makes the
 # checksums and publishes the binaries with release notes.
 name: Release
@@ -8,7 +8,7 @@ on:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
 
 env:
-  # The one place that says where releases are published. The install script and skel itself
+  # The one place that says where releases are published. The install script and Skelcrew itself
   # download from the `base` line in install.sh, so to move releases change both. A repository
   # other than this one also needs a RELEASES_TOKEN secret that can write to it.
   RELEASES_REPO: skelcrew/skelcrew
@@ -101,6 +101,6 @@ jobs:
           sha256sum skelcrew-darwin-arm64 skelcrew-darwin-x64 skelcrew-linux-arm64 skelcrew-linux-x64 > SHA256SUMS
       - run: |
           gh release create "$GITHUB_REF_NAME" dist/skelcrew-* dist/SHA256SUMS \
-            --repo "$RELEASES_REPO" --title "skel ${GITHUB_REF_NAME#v}" --notes-file dist/notes.md
+            --repo "$RELEASES_REPO" --title "Skelcrew ${GITHUB_REF_NAME#v}" --notes-file dist/notes.md
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN || github.token }}

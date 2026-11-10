@@ -1,11 +1,11 @@
-// skel's state on this machine: one SQLite file.
+// Skelcrew's state on this machine: one SQLite file.
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "./paths.ts";
 
-// `name` is the repository's name in skel, and `repo` its GitHub name without the owner.
+// `name` is the repository's name in Skelcrew, and `repo` its GitHub name without the owner.
 export const Repository = z.object({ name: z.string(), owner: z.string(), repo: z.string() });
 export type Repository = z.infer<typeof Repository>;
 
@@ -17,12 +17,12 @@ export function nameRepositories(db: Database): void {
     THEN owner || '/' || repo ELSE repo END`);
 }
 
-// Opens skel's database and prepares its tables so repositories, their leads and threads
+// Opens Skelcrew's database and prepares its tables so repositories, their leads and threads
 // survive restarts.
 export function openDb(): Database {
   mkdirSync(dataDir(), { recursive: true });
   const db = new Database(join(dataDir(), "skelcrew.db"), { strict: true });
-  // The daemon and skel run in your terminal can use the file at once. Without a wait, a
+  // The daemon and Skelcrew run in your terminal can use the file at once. Without a wait, a
   // write that meets another one fails with "database is locked" at once.
   db.run("PRAGMA busy_timeout = 5000");
   // One process prepares the tables at a time. On a first run the daemon and the screen open
@@ -32,7 +32,7 @@ export function openDb(): Database {
   return db;
 }
 
-// Creates the tables skel keeps, and adds the columns a database from an earlier release
+// Creates the tables Skelcrew keeps, and adds the columns a database from an earlier release
 // lacks, leaving everything already there as it is.
 function prepareTables(db: Database): void {
   db.run(`CREATE TABLE IF NOT EXISTS repositories (
@@ -41,17 +41,17 @@ function prepareTables(db: Database): void {
     name TEXT NOT NULL UNIQUE,
     PRIMARY KEY (owner, repo)
   )`);
-  // Whether skel made sure the repository has the skelcrew label. A repository saved before this
-  // column existed gets it once, when the daemon next refreshes its clone.
+  // Whether Skelcrew made sure the repository has the skelcrew label. A repository saved before
+  // this column existed gets it once, when the daemon next refreshes its clone.
   if (!db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = 'labeled'").get())
     db.run("ALTER TABLE repositories ADD COLUMN labeled INTEGER NOT NULL DEFAULT 0");
-  // How many tasks and PRs are open in skel's copy, as the sidebar counts those it doesn't show.
-  // `lead_session` is the session ID of the repository's lead, kept so it comes back with its
-  // conversation. `opened` is when you last opened the repository, in milliseconds since 1970,
-  // and null until you first do: its lead starts then, and from then on the daemon brings it
-  // back. `lead_harness` is the harness the lead started on, which it keeps, as a conversation
-  // can't move to another harness. `kept_lead` marks the repository whose lead is the one this machine had before skel
-  // gave each repository its own.
+  // How many tasks and PRs are open in Skelcrew's copy, as the sidebar counts those it doesn't
+  // show. `lead_session` is the session ID of the repository's lead, kept so it comes back with its
+  // conversation. `opened` is when you last opened the repository, in milliseconds since 1970, and
+  // null until you first do: its lead starts then, and from then on the daemon brings it back.
+  // `lead_harness` is the harness the lead started on, which it keeps, as a conversation can't move
+  // to another harness. `kept_lead` marks the repository whose lead is the one this machine had
+  // before Skelcrew gave each repository its own.
   const columns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -128,7 +128,7 @@ function prepareTables(db: Database): void {
   for (const [column, type] of Object.entries(added))
     if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))
       db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
-  // skel's copy of each repository's open tasks and PRs, as items, kept as JSON. The columns
+  // Skelcrew's copy of each repository's open tasks and PRs, as items, kept as JSON. The columns
   // are what readers pick and sort by. A database from an earlier release also has an
   // open_items table, which nothing reads now. It stays, as a daemon of that release may still
   // write to it until it restarts on this one.
@@ -150,7 +150,7 @@ function prepareTables(db: Database): void {
       db.run(`ALTER TABLE notes ADD COLUMN ${column} TEXT`);
   if (db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lead'").get())
     keepTheLead(db);
-  // The reviews skel posted. They go out with your gh login, so on GitHub they look like
+  // The reviews Skelcrew posted. They go out with your gh login, so on GitHub they look like
   // reviews of yours, and polling must not type them back into the builder.
   db.run("CREATE TABLE IF NOT EXISTS posted (id INTEGER PRIMARY KEY)");
   // The plugins you installed: the folder each runs from, and the GitHub repository it came
@@ -162,7 +162,7 @@ function prepareTables(db: Database): void {
   )`);
 }
 
-// Makes the one lead a machine had before skel gave each repository its own the lead of the
+// Makes the one lead a machine had before Skelcrew gave each repository its own the lead of the
 // repository you last attached from, or else of the first by name. It keeps its session, so
 // --resume still finds its conversation, and leadPlaces gives it its old name, folder and
 // socket, so a lead running through the upgrade carries on. Notes still waiting for it stay
@@ -197,7 +197,7 @@ function keepTheLead(db: Database): void {
     db.run("INSERT INTO notes (owner, repo, text) VALUES (?, ?, ?)", [
       owner,
       repo,
-      `skel now gives each repository a lead of its own, and you are the lead of ${name} (${owner}/${repo}). Work only on ${name} from now on. For another repository, ask the human to open it with skel in a checkout of it: it gets a lead of its own.`,
+      `Skelcrew now gives each repository a lead of its own, and you are the lead of ${name} (${owner}/${repo}). Work only on ${name} from now on. For another repository, ask the human to open it with sc in a checkout of it: it gets a lead of its own.`,
     ]);
   }
   db.run("DROP TABLE lead");

@@ -19,7 +19,7 @@ export type Decision =
       // What to type into the builder, besides the failed checks, whose logs come from GitHub.
       tell: string[];
       failed: Check[];
-      // The base branch the PR conflicts with, which skel's clone must hold before the
+      // The base branch the PR conflicts with, which Skelcrew's clone must hold before the
       // builder, told to merge it, fetches it from there.
       conflict: string | null;
       change: Change;
@@ -43,7 +43,7 @@ const running = (check: Check) =>
     ? check.status !== "COMPLETED"
     : ["PENDING", "EXPECTED"].includes(check.state);
 
-// Returns CI's checks, without skel's own review check, which its rounds look after.
+// Returns CI's checks, without Skelcrew's own review check, which its rounds look after.
 const ciOf = (pr: PullRequest) => pr.checks.filter((c) => c.name !== "skelcrew/check");
 
 // Returns what the PR's CI says, for the strip, or null when it has none. One failure is enough
@@ -67,7 +67,7 @@ function newReviews(reviews: PullRequest["reviews"], after: number): PullRequest
 // Decides what the thread's PR, as GitHub returned it, means for the thread: whether it
 // ended, what to type into the builder, and how the thread changes. Events are handled once:
 // only reviews, comments and check runs after the last ones handled count. You are `you`, the
-// gh login skel uses, and `posted` holds the reviews skel posted with it, which are never
+// gh login Skelcrew uses, and `posted` holds the reviews Skelcrew posted with it, which are never
 // typed back as yours. Your comments wake the builder even past the round limit. Those of
 // `pushers`, who can push to the repository, wake it within the limit. Anyone else's, a bot's
 // included, never do: on a public repository anyone can comment, and what is typed in steers
@@ -99,7 +99,7 @@ export function decide(
     (author.login === given.you || (!past && given.pushers.includes(author.login)));
   const who = (author: Author) => author?.login ?? "someone";
   const tell: string[] = [];
-  // While skel's reviewer reviews, the review it posts can reach GitHub before skel has
+  // While Skelcrew's reviewer reviews, the review it posts can reach GitHub before Skelcrew has
   // noted it as its own, so reviews wait until it is done.
   const reviews = thread.reviewing === null ? newReviews(pr.reviews, last_review) : [];
   for (const r of reviews) {
@@ -130,7 +130,7 @@ export function decide(
   const conflict = quiet && pr.mergeable === "CONFLICTING" ? pr.base : null;
   if (conflict !== null)
     tell.push(
-      `The PR conflicts with ${conflict}. Run git fetch origin, merge origin/${conflict} into your branch and fix the conflict, then commit and run skel submit "<summary>" again.`,
+      `The PR conflicts with ${conflict}. Run git fetch origin, merge origin/${conflict} into your branch and fix the conflict, then commit and run sc submit "<summary>" again.`,
     );
   const handled = {
     last_review: Math.max(last_review, ...reviews.map((r) => r.id)),
@@ -144,7 +144,7 @@ export function decide(
     const why = `told the builder: ${told.join("; ")}`;
     return { handled, tell, failed, conflict, change, why };
   }
-  // skel's reviewer approves by setting its skelcrew/check check, so an approved PR with every
+  // Skelcrew's reviewer approves by setting its skelcrew/check check, so an approved PR with every
   // check passed, its own included, is ready. With no CI, that check is the only one.
   const approved = pr.checks.some(
     (c) => c.kind === "status" && c.name === "skelcrew/check" && c.state === "SUCCESS",
@@ -156,7 +156,7 @@ export function decide(
       failed,
       conflict,
       change: { needs_you: true },
-      why: "approved by skel's reviewer with every check green, so it is ready to merge",
+      why: "approved by Skelcrew's reviewer with every check green, so it is ready to merge",
     };
   return { handled, tell, failed, conflict, change: {}, why: "" };
 }
@@ -165,7 +165,7 @@ type Labeled = { number: number; title: string };
 
 // Returns the issues labeled skelcrew that get a thread: those with no thread at all. A thread
 // that failed, was stopped or is done keeps its row, so its label never starts it again;
-// only skel start does.
+// only sc start does.
 export function labeledToStart(threads: Thread[], labeled: Labeled[]): Labeled[] {
   return labeled.filter((issue) => !threads.some((t) => t.task === issue.number));
 }
@@ -207,7 +207,7 @@ type Outcome = {
 // Decides what a finished review means for a thread that has had `rounds` rounds of changes:
 // the skelcrew/check check to set, the thread's new state, and what to type into the builder,
 // if anything. The builder gets max_rounds rounds of changes to fix. A review asking for
-// changes after those is posted but not typed in, only held for skel start to let the thread
+// changes after those is posted but not typed in, only held for sc start to let the thread
 // go on, and, like a failed review, the thread then needs you. An approved thread waits on
 // CI: polling GitHub marks it needs you once every check is green.
 export function afterReview(rounds: number, given: Review, maxRounds: number): Outcome {
@@ -225,21 +225,21 @@ export function afterReview(rounds: number, given: Review, maxRounds: number): O
   if (given.verdict === "approve")
     return {
       check: "success",
-      description: "skel's reviewer approved",
+      description: "Skelcrew's reviewer approved",
       rounds,
       needsYou: false,
       status: "waiting",
       tell: null,
       held: null,
-      why: "approved by skel's reviewer, so it waits on CI",
+      why: "approved by Skelcrew's reviewer, so it waits on CI",
     };
   const counted = rounds + 1;
   const changes: Pick<Outcome, "check" | "description" | "rounds"> = {
     check: "failure",
-    description: "skel's reviewer asked for changes",
+    description: "Skelcrew's reviewer asked for changes",
     rounds: counted,
   };
-  const tell = `skel's reviewer asked for changes:\n\n${given.body}\n\nFix what it asks, commit, and run skel submit "<summary>" again.`;
+  const tell = `Skelcrew's reviewer asked for changes:\n\n${given.body}\n\nFix what it asks, commit, and run sc submit "<summary>" again.`;
   if (counted > maxRounds)
     return {
       ...changes,

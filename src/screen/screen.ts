@@ -83,7 +83,7 @@ const config = [
   // is a gap before the agent.
   ["set", "-g", "pane-border-lines", "spaces"],
   // tmux shares a resize out among panes, so tmux itself sets the sidebar's width back after
-  // each, with no process of skel's to do it.
+  // each, with no process of Skelcrew's to do it.
   ["set-hook", "-g", "window-resized", `resize-pane -t :.0 -x ${sidebarWidth}`],
 ];
 
@@ -97,15 +97,15 @@ export function agentClient(agents: string, session: string, lead: string): stri
   return ["sh", "-c", script, "sh", agents, session, lead];
 }
 
-// Returns the command that runs the skel you are running, which is a single file on a server,
+// Returns the command that runs the Skelcrew you are running, which is a single file on a server,
 // or else this checkout.
 function skel(...words: string[]): string[] {
   const checkout = singleFile ? [] : [mainFile];
   return [process.execPath, ...checkout, ...words];
 }
 
-// Returns the command that runs skel's sidebar, with the GitHub name of the repository it opens
-// on. Where skel runs goes along as a word, not in the environment: a tmux server hands its
+// Returns the command that runs Skelcrew's sidebar, with the GitHub name of the repository it opens
+// on. Where Skelcrew runs goes along as a word, not in the environment: a tmux server hands its
 // panes the environment of whichever terminal started it, and terminals on this server can
 // come from different laptops.
 const sidebar = (agents: string, session: string, where: string, repository: string) =>
@@ -135,7 +135,7 @@ export async function openScreen(
   if (env.TERM && !known(env.TERM)) env.TERM = "xterm-256color";
   applyConfig(agents);
   const name = `screen-${process.pid}`;
-  // The name skel --remote passes along, such as sprite:demo. Empty on this machine.
+  // The name sc --remote passes along, such as sprite:demo. Empty on this machine.
   const where = env.SKELCREW_REMOTE_NAME ?? "";
   const left = sidebar(agents, name, where, repository);
   // The title is the session's own: terminals on this server can come from different laptops.
@@ -154,5 +154,5 @@ export async function openScreen(
   const argv = ["tmux", "-L", screenSocket(agents), "-f", "/dev/null", ...commands];
   const code = await Bun.spawn(argv, { env, stdio: ["inherit", "inherit", "inherit"] }).exited;
   if (code !== 0) throw new Error(`couldn't open the screen: tmux exited with ${code}`);
-  console.log("Your agents keep running. Run skel to come back.");
+  console.log("Your agents keep running. Run sc to come back.");
 }

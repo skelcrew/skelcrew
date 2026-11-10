@@ -1,5 +1,5 @@
 // Needs you, against a running daemon: a builder's question marks its thread needs you, and
-// skel types a note into the lead's session when a thread starts needing you. A shell script
+// Skelcrew types a note into the lead's session when a thread starts needing you. A shell script
 // stands in for Claude Code: as the builder it runs the hook commands in its settings, as
 // Claude Code would around AskUserQuestion, and as the lead it waits at a ❯ prompt.
 import { Database } from "bun:sqlite";
@@ -124,14 +124,14 @@ const env = () => homeEnv(home);
 // Runs this test's daemon, which the test's clean-up stops.
 const serve = () => startDaemon(socket, env(), running);
 
-// Runs skel as you would, or as a builder's hook would with its thread's socket.
+// Runs sc as you would, or as a builder's hook would with its thread's socket.
 const skel = (args: string[], more: Record<string, string> = {}) =>
   runSkel(args, { ...env(), ...more });
 
 // A daemon's work takes its time here, so a wait lasts 15 seconds unless a test says otherwise.
 const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout });
 
-// Puts simon/app, or another of simon's repositories, on the fake GitHub and tells skel about
+// Puts simon/app, or another of simon's repositories, on the fake GitHub and tells Skelcrew about
 // it.
 function addApp(name = "app"): void {
   const work = join(home, "work", name);
@@ -147,7 +147,7 @@ openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?
   if (!added.success) throw new Error(added.stderr.toString());
 }
 
-// What skel ps --json shows you about app-12.
+// What sc ps --json shows you about app-12.
 async function needsYou(): Promise<boolean> {
   const ps = await skel(["ps", "--json"]);
   return JSON.parse(ps.out).find((t: { thread: string }) => t.thread === "app-12")?.needsYou;
@@ -177,7 +177,7 @@ function setNeedsYou(): void {
   db.close();
 }
 
-// Asks the daemon for the lead, as plain skel does before attaching, without attaching.
+// Asks the daemon for the lead, as plain sc does before attaching, without attaching.
 function askForLead(from?: string): Promise<string> {
   return new Promise((done) => {
     const connection = createConnection(join(home, "run", "skelcrew.sock"));
@@ -192,7 +192,7 @@ function askForLead(from?: string): Promise<string> {
   });
 }
 
-// Starts the daemon and app-12, opening app first, as plain skel in its checkout does, unless
+// Starts the daemon and app-12, opening app first, as plain sc in its checkout does, unless
 // told not to.
 async function startApp12(open = true) {
   serve();
@@ -202,7 +202,7 @@ async function startApp12(open = true) {
   await until(() => read(join(builder(), "args")) !== "", 30_000);
 }
 
-// bubblewrap can't start inside skel's own sandbox, so only there builders can't start.
+// bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
 describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("needs you", () => {
   test("a builder's question marks the thread needs you, tells the lead once, and clears when answered", async () => {
     addApp();

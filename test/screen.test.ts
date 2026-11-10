@@ -25,7 +25,7 @@ const dbFile = source("db.ts");
 const screenFile = source("screen/screen.ts");
 const pathNow = process.env.PATH ?? "";
 const sidebar = sidebarWidth;
-const leaving = "Your agents keep running. Run skel to come back.";
+const leaving = "Your agents keep running. Run sc to come back.";
 // Longer than the waits below, so a test that fails says what it waited for.
 setDefaultTimeout(20_000);
 let home = "";
@@ -36,7 +36,7 @@ let terminal = "";
 
 // The sockets are the test's own too, as a sidebar tells whatever daemon it finds that it opened.
 const env = () => ({ ...process.env, HOME: home, XDG_RUNTIME_DIR: join(home, "run") });
-// Runs tmux on one of the test's servers, never on skel's own.
+// Runs tmux on one of the test's servers, never on Skelcrew's own.
 function tmux(socket: string, ...args: string[]) {
   const run = Bun.spawnSync(["tmux", "-L", socket, "-f", "/dev/null", ...args], {
     env: { ...env(), TMUX: "" },
@@ -99,11 +99,11 @@ while test -d ${JSON.stringify(home)}; do read -r line && echo "$line" >> ${name
   startSession(agents, name, { folder: home, command: [script], env: { PATH: pathNow } });
 }
 
-// What goes ahead of skel in a terminal's command, such as a PATH that changes what it finds.
+// What goes ahead of Skelcrew in a terminal's command, such as a PATH that changes what it finds.
 let before = "";
 
 // Opens the screen on an agent in a terminal of its own, whose title until then is "my shell",
-// and which logs how skel exited. `where` is the name a laptop's skel --remote passes along.
+// and which logs how Skelcrew exited. `where` is the name a laptop's sc --remote passes along.
 function open(
   session: string,
   window = "one",
@@ -145,14 +145,14 @@ beforeEach(() => {
   agents = `skel-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
   screen = `${agents}-screen`;
   terminal = `${agents}-terminal`;
-  // app's lead is the one skel kept from before, as its session is named lead. It has started,
+  // app's lead is the one Skelcrew kept from before, as its session is named lead. It has started,
   // so its row names its harness.
   sql(`INSERT INTO repositories (name, owner, repo, kept_lead, lead_session)
   VALUES ('app', 'simon', 'app', 1, 's');
 INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you) VALUES
-  ('simon', 'app', 3, 'app-3', 'skel/3', 'done', 0),
-  ('simon', 'app', 7, 'app-7', 'skel/7', 'working', 0),
-  ('simon', 'app', 12, 'app-12', 'skel/12', 'working', 0);`);
+  ('simon', 'app', 3, 'app-3', 'skelcrew/3', 'done', 0),
+  ('simon', 'app', 7, 'app-7', 'skelcrew/7', 'working', 0),
+  ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'working', 0);`);
   agent("lead");
   agent("app-7");
   agent("app-12");
@@ -223,7 +223,7 @@ test("clicking a row switches the right side and leaves your typing there", asyn
   await until(() => existsSync(join(home, "app-7.typed")), "the typing");
 });
 
-test("skel attach's screen starts on the agent it names, marked in the sidebar", async () => {
+test("sc attach's screen starts on the agent it names, marked in the sidebar", async () => {
   open("app-7");
   await ready("app-7");
   expect(selected()).toBe("● app-7");
@@ -247,7 +247,7 @@ test("Ctrl-Q leaves the whole screen, ends no agent, and says so", async () => {
   open("lead");
   await ready("lead");
   press("C-q");
-  await until(() => existsSync(join(home, "left-one")), "skel to return");
+  await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
   await until(() => screenSessions().length === 0, "the session to end");
   expect(tmux(screen, "list-sessions").ok).toBe(false);
   for (const name of ["lead", "app-7", "app-12"])
@@ -291,7 +291,7 @@ const scrolledBack = () => tmux(agents, "list-panes", "-a", "-F", "#{pane_in_mod
 test("the wheel scrolls back through the agent's output, and typing returns you to it", async () => {
   agent("output", history);
   sql(`INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES
-    ('simon', 'app', 20, 'output', 'skel/20', 'working')`);
+    ('simon', 'app', 20, 'output', 'skelcrew/20', 'working')`);
   open("output");
   await ready("output");
   for (let turn = 0; turn < 4; turn++) wheel(64);
@@ -347,7 +347,7 @@ test("every key pressed while scrolled back reaches the agent, Enter too", async
 test("Ctrl-Q and switching still work while scrolled back", async () => {
   agent("output", history);
   sql(`INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES
-    ('simon', 'app', 20, 'output', 'skel/20', 'working')`);
+    ('simon', 'app', 20, 'output', 'skelcrew/20', 'working')`);
   open("output");
   await ready("output");
   wheel(64);
@@ -355,7 +355,7 @@ test("Ctrl-Q and switching still work while scrolled back", async () => {
   press("M-Down");
   await until(() => selected() === "● app-12", "the next row");
   press("C-q");
-  await until(() => existsSync(join(home, "left-one")), "skel to return");
+  await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
 });
 
 test("an agent drawing the full screen with the mouse gets the wheel itself", async () => {
@@ -387,7 +387,7 @@ test("an agent drawing the full screen without the mouse gets arrow keys, as fro
   expect(scrolledBack()).not.toContain("1");
 });
 
-test("a tmux server started by an older skel gets scrolling when the screen opens", async () => {
+test("a tmux server started by an older Skelcrew gets scrolling when the screen opens", async () => {
   agent("output", history);
   tmux(agents, "set", "-g", "mouse", "off");
   open("output");
@@ -480,7 +480,7 @@ test("a terminal a few lines high still shows the agent, and Ctrl-Q still leaves
   await until(() => seen().includes("I am lead"), "the agent to come back");
   await until(() => seen().includes("⌥↑↓ move"), "the hints to come back");
   press("C-q");
-  await until(() => existsSync(join(home, "left-one")), "skel to return");
+  await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
 });
 
 test("the strip sits above the agent, and the agent's height stays as you switch", async () => {
@@ -512,16 +512,16 @@ test("under the tabs, the header is the second row and the thin line the third, 
   await until(() => seen().includes("#34"), "the strip");
   const lines = seen().split("\n");
   expect(lines[0]?.trimEnd()).toBe("  app");
-  expect(lines[1]).toStartWith("  skel");
+  expect(lines[1]).toStartWith("  Skelcrew");
   expect(lines[1]).toContain("#34");
   expect(lines[2]).toStartWith("───");
   expect(lines[3]).toContain("I am app-7");
 });
 
-test("above the sidebar it says just skel, in white, when no laptop sent you here", async () => {
+test("above the sidebar it says just Skelcrew, in white, when no laptop sent you here", async () => {
   open("lead");
   await ready("lead");
-  await until(() => seen().split("\n")[1]?.trimEnd() === "  skel", "the header");
+  await until(() => seen().split("\n")[1]?.trimEnd() === "  Skelcrew", "the header");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
   const header = colours.split("\n")[1];
   expect(header).toContain("\x1b[1m");
@@ -534,8 +534,8 @@ test("each terminal says where it came from, as they can come from different lap
   open("lead", "two");
   await ready("lead", "two");
   const place = (window: string) => seen(window).split("\n")[1] ?? "";
-  await until(() => place("one").startsWith("  skel · sprite:demo"), "the first place");
-  await until(() => place("two").trimEnd() === "  skel", "the second header", "two");
+  await until(() => place("one").startsWith("  Skelcrew · sprite:demo"), "the first place");
+  await until(() => place("two").trimEnd() === "  Skelcrew", "the second header", "two");
 });
 
 // The divider under the strip, as you see it.
@@ -593,17 +593,17 @@ test("clicking the strip, or turning the wheel over it, does nothing", async () 
   expect(seen()).toContain("I am lead");
 });
 
-// Puts two open issues and a PR in skel's copy, as a poll would, with what their pages say.
+// Puts two open issues and a PR in Skelcrew's copy, as a poll would, with what their pages say.
 const openOnGitHub = () =>
   sql(`${itemSql("app", "task", 31, "Add CSV export", "2026-11-05T10:00:00Z", {
     author: { login: "ana", bot: false, you: false },
-    labels: ["skel"],
+    labels: ["skelcrew"],
     body: Array.from({ length: 80 }, (_, i) => `line ${i + 1} of the description`).join("\n"),
   })}
 ${itemSql("app", "task", 12, "Fix login", "2026-11-04T10:00:00Z", { author: { login: "ana", bot: false, you: false } })}
 ${itemSql("app", "pr", 34, "Bump deps", "2026-11-05T10:00:00Z", {
   body: "All of them.",
-  branch: "skel/12",
+  branch: "skelcrew/12",
   checks: [{ name: "test", id: "1", state: "passed" }],
   reviews: [
     {
@@ -652,13 +652,13 @@ function daemon(): void {
 }
 
 const issueUrl = "https://github.com/simon/app/issues/31";
-// What the issue's page says, as drawn from skel's copy.
+// What the issue's page says, as drawn from Skelcrew's copy.
 const issuePage: Page = {
   title: "Add CSV export",
   facts: [
     ["State", "open"],
     ["Author", "ana"],
-    ["Labels", "skel"],
+    ["Labels", "skelcrew"],
   ],
   body: Array.from({ length: 80 }, (_, i) => `line ${i + 1} of the description`).join("\n"),
 };
@@ -711,7 +711,7 @@ test("a PR's page shows its branch, checks and latest review", async () => {
   await openWithPages();
   clickRow("app#34");
   await onPage("Approved. · codex");
-  expect(right()).toContain("skel/12 → main");
+  expect(right()).toContain("skelcrew/12 → main");
   expect(right()).toContain("passing");
   expect(right()).toContain("All of them.");
 });
@@ -890,11 +890,11 @@ test("clicking the row of the page you are on doesn't open it again", async () =
   expect(rightPane()).toBe(page);
 });
 
-test("a page skel's copy no longer has says so, and you can still move on", async () => {
+test("a page Skelcrew's copy no longer has says so, and you can still move on", async () => {
   await openWithPages();
   sql("DELETE FROM items WHERE id = '31'");
   clickRow("app-31");
-  await onPage("skel has no open issue or PR at this link now");
+  await onPage("Skelcrew has no open issue or PR at this link now");
   expect(seen()).toContain(`GitHub  ${issueUrl}`);
   press("M-S-Down");
   await until(() => seen().includes("I am lead"), "the lead");
@@ -914,7 +914,7 @@ test("the wheel over an agent still scrolls it after a page came and went", asyn
   openOnGitHub();
   agent("app-5", "seq 1 200");
   sql(`INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you) VALUES
-  ('simon', 'app', 5, 'app-5', 'skel/5', 'working', 0);`);
+  ('simon', 'app', 5, 'app-5', 'skelcrew/5', 'working', 0);`);
   open("app-5");
   await ready("app-5");
   await until(() => seen().includes("Add CSV export"), "the issue");
@@ -933,7 +933,7 @@ test("Ctrl-Q leaves from a page, and no page is left running", async () => {
   expect(pagesRunning()).toBe(1);
   const panes = tmux(screen, "list-panes", "-a", "-F", "#{pane_pid}").out.trim().split("\n");
   press("C-q");
-  await until(() => seen().includes(leaving), "skel to say goodbye");
+  await until(() => seen().includes(leaving), "Skelcrew to say goodbye");
   await until(() => stillRunning(panes.map(Number)).length === 0, "the panes' processes to end");
 });
 
@@ -1064,19 +1064,19 @@ test("both tmux servers pass synchronized output on, so nesting brings no flicke
     expect(tmux(socket, "list-clients", "-F", "#{client_termfeatures}").out).toContain("sync");
 });
 
-test("the terminal's title says skel while the screen is open, and comes back after", async () => {
+test("the terminal's title says Skelcrew while the screen is open, and comes back after", async () => {
   open("lead");
   await ready("lead");
-  await until(() => title() === "skel", "the title");
+  await until(() => title() === "Skelcrew", "the title");
   press("C-q");
-  await until(() => existsSync(join(home, "left-one")), "skel to return");
+  await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
   expect(title()).toBe("my shell");
 });
 
 test("the title names the machine when you came from a laptop", async () => {
   open("lead", "one", "xterm-256color", "120", "sprite:demo");
   await ready("lead");
-  await until(() => title() === "skel · sprite:demo", "the title");
+  await until(() => title() === "Skelcrew · sprite:demo", "the title");
 });
 
 test("the title goes out in the form sprite leaves alone", async () => {
@@ -1099,8 +1099,11 @@ await openScreen(${JSON.stringify(agents)}, "lead");`,
     },
   });
   try {
-    await until(() => wrote.includes("skel\x07") || wrote.includes("skel\x1b\\"), "the title");
-    expect(wrote).toContain("\x1b]2;skel");
+    await until(
+      () => wrote.includes("Skelcrew\x07") || wrote.includes("Skelcrew\x1b\\"),
+      "the title",
+    );
+    expect(wrote).toContain("\x1b]2;Skelcrew");
     expect(wrote).not.toContain("\x1b]0;");
   } finally {
     tmux(screen, "kill-server");
@@ -1114,22 +1117,22 @@ test("two terminals on one machine keep a title each", async () => {
   await ready("lead");
   open("lead", "two");
   await ready("lead", "two");
-  await until(() => title("two") === "skel", "the second title");
+  await until(() => title("two") === "Skelcrew", "the second title");
   press("M-Down");
   await until(() => seen().includes("I am app-12"), "app-12");
-  expect(title()).toBe("skel · sprite:demo");
+  expect(title()).toBe("Skelcrew · sprite:demo");
 });
 
 test("an agent's own title never reaches the terminal, even after switching", async () => {
   open("lead");
   await ready("lead");
-  await until(() => title() === "skel", "the title");
+  await until(() => title() === "Skelcrew", "the title");
   expect(tmux(agents, "list-panes", "-t", "=lead:", "-F", "#{pane_title}").out).toContain(
     "title of lead",
   );
   press("M-Down");
   await until(() => seen().includes("I am app-12"), "app-12");
-  expect(title()).toBe("skel");
+  expect(title()).toBe("Skelcrew");
 });
 
 test("a terminal too narrow for a sidebar still shows the agent", async () => {
@@ -1162,7 +1165,7 @@ const siteLead = leadPlaces("simon", "site").name;
 function addSite(): void {
   sql(`INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site');
 INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you) VALUES
-  ('simon', 'site', 8, 'site-8', 'skel/8', 'waiting', 1);`);
+  ('simon', 'site', 8, 'site-8', 'skelcrew/8', 'waiting', 1);`);
   agent(siteLead);
 }
 // The row of tabs, as you see it.

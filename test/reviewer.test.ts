@@ -25,7 +25,7 @@ const sessions = () => join(codexHome(), "sessions");
 const issue = { title: "Fix the flaky test", body: "It fails one run in ten." };
 
 // A Sprite's own disk is an overlay, where bwrap can't lay another, while its /tmp is a disk
-// of its own. So there the test's home is on the Sprite's own disk, as skel's is.
+// of its own. So there the test's home is on the Sprite's own disk, as Skelcrew's is.
 const sprite = existsSync("/.sprite/api.sock");
 
 // Runs git in the clone and returns what it printed.
@@ -53,7 +53,7 @@ afterEach(() => {
 });
 
 // Without your PATH, which may find a real codex or claude. A Sprite's own tools are kept,
-// which tell skel it runs on one.
+// which tell Skelcrew it runs on one.
 const env = () => ({
   HOME: home,
   PATH: `${bin}:/usr/local/bin:/usr/bin:/bin${sprite ? ":/.sprite/bin" : ""}`,
@@ -92,7 +92,7 @@ const start = (
   more: { signal?: AbortSignal; limit?: number; harness?: "claude"; model?: string } = {},
 ) => review({ ...given(), ...more });
 
-// bubblewrap can't start inside skel's own sandbox, so only there these tests can't run.
+// bubblewrap can't start inside Skelcrew's own sandbox, so only there these tests can't run.
 describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("reviewer", () => {
   test("answers with Codex's verdict, given the issue and the base branch", async () => {
     fakeCodex('{"verdict":"changes","body":"The retry has no test."}');
@@ -118,7 +118,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("reviewer", () => {
     expect(args[args.indexOf("-m") + 1]).toBe("gpt-5-codex");
   });
 
-  test("passes skel's Codex login and an API key in, and no other secrets", async () => {
+  test("passes Skelcrew's Codex login and an API key in, and no other secrets", async () => {
     fakeCodex(approve);
     await start();
     const seen = kept("env");
@@ -188,7 +188,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("reviewer", () => {
     for (const file of ["config.toml", "AGENTS.md", "rules/default.rules"])
       expect(readFileSync(join(codexHome(), file), "utf8")).toBe("mine\n");
     expect(existsSync(join(codexHome(), "prompts"))).toBe(false);
-    // Codex up to 0.163 rewrites its login in place, and a renewal reaches skel's copy.
+    // Codex up to 0.163 rewrites its login in place, and a renewal reaches Skelcrew's copy.
     expect(readFileSync(join(codexHome(), "auth.json"), "utf8")).toBe("renewed\n");
     expect(kept("rollout.jsonl")).toBe("transcript\n");
     expect(kept("yours")).toBe("hidden\n");
@@ -323,7 +323,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("reviewer", () => {
   });
 });
 
-// These never start bubblewrap, so they run inside skel's sandbox too.
+// These never start bubblewrap, so they run inside Skelcrew's sandbox too.
 describe("starting a review", () => {
   // Returns what your config sets for one role, `lead`, `builder` or `reviewer`, with these
   // settings in your config.yaml. Read in a process of its own, as homedir() keeps the HOME
@@ -384,7 +384,7 @@ console.log(JSON.stringify(agentRoles().${role}));`;
     script("claude", ["exit 0"]);
     const done = await start({ harness: "claude" });
     expect(done.verdict).toBe("failed");
-    expect(done.body).toContain("run skel");
+    expect(done.body).toContain("run sc");
   });
 
   test("fails a review cancelled before it started, without running it", async () => {

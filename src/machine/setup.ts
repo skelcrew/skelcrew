@@ -1,4 +1,4 @@
-// The first run: what a plain skel sets up on a new machine, skipping each step already
+// The first run: what a plain sc sets up on a new machine, skipping each step already
 // done.
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -32,7 +32,10 @@ const tools = [
 // On a Mac the sandbox comes with the system, and what Homebrew gives goes in one line.
 const brewed = ["tmux", "git", "gh"];
 const macTools = [
-  { command: "sandbox-exec", install: "it comes with macOS, and skel can't run agents without it" },
+  {
+    command: "sandbox-exec",
+    install: "it comes with macOS, and Skelcrew can't run agents without it",
+  },
 ];
 
 // Returns what to install for agents to have a harness: the one your config saved, or else
@@ -111,12 +114,12 @@ function apparmorAdvice(bwrap: string): string {
 
 // Hands your terminal to an outside login and reports whether it succeeded. Rules naming
 // the tool mark where its output starts and ends, without touching it, since the codes and
-// tokens it prints must stay on screen. At a terminal, skel first waits for Enter, so you
+// tokens it prints must stay on screen. At a terminal, Skelcrew first waits for Enter, so you
 // choose when each login starts. While the tool runs, Ctrl-C stops only the tool, so the
-// way back is marked whatever happens. Ctrl-C at the pause stops skel before anything runs.
+// way back is marked whatever happens. Ctrl-C at the pause stops Skelcrew before anything runs.
 function handOver(tool: string, command: string[], env: Env): boolean {
   // Bun's prompt answers a bare Enter as it answers Ctrl-D, so the secret's prompt waits,
-  // which also stops skel on Ctrl-C with your terminal as it was.
+  // which also stops Skelcrew on Ctrl-C with your terminal as it was.
   if (process.stdin.isTTY) promptSecret(skelLine(`press Enter to start ${tool}'s login`));
   console.log(rule(tool));
   const ignore = () => {};
@@ -129,13 +132,13 @@ function handOver(tool: string, command: string[], env: Env): boolean {
     process.off("SIGINT", ignore);
     // A tool stopped by Ctrl-C leaves the terminal's ^C on the line, which would push the
     // rule past the edge.
-    console.log(`${ran ? "" : "\n"}${rule("back in skel")}`);
+    console.log(`${ran ? "" : "\n"}${rule("back in Skelcrew")}`);
   }
 }
 
 // Returns what is wrong with a pasted token, or null when it looks like one. Claude Code
 // itself tells its login tokens apart by this prefix. It reports any token as logged in
-// without asking the server, so the form is all skel can check here.
+// without asking the server, so the form is all Skelcrew can check here.
 function tokenProblem(token: string): string | null {
   if (token === "") return "nothing was pasted";
   if (/\s/.test(token)) return "that has spaces in it, and a token is one word";
@@ -167,11 +170,11 @@ function saveClaudeToken(env: Env): void {
   }
 }
 
-// Returns the settings for skel's own Codex login, which every Codex agent and review shares:
+// Returns the settings for Skelcrew's own Codex login, which every Codex agent and review shares:
 // apart from yours in ~/.codex, so a renewal on either side never breaks the other.
 const codexEnv = (env: Env): Env => ({ ...env, CODEX_HOME: codexHome() });
 
-// Reports whether skel's own Codex login exists. Reviews can change only the login and session
+// Reports whether Skelcrew's own Codex login exists. Reviews can change only the login and session
 // files in its folder, so running codex on it with your rights runs nothing a reviewer left
 // there. codex login status reads only the saved login: a key in your environment doesn't
 // count.
@@ -180,7 +183,7 @@ function codexLoggedIn(env: Env): boolean {
   return Bun.spawnSync(status, { env: codexEnv(env), stdout: "pipe", stderr: "pipe" }).success;
 }
 
-// Logs skel in to Codex in its own folder, with a code you enter on any device, since the
+// Logs Skelcrew in to Codex in its own folder, with a code you enter on any device, since the
 // machine may have no browser. Then says who now has the login, `who` as the step named them,
 // to mark where Codex's output ends.
 function logInCodex(env: Env, who: "agents" | "the reviewer"): void {
@@ -199,7 +202,7 @@ const githubConnected = (env: Env) =>
 // if more is to come.
 function connectGitHub(env: Env): void {
   if (!handOver("gh", ["gh", "auth", "login"], env))
-    throw new Error("gh auth login didn't finish, so skel can't reach GitHub");
+    throw new Error("gh auth login didn't finish, so Skelcrew can't reach GitHub");
   console.log(skelLine("connected to GitHub."));
 }
 
@@ -247,8 +250,8 @@ function pickReviewer(harness: HarnessName): void {
 }
 
 // Reports whether agents on this harness have their login: Claude Code's token from the
-// first run, or skel's own Codex login, which reviews use too. Only files are looked at, as
-// plain skel checks this each time it starts.
+// first run, or Skelcrew's own Codex login, which reviews use too. Only files are looked at, as
+// plain sc checks this each time it starts.
 function agentsLoggedIn(harness: HarnessName): boolean {
   if (harness === "claude") return existsSync(claudeTokenFile());
   return existsSync(join(codexHome(), "auth.json"));
@@ -304,7 +307,7 @@ export function firstRun(): void {
   if (process.platform === "darwin")
     console.log(
       skelLine(
-        "a laptop sleeps, so work stops while the lid is closed. skel remote add keeps it going, on a server or a Sprite.",
+        "a laptop sleeps, so work stops while the lid is closed. sc remote add keeps it going, on a server or a Sprite.",
       ),
     );
 }
@@ -320,7 +323,7 @@ function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
   if (!githubConnected(env))
     steps.push({
       title: "connect to GitHub",
-      about: "gh will log you in. skel uses this login for everything it does on GitHub.",
+      about: "gh will log you in. Skelcrew uses this login for everything it does on GitHub.",
       take: () => connectGitHub(env),
     });
   const { harness } = readConfig();
@@ -349,7 +352,7 @@ function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
         about: "Claude Code will print a long-lived token. Copy it, then come back here.",
         take: () => saveClaudeToken(env),
       });
-  // Every Codex agent and review shares skel's own Codex login.
+  // Every Codex agent and review shares Skelcrew's own Codex login.
   const onCodex = harness === "codex" ? "agents" : "the reviewer";
   if ((harness === "codex" || reviewer === "codex") && !codexLoggedIn(env))
     steps.push({

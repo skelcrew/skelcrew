@@ -1,4 +1,4 @@
-// skel's command line: reads the command and hands it to the file that does it.
+// Skelcrew's command line: reads the command and hands it to the file that does it.
 import { help } from "./help.ts";
 import {
   addServer,
@@ -12,7 +12,7 @@ import { addSprite, remoteSprite } from "./machine/sprite.ts";
 import { errorText } from "./say.ts";
 import { versionLine } from "./version.ts";
 
-// What an agent may not run, in its words. Its sandbox hides skel's database, your settings
+// What an agent may not run, in its words. Its sandbox hides Skelcrew's database, your settings
 // and your logins, so these would act on an empty database or ask what nobody can answer.
 // Trusting a repository is yours alone even with the database at hand: a yes passed on by
 // the lead could come from an injected instruction.
@@ -21,7 +21,7 @@ const yoursOnly: Record<string, string> = {
   serve: "running the daemon",
   "repo add": "adding a repository",
   "repo rm": "removing a repository",
-  init: "setting up a repository for skel",
+  init: "setting up a repository for Skelcrew",
   "repo trust": "trusting a repository",
   attach: "attaching to a thread",
   sidebar: "showing the sidebar",
@@ -41,8 +41,8 @@ function taskName(word?: string): [string, number] | undefined {
   return parts?.[1] ? [parts[1], Number(parts[2])] : undefined;
 }
 
-// Prints why a command can't run as given, and ends skel with an error. People who mistype a
-// command skel knows hear to check its arguments, not that the command doesn't exist.
+// Prints why a command can't run as given, and ends Skelcrew with an error. People who mistype a
+// command Skelcrew knows hear to check its arguments, not that the command doesn't exist.
 function usage(command?: string): never {
   const known = [
     "serve",
@@ -61,18 +61,18 @@ function usage(command?: string): never {
   const first = command ?? "";
   console.error(
     first === "--remote"
-      ? "skel: --remote needs a host, such as skel --remote simon@workbox or skel --remote sprite:demo."
+      ? "Skelcrew: --remote needs a host, such as sc --remote simon@workbox or sc --remote sprite:demo."
       : first === "remote"
-        ? "skel: skel remote add needs a host, such as skel remote add simon@workbox or skel remote add sprite:demo."
+        ? "Skelcrew: sc remote add needs a host, such as sc remote add simon@workbox or sc remote add sprite:demo."
         : known.includes(first)
-          ? `skel: skel ${first} was given arguments it doesn't take. Run skel --help to see how to use it.`
-          : "skel: that isn't a skel command. Run skel --help to see them.",
+          ? `Skelcrew: sc ${first} was given arguments it doesn't take. Run sc --help to see how to use it.`
+          : "Skelcrew: that isn't a Skelcrew command. Run sc --help to see them.",
   );
   process.exit(1);
 }
 
-// Sets up skel if it needs it and opens the screen on the lead of the repository you ran skel
-// from, or the one --from names, or else the one you opened last. While skel has no
+// Sets up Skelcrew if it needs it and opens the screen on the lead of the repository you ran sc
+// from, or the one --from names, or else the one you opened last. While Skelcrew has no
 // repositories, bringInFrom has said so, and there is no lead to open.
 async function leadCommand(from?: string): Promise<void> {
   const { attachToLead } = await import("./client.ts");
@@ -89,7 +89,7 @@ async function machineCommand(args: string[]): Promise<void> {
   const [command] = args;
   const { serve } = await import("./flow/daemon.ts");
   const { firstRun } = await import("./machine/setup.ts");
-  // Run by skel remote add on the machine it sets up, not by people, so usage leaves it out.
+  // Run by sc remote add on the machine it sets up, not by people, so usage leaves it out.
   if (command === "first-run" && args.length === 1) {
     firstRun();
     return;
@@ -109,7 +109,7 @@ async function screenCommand(args: string[]): Promise<void> {
   const { readPage } = await import("./flow/page.ts");
   const { runPage } = await import("./screen/page.ts");
   const { runSidebar } = await import("./screen/sidebar.ts");
-  // The third word is the remote skel runs on, and empty on this machine. The last is the
+  // The third word is the remote Skelcrew runs on, and empty on this machine. The last is the
   // GitHub name of the repository the screen opened on.
   const [session, where, repository] = rest;
   if (
@@ -133,7 +133,7 @@ async function screenCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
-// Adds, lists, removes or trusts a repository, for skel repo, or sets one up with skel init.
+// Adds, lists, removes or trusts a repository, for sc repo, or sets one up with sc init.
 // Only ls takes --json: to add, remove or trust, it is a word like any other.
 async function repoCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
@@ -152,7 +152,7 @@ async function repoCommand(args: string[]): Promise<void> {
   // --json can go anywhere, as tools add it last and people type it where they like.
   const json = args.includes("--json");
   if (sub === "ls" && rest.filter((arg) => arg !== "--json").length === 0) {
-    // An agent's sandbox hides skel's database, so there the daemon answers. In your
+    // An agent's sandbox hides Skelcrew's database, so there the daemon answers. In your
     // terminal it is read here, so the list shows even while the daemon is down.
     printRepositories(
       process.env.SKELCREW_SANDBOX === "1"
@@ -173,7 +173,7 @@ async function repoCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
-// Installs, updates, removes or lists plugins, for skel plugin. Only ls takes --json.
+// Installs, updates, removes or lists plugins, for sc plugin. Only ls takes --json.
 async function pluginCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
   const { installPlugin, listPlugins, removePlugin, updatePlugins } = await import(
@@ -195,7 +195,7 @@ async function agentCommand(args: string[]): Promise<void> {
   if (command === "submit" && sub && rest.length === 0) {
     const thread = await submitForReview(sub);
     console.log(
-      `Submitted ${thread} for review. skel pushes it and opens or updates the pull request. If the reviewer asks for changes, skel types them in here.`,
+      `Submitted ${thread} for review. Skelcrew pushes it and opens or updates the pull request. If the reviewer asks for changes, Skelcrew types them in here.`,
     );
     return;
   }
@@ -218,7 +218,7 @@ async function agentCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
-// Prints the threads, or one repository's, for skel ps.
+// Prints the threads, or one repository's, for sc ps.
 async function psCommand(args: string[]): Promise<void> {
   const { askForThreads } = await import("./client.ts");
   const { printThreads } = await import("./flow/list.ts");
@@ -233,7 +233,7 @@ async function psCommand(args: string[]): Promise<void> {
   printThreads(all ? rows : rows.filter((row) => row.status !== "done"), json);
 }
 
-// Lists tasks, shows one or creates one, for skel task. Only ls and show take --json: to
+// Lists tasks, shows one or creates one, for sc task. Only ls and show take --json: to
 // create, it is a word like any other.
 async function taskCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
@@ -272,14 +272,14 @@ async function threadCommand(args: string[]): Promise<void> {
   if (command === "stop" && thread && rest.length === 0) {
     const name = await stopOn(...thread);
     console.log(
-      `Stopped ${name}. Its clone, branch and pull request stay, and skel start ${name} brings its builder back.`,
+      `Stopped ${name}. Its clone, branch and pull request stay, and sc start ${name} brings its builder back.`,
     );
     return;
   }
   if (command === "review" && thread && rest.length === 0) {
     const name = await reviewAgain(...thread);
     console.log(
-      `Reviewing ${name}'s last commit again. skel posts the review on its pull request, and types any changes into its builder.`,
+      `Reviewing ${name}'s last commit again. Skelcrew posts the review on its pull request, and types any changes into its builder.`,
     );
     return;
   }
@@ -298,34 +298,34 @@ async function tellCommand(args: string[]): Promise<void> {
   const { tellOn, tellTheLead } = await import("./client.ts");
   if (process.env.SKELCREW_SANDBOX !== "1")
     throw new Error(
-      "skel tell is for the lead and builders. To type to a builder, pick it in the sidebar.",
+      "sc tell is for the lead and builders. To type to a builder, pick it in the sidebar.",
     );
   const thread = taskName(to);
   if (to === "lead" && text && rest.length === 0) {
     await tellTheLead(text);
-    console.log("Telling the lead. skel types it in once the lead is idle.");
+    console.log("Telling the lead. Skelcrew types it in once the lead is idle.");
     return;
   }
   if (thread && text && rest.length === 0) {
     const name = await tellOn(...thread, text);
-    console.log(`Telling ${name}'s builder. skel types it in once the builder is idle.`);
+    console.log(`Telling ${name}'s builder. Skelcrew types it in once the builder is idle.`);
     return;
   }
   usage(command);
 }
 
 // Runs the requested CLI command, or prints usage and exits when its arguments are invalid.
-// With no command, sets up skel and opens the screen on the lead. The checks here come first,
+// With no command, sets up Skelcrew and opens the screen on the lead. The checks here come first,
 // in this order, and the functions above run the commands that are left.
 async function runCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
-  // Before the check below, so a server whose skel differs from the laptop's still says what
+  // Before the check below, so a server whose Skelcrew differs from the laptop's still says what
   // it is.
   if (args.length === 1 && command === "--version") {
     console.log(versionLine());
     return;
   }
-  // A sidebar or page is started by a skel that passed this check, and its tmux server can hand
+  // A sidebar or page is started by a Skelcrew that passed this check, and its tmux server can hand
   // it the build of whichever laptop started the server, so it would refuse to run.
   const onScreen = command === "sidebar" || command === "page";
   if (!onScreen && outOfDate()) process.exit(outdated);
@@ -358,7 +358,7 @@ async function runCommand(args: string[]): Promise<void> {
       ),
     );
   }
-  // Commands that run here load what they need only from this point on, so skel --remote
+  // Commands that run here load what they need only from this point on, so sc --remote
   // starts quickly and loads no part of the daemon on your laptop.
   const { setupDone } = await import("./machine/setup.ts");
   // A sidebar, a page or an agent can inherit this name from whoever started tmux, and its
@@ -410,6 +410,6 @@ async function runCommand(args: string[]): Promise<void> {
 try {
   await runCommand(process.argv.slice(2));
 } catch (error) {
-  console.error(`skel: ${errorText(error)}`);
+  console.error(`Skelcrew: ${errorText(error)}`);
   process.exit(1);
 }

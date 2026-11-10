@@ -1,4 +1,4 @@
-// skel's tmux sessions, against a fake harness on a tmux server of the test's own.
+// Skelcrew's tmux sessions, against a fake harness on a tmux server of the test's own.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
   existsSync,

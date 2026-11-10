@@ -13,7 +13,7 @@ const wrapped = (text: string, columns: number) =>
 
 // Returns a page as lines for a pane of a given width, from the top: the title, then the facts
 // with the link to GitHub, then the description, drawn from its markdown. It reads nothing, so
-// what you see can be tested without a terminal. The link comes from skel's copy, which takes
+// what you see can be tested without a terminal. The link comes from Skelcrew's copy, which takes
 // only a web address of printable characters, so it can't end the terminal link early or hold
 // a control code. It sits with the facts, not under a description that could push it far out
 // of view.

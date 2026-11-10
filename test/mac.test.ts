@@ -1,5 +1,5 @@
-// skel as it runs on a Mac, played out on Linux: each run loads test/as-mac.ts, so skel takes
-// its Mac paths, with fake sandbox-exec and launchctl scripts in place of the real ones.
+// Skelcrew as it runs on a Mac, played out on Linux: each run loads test/as-mac.ts, so Skelcrew
+// takes its Mac paths, with fake sandbox-exec and launchctl scripts in place of the real ones.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
   existsSync,
@@ -26,13 +26,13 @@ let socket = "";
 const running: Subprocess[] = [];
 
 // Writes a fake program that logs its calls and then does `body`. The log's path is written
-// in, as a sandbox's environment holds only what skel lets in.
+// in, as a sandbox's environment holds only what Skelcrew lets in.
 function fake(name: string, body: string): void {
   const line = `#!/bin/sh\necho "${name} $*" >> "${home}/calls"\n${body}\n`;
   writeFileSync(join(bin, name), line, { mode: 0o755 });
 }
 
-// XDG_RUNTIME_DIR is set, as a Mac has no /run/user but this machine does, and skel's real
+// XDG_RUNTIME_DIR is set, as a Mac has no /run/user but this machine does, and Skelcrew's real
 // daemon listens there.
 const env = () => ({
   HOME: home,
@@ -42,7 +42,7 @@ const env = () => ({
   SECRET_TOKEN: "secret",
 });
 
-// Runs a script as a Mac would, in a process of its own: skel's home folder must be the
+// Runs a script as a Mac would, in a process of its own: Skelcrew's home folder must be the
 // test's, and only a HOME set from the start reaches it.
 async function asMacRun(script: string) {
   const run = Bun.spawn([process.execPath, "--preload", asMac, "-e", script], {
@@ -63,7 +63,7 @@ const Command = (text: string) => {
   return { argv: [...argv].map(String), env: { ...env } };
 };
 
-// skel's clone of simon/app, which its lead sees, made as a repository is added.
+// Skelcrew's clone of simon/app, which its lead sees, made as a repository is added.
 function appClone(): string {
   const clone = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
   mkdirSync(clone, { recursive: true });
@@ -71,7 +71,7 @@ function appClone(): string {
   return clone;
 }
 
-// Returns what starts app's lead, with its folder and its clone, as skel gives them.
+// Returns what starts app's lead, with its folder and its clone, as Skelcrew gives them.
 const leadStart = (socket: string) =>
   JSON.stringify({
     name: "lead",
@@ -81,7 +81,7 @@ const leadStart = (socket: string) =>
     origin: appClone(),
   });
 
-// Returns the command skel would start the lead with.
+// Returns the command Skelcrew would start the lead with.
 async function leadCommand() {
   const socket = join(home, "run", "skelcrew", "lead", "skelcrew.sock");
   mkdirSync(join(socket, ".."), { recursive: true });
@@ -192,7 +192,7 @@ test("the profile hides your home folder and brings back the agent's folders", a
   );
   expect(text).toContain(`(allow file-read* (subpath "${join(skel, "repos", "simon", "app")}"))`);
   expect(text).toContain(`(remote unix-socket (subpath "${socket}"))`);
-  // Bun and claude are found on the PATH, and skel's own commands come back with them.
+  // Bun and claude are found on the PATH, and Skelcrew's own commands come back with them.
   expect(text).toContain(`(allow file-read* (subpath "${bin}"))`);
   expect(text).toContain(`${join(import.meta.dir, "..", "bin")}"`);
 });
@@ -261,7 +261,7 @@ openDb().run("INSERT INTO repositories (name, owner, repo, opened) VALUES ('app'
   // keeps going through a hangup to remove its folder once the agent has ended.
   fake(
     "claude",
-    'skel ps > "$CLAUDE_CONFIG_DIR/ps.new" 2>&1; mv "$CLAUDE_CONFIG_DIR/ps.new" "$CLAUDE_CONFIG_DIR/ps"; read -r line',
+    'sc ps > "$CLAUDE_CONFIG_DIR/ps.new" 2>&1; mv "$CLAUDE_CONFIG_DIR/ps.new" "$CLAUDE_CONFIG_DIR/ps"; read -r line',
   );
   const script = `import { serve } from ${JSON.stringify(source("flow/daemon.ts"))};
 await serve(${JSON.stringify(socket)});`;
@@ -339,7 +339,7 @@ process.exit(0);`);
   return JSON.parse(ran.out);
 }
 
-test("a reviewer works in a copy, and only its login and sessions reach skel's", async () => {
+test("a reviewer works in a copy, and only its login and sessions reach Skelcrew's", async () => {
   const clone = reviewable(`mkdir -p "$CODEX_HOME/sessions"
 pwd > "$CODEX_HOME/sessions/where"
 cat README >> "$CODEX_HOME/sessions/where"

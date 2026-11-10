@@ -1,4 +1,4 @@
-// The repositories skel works on, each from a clone of its own: bringing one in, trusting
+// The repositories Skelcrew works on, each from a clone of its own: bringing one in, trusting
 // one, keeping the clones current, listing the repositories and removing one.
 import type { Database } from "bun:sqlite";
 import {
@@ -32,7 +32,7 @@ import { cloneDir, configDir, dataDir, leadPlaces } from "../paths.ts";
 import { errorText } from "../say.ts";
 import { hookRepository } from "./webhook.ts";
 
-export const noRepositories = "skel has no repositories yet. Run skel in a checkout of one.";
+export const noRepositories = "Skelcrew has no repositories yet. Run sc in a checkout of one.";
 
 // Returns the file of trusted repositories, kept with your settings so a clone can't bring
 // its own yes.
@@ -59,20 +59,20 @@ export function repositories(db: Database): Repository[] {
 }
 
 // Returns whether the name is the repository's full GitHub name. GitHub ignores case in
-// names, so a checkout's remote or a command can spell one differently from skel. No name,
+// names, so a checkout's remote or a command can spell one differently from Skelcrew. No name,
 // such as a folder that isn't on GitHub, matches nothing.
 export const fullNameIs = (r: Repository, name: string | null | undefined) =>
   `${r.owner}/${r.repo}`.toLowerCase() === name?.toLowerCase();
 
-// Returns the repository a command names, by its name in skel or its full GitHub name, in
-// any case. Throws when skel has no such repository, since commands only work on ones it has.
+// Returns the repository a command names, by its name in Skelcrew or its full GitHub name, in
+// any case. Throws when Skelcrew has no such repository, since commands only work on ones it has.
 export function findRepository(db: Database, given: string): Repository {
   const found = repositories(db).find((r) => r.name === given || fullNameIs(r, given));
   if (!found) throw new Error(`there is no repository named ${given}`);
   return found;
 }
 
-// Creates or updates skel's repository clone so its lead can read its latest default
+// Creates or updates Skelcrew's repository clone so its lead can read its latest default
 // branch. The lead reads the clone, so a clone whose config holds a credential is deleted
 // rather than left there for it.
 async function refreshClone(owner: string, repo: string): Promise<void> {
@@ -106,7 +106,7 @@ function checkOrDelete(clone: string): void {
 let refreshing: Promise<void> | null = null;
 
 // Refreshes every registered clone so leads read current repositories, and creates the
-// skelcrew label in a repository skel hasn't made it in yet, so you can start threads from
+// skelcrew label in a repository Skelcrew hasn't made it in yet, so you can start threads from
 // GitHub. A second call joins the refresh running, so two git commands never fight over a
 // clone. A clone or label that fails only gets a line in the log and is tried again at the
 // next refresh, since an old clone still lets a lead read its repository.
@@ -128,7 +128,7 @@ export function refreshClones(db: Database): Promise<void> {
           await createLabel(`${owner}/${repo}`);
           db.run(`UPDATE repositories SET labeled = 1 ${where}`, [owner, repo]);
         }
-        // skel repo rm can run while a clone is still being made, and the clone would then
+        // sc repo rm can run while a clone is still being made, and the clone would then
         // land after the removal, where nothing would remove it.
         if (!repositories(db).some((r) => r.owner === owner && r.repo === repo))
           rmSync(cloneDir(owner, repo), { recursive: true, force: true });
@@ -142,9 +142,9 @@ export function refreshClones(db: Database): Promise<void> {
   return refreshing;
 }
 
-// Whether skel may clone a repository without asking you. You vouch for what is in a
+// Whether Skelcrew may clone a repository without asking you. You vouch for what is in a
 // repository you can push to, so asking would only add a step. A fork you own holds someone
-// else's code, so it is asked about. skel clones from GitHub, never from your checkout, so
+// else's code, so it is asked about. Skelcrew clones from GitHub, never from your checkout, so
 // what it clones is what your permission covers.
 function trusted({ owner, repo, canPush, isFork }: GitHubRepo): boolean {
   return (canPush && !isFork) || trustLines().includes(`${owner}/${repo}`);
@@ -162,12 +162,12 @@ async function bringIn(db: Database, details: GitHubRepo): Promise<void> {
     console.log("and settings as instructions.");
     const answer = prompt(`Do you trust ${fullName}? [y/N]`);
     if (!["y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
-      console.log(`skel didn't clone ${fullName}, since you don't trust it.`);
+      console.log(`Skelcrew didn't clone ${fullName}, since you don't trust it.`);
       return;
     }
     trust(fullName);
   }
-  if (!existsSync(cloneDir(owner, repo))) console.log(`Cloning ${fullName} for skel.`);
+  if (!existsSync(cloneDir(owner, repo))) console.log(`Cloning ${fullName} for Skelcrew.`);
   await refreshClone(owner, repo);
   if (known) return;
   db.run("INSERT INTO repositories (owner, repo, name) VALUES (?, ?, ?)", [owner, repo, fullName]);
@@ -177,7 +177,7 @@ async function bringIn(db: Database, details: GitHubRepo): Promise<void> {
   if (onSprite())
     await hookRepository(fullName).catch((error) =>
       console.error(
-        `skel: couldn't set the webhook that wakes this Sprite in ${fullName}: ${errorText(error)}`,
+        `Skelcrew: couldn't set the webhook that wakes this Sprite in ${fullName}: ${errorText(error)}`,
       ),
     );
   const labeled = "UPDATE repositories SET labeled = 1 WHERE owner = ? AND repo = ?";
@@ -192,13 +192,15 @@ async function bringIn(db: Database, details: GitHubRepo): Promise<void> {
     db.run(labeled, [owner, repo]);
   } catch (error) {
     // The daemon tries again when it next refreshes the clone.
-    console.error(`skel: couldn't create the skelcrew label in ${fullName}: ${errorText(error)}`);
+    console.error(
+      `Skelcrew: couldn't create the skelcrew label in ${fullName}: ${errorText(error)}`,
+    );
   }
 }
 
 // Brings in the repository you attached from, reporting failures without blocking the lead.
-// Returns its owner/repo once skel has it, so skel opens its lead; one waiting for trust
-// isn't in yet. Plain skel must stay fast, so a repository skel has costs
+// Returns its owner/repo once Skelcrew has it, so Skelcrew opens its lead; one waiting for trust
+// isn't in yet. Plain Skelcrew must stay fast, so a repository Skelcrew has costs
 // no call to GitHub: the daemon keeps its clone current. A folder that isn't on GitHub,
 // such as your dotfiles, gets no complaint.
 export async function bringInFrom(from: string | undefined): Promise<string | undefined> {
@@ -210,22 +212,22 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
     if (named && !repositories(db).some(known)) {
       const details = await githubRepo(named);
       // A checkout can still use a name the repository had before it was renamed or moved on
-      // GitHub. skel keeps it under the name GitHub gives now, and opens it by that one.
+      // GitHub. Skelcrew keeps it under the name GitHub gives now, and opens it by that one.
       named = `${details.owner}/${details.repo}`;
       await bringIn(db, details);
     }
   } catch (error) {
-    console.error(`skel: ${errorText(error)}`);
+    console.error(`Skelcrew: ${errorText(error)}`);
   }
   if (repositories(db).length === 0) console.log(noRepositories);
   const found = repositories(db).find(known);
   return found && `${found.owner}/${found.repo}`;
 }
 
-// Adds a repository for skel repo add: the checkout in the folder given, the repository named
+// Adds a repository for sc repo add: the checkout in the folder given, the repository named
 // as owner/repo, or with neither, the checkout you are in, and says what it did. A folder that
 // is there is taken as one, as a path such as simon/app reads like a name. Asks whether you
-// trust the repository when it needs to, so it runs only in your own terminal. One skel has
+// trust the repository when it needs to, so it runs only in your own terminal. One Skelcrew has
 // costs no call to GitHub.
 export async function addRepo(given?: string): Promise<void> {
   const db = openDb();
@@ -233,14 +235,14 @@ export async function addRepo(given?: string): Promise<void> {
   const named = folder === null ? given : originHere(folder);
   if (folder !== null && !named)
     throw new Error(
-      `${folder} isn't a checkout of a repository on GitHub. Run skel repo add in one, or name it as owner/repo.`,
+      `${folder} isn't a checkout of a repository on GitHub. Run sc repo add in one, or name it as owner/repo.`,
     );
   // A name starting with a dash would reach gh as an option.
   if (!named || !/^[\w.][\w.-]*\/[\w.-]+$/.test(named))
     throw new Error(`${given} is neither a folder nor a repository's GitHub name, as owner/repo`);
   const had = repositories(db).find((r) => fullNameIs(r, named));
   if (had) {
-    console.log(`skel has ${had.owner}/${had.repo} already, as ${had.name}.`);
+    console.log(`Skelcrew has ${had.owner}/${had.repo} already, as ${had.name}.`);
     return;
   }
   const details = await githubRepo(named);
@@ -273,10 +275,10 @@ function starter(): string {
   ].join("\n");
 }
 
-// Sets up the checkout you are in for skel, for skel init: writes the starter skelcrew.yaml at its
-// top, unless one is there, then adds the repository as skel repo add does. Stops outside a
-// git repository, and in one with no remote on GitHub, as skel works from its own clone. That
-// clone is at the default branch, so it says the file counts only once pushed there.
+// Sets up the checkout you are in for Skelcrew, for sc init: writes the starter skelcrew.yaml at
+// its top, unless one is there, then adds the repository as sc repo add does. Stops outside a git
+// repository, and in one with no remote on GitHub, as Skelcrew works from its own clone. That clone
+// is at the default branch, so it says the file counts only once pushed there.
 export async function initRepo(): Promise<void> {
   const top = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"], {
     stdout: "pipe",
@@ -284,22 +286,22 @@ export async function initRepo(): Promise<void> {
   });
   if (!top.success)
     throw new Error(
-      "skel init runs in a checkout of a git repository, and this folder isn't in one.",
+      "sc init runs in a checkout of a git repository, and this folder isn't in one.",
     );
   const root = top.stdout.toString().trim();
   if (!originHere(root))
     throw new Error(
-      "skel init needs the repository on GitHub, and this checkout has no remote there. Push it to GitHub first.",
+      "sc init needs the repository on GitHub, and this checkout has no remote there. Push it to GitHub first.",
     );
   const file = join(root, "skelcrew.yaml");
   // A link counts as there, so the write never goes through one.
   const there = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
-  if (there) console.log("skelcrew.yaml is there already, so skel left it as it is.");
+  if (there) console.log("skelcrew.yaml is there already, so Skelcrew left it as it is.");
   else writeFileSync(file, starter(), { flag: "wx" });
   await addRepo(root);
   if (!there)
     console.log(
-      "Wrote skelcrew.yaml. skel reads it from its own clone, so it counts once you commit it and push it to the default branch.",
+      "Wrote skelcrew.yaml. Skelcrew reads it from its own clone, so it counts once you commit it and push it to the default branch.",
     );
 }
 
@@ -314,7 +316,7 @@ export async function trustRepo(given: string): Promise<void> {
   await bringIn(db, details);
 }
 
-// Ends the repository's lead, on skel's tmux server `tmux`, deletes skel's clone,
+// Ends the repository's lead, on Skelcrew's tmux server `tmux`, deletes Skelcrew's clone,
 // registration and saved trust, then updates names that no longer clash, and on a Sprite
 // removes the webhook that wakes it. Refuses while the repository has live threads, naming
 // them. Left running, the lead would go on with no repository behind it, and the daemon would
@@ -324,7 +326,7 @@ export async function removeRepo(name: string, tmux: string): Promise<void> {
   const found = repositories(db).find((r) => r.name === name);
   if (!found) throw new Error(`there is no repository named ${name}`);
   // Builders of live threads would keep running with no repository behind them, which
-  // breaks polling, skel ps and cleanup after merge.
+  // breaks polling, sc ps and cleanup after merge.
   const live = db
     .query(
       "SELECT task FROM threads WHERE owner = ? AND repo = ? AND status IN ('working', 'waiting') ORDER BY task",
@@ -350,12 +352,12 @@ export async function removeRepo(name: string, tmux: string): Promise<void> {
   if (existsSync(trustFile()))
     writeFileSync(trustFile(), trusted.map((line) => `${line}\n`).join(""));
   // Removed last, so a webhook GitHub couldn't remove never stops the rest. Left behind, it
-  // only wakes the Sprite for a repository skel no longer polls.
+  // only wakes the Sprite for a repository Skelcrew no longer polls.
   if (onSprite())
     await removeWebhook(fullName, spriteUrl()).catch((error) =>
       console.error(
-        `skel: couldn't remove the webhook that wakes this Sprite from ${fullName}, so remove it on GitHub: ${errorText(error)}`,
+        `Skelcrew: couldn't remove the webhook that wakes this Sprite from ${fullName}, so remove it on GitHub: ${errorText(error)}`,
       ),
     );
-  console.log(`Removed ${name} and skel's clone of it.`);
+  console.log(`Removed ${name} and Skelcrew's clone of it.`);
 }

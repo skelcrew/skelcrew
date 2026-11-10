@@ -32,7 +32,7 @@ test("hands on the environment it is given", async () => {
   expect(ran.out).toBe("given\n");
 });
 
-// Some commands depend on this: they run with the environment skel started with, and a
+// Some commands depend on this: they run with the environment Skelcrew started with, and a
 // default of process.env would change what they see.
 test("hands on no change to process.env unless given the environment", async () => {
   process.env.SKELCREW_RUN_TEST = "changed";

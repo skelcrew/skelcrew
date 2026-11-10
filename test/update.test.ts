@@ -1,5 +1,5 @@
-// Updates: a release of skel installing a newer one in the background, from a fake release
-// server, the sidebar's notice that it waits for a restart, and skel restarting the daemon on
+// Updates: a release of Skelcrew installing a newer one in the background, from a fake release
+// server, the sidebar's notice that it waits for a restart, and Skelcrew restarting the daemon on
 // the new release before you attach.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
@@ -27,9 +27,9 @@ const running: Subprocess[] = [];
 // The release file for this machine, as the install script names it.
 const asset = `skelcrew-${process.platform === "darwin" ? "darwin" : "linux"}-${process.arch === "arm64" ? "arm64" : "x64"}`;
 const sum = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
-// A stand-in for a skel binary that says which release it is.
+// A stand-in for a Skelcrew binary that says which release it is.
 const binary = (version: string) => `#!/bin/sh\necho "skelcrew ${version}"\n`;
-const installed = () => join(home, "bin", "skel");
+const installed = () => join(home, "bin", "sc");
 const marker = () => join(home, ".local", "share", "skelcrew", "installed");
 
 // Puts a release on the fake server as the latest, as GitHub lays one out.
@@ -64,7 +64,7 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// The environment of skel in these tests. Its PATH holds the test's fakes, bun and the
+// The environment of Skelcrew in these tests. Its PATH holds the test's fakes, bun and the
 // system's own folders, and nothing else of this machine's, so the real sprite-env of a Sprite
 // is never found. systemctl and launchctl are in the system's folders, so every test that can
 // reach them puts fakes in front.
@@ -73,7 +73,7 @@ const env = () => ({
   PATH: `${join(home, "bin")}:${dirname(process.execPath)}:/usr/bin:/bin`,
 });
 
-// Runs code that uses skel's modules in a process of its own with the test's home, as skel
+// Runs code that uses Skelcrew's modules in a process of its own with the test's home, as Skelcrew
 // stamped with `build` would run it, and returns what it printed.
 async function inProcess(code: string, build?: string) {
   const define = build === undefined ? [] : ["--define", `SKELCREW_BUILD=${JSON.stringify(build)}`];
@@ -90,23 +90,23 @@ async function inProcess(code: string, build?: string) {
   return { out, err, code: code_ };
 }
 
-// Has skel look for a newer release and install it over the stand-in skel.
+// Has Skelcrew look for a newer release and install it over the stand-in Skelcrew.
 const installLatest = () =>
   inProcess(`import { installLatest } from ${JSON.stringify(source("machine/update.ts"))};
 console.log(await installLatest(${JSON.stringify(installed())}, "http://127.0.0.1:${releases.port}"));`);
 
-test("installs a newer release over skel, and notes which one", async () => {
+test("installs a newer release over Skelcrew, and notes which one", async () => {
   latest(binary("0.4.3"));
   const done = await installLatest();
   expect(done.err).toBe("");
   expect(done.out).toBe("0.4.3\n");
   expect(readFileSync(installed(), "utf8")).toBe(binary("0.4.3"));
   expect(readFileSync(marker(), "utf8")).toBe("0.4.3\n");
-  // Staged beside skel and renamed over it, so nothing is left behind.
-  expect(readdirSync(join(home, "bin"))).toEqual(["skel"]);
+  // Staged beside Skelcrew and renamed over it, so nothing is left behind.
+  expect(readdirSync(join(home, "bin"))).toEqual(["sc"]);
 });
 
-test("downloads nothing more when skel already is the latest release", async () => {
+test("downloads nothing more when Skelcrew already is the latest release", async () => {
   latest(binary("0.4.2"));
   const done = await installLatest();
   expect(done.out).toBe("null\n");
@@ -120,7 +120,7 @@ test("installs nothing that fails its checksum", async () => {
   expect(done.code).toBe(1);
   expect(done.err).toContain("checksum");
   expect(readFileSync(installed(), "utf8")).toBe(binary("0.4.2"));
-  expect(readdirSync(join(home, "bin"))).toEqual(["skel"]);
+  expect(readdirSync(join(home, "bin"))).toEqual(["sc"]);
 });
 
 test("installs nothing that won't start on this machine", async () => {
@@ -128,7 +128,7 @@ test("installs nothing that won't start on this machine", async () => {
   const done = await installLatest();
   expect(done.code).toBe(1);
   expect(readFileSync(installed(), "utf8")).toBe(binary("0.4.2"));
-  expect(readdirSync(join(home, "bin"))).toEqual(["skel"]);
+  expect(readdirSync(join(home, "bin"))).toEqual(["sc"]);
   expect(existsSync(marker())).toBe(false);
 });
 
@@ -138,7 +138,7 @@ test("names the address when the release server can't be reached", async () => {
   expect(done.err).toContain(`http://127.0.0.1:${releases.port}/latest/download/SHA256SUMS`);
 });
 
-// What the sidebar's notice says to a skel of `build`.
+// What the sidebar's notice says to a Skelcrew of `build`.
 const notice = async (build: string) =>
   (
     await inProcess(
@@ -148,15 +148,15 @@ console.log(updateNotice());`,
     )
   ).out;
 
-test("the sidebar's notice says a newer release is installed until skel runs on it", async () => {
+test("the sidebar's notice says a newer release is installed until Skelcrew runs on it", async () => {
   expect(await notice("0.4.2")).toBe("\n");
   mkdirSync(join(home, ".local", "share", "skelcrew"), { recursive: true });
   writeFileSync(marker(), "0.4.3\n");
-  expect(await notice("0.4.2")).toBe("skel 0.4.3 installed · restart to use it\n");
+  expect(await notice("0.4.2")).toBe("Skelcrew 0.4.3 installed · restart to use it\n");
   expect(await notice("0.4.3")).toBe("\n");
 });
 
-// How skel restarts the daemon's service on this machine, as the fakes note it, and where it
+// How Skelcrew restarts the daemon's service on this machine, as the fakes note it, and where it
 // says the daemon's log is. A Mac restarts it with launchd, in your login session, which no HOME
 // of the test's can keep apart from your own daemon, so it must never reach the real launchctl.
 const mac = process.platform === "darwin";
@@ -169,7 +169,7 @@ const daemonLog = () =>
 // Stands in for a daemon on the test's socket, answering what it runs, its release or the
 // checkout and commit it started from: `before`, or `after` once the fake systemctl or
 // launchctl restarted it. In a process of its own, as one in the test's process got no answer
-// while the test waited on skel, and on Bun.listen, as a node:net server refused connections
+// while the test waited on Skelcrew, and on Bun.listen, as a node:net server refused connections
 // for a moment after it said it was listening.
 async function daemon(before: object, after: object): Promise<void> {
   const managers: [string, string][] = [
@@ -200,7 +200,7 @@ await Bun.write(${JSON.stringify(ready)}, "");`;
   await until(() => existsSync(ready));
 }
 
-// Has skel, stamped with `build`, or run from this checkout without one, make sure the daemon
+// Has Skelcrew, stamped with `build`, or run from this checkout without one, make sure the daemon
 // runs what it does, as it does before you attach, and returns what it printed and what the
 // service manager was asked.
 async function beforeAttaching(build?: string) {
@@ -230,11 +230,11 @@ test("leaves a daemon on this release running", async () => {
   expect(done.calls).toBe("");
 });
 
-// The checkout these tests run from, and the commit it is on, as skel run from it sees them.
+// The checkout these tests run from, and the commit it is on, as Skelcrew run from it sees them.
 const checkout = join(source(), "..");
 const head = () => git(checkout, "rev-parse", "--short", "HEAD");
 
-test("after git pull, skel from a checkout restarts a daemon still on the old commit", async () => {
+test("after git pull, Skelcrew from a checkout restarts a daemon still on the old commit", async () => {
   await daemon({ folder: checkout, commit: "0000000" }, { folder: checkout, commit: head() });
   const done = await beforeAttaching();
   expect(done.err).toBe("");
@@ -252,7 +252,7 @@ test("leaves a daemon on this checkout's commit running", async () => {
 });
 
 // A restart would only bring back the daemon of the checkout its service runs, such as your
-// main one while you run skel from a worktree, so waiting for this one would never end.
+// main one while you run sc from a worktree, so waiting for this one would never end.
 test("leaves alone a daemon that runs from another checkout", async () => {
   await daemon({ folder: "/elsewhere/skel", commit: "0000000" }, {});
   expect((await beforeAttaching()).calls).toBe("");
@@ -270,7 +270,7 @@ test("says where to look when the daemon doesn't come back on the new release", 
   expect(done.err).toContain(daemonLog());
 }, 15_000);
 
-// Runs skel stamped with `build` on a server, as --remote from a laptop on `laptop` runs it.
+// Runs sc stamped with `build` on a server, as --remote from a laptop on `laptop` runs it.
 async function onServer(build: string, laptop: string) {
   const run = Bun.spawn(
     [process.execPath, "--define", `SKELCREW_BUILD="${build}"`, source("main.ts"), "--help"],
@@ -287,7 +287,7 @@ async function onServer(build: string, laptop: string) {
 test("a server on an older release than the laptop asks to be updated, and a newer one doesn't", async () => {
   const older = await onServer("0.4.2", "0.4.3");
   expect(older.code).toBe(98);
-  expect(older.out).toContain("skel on simon@workbox is from 0.4.2, yours is 0.4.3.");
+  expect(older.out).toContain("Skelcrew on simon@workbox is from 0.4.2, yours is 0.4.3.");
   // It updates itself in the background, and the laptop catches up on its own.
   expect((await onServer("0.4.4", "0.4.3")).code).toBe(0);
   expect((await onServer("0.4.3", "0.4.3")).code).toBe(0);

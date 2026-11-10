@@ -1,4 +1,4 @@
-// Plugins: skel plugin install, update, rm and ls run as you would run them, and the daemon's
+// Plugins: sc plugin install, update, rm and ls run as you would run them, and the daemon's
 // calls and git logins through a plugin. A folder of git repositories with version tags stands
 // in for GitHub, and a small fake plugin for a real one.
 import { Database } from "bun:sqlite";
@@ -33,7 +33,7 @@ function fakePlugin(folder: string, version: string, more = ""): void {
     join(folder, "skelcrew-plugin.yaml"),
     `name: fake
 version: ${version}
-skel: 0.4.0
+skelcrew: 0.4.0
 about: Tasks from a fake tracker
 jobs: [tracker, forge]
 build: [[bun, build.ts]]
@@ -100,7 +100,7 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// Runs skel as the release given, or as a build from a checkout, with what you type.
+// Runs sc as the release given, or as a build from a checkout, with what you type.
 async function skel(args: string[], typed = "", release = "", more: Record<string, string> = {}) {
   const stamp = release ? ["--define", `SKELCREW_BUILD=${JSON.stringify(release)}`] : [];
   const run = Bun.spawn([process.execPath, ...stamp, source("main.ts"), ...args], {
@@ -123,7 +123,7 @@ async function skel(args: string[], typed = "", release = "", more: Record<strin
   return { out, err, code };
 }
 
-// Runs code against skel's own modules in a process of its own, with this test's home, as the
+// Runs code against Skelcrew's own modules in a process of its own, with this test's home, as the
 // daemon would, and returns what it printed. homedir() keeps the HOME a process started with.
 async function asDaemon(code: string) {
   const run = Bun.spawn([process.execPath, "-e", code], {
@@ -177,13 +177,13 @@ test("answering no installs nothing and leaves no clone behind", async () => {
   publish("skelcrew/skel-plugin-fake", "0.1.0");
   const { out, code } = await skel(["plugin", "install", "skelcrew/skel-plugin-fake"], "n\n");
   expect(code).toBe(0);
-  expect(out).toContain("skel didn't install fake.");
+  expect(out).toContain("Skelcrew didn't install fake.");
   expect(existsSync(join(plugins(), "fake"))).toBe(false);
   expect((await skel(["plugin", "ls"])).out).toBe("No plugins installed.\n");
   expect(readdirSync(plugins())).toEqual([]);
 });
 
-test("a plugin that needs a newer skel is refused before anything runs", async () => {
+test("a plugin that needs a newer Skelcrew is refused before anything runs", async () => {
   publish("skelcrew/skel-plugin-fake", "0.1.0");
   const { err, code } = await skel(
     ["plugin", "install", "skelcrew/skel-plugin-fake"],
@@ -191,7 +191,7 @@ test("a plugin that needs a newer skel is refused before anything runs", async (
     "0.3.9",
   );
   expect(code).toBe(1);
-  expect(err).toContain("fake 0.1.0 needs skel 0.4.0 or newer, and this is skel 0.3.9");
+  expect(err).toContain("fake 0.1.0 needs Skelcrew 0.4.0 or newer, and this is Skelcrew 0.3.9");
   expect(existsSync(join(plugins(), "fake"))).toBe(false);
   expect(
     (await skel(["plugin", "install", "skelcrew/skel-plugin-fake"], "y\n", "0.4.0")).code,
@@ -213,7 +213,7 @@ test("a repository with no version tag, or a manifest that isn't valid, is refus
   fakePlugin(broken, "0.1.0");
   writeFileSync(
     join(broken, "skelcrew-plugin.yaml"),
-    "name: broken\nversion: 0.1.0\nskel: 0.4.0\nabout: x\njobs: [forge]\ncall: [bun, call.ts]\n",
+    "name: broken\nversion: 0.1.0\nskelcrew: 0.4.0\nabout: x\njobs: [forge]\ncall: [bun, call.ts]\n",
   );
   const invalid = await skel(["plugin", "install", broken], "y\n");
   expect(invalid.code).toBe(1);
@@ -256,7 +256,7 @@ test("installing a plugin twice is refused, and points to update", async () => {
   await skel(["plugin", "install", "skelcrew/skel-plugin-fake"], "y\n");
   const again = await skel(["plugin", "install", "skelcrew/skel-plugin-fake"], "y\n");
   expect(again.code).toBe(1);
-  expect(again.err).toContain("fake is installed already: run skel plugin update fake");
+  expect(again.err).toContain("fake is installed already: run sc plugin update fake");
 });
 
 test("update moves a plugin to its newest tag after asking, and removes the old version", async () => {
@@ -267,7 +267,7 @@ test("update moves a plugin to its newest tag after asking, and removes the old 
 
   publish("skelcrew/skel-plugin-fake", "0.2.0");
   const declined = await skel(["plugin", "update", "fake"], "n\n");
-  expect(declined.out).toContain("skel didn't update fake.");
+  expect(declined.out).toContain("Skelcrew didn't update fake.");
   expect((await skel(["plugin", "ls"])).out).toBe("fake 0.1.0 tracker, forge\n");
 
   const updated = await skel(["plugin", "update", "fake"], "y\n");
@@ -285,7 +285,7 @@ test("update moves a plugin to its newest tag after asking, and removes the old 
 test("rm removes a plugin's folders and settings, and refuses for a repository's tracker", async () => {
   publish("skelcrew/skel-plugin-fake", "0.1.0");
   await skel(["plugin", "install", "skelcrew/skel-plugin-fake"], "y\n");
-  // A repository skel has, whose skelcrew.yaml names fake as its tracker.
+  // A repository Skelcrew has, whose skelcrew.yaml names fake as its tracker.
   const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
   db.run("INSERT INTO repositories (owner, repo, name) VALUES ('simon', 'app', 'app')");
   db.close();
@@ -305,7 +305,7 @@ test("rm removes a plugin's folders and settings, and refuses for a repository's
   expect(existsSync(settings("fake"))).toBe(false);
 });
 
-test("agents can't run skel plugin", async () => {
+test("agents can't run sc plugin", async () => {
   for (const sub of ["install", "update", "rm", "ls"]) {
     const { err, code } = await skel(["plugin", sub, "x"], "", "", { SKELCREW_SANDBOX: "1" });
     expect(code).toBe(1);
@@ -317,7 +317,7 @@ test("a call hands the plugin one question and checks its one answer", async () 
   publish("skelcrew/skel-plugin-fake", "0.1.0");
   await skel(["plugin", "install", "skelcrew/skel-plugin-fake"], "y\n");
   const ask = (question: string, timeout = 60_000) =>
-    // Zod by its path in skel's checkout, as the test's home has no node_modules to find it in.
+    // Zod by its path in Skelcrew's checkout, as the test's home has no node_modules to find it in.
     asDaemon(`import { z } from ${JSON.stringify(Bun.resolveSync("zod", import.meta.dir))};
 import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { callPlugin } from ${JSON.stringify(source("plugins/plugin.ts"))};
@@ -338,7 +338,7 @@ try {
   });
   expect((await ask('{ ask: "fail" }')).out).toBe("error: fake failed: the token expired\n");
   expect((await ask('{ ask: "bad" }')).out).toContain(
-    "error: fake answered in a way skel doesn't understand",
+    "error: fake answered in a way Skelcrew doesn't understand",
   );
   const started = Date.now();
   expect((await ask('{ ask: "slow" }', 500)).out).toBe(

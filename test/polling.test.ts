@@ -50,7 +50,7 @@ const typed = () => read(join(builder(), "typed"));
 // Puts a program of the test's on its PATH.
 const script = (name: string, body: string) => writeScript(home, name, body);
 
-// Stands in for Claude Code. As the builder, it commits a round and runs skel submit, then
+// Stands in for Claude Code. As the builder, it commits a round and runs sc submit, then
 // waits at a ❯ prompt, keeping what is typed into it. Told of a conflict, it fetches
 // origin and merges the base, as Claude Code would, keeping what git said. While the file
 // busy is in its config folder, it looks busy, as Claude Code does mid-turn.
@@ -60,7 +60,7 @@ function fakeClaude(): void {
     `case "$CLAUDE_CONFIG_DIR" in */lead-*) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
 echo 1 > change
 git add -A && git commit -qm "round 1"
-skel submit "Round 1" >> "$CLAUDE_CONFIG_DIR/submitted" 2>&1
+sc submit "Round 1" >> "$CLAUDE_CONFIG_DIR/submitted" 2>&1
 while test -e "$CLAUDE_CONFIG_DIR/busy"; do echo "esc to interrupt"; sleep 0.2; done
 clear
 printf '\\033[?2004h'
@@ -122,7 +122,7 @@ beforeEach(() => {
   echo "{\\"id\\":$n}" ;;
 "api repos/simon/app/statuses/"*) cat > /dev/null; echo '{"state":"set"}' ;;
 "api repos/simon/app/labels --method POST --input -") cat >> "$HOME/gh/label"; echo >> "$HOME/gh/label"
-  echo '{"name":"skel"}' ;;
+  echo '{"name":"Skelcrew"}' ;;
 "api repos/simon/app/issues/12/reactions --method POST --input -") cat >> "$HOME/gh/reacted"
   echo >> "$HOME/gh/reacted"; echo '{"content":"eyes"}' ;;
 "api repos/simon/app/collaborators/ana/permission") echo '{"permission":"write"}' ;;
@@ -180,7 +180,7 @@ const leadName = leadPlaces("simon", "app").name;
 // A daemon's work takes its time here, so a wait lasts 15 seconds unless a test says otherwise.
 const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout });
 
-// Puts simon/app on the fake GitHub and tells skel about it, as a repository you have opened,
+// Puts simon/app on the fake GitHub and tells Skelcrew about it, as a repository you have opened,
 // whose lead the daemon starts. Returns a checkout to push from.
 function addApp(): string {
   const work = join(home, "work", "app");
@@ -281,7 +281,7 @@ const check = (id: number, conclusion: string | null) => ({
   detailsUrl: `https://github.com/simon/app/actions/runs/1/job/${id}`,
 });
 
-// Starts the thread on app-12, and waits until skel's reviewer has approved its first round,
+// Starts the thread on app-12, and waits until Skelcrew's reviewer has approved its first round,
 // so the thread waits on CI.
 async function approvedApp12(from?: string): Promise<string> {
   const work = addApp();
@@ -289,7 +289,7 @@ async function approvedApp12(from?: string): Promise<string> {
     git(work, "checkout", "-q", "-b", from);
     git(work, "push", "-q", join(home, "github", "simon", "app.git"), from);
   }
-  // skel start reads the task from skel's copy, which it brings up to date first.
+  // sc start reads the task from Skelcrew's copy, which it brings up to date first.
   writeFileSync(join(home, "gh", "graphql"), JSON.stringify(pollAnswer([issue12()])));
   serve();
   await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
@@ -310,7 +310,7 @@ async function approvedApp12(from?: string): Promise<string> {
   return work;
 }
 
-// What skel's copy holds open, as kind and ID, and the totals the sidebar counts with.
+// What Skelcrew's copy holds open, as kind and ID, and the totals the sidebar counts with.
 function copied(): { rows: string[]; totals: unknown } {
   const db = new Database(join(data(), "skelcrew.db"), { readonly: true });
   // The daemon can be saving a poll just as this reads, which would otherwise fail the test.
@@ -321,7 +321,7 @@ function copied(): { rows: string[]; totals: unknown } {
   return { rows: rows.map((row) => Object.values(Object(row)).join(" ")), totals };
 }
 
-test("the first poll brings everything open into skel's copy, and later ones what changed", async () => {
+test("the first poll brings everything open into Skelcrew's copy, and later ones what changed", async () => {
   addApp();
   const answer = (issues: object[], pulls: object[]) =>
     writeFileSync(join(home, "gh", "graphql"), JSON.stringify(pollAnswer(issues, pulls)));
@@ -332,7 +332,7 @@ test("the first poll brings everything open into skel's copy, and later ones wha
     rows: ["pr 34", "task 12", "task 13"],
     totals: { open_issues: 2, open_prs: 1 },
   });
-  // GitHub only sends what changed since the newest change skel saw. A closed issue goes.
+  // GitHub only sends what changed since the newest change Skelcrew saw. A closed issue goes.
   answer([issueNode(13, "Fix login", { state: "CLOSED", updatedAt: "2026-11-06T10:00:00Z" })], []);
   await until(() => copied().rows.length === 2);
   expect(copied().rows).toEqual(["pr 34", "task 12"]);
@@ -347,9 +347,9 @@ test("the first poll brings everything open into skel's copy, and later ones wha
   expect(copied()).toEqual({ rows: ["task 12"], totals: { open_issues: 1, open_prs: 0 } });
 });
 
-// bubblewrap can't start inside skel's own sandbox, so only there builders can't start.
+// bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
 describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling GitHub", () => {
-  test("a PR's checks are saved for the strip, without skel's own review check", async () => {
+  test("a PR's checks are saved for the strip, without Skelcrew's own review check", async () => {
     await approvedApp12();
     await morePolls();
     pr({ reviews: [skelReview], checks: [approved, check(900, "SUCCESS")] });
@@ -359,7 +359,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling GitHub", () => {
 
   test("a failed check reaches the builder once, even after GitHub fails and the daemon restarts", async () => {
     await approvedApp12();
-    // GitHub fails while the graphql file is gone; skel tries again at the next poll.
+    // GitHub fails while the graphql file is gone; Skelcrew tries again at the next poll.
     rmSync(join(home, "gh", "graphql"));
     await morePolls();
     pr({ reviews: [skelReview], checks: [approved, check(900, "FAILURE")] });
@@ -417,7 +417,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling GitHub", () => {
     expect(typed()).not.toContain("The check test failed");
   }, 60_000);
 
-  test("approved with every check green needs you, and skel's own review is not typed back", async () => {
+  test("approved with every check green needs you, and Skelcrew's own review is not typed back", async () => {
     await approvedApp12();
     pr({ reviews: [skelReview], checks: [approved, check(900, null)] });
     await morePolls();
@@ -427,7 +427,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling GitHub", () => {
     expect(thread().last_review).toBe(1001);
     await until(() => read(join(data(), "claude", leadName, "typed")).includes("app-12 needs you"));
     expect(read(join(data(), "claude", leadName, "typed"))).toContain("ready to merge");
-    // Your own comment wakes the builder; skel's review, posted with your login, never does.
+    // Your own comment wakes the builder; Skelcrew's review, posted with your login, never does.
     // Waiting on you, it is polled every other time: every minute, at 30 seconds a poll.
     const before = polls();
     await Bun.sleep(2000);
@@ -554,13 +554,13 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling GitHub", () => {
     expect(thread()).toMatchObject({ status: "stopped", needs_you: 0, last_comment: 0 });
   }, 60_000);
 
-  // skel start polls first, and that poll can find the label and start the thread itself.
-  test("skel start on a labeled issue starts it itself, from the branch it names", async () => {
+  // sc start polls first, and that poll can find the label and start the thread itself.
+  test("sc start on a labeled issue starts it itself, from the branch it names", async () => {
     const work = addApp();
     git(work, "checkout", "-q", "-b", "next");
     git(work, "push", "-q", join(home, "github", "simon", "app.git"), "next");
     writeFileSync(join(home, "gh", "graphql"), JSON.stringify(pollAnswer([issue12()])));
-    // An hour between polls, so only skel start brings another.
+    // An hour between polls, so only sc start brings another.
     serve(3_600_000);
     await until(() => copied().rows.includes("task 12"));
     writeFileSync(join(home, "gh", "graphql"), JSON.stringify(pollAnswer([issue12(true)])));
@@ -574,11 +574,11 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling GitHub", () => {
     expect(thread()).toMatchObject({ task: 12, status: "working", base: "next" });
   }, 30_000);
 
-  // A poll reads one page of changes, so skel start reads its own task too.
-  test("skel start reads its task as it is now, though more changed than a poll reads", async () => {
+  // A poll reads one page of changes, so sc start reads its own task too.
+  test("sc start reads its task as it is now, though more changed than a poll reads", async () => {
     addApp();
     writeFileSync(join(home, "gh", "graphql"), JSON.stringify(pollAnswer([issue12()])));
-    // An hour between polls, so only skel start brings another.
+    // An hour between polls, so only sc start brings another.
     serve(3_600_000);
     await until(() => copied().rows.includes("task 12"));
     // A hundred other issues changed since, more than one answer holds.

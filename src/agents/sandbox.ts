@@ -61,7 +61,7 @@ function linksTo(program: string): Map<string, string> {
 
 // Returns the command that runs an agent in its sandbox, hiding your credentials and exposing
 // only its chosen writable folders: bubblewrap on Linux, sandbox-exec on a Mac. Keeps the
-// terminal connection and network available for the harness and model, and puts skel's own
+// terminal connection and network available for the harness and model, and puts Skelcrew's own
 // commands on the agent's PATH. `mounts` is in bubblewrap's words.
 export function sandboxArgs(given: {
   home: string;
@@ -75,7 +75,7 @@ export function sandboxArgs(given: {
   const { home, path, mounts, socket, cwd, command, programs: named = [command[0]] } = given;
   // Programs often live under the home folder: Claude Code under nvm keeps node beside it,
   // and its package where its link points. So the program's folder and the package its link
-  // resolves into come back, as does bun, which skel's own commands run on. The program is
+  // resolves into come back, as does bun, which Skelcrew's own commands run on. The program is
   // the command's first word unless others are named, as for a shell running a setup command.
   const programs = new Set<string>();
   const links = new Map<string, string>();
@@ -88,9 +88,9 @@ export function sandboxArgs(given: {
         if (link.startsWith(`${home}/`)) links.set(link, target);
     }
   }
-  // skel built as one file runs its modules from a folder only it sees, and needs nothing
-  // but itself. From a checkout, only the parts skel runs from: the checkout's .git and
-  // other files aren't the agent's to read. bun runs skel without node_modules by fetching
+  // Skelcrew built as one file runs its modules from a folder only it sees, and needs nothing
+  // but itself. From a checkout, only the parts Skelcrew runs from: the checkout's .git and
+  // other files aren't the agent's to read. bun runs sc without node_modules by fetching
   // its packages itself, and a sandbox can't show a folder that is missing.
   const bin = singleFile ? dirname(process.execPath) : join(checkoutFolder, "bin");
   const skel = singleFile
@@ -129,7 +129,7 @@ export function sandboxArgs(given: {
     // node live.
     args.push("--ro-bind", "/dev/null", controlSocket);
     // sprite-env only fails without the control socket. Hidden too, the sandbox looks like
-    // any Linux machine to what runs in it, skel's own tests included, rather than a Sprite
+    // any Linux machine to what runs in it, Skelcrew's own tests included, rather than a Sprite
     // whose services can't be reached.
     const spriteEnv = Bun.which("sprite-env", { PATH: path });
     if (spriteEnv) args.push("--ro-bind", "/dev/null", spriteEnv);
@@ -220,7 +220,7 @@ export function refuseCredentials(repository: string): void {
   // hide what the file holds, while the lead can still read it.
   if (read.exitCode !== 0 && read.exitCode !== 1)
     throw new Error(
-      `git can't read ${repository}/.git/config, so skel can't check it for credentials: ${read.stderr.toString().trim()}`,
+      `git can't read ${repository}/.git/config, so Skelcrew can't check it for credentials: ${read.stderr.toString().trim()}`,
     );
   for (const line of read.stdout.toString().split("\n")) {
     const key = line.split(" ")[0] ?? "";
@@ -264,7 +264,7 @@ export function setupCommand(
   env: Record<string, string | undefined> = process.env,
 ): { argv: string[]; env: Record<string, string> } {
   const home = env.HOME;
-  if (!home) throw new Error("HOME isn't set, so skel can't find its own folders");
+  if (!home) throw new Error("HOME isn't set, so Skelcrew can't find its own folders");
   const argv = sandboxArgs({
     home,
     path: env.PATH ?? "",
@@ -275,7 +275,7 @@ export function setupCommand(
     // under nvm, often don't. Every word is tried rather than the first, since a command
     // can start with cd or a variable; words that name no program bring back nothing. Only
     // bare names: the command comes from the repository, and a path could name a program in
-    // a folder of yours that holds secrets, such as skel's own token.
+    // a folder of yours that holds secrets, such as Skelcrew's own token.
     programs: command.split(/\s+/).filter((word) => !word.includes("/")),
   });
   return { argv, env: keptEnv(env) };

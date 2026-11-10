@@ -117,10 +117,10 @@ test("the release notes list what changed since the last release", () => {
 test("the first release says so, instead of listing all of history", () => {
   commit("Something early");
   build("0.1.0");
-  expect(dist("notes.md")).toBe("The first release of skel.\n");
+  expect(dist("notes.md")).toBe("The first release of Skelcrew.\n");
 });
 
-test("anything but a plain release number is refused, as skel couldn't tell it from a commit", () => {
+test("anything but a plain release number is refused, as Skelcrew couldn't tell it from a commit", () => {
   for (const version of ["", "v0.4.2", "0.4", "0.4.2-beta", "39939b0"]) {
     const done = build(version);
     expect(done.code).not.toBe(0);
