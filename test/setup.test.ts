@@ -19,6 +19,7 @@ import { createServer, type Server } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
+import { fakePlugin, git } from "./harness.ts";
 
 let home = "";
 let bin = "";
@@ -496,6 +497,90 @@ test("a yes to the GitHub plugin installs it from GitHub, after showing what it 
   expect(existsSync(join(home, ".local", "share", "skel", "plugins", "github", "0.1.0"))).toBe(
     true,
   );
+});
+
+// Puts simon/site on the fake GitHub, claimed by a fake GitHub plugin that is a tracker and a
+// forge, and returns your checkout of it. git reaches the fake GitHub for every
+// https://github.com/ URL.
+function siteOnGitHub(): string {
+  noGitHubPlugin();
+  const settings = fakePlugin(home, "github", ["tracker", "forge"]);
+  const answer = {
+    key: "simon/site",
+    name: "site",
+    link: "https://github.com/simon/site",
+    clone: "https://github.com/simon/site.git",
+    push: true,
+    fork: false,
+  };
+  writeFileSync(
+    join(settings, "claims.json"),
+    JSON.stringify({ "https://github.com/simon/site": answer, [answer.clone]: answer }),
+  );
+  writeFileSync(
+    join(home, ".gitconfig"),
+    `[url "file://${home}/github/"]\n\tinsteadOf = https://github.com/\n`,
+  );
+  const site = join(home, "code", "site");
+  mkdirSync(site, { recursive: true });
+  writeFileSync(join(site, "README"), "site\n");
+  git(site, "init", "-q", "-b", "main");
+  git(site, "add", ".");
+  git(site, "commit", "-q", "-m", "start");
+  git(home, "clone", "-q", "--bare", site, join(home, "github", "simon", "site.git"));
+  git(site, "remote", "add", "origin", "https://github.com/simon/site");
+  return site;
+}
+
+const initOffer =
+  "skel · run skel init here, so GitHub's issues become this repository's tasks? [Y/n]";
+
+test("with the GitHub plugin, offers skel init in a checkout whose skel.yaml names no tracker, which names GitHub", async () => {
+  const site = siteOnGitHub();
+  const run = await skel("1\nsk-ant-oat01-good\n\n", bin, main(), site);
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  // Offered once the steps are done, and before the lead opens.
+  expect(run.out.indexOf("skel · setup is done.")).toBeLessThan(run.out.indexOf(initOffer));
+  expect(run.out).not.toContain("Which tracker");
+  expect(readFileSync(join(site, "skel.yaml"), "utf8")).toContain("\ntracker: github\n");
+  expect(run.out).toContain("Added simon/site, as site.");
+  expect(run.out).toContain("counts once you commit it and push it to the default branch");
+  expect(calls()).toEndWith("daemon lead\nscreen on lead\n");
+});
+
+test("a no to skel init writes nothing, and the lead opens", async () => {
+  const site = siteOnGitHub();
+  const run = await skel("1\nsk-ant-oat01-good\nn\n", bin, main(), site);
+  expect(run.err).toBe("");
+  expect(run.out).toContain(initOffer);
+  expect(run.out).toContain(
+    "skel · skipped. Run skel init here later, so GitHub's issues become this repository's tasks.",
+  );
+  expect(existsSync(join(site, "skel.yaml"))).toBe(false);
+  expect(calls()).toEndWith("daemon lead\nscreen on lead\n");
+});
+
+test("offers no skel init where skel.yaml names a tracker, outside a checkout, or without the plugin", async () => {
+  const site = siteOnGitHub();
+  writeFileSync(join(site, "skel.yaml"), "tracker: linear\n");
+  const named = await skel("1\nsk-ant-oat01-good\n", bin, main(), site);
+  expect(named.err).toBe("");
+  expect(named.out).not.toContain("skel init");
+  expect(readFileSync(join(site, "skel.yaml"), "utf8")).toBe("tracker: linear\n");
+
+  rmSync(token());
+  const outside = await skel("sk-ant-oat01-good\n");
+  expect(outside.out).not.toContain("skel init");
+
+  rmSync(token());
+  rmSync(join(site, "skel.yaml"));
+  noGitHubPlugin();
+  const without = await skel("n\nsk-ant-oat01-good\n", bin, main(), site);
+  expect(without.err).toBe("");
+  expect(without.out).toContain("skel · skipped. skel works from git alone");
+  expect(without.out).not.toContain("skel init");
+  expect(existsSync(join(site, "skel.yaml"))).toBe(false);
 });
 
 test("names each missing tool with what to install, and runs nothing else", async () => {

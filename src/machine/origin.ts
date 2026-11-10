@@ -21,7 +21,7 @@ export function pathOf(url: string): { host: string; owner: string; repo: string
 
 // Returns the remote URL of the checkout in the folder, this one unless told, or null when it
 // has no origin. Reading origin is the only git skel runs in your checkout, besides finding
-// its top for skel init: the folder only names the repository. It is read as written, before
+// its top for skel init and the first run's offer of it: the folder only names the repository. It is read as written, before
 // any insteadOf in your git config rewrites it.
 export function originHere(folder = "."): string | null {
   const origin = Bun.spawnSync(["git", "-C", folder, "config", "--get", "remote.origin.url"], {

@@ -9,7 +9,7 @@ import { Item, type Task } from "../flow/copy.ts";
 import { callPlugin, installedPlugins, readManifest } from "./plugin.ts";
 
 // Returns the installed plugins that do the job.
-function pluginsFor(db: Database, job: "tracker" | "forge"): string[] {
+export function pluginsFor(db: Database, job: "tracker" | "forge"): string[] {
   return installedPlugins(db)
     .filter((plugin) => {
       try {

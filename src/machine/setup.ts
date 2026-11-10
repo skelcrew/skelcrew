@@ -6,10 +6,12 @@ import { codexHome } from "../agents/codex.ts";
 import { HarnessName } from "../agents/harness.ts";
 import { configFile, readConfig } from "../config.ts";
 import { openDb } from "../db.ts";
+import { checkoutSettings, checkoutTop, initRepo } from "../flow/repo.ts";
 import { claudeTokenFile, configDir } from "../paths.ts";
 import { installPlugin } from "../plugins/install.ts";
 import { installedPlugins } from "../plugins/plugin.ts";
 import { errorText, rule, skelLine } from "../say.ts";
+import { originHere } from "./origin.ts";
 import { promptSecret } from "./secret.ts";
 import { installService, loginPath, serviceFile } from "./service.ts";
 import { dropCapabilities, onSprite, spriteServiceInstalled } from "./sprite.ts";
@@ -218,6 +220,36 @@ function offerGitHub(): void {
   }
 }
 
+// Offers skel init in the checkout you ran skel from, once the GitHub plugin is installed and
+// the checkout's skel.yaml names no tracker, so GitHub's issues become the repository's tasks.
+// A yes names GitHub as its tracker without asking which. Outside a checkout with a remote, or
+// where skel.yaml can't be read, it offers nothing, and skel init says why when you run it. A
+// skel init that fails is only reported, as the machine is set up either way.
+async function offerInit(): Promise<void> {
+  const root = checkoutTop();
+  if (!hasGitHubPlugin() || root === null || !originHere(root)) return;
+  try {
+    const { there, settings } = checkoutSettings(root);
+    if (there && (settings === null || settings.has("tracker"))) return;
+  } catch {
+    return;
+  }
+  const answer = prompt(
+    skelLine("run skel init here, so GitHub's issues become this repository's tasks? [Y/n]"),
+  );
+  if (!["", "y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
+    console.log(
+      skelLine(
+        "skipped. Run skel init here later, so GitHub's issues become this repository's tasks.",
+      ),
+    );
+    return;
+  }
+  await initRepo("github").catch((error) =>
+    console.log(skelLine(`couldn't run skel init: ${errorText(error)}`)),
+  );
+}
+
 // Asks whether agents run on Claude Code or Codex, refuses one that isn't installed, and saves
 // the choice. Enter picks the first one installed.
 function pickHarness(env: Env): void {
@@ -281,8 +313,8 @@ export function setupDone(): boolean {
 }
 
 // Completes unfinished machine setup and keeps the daemon service current before attaching
-// to the lead.
-export function firstRun(): void {
+// to the lead. A first run in a checkout ends by offering skel init there.
+export async function firstRun(): Promise<void> {
   const done = setupDone();
   if (!done) {
     // The tools are found where your login shell finds them, even over ssh, so a codex
@@ -322,6 +354,7 @@ export function firstRun(): void {
         "a laptop sleeps, so work stops while the lid is closed. skel remote add keeps it going, on a server or a Sprite.",
       ),
     );
+  await offerInit();
 }
 
 type Step = { title: string; about: string; take: () => void };

@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { stringify } from "yaml";
+import { type Document, parseDocument, stringify } from "yaml";
 import { z } from "zod";
 import { refuseCredentials } from "../agents/sandbox.ts";
 import { stopSession } from "../agents/tmux.ts";
@@ -21,7 +21,7 @@ import { nameRepositories, openDb, Repository } from "../db.ts";
 import { originHere, pathOf } from "../machine/origin.ts";
 import { onSprite } from "../machine/sprite.ts";
 import { cloneDir, configDir, dataDir, leadPlaces } from "../paths.ts";
-import { type Claimed, claims } from "../plugins/ask.ts";
+import { type Claimed, claims, pluginsFor } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { checkPush, cloneRepository, updateClone } from "./git.ts";
 import { wakeRepository } from "./wake.ts";
@@ -326,9 +326,9 @@ export async function addRepo(given?: string): Promise<void> {
 const yamlValue = (value: string) => stringify(value).trim();
 
 // Returns the starter skel.yaml: a line saying the file is shared and never holds a secret,
-// your harness and model for each role as real lines, from your config, and setup and test
-// as commented examples.
-function starter(): string {
+// the tracker you picked, if any, your harness and model for each role as real lines, from
+// your config, and setup and test as commented examples.
+function starter(tracker: string | null): string {
   const roles = agentRoles();
   const line = (name: "lead" | "builder" | "reviewer") => {
     const parts = Object.entries(roles[name]).map(([key, value]) => `${key}: ${yamlValue(value)}`);
@@ -336,6 +336,7 @@ function starter(): string {
   };
   return [
     "# Shared with everyone who works on this repository. Never put a secret here.",
+    ...(tracker ? [`tracker: ${yamlValue(tracker)}`] : []),
     line("lead"),
     line("builder"),
     line("reviewer"),
@@ -345,34 +346,88 @@ function starter(): string {
   ].join("\n");
 }
 
-// Sets up the checkout you are in for skel, for skel init: writes the starter skel.yaml at its
-// top, unless one is there, then adds the repository as skel repo add does. Stops outside a
-// git repository, and in one with no remote on GitHub, as skel works from its own clone. That
-// clone is at the default branch, so it says the file counts only once pushed there.
-export async function initRepo(): Promise<void> {
+// Returns the top folder of the checkout you are in, or null outside one.
+export function checkoutTop(): string | null {
   const top = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"], {
     stdout: "pipe",
     stderr: "pipe",
   });
-  if (!top.success)
+  return top.success ? top.stdout.toString().trim() : null;
+}
+
+// Reads the skel.yaml at the top of a checkout, for skel init. `there` says whether there is
+// one at all, and `settings` is what it holds, or null when it isn't a plain file, as a link
+// could point skel at any file of yours. Throws when it isn't valid YAML.
+export function checkoutSettings(root: string): { there: boolean; settings: Document | null } {
+  const file = join(root, "skel.yaml");
+  const stat = lstatSync(file, { throwIfNoEntry: false });
+  if (!stat?.isFile()) return { there: stat !== undefined, settings: null };
+  const settings = parseDocument(readFileSync(file, "utf8"));
+  const [broken] = settings.errors;
+  if (broken) throw new Error(`${file} isn't valid YAML: ${broken.message}`);
+  return { there: true, settings };
+}
+
+// Asks which of your installed trackers holds the repository's tasks, or none, and returns it,
+// or null for none. With no tracker installed there is nothing to ask. Enter picks the first.
+function pickTracker(): string | null {
+  const trackers = pluginsFor(openDb(), "tracker");
+  if (trackers.length === 0) return null;
+  console.log("Which tracker holds this repository's tasks?");
+  for (const [at, name] of [...trackers, "none"].entries()) console.log(`  ${at + 1}) ${name}`);
+  // Bun's prompt answers null both for Ctrl-D and for a bare Enter, unless it has a default:
+  // then Enter gives the default and only Ctrl-D gives null.
+  const answer = prompt("Pick one by its number:", "1");
+  if (answer === null) throw new Error("no tracker was picked, so skel init wrote nothing");
+  const at = Number(answer.trim()) - 1;
+  if (!Number.isInteger(at) || at < 0 || at > trackers.length)
+    throw new Error(`${answer.trim()} isn't one of the numbers, so skel init wrote nothing`);
+  return trackers[at] ?? null;
+}
+
+// Returns the text of a skel.yaml that names no tracker, with a line naming one added at the
+// end. Added as text, since writing the file out again from YAML would change how the rest of
+// it is laid out. Throws when the line wouldn't read back as the tracker, such as in a file
+// written as one { … } map.
+function withTracker(file: string, tracker: string): string {
+  const text = readFileSync(file, "utf8");
+  const added = `${text}${text === "" || text.endsWith("\n") ? "" : "\n"}tracker: ${yamlValue(tracker)}\n`;
+  const read = parseDocument(added);
+  if (read.errors.length > 0 || read.get("tracker") !== tracker)
+    throw new Error(`skel init can't add a line to ${file}: add tracker: ${tracker} yourself`);
+  return added;
+}
+
+// Sets up the checkout you are in for skel, for skel init: writes the starter skel.yaml at its
+// top, with the tracker you pick, or `tracker` when given, as the first run gives GitHub. In a
+// checkout with a skel.yaml already, it only adds the tracker, and leaves one that names a
+// tracker alone. Then it adds the repository as skel repo add does. Stops outside a git
+// repository, and in one with no remote, as skel works from its own clone. That clone is at
+// the default branch, so it says the file counts only once pushed there.
+export async function initRepo(tracker?: string): Promise<void> {
+  const root = checkoutTop();
+  if (root === null)
     throw new Error(
       "skel init runs in a checkout of a git repository, and this folder isn't in one.",
     );
-  const root = top.stdout.toString().trim();
   if (!originHere(root))
     throw new Error(
       "skel init needs the repository's remote, and this checkout has none. Push it somewhere first, such as to GitHub.",
     );
   const file = join(root, "skel.yaml");
-  // A link counts as there, so the write never goes through one.
-  const there = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
-  if (there) console.log("skel.yaml is there already, so skel left it as it is.");
-  else writeFileSync(file, starter(), { flag: "wx" });
+  const { there, settings } = checkoutSettings(root);
+  const named = settings?.has("tracker") ?? false;
+  const picked = there && (settings === null || named) ? null : (tracker ?? pickTracker());
+  // The writes never follow a link: a new file is made only where none is, and one that is
+  // there is written only when it is a plain file.
+  if (!there) writeFileSync(file, starter(picked), { flag: "wx" });
+  else if (settings && picked) writeFileSync(file, withTracker(file, picked));
+  else console.log("skel.yaml is there already, so skel left it as it is.");
   await addRepo(root);
-  if (!there)
-    console.log(
-      "Wrote skel.yaml. skel reads it from its own clone, so it counts once you commit it and push it to the default branch.",
-    );
+  const counts =
+    "skel reads it from its own clone, so it counts once you commit it and push it to the default branch.";
+  if (!there) console.log(`Wrote skel.yaml. ${counts}`);
+  else if (picked) console.log(`Added tracker: ${picked} to skel.yaml. ${counts}`);
 }
 
 // Records your trust from outside the sandbox and brings in the repository: one skel has,
