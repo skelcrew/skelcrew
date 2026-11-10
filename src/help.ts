@@ -1,4 +1,4 @@
-// skel's help page: what skel --help shows, laid out in sections with skel.run's amber for
+// skel's help page: what skel --help shows, laid out in sections with skelcrew.dev's amber for
 // the headings, so it reads as help and not as an error.
 
 const sections: [string, [string, string][]][] = [
@@ -99,7 +99,7 @@ export function help(color = colorful()): string {
   lines.push(
     "",
     dim("  A task is named by its repository and number, such as app-12. --remote keeps"),
-    dim("  skel on the other side up to date with yours, after asking. See skel.run."),
+    dim("  skel on the other side up to date with yours, after asking. See skelcrew.dev."),
     dim("  In the sidebar, click a row or press Alt-Up or Alt-Down. Alt-Shift-Up and"),
     dim("  Alt-Shift-Down jump between lists. Alt-Left and Alt-Right switch to the"),
     dim("  repository before or after. Ctrl-Q leaves."),
