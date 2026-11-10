@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, realpathSync, renameSync, rmSync } from "node:fs
 import { dirname, join, resolve } from "node:path";
 import { openDb } from "../db.ts";
 import { repositories } from "../flow/repo.ts";
+import { originHere } from "../machine/origin.ts";
 import { configDir, dataDir } from "../paths.ts";
 import { clean } from "../screen/look.ts";
 import { release } from "../version.ts";
@@ -89,47 +90,49 @@ function fitsThisSkel(manifest: Manifest): void {
     );
 }
 
-// Shows what the plugin is and every command it will run as you, then asks whether to go on,
-// as `verb`, such as Install. Returns whether you said yes. A plugin runs outside the sandbox
-// with your rights, so nothing of it runs before you have seen this.
+// Says in one line that the plugin runs as you, outside the sandbox, then asks whether to go on,
+// as `verb`, such as Install. Returns whether you said yes. A plugin runs with your rights, so
+// nothing of it runs before you have said yes.
 function agreed(manifest: Manifest, from: string, verb: string): boolean {
-  const { name, version, about, jobs } = manifest;
-  console.log(`${name} ${version}, from ${from}`);
-  console.log(clean(about));
-  console.log(`Jobs: ${jobs.join(", ")}`);
-  console.log("It runs these commands as you, outside Skelcrew's sandbox:");
-  const commands = [
-    ...(manifest.build ?? []).map((words) => ["build", words] as const),
-    ...(["setup", "call", "git_credentials", "add", "exec", "push"] as const).flatMap((key) => {
-      const words = manifest[key];
-      return words ? [[key, words] as const] : [];
-    }),
-  ];
-  for (const [key, words] of commands) console.log(`  ${key}: ${clean(words.join(" "))}`);
-  const answer = prompt(`${verb} ${name}? [y/N]`);
+  const { name, version } = manifest;
+  const answer = prompt(
+    `${name} ${version} from ${clean(from)} runs as you, outside Skelcrew's sandbox. ${verb} it? [y/N]`,
+  );
   return ["y", "yes"].includes(answer?.trim().toLowerCase() ?? "");
 }
 
 // Runs one of a plugin's commands in your terminal, in the plugin's folder, so a setup can ask
-// you things. Throws when it fails.
-function runInTerminal(manifest: Manifest, folder: string, words: string[]): void {
+// you things. `remote` is the remote of the checkout sc ran in, handed over as SKELCREW_REMOTE so
+// a setup can set itself up for that repository, such as install an app on it. Throws when it
+// fails.
+function runInTerminal(
+  manifest: Manifest,
+  folder: string,
+  words: string[],
+  remote: string | null,
+): void {
   const { argv, env } = commandFor(manifest.name, words);
   const run = Bun.spawnSync(argv, {
     cwd: folder,
-    env: { ...process.env, ...env },
+    env: { ...process.env, ...env, ...(remote ? { SKELCREW_REMOTE: remote } : {}) },
     stdio: ["inherit", "inherit", "inherit"],
   });
   if (!run.success) throw new Error(`${manifest.name}'s ${clean(words.join(" "))} failed`);
 }
 
-// Runs a plugin's build commands, then its setup, in the plugin's folder. Throws when one
-// fails.
-function buildAndSetUp(manifest: Manifest, folder: string, setup: boolean): void {
+// Runs a plugin's build commands, then its setup, in the plugin's folder, handing each the
+// remote of the checkout sc ran in. Throws when one fails.
+function buildAndSetUp(
+  manifest: Manifest,
+  folder: string,
+  setup: boolean,
+  remote: string | null,
+): void {
   const commands = [
     ...(manifest.build ?? []),
     ...(setup && manifest.setup ? [manifest.setup] : []),
   ];
-  for (const words of commands) runInTerminal(manifest, folder, words);
+  for (const words of commands) runInTerminal(manifest, folder, words, remote);
 }
 
 // Runs an installed plugin's setup again in your terminal, for sc plugin setup, such as to
@@ -139,7 +142,7 @@ export function setUpPlugin(name: string): void {
   const { folder } = findPlugin(openDb(), name);
   const manifest = readManifest(folder);
   if (!manifest.setup) throw new Error(`${name} has no setup to run`);
-  runInTerminal(manifest, folder, manifest.setup);
+  runInTerminal(manifest, folder, manifest.setup, originHere());
   console.log(`Ran ${name}'s setup.`);
 }
 
@@ -158,8 +161,10 @@ function refuseInstalled(db: Database, name: string): void {
 
 // Installs a plugin, for sc plugin install: from the newest version tag of a GitHub
 // repository, given as owner/repo, or from a folder of yours, given as a path, used where it
-// is. It shows what the plugin runs and asks first, then runs its build and setup.
-export function installPlugin(given: string): void {
+// is. It warns that the plugin runs outside the sandbox and asks first, then runs its build and
+// setup, handing them `remote`, the checkout's remote. When sc offered the plugin itself, you
+// said yes to that offer already, so `ask` is false and it only says what it installs.
+export function installPlugin(given: string, remote = originHere(), ask = true): void {
   const db = openDb();
   const isPath = given.startsWith(".") || given.startsWith("/");
   if (isPath) {
@@ -171,7 +176,7 @@ export function installPlugin(given: string): void {
       console.log(`Skelcrew didn't install ${manifest.name}.`);
       return;
     }
-    buildAndSetUp(manifest, folder, true);
+    buildAndSetUp(manifest, folder, true, remote);
     db.run("INSERT INTO plugins (name, folder, source) VALUES (?, ?, NULL)", [
       manifest.name,
       folder,
@@ -187,7 +192,8 @@ export function installPlugin(given: string): void {
   try {
     refuseInstalled(db, manifest.name);
     fitsThisSkel(manifest);
-    if (!agreed(manifest, given, "Install")) {
+    if (!ask) console.log(`Installing ${manifest.name} ${manifest.version} from ${given}...`);
+    else if (!agreed(manifest, given, "Install")) {
       console.log(`Skelcrew didn't install ${manifest.name}.`);
       return;
     }
@@ -196,7 +202,7 @@ export function installPlugin(given: string): void {
     mkdirSync(dirname(folder), { recursive: true });
     renameSync(staged, folder);
     try {
-      buildAndSetUp(manifest, folder, true);
+      buildAndSetUp(manifest, folder, true, remote);
     } catch (error) {
       rmSync(dirname(folder), { recursive: true, force: true });
       throw error;
@@ -214,13 +220,13 @@ export function installPlugin(given: string): void {
 }
 
 // Updates one plugin. One from a folder is built again from it, so your edits count. One from
-// GitHub moves to its newest version tag, after showing what it runs and asking, as installing
+// GitHub moves to its newest version tag, after warning and asking, as installing
 // does, and its old version's folder goes.
 function updatePlugin(db: Database, plugin: Plugin): void {
   const { name, folder, source } = plugin;
   const current = readManifest(folder);
   if (source === null) {
-    buildAndSetUp(current, folder, false);
+    buildAndSetUp(current, folder, false, originHere());
     console.log(`Built ${name} ${current.version} again from ${folder}.`);
     return;
   }
@@ -242,7 +248,7 @@ function updatePlugin(db: Database, plugin: Plugin): void {
     rmSync(moved, { recursive: true, force: true });
     renameSync(staged, moved);
     try {
-      buildAndSetUp(manifest, moved, true);
+      buildAndSetUp(manifest, moved, true, originHere());
     } catch (error) {
       rmSync(moved, { recursive: true, force: true });
       throw error;

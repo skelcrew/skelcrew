@@ -48,7 +48,7 @@ ${more}`,
   );
   writeFileSync(
     join(folder, "setup.sh"),
-    'echo "setting up $SKELCREW_PLUGIN"\necho secret > "$SKELCREW_PLUGIN_CONFIG/token"\n',
+    'echo "setting up $SKELCREW_PLUGIN"\necho secret > "$SKELCREW_PLUGIN_CONFIG/token"\necho "$SKELCREW_REMOTE" > "$SKELCREW_PLUGIN_CONFIG/remote"\n',
   );
   writeFileSync(
     join(folder, "call.ts"),
@@ -106,10 +106,16 @@ afterEach(() => {
 });
 
 // Runs sc as the release given, or as a build from a checkout, with what you type.
-async function skel(args: string[], typed = "", release = "", more: Record<string, string> = {}) {
+async function skel(
+  args: string[],
+  typed = "",
+  release = "",
+  more: Record<string, string> = {},
+  cwd = home,
+) {
   const stamp = release ? ["--define", `SKELCREW_BUILD=${JSON.stringify(release)}`] : [];
   const run = Bun.spawn([process.execPath, ...stamp, source("main.ts"), ...args], {
-    cwd: home,
+    cwd,
     env: {
       PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
       HOME: home,
@@ -145,16 +151,16 @@ async function asDaemon(code: string) {
   return { out, err, code: code_ };
 }
 
-test("installing from GitHub shows what the plugin runs, asks, and installs its newest tag", async () => {
+test("installing from GitHub warns in one line, asks, and installs its newest tag", async () => {
   publish("skelcrew/skel-plugin-fake", "0.1.0", "0.9.0", "0.10.0");
   const { out, err, code } = await skel(["plugin", "install", "skelcrew/skel-plugin-fake"], "y\n");
   expect(err).toBe("");
   expect(code).toBe(0);
-  expect(out).toContain("fake 0.10.0");
-  expect(out).toContain("Tasks from a fake tracker");
-  expect(out).toContain("tracker, forge");
-  for (const command of ["bun build.ts", "sh setup.sh", "bun call.ts", "sh credentials.sh"])
-    expect(out).toContain(command);
+  expect(out).toStartWith(
+    "fake 0.10.0 from skelcrew/skel-plugin-fake runs as you, outside Skelcrew's sandbox. Install it? [y/N]",
+  );
+  expect(out).not.toContain("Tasks from a fake tracker");
+  expect(out).not.toContain("bun call.ts");
   expect(out).toContain("setting up fake");
   expect(out).toContain("Installed fake 0.10.0.");
   const folder = join(plugins(), "fake", "0.10.0");
@@ -277,7 +283,9 @@ test("update moves a plugin to its newest tag after asking, and removes the old 
 
   const updated = await skel(["plugin", "update", "fake"], "y\n");
   expect(updated.err).toBe("");
-  expect(updated.out).toContain("bun build.ts");
+  expect(updated.out).toContain(
+    "fake 0.2.0 from skelcrew/skel-plugin-fake runs as you, outside Skelcrew's sandbox. Update it? [y/N]",
+  );
   expect(updated.out).toContain("Updated fake from 0.1.0 to 0.2.0.");
   expect((await skel(["plugin", "ls"])).out).toBe("fake 0.2.0 tracker, forge\n");
   expect(existsSync(join(plugins(), "fake", "0.1.0"))).toBe(false);
@@ -335,6 +343,29 @@ test("setup runs an installed plugin's setup again in your terminal, and nothing
   const none = await skel(["plugin", "setup", "nothing"]);
   expect(none.code).toBe(1);
   expect(none.err).toContain("no plugin named nothing");
+});
+
+// So the GitHub plugin can install its app on the repository you are working on.
+test("setup is handed the remote of the checkout sc ran in, and nothing outside one", async () => {
+  publish("skelcrew/skel-plugin-fake", "0.1.0");
+  const app = join(home, "app");
+  mkdirSync(join(app, "src"), { recursive: true });
+  git(app, "init", "-q", "-b", "main");
+  git(app, "remote", "add", "origin", "git@github.com:simon/app.git");
+  const remote = () => readFileSync(join(settings("fake"), "remote"), "utf8");
+  const installed = await skel(
+    ["plugin", "install", "skelcrew/skel-plugin-fake"],
+    "y\n",
+    "",
+    {},
+    join(app, "src"),
+  );
+  expect(installed.err).toBe("");
+  expect(remote()).toBe("git@github.com:simon/app.git\n");
+  await skel(["plugin", "setup", "fake"]);
+  expect(remote()).toBe("\n");
+  await skel(["plugin", "setup", "fake"], "", "", {}, app);
+  expect(remote()).toBe("git@github.com:simon/app.git\n");
 });
 
 test("setup says so for a plugin with no setup, and when its setup fails", async () => {
