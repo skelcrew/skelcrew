@@ -274,7 +274,8 @@ export const paneWidth = (socket: string, target: string) =>
 
 // Sets the status lines of a session, as tmux formats: the tabs, the strip and the line under
 // it. Each set makes tmux redraw the whole screen, so all go in one run, for one redraw, and
-// only when a line changed. The lone ";" separates tmux commands, so it skips literal().
+// the sidebar calls this only when a line changed. The lone ";" separates tmux commands, so
+// it skips literal().
 export function showStrip(socket: string, session: string, lines: string[]): void {
   // One `set` per line, joined by ";" into a single tmux run.
   const sets = lines.flatMap((line, index) => [
