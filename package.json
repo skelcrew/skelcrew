@@ -1,10 +1,10 @@
 {
-  "name": "skel",
+  "name": "skelcrew",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "skel": "bin/skel"
+    "sc": "bin/sc"
   },
   "scripts": {
     "check": "biome ci . && tsc --noEmit && bun test",

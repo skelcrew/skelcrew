@@ -1,4 +1,4 @@
-// Messages between a repository's lead and its threads' builders, for skel tell: typed into
+// Messages between a repository's lead and its threads' builders, for sc tell: typed into
 // the other's session once it is idle, and kept in the thread's log. They never go to GitHub.
 import type { Database } from "bun:sqlite";
 import { agentRuns, typeInto } from "../agents/tmux.ts";
@@ -6,15 +6,17 @@ import { errorText } from "../say.ts";
 import { noteForLead } from "./lead.ts";
 import { builderHarness, log, readThread, type Thread, threadName } from "./thread.ts";
 
-// Returns the message wrapped in skel's tag, saying who it is from and the command to answer
-// with, so the receiving agent never takes it for the human. The tag marks where it starts
-// and ends, and the text inside stays plain. Any <skel or </skel> in the text is removed, so a
+// Returns the message wrapped in Skelcrew's tag, saying who it is from and the command to answer
+// with, so the receiving agent never takes it for the human. The tag marks where it starts and
+// ends, and the text inside stays plain. Any <skelcrew or </skelcrew> in the text is removed, so a
 // message can't close its tag early and pass the rest off as coming from outside it.
 function wrapped(from: string, reply: string, text: string): string {
   let inside = text;
-  // One pass isn't enough: removing the inner tag of </sk</skel>el> leaves a whole </skel>.
-  while (/<\/skel>|<skel/i.test(inside)) inside = inside.replace(/<\/skel>|<skel/gi, "");
-  return `<skel from="${from}" reply="${reply}">\n${inside}\n</skel>`;
+  // One pass isn't enough: removing the inner tag of </skel</skelcrew>crew> leaves a whole
+  // </skelcrew>.
+  while (/<\/skelcrew>|<skelcrew/i.test(inside))
+    inside = inside.replace(/<\/skelcrew>|<skelcrew/gi, "");
+  return `<skelcrew from="${from}" reply="${reply}">\n${inside}\n</skelcrew>`;
 }
 
 // Types the lead's message into the thread's builder once it is idle, and returns the
@@ -28,7 +30,7 @@ export function messageBuilder(db: Database, tmux: string, thread: Thread, text:
   const live = thread.status === "working" || thread.status === "waiting";
   if (thread.status === "stopped")
     throw new Error(
-      `${name}'s builder isn't running: the thread is stopped. skel start ${name} brings it back.`,
+      `${name}'s builder isn't running: the thread is stopped. sc start ${name} brings it back.`,
     );
   // A thread still setting up has no session yet, and one that failed or is done has none left.
   if (!live || !agentRuns(tmux, thread.folder))
@@ -37,7 +39,7 @@ export function messageBuilder(db: Database, tmux: string, thread: Thread, text:
     throw new Error(
       `${name}'s builder is asking the human a question, and typing now would answer it. Tell the human instead.`,
     );
-  const message = wrapped("lead", "skel tell lead", text);
+  const message = wrapped("lead", "sc tell lead", text);
   typeInto(tmux, thread.folder, builderHarness(thread).marks, message, {
     timeout: 30 * 60_000,
   }).then(
@@ -56,6 +58,6 @@ export function messageBuilder(db: Database, tmux: string, thread: Thread, text:
 // agent command.
 export function messageLead(db: Database, tmux: string, thread: Thread, text: string): void {
   const name = threadName(db, thread);
-  noteForLead(db, tmux, thread, wrapped(name, `skel tell ${name}`, text));
+  noteForLead(db, tmux, thread, wrapped(name, `sc tell ${name}`, text));
   log(readThread(db, thread.folder), `its builder told the lead: ${text}`);
 }

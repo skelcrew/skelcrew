@@ -1,5 +1,6 @@
-// Updates: a release of skel installs the latest release over itself in the background, and the
-// sidebar says so until skel runs on it. A build from a checkout never does: git pull updates it.
+// Updates: a release of Skelcrew installs the latest release over itself in the background, and the
+// sidebar says so until Skelcrew runs on it. A build from a checkout never does: git pull updates
+// it.
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
@@ -12,9 +13,9 @@ import { isRelease, release, releases, singleFile } from "../version.ts";
 // release followed by a line end.
 const installedFile = () => join(dataDir(), "installed");
 
-// The release file for this machine, named as the install script names it. A Mac running skel
+// The release file for this machine, named as the install script names it. A Mac running sc
 // through Rosetta asks for the x64 file again, which is the one it already runs.
-const asset = `skel-${process.platform === "darwin" ? "darwin" : "linux"}-${process.arch === "arm64" ? "arm64" : "x64"}`;
+const asset = `skelcrew-${process.platform === "darwin" ? "darwin" : "linux"}-${process.arch === "arm64" ? "arm64" : "x64"}`;
 
 // Downloads an address, or throws naming it.
 async function download(address: string): Promise<Response> {
@@ -23,7 +24,7 @@ async function download(address: string): Promise<Response> {
   return response;
 }
 
-// Returns the SHA-256 of a file, read in pieces, as skel is about 100 MB and the daemon has
+// Returns the SHA-256 of a file, read in pieces, as Skelcrew is about 100 MB and the daemon has
 // no reason to hold it all.
 async function fileSum(file: string): Promise<string> {
   const hasher = new Bun.CryptoHasher("sha256");
@@ -53,10 +54,10 @@ export async function downloadRelease(at: string, name: string, want: string) {
   return bytes;
 }
 
-// Installs the latest release over the skel at `file`, from the releases at `base`, laid out
+// Installs the latest release over the Skelcrew at `file`, from the releases at `base`, laid out
 // as the install script expects, and returns the release it installed. Returns null when that
 // file already is the latest. Like the install script, it starts the download once before it
-// goes in, so a broken download never replaces a skel that works. It is staged beside `file`
+// goes in, so a broken download never replaces a Skelcrew that works. It is staged beside `file`
 // and renamed over it: macOS kills a program whose file was written over in place, and the
 // running daemon keeps the old file until it restarts.
 export async function installLatest(file: string, base: string): Promise<string | null> {
@@ -65,12 +66,12 @@ export async function installLatest(file: string, base: string): Promise<string 
   // Comparing sums costs only the small checksums file.
   if ((await fileSum(file)) === want) return null;
   const bytes = await downloadRelease(at, asset, want);
-  const staged = join(dirname(file), `.skel-update-${process.pid}`);
+  const staged = join(dirname(file), `.sc-update-${process.pid}`);
   try {
     await Bun.write(staged, bytes);
     chmodSync(staged, 0o755);
     const started = await quietly([staged, "--version"]);
-    const version = started.out.match(/^skel (\d+\.\d+\.\d+)$/m)?.[1];
+    const version = started.out.match(/^skelcrew (\d+\.\d+\.\d+)$/m)?.[1];
     if (!started.ok || !version)
       throw new Error(
         `the latest release won't start here, so it wasn't installed: ${started.said}`,
@@ -84,25 +85,25 @@ export async function installLatest(file: string, base: string): Promise<string 
   }
 }
 
-// Keeps a release of skel at the latest release, for the daemon: looks now, then every hour,
+// Keeps a release of Skelcrew at the latest release, for the daemon: looks now, then every hour,
 // and logs what it did. A new release most days makes an hour soon enough, and a look costs
 // one small download. The note of an earlier install goes, as this daemon runs on whatever is
-// installed now. A build from a checkout, or a skel that isn't one file, is left alone.
+// installed now. A build from a checkout, or a Skelcrew that isn't one file, is left alone.
 export function keepUpToDate(): void {
   rmSync(installedFile(), { force: true });
   if (!release || !singleFile) return;
   const look = () =>
     installLatest(process.execPath, releases).then(
       (installed) => {
-        if (installed) console.log(`installed skel ${installed}. It runs from the next skel.`);
+        if (installed) console.log(`installed Skelcrew ${installed}. It runs from the next sc.`);
       },
-      (error) => console.log(`couldn't update skel: ${errorText(error)}`),
+      (error) => console.log(`couldn't update Skelcrew: ${errorText(error)}`),
     );
   look();
   setInterval(look, 60 * 60 * 1000);
 }
 
-// Returns the sidebar's notice of a release installed in the background, or nothing when skel
+// Returns the sidebar's notice of a release installed in the background, or nothing when Skelcrew
 // already runs on it. Read each time the sidebar looks, as the daemon can install one at any
 // moment.
 export function updateNotice(): string {
@@ -112,5 +113,5 @@ export function updateNotice(): string {
   } catch {}
   const installed = z.string().refine(isRelease).safeParse(text);
   if (!installed.success || installed.data === release) return "";
-  return `skel ${installed.data} installed · restart to use it`;
+  return `Skelcrew ${installed.data} installed · restart to use it`;
 }

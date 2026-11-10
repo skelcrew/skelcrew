@@ -43,7 +43,7 @@ export type Link = {
 };
 // The repository open in the sidebar, by its GitHub owner and name, and its lead's session.
 export type Open = { owner: string; repo: string; lead: string };
-// A repository's tab: its name in skel, its GitHub name, and how many of its threads need you
+// A repository's tab: its name in Skelcrew, its GitHub name, and how many of its threads need you
 // or failed.
 export type Tab = { name: string; fullName: string; count: number };
 // The rows to show, and how many are open in all, which can be far more.
@@ -104,7 +104,7 @@ export function threadAge(started: number, now: number): string {
 }
 
 // Returns the open repository's rows as the database and tmux have them now: its lead, then
-// each of its threads that isn't done, newest first as in skel ps, each with its word by its
+// each of its threads that isn't done, newest first as in sc ps, each with its word by its
 // round limit, which `maxRounds` gives. It runs each second, so it reads only what shows.
 // Only a thread whose word is working shows its running time. A time on any other row would
 // write to the terminal each minute, and on a Sprite a terminal that stays quiet lets it sleep.
@@ -120,7 +120,7 @@ export function sidebarRows(
     "SELECT * FROM threads WHERE status != 'done' AND owner = ? AND repo = ? ORDER BY rowid DESC",
   );
   const leadRuns = running.includes(open.lead);
-  // A repository skel no longer works on has no lead to name a harness for.
+  // A repository Skelcrew no longer works on has no lead to name a harness for.
   const known = db.query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ?");
   const lead = known.get(open.owner, open.repo) ? leadOf(db, open.owner, open.repo) : null;
   return [
@@ -172,7 +172,7 @@ const ListRow = z.object({
   item: z.string(),
 });
 
-// Returns the open repository's ISSUES and PRS from skel's copy, up to `most` rows of each: it
+// Returns the open repository's ISSUES and PRS from Skelcrew's copy, up to `most` rows of each: it
 // reads the database and never asks GitHub, as it runs each second. Newest first, with issues
 // that have a thread last. A thread that is done has left THREADS, so its issue counts as
 // waiting again. A PR from a thread takes the word and mark of its row. GitHub numbers issues

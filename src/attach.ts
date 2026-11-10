@@ -1,5 +1,5 @@
 // Attaching you to a repository's lead or a thread's builder, after making sure the daemon
-// runs on this skel's code. Plain skel attaches to a lead, and skel attach to a builder.
+// runs on this Skelcrew's code. Plain sc attaches to a lead, and sc attach to a builder.
 import { z } from "zod";
 import { agentRuns } from "./agents/tmux.ts";
 import { ask } from "./client.ts";
@@ -33,23 +33,23 @@ async function daemonRuns(): Promise<z.infer<typeof Running> | null> {
   return reply === null ? null : Running.parse(reply);
 }
 
-// Returns what this skel would have the daemon run, in words, or null when the daemon already
+// Returns what this Skelcrew would have the daemon run, in words, or null when the daemon already
 // runs it, or a restart couldn't change what it runs. A release wants the daemon on the same
 // release. A checkout wants it on its current commit, after a git pull, but only a daemon that
 // runs from this same checkout: the service starts one checkout, so restarting a daemon of
-// another, such as your main one while you run skel from a worktree, would change nothing.
+// another, such as your main one while you run sc from a worktree, would change nothing.
 // Changes not committed don't count: the daemon can't say what it loaded, and asking for a
-// restart at every skel while you edit would only get in the way.
+// restart at every sc while you edit would only get in the way.
 function wanted(running: z.infer<typeof Running>): string | null {
-  if (release) return running.release === release ? null : `skel ${release}`;
+  if (release) return running.release === release ? null : `Skelcrew ${release}`;
   if (singleFile || running.folder !== checkoutFolder) return null;
   const commit = git("rev-parse", "--short", "HEAD");
   return commit === "" || running.commit === commit ? null : `commit ${commit}`;
 }
 
-// Restarts the daemon when it runs another release than this skel, or another commit of this
+// Restarts the daemon when it runs another release than this Skelcrew, or another commit of this
 // checkout, before you attach. So a release installed in the background, or a git pull, takes
-// over once you run skel again. Agents keep running, as only the daemon restarts.
+// over once you run sc again. Agents keep running, as only the daemon restarts.
 export async function onThisSkel(): Promise<void> {
   const running = await daemonRuns();
   const want = running && wanted(running);
@@ -62,13 +62,13 @@ export async function onThisSkel(): Promise<void> {
     if (now && !wanted(now)) return;
     if (Date.now() > deadline)
       throw new Error(
-        `skel's daemon didn't come back on ${want} within 10 seconds: ${log} shows why`,
+        `Skelcrew's daemon didn't come back on ${want} within 10 seconds: ${log} shows why`,
       );
     await Bun.sleep(100);
   }
 }
 
-// Makes sure the daemon runs, on this skel's code, before you attach to an agent it keeps.
+// Makes sure the daemon runs, on this Skelcrew's code, before you attach to an agent it keeps.
 // One on another release or commit is restarted, and one that doesn't answer is started.
 async function daemonUp(): Promise<void> {
   await onThisSkel();
@@ -77,7 +77,7 @@ async function daemonUp(): Promise<void> {
   const deadline = Date.now() + 10_000;
   while (!(await daemonRuns())) {
     if (Date.now() > deadline)
-      throw new Error(`skel's daemon didn't answer within 10 seconds: ${log} shows why`);
+      throw new Error(`Skelcrew's daemon didn't answer within 10 seconds: ${log} shows why`);
     await Bun.sleep(100);
   }
 }
@@ -89,9 +89,10 @@ export async function attachToLead(tmux: string, from?: string): Promise<void> {
   await daemonUp();
   // Asking for the lead brings it back if it ended while the daemon kept running.
   const reply = await ask({ command: "lead", ...(from ? { from } : {}) }, 15_000);
-  if (reply === null) throw new Error("the daemon didn't answer: run skel to start it");
+  if (reply === null) throw new Error("the daemon didn't answer: run sc to start it");
   const lead = LeadReply.safeParse(reply);
-  if (!lead.success) throw new Error("the daemon answered in a way this skel doesn't understand");
+  if (!lead.success)
+    throw new Error("the daemon answered in a way this Skelcrew doesn't understand");
   if ("error" in lead.data) throw new Error(lead.data.error);
   await openScreen(tmux, lead.data.lead, lead.data.lead, lead.data.repository);
 }

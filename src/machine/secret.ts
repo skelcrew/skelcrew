@@ -45,8 +45,8 @@ const stty = (args: string[]) =>
     .trim();
 
 // Asks the question and returns the answer, or null at the end of the input. Piped input
-// is read as a plain line, since nobody watches it. At a terminal, raw mode lets skel see
-// each key, and turns off what Ctrl-C does, so skel stops itself on one. The terminal's
+// is read as a plain line, since nobody watches it. At a terminal, raw mode lets Skelcrew see
+// each key, and turns off what Ctrl-C does, so Skelcrew stops itself on one. The terminal's
 // settings come back even if reading fails.
 export function promptSecret(question: string): string | null {
   if (!process.stdin.isTTY) return prompt(question);

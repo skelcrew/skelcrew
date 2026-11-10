@@ -15,12 +15,12 @@ import { basename, dirname, join } from "node:path";
 // What every program needs, and nothing else. All else stays denied, so a Mac service nobody
 // thought of stays closed. Two services are left out on purpose: com.apple.SecurityServer
 // and com.apple.securityd.xpc are the Keychain, where gh keeps your GitHub token and Claude
-// Code your login. Agents log in with skel's token, so they never need it. lsopen and
+// Code your login. Agents log in with Skelcrew's token, so they never need it. lsopen and
 // appleevent-send stay denied too, as open and osascript start programs outside the sandbox.
 // Local sockets are denied here and opened one by one below: tmux's and the ssh agent's would
 // run commands with your rights, and a Mac has no /run to hide them in.
 const base = `(version 1)
-(deny default (with message "skel"))
+(deny default (with message "skelcrew"))
 
 (allow process-exec)
 (allow process-fork)
@@ -167,11 +167,11 @@ export function seatbeltArgs(given: {
       throw new Error(`a Mac's sandbox can't mount ${mounts.join(" ")}`);
     (kind === "--bind" ? write : shown).push(from);
   }
-  const own = realpathSync(mkdtempSync(join(tmpdir(), "skel-sandbox-")));
+  const own = realpathSync(mkdtempSync(join(tmpdir(), "skelcrew-sandbox-")));
   const [ownHome, ownTemp] = [join(own, "home"), join(own, "tmp")];
   for (const folder of [ownHome, ownTemp]) mkdirSync(folder);
   // What comes back of your home folder keeps its place under the agent's own, since agents
-  // are told of it by that path: a lead finds its repository in ~/.local/share/skel/repos.
+  // are told of it by that path: a lead finds its repository in ~/.local/share/skelcrew/repos.
   // Shortest first, so a folder inside one already linked is found there.
   const under = `${home}/`;
   for (const folder of [...shown, ...write].sort((a, b) => a.length - b.length)) {
@@ -193,10 +193,10 @@ export function seatbeltArgs(given: {
     ...(socket ? { socket: realSocket(socket) } : {}),
   });
   writeFileSync(profile, text);
-  const vars = [`HOME=${ownHome}`, `TMPDIR=${ownTemp}`, "SKEL_SANDBOX=1", `PATH=${path}`];
+  const vars = [`HOME=${ownHome}`, `TMPDIR=${ownTemp}`, "SKELCREW_SANDBOX=1", `PATH=${path}`];
   // Claude Code keeps its working files in /tmp unless told otherwise.
   vars.push(`CLAUDE_CODE_TMPDIR=${ownTemp}`);
-  if (socket) vars.push(`SKEL_SOCKET=${socket}`);
+  if (socket) vars.push(`SKELCREW_SOCKET=${socket}`);
   const enter = 'cd "$1" && shift && exec /usr/bin/env "$@"';
   const sandboxed = ["sandbox-exec", "-f", profile, "/bin/sh", "-c", enter, "sh", cwd];
   // Outside the sandbox, a shell waits for it and then removes its folders, or every review

@@ -1,4 +1,4 @@
-// What a page says: the issue or PR behind a row of ISSUES or PRS, read from skel's copy, so it
+// What a page says: the issue or PR behind a row of ISSUES or PRS, read from Skelcrew's copy, so it
 // opens at once and asks GitHub nothing.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
@@ -13,11 +13,11 @@ export const Page = z.object({
 });
 export type Page = z.infer<typeof Page>;
 
-// Returns the page of the issue or PR at a sidebar row's link. Throws when skel's copy has
+// Returns the page of the issue or PR at a sidebar row's link. Throws when Skelcrew's copy has
 // nothing there, such as once it closed.
 export function readPage(db: Database, link: string): Page {
   const item = itemAt(db, link);
-  if (!item) throw new Error("skel has no open issue or PR at this link now.");
+  if (!item) throw new Error("Skelcrew has no open issue or PR at this link now.");
   return pageOf(item);
 }
 
@@ -44,17 +44,18 @@ export function pageOf(item: Item): Page {
   return { title: item.title, facts, body: item.body };
 }
 
-// Returns what a PR's CI says, as the strip does: skel's own review check isn't CI, and one
+// Returns what a PR's CI says, as the strip does: Skelcrew's own review check isn't CI, and one
 // failure is enough to say so while the rest still run.
 function checksOf(pr: Extract<Item, { kind: "pr" }>): string {
-  const ci = pr.checks.filter((check) => check.name !== "skel/review");
+  const ci = pr.checks.filter((check) => check.name !== "skelcrew/check");
   if (ci.length === 0) return "none";
   if (ci.every((check) => check.state === "passed")) return "passing";
   return ci.some((check) => !["passed", "running"].includes(check.state)) ? "failing" : "running";
 }
 
-// Returns what a review said and who said it. GitHub won't let skel approve its own PR, so skel's
-// verdict is a comment whose first line says it: for those, that line is what you want to read.
+// Returns what a review said and who said it. GitHub won't let Skelcrew approve its own PR, so
+// Skelcrew's verdict is a comment whose first line says it: for those, that line is what you want
+// to read.
 function aboutReview(review: Extract<Item, { kind: "pr" }>["reviews"][number]) {
   const [first = ""] = review.text.split("\n");
   const said = review.verdict === "commented" ? first.replaceAll("*", "").trim() : "";

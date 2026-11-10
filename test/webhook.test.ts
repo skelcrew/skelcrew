@@ -38,7 +38,7 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// Runs webhookSecret in a skel whose home is the test's, and returns what it printed.
+// Runs webhookSecret in a Skelcrew whose home is the test's, and returns what it printed.
 function secretIn(): string {
   const script = `import { webhookSecret } from ${JSON.stringify(source("flow/webhook.ts"))};
 process.stdout.write(webhookSecret());`;
@@ -54,7 +54,7 @@ process.stdout.write(webhookSecret());`;
 test("makes the secret once, and keeps it where only you can read it", () => {
   const made = secretIn();
   expect(made).toMatch(/^[0-9a-f]{64}$/);
-  const file = join(home, ".config", "skel", "webhook-secret");
+  const file = join(home, ".config", "skelcrew", "webhook-secret");
   expect(readFileSync(file, "utf8")).toBe(made);
   expect(statSync(file).mode & 0o777).toBe(0o600);
   expect(secretIn()).toBe(made);

@@ -1,6 +1,6 @@
-// Everything skel knows about Sprites, Fly.io's Linux machines. From your laptop, skel remote
-// add sprite:<name> creates one, and skel --remote sprite:<name> runs skel there. On a Sprite,
-// skel finds out it is on one, shapes the sandbox for it, and runs the daemon as a Sprite service.
+// Everything Skelcrew knows about Sprites, Fly.io's Linux machines. From your laptop, sc remote add
+// sprite:<name> creates one, and sc --remote sprite:<name> runs sc there. On a Sprite, Skelcrew
+// finds out it is on one, shapes the sandbox for it, and runs the daemon as a Sprite service.
 import { z } from "zod";
 import { quietly } from "../run.ts";
 import { errorText, skelLine, windowTitle } from "../say.ts";
@@ -15,7 +15,7 @@ import {
   upToDate,
 } from "./remote.ts";
 
-// Reports whether skel runs on a Sprite. It goes by sprite-env, the Sprite's own tool for
+// Reports whether Skelcrew runs on a Sprite. It goes by sprite-env, the Sprite's own tool for
 // its services: every Sprite has it in /.sprite/bin, on the PATH its commands and services
 // get, and other machines don't have it.
 export const onSprite = (path = process.env.PATH ?? "") =>
@@ -35,12 +35,12 @@ export const dropCapabilities = [
 ];
 
 // Where a Sprite service writes what it prints, so the daemon's log is here.
-export const serviceLog = "/.sprite/logs/services/skel.log";
+export const serviceLog = "/.sprite/logs/services/skelcrew.log";
 
 // Reports whether the daemon's Sprite service exists. The service marks the first run as
 // finished on a Sprite, as the systemd unit does on a server.
 export function spriteServiceInstalled(): boolean {
-  const get = ["sprite-env", "services", "get", "skel"];
+  const get = ["sprite-env", "services", "get", "skelcrew"];
   return Bun.spawnSync(get, { stdout: "pipe", stderr: "pipe" }).success;
 }
 
@@ -49,31 +49,33 @@ export function spriteServiceInstalled(): boolean {
 // it, and --no-stream keeps its log out of your terminal.
 export function installSpriteService(skel: string): void {
   if (spriteServiceInstalled()) return;
-  const create = ["sprite-env", "services", "create", "skel", "--cmd", skel, "--args", "serve"];
+  const create = ["sprite-env", "services", "create", "skelcrew", "--cmd", skel, "--args", "serve"];
   const made = Bun.spawnSync([...create, "--no-stream"], { stdout: "pipe", stderr: "pipe" });
   if (!made.success)
     throw new Error(
-      `sprite-env couldn't create skel's service, so the daemon isn't installed: ${made.stderr.toString().trim()}`,
+      `sprite-env couldn't create Skelcrew's service, so the daemon isn't installed: ${made.stderr.toString().trim()}`,
     );
 }
 
-// Starts the daemon's Sprite service, for a skel that finds no daemon answering. It is quiet,
+// Starts the daemon's Sprite service, for a Skelcrew that finds no daemon answering. It is quiet,
 // since sprite-env prints the service's log for a few seconds after starting it.
 export function startSpriteService(): void {
-  const start = ["sprite-env", "services", "start", "skel"];
+  const start = ["sprite-env", "services", "start", "skelcrew"];
   const started = Bun.spawnSync(start, { stdout: "pipe", stderr: "pipe" });
   if (!started.success)
-    throw new Error(`sprite-env couldn't start skel's daemon: ${started.stderr.toString().trim()}`);
+    throw new Error(
+      `sprite-env couldn't start Skelcrew's daemon: ${started.stderr.toString().trim()}`,
+    );
 }
 
-// Starts skel's tmux server as a Sprite service of its own, and waits until it answers. A
+// Starts Skelcrew's tmux server as a Sprite service of its own, and waits until it answers. A
 // Sprite service ends every process it started when it stops, even one in a session of its
 // own, and while any is left the Sprite takes a crashed service for a running one. So a tmux
 // server the daemon started would end with each restart, taking every agent with it, and
 // keep a crashed daemon from starting again. -D keeps tmux in the foreground for the service,
 // and running with no sessions.
 export function startTmuxService(socket: string): void {
-  const name = `skel-tmux-${socket}`;
+  const name = `skelcrew-tmux-${socket}`;
   const quiet: { stdout: "pipe"; stderr: "pipe" } = { stdout: "pipe", stderr: "pipe" };
   const answers = (tries: number) => {
     for (let tried = 0; tried < tries; tried++) {
@@ -108,7 +110,7 @@ export function spriteUrl(): string {
   try {
     return Info.parse(JSON.parse(info.stdout.toString())).sprite_url;
   } catch {
-    throw new Error("sprite-env described the Sprite in a way this skel doesn't understand");
+    throw new Error("sprite-env described the Sprite in a way this Skelcrew doesn't understand");
   }
 }
 
@@ -118,12 +120,12 @@ export function spriteUrl(): string {
 const holdFor = 300;
 
 // Asks the Sprite's control socket to hold the Sprite awake for some seconds, or to let go
-// of the hold. A hold is a task, as the Sprite calls it, named skel unless named otherwise.
+// of the hold. A hold is a task, as the Sprite calls it, named Skelcrew unless named otherwise.
 // Throws when the socket doesn't answer or answers with an error.
 async function holdTask(
   socket: string,
   method: "PUT" | "DELETE",
-  { task = "skel", expire = holdFor } = {},
+  { task = "skelcrew", expire = holdFor } = {},
 ): Promise<void> {
   const answer = await fetch(`http://sprite/v1/tasks/${task}`, {
     unix: socket,
@@ -184,7 +186,7 @@ export function keepAwake(
 // before keepAwake's next check sees any work the poll started. The hold has a name of its
 // own, so keepAwake never lets go of it, and it simply expires.
 export const holdAwhile = (seconds: number, socket = controlSocket) =>
-  holdTask(socket, "PUT", { task: "skel-webhook", expire: seconds });
+  holdTask(socket, "PUT", { task: "skelcrew-webhook", expire: seconds });
 
 const Service = z.object({ cmd: z.string() });
 
@@ -210,7 +212,7 @@ function spriteNames(again: string): string[] {
   try {
     return Listed.parse(JSON.parse(listed.stdout.toString())).sprites.map((sprite) => sprite.name);
   } catch {
-    throw new Error("sprite list answered in a way this skel doesn't understand");
+    throw new Error("sprite list answered in a way this Skelcrew doesn't understand");
   }
 }
 
@@ -218,7 +220,7 @@ function spriteNames(again: string): string[] {
 const yes = (question: string) =>
   ["y", "yes"].includes(prompt(question)?.trim().toLowerCase() ?? "");
 
-// Installs bubblewrap on the Sprite and readies its node, which skel's sandbox needs.
+// Installs bubblewrap on the Sprite and readies its node, which Skelcrew's sandbox needs.
 async function prepare(name: string): Promise<void> {
   // --no-stdin, since sprite can't reconnect a command whose input it forwards.
   const on = (command: string[]) => ["sprite", "exec", "-s", name, "--no-stdin", "--", ...command];
@@ -242,7 +244,7 @@ async function prepare(name: string): Promise<void> {
 
 // Lets anyone reach the Sprite's URL without a Fly.io login, so GitHub's webhooks can wake
 // it. The URL only reaches the port where the daemon listens, which acts on nothing but a
-// delivery signed with skel's secret, and then only polls GitHub.
+// delivery signed with Skelcrew's secret, and then only polls GitHub.
 // It is quiet, as sprite says "Updated" with the Sprite's name.
 async function makeUrlPublic(name: string): Promise<void> {
   const update = ["sprite", "config", "update", "--url-auth", "public", "-s", name];
@@ -254,7 +256,7 @@ async function makeUrlPublic(name: string): Promise<void> {
 }
 
 // How updating and setting up reach a Sprite: sprite exec for shell lines, sprite file push
-// for skel, and the daemon's Sprite service. --no-stdin, since sprite can't reconnect a
+// for Skelcrew, and the daemon's Sprite service. --no-stdin, since sprite can't reconnect a
 // command whose input it forwards.
 function onTheSprite(name: string): Machine {
   const shell = (script: string) => [
@@ -278,11 +280,11 @@ function onTheSprite(name: string): Machine {
         "-s",
         name,
         file,
-        ".local/bin/skel.new",
+        ".local/bin/sc.new",
       ]),
-    // A Sprite service keeps the command it was made with, even after skel moves.
+    // A Sprite service keeps the command it was made with, even after Skelcrew moves.
     daemonSkel: async () => {
-      const { out, ok } = await quietly(shell("sprite-env services get skel"), {
+      const { out, ok } = await quietly(shell("sprite-env services get skelcrew"), {
         stderr: "ignore",
       });
       if (!ok) return null;
@@ -290,11 +292,11 @@ function onTheSprite(name: string): Machine {
         return Service.parse(JSON.parse(out)).cmd;
       } catch {
         throw new Error(
-          `sprite-env on sprite:${name} described skel's service in a way this skel doesn't understand`,
+          `sprite-env on sprite:${name} described Skelcrew's service in a way this Skelcrew doesn't understand`,
         );
       }
     },
-    restart: "sprite-env services restart skel",
+    restart: "sprite-env services restart skelcrew",
     // A Sprite whose URL was never made public asks for a login there, which GitHub's
     // webhooks can't give. Made public only once the new daemon runs and holds the URL's
     // port: until then, whatever else listens there would be on the internet.
@@ -308,33 +310,33 @@ function checkName(name: string): void {
   if (!/^\w[\w-]*$/.test(name)) throw new Error(`"${name}" can't name a Sprite`);
 }
 
-// Returns how to run skel on the Sprite with these words. It takes the environment to add to
+// Returns how to run sc on the Sprite with these words. It takes the environment to add to
 // what it always passes, and gives back the exit code.
 function skelOnSprite(name: string, words: string[]) {
   // sprite exec passes each word as given, with no shell between. It reports a program it
-  // can't find as exit 1, like any failure, so a shell runs skel: it exits 127 when there is
-  // none, which skel itself never does. sprite puts this whole line in your terminal's title
+  // can't find as exit 1, like any failure, so a shell runs sc: it exits 127 when there is
+  // none, which Skelcrew itself never does. sprite puts this whole line in your terminal's title
   // as it connects, and the screen can be seconds away while a daemon wakes, so the shell
   // replaces the title first. Only the laptop can tell when output goes to a pipe, as --tty
   // gives the Sprite a terminal either way. checkName keeps quotes and % out of the name.
   const where = `sprite:${name}`;
   const title = process.stdout.isTTY ? `printf '\\033]2;${windowTitle(where)}\\007'; ` : "";
-  const line = ["sh", "-c", `${title}exec skel "$@"`, "skel", ...words];
-  const named = `SKEL_REMOTE_NAME=${where}`;
+  const line = ["sh", "-c", `${title}exec sc "$@"`, "sc", ...words];
+  const named = `SKELCREW_REMOTE_NAME=${where}`;
   return (env: string[]) =>
     runInTerminal(["sprite", "exec", "-s", name, "--tty", "--", "env", named, ...env, ...line]);
 }
 
-// Sets up a Sprite for --remote and returns the exit code, for skel remote add. The Sprite is
+// Sets up a Sprite for --remote and returns the exit code, for sc remote add. The Sprite is
 // named as you typed it, sprite:demo, since "the Sprite demo" reads as a demo of Sprites. The
 // URL is made public on every run, so a run that failed there is finished by the next.
 export async function addSprite(name: string): Promise<number> {
   checkName(name);
   const where = `sprite:${name}`;
-  const names = spriteNames(`skel remote add ${where}`);
+  const names = spriteNames(`sc remote add ${where}`);
   console.log(
     skelLine(
-      `setting up ${where}: installing bubblewrap, making its URL public for GitHub's webhooks, copying skel there and running the first run.`,
+      `setting up ${where}: installing bubblewrap, making its URL public for GitHub's webhooks, copying Skelcrew there and running the first run.`,
     ),
   );
   if (!names.includes(name)) {
@@ -351,15 +353,15 @@ export async function addSprite(name: string): Promise<number> {
   return addMachine(where, skelOnSprite(name, ["first-run"]), onTheSprite(name));
 }
 
-// Runs a skel command on the Sprite and returns its exit code. Plain skel passes the
+// Runs a Skelcrew command on the Sprite and returns its exit code. Plain Skelcrew passes the
 // repository you are in on the laptop, so it opens that repository's lead there. Stops at a
-// Sprite that doesn't exist or has no skel.
+// Sprite that doesn't exist or has no Skelcrew.
 export async function remoteSprite(name: string, args: string[]): Promise<number> {
   checkName(name);
   // A sleeping Sprite can take a while to answer, which looks like a hang with nothing on
   // screen. Not in a pipe, where the output is the command's own.
   if (process.stdout.isTTY) console.log(skelLine(`connecting to sprite:${name}…`));
-  const again = ["skel", "--remote", `sprite:${name}`, ...args].map(quoted).join(" ");
+  const again = ["sc", "--remote", `sprite:${name}`, ...args].map(quoted).join(" ");
   const names = spriteNames(again);
   const from = args.length === 0 ? originHere() : null;
   const where = `sprite:${name}`;
