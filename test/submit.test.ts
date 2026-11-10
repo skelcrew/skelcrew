@@ -1,7 +1,7 @@
-// skel submit and the build ⇄ review loop, against a running daemon: a shell script stands in
-// for the builder and runs skel submit like an agent would, another stands in for Codex, a
+// sc submit and the build ⇄ review loop, against a running daemon: a shell script stands in
+// for the builder and runs sc submit like an agent would, another stands in for Codex, a
 // fake plugin for the repository's tracker and forge, and a folder of bare repositories for
-// what skel pushes to.
+// what Skelcrew pushes to.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -30,7 +30,7 @@ let socket = "";
 let plugin = "";
 const running: Subprocess[] = [];
 
-const data = () => join(home, ".local", "share", "skel");
+const data = () => join(home, ".local", "share", "skelcrew");
 const codexHome = () => join(data(), "codex");
 const builder = () => join(data(), "claude", "app-12");
 const lead = () => join(data(), "claude", leadPlaces("simon", "app").name);
@@ -40,7 +40,7 @@ const clone = () => join(data(), "threads", "app-12");
 const script = (name: string, body: string) => writeScript(home, name, body);
 
 // Stands in for Claude Code. As the lead, it waits at a ❯ prompt and keeps what is typed
-// into it. As the builder, it commits a round and runs skel submit, then
+// into it. As the builder, it commits a round and runs sc submit, then
 // waits at a ❯ prompt, keeping what is typed into it. Each typed message ends in a paste mark
 // and an Enter, and it answers each one with another round, as a builder fixing a review
 // would. `submits` false leaves the first round to the test. While the file busy is in its
@@ -55,7 +55,7 @@ round() {
   n=$((n+1))
   echo "$n" > change
   git add -A && git commit -qm "round $n"
-  skel submit "Round $n" >> "$CLAUDE_CONFIG_DIR/submitted" 2>&1
+  sc submit "Round $n" >> "$CLAUDE_CONFIG_DIR/submitted" 2>&1
   while test -e "$CLAUDE_CONFIG_DIR/busy"; do echo "esc to interrupt"; sleep 0.2; done
   clear
 }
@@ -72,7 +72,7 @@ exec sleep 300`,
   );
 }
 
-// Stands in for Codex. Review n answers with the verdict in skel's Codex folder's verdict-n,
+// Stands in for Codex. Review n answers with the verdict in Skelcrew's Codex folder's verdict-n,
 // and fails without one. It sleeps first when slow-n is there. What it was given, and the
 // branches it saw, go in the sessions folder, the one place a review writes that lasts.
 function fakeCodex(): void {
@@ -103,11 +103,11 @@ beforeEach(() => {
   fakeClaude();
   fakeCodex();
   script("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   config("");
-  writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
+  writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
-  writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
+  writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
   writeFileSync(
     join(home, ".gitconfig"),
     `[url "file://${github()}/"]\n\tinsteadOf = https://github.com/\n[user]\n\tname = Simon\n\temail = simon@example.com\n`,
@@ -132,7 +132,7 @@ afterEach(async () => {
 
 function config(more: string): void {
   writeFileSync(
-    join(home, ".config", "skel", "config.yaml"),
+    join(home, ".config", "skelcrew", "config.yaml"),
     `harness: claude\nreviewer: { harness: codex }\n${more}`,
   );
 }
@@ -143,14 +143,14 @@ const env = () => homeEnv(home);
 // Runs this test's daemon, which the test's clean-up stops.
 const serve = () => startDaemon(socket, env(), running);
 
-// Runs skel as you would, or as a builder would with its thread's socket.
+// Runs sc as you would, or as a builder would with its thread's socket.
 const skel = (args: string[], more: Record<string, string> = {}) =>
   runSkel(args, { ...env(), ...more });
 
 // The socket the daemon opens for app-12's builder.
 const builderSocket = () => {
   const short = new Bun.CryptoHasher("sha256").update("app-12").digest("hex").slice(0, 16);
-  return join(home, "run", "skel", "threads", short, "skel.sock");
+  return join(home, "run", "skelcrew", "threads", short, "skelcrew.sock");
 };
 
 // A daemon's work takes its time here, so a wait lasts 15 seconds unless a test says otherwise.
@@ -158,14 +158,14 @@ const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout })
 
 const github = () => join(home, "github");
 
-// Puts simon/app on the fake GitHub and tells skel about it, as a repository you have opened,
+// Puts simon/app on the fake GitHub and tells Skelcrew about it, as a repository you have opened,
 // whose lead the daemon starts, with the fake plugin as its tracker and forge. Returns a
 // checkout to push from.
 function addApp(): string {
   const work = join(home, "work", "app");
   mkdirSync(work, { recursive: true });
   writeFileSync(join(work, "README"), "app\n");
-  writeFileSync(join(work, "skel.yaml"), "tracker: github\n");
+  writeFileSync(join(work, "skelcrew.yaml"), "tracker: github\n");
   git(work, "init", "-q", "-b", "main");
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");
@@ -181,7 +181,7 @@ openDb().run("INSERT INTO repositories (name, owner, repo, opened, forge, remote
 const untilCloned = () => until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
 
 function thread(): Record<string, unknown> {
-  const db = new Database(join(data(), "skel.db"));
+  const db = new Database(join(data(), "skelcrew.db"));
   // The daemon may be writing, and a read that meets a write fails without a wait.
   db.run("PRAGMA busy_timeout = 5000");
   try {
@@ -193,12 +193,12 @@ function thread(): Record<string, unknown> {
 }
 
 // The commit on the thread's branch on the fake GitHub, and what is in its round.
-const pushed = (ref = "skel/12-add-export") =>
+const pushed = (ref = "skelcrew/12-add-export") =>
   git(join(github(), "simon", "app.git"), "rev-parse", ref);
 const pushedRound = () =>
-  git(join(github(), "simon", "app.git"), "show", "skel/12-add-export:change");
+  git(join(github(), "simon", "app.git"), "show", "skelcrew/12-add-export:change");
 
-// The checks skel set on commits, and the reviews it posted, as it asked the forge.
+// The checks Skelcrew set on commits, and the reviews it posted, as it asked the forge.
 type Status = { sha: string; state: string; description: string };
 const statuses = (): Status[] =>
   asked(plugin)
@@ -212,7 +212,7 @@ const reviews = () =>
   asked(plugin)
     .filter((q) => q.ask === "review")
     .map(({ commit, verdict, body }) => ({ commit, verdict, body }));
-// The PR skel opened, as it asked the forge, or nothing.
+// The PR Skelcrew opened, as it asked the forge, or nothing.
 const opened = () => asked(plugin).find((q) => q.ask === "open pr");
 const typedMessages = () => read(join(builder(), "typed")).split("\x1b[201~").length - 1;
 const finished = (state: string) => statuses().filter((s) => s.state === state);
@@ -223,8 +223,8 @@ async function startApp12() {
   expect((await skel(["start", "app-12"])).err).toBe("");
 }
 
-// bubblewrap can't start inside skel's own sandbox, so only there builders can't start.
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
+// bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("sc submit", () => {
   test("each review's round, reviewer, verdict and first line go in the thread's log, and the task's title too", async () => {
     addApp();
     verdict(1, "changes", "\n  The export has no test.\n\nMore detail here.");
@@ -267,7 +267,11 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     expect(read(join(builder(), "submitted"))).toContain("Submitted app-12 for review.");
     expect(pushedRound()).toBe("2");
     const pr = opened();
-    expect(pr).toMatchObject({ branch: "skel/12-add-export", base: "main", title: "Add export" });
+    expect(pr).toMatchObject({
+      branch: "skelcrew/12-add-export",
+      base: "main",
+      title: "Add export",
+    });
     expect(pr?.body).toBe("Round 1\n\nCloses #12");
 
     const second = pushed();
@@ -298,7 +302,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel submit", () => {
     expect(read(join(data(), "threads", "app-12.log"))).toContain("Round 1");
   }, 60_000);
 
-  // So it is always clear on the forge whether you or skel wrote a commit.
+  // So it is always clear on the forge whether you or Skelcrew wrote a commit.
   test("commits are authored by the forge's bot, with you as co-author", async () => {
     addApp();
     const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
@@ -308,15 +312,15 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     await startApp12();
     await until(() => finished("success").length === 1, 30_000);
     const bare = join(github(), "simon", "app.git");
-    expect(git(bare, "log", "-1", "--format=%an <%ae>", "skel/12-add-export")).toBe(
+    expect(git(bare, "log", "-1", "--format=%an <%ae>", "skelcrew/12-add-export")).toBe(
       "skelcrew[bot] <1+skelcrew[bot]@users.noreply.github.com>",
     );
-    expect(git(bare, "log", "-1", "--format=%B", "skel/12-add-export")).toContain(
+    expect(git(bare, "log", "-1", "--format=%B", "skelcrew/12-add-export")).toContain(
       "Co-authored-by: Simon <simon@example.com>",
     );
   }, 60_000);
 
-  test("tells the builder about skel submit, after the task rather than in it", async () => {
+  test("tells the builder about sc submit, after the task rather than in it", async () => {
     addApp();
     fakeClaude(false);
     await startApp12();
@@ -329,7 +333,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
         .split("\n")
         .slice(told + 1)
         .join("\n"),
-    ).toContain('skel submit "<summary>"');
+    ).toContain('sc submit "<summary>"');
     expect(args).toContain(
       "Come back to the human only for new scope, missing access, or a decision that is theirs. Decide everything else yourself.",
     );
@@ -357,7 +361,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     );
   }, 90_000);
 
-  test("skel start on a thread past the round limit lets it go on with the last review's changes", async () => {
+  test("sc start on a thread past the round limit lets it go on with the last review's changes", async () => {
     addApp();
     config("max_rounds: 1\n");
     verdict(1, "changes", "First problem.");
@@ -389,7 +393,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     );
   }, 60_000);
 
-  test("a newer skel submit cancels the review still running for an older commit", async () => {
+  test("a newer sc submit cancels the review still running for an older commit", async () => {
     addApp();
     mkdirSync(codexHome(), { recursive: true });
     writeFileSync(join(codexHome(), "slow-1"), "");
@@ -400,7 +404,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     const older = pushed();
     writeFileSync(join(clone(), "change"), "newer\n");
     git(clone(), "commit", "-qam", "newer");
-    const again = await skel(["submit", "Newer"], { SKEL_SOCKET: builderSocket() });
+    const again = await skel(["submit", "Newer"], { SKELCREW_SOCKET: builderSocket() });
     expect(again.err).toBe("");
     await until(() => finished("success").length === 1, 30_000);
     expect(finished("success")[0]?.sha).toBe(git(clone(), "rev-parse", "HEAD"));
@@ -446,7 +450,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
     first.kill();
     await first.exited;
-    const db = new Database(join(data(), "skel.db"));
+    const db = new Database(join(data(), "skelcrew.db"));
     db.run("DELETE FROM items");
     db.close();
     answer(plugin, "changed", { items: [], next: null });
@@ -556,7 +560,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     expect(typedMessages()).toBe(0);
   }, 60_000);
 
-  test("a newer skel submit drops a review still waiting for the builder", async () => {
+  test("a newer sc submit drops a review still waiting for the builder", async () => {
     addApp();
     verdict(1, "changes", "Stale.");
     verdict(2, "approve", "Fresh.");
@@ -566,7 +570,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     await until(() => thread().telling !== null, 30_000);
     writeFileSync(join(clone(), "change"), "newer\n");
     git(clone(), "commit", "-qam", "newer");
-    expect((await skel(["submit", "Newer"], { SKEL_SOCKET: builderSocket() })).err).toBe("");
+    expect((await skel(["submit", "Newer"], { SKELCREW_SOCKET: builderSocket() })).err).toBe("");
     expect(thread().telling).toBeNull();
     await until(() => finished("success").length === 1, 30_000);
     rmSync(join(builder(), "busy"));
@@ -599,7 +603,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     writeFileSync(join(plugin, "hold-status-success"), "");
     await startApp12();
     await until(() => existsSync(join(plugin, "held-status")), 30_000);
-    expect((await skel(["submit", "Again"], { SKEL_SOCKET: builderSocket() })).err).toBe("");
+    expect((await skel(["submit", "Again"], { SKELCREW_SOCKET: builderSocket() })).err).toBe("");
     await Bun.sleep(1000);
     rmSync(join(plugin, "hold-status-success"));
     await until(() => statuses().length === 3);
@@ -615,7 +619,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     writeFileSync(join(plugin, "hold-review"), "");
     await startApp12();
     await until(() => existsSync(join(plugin, "held-review")), 30_000);
-    expect((await skel(["submit", "Again"], { SKEL_SOCKET: builderSocket() })).err).toBe("");
+    expect((await skel(["submit", "Again"], { SKELCREW_SOCKET: builderSocket() })).err).toBe("");
     await Bun.sleep(1000);
     rmSync(join(plugin, "hold-review"));
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 30_000);
@@ -641,7 +645,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
 
 // Lets a test change a thread as merging its PR would, without polling GitHub.
 function setThread(change: string): void {
-  const db = new Database(join(data(), "skel.db"));
+  const db = new Database(join(data(), "skelcrew.db"));
   db.run("PRAGMA busy_timeout = 5000");
   try {
     db.run(`UPDATE threads SET ${change}`);
@@ -653,10 +657,10 @@ function setThread(change: string): void {
 // app's lead's socket, named by a short hash of its GitHub name.
 const leadSocketPath = () => {
   const short = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
-  return join(home, "run", "skel", "leads", short, "skel.sock");
+  return join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
 };
 
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel review", () => {
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("sc review", () => {
   test("reviews a failed review's commit again: posts the verdict, sets the check, and types changes in as a round", async () => {
     addApp();
     verdict(2, "changes", "The export has no test.");
@@ -674,10 +678,10 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel review", () => {
         .filter((s) => s.sha === first)
         .map((s) => [s.state, s.description]),
     ).toEqual([
-      ["pending", "skel's reviewer is reviewing"],
+      ["pending", "Skelcrew's reviewer is reviewing"],
       ["failure", "review failed"],
-      ["pending", "skel's reviewer is reviewing"],
-      ["failure", "skel's reviewer asked for changes"],
+      ["pending", "Skelcrew's reviewer is reviewing"],
+      ["failure", "Skelcrew's reviewer asked for changes"],
     ]);
     expect(reviews()[0]).toEqual({
       commit: first,
@@ -710,17 +714,17 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel review", () => {
     writeFileSync(join(codexHome(), "slow-1"), "");
     await startApp12();
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
-    const fromLead = await skel(["review", "app-12"], { SKEL_SOCKET: leadSocketPath() });
+    const fromLead = await skel(["review", "app-12"], { SKELCREW_SOCKET: leadSocketPath() });
     expect(fromLead.code).not.toBe(0);
     expect(fromLead.err).toContain(
       "a review of app-12's last commit is already waiting or running",
     );
-    const fromBuilder = await skel(["review", "app-12"], { SKEL_SOCKET: builderSocket() });
+    const fromBuilder = await skel(["review", "app-12"], { SKELCREW_SOCKET: builderSocket() });
     expect(fromBuilder.code).not.toBe(0);
     expect(fromBuilder.err).toContain("doesn't know that request");
   }, 60_000);
 
-  test("a newer skel submit cancels a review asked for again", async () => {
+  test("a newer sc submit cancels a review asked for again", async () => {
     addApp();
     mkdirSync(codexHome(), { recursive: true });
     writeFileSync(join(codexHome(), "slow-2"), "");
@@ -731,14 +735,14 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel review", () => {
     const older = pushed();
     // Held so the second ask comes before the check is pending again.
     writeFileSync(join(plugin, "hold-status-pending"), "");
-    expect((await skel(["review", "app-12"], { SKEL_SOCKET: leadSocketPath() })).err).toBe("");
+    expect((await skel(["review", "app-12"], { SKELCREW_SOCKET: leadSocketPath() })).err).toBe("");
     const twice = await skel(["review", "app-12"]);
     expect(twice.err).toContain("a review of app-12's last commit is already waiting or running");
     rmSync(join(plugin, "hold-status-pending"));
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-2")), 30_000);
     writeFileSync(join(clone(), "change"), "newer\n");
     git(clone(), "commit", "-qam", "newer");
-    expect((await skel(["submit", "Newer"], { SKEL_SOCKET: builderSocket() })).err).toBe("");
+    expect((await skel(["submit", "Newer"], { SKELCREW_SOCKET: builderSocket() })).err).toBe("");
     await until(() => finished("success").length === 1, 30_000);
     expect(finished("success")[0]?.sha).toBe(git(clone(), "rev-parse", "HEAD"));
     expect(
@@ -753,14 +757,14 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("skel review", () => {
 test("only a builder can submit, from its thread", async () => {
   addApp();
   serve();
-  await until(() => existsSync(join(home, "run", "skel.sock")));
+  await until(() => existsSync(join(home, "run", "skelcrew.sock")));
   await Bun.sleep(100);
   const submitted = await skel(["submit", "Done"]);
   expect(submitted.code).not.toBe(0);
   expect(submitted.err).toContain("doesn't know that request");
 });
 
-// Puts simon/app on a remote no forge claims, with no tracker, and tells skel about it, as a
+// Puts simon/app on a remote no forge claims, with no tracker, and tells Skelcrew about it, as a
 // repository you have opened. Returns the bare repository, as its remote.
 function addAppOnGit(): string {
   const work = join(home, "work", "app");
@@ -779,8 +783,8 @@ openDb().run("INSERT INTO repositories (name, owner, repo, opened, remote, claim
 }
 
 // A repository with neither: you tell the lead what to do, and the branch is what you get.
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("with no tracker and no forge", () => {
-  test("a thread on what you said is pushed with git, reviewed in skel, and ends once merged", async () => {
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with no tracker and no forge", () => {
+  test("a thread on what you said is pushed with git, reviewed in Skelcrew, and ends once merged", async () => {
     const bare = addAppOnGit();
     verdict(1, "approve", "Ready to merge.");
     // Polling every 200 milliseconds, so the merge is seen soon.
@@ -797,11 +801,11 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(started.err).toBe("");
     expect(started.out).toBe("Started app-t1.\n");
     const log = () => read(join(data(), "threads", "app-t1.log"));
-    await until(() => log().includes("app-t1 is ready on branch skel/t1-add-export"), 30_000);
-    expect(git(bare, "show", "skel/t1-add-export:change")).toBe("1");
+    await until(() => log().includes("app-t1 is ready on branch skelcrew/t1-add-export"), 30_000);
+    expect(git(bare, "show", "skelcrew/t1-add-export:change")).toBe("1");
     expect(read(join(data(), "claude", "app-t1", "args"))).toContain("Add export\n\nAs JSON");
     const row = () => {
-      const db = new Database(join(data(), "skel.db"));
+      const db = new Database(join(data(), "skelcrew.db"));
       db.run("PRAGMA busy_timeout = 5000");
       try {
         return db.query("SELECT task, status, needs_you, pr FROM threads").get();
@@ -812,10 +816,10 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(row()).toEqual({ task: "t1", status: "waiting", needs_you: 1, pr: null });
     // No forge, so no PR, check or review was asked for.
     expect(asked(plugin).filter((q) => q.ask !== "claims")).toEqual([]);
-    // You merge it yourself, with a squash, and skel sees the branch has nothing left.
+    // You merge it yourself, with a squash, and Skelcrew sees the branch has nothing left.
     const work = join(home, "work", "app");
     git(work, "pull", "-q", bare, "main");
-    git(work, "fetch", "-q", bare, "skel/t1-add-export");
+    git(work, "fetch", "-q", bare, "skelcrew/t1-add-export");
     git(work, "merge", "--squash", "-q", "FETCH_HEAD");
     git(work, "commit", "-q", "-m", "Add export");
     git(work, "push", "-q", bare, "main");

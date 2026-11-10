@@ -1,4 +1,4 @@
-// What skel's flow asks a repository's tracker and forge, through their call command, and
+// What Skelcrew's flow asks a repository's tracker and forge, through their call command, and
 // finding which plugins those are. The flow knows what a tracker or forge does, never which
 // plugin does it.
 import type { Database } from "bun:sqlite";
@@ -57,7 +57,7 @@ export function pluginsOf(
 }
 
 // The key a forge gives a repository is owner/name, which becomes folders, so neither part
-// may climb out of skel's.
+// may climb out of Skelcrew's.
 const Part = z.string().regex(/^(?!\.\.?$)[\w.-]+$/);
 const Claimed = z.object({
   key: z.string().refine((key) => {
@@ -93,7 +93,7 @@ const keyOf = (repository: Repository) => `${repository.owner}/${repository.repo
 const Changed = z.object({ items: z.array(Item), next: z.string().nullable() });
 
 // Asks a plugin what changed in the repository since `next`, or everything open without it,
-// as the jobs it does there, with the PRs skel watches. Returns its items and the next `next`.
+// as the jobs it does there, with the PRs Skelcrew watches. Returns its items and the next `next`.
 export async function changed(
   db: Database,
   plugin: string,
@@ -115,7 +115,7 @@ function trackerFor(db: Database, repository: Repository): string {
   const tracker = trackerOf(db, repository);
   if (tracker === null)
     throw new Error(
-      `${repository.name} has no tracker: tell the lead what to do, and it starts a thread with skel start ${repository.name} "<title>" "<body>"`,
+      `${repository.name} has no tracker: tell the lead what to do, and it starts a thread with sc start ${repository.name} "<title>" "<body>"`,
     );
   return tracker;
 }
@@ -145,7 +145,7 @@ export async function createTask(
   return task;
 }
 
-// Tells the tracker skel took the task, so you can see on it that skel started work.
+// Tells the tracker Skelcrew took the task, so you can see on it that Skelcrew started work.
 export async function took(db: Database, repository: Repository, task: string): Promise<void> {
   await callPlugin(
     db,
@@ -186,7 +186,7 @@ export async function postReview(
   return posted.id;
 }
 
-// Sets skel's own check on the commit, so branch protection can require the review's verdict.
+// Sets Skelcrew's own check on the commit, so branch protection can require the review's verdict.
 export async function setStatus(
   db: Database,
   repository: Repository,

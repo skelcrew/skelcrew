@@ -1,4 +1,4 @@
-// A round of the build ⇄ review loop: the builder's skel submit, pushed from skel's clone,
+// A round of the build ⇄ review loop: the builder's sc submit, pushed from Skelcrew's clone,
 // its PR opened on the first round, reviewed by a fresh reviewer, and the review typed back
 // into the builder's session when it asks for changes.
 import type { Database } from "bun:sqlite";
@@ -24,7 +24,7 @@ import {
   threadName,
 } from "./thread.ts";
 
-// Runs git in skel's own clone and returns what it printed, throwing with its error when it
+// Runs git in Skelcrew's own clone and returns what it printed, throwing with its error when it
 // fails.
 async function git(folder: string, ...args: string[]): Promise<string> {
   const { out, err, ok } = await quietly(["git", "-C", folder, ...args], {
@@ -34,7 +34,7 @@ async function git(folder: string, ...args: string[]): Promise<string> {
   return out.trim();
 }
 
-// Fetches the thread's branch from its clone into skel's clone and pushes the commit it got
+// Fetches the thread's branch from its clone into Skelcrew's clone and pushes the commit it got
 // to the thread's branch on the repository's remote, then, with a forge, opens the PR if there
 // is none yet, with the line that closes its task at the end of its body. Returns the commit.
 // git never runs inside the thread's clone: the builder controls everything there, .git
@@ -43,8 +43,8 @@ async function push(db: Database, folder: string, summary: string): Promise<stri
   const thread = readThread(db, folder);
   const repository = repositoryOf(db, thread);
   const ours = cloneDir(thread.owner, thread.repo);
-  // A ref of the thread's own, not FETCH_HEAD, which refreshing skel's clone also writes.
-  const ref = `refs/skel/threads/${thread.folder}`;
+  // A ref of the thread's own, not FETCH_HEAD, which refreshing Skelcrew's clone also writes.
+  const ref = `refs/skelcrew/threads/${thread.folder}`;
   await git(
     ours,
     "fetch",
@@ -75,9 +75,9 @@ async function push(db: Database, folder: string, summary: string): Promise<stri
   return sha;
 }
 
-// Reviews the commit and acts on the verdict: with a forge, posts it on the PR and sets skel's
+// Reviews the commit and acts on the verdict: with a forge, posts it on the PR and sets Skelcrew's
 // check; saves what it means for the thread, and types changes into the builder. Without a
-// forge the review stays in skel, and an approved branch needs you at once. Stops without a
+// forge the review stays in Skelcrew, and an approved branch needs you at once. Stops without a
 // word once a newer round cancels it, since that round now owns the thread.
 async function reviewRound(
   db: Database,
@@ -97,7 +97,7 @@ async function reviewRound(
   const setCheck = async (state: "pending" | "success" | "failure", description: string) => {
     if (forged) await setStatus(db, repository, { commit: sha, state, description });
   };
-  await setCheck("pending", "skel's reviewer is reviewing");
+  await setCheck("pending", "Skelcrew's reviewer is reviewing");
   if (signal.aborted) return;
   record(db, folder, { reviewing: sha, submitting: null, reviewer }, `reviewing ${sha}`);
   const verdict = await review({
@@ -163,7 +163,7 @@ async function deliver(
 
 // The latest round of each thread. Cancelling it cancels its review. The next round's push
 // waits for its push, so two pushes or two PRs never race, and the next round's review
-// waits for it to end, so its last write to the skel's check comes before the next
+// waits for it to end, so its last write to the Skelcrew's check comes before the next
 // round's pending one. `ended` tells a round still under way from one that failed.
 type Round = {
   cancel: AbortController;
@@ -216,18 +216,18 @@ function pushAndReview(
   follow(db, tmux, folder, cancel, pushed, rest);
 }
 
-// Starts a round for skel submit, cancelling the thread's older round if one is still under
+// Starts a round for sc submit, cancelling the thread's older round if one is still under
 // way, and returns at once: a shell command can't block long, so pushing and the review go on
 // in the background. The submit is saved first, so a stop of the daemon can't lose it. A
 // review still waiting to be typed in, or held past the round limit, is dropped, as it is
-// about an older commit. Throws when your config or the repository's skel.yaml isn't valid,
+// about an older commit. Throws when your config or the repository's skelcrew.yaml isn't valid,
 // so the builder hears why, and
-// for a thread skel stop is ending, whose builder may submit while it exits.
+// for a thread sc stop is ending, whose builder may submit while it exits.
 export function submitRound(db: Database, tmux: string, folder: string, summary: string): void {
   const thread = readThread(db, folder);
   const { maxRounds, reviewer } = threadConfig(thread);
   if (thread.status === "stopped")
-    throw new Error("this thread was stopped, so skel won't push it");
+    throw new Error("this thread was stopped, so Skelcrew won't push it");
   // Past the round limit the thread still needs you, whatever the builder does.
   const needs_you = pastLimit(thread, maxRounds);
   record(
@@ -250,11 +250,11 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
   pushAndReview(db, tmux, folder, summary, before);
 }
 
-// Returns the commit skel last fetched from the thread's clone and pushed, or null when it
-// has pushed none. Read at once, with no await, so two skel review can't both start one.
+// Returns the commit Skelcrew last fetched from the thread's clone and pushed, or null when it
+// has pushed none. Read at once, with no await, so two sc review can't both start one.
 function lastPushed(thread: Thread): string | null {
   const ours = cloneDir(thread.owner, thread.repo);
-  const ref = `refs/skel/threads/${thread.folder}^{commit}`;
+  const ref = `refs/skelcrew/threads/${thread.folder}^{commit}`;
   const run = Bun.spawnSync(["git", "-C", ours, "rev-parse", "--verify", "--quiet", ref], {
     stdout: "pipe",
     stderr: "pipe",
@@ -262,9 +262,9 @@ function lastPushed(thread: Thread): string | null {
   return run.success ? run.stdout.toString().trim() : null;
 }
 
-// Reviews the thread's last submitted commit again, for skel review, such as after a review
-// that failed, and returns at once, as skel submit does. The review runs like any round's,
-// so changes count toward the round limit and a newer skel submit cancels it. A submit whose
+// Reviews the thread's last submitted commit again, for sc review, such as after a review
+// that failed, and returns at once, as sc submit does. The review runs like any round's,
+// so changes count toward the round limit and a newer sc submit cancels it. A submit whose
 // push failed is pushed first. Refuses a thread that is done or stopped, one with nothing
 // submitted, and one whose review is still waiting or running, since that review answers
 // already.
@@ -273,7 +273,7 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
   const name = threadName(db, thread);
   if (thread.status === "done") throw new Error(`${name} is done, so there is nothing to review`);
   if (thread.status === "stopped")
-    throw new Error(`${name} is stopped: run skel start ${name} first`);
+    throw new Error(`${name} is stopped: run sc start ${name} first`);
   const earlier = latest.get(folder);
   const { submitting, reviewing } = thread;
   if ((submitting !== null || reviewing !== null) && earlier && !earlier.ended)
@@ -284,7 +284,7 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
   const { maxRounds } = threadConfig(thread);
   // Past the round limit the thread still needs you, whatever the review says.
   const needs_you = pastLimit(thread, maxRounds);
-  // The commit is saved as under review at once, so a second skel review asked before the
+  // The commit is saved as under review at once, so a second sc review asked before the
   // check is pending again is refused rather than cancelling this one.
   const change = {
     status: "waiting",
@@ -306,7 +306,7 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
 }
 
 // Carries on with a round the daemon's stop cut short: a submit not yet pushed and
-// reviewed, a review whose skel's check was left pending, or changes not yet typed
+// reviewed, a review whose Skelcrew's check was left pending, or changes not yet typed
 // into the builder. Pushing again is harmless: the remote has the commit, or gets it now. A
 // builder brought back can submit before this runs, and then its newer round wins.
 export function resumeRound(db: Database, tmux: string, folder: string): void {
@@ -321,7 +321,7 @@ export function resumeRound(db: Database, tmux: string, folder: string): void {
     follow(db, tmux, folder, cancel, none, deliver(db, tmux, folder, telling, cancel.signal));
 }
 
-// Lets a thread past the round limit go on, for skel start: counts its rounds of changes from
+// Lets a thread past the round limit go on, for sc start: counts its rounds of changes from
 // zero again, so it no longer needs you for them, and types the changes of the review that
 // reached the limit into the builder, as a round within the limit would have.
 export function goOn(db: Database, tmux: string, folder: string): void {
@@ -345,7 +345,7 @@ export function goOn(db: Database, tmux: string, folder: string): void {
   );
 }
 
-// Cancels the thread's round, once its PR is merged or closed or skel stop ends its builder,
+// Cancels the thread's round, once its PR is merged or closed or sc stop ends its builder,
 // so a review still running never changes a thread that is done or stopped.
 export function endRound(folder: string): void {
   latest.get(folder)?.cancel.abort();

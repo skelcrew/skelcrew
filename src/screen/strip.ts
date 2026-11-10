@@ -1,7 +1,7 @@
 // The lines above the agent. First a row of tabs, one per repository. Then the strip, which
 // says what you are looking at: for a thread, its name, task, PR and checks, then its latest
 // review, and for a page, its row's name and title. The lead has none, as the sidebar says it
-// all. Above the sidebar the strip's line says skel, its release and, on a remote, where it
+// all. Above the sidebar the strip's line says Skelcrew, its release and, on a remote, where it
 // runs. A thin line runs under them all.
 import { clean, fitted } from "./look.ts";
 import type { Link, Row, Tab } from "./rows.ts";
@@ -53,19 +53,19 @@ function aboutPage(page: Link, width: number): string {
   return `#[bold]${escaped(name)}#[default]${escaped(title)}`;
 }
 
-// skel's name above the sidebar, in the white of a selected name. A 256-colour number, so it
+// Skelcrew's name above the sidebar, in the white of a selected name. A 256-colour number, so it
 // looks the same whatever your theme.
-const skelName = "#[bold,fg=colour231]skel#[default]";
+const skelName = "#[bold,fg=colour231]Skelcrew#[default]";
 
-// Returns the header above the sidebar: skel's name, in line with the sidebar's marks, then dim
+// Returns the header above the sidebar: Skelcrew's name, in line with the sidebar's marks, then dim
 // the release, if any, then, on a remote, a dot and where it runs, then spaces out to the agent's
 // column. `where` is empty on this machine. It comes from outside, so it is made safe as a title
 // is, and cut to stop two columns before the sidebar's edge, as all the sidebar's text does. The
 // place gives way first. A release is never cut, as half a number would be a different release.
 function header(where: string, left: number, release: string): string {
-  // "  skel" takes six columns. The sidebar's edge is two columns left of the agent, and text
+  // "  Skelcrew" takes ten columns. The sidebar's edge is two columns left of the agent, and text
   // stops two before it, so what follows the name has `room`.
-  const named = 6;
+  const named = 10;
   const room = Math.max(left - 4 - named, 0);
   const taken = release ? Bun.stringWidth(release) + 1 : 0;
   const version = release && room >= taken ? ` ${release}` : "";
@@ -78,8 +78,8 @@ function header(where: string, left: number, release: string): string {
 }
 
 // Returns the strip's two lines as tmux formats, given the rows, the session on the right,
-// where the agent's pane is, `left` columns in and `width` wide, the remote skel runs on, if
-// any, the release of the skel running here, if it is one, and the row of the page on the
+// where the agent's pane is, `left` columns in and `width` wide, the remote Skelcrew runs on, if
+// any, the release of the Skelcrew running here, if it is one, and the row of the page on the
 // right, if that is what shows. tmux's status lines span the whole terminal, so the first starts
 // with the header, and the second meets the line at the sidebar's edge, two columns left of the
 // agent, with a ┬. It reads nothing, so what you see can be tested without a terminal. Always

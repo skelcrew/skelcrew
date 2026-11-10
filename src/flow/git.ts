@@ -24,7 +24,7 @@ async function git(
   return out.trim();
 }
 
-// Clones the repository into skel's chosen folder, away from your checkout.
+// Clones the repository into Skelcrew's chosen folder, away from your checkout.
 export async function cloneRepository(
   db: Database,
   repository: Repository,
@@ -33,7 +33,7 @@ export async function cloneRepository(
   await git(db, repository, ["clone", "--quiet", repository.remote, folder]);
 }
 
-// Resets skel's clone in the folder to the latest default branch, so the lead reads current
+// Resets Skelcrew's clone in the folder to the latest default branch, so the lead reads current
 // code. Fetching HEAD follows the default branch even after it is renamed.
 export async function updateClone(
   db: Database,
@@ -57,9 +57,9 @@ export async function fetchBranch(
   await git(db, repository, ["-C", folder, "fetch", "--quiet", repository.remote, ref]);
 }
 
-// Brings a branch of the repository into skel's clone in the folder, as a ref of its own.
-// Without `ref`, as the branch itself, so a builder whose clone has skel's as origin can fetch
-// it: never the branch skel's clone has checked out, which updateClone keeps current.
+// Brings a branch of the repository into Skelcrew's clone in the folder, as a ref of its own.
+// Without `ref`, as the branch itself, so a builder whose clone has Skelcrew's as origin can fetch
+// it: never the branch Skelcrew's clone has checked out, which updateClone keeps current.
 export async function fetchInto(
   db: Database,
   repository: Repository,
@@ -78,7 +78,7 @@ export async function fetchInto(
   ]);
 }
 
-// Pushes a commit from skel's clone in the folder to a branch of the repository. Never
+// Pushes a commit from Skelcrew's clone in the folder to a branch of the repository. Never
 // forced, so a push can only add to what the branch already holds.
 export async function pushCommit(
   db: Database,
@@ -113,8 +113,8 @@ export async function onRemote(
   return listed !== "";
 }
 
-// Checks that skel can push to a repository with no forge on your own git login, as it will
-// for a thread: a dry run of a new branch from skel's clone in the folder. The daemon pushes
+// Checks that Skelcrew can push to a repository with no forge on your own git login, as it will
+// for a thread: a dry run of a new branch from Skelcrew's clone in the folder. The daemon pushes
 // outside your terminal, with no SSH agent, so the check runs without yours. Throws what git
 // said when it refuses.
 export async function checkPush(
@@ -126,7 +126,15 @@ export async function checkPush(
   await git(
     db,
     repository,
-    ["-C", folder, "push", "--dry-run", "--quiet", repository.remote, "HEAD:refs/heads/skel-check"],
+    [
+      "-C",
+      folder,
+      "push",
+      "--dry-run",
+      "--quiet",
+      repository.remote,
+      "HEAD:refs/heads/skelcrew-check",
+    ],
     env,
   );
 }

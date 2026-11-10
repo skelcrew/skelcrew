@@ -1,4 +1,4 @@
-// Bringing a repository into skel's own clones, repo ls, repo rm and trust, run as you would
+// Bringing a repository into Skelcrew's own clones, repo ls, repo rm and trust, run as you would
 // run them, against a fake forge plugin, a fake daemon and a folder of bare repositories
 // standing in for GitHub.
 import { Database } from "bun:sqlite";
@@ -25,11 +25,11 @@ let daemon: Server | undefined;
 // The fake forge's settings folder, where it keeps what it is asked and its answers.
 let forge = "";
 
-const hint = "skel has no repositories yet. Run skel in a checkout of one.";
-// What skel says once you leave the screen.
-const left = "Your agents keep running. Run skel to come back.\n";
-const clone = (full: string) => join(home, ".local", "share", "skel", "repos", full);
-const trustFile = () => join(home, ".config", "skel", "trusted");
+const hint = "Skelcrew has no repositories yet. Run sc in a checkout of one.";
+// What Skelcrew says once you leave the screen.
+const left = "Your agents keep running. Run sc to come back.\n";
+const clone = (full: string) => join(home, ".local", "share", "skelcrew", "repos", full);
+const trustFile = () => join(home, ".config", "skelcrew", "trusted");
 
 function fake(name: string, body: string): void {
   writeFileSync(
@@ -45,7 +45,7 @@ beforeEach(async () => {
   mkdirSync(join(home, "bin"));
   mkdirSync(join(home, "run"), { mode: 0o700 });
   fake("tmux", "exit 0");
-  // Run from a clone rather than a worktree, as in a builder's thread, skel rewrites the
+  // Run from a clone rather than a worktree, as in a builder's thread, Skelcrew rewrites the
   // service's unit and reloads systemd. Nothing else may reach systemd.
   fake("systemctl", 'test "$2" = daemon-reload');
   // git reaches the fake GitHub for every https://github.com/ URL.
@@ -53,12 +53,12 @@ beforeEach(async () => {
     join(home, ".gitconfig"),
     `[url "file://${home}/github/"]\n\tinsteadOf = https://github.com/\n`,
   );
-  // As the first run leaves a machine, so plain skel goes straight to the repository.
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
-  writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\n");
-  writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
+  // As the first run leaves a machine, so plain sc goes straight to the repository.
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: claude\n");
+  writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
-  writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
+  writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
   forge = fakePlugin(home, "github", ["tracker", "forge"]);
   daemon = createServer((connection) =>
     connection.on("data", (data) => {
@@ -67,7 +67,9 @@ beforeEach(async () => {
       connection.end('{"lead":"app-lead","repository":"simon/app"}\n');
     }),
   );
-  await new Promise<void>((listening) => daemon?.listen(join(home, "run", "skel.sock"), listening));
+  await new Promise<void>((listening) =>
+    daemon?.listen(join(home, "run", "skelcrew.sock"), listening),
+  );
 });
 afterEach(() => {
   daemon?.close();
@@ -108,7 +110,7 @@ function claim(full: string, permission: string, fork: boolean, as = full): void
   writeFileSync(join(forge, "claims.json"), JSON.stringify(claimed));
 }
 
-// Returns the remotes skel asked the forge about.
+// Returns the remotes Skelcrew asked the forge about.
 const claimsAsked = () =>
   asked(forge)
     .filter((q) => q.ask === "claims")
@@ -151,17 +153,17 @@ async function skel(args: string[], typed = "", cwd = home, more: Record<string,
   return { out, err, code };
 }
 
-// Returns what skel ran, with the long tmux line that opens the screen cut to the agent it
+// Returns what Skelcrew ran, with the long tmux line that opens the screen cut to the agent it
 // opens on. The fake daemon names the lead's session app-lead.
 const calls = () =>
   existsSync(join(home, "calls"))
     ? readFileSync(join(home, "calls"), "utf8")
-        .replace(/tmux -L skel -f \/dev\/null source-file -\n/g, "")
-        .replace(/tmux -L skel-screen .* sh skel (\S+) \S+ ;.*/g, "screen on $1")
+        .replace(/tmux -L skelcrew -f \/dev\/null source-file -\n/g, "")
+        .replace(/tmux -L skelcrew-screen .* sh skelcrew (\S+) \S+ ;.*/g, "screen on $1")
     : "";
 const attached = () => calls().endsWith("daemon lead\nscreen on app-lead\n");
 
-// Returns each repository skel repo ls --json lists, as its name, owner/name and forge.
+// Returns each repository sc repo ls --json lists, as its name, owner/name and forge.
 async function listed(): Promise<string[][]> {
   const rows: { name: string; repository: string; forge: string | null }[] = JSON.parse(
     (await skel(["repo", "ls", "--json"])).out,
@@ -231,8 +233,8 @@ for (const [what, typed] of [
   });
 }
 
-// Plain skel must stay fast: keeping the clone current is the daemon's work.
-test("asks its forge nothing and fetches nothing for a repository skel has", async () => {
+// Plain Skelcrew must stay fast: keeping the clone current is the daemon's work.
+test("asks its forge nothing and fetches nothing for a repository Skelcrew has", async () => {
   const checkout = onGitHub("simon/app");
   await skel([], "y\n", checkout);
   writeFileSync(join(checkout, "NEWS"), "more\n");
@@ -257,7 +259,7 @@ test("asks its forge nothing and fetches nothing for a repository skel has", asy
   expect(existsSync(join(clone("simon/app"), "NEWS"))).toBe(false);
 });
 
-// With no forge to say you can push to it, skel can't vouch for what is in it.
+// With no forge to say you can push to it, Skelcrew can't vouch for what is in it.
 test("asks about a repository no forge claims, and does nothing in one with no origin", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
   git(checkout, "remote", "set-url", "origin", "https://gitlab.com/simon/app");
@@ -273,7 +275,7 @@ test("asks about a repository no forge claims, and does nothing in one with no o
   expect(existsSync(clone("simon/app"))).toBe(false);
 });
 
-test("outside a repository, says how to bring one in, and attaches to nothing, while skel has none", async () => {
+test("outside a repository, says how to bring one in, and attaches to nothing, while Skelcrew has none", async () => {
   const first = await skel([]);
   expect(first.err).toBe("");
   expect(first.out).toBe(`${hint}\n`);
@@ -283,7 +285,7 @@ test("outside a repository, says how to bring one in, and attaches to nothing, w
   expect((await skel([])).out).toBe(left);
 });
 
-test("--from brings in the repository it names, wherever skel runs", async () => {
+test("--from brings in the repository it names, wherever Skelcrew runs", async () => {
   onGitHub("simon/app", "WRITE");
   const run = await skel(["--from", "simon/app"]);
   expect(run.err).toBe("");
@@ -304,7 +306,7 @@ test("--from says why it can't bring a repository in, and attaches to the one yo
 });
 
 // The daemon opens that repository's lead, or the one you opened last when it names none.
-test("tells the daemon the repository you attached from, once skel has it", async () => {
+test("tells the daemon the repository you attached from, once Skelcrew has it", async () => {
   const asked = () => JSON.parse(readFileSync(join(home, "asked"), "utf8"));
   const app = onGitHub("simon/app", "WRITE");
   await skel([], "", app);
@@ -316,7 +318,7 @@ test("tells the daemon the repository you attached from, once skel has it", asyn
   expect(asked()).toEqual({ command: "lead", from: "simon/app" });
   await skel([]);
   expect(asked()).toEqual({ command: "lead" });
-  // Not yet in skel, as you didn't trust it.
+  // Not yet in Skelcrew, as you didn't trust it.
   await skel([], "n\n", onGitHub("other/tool"));
   expect(asked()).toEqual({ command: "lead" });
   git(app, "remote", "set-url", "origin", "https://gitlab.com/simon/app");
@@ -340,7 +342,7 @@ test("repo ls says how to bring a repository in while there is none", async () =
   expect((await skel(["repo", "ls"])).out).toBe(`${hint}\n`);
 });
 
-test("repo rm removes skel's clone and forgets the trust", async () => {
+test("repo rm removes Skelcrew's clone and forgets the trust", async () => {
   const checkout = onGitHub("simon/app");
   await skel([], "y\n", checkout);
   const removed = await skel(["repo", "rm", "app"]);
@@ -355,13 +357,13 @@ test("repo rm removes skel's clone and forgets the trust", async () => {
   expect(missing.err).toContain("app");
 });
 
-// skel takes a machine with sprite-env, the Sprite's own tool, on its PATH for a Sprite. This
+// Skelcrew takes a machine with sprite-env, the Sprite's own tool, on its PATH for a Sprite. This
 // one has the daemon's service, as the first run leaves it, and says the Sprite's URL.
 function onSprite(): void {
   fake(
     "sprite-env",
     `case "$*" in
-  "services get skel") exit 0 ;;
+  "services get skelcrew") exit 0 ;;
   info) echo '{"sprite_name":"demo","sprite_url":"https://demo-simon.sprites.app"}' ;;
   *) exit 1 ;;
 esac`,
@@ -379,7 +381,7 @@ test("on a Sprite, brings in a repository asking its forge for the wake-ups that
   ]);
 });
 
-// Wake-ups left on would wake the Sprite for a repository skel no longer polls.
+// Wake-ups left on would wake the Sprite for a repository Skelcrew no longer polls.
 test("on a Sprite, repo rm stops the wake-ups", async () => {
   onSprite();
   await skel([], "", onGitHub("simon/app", "WRITE"));
@@ -392,14 +394,14 @@ test("on a Sprite, repo rm stops the wake-ups", async () => {
 
 test("repo rm refuses while the repository has live threads, and names them", async () => {
   await skel([], "y\n", onGitHub("simon/app"));
-  const db = new Database(join(home, ".local", "share", "skel", "skel.db"));
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
   db.run(`INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES
-    ('simon', 'app', 12, 'app-12', 'skel/12', 'working'),
-    ('simon', 'app', 15, 'app-15', 'skel/15', 'waiting'),
-    ('simon', 'app', 9, 'app-9', 'skel/9', 'done')`);
+    ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'working'),
+    ('simon', 'app', 15, 'app-15', 'skelcrew/15', 'waiting'),
+    ('simon', 'app', 9, 'app-9', 'skelcrew/9', 'done')`);
   const refused = await skel(["repo", "rm", "app"]);
   expect(refused.code).toBe(1);
-  expect(refused.err).toBe("skel: app has live threads: app-12, app-15. Stop them first.\n");
+  expect(refused.err).toBe("Skelcrew: app has live threads: app-12, app-15. Stop them first.\n");
   expect(existsSync(clone("simon/app"))).toBe(true);
   db.run("UPDATE threads SET status = 'done' WHERE task = 12");
   db.run("UPDATE threads SET status = 'failed' WHERE task = 15");
@@ -409,22 +411,22 @@ test("repo rm refuses while the repository has live threads, and names them", as
   expect(existsSync(clone("simon/app"))).toBe(false);
 });
 
-test("repo rm refuses inside skel's sandbox, where skel's database is hidden", async () => {
+test("repo rm refuses inside Skelcrew's sandbox, where Skelcrew's database is hidden", async () => {
   await skel([], "", onGitHub("simon/app", "WRITE"));
-  const run = await skel(["repo", "rm", "app"], "", home, { SKEL_SANDBOX: "1" });
+  const run = await skel(["repo", "rm", "app"], "", home, { SKELCREW_SANDBOX: "1" });
   expect(run.code).toBe(1);
   expect(run.err).toBe(
-    "skel: removing a repository is only for your own terminal, not for agents\n",
+    "Skelcrew: removing a repository is only for your own terminal, not for agents\n",
   );
   expect(existsSync(clone("simon/app"))).toBe(true);
 });
 
-test("plain skel refuses inside skel's sandbox, and brings in nothing", async () => {
+test("plain sc refuses inside Skelcrew's sandbox, and brings in nothing", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
-  const run = await skel([], "", checkout, { SKEL_SANDBOX: "1" });
+  const run = await skel([], "", checkout, { SKELCREW_SANDBOX: "1" });
   expect(run.code).toBe(1);
   expect(run.err).toBe(
-    "skel: attaching to the lead is only for your own terminal, not for agents\n",
+    "Skelcrew: attaching to the lead is only for your own terminal, not for agents\n",
   );
   expect(calls()).toBe("");
   expect(existsSync(clone("simon/app"))).toBe(false);
@@ -444,8 +446,8 @@ test("names two repositories that share a name with their owners", async () => {
 test("repo ls lists each repository with its tracker and forge, as text and for tools", async () => {
   expect(JSON.parse((await skel(["repo", "ls", "--json"])).out)).toEqual([]);
   await skel([], "", onGitHub("simon/app", "WRITE"));
-  // Its skel.yaml names a tracker that isn't installed, so it has none.
-  writeFileSync(join(clone("simon/app"), "skel.yaml"), "tracker: linear\n");
+  // Its skelcrew.yaml names a tracker that isn't installed, so it has none.
+  writeFileSync(join(clone("simon/app"), "skelcrew.yaml"), "tracker: linear\n");
   const json = await skel(["repo", "ls", "--json"]);
   expect(json.err).toBe("");
   expect(JSON.parse(json.out)).toEqual([
@@ -458,11 +460,11 @@ test("repo ls lists each repository with its tracker and forge, as text and for 
       clone: clone("simon/app"),
     },
   ]);
-  writeFileSync(join(clone("simon/app"), "skel.yaml"), "tracker: github\n");
+  writeFileSync(join(clone("simon/app"), "skelcrew.yaml"), "tracker: github\n");
   expect((await skel(["repo", "ls"])).out).toBe(
     `NAME  REPOSITORY  TRACKER  FORGE   CLONE\napp   simon/app   github   github  ${clone("simon/app")}\n`,
   );
-  writeFileSync(join(clone("simon/app"), "skel.yaml"), "tracker: linear\n");
+  writeFileSync(join(clone("simon/app"), "skelcrew.yaml"), "tracker: linear\n");
   expect((await skel(["repo", "ls"])).out).toContain("linear, not installed");
 });
 
@@ -476,16 +478,16 @@ test("repo trust clones a repository you can't push to, named by its GitHub name
   expect(await listed()).toEqual([["tool", "other/tool", "github"]]);
 });
 
-test("repo trust refuses inside skel's sandbox, where a yes could come from an agent", async () => {
+test("repo trust refuses inside Skelcrew's sandbox, where a yes could come from an agent", async () => {
   onGitHub("other/tool");
-  const run = await skel(["repo", "trust", "other/tool"], "", home, { SKEL_SANDBOX: "1" });
+  const run = await skel(["repo", "trust", "other/tool"], "", home, { SKELCREW_SANDBOX: "1" });
   expect(run.code).toBe(1);
   expect(run.err).toContain("your own terminal");
   expect(existsSync(clone("other/tool"))).toBe(false);
   expect(existsSync(trustFile())).toBe(false);
 });
 
-test("repo trust asks for owner/repo for a repository skel doesn't know yet", async () => {
+test("repo trust asks for owner/repo for a repository Skelcrew doesn't know yet", async () => {
   const run = await skel(["repo", "trust", "tool"]);
   expect(run.code).toBe(1);
   expect(run.err).toContain("owner/repo");
@@ -496,7 +498,7 @@ test("repo add adds the checkout you are in, and attaches to nothing", async () 
   const run = await skel(["repo", "add"], "", checkout);
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toBe("Cloning simon/app for skel.\nAdded simon/app, as app.\n");
+  expect(run.out).toBe("Cloning simon/app for Skelcrew.\nAdded simon/app, as app.\n");
   expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
   expect(calls()).not.toContain("daemon");
 });
@@ -523,13 +525,13 @@ test("repo add asks about a repository you can't push to, and a no adds nothing"
   expect(yes.out).toContain("Added other/tool, as tool.");
 });
 
-test("repo add says so for a repository skel has, and fetches nothing", async () => {
+test("repo add says so for a repository Skelcrew has, and fetches nothing", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
   await skel(["repo", "add"], "", checkout);
   writeFileSync(join(home, "calls"), "");
   const again = await skel(["repo", "add", "simon/app"]);
   expect(again.err).toBe("");
-  expect(again.out).toBe("skel has simon/app already, as app.\n");
+  expect(again.out).toBe("Skelcrew has simon/app already, as app.\n");
   expect(calls()).toBe("");
 });
 
@@ -537,14 +539,14 @@ test("repo add says why outside a checkout with a remote, and for a name no forg
   const outside = await skel(["repo", "add"]);
   expect(outside.code).toBe(1);
   expect(outside.err).toBe(
-    `skel: ${home} isn't a checkout with a remote. Run skel repo add in one, or give the repository's URL.\n`,
+    `Skelcrew: ${home} isn't a checkout with a remote. Run sc repo add in one, or give the repository's URL.\n`,
   );
   const unknown = await skel(["repo", "add", "nobody/none"]);
   expect(unknown.code).toBe(1);
   expect(unknown.err).toContain("no forge installed knows nobody/none");
 });
 
-// A repository with no forge takes skel's pushes on your own git login, which the daemon must
+// A repository with no forge takes Skelcrew's pushes on your own git login, which the daemon must
 // be able to use without you.
 describe("a repository no forge claims", () => {
   // Returns a checkout whose remote is a folder of bare repositories no forge claims.
@@ -570,7 +572,7 @@ describe("a repository no forge claims", () => {
     expect(existsSync(join(clone("simon/notes"), "README"))).toBe(true);
   });
 
-  test("isn't added when git refuses to push, and skel says what to fix", async () => {
+  test("isn't added when git refuses to push, and Skelcrew says what to fix", async () => {
     const real = Bun.which("git") ?? "git";
     writeFileSync(
       join(home, "bin", "git"),
@@ -586,23 +588,23 @@ describe("a repository no forge claims", () => {
   });
 });
 
-test("repo add and init refuse inside skel's sandbox, where a yes could come from an agent", async () => {
+test("repo add and init refuse inside Skelcrew's sandbox, where a yes could come from an agent", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
   for (const [args, what] of [
     [["repo", "add"], "adding a repository"],
-    [["init"], "setting up a repository for skel"],
+    [["init"], "setting up a repository for Skelcrew"],
   ] as const) {
-    const run = await skel([...args], "", checkout, { SKEL_SANDBOX: "1" });
+    const run = await skel([...args], "", checkout, { SKELCREW_SANDBOX: "1" });
     expect(run.code).toBe(1);
-    expect(run.err).toBe(`skel: ${what} is only for your own terminal, not for agents\n`);
+    expect(run.err).toBe(`Skelcrew: ${what} is only for your own terminal, not for agents\n`);
   }
-  expect(existsSync(join(checkout, "skel.yaml"))).toBe(false);
+  expect(existsSync(join(checkout, "skelcrew.yaml"))).toBe(false);
   expect(existsSync(clone("simon/app"))).toBe(false);
 });
 
-test("init writes a starter skel.yaml with the tracker you pick and your harness and model for each role, and adds the repository", async () => {
+test("init writes a starter skelcrew.yaml with the tracker you pick and your harness and model for each role, and adds the repository", async () => {
   writeFileSync(
-    join(home, ".config", "skel", "config.yaml"),
+    join(home, ".config", "skelcrew", "config.yaml"),
     "harness: claude\nmodel: sonnet\nlead: { model: opus }\nreviewer: { harness: codex }\n",
   );
   const checkout = onGitHub("simon/app", "WRITE");
@@ -614,7 +616,7 @@ test("init writes a starter skel.yaml with the tracker you pick and your harness
   expect(run.out).toContain(
     "Which tracker holds this repository's tasks?\n  1) github\n  2) none\n",
   );
-  expect(readFileSync(join(checkout, "skel.yaml"), "utf8")).toBe(
+  expect(readFileSync(join(checkout, "skelcrew.yaml"), "utf8")).toBe(
     `# Shared with everyone who works on this repository. Never put a secret here.
 tracker: github
 lead:     { harness: claude, model: opus }
@@ -627,34 +629,34 @@ reviewer: { harness: codex }
   expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
   expect(run.out).toContain("Added simon/app, as app.");
   expect(run.out).toContain(
-    "Wrote skel.yaml. skel reads it from its own clone, so it counts once you commit it and push it to the default branch.",
+    "Wrote skelcrew.yaml. Skelcrew reads it from its own clone, so it counts once you commit it and push it to the default branch.",
   );
 });
 
 // YAML reads true, null or 123 as something other than text, which a model name must be.
 test("init writes model names that read back as the same text", async () => {
   writeFileSync(
-    join(home, ".config", "skel", "config.yaml"),
+    join(home, ".config", "skelcrew", "config.yaml"),
     'harness: claude\nmodel: "123"\nlead: { model: "true" }\nbuilder: { model: "null" }\n',
   );
   const checkout = onGitHub("simon/app", "WRITE");
   // 2 picks no tracker, so the file names none.
   expect((await skel(["init"], "2\n", checkout)).err).toBe("");
-  expect(parse(readFileSync(join(checkout, "skel.yaml"), "utf8"))).toEqual({
+  expect(parse(readFileSync(join(checkout, "skelcrew.yaml"), "utf8"))).toEqual({
     lead: { harness: "claude", model: "true" },
     builder: { harness: "claude", model: "null" },
     reviewer: { harness: "claude", model: "123" },
   });
 });
 
-test("init only adds the tracker to a skel.yaml that is there, and leaves one naming a tracker alone", async () => {
+test("init only adds the tracker to a skelcrew.yaml that is there, and leaves one naming a tracker alone", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
-  const file = join(checkout, "skel.yaml");
+  const file = join(checkout, "skelcrew.yaml");
   writeFileSync(file, "# How to build it.\nsetup: [make]\n");
   const none = await skel(["init"], "2\n", checkout);
   expect(none.code).toBe(0);
   expect(readFileSync(file, "utf8")).toBe("# How to build it.\nsetup: [make]\n");
-  expect(none.out).toContain("skel.yaml is there already, so skel left it as it is.");
+  expect(none.out).toContain("skelcrew.yaml is there already, so Skelcrew left it as it is.");
   expect(none.out).toContain("Added simon/app, as app.");
 
   const run = await skel(["init"], "1\n", checkout);
@@ -662,44 +664,44 @@ test("init only adds the tracker to a skel.yaml that is there, and leaves one na
   expect(run.code).toBe(0);
   expect(readFileSync(file, "utf8")).toBe("# How to build it.\nsetup: [make]\ntracker: github\n");
   expect(run.out).toContain(
-    "Added tracker: github to skel.yaml. skel reads it from its own clone, so it counts once you commit it and push it to the default branch.",
+    "Added tracker: github to skelcrew.yaml. Skelcrew reads it from its own clone, so it counts once you commit it and push it to the default branch.",
   );
 
   const again = await skel(["init"], "", checkout);
   expect(again.code).toBe(0);
   expect(again.out).not.toContain("Which tracker");
   expect(readFileSync(file, "utf8")).toBe("# How to build it.\nsetup: [make]\ntracker: github\n");
-  expect(again.out).toContain("skel.yaml is there already, so skel left it as it is.");
+  expect(again.out).toContain("skelcrew.yaml is there already, so Skelcrew left it as it is.");
 });
 
 test("init writes nothing when no tracker is picked", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
   const run = await skel(["init"], "", checkout);
   expect(run.code).toBe(1);
-  expect(run.err).toBe("skel: no tracker was picked, so skel init wrote nothing\n");
+  expect(run.err).toBe("Skelcrew: no tracker was picked, so sc init wrote nothing\n");
   const wrong = await skel(["init"], "3\n", checkout);
-  expect(wrong.err).toBe("skel: 3 isn't one of the numbers, so skel init wrote nothing\n");
-  expect(existsSync(join(checkout, "skel.yaml"))).toBe(false);
+  expect(wrong.err).toBe("Skelcrew: 3 isn't one of the numbers, so sc init wrote nothing\n");
+  expect(existsSync(join(checkout, "skelcrew.yaml"))).toBe(false);
 });
 
 test("init stops outside a git repository, and in one with no remote", async () => {
   const outside = await skel(["init"]);
   expect(outside.code).toBe(1);
   expect(outside.err).toBe(
-    "skel: skel init runs in a checkout of a git repository, and this folder isn't in one.\n",
+    "Skelcrew: sc init runs in a checkout of a git repository, and this folder isn't in one.\n",
   );
   const checkout = onGitHub("simon/app", "WRITE");
   git(checkout, "remote", "remove", "origin");
   const none = await skel(["init"], "", checkout);
   expect(none.code).toBe(1);
   expect(none.err).toBe(
-    "skel: skel init needs the repository's remote, and this checkout has none. Push it somewhere first, such as to GitHub.\n",
+    "Skelcrew: sc init needs the repository's remote, and this checkout has none. Push it somewhere first, such as to GitHub.\n",
   );
-  expect(existsSync(join(checkout, "skel.yaml"))).toBe(false);
+  expect(existsSync(join(checkout, "skelcrew.yaml"))).toBe(false);
 });
 
 // A git template, or anything else, could put a credential in a new clone's config. The lead
-// reads every clone in skel's folder, so such a clone must never get there, even briefly.
+// reads every clone in Skelcrew's folder, so such a clone must never get there, even briefly.
 test("refuses a clone whose config holds a credential, before the lead could see it", async () => {
   onGitHub("simon/app", "WRITE");
   const template = join(home, "template");
@@ -712,6 +714,8 @@ test("refuses a clone whose config holds a credential, before the lead could see
   const run = await skel(["--from", "simon/app"]);
   expect(run.err).toContain("credential");
   expect(existsSync(clone("simon/app"))).toBe(false);
-  expect(existsSync(join(home, ".local", "share", "skel", "cloning", "simon", "app"))).toBe(false);
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "cloning", "simon", "app"))).toBe(
+    false,
+  );
   expect((await skel(["repo", "ls"])).out).toBe(`${hint}\n`);
 });

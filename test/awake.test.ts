@@ -14,7 +14,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     repo: "app",
     task: "12",
     folder: "app-12",
-    branch: "skel/12-add-export",
+    branch: "skelcrew/12-add-export",
     base: null,
     status: "working",
     session: "s",
@@ -136,7 +136,7 @@ test("the daemon holds the Sprite for five minutes and renews the hold", async (
   await Bun.sleep(150);
   expect(calls.length).toBeGreaterThanOrEqual(2);
   expect(calls.length).toBeLessThanOrEqual(4);
-  for (const call of calls) expect(call).toBe('PUT /v1/tasks/skel {"expire":300}');
+  for (const call of calls) expect(call).toBe('PUT /v1/tasks/skelcrew {"expire":300}');
 });
 
 test("the daemon lets the Sprite sleep once there is no work, and holds it again for new work", async () => {
@@ -148,16 +148,16 @@ test("the daemon lets the Sprite sleep once there is no work, and holds it again
   await Bun.sleep(100);
   work = true;
   expect(await seen(3)).toEqual([
-    'PUT /v1/tasks/skel {"expire":300}',
-    "DELETE /v1/tasks/skel",
-    'PUT /v1/tasks/skel {"expire":300}',
+    'PUT /v1/tasks/skelcrew {"expire":300}',
+    "DELETE /v1/tasks/skelcrew",
+    'PUT /v1/tasks/skelcrew {"expire":300}',
   ]);
 });
 
 test("a daemon started without work lets go of a hold an earlier daemon left", async () => {
   stop = keepAwake(() => false, { socket, every: 20, renew: 60_000 });
   await Bun.sleep(150);
-  expect(calls).toEqual(["DELETE /v1/tasks/skel"]);
+  expect(calls).toEqual(["DELETE /v1/tasks/skelcrew"]);
 });
 
 test("a control socket that doesn't answer is tried again at the next check", async () => {
@@ -166,12 +166,12 @@ test("a control socket that doesn't answer is tried again at the next check", as
   stop = keepAwake(() => true, { socket, every: 20, renew: 60_000 });
   await Bun.sleep(60);
   await serveControlSocket();
-  expect(await seen(1)).toEqual(['PUT /v1/tasks/skel {"expire":300}']);
+  expect(await seen(1)).toEqual(['PUT /v1/tasks/skelcrew {"expire":300}']);
 });
 
 // A Sprite sleeps again as soon as a webhook delivery is answered, before the poll it asked
 // for has run. This hold is apart from the daemon's own, which it never lets go of.
 test("a webhook delivery holds the Sprite for a minute, under a hold of its own", async () => {
   await holdAwhile(60, socket);
-  expect(calls).toEqual(['PUT /v1/tasks/skel-webhook {"expire":60}']);
+  expect(calls).toEqual(['PUT /v1/tasks/skelcrew-webhook {"expire":60}']);
 });

@@ -16,7 +16,7 @@ import {
 import { installSpriteService, onSprite, serviceLog, startSpriteService } from "./sprite.ts";
 
 // Returns the systemd user service path, which also marks daemon installation complete.
-const unitFile = () => join(homedir(), ".config", "systemd", "user", "skel.service");
+const unitFile = () => join(homedir(), ".config", "systemd", "user", "skelcrew.service");
 
 // Returns the file that defines the daemon's service here and marks it as installed.
 export const serviceFile = () => (process.platform === "darwin" ? plistFile() : unitFile());
@@ -36,10 +36,10 @@ function unitValue(value: string): string {
 }
 
 // Returns the PATH your login shell sets up, followed by any folders of this one it lacks.
-// A command over ssh, as skel --remote runs, gets a bare PATH, and Ubuntu's ~/.bashrc adds
+// A command over ssh, as sc --remote runs, gets a bare PATH, and Ubuntu's ~/.bashrc adds
 // folders such as nvm's only in a shell you type into. So the shell starts as one, login
 // and interactive, in a session of its own: with no terminal to take over, it can't stop
-// skel's. Its startup files can print, so the PATH comes after a marker. Without SHELL
+// Skelcrew's. Its startup files can print, so the PATH comes after a marker. Without SHELL
 // there is no login shell to ask.
 export function loginPath(): string {
   const here = (process.env.PATH ?? "").split(":");
@@ -79,7 +79,7 @@ function unitText(skel: string, given: string): string {
   // Where tmux couldn't get a scope of its own, stopping the service would otherwise end
   // the tmux server, and every agent with it.
   return `[Unit]
-Description=skel daemon
+Description=Skelcrew daemon
 
 [Service]
 ExecStart="${unitValue(skel)}" serve
@@ -94,22 +94,22 @@ WantedBy=default.target
 
 // Installs or updates the daemon service, enabling it and lingering on the first
 // installation. On a Sprite, which has no systemd, it is a Sprite service instead, and on a
-// Mac a launchd agent. Checked on every plain skel, but only by comparing files, so a moved
+// Mac a launchd agent. Checked on every plain sc, but only by comparing files, so a moved
 // bun, harness or checkout reaches the daemon at its next start without a systemctl call each
 // time.
 export function installService(): void {
   const mac = process.platform === "darwin";
   const file = serviceFile();
   const before = existsSync(file) ? readFileSync(file, "utf8") : null;
-  // skel built as one file runs its modules from a folder only it sees, so the service runs
+  // Skelcrew built as one file runs its modules from a folder only it sees, so the service runs
   // the file itself.
-  const skel = singleFile ? process.execPath : join(checkoutFolder, "bin", "skel");
+  const skel = singleFile ? process.execPath : join(checkoutFolder, "bin", "sc");
   // A worktree goes away once its work merges, and the daemon with it. Its .git is a file
   // pointing back at the repository, wherever the worktree lives.
   if (!singleFile && statSync(join(checkoutFolder, ".git"), { throwIfNoEntry: false })?.isFile()) {
     if (before !== null) return;
     throw new Error(
-      `this skel runs from a worktree (${skel}): run skel from the main checkout to install its daemon`,
+      `this Skelcrew runs from a worktree (${skel}): run sc from the main checkout to install its daemon`,
     );
   }
   if (onSprite()) {
@@ -132,7 +132,7 @@ export function installService(): void {
     }
     runServiceCommand(["systemctl", "--user", "daemon-reload"]);
     if (before !== null) return;
-    runServiceCommand(["systemctl", "--user", "enable", "--now", "skel"]);
+    runServiceCommand(["systemctl", "--user", "enable", "--now", "skelcrew"]);
     console.log(
       skelLine(
         "turning on lingering, so the daemon keeps running after you log out and starts after a reboot.",
@@ -141,7 +141,7 @@ export function installService(): void {
     runServiceCommand(["loginctl", "enable-linger"]);
   } catch (error) {
     // The unit file marks the service installed, so the old one comes back, or none, and
-    // the next skel tries again.
+    // the next sc tries again.
     if (before === null) rmSync(file);
     else writeFileSync(file, before);
     throw error;
@@ -159,14 +159,14 @@ export function startDaemon(): string {
     startLaunchAgent();
     return daemonLog();
   }
-  const start = Bun.spawnSync(["systemctl", "--user", "start", "skel"], {
+  const start = Bun.spawnSync(["systemctl", "--user", "start", "skelcrew"], {
     stdio: ["inherit", "inherit", "inherit"],
   });
-  if (!start.success) throw new Error("systemctl couldn't start skel's daemon");
-  return "journalctl --user -u skel";
+  if (!start.success) throw new Error("systemctl couldn't start Skelcrew's daemon");
+  return "journalctl --user -u skelcrew";
 }
 
-// Restarts the daemon's service on this machine, so it runs the skel installed now, and returns
+// Restarts the daemon's service on this machine, so it runs the Skelcrew installed now, and returns
 // where its log is, for when it doesn't come back. Agents keep running, as their sessions live
 // in tmux and only the daemon restarts. Throws when the service manager refuses.
 export function restartDaemon(): string {
@@ -176,13 +176,13 @@ export function restartDaemon(): string {
   }
   const sprite = onSprite();
   const argv = sprite
-    ? ["sprite-env", "services", "restart", "skel"]
-    : ["systemctl", "--user", "restart", "skel"];
+    ? ["sprite-env", "services", "restart", "skelcrew"]
+    : ["systemctl", "--user", "restart", "skelcrew"];
   // sprite-env prints the service's log for a few seconds after starting it.
   const restart = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe" });
   if (!restart.success)
     throw new Error(
-      `${argv[0]} couldn't restart skel's daemon: ${restart.stderr.toString().trim()}`,
+      `${argv[0]} couldn't restart Skelcrew's daemon: ${restart.stderr.toString().trim()}`,
     );
-  return sprite ? serviceLog : "journalctl --user -u skel";
+  return sprite ? serviceLog : "journalctl --user -u skelcrew";
 }

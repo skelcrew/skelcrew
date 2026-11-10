@@ -1,5 +1,6 @@
 #!/bin/sh
-# Runs skel from this checkout. Put this folder on your PATH, or link to this file.
+# Runs sc, Skelcrew's command, from this checkout. Put this folder on your PATH, or link
+# to this file.
 # A command over ssh gets a bare PATH without ~/.bun/bin, where Bun's installer puts bun.
 bun=$(command -v bun || echo "$HOME/.bun/bin/bun")
 exec "$bun" "$(dirname "$(readlink -f "$0")")/../src/main.ts" "$@"

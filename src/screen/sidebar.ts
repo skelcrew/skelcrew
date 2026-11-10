@@ -1,8 +1,8 @@
 // The sidebar: the live left pane of the screen, with three lists, all of the open repository's.
-// THREADS has its lead and every thread that isn't done, with what each is doing. ISSUES and
-// PRS show what is open in its tracker and forge, as links. It only shows, switches, links and opens pages.
-// Picking a thread switches the client in the right pane, and picking an issue or PR puts its
-// page there. It also keeps the tabs and the strip above that pane up to date, and switches to
+// THREADS has its lead and every thread that isn't done, with what each is doing. ISSUES and PRS
+// show what is open in its tracker and forge, as links. It only shows, switches, links and opens
+// pages. Picking a thread switches the client in the right pane, and picking an issue or PR puts
+// its page there. It also keeps the tabs and the strip above that pane up to date, and switches to
 // another repository's tab.
 import {
   paneTty,
@@ -46,7 +46,7 @@ const input = new RegExp(
 );
 
 // Returns the repository open in the sidebar, given its owner/name, with its lead's session.
-// One skel no longer has, such as one removed this moment, has the name a new lead would.
+// One Skelcrew no longer has, such as one removed this moment, has the name a new lead would.
 function opening(db: ReturnType<typeof openDb>, fullName: string): Open {
   const [owner = "", repo = ""] = fullName.split("/");
   try {
@@ -57,7 +57,7 @@ function opening(db: ReturnType<typeof openDb>, fullName: string): Open {
 }
 
 // Runs the sidebar until its pane goes. The session given is its own, on the screen's server,
-// `where` says which remote skel runs on, if any, for the header above it, and `repository`
+// `where` says which remote Skelcrew runs on, if any, for the header above it, and `repository`
 // is the owner/name of the repository it opens on.
 // tmux brings it the keys that move and clicks on its input. It looks again each second, and
 // writes only when something changed: over a slow link each write costs, and on a Sprite a
@@ -82,7 +82,7 @@ export async function runSidebar(
   let lastStrip = "";
   // The notice's lines, above the lists, which have the height that is left.
   let notice: string[] = [];
-  // Returns a thread's round limit, from its repository's skel.yaml or your config. Settings
+  // Returns a thread's round limit, from its repository's skelcrew.yaml or your config. Settings
   // that aren't valid already stop rounds, with the reason, and mustn't also take the sidebar
   // away. Such a thread then reads as never past the limit.
   const maxRounds = (thread: Thread) => {

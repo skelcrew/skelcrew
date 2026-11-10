@@ -1,4 +1,4 @@
-// The page shown for an issue or PR: what it says of an item in skel's copy, as a tracker or
+// The page shown for an issue or PR: what it says of an item in Skelcrew's copy, as a tracker or
 // forge sends it, and how it is drawn.
 import { expect, test } from "bun:test";
 import { Item } from "../src/flow/copy.ts";
@@ -25,11 +25,12 @@ const review = (verdict: string, text: string, login = "codex-bot") => ({
 const pull = (more: object = {}) =>
   prItem("34", "Fix the login redirect", {
     body: "Sign-in landed on a 404.",
-    branch: "skel/12",
+    branch: "skelcrew/12",
     ...more,
   });
 
-// Returns the page of an issue or PR, as its tracker or forge sends it and skel's copy keeps it.
+// Returns the page of an issue or PR, as its tracker or forge sends it and Skelcrew's copy keeps
+// it.
 const pageFor = (item: object): Page => pageOf(Item.parse(item));
 
 test("an issue's page has its title, state, author, labels and description", () => {
@@ -66,7 +67,7 @@ test("a PR's page has its title, state, branch, checks, latest review and descri
     title: "Fix the login redirect",
     facts: [
       ["State", "open"],
-      ["Branch", "skel/12 → main"],
+      ["Branch", "skelcrew/12 → main"],
       ["Checks", "passing"],
       ["Review", "approved · ana"],
     ],
@@ -80,7 +81,7 @@ test("a PR with no checks or reviews says so", () => {
   expect(facts).toContainEqual(["Review", "none"]);
 });
 
-test("checks read as the strip reads them, leaving out skel's own check", () => {
+test("checks read as the strip reads them, leaving out Skelcrew's own check", () => {
   const running = [check("test", "passed"), check("lint", "running")];
   const pr = pull({ checks: [...running, check("skelcrew/check", "failed")] });
   expect(pageFor(pr).facts).toContainEqual(["Checks", "running"]);
@@ -88,7 +89,7 @@ test("checks read as the strip reads them, leaving out skel's own check", () => 
   expect(pageFor(failing).facts).toContainEqual(["Checks", "failing"]);
 });
 
-test("a review skel posted says its verdict, as a forge may only have it as a comment", () => {
+test("a review Skelcrew posted says its verdict, as a forge may only have it as a comment", () => {
   const pr = pull({ reviews: [review("commented", "**Approved.**\n\nLooks right.")] });
   expect(pageFor(pr).facts).toContainEqual(["Review", "Approved. · codex-bot"]);
 });
@@ -97,7 +98,7 @@ const page: Page = {
   title: "Add CSV export",
   facts: [
     ["State", "open"],
-    ["Labels", "skel"],
+    ["Labels", "skelcrew"],
   ],
   body: "Export threads.\n\nKeep it small.",
 };
@@ -109,7 +110,7 @@ test("a page reads from the title down, two columns in, with the link among the 
     "  Add CSV export",
     "",
     "  State   open",
-    "  Labels  skel",
+    "  Labels  skelcrew",
     `  GitHub  ${issueUrl}`,
     "",
     "  Export threads.",

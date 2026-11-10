@@ -1,11 +1,11 @@
-// What skel's tests share: finding skel's source files, waiting, and running skel and its
+// What Skelcrew's tests share: finding Skelcrew's source files, waiting, and running sc and its
 // daemon as a user would. Each test file keeps its own home folder and tmux socket and hands
 // them in, so a test that outlives its file can never reach another file's home.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 
-// Returns the path of a file in src/, or of src/ itself, for a test that runs skel or hands
+// Returns the path of a file in src/, or of src/ itself, for a test that runs sc or hands
 // its code to a process of its own.
 export const source = (file = "") => join(import.meta.dir, "..", "src", file);
 
@@ -25,7 +25,7 @@ export async function until(
   }
 }
 
-// Returns the environment for a process of a test with this home. skel, its daemon and what
+// Returns the environment for a process of a test with this home. Skelcrew, its daemon and what
 // they start find their state, their socket and the test's fake programs through it, and so
 // never reach the real ones.
 export const homeEnv = (home: string) => ({
@@ -72,7 +72,7 @@ await serve(${JSON.stringify(socket)});`;
   return run;
 }
 
-// Runs skel with these arguments and environment, and gives back what it printed and its code.
+// Runs sc with these arguments and environment, and gives back what it printed and its code.
 export async function runSkel(args: string[], env: Record<string, string>) {
   const run = Bun.spawn([process.execPath, source("main.ts"), ...args], {
     env,
@@ -98,10 +98,10 @@ export function fakePlugin(
   const folder = join(home, `plugin-${name}`);
   mkdirSync(folder, { recursive: true });
   writeFileSync(
-    join(folder, "skel-plugin.yaml"),
+    join(folder, "skelcrew-plugin.yaml"),
     `name: ${name}
 version: 0.1.0
-skel: 0.1.0
+skelcrew: 0.1.0
 about: A tracker and forge for tests
 jobs: [${jobs.join(", ")}]
 call: [bun, ${JSON.stringify(join(import.meta.dir, "fake-plugin.ts"))}]
@@ -115,7 +115,7 @@ openDb().run("INSERT INTO plugins (name, folder) VALUES (?, ?)", [${JSON.stringi
     stderr: "pipe",
   });
   if (!added.success) throw new Error(added.stderr.toString());
-  const settings = join(home, ".config", "skel", "plugins", name);
+  const settings = join(home, ".config", "skelcrew", "plugins", name);
   mkdirSync(settings, { recursive: true });
   return settings;
 }
@@ -165,7 +165,7 @@ export function prItem(id: string, title: string, more: object = {}): object {
     link: `https://github.com/simon/app/pull/${id}`,
     created: "2026-11-05T10:00:00Z",
     updated: "2026-11-05T10:00:00Z",
-    branch: `skel/${id}`,
+    branch: `skelcrew/${id}`,
     base: "main",
     conflicts: false,
     checks: [],
@@ -175,9 +175,9 @@ export function prItem(id: string, title: string, more: object = {}): object {
   };
 }
 
-// Returns SQL that puts an open issue or PR into skel's copy, as a poll would have saved it, for
-// a test that reads the copy without a daemon. The repository's owner is simon. `more` sets
-// the item's other fields, such as its body.
+// Returns SQL that puts an open issue or PR into Skelcrew's copy, as a poll would have saved it,
+// for a test that reads the copy without a daemon. The repository's owner is simon. `more` sets the
+// item's other fields, such as its body.
 export function itemSql(
   repo: string,
   kind: "task" | "pr",

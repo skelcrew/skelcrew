@@ -1,4 +1,4 @@
-// The first run: what a plain skel sets up on a new machine, skipping each step already
+// The first run: what a plain sc sets up on a new machine, skipping each step already
 // done.
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -36,7 +36,10 @@ const tools = [
 // On a Mac the sandbox comes with the system, and what Homebrew gives goes in one line.
 const brewed = ["tmux", "git"];
 const macTools = [
-  { command: "sandbox-exec", install: "it comes with macOS, and skel can't run agents without it" },
+  {
+    command: "sandbox-exec",
+    install: "it comes with macOS, and Skelcrew can't run agents without it",
+  },
 ];
 
 // Returns what to install for agents to have a harness: the one your config saved, or else
@@ -109,18 +112,18 @@ function apparmorAdvice(bwrap: string): string {
   sudo cp ${shipped} /etc/apparmor.d/
   sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict`;
   return `${intro} This adds a profile for ${bwrap}:
-  printf 'abi <abi/4.0>,\\ninclude <tunables/global>\\nprofile skel-bwrap ${bwrap} flags=(unconfined) {\\n  userns,\\n  include if exists <local/skel-bwrap>\\n}\\n' | sudo tee /etc/apparmor.d/skel-bwrap
-  sudo apparmor_parser -r /etc/apparmor.d/skel-bwrap`;
+  printf 'abi <abi/4.0>,\\ninclude <tunables/global>\\nprofile skelcrew-bwrap ${bwrap} flags=(unconfined) {\\n  userns,\\n  include if exists <local/skelcrew-bwrap>\\n}\\n' | sudo tee /etc/apparmor.d/skelcrew-bwrap
+  sudo apparmor_parser -r /etc/apparmor.d/skelcrew-bwrap`;
 }
 
 // Hands your terminal to an outside login and reports whether it succeeded. Rules naming
 // the tool mark where its output starts and ends, without touching it, since the codes and
-// tokens it prints must stay on screen. At a terminal, skel first waits for Enter, so you
+// tokens it prints must stay on screen. At a terminal, Skelcrew first waits for Enter, so you
 // choose when each login starts. While the tool runs, Ctrl-C stops only the tool, so the
-// way back is marked whatever happens. Ctrl-C at the pause stops skel before anything runs.
+// way back is marked whatever happens. Ctrl-C at the pause stops Skelcrew before anything runs.
 function handOver(tool: string, command: string[], env: Env): boolean {
   // Bun's prompt answers a bare Enter as it answers Ctrl-D, so the secret's prompt waits,
-  // which also stops skel on Ctrl-C with your terminal as it was.
+  // which also stops Skelcrew on Ctrl-C with your terminal as it was.
   if (process.stdin.isTTY) promptSecret(skelLine(`press Enter to start ${tool}'s login`));
   console.log(rule(tool));
   const ignore = () => {};
@@ -133,13 +136,13 @@ function handOver(tool: string, command: string[], env: Env): boolean {
     process.off("SIGINT", ignore);
     // A tool stopped by Ctrl-C leaves the terminal's ^C on the line, which would push the
     // rule past the edge.
-    console.log(`${ran ? "" : "\n"}${rule("back in skel")}`);
+    console.log(`${ran ? "" : "\n"}${rule("back in Skelcrew")}`);
   }
 }
 
 // Returns what is wrong with a pasted token, or null when it looks like one. Claude Code
 // itself tells its login tokens apart by this prefix. It reports any token as logged in
-// without asking the server, so the form is all skel can check here.
+// without asking the server, so the form is all Skelcrew can check here.
 function tokenProblem(token: string): string | null {
   if (token === "") return "nothing was pasted";
   if (/\s/.test(token)) return "that has spaces in it, and a token is one word";
@@ -171,11 +174,11 @@ function saveClaudeToken(env: Env): void {
   }
 }
 
-// Returns the settings for skel's own Codex login, which every Codex agent and review shares:
+// Returns the settings for Skelcrew's own Codex login, which every Codex agent and review shares:
 // apart from yours in ~/.codex, so a renewal on either side never breaks the other.
 const codexEnv = (env: Env): Env => ({ ...env, CODEX_HOME: codexHome() });
 
-// Reports whether skel's own Codex login exists. Reviews can change only the login and session
+// Reports whether Skelcrew's own Codex login exists. Reviews can change only the login and session
 // files in its folder, so running codex on it with your rights runs nothing a reviewer left
 // there. codex login status reads only the saved login: a key in your environment doesn't
 // count.
@@ -184,7 +187,7 @@ function codexLoggedIn(env: Env): boolean {
   return Bun.spawnSync(status, { env: codexEnv(env), stdout: "pipe", stderr: "pipe" }).success;
 }
 
-// Logs skel in to Codex in its own folder, with a code you enter on any device, since the
+// Logs Skelcrew in to Codex in its own folder, with a code you enter on any device, since the
 // machine may have no browser. Then says who now has the login, `who` as the step named them,
 // to mark where Codex's output ends.
 function logInCodex(env: Env, who: "agents" | "the reviewer"): void {
@@ -201,14 +204,14 @@ const githubPlugin = "skelcrew/skel-plugin-github";
 const hasGitHubPlugin = () => installedPlugins(openDb()).some((p) => p.name === "github");
 
 // Offers the GitHub plugin, and on a yes installs it, which shows what it runs and asks again
-// before it runs anything. One that fails to install is only reported: skel works from git
-// alone until you install it with skel plugin install.
+// before it runs anything. One that fails to install is only reported: Skelcrew works from git
+// alone until you install it with sc plugin install.
 function offerGitHub(): void {
   const answer = prompt("Install the GitHub plugin? [Y/n]")?.trim().toLowerCase() ?? "";
   if (!["", "y", "yes"].includes(answer)) {
     console.log(
       skelLine(
-        `skipped. skel works from git alone until you run skel plugin install ${githubPlugin}.`,
+        `skipped. Skelcrew works from git alone until you run sc plugin install ${githubPlugin}.`,
       ),
     );
     return;
@@ -220,11 +223,11 @@ function offerGitHub(): void {
   }
 }
 
-// Offers skel init in the checkout you ran skel from, once the GitHub plugin is installed and
-// the checkout's skel.yaml names no tracker, so GitHub's issues become the repository's tasks.
+// Offers sc init in the checkout you ran Skelcrew from, once the GitHub plugin is installed and
+// the checkout's skelcrew.yaml names no tracker, so GitHub's issues become the repository's tasks.
 // A yes names GitHub as its tracker without asking which. Outside a checkout with a remote, or
-// where skel.yaml can't be read, it offers nothing, and skel init says why when you run it. A
-// skel init that fails is only reported, as the machine is set up either way.
+// where skelcrew.yaml can't be read, it offers nothing, and sc init says why when you run it. A
+// sc init that fails is only reported, as the machine is set up either way.
 async function offerInit(): Promise<void> {
   const root = checkoutTop();
   if (!hasGitHubPlugin() || root === null || !originHere(root)) return;
@@ -235,18 +238,18 @@ async function offerInit(): Promise<void> {
     return;
   }
   const answer = prompt(
-    skelLine("run skel init here, so GitHub's issues become this repository's tasks? [Y/n]"),
+    skelLine("run sc init here, so GitHub's issues become this repository's tasks? [Y/n]"),
   );
   if (!["", "y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
     console.log(
       skelLine(
-        "skipped. Run skel init here later, so GitHub's issues become this repository's tasks.",
+        "skipped. Run sc init here later, so GitHub's issues become this repository's tasks.",
       ),
     );
     return;
   }
   await initRepo("github").catch((error) =>
-    console.log(skelLine(`couldn't run skel init: ${errorText(error)}`)),
+    console.log(skelLine(`couldn't run sc init: ${errorText(error)}`)),
   );
 }
 
@@ -294,8 +297,8 @@ function pickReviewer(harness: HarnessName): void {
 }
 
 // Reports whether agents on this harness have their login: Claude Code's token from the
-// first run, or skel's own Codex login, which reviews use too. Only files are looked at, as
-// plain skel checks this each time it starts.
+// first run, or Skelcrew's own Codex login, which reviews use too. Only files are looked at, as
+// plain sc checks this each time it starts.
 function agentsLoggedIn(harness: HarnessName): boolean {
   if (harness === "claude") return existsSync(claudeTokenFile());
   return existsSync(join(codexHome(), "auth.json"));
@@ -313,7 +316,7 @@ export function setupDone(): boolean {
 }
 
 // Completes unfinished machine setup and keeps the daemon service current before attaching
-// to the lead. A first run in a checkout ends by offering skel init there.
+// to the lead. A first run in a checkout ends by offering sc init there.
 export async function firstRun(): Promise<void> {
   const done = setupDone();
   if (!done) {
@@ -351,7 +354,7 @@ export async function firstRun(): Promise<void> {
   if (process.platform === "darwin")
     console.log(
       skelLine(
-        "a laptop sleeps, so work stops while the lid is closed. skel remote add keeps it going, on a server or a Sprite.",
+        "a laptop sleeps, so work stops while the lid is closed. sc remote add keeps it going, on a server or a Sprite.",
       ),
     );
   await offerInit();
@@ -369,7 +372,7 @@ function stepsToTake(env: Env, asked: { reviewer: boolean; plugin: boolean }): S
     steps.push({
       title: "offer the GitHub plugin",
       about:
-        "For tasks from GitHub issues and PRs on GitHub. skel acts there as its GitHub App, never as you.",
+        "For tasks from GitHub issues and PRs on GitHub. Skelcrew acts there as its GitHub App, never as you.",
       take: () => {
         asked.plugin = true;
         offerGitHub();
@@ -401,7 +404,7 @@ function stepsToTake(env: Env, asked: { reviewer: boolean; plugin: boolean }): S
         about: "Claude Code will print a long-lived token. Copy it, then come back here.",
         take: () => saveClaudeToken(env),
       });
-  // Every Codex agent and review shares skel's own Codex login.
+  // Every Codex agent and review shares Skelcrew's own Codex login.
   const onCodex = harness === "codex" ? "agents" : "the reviewer";
   if ((harness === "codex" || reviewer === "codex") && !codexLoggedIn(env))
     steps.push({

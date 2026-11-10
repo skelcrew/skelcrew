@@ -1,4 +1,4 @@
-// skel's database, opened over one that lacks the newer columns.
+// Skelcrew's database, opened over one that lacks the newer columns.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
@@ -15,14 +15,14 @@ afterEach(() => {
 });
 
 test("a thread saved before the newer columns keeps working, with no rounds and no pull request yet", () => {
-  const data = join(home, ".local", "share", "skel");
+  const data = join(home, ".local", "share", "skelcrew");
   mkdirSync(data, { recursive: true });
-  const old = new Database(join(data, "skel.db"));
+  const old = new Database(join(data, "skelcrew.db"));
   old.run(`CREATE TABLE threads (owner TEXT NOT NULL, repo TEXT NOT NULL, task INTEGER NOT NULL,
     folder TEXT NOT NULL UNIQUE, branch TEXT NOT NULL, base TEXT, status TEXT NOT NULL,
     session TEXT, PRIMARY KEY (owner, repo, task))`);
   old.run(
-    `INSERT INTO threads VALUES ('simon', 'app', 12, 'app-12', 'skel/12', NULL, 'working', NULL)`,
+    `INSERT INTO threads VALUES ('simon', 'app', 12, 'app-12', 'skelcrew/12', NULL, 'working', NULL)`,
   );
   old.close();
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
@@ -59,14 +59,14 @@ console.log(JSON.stringify(liveThreads(openDb())));`;
   ]);
 });
 
-// The daemon writes while skel run in your terminal, or a test, reads or writes too.
+// The daemon writes while Skelcrew run in your terminal, or a test, reads or writes too.
 test("a write waits for another process's write instead of failing", async () => {
   const db = JSON.stringify(source("db.ts"));
   const env = { ...process.env, HOME: home };
   const run = (code: string) =>
     Bun.spawn([process.execPath, "-e", code], { env, stdout: "pipe", stderr: "pipe" });
   await run(`import { openDb } from ${db}; openDb();`).exited;
-  const file = JSON.stringify(join(home, ".local", "share", "skel", "skel.db"));
+  const file = JSON.stringify(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
   const held = JSON.stringify(join(home, "held"));
   const holder = run(`import { Database } from "bun:sqlite";
 const db = new Database(${file});
@@ -85,9 +85,9 @@ openDb().run("INSERT INTO repositories (owner, repo, name) VALUES ('simon', 'sit
 });
 
 test("a process that opens the database while another is adding the newer columns still starts", async () => {
-  const data = join(home, ".local", "share", "skel");
+  const data = join(home, ".local", "share", "skelcrew");
   mkdirSync(data, { recursive: true });
-  const other = new Database(join(data, "skel.db"));
+  const other = new Database(join(data, "skelcrew.db"));
   // The waiting process keeps looking at the file, and a commit that meets one of those looks
   // fails at once without a wait of its own.
   other.run("PRAGMA busy_timeout = 5000");
@@ -114,12 +114,12 @@ openDb().close();`;
   expect(await run.exited).toBe(0);
 }, 15_000);
 
-// A database from the release before skel kept a copy of issues and PRs: it had only the
+// A database from the release before Skelcrew kept a copy of issues and PRs: it had only the
 // newest open ones' numbers and titles, for the sidebar.
 test("a database from before the copy gains it, and keeps its repositories and threads", () => {
-  const data = join(home, ".local", "share", "skel");
+  const data = join(home, ".local", "share", "skelcrew");
   mkdirSync(data, { recursive: true });
-  const old = new Database(join(data, "skel.db"));
+  const old = new Database(join(data, "skelcrew.db"));
   old.run(`CREATE TABLE repositories (owner TEXT NOT NULL, repo TEXT NOT NULL,
     name TEXT NOT NULL UNIQUE, labeled INTEGER NOT NULL DEFAULT 0,
     open_issues INTEGER NOT NULL DEFAULT 0, open_prs INTEGER NOT NULL DEFAULT 0,
@@ -132,7 +132,7 @@ test("a database from before the copy gains it, and keeps its repositories and t
     folder TEXT NOT NULL UNIQUE, branch TEXT NOT NULL, base TEXT, status TEXT NOT NULL,
     session TEXT, PRIMARY KEY (owner, repo, task))`);
   old.run(
-    `INSERT INTO threads VALUES ('simon', 'app', 12, 'app-12', 'skel/12', NULL, 'working', NULL)`,
+    `INSERT INTO threads VALUES ('simon', 'app', 12, 'app-12', 'skelcrew/12', NULL, 'working', NULL)`,
   );
   old.run(`CREATE TABLE open_items (owner TEXT NOT NULL, repo TEXT NOT NULL, kind TEXT NOT NULL,
     number INTEGER NOT NULL, title TEXT NOT NULL, created TEXT NOT NULL,
@@ -146,7 +146,7 @@ test("a database from before the copy gains it, and keeps its repositories and t
     body: "As JSON",
     state: "open",
     author: null,
-    labels: ["skel"],
+    labels: ["skelcrew"],
     link: "https://github.com/simon/app/issues/12",
     created: "2026-11-05T10:00:00Z",
     updated: "2026-11-05T10:00:00Z",

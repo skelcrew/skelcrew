@@ -18,7 +18,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     repo: "app",
     task: "12",
     folder: "app-12",
-    branch: "skel/12-add-export",
+    branch: "skelcrew/12-add-export",
     base: null,
     status: "waiting",
     session: "s",
@@ -85,7 +85,7 @@ function pr(change: Partial<PullRequest> = {}): PullRequest {
     link: "https://github.com/simon/app/pull/7",
     created: "2026-11-05T10:00:00Z",
     updated: "2026-11-05T10:00:00Z",
-    branch: "skel/12-add-export",
+    branch: "skelcrew/12-add-export",
     base: "main",
     conflicts: false,
     reviews: [],
@@ -143,7 +143,7 @@ test("failed checks are told once every check has finished, whatever order they 
   expect(done.seen).toEqual(["30", "31"]);
 });
 
-test("skel's own check doesn't hold back failed checks", () => {
+test("Skelcrew's own check doesn't hold back failed checks", () => {
   const failing = run(30, "test", "failed");
   const pending: Check = { name: reviewCheck, id: null, state: "running" };
   expect(acted(thread(), pr({ checks: [pending, failing] })).failed).toEqual([failing]);
@@ -158,7 +158,7 @@ test("a failed check with no ID is told while the thread waits, then not again",
   expect(acted(thread({ status: "working" }), pr({ checks: [status] })).failed).toEqual([]);
 });
 
-test("skel's reviewer asking for changes isn't a failed check for polling to tell", () => {
+test("Skelcrew's reviewer asking for changes isn't a failed check for polling to tell", () => {
   const changes: Check = { name: reviewCheck, id: null, state: "failed" };
   expect(acted(thread(), pr({ checks: [changes] })).failed).toEqual([]);
 });
@@ -177,7 +177,7 @@ test("a failed check waits while a newer round is still being pushed", () => {
   expect(decision.seen).toEqual([]);
 });
 
-test("approved by skel's reviewer and every check green: the thread needs you", () => {
+test("approved by Skelcrew's reviewer and every check green: the thread needs you", () => {
   const checks = [approved, run(30, "test", "passed")];
   const decision = acted(thread(), pr({ checks }));
   expect(decision.change).toEqual({ needs_you: true });
@@ -193,7 +193,7 @@ test("approved while a check still runs: the thread waits on CI", () => {
   expect(acted(thread(), pr({ checks })).change).toEqual({});
 });
 
-test("green checks without skel's approval don't need you", () => {
+test("green checks without Skelcrew's approval don't need you", () => {
   expect(acted(thread(), pr({ checks: [run(30, "test", "passed")] })).change).toEqual({});
 });
 
@@ -260,8 +260,8 @@ test("a person's review is typed in with its line comments", () => {
   expect(decision.change).toEqual({ status: "working", needs_you: false });
 });
 
-// skel's reviews come from its forge's app, so they are a bot's.
-test("bot comments and reviews, skel's own included, are ignored", () => {
+// Skelcrew's reviews come from its forge's app, so they are a bot's.
+test("bot comments and reviews, Skelcrew's own included, are ignored", () => {
   const comments = [comment(50, bot, "Bumped a dependency.")];
   const skel = { login: "skelcrew[bot]", bot: true, you: false, push: false };
   const reviews = [review(60, bot, "Summary."), review(61, skel, "**Approved.**")];
@@ -311,7 +311,7 @@ test("a merge conflict tells the builder to merge the base branch", () => {
   const decision = acted(thread({ base: "next" }), pr({ conflicts: true, base: "next" }));
   expect(decision.tell).toEqual([expect.stringContaining("conflicts with next")]);
   expect(decision.tell[0]).toContain("git fetch origin, merge origin/next");
-  // skel's clone, the builder's origin, must hold next before the builder is told.
+  // Skelcrew's clone, the builder's origin, must hold next before the builder is told.
   expect(decision.conflict).toBe("next");
   expect(decision.change).toEqual({ status: "working", needs_you: false });
 });
@@ -355,7 +355,7 @@ test("a labeled task with no thread gets one", () => {
   ]);
 });
 
-// Only skel start brings back a thread that failed, was stopped or is done: a label left on
+// Only sc start brings back a thread that failed, was stopped or is done: a label left on
 // the task must not start it over and over.
 test("a labeled task whose thread failed or is done gets no new thread", () => {
   const threads = [
@@ -369,7 +369,7 @@ test("a labeled task whose thread failed or is done gets no new thread", () => {
   expect(labeledToStart(threads, tasks)).toEqual([]);
 });
 
-test("a PR's CI reads as passing, failing or still running, and skel's own check doesn't count", () => {
+test("a PR's CI reads as passing, failing or still running, and Skelcrew's own check doesn't count", () => {
   const changes: Check = { name: reviewCheck, id: null, state: "failed" };
   const passed = run(30, "test", "passed");
   const failed = run(31, "build", "failed");
@@ -390,7 +390,7 @@ test("with a forge, an approved review waits on CI", () => {
 
 // Without a forge there is no CI to wait on, and no PR: the branch is what is ready.
 test("without a forge, an approved review needs you at once, saying where the branch is", () => {
-  const ready = "app-t1 is ready on branch skel/t1-fix-login";
+  const ready = "app-t1 is ready on branch skelcrew/t1-fix-login";
   const outcome = afterReview(0, approval, 3, ready);
   expect(outcome).toMatchObject({ needsYou: true, status: "waiting", why: ready });
 });

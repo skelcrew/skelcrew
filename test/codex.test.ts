@@ -1,6 +1,6 @@
 // Codex as the lead and a builder, against a running daemon. A shell script stands in for
 // Codex: it keeps what it was started with in its CODEX_HOME, saves a conversation as Codex
-// does, waits at Codex's prompt, and runs the hook commands skel gives it on the command line.
+// does, waits at Codex's prompt, and runs the hook commands Skelcrew gives it on the command line.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -29,7 +29,7 @@ let socket = "";
 let plugin = "";
 const running: Subprocess[] = [];
 
-const data = () => join(home, ".local", "share", "skel");
+const data = () => join(home, ".local", "share", "skelcrew");
 // The CODEX_HOME of app-12's builder, and of app's lead.
 const builder = () => join(data(), "codex-sessions", "app-12");
 const lead = () => join(data(), "codex-sessions", leadPlaces("simon", "app").name);
@@ -115,9 +115,9 @@ beforeEach(() => {
     next: null,
   });
   config("lead: { harness: codex }\nbuilder: { harness: codex, model: gpt-6.1-sol }\n");
-  writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
+  writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
-  writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
+  writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
   writeFileSync(
     join(home, ".gitconfig"),
     `[url "file://${join(home, "github")}/"]\n\tinsteadOf = https://github.com/\n[user]\n\tname = Simon\n\temail = simon@example.com\n`,
@@ -137,25 +137,25 @@ afterEach(async () => {
 
 // Writes your config.yaml, with Claude Code as your harness and what `roles` adds.
 function config(roles: string): void {
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
-  writeFileSync(join(home, ".config", "skel", "config.yaml"), `harness: claude\n${roles}`);
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), `harness: claude\n${roles}`);
 }
 
 // What this test's processes run with.
 const env = () => homeEnv(home);
 
-// Runs skel as you would.
+// Runs sc as you would.
 const skel = (args: string[]) => runSkel(args, env());
 
 // A daemon's work takes its time here, so a wait lasts 15 seconds unless a test says otherwise.
 const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout });
 
-// Puts simon/app on the fake GitHub and tells skel about it.
+// Puts simon/app on the fake GitHub and tells Skelcrew about it.
 function addApp(): void {
   const work = join(home, "work", "app");
   mkdirSync(work, { recursive: true });
   writeFileSync(join(work, "README"), "app\n");
-  writeFileSync(join(work, "skel.yaml"), "tracker: github\n");
+  writeFileSync(join(work, "skelcrew.yaml"), "tracker: github\n");
   git(work, "init", "-q", "-b", "main");
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");
@@ -167,7 +167,7 @@ openDb().run("UPDATE repositories SET forge = 'github', claimed = 1, remote = 'h
   if (!added.success) throw new Error(added.stderr.toString());
 }
 
-// What skel ps --json shows you about app-12.
+// What sc ps --json shows you about app-12.
 async function app12(): Promise<{ status: string; needsYou: boolean } | undefined> {
   const ps = await skel(["ps", "--json"]);
   return JSON.parse(ps.out).find((t: { thread: string }) => t.thread === "app-12");
@@ -192,10 +192,10 @@ async function act(step: "stop" | "talk" | "renew") {
 // The fake builder's arguments, one to a line.
 const args = (folder = builder()) => read(join(folder, "args")).trimEnd().split("\n");
 
-// Asks the daemon for app's lead, as plain skel does before attaching, without attaching.
+// Asks the daemon for app's lead, as plain sc does before attaching, without attaching.
 function askForLead(): Promise<string> {
   return new Promise((done) => {
-    const connection = createConnection(join(home, "run", "skel.sock"));
+    const connection = createConnection(join(home, "run", "skelcrew.sock"));
     let reply = "";
     connection.on("connect", () =>
       connection.write(`${JSON.stringify({ command: "lead", from: "simon/app" })}\n`),
@@ -218,15 +218,15 @@ async function startApp12() {
 
 // Changes app-12 in the database, as a round would.
 function setThread(sql: string): void {
-  const db = new Database(join(data(), "skel.db"));
+  const db = new Database(join(data(), "skelcrew.db"));
   db.run("PRAGMA busy_timeout = 5000");
   db.run(sql);
   db.close();
 }
 
-// bubblewrap can't start inside skel's own sandbox, so only there agents can't start.
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("codex", () => {
-  test("a builder starts on Codex in a folder of its own, with the task after -- and skel's settings", async () => {
+// bubblewrap can't start inside Skelcrew's own sandbox, so only there agents can't start.
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("codex", () => {
+  test("a builder starts on Codex in a folder of its own, with the task after -- and Skelcrew's settings", async () => {
     await startApp12();
     const given = args();
     const clone = join(data(), "threads", "app-12");
@@ -324,7 +324,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("codex", () => {
     expect(existsSync(join(builder(), "args"))).toBe(false);
   }, 60_000);
 
-  test("a session renewing the login renews skel's own, which every session shares", async () => {
+  test("a session renewing the login renews Skelcrew's own, which every session shares", async () => {
     mkdirSync(join(data(), "codex"), { recursive: true });
     writeFileSync(join(data(), "codex", "auth.json"), "mine\n");
     await startApp12();

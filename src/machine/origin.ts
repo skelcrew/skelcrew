@@ -1,5 +1,5 @@
-// The remote of the checkout you run skel in, read from its origin. It names the repository
-// you attached from, on the server or, for skel --remote, on your laptop.
+// The remote of the checkout you run sc in, read from its origin. It names the repository
+// you attached from, on the server or, for sc --remote, on your laptop.
 
 // Returns the host a remote URL is on and the owner and name its path ends with, such as
 // github.com and simon/app for git@github.com:simon/app.git, or null for one with no owner in
@@ -19,10 +19,10 @@ export function pathOf(url: string): { host: string; owner: string; repo: string
   return { host: (found?.[1] ?? "").toLowerCase(), owner, repo };
 }
 
-// Returns the remote URL of the checkout in the folder, this one unless told, or null when it
-// has no origin. Reading origin is the only git skel runs in your checkout, besides finding
-// its top for skel init and the first run's offer of it: the folder only names the repository. It is read as written, before
-// any insteadOf in your git config rewrites it.
+// Returns the remote URL of the checkout in the folder, this one unless told, or null when it has
+// no origin. Reading origin is the only git Skelcrew runs in your checkout, besides finding its top
+// for sc init and the first run's offer of it: the folder only names the repository. It is read as
+// written, before any insteadOf in your git config rewrites it.
 export function originHere(folder = "."): string | null {
   const origin = Bun.spawnSync(["git", "-C", folder, "config", "--get", "remote.origin.url"], {
     stdout: "pipe",

@@ -1,4 +1,4 @@
-// The daemon, run by skel serve: keeps each repository's lead and the threads' builders
+// The daemon, run by sc serve: keeps each repository's lead and the threads' builders
 // running, and answers the CLI and the agents on their sockets.
 import { dlopen, FFIType } from "bun:ffi";
 import type { Database } from "bun:sqlite";
@@ -163,7 +163,7 @@ function wakeOnDeliveries(
 // Sprite, keeps the Sprite awake while there is work, and listens on `port` for wake-ups,
 // which wake it while it sleeps.
 export async function serve(tmux: string, every = 30_000, port = urlPort): Promise<void> {
-  if (!setupDone()) throw new Error("the first run isn't done on this machine: run skel first");
+  if (!setupDone()) throw new Error("the first run isn't done on this machine: run sc first");
   const db = openDb();
   // The checkout and commit this daemon's code came from, read once, as it loaded that code
   // when it started: a git pull since doesn't change what runs.
@@ -179,11 +179,11 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
     await listen(createServer(answer(caller)), socket);
     sockets.push(socket);
   };
-  // Polls one repository at once, for skel start. Until polling starts, skel start waits for
+  // Polls one repository at once, for sc start. Until polling starts, sc start waits for
   // it, so a builder never starts from what an earlier daemon saved of its task.
   const polling = Promise.withResolvers<(fullName: string) => Promise<void>>();
   const listening = new Set<string>();
-  // The tasks skel start is starting, as owner/repo#number, which no poll starts by its label.
+  // The tasks sc start is starting, as owner/repo#number, which no poll starts by its label.
   const startingTasks = new Set<string>();
   // Opens a thread's own socket, so the daemon knows which thread calls on it. A thread that
   // starts over keeps the socket it has.
@@ -212,8 +212,8 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
     return starting;
   };
   // Returns the request as a lead may make it: about its own repository. A lead sees only its
-  // own, so a request about another is refused, and it asks you to open that one instead. skel
-  // ps and skel task ls with no repository mean every one, which for a lead is its own. Your
+  // own, so a request about another is refused, and it asks you to open that one instead. Skelcrew
+  // ps and sc task ls with no repository mean every one, which for a lead is its own. Your
   // requests and a builder's are left as they are.
   const within = (request: DaemonRequest, caller: Caller): DaemonRequest => {
     const yours = leadOfCaller(caller);
@@ -224,10 +224,10 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
     if (!("repo" in request) || !request.repo || fullNameIs(findRepository(db, request.repo), own))
       return request;
     throw new Error(
-      `you are the lead of ${own} only, so ${request.repo} isn't yours. Ask the human to open it with skel in a checkout of it: its own lead works on it.`,
+      `you are the lead of ${own} only, so ${request.repo} isn't yours. Ask the human to open it with sc in a checkout of it: its own lead works on it.`,
     );
   };
-  // Sets up a new thread's clone, opens its socket and starts its builder, after skel start
+  // Sets up a new thread's clone, opens its socket and starts its builder, after sc start
   // has had its answer. Marks the thread failed, with the reason, when any of it fails.
   const begin = async (thread: Thread) => {
     try {
@@ -238,7 +238,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       failThread(db, thread, error);
     }
   };
-  // Brings back a stopped thread's builder for skel start, with --resume on its last session
+  // Brings back a stopped thread's builder for sc start, with --resume on its last session
   // in the same clone, then carries on the round its stop cut short, as after a restart.
   // Marks the thread failed, with the reason, when the builder can't start.
   const resume = async (stopped: Thread) => {
@@ -261,7 +261,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         return { running: true, pid: process.pid, release, ...started, ...thread };
       }
       case "lead": {
-        // From outside any repository skel has, the one you opened last.
+        // From outside any repository Skelcrew has, the one you opened last.
         const repository =
           (request.from === undefined ? undefined : repositoryAt(db, request.from)) ??
           lastOpened(db);
@@ -351,7 +351,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
           goOn(db, tmux, before.folder);
           return { started: `${threadName(db, before)} goes on past the round limit.` };
         }
-        // The task's title and body come from skel's copy, brought up to date first. Meanwhile
+        // The task's title and body come from Skelcrew's copy, brought up to date first. Meanwhile
         // no poll starts the task by its label, which would leave out this start's options.
         const repository = findRepository(db, request.repo);
         const { owner, repo } = repository;
@@ -359,8 +359,8 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         startingTasks.add(key);
         let thread: Thread;
         try {
-          // Its skelcrew.yaml, which names its tracker, is in skel's clone, which the daemon may
-          // still be making.
+          // Its skelcrew.yaml, which names its tracker, is in Skelcrew's clone, which the daemon
+          // may still be making.
           if (!existsSync(cloneDir(owner, repo))) await refreshClones(db);
           await (await polling.promise)(`${owner}/${repo}`);
           // A poll already past its labels as this began may have started the thread itself.
@@ -412,7 +412,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   const path = daemonSocket();
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   if (!lock(`${path}.lock`))
-    throw new Error("the daemon is already running. Run skel to attach to a lead.");
+    throw new Error("the daemon is already running. Run sc to attach to a lead.");
   // Taken before any request comes in, so a thread started meanwhile, still setting up,
   // isn't taken for one whose setup the daemon's stop cut short.
   const before = liveThreads(db);

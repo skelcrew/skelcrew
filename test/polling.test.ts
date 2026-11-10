@@ -38,7 +38,7 @@ let socket = "";
 let plugin = "";
 const running: Subprocess[] = [];
 
-const data = () => join(home, ".local", "share", "skel");
+const data = () => join(home, ".local", "share", "skelcrew");
 const codexHome = () => join(data(), "codex");
 const builder = () => join(data(), "claude", "app-12");
 const clone = () => join(data(), "threads", "app-12");
@@ -54,7 +54,7 @@ const typed = () => read(join(builder(), "typed"));
 // Puts a program of the test's on its PATH.
 const script = (name: string, body: string) => writeScript(home, name, body);
 
-// Stands in for Claude Code. As the builder, it commits a round and runs skel submit, then
+// Stands in for Claude Code. As the builder, it commits a round and runs sc submit, then
 // waits at a ❯ prompt, keeping what is typed into it. Told of a conflict, it fetches
 // origin and merges the base, as Claude Code would, keeping what git said. While the file
 // busy is in its config folder, it looks busy, as Claude Code does mid-turn.
@@ -64,7 +64,7 @@ function fakeClaude(): void {
     `case "$CLAUDE_CONFIG_DIR" in */lead-*) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
 echo 1 > change
 git add -A && git commit -qm "round 1"
-skel submit "Round 1" >> "$CLAUDE_CONFIG_DIR/submitted" 2>&1
+sc submit "Round 1" >> "$CLAUDE_CONFIG_DIR/submitted" 2>&1
 while test -e "$CLAUDE_CONFIG_DIR/busy"; do echo "esc to interrupt"; sleep 0.2; done
 clear
 printf '\\033[?2004h'
@@ -101,14 +101,14 @@ beforeEach(() => {
   fakeClaude();
   fakeCodex();
   script("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   writeFileSync(
-    join(home, ".config", "skel", "config.yaml"),
+    join(home, ".config", "skelcrew", "config.yaml"),
     "harness: claude\nreviewer: { harness: codex }\n",
   );
-  writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
+  writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
-  writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
+  writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
   writeFileSync(
     join(home, ".gitconfig"),
     `[url "file://${join(home, "github")}/"]\n\tinsteadOf = https://github.com/\n[user]\n\tname = Simon\n\temail = simon@example.com\n`,
@@ -149,14 +149,14 @@ const leadName = leadPlaces("simon", "app").name;
 // A daemon's work takes its time here, so a wait lasts 15 seconds unless a test says otherwise.
 const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout });
 
-// Puts simon/app on the fake GitHub and tells skel about it, as a repository you have opened,
+// Puts simon/app on the fake GitHub and tells Skelcrew about it, as a repository you have opened,
 // whose lead the daemon starts, with the fake plugin as its tracker and forge. Returns a
 // checkout to push from.
 function addApp(): string {
   const work = join(home, "work", "app");
   mkdirSync(work, { recursive: true });
   writeFileSync(join(work, "README"), "app\n");
-  writeFileSync(join(work, "skel.yaml"), "tracker: github\n");
+  writeFileSync(join(work, "skelcrew.yaml"), "tracker: github\n");
   git(work, "init", "-q", "-b", "main");
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");
@@ -169,7 +169,7 @@ openDb().run("INSERT INTO repositories (name, owner, repo, opened, forge, remote
 }
 
 function thread(): Record<string, unknown> {
-  const db = new Database(join(data(), "skel.db"));
+  const db = new Database(join(data(), "skelcrew.db"));
   // The daemon may be writing, and a read that meets a write fails without a wait.
   db.run("PRAGMA busy_timeout = 5000");
   try {
@@ -245,7 +245,7 @@ const check = (id: number, state: string) => ({ name: "test", id: String(id), st
 // Returns whether the thread has handled the event with this ID.
 const handled = (id: string) => String(thread().seen ?? "").includes(`"${id}"`);
 
-// Starts the thread on app-12, and waits until skel's reviewer has approved its first round,
+// Starts the thread on app-12, and waits until Skelcrew's reviewer has approved its first round,
 // so the thread waits on CI.
 async function approvedApp12(from?: string): Promise<string> {
   const work = addApp();
@@ -253,7 +253,7 @@ async function approvedApp12(from?: string): Promise<string> {
     git(work, "checkout", "-q", "-b", from);
     git(work, "push", "-q", join(home, "github", "simon", "app.git"), from);
   }
-  // skel start reads the task from skel's copy, which it brings up to date first.
+  // sc start reads the task from Skelcrew's copy, which it brings up to date first.
   changes([issue12()]);
   serve();
   await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
@@ -274,9 +274,9 @@ async function approvedApp12(from?: string): Promise<string> {
   return work;
 }
 
-// What skel's copy holds open, as kind and ID, and the totals the sidebar counts with.
+// What Skelcrew's copy holds open, as kind and ID, and the totals the sidebar counts with.
 function copied(): { rows: string[]; totals: unknown } {
-  const db = new Database(join(data(), "skel.db"), { readonly: true });
+  const db = new Database(join(data(), "skelcrew.db"), { readonly: true });
   // The daemon can be saving a poll just as this reads, which would otherwise fail the test.
   db.run("PRAGMA busy_timeout = 5000");
   const rows = db.query("SELECT kind, id FROM items WHERE state = 'open' ORDER BY kind, id").all();
@@ -285,7 +285,7 @@ function copied(): { rows: string[]; totals: unknown } {
   return { rows: rows.map((row) => Object.values(Object(row)).join(" ")), totals };
 }
 
-test("the first poll brings everything open into skel's copy, and later ones what changed", async () => {
+test("the first poll brings everything open into Skelcrew's copy, and later ones what changed", async () => {
   addApp();
   changes([issue12(), taskItem("13", "Fix login"), prItem("34", "Bump deps")]);
   serve();
@@ -318,9 +318,9 @@ test("the first poll brings everything open into skel's copy, and later ones wha
   expect(copied()).toEqual({ rows: ["task 12"], totals: { open_issues: 1, open_prs: 0 } });
 });
 
-// bubblewrap can't start inside skel's own sandbox, so only there builders can't start.
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling a forge", () => {
-  test("a PR's checks are saved for the strip, without skel's own review check", async () => {
+// bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
+  test("a PR's checks are saved for the strip, without Skelcrew's own review check", async () => {
     await approvedApp12();
     await morePolls();
     pr({ reviews: [skelReview], checks: [approved, check(900, "passed")] });
@@ -330,7 +330,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling a forge", () => {
 
   test("a failed check reaches the builder once, even after the forge fails and the daemon restarts", async () => {
     await approvedApp12();
-    // The forge fails while this file is there; skel tries again at the next poll.
+    // The forge fails while this file is there; Skelcrew tries again at the next poll.
     writeFileSync(join(plugin, "fail-changed"), "HTTP 502: Bad Gateway");
     await morePolls();
     rmSync(join(plugin, "fail-changed"));
@@ -355,7 +355,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling a forge", () => {
     pr({ reviews: [skelReview], comments: [{ id: "50", author: you, text: "Also CSV." }] });
     await morePolls();
     // As a newer round would leave it, approved and ready, while the comment waits.
-    const db = new Database(join(data(), "skel.db"));
+    const db = new Database(join(data(), "skelcrew.db"));
     db.run("PRAGMA busy_timeout = 5000");
     db.run("UPDATE threads SET rounds = 1, needs_you = 1");
     db.close();
@@ -368,7 +368,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling a forge", () => {
   test("a poll the forge answered slowly, while a newer round was pushed, isn't acted on", async () => {
     await approvedApp12();
     const db = (sql: string) => {
-      const opened = new Database(join(data(), "skel.db"));
+      const opened = new Database(join(data(), "skelcrew.db"));
       opened.run("PRAGMA busy_timeout = 5000");
       opened.run(sql);
       opened.close();
@@ -390,7 +390,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling a forge", () => {
     expect(typed()).not.toContain("The check test failed");
   }, 60_000);
 
-  test("approved with every check green needs you, and skel's own review is not typed back", async () => {
+  test("approved with every check green needs you, and Skelcrew's own review is not typed back", async () => {
     await approvedApp12();
     pr({ reviews: [skelReview], checks: [approved, check(900, "running")] });
     await morePolls();
@@ -400,7 +400,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling a forge", () => {
     expect(handled("1001")).toBe(true);
     await until(() => read(join(data(), "claude", leadName, "typed")).includes("app-12 needs you"));
     expect(read(join(data(), "claude", leadName, "typed"))).toContain("ready to merge");
-    // Your own comment wakes the builder; skel's review, posted by its app, never does.
+    // Your own comment wakes the builder; Skelcrew's review, posted by its app, never does.
     // Waiting on you, it is polled every other time: every minute, at 30 seconds a poll.
     const before = polls();
     await Bun.sleep(2000);
@@ -529,13 +529,13 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling a forge", () => {
     expect(handled("50")).toBe(false);
   }, 60_000);
 
-  // skel start polls first, and that poll can find the label and start the thread itself.
-  test("skel start on a labeled issue starts it itself, from the branch it names", async () => {
+  // sc start polls first, and that poll can find the label and start the thread itself.
+  test("sc start on a labeled issue starts it itself, from the branch it names", async () => {
     const work = addApp();
     git(work, "checkout", "-q", "-b", "next");
     git(work, "push", "-q", join(home, "github", "simon", "app.git"), "next");
     changes([issue12()]);
-    // An hour between polls, so only skel start brings another.
+    // An hour between polls, so only sc start brings another.
     serve(3_600_000);
     await until(() => copied().rows.includes("task 12"));
     changes([issue12(true)]);
@@ -549,11 +549,11 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling a forge", () => {
     expect(thread()).toMatchObject({ task: 12, status: "working", base: "next" });
   }, 30_000);
 
-  // skel start polls first, so a builder never starts from an old title or body.
-  test("skel start reads its task as it is now", async () => {
+  // sc start polls first, so a builder never starts from an old title or body.
+  test("sc start reads its task as it is now", async () => {
     addApp();
     changes([issue12()]);
-    // An hour between polls, so only skel start brings another.
+    // An hour between polls, so only sc start brings another.
     serve(3_600_000);
     await until(() => copied().rows.includes("task 12"));
     changes([taskItem("12", "Add export as CSV", { body: "With headers" })]);

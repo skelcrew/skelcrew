@@ -1,12 +1,12 @@
 // Each repository's lead: your agent session for that repository on this machine, in its own
-// folder, kept alive in tmux, and the notes skel types into it.
+// folder, kept alive in tmux, and the notes Skelcrew types into it.
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { z } from "zod";
 import { HarnessName, harnessNamed } from "../agents/harness.ts";
 // What the lead is and how it hands work to threads. Without it, told "fix the flaky test",
 // it would try to edit the read-only clone rather than start a thread. It is a plain file so
-// it reads and changes like a doc, and Bun builds it into skel. It reaches the lead in every
+// it reads and changes like a doc, and Bun builds it into Skelcrew. It reaches the lead in every
 // turn, so every line costs context: keep it short, and promise only what is built.
 import instructions from "../agents/prompts/lead.md" with { type: "text" };
 import {
@@ -36,15 +36,15 @@ const Note = z.object({ id: z.number(), text: z.string() }).nullable();
 
 // Returns a repository's lead: where it lives, as leadPlaces gives it, the session ID of its
 // conversation, and the harness it started on, both null before it first started. A lead that
-// started before skel saved its harness ran on Claude Code, the only one then. Throws when
-// skel doesn't have the repository.
+// started before Skelcrew saved its harness ran on Claude Code, the only one then. Throws when
+// Skelcrew doesn't have the repository.
 export function leadOf(db: Database, owner: string, repo: string) {
   const row = db
     .query(
       "SELECT lead_session, lead_harness, kept_lead FROM repositories WHERE owner = ? AND repo = ?",
     )
     .get(owner, repo);
-  if (!row) throw new Error(`skel doesn't have ${owner}/${repo}`);
+  if (!row) throw new Error(`Skelcrew doesn't have ${owner}/${repo}`);
   const { lead_session, lead_harness, kept_lead } = LeadRow.parse(row);
   const harness = lead_harness ?? (lead_session === null ? null : "claude");
   return { ...leadPlaces(owner, repo, kept_lead), session: lead_session, harness };
@@ -59,8 +59,8 @@ export const openedRepositories = (db: Database) =>
     .all()
     .map((row) => Repository.parse(row));
 
-// Returns the repository you opened last, for plain skel outside any repository, or the first
-// by name while you have opened none. Null while skel has no repositories.
+// Returns the repository you opened last, for plain sc outside any repository, or the first
+// by name while you have opened none. Null while Skelcrew has no repositories.
 export function lastOpened(db: Database): Repository | null {
   const row = db
     .query(
@@ -90,7 +90,7 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
   const clone = cloneDir(owner, repo);
   if (!existsSync(clone)) await refreshClones(db);
   if (!existsSync(clone))
-    throw new Error(`skel couldn't clone ${owner}/${repo}, so its lead can't start yet`);
+    throw new Error(`Skelcrew couldn't clone ${owner}/${repo}, so its lead can't start yet`);
   const role = agentRoles(repository).lead;
   const harness = harnessNamed(lead.harness ?? role.harness);
   const stored = lead.session;
@@ -109,8 +109,8 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
     folder: lead.folder,
     origin: clone,
     // By its owner/name, which every command takes and which never changes, while its
-    // name in skel can gain its owner.
-    system: `${instructions}\nYou are the lead of ${owner}/${repo}. skel's clone of it is at ${clone}.`,
+    // name in Skelcrew can gain its owner.
+    system: `${instructions}\nYou are the lead of ${owner}/${repo}. Skelcrew's clone of it is at ${clone}.`,
     ...(resume ? { resume } : { sessionId: session }),
   });
   startSession(tmux, lead.name, { folder: lead.folder, command: argv, env });
@@ -164,7 +164,7 @@ const telling = new Map<string, Promise<void>>();
 // the round or request that saved a note never waits on a lead. Each lead's notes go one
 // after another, so a note is never pasted twice, nor two before either's Enter, while a busy
 // lead holds up no other. A note that fails to be typed stays saved, and the next call, at
-// the next note, the next skel attach or the daemon's next start, tries it again.
+// the next note, the next sc attach or the daemon's next start, tries it again.
 export function tellLead(db: Database, tmux: string): void {
   for (const { owner, repo } of repositories(db)) {
     const key = `${owner}/${repo}`;

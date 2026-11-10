@@ -12,7 +12,7 @@ export const Thread = z.object({
   owner: z.string(),
   // The repository's name on its forge, or its remote's path, without the owner.
   repo: z.string(),
-  // The task's ID in its tracker, such as 12, or, with no tracker, skel's own, such as t1.
+  // The task's ID in its tracker, such as 12, or, with no tracker, Skelcrew's own, such as t1.
   task: z.coerce.string(),
   folder: z.string(),
   branch: z.string(),
@@ -30,11 +30,11 @@ export const Thread = z.object({
   // A posted review's changes, until they are typed into the builder.
   telling: z.string().nullable(),
   // The changes of a review past the round limit, which aren't typed in, kept for when you
-  // let the thread go on with skel start.
+  // let the thread go on with sc start.
   held: z.string().nullable(),
   // The IDs of the reviews, PR comments and check runs handled, among those its PR shows, so
   // each event is handled once, across restarts too. A new thread starts with none. A row from
-  // before skel kept them has the last ID of each kind handled instead, or, older still, null
+  // before Skelcrew kept them has the last ID of each kind handled instead, or, older still, null
   // for those too: the PR's first poll then starts after its history rather than replaying it.
   seen: z
     .string()
@@ -49,14 +49,14 @@ export const Thread = z.object({
   // Why the thread started needing you, until a note saying so is typed into the lead.
   noting: z.string().nullable(),
   // The task's title and body when the thread started, for the strip, which looks each second
-  // and so can't ask the tracker, and for a task that has left skel's copy. With no tracker,
+  // and so can't ask the tracker, and for a task that has left Skelcrew's copy. With no tracker,
   // they are the task itself. An old row can hold null.
   title: z.string().nullable(),
   body: z.string().nullable(),
   // When the thread started, in milliseconds since 1970, for its running time in the sidebar.
   // An old row can hold null.
   started: z.number().nullable(),
-  // What the PR's CI says, without skel's own check, as last polled. Null with no CI, or
+  // What the PR's CI says, without Skelcrew's own check, as last polled. Null with no CI, or
   // while the commit it would be about is still on its way to the forge.
   checks: z.enum(["passing", "failing", "pending"]).nullable(),
   // The harness of the review waiting or running, which can differ from the latest finished
@@ -69,7 +69,7 @@ export const Thread = z.object({
   verdict: z.enum(["approve", "changes", "failed"]).nullable(),
   review_line: z.string().nullable(),
   // The harness its builder runs on, saved when the builder first starts, since a conversation
-  // can't move to another harness. Null before then, and in a row from before skel saved it,
+  // can't move to another harness. Null before then, and in a row from before Skelcrew saved it,
   // when every builder ran on Claude Code.
   harness: HarnessName.nullable(),
 });
@@ -83,7 +83,7 @@ export const builderHarness = (thread: Thread) => harnessNamed(thread.harness ??
 export const needsYou = (thread: Thread) => thread.needs_you || thread.asking;
 
 // Returns whether a builder that just ended its turn is waiting on you, for a harness with no
-// tool for asking, such as Codex. A builder that works and stops without skel submit has a
+// tool for asking, such as Codex. A builder that works and stops without sc submit has a
 // question for you, or is stuck. One that submitted waits on its review, and one already asking
 // has nothing new to say.
 export const endedTurnAsks = (thread: Thread) => thread.status === "working" && !thread.asking;
@@ -100,7 +100,7 @@ export const hasWork = (threads: Thread[]) =>
 
 // Returns the thread's repository as owner/name.
 export const fullNameOf = (thread: Thread) => `${thread.owner}/${thread.repo}`;
-// Returns the thread's repository, or throws once skel no longer has it.
+// Returns the thread's repository, or throws once Skelcrew no longer has it.
 export const repositoryOf = (db: Database, thread: Thread) =>
   findRepository(db, fullNameOf(thread));
 
@@ -152,7 +152,7 @@ export function record(
 }
 
 // Returns the thread's name, such as app-12, for replies. It uses the repository's name
-// now, which can gain its owner since the thread started, or owner/name once skel no longer
+// now, which can gain its owner since the thread started, or owner/name once Skelcrew no longer
 // has the repository.
 export function threadName(db: Database, thread: Thread): string {
   const row = db
@@ -163,7 +163,7 @@ export function threadName(db: Database, thread: Thread): string {
 }
 
 // Returns the thread named repo-task, such as app-12, or null when the task has none. Throws
-// when skel doesn't have the repository.
+// when Skelcrew doesn't have the repository.
 export function threadOn(db: Database, repository: string, task: string): Thread | null {
   const { owner, repo } = findRepository(db, repository);
   return Thread.nullable().parse(
@@ -193,7 +193,7 @@ export function liveThreads(db: Database): Thread[] {
 // config folder and session are named after it too, so it starts with a letter or digit, as
 // they must. tmux changes . and : in a session's name, and / would make a folder. It stays
 // short: Claude Code hashes the name of the folder it saves a conversation in once the path
-// passes 200 characters, and skel would then miss it when bringing the builder back.
+// passes 200 characters, and Skelcrew would then miss it when bringing the builder back.
 export function folderName(repository: string): string {
   const name = repository
     .replace(/[^\w-]/g, "-")

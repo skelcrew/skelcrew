@@ -1,4 +1,4 @@
-// An installed plugin: its manifest, where it lives, and running its commands, as skel asks a
+// An installed plugin: its manifest, where it lives, and running its commands, as Skelcrew asks a
 // tracker or forge with a call, or hands git a forge's login.
 import type { Database } from "bun:sqlite";
 import { lstatSync, mkdirSync, readFileSync } from "node:fs";
@@ -23,13 +23,13 @@ const needs = {
   machine: ["add", "exec", "push"],
 } as const;
 
-// What a plugin's skel-plugin.yaml says. Its name becomes a folder and an environment value,
+// What a plugin's skelcrew-plugin.yaml says. Its name becomes a folder and an environment value,
 // so it is only lowercase letters, digits and dashes.
 export const Manifest = z
   .object({
     name: z.string().regex(/^[a-z0-9][a-z0-9-]*$/, "must be lowercase letters, digits and dashes"),
     version: Version,
-    skel: Version,
+    skelcrew: Version,
     about: z.string().min(1),
     jobs: z.array(z.enum(["tracker", "forge", "chat", "machine"])).min(1),
     build: z.array(Command).optional(),
@@ -53,11 +53,12 @@ export const Manifest = z
 export type Manifest = z.infer<typeof Manifest>;
 
 // Returns the manifest in a plugin's folder, or throws saying what is wrong with it. The
-// folder is the plugin's, so a link, which could point skel at any file of yours, is refused.
+// folder is the plugin's, so a link, which could point Skelcrew at any file of yours, is refused.
 export function readManifest(folder: string): Manifest {
-  const file = join(folder, "skel-plugin.yaml");
+  const file = join(folder, "skelcrew-plugin.yaml");
   const stat = lstatSync(file, { throwIfNoEntry: false });
-  if (!stat?.isFile()) throw new Error(`${folder} has no skel-plugin.yaml, so it isn't a plugin`);
+  if (!stat?.isFile())
+    throw new Error(`${folder} has no skelcrew-plugin.yaml, so it isn't a plugin`);
   let read: unknown;
   try {
     read = parse(readFileSync(file, "utf8"));
@@ -69,7 +70,7 @@ export function readManifest(folder: string): Manifest {
   return manifest.data;
 }
 
-// A plugin as skel records it: its folder, and the GitHub repository it came from, or null for
+// A plugin as Skelcrew records it: its folder, and the GitHub repository it came from, or null for
 // a folder of yours, used where it is.
 export const Plugin = z.object({
   name: z.string(),
@@ -88,12 +89,12 @@ export const installedPlugins = (db: Database): Plugin[] =>
 // Returns the installed plugin of that name, or throws when there is none.
 export function findPlugin(db: Database, name: string): Plugin {
   const found = installedPlugins(db).find((plugin) => plugin.name === name);
-  if (!found) throw new Error(`there is no plugin named ${name}: skel plugin ls lists them`);
+  if (!found) throw new Error(`there is no plugin named ${name}: sc plugin ls lists them`);
   return found;
 }
 
-// Returns the repositories whose skel.yaml names the plugin as their tracker. One whose
-// skel.yaml can't be read has no tracker.
+// Returns the repositories whose skelcrew.yaml names the plugin as their tracker. One whose
+// skelcrew.yaml can't be read has no tracker.
 export function trackedBy(db: Database, name: string): Repository[] {
   return repositories(db).filter((repository) => {
     try {
@@ -114,22 +115,22 @@ export function settingsDir(name: string): string {
 }
 
 // Returns how to run one of a plugin's commands: its words, with `bun` turned into the Bun
-// inside skel, and the environment it gets. A plugin written for Bun so needs nothing else
-// installed. A single-file skel is Bun too, and acts as Bun when BUN_BE_BUN is set.
+// inside Skelcrew, and the environment it gets. A plugin written for Bun so needs nothing else
+// installed. A single-file Skelcrew is Bun too, and acts as Bun when BUN_BE_BUN is set.
 export function commandFor(name: string, words: string[]) {
   const [first, ...rest] = words;
   const argv = first === "bun" ? [process.execPath, ...rest] : words;
   const env: Record<string, string> = {
     ...(first === "bun" && singleFile ? { BUN_BE_BUN: "1" } : {}),
-    SKEL_PLUGIN: name,
-    SKEL_PLUGIN_CONFIG: settingsDir(name),
+    SKELCREW_PLUGIN: name,
+    SKELCREW_PLUGIN_CONFIG: settingsDir(name),
   };
   return { argv, env };
 }
 
-// Asks a tracker or forge one question, as skel's flow does, and returns its answer checked
+// Asks a tracker or forge one question, as Skelcrew's flow does, and returns its answer checked
 // against `Answer`. The call command gets the question as one JSON line on stdin and prints
-// one JSON answer. A plugin that fails throws its last line of stderr, naming skel plugin
+// one JSON answer. A plugin that fails throws its last line of stderr, naming sc plugin
 // setup when it exits with code 2, which means it needs its setup again. One that takes
 // longer than `timeout` milliseconds is ended, so a hung plugin can't hold up the daemon.
 export async function callPlugin<T>(
@@ -141,7 +142,7 @@ export async function callPlugin<T>(
 ): Promise<T> {
   const plugin = findPlugin(db, name);
   const { call } = readManifest(plugin.folder);
-  if (!call) throw new Error(`${name} has no call command, so skel can't ask it anything`);
+  if (!call) throw new Error(`${name} has no call command, so Skelcrew can't ask it anything`);
   const { argv, env } = commandFor(name, call);
   // In a process group of its own, so a timeout ends whatever the call started too. Ending
   // only the call would leave a program it started holding its output open, and the wait
@@ -178,7 +179,7 @@ export async function callPlugin<T>(
     // Code 2 is how a plugin says it needs its setup again, such as when its sign-in lapsed,
     // so the error says what fixes it.
     if (code === 2)
-      throw new Error(`${name} failed: ${last}. Run skel plugin setup ${name} to set it up again.`);
+      throw new Error(`${name} failed: ${last}. Run sc plugin setup ${name} to set it up again.`);
     throw new Error(`${name} failed: ${last}`);
   }
   let answer: unknown;
@@ -188,7 +189,7 @@ export async function callPlugin<T>(
     answer = undefined;
   }
   const checked = Answer.safeParse(answer);
-  if (!checked.success) throw new Error(`${name} answered in a way skel doesn't understand`);
+  if (!checked.success) throw new Error(`${name} answered in a way Skelcrew doesn't understand`);
   return checked.data;
 }
 

@@ -9,8 +9,8 @@ export type PullRequest = Extract<Item, { kind: "pr" }>;
 export type Check = PullRequest["checks"][number];
 type Author = PullRequest["comments"][number]["author"];
 
-// The check skel sets on a thread's commit with the review's verdict. It is skel's own, so it
-// is neither CI nor a failure for the builder to fix.
+// The check Skelcrew sets on a thread's commit with the review's verdict. It is Skelcrew's own, so
+// it is neither CI nor a failure for the builder to fix.
 export const reviewCheck = "skelcrew/check";
 
 // Returns whether the thread has used up its rounds of changes. Past that it goes on needing
@@ -26,14 +26,14 @@ export type Decision =
       // What to type into the builder, besides the failed checks, whose logs come from the forge.
       tell: string[];
       failed: Check[];
-      // The base branch the PR conflicts with, which skel's clone must hold before the
+      // The base branch the PR conflicts with, which Skelcrew's clone must hold before the
       // builder, told to merge it, fetches it from there.
       conflict: string | null;
       change: Change;
       why: string;
     };
 
-// Returns CI's checks, without skel's own review check, which its rounds look after.
+// Returns CI's checks, without Skelcrew's own review check, which its rounds look after.
 const ciOf = (pr: PullRequest) => pr.checks.filter((c) => c.name !== reviewCheck);
 
 // Returns what the PR's CI says, for the strip, or null when it has none. One failure is enough
@@ -46,7 +46,7 @@ export function ciChecks(pr: PullRequest): Thread["checks"] {
   return ci.some((c) => c.state === "failed" || c.state === "cancelled") ? "failing" : "pending";
 }
 
-// Returns the IDs the thread has handled, as a set. A thread saved before skel kept them has
+// Returns the IDs the thread has handled, as a set. A thread saved before Skelcrew kept them has
 // the last ID of each kind it handled instead, from a forge whose IDs only grow: everything up
 // to those counts as handled. One that never took in its PR's history has neither.
 function handledBefore(thread: Thread, pr: PullRequest): Set<string> | null {
@@ -66,7 +66,7 @@ function handledBefore(thread: Thread, pr: PullRequest): Set<string> | null {
 // only reviews, comments and check runs whose IDs the thread hasn't seen count. Your comments
 // wake the builder even past the round limit. Those of someone who can push to the repository
 // wake it within the limit. Anyone else's, a bot's included, never do: on a public repository
-// anyone can comment, and what is typed in steers the builder. skel's own reviews come from
+// anyone can comment, and what is typed in steers the builder. Skelcrew's own reviews come from
 // its forge's app, a bot.
 export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: number }): Decision {
   if (pr.state === "merged") return { end: `PR #${thread.pr} was merged` };
@@ -110,7 +110,7 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
   const conflict = quiet && pr.conflicts ? pr.base : null;
   if (conflict !== null)
     tell.push(
-      `The PR conflicts with ${conflict}. Run git fetch origin, merge origin/${conflict} into your branch and fix the conflict, then commit and run skel submit "<summary>" again.`,
+      `The PR conflicts with ${conflict}. Run git fetch origin, merge origin/${conflict} into your branch and fix the conflict, then commit and run sc submit "<summary>" again.`,
     );
   // The IDs the PR no longer shows can never come back, so they are left out.
   const seen = shown.filter(
@@ -127,7 +127,7 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
     const why = `told the builder: ${told.join("; ")}`;
     return { seen, tell, failed, conflict, change, why };
   }
-  // skel's reviewer approves by setting its check, so an approved PR with every check passed,
+  // Skelcrew's reviewer approves by setting its check, so an approved PR with every check passed,
   // its own included, is ready. With no CI, that check is the only one.
   const approved = pr.checks.some((c) => c.name === reviewCheck && c.state === "passed");
   if (quiet && !thread.needs_you && approved && pr.checks.every((c) => c.state === "passed"))
@@ -137,7 +137,7 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
       failed,
       conflict,
       change: { needs_you: true },
-      why: "approved by skel's reviewer with every check green, so it is ready to merge",
+      why: "approved by Skelcrew's reviewer with every check green, so it is ready to merge",
     };
   return { seen, tell, failed, conflict, change: {}, why: "" };
 }
@@ -146,7 +146,7 @@ type Labeled = { id: string; title: string };
 
 // Returns the tasks labeled to start that get a thread: those with no thread at all. A thread
 // that failed, was stopped or is done keeps its row, so its label never starts it again;
-// only skel start does.
+// only sc start does.
 export function labeledToStart(threads: Thread[], labeled: Labeled[]): Labeled[] {
   return labeled.filter((task) => !threads.some((t) => t.task === task.id));
 }
@@ -164,9 +164,9 @@ type Outcome = {
 };
 
 // Decides what a finished review means for a thread that has had `rounds` rounds of changes:
-// skel's check to set, the thread's new state, and what to type into the builder, if
+// Skelcrew's check to set, the thread's new state, and what to type into the builder, if
 // anything. The builder gets max_rounds rounds of changes to fix. A review asking for changes
-// after those is posted but not typed in, only held for skel start to let the thread go on,
+// after those is posted but not typed in, only held for sc start to let the thread go on,
 // and, like a failed review, the thread then needs you. With a forge, an approved thread waits
 // on CI: polling marks it needs you once every check is green. Without one there is no CI, and
 // `ready` says why it needs you at once, such as the branch it is ready on.
@@ -190,7 +190,7 @@ export function afterReview(
   if (given.verdict === "approve" && ready !== null)
     return {
       check: "success",
-      description: "skel's reviewer approved",
+      description: "Skelcrew's reviewer approved",
       rounds,
       needsYou: true,
       status: "waiting",
@@ -201,21 +201,21 @@ export function afterReview(
   if (given.verdict === "approve")
     return {
       check: "success",
-      description: "skel's reviewer approved",
+      description: "Skelcrew's reviewer approved",
       rounds,
       needsYou: false,
       status: "waiting",
       tell: null,
       held: null,
-      why: "approved by skel's reviewer, so it waits on CI",
+      why: "approved by Skelcrew's reviewer, so it waits on CI",
     };
   const counted = rounds + 1;
   const changes: Pick<Outcome, "check" | "description" | "rounds"> = {
     check: "failure",
-    description: "skel's reviewer asked for changes",
+    description: "Skelcrew's reviewer asked for changes",
     rounds: counted,
   };
-  const tell = `skel's reviewer asked for changes:\n\n${given.body}\n\nFix what it asks, commit, and run skel submit "<summary>" again.`;
+  const tell = `Skelcrew's reviewer asked for changes:\n\n${given.body}\n\nFix what it asks, commit, and run sc submit "<summary>" again.`;
   if (counted > maxRounds)
     return {
       ...changes,

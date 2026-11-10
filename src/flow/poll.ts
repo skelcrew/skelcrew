@@ -1,4 +1,4 @@
-// Polling: the daemon asks each repository's tracker and forge what changed, brings skel's
+// Polling: the daemon asks each repository's tracker and forge what changed, brings Skelcrew's
 // copy of its tasks and PRs up to date, starts threads on tasks labeled to start, and hands what
 // each thread's PR means for it to the code that acts on it. In a repository with no forge, it
 // ends a thread once its branch is merged or gone.
@@ -21,10 +21,10 @@ import { needsYou, readThread, record, Thread, threadName } from "./thread.ts";
 // The label that starts a thread on a task, added in its tracker by someone who may.
 const startLabel = "skelcrew";
 
-// Starts a thread on each of the repository's open tasks labeled to start in skel's copy that
-// has none, exactly as skel start does, then tells the tracker skel took it and tells the
-// repository's lead. Thread rows are read after the tracker answers, so a thread skel start
-// made meanwhile counts. A task in `starting`, named as owner/repo#task, is left to the skel
+// Starts a thread on each of the repository's open tasks labeled to start in Skelcrew's copy that
+// has none, exactly as sc start does, then tells the tracker Skelcrew took it and tells the
+// repository's lead. Thread rows are read after the tracker answers, so a thread sc start
+// made meanwhile counts. A task in `starting`, named as owner/repo#task, is left to the Skelcrew
 // start starting it, which has options of its own, such as the branch to start from. The
 // thread is recorded before anything else, so neither a later poll nor a restart starts it
 // again; telling the tracker that fails is only logged, never tried again.
@@ -45,7 +45,7 @@ async function startLabeled(
     (task) => task.labels.includes(startLabel) && !starting.has(`${fullName}#${task.id}`),
   );
   for (const task of labeledToStart(threads, labeled)) {
-    // One skel start took meanwhile waits for the next poll.
+    // One sc start took meanwhile waits for the next poll.
     const thread = await startThread(db, { repo: fullName, task: task.id }).catch((error) => {
       console.log(`couldn't start ${task.id} in ${fullName}: ${errorText(error)}`);
       return null;
@@ -53,11 +53,11 @@ async function startLabeled(
     if (thread === null) continue;
     const note = `started ${threadName(db, thread)} from ${trackerOf(db, repository)}: ${task.title}`;
     noteForLead(db, tmux, { owner, repo }, note.replace(/\s+/g, " ").slice(0, 200));
-    // Not waited on, as for skel start: setup can take minutes.
+    // Not waited on, as for sc start: setup can take minutes.
     begin(thread);
     await took(db, repository, task.id).catch((error) =>
       console.log(
-        `couldn't tell the tracker skel took ${task.id} in ${fullName}: ${errorText(error)}`,
+        `couldn't tell the tracker Skelcrew took ${task.id} in ${fullName}: ${errorText(error)}`,
       ),
     );
   }
@@ -72,7 +72,7 @@ async function actOnPr(db: Database, tmux: string, before: Thread, pr: PullReque
   const thread = readThread(db, folder);
   if (!["working", "waiting", "stopped"].includes(thread.status)) return;
   // Read only for a thread with a PR, so a bad max_rounds never fails the copy's update, nor
-  // skel start, which polls first.
+  // sc start, which polls first.
   const { maxRounds } = threadConfig(thread);
   const decision = decide(thread, pr, { maxRounds });
   const stale =
@@ -103,11 +103,11 @@ async function actOnPr(db: Database, tmux: string, before: Thread, pr: PullReque
 
 // Ends a thread of a repository with no forge once its branch is done with: when merging it
 // into its base would change nothing, which a merge, a squash and a rebase all leave, or when
-// it is gone from the remote. Only a branch skel has pushed counts, as before that it isn't on
+// it is gone from the remote. Only a branch Skelcrew has pushed counts, as before that it isn't on
 // the remote at all.
 async function actOnBranch(db: Database, tmux: string, repository: Repository, thread: Thread) {
   const ours = cloneDir(thread.owner, thread.repo);
-  const ref = (kind: string) => `refs/skel/${kind}/${thread.folder}`;
+  const ref = (kind: string) => `refs/skelcrew/${kind}/${thread.folder}`;
   const git = (...args: string[]) => quietly(["git", "-C", ours, ...args]);
   // A push under way has saved its local ref before the remote has the branch, and a failed
   // one keeps its submit, so only a thread with nothing being pushed counts.
@@ -127,7 +127,7 @@ async function actOnBranch(db: Database, tmux: string, repository: Repository, t
 }
 
 // Polls one repository: asks each of its tracker and forge what changed since its last
-// `next`, kept in `nexts` by plugin, or for everything open without one, and brings skel's
+// `next`, kept in `nexts` by plugin, or for everything open without one, and brings Skelcrew's
 // copy up to date, keeping tasks only from its tracker and PRs only from its forge. Then
 // starts threads on its tasks labeled to start, and acts on what each of its threads' PRs
 // means for the thread, or, with no forge, on each thread's branch. Thread rows are read again
@@ -176,9 +176,9 @@ async function pollRepository(
 // pick up what happened while the daemon was down. A failed poll, such as a forge answering
 // with an error, is logged and tried again at the next one. Polls run in the background, so
 // they never hold up the daemon. `begin` sets up a thread started from a label and starts its
-// builder, as the daemon does for skel start. `starting` holds the tasks skel start is starting
+// builder, as the daemon does for sc start. `starting` holds the tasks sc start is starting
 // right now, which no poll starts by their label. Returns a function that polls one repository
-// at once, named by its owner/name, for a wake-up or for skel start, and settles once that
+// at once, named by its owner/name, for a wake-up or for sc start, and settles once that
 // poll is done, failing as it does.
 export function pollRepositories(
   db: Database,
@@ -207,7 +207,7 @@ export function pollRepositories(
     const now = running.get(fullName);
     if (now) {
       // A delivery that comes in while its repository is being polled may be about an event
-      // the poll's query was too early to see, and skel start must see every change up to its
+      // the poll's query was too early to see, and sc start must see every change up to its
       // asking, so one more poll follows. Everyone who asks meanwhile shares it.
       const next =
         following.get(fullName) ??

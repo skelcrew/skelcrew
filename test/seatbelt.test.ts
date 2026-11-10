@@ -6,10 +6,10 @@ import { seatbeltProfile } from "../src/agents/seatbelt.ts";
 const profile = () =>
   seatbeltProfile({
     hidden: ["/Users/simon", "/private/tmp"],
-    read: ["/Users/simon/.local/bin", "/Users/simon/.local/share/skel/repos"],
+    read: ["/Users/simon/.local/bin", "/Users/simon/.local/share/skelcrew/repos"],
     links: ["/Users/simon/.local/bin/claude"],
-    write: ["/Users/simon/.local/share/skel/lead", "/private/tmp/run/home"],
-    socket: "/Users/simon/.local/share/skel/run/skel/lead/skel.sock",
+    write: ["/Users/simon/.local/share/skelcrew/lead", "/private/tmp/run/home"],
+    socket: "/Users/simon/.local/share/skelcrew/run/skelcrew/lead/skelcrew.sock",
   });
 
 // Strips strings and comments, then reports whether every bracket closes, since one bad
@@ -27,7 +27,7 @@ function balanced(text: string): boolean {
 
 test("is well formed, and denies whatever it doesn't name", () => {
   expect(balanced(profile())).toBe(true);
-  expect(profile().startsWith('(version 1)\n(deny default (with message "skel"))')).toBe(true);
+  expect(profile().startsWith('(version 1)\n(deny default (with message "skelcrew"))')).toBe(true);
 });
 
 test("hides a folder, then brings back only what the agent needs, in that order", () => {
@@ -38,7 +38,7 @@ test("hides a folder, then brings back only what the agent needs, in that order"
     '(deny file-read* (subpath "/Users/simon"))',
     '(allow file-read* (subpath "/Users/simon/.local/bin"))',
     '(allow file-read* (literal "/Users/simon/.local/bin/claude"))',
-    '(allow file-read* file-write* (subpath "/Users/simon/.local/share/skel/lead"))',
+    '(allow file-read* file-write* (subpath "/Users/simon/.local/share/skelcrew/lead"))',
   ];
   const at = order.map((rule) => text.indexOf(rule));
   expect(at).not.toContain(-1);
@@ -79,7 +79,7 @@ test("reaches the network, but of local sockets only the agent's own and its fol
   const text = profile();
   expect(text).toContain('(allow network-outbound (remote ip "*:*"))');
   expect(text).toContain(
-    '(allow network-outbound (remote unix-socket (subpath "/Users/simon/.local/share/skel/run/skel/lead/skel.sock")))',
+    '(allow network-outbound (remote unix-socket (subpath "/Users/simon/.local/share/skelcrew/run/skelcrew/lead/skelcrew.sock")))',
   );
   expect(text).toContain(
     '(allow network-bind (local unix-socket (subpath "/private/tmp/run/home")))',

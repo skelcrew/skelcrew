@@ -1,5 +1,5 @@
 // Acting on what a thread's PR events mean: typing them into its builder, and ending the
-// builder for a merge or for skel stop, as both must cancel the events still being typed in.
+// builder for a merge or for sc stop, as both must cancel the events still being typed in.
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 import { agentRuns, stopSession, typeInto } from "../agents/tmux.ts";
@@ -25,19 +25,19 @@ import {
 // The message about failed checks, with the end of each one's log. A check with no ID, such
 // as a commit status, has no log to read.
 async function aboutChecks(db: Database, thread: Thread, failed: Check[]): Promise<string[]> {
-  const fix = 'Fix it, commit, and run skel submit "<summary>" again.';
+  const fix = 'Fix it, commit, and run sc submit "<summary>" again.';
   return Promise.all(
     failed.map(async (c) => {
       if (c.id === null) return `The check ${c.name} failed. ${fix}`;
       const log = await failedLog(db, repositoryOf(db, thread), c.id).catch(
-        (error) => `(skel couldn't read its log: ${errorText(error)})`,
+        (error) => `(Skelcrew couldn't read its log: ${errorText(error)})`,
       );
       return `The check ${c.name} failed. The end of its log:\n\n${log}\n\n${fix}`;
     }),
   );
 }
 
-// Brings skel's clone of the repository up to date with the base branch, so the builder,
+// Brings Skelcrew's clone of the repository up to date with the base branch, so the builder,
 // whose clone has it as origin, gets the latest base when it fetches. The daemon otherwise
 // refreshes it only when you attach or it starts, and holds only the default branch.
 async function freshBase(db: Database, thread: Thread, base: string): Promise<void> {
@@ -60,8 +60,8 @@ async function endBuilder(tmux: string, folder: string): Promise<void> {
   await stopSession(tmux, folder);
 }
 
-// Stops the thread for skel stop: marks it stopped, then ends its builder as a merge would,
-// but keeps its clone, branch and PR, so skel start can bring the builder back where it was.
+// Stops the thread for sc stop: marks it stopped, then ends its builder as a merge would,
+// but keeps its clone, branch and PR, so sc start can bring the builder back where it was.
 // A submit, review or review's changes under way stay saved and carry on once it starts
 // again. It no longer needs you: you stopped it, and its builder's question ended with it.
 // Marked first, so a builder that submits while it exits is refused. Refuses a thread that

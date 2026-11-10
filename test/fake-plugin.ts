@@ -8,7 +8,7 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const dir = process.env.SKEL_PLUGIN_CONFIG ?? "";
+const dir = process.env.SKELCREW_PLUGIN_CONFIG ?? "";
 const question = JSON.parse(await Bun.stdin.text());
 appendFileSync(join(dir, "asked"), `${JSON.stringify(question)}\n`);
 const name = String(question.ask).replaceAll(" ", "-");

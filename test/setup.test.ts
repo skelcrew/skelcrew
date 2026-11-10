@@ -1,4 +1,4 @@
-// The first plain skel on a machine, run as you would run it, against fake tools.
+// The first plain sc on a machine, run as you would run it, against fake tools.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
   appendFileSync,
@@ -27,7 +27,7 @@ let checkout = "";
 let daemon: Server | undefined;
 const main = () => join(checkout, "src", "main.ts");
 
-// A copy of skel to run, since the service refuses to point into a worktree, where tests
+// A copy of Skelcrew to run, since the service refuses to point into a worktree, where tests
 // usually run.
 function copySkel(to: string): void {
   const from = join(import.meta.dir, "..");
@@ -37,7 +37,7 @@ function copySkel(to: string): void {
   symlinkSync(join(from, "node_modules"), join(to, "node_modules"));
 }
 
-// Stands in for skel's daemon on its socket. Like the real one, it answers only once
+// Stands in for Skelcrew's daemon on its socket. Like the real one, it answers only once
 // systemd has started it.
 function fakeDaemon(): Promise<Server> {
   const server = createServer((connection) =>
@@ -45,18 +45,19 @@ function fakeDaemon(): Promise<Server> {
       if (!existsSync(join(home, "started"))) return connection.destroy();
       const request = JSON.parse(data.toString());
       const asked = String(request.command);
-      // skel asks which commit the daemon runs before every attach, which update.test.ts covers.
+      // Skelcrew asks which commit the daemon runs before every attach, which update.test.ts
+      // covers.
       if (asked !== "status") appendFileSync(join(home, "calls"), `daemon ${asked}\n`);
       const lead = '{"lead":"lead","repository":"simon/app"}\n';
       connection.end(asked === "lead" ? lead : '{"running":true,"pid":1}\n');
     }),
   );
   return new Promise((listening) =>
-    server.listen(join(home, "run", "skel.sock"), () => listening(server)),
+    server.listen(join(home, "run", "skelcrew.sock"), () => listening(server)),
   );
 }
 
-// Each fake writes its calls to a log, so a test can see what skel ran.
+// Each fake writes its calls to a log, so a test can see what Skelcrew ran.
 function fake(name: string, body: string): void {
   writeFileSync(join(bin, name), `#!/bin/sh\necho "${name} $*" >> "$HOME/calls"\n${body}\n`, {
     mode: 0o755,
@@ -78,12 +79,12 @@ beforeEach(async () => {
   fake(
     "systemctl",
     `case "$*" in
-  "--user start skel"|"--user enable --now skel") : > "$HOME/started" ;;
+  "--user start skelcrew"|"--user enable --now skelcrew") : > "$HOME/started" ;;
 esac`,
   );
   fake("loginctl", "exit 0");
-  // skel has a repository, so plain skel has a lead to open once set up. The GitHub plugin is
-  // installed, so the first run doesn't offer it, unless a test removes it.
+  // Skelcrew has a repository, so plain Skelcrew has a lead to open once set up. The GitHub plugin
+  // is installed, so the first run doesn't offer it, unless a test removes it.
   const db = `import { openDb } from ${JSON.stringify(join(checkout, "src", "db.ts"))};
 const db = openDb();
 db.run("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app')");
@@ -105,13 +106,13 @@ function calls(): string {
   // The long tmux line that opens the screen is cut to the agent it opens on.
   const said = existsSync(log) ? readFileSync(log, "utf8") : "";
   return said
-    .replace(/tmux -L skel -f \/dev\/null source-file -\n/g, "")
-    .replace(/tmux -L skel-screen .* sh skel (\S+) \S+ ;.*/g, "screen on $1");
+    .replace(/tmux -L skelcrew -f \/dev\/null source-file -\n/g, "")
+    .replace(/tmux -L skelcrew-screen .* sh skelcrew (\S+) \S+ ;.*/g, "screen on $1");
 }
 
-const config = () => join(home, ".config", "skel", "config.yaml");
-const token = () => join(home, ".config", "skel", "claude-token");
-const unit = () => join(home, ".config", "systemd", "user", "skel.service");
+const config = () => join(home, ".config", "skelcrew", "config.yaml");
+const token = () => join(home, ".config", "skelcrew", "claude-token");
+const unit = () => join(home, ".config", "systemd", "user", "skelcrew.service");
 
 async function skel(
   typed = "",
@@ -146,16 +147,16 @@ test("takes every step on the first run, and none on the second", async () => {
   expect(first.err).toBe("");
   expect(first.code).toBe(0);
   expect(first.out).toContain("Claude Code");
-  // skel marks where it speaks again, so its lines stand apart from what claude prints, and
+  // Skelcrew marks where it speaks again, so its lines stand apart from what claude prints, and
   // numbers only the steps it takes.
   const said = [
-    "skel · step 1 of 2: pick a harness\n",
-    "skel · step 2 of 2: log agents in to Claude\n",
+    "Skelcrew · step 1 of 2: pick a harness\n",
+    "Skelcrew · step 2 of 2: log agents in to Claude\n",
     `──── Claude Code ${"─".repeat(63)}\n`,
     "Your token: sk-ant-oat01-good\n",
-    `──── back in skel ${"─".repeat(62)}\n`,
-    "skel · paste the token Claude printed above (it starts with sk-ant-oat01-):",
-    "skel · setup is done.\n",
+    `──── back in Skelcrew ${"─".repeat(58)}\n`,
+    "Skelcrew · paste the token Claude printed above (it starts with sk-ant-oat01-):",
+    "Skelcrew · setup is done.\n",
   ];
   // Each line comes after the one before, so a rule found is the one for its own step.
   let at = 0;
@@ -176,7 +177,7 @@ test("takes every step on the first run, and none on the second", async () => {
   expect(second.code).toBe(0);
   expect(second.out).not.toContain("Claude Code");
   expect(second.out).not.toContain("setup is done");
-  // Once set up, skel checks no tools, asks nothing and leaves systemd alone, so it
+  // Once set up, Skelcrew checks no tools, asks nothing and leaves systemd alone, so it
   // starts fast.
   expect(calls()).toBe("daemon lead\nscreen on lead\n");
 });
@@ -184,7 +185,7 @@ test("takes every step on the first run, and none on the second", async () => {
 test("installs the daemon as a systemd user service with lingering, once", async () => {
   const first = await skel("1\nsk-ant-oat01-good\n");
   expect(first.code).toBe(0);
-  const skelBin = join(checkout, "bin", "skel");
+  const skelBin = join(checkout, "bin", "sc");
   const written = readFileSync(unit(), "utf8");
   expect(written).toContain(`ExecStart="${skelBin}" serve`);
   expect(written).toContain("Restart=on-failure");
@@ -192,7 +193,7 @@ test("installs the daemon as a systemd user service with lingering, once", async
   expect(written).toContain("KillMode=process");
   expect(written).toContain(`Environment="PATH=${bin}"`);
   expect(calls()).toContain(
-    "systemctl --user daemon-reload\nsystemctl --user enable --now skel\nloginctl enable-linger\n",
+    "systemctl --user daemon-reload\nsystemctl --user enable --now skelcrew\nloginctl enable-linger\n",
   );
   expect(first.out).toContain("log out");
 
@@ -202,15 +203,15 @@ test("installs the daemon as a systemd user service with lingering, once", async
   expect(calls()).not.toContain("loginctl");
 });
 
-// skel takes a machine with sprite-env, the Sprite's own tool, on its PATH for a Sprite. Like
+// Skelcrew takes a machine with sprite-env, the Sprite's own tool, on its PATH for a Sprite. Like
 // the real one, it starts a service as it creates it.
 function onSprite(): void {
   fake(
     "sprite-env",
     `case "$*" in
-  "services get skel") test -f "$HOME/service" ;;
-  "services create skel "*) : > "$HOME/service"; : > "$HOME/started" ;;
-  "services start skel") : > "$HOME/started" ;;
+  "services get skelcrew") test -f "$HOME/service" ;;
+  "services create skelcrew "*) : > "$HOME/service"; : > "$HOME/started" ;;
+  "services start skelcrew") : > "$HOME/started" ;;
 esac`,
   );
   fake("setpriv", 'while case "$1" in --*) true ;; *) false ;; esac; do shift; done; exec "$@"');
@@ -225,7 +226,7 @@ test("on a Sprite, installs the daemon as a Sprite service, not with systemd", a
     `setpriv --inh-caps=-all --ambient-caps=-all --bounding-set=-all ${bin}/bwrap --ro-bind / / true\n`,
   );
   expect(calls()).toContain(
-    `sprite-env services create skel --cmd ${join(checkout, "bin", "skel")} --args serve --no-stream\n`,
+    `sprite-env services create skelcrew --cmd ${join(checkout, "bin", "sc")} --args serve --no-stream\n`,
   );
   expect(calls()).not.toContain("systemctl");
   expect(calls()).not.toContain("loginctl");
@@ -238,21 +239,21 @@ test("on a Sprite, installs the daemon as a Sprite service, not with systemd", a
   expect(again.code).toBe(0);
   expect(again.out).not.toContain("setup is done");
   expect(calls()).not.toContain("services create");
-  expect(calls()).toContain("sprite-env services start skel\ndaemon lead\n");
+  expect(calls()).toContain("sprite-env services start skelcrew\ndaemon lead\n");
 });
 
-test("installs the service on a machine set up before skel had one", async () => {
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
+test("installs the service on a machine set up before Skelcrew had one", async () => {
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   writeFileSync(config(), "harness: claude\n");
   writeFileSync(token(), "sk-ant-oat01-good\n");
   const run = await skel();
   expect(run.code).toBe(0);
   expect(existsSync(unit())).toBe(true);
-  expect(calls()).toContain("systemctl --user enable --now skel");
+  expect(calls()).toContain("systemctl --user enable --now skelcrew");
   expect(calls()).not.toContain("claude setup-token");
 });
 
-test("installs no service when systemctl fails, so the next skel tries again", async () => {
+test("installs no service when systemctl fails, so the next sc tries again", async () => {
   fake("systemctl", "exit 1");
   const run = await skel("1\nsk-ant-oat01-good\n");
   expect(run.code).toBe(1);
@@ -266,7 +267,7 @@ test("starts the daemon through systemd when it doesn't answer, then attaches to
   writeFileSync(join(home, "calls"), "");
   const run = await skel();
   expect(run.code).toBe(0);
-  expect(calls()).toBe("systemctl --user start skel\ndaemon lead\nscreen on lead\n");
+  expect(calls()).toBe("systemctl --user start skelcrew\ndaemon lead\nscreen on lead\n");
 });
 
 test("shows why when the daemon can't start the lead", async () => {
@@ -276,7 +277,9 @@ test("shows why when the daemon can't start the lead", async () => {
   daemon = createServer((connection) =>
     connection.on("data", () => connection.end('{"error":"the lead exited: no login"}\n')),
   );
-  await new Promise<void>((listening) => daemon?.listen(join(home, "run", "skel.sock"), listening));
+  await new Promise<void>((listening) =>
+    daemon?.listen(join(home, "run", "skelcrew.sock"), listening),
+  );
   const run = await skel();
   expect(run.code).toBe(1);
   expect(run.err).toContain("no login");
@@ -307,7 +310,7 @@ test("refuses a PATH that systemd would read differently", async () => {
 });
 
 // A git worktree has a .git file pointing back at its repository, where a checkout has a folder.
-test("refuses to install a service that runs skel from a worktree", async () => {
+test("refuses to install a service that runs sc from a worktree", async () => {
   const worktree = join(home, "code", "skel", ".claude", "worktrees", "12");
   copySkel(worktree);
   writeFileSync(join(worktree, ".git"), "gitdir: ../../../.git/worktrees/12\n");
@@ -317,7 +320,7 @@ test("refuses to install a service that runs skel from a worktree", async () => 
   expect(existsSync(unit())).toBe(false);
 });
 
-// Runs skel as it runs on a Mac, with fake launchctl and sandbox-exec.
+// Runs sc as it runs on a Mac, with fake launchctl and sandbox-exec.
 function skelOnMac(typed = "", path = bin) {
   const preload = join(import.meta.dir, "as-mac.ts");
   return skel(typed, path, main(), home, { BUN_OPTIONS: `--preload ${preload}` });
@@ -338,7 +341,7 @@ esac`,
   fake("brew", "exit 0");
 }
 
-const plist = () => join(home, "Library", "LaunchAgents", "run.skel.daemon.plist");
+const plist = () => join(home, "Library", "LaunchAgents", "dev.skelcrew.daemon.plist");
 const uid = userInfo().uid;
 
 test("on a Mac, installs the daemon as a launchd agent, with no systemd", async () => {
@@ -348,12 +351,12 @@ test("on a Mac, installs the daemon as a launchd agent, with no systemd", async 
   expect(first.code).toBe(0);
   expect(calls()).toContain(`launchctl bootstrap gui/${uid} ${plist()}\n`);
   const text = readFileSync(plist(), "utf8");
-  expect(text).toContain("<string>run.skel.daemon</string>");
+  expect(text).toContain("<string>dev.skelcrew.daemon</string>");
   expect(text).toContain(
-    `<string>${join(checkout, "bin", "skel")}</string>\n    <string>serve</string>`,
+    `<string>${join(checkout, "bin", "sc")}</string>\n    <string>serve</string>`,
   );
   expect(text).toContain("<key>AbandonProcessGroup</key>\n  <true/>");
-  expect(text).toContain(`<string>${join(home, "Library", "Logs", "skel.log")}</string>`);
+  expect(text).toContain(`<string>${join(home, "Library", "Logs", "skelcrew.log")}</string>`);
   expect(calls()).toContain("daemon lead");
 });
 
@@ -364,7 +367,7 @@ test("on a Mac, says once that work stops with the lid closed", async () => {
   const note = first.out.indexOf("work stops while the lid is closed");
   expect(done).toBeGreaterThan(-1);
   expect(note).toBeGreaterThan(done);
-  expect(first.out).toContain("skel remote add keeps it going");
+  expect(first.out).toContain("sc remote add keeps it going");
   const second = await skelOnMac();
   expect(second.out).not.toContain("lid");
 });
@@ -374,7 +377,7 @@ test("says nothing about a lid on Linux", async () => {
   expect(first.out).not.toContain("lid");
 });
 
-test("on a Mac, installs no agent when launchctl fails, so the next skel tries again", async () => {
+test("on a Mac, installs no agent when launchctl fails, so the next sc tries again", async () => {
   asMac();
   fake("launchctl", 'test "$1" = bootout && exit 3; echo "Load failed" >&2; exit 5');
   const run = await skelOnMac("1\nsk-ant-oat01-good\n");
@@ -390,7 +393,7 @@ test("on a Mac, starts the daemon through launchd when it doesn't answer", async
   writeFileSync(join(home, "calls"), "");
   const run = await skelOnMac();
   expect(run.err).toBe("");
-  expect(calls()).toContain(`launchctl kickstart gui/${uid}/run.skel.daemon\n`);
+  expect(calls()).toContain(`launchctl kickstart gui/${uid}/dev.skelcrew.daemon\n`);
 });
 
 test("on a Mac, reloads the agent when the PATH it needs moved", async () => {
@@ -399,7 +402,7 @@ test("on a Mac, reloads the agent when the PATH it needs moved", async () => {
   writeFileSync(join(home, "calls"), "");
   await skelOnMac("", `${bin}:/usr/bin`);
   expect(readFileSync(plist(), "utf8")).toContain(`<string>${bin}:/usr/bin</string>`);
-  expect(calls()).toContain(`launchctl bootout gui/${uid}/run.skel.daemon\n`);
+  expect(calls()).toContain(`launchctl bootout gui/${uid}/dev.skelcrew.daemon\n`);
   expect(calls()).toContain(`launchctl bootstrap gui/${uid} ${plist()}\n`);
 });
 
@@ -444,7 +447,7 @@ test("on a Mac, stops when sandbox-exec can't start a sandbox", async () => {
   expect(calls()).not.toContain("claude");
 });
 
-// Removes the GitHub plugin from skel's database, so the first run offers it.
+// Removes the GitHub plugin from Skelcrew's database, so the first run offers it.
 function noGitHubPlugin(): void {
   const code = `import { openDb } from ${JSON.stringify(join(checkout, "src", "db.ts"))};
 openDb().run("DELETE FROM plugins");`;
@@ -460,12 +463,12 @@ test("offers the GitHub plugin first, and a no goes on from git alone", async ()
   const run = await skel("n\n1\nsk-ant-oat01-good\n");
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toContain("skel · step 1 of 3: offer the GitHub plugin\n");
+  expect(run.out).toContain("Skelcrew · step 1 of 3: offer the GitHub plugin\n");
   expect(run.out).toContain("Install the GitHub plugin? [Y/n]");
   expect(run.out).toContain(
-    "skel · skipped. skel works from git alone until you run skel plugin install skelcrew/skel-plugin-github.",
+    "Skelcrew · skipped. Skelcrew works from git alone until you run sc plugin install skelcrew/skel-plugin-github.",
   );
-  expect(run.out).toContain("skel · step 2 of 3: pick a harness\n");
+  expect(run.out).toContain("Skelcrew · step 2 of 3: pick a harness\n");
   // Once the first run is done, it isn't offered again.
   const again = await skel();
   expect(again.out).not.toContain("GitHub plugin");
@@ -477,7 +480,7 @@ test("a yes to the GitHub plugin installs it from GitHub, after showing what it 
   const plugin = join(home, "github", "skelcrew", "skel-plugin-github");
   mkdirSync(plugin, { recursive: true });
   writeFileSync(
-    join(plugin, "skel-plugin.yaml"),
+    join(plugin, "skelcrew-plugin.yaml"),
     "name: github\nversion: 0.1.0\nskel: 0.1.0\nabout: GitHub\njobs: [tracker, forge]\ncall: [bun, call.ts]\ngit_credentials: [bun, credentials.ts]\n",
   );
   const git = (...args: string[]) =>
@@ -494,7 +497,7 @@ test("a yes to the GitHub plugin installs it from GitHub, after showing what it 
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(run.out).toContain("Installed github 0.1.0.");
-  expect(existsSync(join(home, ".local", "share", "skel", "plugins", "github", "0.1.0"))).toBe(
+  expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "github", "0.1.0"))).toBe(
     true,
   );
 });
@@ -533,54 +536,54 @@ function siteOnGitHub(): string {
 }
 
 const initOffer =
-  "skel · run skel init here, so GitHub's issues become this repository's tasks? [Y/n]";
+  "Skelcrew · run sc init here, so GitHub's issues become this repository's tasks? [Y/n]";
 
-test("with the GitHub plugin, offers skel init in a checkout whose skel.yaml names no tracker, which names GitHub", async () => {
+test("with the GitHub plugin, offers sc init in a checkout whose skelcrew.yaml names no tracker, which names GitHub", async () => {
   const site = siteOnGitHub();
   const run = await skel("1\nsk-ant-oat01-good\n\n", bin, main(), site);
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   // Offered once the steps are done, and before the lead opens.
-  expect(run.out.indexOf("skel · setup is done.")).toBeLessThan(run.out.indexOf(initOffer));
+  expect(run.out.indexOf("Skelcrew · setup is done.")).toBeLessThan(run.out.indexOf(initOffer));
   expect(run.out).not.toContain("Which tracker");
-  expect(readFileSync(join(site, "skel.yaml"), "utf8")).toContain("\ntracker: github\n");
+  expect(readFileSync(join(site, "skelcrew.yaml"), "utf8")).toContain("\ntracker: github\n");
   expect(run.out).toContain("Added simon/site, as site.");
   expect(run.out).toContain("counts once you commit it and push it to the default branch");
   expect(calls()).toEndWith("daemon lead\nscreen on lead\n");
 });
 
-test("a no to skel init writes nothing, and the lead opens", async () => {
+test("a no to sc init writes nothing, and the lead opens", async () => {
   const site = siteOnGitHub();
   const run = await skel("1\nsk-ant-oat01-good\nn\n", bin, main(), site);
   expect(run.err).toBe("");
   expect(run.out).toContain(initOffer);
   expect(run.out).toContain(
-    "skel · skipped. Run skel init here later, so GitHub's issues become this repository's tasks.",
+    "Skelcrew · skipped. Run sc init here later, so GitHub's issues become this repository's tasks.",
   );
-  expect(existsSync(join(site, "skel.yaml"))).toBe(false);
+  expect(existsSync(join(site, "skelcrew.yaml"))).toBe(false);
   expect(calls()).toEndWith("daemon lead\nscreen on lead\n");
 });
 
-test("offers no skel init where skel.yaml names a tracker, outside a checkout, or without the plugin", async () => {
+test("offers no sc init where skelcrew.yaml names a tracker, outside a checkout, or without the plugin", async () => {
   const site = siteOnGitHub();
-  writeFileSync(join(site, "skel.yaml"), "tracker: linear\n");
+  writeFileSync(join(site, "skelcrew.yaml"), "tracker: linear\n");
   const named = await skel("1\nsk-ant-oat01-good\n", bin, main(), site);
   expect(named.err).toBe("");
-  expect(named.out).not.toContain("skel init");
-  expect(readFileSync(join(site, "skel.yaml"), "utf8")).toBe("tracker: linear\n");
+  expect(named.out).not.toContain("sc init");
+  expect(readFileSync(join(site, "skelcrew.yaml"), "utf8")).toBe("tracker: linear\n");
 
   rmSync(token());
   const outside = await skel("sk-ant-oat01-good\n");
-  expect(outside.out).not.toContain("skel init");
+  expect(outside.out).not.toContain("sc init");
 
   rmSync(token());
-  rmSync(join(site, "skel.yaml"));
+  rmSync(join(site, "skelcrew.yaml"));
   noGitHubPlugin();
   const without = await skel("n\nsk-ant-oat01-good\n", bin, main(), site);
   expect(without.err).toBe("");
-  expect(without.out).toContain("skel · skipped. skel works from git alone");
-  expect(without.out).not.toContain("skel init");
-  expect(existsSync(join(site, "skel.yaml"))).toBe(false);
+  expect(without.out).toContain("Skelcrew · skipped. Skelcrew works from git alone");
+  expect(without.out).not.toContain("sc init");
+  expect(existsSync(join(site, "skelcrew.yaml"))).toBe(false);
 });
 
 test("names each missing tool with what to install, and runs nothing else", async () => {
@@ -588,18 +591,18 @@ test("names each missing tool with what to install, and runs nothing else", asyn
   unlinkSync(join(bin, "claude"));
   const run = await skel();
   expect(run.code).toBe(1);
-  expect(run.err).toStartWith("skel: install these first:\n");
+  expect(run.err).toStartWith("Skelcrew: install these first:\n");
   expect(run.err).toContain("sudo apt install tmux");
   expect(run.err).toContain("curl -fsSL https://claude.ai/install.sh | bash");
   expect(run.err).not.toContain("bubblewrap");
   expect(calls()).toBe("");
 });
 
-test("names git when it is missing, as skel clones and pushes with it", async () => {
+test("names git when it is missing, as Skelcrew clones and pushes with it", async () => {
   unlinkSync(join(bin, "git"));
   const run = await skel();
   expect(run.code).toBe(1);
-  expect(run.err).toStartWith("skel: install these first:\n");
+  expect(run.err).toStartWith("Skelcrew: install these first:\n");
   expect(run.err).toContain("  git: sudo apt install git\n");
   expect(calls()).toBe("");
 });
@@ -629,15 +632,15 @@ test("gives the AppArmor advice when bwrap can't run", async () => {
   expect(run.code).toBe(1);
   expect(run.err).toContain("Permission denied");
   expect(run.err).toContain("AppArmor");
-  expect(run.err).toContain(`profile skel-bwrap ${real} `);
-  expect(run.err).toContain("include if exists <local/skel-bwrap>");
-  expect(run.err).toContain("/etc/apparmor.d/skel-bwrap");
+  expect(run.err).toContain(`profile skelcrew-bwrap ${real} `);
+  expect(run.err).toContain("include if exists <local/skelcrew-bwrap>");
+  expect(run.err).toContain("/etc/apparmor.d/skelcrew-bwrap");
   expect(run.err).not.toContain("/etc/apparmor.d/bwrap ");
   expect(calls()).not.toContain("claude");
 });
 
 test("asks for a token when the harness is saved but no token is", async () => {
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   writeFileSync(config(), "harness: claude\n");
   const run = await skel("sk-ant-oat01-good\n");
   expect(run.code).toBe(0);
@@ -653,7 +656,7 @@ for (const [pasted, why] of [
   test(`asks again for a token that isn't one from setup-token: ${JSON.stringify(pasted)}`, async () => {
     const run = await skel(`1\n${pasted}\nsk-ant-oat01-good\n`);
     expect(run.code).toBe(0);
-    expect(run.out).toContain(`skel · ${why}`);
+    expect(run.out).toContain(`Skelcrew · ${why}`);
     expect(readFileSync(token(), "utf8").trim()).toBe("sk-ant-oat01-good");
   });
 
@@ -672,7 +675,7 @@ test("saves no token after Ctrl-D at the token question", async () => {
 });
 
 test("keeps the other settings in config.yaml", async () => {
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   writeFileSync(config(), "# mine\ncolor: blue\n");
   const run = await skel("1\nsk-ant-oat01-good\n");
   expect(run.code).toBe(0);
@@ -684,7 +687,7 @@ test("keeps the other settings in config.yaml", async () => {
 
 for (const broken of ["a: b: c\n", "harness: claude\n  - x: [\n"]) {
   test(`refuses a config.yaml that isn't YAML: ${JSON.stringify(broken)}`, async () => {
-    mkdirSync(join(home, ".config", "skel"), { recursive: true });
+    mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
     writeFileSync(config(), broken);
     const run = await skel("1\nsk-ant-oat01-good\n");
     expect(run.code).toBe(1);
@@ -706,7 +709,7 @@ for (const [what, typed] of [
 }
 
 test("refuses a config.yaml it can't read", async () => {
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   writeFileSync(config(), "harness: [1, 2]\n");
   const run = await skel("1\nsk-ant-oat01-good\n");
   expect(run.code).toBe(1);
@@ -720,9 +723,9 @@ test("Enter at the harness question picks Claude Code", async () => {
   expect(readFileSync(config(), "utf8")).toContain("harness: claude");
 });
 
-const codexHome = () => join(home, ".local", "share", "skel", "codex");
+const codexHome = () => join(home, ".local", "share", "skelcrew", "codex");
 
-// A login counts once Codex saved one in skel's own folder, never yours in ~/.codex.
+// A login counts once Codex saved one in Skelcrew's own folder, never yours in ~/.codex.
 function fakeCodex(login = ': > "$CODEX_HOME/auth.json"'): void {
   fake(
     "codex",
@@ -734,13 +737,13 @@ esac`,
   );
 }
 
-test("logs the reviewer in to Codex with a login of skel's own", async () => {
+test("logs the reviewer in to Codex with a login of Skelcrew's own", async () => {
   fakeCodex();
   const run = await skel("1\n\nsk-ant-oat01-good\n");
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  expect(run.out).toContain("skel · step 4 of 4: log the reviewer in to Codex\n");
-  expect(run.out).toContain("skel · the reviewer is logged in to Codex.\n");
+  expect(run.out).toContain("Skelcrew · step 4 of 4: log the reviewer in to Codex\n");
+  expect(run.out).toContain("Skelcrew · the reviewer is logged in to Codex.\n");
   expect(calls()).toContain(`codex login --device-auth\nCODEX_HOME=${codexHome()}\n`);
   expect(existsSync(join(codexHome(), "auth.json"))).toBe(true);
   expect(statSync(codexHome()).mode & 0o777).toBe(0o700);
@@ -750,7 +753,7 @@ test("logs the reviewer in to Codex with a login of skel's own", async () => {
   expect(at).toEqual([...at].sort((a, b) => a - b));
 });
 
-test("skips the reviewer's login when skel's Codex login works already", async () => {
+test("skips the reviewer's login when Skelcrew's Codex login works already", async () => {
   fakeCodex();
   mkdirSync(codexHome(), { recursive: true });
   writeFileSync(join(codexHome(), "auth.json"), "{}");
@@ -765,19 +768,19 @@ test("says reviews run on your harness when Codex isn't installed", async () => 
   expect(run.code).toBe(0);
   expect(run.out).not.toContain("for reviews");
   expect(run.out).toContain(
-    "skel · Codex isn't installed, so reviews will run on your harness, with no second view",
+    "Skelcrew · Codex isn't installed, so reviews will run on your harness, with no second view",
   );
   expect(run.out).toContain("step 2 of 2");
   expect(run.out).toContain("second view");
 });
 
-test("finishes no setup when the reviewer's login fails, so the next skel tries again", async () => {
+test("finishes no setup when the reviewer's login fails, so the next sc tries again", async () => {
   fakeCodex("exit 1");
   const run = await skel("1\n\nsk-ant-oat01-good\n");
   expect(run.code).toBe(1);
   expect(run.err).toContain("codex login");
   // The way back is marked even when the tool fails.
-  expect(run.out).toEndWith(`\n\n──── back in skel ${"─".repeat(62)}\n`);
+  expect(run.out).toEndWith(`\n\n──── back in Skelcrew ${"─".repeat(58)}\n`);
   expect(existsSync(unit())).toBe(false);
 
   fakeCodex();
@@ -796,8 +799,8 @@ test("on a machine with only Codex, Enter picks it, and its one login serves age
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(run.out).toContain("2) Codex");
-  expect(run.out).toContain("skel · step 2 of 2: log agents in to Codex\n");
-  expect(run.out).toContain("skel · agents are logged in to Codex.\n");
+  expect(run.out).toContain("Skelcrew · step 2 of 2: log agents in to Codex\n");
+  expect(run.out).toContain("Skelcrew · agents are logged in to Codex.\n");
   expect(run.out).not.toContain("for reviews");
   expect(run.out).not.toContain("the reviewer");
   expect(readFileSync(config(), "utf8")).toContain("harness: codex");
@@ -877,7 +880,7 @@ test("needs Claude Code or Codex, and names how to install either", async () => 
 });
 
 // Ubuntu's ~/.bashrc stops early in a shell nobody types into, so a folder it adds, such as
-// nvm's, is known to your terminal but not to a command run over ssh, as skel --remote runs.
+// nvm's, is known to your terminal but not to a command run over ssh, as sc --remote runs.
 function onlyLoginShellKnows(tools: string[]): string {
   const folder = join(home, "nvm", "bin");
   mkdirSync(folder, { recursive: true });
@@ -908,7 +911,7 @@ test("finds the tools your login shell finds, on a first run over ssh", async ()
   expect(servicePath()).toContain(bin);
 });
 
-test("keeps the login shell's folders in the service when skel runs over ssh again", async () => {
+test("keeps the login shell's folders in the service when Skelcrew runs over ssh again", async () => {
   fakeCodex();
   const nvm = onlyLoginShellKnows(["claude", "codex"]);
   await skel("1\n\nsk-ant-oat01-good\n", bin, main(), home, { SHELL: "/bin/bash" });
@@ -919,8 +922,8 @@ test("keeps the login shell's folders in the service when skel runs over ssh aga
   expect(calls()).toBe("daemon lead\nscreen on lead\n");
 });
 
-// skel remote add runs this on the machine it sets up, and leaves connecting to you.
-test("skel first-run takes the steps and installs the service, without attaching", async () => {
+// sc remote add runs this on the machine it sets up, and leaves connecting to you.
+test("sc first-run takes the steps and installs the service, without attaching", async () => {
   const run = Bun.spawn([process.execPath, main(), "first-run"], {
     cwd: home,
     env: { PATH: bin, HOME: home, XDG_RUNTIME_DIR: join(home, "run"), TMPDIR: join(home, "tmp") },
@@ -933,11 +936,11 @@ test("skel first-run takes the steps and installs the service, without attaching
   expect(calls()).not.toContain("attach");
 });
 
-// Logging in on a machine is what skel remote add is for, so --remote never starts it.
+// Logging in on a machine is what sc remote add is for, so --remote never starts it.
 test("over --remote, a machine whose first run isn't done says so and takes no step", async () => {
-  const run = await skel("", bin, main(), home, { SKEL_REMOTE_NAME: "simon@workbox" });
+  const run = await skel("", bin, main(), home, { SKELCREW_REMOTE_NAME: "simon@workbox" });
   expect(run.err).toBe(
-    "skel: simon@workbox isn't set up. Run this on your laptop:\n  skel remote add simon@workbox\n",
+    "Skelcrew: simon@workbox isn't set up. Run this on your laptop:\n  sc remote add simon@workbox\n",
   );
   expect(run.code).toBe(1);
   expect(calls()).not.toContain("claude");
@@ -945,7 +948,7 @@ test("over --remote, a machine whose first run isn't done says so and takes no s
 
 test("over --remote, a machine that finished its first run attaches as usual", async () => {
   await skel("1\nsk-ant-oat01-good\n");
-  const run = await skel("", bin, main(), home, { SKEL_REMOTE_NAME: "simon@workbox" });
+  const run = await skel("", bin, main(), home, { SKELCREW_REMOTE_NAME: "simon@workbox" });
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
 });

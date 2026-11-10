@@ -7,11 +7,11 @@ import type { Thread } from "./thread.ts";
 // for something else.
 const Branch = z.string().regex(/^(?!-)(?!.*\.\.)[\w./-]+$/);
 
-// A task's ID in its tracker, or skel's own for a thread with no tracker, such as t1. It names
+// A task's ID in its tracker, or Skelcrew's own for a thread with no tracker, such as t1. It names
 // folders and branches, so it holds only letters, digits and dashes.
 const TaskId = z.string().regex(/^[A-Za-z0-9][\w-]*$/);
 
-// A request's `repo` names a repository the way a command does: by its name in skel or its
+// A request's `repo` names a repository the way a command does: by its name in Skelcrew or its
 // owner/name. It keeps that word because clients on other machines send it.
 export const DaemonRequest = z.discriminatedUnion("command", [
   z.object({ command: z.literal("status") }),

@@ -35,10 +35,10 @@ import {
   Thread,
 } from "./thread.ts";
 
-// Returns what skel start means for a task, given its thread if it has one: bring back a
+// Returns what sc start means for a task, given its thread if it has one: bring back a
 // stopped thread, let a live one past the round limit go on, or else start a new thread, which
 // startThread refuses when the task's thread can't start over. The config is read only for a
-// live thread: a bad max_rounds must fail a thread with the reason, not refuse skel start.
+// live thread: a bad max_rounds must fail a thread with the reason, not refuse sc start.
 export function startChoice(thread: Thread | null): "bring back" | "go on" | "new thread" {
   if (thread?.status === "stopped") return "bring back";
   const live = thread?.status === "working" || thread?.status === "waiting";
@@ -46,7 +46,7 @@ export function startChoice(thread: Thread | null): "bring back" | "go on" | "ne
   return "new thread";
 }
 
-// Returns the status of a stopped thread that skel start brings back. Its builder sits at its
+// Returns the status of a stopped thread that sc start brings back. Its builder sits at its
 // prompt once back, as its turn ended with the stop. It waits when a round or its PR will wake
 // it: a submit or review under way, or the PR's checks, reviews and comments. It works when it
 // has a review's changes to be typed in, or no PR yet.
@@ -56,13 +56,13 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
   return handed ? "waiting" : "working";
 }
 
-// Records a new thread and returns it: on a task of the repository's tracker, from skel's copy,
-// which skel start brings up to date first, or, in a repository with no tracker, on a title
+// Records a new thread and returns it: on a task of the repository's tracker, from Skelcrew's copy,
+// which sc start brings up to date first, or, in a repository with no tracker, on a title
 // and body, as a task of the thread's own named t1, t2 and on. Refuses a task the copy doesn't
 // have open, and a task that has a thread already, unless that one failed: then it starts over
 // in the same folder, on the task it had. Only records it, since the lead waits on the answer.
 // Setting up its clone and starting its builder come after, and can take minutes. `given` is a
-// start request, so its `repo` is the repository's name in skel or its owner/name.
+// start request, so its `repo` is the repository's name in Skelcrew or its owner/name.
 export async function startThread(
   db: Database,
   given:
@@ -79,7 +79,7 @@ export async function startThread(
   if ("title" in given) {
     if (tracked)
       throw new Error(
-        `${name} has a tracker, so its tasks belong there: create one with skel task create, and start it by its name`,
+        `${name} has a tracker, so its tasks belong there: create one with sc task create, and start it by its name`,
       );
     // The highest number of the repository's own tasks, to name the next one.
     const ours = db
@@ -104,7 +104,7 @@ export async function startThread(
       throw new Error(
         tracked
           ? `there is no open task ${task} in ${name}`
-          : `${name} has no tracker, and no thread ${name}-${task}: start one with skel start ${name} "<title>" "<body>"`,
+          : `${name} has no tracker, and no thread ${name}-${task}: start one with sc start ${name} "<title>" "<body>"`,
       );
   }
   const slug = title
@@ -133,7 +133,7 @@ export async function startThread(
       task,
       // A thread that failed starts over in its folder, named when it first started.
       folder: before?.folder ?? freeFolder(`${folderName(name)}-${task}`),
-      branch: slug ? `skel/${task}-${slug}` : `skel/${task}`,
+      branch: slug ? `skelcrew/${task}-${slug}` : `skelcrew/${task}`,
       base: "from" in given ? (given.from ?? null) : null,
       status: "working",
       session: null,
@@ -201,7 +201,7 @@ async function mustRun(
 const shellQuoted = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
 
 // Returns the branch the thread's PR goes into: the one it started from with --from, or else
-// the default branch, which skel's clone is on.
+// the default branch, which Skelcrew's clone is on.
 export function baseOf(thread: Thread): string {
   if (thread.base) return thread.base;
   const head = Bun.spawnSync(
@@ -212,19 +212,19 @@ export function baseOf(thread: Thread): string {
   return head.stdout.toString().trim();
 }
 
-// Makes the thread's clone afresh: cloned from skel's clone, on the thread's branch from the
+// Makes the thread's clone afresh: cloned from Skelcrew's clone, on the thread's branch from the
 // default branch or the one given with --from, with your name for commits, and the setup
 // commands run once in the sandbox. The daemon runs git in the thread's clone only here,
 // before anything from the repository has run in it. After that the builder controls
 // everything in the folder, .git included.
 export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   const clone = cloneOf(thread);
-  // skel's clone of the repository can still be on its way, as the daemon refreshes clones as
-  // it starts, and its skel.yaml, which sets up the thread, must be the latest pushed. Asking
+  // Skelcrew's clone of the repository can still be on its way, as the daemon refreshes clones as
+  // it starts, and its skelcrew.yaml, which sets up the thread, must be the latest pushed. Asking
   // for a refresh joins the one under way.
   await refreshClones(db);
   rmSync(clone, { recursive: true, force: true });
-  // From skel's own clone on the same disk, so git links its files rather than copying them.
+  // From Skelcrew's own clone on the same disk, so git links its files rather than copying them.
   await mustRun([
     "git",
     "clone",
@@ -236,8 +236,8 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   await fetchBranch(db, repositoryOf(db, thread), clone, thread.base);
   await mustRun(["git", "-C", clone, "checkout", "--quiet", "-b", thread.branch, "FETCH_HEAD"]);
   // The reviewer reads the diff against origin/<base>, which must be where the branch
-  // started. Cloned from skel's clone, the thread's clone has only the default branch there,
-  // and as skel's clone last saw it, which can be older.
+  // started. Cloned from Skelcrew's clone, the thread's clone has only the default branch there,
+  // and as Skelcrew's clone last saw it, which can be older.
   await mustRun([
     "git",
     "-C",
@@ -270,16 +270,16 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   refuseCredentials(clone);
   for (const command of repositorySetup(thread)) {
     const { argv, env } = setupCommand(clone, command);
-    await mustRun(argv, `the repository's skel.yaml setup command "${command}"`, env);
+    await mustRun(argv, `the repository's skelcrew.yaml setup command "${command}"`, env);
   }
 }
 
-// Starts the thread's builder in tmux, in the sandbox in its clone: bringing back the
-// conversation it saved, or else afresh with the task's title and body from skel's copy as its first
-// message. Throws when it exits as soon as it starts. A builder's first start picks the harness your
-// config names, and saves it with the thread, which keeps it from then on: a conversation
-// can't move to another harness. The session id is stored before the builder starts, so the
-// builder can be brought back after its session is gone.
+// Starts the thread's builder in tmux, in the sandbox in its clone: bringing back the conversation
+// it saved, or else afresh with the task's title and body from Skelcrew's copy as its first
+// message. Throws when it exits as soon as it starts. A builder's first start picks the harness
+// your config names, and saves it with the thread, which keeps it from then on: a conversation
+// can't move to another harness. The session id is stored before the builder starts, so the builder
+// can be brought back after its session is gone.
 export async function startBuilder(db: Database, tmux: string, thread: Thread): Promise<void> {
   const clone = cloneOf(thread);
   const stored = thread.session;
@@ -289,7 +289,7 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
   const session = resume ?? crypto.randomUUID();
   let start: { resume: string } | { sessionId: string; prompt: string } = { resume: session };
   if (!resume) {
-    // Saved as the thread started, from skel's copy brought up to date just before.
+    // Saved as the thread started, from Skelcrew's copy brought up to date just before.
     const title = thread.title ?? "";
     const body = thread.body ?? "";
     start = { sessionId: session, prompt: body ? `${title}\n\n${body}` : title };
@@ -302,7 +302,7 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
     // names for builders gets that harness's default.
     model: role.harness === harness.name ? role.model : undefined,
     thread: clone,
-    // Gone once you remove the repository from skel, and bwrap can't mount what is missing.
+    // Gone once you remove the repository from Skelcrew, and bwrap can't mount what is missing.
     ...(existsSync(cloneDir(thread.owner, thread.repo))
       ? { origin: cloneDir(thread.owner, thread.repo) }
       : {}),
@@ -319,22 +319,22 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
   await checkItLived(tmux, thread.folder, "builder");
 }
 
-// Brings back a thread's builder after the daemon restarts, or after skel stop for skel
+// Brings back a thread's builder after the daemon restarts, or after sc stop for Skelcrew
 // start: leaves one that runs alone, and starts again one whose session is gone or ended.
 // Throws for a thread with no session, which never got past its setup because the daemon
 // stopped, so it can be started again.
 export async function bringBack(db: Database, tmux: string, thread: Thread): Promise<void> {
   if (thread.session === null)
-    throw new Error("the daemon stopped while setting up the thread: run skel start again");
+    throw new Error("the daemon stopped while setting up the thread: run sc start again");
   if (agentRuns(tmux, thread.folder)) return;
   if (hasSession(tmux, thread.folder)) endSession(tmux, thread.folder);
   await startBuilder(db, tmux, thread);
 }
 
 // Marks the thread failed and logs why, in its log and the daemon's, so you can see what
-// stopped it and start it again. A thread that skel stop stopped, or that its PR's merge or
+// stopped it and start it again. A thread that sc stop stopped, or that its PR's merge or
 // close ended, meanwhile stays as it is: its builder ended because of that, such as within
-// the moment skel watches it start.
+// the moment Skelcrew watches it start.
 export function failThread(db: Database, thread: Thread, error: unknown): void {
   const why = errorText(error);
   const { status } = readThread(db, thread.folder);
