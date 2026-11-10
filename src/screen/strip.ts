@@ -63,11 +63,16 @@ const skelName = "#[bold,fg=colour231]skel#[default]";
 // is, and cut to stop two columns before the sidebar's edge, as all the sidebar's text does. The
 // place gives way first. A release is never cut, as half a number would be a different release.
 function header(where: string, left: number, release: string): string {
+  // "  skel" takes six columns. The sidebar's edge is two columns left of the agent, and text
+  // stops two before it, so what follows the name has `room`.
+  const named = 6;
+  const room = Math.max(left - 4 - named, 0);
   const taken = release ? Bun.stringWidth(release) + 1 : 0;
-  const version = release && left - 10 >= taken ? ` ${release}` : "";
-  const place = fitted(clean(where), Math.max(left - 13 - taken, 0));
+  const version = release && room >= taken ? ` ${release}` : "";
+  // " · " before the place takes three columns.
+  const place = fitted(clean(where), Math.max(room - 3 - taken, 0));
   const about = `${version}${place && ` · ${place}`}`;
-  const spare = " ".repeat(Math.max(left - 6 - Bun.stringWidth(about), 0));
+  const spare = " ".repeat(Math.max(left - named - Bun.stringWidth(about), 0));
   const dim = about && `#[fg=brightblack]${escaped(about)}#[default]`;
   return `  ${skelName}${dim}${spare}`;
 }
