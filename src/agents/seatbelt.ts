@@ -112,6 +112,7 @@ export function seatbeltProfile(given: {
   socket?: string;
 }): string {
   const { hidden, read, links, write, socket } = given;
+  // Hidden first, then what comes back, in the order the boundary needs.
   const rules = hidden.map((path) => `(deny file-read* (subpath ${quoted(path)}))`);
   rules.push(...read.map((path) => `(allow file-read* (subpath ${quoted(path)}))`));
   rules.push(...links.map((path) => `(allow file-read* (literal ${quoted(path)}))`));
@@ -121,6 +122,8 @@ export function seatbeltProfile(given: {
   const folders = new Set([...read, ...links, ...write].flatMap(above));
   for (const folder of folders)
     rules.push(`(allow file-read-metadata (literal ${quoted(folder)}))`);
+  // Programs may make and reach local sockets in their own writable folders, and the agent may
+  // reach the daemon's socket. All other local sockets stay denied.
   for (const path of write) {
     rules.push(`(allow network-bind (local unix-socket (subpath ${quoted(path)})))`);
     rules.push(`(allow network-outbound (remote unix-socket (subpath ${quoted(path)})))`);
@@ -159,6 +162,8 @@ export function seatbeltArgs(given: {
   command: string[];
 }): string[] {
   const { home, path, read, links, mounts, socket, cwd, command } = given;
+  // Read bubblewrap's mounts three words at a time: writable ones and read-only ones. Only a
+  // folder at its own path can be shown, as a profile can't move one.
   const write: string[] = [];
   const shown = [...read];
   for (let at = 0; at < mounts.length; at += 3) {
@@ -167,6 +172,7 @@ export function seatbeltArgs(given: {
       throw new Error(`a Mac's sandbox can't mount ${mounts.join(" ")}`);
     (kind === "--bind" ? write : shown).push(from);
   }
+  // The agent's own home and temporary folder, made fresh for this sandbox.
   const own = realpathSync(mkdtempSync(join(tmpdir(), "skelcrew-sandbox-")));
   const [ownHome, ownTemp] = [join(own, "home"), join(own, "tmp")];
   for (const folder of [ownHome, ownTemp]) mkdirSync(folder);
@@ -193,10 +199,13 @@ export function seatbeltArgs(given: {
     ...(socket ? { socket: realSocket(socket) } : {}),
   });
   writeFileSync(profile, text);
+  // What the agent's environment must say instead of what it inherits: its own home and
+  // temporary folder, and Skelcrew's commands first on its PATH.
   const vars = [`HOME=${ownHome}`, `TMPDIR=${ownTemp}`, "SKELCREW_SANDBOX=1", `PATH=${path}`];
   // Claude Code keeps its working files in /tmp unless told otherwise.
   vars.push(`CLAUDE_CODE_TMPDIR=${ownTemp}`);
   if (socket) vars.push(`SKELCREW_SOCKET=${socket}`);
+  // Inside, a shell moves to the agent's folder and runs the command with that environment.
   const enter = 'cd "$1" && shift && exec /usr/bin/env "$@"';
   const sandboxed = ["sandbox-exec", "-f", profile, "/bin/sh", "-c", enter, "sh", cwd];
   // Outside the sandbox, a shell waits for it and then removes its folders, or every review
