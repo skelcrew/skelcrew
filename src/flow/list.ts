@@ -27,6 +27,8 @@ export type RepositoryRow = z.infer<typeof RepositoryRow>;
 export function listRepositories(db: Database): RepositoryRow[] {
   return repositories(db).map((r) => {
     const tracker = trackerOf(db, r);
+    // The tracker skelcrew.yaml names, to say which plugin is missing. A skelcrew.yaml that
+    // can't be read names none here, so one bad repository doesn't stop the whole list.
     let named: string | null = null;
     try {
       named = repositoryTracker(r) ?? null;
@@ -42,6 +44,7 @@ export function listRepositories(db: Database): RepositoryRow[] {
   });
 }
 
+// A thread as sc ps shows it.
 export const ThreadRow = z.object({
   thread: z.string(),
   status: Thread.shape.status,
@@ -64,6 +67,7 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
   });
 }
 
+// An open task as sc task ls shows it, with how its thread stands, or null with no thread.
 export const TaskRow = z.object({
   task: z.string(),
   title: z.string(),
@@ -85,6 +89,8 @@ function threadOf(db: Database, owner: string, repo: string, task: string): Task
 // asked.
 export function listTasks(db: Database, repository?: string): TaskRow[] {
   const chosen = repository ? [findRepository(db, repository)] : repositories(db);
+  // Each repository's tasks come newest first, but mixing repositories needs a sort of its own,
+  // so each row keeps its creation time until the sort is done.
   return chosen
     .flatMap((r) =>
       openTasks(db, r.owner, r.repo).map((task) => ({
@@ -98,6 +104,7 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
     .map(({ created, ...task }) => task);
 }
 
+// One task as sc task show shows it.
 export const TaskView = z.object({
   task: z.string(),
   title: z.string(),
@@ -116,6 +123,7 @@ export function showTask(db: Database, repository: string, task: string): TaskVi
 
 // Prints rows as columns lined up under their headings, with no spaces left at line ends.
 function table(heading: string[], rows: string[][]): void {
+  // Each column is as wide as its widest cell.
   const widths = heading.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i]?.length ?? 0)));
   for (const row of [heading, ...rows])
     console.log(
