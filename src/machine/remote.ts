@@ -40,6 +40,8 @@ export const outdated = 98;
 // catches up on its own, so asking would only offer to go back.
 export function outOfDate(): boolean {
   const laptop = process.env.SKELCREW_LAPTOP_BUILD;
+  // No laptop build means the command came without the check, and no build here means this
+  // Skelcrew runs from a checkout. Uncommitted changes never count as the same build.
   if (!laptop || built === undefined || (laptop === built && !built.endsWith(dirty))) return false;
   if (release && isRelease(laptop) && newer(release, laptop)) return false;
   const where = process.env.SKELCREW_REMOTE_NAME;
@@ -52,6 +54,7 @@ export function outOfDate(): boolean {
 // Says whether release `a` comes after release `b`, by number, so 0.4.10 comes after 0.4.9.
 function newer(a: string, b: string): boolean {
   const [x, y] = [a.split(".").map(Number), b.split(".").map(Number)];
+  // The first part that differs decides.
   const at = x.findIndex((part, i) => part !== y[i]);
   return at !== -1 && (x[at] ?? 0) > (y[at] ?? 0);
 }
@@ -132,6 +135,7 @@ export async function addMachine(
   machine: Machine,
 ): Promise<number> {
   let code = await upToDate(where, there, machine);
+  // 127 is the machine's shell finding no Skelcrew, so it gets one and the first run goes again.
   if (code === 127) {
     await withLinuxSkel(machine);
     code = await there([]);
@@ -153,8 +157,10 @@ export async function upToDate(
   machine: Machine,
 ): Promise<number> {
   const build = release || laptopBuild();
+  // A copy there that differs exits with `outdated` before running anything.
   const code = await there(build ? [`SKELCREW_LAPTOP_BUILD=${build}`] : []);
   if (code !== outdated) return code;
+  // Bun's prompt answers a bare Enter with null, so only a no keeps the old Skelcrew.
   const answer = prompt(skelLine("Update it? [Y/n]"))?.trim().toLowerCase() ?? "";
   if (["n", "no"].includes(answer))
     console.log(skelLine(`running it on the old Skelcrew on ${where}.`));
@@ -218,6 +224,7 @@ export type Machine = {
 // committed, or a branch other than main, go along, which is allowed but worth a line.
 function describeCheckout(): string {
   const folder = checkoutFolder;
+  // The folder under your home is shown with ~, as you would type it.
   const shown = folder.startsWith(`${homedir()}/`) ? `~${folder.slice(homedir().length)}` : folder;
   if (git("status", "--porcelain") !== "")
     console.log(skelLine(`${shown} has uncommitted changes, and they are copied too.`));
@@ -238,6 +245,8 @@ async function update(where: string, machine: Machine): Promise<void> {
   // replaces ~/.local/bin/sc itself, so a service starting the file a link there points
   // to counts as elsewhere.
   const daemon = await machine.daemonSkel();
+  // One line over the connection tells the three apart: a checkout has src/main.ts beside its
+  // bin/sc, a copy is ~/.local/bin/sc itself, and anything else is elsewhere.
   const script = `f=${quoted(daemon ?? ".local/bin/sc")}
 d=$(dirname "$(readlink -f "$f")")/..
 if [ -f "$d/src/main.ts" ]; then echo "checkout $(cd "$d" && pwd)"
@@ -259,6 +268,7 @@ else echo "elsewhere $f"; fi`;
     throw new Error(
       `the daemon on ${where} runs sc from ${found[3]}, not ~/.local/bin/sc, where update puts it, so nothing was replaced`,
     );
+  // Said before the copy, so a note about the checkout shows before the build starts.
   const now = release ? `Skelcrew ${release}` : describeCheckout();
   await withLinuxSkel(machine);
   // The service commands print their logs, which matter only when they fail.
