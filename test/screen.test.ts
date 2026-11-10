@@ -440,7 +440,7 @@ const edge = (height: number) =>
 test("the sidebar's line runs to the bottom, with a blank column before the agent", async () => {
   open("lead");
   await ready("lead");
-  expect(new Set(edge(30))).toEqual(new Set(["│ ", "┤ "]));
+  expect(new Set(edge(30))).toEqual(new Set(["│ "]));
   expect(seen().split("\n")[1]?.indexOf("I am lead")).toBe(sidebar + 1);
 });
 
@@ -472,7 +472,7 @@ test("the sidebar is whole after the terminal goes narrower than it and straight
     tmux(terminal, "resize-window", "-t", "=one:", "-x", "120", "-y", "30");
   }
   await Bun.sleep(1500);
-  expect(new Set(edge(30))).toEqual(new Set(["│ ", "┤ "]));
+  expect(new Set(edge(30))).toEqual(new Set(["│ "]));
   expect(seen().split("◆ lead")).toHaveLength(2);
   expect(selected()).toBe("◆ lead");
 });

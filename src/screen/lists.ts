@@ -90,7 +90,7 @@ const headed = (heading: string): Line[] => [
 // Returns a list's lines for a third of `height` lines: its heading and a blank line, as many
 // rows as fit, then a count of the rest. Rows come with the dim ones last, so those are the
 // first to be left out. A third with room for just one row keeps the row, and the count gives
-// way. An empty list says so, as its third stays either way.
+// way.
 function listLines(
   heading: string,
   list: List,
@@ -101,7 +101,6 @@ function listLines(
   const top = headed(heading);
   // Each row takes two lines. When not all of them fit, a line is kept for the count of the
   // rest, unless that would leave no row at all.
-  if (list.links.length === 0) return [...top, { text: paint(grey, `${pad}none`) }];
   const fit = Math.floor((height - top.length) / 2);
   const few = list.total > fit ? Math.max(Math.floor((height - top.length - 1) / 2), 1) : fit;
   const links = list.links.slice(0, few);
@@ -138,8 +137,9 @@ function scrolled(blocks: Line[][], here: number, room: number): Line[] {
 // Returns the lines above the hints, and how many there can be. The hints take the bottom four,
 // until the sidebar can't hold them and the whole row you are looking at: then they give way, as
 // the rows are what you pick from and the keys are also in Skelcrew's help.
-// The lists the repository has, of ISSUES, THREADS and PRS, share those lines evenly, however
-// full, so each list stays in the same place on screen, and what doesn't divide goes to THREADS.
+// The lists that show, of ISSUES, THREADS and PRS, share those lines evenly, however full, so
+// each list stays in the same place on screen, and what doesn't divide goes to THREADS. ISSUES
+// shows only with an open issue, and PRS only with an open PR, as an empty list says nothing.
 // On a terminal too short for a heading and a row in each share, or for the row you are looking
 // at in THREADS, ISSUES and PRS go, and THREADS has the whole sidebar, as it is the list you
 // move through. With neither of them, THREADS has it too, with no heading.
@@ -158,9 +158,11 @@ export function layout(
   const here = rows.findIndex((row) => row.session === shown);
   const tallest = blocks[here]?.length ?? 2;
   const room = size.height >= tallest + hints.length ? size.height - hints.length : size.height;
+  const issues = lists.issues?.links.length ? lists.issues : null;
+  const prs = lists.prs?.links.length ? lists.prs : null;
   const others = [
-    ...(lists.issues ? [["Issues", lists.issues] as const] : []),
-    ...(lists.prs ? [["PRs", lists.prs] as const] : []),
+    ...(issues ? [["Issues", issues] as const] : []),
+    ...(prs ? [["PRs", prs] as const] : []),
   ];
   // One line parts each list from the next.
   const share = Math.floor((room - others.length) / (others.length + 1));
@@ -183,7 +185,7 @@ export function layout(
   // ISSUES goes above THREADS and PRS below, with a line between each. A repository with PRS
   // and no ISSUES has them below THREADS.
   const [first, second] = others;
-  const lines = lists.issues
+  const lines = issues
     ? [
         ...(first ? listed(first) : []),
         divider,

@@ -547,6 +547,8 @@ test("control codes in a title never reach your terminal", () => {
 
 const links = (count: number) =>
   Array.from({ length: count }, (_, n) => link(`app-${n + 1}`, "An issue"));
+// One open PR, so PRS shows and each list has a third.
+const onePr = list([pr("app#40", "A PR")]);
 // The lines of one list, from its heading to the line under it or the hints.
 const third = (lines: string[], heading: string) => {
   const from = lines.indexOf(`  ${heading}`);
@@ -557,7 +559,8 @@ const third = (lines: string[], heading: string) => {
 test("a list shows as many rows as fit its third, then a count of the rest", () => {
   const height = 40;
   const room = { width: sidebarWidth, height };
-  const lines = read(drawLists(threads, { ...nothing, issues: list(links(9), 240) }, "lead", room));
+  const shown = { issues: list(links(9), 240), prs: onePr };
+  const lines = read(drawLists(threads, shown, "lead", room));
   expect(third(lines, "Issues")).toHaveLength(10);
   expect(lines).toContain("  app-4");
   expect(lines).not.toContain("  app-5");
@@ -573,23 +576,23 @@ test("a list that just fits its third has no count", () => {
 
 test("the count gives way to the row in a third that only has room for one", () => {
   const room = { width: sidebarWidth, height: 18 };
-  const lines = read(drawLists(threads, { ...nothing, issues: list(links(9)) }, "lead", room));
+  const lines = read(drawLists(threads, { issues: list(links(9)), prs: onePr }, "lead", room));
   expect(third(lines, "Issues")).toEqual(["  Issues", "  An issue", "  app-1"]);
 });
 
-test("an empty list keeps its heading and a dim none", () => {
-  const screen = drawLists(threads, { ...nothing, prs: lists.prs }, "lead", tall);
-  const lines = read(screen);
-  expect(third(lines, "Issues")).toEqual(["  Issues", "  none"]);
-  expect(third(lines, "Threads")[0]).toBe("  Threads");
-  expect(screen).toContain("\x1b[90m  none");
-  expect(lines.filter((line) => line === rule)).toHaveLength(2);
+test("an empty list isn't shown, and the others share its room", () => {
+  const lines = read(drawLists(threads, { ...nothing, prs: lists.prs }, "lead", tall));
+  expect(lines).not.toContain("  Issues");
+  expect(lines).not.toContain("  none");
+  expect(lines.indexOf("  Threads")).toBe(0);
+  expect(lines.filter((line) => line === rule)).toHaveLength(1);
 });
 
-test("with nothing open, all three lists keep their place", () => {
-  const lines = read(draw(threads, "lead", tall));
-  expect(third(lines, "Issues")).toEqual(["  Issues", "  none"]);
-  expect(third(lines, "PRs")).toEqual(["  PRs", "  none"]);
+test("with nothing open, only the threads show, as no list would say anything", () => {
+  const lines = read(draw(threads, "lead", tall)).join("\n");
+  for (const heading of ["Issues", "Threads", "PRs", "none", "───"])
+    expect(lines).not.toContain(heading);
+  expect(lines).toContain("● app-12");
 });
 
 test("each list has a third of the sidebar above the hints, and THREADS has what is left over", () => {
@@ -614,7 +617,8 @@ test("each list stays in its place, however full any of them is", () => {
     return ["  Issues", "  Threads", "  PRs"].map((text) => lines.indexOf(text));
   };
   const expected = [0, 13, 26];
-  expect(places(threads, nothing)).toEqual(expected);
+  const few: Lists = { issues: list(links(1)), prs: list(links(1)) };
+  expect(places(threads, few)).toEqual(expected);
   expect(places(threads, lists)).toEqual(expected);
   expect(places(threads, crowded)).toEqual(expected);
   expect(places(moreThreads, crowded)).toEqual(expected);
@@ -740,7 +744,7 @@ test("moving steps over a thread whose agent isn't running, into the next list",
 
 test("moving lands only on rows you can see, and skips what is under the count", () => {
   const links = [31, 30, 29, 28, 27, 26].map((n) => link(`app-${n}`, `Issue ${n}`));
-  const crowded: Lists = { issues: list(links), prs: nothing.prs };
+  const crowded: Lists = { issues: list(links), prs: onePr };
   const room = { width: sidebarWidth, height: 27 };
   const lines = read(drawLists(threads, crowded, "lead", room)).join("\n");
   expect(lines).toContain("app-30");
