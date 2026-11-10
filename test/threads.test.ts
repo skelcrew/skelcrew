@@ -454,8 +454,8 @@ c.on("data", (d) => process.stdout.write(d));`;
     serve();
     await untilCloned();
     await skel("start", "app-12");
-    // GitHub is down now, and the refusal needs nothing from it.
-    rmSync(join(home, "issues", "poll"));
+    // The tracker is failing now, and the refusal needs nothing from it.
+    writeFileSync(join(plugin, "fail-changed"), "HTTP 502: Bad Gateway");
     const again = await skel("start", "app-12");
     expect(again.code).not.toBe(0);
     expect(again.err).toBe("Skelcrew: app-12 has a thread already\n");
