@@ -226,7 +226,14 @@ function trusted({ owner, repo, claimed }: Found): boolean {
 async function bringIn(db: Database, details: Found): Promise<void> {
   const { owner, repo, remote, claimed } = details;
   const fullName = `${owner}/${repo}`;
-  const known = repositories(db).some((r) => r.owner === owner && r.repo === repo);
+  const had = repositories(db).find((r) => r.owner === owner && r.repo === repo);
+  const known = had !== undefined;
+  // Another server can hold a repository of the same owner/name. Refreshing from it would put
+  // its code in the clone of the one Skelcrew has, where leads and builders read it.
+  if (had && !remoteIs(had, remote))
+    throw new Error(
+      `Skelcrew has ${fullName} already, from ${had.remote}. To add the one at ${remote}, remove it first with sc repo rm ${had.name}`,
+    );
   if (!known && !trusted(details)) {
     console.log(`Agents will run ${fullName}'s setup and test commands, and follow its AGENTS.md`);
     console.log("and settings as instructions.");

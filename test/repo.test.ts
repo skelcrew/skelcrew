@@ -586,6 +586,29 @@ describe("a repository no forge claims", () => {
     expect(run.err).toContain("a key with no passphrase or a credential helper");
     expect(await listed()).toEqual([]);
   });
+
+  // Two servers can each hold a simon/notes. Taking the second as the one Skelcrew has would
+  // put its code in the first's clone, where leads and builders read it.
+  test("one on another server with the same owner/name is refused, and the clone stays", async () => {
+    await skel(["repo", "add"], "y\n", elsewhere());
+    const other = join(home, "other");
+    const work = join(home, "code", "other-notes");
+    mkdirSync(work, { recursive: true });
+    writeFileSync(join(work, "README"), "other notes\n");
+    git(work, "init", "-q", "-b", "main");
+    git(work, "add", ".");
+    git(work, "commit", "-q", "-m", "start");
+    git(home, "clone", "-q", "--bare", work, join(other, "simon", "notes.git"));
+    appendFileSync(
+      join(home, ".gitconfig"),
+      `[url "file://${other}/"]\n\tinsteadOf = https://other.example/\n`,
+    );
+    const run = await skel(["repo", "add", "https://other.example/simon/notes.git"], "y\n");
+    expect(run.code).toBe(1);
+    expect(run.err).toContain("Skelcrew has simon/notes already, from file://");
+    expect(readFileSync(join(clone("simon/notes"), "README"), "utf8")).toBe("notes\n");
+    expect(await listed()).toEqual([["notes", "simon/notes", "none"]]);
+  });
 });
 
 test("repo add and init refuse inside Skelcrew's sandbox, where a yes could come from an agent", async () => {
