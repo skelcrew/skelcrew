@@ -14,6 +14,7 @@ const Author = z.object({
   push: z.boolean().nullable().default(null),
 });
 
+// A comment on an item, or the text of a review on a PR.
 const Comment = z.object({ id: z.string(), text: z.string(), author: Author.nullable() });
 
 // A task's ID in its tracker, or Skelcrew's own for a thread with no tracker, such as t1. It
@@ -85,6 +86,8 @@ export function saveItems(
   everything: Item["kind"][],
 ): void {
   db.transaction(() => {
+    // Mark every open item of each kind the answer covers closed, then save the answer over
+    // them, so what is still open ends up open again.
     for (const kind of everything)
       db.run(
         `UPDATE items SET state = 'closed', item = json_set(item, '$.state', 'closed')
@@ -97,6 +100,8 @@ export function saveItems(
           VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [owner, repo, item.kind, item.id, item.state, item.created, JSON.stringify(item)],
       );
+    // Forget the items that are no longer open, unless a thread still working, waiting or
+    // stopped points to one by its task or PR.
     db.run(
       `DELETE FROM items WHERE owner = ? AND repo = ? AND state != 'open' AND NOT EXISTS (
         SELECT 1 FROM threads t WHERE t.owner = items.owner AND t.repo = items.repo
@@ -104,6 +109,7 @@ export function saveItems(
           AND items.id = CAST((CASE items.kind WHEN 'task' THEN t.task ELSE t.pr END) AS TEXT))`,
       [owner, repo],
     );
+    // Count what is left open, for the sidebar.
     db.run(
       `UPDATE repositories SET
         open_issues = (SELECT COUNT(*) FROM items i WHERE i.owner = repositories.owner
@@ -153,6 +159,7 @@ export function prOf(
 // Returns a repository's open tasks, newest first, for sc task ls and for starting a thread
 // on each one labeled to start.
 export function openTasks(db: Database, owner: string, repo: string): Task[] {
+  // Tasks made at the same moment sort by ID as numbers, as a longer number is the larger one.
   return parsed(
     db
       .query(`SELECT item FROM items WHERE owner = ? AND repo = ? AND kind = 'task'
@@ -174,6 +181,7 @@ export function threadTask(
   db: Database,
   thread: { owner: string; repo: string; task: string; title: string | null; body: string | null },
 ): { title: string; body: string; closes: string | null } {
+  // taskOf throws when the copy has no such task, which is the sign to use the thread's own.
   try {
     const { title, body, closes } = taskOf(db, thread.owner, thread.repo, thread.task);
     return { title, body, closes };

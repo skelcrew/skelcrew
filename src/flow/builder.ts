@@ -69,6 +69,8 @@ export async function startThread(
     | { repo: string; task: string; from?: string | undefined }
     | { repo: string; title: string; body: string },
 ): Promise<Thread> {
+  // Find the repository and whether a tracker holds its tasks, which decides where the task's
+  // title and body come from.
   const repository = findRepository(db, given.repo);
   const { owner, repo, name } = repository;
   const tracked = trackerOf(db, repository) !== null;
@@ -89,6 +91,9 @@ export async function startThread(
     task = `t${Math.max(0, ...ours) + 1}`;
     ({ title, body } = given);
   } else {
+    // A named task takes its words from Skelcrew's copy of the tracker. One of the repository's
+    // own, or one the tracker no longer has, can only start over on the words its failed thread
+    // kept.
     task = given.task;
     const had = Thread.nullable().parse(
       db.query(`SELECT * FROM threads ${where}`).get(owner, repo, task),
@@ -107,6 +112,8 @@ export async function startThread(
           : `${name} has no tracker, and no thread ${name}-${task}: start one with sc start ${name} "<title>" "<body>"`,
       );
   }
+  // The branch is named by the task and a short form of its title, so you can tell branches
+  // apart on the forge.
   const slug = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -121,6 +128,8 @@ export async function startThread(
     for (let n = 2; taken(free); n++) free = `${folder}-${n}`;
     return free;
   };
+  // Check again for a thread and record the new one in one transaction, so a failed thread's
+  // row is never removed without the new one taking its place.
   return db.transaction(() => {
     const before = Thread.nullable().parse(
       db.query(`SELECT * FROM threads ${where}`).get(owner, repo, task),
@@ -162,6 +171,7 @@ export async function startThread(
       review_line: null,
       harness: null,
     };
+    // A failed thread's row gives way to the new one.
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run(
       `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, title,
@@ -223,6 +233,7 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   // it starts, and its skelcrew.yaml, which sets up the thread, must be the latest pushed. Asking
   // for a refresh joins the one under way.
   await refreshClones(db);
+  // A failed thread starting over leaves its old clone behind, so it goes first.
   rmSync(clone, { recursive: true, force: true });
   // From Skelcrew's own clone on the same disk, so git links its files rather than copying them.
   await mustRun([
@@ -233,6 +244,7 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
     cloneDir(thread.owner, thread.repo),
     clone,
   ]);
+  // The branch starts from the base as the forge has it now, not as Skelcrew's clone last saw it.
   await fetchBranch(db, repositoryOf(db, thread), clone, thread.base);
   await mustRun(["git", "-C", clone, "checkout", "--quiet", "-b", thread.branch, "FETCH_HEAD"]);
   // The reviewer reads the diff against origin/<base>, which must be where the branch
@@ -259,6 +271,8 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   const commits = author ? { name: author[1] ?? "", email: author[2] ?? "" } : you;
   if (commits.name) await mustRun(["git", "-C", clone, "config", "user.name", commits.name]);
   if (commits.email) await mustRun(["git", "-C", clone, "config", "user.email", commits.email]);
+  // A hook adds you as co-author to each commit the forge's author makes, since the builder
+  // writes the message and could leave the trailer out.
   if (author && you.name && you.email) {
     mkdirSync(join(clone, ".git", "hooks"), { recursive: true });
     writeFileSync(
@@ -267,6 +281,8 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
       { mode: 0o755 },
     );
   }
+  // Make sure no git login reached the clone's settings before the builder can read them,
+  // then run the repository's setup commands in the sandbox.
   refuseCredentials(clone);
   for (const command of repositorySetup(thread)) {
     const { argv, env } = setupCommand(clone, command);
@@ -281,6 +297,8 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
 // can't move to another harness. The session id is stored before the builder starts, so the builder
 // can be brought back after its session is gone.
 export async function startBuilder(db: Database, tmux: string, thread: Thread): Promise<void> {
+  // Pick the harness: your config's for a first start, the saved one for a builder coming back.
+  // A saved conversation the harness can't find starts afresh under a new id.
   const clone = cloneOf(thread);
   const stored = thread.session;
   const role = threadConfig(thread).builder;
@@ -313,6 +331,8 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
     system: instructions,
     ...start,
   });
+  // Start it in its own tmux session, then watch a moment for it to exit at once, so a broken
+  // start fails the thread with a reason.
   startServer(tmux);
   startSession(tmux, thread.folder, { folder: clone, command: argv, env });
   console.log(`${resume ? "Brought back" : "Started"} the builder of ${thread.folder}.`);
@@ -326,6 +346,7 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
 export async function bringBack(db: Database, tmux: string, thread: Thread): Promise<void> {
   if (thread.session === null)
     throw new Error("the daemon stopped while setting up the thread: run sc start again");
+  // A session whose agent ended is ended too, so the new one can take its name.
   if (agentRuns(tmux, thread.folder)) return;
   if (hasSession(tmux, thread.folder)) endSession(tmux, thread.folder);
   await startBuilder(db, tmux, thread);
@@ -336,6 +357,7 @@ export async function bringBack(db: Database, tmux: string, thread: Thread): Pro
 // close ended, meanwhile stays as it is: its builder ended because of that, such as within
 // the moment Skelcrew watches it start.
 export function failThread(db: Database, thread: Thread, error: unknown): void {
+  // Read the thread afresh, as sc stop or a merge may have changed it while it was starting.
   const why = errorText(error);
   const { status } = readThread(db, thread.folder);
   if (status === "stopped" || status === "done") {

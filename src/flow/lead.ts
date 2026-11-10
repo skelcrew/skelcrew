@@ -26,11 +26,13 @@ import { errorText } from "../say.ts";
 import { refreshClones, repositories } from "./repo.ts";
 import { readThread, record, Thread, threadName } from "./thread.ts";
 
+// What Skelcrew's database keeps about a repository's lead, checked as it is read back.
 const LeadRow = z.object({
   lead_session: z.string().nullable(),
   lead_harness: HarnessName.nullable(),
   kept_lead: z.coerce.boolean(),
 });
+// A note waiting to be typed into a lead, or null when none waits.
 const Note = z.object({ id: z.number(), text: z.string() }).nullable();
 
 // Returns a repository's lead: where it lives, as leadPlaces gives it, the session ID of its
@@ -77,6 +79,8 @@ export function lastOpened(db: Database): Repository | null {
 export async function startLead(db: Database, tmux: string, repository: Repository): Promise<void> {
   const { owner, repo } = repository;
   const lead = leadOf(db, owner, repo);
+  // A lead still running is kept. One whose harness ended leaves its screen behind, which is
+  // logged before its session is ended to make room for the new one.
   if (hasSession(tmux, lead.name)) {
     const failed = failedScreen(tmux, lead.name);
     if (failed === null) return;
@@ -90,6 +94,8 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
   if (!existsSync(clone)) await refreshClones(db);
   if (!existsSync(clone))
     throw new Error(`Skelcrew couldn't clone ${owner}/${repo}, so its lead can't start yet`);
+  // Pick the harness and the conversation to bring back, if the harness still has it, and save
+  // both before starting.
   const role = agentRoles(repository).lead;
   const harness = harnessNamed(lead.harness ?? role.harness);
   const stored = lead.session;
@@ -130,6 +136,8 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
 async function typeNotes(db: Database, tmux: string, owner: string, repo: string): Promise<void> {
   const { name, harness } = leadOf(db, owner, repo);
   const where = "owner = ? AND repo = ?";
+  // Each pass reads the oldest note and the first thread waiting to be announced, so what was
+  // saved while typing is seen too.
   for (;;) {
     const note = Note.parse(
       db.query(`SELECT id, text FROM notes WHERE ${where} ORDER BY id`).get(owner, repo),
@@ -138,11 +146,13 @@ async function typeNotes(db: Database, tmux: string, owner: string, repo: string
       .query(`SELECT * FROM threads WHERE noting IS NOT NULL AND ${where} ORDER BY rowid`)
       .get(owner, repo);
     const thread = Thread.nullable().parse(row);
+    // Stop when nothing is left to say, or nobody is there to hear it. Wait while the lead is busy.
     if (note === null && (thread === null || thread.noting === null)) return;
     if (!agentRuns(tmux, name)) return;
     // A lead that is running has started, so it has a harness.
     const { marks } = harnessNamed(harness ?? "claude");
     if (!(await isIdle(tmux, name, marks))) continue;
+    // Saved notes go first, then a thread that needs you.
     if (note !== null) {
       await typeInto(tmux, name, marks, note.text);
       db.run("DELETE FROM notes WHERE id = ?", [note.id]);
@@ -166,6 +176,7 @@ const telling = new Map<string, Promise<void>>();
 // the next note, the next sc attach or the daemon's next start, tries it again.
 export function tellLead(db: Database, tmux: string): void {
   for (const { owner, repo } of repositories(db)) {
+    // Chain onto the lead's typing under way, so its notes go in one after another.
     const key = `${owner}/${repo}`;
     const before = telling.get(key) ?? Promise.resolve();
     telling.set(

@@ -15,6 +15,7 @@ async function git(
   args: string[],
   env: Record<string, string | undefined> = process.env,
 ): Promise<string> {
+  // With no forge, git uses your own login, as it would in your terminal.
   const forge = forgeOf(db, repository);
   const login = forge === null ? [] : gitCredentials(db, forge);
   const { out, err, ok } = await quietly(["git", ...login, ...args], {
@@ -122,6 +123,7 @@ export async function checkPush(
   repository: Repository,
   folder: string,
 ): Promise<void> {
+  // Leave out your SSH agent, as the daemon won't have it when it pushes for real.
   const { SSH_AUTH_SOCK: _agent, ...env } = process.env;
   await git(
     db,

@@ -23,8 +23,9 @@ import {
   threadName,
 } from "./thread.ts";
 
-// The message about failed checks, with the end of each one's log. A check with no ID, such
-// as a commit status, has no log to read.
+// Returns a message for each failed check, with the end of its log, for the builder to fix.
+// A check with no ID, such as a commit status, has no log to read. A log that can't be read
+// is said so in the message, so the builder still hears of the failure.
 async function aboutChecks(db: Database, thread: Thread, failed: Check[]): Promise<string[]> {
   const fix = 'Fix it, commit, and run sc submit "<summary>" again.';
   return Promise.all(
@@ -42,6 +43,7 @@ async function aboutChecks(db: Database, thread: Thread, failed: Check[]): Promi
 // whose clone has it as origin, gets the latest base when it fetches. The daemon otherwise
 // refreshes it only when you attach or it starts, and holds only the default branch.
 async function freshBase(db: Database, thread: Thread, base: string): Promise<void> {
+  // Refreshing brings the default branch up to date. Any other base is fetched on its own.
   await refreshClones(db);
   if (base !== baseOf({ ...thread, base: null }))
     await fetchInto(db, repositoryOf(db, thread), cloneDir(thread.owner, thread.repo), base);
@@ -102,10 +104,13 @@ export async function tellBuilder(
   thread: Thread,
   decision: Exclude<Decision, { end: string }>,
 ): Promise<void> {
+  // Mark the typing under way, so a poll leaves the thread alone and a stop or merge can
+  // cancel it.
   const cancel = new AbortController();
   typingEvents.set(thread.folder, cancel);
   const { seen, change, why } = decision;
   try {
+    // Gather everything to tell into one message: the failed checks first, then the rest.
     if (decision.conflict !== null) await freshBase(db, thread, decision.conflict);
     const checks = await aboutChecks(db, thread, decision.failed);
     const text = [...checks, ...decision.tell].join("\n\n---\n\n");
