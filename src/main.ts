@@ -39,6 +39,7 @@ const yoursOnly: Record<string, string> = {
 // tracker, or nothing when it isn't one. Repository names can hold dashes, so the task is what
 // follows the last one.
 function taskName(word?: string): [string, string] | undefined {
+  // The greedy first group takes every dash but the last.
   const parts = word?.match(/^(.+)-(t?\d+)$/);
   return parts?.[1] && parts[2] ? [parts[1], parts[2]] : undefined;
 }
@@ -46,6 +47,7 @@ function taskName(word?: string): [string, string] | undefined {
 // Prints why a command can't run as given, and ends Skelcrew with an error. People who mistype a
 // command Skelcrew knows hear to check its arguments, not that the command doesn't exist.
 function usage(command?: string): never {
+  // The commands that have words after them, so a mistake there is in the arguments.
   const known = [
     "serve",
     "init",
@@ -77,11 +79,13 @@ function usage(command?: string): never {
 // from, or the one --from names, or else the one you opened last. While Skelcrew has no
 // repositories, bringInFrom has said so, and there is no lead to open.
 async function leadCommand(from?: string): Promise<void> {
+  // Loaded only here, so sc --remote on your laptop never loads them.
   const { attachToLead } = await import("./attach.ts");
   const { openDb } = await import("./db.ts");
   const { bringInFrom, repositories } = await import("./flow/repo.ts");
   const { firstRun } = await import("./machine/setup.ts");
   await firstRun(from);
+  // Adds the repository you ran sc from if Skelcrew doesn't have it yet.
   const found = await bringInFrom(from);
   if (repositories(openDb()).length > 0) await attachToLead("skelcrew", found);
 }
@@ -177,6 +181,7 @@ async function pluginCommand(args: string[], json: boolean): Promise<void> {
   const { installPlugin, listPlugins, removePlugin, setUpPlugin, updatePlugins } = await import(
     "./plugins/install.ts"
   );
+  // Each takes a name or a source as its one word, except update, where it is optional.
   if (sub === "install" && rest[0] && rest.length === 1) return installPlugin(rest[0]);
   if (sub === "update" && rest.length <= 1) return updatePlugins(rest[0]);
   if (sub === "setup" && rest[0] && rest.length === 1) return setUpPlugin(rest[0]);
@@ -222,6 +227,7 @@ async function psCommand(args: string[], json: boolean): Promise<void> {
   const { printThreads } = await import("./flow/list.ts");
   // Done threads pile up forever and would bury the live ones, so only --all shows them.
   const all = args.includes("--all");
+  // What is left is ps and, at most, a repository.
   const rest = args.filter((word) => word !== "--all");
   if (rest.length > 2) usage("ps");
   const rows = await askForThreads(rest[1]);
@@ -238,6 +244,8 @@ async function taskCommand(args: string[], json: boolean): Promise<void> {
     printTasks(await askForTasks(rest[0]), json);
     return;
   }
+  // sc task show takes a task's name, such as app-13. sc task create takes a repository
+  // with a title and a body, which may be empty.
   const shown = taskName(rest[0]);
   if (sub === "show" && shown && rest.length === 1) {
     printTask(await askForTask(...shown), json);
@@ -257,11 +265,13 @@ async function threadCommand(args: string[]): Promise<void> {
   const { attachToThread } = await import("./attach.ts");
   const { reviewAgain, startNew, startOn, stopOn } = await import("./client.ts");
   const thread = taskName(sub);
+  // --from takes a branch, and only sc start <task> takes it.
   const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
   if (command === "start" && thread && (rest.length === 0 || from)) {
     console.log(await startOn(...thread, from));
     return;
   }
+  // A first word that isn't a task's name is a repository, for a thread with no tracker.
   const [title, body] = rest;
   if (command === "start" && sub && !thread && title && body !== undefined && rest.length === 2) {
     console.log(await startNew(sub, title, body));
@@ -345,6 +355,8 @@ async function runCommand(args: string[]): Promise<void> {
   const json = args.includes("--json");
   const words = args.filter((arg) => arg !== "--json");
   const [first, second] = words;
+  // The command as yoursOnly names it: two words for repo, remote and plugin, and "" for
+  // attaching to the lead.
   const named = first === undefined || first === "--from" ? "" : first;
   const refused =
     yoursOnly[
@@ -374,6 +386,7 @@ async function runCommand(args: string[]): Promise<void> {
     !setupDone()
   )
     throw new Error(notSetUp(remoteName));
+  // Plain sc, or sc --from <remote> as sc --remote sends it.
   if (words.length === 0 || (first === "--from" && second && words.length === 2))
     return leadCommand(second);
   switch (first) {

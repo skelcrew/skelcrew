@@ -72,6 +72,7 @@ function prepareTables(db: Database): void {
     claimed: "INTEGER NOT NULL DEFAULT 0",
     author: "TEXT",
   };
+  // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
   for (const [column, type] of Object.entries(columns))
     if (!db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = ?").get(column))
       db.run(`ALTER TABLE repositories ADD COLUMN ${column} ${type}`);
@@ -144,9 +145,12 @@ function prepareTables(db: Database): void {
   // Notes for a repository's lead that aren't about a thread needing you, such as a thread
   // started from a tracker, kept until they are typed in, since the lead may not be running.
   db.run("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)");
+  // A note names its repository, and one from before each repository had its own lead names
+  // none until keepTheLead gives it one.
   for (const column of ["owner", "repo"])
     if (!db.query("SELECT 1 FROM pragma_table_info('notes') WHERE name = ?").get(column))
       db.run(`ALTER TABLE notes ADD COLUMN ${column} TEXT`);
+  // A lead table means a database from before each repository had its own lead.
   if (db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lead'").get())
     keepTheLead(db);
   // The reviews Skelcrew posted with your gh login, before its forge posted them as its own app.
@@ -166,6 +170,7 @@ function prepareTables(db: Database): void {
 // socket, so a lead running through the upgrade carries on. Notes still waiting for it stay
 // its own, and one more tells it what it now leads. Runs once: the tables it reads go.
 function keepTheLead(db: Database): void {
+  // The one lead's session, and the repository you last attached from, if that was kept.
   const session = z
     .object({ session: z.string() })
     .nullable()
@@ -183,10 +188,12 @@ function keepTheLead(db: Database): void {
     .query("SELECT * FROM repositories ORDER BY name")
     .all()
     .map((row) => Repository.parse(row));
+  // The repository you last attached from, matched without case, as GitHub's names are.
   const chosen =
     all.find((r) => `${r.owner}/${r.repo}`.toLowerCase() === from?.toLowerCase()) ?? all[0];
   if (chosen) {
     const { name, owner, repo } = chosen;
+    // Marked as opened now, so the daemon brings the kept lead back from here on.
     db.run(
       "UPDATE repositories SET kept_lead = 1, lead_session = ?, opened = ? WHERE owner = ? AND repo = ?",
       [session?.session ?? null, Date.now(), owner, repo],
