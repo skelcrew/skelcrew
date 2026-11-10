@@ -1,6 +1,7 @@
 // Skelcrew's help page: what sc --help shows, laid out in sections with skelcrew.dev's amber for
 // the headings, so it reads as help and not as an error.
 
+// The help page's sections, each a heading and its rows of a command and what it does.
 const sections: [string, [string, string][]][] = [
   [
     "COMMANDS",
@@ -66,6 +67,7 @@ const sections: [string, [string, string][]][] = [
   ],
 ];
 
+// Lines to copy, in the order a new user would run them.
 const examples = [
   "sc",
   'sc task create app "Fix the login redirect" "Sign-in lands on a 404."',
@@ -80,9 +82,11 @@ const examples = [
 export function help(color = colorful()): string {
   const paint = (codes: string) => (text: string) =>
     color ? `\x1b[${codes}m${text}\x1b[0m` : text;
+  // Headings in skelcrew.dev's amber, bold.
   const heading = paint("1;38;2;240;166;58");
   const strong = paint("1");
   const dim = paint("2");
+  // Every section's commands line up in one column, as wide as the longest and three more.
   const rows = sections.flatMap(([, list]) => list);
   const width = Math.max(...rows.map(([command]) => command.length)) + 3;
   const lines = [

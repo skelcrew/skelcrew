@@ -56,6 +56,7 @@ export function laptopBuild(): string | null {
 // Returns what sc --version prints: the release, or, for anything else, that this is a build
 // from a checkout, so nobody reports a bug against a release they don't have.
 export function versionLine(): string {
+  // installLatest reads a release back from this line, so its shape matters.
   if (release) return `skelcrew ${release}`;
   const build = built ?? laptopBuild();
   return `skelcrew from a checkout, at ${build ? `commit ${readable(build)}` : "an unknown commit"}`;
