@@ -645,6 +645,21 @@ test("on a run after setup, a yes goes straight on to sc init", async () => {
   expect(readFileSync(join(site, "skelcrew.yaml"), "utf8")).toContain("\ntracker: github\n");
 });
 
+// The yes came in a first run that stopped later, such as at a sign-in, so sc init is offered
+// once the first run is done.
+test("after a first run that stopped once the plugin was in, the run that finishes offers sc init", async () => {
+  const site = siteOnGitHub();
+  const stopped = await skel("\n1\n", bin, main(), site);
+  expect(stopped.code).toBe(1);
+  expect(stopped.out).toContain("Installed github 0.1.0.");
+  expect(stopped.out).not.toContain(initOffer);
+  const finished = await skel("sk-ant-oat01-good\n\n", bin, main(), site);
+  expect(finished.err).toBe("");
+  expect(finished.out).not.toContain("GitHub detected");
+  expect(finished.out.indexOf("Skelcrew is set up.")).toBeLessThan(finished.out.indexOf(initOffer));
+  expect(readFileSync(join(site, "skelcrew.yaml"), "utf8")).toContain("\ntracker: github\n");
+});
+
 test("a no to sc init writes nothing, and the lead opens", async () => {
   const site = siteOnGitHub();
   const run = await skel("\n1\nsk-ant-oat01-good\nn\n", bin, main(), site);

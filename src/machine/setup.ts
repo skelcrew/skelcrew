@@ -253,6 +253,7 @@ async function offerInit(): Promise<void> {
   } catch {
     return;
   }
+  console.log("");
   const answer = prompt(
     "Use this repository's GitHub issues as tasks? This adds skelcrew.yaml here. [Y/n]",
   );
@@ -332,7 +333,7 @@ export function setupDone(): boolean {
 
 // Completes unfinished machine setup and keeps the daemon service current before attaching
 // to the lead. In a checkout of a GitHub repository it offers the GitHub plugin, on any run, and
-// a yes ends with the offer of sc init there. `from` is the remote sc --remote brings from your
+// a yes ends with the offer of sc init there, once setup is done. `from` is the remote sc --remote brings from your
 // laptop, as the checkout is there.
 export async function firstRun(from?: string): Promise<void> {
   const done = setupDone();
@@ -373,10 +374,10 @@ export async function firstRun(from?: string): Promise<void> {
     if (process.platform === "darwin")
       console.log("Work stops while your laptop sleeps. sc remote add keeps it going on a server.");
   }
-  if (installed) {
-    console.log("");
-    await offerInit();
-  }
+  // A first run that stopped after the yes, such as at a sign-in, left the plugin in with no
+  // offer of sc init, so the run that finishes setup offers it. offerInit asks only with the
+  // plugin in, in a checkout whose skelcrew.yaml names no tracker.
+  if (installed || (!done && hasGitHubPlugin())) await offerInit();
 }
 
 // A step of the first run: `title` names it, and `take` asks what it needs, starting with a line
