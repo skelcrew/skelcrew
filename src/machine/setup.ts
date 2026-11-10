@@ -16,6 +16,7 @@ import { promptSecret } from "./secret.ts";
 import { installService, loginPath, serviceFile } from "./service.ts";
 import { dropCapabilities, onSprite, spriteServiceInstalled } from "./sprite.ts";
 
+// The environment a step looks programs up in and runs them with.
 type Env = Record<string, string | undefined>;
 
 // The harnesses agents can run on, in the order the first run offers them.
@@ -28,6 +29,7 @@ const harnesses = [
   },
   { name: "codex", title: "Codex", command: "codex", install: "npm install -g @openai/codex" },
 ] as const;
+// The programs agents need on Linux, each with the line that installs it.
 const tools = [
   { command: "tmux", install: "sudo apt install tmux" },
   { command: "bwrap", install: "sudo apt install bubblewrap" },
@@ -35,6 +37,7 @@ const tools = [
 ];
 // On a Mac the sandbox comes with the system, and what Homebrew gives goes in one line.
 const brewed = ["tmux", "git"];
+// What a Mac needs beyond Homebrew's tools, with what to do when it is missing.
 const macTools = [
   {
     command: "sandbox-exec",
@@ -47,6 +50,7 @@ const macTools = [
 function missingHarness(env: Env): string[] {
   const PATH = env.PATH ?? "";
   const saved = readConfig().harness;
+  // Before you pick one, any installed harness will do.
   const wanted = harnesses.filter((h) => saved === undefined || h.name === saved);
   if (wanted.some((h) => Bun.which(h.command, { PATH }))) return [];
   return wanted.map((h) => `  ${h.command}: ${h.install}`);
@@ -60,10 +64,12 @@ function checkMacTools(env: Env): void {
   const missing = macTools.filter((tool) => !Bun.which(tool.command, { PATH }));
   const lines = missing.map((tool) => `  ${tool.command}: ${tool.install}`);
   lines.push(...missingHarness(env));
+  // The brew line goes first, with where to get Homebrew above it when it is missing too.
   if (brew.length > 0) lines.unshift(`  brew install ${brew.join(" ")}`);
   if (brew.length > 0 && !Bun.which("brew", { PATH }))
     lines.unshift("  Homebrew, for the line below: https://brew.sh");
   if (lines.length > 0) throw new Error(`Install these first:\n${lines.join("\n")}`);
+  // A sandbox that allows everything, to see that sandbox-exec starts one at all.
   const tried = Bun.spawnSync(["sandbox-exec", "-p", "(version 1)(allow default)", "true"], {
     env,
     stderr: "pipe",
@@ -80,6 +86,8 @@ function checkTools(env: Env): void {
   const missing = tools.filter((tool) => !Bun.which(tool.command, { PATH }));
   const lines = missing.map((tool) => `  ${tool.command}: ${tool.install}`);
   lines.push(...missingHarness(env));
+  // A missing bwrap is in the lines already, and checking it here too tells TypeScript it
+  // is found below.
   if (lines.length > 0 || !bwrap) {
     throw new Error(`Install these first:\n${lines.join("\n")}`);
   }
@@ -104,6 +112,8 @@ function apparmorAdvice(bwrap: string): string {
   const intro =
     "On Ubuntu 24.04 and later, AppArmor may block it unless a profile allows it. Other\n" +
     "causes fail the same way, such as the kernel's user namespace setting or a container.";
+  // Ubuntu's own bwrap: either its profile is loaded and something else blocks it, or the
+  // profile ships and only needs loading. Any other bwrap gets a profile of Skelcrew's.
   const shipped = "/usr/share/apparmor/extra-profiles/bwrap-userns-restrict";
   if (bwrap === "/usr/bin/bwrap" && existsSync("/etc/apparmor.d/bwrap-userns-restrict"))
     return `${intro} Ubuntu's profile for bwrap is in place already, so look at those first.`;
@@ -132,6 +142,7 @@ function tokenProblem(token: string): string | null {
 // own Claude Code for a refresh. Skelcrew doesn't run it, so its text never mixes with Skelcrew's,
 // and over ssh you run it on your laptop, where the browser is. A wrong paste is asked for again.
 function saveClaudeToken(): void {
+  // Each wrong paste asks again, saying what was wrong with the last one.
   let question = "Token:";
   for (;;) {
     const answer = promptSecret(question);
@@ -173,8 +184,10 @@ function logInCodex(env: Env, line: string): void {
   // which also stops Skelcrew on Ctrl-C with your terminal as it was.
   if (process.stdin.isTTY) promptSecret(line);
   else console.log(line);
+  // The alternate screen needs a terminal that understands it.
   const screen = process.stdout.isTTY && process.env.TERM !== "dumb";
   if (screen) process.stdout.write("\x1b[?1049h\x1b[H");
+  // Ctrl-C reaches both codex and Skelcrew, and only codex should stop on it.
   const ignore = () => {};
   process.on("SIGINT", ignore);
   let ran = false;
@@ -186,6 +199,8 @@ function logInCodex(env: Env, line: string): void {
     }).success;
   } finally {
     process.off("SIGINT", ignore);
+    // Codex's reason for failing is on the alternate screen, which switching back would
+    // hide.
     if (screen && !ran && process.stdin.isTTY)
       promptSecret("\nCodex's sign-in didn't finish. Press Enter to go back.");
     if (screen) process.stdout.write("\x1b[?1049l");
@@ -207,6 +222,7 @@ function gitHubToOffer(remote: string | null): string | null {
   const found = remote === null ? null : pathOf(remote);
   if (found?.host !== "github.com" || hasGitHubPlugin()) return null;
   const repository = `${found.owner}/${found.repo}`;
+  // GitHub's names ignore case, so a no for Simon/App covers simon/app.
   const declined = readConfig().declined.map((name) => name.toLowerCase());
   return declined.includes(repository.toLowerCase()) ? null : repository;
 }
@@ -221,6 +237,7 @@ function offerGitHub(repository: string, remote: string): boolean {
   const answer = prompt(
     "The GitHub plugin lets Skelcrew work with issues, pull requests\nand CI on your repositories. Install the GitHub plugin? [Y/n]",
   );
+  // Bun's prompt answers a bare Enter with null, which takes the default, yes.
   if (!["", "y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
     const { config, declined } = readConfig();
     config.set("github_declined", [...declined, repository]);
@@ -231,6 +248,7 @@ function offerGitHub(repository: string, remote: string): boolean {
     );
     return false;
   }
+  // The plugin's setup is handed the remote, so it can set itself up for this repository.
   try {
     installPlugin(githubPlugin, remote, false);
   } catch (error) {
@@ -247,6 +265,7 @@ function offerGitHub(repository: string, remote: string): boolean {
 async function offerInit(): Promise<void> {
   const root = checkoutTop();
   if (!hasGitHubPlugin() || root === null || !originHere(root)) return;
+  // A skelcrew.yaml that names a tracker already, or can't be read, means nothing to offer.
   try {
     const { there, settings } = checkoutSettings(root);
     if (there && (settings === null || settings.has("tracker"))) return;
@@ -273,6 +292,7 @@ function pickHarness(env: Env): void {
   const PATH = env.PATH ?? "";
   console.log("Choose the coding agent:");
   for (const [at, h] of harnesses.entries()) console.log(`  ${at + 1}) ${h.title}`);
+  // The first one installed is the default, so Enter picks a harness that works.
   const installed = harnesses.findIndex((h) => Bun.which(h.command, { PATH }));
   // Bun's prompt answers null both for Ctrl-D and for a bare Enter, unless it has a
   // default: then Enter gives the default and only Ctrl-D gives null.
@@ -298,6 +318,7 @@ function reviewerSaved(): HarnessName | undefined {
 // anyway.
 function pickReviewer(harness: HarnessName): void {
   const other = harnesses.filter((h) => h.name !== harness);
+  // The other harness is 1, the default.
   const choices = [...other, ...harnesses.filter((h) => h.name === harness)];
   console.log("Choose the coding agent for reviews:");
   for (const [at, h] of choices.entries())
@@ -333,8 +354,8 @@ export function setupDone(): boolean {
 
 // Completes unfinished machine setup and keeps the daemon service current before attaching
 // to the lead. In a checkout of a GitHub repository it offers the GitHub plugin, on any run, and
-// a yes ends with the offer of sc init there, once setup is done. `from` is the remote sc --remote brings from your
-// laptop, as the checkout is there.
+// a yes ends with the offer of sc init there, once setup is done. `from` is the remote sc
+// --remote brings from your laptop, as the checkout is there.
 export async function firstRun(from?: string): Promise<void> {
   const done = setupDone();
   // The tools are found where your login shell finds them, even over ssh, so a codex
@@ -358,11 +379,16 @@ export async function firstRun(from?: string): Promise<void> {
     for (;;) {
       const [step] = stepsToTake(env, asked);
       if (!step) break;
+      // A step that comes back right after it was taken didn't do its job, and asking again
+      // would never end.
       if (step.title === taken) throw new Error(`${step.title} didn't finish`);
+      // A blank line parts each step from the one before, and the first from the offer.
       if (taken !== "" || github !== null) console.log("");
       step.take();
       taken = step.title;
     }
+    // Reviews fall back to your harness when the other one isn't installed, which is worth
+    // a line.
     const yours = harnesses.find((h) => h.name === readConfig().harness);
     const other = harnesses.find((h) => h !== yours);
     if (yours && other && !Bun.which(other.command, { PATH: env.PATH ?? "" }))
@@ -392,6 +418,8 @@ function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
   const { harness } = readConfig();
   if (!harness) steps.push({ title: "the coding agent", take: () => pickHarness(env) });
   const PATH = env.PATH ?? "";
+  // Reviews are asked about only when both harnesses are installed, as otherwise there is
+  // nothing to pick.
   const both = harnesses.every((h) => Bun.which(h.command, { PATH }));
   if (harness && both && !reviewerSaved() && !asked.reviewer)
     steps.push({
