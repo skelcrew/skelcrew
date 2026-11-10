@@ -249,7 +249,6 @@ test("the daemon takes its lock from a Mac's system library, and the lead reache
   writeFileSync(join(home, "Library", "LaunchAgents", "run.skel.daemon.plist"), "");
   writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\n");
   fake("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
-  fake("gh", "exit 1");
   // simon/app, opened before, so the daemon starts its lead as it starts.
   appClone();
   const opened = `import { openDb } from ${JSON.stringify(source("db.ts"))};

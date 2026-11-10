@@ -474,11 +474,11 @@ claude.start({ name: "app-12", socket: "x", model: "opus", ...${JSON.stringify(l
       '[remote "origin"]\n\turl = https://x:ghp_secret@github.com/a/b\n',
     );
     git(repo, "config", "include.path", "../extra.config");
-    expect(start).toThrow("gh");
+    expect(start).toThrow("credential helper");
     git(repo, "config", "--unset", "include.path");
     for (const [key, value] of credentials) {
       git(repo, "config", key, value);
-      expect(start).toThrow("gh");
+      expect(start).toThrow("credential helper");
       git(repo, "config", "--unset", key);
     }
     expect(start).not.toThrow();

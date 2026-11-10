@@ -104,7 +104,7 @@ function skel(...words: string[]): string[] {
   return [process.execPath, ...checkout, ...words];
 }
 
-// Returns the command that runs skel's sidebar, with the GitHub name of the repository it opens
+// Returns the command that runs skel's sidebar, with the owner/name of the repository it opens
 // on. Where skel runs goes along as a word, not in the environment: a tmux server hands its
 // panes the environment of whichever terminal started it, and terminals on this server can
 // come from different laptops.
@@ -115,7 +115,7 @@ const sidebar = (agents: string, session: string, where: string, repository: str
 export const pageCommand = (url: string) => skel("page", url);
 
 // Opens the screen in your terminal on the named agent session, with the open repository's
-// lead's session and its GitHub name, and returns when you leave with Ctrl-Q, saying that
+// lead's session and its owner/name, and returns when you leave with Ctrl-Q, saying that
 // nothing stopped. The name of the session here only has to differ from
 // other terminals', and this process runs as long as the terminal has it open. Agents' sessions
 // are never touched.

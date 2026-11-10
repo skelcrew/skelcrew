@@ -5,8 +5,11 @@ import { join } from "node:path";
 import { codexHome } from "../agents/codex.ts";
 import { HarnessName } from "../agents/harness.ts";
 import { configFile, readConfig } from "../config.ts";
+import { openDb } from "../db.ts";
 import { claudeTokenFile, configDir } from "../paths.ts";
-import { rule, skelLine } from "../say.ts";
+import { installPlugin } from "../plugins/install.ts";
+import { installedPlugins } from "../plugins/plugin.ts";
+import { errorText, rule, skelLine } from "../say.ts";
 import { promptSecret } from "./secret.ts";
 import { installService, loginPath, serviceFile } from "./service.ts";
 import { dropCapabilities, onSprite, spriteServiceInstalled } from "./sprite.ts";
@@ -27,10 +30,9 @@ const tools = [
   { command: "tmux", install: "sudo apt install tmux" },
   { command: "bwrap", install: "sudo apt install bubblewrap" },
   { command: "git", install: "sudo apt install git" },
-  { command: "gh", install: "sudo apt install gh" },
 ];
 // On a Mac the sandbox comes with the system, and what Homebrew gives goes in one line.
-const brewed = ["tmux", "git", "gh"];
+const brewed = ["tmux", "git"];
 const macTools = [
   { command: "sandbox-exec", install: "it comes with macOS, and skel can't run agents without it" },
 ];
@@ -190,17 +192,30 @@ function logInCodex(env: Env, who: "agents" | "the reviewer"): void {
   console.log(skelLine(`${who} ${who === "agents" ? "are" : "is"} logged in to Codex.`));
 }
 
-// Reports whether gh is logged in to GitHub, which the daemon needs to clone repositories
-// and manage issues and PRs.
-const githubConnected = (env: Env) =>
-  Bun.spawnSync(["gh", "auth", "status"], { env, stdout: "pipe", stderr: "pipe" }).success;
+// The plugin the first run offers, for tasks from GitHub issues and PRs on GitHub.
+const githubPlugin = "skelcrew/skel-plugin-github";
 
-// Runs gh auth login in your terminal, then says so, since gh's own last lines can read as
-// if more is to come.
-function connectGitHub(env: Env): void {
-  if (!handOver("gh", ["gh", "auth", "login"], env))
-    throw new Error("gh auth login didn't finish, so skel can't reach GitHub");
-  console.log(skelLine("connected to GitHub."));
+// Returns whether a plugin named github is installed, so the first run offers it only once.
+const hasGitHubPlugin = () => installedPlugins(openDb()).some((p) => p.name === "github");
+
+// Offers the GitHub plugin, and on a yes installs it, which shows what it runs and asks again
+// before it runs anything. One that fails to install is only reported: skel works from git
+// alone until you install it with skel plugin install.
+function offerGitHub(): void {
+  const answer = prompt("Install the GitHub plugin? [Y/n]")?.trim().toLowerCase() ?? "";
+  if (!["", "y", "yes"].includes(answer)) {
+    console.log(
+      skelLine(
+        `skipped. skel works from git alone until you run skel plugin install ${githubPlugin}.`,
+      ),
+    );
+    return;
+  }
+  try {
+    installPlugin(githubPlugin);
+  } catch (error) {
+    console.log(skelLine(`couldn't install the GitHub plugin: ${errorText(error)}`));
+  }
 }
 
 // Asks whether agents run on Claude Code or Codex, refuses one that isn't installed, and saves
@@ -279,7 +294,7 @@ export function firstRun(): void {
     // The steps left are worked out again after each one, as the harness you pick decides
     // which login comes next.
     let taken = "";
-    const asked = { reviewer: false };
+    const asked = { reviewer: false, plugin: false };
     for (let at = 1; ; at++) {
       const [step, ...rest] = stepsToTake(env, asked);
       if (!step) break;
@@ -315,13 +330,17 @@ type Step = { title: string; about: string; take: () => void };
 // runs this time. `asked` says whether you were asked about reviews in this run, as reviews on
 // your own harness save nothing to show it. Until you pick a harness, Claude Code's login is
 // counted, as Enter usually picks it.
-function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
+function stepsToTake(env: Env, asked: { reviewer: boolean; plugin: boolean }): Step[] {
   const steps: Step[] = [];
-  if (!githubConnected(env))
+  if (!asked.plugin && !hasGitHubPlugin())
     steps.push({
-      title: "connect to GitHub",
-      about: "gh will log you in. skel uses this login for everything it does on GitHub.",
-      take: () => connectGitHub(env),
+      title: "offer the GitHub plugin",
+      about:
+        "For tasks from GitHub issues and PRs on GitHub. skel acts there as its GitHub App, never as you.",
+      take: () => {
+        asked.plugin = true;
+        offerGitHub();
+      },
     });
   const { harness } = readConfig();
   if (!harness)

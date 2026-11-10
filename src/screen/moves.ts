@@ -18,7 +18,11 @@ function stops(rows: Row[], lists: Lists, shown: string | null, size: Size): Sto
       .filter((link) => lines.some((line) => line.link === link))
       .map((link) => ({ place: link.url, open: true }));
   const threads = rows.map((row) => ({ place: row.session, open: row.running }));
-  return [seen(lists.issues), threads, seen(lists.prs)];
+  return [
+    ...(lists.issues ? [seen(lists.issues)] : []),
+    threads,
+    ...(lists.prs ? [seen(lists.prs)] : []),
+  ];
 }
 
 // Returns what is one row up or down, for Alt-Up and Alt-Down, as a session or a link's url, or

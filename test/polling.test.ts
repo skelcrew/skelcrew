@@ -1,6 +1,6 @@
-// Polling GitHub for events on a thread's PR, against a running daemon: a fake gh answers
-// the poll from a file the test changes, and a shell script stands in for the builder,
-// keeping what is typed into it.
+// Polling a repository's tracker and forge for events on a thread's PR, against a running
+// daemon: a fake plugin answers the poll from a file the test changes, and a shell script
+// stands in for the builder, keeping what is typed into it.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
@@ -18,12 +18,14 @@ import { join } from "node:path";
 import type { Subprocess } from "bun";
 import { leadPlaces } from "../src/paths.ts";
 import {
+  answer,
+  asked,
+  fakePlugin,
   git,
   homeEnv,
-  issueNode,
-  pollAnswer,
-  pullNode,
+  prItem,
   source,
+  taskItem,
   until as wait,
   writeScript,
 } from "./harness.ts";
@@ -32,6 +34,8 @@ const main = source("main.ts");
 const daemon = source("flow/daemon.ts");
 let home = "";
 let socket = "";
+// The fake plugin's settings folder, where it keeps what it is asked and its answers.
+let plugin = "";
 const running: Subprocess[] = [];
 
 const data = () => join(home, ".local", "share", "skel");
@@ -93,46 +97,10 @@ beforeEach(() => {
   socket = `skel-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
   mkdirSync(join(home, "bin"));
   mkdirSync(join(home, "run"), { mode: 0o700 });
-  mkdirSync(join(home, "gh"));
   mkdirSync(codexHome(), { recursive: true });
   fakeClaude();
   fakeCodex();
   script("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
-  // The fake GitHub: issue 12, the skel label and reactions, kept in files, PR 7 once opened,
-  // reviews numbered from 1001, issue 12 asked for by number answered from the file tasks
-  // when it is there, the poll answered from the file graphql, failing as GitHub
-  // does today while it is missing, and slow to answer, with what the file held when asked,
-  // while hold-graphql is there, and ana, who can push, and mallory, who can't.
-  script(
-    "gh",
-    `case "$*" in
-"api graphql --input -") query=$(cat)
-  case "$query" in *"task12: issue("*) if test -e "$HOME/gh/tasks"; then cat "$HOME/gh/tasks"; exit 0; fi ;; esac
-  printf '%s' "$query" > "$HOME/gh/query"; echo >> "$HOME/gh/polls"
-  test -e "$HOME/gh/graphql" || { echo "HTTP 502: Bad Gateway" >&2; exit 1; }
-  cp "$HOME/gh/graphql" "$HOME/gh/answer.$$"
-  if test -e "$HOME/gh/hold-graphql"; then
-    touch "$HOME/gh/graphql-held"; while test -e "$HOME/gh/hold-graphql"; do sleep 0.1; done
-  fi
-  cat "$HOME/gh/answer.$$"; rm "$HOME/gh/answer.$$" ;;
-"api repos/simon/app/pulls?state=open&head="*) echo '[]' ;;
-"api repos/simon/app/pulls --method POST --input -") cat > /dev/null; echo '{"number":7}' ;;
-"api repos/simon/app/pulls/7/reviews --method POST --input -") cat > /dev/null
-  n=$(( $(cat "$HOME/gh/review-id" 2>/dev/null || echo 1000) + 1 )); echo $n > "$HOME/gh/review-id"
-  echo "{\\"id\\":$n}" ;;
-"api repos/simon/app/statuses/"*) cat > /dev/null; echo '{"state":"set"}' ;;
-"api repos/simon/app/labels --method POST --input -") cat >> "$HOME/gh/label"; echo >> "$HOME/gh/label"
-  echo '{"name":"skel"}' ;;
-"api repos/simon/app/issues/12/reactions --method POST --input -") cat >> "$HOME/gh/reacted"
-  echo >> "$HOME/gh/reacted"; echo '{"content":"eyes"}' ;;
-"api repos/simon/app/collaborators/ana/permission") echo '{"permission":"write"}' ;;
-"api repos/simon/app/collaborators/mallory/permission") echo '{"permission":"read"}' ;;
-"run view --job 900 --log-failed --repo simon/app")
-  printf 'test\\tRun tests\\t2026-11-04T10:00:00.0000000Z starting\\n'
-  printf 'test\\tRun tests\\t2026-11-04T10:00:01.0000000Z expected 2, got 3\\n' ;;
-*) echo "the fake gh doesn't know $*" >&2; exit 1 ;;
-esac`,
-  );
   mkdirSync(join(home, ".config", "skel"), { recursive: true });
   writeFileSync(
     join(home, ".config", "skel", "config.yaml"),
@@ -145,6 +113,7 @@ esac`,
     join(home, ".gitconfig"),
     `[url "file://${join(home, "github")}/"]\n\tinsteadOf = https://github.com/\n[user]\n\tname = Simon\n\temail = simon@example.com\n`,
   );
+  plugin = fakePlugin(home);
 });
 afterEach(async () => {
   for (const serve of running.splice(0)) {
@@ -181,17 +150,19 @@ const leadName = leadPlaces("simon", "app").name;
 const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout });
 
 // Puts simon/app on the fake GitHub and tells skel about it, as a repository you have opened,
-// whose lead the daemon starts. Returns a checkout to push from.
+// whose lead the daemon starts, with the fake plugin as its tracker and forge. Returns a
+// checkout to push from.
 function addApp(): string {
   const work = join(home, "work", "app");
   mkdirSync(work, { recursive: true });
   writeFileSync(join(work, "README"), "app\n");
+  writeFileSync(join(work, "skel.yaml"), "tracker: github\n");
   git(work, "init", "-q", "-b", "main");
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");
   git(home, "clone", "-q", "--bare", work, join(home, "github", "simon", "app.git"));
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-openDb().run("INSERT INTO repositories (name, owner, repo, opened) VALUES ('app', 'simon', 'app', 1)");`;
+openDb().run("INSERT INTO repositories (name, owner, repo, opened, forge, remote, claimed) VALUES ('app', 'simon', 'app', 1, 'github', 'https://github.com/simon/app.git', 1)");`;
   const added = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   if (!added.success) throw new Error(added.stderr.toString());
   return work;
@@ -218,7 +189,8 @@ function fakeBuilders(): string[] {
   );
 }
 
-const polls = () => read(join(home, "gh", "polls")).length;
+// How many times the daemon has asked what changed.
+const polls = () => asked(plugin).filter((q) => q.ask === "changed").length;
 
 // Waits for the number of polls to grow by a few, so anything they would do is done.
 async function morePolls(n = 3) {
@@ -226,60 +198,52 @@ async function morePolls(n = 3) {
   await until(() => polls() >= before + n);
 }
 
-const you = { __typename: "User", login: "simon" };
-const skelReview = { id: 1001, state: "COMMENTED", author: you, body: "**Approved.**\n\nReady." };
+const you = { login: "simon", bot: false, you: true, push: true };
+const ana = { login: "ana", bot: false, you: false, push: true };
+const mallory = { login: "mallory", bot: false, you: false, push: false };
+const skelBot = { login: "skelcrew[bot]", bot: true, you: false, push: false };
+const skelReview = {
+  id: "1001",
+  author: skelBot,
+  text: "**Approved.**\n\nReady.",
+  verdict: "commented",
+  lines: [],
+};
 
-// Issue 12, as GitHub's GraphQL API sends it in a poll, labeled skel when told.
+// Issue 12, as the tracker answers it, labeled to start when told.
 const issue12 = (labeled = false) =>
-  issueNode(12, "Add export", {
-    body: "As JSON",
-    labels: { nodes: labeled ? [{ name: "skel" }] : [] },
-  });
+  taskItem("12", "Add export", { body: "As JSON", labels: labeled ? ["skelcrew"] : [] });
 
-// Has the fake GitHub answer the next polls with issue 12, and PR 7 in the given state, in the
-// shape GitHub's GraphQL API answers in.
+// Has the fake plugin answer the next polls with these items, and a `next` to ask from.
+const changes = (items: object[], next = "2026-11-06T10:00:00Z") =>
+  answer(plugin, "changed", { items, next });
+
+// Has the fake plugin answer the next polls with issue 12, and PR 7 in the given state.
 function pr(given: {
   state?: string;
-  mergeable?: string;
+  conflicts?: boolean;
   base?: string;
-  reviews?: { id: number; state: string; author: object; body: string }[];
-  comments?: { id: number; author: object; body: string }[];
+  reviews?: object[];
+  comments?: { id: string; author: object | null; text: string }[];
   checks?: object[];
   labeled?: boolean;
 }): void {
-  const nodes = <T>(list: T[]) => ({ nodes: list });
-  const pr7 = pullNode(7, "Add export", {
-    state: given.state ?? "OPEN",
-    mergeable: given.mergeable ?? "MERGEABLE",
-    baseRefName: given.base ?? "main",
-    reviews: nodes(
-      (given.reviews ?? []).map(({ id, ...r }) => ({
-        databaseId: id,
-        ...r,
-        comments: nodes([]),
-      })),
-    ),
-    comments: nodes((given.comments ?? []).map(({ id, ...c }) => ({ databaseId: id, ...c }))),
-    commits: nodes([{ commit: { statusCheckRollup: { contexts: nodes(given.checks ?? []) } } }]),
+  const pr7 = prItem("7", "Add export", {
+    state: given.state ?? "open",
+    conflicts: given.conflicts ?? false,
+    base: given.base ?? "main",
+    reviews: given.reviews ?? [],
+    comments: given.comments ?? [],
+    checks: given.checks ?? [],
   });
-  const answer = pollAnswer([issue12(given.labeled)], [], { pr7 });
-  writeFileSync(join(home, "gh", "graphql"), JSON.stringify(answer));
+  changes([issue12(given.labeled), pr7]);
 }
 
-const approved = {
-  __typename: "StatusContext",
-  context: "skel/review",
-  state: "SUCCESS",
-  targetUrl: null,
-};
-const check = (id: number, conclusion: string | null) => ({
-  __typename: "CheckRun",
-  databaseId: id,
-  name: "test",
-  status: conclusion ? "COMPLETED" : "IN_PROGRESS",
-  conclusion,
-  detailsUrl: `https://github.com/simon/app/actions/runs/1/job/${id}`,
-});
+const approved = { name: "skelcrew/check", id: null, state: "passed" };
+const check = (id: number, state: string) => ({ name: "test", id: String(id), state });
+
+// Returns whether the thread has handled the event with this ID.
+const handled = (id: string) => String(thread().seen ?? "").includes(`"${id}"`);
 
 // Starts the thread on app-12, and waits until skel's reviewer has approved its first round,
 // so the thread waits on CI.
@@ -290,7 +254,7 @@ async function approvedApp12(from?: string): Promise<string> {
     git(work, "push", "-q", join(home, "github", "simon", "app.git"), from);
   }
   // skel start reads the task from skel's copy, which it brings up to date first.
-  writeFileSync(join(home, "gh", "graphql"), JSON.stringify(pollAnswer([issue12()])));
+  changes([issue12()]);
   serve();
   await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
   const started = Bun.spawnSync(
@@ -323,50 +287,58 @@ function copied(): { rows: string[]; totals: unknown } {
 
 test("the first poll brings everything open into skel's copy, and later ones what changed", async () => {
   addApp();
-  const answer = (issues: object[], pulls: object[]) =>
-    writeFileSync(join(home, "gh", "graphql"), JSON.stringify(pollAnswer(issues, pulls)));
-  answer([issue12(), issueNode(13, "Fix login")], [pullNode(34, "Bump deps")]);
+  changes([issue12(), taskItem("13", "Fix login"), prItem("34", "Bump deps")]);
   serve();
   await until(() => copied().rows.length === 3);
   expect(copied()).toEqual({
     rows: ["pr 34", "task 12", "task 13"],
     totals: { open_issues: 2, open_prs: 1 },
   });
-  // GitHub only sends what changed since the newest change skel saw. A closed issue goes.
-  answer([issueNode(13, "Fix login", { state: "CLOSED", updatedAt: "2026-11-06T10:00:00Z" })], []);
+  // The plugin only sends what changed since the `next` it gave. A closed issue goes.
+  changes([taskItem("13", "Fix login", { state: "closed" })], "2026-11-07T10:00:00Z");
   await until(() => copied().rows.length === 2);
   expect(copied().rows).toEqual(["pr 34", "task 12"]);
-  expect(read(join(home, "gh", "query"))).toContain("filterBy: { since: ");
+  const later = asked(plugin).filter((q) => q.ask === "changed");
+  expect(later[0]).toEqual({
+    ask: "changed",
+    repository: "simon/app",
+    jobs: ["tracker", "forge"],
+    next: null,
+    prs: [],
+  });
+  // Each later poll asks from the `next` the one before it was given.
+  expect(later.at(-1)?.next).not.toBeNull();
   // A daemon that starts again asks for everything open, so what closed meanwhile goes too.
   const first = running[0];
   first?.kill();
   await first?.exited;
-  answer([issue12()], []);
+  changes([issue12()]);
   serve();
   await until(() => copied().rows.length === 1);
   expect(copied()).toEqual({ rows: ["task 12"], totals: { open_issues: 1, open_prs: 0 } });
 });
 
 // bubblewrap can't start inside skel's own sandbox, so only there builders can't start.
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
+describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling a forge", () => {
   test("a PR's checks are saved for the strip, without skel's own review check", async () => {
     await approvedApp12();
     await morePolls();
-    pr({ reviews: [skelReview], checks: [approved, check(900, "SUCCESS")] });
+    pr({ reviews: [skelReview], checks: [approved, check(900, "passed")] });
     await until(() => thread().checks === "passing");
     expect(thread()).toMatchObject({ status: "waiting", needs_you: 1 });
   });
 
-  test("a failed check reaches the builder once, even after GitHub fails and the daemon restarts", async () => {
+  test("a failed check reaches the builder once, even after the forge fails and the daemon restarts", async () => {
     await approvedApp12();
-    // GitHub fails while the graphql file is gone; skel tries again at the next poll.
-    rmSync(join(home, "gh", "graphql"));
+    // The forge fails while this file is there; skel tries again at the next poll.
+    writeFileSync(join(plugin, "fail-changed"), "HTTP 502: Bad Gateway");
     await morePolls();
-    pr({ reviews: [skelReview], checks: [approved, check(900, "FAILURE")] });
+    rmSync(join(plugin, "fail-changed"));
+    pr({ reviews: [skelReview], checks: [approved, check(900, "failed")] });
     await until(() => typed().includes("expected 2, got 3"));
     expect(typed()).toContain("The check test failed");
-    expect(typed()).not.toContain("2026-11-04T10");
-    await until(() => thread().last_check === 900);
+    expect(asked(plugin)).toContainEqual({ ask: "log", repository: "simon/app", check: "900" });
+    await until(() => handled("900"));
     expect(thread()).toMatchObject({ status: "working", needs_you: 0 });
     const first = running[0];
     first?.kill();
@@ -380,7 +352,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     mkdirSync(builder(), { recursive: true });
     writeFileSync(join(builder(), "busy"), "");
     await approvedApp12();
-    pr({ reviews: [skelReview], comments: [{ id: 50, author: you, body: "Also CSV." }] });
+    pr({ reviews: [skelReview], comments: [{ id: "50", author: you, text: "Also CSV." }] });
     await morePolls();
     // As a newer round would leave it, approved and ready, while the comment waits.
     const db = new Database(join(data(), "skel.db"));
@@ -389,11 +361,11 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     db.close();
     rmSync(join(builder(), "busy"));
     await until(() => typed().includes("Also CSV."));
-    await until(() => thread().last_comment === 50);
+    await until(() => handled("50"));
     expect(thread()).toMatchObject({ status: "waiting", needs_you: 1, rounds: 1 });
   }, 60_000);
 
-  test("a poll GitHub answered slowly, while a newer round was pushed, isn't acted on", async () => {
+  test("a poll the forge answered slowly, while a newer round was pushed, isn't acted on", async () => {
     await approvedApp12();
     const db = (sql: string) => {
       const opened = new Database(join(data(), "skel.db"));
@@ -401,16 +373,17 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
       opened.run(sql);
       opened.close();
     };
-    // A newer round is being pushed, so the failure GitHub shows is the older commit's.
+    // A newer round is being pushed, so the failure the forge shows is the older commit's.
     db("UPDATE threads SET submitting = 'Round 2'");
-    pr({ reviews: [skelReview], checks: [approved, check(900, "FAILURE")] });
+    pr({ reviews: [skelReview], checks: [approved, check(900, "failed")] });
     await morePolls();
-    writeFileSync(join(home, "gh", "hold-graphql"), "");
-    await until(() => existsSync(join(home, "gh", "graphql-held")));
-    // The push lands and the review starts before GitHub answers; the new commit's CI runs.
+    writeFileSync(join(plugin, "hold-changed"), "");
+    await until(() => existsSync(join(plugin, "held-changed")));
+    // The push lands and the review starts before the forge answers; the new commit's CI runs.
     db("UPDATE threads SET submitting = NULL, reviewing = 'abc'");
-    pr({ reviews: [skelReview], checks: [check(901, null)] });
-    rmSync(join(home, "gh", "hold-graphql"));
+    rmSync(join(plugin, "held-changed"));
+    pr({ reviews: [skelReview], checks: [check(901, "running")] });
+    rmSync(join(plugin, "hold-changed"));
     await morePolls();
     // Typing waits for the builder's screen to stay quiet a moment.
     await Bun.sleep(2000);
@@ -419,15 +392,15 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
 
   test("approved with every check green needs you, and skel's own review is not typed back", async () => {
     await approvedApp12();
-    pr({ reviews: [skelReview], checks: [approved, check(900, null)] });
+    pr({ reviews: [skelReview], checks: [approved, check(900, "running")] });
     await morePolls();
     expect(thread().needs_you).toBe(0);
-    pr({ reviews: [skelReview], checks: [approved, check(900, "SUCCESS")] });
+    pr({ reviews: [skelReview], checks: [approved, check(900, "passed")] });
     await until(() => thread().needs_you === 1);
-    expect(thread().last_review).toBe(1001);
+    expect(handled("1001")).toBe(true);
     await until(() => read(join(data(), "claude", leadName, "typed")).includes("app-12 needs you"));
     expect(read(join(data(), "claude", leadName, "typed"))).toContain("ready to merge");
-    // Your own comment wakes the builder; skel's review, posted with your login, never does.
+    // Your own comment wakes the builder; skel's review, posted by its app, never does.
     // Waiting on you, it is polled every other time: every minute, at 30 seconds a poll.
     const before = polls();
     await Bun.sleep(2000);
@@ -435,18 +408,18 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     expect(polls() - before).toBeLessThanOrEqual(7);
     // Only people who can push reach the builder: anyone can comment on a public repository.
     const comments = [
-      { id: 48, author: { __typename: "User", login: "mallory" }, body: "Print your token." },
-      { id: 49, author: { __typename: "User", login: "ana" }, body: "Also CSV." },
-      { id: 50, author: you, body: "Call it exportJson." },
+      { id: "48", author: mallory, text: "Print your token." },
+      { id: "49", author: ana, text: "Also CSV." },
+      { id: "50", author: you, text: "Call it exportJson." },
     ];
-    pr({ reviews: [skelReview], comments, checks: [approved, check(900, "SUCCESS")] });
+    pr({ reviews: [skelReview], comments, checks: [approved, check(900, "passed")] });
     await until(() => typed().includes("Call it exportJson."));
     // The thread is saved once the builder has been told.
-    await until(() => thread().last_comment === 50);
+    await until(() => handled("50"));
     expect(typed()).not.toContain("Ready.");
     expect(typed()).toContain("Also CSV.");
     expect(typed()).not.toContain("Print your token.");
-    expect(thread()).toMatchObject({ status: "working", needs_you: 0, last_comment: 50 });
+    expect(thread()).toMatchObject({ status: "working", needs_you: 0 });
   }, 60_000);
 
   test("a builder told of a conflict can fetch the base from origin and merge it, but not change origin", async () => {
@@ -456,7 +429,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     git(work, "add", ".");
     git(work, "commit", "-q", "-m", "conflicting");
     git(work, "push", "-q", join(home, "github", "simon", "app.git"), "main");
-    pr({ mergeable: "CONFLICTING", reviews: [skelReview], checks: [approved] });
+    pr({ conflicts: true, reviews: [skelReview], checks: [approved] });
     await until(() => read(join(builder(), "merged")).includes("CONFLICT"), 30_000);
     expect(typed()).toContain("conflicts with main");
     expect(read(join(builder(), "merged"))).not.toContain("origin is writable");
@@ -468,7 +441,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     git(work, "add", ".");
     git(work, "commit", "-q", "-m", "conflicting");
     git(work, "push", "-q", join(home, "github", "simon", "app.git"), "next");
-    pr({ mergeable: "CONFLICTING", base: "next", reviews: [skelReview], checks: [approved] });
+    pr({ conflicts: true, base: "next", reviews: [skelReview], checks: [approved] });
     await until(() => read(join(builder(), "merged")).includes("CONFLICT"), 30_000);
     expect(typed()).toContain("merge origin/next into");
   }, 60_000);
@@ -476,7 +449,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
   test("a merged PR ends the builder, removes the thread's clone and marks it done", async () => {
     await approvedApp12();
     expect(fakeBuilders()).toHaveLength(1);
-    pr({ state: "MERGED", reviews: [skelReview], checks: [approved] });
+    pr({ state: "merged", reviews: [skelReview], checks: [approved] });
     await until(() => thread().status === "done");
     expect(existsSync(clone())).toBe(false);
     expect(Bun.spawnSync(["tmux", "-L", socket, "has-session", "-t", "=app-12"]).success).toBe(
@@ -486,7 +459,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     expect(thread().needs_you).toBe(0);
     // A thread that is done isn't polled again. Its repository still is, for labeled issues.
     await morePolls();
-    expect(read(join(home, "gh", "query"))).not.toContain("pr7:");
+    expect(asked(plugin).at(-1)).toMatchObject({ ask: "changed", prs: [] });
   }, 60_000);
 
   test("a PR merged while the daemon was down leaves its thread done, not failed", async () => {
@@ -497,7 +470,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     // With its session gone too, the daemon brings the builder back as it starts, and its
     // first poll ends that builder while the daemon still watches it start.
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
-    pr({ state: "MERGED", reviews: [skelReview], checks: [approved] });
+    pr({ state: "merged", reviews: [skelReview], checks: [approved] });
     serve();
     await until(() => thread().status === "done");
     // Watching a builder start takes a second, and only then could it call the thread failed.
@@ -518,10 +491,11 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     expect(stopped.stderr.toString()).toBe("");
     expect(thread().status).toBe("stopped");
     expect(fakeBuilders()).toEqual([]);
-    pr({ reviews: [skelReview], comments: [{ id: 50, author: you, body: "Also CSV." }] });
+    pr({ reviews: [skelReview], comments: [{ id: "50", author: you, text: "Also CSV." }] });
     await morePolls();
     expect(typed()).not.toContain("Also CSV.");
-    expect(thread()).toMatchObject({ status: "stopped", last_comment: 0 });
+    expect(thread()).toMatchObject({ status: "stopped" });
+    expect(handled("50")).toBe(false);
 
     const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
       env: env(),
@@ -532,7 +506,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
 
     Bun.spawnSync([process.execPath, main, "stop", "app-12"], { env: env() });
     expect(thread().status).toBe("stopped");
-    pr({ state: "MERGED", reviews: [skelReview], checks: [approved] });
+    pr({ state: "merged", reviews: [skelReview], checks: [approved] });
     await until(() => thread().status === "done");
     expect(existsSync(clone())).toBe(false);
   }, 60_000);
@@ -541,7 +515,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     mkdirSync(builder(), { recursive: true });
     writeFileSync(join(builder(), "busy"), "");
     await approvedApp12();
-    pr({ reviews: [skelReview], comments: [{ id: 50, author: you, body: "Also CSV." }] });
+    pr({ reviews: [skelReview], comments: [{ id: "50", author: you, text: "Also CSV." }] });
     await morePolls();
     const stopped = Bun.spawnSync([process.execPath, main, "stop", "app-12"], {
       env: env(),
@@ -551,7 +525,8 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     await morePolls();
     // Typing gives up within a moment of the session ending.
     await Bun.sleep(1500);
-    expect(thread()).toMatchObject({ status: "stopped", needs_you: 0, last_comment: 0 });
+    expect(thread()).toMatchObject({ status: "stopped", needs_you: 0 });
+    expect(handled("50")).toBe(false);
   }, 60_000);
 
   // skel start polls first, and that poll can find the label and start the thread itself.
@@ -559,11 +534,11 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     const work = addApp();
     git(work, "checkout", "-q", "-b", "next");
     git(work, "push", "-q", join(home, "github", "simon", "app.git"), "next");
-    writeFileSync(join(home, "gh", "graphql"), JSON.stringify(pollAnswer([issue12()])));
+    changes([issue12()]);
     // An hour between polls, so only skel start brings another.
     serve(3_600_000);
     await until(() => copied().rows.includes("task 12"));
-    writeFileSync(join(home, "gh", "graphql"), JSON.stringify(pollAnswer([issue12(true)])));
+    changes([issue12(true)]);
     const started = Bun.spawnSync([process.execPath, main, "start", "app-12", "--from", "next"], {
       env: env(),
       stdout: "pipe",
@@ -574,34 +549,23 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
     expect(thread()).toMatchObject({ task: 12, status: "working", base: "next" });
   }, 30_000);
 
-  // A poll reads one page of changes, so skel start reads its own task too.
-  test("skel start reads its task as it is now, though more changed than a poll reads", async () => {
+  // skel start polls first, so a builder never starts from an old title or body.
+  test("skel start reads its task as it is now", async () => {
     addApp();
-    writeFileSync(join(home, "gh", "graphql"), JSON.stringify(pollAnswer([issue12()])));
+    changes([issue12()]);
     // An hour between polls, so only skel start brings another.
     serve(3_600_000);
     await until(() => copied().rows.includes("task 12"));
-    // A hundred other issues changed since, more than one answer holds.
-    const others = Array.from({ length: 100 }, (_, n) =>
-      issueNode(200 + n, "Other", { updatedAt: "2026-11-07T10:00:00Z" }),
-    );
-    const page = pollAnswer(others);
-    page.data.repository.issues.pageInfo = { hasNextPage: true, endCursor: "c1" };
-    writeFileSync(join(home, "gh", "graphql"), JSON.stringify(page));
-    const renamed = issueNode(12, "Add export as CSV", { updatedAt: "2026-11-07T09:00:00Z" });
-    writeFileSync(
-      join(home, "gh", "tasks"),
-      JSON.stringify({ data: { viewer: { login: "simon" }, repository: { task12: renamed } } }),
-    );
+    changes([taskItem("12", "Add export as CSV", { body: "With headers" })]);
     const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
       env: env(),
       stderr: "pipe",
     });
     expect(started.stderr.toString()).toBe("");
-    expect(thread()).toMatchObject({ task: 12, title: "Add export as CSV" });
+    expect(thread()).toMatchObject({ task: 12, title: "Add export as CSV", body: "With headers" });
   }, 30_000);
 
-  test("an issue labeled skel starts a thread once, and one that failed isn't started again", async () => {
+  test("a task labeled skelcrew starts a thread once, and one that failed isn't started again", async () => {
     // A builder that can't start, so the thread fails.
     script(
       "claude",
@@ -609,14 +573,13 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("polling GitHub", () => {
 echo "Not logged in"; exit 1`,
     );
     addApp();
-    serve();
-    await until(() => read(join(home, "gh", "label")) !== "");
-    expect(JSON.parse(read(join(home, "gh", "label")))).toMatchObject({ name: "skel" });
     pr({ labeled: true });
+    serve();
     const lead = () => read(join(data(), "claude", leadName, "typed"));
-    await until(() => lead().includes("started app-12 from GitHub: Add export"));
-    await until(() => read(join(home, "gh", "reacted")) !== "");
-    expect(JSON.parse(read(join(home, "gh", "reacted")))).toEqual({ content: "eyes" });
+    await until(() => lead().includes("started app-12 from github: Add export"));
+    const took = () => asked(plugin).filter((q) => q.ask === "took");
+    await until(() => took().length > 0);
+    expect(took()).toEqual([{ ask: "took", repository: "simon/app", task: "12" }]);
     await until(() => thread().status === "failed");
     // The label is still there, after a restart too.
     await morePolls();
@@ -626,16 +589,7 @@ echo "Not logged in"; exit 1`,
     serve();
     await morePolls();
     expect(thread().status).toBe("failed");
-    expect(
-      read(join(home, "gh", "reacted"))
-        .trim()
-        .split("\n"),
-    ).toHaveLength(1);
+    expect(took()).toHaveLength(1);
     expect(lead().split("started app-12").length - 1).toBe(1);
-    expect(
-      read(join(home, "gh", "label"))
-        .trim()
-        .split("\n"),
-    ).toHaveLength(1);
   }, 60_000);
 });

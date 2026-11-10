@@ -1,7 +1,7 @@
 // What the sidebar shows and which row a key or click picks, given the rows it was handed, and
 // the word each thread gets.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Thread } from "../src/flow/thread.ts";
@@ -9,7 +9,7 @@ import { draw as drawLists, noticeLines } from "../src/screen/lists.ts";
 import { jumped, picked as pickedInLists, stepped as steppedInLists } from "../src/screen/moves.ts";
 import { type Link, type Lists, type Row, threadAge, threadWord } from "../src/screen/rows.ts";
 import { sidebarWidth } from "../src/screen/screen.ts";
-import { itemSql, source } from "./harness.ts";
+import { fakePlugin, itemSql, source } from "./harness.ts";
 
 const row = {
   title: null,
@@ -669,6 +669,21 @@ test("the thread you are on stays on screen with the lists, at every height", ()
     }
 });
 
+// A repository with no tracker has no ISSUES, and one with no forge no PRS: the lists it has
+// share the height, with THREADS first when ISSUES is gone.
+test("only the lists the repository has show, sharing the height", () => {
+  const forged = read(drawLists(threads, { issues: null, prs: lists.prs }, "lead", tall));
+  expect(forged.some((line) => line.includes("Issues"))).toBe(false);
+  const at = (text: string) => forged.findIndex((line) => line.includes(text));
+  expect(at("Threads")).toBeLessThan(at("PRs"));
+  expect(at("PRs")).toBeGreaterThanOrEqual(Math.floor(tall.height / 2) - 3);
+  expect(forged.join("\n")).toContain("app#34");
+  const bare = read(drawLists(threads, { issues: null, prs: null }, "lead", tall));
+  for (const heading of ["Issues", "Threads", "PRs", "───"])
+    expect(bare.some((line) => line.includes(heading))).toBe(false);
+  expect(bare.join("\n")).toContain("◆ lead");
+});
+
 test("a click picks a thread below the other lists or a row of them, and on a heading nothing", () => {
   const y = (text: string) =>
     read(drawLists(threads, lists, "lead", tall)).findIndex((line) => line.includes(text));
@@ -677,9 +692,9 @@ test("a click picks a thread below the other lists or a row of them, and on a he
   expect(click(y("working · claude"))).toBe("app-12");
   expect(click(y("◆ lead"))).toBe("lead");
   for (const text of ["Issues", "Threads", "PRs", "───"]) expect(click(y(text))).toBeNull();
-  expect(click(y("Add CSV export"))).toBe(lists.issues.links[0]?.url ?? "");
-  expect(click(y("app-31"))).toBe(lists.issues.links[0]?.url ?? "");
-  expect(click(y("app#34"))).toBe(lists.prs.links[0]?.url ?? "");
+  expect(click(y("Add CSV export"))).toBe(lists.issues?.links[0]?.url ?? "");
+  expect(click(y("app-31"))).toBe(lists.issues?.links[0]?.url ?? "");
+  expect(click(y("app#34"))).toBe(lists.prs?.links[0]?.url ?? "");
   // The blank line under a heading is no row, and the first row is just below it.
   expect(click(y("Threads") + 1)).toBeNull();
   expect(click(y("Threads") + 2)).toBe("lead");
@@ -696,10 +711,10 @@ test("a click finds its row as THREADS scrolls between the other lists", () => {
 });
 
 const urls = {
-  a: lists.issues.links[0]?.url ?? "",
-  b: lists.issues.links[1]?.url ?? "",
-  c: lists.prs.links[0]?.url ?? "",
-  d: lists.prs.links[1]?.url ?? "",
+  a: lists.issues?.links[0]?.url ?? "",
+  b: lists.issues?.links[1]?.url ?? "",
+  c: lists.prs?.links[0]?.url ?? "",
+  d: lists.prs?.links[1]?.url ?? "",
 };
 // Moves from a place, as Alt-Up and Alt-Down or, with Shift, as Alt-Shift-Up and Alt-Shift-Down.
 const step = (from: string | null, by: 1 | -1, rows = threads) =>
@@ -816,7 +831,7 @@ test("no thread is shaded while you are on an issue", () => {
 const state: Thread = {
   owner: "simon",
   repo: "app",
-  task: 12,
+  task: "12",
   folder: "app-12",
   branch: "skel/12",
   base: null,
@@ -829,11 +844,13 @@ const state: Thread = {
   reviewing: null,
   telling: null,
   held: null,
+  seen: [],
   last_review: 0,
   last_comment: 0,
   last_check: 0,
   asking: false,
   noting: null,
+  body: null,
   title: null,
   started: null,
   checks: null,
@@ -905,11 +922,19 @@ describe("the rows the database gives", () => {
   // Returns the rows after running the SQL, at a moment in milliseconds. It takes a process of
   // its own with HOME set: homedir() keeps the HOME this process started with, so opening the
   // database from here would reach your real one.
-  function after(sql: string, now: number): { rows: Row[]; lists: Lists } {
+  // app has the fake plugin as its tracker and forge, unless `plugins` is false.
+  function after(sql: string, now: number, plugins = true): { rows: Row[]; lists: Lists } {
+    if (plugins) {
+      fakePlugin(home);
+      const clone = join(home, ".local", "share", "skel", "repos", "simon", "app");
+      mkdirSync(clone, { recursive: true });
+      writeFileSync(join(clone, "skel.yaml"), "tracker: github\n");
+    }
     const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { sidebarLists, sidebarRows } from ${JSON.stringify(source("screen/rows.ts"))};
 const db = openDb();
 db.run(${JSON.stringify(sql)});
+db.run("UPDATE repositories SET forge = 'github' WHERE ${plugins ? "1" : "0"}");
 const app = { owner: "simon", repo: "app", lead: "lead" };
 const rows = sidebarRows(db, ["lead", "app-12"], () => 3, ${now}, app);
 console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5, app) }));`;
@@ -965,11 +990,11 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5, app) }));`;
 
   test("issues come newest first, with those on a thread dim and last", () => {
     const { issues } = after(`${open} ${onTwelve("working")}`, 0).lists;
-    expect(issues.links.map(({ name, dim }) => [name, dim])).toEqual([
+    expect(issues?.links.map(({ name, dim }) => [name, dim])).toEqual([
       ["app-3", false],
       ["app-12", true],
     ]);
-    expect(issues.total).toBe(212);
+    expect(issues?.total).toBe(212);
   });
 
   // One repository's lead never mentions another's work, and neither does its sidebar.
@@ -980,22 +1005,22 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5, app) }));`;
       ${itemSql("site", "pr", 9, "Dark mode", "2026-11-06T10:00:00Z")}`;
     const { rows, lists } = after(sql, 0);
     expect(rows.map((shown) => shown.name)).toEqual(["lead", "app-12"]);
-    expect(lists.issues.links.map((link) => link.name)).toEqual(["app-3", "app-12"]);
-    expect(lists.prs.links.map((link) => link.name)).toEqual(["app#34", "app#40"]);
+    expect(lists.issues?.links.map((link) => link.name)).toEqual(["app-3", "app-12"]);
+    expect(lists.prs?.links.map((link) => link.name)).toEqual(["app#34", "app#40"]);
   });
 
   test("a thread that is done no longer dims its issue, as it is gone from THREADS", () => {
     const { issues } = after(`${open} ${onTwelve("done")}`, 0).lists;
-    expect(issues.links[0]).toMatchObject({ name: "app-12", dim: false });
+    expect(issues?.links[0]).toMatchObject({ name: "app-12", dim: false });
   });
 
   test("PRs come newest first, and one from a thread has that thread's word", () => {
     const { prs } = after(`${open} ${onTwelve("waiting", 1)}`, 0).lists;
-    expect(prs.links.map(({ name, word, needing }) => [name, word, needing])).toEqual([
+    expect(prs?.links.map(({ name, word, needing }) => [name, word, needing])).toEqual([
       ["app#34", "needs you", true],
       ["app#40", "", false],
     ]);
-    expect(prs.total).toBe(3);
+    expect(prs?.total).toBe(3);
   });
 
   test("a PR shows the same mark and colour as its thread, in every state", () => {
@@ -1017,19 +1042,19 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5, app) }));`;
 
   test("a PR with no thread shows the dim circle, and an issue has no mark", () => {
     const { issues, prs } = after(open, 0).lists;
-    expect(prs.links[0]?.mark).toEqual(["○", 90]);
-    expect(issues.links[0]?.mark).toBeNull();
+    expect(prs?.links[0]?.mark).toEqual(["○", 90]);
+    expect(issues?.links[0]?.mark).toBeNull();
   });
 
   test("a PR whose thread is done has no thread left, so it shows the dim circle", () => {
     const { prs } = after(`${open} ${onTwelve("done")}`, 0).lists;
-    expect(prs.links[0]?.mark).toEqual(["○", 90]);
+    expect(prs?.links[0]?.mark).toEqual(["○", 90]);
   });
 
   test("a row links to the issue or PR on GitHub", () => {
     const { issues, prs } = after(open, 0).lists;
-    expect(issues.links[0]?.url).toBe("https://github.com/simon/app/issues/12");
-    expect(prs.links[0]?.url).toBe("https://github.com/simon/app/pull/34");
+    expect(issues?.links[0]?.url).toBe("https://github.com/simon/app/issues/12");
+    expect(prs?.links[0]?.url).toBe("https://github.com/simon/app/pull/34");
   });
 
   test("only as many rows as could show are read, as the sidebar reads each second", () => {
@@ -1037,12 +1062,17 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5, app) }));`;
       itemSql("app", "task", n + 1, "t", `2026-11-0${n + 1}T10:00:00Z`),
     );
     const sql = `${repository} ${rows.join(" ")}`;
-    expect(after(sql, 0).lists.issues.links).toHaveLength(5);
+    expect(after(sql, 0).lists.issues?.links).toHaveLength(5);
   });
 
   test("a repository skel no longer works on shows nothing", () => {
     const sql = itemSql("gone", "task", 1, "t", "2026-11-01T10:00:00Z");
-    expect(after(sql, 0).lists).toEqual(nothing);
+    expect(after(sql, 0).lists).toEqual({ issues: null, prs: null });
+  });
+
+  // The lists follow the repository's plugins: ISSUES with a tracker, PRS with a forge.
+  test("a repository with no tracker has no ISSUES, and one with no forge no PRS", () => {
+    expect(after(open, 0, false).lists).toEqual({ issues: null, prs: null });
   });
 
   test("a working thread shows how long ago it started, and the lead shows no time", () => {

@@ -5,11 +5,19 @@ import { join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "./paths.ts";
 
-// `name` is the repository's name in skel, and `repo` its GitHub name without the owner.
-export const Repository = z.object({ name: z.string(), owner: z.string(), repo: z.string() });
+// `name` is the repository's name in skel. `owner` and `repo` are its name on its forge, or
+// without a forge its remote's path. `forge` is the plugin that claims its remote, or null
+// when none does, and `remote` is the URL git clones and pushes it from.
+export const Repository = z.object({
+  name: z.string(),
+  owner: z.string(),
+  repo: z.string(),
+  forge: z.string().nullable(),
+  remote: z.string(),
+});
 export type Repository = z.infer<typeof Repository>;
 
-// Updates repository names, adding the owner only when repositories share a GitHub name.
+// Updates repository names, adding the owner only when repositories share a name.
 // Names are unique in the end, and no row ever takes a name another row still holds.
 export function nameRepositories(db: Database): void {
   db.run(`UPDATE repositories SET name = CASE
@@ -41,17 +49,15 @@ function prepareTables(db: Database): void {
     name TEXT NOT NULL UNIQUE,
     PRIMARY KEY (owner, repo)
   )`);
-  // Whether skel made sure the repository has the skel label. A repository saved before this
-  // column existed gets it once, when the daemon next refreshes its clone.
-  if (!db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = 'labeled'").get())
-    db.run("ALTER TABLE repositories ADD COLUMN labeled INTEGER NOT NULL DEFAULT 0");
   // How many tasks and PRs are open in skel's copy, as the sidebar counts those it doesn't show.
   // `lead_session` is the session ID of the repository's lead, kept so it comes back with its
   // conversation. `opened` is when you last opened the repository, in milliseconds since 1970,
   // and null until you first do: its lead starts then, and from then on the daemon brings it
   // back. `lead_harness` is the harness the lead started on, which it keeps, as a conversation
-  // can't move to another harness. `kept_lead` marks the repository whose lead is the one this machine had before skel
-  // gave each repository its own.
+  // can't move to another harness. `kept_lead` marks the repository whose lead is the one this
+  // machine had before skel gave each repository its own. `claimed` is whether skel has asked
+  // the forges installed which of them claims the repository's remote, `forge` is the one
+  // that does, or null, and `author` is who commits in its name, as git writes an author.
   const columns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -59,11 +65,21 @@ function prepareTables(db: Database): void {
     lead_harness: "TEXT",
     opened: "INTEGER",
     kept_lead: "INTEGER NOT NULL DEFAULT 0",
+    forge: "TEXT",
+    claimed: "INTEGER NOT NULL DEFAULT 0",
+    author: "TEXT",
   };
   for (const [column, type] of Object.entries(columns))
     if (!db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = ?").get(column))
       db.run(`ALTER TABLE repositories ADD COLUMN ${column} ${type}`);
-  // A thread names its repository by GitHub owner and name, which never change, and is named
+  // Every repository skel had before it kept remotes came from GitHub, by its GitHub name.
+  if (!db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = 'remote'").get()) {
+    db.run("ALTER TABLE repositories ADD COLUMN remote TEXT NOT NULL DEFAULT ''");
+    db.run(
+      "UPDATE repositories SET remote = 'https://github.com/' || owner || '/' || repo || '.git'",
+    );
+  }
+  // A thread names its repository by its owner and name, which never change, and is named
   // once, at start, for its folder: its clone, log, config folder, session and socket all
   // use it, so none of them move when the repository's short name gains its owner.
   db.run(`CREATE TABLE IF NOT EXISTS threads (
@@ -96,6 +112,8 @@ function prepareTables(db: Database): void {
     verdict TEXT,
     review_line TEXT,
     harness TEXT,
+    body TEXT,
+    seen TEXT,
     PRIMARY KEY (owner, repo, task)
   )`);
   // Creating a table leaves one that exists as it is, so a release that gives threads a new
@@ -124,6 +142,8 @@ function prepareTables(db: Database): void {
     verdict: "TEXT",
     review_line: "TEXT",
     harness: "TEXT",
+    body: "TEXT",
+    seen: "TEXT",
   };
   for (const [column, type] of Object.entries(added))
     if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))
@@ -143,16 +163,15 @@ function prepareTables(db: Database): void {
     PRIMARY KEY (owner, repo, kind, id)
   )`);
   // Notes for a repository's lead that aren't about a thread needing you, such as a thread
-  // started from GitHub, kept until they are typed in, since the lead may not be running.
+  // started from a tracker, kept until they are typed in, since the lead may not be running.
   db.run("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)");
   for (const column of ["owner", "repo"])
     if (!db.query("SELECT 1 FROM pragma_table_info('notes') WHERE name = ?").get(column))
       db.run(`ALTER TABLE notes ADD COLUMN ${column} TEXT`);
   if (db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lead'").get())
     keepTheLead(db);
-  // The reviews skel posted. They go out with your gh login, so on GitHub they look like
-  // reviews of yours, and polling must not type them back into the builder.
-  db.run("CREATE TABLE IF NOT EXISTS posted (id INTEGER PRIMARY KEY)");
+  // The reviews skel posted with your gh login, before its forge posted them as its own app.
+  db.run("DROP TABLE IF EXISTS posted");
   // The plugins you installed: the folder each runs from, and the GitHub repository it came
   // from, or null for a folder of yours, used where it is.
   db.run(`CREATE TABLE IF NOT EXISTS plugins (
@@ -182,7 +201,7 @@ function keepTheLead(db: Database): void {
         .parse(db.query("SELECT repo FROM attached_from").get())?.repo
     : null;
   const all = db
-    .query("SELECT name, owner, repo FROM repositories ORDER BY name")
+    .query("SELECT * FROM repositories ORDER BY name")
     .all()
     .map((row) => Repository.parse(row));
   const chosen =

@@ -327,7 +327,7 @@ describe("skel task show", () => {
     await untilAnswers();
     const missing = await skel(["task", "show", "app-99"]);
     expect(missing.code).not.toBe(0);
-    expect(missing.err).toBe("skel: there is no open task #99 in simon/app\n");
+    expect(missing.err).toBe("skel: there is no open task 99 in simon/app\n");
     const unknown = await skel(["task", "show", "web-1"]);
     expect(unknown.code).not.toBe(0);
     expect(unknown.err).toContain("no repository named web");
@@ -356,7 +356,9 @@ describe("skel repo ls", () => {
     await openApp();
     const lead = await asAgent(["repo", "ls"], leadSocket());
     expect(lead.err).toBe("");
-    expect(lead.out).toBe(`app  simon/app  ${data()}/repos/simon/app\n`);
+    expect(lead.out).toBe(
+      `NAME  REPOSITORY  TRACKER  FORGE  CLONE\napp   simon/app   none     none   ${data()}/repos/simon/app\n`,
+    );
   });
 
   test("a builder can't ask the daemon for the repositories", async () => {
@@ -445,7 +447,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("from the lead", () => {
       join(home, "bin", "claude"),
       `#!/bin/sh
 case "$CLAUDE_CONFIG_DIR" in
-*/lead-*) { skel ps app --json; skel task ls app --json; skel task show app-12 --json; skel repo ls; skel attach app-12; } > out.new 2>&1; mv out.new out ;;
+*/lead-*) { skel ps app --json; skel task ls app --json; skel task show app-12 --json; skel repo ls --json; skel attach app-12; } > out.new 2>&1; mv out.new out ;;
 esac
 exec sleep 300
 `,
@@ -462,7 +464,16 @@ exec sleep 300
       { task: "app-12", title: "Add export", thread: { status: "working", needsYou: false } },
     ]);
     expect(JSON.parse(shown ?? "")).toMatchObject({ task: "app-12", body: "As JSON" });
-    expect(app).toBe(`app  simon/app  ${data()}/repos/simon/app`);
+    expect(JSON.parse(app ?? "")).toEqual([
+      {
+        name: "app",
+        repository: "simon/app",
+        tracker: null,
+        forge: null,
+        missing: null,
+        clone: `${data()}/repos/simon/app`,
+      },
+    ]);
     expect(attach).toBe(
       "skel: attaching to a thread is only for your own terminal, not for agents",
     );

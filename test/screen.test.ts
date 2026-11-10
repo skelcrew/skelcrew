@@ -19,7 +19,7 @@ import type { Page } from "../src/flow/page.ts";
 import { leadPlaces } from "../src/paths.ts";
 import { drawPage } from "../src/screen/page.ts";
 import { sidebarWidth } from "../src/screen/screen.ts";
-import { itemSql, source, until as wait } from "./harness.ts";
+import { fakePlugin, itemSql, source, until as wait } from "./harness.ts";
 
 const dbFile = source("db.ts");
 const screenFile = source("screen/screen.ts");
@@ -147,8 +147,13 @@ beforeEach(() => {
   terminal = `${agents}-terminal`;
   // app's lead is the one skel kept from before, as its session is named lead. It has started,
   // so its row names its harness.
-  sql(`INSERT INTO repositories (name, owner, repo, kept_lead, lead_session)
-  VALUES ('app', 'simon', 'app', 1, 's');
+  // The fake plugin is app's tracker and forge, so its sidebar has ISSUES and PRS.
+  fakePlugin(home);
+  const clone = join(home, ".local", "share", "skel", "repos", "simon", "app");
+  mkdirSync(clone, { recursive: true });
+  writeFileSync(join(clone, "skel.yaml"), "tracker: github\n");
+  sql(`INSERT INTO repositories (name, owner, repo, kept_lead, lead_session, forge)
+  VALUES ('app', 'simon', 'app', 1, 's', 'github');
 INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you) VALUES
   ('simon', 'app', 3, 'app-3', 'skel/3', 'done', 0),
   ('simon', 'app', 7, 'app-7', 'skel/7', 'working', 0),

@@ -206,7 +206,7 @@ export async function throwaway(given: {
 }
 
 // Rejects clone settings containing credentials or unreadable settings, so agents cannot
-// receive your GitHub login. The lead reads each clone's .git/config, so a credential in it
+// receive your git login. The lead reads each clone's .git/config, so a credential in it
 // would be the lead's.
 export function refuseCredentials(repository: string): void {
   const read = Bun.spawnSync(
@@ -226,7 +226,7 @@ export function refuseCredentials(repository: string): void {
     const key = line.split(" ")[0] ?? "";
     if (/^http\..*extraheader$/i.test(key) || /https?:\/\/[^/\s]*@/i.test(line))
       throw new Error(
-        `${repository}/.git/config holds a credential (${key}), which agents could read. Remove it from the remote URL and leave GitHub to gh`,
+        `${repository}/.git/config holds a credential (${key}), which agents could read. Remove it from the remote URL, and leave the login to a credential helper or a forge plugin`,
       );
   }
 }

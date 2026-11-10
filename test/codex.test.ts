@@ -10,20 +10,23 @@ import { join } from "node:path";
 import type { Subprocess } from "bun";
 import { leadPlaces } from "../src/paths.ts";
 import {
+  answer,
+  fakePlugin,
   git,
   homeEnv,
-  issueNode,
-  pollAnswer,
   read,
   runSkel,
   source,
   startDaemon,
+  taskItem,
   until as wait,
   writeScript,
 } from "./harness.ts";
 
 let home = "";
 let socket = "";
+// The fake plugin's settings folder, where it keeps what it is asked and its answers.
+let plugin = "";
 const running: Subprocess[] = [];
 
 const data = () => join(home, ".local", "share", "skel");
@@ -105,18 +108,12 @@ beforeEach(() => {
   mkdirSync(join(home, "run"), { mode: 0o700 });
   fakeCodex();
   script("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
-  // The fake GitHub answers every poll with issue 12.
-  writeFileSync(
-    join(home, "poll.json"),
-    JSON.stringify(pollAnswer([issueNode(12, "Add export", { body: "-n as JSON" })])),
-  );
-  script(
-    "gh",
-    `case "$*" in
-"api graphql --input -") cat > /dev/null; cat "$HOME/poll.json" ;;
-*) echo "the fake gh doesn't know $*" >&2; exit 1 ;;
-esac`,
-  );
+  // The tracker answers every poll with issue 12.
+  plugin = fakePlugin(home);
+  answer(plugin, "changed", {
+    items: [taskItem("12", "Add export", { body: "-n as JSON" })],
+    next: null,
+  });
   config("lead: { harness: codex }\nbuilder: { harness: codex, model: gpt-6.1-sol }\n");
   writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
@@ -158,12 +155,14 @@ function addApp(): void {
   const work = join(home, "work", "app");
   mkdirSync(work, { recursive: true });
   writeFileSync(join(work, "README"), "app\n");
+  writeFileSync(join(work, "skel.yaml"), "tracker: github\n");
   git(work, "init", "-q", "-b", "main");
   git(work, "add", ".");
   git(work, "commit", "-q", "-m", "start");
   git(home, "clone", "-q", "--bare", work, join(home, "github", "simon", "app.git"));
   const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
-openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app')");`;
+openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app')");
+openDb().run("UPDATE repositories SET forge = 'github', claimed = 1, remote = 'https://github.com/' || owner || '/' || repo || '.git'");`;
   const added = Bun.spawnSync([process.execPath, "-e", code], { env: env(), stderr: "pipe" });
   if (!added.success) throw new Error(added.stderr.toString());
 }

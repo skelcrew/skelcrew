@@ -6,8 +6,9 @@ import { z } from "zod";
 import { Item } from "../flow/copy.ts";
 import { pastLimit } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
+import { repositories } from "../flow/repo.ts";
 import { fullNameOf, needsYou, Thread, threadName } from "../flow/thread.ts";
-import { Name } from "../github.ts";
+import { forgeOf, trackerOf } from "../plugins/ask.ts";
 import { green, grey, red, yellow } from "./look.ts";
 
 // One row of the sidebar, with what the strip says of the agent too. The lead has no status of
@@ -41,14 +42,15 @@ export type Link = {
   dim: boolean;
   mark: Mark | null;
 };
-// The repository open in the sidebar, by its GitHub owner and name, and its lead's session.
+// The repository open in the sidebar, by its owner and name, and its lead's session.
 export type Open = { owner: string; repo: string; lead: string };
-// A repository's tab: its name in skel, its GitHub name, and how many of its threads need you
+// A repository's tab: its name in skel, its owner/name, and how many of its threads need you
 // or failed.
 export type Tab = { name: string; fullName: string; count: number };
 // The rows to show, and how many are open in all, which can be far more.
 export type List = { links: Link[]; total: number };
-export type Lists = { issues: List; prs: List };
+// ISSUES is there when the repository has a tracker, and PRS when it has a forge.
+export type Lists = { issues: List | null; prs: List | null };
 
 // Each thread's mark is a circle in its status's colour. Waiting and stopped look alike, and the
 // word under the name tells every status apart, so nothing is told by colour alone.
@@ -165,27 +167,27 @@ export function sidebarRows(
 }
 
 const ListRow = z.object({
-  owner: Name,
-  repo: Name,
+  owner: z.string(),
+  repo: z.string(),
   name: z.string(),
   threaded: z.coerce.boolean(),
   item: z.string(),
 });
 
-// Returns the open repository's ISSUES and PRS from skel's copy, up to `most` rows of each: it
-// reads the database and never asks GitHub, as it runs each second. Newest first, with issues
+// Returns the open repository's ISSUES and PRS from skel's copy, up to `most` rows of each, or
+// none of a list its repository has no tracker or forge for: it reads the database and never
+// asks the tracker, as it runs each second. Newest first, with issues
 // that have a thread last. A thread that is done has left THREADS, so its issue counts as
-// waiting again. A PR from a thread takes the word and mark of its row. GitHub numbers issues
-// and PRs from one counter, so no issue can be taken for a thread's PR.
+// waiting again. A PR from a thread takes the word and mark of its row.
 export function sidebarLists(db: Database, rows: Row[], most: number, open: Open): Lists {
   // Returns one list, of tasks or PRs, with the column that counts all of its kind.
   const read = (kind: "task" | "pr", column: string): List => {
     const found = db.query(`SELECT i.owner, i.repo, r.name, i.item,
         EXISTS (SELECT 1 FROM threads t WHERE i.kind = 'task' AND t.owner = i.owner
-          AND t.repo = i.repo AND t.task = CAST(i.id AS INTEGER) AND t.status != 'done') AS threaded
+          AND t.repo = i.repo AND CAST(t.task AS TEXT) = i.id AND t.status != 'done') AS threaded
       FROM items i JOIN repositories r ON r.owner = i.owner AND r.repo = i.repo
       WHERE i.kind = ? AND i.state = 'open' AND i.owner = ? AND i.repo = ?
-      ORDER BY threaded, i.created DESC, CAST(i.id AS INTEGER) DESC LIMIT ?`);
+      ORDER BY threaded, i.created DESC, length(i.id) DESC, i.id DESC LIMIT ?`);
     const links = found.all(kind, open.owner, open.repo, most).map((saved) => {
       const { owner, repo, name, threaded, item } = ListRow.parse(saved);
       const { id, title, link } = Item.parse(JSON.parse(item));
@@ -209,7 +211,11 @@ export function sidebarLists(db: Database, rows: Row[], most: number, open: Open
       .get(open.owner, open.repo);
     return { links, total: z.object({ total: z.number() }).parse(sum).total };
   };
-  return { issues: read("task", "open_issues"), prs: read("pr", "open_prs") };
+  const repository = repositories(db).find((r) => r.owner === open.owner && r.repo === open.repo);
+  return {
+    issues: repository && trackerOf(db, repository) ? read("task", "open_issues") : null,
+    prs: repository && forgeOf(db, repository) ? read("pr", "open_prs") : null,
+  };
 }
 
 const TabRow = z.object({

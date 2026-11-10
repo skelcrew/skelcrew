@@ -16,7 +16,7 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 import { leadPlaces } from "../src/paths.ts";
-import { read, source, until as wait } from "./harness.ts";
+import { asked, fakePlugin, read, source, until as wait } from "./harness.ts";
 
 const main = source("main.ts");
 const daemon = source("flow/daemon.ts");
@@ -80,7 +80,7 @@ function setUp(): void {
 }
 
 // Runs the daemon as skel serve would, but on the test's own tmux server. Given a port, a
-// daemon on a Sprite listens there for GitHub's webhooks, in place of the Sprite's own.
+// daemon on a Sprite listens there for wake-ups, in place of the Sprite's own.
 function serve(runtime = join(home, "run"), port?: number): Subprocess<"ignore", "pipe", "pipe"> {
   const more = port === undefined ? "" : `, 30_000, ${port}`;
   const script = `import { serve } from ${JSON.stringify(daemon)};
@@ -214,7 +214,7 @@ function addRepository(name: string): string {
   onGitHub(name);
   const db = source("db.ts");
   const script = `import { openDb } from ${JSON.stringify(db)};
-openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?)", [${JSON.stringify(name)}, ${JSON.stringify(name)}]);`;
+openDb().run("INSERT INTO repositories (name, owner, repo, remote) VALUES (?, 'simon', ?, ?)", [${JSON.stringify(name)}, ${JSON.stringify(name)}, ${JSON.stringify(`https://github.com/simon/${name}.git`)}]);`;
   const added = Bun.spawnSync([process.execPath, "-e", script], {
     env: { HOME: home },
     stderr: "pipe",
@@ -369,7 +369,7 @@ test("on a Sprite, starts skel's tmux server as a Sprite service of its own", as
   );
 });
 
-// A port nothing listens on, for the daemon's webhook listener.
+// A port nothing listens on, for the daemon's listener for wake-ups.
 function freePort(): number {
   const probe = Bun.serve({ port: 0, fetch: () => new Response() });
   const { port } = probe;
@@ -378,39 +378,26 @@ function freePort(): number {
   return port;
 }
 
-// The fake GitHub notes each call and fails every poll, which still counts as one. It has no
-// webhooks yet, and notes the one skel sets.
-function fakeGitHub(): void {
-  fake(
-    "gh",
-    `case "$*" in
-  "api graphql --input -") cat > /dev/null; echo "HTTP 502: Bad Gateway" >&2; exit 1 ;;
-  "api repos/simon/app/hooks?per_page=100") echo '[]' ;;
-  "api repos/simon/app/hooks --method POST --input -") cat > "$HOME/hook"; echo '{"id":1}' ;;
-  "repo view simon/site --json name,owner,viewerPermission,isFork")
-    echo '{"name":"site","owner":{"login":"simon"},"viewerPermission":"WRITE","isFork":false}' ;;
-  "issue list --repo simon/site "*) echo '[]' ;;
-  "api repos/simon/site/hooks?per_page=100") echo '[]' ;;
-  "api repos/simon/site/hooks --method POST --input -") cat > "$HOME/site-hook"; echo '{"id":2}' ;;
-  *) exit 1 ;;
-esac`,
+// The fake forge's settings folder, where it keeps what it is asked.
+let forge = "";
+
+// Makes the fake plugin the forge of the repositories skel has. It fails every poll, which
+// still counts as one.
+function fakeForge(): void {
+  forge = fakePlugin(home, "github", ["forge"]);
+  writeFileSync(join(forge, "fail-changed"), "HTTP 502: Bad Gateway");
+  onDb((db) =>
+    db.run(
+      "UPDATE repositories SET forge = 'github', claimed = 1, remote = 'https://github.com/' || owner || '/' || repo || '.git'",
+    ),
   );
 }
 
-const polls = () => calls().split("gh api graphql").length - 1;
+const polls = () => asked(forge).filter((q) => q.ask === "changed").length;
 
-const sign = (body: string, secret: string) =>
-  `sha256=${new Bun.CryptoHasher("sha256", secret).update(body).digest("hex")}`;
-
-// Sends a delivery for simon/app to the daemon's listener, signed with the given secret.
-function deliver(port: number, secret: string): Promise<Response> {
-  const body = JSON.stringify({ action: "labeled", repository: { full_name: "simon/app" } });
-  return fetch(`http://127.0.0.1:${port}/`, {
-    method: "POST",
-    headers: { "X-GitHub-Event": "issues", "X-Hub-Signature-256": sign(body, secret) },
-    body,
-  });
-}
+// Sends a delivery to the daemon's listener, for a plugin's name.
+const deliver = (port: number, plugin: string) =>
+  fetch(`http://127.0.0.1:${port}/${plugin}`, { method: "POST", body: "{}" });
 
 // Returns whether anything answers on the port.
 const listening = (port: number) =>
@@ -427,66 +414,58 @@ async function untilListening(port: number) {
   }
 }
 
-// GitHub can't wake a sleeping Sprite's daemon any other way, and polling is what reads it.
-test("on a Sprite, a delivery GitHub signed has the daemon poll its repository at once", async () => {
+// A forge can't wake a sleeping Sprite's daemon any other way, and polling is what reads it.
+test("on a Sprite, a delivery for a plugin has the daemon poll its repositories at once", async () => {
   setUp();
   onSprite();
-  fakeGitHub();
   addRepository("app");
+  fakeForge();
   const port = freePort();
   serve(undefined, port);
   await until(() => polls() === 1);
   await untilListening(port);
-  const secret = readFileSync(join(home, ".config", "skel", "webhook-secret"), "utf8");
-  expect((await deliver(port, secret)).status).toBe(202);
+  expect((await deliver(port, "github")).status).toBe(202);
   await until(() => polls() === 2);
 });
 
-test("on a Sprite, a delivery with another secret polls nothing", async () => {
+test("on a Sprite, a delivery for no plugin of a repository polls nothing", async () => {
   setUp();
   onSprite();
-  fakeGitHub();
   addRepository("app");
+  fakeForge();
   const port = freePort();
   serve(undefined, port);
   await until(() => polls() === 1);
   await untilListening(port);
-  expect((await deliver(port, "b".repeat(64))).status).toBe(401);
+  expect((await deliver(port, "other")).status).toBe(404);
+  expect((await deliver(port, "")).status).toBe(404);
   await Bun.sleep(500);
   expect(polls()).toBe(1);
 });
 
-test("on a Sprite, sets the webhook to the Sprite on each repository it has", async () => {
+test("on a Sprite, asks each repository's forge to pass on its wake-ups to the Sprite", async () => {
   setUp();
   onSprite();
-  fakeGitHub();
   addRepository("app");
+  fakeForge();
   serve(undefined, freePort());
-  await until(
-    () => existsSync(join(home, "hook")) && readFileSync(join(home, "hook"), "utf8") !== "",
-  );
-  const hook = JSON.parse(readFileSync(join(home, "hook"), "utf8"));
-  const secret = readFileSync(join(home, ".config", "skel", "webhook-secret"), "utf8");
-  expect(hook.config).toEqual({
-    url: "https://demo-simon.sprites.app",
-    content_type: "json",
-    secret,
-    insecure_ssl: "0",
-  });
+  await until(() => asked(forge).some((q) => q.ask === "wake"));
+  expect(asked(forge).filter((q) => q.ask === "wake")).toEqual([
+    { ask: "wake", repository: "simon/app", url: "https://demo-simon.sprites.app/github" },
+  ]);
 });
 
 // A server stays awake, so polling alone sees every event soon enough.
-test("on a server, neither listens for webhooks nor sets them", async () => {
+test("on a server, neither listens for wake-ups nor asks for them", async () => {
   setUp();
-  fakeGitHub();
   addRepository("app");
+  fakeForge();
   const port = freePort();
   serve(undefined, port);
   await until(() => polls() === 1);
   await Bun.sleep(500);
   expect(await listening(port)).toBe(false);
-  expect(calls()).not.toContain("hooks");
-  expect(existsSync(join(home, ".config", "skel", "webhook-secret"))).toBe(false);
+  expect(asked(forge).filter((q) => q.ask === "wake")).toEqual([]);
 });
 
 // Asks the daemon to open a repository, as plain skel in a checkout of it does.
@@ -701,12 +680,11 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", 
     addRepository("web");
     addThread("app", 1);
     addThread("web", 2);
-    fake("gh", "exit 1");
     serve();
     await untilAnswers();
     await open();
     expect(await askAsLead({ command: "repo ls" })).toMatchObject({
-      repositories: [{ name: "app", github: "simon/app" }],
+      repositories: [{ name: "app", repository: "simon/app" }],
     });
     expect(await askAsLead({ command: "ps" })).toEqual({
       threads: [{ thread: "app-1", status: "stopped", needsYou: false }],
@@ -716,7 +694,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", 
         "you are the lead of simon/app only, so web isn't yours. Ask the human to open it with skel in a checkout of it: its own lead works on it.",
     };
     expect(await askAsLead({ command: "ps", repo: "web" })).toEqual(refused);
-    expect(await askAsLead({ command: "stop", repo: "web", task: 2 })).toEqual(refused);
+    expect(await askAsLead({ command: "stop", repo: "web", task: "2" })).toEqual(refused);
     expect(
       await askAsLead({ command: "task create", repo: "web", title: "Fix", body: "it" }),
     ).toEqual(refused);
@@ -914,8 +892,6 @@ c.on("error", () => process.exit(1));`;
   test("moves skel's clones to the latest after answering a lead request, not before", async () => {
     setUp();
     const clone = addRepository("app");
-    // Fails at once, so creating the label can't hold the first refresh until the second ask.
-    fake("gh", "exit 1");
     serve();
     await until(() => existsSync(join(clone, "README")));
     await open();

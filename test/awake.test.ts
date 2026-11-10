@@ -12,7 +12,7 @@ function thread(change: Partial<Thread> = {}): Thread {
   return {
     owner: "simon",
     repo: "app",
-    task: 12,
+    task: "12",
     folder: "app-12",
     branch: "skel/12-add-export",
     base: null,
@@ -25,6 +25,8 @@ function thread(change: Partial<Thread> = {}): Thread {
     reviewing: null,
     telling: null,
     held: null,
+    seen: [],
+    body: null,
     last_review: 0,
     last_comment: 0,
     last_check: 0,

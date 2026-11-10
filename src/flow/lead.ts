@@ -53,7 +53,9 @@ export function leadOf(db: Database, owner: string, repo: string) {
 // Returns the repositories you have opened, whose leads the daemon keeps running.
 export const openedRepositories = (db: Database) =>
   db
-    .query("SELECT name, owner, repo FROM repositories WHERE opened IS NOT NULL ORDER BY name")
+    .query(
+      "SELECT name, owner, repo, forge, remote FROM repositories WHERE opened IS NOT NULL ORDER BY name",
+    )
     .all()
     .map((row) => Repository.parse(row));
 
@@ -62,7 +64,7 @@ export const openedRepositories = (db: Database) =>
 export function lastOpened(db: Database): Repository | null {
   const row = db
     .query(
-      "SELECT name, owner, repo FROM repositories ORDER BY opened IS NULL, opened DESC, name LIMIT 1",
+      "SELECT name, owner, repo, forge, remote FROM repositories ORDER BY opened IS NULL, opened DESC, name LIMIT 1",
     )
     .get();
   return Repository.nullable().parse(row);
@@ -106,14 +108,14 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
     model: role.harness === harness.name ? role.model : undefined,
     folder: lead.folder,
     origin: clone,
-    // By its full GitHub name, which every command takes and which never changes, while its
+    // By its owner/name, which every command takes and which never changes, while its
     // name in skel can gain its owner.
     system: `${instructions}\nYou are the lead of ${owner}/${repo}. skel's clone of it is at ${clone}.`,
     ...(resume ? { resume } : { sessionId: session }),
   });
   startSession(tmux, lead.name, { folder: lead.folder, command: argv, env });
-  // GitHub can be slow or away, and attaching waits on this.
-  refreshClones(db).catch((error) => console.log(String(error)));
+  // A remote can be slow or away, and attaching waits on this.
+  refreshClones(db).catch((error) => console.log(errorText(error)));
   console.log(
     `${resume ? "Brought back" : "Started"} ${owner}/${repo}'s lead, session ${session}.`,
   );
@@ -121,7 +123,7 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
 }
 
 // Types each saved note for a repository's lead into it, one at a time, such as "started
-// app-12 from GitHub: Fix the login redirect" or "app-12 needs you: its builder asked a
+// app-12 from github: Fix the login redirect" or "app-12 needs you: its builder asked a
 // question", and forgets it once typed. It waits as long as the lead is busy, checking again
 // each time whether a note about a thread needing you is still wanted, so a question you
 // answered meanwhile is never announced. A lead that isn't running, or never started, gets
@@ -155,7 +157,7 @@ async function typeNotes(db: Database, tmux: string, owner: string, repo: string
   }
 }
 
-// Each repository's notes being typed, by its GitHub name.
+// Each repository's notes being typed, by its owner/name.
 const telling = new Map<string, Promise<void>>();
 
 // Has the daemon type the saved notes into each repository's lead, and returns at once, so

@@ -9,8 +9,9 @@ const sections: [string, [string, string][]][] = [
       ["ps [<repo>]", "Threads and whether they need you"],
       ["task ls [<repo>]", "Open tasks, with the thread on each"],
       ["task show <task>", "A task's title and body"],
-      ['task create <repo> "<title>" "<body>"', "Create a task, as a GitHub issue"],
+      ['task create <repo> "<title>" "<body>"', "Create a task in the repository's tracker"],
       ["start <task> [--from <branch>]", "Start, resume, or go on past the limit"],
+      ['start <repo> "<title>" "<body>"', "Start a thread, with no tracker"],
       ["stop <task>", "End the builder, keeping its clone and PR"],
       ["attach <task>", "Open that builder, with the sidebar"],
       ["review <task>", "Run the thread's last review again"],
@@ -20,7 +21,7 @@ const sections: [string, [string, string][]][] = [
     "REPOSITORIES",
     [
       ["init", "Write a starter skel.yaml here and add this repository"],
-      ["repo add [<path> | <owner/repo>]", "Add a repository, this one by default"],
+      ["repo add [<path> | <url> | <owner/repo>]", "Add a repository, this one by default"],
       ["repo ls", "Repositories skel works on"],
       ["repo rm <name>", "Remove skel's clone of one"],
       ["repo trust <name>", "Trust one your login can't push to"],
@@ -58,7 +59,7 @@ const sections: [string, [string, string][]][] = [
     [
       ["--json", "Output for tools"],
       ["--all", "Done threads too, on ps"],
-      ["--from <owner/repo>", "The repository you're in"],
+      ["--from <remote>", "The repository you're in"],
       ["--version", "Which release of skel this is"],
     ],
   ],

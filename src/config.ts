@@ -53,7 +53,7 @@ const Setup = z.looseObject({ setup: z.array(z.string()).optional() });
 // The plugin that holds the repository's tasks. Only the name: settings for it stay yours.
 const Tracker = z.looseObject({ tracker: z.string().optional() });
 
-// A repository skel works on, by its GitHub owner and name.
+// A repository skel works on, by its owner and name.
 type Repository = { owner: string; repo: string };
 
 type Role = { harness: HarnessName; model?: string };

@@ -1,7 +1,9 @@
 // Starting work on a thread: recording it, setting up its clone, starting its builder or
 // bringing it back, and marking the thread failed when any of that goes wrong.
 import type { Database } from "bun:sqlite";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { z } from "zod";
 import { harnessNamed } from "../agents/harness.ts";
 import instructions from "../agents/prompts/builder.md" with { type: "text" };
 import { refuseCredentials, setupCommand } from "../agents/sandbox.ts";
@@ -14,21 +16,22 @@ import {
   startSession,
 } from "../agents/tmux.ts";
 import { repositorySetup, threadConfig } from "../config.ts";
-import { fetchBranch } from "../github.ts";
 import { cloneDir, threadSocket } from "../paths.ts";
+import { trackerOf } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { taskOf } from "./copy.ts";
 import { pastLimit } from "./decide.ts";
-import { findRepository, refreshClones } from "./repo.ts";
+import { fetchBranch } from "./git.ts";
+import { findRepository, forgeAuthor, refreshClones } from "./repo.ts";
 import {
   builderHarness,
   cloneOf,
   folderName,
-  fullNameOf,
   log,
   readThread,
   record,
+  repositoryOf,
   Thread,
 } from "./thread.ts";
 
@@ -53,20 +56,57 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
   return handed ? "waiting" : "working";
 }
 
-// Records a new thread on a task, with its folder and branch, and returns it. The task's title
-// comes from skel's copy, which skel start brings up to date first. Refuses a task the copy
-// doesn't have open, and a task that has a thread already, unless that one failed: then it starts
-// over in the same folder. Only records it, since the lead waits on the answer. Setting up its clone and
-// starting its builder come after, and can take minutes. `given` is a start request, so its
-// `repo` is the repository's name in skel or its full GitHub name.
+// Records a new thread and returns it: on a task of the repository's tracker, from skel's copy,
+// which skel start brings up to date first, or, in a repository with no tracker, on a title
+// and body, as a task of the thread's own named t1, t2 and on. Refuses a task the copy doesn't
+// have open, and a task that has a thread already, unless that one failed: then it starts over
+// in the same folder, on the task it had. Only records it, since the lead waits on the answer.
+// Setting up its clone and starting its builder come after, and can take minutes. `given` is a
+// start request, so its `repo` is the repository's name in skel or its owner/name.
 export async function startThread(
   db: Database,
-  given: { repo: string; task: number; from?: string | undefined },
+  given:
+    | { repo: string; task: string; from?: string | undefined }
+    | { repo: string; title: string; body: string },
 ): Promise<Thread> {
-  const { owner, repo, name } = findRepository(db, given.repo);
-  const { task } = given;
-  const { title, state } = taskOf(db, owner, repo, task);
-  if (state !== "open") throw new Error(`there is no open task #${task} in ${owner}/${repo}`);
+  const repository = findRepository(db, given.repo);
+  const { owner, repo, name } = repository;
+  const tracked = trackerOf(db, repository) !== null;
+  const where = "WHERE owner = ? AND repo = ? AND task = ?";
+  let task: string;
+  let title: string;
+  let body: string;
+  if ("title" in given) {
+    if (tracked)
+      throw new Error(
+        `${name} has a tracker, so its tasks belong there: create one with skel task create, and start it by its name`,
+      );
+    // The highest number of the repository's own tasks, to name the next one.
+    const ours = db
+      .query("SELECT task FROM threads WHERE owner = ? AND repo = ? AND task GLOB 't[0-9]*'")
+      .all(owner, repo)
+      .map((row) => Number(z.object({ task: z.string() }).parse(row).task.slice(1)));
+    task = `t${Math.max(0, ...ours) + 1}`;
+    ({ title, body } = given);
+  } else {
+    task = given.task;
+    const had = Thread.nullable().parse(
+      db.query(`SELECT * FROM threads ${where}`).get(owner, repo, task),
+    );
+    if (tracked && !/^t\d+$/.test(task)) {
+      const found = taskOf(db, owner, repo, task);
+      if (found.state !== "open") throw new Error(`there is no open task ${task} in ${name}`);
+      ({ title, body } = found);
+    } else if (had?.title) {
+      title = had.title;
+      body = had.body ?? "";
+    } else
+      throw new Error(
+        tracked
+          ? `there is no open task ${task} in ${name}`
+          : `${name} has no tracker, and no thread ${name}-${task}: start one with skel start ${name} "<title>" "<body>"`,
+      );
+  }
   const slug = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -82,7 +122,6 @@ export async function startThread(
     return free;
   };
   return db.transaction(() => {
-    const where = "WHERE owner = ? AND repo = ? AND task = ?";
     const before = Thread.nullable().parse(
       db.query(`SELECT * FROM threads ${where}`).get(owner, repo, task),
     );
@@ -95,7 +134,7 @@ export async function startThread(
       // A thread that failed starts over in its folder, named when it first started.
       folder: before?.folder ?? freeFolder(`${folderName(name)}-${task}`),
       branch: slug ? `skel/${task}-${slug}` : `skel/${task}`,
-      base: given.from ?? null,
+      base: "from" in given ? (given.from ?? null) : null,
       status: "working",
       session: null,
       rounds: 0,
@@ -106,12 +145,14 @@ export async function startThread(
       telling: null,
       held: null,
       // A new thread has no PR yet, so everything on the one it opens is new.
-      last_review: 0,
-      last_comment: 0,
-      last_check: 0,
+      seen: [],
+      last_review: null,
+      last_comment: null,
+      last_check: null,
       asking: false,
       noting: null,
       title,
+      body,
       started: Date.now(),
       checks: null,
       reviewer: null,
@@ -124,8 +165,7 @@ export async function startThread(
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run(
       `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, title,
-        started, last_review, last_comment, last_check)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0)`,
+        body, started, seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]')`,
       [
         owner,
         repo,
@@ -136,6 +176,7 @@ export async function startThread(
         thread.status,
         null,
         title,
+        body,
         thread.started,
       ],
     );
@@ -155,6 +196,9 @@ async function mustRun(
   const { said, ok } = await quietly(argv, { env });
   if (!ok) throw new Error(`${doing} failed: ${said.slice(-2000)}`);
 }
+
+// Quotes a word for sh, which runs the hook that adds you as co-author.
+const shellQuoted = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
 
 // Returns the branch the thread's PR goes into: the one it started from with --from, or else
 // the default branch, which skel's clone is on.
@@ -189,7 +233,7 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
     cloneDir(thread.owner, thread.repo),
     clone,
   ]);
-  await fetchBranch(clone, fullNameOf(thread), thread.base);
+  await fetchBranch(db, repositoryOf(db, thread), clone, thread.base);
   await mustRun(["git", "-C", clone, "checkout", "--quiet", "-b", thread.branch, "FETCH_HEAD"]);
   // The reviewer reads the diff against origin/<base>, which must be where the branch
   // started. Cloned from skel's clone, the thread's clone has only the default branch there,
@@ -202,12 +246,26 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
     `refs/remotes/origin/${baseOf(thread)}`,
     "FETCH_HEAD",
   ]);
-  // Your git config is hidden from the builder, and its commits are authored by you. Only
-  // your global config, since the folder the daemon started in makes no difference.
-  for (const key of ["user.name", "user.email"]) {
-    const yours = Bun.spawnSync(["git", "config", "--global", "--get", key], { stdout: "pipe" });
-    const value = yours.stdout.toString().trim();
-    if (yours.success && value) await mustRun(["git", "-C", clone, "config", key, value]);
+  // Your git config is hidden from the builder. Its commits are authored by the forge's own,
+  // such as its app's bot, with you as co-author, so it is always clear who wrote what. With a
+  // forge that names none, or no forge, they are authored by you. Only your global config,
+  // since the folder the daemon started in makes no difference.
+  const yours = (key: string) =>
+    Bun.spawnSync(["git", "config", "--global", "--get", key], { stdout: "pipe" })
+      .stdout.toString()
+      .trim();
+  const you = { name: yours("user.name"), email: yours("user.email") };
+  const author = forgeAuthor(db, thread)?.match(/^(.+) <(.+)>$/);
+  const commits = author ? { name: author[1] ?? "", email: author[2] ?? "" } : you;
+  if (commits.name) await mustRun(["git", "-C", clone, "config", "user.name", commits.name]);
+  if (commits.email) await mustRun(["git", "-C", clone, "config", "user.email", commits.email]);
+  if (author && you.name && you.email) {
+    mkdirSync(join(clone, ".git", "hooks"), { recursive: true });
+    writeFileSync(
+      join(clone, ".git", "hooks", "commit-msg"),
+      `#!/bin/sh\nexec git interpret-trailers --in-place --if-exists addIfDifferent --trailer ${shellQuoted(`Co-authored-by: ${you.name} <${you.email}>`)} "$1"\n`,
+      { mode: 0o755 },
+    );
   }
   refuseCredentials(clone);
   for (const command of repositorySetup(thread)) {
@@ -231,7 +289,9 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
   const session = resume ?? crypto.randomUUID();
   let start: { resume: string } | { sessionId: string; prompt: string } = { resume: session };
   if (!resume) {
-    const { title, body } = taskOf(db, thread.owner, thread.repo, thread.task);
+    // Saved as the thread started, from skel's copy brought up to date just before.
+    const title = thread.title ?? "";
+    const body = thread.body ?? "";
     start = { sessionId: session, prompt: body ? `${title}\n\n${body}` : title };
   }
   record(db, thread.folder, { session, harness: harness.name });

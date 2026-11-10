@@ -4,6 +4,7 @@ import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { openDb } from "../db.ts";
+import { repositories } from "../flow/repo.ts";
 import { configDir, dataDir } from "../paths.ts";
 import { clean } from "../screen/look.ts";
 import { release } from "../version.ts";
@@ -126,6 +127,13 @@ function buildAndSetUp(manifest: Manifest, folder: string, setup: boolean): void
   }
 }
 
+// Has skel ask again which forge claims each repository that has none, once a forge is
+// installed, so a repository added before it gains it.
+function askAgain(db: Database, manifest: Manifest): void {
+  if (manifest.jobs.includes("forge"))
+    db.run("UPDATE repositories SET claimed = 0 WHERE forge IS NULL");
+}
+
 // Throws when a plugin of that name is installed already, as one name can't be two plugins.
 function refuseInstalled(db: Database, name: string): void {
   if (installedPlugins(db).some((plugin) => plugin.name === name))
@@ -152,6 +160,7 @@ export function installPlugin(given: string): void {
       manifest.name,
       folder,
     ]);
+    askAgain(db, manifest);
     console.log(`Installed ${manifest.name} ${manifest.version}.`);
     return;
   }
@@ -181,6 +190,7 @@ export function installPlugin(given: string): void {
       folder,
       given,
     ]);
+    askAgain(db, manifest);
     console.log(`Installed ${manifest.name} ${manifest.version}.`);
   } finally {
     rmSync(staged, { recursive: true, force: true });
@@ -239,15 +249,19 @@ export function updatePlugins(name?: string): void {
 
 // Removes a plugin with its settings and tokens, for skel plugin rm. A plugin from GitHub
 // loses its folders too, and a folder of yours stays. It refuses while a repository skel has
-// names the plugin as its tracker in skel.yaml, as that repository would lose its tasks.
+// names the plugin as its tracker in skel.yaml, as that repository would lose its tasks, and
+// while it is the forge of one, which would lose its PRs and its login for pushing.
 export function removePlugin(name: string): void {
   const db = openDb();
   const plugin = findPlugin(db, name);
-  const tracked = trackedBy(db, name);
-  if (tracked.length > 0)
-    throw new Error(
-      `${name} is the tracker of ${tracked.map((r) => r.name).join(", ")}, so skel keeps it`,
-    );
+  for (const [job, those] of [
+    ["tracker", trackedBy(db, name)],
+    ["forge", repositories(db).filter((r) => r.forge === name)],
+  ] as const)
+    if (those.length > 0)
+      throw new Error(
+        `${name} is the ${job} of ${those.map((r) => r.name).join(", ")}, so skel keeps it`,
+      );
   db.run("DELETE FROM plugins WHERE name = ?", [name]);
   rmSync(join(configDir(), "plugins", name), { recursive: true, force: true });
   if (plugin.source !== null) rmSync(join(pluginsDir(), name), { recursive: true, force: true });

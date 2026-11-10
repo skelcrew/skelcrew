@@ -70,7 +70,7 @@ else console.log(JSON.stringify({ number: 12, asked: question, folder: process.c
   );
   writeFileSync(
     join(folder, "credentials.sh"),
-    'test "$1" = get || exit 0\ncat > /dev/null\necho username=x-access-token\necho "password=token-of-$SKEL_PLUGIN"\n',
+    'test "$1" = get || exit 0\npath=$(sed -n "s/^path=//p")\necho username=x-access-token\necho "password=token-of-$SKEL_PLUGIN-for-$path"\n',
   );
 }
 
@@ -282,7 +282,7 @@ test("update moves a plugin to its newest tag after asking, and removes the old 
   expect((await skel(["plugin", "update", "nothing"])).err).toContain("no plugin named nothing");
 });
 
-test("rm removes a plugin's folders and settings, and refuses for a repository's tracker", async () => {
+test("rm removes a plugin's folders and settings, and refuses for a repository's tracker or forge", async () => {
   publish("skelcrew/skel-plugin-fake", "0.1.0");
   await skel(["plugin", "install", "skelcrew/skel-plugin-fake"], "y\n");
   // A repository skel has, whose skel.yaml names fake as its tracker.
@@ -298,6 +298,15 @@ test("rm removes a plugin's folders and settings, and refuses for a repository's
   expect(existsSync(join(plugins(), "fake", "0.1.0"))).toBe(true);
 
   writeFileSync(join(clone, "skel.yaml"), "tracker: github\n");
+  const forged = new Database(join(home, ".local", "share", "skel", "skel.db"));
+  forged.run("UPDATE repositories SET forge = 'fake'");
+  forged.close();
+  const forge = await skel(["plugin", "rm", "fake"]);
+  expect(forge.code).toBe(1);
+  expect(forge.err).toContain("fake is the forge of app");
+  const unforged = new Database(join(home, ".local", "share", "skel", "skel.db"));
+  unforged.run("UPDATE repositories SET forge = NULL");
+  unforged.close();
   const removed = await skel(["plugin", "rm", "fake"]);
   expect(removed.err).toBe("");
   expect(removed.out).toContain("Removed fake, with its settings and tokens.");
@@ -370,13 +379,14 @@ test("git asks a forge's git_credentials for its login, which is never saved", a
   const { out, err } = await asDaemon(`import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { gitCredentials } from ${JSON.stringify(source("plugins/plugin.ts"))};
 const fill = Bun.spawnSync(["git", ...gitCredentials(openDb(), "fake"), "credential", "fill"], {
-  stdin: new Blob(["protocol=https\\nhost=github.com\\npath=simon/app.git\\n\\n"]),
+  stdin: new Blob(["url=https://github.com/simon/app.git\\n\\n"]),
   env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
 });
 console.log(fill.stdout.toString());
 console.error(fill.stderr.toString().trim());`);
   expect(err.trim()).toBe("");
   expect(out).toContain("username=x-access-token\n");
-  expect(out).toContain("password=token-of-fake\n");
+  // git hands it the repository's path, as a forge's login can be for one repository alone.
+  expect(out).toContain("password=token-of-fake-for-simon/app.git\n");
   expect(readFileSync(join(home, ".gitconfig"), "utf8")).not.toContain("credential");
 });

@@ -34,11 +34,12 @@ const yoursOnly: Record<string, string> = {
   "plugin ls": "listing plugins",
 };
 
-// Returns the repository and task in a name such as app-13, or nothing when it isn't one.
-// Repository names can hold dashes, so the task is the number after the last one.
-function taskName(word?: string): [string, number] | undefined {
-  const parts = word?.match(/^(.+)-(\d+)$/);
-  return parts?.[1] ? [parts[1], Number(parts[2])] : undefined;
+// Returns the repository and task in a name such as app-13, or app-t1 for a thread with no
+// tracker, or nothing when it isn't one. Repository names can hold dashes, so the task is what
+// follows the last one.
+function taskName(word?: string): [string, string] | undefined {
+  const parts = word?.match(/^(.+)-(t?\d+)$/);
+  return parts?.[1] && parts[2] ? [parts[1], parts[2]] : undefined;
 }
 
 // Prints why a command can't run as given, and ends skel with an error. People who mistype a
@@ -110,7 +111,7 @@ async function screenCommand(args: string[]): Promise<void> {
   const { runPage } = await import("./screen/page.ts");
   const { runSidebar } = await import("./screen/sidebar.ts");
   // The third word is the remote skel runs on, and empty on this machine. The last is the
-  // GitHub name of the repository the screen opened on.
+  // owner/name of the repository the screen opened on.
   const [session, where, repository] = rest;
   if (
     command === "sidebar" &&
@@ -260,11 +261,16 @@ async function taskCommand(args: string[]): Promise<void> {
 // Starts, stops, re-reviews or attaches to the thread on a task, named such as app-13.
 async function threadCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
-  const { attachToThread, reviewAgain, startOn, stopOn } = await import("./client.ts");
+  const { attachToThread, reviewAgain, startNew, startOn, stopOn } = await import("./client.ts");
   const thread = taskName(sub);
   const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
   if (command === "start" && thread && (rest.length === 0 || from)) {
     console.log(await startOn(...thread, from));
+    return;
+  }
+  const [title, body] = rest;
+  if (command === "start" && sub && !thread && title && body !== undefined && rest.length === 2) {
+    console.log(await startNew(sub, title, body));
     return;
   }
   if (command === "stop" && thread && rest.length === 0) {

@@ -203,5 +203,14 @@ export function gitCredentials(db: Database, name: string): string[] {
   const assignments = Object.entries(env).map(([key, value]) => `${key}=${quoted(value)}`);
   const helper = `cd ${quoted(plugin.folder)} && ${assignments.join(" ")} exec ${argv.map(quoted).join(" ")}`;
   // The empty helper first clears any you set, such as gh's, so git asks only this plugin.
-  return ["-c", "credential.helper=", "-c", `credential.helper=!${helper}`];
+  // git leaves out the repository's path unless told, and the forge's login can be for one
+  // repository alone.
+  return [
+    "-c",
+    "credential.helper=",
+    "-c",
+    `credential.helper=!${helper}`,
+    "-c",
+    "credential.useHttpPath=true",
+  ];
 }
