@@ -14,7 +14,7 @@ const installedFile = () => join(dataDir(), "installed");
 
 // The release file for this machine, named as the install script names it. A Mac running skel
 // through Rosetta asks for the x64 file again, which is the one it already runs.
-const asset = `skel-${process.platform === "darwin" ? "darwin" : "linux"}-${process.arch === "arm64" ? "arm64" : "x64"}`;
+const asset = `skelcrew-${process.platform === "darwin" ? "darwin" : "linux"}-${process.arch === "arm64" ? "arm64" : "x64"}`;
 
 // Downloads an address, or throws naming it.
 async function download(address: string): Promise<Response> {
@@ -70,7 +70,7 @@ export async function installLatest(file: string, base: string): Promise<string 
     await Bun.write(staged, bytes);
     chmodSync(staged, 0o755);
     const started = await quietly([staged, "--version"]);
-    const version = started.out.match(/^skel (\d+\.\d+\.\d+)$/m)?.[1];
+    const version = started.out.match(/^skelcrew (\d+\.\d+\.\d+)$/m)?.[1];
     if (!started.ok || !version)
       throw new Error(
         `the latest release won't start here, so it wasn't installed: ${started.said}`,

@@ -113,16 +113,16 @@ test("says which release it is, or which commit a build from a checkout came fro
     compile(main, file, ["--define", `SKELCREW_BUILD=${JSON.stringify(build)}`]);
     return Bun.spawnSync([file, "--version"]).stdout.toString();
   };
-  expect(said("0.4.2")).toBe("skel 0.4.2\n");
-  expect(said("39939b0")).toBe("skel from a checkout, at commit 39939b0\n");
+  expect(said("0.4.2")).toBe("skelcrew 0.4.2\n");
+  expect(said("39939b0")).toBe("skelcrew from a checkout, at commit 39939b0\n");
   expect(said("39939b0-dirty")).toBe(
-    "skel from a checkout, at commit 39939b0 with uncommitted changes\n",
+    "skelcrew from a checkout, at commit 39939b0 with uncommitted changes\n",
   );
 });
 
 test("a build nobody stamped doesn't pretend to know what it is", () => {
   expect(Bun.spawnSync([skel, "--version"]).stdout.toString()).toBe(
-    "skel from a checkout, at an unknown commit\n",
+    "skelcrew from a checkout, at an unknown commit\n",
   );
 });
 
@@ -205,10 +205,10 @@ describe("a release setting up a server", () => {
     rmSync(join(home, "copied"), { force: true });
     writeFileSync(join(home, "cpu"), "x86_64\n");
     files = new Map([
-      ["/download/v0.4.2/skel-linux-x64", linux],
+      ["/download/v0.4.2/skelcrew-linux-x64", linux],
       [
         "/download/v0.4.2/SHA256SUMS",
-        `${sum("other")}  skel-darwin-arm64\n${sum(linux)}  skel-linux-x64\n`,
+        `${sum("other")}  skelcrew-darwin-arm64\n${sum(linux)}  skelcrew-linux-x64\n`,
       ],
     ]);
   });
@@ -230,8 +230,8 @@ describe("a release setting up a server", () => {
 
   test("copies the binary for the server's CPU, which can differ from the laptop's", async () => {
     const arm = "the arm64 Linux skel of 0.4.2";
-    files.set("/download/v0.4.2/skel-linux-arm64", arm);
-    files.set("/download/v0.4.2/SHA256SUMS", `${sum(arm)}  skel-linux-arm64\n`);
+    files.set("/download/v0.4.2/skelcrew-linux-arm64", arm);
+    files.set("/download/v0.4.2/SHA256SUMS", `${sum(arm)}  skelcrew-linux-arm64\n`);
     writeFileSync(join(home, "cpu"), "aarch64\n");
     const done = await run(["remote", "add", "simon@workbox"], released);
     expect(done.err).toBe("");
@@ -247,7 +247,7 @@ describe("a release setting up a server", () => {
   });
 
   test("copies nothing that fails its checksum", async () => {
-    files.set("/download/v0.4.2/skel-linux-x64", "tampered");
+    files.set("/download/v0.4.2/skelcrew-linux-x64", "tampered");
     const done = await run(["remote", "add", "simon@workbox"], released);
     expect(done.code).toBe(1);
     expect(done.err).toContain("checksum");
@@ -280,10 +280,12 @@ exit 0`,
   });
 
   test("names the address when the download fails", async () => {
-    files.delete("/download/v0.4.2/skel-linux-x64");
+    files.delete("/download/v0.4.2/skelcrew-linux-x64");
     const done = await run(["remote", "add", "simon@workbox"], released);
     expect(done.code).toBe(1);
-    expect(done.err).toContain(`http://127.0.0.1:${server.port}/download/v0.4.2/skel-linux-x64`);
+    expect(done.err).toContain(
+      `http://127.0.0.1:${server.port}/download/v0.4.2/skelcrew-linux-x64`,
+    );
   });
 });
 

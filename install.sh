@@ -108,7 +108,7 @@ main() {
   system=$(find_system)
   cpu=$(find_cpu)
   [ "$system" != linux ] || require_glibc
-  asset="skel-$system-$cpu"
+  asset="skelcrew-$system-$cpu"
   bin="$HOME/.local/bin"
   mkdir -p "$bin" || fail "couldn't make $bin."
   folder=$(mktemp -d "$bin/.skel-install.XXXXXX") || fail "couldn't write to $bin."

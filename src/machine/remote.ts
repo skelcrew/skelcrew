@@ -291,7 +291,7 @@ async function machineCpu(machine: Machine): Promise<string> {
 async function downloadLinuxSkel(file: string, cpu: string): Promise<void> {
   console.log(`Downloading skel ${release} for Linux.`);
   const at = `${releases}/download/v${release}`;
-  const name = `skel-linux-${cpu}`;
+  const name = `skelcrew-linux-${cpu}`;
   await Bun.write(file, await downloadRelease(at, name, await releaseSum(at, name)));
   chmodSync(file, 0o755);
 }

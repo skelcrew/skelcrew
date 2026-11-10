@@ -25,10 +25,10 @@ let asked: string[] = [];
 const running: Subprocess[] = [];
 
 // The release file for this machine, as the install script names it.
-const asset = `skel-${process.platform === "darwin" ? "darwin" : "linux"}-${process.arch === "arm64" ? "arm64" : "x64"}`;
+const asset = `skelcrew-${process.platform === "darwin" ? "darwin" : "linux"}-${process.arch === "arm64" ? "arm64" : "x64"}`;
 const sum = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
 // A stand-in for a skel binary that says which release it is.
-const binary = (version: string) => `#!/bin/sh\necho "skel ${version}"\n`;
+const binary = (version: string) => `#!/bin/sh\necho "skelcrew ${version}"\n`;
 const installed = () => join(home, "bin", "skel");
 const marker = () => join(home, ".local", "share", "skel", "installed");
 

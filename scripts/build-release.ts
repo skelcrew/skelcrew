@@ -10,10 +10,10 @@ import { errorText } from "../src/say.ts";
 // on every CPU: the plain one stops with "Illegal instruction" on a CPU or virtual machine
 // without AVX2, and skel gains nothing from AVX2.
 const targets = [
-  ["skel-darwin-arm64", "bun-darwin-arm64"],
-  ["skel-darwin-x64", "bun-darwin-x64-baseline"],
-  ["skel-linux-arm64", "bun-linux-arm64"],
-  ["skel-linux-x64", "bun-linux-x64-baseline"],
+  ["skelcrew-darwin-arm64", "bun-darwin-arm64"],
+  ["skelcrew-darwin-x64", "bun-darwin-x64-baseline"],
+  ["skelcrew-linux-arm64", "bun-linux-arm64"],
+  ["skelcrew-linux-x64", "bun-linux-x64-baseline"],
 ] as const;
 
 const dist = "dist";

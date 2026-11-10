@@ -84,12 +84,12 @@ test("skel --version from a checkout says so, with its commit", () => {
     const clean = skel(["--version"], { PATH: path });
     expect(clean).toEqual({
       code: 0,
-      out: "skel from a checkout, at commit 39939b0\n",
+      out: "skelcrew from a checkout, at commit 39939b0\n",
       err: "",
     });
     git(" M src/main.ts");
     expect(skel(["--version"], { PATH: path }).out).toBe(
-      "skel from a checkout, at commit 39939b0 with uncommitted changes\n",
+      "skelcrew from a checkout, at commit 39939b0 with uncommitted changes\n",
     );
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -99,7 +99,7 @@ test("skel --version from a checkout says so, with its commit", () => {
 test("skel --version answers on a server whose skel differs from the laptop's", () => {
   const seen = skel(["--version"], { SKELCREW_LAPTOP_BUILD: "other", SKELCREW_REMOTE_NAME: "x" });
   expect(seen.code).toBe(0);
-  expect(seen.out).toStartWith("skel ");
+  expect(seen.out).toStartWith("skelcrew ");
 });
 
 test("the help names the sidebar's keys, switching repositories included", () => {
