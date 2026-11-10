@@ -390,7 +390,9 @@ test("the update goes by what the Sprite service runs, not by ~/.local/bin", asy
   expect(run.out).toContain(
     `skel · skel on sprite:demo runs from a checkout at ${join(sprite, "skel")}, so it wasn't replaced.`,
   );
-  expect(run.out).toContain("sprite-env services restart skel");
+  expect(run.out).toContain(
+    "git pull there updates it, and the next skel there restarts its daemon on it.",
+  );
   expect(run.out).toEndWith("skel on the Sprite got 1 arguments\n[ps]\n");
   expect(calls()).not.toContain("file push");
   expect(calls()).not.toContain("sprite-env services restart");

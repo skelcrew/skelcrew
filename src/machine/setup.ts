@@ -2,9 +2,10 @@
 // done.
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { codexHome } from "../agents/codex.ts";
 import { HarnessName } from "../agents/harness.ts";
 import { configFile, readConfig } from "../config.ts";
-import { claudeTokenFile, codexHome, configDir } from "../paths.ts";
+import { claudeTokenFile, configDir } from "../paths.ts";
 import { rule, skelLine } from "../say.ts";
 import { promptSecret } from "./secret.ts";
 import { installService, loginPath, serviceFile } from "./service.ts";
@@ -25,10 +26,11 @@ const harnesses = [
 const tools = [
   { command: "tmux", install: "sudo apt install tmux" },
   { command: "bwrap", install: "sudo apt install bubblewrap" },
+  { command: "git", install: "sudo apt install git" },
   { command: "gh", install: "sudo apt install gh" },
 ];
 // On a Mac the sandbox comes with the system, and what Homebrew gives goes in one line.
-const brewed = ["tmux", "gh"];
+const brewed = ["tmux", "git", "gh"];
 const macTools = [
   { command: "sandbox-exec", install: "it comes with macOS, and skel can't run agents without it" },
 ];

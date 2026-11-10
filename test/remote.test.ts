@@ -263,7 +263,7 @@ test("offers to update an out-of-date skel, updates it, then runs the command", 
   expect(run.out).toContain(
     `skel · updated simon@workbox to the skel in ~/code/skel (commit ${laptop.commit}) and restarted its daemon.`,
   );
-  expect(run.out).toContain("the lead picks up new instructions when it's next started");
+  expect(run.out).toContain("each lead picks up new instructions when it's next started");
   expect(run.out).not.toContain("uncommitted");
   expect(run.out).toEndWith("skel on the server got 1 arguments\n[ps]\n");
   expect(run.code).toBe(3);

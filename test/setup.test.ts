@@ -476,6 +476,23 @@ test("names each missing tool with what to install, and runs nothing else", asyn
   expect(calls()).toBe("");
 });
 
+test("names git when it is missing, as skel clones and pushes with it", async () => {
+  unlinkSync(join(bin, "git"));
+  const run = await skel();
+  expect(run.code).toBe(1);
+  expect(run.err).toStartWith("skel: install these first:\n");
+  expect(run.err).toContain("  git: sudo apt install git\n");
+  expect(calls()).toBe("");
+});
+
+test("on a Mac, names git with what Homebrew installs", async () => {
+  asMac();
+  rmSync(join(bin, "git"));
+  const run = await skelOnMac();
+  expect(run.code).toBe(1);
+  expect(run.err).toContain("  brew install git\n");
+});
+
 test("gives the AppArmor advice when bwrap can't run", async () => {
   // AppArmor matches the file a link points to, so the advice must name that file.
   const real = join(home, "opt", "bwrap");

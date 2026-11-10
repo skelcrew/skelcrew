@@ -19,7 +19,7 @@ const xml = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
 // Returns the agent's definition for the daemon. launchd starts a program with a bare PATH,
-// which misses bun, claude and gh where they usually live, so the daemon gets yours. It is
+// which misses bun, your harness and gh where they usually live, so the daemon gets yours. It is
 // started again only after a crash, since a daemon that says one is already running exits
 // cleanly. AbandonProcessGroup keeps launchd from ending what the daemon leaves running when
 // it stops, which is what keeps agents alive through a restart.
@@ -75,8 +75,9 @@ export function loadLaunchAgent(): void {
     throw new Error(`launchctl couldn't load skel's daemon, so it isn't installed: ${loaded.said}`);
 }
 
-// Restarts the daemon, for a skel of a newer release than the daemon runs. launchd ends the
-// running daemon first, and agents keep running in tmux.
+// Restarts the daemon, for a skel newer than the one the daemon runs: a newer release, or a
+// checkout on another commit. launchd ends the running daemon first, and agents keep running in
+// tmux.
 export function restartLaunchAgent(): void {
   const started = launchctl(["kickstart", "-k", `${domain()}/${label}`]);
   if (!started.ok) throw new Error(`launchctl couldn't restart skel's daemon: ${started.said}`);
