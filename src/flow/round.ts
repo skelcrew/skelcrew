@@ -2,7 +2,7 @@
 // its PR opened on the first round, reviewed by a fresh reviewer, and the review typed back
 // into the builder's session when it asks for changes.
 import type { Database } from "bun:sqlite";
-import { typeInto } from "../agents/tmux.ts";
+import { typeInto } from "../agents/typing.ts";
 import { threadConfig } from "../config.ts";
 import { cloneDir } from "../paths.ts";
 import { forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";

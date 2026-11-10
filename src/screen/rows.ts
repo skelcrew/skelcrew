@@ -153,7 +153,8 @@ export function sidebarRows(
         running: running.includes(thread.folder),
         word,
         // Only a review is on another harness. A submit saves which one, so the empty text
-        // is only there for a field that stays null until the first submit.
+        // is only there for a field that stays null until the first submit. A thread with no
+        // harness saved started before Skelcrew saved it, when builders ran only on Claude Code.
         harness: word === "reviewing" ? (reviewer ?? "") : (thread.harness ?? "claude"),
         age: word === "working" && thread.started !== null ? threadAge(thread.started, now) : "",
         fullName: fullNameOf(thread),
@@ -167,8 +168,6 @@ export function sidebarRows(
 }
 
 const ListRow = z.object({
-  owner: z.string(),
-  repo: z.string(),
   name: z.string(),
   threaded: z.coerce.boolean(),
   item: z.string(),
@@ -178,22 +177,21 @@ const ListRow = z.object({
 // none of a list its repository has no tracker or forge for: it reads the database and never
 // asks the tracker, as it runs each second. Newest first, with issues
 // that have a thread last. A thread that is done has left THREADS, so its issue counts as
-// waiting again. A PR from a thread takes the word and mark of its row.
+// waiting again. A PR from a thread takes the word and mark of its row. Both the lists and the
+// rows are of the open repository alone, so a PR's number is enough to find its thread.
 export function sidebarLists(db: Database, rows: Row[], most: number, open: Open): Lists {
   // Returns one list, of tasks or PRs, with the column that counts all of its kind.
   const read = (kind: "task" | "pr", column: string): List => {
-    const found = db.query(`SELECT i.owner, i.repo, r.name, i.item,
+    const found = db.query(`SELECT r.name, i.item,
         EXISTS (SELECT 1 FROM threads t WHERE i.kind = 'task' AND t.owner = i.owner
           AND t.repo = i.repo AND CAST(t.task AS TEXT) = i.id AND t.status != 'done') AS threaded
       FROM items i JOIN repositories r ON r.owner = i.owner AND r.repo = i.repo
       WHERE i.kind = ? AND i.state = 'open' AND i.owner = ? AND i.repo = ?
       ORDER BY threaded, i.created DESC, length(i.id) DESC, i.id DESC LIMIT ?`);
     const links = found.all(kind, open.owner, open.repo, most).map((saved) => {
-      const { owner, repo, name, threaded, item } = ListRow.parse(saved);
+      const { name, threaded, item } = ListRow.parse(saved);
       const { id, title, link } = Item.parse(JSON.parse(item));
-      const thread = rows.find(
-        (row) => row.fullName === `${owner}/${repo}` && row.pr === Number(id),
-      );
+      const thread = rows.find((row) => row.pr === Number(id));
       return {
         name: kind === "pr" ? `${name}#${id}` : `${name}-${id}`,
         title,

@@ -15,13 +15,11 @@ import {
   agentRuns,
   endSession,
   hasSession,
-  isIdle,
-  type Marks,
   startSession,
   stillRunning,
   stopSession,
-  typeInto,
 } from "../src/agents/tmux.ts";
+import { isIdle, type Marks, typeInto } from "../src/agents/typing.ts";
 import { source, until as wait } from "./harness.ts";
 
 const moment = 100;

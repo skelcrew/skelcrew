@@ -2,7 +2,8 @@
 // other's session once it is idle, and kept in the thread's log. They never go to a tracker or
 // forge.
 import type { Database } from "bun:sqlite";
-import { agentRuns, typeInto } from "../agents/tmux.ts";
+import { agentRuns } from "../agents/tmux.ts";
+import { typeInto } from "../agents/typing.ts";
 import { errorText } from "../say.ts";
 import { noteForLead } from "./lead.ts";
 import { builderHarness, log, readThread, type Thread, threadName } from "./thread.ts";
