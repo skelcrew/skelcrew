@@ -1,4 +1,4 @@
-// The release build: makes skel for macOS and Linux, on arm64 and x64, from this one machine,
+// The release build: makes Skelcrew for macOS and Linux, on arm64 and x64, from this one machine,
 // with the release notes, into dist/. Run by the release workflow on a version tag, as
 // bun scripts/build-release.ts 0.4.2. It publishes nothing. It makes no checksums, as the
 // workflow signs the Mac binaries afterwards, and signing changes them.
@@ -8,12 +8,12 @@ import { errorText } from "../src/say.ts";
 
 // Each release file and the Bun target it is built for. On x64 the baseline build, which runs
 // on every CPU: the plain one stops with "Illegal instruction" on a CPU or virtual machine
-// without AVX2, and skel gains nothing from AVX2.
+// without AVX2, and Skelcrew gains nothing from AVX2.
 const targets = [
-  ["skel-darwin-arm64", "bun-darwin-arm64"],
-  ["skel-darwin-x64", "bun-darwin-x64-baseline"],
-  ["skel-linux-arm64", "bun-linux-arm64"],
-  ["skel-linux-x64", "bun-linux-x64-baseline"],
+  ["skelcrew-darwin-arm64", "bun-darwin-arm64"],
+  ["skelcrew-darwin-x64", "bun-darwin-x64-baseline"],
+  ["skelcrew-linux-arm64", "bun-linux-arm64"],
+  ["skelcrew-linux-x64", "bun-linux-x64-baseline"],
 ] as const;
 
 const dist = "dist";
@@ -29,8 +29,8 @@ function releases(): string {
 }
 
 // Builds one binary, stamped with its release and where releases live. By default a binary
-// built by Bun reads any .env and bunfig.toml in the folder it runs in. skel runs in your
-// projects, so a project's .env would land in skel's environment, and from there could reach
+// built by Bun reads any .env and bunfig.toml in the folder it runs in. Skelcrew runs in your
+// projects, so a project's .env would land in Skelcrew's environment, and from there could reach
 // the agents.
 function compile(version: string, file: string, target: string): void {
   const argv = ["bun", "build", "--compile", `--target=${target}`];
@@ -48,7 +48,7 @@ function compile(version: string, file: string, target: string): void {
 function releaseNotes(): string {
   const git = (...args: string[]) => Bun.spawnSync(["git", ...args], { stderr: "pipe" });
   const last = git("describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", "HEAD^");
-  if (!last.success) return "The first release of skel.\n";
+  if (!last.success) return "The first release of Skelcrew.\n";
   const since = `${last.stdout.toString().trim()}..HEAD`;
   return git("log", "--format=- %s", since).stdout.toString();
 }
@@ -66,6 +66,6 @@ function build(version: string): void {
 try {
   build(process.argv[2] ?? "");
 } catch (error) {
-  console.error(`skel: ${errorText(error)}`);
+  console.error(`Skelcrew: ${errorText(error)}`);
   process.exit(1);
 }

@@ -1,4 +1,4 @@
-// skel serve and the lead it keeps, against a fake Claude Code on a tmux server of the test's own.
+// sc serve and the lead it keeps, against a fake Claude Code on a tmux server of the test's own.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
@@ -34,7 +34,8 @@ function fake(name: string, body: string): void {
 
 // The name of a repository's lead's session and config folder, and the folder it works in.
 const leadName = (repo = "app") => leadPlaces("simon", repo).name;
-const leadFolder = (repo = "app") => join(home, ".local", "share", "skel", "leads", "simon", repo);
+const leadFolder = (repo = "app") =>
+  join(home, ".local", "share", "skelcrew", "leads", "simon", repo);
 
 // Stands in for Claude Code, staying up like the real one until its session ends. It runs in
 // the lead's sandbox, where the home folder is hidden, so it notes its calls in the folder it
@@ -72,14 +73,14 @@ afterEach(async () => {
 });
 
 function setUp(): void {
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
-  writeFileSync(join(home, ".config", "skel", "config.yaml"), "harness: claude\n");
-  writeFileSync(join(home, ".config", "skel", "claude-token"), "sk-ant-oat01-good\n");
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: claude\n");
+  writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-good\n");
   mkdirSync(join(home, ".config", "systemd", "user"), { recursive: true });
-  writeFileSync(join(home, ".config", "systemd", "user", "skel.service"), "");
+  writeFileSync(join(home, ".config", "systemd", "user", "skelcrew.service"), "");
 }
 
-// Runs the daemon as skel serve would, but on the test's own tmux server. Given a port, a
+// Runs the daemon as sc serve would, but on the test's own tmux server. Given a port, a
 // daemon on a Sprite listens there for GitHub's webhooks, in place of the Sprite's own.
 function serve(runtime = join(home, "run"), port?: number): Subprocess<"ignore", "pipe", "pipe"> {
   const more = port === undefined ? "" : `, 30_000, ${port}`;
@@ -125,7 +126,7 @@ const claudeCalls = (folder = leadFolder()) =>
   claudeLines(folder)
     .map((line) => `${line.match(/--(session-id|resume) \S+/)?.[0] ?? line}\n`)
     .join("");
-const cliSocket = () => join(home, "run", "skel.sock");
+const cliSocket = () => join(home, "run", "skelcrew.sock");
 
 // What the daemon replies on the CLI socket, or null when nothing answers.
 function ask(request: object): Promise<unknown> {
@@ -154,9 +155,9 @@ async function untilAnswers() {
   }
 }
 
-// Runs SQL on skel's database, as the daemon may be using it at the same time.
+// Runs SQL on Skelcrew's database, as the daemon may be using it at the same time.
 function onDb<T>(use: (db: Database) => T): T {
-  const db = new Database(join(home, ".local", "share", "skel", "skel.db"));
+  const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
   // The daemon may be writing, and a read that meets a write fails without a wait.
   db.run("PRAGMA busy_timeout = 5000");
   try {
@@ -208,7 +209,7 @@ function onGitHub(name: string): string {
   return work;
 }
 
-// A repository skel knows of, as one brought in before leaves it. Returns where skel keeps
+// A repository Skelcrew knows of, as one brought in before leaves it. Returns where Skelcrew keeps
 // its clone.
 function addRepository(name: string): string {
   onGitHub(name);
@@ -220,14 +221,14 @@ openDb().run("INSERT INTO repositories (name, owner, repo) VALUES (?, 'simon', ?
     stderr: "pipe",
   });
   if (!added.success) throw new Error(added.stderr.toString());
-  return join(home, ".local", "share", "skel", "repos", "simon", name);
+  return join(home, ".local", "share", "skelcrew", "repos", "simon", name);
 }
 
 // Claude Code saves a conversation once it has a message, which a fake can't send. It keeps
 // it in the session's own config folder, under projects/, in a folder named after the
 // session's folder with every character but letters and digits made a dash.
 function saveTranscript(id: string, name = leadName(), lead = leadFolder()): void {
-  const projects = join(home, ".local", "share", "skel", "claude", name, "projects");
+  const projects = join(home, ".local", "share", "skelcrew", "claude", name, "projects");
   const folder = join(projects, lead.replace(/[^a-zA-Z0-9]/g, "-"));
   mkdirSync(folder, { recursive: true });
   writeFileSync(join(folder, `${id}.jsonl`), "{}\n");
@@ -246,41 +247,41 @@ async function ended(run: Subprocess<"ignore", "pipe", "pipe">) {
   return { err, code };
 }
 
-test("refuses to start before the first run, and says to run skel", async () => {
+test("refuses to start before the first run, and says to run sc", async () => {
   const run = await ended(serve());
   expect(run.code).not.toBe(0);
-  expect(run.err).toContain("run skel");
+  expect(run.err).toContain("run sc");
   expect(hasLead()).toBe(false);
 });
 
-test("skel serve refuses inside skel's sandbox, where skel's state is hidden", async () => {
+test("sc serve refuses inside Skelcrew's sandbox, where Skelcrew's state is hidden", async () => {
   setUp();
   const run = Bun.spawnSync([process.execPath, main, "serve"], {
     env: {
       HOME: home,
       XDG_RUNTIME_DIR: join(home, "run"),
       PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
-      SKEL_SANDBOX: "1",
+      SKELCREW_SANDBOX: "1",
     },
     stderr: "pipe",
   });
   expect(run.exitCode).toBe(1);
   expect(run.stderr.toString()).toBe(
-    "skel: running the daemon is only for your own terminal, not for agents\n",
+    "Skelcrew: running the daemon is only for your own terminal, not for agents\n",
   );
-  expect(existsSync(join(home, "run", "skel.sock"))).toBe(false);
+  expect(existsSync(join(home, "run", "skelcrew.sock"))).toBe(false);
 });
 
-// As on a Sprite, where the socket's folder is one of skel's own, not one systemd made.
+// As on a Sprite, where the socket's folder is one of Skelcrew's own, not one systemd made.
 test("makes the folder for its socket, which only you can open", async () => {
   setUp();
   const folder = join(home, "fresh", "run");
   serve(folder);
-  await until(() => existsSync(join(folder, "skel.sock")));
+  await until(() => existsSync(join(folder, "skelcrew.sock")));
   expect(statSync(folder).mode & 0o777).toBe(0o700);
 });
 
-test("says which release it runs, so skel can restart one on an older release", async () => {
+test("says which release it runs, so Skelcrew can restart one on an older release", async () => {
   setUp();
   const script = `import { serve } from ${JSON.stringify(daemon)};
 await serve(${JSON.stringify(socket)});`;
@@ -299,7 +300,7 @@ await serve(${JSON.stringify(socket)});`;
   expect(await ask({ command: "status" })).toMatchObject({ running: true, release: "0.4.2" });
 });
 
-test("says which checkout and commit it started from, so skel can restart it after git pull", async () => {
+test("says which checkout and commit it started from, so Skelcrew can restart it after git pull", async () => {
   setUp();
   serve();
   await until(() => existsSync(cliSocket()));
@@ -310,20 +311,20 @@ test("says which checkout and commit it started from, so skel can restart it aft
   expect(await ask({ command: "status" })).toMatchObject({ folder: checkout, commit });
 });
 
-// skel takes a machine with sprite-env, the Sprite's own tool, on its PATH for a Sprite. Like
+// Skelcrew takes a machine with sprite-env, the Sprite's own tool, on its PATH for a Sprite. Like
 // the real one, it starts a service as it creates it.
 function onSprite(): void {
   fake(
     "sprite-env",
     `case "$*" in
-  "services get skel") exit 0 ;;
+  "services get skelcrew") exit 0 ;;
   info) echo '{"sprite_name":"demo","sprite_url":"https://demo-simon.sprites.app"}'; exit 0 ;;
-  "services create skel-tmux-${socket} --cmd tmux --args -L,${socket},-f,/dev/null,-D --no-stream")
+  "services create skelcrew-tmux-${socket} --cmd tmux --args -L,${socket},-f,/dev/null,-D --no-stream")
     test -f "$HOME/tmux-service" && exit 0
     : > "$HOME/tmux-service"
     setsid tmux -L ${socket} -f /dev/null -D < /dev/null > /dev/null 2>&1 &
     exit 0 ;;
-  "services start skel-tmux-${socket}")
+  "services start skelcrew-tmux-${socket}")
     setsid tmux -L ${socket} -f /dev/null -D < /dev/null > /dev/null 2>&1 &
     exit 0 ;;
 esac
@@ -342,21 +343,21 @@ test("on a Sprite, starts once the first run installed its Sprite service", asyn
 
 // Creating a service that exists already does nothing, even when it is stopped, and a tmux
 // server started without it would end with the daemon's service.
-test("on a Sprite, starts skel's tmux service again when it has stopped", async () => {
+test("on a Sprite, starts Skelcrew's tmux service again when it has stopped", async () => {
   setUp();
   onSprite();
   addRepository("app");
   openedBefore();
   writeFileSync(join(home, "tmux-service"), "");
   serve();
-  await until(() => calls().includes("services start skel-tmux"));
+  await until(() => calls().includes("services start skelcrew-tmux"));
   await until(hasServer);
   expect(calls()).not.toContain("systemd-run");
 });
 
 // A Sprite service ends every process it started when it stops, so a tmux server the
 // daemon started would take every agent with it.
-test("on a Sprite, starts skel's tmux server as a Sprite service of its own", async () => {
+test("on a Sprite, starts Skelcrew's tmux server as a Sprite service of its own", async () => {
   setUp();
   onSprite();
   addRepository("app");
@@ -365,7 +366,7 @@ test("on a Sprite, starts skel's tmux server as a Sprite service of its own", as
   await until(() => calls().includes("tmux"));
   await until(hasServer);
   expect(calls()).toContain(
-    `sprite-env services create skel-tmux-${socket} --cmd tmux --args -L,${socket},-f,/dev/null,-D --no-stream\n`,
+    `sprite-env services create skelcrew-tmux-${socket} --cmd tmux --args -L,${socket},-f,/dev/null,-D --no-stream\n`,
   );
 });
 
@@ -379,7 +380,7 @@ function freePort(): number {
 }
 
 // The fake GitHub notes each call and fails every poll, which still counts as one. It has no
-// webhooks yet, and notes the one skel sets.
+// webhooks yet, and notes the one Skelcrew sets.
 function fakeGitHub(): void {
   fake(
     "gh",
@@ -437,7 +438,7 @@ test("on a Sprite, a delivery GitHub signed has the daemon poll its repository a
   serve(undefined, port);
   await until(() => polls() === 1);
   await untilListening(port);
-  const secret = readFileSync(join(home, ".config", "skel", "webhook-secret"), "utf8");
+  const secret = readFileSync(join(home, ".config", "skelcrew", "webhook-secret"), "utf8");
   expect((await deliver(port, secret)).status).toBe(202);
   await until(() => polls() === 2);
 });
@@ -466,7 +467,7 @@ test("on a Sprite, sets the webhook to the Sprite on each repository it has", as
     () => existsSync(join(home, "hook")) && readFileSync(join(home, "hook"), "utf8") !== "",
   );
   const hook = JSON.parse(readFileSync(join(home, "hook"), "utf8"));
-  const secret = readFileSync(join(home, ".config", "skel", "webhook-secret"), "utf8");
+  const secret = readFileSync(join(home, ".config", "skelcrew", "webhook-secret"), "utf8");
   expect(hook.config).toEqual({
     url: "https://demo-simon.sprites.app",
     content_type: "json",
@@ -486,19 +487,19 @@ test("on a server, neither listens for webhooks nor sets them", async () => {
   await Bun.sleep(500);
   expect(await listening(port)).toBe(false);
   expect(calls()).not.toContain("hooks");
-  expect(existsSync(join(home, ".config", "skel", "webhook-secret"))).toBe(false);
+  expect(existsSync(join(home, ".config", "skelcrew", "webhook-secret"))).toBe(false);
 });
 
-// Asks the daemon to open a repository, as plain skel in a checkout of it does.
+// Asks the daemon to open a repository, as plain sc in a checkout of it does.
 const open = (repo = "app") => ask({ command: "lead", from: `simon/${repo}` });
 
 // The socket the daemon opens for a repository's lead, which tells it which lead calls. The
 // lead from before keeps its own.
 const leadSocket = (repo = "app") => {
   const short = new Bun.CryptoHasher("sha256").update(`simon/${repo}`).digest("hex").slice(0, 16);
-  return join(home, "run", "skel", "leads", short, "skel.sock");
+  return join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
 };
-const keptSocket = () => join(home, "run", "skel", "lead", "skel.sock");
+const keptSocket = () => join(home, "run", "skelcrew", "lead", "skelcrew.sock");
 
 // What the daemon replies on a lead's socket, or null when nothing answers.
 function askAsLead(request: object, path = leadSocket()): Promise<unknown> {
@@ -514,7 +515,7 @@ function askAsLead(request: object, path = leadSocket()): Promise<unknown> {
   });
 }
 
-// Removes a repository as skel repo rm does, but on the test's own tmux server, never skel's.
+// Removes a repository as sc repo rm does, but on the test's own tmux server, never Skelcrew's.
 // Returns what it said on stderr.
 function removeRepo(name: string): string {
   const script = `import { removeRepo } from ${JSON.stringify(source("flow/repo.ts"))};
@@ -531,14 +532,14 @@ function addThread(repo: string, task: number): void {
   onDb((db) =>
     db.run(
       `INSERT INTO threads (owner, repo, task, folder, branch, status)
-        VALUES ('simon', ?, ?, ?, 'skel/x', 'stopped')`,
+        VALUES ('simon', ?, ?, ?, 'skelcrew/x', 'stopped')`,
       [repo, task, `${repo}-${task}`],
     ),
   );
 }
 
-// bubblewrap can't start inside skel's own sandbox, so only there a lead can't start.
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", () => {
+// bubblewrap can't start inside Skelcrew's own sandbox, so only there a lead can't start.
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a lead per repository", () => {
   test("starts a repository's lead the first time you open it, in its own folder, with a session id it stores", async () => {
     setUp();
     addRepository("app");
@@ -616,7 +617,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", 
     await until(() => claudeCalls().includes("--resume"));
     for (const line of claudeLines()) {
       expect(line).toContain("--append-system-prompt You are a lead");
-      expect(line).toContain("skel task create");
+      expect(line).toContain("sc task create");
       expect(line).toContain("You are the lead of simon/app.");
     }
   });
@@ -638,7 +639,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", 
     expect(claudeCalls()).toBe(`--session-id ${id}\n--session-id ${fresh}\n`);
   });
 
-  test("brings back a lead that exited while the daemon runs, when skel asks", async () => {
+  test("brings back a lead that exited while the daemon runs, when Skelcrew asks", async () => {
     setUp();
     addRepository("app");
     serve();
@@ -678,7 +679,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", 
       lead: leadName("web"),
       repository: "simon/web",
     });
-    // One skel doesn't have, such as one waiting for skel repo trust, is no repository to open.
+    // One Skelcrew doesn't have, such as one waiting for sc repo trust, is no repository to open.
     expect(await ask({ command: "lead", from: "other/tool" })).toEqual({
       lead: leadName("web"),
       repository: "simon/web",
@@ -690,7 +691,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", 
     serve();
     await untilAnswers();
     expect(await ask({ command: "lead" })).toEqual({
-      error: "skel has no repositories yet. Run skel in a checkout of one.",
+      error: "Skelcrew has no repositories yet. Run sc in a checkout of one.",
     });
   });
 
@@ -713,7 +714,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", 
     });
     const refused = {
       error:
-        "you are the lead of simon/app only, so web isn't yours. Ask the human to open it with skel in a checkout of it: its own lead works on it.",
+        "you are the lead of simon/app only, so web isn't yours. Ask the human to open it with sc in a checkout of it: its own lead works on it.",
     };
     expect(await askAsLead({ command: "ps", repo: "web" })).toEqual(refused);
     expect(await askAsLead({ command: "stop", repo: "web", task: 2 })).toEqual(refused);
@@ -740,16 +741,16 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", 
     expect(hasLead(leadName("web"))).toBe(true);
   });
 
-  // Its own scope keeps tmux out of skel.service's cgroup, so stopping or OOM-killing the
+  // Its own scope keeps tmux out of skelcrew.service's cgroup, so stopping or OOM-killing the
   // service can't take the agents down.
-  test("starts skel's tmux server in a systemd scope of its own", async () => {
+  test("starts Skelcrew's tmux server in a systemd scope of its own", async () => {
     setUp();
     addRepository("app");
     serve();
     await untilAnswers();
     await open();
     expect(calls()).toContain(
-      `systemd-run --user --scope --quiet --unit=skel-tmux-${socket} -- tmux -L ${socket} `,
+      `systemd-run --user --scope --quiet --unit=skelcrew-tmux-${socket} -- tmux -L ${socket} `,
     );
   });
 
@@ -778,14 +779,14 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", 
     expect(claudeCalls()).toBe(`--session-id ${storedSession()}\n`);
   });
 
-  test("refuses a second daemon and points to skel", async () => {
+  test("refuses a second daemon and points to Skelcrew", async () => {
     setUp();
     serve();
     await untilAnswers();
     const second = await ended(serve());
     expect(second.code).not.toBe(0);
     expect(second.err).toContain("already running");
-    expect(second.err).toContain("skel");
+    expect(second.err).toContain("Run sc");
     expect(await answers()).toBe(true);
   });
 
@@ -804,7 +805,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", 
     setUp();
     const repo = addRepository("app");
     fakeClaude(
-      `ls ${repo} > seen; test -S "$SKEL_SOCKET" && echo socket >> seen; test -e ${home}/.config/skel/claude-token || echo token-hidden >> seen; exec sleep 300`,
+      `ls ${repo} > seen; test -S "$SKELCREW_SOCKET" && echo socket >> seen; test -e ${home}/.config/skelcrew/claude-token || echo token-hidden >> seen; exec sleep 300`,
     );
     serve();
     await untilAnswers();
@@ -819,7 +820,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", 
     setUp();
     addRepository("app");
     writeFileSync(
-      join(home, ".config", "skel", "config.yaml"),
+      join(home, ".config", "skelcrew", "config.yaml"),
       "harness: claude\nmodel: sonnet\nlead: { model: haiku }\n",
     );
     serve();
@@ -866,7 +867,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("with a lead per repository", 
     setUp();
     addRepository("app");
     openedBefore();
-    const asker = `const c = require("node:net").createConnection(process.env.SKEL_SOCKET);
+    const asker = `const c = require("node:net").createConnection(process.env.SKELCREW_SOCKET);
 c.on("connect", () => c.write('{"command":"status"}\\n'));
 c.on("data", (d) => process.stdout.write(d));
 c.on("error", () => process.exit(1));`;
@@ -893,7 +894,7 @@ c.on("error", () => process.exit(1));`;
     expect(hasLead()).toBe(false);
   });
 
-  test("moves skel's clones to the latest default branch when the lead starts", async () => {
+  test("moves Skelcrew's clones to the latest default branch when the lead starts", async () => {
     setUp();
     const clone = addRepository("app");
     openedBefore();
@@ -911,7 +912,7 @@ c.on("error", () => process.exit(1));`;
     await until(() => existsSync(join(clone, "NEWS")));
   });
 
-  test("moves skel's clones to the latest after answering a lead request, not before", async () => {
+  test("moves Skelcrew's clones to the latest after answering a lead request, not before", async () => {
     setUp();
     const clone = addRepository("app");
     // Fails at once, so creating the label can't hold the first refresh until the second ask.
@@ -960,11 +961,11 @@ c.on("error", () => process.exit(1));`;
   }, 15_000);
 });
 
-// A machine that ran skel with one lead for all its repositories, as the release before leads
+// A machine that ran sc with one lead for all its repositories, as the release before leads
 // per repository left it: the lead's session, where you last attached from, and a note still
 // waiting for the lead.
 function oneLeadBefore(session: string, from: string | null): void {
-  mkdirSync(join(home, ".local", "share", "skel"), { recursive: true });
+  mkdirSync(join(home, ".local", "share", "skelcrew"), { recursive: true });
   onDb((db) => {
     db.run(`CREATE TABLE repositories (owner TEXT NOT NULL, repo TEXT NOT NULL,
       name TEXT NOT NULL UNIQUE, PRIMARY KEY (owner, repo))`);
@@ -982,7 +983,7 @@ function oneLeadBefore(session: string, from: string | null): void {
 }
 
 // The lead from before keeps its name, folder and socket.
-const keptLead = () => join(home, ".local", "share", "skel", "lead");
+const keptLead = () => join(home, ".local", "share", "skelcrew", "lead");
 
 // A Claude Code at its prompt, which keeps what is typed into it in typed.
 const atPrompt = `exec 3<&0
@@ -990,7 +991,7 @@ while IFS= read -r line; do echo "$line" >> typed; done <&3 &
 echo "❯"
 exec sleep 300`;
 
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("the lead from before", () => {
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("the lead from before", () => {
   test("a lead running through the upgrade becomes the lead of the repository you last attached from", async () => {
     setUp();
     const id = crypto.randomUUID();
@@ -1008,7 +1009,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("the lead from before", () => 
     const typed = () => read(join(keptLead(), "typed"));
     await until(() => typed().includes("you are the lead of web"));
     expect(typed()).toContain("started web-3 from GitHub: Fix the footer");
-    // It kept running: skel started no other.
+    // It kept running: Skelcrew started no other.
     expect(claudeCalls(keptLead())).toBe("--resume old\n");
     expect(storedSession("web")).toBe(id);
     expect(await ask({ command: "lead" })).toEqual({ lead: "lead", repository: "simon/web" });
@@ -1037,7 +1038,7 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("the lead from before", () => 
 });
 
 // A lead started by the release before calls it with each message, until it restarts.
-test("skel attached prints nothing, for a lead from before", async () => {
+test("Skelcrew attached prints nothing, for a lead from before", async () => {
   const run = Bun.spawnSync([process.execPath, main, "attached"], {
     env: { HOME: home, PATH: process.env.PATH ?? "" },
     stdout: "pipe",

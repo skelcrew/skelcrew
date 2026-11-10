@@ -1,4 +1,4 @@
-// skel's help page: what skel --help shows, laid out in sections with skelcrew.dev's amber for
+// Skelcrew's help page: what sc --help shows, laid out in sections with skelcrew.dev's amber for
 // the headings, so it reads as help and not as an error.
 
 const sections: [string, [string, string][]][] = [
@@ -21,8 +21,8 @@ const sections: [string, [string, string][]][] = [
     [
       ["init", "Write a starter skelcrew.yaml here and add this repository"],
       ["repo add [<path> | <owner/repo>]", "Add a repository, this one by default"],
-      ["repo ls", "Repositories skel works on"],
-      ["repo rm <name>", "Remove skel's clone of one"],
+      ["repo ls", "Repositories Skelcrew works on"],
+      ["repo rm <name>", "Remove Skelcrew's clone of one"],
       ["repo trust <name>", "Trust one your login can't push to"],
     ],
   ],
@@ -40,8 +40,8 @@ const sections: [string, [string, string][]][] = [
     [
       ["remote add <host>", "Set up a server, over ssh"],
       ["remote add sprite:<name>", "Set up a Sprite"],
-      ["--remote <host> [command]", "Run skel on a server, over ssh"],
-      ["--remote sprite:<name> [command]", "Run skel on a Sprite"],
+      ["--remote <host> [command]", "Run sc on a server, over ssh"],
+      ["--remote sprite:<name> [command]", "Run sc on a Sprite"],
       ["serve", "Run the daemon, for systemd or launchd"],
     ],
   ],
@@ -59,18 +59,18 @@ const sections: [string, [string, string][]][] = [
       ["--json", "Output for tools"],
       ["--all", "Done threads too, on ps"],
       ["--from <owner/repo>", "The repository you're in"],
-      ["--version", "Which release of skel this is"],
+      ["--version", "Which release of Skelcrew this is"],
     ],
   ],
 ];
 
 const examples = [
-  "skel",
-  'skel task create app "Fix the login redirect" "Sign-in lands on a 404."',
-  "skel start app-12",
-  "skel ps",
-  "skel remote add sprite:demo",
-  "skel --remote sprite:demo",
+  "sc",
+  'sc task create app "Fix the login redirect" "Sign-in lands on a 404."',
+  "sc start app-12",
+  "sc ps",
+  "sc remote add sprite:demo",
+  "sc --remote sprite:demo",
 ];
 
 // Returns the help page, in color only for a terminal that shows it: piped into a file or
@@ -89,7 +89,7 @@ export function help(color = colorful()): string {
     "  through to the merge.",
     "",
     heading("USAGE"),
-    `  ${dim("%")} skel ${dim("[command] [options]")}`,
+    `  ${dim("%")} sc ${dim("[command] [options]")}`,
   ];
   for (const [title, list] of sections) {
     lines.push("", heading(title));
@@ -99,7 +99,7 @@ export function help(color = colorful()): string {
   lines.push(
     "",
     dim("  A task is named by its repository and number, such as app-12. --remote keeps"),
-    dim("  skel on the other side up to date with yours, after asking. See skelcrew.dev."),
+    dim("  Skelcrew on the other side up to date with yours, after asking. See skelcrew.dev."),
     dim("  In the sidebar, click a row or press Alt-Up or Alt-Down. Alt-Shift-Up and"),
     dim("  Alt-Shift-Down jump between lists. Alt-Left and Alt-Right switch to the"),
     dim("  repository before or after. Ctrl-Q leaves."),

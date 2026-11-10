@@ -11,7 +11,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     repo: "app",
     task: 12,
     folder: "app-12",
-    branch: "skel/12-add-export",
+    branch: "skelcrew/12-add-export",
     base: null,
     status: "waiting",
     session: "s",
@@ -128,7 +128,7 @@ test("failed checks are told once every check has finished, whatever order they 
   expect(done.handled.last_check).toBe(31);
 });
 
-test("skel's own review check doesn't hold back failed checks", () => {
+test("Skelcrew's own review check doesn't hold back failed checks", () => {
   const failing = run(30, "test", "COMPLETED", "FAILURE");
   const pending: Check = { kind: "status", name: "skelcrew/check", state: "PENDING", url: null };
   expect(acted(thread(), pr({ checks: [pending, failing] })).failed).toEqual([failing]);
@@ -148,7 +148,7 @@ test("a failed commit status is told while the thread waits, then not again", ()
   expect(acted(thread({ status: "working" }), pr({ checks: [status] })).failed).toEqual([]);
 });
 
-test("skel's reviewer asking for changes isn't a failed check for polling to tell", () => {
+test("Skelcrew's reviewer asking for changes isn't a failed check for polling to tell", () => {
   const changes: Check = { kind: "status", name: "skelcrew/check", state: "FAILURE", url: null };
   expect(acted(thread(), pr({ checks: [changes] })).failed).toEqual([]);
 });
@@ -167,7 +167,7 @@ test("a failed check waits while a newer round is still being pushed", () => {
   expect(decision.handled.last_check).toBe(0);
 });
 
-test("approved by skel's reviewer and every check green: the thread needs you", () => {
+test("approved by Skelcrew's reviewer and every check green: the thread needs you", () => {
   const checks = [approved, run(30, "test", "COMPLETED", "SUCCESS")];
   const decision = acted(thread(), pr({ checks }));
   expect(decision.change).toEqual({ needs_you: true });
@@ -183,7 +183,7 @@ test("approved while a check still runs: the thread waits on CI", () => {
   expect(acted(thread(), pr({ checks })).change).toEqual({});
 });
 
-test("green checks without skel's approval don't need you", () => {
+test("green checks without Skelcrew's approval don't need you", () => {
   const checks = [run(30, "test", "COMPLETED", "SUCCESS")];
   expect(acted(thread(), pr({ checks })).change).toEqual({});
 });
@@ -254,7 +254,7 @@ test("a person's review is typed in with its line comments", () => {
   expect(decision.change).toEqual({ status: "working", needs_you: false });
 });
 
-test("skel's own review is never typed back, though it carries your login", () => {
+test("Skelcrew's own review is never typed back, though it carries your login", () => {
   const reviews = [
     { id: 60, state: "COMMENTED", author: you, body: "**Approved.**\n\nFine.", comments: [] },
   ];
@@ -263,7 +263,7 @@ test("skel's own review is never typed back, though it carries your login", () =
   expect(decision.handled.last_review).toBe(60);
 });
 
-test("a review of yours that skel didn't post is typed in", () => {
+test("a review of yours that Skelcrew didn't post is typed in", () => {
   const reviews = [{ id: 61, state: "COMMENTED", author: you, body: "Nit: naming.", comments: [] }];
   const decision = acted(thread(), pr({ reviews }), { ...given, posted: [60] });
   expect(decision.tell).toEqual([expect.stringContaining("Nit: naming.")]);
@@ -299,7 +299,7 @@ test("a merge conflict tells the builder to merge the base branch", () => {
   const decision = acted(thread({ base: "next" }), pr({ mergeable: "CONFLICTING", base: "next" }));
   expect(decision.tell).toEqual([expect.stringContaining("conflicts with next")]);
   expect(decision.tell[0]).toContain("git fetch origin, merge origin/next");
-  // skel's clone, the builder's origin, must hold next before the builder is told.
+  // Skelcrew's clone, the builder's origin, must hold next before the builder is told.
   expect(decision.conflict).toBe("next");
   expect(decision.change).toEqual({ status: "working", needs_you: false });
 });
@@ -351,7 +351,7 @@ test("a labeled issue with no thread gets one", () => {
   ]);
 });
 
-// Only skel start brings back a thread that failed, was stopped or is done: a label left on
+// Only sc start brings back a thread that failed, was stopped or is done: a label left on
 // the issue must not start it over and over.
 test("a labeled issue whose thread failed or is done gets no new thread", () => {
   const threads = [thread({ task: 12, status: "failed" }), thread({ task: 13, status: "done" })];
@@ -362,7 +362,7 @@ test("a labeled issue whose thread failed or is done gets no new thread", () => 
   expect(labeledToStart(threads, issues)).toEqual([]);
 });
 
-test("a PR's CI reads as passing, failing or still running, and skel's own check doesn't count", () => {
+test("a PR's CI reads as passing, failing or still running, and Skelcrew's own check doesn't count", () => {
   const review: Check = { kind: "status", name: "skelcrew/check", state: "FAILURE", url: null };
   const passed = run(30, "test", "COMPLETED", "SUCCESS");
   const failed = run(31, "build", "COMPLETED", "FAILURE");
@@ -374,7 +374,7 @@ test("a PR's CI reads as passing, failing or still running, and skel's own check
   expect(ciChecks(pr({ checks: [failed, going] }))).toBe("failing");
 });
 
-test("the authors of what is new are those skel asks GitHub about", () => {
+test("the authors of what is new are those Skelcrew asks GitHub about", () => {
   const says = (id: number, author: typeof someone | null) => ({ id, author, body: "Hm" });
   const reviewed = (id: number, author: typeof someone) => ({
     ...says(id, author),

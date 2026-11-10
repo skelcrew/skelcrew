@@ -298,7 +298,7 @@ that covers the code you are about to write.
 ## The agent's shell commands
 
 - **A shell command can't block for long.** After 2 minutes Claude Code moves a running
-  command to the background and ends the agent's turn. So `skel submit` must answer
+  command to the background and ends the agent's turn. So `sc submit` must answer
   quickly, and leave slow work, such as starting a review, to the daemon.
 
 ## Bringing in a repository

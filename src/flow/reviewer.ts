@@ -131,14 +131,14 @@ async function reviewNow(given: {
   if (given.signal?.aborted) return { verdict: "failed", body: "the review was cancelled" };
   const home = env.HOME;
   if (!home)
-    return { verdict: "failed", body: "HOME isn't set, so skel can't find its own folders" };
+    return { verdict: "failed", body: "HOME isn't set, so Skelcrew can't find its own folders" };
   const path = env.PATH ?? "";
   if (!Bun.which(harness, { PATH: path }))
     return {
       verdict: "failed",
       body: `${harness} isn't installed, and your config picks it for reviews`,
     };
-  const folder = mkdtempSync(join(tmpdir(), "skel-review-"));
+  const folder = mkdtempSync(join(tmpdir(), "skelcrew-review-"));
   const timeout = AbortSignal.timeout(limit);
   // Never the timeout itself, even alone: Bun cancels a timeout's timer when a process given
   // it ends, so the copying before the review would leave the review with no limit.
@@ -196,7 +196,7 @@ async function reviewNow(given: {
 let queue: Promise<unknown> = Promise.resolve();
 
 // Queues a review and returns its verdict, turning errors into failed verdicts for the
-// caller. One review at a time across the daemon: reviews share skel's Codex login, and a
+// caller. One review at a time across the daemon: reviews share Skelcrew's Codex login, and a
 // renewal by one could leave the others with a token that no longer works. A review never
 // rejects, so one that throws can't stop the reviews queued after it.
 export function review(given: Parameters<typeof reviewNow>[0]): Promise<Review> {

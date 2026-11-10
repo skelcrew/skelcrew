@@ -19,7 +19,12 @@ import { z } from "zod";
 
 const root = join(import.meta.dir, "..");
 const script = join(root, "scripts", "build-release.ts");
-const assets = ["skel-darwin-arm64", "skel-darwin-x64", "skel-linux-arm64", "skel-linux-x64"];
+const assets = [
+  "skelcrew-darwin-arm64",
+  "skelcrew-darwin-x64",
+  "skelcrew-linux-arm64",
+  "skelcrew-linux-x64",
+];
 
 let home = "";
 
@@ -75,7 +80,7 @@ test("builds all four binaries, stamped with the release", () => {
   const calls = readFileSync(join(home, "calls"), "utf8");
   for (const target of ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"]) {
     expect(calls).toMatch(new RegExp(`--target=bun-${target}\\S* `));
-    expect(existsSync(join(home, "dist", `skel-${target}`))).toBe(true);
+    expect(existsSync(join(home, "dist", `skelcrew-${target}`))).toBe(true);
   }
   expect(calls.match(/--define SKELCREW_BUILD="0\.4\.2"/g)).toHaveLength(4);
   expect(calls.match(/ \S+\/src\/main\.ts /g)).toHaveLength(4);
@@ -112,10 +117,10 @@ test("the release notes list what changed since the last release", () => {
 test("the first release says so, instead of listing all of history", () => {
   commit("Something early");
   build("0.1.0");
-  expect(dist("notes.md")).toBe("The first release of skel.\n");
+  expect(dist("notes.md")).toBe("The first release of Skelcrew.\n");
 });
 
-test("anything but a plain release number is refused, as skel couldn't tell it from a commit", () => {
+test("anything but a plain release number is refused, as Skelcrew couldn't tell it from a commit", () => {
   for (const version of ["", "v0.4.2", "0.4", "0.4.2-beta", "39939b0"]) {
     const done = build(version);
     expect(done.code).not.toBe(0);
@@ -185,7 +190,7 @@ function runStep(step: string) {
     cwd: home,
     env: {
       PATH: `${join(home, "fakes")}:/usr/bin:/bin`,
-      BINARY: "skel-darwin-arm64",
+      BINARY: "skelcrew-darwin-arm64",
       GITHUB_REF_NAME: "v0.4.2",
     },
     stdout: "pipe",
@@ -197,7 +202,7 @@ function runStep(step: string) {
 // Runs the signing step on a stand-in Mac binary that reports `version`, with a stand-in
 // codesign running `script`. The binary starts without its executable mode, as a binary passed
 // between jobs does. Returns the step's exit code and what codesign was asked to do.
-function sign(script: string, version = "skel 0.4.2") {
+function sign(script: string, version = "skelcrew 0.4.2") {
   writeFileSync(
     join(home, "fakes", "codesign"),
     `#!/bin/sh\necho "$*" >> "${home}/signing"\n${script}\nexit 0\n`,
@@ -205,7 +210,7 @@ function sign(script: string, version = "skel 0.4.2") {
   );
   mkdirSync(join(home, "dist"));
   writeFileSync(
-    join(home, "dist", "skel-darwin-arm64"),
+    join(home, "dist", "skelcrew-darwin-arm64"),
     `#!/bin/sh\necho "$*" >> "${home}/started"\necho "${version}"\n`,
     { mode: 0o644 },
   );
@@ -232,7 +237,7 @@ test("the workflow runs on a version tag, checks, builds, signs, then publishes 
   );
   expect(publish).toContain('--repo "$RELEASES_REPO"');
   expect(publish).toContain("--notes-file dist/notes.md");
-  expect(publish).toContain("dist/skel-*");
+  expect(publish).toContain("dist/skelcrew-*");
   expect(publish).toContain("dist/SHA256SUMS");
   const all = [...built, ...runs(jobs.sign.steps), ...published];
   for (const run of all) expect(Bun.spawnSync(["sh", "-n", "-c", run]).success).toBe(true);
@@ -243,8 +248,8 @@ test("each Mac binary is signed on a Mac with its own CPU, so it can be started 
   // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub's syntax, not JavaScript's.
   expect(sign["runs-on"]).toBe("${{ matrix.runner }}");
   expect(sign.strategy.matrix.include).toEqual([
-    { binary: "skel-darwin-arm64", runner: "macos-26" },
-    { binary: "skel-darwin-x64", runner: "macos-26-intel" },
+    { binary: "skelcrew-darwin-arm64", runner: "macos-26" },
+    { binary: "skelcrew-darwin-x64", runner: "macos-26-intel" },
   ]);
 });
 
@@ -252,8 +257,8 @@ test("signing replaces the signature, checks it, then starts the binary", () => 
   const done = sign("");
   expect(done.code).toBe(0);
   expect(done.signing).toEqual([
-    "--force --sign - dist/skel-darwin-arm64",
-    "--verify --strict --verbose=2 dist/skel-darwin-arm64",
+    "--force --sign - dist/skelcrew-darwin-arm64",
+    "--verify --strict --verbose=2 dist/skelcrew-darwin-arm64",
   ]);
   expect(done.started).toBe(true);
 });
@@ -271,7 +276,7 @@ test("a signature that fails its check stops the release", () => {
 });
 
 test("a signed binary that isn't this release stops the release", () => {
-  expect(sign("", "skel 0.4.1").code).not.toBe(0);
+  expect(sign("", "skelcrew 0.4.1").code).not.toBe(0);
 });
 
 test("the release can only be given Mac binaries that went through signing", () => {

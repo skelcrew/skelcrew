@@ -30,7 +30,7 @@ beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-sandbox-test-")));
   // Alone in a folder of its own, as the sandbox mounts the folder.
   mkdirSync(join(home, "socket"));
-  socketPath = join(home, "socket", "skel.sock");
+  socketPath = join(home, "socket", "skelcrew.sock");
   socket = Bun.listen({ unix: socketPath, socket: { data() {} } });
 });
 afterEach(() => {
@@ -55,9 +55,9 @@ function git(cwd: string, ...args: string[]) {
   if (!done.success) throw new Error(done.stderr.toString());
 }
 
-// skel's clone of a repository, with one file in it.
+// Skelcrew's clone of a repository, with one file in it.
 function repository() {
-  const repo = join(home, ".local", "share", "skel", "repos", "simon", "app");
+  const repo = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
   mkdirSync(repo, { recursive: true });
   writeFileSync(join(repo, "README"), "app\n");
   git(repo, "init", "-q");
@@ -67,8 +67,8 @@ function repository() {
 // What a lead's start is given: where app's lead works, and app's clone, which it sees. The
 // clone goes along only once a test made it, as bwrap can't mount a folder that is missing.
 function lead(): { folder: string; origin?: string } {
-  const folder = join(home, ".local", "share", "skel", "leads", "simon", "app");
-  const repo = join(home, ".local", "share", "skel", "repos", "simon", "app");
+  const folder = join(home, ".local", "share", "skelcrew", "leads", "simon", "app");
+  const repo = join(home, ".local", "share", "skelcrew", "repos", "simon", "app");
   return existsSync(repo) ? { folder, origin: repo } : { folder };
 }
 
@@ -81,8 +81,8 @@ function fakeClaude(script: string[]) {
 }
 
 function saveToken() {
-  mkdirSync(join(home, ".config", "skel"), { recursive: true });
-  writeFileSync(join(home, ".config", "skel", "claude-token"), "tok-123\n", { mode: 0o600 });
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "tok-123\n", { mode: 0o600 });
 }
 
 const outside = () => ({
@@ -91,7 +91,7 @@ const outside = () => ({
   TERM: "xterm",
   CLAUDE_CODE_CHILD_SESSION: "1",
   GH_TOKEN: "secret",
-  SKEL_GITHUB_APP_KEY: "secret",
+  SKELCREW_GITHUB_APP_KEY: "secret",
 });
 
 // Runs a shell script as the lead's Claude Code, inside its sandbox.
@@ -108,8 +108,8 @@ function asLead(script: string) {
   return run(argv, env);
 }
 
-// bubblewrap can't start inside skel's own sandbox, so only there these tests can't run.
-describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
+// bubblewrap can't start inside Skelcrew's own sandbox, so only there these tests can't run.
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("sandbox", () => {
   test("the lead writes in its folder and nowhere else", async () => {
     const repo = repository();
     const { folder } = lead();
@@ -122,8 +122,8 @@ describe.skipIf(process.env.SKEL_SANDBOX === "1")("sandbox", () => {
     expect(existsSync(join(repo, "new"))).toBe(false);
   });
 
-  test("starts from a checkout of skel with no node_modules", async () => {
-    // bun runs skel without node_modules by fetching its packages itself, so a fresh clone
+  test("starts from a checkout of Skelcrew with no node_modules", async () => {
+    // bun runs sc without node_modules by fetching its packages itself, so a fresh clone
     // works until the sandbox asks for the folder.
     const copy = join(home, "skel");
     mkdirSync(copy);
@@ -251,17 +251,17 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
     mkdirSync(join(home, ".config", "gh"), { recursive: true });
     writeFileSync(join(home, ".config", "gh", "hosts.yml"), "oauth_token: secret\n");
     const done = await asLead(
-      `test -e ${home}/.config/gh/hosts.yml || echo hidden; ls /run; ls /run/systemd 2>/dev/null; ls /run/skel; test -S "$SKEL_SOCKET" && echo socket; echo $SKEL_SANDBOX`,
+      `test -e ${home}/.config/gh/hosts.yml || echo hidden; ls /run; ls /run/systemd 2>/dev/null; ls /run/skelcrew; test -S "$SKELCREW_SOCKET" && echo socket; echo $SKELCREW_SANDBOX`,
     );
     // Only the DNS resolver comes back into /run, on machines that have one there.
     const resolver = existsSync("/run/systemd/resolve") ? "systemd\nresolve\n" : "";
-    expect(done.out).toBe(`hidden\nskel\n${resolver}skel.sock\nsocket\n1\n`);
+    expect(done.out).toBe(`hidden\nskelcrew\n${resolver}skelcrew.sock\nsocket\n1\n`);
   });
 
-  test("the agent runs skel from this checkout", async () => {
+  test("the agent runs sc from this checkout", async () => {
     repository();
-    const done = await asLead("command -v skel");
-    expect(done.out).toBe(`${join(import.meta.dir, "..", "bin", "skel")}\n`);
+    const done = await asLead("command -v sc");
+    expect(done.out).toBe(`${join(import.meta.dir, "..", "bin", "sc")}\n`);
   });
 
   // Every file under a folder with its contents, to show nothing in it changed.
@@ -275,7 +275,7 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
     return names.stdout.toString() + listed.stdout.toString();
   }
 
-  test("Claude Code starts in its own config folder, trusted, with skel's token", async () => {
+  test("Claude Code starts in its own config folder, trusted, with Skelcrew's token", async () => {
     repository();
     mkdirSync(join(home, ".claude", "projects"), { recursive: true });
     writeFileSync(join(home, ".claude", "settings.json"), "{}\n");
@@ -284,14 +284,14 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
       snapshot(join(home, ".claude")) + readFileSync(join(home, ".claude.json"), "utf8");
     const before = yours();
     saveToken();
-    mkdirSync(join(home, ".local", "share", "skel", "claude", "other"), { recursive: true });
+    mkdirSync(join(home, ".local", "share", "skelcrew", "claude", "other"), { recursive: true });
     fakeClaude([
       'printf "%s\\n" "$@"',
-      "env | grep -E '^(CLAUDE_|DISABLE_AUTOUPDATER|SKEL_|GH_TOKEN|TERM)' | sort",
+      "env | grep -E '^(CLAUDE_|DISABLE_AUTOUPDATER|SKEL|GH_TOKEN|TERM)' | sort",
       "test -e ~/.claude || echo no-claude",
       "test -e ~/.claude.json || echo no-claude-json",
-      "test -e ~/.config/skel/claude-token || echo no-token-file",
-      "test -e ~/.local/share/skel/claude/other || echo no-other-session",
+      "test -e ~/.config/skelcrew/claude-token || echo no-token-file",
+      "test -e ~/.local/share/skelcrew/claude/other || echo no-other-session",
       "echo m > $CLAUDE_CONFIG_DIR/note && echo kept",
       "mkdir -p ~/.claude && echo x > ~/.claude/settings.json",
     ]);
@@ -304,7 +304,7 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
       resume: "abc-123",
       env: outside(),
     });
-    const config = join(home, ".local", "share", "skel", "claude", "app-12");
+    const config = join(home, ".local", "share", "skelcrew", "claude", "app-12");
     const done = await run(argv, env);
     expect(done.err).toBe("");
     expect(done.out).toBe(
@@ -322,8 +322,8 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
         "CLAUDE_CODE_OAUTH_TOKEN=tok-123",
         `CLAUDE_CONFIG_DIR=${config}`,
         "DISABLE_AUTOUPDATER=1",
-        "SKEL_SANDBOX=1",
-        "SKEL_SOCKET=/run/skel/skel.sock",
+        "SKELCREW_SANDBOX=1",
+        "SKELCREW_SOCKET=/run/skelcrew/skelcrew.sock",
         "TERM=xterm",
         "no-claude",
         "no-claude-json",
@@ -348,7 +348,7 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
   test("each session gets a config folder of its own", async () => {
     repository();
     saveToken();
-    fakeClaude(["ls -A ~/.local/share/skel/claude"]);
+    fakeClaude(["ls -A ~/.local/share/skelcrew/claude"]);
     const first = claude.start({
       ...lead(),
       name: "app-12",
@@ -368,7 +368,7 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
   });
 });
 
-// These never start bubblewrap, so they run inside skel's sandbox too.
+// These never start bubblewrap, so they run inside Skelcrew's sandbox too.
 describe("starting Claude Code", () => {
   test("won't write a session's settings through a link the agent left", () => {
     repository();
@@ -382,7 +382,7 @@ describe("starting Claude Code", () => {
         env: outside(),
       });
     start();
-    const config = join(home, ".local", "share", "skel", "claude", "app-12");
+    const config = join(home, ".local", "share", "skelcrew", "claude", "app-12");
     const yours = join(home, ".claude.json");
     writeFileSync(yours, '{"projects":{}}\n');
     rmSync(join(config, ".claude.json"));
@@ -403,7 +403,7 @@ describe("starting Claude Code", () => {
   test("refuses a session settings file that isn't a plain file, without hanging", async () => {
     repository();
     saveToken();
-    const config = join(home, ".local", "share", "skel", "claude", "app-12");
+    const config = join(home, ".local", "share", "skelcrew", "claude", "app-12");
     mkdirSync(config, { recursive: true });
     Bun.spawnSync(["mkfifo", join(config, ".claude.json")]);
     const script = `import { claude } from ${JSON.stringify(source("agents/claude.ts"))};
@@ -503,7 +503,7 @@ claude.start({ name: "app-12", socket: "x", model: "opus", ...${JSON.stringify(l
     ).toThrow("config");
   });
 
-  // skel takes a machine with sprite-env, the Sprite's own tool, on its PATH for a Sprite.
+  // Skelcrew takes a machine with sprite-env, the Sprite's own tool, on its PATH for a Sprite.
   test("on a Sprite, gives the agent processes of its own, drops capabilities, and hides the Sprite's tools", () => {
     repository();
     saveToken();
@@ -556,7 +556,7 @@ claude.start({ name: "app-12", socket: "x", model: "opus", ...${JSON.stringify(l
     expect(options).not.toContain(".sprite");
   });
 
-  test("says to run skel first when there is no token", () => {
+  test("says to run sc first when there is no token", () => {
     repository();
     expect(() =>
       claude.start({
@@ -566,7 +566,7 @@ claude.start({ name: "app-12", socket: "x", model: "opus", ...${JSON.stringify(l
         model: "opus",
         env: outside(),
       }),
-    ).toThrow("run skel");
+    ).toThrow("run sc");
   });
 });
 
@@ -603,9 +603,9 @@ test("a Claude Code session gets Claude Code's key and not Codex's", () => {
   expect(env.OPENAI_API_KEY).toBeUndefined();
 });
 
-// Only a Sprite has its control socket, so these run only there, as when checking skel on a
-// test Sprite, and never inside skel's own sandbox, where bubblewrap can't start.
-describe.if(existsSync("/.sprite/api.sock") && process.env.SKEL_SANDBOX !== "1")(
+// Only a Sprite has its control socket, so these run only there, as when checking Skelcrew on a
+// test Sprite, and never inside Skelcrew's own sandbox, where bubblewrap can't start.
+describe.if(existsSync("/.sprite/api.sock") && process.env.SKELCREW_SANDBOX !== "1")(
   "on a Sprite",
   () => {
     test("the agent can't reach the control socket or sprite-env, but runs the Sprite's tools", async () => {

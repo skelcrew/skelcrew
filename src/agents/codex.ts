@@ -1,5 +1,5 @@
 // How Codex runs inside the sandbox: as the lead or a builder, in a tmux session with a
-// CODEX_HOME of its own, and as the reviewer, once per review. All of them share skel's own
+// CODEX_HOME of its own, and as the reviewer, once per review. All of them share Skelcrew's own
 // login.
 import {
   closeSync,
@@ -21,17 +21,17 @@ import { z } from "zod";
 import { dataDir } from "../paths.ts";
 import { keptEnv, refuseCredentials, ro, rw, sandboxArgs, throwaway } from "./sandbox.ts";
 
-// Returns skel's own CODEX_HOME, where the first run's codex login goes and reviews run: a
-// login of skel's own, apart from yours in ~/.codex, so a renewal on either side never breaks
+// Returns Skelcrew's own CODEX_HOME, where the first run's codex login goes and reviews run: a
+// login of Skelcrew's own, apart from yours in ~/.codex, so a renewal on either side never breaks
 // the other. A caller that was handed an environment passes its HOME, as for dataDir.
 export const codexHome = (home = homedir()) => join(dataDir(home), "codex");
 
-// Puts skel's Codex login in a folder of its own, holding only auth.json and auth.lock, and
-// links them from `folder`, a CODEX_HOME: skel's own unless another is named. Returns the
+// Puts Skelcrew's Codex login in a folder of its own, holding only auth.json and auth.lock, and
+// links them from `folder`, a CODEX_HOME: Skelcrew's own unless another is named. Returns the
 // login folder, which every Codex sandbox gets writable. From 0.167 Codex renews its login by
 // renaming a new auth.json over the old one, beside the file a link leads to. A file mounted
 // on its own can't be renamed over, and by then the old refresh token is spent, which would
-// leave skel's login stale. Its lock is shared the same way, so two renewals take turns.
+// leave Skelcrew's login stale. Its lock is shared the same way, so two renewals take turns.
 function shareLogin(home: string, folder = codexHome(home)): string {
   const login = join(dataDir(home), "codex-login");
   mkdirSync(folder, { recursive: true, mode: 0o700 });
@@ -40,8 +40,8 @@ function shareLogin(home: string, folder = codexHome(home)): string {
     const at = join(folder, file);
     const found = lstatSync(at, { throwIfNoEntry: false });
     if (found?.isSymbolicLink() && readlinkSync(at) === join(login, file)) continue;
-    // The first run's codex login writes a plain auth.json in skel's own folder. Anywhere
-    // else the agent can write what is there, so it is never taken for skel's login.
+    // The first run's codex login writes a plain auth.json in Skelcrew's own folder. Anywhere
+    // else the agent can write what is there, so it is never taken for Skelcrew's login.
     if (found?.isFile() && folder === codexHome(home)) renameSync(at, join(login, file));
     else rmSync(at, { force: true });
     symlinkSync(join(login, file), at);
@@ -74,7 +74,7 @@ function firstLine(file: string): string {
 }
 
 // Returns the ID of the conversation a session saved in `folder`, for codex resume to bring
-// back, or null when it saved none. Codex picks the ID itself, so `_session`, the one skel
+// back, or null when it saved none. Codex picks the ID itself, so `_session`, the one Skelcrew
 // keeps, can be another. Each session's CODEX_HOME holds its own conversation, but a review or
 // a sub-agent started from it saves there too, so only one whose session_meta, the file's
 // first line, says it came from the interactive CLI counts. The newest wins: its file names
@@ -108,20 +108,20 @@ function savedConversation(name: string, folder: string, _session: string): stri
 // Returns a TOML value for a -c setting. JSON's strings are TOML's too.
 const toml = (text: string) => JSON.stringify(text);
 
-// A builder on Codex asks you a question by ending its turn without skel submit, since Codex
-// has no tool for asking, and its Stop hook tells skel the turn ended. Whatever is typed into
+// A builder on Codex asks you a question by ending its turn without sc submit, since Codex
+// has no tool for asking, and its Stop hook tells Skelcrew the turn ended. Whatever is typed into
 // the builder next ends the question, as on Claude Code. The commands print nothing, and run
 // with no trust asked for: Codex would otherwise wait for a person to trust each one.
 const hookOf = (command: string) =>
   `[{hooks=[{type="command",command=${toml(command)},timeout=10}]}]`;
 const builderHooks = [
-  ["-c", `hooks.Stop=${hookOf("skel turn ended")}`],
-  ["-c", `hooks.UserPromptSubmit=${hookOf("skel question answered")}`],
+  ["-c", `hooks.Stop=${hookOf("sc turn ended")}`],
+  ["-c", `hooks.UserPromptSubmit=${hookOf("sc question answered")}`],
 ].flat();
 
 // Throws when Codex doesn't offer the model, saying which it does. An unknown model only shows
-// an error inside the session, which then waits at its prompt with no hook to tell skel. Asked
-// with skel's own CODEX_HOME, which reviews can't change, outside the sandbox. It can take
+// an error inside the session, which then waits at its prompt with no hook to tell Skelcrew. Asked
+// with Skelcrew's own CODEX_HOME, which reviews can't change, outside the sandbox. It can take
 // seconds, and the daemon must keep answering builders' hooks meanwhile, so it never blocks.
 async function checkModel(home: string, model: string, env: Record<string, string | undefined>) {
   const asked = Bun.spawn(["codex", "debug", "models"], {
@@ -149,12 +149,12 @@ async function checkModel(home: string, model: string, env: Record<string, strin
 // Prepares a session's own CODEX_HOME and returns its sandbox command and environment, for the
 // lead or a builder. It starts afresh with the first message in `prompt`, or brings back a
 // saved conversation with `resume`. A builder, given its thread's clone, works there; a lead
-// works in its own `folder`. Each sees nothing else but `origin`, skel's clone of its
+// works in its own `folder`. Each sees nothing else but `origin`, Skelcrew's clone of its
 // repository, read-only, and the login it shares with every Codex session.
 //
 // Settings go on the command line rather than in the session's config.toml: a repository's
 // own .codex/config.toml wins over that file, and could turn the hooks off. Codex's own
-// sandbox and approvals are off, since skel's sandbox draws the boundary. Codex picks its own
+// sandbox and approvals are off, since Skelcrew's sandbox draws the boundary. Codex picks its own
 // session ID, so `sessionId` is not passed on.
 async function startCommand(given: {
   name: string;
@@ -172,8 +172,8 @@ async function startCommand(given: {
   const { name, socket, model, thread, folder, origin, prompt, system, resume } = given;
   const env = given.env ?? process.env;
   const home = env.HOME;
-  if (!home) throw new Error("HOME isn't set, so skel can't find its own folders");
-  // The name becomes a folder, so it must not climb out of skel's.
+  if (!home) throw new Error("HOME isn't set, so Skelcrew can't find its own folders");
+  // The name becomes a folder, so it must not climb out of Skelcrew's.
   if (!/^[a-zA-Z0-9][\w.-]*$/.test(name)) throw new Error(`"${name}" can't name a session`);
   if (model) await checkModel(home, model, env);
 
@@ -181,18 +181,18 @@ async function startCommand(given: {
   // that another session loads. It stays, so codex resume finds the conversation.
   const sessions = join(dataDir(home), "codex-sessions");
   const own = join(sessions, name);
-  // skel writes here with your rights, and the agent can change what is in its folder. A
+  // Skelcrew writes here with your rights, and the agent can change what is in its folder. A
   // link it left would send that write to any file of yours.
   for (const p of [sessions, own])
     if (lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink())
-      throw new Error(`${p} is a link, so skel won't write through it`);
+      throw new Error(`${p} is a link, so Skelcrew won't write through it`);
   mkdirSync(own, { recursive: true, mode: 0o700 });
-  // skel's own folder first, so a login the first run just saved there moves to the shared
+  // Skelcrew's own folder first, so a login the first run just saved there moves to the shared
   // folder before this session links to it.
   shareLogin(home);
   const login = shareLogin(home, own);
   const cwd = thread ?? folder;
-  if (!cwd) throw new Error(`skel has no folder for ${name} to work in`);
+  if (!cwd) throw new Error(`Skelcrew has no folder for ${name} to work in`);
   mkdirSync(cwd, { recursive: true });
   const mounts = [...rw(cwd), ...rw(own), ...rw(login)];
   // Read-only at the same path, as for Claude Code.
@@ -225,7 +225,7 @@ async function startCommand(given: {
 
 // Returns Codex's review command, mounts and environment, protecting instructions shared by
 // reviews. The command reads the review's prompt on stdin and the answer's shape from the
-// review's folder. skel's Codex folder holds what Codex reads as instructions, and every review
+// review's folder. Skelcrew's Codex folder holds what Codex reads as instructions, and every review
 // shares it. So the reviewer sees it as a throwaway folder, and only its sessions and the
 // login folder reach the real ones.
 async function review(given: {
@@ -269,7 +269,7 @@ function answer(folder: string): unknown {
   return JSON.parse(readFileSync(file, "utf8"));
 }
 
-// Codex as skel knows it. While a turn runs it shows "esc to interrupt". Its empty input
+// Codex as Skelcrew knows it. While a turn runs it shows "esc to interrupt". Its empty input
 // always shows "› Ask Codex to do anything", even mid-turn, so that whole line is its prompt:
 // a line holding only › never shows. codex exec reads CODEX_API_KEY: given only
 // OPENAI_API_KEY, it sent no key at all, so both get into the sandbox for those who use a key

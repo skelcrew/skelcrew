@@ -1,10 +1,10 @@
-// The harnesses skel runs agents on, found by the name your config uses. Each harness lives in
+// The harnesses Skelcrew runs agents on, found by the name your config uses. Each harness lives in
 // a module of its own, so the flow never names one.
 import { z } from "zod";
 import { claude } from "./claude.ts";
 import { codex } from "./codex.ts";
 
-// A harness's name, as your config and skel's database write it.
+// A harness's name, as your config and Skelcrew's database write it.
 export const HarnessName = z.enum(["claude", "codex"]);
 export type HarnessName = z.infer<typeof HarnessName>;
 

@@ -17,10 +17,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const script = join(import.meta.dir, "..", "install.sh");
-const assets = ["skel-darwin-arm64", "skel-darwin-x64", "skel-linux-arm64", "skel-linux-x64"];
+const assets = [
+  "skelcrew-darwin-arm64",
+  "skelcrew-darwin-x64",
+  "skelcrew-linux-arm64",
+  "skelcrew-linux-x64",
+];
 
 // Returns a stand-in for a release binary, which says which one it is.
-const binary = (name: string) => `#!/bin/sh\necho "skel 0.4.2 ($0 ${name})"\n`;
+const binary = (name: string) => `#!/bin/sh\necho "skelcrew 0.4.2 ($0 ${name})"\n`;
 // Returns a file's SHA-256, as the release's checksums list it.
 const sha256 = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
 
@@ -91,30 +96,30 @@ async function install(shell: string[], path = `${join(home, "fakes")}:/usr/bin:
   return { out, err, code };
 }
 
-const installed = () => join(home, ".local", "bin", "skel");
+const installed = () => join(home, ".local", "bin", "sc");
 const onPath = (shell: string[]) =>
   install(shell, `${join(home, ".local", "bin")}:${join(home, "fakes")}:/usr/bin:/bin`);
 
 // macOS's sh is bash in POSIX mode, so that is the shell most installs will run under.
 describe.each([[["sh"]], [["dash"]], [["bash", "--posix"]]])("under %j", (shell) => {
-  test("installs the binary for this machine and says to run skel", async () => {
+  test("installs the binary for this machine and says to run sc", async () => {
     const done = await onPath(shell);
-    expect(done.err).not.toContain("skel:");
+    expect(done.err).not.toContain("Skelcrew:");
     expect(done.code).toBe(0);
-    expect(readFileSync(installed(), "utf8")).toBe(binary("skel-linux-x64"));
+    expect(readFileSync(installed(), "utf8")).toBe(binary("skelcrew-linux-x64"));
     expect(Bun.spawnSync([installed()]).success).toBe(true);
-    expect(done.out).toContain("Run skel");
+    expect(done.out).toContain("Run sc");
     expect(done.out).not.toContain("PATH");
   });
 
   test("picks the binary by system and CPU, whatever name the machine gives them", async () => {
     const machines = [
-      ["Darwin", "arm64", "skel-darwin-arm64"],
-      ["Darwin", "x86_64", "skel-darwin-x64"],
-      ["Linux", "aarch64", "skel-linux-arm64"],
-      ["Linux", "arm64", "skel-linux-arm64"],
-      ["Linux", "x86_64", "skel-linux-x64"],
-      ["Linux", "amd64", "skel-linux-x64"],
+      ["Darwin", "arm64", "skelcrew-darwin-arm64"],
+      ["Darwin", "x86_64", "skelcrew-darwin-x64"],
+      ["Linux", "aarch64", "skelcrew-linux-arm64"],
+      ["Linux", "arm64", "skelcrew-linux-arm64"],
+      ["Linux", "x86_64", "skelcrew-linux-x64"],
+      ["Linux", "amd64", "skelcrew-linux-x64"],
     ] as const;
     for (const [system, cpu, asset] of machines) {
       machine(system, cpu);
@@ -128,26 +133,26 @@ describe.each([[["sh"]], [["dash"]], [["bash", "--posix"]]])("under %j", (shell)
     machine("Darwin", "x86_64");
     fake("sysctl", 'test "$2" = sysctl.proc_translated && echo 1');
     expect((await install(shell)).code).toBe(0);
-    expect(readFileSync(installed(), "utf8")).toBe(binary("skel-darwin-arm64"));
+    expect(readFileSync(installed(), "utf8")).toBe(binary("skelcrew-darwin-arm64"));
   });
 
-  test("says how to reach skel when ~/.local/bin isn't on the PATH", async () => {
+  test("says how to reach Skelcrew when ~/.local/bin isn't on the PATH", async () => {
     const done = await install(shell);
     expect(done.code).toBe(0);
     expect(done.out).toContain("isn't on your PATH");
     expect(done.out).toContain('export PATH="$HOME/.local/bin:$PATH"');
-    expect(done.out).toContain("run skel");
+    expect(done.out).toContain("run sc");
   });
 
-  test("a download that doesn't match its checksum installs nothing and keeps the old skel", async () => {
+  test("a download that doesn't match its checksum installs nothing and keeps the old Skelcrew", async () => {
     mkdirSync(join(home, ".local", "bin"), { recursive: true });
-    writeFileSync(installed(), "the old skel");
-    served.set("skel-linux-x64", "tampered");
+    writeFileSync(installed(), "the old Skelcrew");
+    served.set("skelcrew-linux-x64", "tampered");
     const done = await install(shell);
     expect(done.code).not.toBe(0);
     expect(done.err).toContain("checksum");
-    expect(readFileSync(installed(), "utf8")).toBe("the old skel");
-    expect(readdirSync(join(home, ".local", "bin"))).toEqual(["skel"]);
+    expect(readFileSync(installed(), "utf8")).toBe("the old Skelcrew");
+    expect(readdirSync(join(home, ".local", "bin"))).toEqual(["sc"]);
   });
 
   test("a release with no checksum for this binary installs nothing", async () => {
@@ -158,28 +163,30 @@ describe.each([[["sh"]], [["dash"]], [["bash", "--posix"]]])("under %j", (shell)
     expect(existsSync(installed())).toBe(false);
   });
 
-  test("a binary that can't start here installs nothing and keeps the old skel", async () => {
+  test("a binary that can't start here installs nothing and keeps the old Skelcrew", async () => {
     mkdirSync(join(home, ".local", "bin"), { recursive: true });
-    writeFileSync(installed(), "the old skel");
+    writeFileSync(installed(), "the old Skelcrew");
     const broken = "#!/bin/sh\nexit 1\n";
-    served.set("skel-linux-x64", broken);
-    served.set("SHA256SUMS", `${sha256(broken)}  skel-linux-x64\n`);
+    served.set("skelcrew-linux-x64", broken);
+    served.set("SHA256SUMS", `${sha256(broken)}  skelcrew-linux-x64\n`);
     const done = await install(shell);
     expect(done.code).not.toBe(0);
     expect(done.err).toContain("won't start");
-    expect(readFileSync(installed(), "utf8")).toBe("the old skel");
+    expect(readFileSync(installed(), "utf8")).toBe("the old Skelcrew");
   });
 
   test("asks for the checksums just before the long download, so a new release can't slip between", async () => {
     await install(shell);
-    expect(asked).toEqual(["SHA256SUMS", "skel-linux-x64"]);
+    expect(asked).toEqual(["SHA256SUMS", "skelcrew-linux-x64"]);
   });
 
   test("a download that fails says which address failed", async () => {
-    served.delete("skel-linux-x64");
+    served.delete("skelcrew-linux-x64");
     const done = await install(shell);
     expect(done.code).not.toBe(0);
-    expect(done.err).toContain(`http://127.0.0.1:${server.port}/latest/download/skel-linux-x64`);
+    expect(done.err).toContain(
+      `http://127.0.0.1:${server.port}/latest/download/skelcrew-linux-x64`,
+    );
     expect(existsSync(installed())).toBe(false);
     expect(readdirSync(join(home, ".local", "bin"))).toEqual([]);
   });
@@ -194,7 +201,7 @@ describe.each([[["sh"]], [["dash"]], [["bash", "--posix"]]])("under %j", (shell)
     expect(asked).toEqual([]);
   });
 
-  test("a system or CPU skel isn't built for is named, before any download", async () => {
+  test("a system or CPU Skelcrew isn't built for is named, before any download", async () => {
     machine("FreeBSD", "amd64");
     const system = await install(shell);
     expect(system.code).not.toBe(0);
@@ -226,9 +233,9 @@ describe.each([[["sh"]], [["dash"]], [["bash", "--posix"]]])("under %j", (shell)
     fake("shasum", `test "$1 $2" = "-a 256" && shift 2 && exec ${sum} "$@"`);
     machine("Darwin", "arm64");
     const done = await install(shell, `${join(home, "fakes")}:${join(home, "tools")}`);
-    expect(done.err).not.toContain("skel:");
+    expect(done.err).not.toContain("Skelcrew:");
     expect(done.code).toBe(0);
-    expect(readFileSync(installed(), "utf8")).toBe(binary("skel-darwin-arm64"));
+    expect(readFileSync(installed(), "utf8")).toBe(binary("skelcrew-darwin-arm64"));
   });
 
   test("says what is missing when curl isn't installed", async () => {
@@ -238,14 +245,14 @@ describe.each([[["sh"]], [["dash"]], [["bash", "--posix"]]])("under %j", (shell)
     expect(done.err).toContain("curl");
   });
 
-  test("replaces a link to a checkout's skel, and not the file it points to", async () => {
+  test("replaces a link to a checkout's Skelcrew, and not the file it points to", async () => {
     mkdirSync(join(home, ".local", "bin"), { recursive: true });
     writeFileSync(join(home, "launcher"), "the checkout's launcher");
     chmodSync(join(home, "launcher"), 0o755);
     symlinkSync(join(home, "launcher"), installed());
     expect((await install(shell)).code).toBe(0);
     expect(readFileSync(join(home, "launcher"), "utf8")).toBe("the checkout's launcher");
-    expect(readFileSync(installed(), "utf8")).toBe(binary("skel-linux-x64"));
+    expect(readFileSync(installed(), "utf8")).toBe(binary("skelcrew-linux-x64"));
   });
 
   test("a file only half received by the shell does nothing", async () => {

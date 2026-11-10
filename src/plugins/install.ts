@@ -1,4 +1,4 @@
-// skel plugin: installing a plugin from its newest version tag on GitHub or from a folder of
+// sc plugin: installing a plugin from its newest version tag on GitHub or from a folder of
 // yours, updating, removing and listing plugins. Only you run these, in your own terminal.
 import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, realpathSync, renameSync, rmSync } from "node:fs";
@@ -78,12 +78,12 @@ function cloneTag(source: string, tag: string): { staged: string; manifest: Mani
   }
 }
 
-// Throws when the plugin needs a newer skel than this one. A build from a checkout has no
+// Throws when the plugin needs a newer Skelcrew than this one. A build from a checkout has no
 // release to compare, and takes any plugin.
 function fitsThisSkel(manifest: Manifest): void {
-  if (release && newer(manifest.skel, release))
+  if (release && newer(manifest.skelcrew, release))
     throw new Error(
-      `${manifest.name} ${manifest.version} needs skel ${manifest.skel} or newer, and this is skel ${release}`,
+      `${manifest.name} ${manifest.version} needs Skelcrew ${manifest.skelcrew} or newer, and this is Skelcrew ${release}`,
     );
 }
 
@@ -95,7 +95,7 @@ function agreed(manifest: Manifest, from: string, verb: string): boolean {
   console.log(`${name} ${version}, from ${from}`);
   console.log(clean(about));
   console.log(`Jobs: ${jobs.join(", ")}`);
-  console.log("It runs these commands as you, outside skel's sandbox:");
+  console.log("It runs these commands as you, outside Skelcrew's sandbox:");
   const commands = [
     ...(manifest.build ?? []).map((words) => ["build", words] as const),
     ...(["setup", "call", "git_credentials", "add", "exec", "push"] as const).flatMap((key) => {
@@ -129,10 +129,10 @@ function buildAndSetUp(manifest: Manifest, folder: string, setup: boolean): void
 // Throws when a plugin of that name is installed already, as one name can't be two plugins.
 function refuseInstalled(db: Database, name: string): void {
   if (installedPlugins(db).some((plugin) => plugin.name === name))
-    throw new Error(`${name} is installed already: run skel plugin update ${name}`);
+    throw new Error(`${name} is installed already: run sc plugin update ${name}`);
 }
 
-// Installs a plugin, for skel plugin install: from the newest version tag of a GitHub
+// Installs a plugin, for sc plugin install: from the newest version tag of a GitHub
 // repository, given as owner/repo, or from a folder of yours, given as a path, used where it
 // is. It shows what the plugin runs and asks first, then runs its build and setup.
 export function installPlugin(given: string): void {
@@ -144,7 +144,7 @@ export function installPlugin(given: string): void {
     refuseInstalled(db, manifest.name);
     fitsThisSkel(manifest);
     if (!agreed(manifest, folder, "Install")) {
-      console.log(`skel didn't install ${manifest.name}.`);
+      console.log(`Skelcrew didn't install ${manifest.name}.`);
       return;
     }
     buildAndSetUp(manifest, folder, true);
@@ -163,7 +163,7 @@ export function installPlugin(given: string): void {
     refuseInstalled(db, manifest.name);
     fitsThisSkel(manifest);
     if (!agreed(manifest, given, "Install")) {
-      console.log(`skel didn't install ${manifest.name}.`);
+      console.log(`Skelcrew didn't install ${manifest.name}.`);
       return;
     }
     const folder = join(pluginsDir(), manifest.name, manifest.version);
@@ -209,7 +209,7 @@ function updatePlugin(db: Database, plugin: Plugin): void {
       throw new Error(`${source} now names its plugin ${manifest.name}, not ${name}`);
     fitsThisSkel(manifest);
     if (!agreed(manifest, source, "Update")) {
-      console.log(`skel didn't update ${name}.`);
+      console.log(`Skelcrew didn't update ${name}.`);
       return;
     }
     const moved = join(pluginsDir(), name, manifest.version);
@@ -229,7 +229,7 @@ function updatePlugin(db: Database, plugin: Plugin): void {
   }
 }
 
-// Updates the named plugin, or every one, for skel plugin update.
+// Updates the named plugin, or every one, for sc plugin update.
 export function updatePlugins(name?: string): void {
   const db = openDb();
   const chosen = name ? [findPlugin(db, name)] : installedPlugins(db);
@@ -237,8 +237,8 @@ export function updatePlugins(name?: string): void {
   for (const plugin of chosen) updatePlugin(db, plugin);
 }
 
-// Removes a plugin with its settings and tokens, for skel plugin rm. A plugin from GitHub
-// loses its folders too, and a folder of yours stays. It refuses while a repository skel has
+// Removes a plugin with its settings and tokens, for sc plugin rm. A plugin from GitHub
+// loses its folders too, and a folder of yours stays. It refuses while a repository Skelcrew has
 // names the plugin as its tracker in skelcrew.yaml, as that repository would lose its tasks.
 export function removePlugin(name: string): void {
   const db = openDb();
@@ -246,7 +246,7 @@ export function removePlugin(name: string): void {
   const tracked = trackedBy(db, name);
   if (tracked.length > 0)
     throw new Error(
-      `${name} is the tracker of ${tracked.map((r) => r.name).join(", ")}, so skel keeps it`,
+      `${name} is the tracker of ${tracked.map((r) => r.name).join(", ")}, so Skelcrew keeps it`,
     );
   db.run("DELETE FROM plugins WHERE name = ?", [name]);
   rmSync(join(configDir(), "plugins", name), { recursive: true, force: true });
@@ -254,7 +254,7 @@ export function removePlugin(name: string): void {
   console.log(`Removed ${name}, with its settings and tokens.`);
 }
 
-// Prints the installed plugins, for skel plugin ls: each one's name, version and jobs, such
+// Prints the installed plugins, for sc plugin ls: each one's name, version and jobs, such
 // as "github 0.1.0 tracker, forge", or as JSON for tools, with where each one came from.
 export function listPlugins(json: boolean): void {
   const rows = installedPlugins(openDb()).map((plugin) => {
