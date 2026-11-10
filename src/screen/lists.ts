@@ -35,12 +35,17 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
     if (here) return paint(white, name);
     return row.running ? name : paint(grey, name);
   };
+  // The name is cut into pieces that fit between the indent and the padding, so a long one
+  // goes on to more lines instead of being cut short.
   const room = Math.max(width - indent.length - pad.length, 1);
   const [first = "", ...rest] = row.name.match(new RegExp(`.{1,${room}}`, "g")) ?? [];
+  // The last line has the word, then the harness and age in what room the word leaves.
   const [sign, colour] = threadMark(row);
   const word = row.word.slice(0, room);
   const after = [row.harness, row.age].flatMap((part) => (part ? [` · ${part}`] : [])).join("");
   const more = after.slice(0, room - word.length);
+  // The mark starts the first line, and the rest line up under the name. The word is yellow
+  // when the thread needs you.
   const lines = [
     `${pad}${tinted(here, colour, sign)} ${styled(first)}`,
     ...rest.map((part) => `${indent}${styled(part)}`),
@@ -56,6 +61,8 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
 // opens the link. The title comes from outside, so it is made safe. The one you are looking at
 // is shaded as a thread's row is.
 function linkLines(link: Link, here: boolean, width: number): string[] {
+  // Each part is cut to fit between where its line starts and the padding. The word shares
+  // the name's line, after a dot of three columns, and is yellow when its thread needs you.
   const start = link.mark ? indent : pad;
   const room = Math.max(width - start.length - pad.length, 0);
   const title = fitted(clean(link.title), room);
@@ -63,6 +70,8 @@ function linkLines(link: Link, here: boolean, width: number): string[] {
   const word = link.word && fitted(link.word, room - Bun.stringWidth(name) - 3);
   const about =
     word && `${tinted(here, grey, " · ")}${tinted(here, link.needing ? yellow : grey, word)}`;
+  // The title is white on the row you are looking at, and dim for an issue that already has a
+  // thread. Both lines are the link, so either one opens it.
   const heading = here ? paint(white, title) : link.dim ? paint(grey, title) : title;
   const [top, bottom] = [heading, `${tinted(here, grey, name)}${about}`].map(
     (text) => `\x1b]8;;${link.url}\x1b\\${text}\x1b]8;;\x1b\\`,
@@ -90,11 +99,14 @@ function listLines(
   width: number,
 ): Line[] {
   const top = headed(heading);
+  // Each row takes two lines. When not all of them fit, a line is kept for the count of the
+  // rest, unless that would leave no row at all.
   if (list.links.length === 0) return [...top, { text: paint(grey, `${pad}none`) }];
   const fit = Math.floor((height - top.length) / 2);
   const few = list.total > fit ? Math.max(Math.floor((height - top.length - 1) / 2), 1) : fit;
   const links = list.links.slice(0, few);
   const rest = list.total - links.length;
+  // Cutting to the third is what drops the count when only one row fits.
   return [
     ...top,
     ...links.flatMap((link) =>
@@ -113,6 +125,7 @@ const padded = (lines: Line[], height: number) => [
 // Returns what fits of the threads in a number of lines, by whole rows from the top, just far
 // enough down to keep the row you are looking at in view, so Alt-Down never moves off the bottom.
 function scrolled(blocks: Line[][], here: number, room: number): Line[] {
+  // Starts with every row down to yours, then drops rows from the top until that fits.
   let used = blocks.slice(0, here + 1).flat().length;
   let first = 0;
   while (first < here && used > room) {
@@ -136,6 +149,8 @@ export function layout(
   shown: string | null,
   size: Size,
 ): { lines: Line[]; room: number } {
+  // Every thread's lines, and how tall the row you are looking at is. The hints keep the bottom
+  // lines only while that row still fits above them.
   const width = size.width - 1;
   const blocks = rows.map((row) =>
     rowLines(row, row.session === shown, width).map((text) => ({ text, row })),
@@ -151,15 +166,22 @@ export function layout(
   const share = Math.floor((room - others.length) / (others.length + 1));
   const middle = room - others.length - others.length * share;
   const top = headed("Threads");
+  // Too short for a heading and a row in each list, or for your row in THREADS: THREADS alone.
   if (others.length === 0 || share < top.length + 2 || middle < top.length + tallest)
     return { lines: scrolled(blocks, here, room), room };
+  // THREADS has its heading, then its rows, scrolled to keep yours in view and filled out to its
+  // share.
   const divider = { text: paint(edge, "─".repeat(Math.max(width, 0))), joins: true };
   const threads = [
     ...top,
     ...padded(scrolled(blocks, here, middle - top.length), middle - top.length),
   ];
+  // Returns a list's lines, filled out to its share, so the list after it always starts in the
+  // same place.
   const listed = ([heading, list]: (typeof others)[number]) =>
     padded(listLines(heading, list, shown, share, width), share);
+  // ISSUES goes above THREADS and PRS below, with a line between each. A repository with PRS
+  // and no ISSUES has them below THREADS.
   const [first, second] = others;
   const lines = lists.issues
     ? [
@@ -177,12 +199,15 @@ export function layout(
 // tested without a terminal. Every line fills the pane and ends with the sidebar's edge, in the
 // last column. tmux's own border beside it is blank, which leaves a gap before the agent.
 export function draw(rows: Row[], lists: Lists, shown: string | null, size: Size): string {
+  // The hints are cut to the sidebar's width, and come below the lists only when the layout left
+  // room for them.
   const { lines, room } = layout(rows, lists, shown, size);
   const width = size.width - 1;
   const keys = hints.map((hint) => ({
     text: paint(grey, hint.slice(0, Math.max(width - pad.length, 0))),
   }));
   const all: Line[] = [...padded(lines, room), ...(room < size.height ? keys : [])];
+  // Each line is filled out to the edge, which a divider meets with a ┤.
   return all
     .map(({ text, joins }) => `${filled(text, width)}${paint(edge, joins ? "┤" : "│")}`)
     .join("\n");
@@ -194,6 +219,8 @@ export function draw(rows: Row[], lists: Lists, shown: string | null, size: Size
 export function noticeLines(notice: string, width: number): string[] {
   if (!notice) return [];
   const room = Math.max(width - 1 - 2 * pad.length, 1);
+  // A word goes on the last line while it fits, and starts a new one when it doesn't. A word
+  // longer than a whole line has one to itself.
   const lines = [""];
   for (const word of notice.split(" ")) {
     const last = lines.length - 1;
@@ -201,6 +228,7 @@ export function noticeLines(notice: string, width: number): string[] {
     if (Bun.stringWidth(longer) <= room || !lines[last]) lines[last] = longer;
     else lines.push(word);
   }
+  // Each line is padded, a blank one follows, and all of them end at the sidebar's edge.
   return [...lines.map((line) => `${pad}${line}`), ""].map(
     (line) => `${filled(line, width - 1)}${paint(edge, "│")}`,
   );

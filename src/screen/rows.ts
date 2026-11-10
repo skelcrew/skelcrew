@@ -82,6 +82,8 @@ export function threadMark(row: Row): Mark {
 // couldn't be told about an event, and that says just so rather than something untrue.
 export function threadWord(thread: Thread, maxRounds: number): string {
   const { status, verdict, checks } = thread;
+  // A thread that ended or stopped says just that. Otherwise a question from its builder comes
+  // first, then why it needs you, then what it is doing.
   if (status === "failed" || status === "stopped" || status === "done") return status;
   const underWay = thread.submitting !== null || thread.reviewing !== null;
   if (thread.asking) return "question";
@@ -91,6 +93,8 @@ export function threadWord(thread: Thread, maxRounds: number): string {
     if (verdict === "approve" && (checks === "passing" || checks === null)) return "approved";
     return "needs you";
   }
+  // Not needing you: a round under way is a review, a review still being typed into the
+  // builder is changes, and otherwise it works or waits on checks.
   if (underWay) return "reviewing";
   if (thread.telling !== null) return "changes";
   return status === "working" ? "working" : "checks";
@@ -118,6 +122,8 @@ export function sidebarRows(
   now: number,
   open: Open,
 ): Row[] {
+  // THREADS has the repository's threads that aren't done, after its lead, which has no status,
+  // PR or review of its own, only whether its session runs.
   const threads = db.query(
     "SELECT * FROM threads WHERE status != 'done' AND owner = ? AND repo = ? ORDER BY rowid DESC",
   );
@@ -141,6 +147,7 @@ export function sidebarRows(
       checks: null,
       review: null,
     },
+    // Each thread's word is worked out first, as its harness and age depend on it.
     ...threads.all(open.owner, open.repo).map((row) => {
       const thread = Thread.parse(row);
       const { review_round: round, reviewer, reviewed_by: by, verdict } = thread;
@@ -167,6 +174,7 @@ export function sidebarRows(
   ];
 }
 
+// What a row of ISSUES or PRS holds as the database gives it, checked, since it is read from disk.
 const ListRow = z.object({
   name: z.string(),
   threaded: z.coerce.boolean(),
@@ -182,12 +190,16 @@ const ListRow = z.object({
 export function sidebarLists(db: Database, rows: Row[], most: number, open: Open): Lists {
   // Returns one list, of tasks or PRs, with the column that counts all of its kind.
   const read = (kind: "task" | "pr", column: string): List => {
+    // The open items of one kind, and for a task whether it has a thread that isn't done, which
+    // puts it last and dims it.
     const found = db.query(`SELECT r.name, i.item,
         EXISTS (SELECT 1 FROM threads t WHERE i.kind = 'task' AND t.owner = i.owner
           AND t.repo = i.repo AND CAST(t.task AS TEXT) = i.id AND t.status != 'done') AS threaded
       FROM items i JOIN repositories r ON r.owner = i.owner AND r.repo = i.repo
       WHERE i.kind = ? AND i.state = 'open' AND i.owner = ? AND i.repo = ?
       ORDER BY threaded, i.created DESC, length(i.id) DESC, i.id DESC LIMIT ?`);
+    // Each is named as Skelcrew names it, app-12 for an issue and app#34 for a PR. A PR takes the
+    // word and mark of its thread's row, if it has one.
     const links = found.all(kind, open.owner, open.repo, most).map((saved) => {
       const { name, threaded, item } = ListRow.parse(saved);
       const { id, title, link } = Item.parse(JSON.parse(item));
@@ -202,6 +214,8 @@ export function sidebarLists(db: Database, rows: Row[], most: number, open: Open
         mark: kind === "task" ? null : thread ? threadMark(thread) : noThread,
       };
     });
+    // The total is every open one in Skelcrew's copy, counted when the copy was saved, while the
+    // rows stop at `most`.
     const sum = db
       .query(
         `SELECT COALESCE(SUM(${column}), 0) AS total FROM repositories WHERE owner = ? AND repo = ?`,
@@ -209,6 +223,7 @@ export function sidebarLists(db: Database, rows: Row[], most: number, open: Open
       .get(open.owner, open.repo);
     return { links, total: z.object({ total: z.number() }).parse(sum).total };
   };
+  // A list is there only when the repository has a tracker for ISSUES or a forge for PRS.
   const repository = repositories(db).find((r) => r.owner === open.owner && r.repo === open.repo);
   return {
     issues: repository && trackerOf(db, repository) ? read("task", "open_issues") : null,
@@ -216,6 +231,7 @@ export function sidebarLists(db: Database, rows: Row[], most: number, open: Open
   };
 }
 
+// What a tab's row holds as the database gives it, checked, since it is read from disk.
 const TabRow = z.object({
   name: z.string(),
   owner: z.string(),
