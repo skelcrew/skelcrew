@@ -75,8 +75,10 @@ export function startSpriteService(): void {
 // keep a crashed daemon from starting again. -D keeps tmux in the foreground for the service,
 // and running with no sessions.
 export function startTmuxService(socket: string): void {
+  // Named by the socket, so each tmux server gets a service of its own.
   const name = `skelcrew-tmux-${socket}`;
   const quiet: { stdout: "pipe"; stderr: "pipe" } = { stdout: "pipe", stderr: "pipe" };
+  // Whether tmux answers within some tries, a tenth of a second apart.
   const answers = (tries: number) => {
     for (let tried = 0; tried < tries; tried++) {
       if (Bun.spawnSync(["tmux", "-L", socket, "list-sessions"], quiet).success) return true;
@@ -84,6 +86,8 @@ export function startTmuxService(socket: string): void {
     }
     return false;
   };
+  // sprite-env takes the arguments as one word, split at commas. -f /dev/null keeps your
+  // tmux config out of the agents' server.
   const args = ["--cmd", "tmux", "--args", `-L,${socket},-f,/dev/null,-D`, "--no-stream"];
   Bun.spawnSync(["sprite-env", "services", "create", name, ...args], quiet);
   if (answers(20)) return;
@@ -99,6 +103,7 @@ export function startTmuxService(socket: string): void {
 // webhooks. A request to the URL wakes a Sprite that sleeps.
 export const urlPort = 8080;
 
+// What sprite-env info says about the Sprite, as far as Skelcrew reads it.
 const Info = z.object({ sprite_url: z.string().url() });
 
 // Returns the Sprite's URL, for GitHub's webhooks to wake it with, as sprite-env, the
@@ -127,6 +132,7 @@ async function holdTask(
   method: "PUT" | "DELETE",
   { task = "skelcrew", expire = holdFor } = {},
 ): Promise<void> {
+  // The host name is only a placeholder: the request goes to the socket.
   const answer = await fetch(`http://sprite/v1/tasks/${task}`, {
     unix: socket,
     method,
@@ -156,11 +162,14 @@ export function keepAwake(
   // When the hold was last renewed, or null once let go. It starts unknown, so a hold an
   // earlier daemon left is let go when there is no work.
   let held: number | "unknown" | null = "unknown";
+  // A check waits on the socket, so one still running when the next is due lets that one go.
   let checking = false;
   const check = async () => {
     if (checking) return;
     checking = true;
     try {
+      // With work, the hold is taken, or renewed once a minute has passed. Without, it is
+      // let go once.
       if (work()) {
         if (typeof held !== "number" || Date.now() - held >= renew) {
           await holdTask(socket, "PUT");
@@ -188,8 +197,10 @@ export function keepAwake(
 export const holdAwhile = (seconds: number, socket = controlSocket) =>
   holdTask(socket, "PUT", { task: "skelcrew-webhook", expire: seconds });
 
+// What sprite-env says about a Sprite service, as far as Skelcrew reads it.
 const Service = z.object({ cmd: z.string() });
 
+// What sprite list --json says about your Sprites, as far as Skelcrew reads it.
 const Listed = z.object({ sprites: z.array(z.object({ name: z.string() })) });
 
 // Returns the names of your Sprites. Before that, checks that sprite is installed and logged
@@ -197,6 +208,7 @@ const Listed = z.object({ sprites: z.array(z.object({ name: z.string() })) });
 // sprite has no command that only tells whether you are logged in, but listing fails, saying
 // to run sprite login, when you aren't.
 function spriteNames(again: string): string[] {
+  // The error for something the laptop lacks, with its fix and the command to run again.
   const missing = (what: string, fix: string) =>
     new Error(`${what} on this laptop first:\n  ${fix}\nThen run ${again} again.`);
   if (!Bun.which("sprite"))
@@ -204,6 +216,7 @@ function spriteNames(again: string): string[] {
       "install sprite, Fly.io's command for Sprites,",
       "curl -fsSL https://sprites.dev/install.sh | sh",
     );
+  // Listing is also the check that you are logged in.
   const listed = Bun.spawnSync(["sprite", "list", "--json"], { stdout: "pipe", stderr: "pipe" });
   const said = `${listed.stderr.toString()}${listed.stdout.toString()}`.trim();
   if (!listed.success && said.includes("sprite login"))
@@ -320,6 +333,7 @@ function skelOnSprite(name: string, words: string[]) {
   // replaces the title first. Only the laptop can tell when output goes to a pipe, as --tty
   // gives the Sprite a terminal either way. checkName keeps quotes and % out of the name.
   const where = `sprite:${name}`;
+  // The words after "sc" in the shell line reach sc as "$@", each as given.
   const title = process.stdout.isTTY ? `printf '\\033]2;${windowTitle(where)}\\007'; ` : "";
   const line = ["sh", "-c", `${title}exec sc "$@"`, "sc", ...words];
   const named = `SKELCREW_REMOTE_NAME=${where}`;
@@ -334,6 +348,7 @@ export async function addSprite(name: string): Promise<number> {
   checkName(name);
   const where = `sprite:${name}`;
   const names = spriteNames(`sc remote add ${where}`);
+  // Said before anything is created, so you know what a yes below leads to.
   console.log(
     skelLine(
       `setting up ${where}: installing bubblewrap, making its URL public for GitHub's webhooks, copying Skelcrew there and running the first run.`,
@@ -348,6 +363,7 @@ export async function addSprite(name: string): Promise<number> {
     if ((await runInTerminal(["sprite", "create", "--skip-console", name])) !== 0)
       throw new Error(`sprite couldn't create ${where}`);
   }
+  // Each of these is safe to run again on a Sprite that has it already.
   await prepare(name);
   await makeUrlPublic(name);
   return addMachine(where, skelOnSprite(name, ["first-run"]), onTheSprite(name));
@@ -361,6 +377,8 @@ export async function remoteSprite(name: string, args: string[]): Promise<number
   // A sleeping Sprite can take a while to answer, which looks like a hang with nothing on
   // screen. Not in a pipe, where the output is the command's own.
   if (process.stdout.isTTY) console.log(skelLine(`connecting to sprite:${name}…`));
+  // The command as you typed it, for the error that says to run it again once the laptop
+  // is ready.
   const again = ["sc", "--remote", `sprite:${name}`, ...args].map(quoted).join(" ");
   const names = spriteNames(again);
   const from = args.length === 0 ? originHere() : null;
