@@ -11,7 +11,7 @@ import { claudeTokenFile, configDir } from "../paths.ts";
 import { installPlugin } from "../plugins/install.ts";
 import { installedPlugins } from "../plugins/plugin.ts";
 import { errorText, rule, skelLine } from "../say.ts";
-import { originHere } from "./origin.ts";
+import { originHere, pathOf } from "./origin.ts";
 import { promptSecret } from "./secret.ts";
 import { installService, loginPath, serviceFile } from "./service.ts";
 import { dropCapabilities, onSprite, spriteServiceInstalled } from "./sprite.ts";
@@ -197,33 +197,52 @@ function logInCodex(env: Env, who: "agents" | "the reviewer"): void {
   console.log(skelLine(`${who} ${who === "agents" ? "are" : "is"} logged in to Codex.`));
 }
 
-// The plugin the first run offers, for tasks from GitHub issues and PRs on GitHub.
+// The plugin sc offers in a checkout of a GitHub repository.
 const githubPlugin = "skelcrew/skel-plugin-github";
 
-// Returns whether a plugin named github is installed, so the first run offers it only once.
+// Returns whether a plugin named github is installed, so sc offers it only until it is.
 const hasGitHubPlugin = () => installedPlugins(openDb()).some((p) => p.name === "github");
 
-// Offers the GitHub plugin, and on a yes installs it, which shows what it runs and asks again
-// before it runs anything. One that fails to install is only reported: Skelcrew works from git
-// alone until you install it with sc plugin install.
-function offerGitHub(): void {
-  const answer = prompt("Install the GitHub plugin? [Y/n]")?.trim().toLowerCase() ?? "";
-  if (!["", "y", "yes"].includes(answer)) {
-    console.log(
-      skelLine(
-        `skipped. Skelcrew works from git alone until you run sc plugin install ${githubPlugin}.`,
-      ),
-    );
-    return;
-  }
-  try {
-    installPlugin(githubPlugin);
-  } catch (error) {
-    console.log(skelLine(`couldn't install the GitHub plugin: ${errorText(error)}`));
-  }
+// Returns the repository to offer the GitHub plugin for, as owner/name, or null for none: a
+// remote that isn't on github.com, a machine with the plugin, or a repository you said no for.
+// Only the remote is read, with no call to GitHub, as plain sc must start fast.
+function gitHubToOffer(remote: string | null): string | null {
+  const found = remote === null ? null : pathOf(remote);
+  if (found?.host !== "github.com" || hasGitHubPlugin()) return null;
+  const repository = `${found.owner}/${found.repo}`;
+  const declined = readConfig().declined.map((name) => name.toLowerCase());
+  return declined.includes(repository.toLowerCase()) ? null : repository;
 }
 
-// Offers sc init in the checkout you ran Skelcrew from, once the GitHub plugin is installed and
+// Offers the GitHub plugin for a checkout of the repository at `remote`, and reports whether it
+// is installed after. Your yes is all the install asks for, as you said yes to this plugin by
+// name. A no is saved in config.yaml for the repository, so no checkout of it asks again, and
+// you can undo it there. One that fails to install is only reported: Skelcrew works from git
+// alone until you install it with sc plugin install.
+function offerGitHub(repository: string, remote: string): boolean {
+  console.log("GitHub detected.\n");
+  const answer = prompt(
+    "The GitHub plugin lets Skelcrew work with issues, pull requests\nand CI on your repositories. Install the GitHub plugin? [Y/n]",
+  );
+  if (!["", "y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
+    const { config, declined } = readConfig();
+    config.set("github_declined", [...declined, repository]);
+    mkdirSync(configDir(), { recursive: true });
+    writeFileSync(configFile(), config.toString());
+    console.log(
+      `Skelcrew won't ask again for ${repository}. To install it: sc plugin install ${githubPlugin}`,
+    );
+    return false;
+  }
+  try {
+    installPlugin(githubPlugin, remote, false);
+  } catch (error) {
+    console.log(`Couldn't install the GitHub plugin: ${errorText(error)}`);
+  }
+  return hasGitHubPlugin();
+}
+
+// Offers sc init in the checkout you ran Skelcrew from, once you said yes to the GitHub plugin and
 // the checkout's skelcrew.yaml names no tracker, so GitHub's issues become the repository's tasks.
 // A yes names GitHub as its tracker without asking which. Outside a checkout with a remote, or
 // where skelcrew.yaml can't be read, it offers nothing, and sc init says why when you run it. A
@@ -316,20 +335,28 @@ export function setupDone(): boolean {
 }
 
 // Completes unfinished machine setup and keeps the daemon service current before attaching
-// to the lead. A first run in a checkout ends by offering sc init there.
-export async function firstRun(): Promise<void> {
+// to the lead. In a checkout of a GitHub repository it offers the GitHub plugin, on any run, and
+// a yes ends with the offer of sc init there. `from` is the remote sc --remote brings from your
+// laptop, as the checkout is there.
+export async function firstRun(from?: string): Promise<void> {
   const done = setupDone();
+  // The tools are found where your login shell finds them, even over ssh, so a codex
+  // under nvm isn't taken for missing. Passed to each one, since Bun looks programs up in
+  // the PATH it started with, whatever process.env says later.
+  const env = done ? process.env : { ...process.env, PATH: loginPath() };
   if (!done) {
-    // The tools are found where your login shell finds them, even over ssh, so a codex
-    // under nvm isn't taken for missing. Passed to each one, since Bun looks programs up in
-    // the PATH it started with, whatever process.env says later.
-    const env = { ...process.env, PATH: loginPath() };
     if (process.platform === "darwin") checkMacTools(env);
     else checkTools(env);
+  }
+  // Read once git is known to be there.
+  const remote = from ?? originHere();
+  const github = gitHubToOffer(remote);
+  const installed = github !== null && remote !== null && offerGitHub(github, remote);
+  if (!done) {
     // The steps left are worked out again after each one, as the harness you pick decides
     // which login comes next.
     let taken = "";
-    const asked = { reviewer: false, plugin: false };
+    const asked = { reviewer: false };
     for (let at = 1; ; at++) {
       const [step, ...rest] = stepsToTake(env, asked);
       if (!step) break;
@@ -341,7 +368,7 @@ export async function firstRun(): Promise<void> {
     }
     const yours = readConfig().harness;
     const other = harnesses.find((h) => h.name !== yours);
-    if (other && !Bun.which(other.command, { PATH: env.PATH }))
+    if (other && !Bun.which(other.command, { PATH: env.PATH ?? "" }))
       console.log(
         skelLine(
           `${other.title} isn't installed, so reviews will run on your harness, with no second view on another model.`,
@@ -349,15 +376,16 @@ export async function firstRun(): Promise<void> {
       );
   }
   installService();
-  if (done) return;
-  console.log(skelLine("setup is done."));
-  if (process.platform === "darwin")
-    console.log(
-      skelLine(
-        "a laptop sleeps, so work stops while the lid is closed. sc remote add keeps it going, on a server or a Sprite.",
-      ),
-    );
-  await offerInit();
+  if (!done) {
+    console.log(skelLine("setup is done."));
+    if (process.platform === "darwin")
+      console.log(
+        skelLine(
+          "a laptop sleeps, so work stops while the lid is closed. sc remote add keeps it going, on a server or a Sprite.",
+        ),
+      );
+  }
+  if (installed) await offerInit();
 }
 
 type Step = { title: string; about: string; take: () => void };
@@ -366,18 +394,8 @@ type Step = { title: string; about: string; take: () => void };
 // runs this time. `asked` says whether you were asked about reviews in this run, as reviews on
 // your own harness save nothing to show it. Until you pick a harness, Claude Code's login is
 // counted, as Enter usually picks it.
-function stepsToTake(env: Env, asked: { reviewer: boolean; plugin: boolean }): Step[] {
+function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
   const steps: Step[] = [];
-  if (!asked.plugin && !hasGitHubPlugin())
-    steps.push({
-      title: "offer the GitHub plugin",
-      about:
-        "For tasks from GitHub issues and PRs on GitHub. Skelcrew acts there as its GitHub App, never as you.",
-      take: () => {
-        asked.plugin = true;
-        offerGitHub();
-      },
-    });
   const { harness } = readConfig();
   if (!harness)
     steps.push({

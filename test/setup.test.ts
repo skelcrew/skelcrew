@@ -19,7 +19,7 @@ import { createServer, type Server } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { fakePlugin, git } from "./harness.ts";
+import { git } from "./harness.ts";
 
 let home = "";
 let bin = "";
@@ -120,8 +120,9 @@ async function skel(
   program = main(),
   cwd = home,
   more: Record<string, string> = {},
+  args: string[] = [],
 ) {
-  const run = Bun.spawn([process.execPath, program], {
+  const run = Bun.spawn([process.execPath, program, ...args], {
     cwd,
     env: {
       PATH: path,
@@ -467,7 +468,7 @@ test("on a Mac, stops when sandbox-exec can't start a sandbox", async () => {
   expect(calls()).not.toContain("claude");
 });
 
-// Removes the GitHub plugin from Skelcrew's database, so the first run offers it.
+// Removes the GitHub plugin from Skelcrew's database, so sc offers it.
 function noGitHubPlugin(): void {
   const code = `import { openDb } from ${JSON.stringify(join(checkout, "src", "db.ts"))};
 openDb().run("DELETE FROM plugins");`;
@@ -478,56 +479,110 @@ openDb().run("DELETE FROM plugins");`;
   if (!removed.success) throw new Error(removed.stderr.toString());
 }
 
-test("offers the GitHub plugin first, and a no goes on from git alone", async () => {
-  noGitHubPlugin();
-  const run = await skel("n\n1\nsk-ant-oat01-good\n");
-  expect(run.err).toBe("");
-  expect(run.code).toBe(0);
-  expect(run.out).toContain("Skelcrew · step 1 of 3: offer the GitHub plugin\n");
-  expect(run.out).toContain("Install the GitHub plugin? [Y/n]");
-  expect(run.out).toContain(
-    "Skelcrew · skipped. Skelcrew works from git alone until you run sc plugin install skelcrew/skel-plugin-github.",
+// Has git reach the fake GitHub in home/github for every github.com remote, so no test reaches
+// the real one.
+function fakeGitHub(): void {
+  writeFileSync(
+    join(home, ".gitconfig"),
+    `[url "file://${home}/github/"]\n\tinsteadOf = https://github.com/\n\tinsteadOf = git@github.com:\n`,
   );
-  expect(run.out).toContain("Skelcrew · step 2 of 3: pick a harness\n");
-  // Once the first run is done, it isn't offered again.
-  const again = await skel();
-  expect(again.out).not.toContain("GitHub plugin");
+}
+
+// Returns a new checkout in home/code with the remote given, if any.
+function checkoutWith(name: string, remote?: string): string {
+  const folder = join(home, "code", name);
+  mkdirSync(folder, { recursive: true });
+  git(folder, "init", "-q", "-b", "main");
+  if (remote) git(folder, "remote", "add", "origin", remote);
+  return folder;
+}
+
+const offer = "Install the GitHub plugin? [Y/n]";
+
+// The GitHub plugin is offered where you work on a GitHub repository, and only there, on any run
+// until it is installed or you say no.
+test("offers the GitHub plugin only in a checkout on github.com, on any run", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  const outside = await skel("1\nsk-ant-oat01-good\n");
+  expect(outside.code).toBe(0);
+  expect(outside.out).not.toContain("GitHub");
+  const folder = checkoutWith("app");
+  expect((await skel("", bin, main(), folder)).out).not.toContain("GitHub");
+  git(folder, "remote", "add", "origin", "git@gitlab.com:simon/app.git");
+  expect((await skel("", bin, main(), folder)).out).not.toContain("GitHub");
+  git(folder, "remote", "set-url", "origin", "git@github.com:simon/app.git");
+  const later = await skel("n\n", bin, main(), join(folder));
+  expect(later.out).toStartWith(
+    "GitHub detected.\n\nThe GitHub plugin lets Skelcrew work with issues, pull requests\nand CI on your repositories. Install the GitHub plugin? [Y/n]",
+  );
 });
 
-// Enter takes the offer: the install shows what the plugin runs and asks again, as any does.
-test("a yes to the GitHub plugin installs it from GitHub, after showing what it runs", async () => {
+test("a no holds for the repository, in every checkout of it, and another repository asks once", async () => {
   noGitHubPlugin();
+  fakeGitHub();
+  const app = checkoutWith("app", "git@github.com:simon/app.git");
+  const first = await skel("n\n1\nsk-ant-oat01-good\n", bin, main(), app);
+  expect(first.code).toBe(0);
+  expect(first.out).toContain(offer);
+  expect(first.out).toContain(
+    "Skelcrew won't ask again for simon/app. To install it: sc plugin install skelcrew/skel-plugin-github",
+  );
+  // The offer comes before the first step.
+  expect(first.out.indexOf(offer)).toBeLessThan(first.out.indexOf("pick a harness"));
+  expect(parse(readFileSync(config(), "utf8"))).toMatchObject({
+    harness: "claude",
+    github_declined: ["simon/app"],
+  });
+  const again = checkoutWith("app-again", "https://github.com/Simon/app.git");
+  expect((await skel("", bin, main(), again)).out).not.toContain("GitHub");
+  expect((await skel("", bin, main(), app)).out).not.toContain("GitHub");
+  const site = checkoutWith("site", "git@github.com:simon/site.git");
+  const other = await skel("n\n", bin, main(), site);
+  expect(other.out).toContain(offer);
+  expect(parse(readFileSync(config(), "utf8")).github_declined).toEqual([
+    "simon/app",
+    "simon/site",
+  ]);
+  // Nothing is written into the repository.
+  expect(git(app, "status", "--porcelain")).toBe("");
+});
+
+test("over --remote, the offer reads the remote sc brought from your laptop", async () => {
+  noGitHubPlugin();
+  fakeGitHub();
+  await skel("1\nsk-ant-oat01-good\n");
+  const run = await skel("n\n", bin, main(), home, {}, ["--from", "git@github.com:simon/app.git"]);
+  expect(run.out).toContain(offer);
+  expect(parse(readFileSync(config(), "utf8")).github_declined).toEqual(["simon/app"]);
+});
+
+// Puts a GitHub plugin on the fake GitHub as skelcrew/skel-plugin-github, a tracker and forge whose
+// setup keeps the remote it was handed, and whose calls the fake plugin answers. It claims
+// simon/site.
+function publishGitHubPlugin(): void {
   const plugin = join(home, "github", "skelcrew", "skel-plugin-github");
   mkdirSync(plugin, { recursive: true });
   writeFileSync(
     join(plugin, "skelcrew-plugin.yaml"),
-    "name: github\nversion: 0.1.0\nskelcrew: 0.1.0\nabout: GitHub\njobs: [tracker, forge]\ncall: [bun, call.ts]\ngit_credentials: [bun, credentials.ts]\n",
+    `name: github
+version: 0.1.0
+skelcrew: 0.1.0
+about: GitHub
+jobs: [tracker, forge]
+setup: [bun, setup.ts]
+call: [bun, ${JSON.stringify(join(import.meta.dir, "fake-plugin.ts"))}]
+git_credentials: ["true"]
+`,
   );
-  const git = (...args: string[]) =>
-    Bun.spawnSync(["git", "-C", plugin, "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
-  git("init", "-q", "-b", "main");
-  git("add", ".");
-  git("commit", "-q", "-m", "0.1.0");
-  git("tag", "v0.1.0");
   writeFileSync(
-    join(home, ".gitconfig"),
-    `[url "file://${home}/github/"]\n\tinsteadOf = https://github.com/\n`,
+    join(plugin, "setup.ts"),
+    'await Bun.write(process.env.HOME + "/handed", process.env.SKELCREW_REMOTE + "\\n");\n',
   );
-  const run = await skel("\ny\n1\nsk-ant-oat01-good\n");
-  expect(run.err).toBe("");
-  expect(run.code).toBe(0);
-  expect(run.out).toContain("Installed github 0.1.0.");
-  expect(existsSync(join(home, ".local", "share", "skelcrew", "plugins", "github", "0.1.0"))).toBe(
-    true,
-  );
-});
-
-// Puts simon/site on the fake GitHub, claimed by a fake GitHub plugin that is a tracker and a
-// forge, and returns your checkout of it. git reaches the fake GitHub for every
-// https://github.com/ URL.
-function siteOnGitHub(): string {
-  noGitHubPlugin();
-  const settings = fakePlugin(home, "github", ["tracker", "forge"]);
+  git(plugin, "init", "-q", "-b", "main");
+  git(plugin, "add", ".");
+  git(plugin, "commit", "-q", "-m", "0.1.0");
+  git(plugin, "tag", "v0.1.0");
   const answer = {
     key: "simon/site",
     name: "site",
@@ -536,18 +591,22 @@ function siteOnGitHub(): string {
     push: true,
     fork: false,
   };
+  const settings = join(home, ".config", "skelcrew", "plugins", "github");
+  mkdirSync(settings, { recursive: true });
   writeFileSync(
     join(settings, "claims.json"),
     JSON.stringify({ "https://github.com/simon/site": answer, [answer.clone]: answer }),
   );
-  writeFileSync(
-    join(home, ".gitconfig"),
-    `[url "file://${home}/github/"]\n\tinsteadOf = https://github.com/\n`,
-  );
-  const site = join(home, "code", "site");
-  mkdirSync(site, { recursive: true });
+}
+
+// Returns your checkout of simon/site, which is on the fake GitHub, with no GitHub plugin
+// installed and the plugin published there.
+function siteOnGitHub(): string {
+  noGitHubPlugin();
+  fakeGitHub();
+  publishGitHubPlugin();
+  const site = checkoutWith("site");
   writeFileSync(join(site, "README"), "site\n");
-  git(site, "init", "-q", "-b", "main");
   git(site, "add", ".");
   git(site, "commit", "-q", "-m", "start");
   git(home, "clone", "-q", "--bare", site, join(home, "github", "simon", "site.git"));
@@ -558,12 +617,17 @@ function siteOnGitHub(): string {
 const initOffer =
   "Skelcrew · run sc init here, so GitHub's issues become this repository's tasks? [Y/n]";
 
-test("with the GitHub plugin, offers sc init in a checkout whose skelcrew.yaml names no tracker, which names GitHub", async () => {
+// Enter takes the offer. You said yes to this plugin by name, so the install asks nothing more.
+test("a yes installs the GitHub plugin with no second question, then offers sc init once set up", async () => {
   const site = siteOnGitHub();
-  const run = await skel("1\nsk-ant-oat01-good\n\n", bin, main(), site);
+  const run = await skel("\n1\nsk-ant-oat01-good\n\n", bin, main(), site);
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
-  // Offered once the steps are done, and before the lead opens.
+  expect(run.out).toContain(
+    "Installing github 0.1.0 from skelcrew/skel-plugin-github...\nInstalled github 0.1.0.\n",
+  );
+  expect(run.out).not.toContain("[y/N]");
+  expect(readFileSync(join(home, "handed"), "utf8")).toBe("https://github.com/simon/site\n");
   expect(run.out.indexOf("Skelcrew · setup is done.")).toBeLessThan(run.out.indexOf(initOffer));
   expect(run.out).not.toContain("Which tracker");
   expect(readFileSync(join(site, "skelcrew.yaml"), "utf8")).toContain("\ntracker: github\n");
@@ -572,9 +636,20 @@ test("with the GitHub plugin, offers sc init in a checkout whose skelcrew.yaml n
   expect(calls()).toEndWith("daemon lead\nscreen on lead\n");
 });
 
+test("on a run after setup, a yes goes straight on to sc init", async () => {
+  const site = siteOnGitHub();
+  await skel("1\nsk-ant-oat01-good\n");
+  const run = await skel("\n\n", bin, main(), site);
+  expect(run.err).toBe("");
+  expect(run.out).toStartWith("GitHub detected.");
+  expect(run.out).toContain("Installed github 0.1.0.");
+  expect(run.out).toContain(initOffer);
+  expect(readFileSync(join(site, "skelcrew.yaml"), "utf8")).toContain("\ntracker: github\n");
+});
+
 test("a no to sc init writes nothing, and the lead opens", async () => {
   const site = siteOnGitHub();
-  const run = await skel("1\nsk-ant-oat01-good\nn\n", bin, main(), site);
+  const run = await skel("\n1\nsk-ant-oat01-good\nn\n", bin, main(), site);
   expect(run.err).toBe("");
   expect(run.out).toContain(initOffer);
   expect(run.out).toContain(
@@ -584,24 +659,19 @@ test("a no to sc init writes nothing, and the lead opens", async () => {
   expect(calls()).toEndWith("daemon lead\nscreen on lead\n");
 });
 
-test("offers no sc init where skelcrew.yaml names a tracker, outside a checkout, or without the plugin", async () => {
+test("offers no sc init where skelcrew.yaml names a tracker, or after a no to the plugin", async () => {
   const site = siteOnGitHub();
   writeFileSync(join(site, "skelcrew.yaml"), "tracker: linear\n");
-  const named = await skel("1\nsk-ant-oat01-good\n", bin, main(), site);
+  const named = await skel("\n1\nsk-ant-oat01-good\n", bin, main(), site);
   expect(named.err).toBe("");
+  expect(named.out).toContain("Installed github 0.1.0.");
   expect(named.out).not.toContain("sc init");
   expect(readFileSync(join(site, "skelcrew.yaml"), "utf8")).toBe("tracker: linear\n");
 
-  rmSync(token());
-  const outside = await skel("sk-ant-oat01-good\n");
-  expect(outside.out).not.toContain("sc init");
-
-  rmSync(token());
   rmSync(join(site, "skelcrew.yaml"));
   noGitHubPlugin();
-  const without = await skel("n\nsk-ant-oat01-good\n", bin, main(), site);
-  expect(without.err).toBe("");
-  expect(without.out).toContain("Skelcrew · skipped. Skelcrew works from git alone");
+  const without = await skel("n\n", bin, main(), site);
+  expect(without.out).toContain("Skelcrew won't ask again for simon/site.");
   expect(without.out).not.toContain("sc init");
   expect(existsSync(join(site, "skelcrew.yaml"))).toBe(false);
 });
