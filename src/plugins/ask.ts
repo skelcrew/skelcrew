@@ -22,8 +22,10 @@ export function pluginsFor(db: Database, job: "tracker" | "forge"): string[] {
     .map((plugin) => plugin.name);
 }
 
-// Returns the repository's tracker: the plugin its skelcrew.yaml names, when that is installed
-// as a tracker, or null. A file that can't be read names none.
+// Returns the repository's tracker, or null. Its forge is its tracker when the forge can be one,
+// as GitHub can, so a repository on GitHub plans in its issues with nothing to set up. Its
+// skelcrew.yaml can name another, used only when installed, or say none, for git alone. A file
+// that can't be read names none.
 export function trackerOf(db: Database, repository: Repository): string | null {
   let named: string | undefined;
   try {
@@ -31,7 +33,10 @@ export function trackerOf(db: Database, repository: Repository): string | null {
   } catch {
     return null;
   }
-  return named !== undefined && pluginsFor(db, "tracker").includes(named) ? named : null;
+  if (named === "none") return null;
+  // A named tracker that isn't installed gives none, not the forge: its tasks are planned elsewhere.
+  const tracker = named ?? repository.forge;
+  return tracker !== null && pluginsFor(db, "tracker").includes(tracker) ? tracker : null;
 }
 
 // Returns the repository's forge: the plugin that claimed its remote, while it is installed,

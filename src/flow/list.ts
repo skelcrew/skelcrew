@@ -28,11 +28,13 @@ export function listRepositories(db: Database): RepositoryRow[] {
   return repositories(db).map((r) => {
     const tracker = trackerOf(db, r);
     // The tracker skelcrew.yaml names, to say which plugin is missing. A skelcrew.yaml that
-    // can't be read names none here, so one bad repository doesn't stop the whole list.
+    // can't be read names none here, so one bad repository doesn't stop the whole list, and
+    // tracker: none misses nothing.
     let named: string | null = null;
     try {
       named = repositoryTracker(r) ?? null;
     } catch {}
+    if (named === "none") named = null;
     return {
       name: r.name,
       repository: `${r.owner}/${r.repo}`,

@@ -56,8 +56,9 @@ const Rounds = z.looseObject({ max_rounds: z.number().int().positive().optional(
 // commands from the file itself.
 const Setup = z.looseObject({ setup: z.array(z.string()).optional() });
 
-// The plugin that holds the repository's tasks. Only the name: settings for it stay yours.
-const Tracker = z.looseObject({ tracker: z.string().optional() });
+// The plugin that holds the repository's tasks. Only the name: settings for it stay yours. A bare
+// `tracker:` is YAML's null, which counts as no line at all, so the forge stays the tracker.
+const Tracker = z.looseObject({ tracker: z.string().nullish() });
 
 // A repository Skelcrew works on, by its owner and name.
 type Repository = { owner: string; repo: string };
@@ -152,4 +153,4 @@ export const repositorySetup = (repository: Repository): string[] =>
 // Returns the plugin the repository's skelcrew.yaml names as its tracker, or nothing when it
 // names none.
 export const repositoryTracker = (repository: Repository): string | undefined =>
-  sharedAgainst(Tracker, repository).tracker;
+  sharedAgainst(Tracker, repository).tracker ?? undefined;

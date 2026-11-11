@@ -376,7 +376,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         startingTasks.add(key);
         let thread: Thread;
         try {
-          // Its skelcrew.yaml, which names its tracker, is in Skelcrew's clone, which the daemon
+          // Its skelcrew.yaml, which can name its tracker, is in Skelcrew's clone, which the daemon
           // may still be making.
           if (!existsSync(cloneDir(owner, repo))) await refreshClones(db);
           await (await polling.promise)(`${owner}/${repo}`);

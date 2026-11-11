@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { type Document, parseDocument, stringify } from "yaml";
+import { stringify } from "yaml";
 import { z } from "zod";
 import { refuseCredentials } from "../agents/sandbox.ts";
 import { stopSession } from "../agents/tmux.ts";
@@ -21,7 +21,7 @@ import { nameRepositories, openDb, Repository } from "../db.ts";
 import { originHere, pathOf } from "../machine/origin.ts";
 import { onSprite } from "../machine/sprite.ts";
 import { cloneDir, configDir, dataDir, leadPlaces } from "../paths.ts";
-import { type Claimed, claims, pluginsFor } from "../plugins/ask.ts";
+import { type Claimed, claims } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { checkPush, cloneRepository, updateClone } from "./git.ts";
 import { wakeRepository } from "./wake.ts";
@@ -350,9 +350,10 @@ export async function addRepo(given?: string): Promise<void> {
 const yamlValue = (value: string) => stringify(value).trim();
 
 // Returns the starter skelcrew.yaml: a line saying the file is shared and never holds a secret,
-// the tracker you picked, if any, your harness and model for each role as real lines, from
-// your config, and setup and test as commented examples.
-function starter(tracker: string | null): string {
+// your harness and model for each role as real lines, from your config, and setup and test as
+// commented examples. It names no tracker, so a repository on GitHub keeps its issues as tasks,
+// and shows tracker: none commented out, so you can find how to turn that off.
+function starter(): string {
   // Each role is one line of { key: value } pairs, its name padded so the three line up.
   const roles = agentRoles();
   const line = (name: "lead" | "builder" | "reviewer") => {
@@ -361,18 +362,19 @@ function starter(tracker: string | null): string {
   };
   return [
     "# Shared with everyone who works on this repository. Never put a secret here.",
-    ...(tracker ? [`tracker: ${yamlValue(tracker)}`] : []),
     line("lead"),
     line("builder"),
     line("reviewer"),
     "# setup: [bun install]",
     "# test: [bun test]",
+    "# Keeps this repository on git alone, with no tracker.",
+    "# tracker: none",
     "",
   ].join("\n");
 }
 
 // Returns the top folder of the checkout you are in, or null outside one.
-export function checkoutTop(): string | null {
+function checkoutTop(): string | null {
   const top = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"], {
     stdout: "pipe",
     stderr: "pipe",
@@ -380,58 +382,11 @@ export function checkoutTop(): string | null {
   return top.success ? top.stdout.toString().trim() : null;
 }
 
-// Reads the skelcrew.yaml at the top of a checkout, for sc init. `there` says whether there is
-// one at all, and `settings` is what it holds, or null when it isn't a plain file, as a link
-// could point Skelcrew at any file of yours. Throws when it isn't valid YAML.
-export function checkoutSettings(root: string): { there: boolean; settings: Document | null } {
-  const file = join(root, "skelcrew.yaml");
-  const stat = lstatSync(file, { throwIfNoEntry: false });
-  if (!stat?.isFile()) return { there: stat !== undefined, settings: null };
-  const settings = parseDocument(readFileSync(file, "utf8"));
-  const [broken] = settings.errors;
-  if (broken) throw new Error(`${file} isn't valid YAML: ${broken.message}`);
-  return { there: true, settings };
-}
-
-// Asks which of your installed trackers holds the repository's tasks, or none, and returns it,
-// or null for none. With no tracker installed there is nothing to ask. Enter picks the first.
-function pickTracker(): string | null {
-  // The choices are numbered from 1, with none last.
-  const trackers = pluginsFor(openDb(), "tracker");
-  if (trackers.length === 0) return null;
-  console.log("Which tracker holds this repository's tasks?");
-  for (const [at, name] of [...trackers, "none"].entries()) console.log(`  ${at + 1}) ${name}`);
-  // Bun's prompt answers null both for Ctrl-D and for a bare Enter, unless it has a default:
-  // then Enter gives the default and only Ctrl-D gives null.
-  const answer = prompt("Pick one by its number:", "1");
-  if (answer === null) throw new Error("no tracker was picked, so sc init wrote nothing");
-  // A number one past the trackers is none, which gives null.
-  const at = Number(answer.trim()) - 1;
-  if (!Number.isInteger(at) || at < 0 || at > trackers.length)
-    throw new Error(`${answer.trim()} isn't one of the numbers, so sc init wrote nothing`);
-  return trackers[at] ?? null;
-}
-
-// Returns the text of a skelcrew.yaml that names no tracker, with a line naming one added at the
-// end. Added as text, since writing the file out again from YAML would change how the rest of
-// it is laid out. Throws when the line wouldn't read back as the tracker, such as in a file
-// written as one { … } map.
-function withTracker(file: string, tracker: string): string {
-  const text = readFileSync(file, "utf8");
-  const added = `${text}${text === "" || text.endsWith("\n") ? "" : "\n"}tracker: ${yamlValue(tracker)}\n`;
-  const read = parseDocument(added);
-  if (read.errors.length > 0 || read.get("tracker") !== tracker)
-    throw new Error(`sc init can't add a line to ${file}: add tracker: ${tracker} yourself`);
-  return added;
-}
-
 // Sets up the checkout you are in for Skelcrew, for sc init: writes the starter skelcrew.yaml at
-// its top, with the tracker you pick, or `tracker` when given, as the first run gives GitHub. In a
-// checkout with a skelcrew.yaml already, it only adds the tracker, and leaves one that names a
-// tracker alone. Then it adds the repository as sc repo add does. Stops outside a git repository,
-// and in one with no remote, as Skelcrew works from its own clone. That clone is at the default
-// branch, so it says the file counts only once pushed there.
-export async function initRepo(tracker?: string): Promise<void> {
+// its top, or leaves one that is there as it is, then adds the repository as sc repo add does.
+// Stops outside a git repository, and in one with no remote, as Skelcrew works from its own
+// clone. That clone is at the default branch, so it says the file counts only once pushed there.
+export async function initRepo(): Promise<void> {
   // Stop before writing anything where the file couldn't count: outside a checkout, or in one
   // with no remote for Skelcrew to clone.
   const root = checkoutTop();
@@ -443,23 +398,14 @@ export async function initRepo(tracker?: string): Promise<void> {
     throw new Error(
       "sc init needs the repository's remote, and this checkout has none. Push it somewhere first, such as to GitHub.",
     );
-  // Ask for a tracker only when there is somewhere to write it: no file yet, or a plain one
-  // that names none.
+  // A new file is made only where none is, so the write never follows a link.
   const file = join(root, "skelcrew.yaml");
-  const { there, settings } = checkoutSettings(root);
-  const named = settings?.has("tracker") ?? false;
-  const picked = there && (settings === null || named) ? null : (tracker ?? pickTracker());
-  // The writes never follow a link: a new file is made only where none is, and one that is
-  // there is written only when it is a plain file.
-  if (!there) writeFileSync(file, starter(picked), { flag: "wx" });
-  else if (settings && picked) writeFileSync(file, withTracker(file, picked));
+  const there = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
+  if (!there) writeFileSync(file, starter(), { flag: "wx" });
   else console.log("skelcrew.yaml is there already, so Skelcrew left it as it is.");
   // Bring the repository in, then say what was written and when Skelcrew will read it.
   await addRepo(root);
-  // Skelcrew reads it from its own clone, so it counts once it is pushed to the default branch.
-  const counts = "Commit and push it to start.";
-  if (!there) console.log(`Wrote skelcrew.yaml. ${counts}`);
-  else if (picked) console.log(`Added tracker: ${picked} to skelcrew.yaml. ${counts}`);
+  if (!there) console.log("Wrote skelcrew.yaml. Commit and push it to start.");
 }
 
 // Records your trust from outside the sandbox and brings in the repository: one Skelcrew has,
