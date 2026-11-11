@@ -184,7 +184,13 @@ async function pluginCommand(args: string[], json: boolean): Promise<void> {
   // Each takes a name or a source as its one word, except update, where it is optional.
   if (sub === "install" && rest[0] && rest.length === 1) return installPlugin(rest[0]);
   if (sub === "update" && rest.length <= 1) return updatePlugins(rest[0]);
-  if (sub === "setup" && rest[0] && rest.length === 1) return setUpPlugin(rest[0]);
+  // sc plugin setup sets the plugin up for the checkout you are in, as install does.
+  if (sub === "setup" && rest[0] && rest.length === 1) {
+    const { originHere } = await import("./machine/origin.ts");
+    setUpPlugin(rest[0], originHere());
+    console.log(`Ran ${rest[0]}'s setup.`);
+    return;
+  }
   if (sub === "rm" && rest[0] && rest.length === 1) return removePlugin(rest[0]);
   if (sub === "ls" && rest.length === 0) return listPlugins(json);
   usage(command);

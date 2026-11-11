@@ -22,6 +22,8 @@ import { originHere, pathOf } from "../machine/origin.ts";
 import { onSprite } from "../machine/sprite.ts";
 import { cloneDir, configDir, dataDir, leadPlaces } from "../paths.ts";
 import { type Claimed, claims } from "../plugins/ask.ts";
+import { setUpPlugin } from "../plugins/install.ts";
+import { SetupNeeded } from "../plugins/plugin.ts";
 import { errorText } from "../say.ts";
 import { checkPush, cloneRepository, updateClone } from "./git.ts";
 import { wakeRepository } from "./wake.ts";
@@ -205,7 +207,7 @@ async function found(db: Database, given: string): Promise<Found> {
   // A forge's answer wins, as it knows the repository's real owner/name and the URL its login
   // can clone. Without one, only a URL says where the repository is: a bare owner/name
   // names nothing a forge doesn't know.
-  const claimed = await claims(db, given);
+  const claimed = await claimsSettingUp(db, given);
   if (claimed) {
     const [owner = "", repo = ""] = claimed.key.split("/");
     return { owner, repo, remote: claimed.clone, claimed };
@@ -216,6 +218,21 @@ async function found(db: Database, given: string): Promise<Found> {
       `no forge installed knows ${given}: give its remote's URL, or run sc in a checkout of it`,
     );
   return { owner: path.owner, repo: path.repo, remote: given, claimed: null };
+}
+
+// Asks the forges which one claims the remote, as claims does. When the forge needs its setup
+// again, such as GitHub's where its app isn't on the repository yet, and you are at a terminal,
+// it runs that setup here for the repository and asks once more. So a new user gets the fix
+// where they are, instead of an error to act on. With no terminal, nothing can answer a setup,
+// so the error stays, naming the command. A setup that fails throws, having said why.
+async function claimsSettingUp(db: Database, given: string): Promise<Claimed | null> {
+  try {
+    return await claims(db, given);
+  } catch (error) {
+    if (!(error instanceof SetupNeeded) || !process.stdin.isTTY) throw error;
+    setUpPlugin(error.plugin, given);
+    return claims(db, given);
+  }
 }
 
 // Whether Skelcrew may clone a repository without asking you. You vouch for what is in a
