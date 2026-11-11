@@ -147,10 +147,10 @@ test("the sidebar's header shows the release of the Skelcrew that runs it", asyn
       "=one:",
       `${env} ${file} sidebar ${agents} one '' simon/app`,
     );
-    const header = () => tmux("show", "-v", "-t", "=one:", "status-format[1]").stdout.toString();
+    const header = () => tmux("show", "-v", "-t", "=one:", "status-format[0]").stdout.toString();
     for (let tries = 0; tries < 100 && !header().includes("Skelcrew"); tries++)
       await Bun.sleep(100);
-    expect(header()).toContain(" 0.4.2");
+    expect(header()).toContain(" v0.4.2");
   } finally {
     tmux("kill-server");
   }
@@ -161,12 +161,12 @@ test("the screen's panes run the single file itself, with no checkout to find", 
   const screen = JSON.stringify(source("screen/screen.ts"));
   writeFileSync(
     entry,
-    `import { pageCommand } from ${screen};\nconsole.log(JSON.stringify(pageCommand("url")));`,
+    `import { pageCommand } from ${screen};\nconsole.log(JSON.stringify(pageCommand("url", "")));`,
   );
   const file = join(home, "panes", "skel");
   compile(entry, file);
   const said = Bun.spawnSync([file]).stdout.toString();
-  expect(JSON.parse(said)).toEqual([file, "page", "url"]);
+  expect(JSON.parse(said)).toEqual([file, "page", "url", ""]);
 });
 
 describe("a release setting up a server", () => {

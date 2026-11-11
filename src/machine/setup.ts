@@ -364,11 +364,7 @@ export function firstRun(from?: string): void {
       console.log(`\n${other.title} isn't installed, so reviews run on ${yours.title}.`);
   }
   installService();
-  if (!done) {
-    console.log("\nSkelcrew is set up.");
-    if (process.platform === "darwin")
-      console.log("Work stops while your laptop sleeps. sc remote add keeps it going on a server.");
-  }
+  if (!done) console.log("\nSkelcrew is set up.");
 }
 
 // A step of the first run: `title` names it, and `take` asks what it needs, starting with a line
@@ -402,9 +398,12 @@ function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
     steps.push({
       title: "Claude's sign-in",
       take: () => {
-        console.log(
-          `Sign in to Claude${forReviews}: run claude setup-token in another terminal, then paste the token here.`,
-        );
+        // The command sits on a line of its own, bold where the terminal shows it, so it
+        // reads as something to copy and run, not as part of the sentence.
+        const bold = process.stdout.isTTY && process.env.TERM !== "dumb";
+        const command = bold ? "\x1b[1mclaude setup-token\x1b[22m" : "claude setup-token";
+        console.log(`Sign in to Claude${forReviews}. In another terminal, run:\n\n  ${command}\n`);
+        console.log("Then paste the token here.");
         saveClaudeToken();
       },
     });

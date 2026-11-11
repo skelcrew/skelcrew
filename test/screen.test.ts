@@ -14,6 +14,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import checkout from "../package.json";
 import { startSession, stillRunning } from "../src/agents/tmux.ts";
 import type { Page } from "../src/flow/page.ts";
 import { leadPlaces } from "../src/paths.ts";
@@ -58,14 +59,17 @@ const read = (file: string) => {
 
 // What you see in the first terminal, or a second one.
 const seen = (window = "one") => tmux(terminal, "capture-pane", "-p", "-t", `=${window}:`).out;
+// The top row as you see it: Skelcrew above the sidebar, then the tabs and the strip above the
+// agent.
+const tabRow = () => (seen().split("\n")[0] ?? "").trimEnd();
 // The row you are looking at, as the name line with the grey background shows it, below the
-// three status lines, where the open tab has the same grey. Empty until the sidebar has drawn
+// status line, where the open tab has the same grey. Empty until the sidebar has drawn
 // one.
 function selected(window = "one"): string {
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", `=${window}:`).out;
   const line = colours
     .split("\n")
-    .slice(3)
+    .slice(1)
     .find((text) => text.includes("48;5;238"));
   return Bun.stripANSI(line ?? "")
     .slice(0, sidebar - 1)
@@ -118,7 +122,7 @@ function open(
 await openScreen(${JSON.stringify(agents)}, ${JSON.stringify(session)}, "lead", "simon/app");
 await Bun.write(${JSON.stringify(join(home, `left-${window}`))}, "left");`,
   );
-  const named = where ? `SKELCREW_REMOTE_NAME=${where} ` : `${before}`;
+  const named = `${where ? `SKELCREW_REMOTE_NAME=${where} ` : ""}${before}`;
   const title = `printf '\\033]2;my shell\\007'`;
   const command = `${title}; ${named}TERM=${term} ${process.execPath} ${script}; sleep 300`;
   tmux(terminal, "new-session", "-d", "-s", window, "-x", width, "-y", "30", command);
@@ -188,13 +192,16 @@ test("shows the lead and every thread that isn't done, beside the agent", async 
   await ready("lead");
   const lines = seen().split("\n");
   const y = lines.findIndex((line) => line.includes("◆ lead"));
-  expect(y).toBeGreaterThan(2);
+  // The lead is at the very top of the sidebar, then a line, then THREADS.
+  expect(y).toBe(1);
   expect(selected()).toBe("◆ lead");
-  expect(lines[3]).toContain("I am lead");
+  expect(lines[1]).toContain("I am lead");
   expect(lines[y + 1]).toContain("running · claude");
-  expect(lines[y + 2]).toContain("● app-12");
-  expect(lines[y + 3]).toContain("working · claude");
-  expect(lines[y + 4]).toContain("● app-7");
+  expect(lines[y + 2]?.slice(0, sidebar - 1)).toMatch(/^─+$/);
+  expect(lines[y + 3]).toContain("Threads");
+  expect(lines[y + 5]).toContain("● app-12");
+  expect(lines[y + 6]).toContain("working · claude");
+  expect(lines[y + 7]).toContain("● app-7");
   expect(seen()).not.toContain("app-3");
   // Nothing of the screen is left in agents' sessions: each stays one pane.
   const panes = tmux(agents, "list-panes", "-a", "-F", "#{session_name}").out.trim().split("\n");
@@ -243,7 +250,7 @@ test("updates on its own, with needs you in the sidebar", async () => {
   expect(seen()).toContain("● app-12");
   expect(seen()).toContain("needs you");
   // Its tab says so too, as other repositories' tabs would.
-  expect(seen().split("\n")[0]?.trimEnd()).toBe("  app •1");
+  expect(seen().split("\n")[0]?.trimEnd()).toMatch(/^ {2}Skelcrew v[\d.]+ +│ {3}app •1$/);
   sql("UPDATE threads SET status = 'done' WHERE task = 7");
   await until(() => !seen().includes("app-7"), "the done thread to go");
 });
@@ -370,7 +377,7 @@ test("an agent drawing the full screen with the mouse gets the wheel itself", as
   wheel(64);
   await until(() => existsSync(join(home, "drawn.bytes")), "the wheel");
   await until(
-    () => readFileSync(join(home, "drawn.bytes"), "utf8").startsWith("\x1b[<64;28;2M"),
+    () => readFileSync(join(home, "drawn.bytes"), "utf8").startsWith("\x1b[<64;28;4M"),
     "the wheel at its place in the agent's window",
   );
   expect(scrolledBack()).not.toContain("1");
@@ -405,12 +412,12 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
   open("lead");
   await ready("lead");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "27 88\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "29 88\n",
     "the agent's size",
   );
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "40");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "37 118\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "39 118\n",
     "the agent to resize",
   );
   const widths = tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out.trim().split("\n");
@@ -419,7 +426,7 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
   press("M-Down");
   press("M-Down");
   await until(() => selected() === "● app-7", "app-7");
-  tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "5");
+  tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "4");
   await until(() => !seen().includes("⌥↑↓ move"), "the hints to give way");
   await until(() => selected() === "● app-7", "the sidebar to scroll");
 });
@@ -430,14 +437,14 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
 const edge = (height: number) =>
   seen()
     .split("\n")
-    .slice(3, height)
+    .slice(0, height)
     .map((line) => `${line[sidebar - 1]}${line[sidebar] ?? " "}`);
 
 test("the sidebar's line runs to the bottom, with a blank column before the agent", async () => {
   open("lead");
   await ready("lead");
   expect(new Set(edge(30))).toEqual(new Set(["│ ", "┤ "]));
-  expect(seen().split("\n")[3]?.indexOf("I am lead")).toBe(sidebar + 1);
+  expect(seen().split("\n")[1]?.indexOf("I am lead")).toBe(sidebar + 1);
 });
 
 test("the sidebar's line stays whole however the terminal is resized", async () => {
@@ -488,7 +495,7 @@ test("a terminal a few lines high still shows the agent, and Ctrl-Q still leaves
   await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
 });
 
-test("the strip sits above the agent, and the agent's height stays as you switch", async () => {
+test("the strip ends the top row, and the agent's height stays as you switch", async () => {
   sql(`UPDATE threads SET title = 'Fix the login', pr = 34, checks = 'passing',
     review_round = 2, reviewer = 'claude', reviewed_by = 'codex', verdict = 'changes',
     review_line = 'A test is missing.' WHERE task = 7`);
@@ -498,17 +505,15 @@ test("the strip sits above the agent, and the agent's height stays as you switch
   press("M-Down");
   press("M-Down");
   const line = "app-7  Fix the login  #34  checks passing  round 2 · codex · changes";
-  await until(() => seen().includes(line), "the strip");
-  const [, first = ""] = seen().split("\n");
-  expect(first.indexOf("app-7")).toBe(sidebar + 1);
+  await until(() => tabRow().endsWith(line), "the strip");
   expect(seen()).not.toContain("A test is missing.");
   expect(readFileSync(join(home, "app-7.size"), "utf8")).toBe(height);
   press("M-Up");
-  await until(() => seen().split("\n")[1]?.trimEnd().endsWith("app-12") === true, "app-12's strip");
+  await until(() => tabRow().endsWith("app-12"), "app-12's strip");
   expect(readFileSync(join(home, "app-12.size"), "utf8")).toBe(height);
 });
 
-test("under the tabs, the header is the second row and the thin line the third, with no blank rows", async () => {
+test("the header, the tabs and the strip share one row, and the agent starts right under it", async () => {
   sql("UPDATE threads SET title = 'Fix the login', pr = 34 WHERE task = 7");
   open("lead");
   await ready("lead");
@@ -516,19 +521,22 @@ test("under the tabs, the header is the second row and the thin line the third, 
   press("M-Down");
   await until(() => seen().includes("#34"), "the strip");
   const lines = seen().split("\n");
-  expect(lines[0]?.trimEnd()).toBe("  app");
-  expect(lines[1]).toStartWith("  Skelcrew");
-  expect(lines[1]).toContain("#34");
-  expect(lines[2]).toStartWith("───");
-  expect(lines[3]).toContain("I am app-7");
+  // Skelcrew above the sidebar, its edge, and the tab above the agent, then the strip.
+  expect(lines[0]?.trimEnd()).toMatch(
+    /^ {2}Skelcrew v[\d.]+ +│ {3}app +app-7 {2}Fix the login {2}#34$/,
+  );
+  // The open tab's grey starts where the agent's text does, with its name two columns in.
+  expect(lines[0]?.indexOf("app")).toBe((lines[1]?.indexOf("I am") ?? 0) + 2);
+  expect(lines[1]).toContain("I am app-7");
 });
 
-test("above the sidebar it says just Skelcrew, in white, when no laptop sent you here", async () => {
+test("above the sidebar it says Skelcrew, in white, and the checkout's version when no laptop sent you here", async () => {
   open("lead");
   await ready("lead");
-  await until(() => seen().split("\n")[1]?.trimEnd() === "  Skelcrew", "the header");
+  const above = () => (seen().split("\n")[0] ?? "").slice(0, sidebar - 1).trimEnd();
+  await until(() => above() === `  Skelcrew v${checkout.version}`, "the header");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
-  const header = colours.split("\n")[1];
+  const header = colours.split("\n")[0];
   expect(header).toContain("\x1b[1m");
   expect(header).toContain("38;5;231m");
 });
@@ -538,27 +546,33 @@ test("each terminal says where it came from, as they can come from different lap
   await ready("lead");
   open("lead", "two");
   await ready("lead", "two");
-  const place = (window: string) => seen(window).split("\n")[1] ?? "";
-  await until(() => place("one").startsWith("  Skelcrew · sprite:demo"), "the first place");
-  await until(() => place("two").trimEnd() === "  Skelcrew", "the second header", "two");
+  const place = (window: string) => (seen(window).split("\n")[0] ?? "").slice(0, sidebar - 1);
+  await until(
+    () => place("one").startsWith(`  Skelcrew v${checkout.version} · sprite:`),
+    "the first place",
+  );
+  await until(
+    () => place("two").trimEnd() === `  Skelcrew v${checkout.version}`,
+    "the second header",
+    "two",
+  );
 });
 
-// The divider under the strip, as you see it.
-const divider = () => (seen().split("\n")[2] ?? "").trimEnd();
-
-test("a thin line runs under the strip, meeting the sidebar's edge, at every width", async () => {
+test("the sidebar's edge runs from the top row to the bottom, at every width", async () => {
   open("lead");
   await ready("lead");
-  await until(() => divider().length === 120, "the divider");
-  expect(divider().indexOf("┬")).toBe(sidebar - 1);
-  expect(divider().replace("┬", "")).toMatch(/^─+$/);
-  expect(seen().split("\n")[3]?.[sidebar - 1]).toBe("│");
+  const column = () =>
+    seen()
+      .split("\n")
+      .slice(0, 30)
+      .map((line) => line[sidebar - 1]);
+  await until(() => column().every((mark) => mark === "│" || mark === "┤"), "the edge");
   for (const width of [150, 90, 120]) {
     tmux(terminal, "resize-window", "-t", "=one:", "-x", String(width), "-y", "30");
     // tmux stretches the sidebar for a moment before the screen's hook sets its width back.
     await until(
-      () => divider().length === width && divider().indexOf("┬") === sidebar - 1,
-      `the divider at ${width}`,
+      () => tabRow().length > sidebar && column().every((mark) => mark === "│" || mark === "┤"),
+      `the edge at ${width}`,
     );
   }
 });
@@ -566,7 +580,7 @@ test("a thin line runs under the strip, meeting the sidebar's edge, at every wid
 test("a thread's strip follows it as it changes", async () => {
   open("app-7");
   await ready("app-7");
-  await until(() => seen().split("\n")[1]?.trimEnd().endsWith("app-7") === true, "the strip");
+  await until(() => tabRow().endsWith("app-7"), "the strip");
   sql(`UPDATE threads SET review_round = 1, reviewed_by = 'codex', verdict = 'approve',
     review_line = 'Looks right.' WHERE task = 7`);
   await until(() => seen().includes("app-7  round 1 · codex · approved"), "the review");
@@ -588,9 +602,8 @@ test("what a title says is shown, never run or read as a format", async () => {
 test("clicking the strip, or turning the wheel over it, does nothing", async () => {
   open("lead");
   await ready("lead");
-  click(60, 2);
-  click(60, 3);
-  type("\x1b[<64;60;2M");
+  click(100, 1);
+  type("\x1b[<64;100;1M");
   await Bun.sleep(200);
   const modes = tmux(screen, "list-panes", "-a", "-F", "#{pane_in_mode}").out.trim().split("\n");
   expect(modes).toEqual(["0", "0"]);
@@ -709,7 +722,7 @@ test("a click on an issue shows its page on the right, marks its row, and fills 
   expect(lines).toContain("State");
   expect(lines).toContain("ana");
   expect(lines).not.toContain("I am lead");
-  expect(seen().split("\n")[1]).toContain("app-31  Add CSV export");
+  expect(tabRow()).toEndWith("app-31  Add CSV export");
 });
 
 test("a PR's page shows its branch, checks and latest review", async () => {
@@ -731,13 +744,59 @@ test("the page's link reaches your terminal as a terminal link, through tmux", a
   expect(seen()).toContain(`GitHub  ${issueUrl}`);
 });
 
-test("Alt-Up moves from the lead into ISSUES, and Alt-Down back puts you in the agent", async () => {
+// Puts a stand-in for the command that opens a link in your browser ahead of the real one, on a
+// machine with a display, so a test never opens a real browser. It logs each link it gets.
+function fakeOpener(): void {
+  mkdirSync(join(home, "opener"));
+  const log = JSON.stringify(join(home, "opened"));
+  for (const name of ["open", "xdg-open"])
+    writeFileSync(join(home, "opener", name), `#!/bin/sh\necho "$1" >> ${log}\n`, { mode: 0o755 });
+  before = `PATH=${join(home, "opener")}:$PATH DISPLAY=:9 `;
+}
+// Clicks the page's link to GitHub, a few columns into it, where the screen shows it.
+function clickLink(): void {
+  const lines = seen().split("\n");
+  const y = lines.findIndex((line) => line.includes(`GitHub  ${issueUrl}`));
+  click((lines[y] ?? "").indexOf(issueUrl) + 4, y + 1);
+}
+
+test("a plain click on the page's link opens it in your browser, on the machine you sit at", async () => {
+  fakeOpener();
   await openWithPages();
-  press("M-Up");
-  await onPage("Add CSV export");
-  await until(() => right().includes("Author"), "the page");
-  expect(selected()).toContain("Fix login");
+  clickRow("app-31");
+  await onPage("click to open");
+  // A click elsewhere on the page opens nothing.
+  const lines = seen().split("\n");
+  click(sidebar + 6, lines.findIndex((line) => line.includes("Author")) + 1);
+  clickLink();
+  await until(() => read("opened") !== "", "the link to open");
+  await Bun.sleep(300);
+  expect(read("opened")).toBe(`${issueUrl}\n`);
+});
+
+test("on a remote, a click on the page's link copies it to your terminal's clipboard", async () => {
+  fakeOpener();
+  openOnGitHub();
+  open("lead", "one", "xterm-256color", "120", "sprite:demo");
+  await ready("lead");
+  // Your terminal keeps what a program copies, as Ghostty does.
+  tmux(terminal, "set", "-s", "set-clipboard", "on");
+  await until(() => seen().includes("app-31"), "the issue");
+  clickRow("app-31");
+  await onPage("click to copy");
+  clickLink();
+  await onPage("copied");
+  expect(tmux(terminal, "show-buffer").out).toBe(issueUrl);
+  expect(read("opened")).toBe("");
+});
+
+test("Alt-Down moves from the lead into ISSUES, and Alt-Up back puts you in the agent", async () => {
+  await openWithPages();
   press("M-Down");
+  await onPage("line 1 of the description");
+  await until(() => right().includes("Author"), "the page");
+  expect(selected()).toContain("Add CSV export");
+  press("M-Up");
   await until(() => seen().includes("I am lead"), "the lead");
   await until(() => selected() === "◆ lead", "the lead's row");
   type("straight back\r");
@@ -747,16 +806,24 @@ test("Alt-Up moves from the lead into ISSUES, and Alt-Down back puts you in the 
 test("Alt-Shift-Down and Alt-Shift-Up jump from list to list, through tmux", async () => {
   await openWithPages();
   press("M-S-Down");
+  await until(() => right().includes("Author"), "the first row of ISSUES");
+  press("M-S-Down");
+  await until(() => selected() === "● app-12", "the first row of THREADS");
+  press("M-S-Down");
   await onPage("All of them.");
   press("M-S-Up");
-  await until(() => seen().includes("I am lead"), "the first row of THREADS");
+  await until(() => selected() === "● app-12", "THREADS again");
   press("M-S-Up");
-  await until(() => right().includes("Author"), "the first row of ISSUES");
+  await until(() => right().includes("Author"), "ISSUES again");
+  press("M-S-Up");
+  await until(() => seen().includes("I am lead"), "the lead");
 });
 
 test("moving from a thread to a page and back returns to that thread, not the lead", async () => {
   await openWithPages();
-  press("M-Down");
+  press("M-S-Down");
+  await until(() => right().includes("Author"), "the first issue");
+  press("M-S-Down");
   await until(() => selected() === "● app-12", "the thread");
   press("M-S-Down");
   await onPage("All of them.");
@@ -778,13 +845,15 @@ test("keys pressed together when leaving a page all count, however slowly the cl
   );
   before = `PATH=${join(home, "slow")}:$PATH `;
   await openWithPages();
-  press("M-Up");
-  await until(() => right().includes("Author"), "the page");
+  press("M-Down");
+  await until(() => right().includes("Author"), "the first page");
+  press("M-Down");
+  await until(() => selected().includes("Fix login"), "the last page");
   type("\x1b[1;3B\x1b[1;3B");
-  await until(() => seen().includes("I am app-12"), "the second row's agent");
+  await until(() => seen().includes("I am app-7"), "the second row's agent");
   await Bun.sleep(1200);
-  expect(selected()).toBe("● app-12");
-  expect(seen()).toContain("I am app-12");
+  expect(selected()).toBe("● app-7");
+  expect(seen()).toContain("I am app-7");
 });
 
 test("a pane too narrow for a page's lines cuts them, so every line keeps its own row", async () => {
@@ -796,8 +865,8 @@ test("a pane too narrow for a page's lines cuts them, so every line keeps its ow
   const panes = tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out.trim().split("\n");
   const width = Number(panes.at(-1));
   expect(width).toBeLessThan(11);
-  const rows = right().split("\n").slice(3, 21);
-  const lines = drawPage(issuePage, issueUrl, width).map((line) =>
+  const rows = right().split("\n").slice(1, 19);
+  const lines = drawPage(issuePage, issueUrl, width, "click to open").map((line) =>
     Bun.stripANSI(line).slice(0, width).trimEnd(),
   );
   expect(rows.map((row) => row.trimEnd())).toEqual(lines.slice(0, 18));
@@ -811,7 +880,7 @@ test("a page leaves none of its terminal's modes behind on the agent", async () 
   clickRow("app-31");
   await onPage("line 1 of the description");
   expect(modes()).not.toBe(before);
-  press("M-S-Down");
+  press("M-S-Up");
   await until(() => seen().includes("I am lead"), "the lead");
   await until(() => modes() === before, "the modes to come back");
 });
@@ -845,7 +914,7 @@ test("typing on a page goes nowhere, and the agent never gets it", async () => {
   press("C-\\");
   await Bun.sleep(300);
   expect(right()).toBe(before);
-  press("M-S-Down");
+  press("M-S-Up");
   await until(() => seen().includes("I am lead"), "the agent");
   await Bun.sleep(300);
   expect(read("lead.typed")).toBe("");
@@ -855,7 +924,7 @@ test("Ctrl-C pressed the moment a page opens can't take the right side away", as
   await openWithPages();
   const running = () => tmux(screen, "list-panes", "-a", "-F", "#{pane_pid}").out;
   const before = running();
-  press("M-Up");
+  press("M-Down");
   await until(() => running() !== before, "the pane to start the page");
   for (let i = 0; i < 10; i++) {
     press("C-c");
@@ -863,7 +932,7 @@ test("Ctrl-C pressed the moment a page opens can't take the right side away", as
   }
   await Bun.sleep(500);
   expect(running().trim().split("\n")).toHaveLength(2);
-  press("M-Down");
+  press("M-Up");
   await until(() => seen().includes("I am lead"), "the lead");
   type("still here\r");
   await until(() => read("lead.typed").includes("still here"), "what you typed");
@@ -946,7 +1015,7 @@ test("leaving a page for an agent ends the page, and no client is left behind it
   await openWithPages();
   clickRow("app-31");
   await onPage("line 1 of the description");
-  press("M-S-Down");
+  press("M-S-Up");
   await until(() => seen().includes("I am lead"), "the lead");
   await until(() => pagesRunning() === 0, "the page to end");
   expect(tmux(agents, "list-clients").out.trim().split("\n")).toHaveLength(1);
@@ -992,10 +1061,10 @@ test("the hints stay at the bottom, and a click there picks nothing", async () =
   open("lead");
   await ready("lead");
   const lines = seen().trimEnd().split("\n");
-  expect(lines.at(-4)).toContain("⌥↑↓ move");
-  expect(lines.at(-3)).toContain("⌥⇧↑↓ list");
-  expect(lines.at(-2)).toContain("⌥←→ repo");
+  expect(lines.at(-2)).toContain("⌥↑↓ move");
   expect(lines.at(-1)).toContain("⌃Q quit");
+  expect(seen()).not.toContain("⌥⇧↑↓");
+  expect(seen()).not.toContain("⌥←→");
   click(5, 30);
   await Bun.sleep(200);
   expect(selected()).toBe("◆ lead");
@@ -1173,14 +1242,12 @@ INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you) VALUE
   ('simon', 'site', 8, 'site-8', 'skelcrew/8', 'waiting', 1);`);
   agent(siteLead);
 }
-// The row of tabs, as you see it.
-const tabRow = () => (seen().split("\n")[0] ?? "").trimEnd();
 
 test("a tab for each repository runs across the top, with a badge for what needs you", async () => {
   addSite();
   open("lead");
   await ready("lead");
-  await until(() => tabRow() === "  app  site •1", "the tabs");
+  await until(() => /^ {2}Skelcrew v[\d.]+ +│ {3}app {4}site •1$/.test(tabRow()), "the tabs");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out.split("\n")[0];
   // The open one is on a picked row's grey.
   expect(colours).toContain("48;5;238");

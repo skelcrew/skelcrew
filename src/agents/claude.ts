@@ -193,6 +193,11 @@ function startCommand(given: {
   kept.CLAUDE_CODE_OAUTH_TOKEN = token;
   // Its greyed-out suggestions propose steps, such as pushing, that belong to Skelcrew.
   kept.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = "false";
+  // Cross-session messaging off, since agents never talk to other Claude Code sessions. On a
+  // Mac its socket under the agent's long temporary folder runs past the 103 bytes a socket
+  // path may have. Claude Code then falls back to /tmp, which the sandbox hides, and shows a
+  // yellow warning at the top of the session.
+  kept.CLAUDE_CODE_HARBOR_KITE = "false";
   // Its install folder is read-only in the sandbox, so an update only fails, with a red line
   // in every session. You update claude outside Skelcrew, and agents start on that version.
   kept.DISABLE_AUTOUPDATER = "1";

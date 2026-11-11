@@ -319,6 +319,7 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
         "abc-123",
         "Fix the bug",
         "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false",
+        "CLAUDE_CODE_HARBOR_KITE=false",
         "CLAUDE_CODE_OAUTH_TOKEN=tok-123",
         `CLAUDE_CONFIG_DIR=${config}`,
         "DISABLE_AUTOUPDATER=1",

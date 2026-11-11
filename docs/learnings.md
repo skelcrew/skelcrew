@@ -43,6 +43,12 @@ that covers the code you are about to write.
 - **Turn off Claude Code's prompt suggestions** with
   `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false`. Its greyed-out suggestions propose steps,
   such as pushing, that belong to Skelcrew.
+- **Turn off cross-session messaging** with `CLAUDE_CODE_HARBOR_KITE=false`. Claude Code
+  opens a socket at `$CLAUDE_CODE_TMPDIR/cc-socks/<pid>.sock`, and a path over 103 bytes
+  falls back to `/tmp/cc-socks-<uid>`. On a Mac the agent's temporary folder is long enough
+  to fall back, the sandbox hides `/tmp`, and every session opens with "Cross-session
+  messaging is off". The variable is Claude Code's internal name, not a documented one, so
+  check it still works after an update.
 - **Claude Code can outlive SIGTERM for a few seconds.** Wait for it to exit before
   removing the thread's clone or anything else it uses.
 
@@ -270,6 +276,14 @@ that covers the code you are about to write.
   doesn't expand that in the text it types, so `run-shell -C` must expand the whole
   `send-keys` first. A second click soon after the first comes as `DoubleClick1Status`, not
   `MouseDown1Status`, so bind both.
+- **A terminal opens a link only when no program has the mouse, or with Shift.** Ghostty
+  looks for a link under the pointer only while mouse reporting is off or Shift is held, so
+  Cmd-click on the screen goes to tmux and Shift-Cmd-click opens. WezTerm and kitty skip the
+  program with Shift too. iTerm2 opens on Cmd-click and also hands the click to the program.
+  No escape code asks a terminal to keep link clicks for itself.
+- **tmux keeps a program's OSC 52 copy from your terminal** unless `set-clipboard` is `on`.
+  Its default, `external`, lets only tmux itself set your clipboard. A terminal tmux doesn't
+  recognise also needs the `clipboard` feature.
 - **`capture-pane -e` shows a terminal link with an id tmux made up**, as `ESC]8;id=...;url`.
   A test that looks for `ESC]8;;url` finds nothing.
 

@@ -7,8 +7,8 @@ import type { List, Lists, Row } from "./rows.ts";
 // whether anything could show on the right.
 type Stop = { place: string; open: boolean };
 
-// Returns what you can move to, list by list, top to bottom. Every thread counts, as THREADS
-// scrolls to keep you in view. Of ISSUES and PRS only the rows on screen do, since they have
+// Returns what you can move to, list by list, top to bottom, the lead first, on its own. Every
+// thread counts, as THREADS scrolls to keep you in view. Of ISSUES and PRS only the rows on screen do, since they have
 // no scrolling, and a row you can't see would be a page you can't place.
 function stops(rows: Row[], lists: Lists, shown: string | null, size: Size): Stop[][] {
   // The layout says which rows of ISSUES and PRS are on screen now.
@@ -18,12 +18,14 @@ function stops(rows: Row[], lists: Lists, shown: string | null, size: Size): Sto
     links
       .filter((link) => lines.some((line) => line.link === link))
       .map((link) => ({ place: link.url, open: true }));
-  // Every row of THREADS is a stop, open only while its agent runs. The lists come in the order
-  // the sidebar draws them: ISSUES above THREADS and PRS below, each only when it is there.
-  const threads = rows.map((row) => ({ place: row.session, open: row.running }));
+  // The lead and every row of THREADS are stops, open only while their agent runs. The lead has
+  // no status of its own. The lists come in the order the sidebar draws them: the lead, then
+  // ISSUES above THREADS and PRS below, each only when it is there.
+  const stop = (row: Row) => ({ place: row.session, open: row.running });
   return [
+    rows.filter((row) => row.status === null).map(stop),
     ...(lists.issues ? [seen(lists.issues)] : []),
-    threads,
+    rows.filter((row) => row.status !== null).map(stop),
     ...(lists.prs ? [seen(lists.prs)] : []),
   ];
 }

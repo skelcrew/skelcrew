@@ -19,8 +19,7 @@ export const onShade: Record<number, string> = {
 };
 // The line at the sidebar's edge, a shade quieter than dim text, as it only parts two things.
 export const edge = "38;5;237";
-// The padding on each side, in columns, which also starts every heading and mark. A terminal
-// cell is about twice as tall as wide, so two columns look like the one blank row at the top.
+// The padding on each side, in columns, which also starts every heading and mark.
 export const pad = "  ";
 
 // Returns text from outside, such as an issue's title, safe to show: its control codes would
