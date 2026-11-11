@@ -13,18 +13,14 @@ export const sidebarWidth = 31;
 // Run with each opening, ahead of the new session, so a first draw never shows tmux's own
 // look. Your own ~/.tmux.conf never applies.
 const config = [
-  // tmux's three status lines are at the top. The tabs are the first, the strip and header
-  // share the second, and the thin line is the third, so the agent's height stays the same on
-  // every session. No blank rows go around them: the thin line sits mid-cell, so half a row
-  // falls on each side of it, which is the padding the header needs. They start empty, as the
-  // sidebar fills them in, and have no clock to redraw for.
-  ["set", "-g", "status", "3"],
+  // tmux's one status line is at the top, so the agent's height stays the same on every
+  // session. The header, the tabs and the strip share it. It starts empty, as the sidebar fills
+  // it in, and has no clock to redraw for.
+  ["set", "-g", "status", "on"],
   ["set", "-g", "status-position", "top"],
   ["set", "-g", "status-interval", "0"],
   ["set", "-g", "status-style", "default"],
   ["set", "-g", "status-format[0]", ""],
-  ["set", "-g", "status-format[1]", ""],
-  ["set", "-g", "status-format[2]", ""],
   // tmux writes the title to your terminal, over whatever sprite or your shell put there. An
   // agent's own title stops at its pane, on the agents' server: Claude Code changes its title
   // as it works, and the title says where you are, which switching agents doesn't change. tmux

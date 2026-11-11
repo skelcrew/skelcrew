@@ -1,5 +1,5 @@
-// The sidebar's lists as lines for its pane: the lead and threads, ISSUES and PRS, and the keys
-// at the bottom. It reads nothing, so what you see can be tested without a terminal.
+// The sidebar as lines for its pane: the lead's row on top, then ISSUES, THREADS and PRS, and the
+// keys at the bottom. It reads nothing, so what you see can be tested without a terminal.
 import { clean, edge, fitted, grey, onShade, pad, paint, shade, white, yellow } from "./look.ts";
 import { type Link, type List, type Lists, needing, type Row, threadMark } from "./rows.ts";
 
@@ -10,8 +10,8 @@ type Line = { text: string; row?: Row; link?: Link; joins?: boolean };
 
 // Where a name starts, past its mark.
 const indent = `${pad}  `;
-// The keys you need most, at the bottom of the sidebar.
-const hints = [`${pad}⌥↑↓ move`, `${pad}⌥⇧↑↓ list`, `${pad}⌥←→ repo`, `${pad}⌃Q quit`];
+// The keys you need most, at the bottom of the sidebar. The others are in Skelcrew's help.
+const hints = [`${pad}⌥↑↓ move`, `${pad}⌃Q quit`];
 
 // Returns a line with spaces added out to a width.
 const filled = (line: string, width: number) =>
@@ -90,7 +90,7 @@ const headed = (heading: string): Line[] => [
 // Returns a list's lines for a third of `height` lines: its heading and a blank line, as many
 // rows as fit, then a count of the rest. Rows come with the dim ones last, so those are the
 // first to be left out. A third with room for just one row keeps the row, and the count gives
-// way. An empty list says so, as its third stays either way.
+// way.
 function listLines(
   heading: string,
   list: List,
@@ -101,7 +101,6 @@ function listLines(
   const top = headed(heading);
   // Each row takes two lines. When not all of them fit, a line is kept for the count of the
   // rest, unless that would leave no row at all.
-  if (list.links.length === 0) return [...top, { text: paint(grey, `${pad}none`) }];
   const fit = Math.floor((height - top.length) / 2);
   const few = list.total > fit ? Math.max(Math.floor((height - top.length - 1) / 2), 1) : fit;
   const links = list.links.slice(0, few);
@@ -135,62 +134,65 @@ function scrolled(blocks: Line[][], here: number, room: number): Line[] {
   return blocks.slice(first).flat().slice(0, room);
 }
 
-// Returns the lines above the hints, and how many there can be. The hints take the bottom four,
+// Returns the lines above the hints, and how many there can be. The hints take the bottom lines,
 // until the sidebar can't hold them and the whole row you are looking at: then they give way, as
 // the rows are what you pick from and the keys are also in Skelcrew's help.
-// The lists the repository has, of ISSUES, THREADS and PRS, share those lines evenly, however
-// full, so each list stays in the same place on screen, and what doesn't divide goes to THREADS.
-// On a terminal too short for a heading and a row in each share, or for the row you are looking
-// at in THREADS, ISSUES and PRS go, and THREADS has the whole sidebar, as it is the list you
-// move through. With neither of them, THREADS has it too, with no heading.
+// The lead's row comes first, on its own, with a line under it. Below it, the lists that show, of
+// ISSUES, THREADS and PRS, share the lines left evenly, however full, so each list stays in the
+// same place on screen, and what doesn't divide goes to THREADS. A list shows only with something
+// in it, as an empty list says nothing. On a terminal too short for a heading and a row in each
+// share, or for the row you are looking at in THREADS, the lists go, and the lead and the threads
+// have the whole sidebar together, with no heading, as they are what you move through.
 export function layout(
   rows: Row[],
   lists: Lists,
   shown: string | null,
   size: Size,
 ): { lines: Line[]; room: number } {
-  // Every thread's lines, and how tall the row you are looking at is. The hints keep the bottom
+  // Every row's lines, and how tall the row you are looking at is. The hints keep the bottom
   // lines only while that row still fits above them.
   const width = size.width - 1;
-  const blocks = rows.map((row) =>
-    rowLines(row, row.session === shown, width).map((text) => ({ text, row })),
-  );
+  const linesOf = (row: Row) =>
+    rowLines(row, row.session === shown, width).map((text) => ({ text, row }));
+  const blocks = rows.map(linesOf);
   const here = rows.findIndex((row) => row.session === shown);
   const tallest = blocks[here]?.length ?? 2;
   const room = size.height >= tallest + hints.length ? size.height - hints.length : size.height;
-  const others = [
-    ...(lists.issues ? [["Issues", lists.issues] as const] : []),
-    ...(lists.prs ? [["PRs", lists.prs] as const] : []),
+  // The lead is the row with no status of its own.
+  const lead = rows.filter((row) => row.status === null).flatMap(linesOf);
+  const threads = rows.filter((row) => row.status !== null).map(linesOf);
+  const yours = rows.filter((row) => row.status !== null).findIndex((row) => row.session === shown);
+  const issues = lists.issues?.links.length ? lists.issues : null;
+  const prs = lists.prs?.links.length ? lists.prs : null;
+  // Each list that shows, as what draws it in a number of lines. THREADS scrolls to keep yours
+  // in view.
+  const parts = [
+    ...(issues ? [(height: number) => listLines("Issues", issues, shown, height, width)] : []),
+    ...(threads.length > 0
+      ? [(height: number) => [...headed("Threads"), ...scrolled(threads, yours, height - 2)]]
+      : []),
+    ...(prs ? [(height: number) => listLines("PRs", prs, shown, height, width)] : []),
   ];
-  // One line parts each list from the next.
-  const share = Math.floor((room - others.length) / (others.length + 1));
-  const middle = room - others.length - others.length * share;
-  const top = headed("Threads");
-  // Too short for a heading and a row in each list, or for your row in THREADS: THREADS alone.
-  if (others.length === 0 || share < top.length + 2 || middle < top.length + tallest)
+  // One line goes under the lead, and one between each list and the next. What doesn't divide
+  // goes to THREADS, or to the first list without it.
+  const below = room - lead.length - (lead.length > 0 ? parts.length : parts.length - 1);
+  const share = Math.floor(below / parts.length);
+  const wide = threads.length > 0 && issues ? 1 : 0;
+  const heights = parts.map((_, index) =>
+    index === wide ? below - (parts.length - 1) * share : share,
+  );
+  // Too short for a heading and a row in each list, or for your row in THREADS: no lists.
+  const tallestThread = threads[yours]?.length ?? 2;
+  const threadsFit = threads.length === 0 || (heights[wide] ?? 0) >= 2 + tallestThread;
+  if (parts.length === 0 || share < 4 || !threadsFit)
     return { lines: scrolled(blocks, here, room), room };
-  // THREADS has its heading, then its rows, scrolled to keep yours in view and filled out to its
-  // share.
+  // Each list is filled out to its share, so the list after it always starts in the same place.
   const divider = { text: paint(edge, "─".repeat(Math.max(width, 0))), joins: true };
-  const threads = [
-    ...top,
-    ...padded(scrolled(blocks, here, middle - top.length), middle - top.length),
+  const sections = [
+    ...(lead.length > 0 ? [lead] : []),
+    ...parts.map((part, index) => padded(part(heights[index] ?? share), heights[index] ?? share)),
   ];
-  // Returns a list's lines, filled out to its share, so the list after it always starts in the
-  // same place.
-  const listed = ([heading, list]: (typeof others)[number]) =>
-    padded(listLines(heading, list, shown, share, width), share);
-  // ISSUES goes above THREADS and PRS below, with a line between each. A repository with PRS
-  // and no ISSUES has them below THREADS.
-  const [first, second] = others;
-  const lines = lists.issues
-    ? [
-        ...(first ? listed(first) : []),
-        divider,
-        ...threads,
-        ...(second ? [divider, ...listed(second)] : []),
-      ]
-    : [...threads, divider, ...(first ? listed(first) : [])];
+  const lines = sections.flatMap((section, index) => (index > 0 ? [divider, ...section] : section));
   return { lines, room };
 }
 

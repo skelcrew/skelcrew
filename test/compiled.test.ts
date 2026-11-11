@@ -150,7 +150,7 @@ test("the sidebar's header shows the release of the Skelcrew that runs it", asyn
     const header = () => tmux("show", "-v", "-t", "=one:", "status-format[0]").stdout.toString();
     for (let tries = 0; tries < 100 && !header().includes("Skelcrew"); tries++)
       await Bun.sleep(100);
-    expect(header()).toContain(" 0.4.2");
+    expect(header()).toContain(" v0.4.2");
   } finally {
     tmux("kill-server");
   }

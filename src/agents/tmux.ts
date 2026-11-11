@@ -272,22 +272,10 @@ export const paneTty = (socket: string, target: string) =>
 export const paneWidth = (socket: string, target: string) =>
   Number(tmux(socket, ["display-message", "-p", "-t", target, "#{pane_width}"]).out.trim());
 
-// Sets the status lines of a session, as tmux formats: the tabs, the strip and the line under
-// it. Each set makes tmux redraw the whole screen, so all go in one run, for one redraw, and
-// the sidebar calls this only when a line changed. The lone ";" separates tmux commands, so
-// it skips literal().
-export function showStrip(socket: string, session: string, lines: string[]): void {
-  // One `set` per line, joined by ";" into a single tmux run.
-  const sets = lines.flatMap((line, index) => [
-    ...(index > 0 ? [";"] : []),
-    "set",
-    "-t",
-    `=${session}:`,
-    `status-format[${index}]`,
-    literal(line),
-  ]);
-  const argv = ["tmux", "-L", socket, "-f", "/dev/null", ...sets];
-  Bun.spawnSync(argv, { env: cleanEnv(), stdout: "ignore", stderr: "ignore" });
+// Sets the status line of a session, as a tmux format: the header, the tabs and the strip. Each
+// set makes tmux redraw the whole screen, so the sidebar calls this only when the line changed.
+export function showStrip(socket: string, session: string, line: string): void {
+  tmux(socket, ["set", "-t", `=${session}:`, "status-format[0]", literal(line)]);
 }
 
 // Returns the session a client on the given terminal is showing, or null while it has none,
