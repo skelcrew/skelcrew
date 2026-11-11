@@ -276,6 +276,14 @@ that covers the code you are about to write.
   doesn't expand that in the text it types, so `run-shell -C` must expand the whole
   `send-keys` first. A second click soon after the first comes as `DoubleClick1Status`, not
   `MouseDown1Status`, so bind both.
+- **A terminal opens a link only when no program has the mouse, or with Shift.** Ghostty
+  looks for a link under the pointer only while mouse reporting is off or Shift is held, so
+  Cmd-click on the screen goes to tmux and Shift-Cmd-click opens. WezTerm and kitty skip the
+  program with Shift too. iTerm2 opens on Cmd-click and also hands the click to the program.
+  No escape code asks a terminal to keep link clicks for itself.
+- **tmux keeps a program's OSC 52 copy from your terminal** unless `set-clipboard` is `on`.
+  Its default, `external`, lets only tmux itself set your clipboard. A terminal tmux doesn't
+  recognise also needs the `clipboard` feature.
 - **`capture-pane -e` shows a terminal link with an id tmux made up**, as `ESC]8;id=...;url`.
   A test that looks for `ESC]8;;url` finds nothing.
 

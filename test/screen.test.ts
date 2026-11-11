@@ -122,7 +122,7 @@ function open(
 await openScreen(${JSON.stringify(agents)}, ${JSON.stringify(session)}, "lead", "simon/app");
 await Bun.write(${JSON.stringify(join(home, `left-${window}`))}, "left");`,
   );
-  const named = where ? `SKELCREW_REMOTE_NAME=${where} ` : `${before}`;
+  const named = `${where ? `SKELCREW_REMOTE_NAME=${where} ` : ""}${before}`;
   const title = `printf '\\033]2;my shell\\007'`;
   const command = `${title}; ${named}TERM=${term} ${process.execPath} ${script}; sleep 300`;
   tmux(terminal, "new-session", "-d", "-s", window, "-x", width, "-y", "30", command);
@@ -744,6 +744,52 @@ test("the page's link reaches your terminal as a terminal link, through tmux", a
   expect(seen()).toContain(`GitHub  ${issueUrl}`);
 });
 
+// Puts a stand-in for the command that opens a link in your browser ahead of the real one, on a
+// machine with a display, so a test never opens a real browser. It logs each link it gets.
+function fakeOpener(): void {
+  mkdirSync(join(home, "opener"));
+  const log = JSON.stringify(join(home, "opened"));
+  for (const name of ["open", "xdg-open"])
+    writeFileSync(join(home, "opener", name), `#!/bin/sh\necho "$1" >> ${log}\n`, { mode: 0o755 });
+  before = `PATH=${join(home, "opener")}:$PATH DISPLAY=:9 `;
+}
+// Clicks the page's link to GitHub, a few columns into it, where the screen shows it.
+function clickLink(): void {
+  const lines = seen().split("\n");
+  const y = lines.findIndex((line) => line.includes(`GitHub  ${issueUrl}`));
+  click((lines[y] ?? "").indexOf(issueUrl) + 4, y + 1);
+}
+
+test("a plain click on the page's link opens it in your browser, on the machine you sit at", async () => {
+  fakeOpener();
+  await openWithPages();
+  clickRow("app-31");
+  await onPage("click to open");
+  // A click elsewhere on the page opens nothing.
+  const lines = seen().split("\n");
+  click(sidebar + 6, lines.findIndex((line) => line.includes("Author")) + 1);
+  clickLink();
+  await until(() => read("opened") !== "", "the link to open");
+  await Bun.sleep(300);
+  expect(read("opened")).toBe(`${issueUrl}\n`);
+});
+
+test("on a remote, a click on the page's link copies it to your terminal's clipboard", async () => {
+  fakeOpener();
+  openOnGitHub();
+  open("lead", "one", "xterm-256color", "120", "sprite:demo");
+  await ready("lead");
+  // Your terminal keeps what a program copies, as Ghostty does.
+  tmux(terminal, "set", "-s", "set-clipboard", "on");
+  await until(() => seen().includes("app-31"), "the issue");
+  clickRow("app-31");
+  await onPage("click to copy");
+  clickLink();
+  await onPage("copied");
+  expect(tmux(terminal, "show-buffer").out).toBe(issueUrl);
+  expect(read("opened")).toBe("");
+});
+
 test("Alt-Down moves from the lead into ISSUES, and Alt-Up back puts you in the agent", async () => {
   await openWithPages();
   press("M-Down");
@@ -820,7 +866,7 @@ test("a pane too narrow for a page's lines cuts them, so every line keeps its ow
   const width = Number(panes.at(-1));
   expect(width).toBeLessThan(11);
   const rows = right().split("\n").slice(1, 19);
-  const lines = drawPage(issuePage, issueUrl, width).map((line) =>
+  const lines = drawPage(issuePage, issueUrl, width, "click to open").map((line) =>
     Bun.stripANSI(line).slice(0, width).trimEnd(),
   );
   expect(rows.map((row) => row.trimEnd())).toEqual(lines.slice(0, 18));
