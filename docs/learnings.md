@@ -125,6 +125,13 @@ that covers the code you are about to write.
 - **Agents read `.git/config`.** A remote URL with a token in it, or an `extraheader`, would
   be visible to them, so Skelcrew refuses to start the lead while a clone holds one. Hand git
   your gh login for each command, as a credential helper, rather than saving it.
+- **Codex needs the Mac Keychain's service.** It checks each site's certificate through
+  `com.apple.SecurityServer`, and with it closed every request fails, with nothing but
+  "Reconnecting…" and "workspace routing discovery failed". Opening it is safe only while the
+  home folder stays hidden: the login keychain is a file there, and with it hidden, an agent
+  asking for gh's token or Claude Code's login finds nothing. Checked on a Mac with
+  `security find-generic-password` inside the sandbox. Keep `com.apple.securityd.xpc`
+  closed: it holds no file the sandbox could hide.
 - **Agents share the network.** They can reach ports on localhost and abstract sockets.
 - **Mount the folder of clones, not each clone.** A mount per clone, made when the sandbox
   starts, misses repositories brought in later. Mount their parent folder, and create it
