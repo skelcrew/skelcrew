@@ -60,10 +60,21 @@ test("writes nowhere but the agent's folders and the terminal", () => {
   expect(profile()).not.toContain("(allow file-write*)\n");
 });
 
-test("keeps the Keychain closed, where gh and Claude Code keep your logins", () => {
+test("lets Codex check a site's certificate, but keeps your logins out of reach", () => {
   const text = profile();
-  expect(text).not.toContain("com.apple.SecurityServer");
+  // Codex checks every connection's certificate through the Keychain's service, and with it
+  // closed reaches nothing. Your login keychain is a file in your home folder, which stays
+  // hidden, so the service finds none of your logins.
+  expect(text).toContain('(global-name "com.apple.SecurityServer")');
+  expect(text).toContain('(deny file-read* (subpath "/Users/simon"))');
+  // The newer Keychain, which holds no file the sandbox could hide, stays closed.
   expect(text).not.toContain("com.apple.securityd");
+});
+
+test("lets a database such as Postgres start, which on a Mac needs System V shared memory", () => {
+  const text = profile();
+  expect(text).toContain("(allow ipc-sysv-shm)");
+  expect(text).toContain("(allow ipc-sysv-sem)");
 });
 
 test("never lets an agent start something outside the sandbox", () => {
