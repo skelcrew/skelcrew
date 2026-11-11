@@ -192,8 +192,9 @@ test("shows the lead and every thread that isn't done, beside the agent", async 
   await ready("lead");
   const lines = seen().split("\n");
   const y = lines.findIndex((line) => line.includes("◆ lead"));
-  // The lead is at the very top of the sidebar, then a line, then THREADS.
-  expect(y).toBe(1);
+  // The lead is at the top of the sidebar, below a blank line, then a line, then THREADS.
+  expect(y).toBe(2);
+  expect(lines[1]?.slice(0, sidebar - 1).trim()).toBe("");
   expect(selected()).toBe("◆ lead");
   expect(lines[1]).toContain("I am lead");
   expect(lines[y + 1]).toContain("running · claude");
