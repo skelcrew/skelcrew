@@ -13,10 +13,18 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
 // What every program needs, and nothing else. All else stays denied, so a Mac service nobody
-// thought of stays closed. Two services are left out on purpose: com.apple.SecurityServer
-// and com.apple.securityd.xpc are the Keychain, where gh keeps your GitHub token and Claude
-// Code your login. Agents log in with Skelcrew's token, so they never need it. lsopen and
-// appleevent-send stay denied too, as open and osascript start programs outside the sandbox.
+// thought of stays closed. com.apple.SecurityServer is the Keychain's service, where gh keeps
+// your GitHub token and Claude Code your login. It is open because Codex checks each site's
+// certificate through it, and with it closed reaches nothing. Your logins stay out of reach
+// all the same: your login keychain is a file in your home folder, which the sandbox hides,
+// so the service finds none of them. com.apple.securityd.xpc, the newer Keychain, has no such
+// file to hide, so it stays closed. lsopen and appleevent-send stay denied too, as open and
+// osascript start programs outside the sandbox.
+// Shared memory and semaphores of both kinds are open, as Postgres on a Mac needs the older
+// System V kind to start, and builders run their repository's tests. macOS has one set for
+// the whole machine, where Linux gives each sandbox its own, so an agent could disturb a
+// Postgres you run yourself. It can't read its data that way: Postgres keeps only a small
+// lock record there.
 // Local sockets are denied here and opened one by one below: tmux's and the ssh agent's would
 // run commands with your rights, and a Mac has no /run to hide them in.
 const base = `(version 1)
@@ -32,6 +40,7 @@ const base = `(version 1)
 (allow mach-lookup
   (global-name "com.apple.FontObjectsServer")
   (global-name "com.apple.PowerManagement.control")
+  (global-name "com.apple.SecurityServer")
   (global-name "com.apple.SystemConfiguration.DNSConfiguration")
   (global-name "com.apple.SystemConfiguration.configd")
   (global-name "com.apple.bsd.dirhelper")
@@ -49,6 +58,8 @@ const base = `(version 1)
 )
 (allow ipc-posix-shm)
 (allow ipc-posix-sem)
+(allow ipc-sysv-shm)
+(allow ipc-sysv-sem)
 (allow iokit-open
   (iokit-registry-entry-class "IOSurfaceRootUserClient")
   (iokit-registry-entry-class "RootDomainUserClient")
