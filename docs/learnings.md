@@ -132,6 +132,11 @@ that covers the code you are about to write.
   asking for gh's token or Claude Code's login finds nothing. Checked on a Mac with
   `security find-generic-password` inside the sandbox. Keep `com.apple.securityd.xpc`
   closed: it holds no file the sandbox could hide.
+- **Postgres on a Mac needs System V shared memory.** It takes a small segment and its
+  semaphores that way, so a sandbox without `ipc-sysv-shm` and `ipc-sysv-sem` stops it from
+  starting, and builders can't run the tests. Linux gives each sandbox a private set; macOS
+  has one for the machine, so agents could disturb a Postgres you run yourself. Decided by
+  Simon: running tests matters more.
 - **Agents share the network.** They can reach ports on localhost and abstract sockets.
 - **Mount the folder of clones, not each clone.** A mount per clone, made when the sandbox
   starts, misses repositories brought in later. Mount their parent folder, and create it

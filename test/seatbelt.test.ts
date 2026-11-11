@@ -71,6 +71,12 @@ test("lets Codex check a site's certificate, but keeps your logins out of reach"
   expect(text).not.toContain("com.apple.securityd");
 });
 
+test("lets a database such as Postgres start, which on a Mac needs System V shared memory", () => {
+  const text = profile();
+  expect(text).toContain("(allow ipc-sysv-shm)");
+  expect(text).toContain("(allow ipc-sysv-sem)");
+});
+
 test("never lets an agent start something outside the sandbox", () => {
   const text = profile();
   // Each of these reaches a process with your rights: open, osascript and any app.

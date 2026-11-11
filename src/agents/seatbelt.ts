@@ -20,6 +20,11 @@ import { basename, dirname, join } from "node:path";
 // so the service finds none of them. com.apple.securityd.xpc, the newer Keychain, has no such
 // file to hide, so it stays closed. lsopen and appleevent-send stay denied too, as open and
 // osascript start programs outside the sandbox.
+// Shared memory and semaphores of both kinds are open, as Postgres on a Mac needs the older
+// System V kind to start, and builders run their repository's tests. macOS has one set for
+// the whole machine, where Linux gives each sandbox its own, so an agent could disturb a
+// Postgres you run yourself. It can't read its data that way: Postgres keeps only a small
+// lock record there.
 // Local sockets are denied here and opened one by one below: tmux's and the ssh agent's would
 // run commands with your rights, and a Mac has no /run to hide them in.
 const base = `(version 1)
@@ -53,6 +58,8 @@ const base = `(version 1)
 )
 (allow ipc-posix-shm)
 (allow ipc-posix-sem)
+(allow ipc-sysv-shm)
+(allow ipc-sysv-sem)
 (allow iokit-open
   (iokit-registry-entry-class "IOSurfaceRootUserClient")
   (iokit-registry-entry-class "RootDomainUserClient")
