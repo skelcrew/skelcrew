@@ -258,12 +258,13 @@ const tabText = (tabs: Tab[], open: string, width: number) =>
 test("tabs name each repository in order, above the agent, with a badge for what needs you", () => {
   const tabs = [tab("app"), tab("site", 1)];
   expect(tabText(tabs, "simon/app", 120)).toBe("  app    site •1");
-  // The open one is bold white on a picked row's grey, the others dim, and the badge yellow.
+  // Tabs have greys of their own, apart from the rest of the screen: the open one is bold white
+  // on a dark grey, the others dim on a lighter grey, and the badge yellow.
   const line = top({ tabs, shown: "lead" });
-  expect(line).toContain("#[bg=colour238,fg=colour231,bold]  app  #[default]");
-  expect(line).toContain("#[fg=brightblack]  site #[fg=yellow]•1  #[default]");
+  expect(line).toContain("#[bg=colour234,fg=colour231,bold]  app  #[default]");
+  expect(line).toContain("#[bg=colour237,fg=colour245]  site #[fg=yellow]•1  #[default]");
   expect(top({ tabs, open: "simon/site" })).toContain(
-    "#[bg=colour238,fg=colour231,bold]  site #[fg=colour221]•1  #[default]",
+    "#[bg=colour234,fg=colour231,bold]  site #[fg=colour221]•1  #[default]",
   );
 });
 
