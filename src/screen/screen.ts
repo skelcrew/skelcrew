@@ -77,13 +77,21 @@ const config = [
   // terminal, as tmux otherwise keeps a program's copies from it.
   ["set", "-s", "terminal-features[90]", "*:sync:hyperlinks:clipboard"],
   ["set", "-s", "set-clipboard", "on"],
-  // tmux's border between the panes is blank: the sidebar draws its own line, so the border
-  // is a gap before the agent.
-  ["set", "-g", "pane-border-lines", "spaces"],
   // tmux shares a resize out among panes, so tmux itself sets the sidebar's width back after
   // each, with no process of Skelcrew's to do it.
   ["set-hook", "-g", "window-resized", `resize-pane -t :.0 -x ${sidebarWidth}`],
 ];
+
+// Returns whether this machine's tmux can make the border between the panes blank, which tmux
+// can since 3.6. An older one refuses the whole screen over it. A version that isn't a plain
+// number, such as "next-3.7" or "master", is taken as new.
+function blankBorder(env: Record<string, string>): boolean {
+  const said = Bun.spawnSync(["tmux", "-V"], { env, stderr: "ignore" }).stdout.toString();
+  const version = said.match(/^tmux (\d+)\.(\d+)/);
+  if (!version) return true;
+  const [major, minor] = [Number(version[1]), Number(version[2])];
+  return major > 3 || (major === 3 && minor >= 6);
+}
 
 // Returns the command for the right pane: an ordinary tmux client attached to the session.
 // When the client ends, because the agent you were looking at ended or you left its session
@@ -140,8 +148,12 @@ export async function openScreen(
   const where = env.SKELCREW_REMOTE_NAME ?? "";
   const left = sidebar(agents, name, where, repository);
   // The title is the session's own: terminals on this server can come from different laptops.
+  // tmux's border between the panes is blank where it can be: the sidebar draws its own line,
+  // so the border is a gap before the agent. On an older tmux it stays tmux's thin line.
+  const border = blankBorder(env) ? [["set", "-g", "pane-border-lines", "spaces"]] : [];
   const open = [
     ...config,
+    ...border,
     ["new-session", "-s", name, "--", ...agentClient(agents, session, lead)],
     ["set", "set-titles-string", windowTitle(env.SKELCREW_REMOTE_NAME)],
     ["split-window", "-hbd", "-l", String(sidebarWidth), "--", ...left],

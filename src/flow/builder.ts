@@ -57,10 +57,11 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 }
 
 // Records a new thread and returns it: on a task of the repository's tracker, from Skelcrew's copy,
-// which sc start brings up to date first, or, in a repository with no tracker, on a title
-// and body, as a task of the thread's own named t1, t2 and on. Refuses a task the copy doesn't
-// have open, and a task that has a thread already, unless that one failed or is done, such as
-// after sc rm: then it starts over in the same folder, on the task it had. Only records it, since the lead waits on the answer.
+// which sc start brings up to date first, or on a title and body, as a task of the thread's own
+// named t1, t2 and on. That works with a tracker too, so you can start work without filing it.
+// Refuses a task the copy doesn't have open, and a task that has a thread already, unless that
+// one failed or is done, such as after sc rm: then it starts over in the same folder, on the
+// task it had. Only records it, since the lead waits on the answer.
 // Setting up its clone and starting its builder come after, and can take minutes. `given` is a
 // start request, so its `repo` is the repository's name in Skelcrew or its owner/name.
 export async function startThread(
@@ -69,8 +70,8 @@ export async function startThread(
     | { repo: string; task: string; from?: string | undefined }
     | { repo: string; title: string; body: string },
 ): Promise<Thread> {
-  // Find the repository and whether a tracker holds its tasks, which decides where the task's
-  // title and body come from.
+  // Find the repository and whether a tracker holds its tasks, which decides where a named
+  // task's title and body come from.
   const repository = findRepository(db, given.repo);
   const { owner, repo, name } = repository;
   const tracked = trackerOf(db, repository) !== null;
@@ -79,10 +80,6 @@ export async function startThread(
   let title: string;
   let body: string;
   if ("title" in given) {
-    if (tracked)
-      throw new Error(
-        `${name} has a tracker, so its tasks belong there: create one with sc task create, and start it by its name`,
-      );
     // The highest number of the repository's own tasks, to name the next one.
     const ours = db
       .query("SELECT task FROM threads WHERE owner = ? AND repo = ? AND task GLOB 't[0-9]*'")

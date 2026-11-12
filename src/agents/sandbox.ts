@@ -165,6 +165,9 @@ export function sandboxArgs(given: {
   }
   // SKELCREW_SANDBOX tells Skelcrew's own commands, and its tests, that they run inside.
   args.push("--setenv", "SKELCREW_SANDBOX", "1", "--setenv", "PATH", `${bin}:${path}`);
+  // Postgres clients default to a socket in /tmp, which the sandbox hides, so they are
+  // pointed at localhost over TCP. A host the project names itself still wins.
+  args.push("--setenv", "PGHOST", "localhost");
   args.push("--chdir", cwd, "--", ...command);
   return args;
 }

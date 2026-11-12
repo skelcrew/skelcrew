@@ -309,6 +309,11 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         return { task: `${repository.name}-${task.id}` };
       }
       case "review": {
+        // A builder may ask only for its own thread, such as when you ask on its pull request
+        // for another review. Its own thread's name is in the refusal, as nothing else tells it.
+        const builder = builderOf(caller);
+        if (builder && threadOn(db, request.repo, request.task)?.folder !== builder.folder)
+          throw new Error(`you may ask for a review of ${threadName(db, builder)} only`);
         const thread = findThread(db, request.repo, request.task);
         rerunReview(db, tmux, thread.folder);
         return { reviewing: threadName(db, thread) };
@@ -402,11 +407,6 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         return { started: `Started ${threadName(db, thread)}.` };
       }
       case "start new": {
-        // Whether the repository has a tracker, which refuses this start, is in the skelcrew.yaml
-        // of Skelcrew's clone. The daemon may still be making it, and without it, a thread with
-        // no tracker would start in a repository whose tasks belong in one.
-        const { owner, repo } = findRepository(db, request.repo);
-        if (!existsSync(cloneDir(owner, repo))) await refreshClones(db);
         const thread = await startThread(db, request);
         begin(thread);
         return { started: `Started ${threadName(db, thread)}.` };

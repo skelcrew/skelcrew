@@ -77,7 +77,8 @@ export type DaemonRequest = z.infer<typeof DaemonRequest>;
 // Who is on the other end of a socket: you, a repository's lead, or a thread's builder. An
 // agent may ask only for what its commands need. Trusting a repository is never a request:
 // only you can, in your own terminal. A builder may tell only its repository's lead, never
-// another thread, and you type to a builder yourself in the sidebar, so you have no tell.
+// another thread, and may ask for a review of its own thread only. You type to a builder
+// yourself in the sidebar, so you have no tell.
 export type Caller = "you" | { lead: { owner: string; repo: string } } | Thread;
 // The requests each kind of caller may make. The daemon refuses any other before acting.
 export const allowed = {
@@ -111,7 +112,15 @@ export const allowed = {
     "rm",
     "tell",
   ],
-  builder: ["status", "submit", "tell lead", "question asked", "question answered", "turn ended"],
+  builder: [
+    "status",
+    "submit",
+    "review",
+    "tell lead",
+    "question asked",
+    "question answered",
+    "turn ended",
+  ],
 };
 
 // Returns a decoded socket message, or undefined so invalid JSON can be rejected without
