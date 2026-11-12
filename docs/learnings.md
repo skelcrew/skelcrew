@@ -333,6 +333,14 @@ that covers the code you are about to write.
 - **Don't end a session while bubblewrap is starting.** Killed about 10 to 20 ms in,
   `--die-with-parent` can miss, and the sandbox's first process lives on. It is PID 1 of its
   namespace, so only SIGKILL from outside ends it. Wait until the fake has run.
+- **Bun gives each test five seconds unless told otherwise.** On a busy machine, a test that
+  starts daemons, sandboxes or many processes takes longer, and failed with nothing wrong.
+  `setDefaultTimeout` in a preload only reaches the first test file of a run, so
+  `bun run check` passes `--timeout` instead.
+- **A fixed wait fails on a busy machine.** Timers fire late and processes start slowly, so
+  a test that looks after a set time, or counts what happened in it, can look too early.
+  Wait for the thing itself: a file, a line on screen, a row, a process gone. Time only
+  what can't come too soon, such as the gap between two renewals.
 - **`Bun.spawn` without `env` ignores changes to `process.env`.** It hands on the environment
   the process started with. Pass `env: process.env` to hand on a change.
 

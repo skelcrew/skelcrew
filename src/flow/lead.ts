@@ -138,7 +138,7 @@ async function typeNotes(db: Database, tmux: string, owner: string, repo: string
   const where = "owner = ? AND repo = ?";
   // Each pass reads the oldest note and the first thread waiting to be announced, so what was
   // saved while typing is seen too.
-  for (;;) {
+  while (true) {
     const note = Note.parse(
       db.query(`SELECT id, text FROM notes WHERE ${where} ORDER BY id`).get(owner, repo),
     );

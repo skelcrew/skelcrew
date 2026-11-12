@@ -175,7 +175,7 @@ export function refreshClones(db: Database): Promise<void> {
     const done = new Set<string>();
     // Read again after each repository, so one brought in during the refresh is cloned in it
     // too: a thread started on it waits on this refresh for its clone.
-    for (;;) {
+    while (true) {
       const next = repositories(db).find((r) => !done.has(`${r.owner}/${r.repo}`));
       if (!next) break;
       const { owner, repo } = next;

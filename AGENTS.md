@@ -51,6 +51,7 @@ These are correctness requirements. If a task asks you to break one, stop and sa
   without them.
 - **Check every outside input with Zod**: `skelcrew.yaml`, requests over the socket, what `gh`
   returns, and anything read back from disk.
+- Write endless loops as `while (true)`.
 
 ## Test first
 

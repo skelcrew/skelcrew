@@ -268,7 +268,7 @@ test("says where to look when the daemon doesn't come back on the new release", 
   const done = await beforeAttaching("0.4.3");
   expect(done.code).toBe(1);
   expect(done.err).toContain(daemonLog());
-}, 15_000);
+}, 60_000);
 
 // Runs sc stamped with `build` on a server, as --remote from a laptop on `laptop` runs it.
 async function onServer(build: string, laptop: string) {

@@ -821,7 +821,7 @@ ${fails ? 'echo "GitHub is unreachable" >&2; exit 1' : 'rm "$SKELCREW_PLUGIN_CON
     );
     expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
     expect(attached()).toBe(true);
-  }, 30_000);
+  }, 60_000);
 
   test("sc repo add runs that setup there too, then adds the repository", async () => {
     const checkout = onGitHub("simon/app", "WRITE");
@@ -831,7 +831,7 @@ ${fails ? 'echo "GitHub is unreachable" >&2; exit 1' : 'rm "$SKELCREW_PLUGIN_CON
       "Installed.\nCloning simon/app for Skelcrew.\nAdded simon/app, as app.\n",
     );
     expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
-  }, 30_000);
+  }, 60_000);
 
   test("Ctrl-C at the setup stops sc, with no lead opened", async () => {
     const checkout = onGitHub("simon/app", "WRITE");
@@ -842,7 +842,7 @@ ${fails ? 'echo "GitHub is unreachable" >&2; exit 1' : 'rm "$SKELCREW_PLUGIN_CON
     expect(screen).not.toContain(hint);
     expect(existsSync(clone("simon/app"))).toBe(false);
     expect(calls()).not.toContain("daemon lead");
-  }, 30_000);
+  }, 60_000);
 
   test("a setup that fails says why, and sc goes on without the repository", async () => {
     const checkout = onGitHub("simon/app", "WRITE");
@@ -852,7 +852,7 @@ ${fails ? 'echo "GitHub is unreachable" >&2; exit 1' : 'rm "$SKELCREW_PLUGIN_CON
     expect(screen).toContain(hint);
     expect(existsSync(clone("simon/app"))).toBe(false);
     expect(calls()).not.toContain("daemon lead");
-  }, 30_000);
+  }, 60_000);
 
   test("with no terminal, nothing runs, and the error names the command that fixes it", async () => {
     const checkout = onGitHub("simon/app", "WRITE");
