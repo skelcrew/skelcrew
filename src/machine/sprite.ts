@@ -3,7 +3,7 @@
 // finds out it is on one, shapes the sandbox for it, and runs the daemon as a Sprite service.
 import { z } from "zod";
 import { quietly } from "../run.ts";
-import { errorText, skelLine, windowTitle } from "../say.ts";
+import { errorText, windowTitle } from "../say.ts";
 import { originHere } from "./origin.ts";
 import {
   addMachine,
@@ -350,14 +350,12 @@ export async function addSprite(name: string): Promise<number> {
   const names = spriteNames(`sc remote add ${where}`);
   // Said before anything is created, so you know what a yes below leads to.
   console.log(
-    skelLine(
-      `setting up ${where}: installing bubblewrap, making its URL public for GitHub's webhooks, copying Skelcrew there and running the first run.`,
-    ),
+    `Setting up ${where}: installing bubblewrap, making its URL public for GitHub's webhooks, copying Skelcrew there and running the first run.`,
   );
   if (!names.includes(name)) {
     // A mistyped name would otherwise make a second Sprite you pay for.
-    if (!yes(skelLine(`No Sprite named ${name}. Create it? [y/N]`))) {
-      console.log(skelLine("no Sprite was created."));
+    if (!yes(`No Sprite named ${name}. Create it? [y/N]`)) {
+      console.log("No Sprite was created.");
       return 1;
     }
     if ((await runInTerminal(["sprite", "create", "--skip-console", name])) !== 0)
@@ -376,7 +374,7 @@ export async function remoteSprite(name: string, args: string[]): Promise<number
   checkName(name);
   // A sleeping Sprite can take a while to answer, which looks like a hang with nothing on
   // screen. Not in a pipe, where the output is the command's own.
-  if (process.stdout.isTTY) console.log(skelLine(`connecting to sprite:${name}…`));
+  if (process.stdout.isTTY) console.log(`Connecting to sprite:${name}…`);
   // The command as you typed it, for the error that says to run it again once the laptop
   // is ready.
   const again = ["sc", "--remote", `sprite:${name}`, ...args].map(quoted).join(" ");

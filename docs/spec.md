@@ -137,7 +137,7 @@ From a laptop, `sc --remote simon@workbox` runs `ssh -t simon@workbox sc --from 
 3. **It sets the Sprite up**: installs bubblewrap, puts Skelcrew there, and makes the Sprite's URL public, so wake-ups from GitHub can reach it.
 4. **It runs the first run inside the Sprite**, then prints `sc --remote sprite:demo`.
 
-After that, `sc --remote sprite:demo` attaches to a repository's lead, and `sc --remote sprite:demo ls` runs any command there, waking the Sprite if it sleeps. In a terminal, Skelcrew first prints `Skelcrew · connecting to sprite:demo…`, as waking can take a while.
+After that, `sc --remote sprite:demo` attaches to a repository's lead, and `sc --remote sprite:demo ls` runs any command there, waking the Sprite if it sleeps. In a terminal, Skelcrew first prints `Connecting to sprite:demo…`, as waking can take a while.
 
 Everything must work over a plain `ssh -t` or `sprite console`: no local display, no browser on the same machine, no clipboard. Logins that need a browser, such as GitHub's and Claude's, use a code and a link you open on your laptop.
 

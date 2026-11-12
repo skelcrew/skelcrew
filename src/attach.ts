@@ -7,7 +7,6 @@ import { openDb } from "./db.ts";
 import { leadOf } from "./flow/lead.ts";
 import { findThread } from "./flow/thread.ts";
 import { restartDaemon, startDaemon } from "./machine/service.ts";
-import { skelLine } from "./say.ts";
 import { openScreen } from "./screen/screen.ts";
 import { checkoutFolder, git, release, singleFile } from "./version.ts";
 
@@ -57,7 +56,7 @@ export async function onThisSkel(): Promise<void> {
   const running = await daemonRuns();
   const want = running && wanted(running);
   if (!want) return;
-  console.log(skelLine(`restarting the daemon on ${want}. Your agents keep running.`));
+  console.log(`Restarting the daemon on ${want}. Your agents keep running.`);
   const log = restartDaemon();
   // Done once a daemon answers that runs what this Skelcrew wants. The old one can still
   // answer for a moment while it stops.
