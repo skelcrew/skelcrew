@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { codexHome } from "../agents/codex.ts";
-import { HarnessName } from "../agents/harness.ts";
+import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { configFile, readConfig } from "../config.ts";
 import { openDb } from "../db.ts";
 import { claudeTokenFile, configDir } from "../paths.ts";
@@ -19,15 +19,7 @@ import { dropCapabilities, onSprite, spriteServiceInstalled } from "./sprite.ts"
 type Env = Record<string, string | undefined>;
 
 // The harnesses agents can run on, in the order the first run offers them.
-const harnesses = [
-  {
-    name: "claude",
-    title: "Claude Code",
-    command: "claude",
-    install: "curl -fsSL https://claude.ai/install.sh | bash",
-  },
-  { name: "codex", title: "Codex", command: "codex", install: "npm install -g @openai/codex" },
-] as const;
+const harnesses = HarnessName.options.map(harnessNamed);
 // The programs agents need on Linux, each with the line that installs it.
 const linuxTools = [
   { command: "tmux", install: "sudo apt install tmux" },
@@ -51,8 +43,8 @@ function missingHarness(env: Env): string[] {
   const saved = readConfig().harness;
   // Before you pick one, any installed harness will do.
   const wanted = harnesses.filter((h) => saved === undefined || h.name === saved);
-  if (wanted.some((h) => Bun.which(h.command, { PATH }))) return [];
-  return wanted.map((h) => `  ${h.command}: ${h.install}`);
+  if (wanted.some((h) => Bun.which(h.program, { PATH }))) return [];
+  return wanted.map((h) => `  ${h.program}: ${h.install}`);
 }
 
 // Checks the programs a Mac needs and tries sandbox-exec, stopping setup with what to install
@@ -271,14 +263,14 @@ function pickHarness(env: Env): void {
   console.log("Choose the coding agent:");
   for (const [at, h] of harnesses.entries()) console.log(`  ${at + 1}) ${h.title}`);
   // The first one installed is the default, so Enter picks a harness that works.
-  const installed = harnesses.findIndex((h) => Bun.which(h.command, { PATH }));
+  const installed = harnesses.findIndex((h) => Bun.which(h.program, { PATH }));
   // Bun's prompt answers null both for Ctrl-D and for a bare Enter, unless it has a
   // default: then Enter gives the default and only Ctrl-D gives null.
   const answer = prompt("Number:", String(installed + 1));
   if (answer === null) throw new Error("no harness was picked, so none is saved");
   const picked = harnesses[Number(answer.trim()) - 1];
   if (!picked) throw new Error(`${answer.trim()} isn't one of the numbers, so no harness is saved`);
-  if (!Bun.which(picked.command, { PATH }))
+  if (!Bun.which(picked.program, { PATH }))
     throw new Error(`${picked.title} isn't installed. Install it first: ${picked.install}`);
   config.set("harness", picked.name);
   mkdirSync(configDir(), { recursive: true });
@@ -369,7 +361,7 @@ export function firstRun(from?: string): void {
     // a line.
     const yours = harnesses.find((h) => h.name === readConfig().harness);
     const other = harnesses.find((h) => h !== yours);
-    if (yours && other && !Bun.which(other.command, { PATH: env.PATH ?? "" }))
+    if (yours && other && !Bun.which(other.program, { PATH: env.PATH ?? "" }))
       console.log(`\n${other.title} isn't installed, so reviews run on ${yours.title}.`);
   }
   installService();
@@ -390,7 +382,7 @@ function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
   const PATH = env.PATH ?? "";
   // Reviews are asked about only when both harnesses are installed, as otherwise there is
   // nothing to pick.
-  const both = harnesses.every((h) => Bun.which(h.command, { PATH }));
+  const both = harnesses.every((h) => Bun.which(h.program, { PATH }));
   if (harness && both && !savedReviewerHarness() && !asked.reviewer)
     steps.push({
       title: "the coding agent for reviews",
