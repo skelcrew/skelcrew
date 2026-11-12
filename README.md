@@ -16,11 +16,10 @@ It runs on macOS and Linux, needs no sudo, and puts `sc` in `~/.local/bin`.
 
 ## First run
 
-1. Run `sc` in a checkout of one of your repositories.
-2. Say yes when it offers the GitHub plugin, `skelcrew/skel-plugin-github`. It connects GitHub and your harness.
-3. Say yes to `sc init`. It writes a `skelcrew.yaml` that makes GitHub issues the repository's tasks, then opens the lead.
-4. Commit and push `skelcrew.yaml`.
-5. On GitHub, add the `skelcrew` label to an issue.
+1. Run `sc` in a checkout of one of your GitHub repositories.
+2. Say yes when it offers the GitHub plugin, `skelcrew/skelcrew-github`. It signs you in to GitHub and installs Skelcrew's GitHub App on the repository.
+3. Pick Claude Code or Codex, and log it in for Skelcrew's agents. Then the lead opens. The repository's GitHub issues are now its tasks, with nothing to write or push.
+4. On GitHub, add the `skelcrew` label to an issue.
 
 Within 2 minutes Skelcrew starts a thread on it, and the lead tells you. A reviewed PR follows.
 

@@ -198,7 +198,7 @@ export function installPlugin(given: string, remote = originHere(), ask = true):
   }
   // A name starting with a dash would reach git as an option.
   if (!/^[\w.][\w.-]*\/[\w.-]+$/.test(given))
-    throw new Error(`${given} is neither a folder, such as ./skel-plugin-linear, nor owner/repo`);
+    throw new Error(`${given} is neither a folder, such as ./skelcrew-linear, nor owner/repo`);
   // Nothing of the clone runs before the checks and your yes.
   const { staged, manifest } = cloneTag(given, newestTag(given));
   try {

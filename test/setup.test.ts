@@ -523,7 +523,7 @@ test("a no holds for the repository, in every checkout of it, and another reposi
   expect(first.code).toBe(0);
   expect(first.out).toContain(offer);
   expect(first.out).toContain(
-    "Skelcrew won't ask again for simon/app. To install it: sc plugin install skelcrew/skel-plugin-github",
+    "Skelcrew won't ask again for simon/app. To install it: sc plugin install skelcrew/skelcrew-github",
   );
   // The offer comes before the first step.
   expect(first.out.indexOf(offer)).toBeLessThan(first.out.indexOf("Choose the coding agent"));
@@ -554,11 +554,11 @@ test("over --remote, the offer reads the remote sc brought from your laptop", as
   expect(parse(readFileSync(config(), "utf8")).github_declined).toEqual(["simon/app"]);
 });
 
-// Puts a GitHub plugin on the fake GitHub as skelcrew/skel-plugin-github, a tracker and forge whose
+// Puts a GitHub plugin on the fake GitHub as skelcrew/skelcrew-github, a tracker and forge whose
 // setup keeps the remote it was handed, and whose calls the fake plugin answers. It claims
 // simon/site.
 function publishGitHubPlugin(): void {
-  const plugin = join(home, "github", "skelcrew", "skel-plugin-github");
+  const plugin = join(home, "github", "skelcrew", "skelcrew-github");
   mkdirSync(plugin, { recursive: true });
   writeFileSync(
     join(plugin, "skelcrew-plugin.yaml"),
@@ -620,7 +620,7 @@ test("a yes installs the GitHub plugin with no second question, writes nothing h
   expect(run.err).toBe("");
   expect(run.code).toBe(0);
   expect(run.out).toContain(
-    "Installing github 0.1.0 from skelcrew/skel-plugin-github...\nInstalled github 0.1.0.\n",
+    "Installing github 0.1.0 from skelcrew/skelcrew-github...\nInstalled github 0.1.0.\n",
   );
   expect(run.out).not.toContain("[y/N]");
   expect(readFileSync(join(home, "handed"), "utf8")).toBe("https://github.com/simon/site\n");
