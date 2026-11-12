@@ -1309,6 +1309,20 @@ test("Alt-Right and Alt-Left switch both sides to the repository beside, and ope
   await until(() => seen().includes("I am lead") && seen().includes("app-12"), "app again");
 });
 
+// Ghostty on a Mac turns Alt-Left and Alt-Right into word jumps, so they never reach Skelcrew,
+// while Alt-Shift-Left and Alt-Shift-Right come through.
+test("Alt-Shift-Right and Alt-Shift-Left switch repositories too", async () => {
+  addSite();
+  daemon();
+  open("lead");
+  await ready("lead");
+  press("M-S-Right");
+  await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
+  await until(() => seen().includes("site-8") && !seen().includes("app-12"), "site's threads");
+  press("M-S-Left");
+  await until(() => seen().includes("I am lead") && seen().includes("app-12"), "app again");
+});
+
 test("a click on a tab switches to its repository", async () => {
   addSite();
   daemon();

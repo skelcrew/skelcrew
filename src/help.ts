@@ -109,8 +109,8 @@ export function help(color = colorful()): string {
     dim("  A task is named by its repository and number, such as app-12. --remote keeps"),
     dim("  Skelcrew on the other side up to date with yours, after asking. See skelcrew.dev."),
     dim("  In the sidebar, click a row or press Alt-Up or Alt-Down. Alt-Shift-Up and"),
-    dim("  Alt-Shift-Down jump between lists. Alt-Left and Alt-Right switch to the"),
-    dim("  repository before or after. Ctrl-Q leaves."),
+    dim("  Alt-Shift-Down jump between lists. Alt-Left and Alt-Right, or Alt-Shift-Left"),
+    dim("  and Alt-Shift-Right, switch to the repository before or after. Ctrl-Q leaves."),
     "",
   );
   return lines.join("\n");
