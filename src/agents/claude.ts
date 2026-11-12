@@ -208,6 +208,8 @@ function startCommand(given: {
     socket,
     cwd,
     command,
+    // Only a builder has a thread. The lead is what you type into, so it keeps its priority.
+    normalPriority: !thread,
   });
   return { argv, env: kept };
 }

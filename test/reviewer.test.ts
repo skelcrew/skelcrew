@@ -92,6 +92,9 @@ const start = (
   more: { signal?: AbortSignal; limit?: number; harness?: "claude"; model?: string } = {},
 ) => review({ ...given(), ...more });
 
+// What `nice` prints here, so a test can tell the reviewer's CPU priority from the test's own.
+const ownNiceness = () => Number(Bun.spawnSync(["nice"], { stdout: "pipe" }).stdout.toString());
+
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there these tests can't run.
 describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("reviewer", () => {
   test("answers with Codex's verdict, given the issue and the base branch", async () => {
@@ -109,6 +112,12 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("reviewer", () => {
     const schema = JSON.parse(kept("schema"));
     expect(schema.properties.verdict.enum).toEqual(["approve", "changes"]);
     expect(schema.additionalProperties).toBe(false);
+  });
+
+  test("runs at a lower CPU priority, so the screen and the lead stay quick", async () => {
+    fakeCodex(approve, ['nice > "$CODEX_HOME/sessions/nice"']);
+    await start();
+    expect(Number(kept("nice"))).toBe(Math.min(ownNiceness() + 10, 19));
   });
 
   test("reviews on the model your config names for Codex, as written", async () => {

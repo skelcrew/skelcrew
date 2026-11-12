@@ -233,7 +233,9 @@ async function startCommand(given: {
   // Only the environment the agent needs, plus its own CODEX_HOME.
   const kept = keptEnv(env, codex.keys);
   kept.CODEX_HOME = own;
-  const argv = sandboxArgs({ home, path: env.PATH ?? "", mounts, socket, cwd, command });
+  // Only a builder has a thread. The lead is what you type into, so it keeps its priority.
+  const path = env.PATH ?? "";
+  const argv = sandboxArgs({ home, path, mounts, socket, cwd, command, normalPriority: !thread });
   return { argv, env: kept };
 }
 
