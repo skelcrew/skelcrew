@@ -209,7 +209,7 @@ function logInCodex(env: Env, line: string): void {
 }
 
 // The plugin sc offers in a checkout of a GitHub repository.
-const githubPlugin = "skelcrew/skel-plugin-github";
+const githubPlugin = "skelcrew/skelcrew-github";
 
 // Returns whether a plugin named github is installed, so sc offers it only until it is.
 const hasGitHubPlugin = () => installedPlugins(openDb()).some((p) => p.name === "github");

@@ -77,7 +77,7 @@ test("runs commands with its state", async () => {
 
 test("runs a plugin's bun commands on the Bun inside it", async () => {
   // No bun on the PATH, so only Skelcrew itself can run the build.
-  const folder = join(home, "skel-plugin-fake");
+  const folder = join(home, "skelcrew-fake");
   mkdirSync(folder);
   writeFileSync(
     join(folder, "skelcrew-plugin.yaml"),
