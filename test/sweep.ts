@@ -1,5 +1,6 @@
 // Finds and ends what a test run left running. Run on its own, it waits for that run to die,
-// however it died, and clears up after it, since a killed run can't do that itself.
+// however it died, or to say its test file is done, and clears up after it, since a killed
+// run can't do that itself.
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
@@ -66,7 +67,13 @@ if (import.meta.main) {
   // the sweep keeps the run's latest tree. One started since the last look is missed. No test
   // starts such a process: all give a test's HOME to anything that keeps running.
   let tree: number[] = [];
-  while (proc(run, "cmdline") !== "") {
+  // The run sends SIGTERM when its test file is done, as a parallel worker goes on to run
+  // another file in the same process. Clearing up is then the same as after a dead run.
+  let done = false;
+  process.on("SIGTERM", () => {
+    done = true;
+  });
+  while (!done && proc(run, "cmdline") !== "") {
     tree = processTree(run)
       .slice(1)
       .filter((pid) => command(pid) !== "");
