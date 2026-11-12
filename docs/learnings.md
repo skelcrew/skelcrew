@@ -14,6 +14,11 @@ that covers the code you are about to write.
 - **Idle means more than a quiet pane.** Claude Code is idle when "esc to interrupt" is
   gone, a line holding only the `❯` prompt is on screen, and nothing has changed for a
   moment. A bell or a changing window title doesn't mean a turn ended.
+- **A person's draft at the prompt is not idle.** A paste lands after their unsent text, and
+  the Enter sends both. Ready means a line holding the bare prompt mark, so a draft makes
+  typing wait. A person can start a draft after the last look, so look again right before
+  the paste. Codex's draft replaces its placeholder, so its mark alone is `›`. A numbered
+  menu also shows the mark before text, and isn't a draft.
 - **Pass the first message on the command line, not by typing it.** Typed into the input, a
   long message collapses to "[Pasted text]" and can miss its Enter.
 

@@ -94,31 +94,35 @@ async function typeNow(socket: string, name: string, marks: Marks, text: string,
   const moment = waits.moment ?? 500;
   const timeout = waits.timeout ?? 60_000;
   const deadline = Date.now() + timeout;
-  // Text typed while Claude Code is starting or busy can be lost, so wait until it is idle.
-  // Check the signal after each wait too: the thread may have stopped meanwhile.
-  for (;;) {
-    if (waits.signal?.aborted) return;
-    const why = await notIdle(socket, name, marks, moment);
-    if (waits.signal?.aborted) return;
-    if (why === "") break;
-    if (Date.now() > deadline) {
-      const waited = `${timeout / 1000}s`;
-      // A person's draft gets a plain answer, as it isn't the agent being busy.
-      if (why === draft)
-        throw new Error(
-          `${name} had an unsent draft at its prompt for ${waited}, so nothing was typed`,
-        );
-      throw new Error(`${name} wasn't idle for ${waited} (${why}), so nothing was typed`);
-    }
-  }
   // A paste buffer of its own, so two daemons or two messages never paste each other's text.
   const buffer = `skelcrew-${process.pid}-${buffers++}`;
-  // Someone scrolled back would swallow the Enter below, and the message would never be
-  // sent. Being scrolled back shows in neither the check above nor the pane's text, so it
-  // is left here, whether or not anyone is. It fails when nobody is, which is fine.
-  tmux(socket, ["send-keys", "-X", "-t", `=${name}:`, "cancel"]);
   try {
-    mustTmux(socket, ["load-buffer", "-b", buffer, "-"], text);
+    // Text typed while Claude Code is starting or busy can be lost, so wait until it is idle.
+    // Check the signal after each wait too: the thread may have stopped meanwhile.
+    for (;;) {
+      if (waits.signal?.aborted) return;
+      const why = await notIdle(socket, name, marks, moment);
+      if (waits.signal?.aborted) return;
+      if (why === "") {
+        // Someone scrolled back would swallow the Enter below, and the message would never be
+        // sent. Being scrolled back shows in neither the check above nor the pane's text, so
+        // it is left here, whether or not anyone is. It fails when nobody is, which is fine.
+        tmux(socket, ["send-keys", "-X", "-t", `=${name}:`, "cancel"]);
+        mustTmux(socket, ["load-buffer", "-b", buffer, "-"], text);
+        // A person can start typing after the last look, and the paste would send their draft
+        // along with the message. So look once more right before pasting, and wait again if
+        // the prompt isn't bare. A moment remains, but only a tmux call long.
+        if (notReady(screen(socket, name), marks) === "") break;
+      } else if (Date.now() > deadline) {
+        const waited = `${timeout / 1000}s`;
+        // A person's draft gets a plain answer, as it isn't the agent being busy.
+        if (why === draft)
+          throw new Error(
+            `${name} had an unsent draft at its prompt for ${waited}, so nothing was typed`,
+          );
+        throw new Error(`${name} wasn't idle for ${waited} (${why}), so nothing was typed`);
+      }
+    }
     // Without the paste marks, Claude Code reads the Enter after a long message as a new
     // line, and the message is never sent. So the Enter goes on its own, a moment after the
     // paste.

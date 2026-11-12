@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -208,6 +209,45 @@ for (const [title, marks, draft] of drafts) {
     expect(read("received.txt")).toBe("");
   });
 }
+
+test("a draft started just before the paste is left alone, and the message waits for it", async () => {
+  // A tmux in front of the real one starts a person's draft once Skelcrew has found the prompt
+  // ready and loads its message, and lets the message on only once the draft shows. That
+  // makes the moment between the last look and the paste happen every time.
+  const real = Bun.which("tmux") ?? "tmux";
+  const bin = join(home, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(home, "race"), "❯ half-typed");
+  writeFileSync(
+    join(bin, "tmux"),
+    `#!/bin/sh
+case " $* " in *" load-buffer "*)
+  if [ -f "${home}/race" ]; then
+    mv "${home}/race" "${home}/draft"
+    until "${real}" -L ${socket} capture-pane -p -t =lead: | grep -q half-typed; do sleep 0.02; done
+  fi
+esac
+exec "${real}" "$@"
+`,
+    { mode: 0o755 },
+  );
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  try {
+    start("lead", drafting(claude.marks));
+    const typing = typeInto(socket, "lead", claude.marks, "hello", { moment });
+    await until(() => existsSync(join(home, "draft")));
+    await Bun.sleep(moment * 8);
+    expect(read("received.txt")).toBe("");
+    expect(shown()).toContain("❯ half-typed");
+    rmSync(join(home, "draft"));
+    await typing;
+    await until(() => read("received.txt").endsWith("\n"));
+    expect(read("received.txt")).toBe("\x1b[200~hello\x1b[201~\n");
+  } finally {
+    process.env.PATH = path;
+  }
+});
 
 test("a session runs its command in its folder, with its environment", async () => {
   start("builder", ["sh", "-c", 'echo "$SKELCREW_THREAD $(pwd)" > seen.txt; sleep 30'], {
