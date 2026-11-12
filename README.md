@@ -39,8 +39,8 @@ It sets the machine up and prints the command that connects to it, such as `sc -
 | `sc` | Opens the lead of the repository you are in. |
 | `sc init` | Writes a starter `skelcrew.yaml` in a checkout. |
 | `sc ps` | Lists threads, with their status and which need you. |
-| `sc attach <repo>-<task>` | Opens a thread's builder. Ctrl-Q detaches. |
-| `sc stop <repo>-<task>` | Ends a thread and keeps its branch and PR. |
+| `sc attach <thread>` | Opens a thread's builder. Ctrl-Q detaches. |
+| `sc stop <thread>` | Ends a thread and keeps its branch and PR. |
 | `sc remote add <host>` | Sets up a server or Sprite to run Skelcrew. |
 | `sc --remote <host>` | Connects to Skelcrew on that server. |
 
