@@ -2,7 +2,7 @@
 // remote, where it runs. Above the agent, a tab for each repository, then the strip, which says
 // what you are looking at: for a thread, its name, task, PR and checks, then its latest review,
 // and for a page, its row's name and title. The lead has none, as the sidebar says it all.
-import { clean, fitted } from "./look.ts";
+import { fitted, removeControlCodes } from "./look.ts";
 import type { Link, Row, Tab } from "./rows.ts";
 
 type Size = { left: number; width: number };
@@ -29,7 +29,7 @@ function aboutReview(row: Row): string {
   if (row.review === null) return "";
   const { round, reviewer, verdict } = row.review;
   const parts = [`round ${round}`, reviewer, verdicts[verdict] ?? verdict];
-  return `  ${clean(parts.filter(Boolean).join(" · "))}`;
+  return `  ${removeControlCodes(parts.filter(Boolean).join(" · "))}`;
 }
 
 // Returns the strip for a thread, in `width` columns at most: its name in bold, then the rest.
@@ -39,7 +39,7 @@ function aboutReview(row: Row): string {
 function aboutThread(row: Row, width: number): [string, string] {
   // The name, then the PR and checks at the end. With no room left after them, the name shows
   // alone.
-  const name = fitted(clean(row.name), width);
+  const name = fitted(removeControlCodes(row.name), width);
   const tail = [row.pr === null ? "" : `#${row.pr}`, row.checks ? checksText[row.checks] : ""]
     .filter(Boolean)
     .join("  ");
@@ -49,14 +49,14 @@ function aboutThread(row: Row, width: number): [string, string] {
   // The review takes what room is left, then the title what the review leaves.
   const review = fitted(aboutReview(row), spare);
   const room = spare - Bun.stringWidth(review);
-  const title = row.title ? fitted(`  ${clean(row.title)}`, room) : "";
+  const title = row.title ? fitted(`  ${removeControlCodes(row.title)}`, room) : "";
   return [name, `${title}${end}${review}`];
 }
 
 // Returns the strip for a page: its row's name, and its title in what room is left.
 function aboutPage(page: Link, width: number): [string, string] {
-  const name = fitted(clean(page.name), width);
-  return [name, fitted(`  ${clean(page.title)}`, width - Bun.stringWidth(name))];
+  const name = fitted(removeControlCodes(page.name), width);
+  return [name, fitted(`  ${removeControlCodes(page.title)}`, width - Bun.stringWidth(name))];
 }
 
 // Skelcrew's name above the sidebar, in the white of a selected name. A 256-colour number, so it
@@ -77,7 +77,7 @@ function header(where: string, left: number, version: string): string {
   const taken = Bun.stringWidth(shown) + 1;
   const number = room >= taken ? ` ${shown}` : "";
   // " · " before the place takes three columns.
-  const place = fitted(clean(where), Math.max(room - 3 - taken, 0));
+  const place = fitted(removeControlCodes(where), Math.max(room - 3 - taken, 0));
   const about = `${number}${place && ` · ${place}`}`;
   const spare = " ".repeat(Math.max(left - 2 - nameWidth - Bun.stringWidth(about), 0));
   const dim = about && `#[fg=brightblack]${escaped(about)}#[default]`;

@@ -6,7 +6,13 @@ import type { Database } from "bun:sqlite";
 import { threadConfig } from "../config.ts";
 import type { Repository } from "../db.ts";
 import { cloneDir } from "../paths.ts";
-import { changed, forgeOf, pluginsOf, took, trackerOf } from "../plugins/ask.ts";
+import {
+  askWhatChanged,
+  claimTask,
+  forgeOf,
+  repositoryPlugins,
+  trackerOf,
+} from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { baseOf, startThread } from "./builder.ts";
@@ -21,15 +27,16 @@ import { needsYou, readThread, record, Thread, threadName } from "./thread.ts";
 // The label that starts a thread on a task, added in its tracker by someone who may.
 const startLabel = "skelcrew";
 
-// Starts a thread on each of the repository's open tasks labeled to start in Skelcrew's copy that
-// has none, exactly as sc start does, once Skelcrew has claimed it in the tracker, and tells the
+// Starts a thread, as sc start does, on each open task in Skelcrew's copy that is labeled to
+// start and has no thread, once Skelcrew has claimed it in the tracker, and tells the
 // repository's lead. The claim comes first so that when two machines run Skelcrew on one
 // repository, such as a laptop and a Sprite, only one starts the task. Thread rows are read
-// after the tracker says what changed, so a thread sc start made meanwhile counts. A task in `starting`,
-// named as owner/repo#task, is left to the sc start starting it, which has options of its own,
-// such as the branch to start from. A task in `passed`, named the same way, is one this daemon
-// won't start by its label: another machine claimed it, or its claim was this daemon's but the
-// thread failed to start. Kept in memory, so the tracker isn't asked about it on every poll.
+// after the tracker says what changed, so a thread sc start made meanwhile counts. A task in
+// `starting`, named as owner/repo#task, is left to the sc start starting it, which has options
+// of its own, such as the branch to start from. A task in `passed`, named the same way, is one
+// this daemon won't start by its label: someone else claimed it, or its claim was this
+// daemon's but the thread failed to start. Kept in memory, so the tracker isn't asked about it
+// on every poll.
 async function startLabeled(
   db: Database,
   tmux: string,
@@ -54,7 +61,7 @@ async function startLabeled(
     const key = `${fullName}#${task.id}`;
     // A claim that fails, such as on a network error, starts nothing and is tried again on the
     // next poll, so a task is never started without its claim.
-    const claimed = await took(db, repository, task.id).catch((error) => {
+    const claimed = await claimTask(db, repository, task.id).catch((error) => {
       console.log(`couldn't claim ${task.id} in ${fullName}, trying again: ${errorText(error)}`);
       return null;
     });
@@ -188,12 +195,12 @@ async function pollRepository(
   // repository's threads. A plugin's answer only updates the kinds its jobs cover. A first
   // poll, with no `next`, replaces those kinds in the copy outright, so what closed while the
   // daemon was down goes.
-  for (const { plugin, jobs } of pluginsOf(db, repository)) {
+  for (const { plugin, jobs } of repositoryPlugins(db, repository)) {
     const next = nexts.get(plugin) ?? null;
     const watched = jobs.includes("forge")
       ? threads.flatMap((t) => (t.pr === null ? [] : [t.pr]))
       : [];
-    const answer = await changed(db, plugin, repository, jobs, next, watched);
+    const answer = await askWhatChanged(db, plugin, repository, jobs, next, watched);
     const kinds: Item["kind"][] = [
       ...(jobs.includes("tracker") ? ["task" as const] : []),
       ...(jobs.includes("forge") ? ["pr" as const] : []),

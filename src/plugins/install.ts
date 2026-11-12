@@ -8,7 +8,7 @@ import { openDb } from "../db.ts";
 import { repositories } from "../flow/repo.ts";
 import { originHere } from "../machine/origin.ts";
 import { configDir, dataDir } from "../paths.ts";
-import { clean } from "../screen/look.ts";
+import { removeControlCodes } from "../screen/look.ts";
 import { release } from "../version.ts";
 import { trackerOf } from "./ask.ts";
 import {
@@ -106,7 +106,7 @@ function confirmPlugin(manifest: Manifest, from: string, verb: string): boolean 
   const { name, version } = manifest;
   // Bun's prompt answers a bare Enter with null, which is no, as the question says.
   const answer = prompt(
-    `${name} ${version} from ${clean(from)} runs as you, outside Skelcrew's sandbox. ${verb} it? [y/N]`,
+    `${name} ${version} from ${removeControlCodes(from)} runs as you, outside Skelcrew's sandbox. ${verb} it? [y/N]`,
   );
   return ["y", "yes"].includes(answer?.trim().toLowerCase() ?? "");
 }
@@ -127,7 +127,8 @@ function runInTerminal(
     env: { ...process.env, ...env, ...(remote ? { SKELCREW_REMOTE: remote } : {}) },
     stdio: ["inherit", "inherit", "inherit"],
   });
-  if (!run.success) throw new Error(`${manifest.name}'s ${clean(words.join(" "))} failed`);
+  if (!run.success)
+    throw new Error(`${manifest.name}'s ${removeControlCodes(words.join(" "))} failed`);
 }
 
 // Runs a plugin's build commands in its folder, then its setup when `setup` is true. Each gets

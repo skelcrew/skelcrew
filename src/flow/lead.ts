@@ -11,7 +11,7 @@ import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import instructions from "../agents/prompts/lead.md" with { type: "text" };
 import {
   agentRuns,
-  checkItLived,
+  checkAgentStarted,
   endSession,
   failedScreen,
   hasSession,
@@ -124,7 +124,7 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
   console.log(
     `${resume ? "Brought back" : "Started"} ${owner}/${repo}'s lead, session ${session}.`,
   );
-  await checkItLived(tmux, lead.name, "lead");
+  await checkAgentStarted(tmux, lead.name, "lead");
 }
 
 // Types each saved note for a repository's lead into it, one at a time, such as "started

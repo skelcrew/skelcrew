@@ -16,7 +16,7 @@ import {
 import { join } from "node:path";
 import { z } from "zod";
 import { claudeTokenFile, dataDir } from "../paths.ts";
-import { keptEnv, refuseCredentials, ro, rw, sandboxArgs } from "./sandbox.ts";
+import { filterEnv, refuseCredentials, ro, rw, sandboxArgs } from "./sandbox.ts";
 
 const { O_NONBLOCK, O_NOFOLLOW, O_RDONLY } = constants;
 
@@ -189,7 +189,7 @@ function startCommand(given: {
   if (prompt) command.push(prompt);
 
   // Only the environment the agent needs, plus its own config folder and login.
-  const kept = keptEnv(env, claude.keys);
+  const kept = filterEnv(env, claude.keys);
   kept.CLAUDE_CONFIG_DIR = config;
   kept.CLAUDE_CODE_OAUTH_TOKEN = token;
   // Its greyed-out suggestions propose steps, such as pushing, that belong to Skelcrew.
