@@ -123,8 +123,14 @@ async function actOnBranch(db: Database, tmux: string, repository: Repository, t
   // one keeps its submit, so only a thread with nothing being pushed counts.
   if (thread.submitting !== null) return;
   if (!(await git("rev-parse", "--verify", "--quiet", ref("threads"))).ok) return;
+  // Asking git takes a while, and sc rm may meanwhile have deleted the branch and ended the
+  // thread, or the thread started over. Only the thread as it was is ended.
+  const unchanged = () => {
+    const now = readThread(db, thread.folder);
+    return now.status === thread.status && now.started === thread.started;
+  };
   if (!(await onRemote(db, repository, thread.branch))) {
-    await endThread(db, tmux, thread, `its branch ${thread.branch} was deleted`);
+    if (unchanged()) await endThread(db, tmux, thread, `its branch ${thread.branch} was deleted`);
     return;
   }
   // Merge the remote branch into its base without touching any files, and compare the result
@@ -134,7 +140,7 @@ async function actOnBranch(db: Database, tmux: string, repository: Repository, t
   await fetchInto(db, repository, ours, thread.branch, ref("remote"));
   const merged = await git("merge-tree", "--write-tree", ref("bases"), ref("remote"));
   const tree = await git("rev-parse", `${ref("bases")}^{tree}`);
-  if (merged.ok && tree.ok && merged.out.trim().split("\n")[0] === tree.out.trim())
+  if (merged.ok && tree.ok && merged.out.trim().split("\n")[0] === tree.out.trim() && unchanged())
     await endThread(db, tmux, thread, `its branch ${thread.branch} is merged into ${base}`);
 }
 

@@ -24,7 +24,7 @@ import {
   statusOnceBack,
 } from "./builder.ts";
 import { saveItems } from "./copy.ts";
-import { stopThread } from "./events.ts";
+import { removeThread, stopThread } from "./events.ts";
 import { lastOpened, leadOf, openedRepositories, startLead, tellLead } from "./lead.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import { pollRepositories } from "./poll.ts";
@@ -324,6 +324,16 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         await stopThread(db, tmux, thread);
         return { stopped: name };
       }
+      case "rm preview": {
+        const thread = findThread(db, request.repo, request.task);
+        return { thread: threadName(db, thread), status: thread.status, pr: thread.pr };
+      }
+      case "rm": {
+        const thread = findThread(db, request.repo, request.task);
+        const name = threadName(db, thread);
+        await removeThread(db, tmux, thread, request.reason);
+        return { removed: name };
+      }
       case "tell": {
         const thread = findThread(db, request.repo, request.task);
         return { told: messageBuilder(db, tmux, thread, request.text) };
@@ -371,7 +381,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         }
         // Refused before the poll, which only a new thread needs, so a slow or failing remote
         // can't hold up the answer. startThread refuses it again, for a thread started meanwhile.
-        if (before && before.status !== "failed")
+        if (before && before.status !== "failed" && before.status !== "done")
           throw new Error(`${threadName(db, before)} has a thread already`);
         // The task's title and body come from Skelcrew's copy, brought up to date first. Meanwhile
         // no poll starts the task by its label, which would leave out this start's options.

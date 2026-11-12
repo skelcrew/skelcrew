@@ -112,6 +112,28 @@ export async function stopOn(repository: string, task: string): Promise<string> 
   return checkReply(z.object({ stopped: z.string() }), reply).stopped;
 }
 
+// Asks the daemon what sc rm would remove: the thread's name, its status, and its PR, if it has
+// one, so sc rm can say so before asking you.
+export async function previewRemoval(repository: string, task: string) {
+  const reply = await request({ command: "rm preview", repo: repository, task });
+  return checkReply(
+    z.object({ thread: z.string(), status: z.string(), pr: z.number().nullable() }),
+    reply,
+  );
+}
+
+// Has the daemon remove a thread, for sc rm, with the reason its PR's comment gives, and
+// returns the thread's name. The daemon answers once the PR is closed and the clone removed.
+export async function removeOn(repository: string, task: string, reason?: string): Promise<string> {
+  const reply = await request({
+    command: "rm",
+    repo: repository,
+    task,
+    ...(reason ? { reason } : {}),
+  });
+  return checkReply(z.object({ removed: z.string() }), reply).removed;
+}
+
 // Has the daemon start a round for sc submit, run by a builder in its sandbox, and returns
 // the thread's name. The builder's own socket tells the daemon which thread it is. The
 // daemon answers at once, and pushes and starts the review after.

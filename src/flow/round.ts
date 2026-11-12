@@ -371,8 +371,12 @@ export function goOn(db: Database, tmux: string, folder: string): void {
 }
 
 // Cancels the thread's round, once its PR is merged or closed or sc stop ends its builder,
-// so a review still running never changes a thread that is done or stopped.
-export function endRound(folder: string): void {
-  latest.get(folder)?.cancel.abort();
+// so a review still running never changes a thread that is done or stopped. Returns its push,
+// which can't be cancelled, settled either way: sc rm waits for it, or the push could put back
+// the branch it deletes, or open a PR after it closed none.
+export function endRound(folder: string): Promise<unknown> {
+  const round = latest.get(folder);
+  round?.cancel.abort();
   latest.delete(folder);
+  return round?.pushed.catch(() => {}) ?? Promise.resolve();
 }

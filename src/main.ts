@@ -73,6 +73,7 @@ function usage(command?: string): never {
     "task",
     "start",
     "stop",
+    "rm",
     "attach",
     "review",
     "submit",
@@ -280,12 +281,14 @@ async function taskCommand(args: string[], json: boolean): Promise<void> {
   usage(command);
 }
 
-// Starts, stops, re-reviews or attaches to the thread on a task such as app-13. sc start also
-// takes a repository, a title and a body, to start a thread with no tracker.
+// Starts, stops, removes, re-reviews or attaches to the thread on a task such as app-13. sc
+// start also takes a repository, a title and a body, to start a thread with no tracker.
 async function threadCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
   const { attachToThread } = await import("./attach.ts");
-  const { reviewAgain, startNew, startOn, stopOn } = await import("./client.ts");
+  const { previewRemoval, removeOn, reviewAgain, startNew, startOn, stopOn } = await import(
+    "./client.ts"
+  );
   const task = splitTaskName(sub);
   // --from takes a branch, and only sc start <task> takes it.
   const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
@@ -312,6 +315,28 @@ async function threadCommand(args: string[]): Promise<void> {
     console.log(
       `Stopped ${name}. Its clone, branch and pull request stay, and sc start ${name} brings its builder back.`,
     );
+    return;
+  }
+  if (command === "rm" && task && rest.length <= 1) {
+    // At a terminal, say what goes and ask first, as closing a PR can't be taken back. An agent,
+    // such as the lead, has no terminal, and confirms with you in its conversation instead. A
+    // thread that is done is left for the daemon to refuse.
+    if (process.stdin.isTTY) {
+      const { thread: name, status, pr } = await previewRemoval(...task);
+      const goes =
+        pr === null
+          ? "This deletes its branch and clone."
+          : `This closes PR #${pr} and deletes its branch and clone.`;
+      // Bun's prompt answers a bare Enter with null, which is no, as the question says.
+      const answer = status === "done" ? "y" : prompt(`Remove ${name}? ${goes} [y/N]`);
+      if (!["y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
+        console.log(`Skelcrew didn't remove ${name}.`);
+        return;
+      }
+    }
+    // An empty reason is no reason, so the PR closes with no comment.
+    const name = await removeOn(...task, rest[0] || undefined);
+    console.log(`Removed ${name}. Its task stays open, and sc start ${name} starts it over.`);
     return;
   }
   if (command === "review" && task && rest.length === 0) {
@@ -441,6 +466,7 @@ async function runCommand(args: string[]): Promise<void> {
       return taskCommand(words, json);
     case "start":
     case "stop":
+    case "rm":
     case "review":
     case "attach":
       return threadCommand(words);

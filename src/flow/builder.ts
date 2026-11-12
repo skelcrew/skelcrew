@@ -58,9 +58,10 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 
 // Records a new thread and returns it: on a task of the repository's tracker, from Skelcrew's copy,
 // which sc start brings up to date first, or on a title and body, as a task of the thread's own
-// named t1, t2 and on. That works with a tracker too, so you can start work without filing it. Refuses a task the copy doesn't
-// have open, and a task that has a thread already, unless that one failed: then it starts over
-// in the same folder, on the task it had. Only records it, since the lead waits on the answer.
+// named t1, t2 and on. That works with a tracker too, so you can start work without filing it.
+// Refuses a task the copy doesn't have open, and a task that has a thread already, unless that
+// one failed or is done, such as after sc rm: then it starts over in the same folder, on the
+// task it had. Only records it, since the lead waits on the answer.
 // Setting up its clone and starting its builder come after, and can take minutes. `given` is a
 // start request, so its `repo` is the repository's name in Skelcrew or its owner/name.
 export async function startThread(
@@ -88,8 +89,8 @@ export async function startThread(
     ({ title, body } = given);
   } else {
     // A named task takes its words from Skelcrew's copy of the tracker. One of the repository's
-    // own, or one the tracker no longer has, can only start over on the words its failed thread
-    // kept.
+    // own, or one the tracker no longer has, can only start over on the words its failed or
+    // done thread kept.
     task = given.task;
     const had = Thread.nullable().parse(
       db.query(`SELECT * FROM threads ${where}`).get(owner, repo, task),
@@ -124,19 +125,19 @@ export async function startThread(
     for (let n = 2; taken(free); n++) free = `${folder}-${n}`;
     return free;
   };
-  // Check again for a thread and record the new one in one transaction, so a failed thread's
-  // row is never removed without the new one taking its place.
+  // Check again for a thread and record the new one in one transaction, so a failed or done
+  // thread's row is never removed without the new one taking its place.
   return db.transaction(() => {
     const before = Thread.nullable().parse(
       db.query(`SELECT * FROM threads ${where}`).get(owner, repo, task),
     );
-    if (before && before.status !== "failed")
+    if (before && before.status !== "failed" && before.status !== "done")
       throw new Error(`${name}-${task} has a thread already`);
     const thread: Thread = {
       owner,
       repo,
       task,
-      // A thread that failed starts over in its folder, named when it first started.
+      // A thread that failed or is done starts over in its folder, named when it first started.
       folder: before?.folder ?? freeFolder(`${folderName(name)}-${task}`),
       branch: slug ? `skelcrew/${task}-${slug}` : `skelcrew/${task}`,
       base: "from" in given ? (given.from ?? null) : null,
@@ -167,7 +168,7 @@ export async function startThread(
       review_line: null,
       harness: null,
     };
-    // A failed thread's row gives way to the new one.
+    // A failed or done thread's row gives way to the new one.
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run(
       `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, title,

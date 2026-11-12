@@ -24,6 +24,7 @@ import {
   git,
   homeEnv,
   prItem,
+  runSkelInTerminal,
   source,
   taskItem,
   until as wait,
@@ -509,6 +510,90 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
     pr({ state: "merged", reviews: [skelReview], checks: [approved] });
     await until(() => thread().status === "done");
     expect(existsSync(clone())).toBe(false);
+  }, 60_000);
+
+  // The lead may remove a thread, as it may stop one, and a builder may not. The task stays
+  // open, so the thread starts over on it.
+  test("sc rm closes the thread's PR with the reason, ends its builder, removes its clone, and the task can start over", async () => {
+    await approvedApp12();
+    const branch = String(thread().branch);
+    // Runs sc rm as an agent would, with its own socket.
+    const rmFrom = (agent: string, ...reason: string[]) =>
+      Bun.spawnSync([process.execPath, main, "rm", "app-12", ...reason], {
+        env: { ...env(), SKELCREW_SOCKET: agent },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+    const hashed = (name: string) =>
+      new Bun.CryptoHasher("sha256").update(name).digest("hex").slice(0, 16);
+    const runDir = join(home, "run", "skelcrew");
+    // At a terminal, sc rm says what it will do and asks first, and anything but y changes
+    // nothing.
+    const question = "Remove app-12? This closes PR #7 and deletes its branch and clone. [y/N]";
+    const kept = await runSkelInTerminal(socket, env(), ["rm", "app-12"], question, "n");
+    expect(kept).toContain("Skelcrew didn't remove app-12.");
+    expect(asked(plugin).filter((q) => q.ask === "close pr")).toEqual([]);
+    expect(thread().status).toBe("waiting");
+    expect(fakeBuilders()).toHaveLength(1);
+
+    // An agent has no terminal, so it isn't asked.
+    const fromBuilder = rmFrom(join(runDir, "threads", hashed("app-12"), "skelcrew.sock"));
+    expect(fromBuilder.stderr.toString()).toContain("doesn't know that request");
+    expect(thread().status).toBe("waiting");
+
+    const fromLead = rmFrom(
+      join(runDir, "leads", hashed("simon/app"), "skelcrew.sock"),
+      "started over as app-14",
+    );
+    expect(fromLead.stderr.toString()).toBe("");
+    expect(fromLead.stdout.toString()).toContain("Removed app-12.");
+    expect(asked(plugin).filter((q) => q.ask === "close pr")).toEqual([
+      {
+        ask: "close pr",
+        repository: "simon/app",
+        pr: 7,
+        branch,
+        comment: "Closed by Skelcrew: started over as app-14",
+      },
+    ]);
+    expect(thread()).toMatchObject({ status: "done", needs_you: 0 });
+    expect(existsSync(clone())).toBe(false);
+    expect(Bun.spawnSync(["tmux", "-L", socket, "has-session", "-t", "=app-12"]).success).toBe(
+      false,
+    );
+    expect(fakeBuilders()).toEqual([]);
+    const again = Bun.spawnSync([process.execPath, main, "rm", "app-12"], {
+      env: env(),
+      stderr: "pipe",
+    });
+    expect(again.stderr.toString()).toContain("app-12 is done already");
+    // The forge deletes the branch as it closes the PR, which the fake plugin leaves to the test.
+    git(join(home, "github", "simon", "app.git"), "branch", "-D", branch);
+
+    // The task is still open, so sc start starts the thread over, and its builder opens a PR
+    // again. Removed with no reason, that PR closes with no comment.
+    const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
+      env: env(),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    expect(started.stderr.toString()).toBe("");
+    expect(started.stdout.toString()).toBe("Started app-12.\n");
+    await until(() => thread().pr === 7 && thread().submitting === null, 30_000);
+    const removed = await runSkelInTerminal(socket, env(), ["rm", "app-12"], question, "y");
+    expect(removed).toContain("Removed app-12.");
+    expect(
+      asked(plugin)
+        .filter((q) => q.ask === "close pr")
+        .at(-1),
+    ).toEqual({
+      ask: "close pr",
+      repository: "simon/app",
+      pr: 7,
+      branch,
+      comment: null,
+    });
+    expect(thread().status).toBe("done");
   }, 60_000);
 
   // A forge answers what changed since the last poll, and nothing changes on the PR while
