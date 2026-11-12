@@ -112,7 +112,7 @@ export async function endThread(
 // Removes the thread for sc rm: ends its builder, closes its PR with the reason as a comment,
 // deletes its branch on the forge, removes its clone and marks it done. Its task stays open,
 // so sc start can start the thread over on it. Without a PR, the branch is deleted with git,
-// if Skelcrew pushed it. A thread still running is marked stopped first, so a builder that
+// if Skelcrew pushed it for this thread. A thread still running is marked stopped first, so a builder that
 // submits while it exits is refused. A forge that fails leaves the thread as it is, short of
 // done, so sc rm can be run again. Refuses a thread that is done, or still setting up, whose
 // setup would go on to start its builder.
@@ -135,17 +135,32 @@ export async function removeThread(
   const pushing = endRound(thread.folder);
   await endBuilder(tmux, thread.folder);
   await pushing;
-  // Close the PR, which deletes its branch on the forge too, or with no PR, delete a branch
-  // Skelcrew pushed, as a repository with no forge has.
+  // Close the PR, which deletes its branch on the forge too. With no PR, as a repository with
+  // no forge has, delete the branch only if this thread pushed it: Skelcrew keeps a ref of each
+  // push in its clone, and a branch of the same name may be someone else's.
   const { pr, branch } = readThread(db, thread.folder);
   const repository = repositoryOf(db, thread);
+  const ours = cloneDir(thread.owner, thread.repo);
+  const pushed = async () =>
+    (
+      await quietly([
+        "git",
+        "-C",
+        ours,
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        `refs/skelcrew/threads/${thread.folder}`,
+      ])
+    ).ok;
   if (pr !== null)
     await closePr(db, repository, {
       pr,
       branch,
       comment: reason ? `Closed by Skelcrew: ${reason}` : null,
     });
-  else if (await onRemote(db, repository, branch)) await deleteBranch(db, repository, branch);
+  else if ((await pushed()) && (await onRemote(db, repository, branch)))
+    await deleteBranch(db, repository, ours, branch);
   await endThread(db, tmux, thread, reason ? `removed: ${reason}` : "removed");
 }
 
