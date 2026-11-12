@@ -61,8 +61,9 @@ const marks: Record<Thread["status"], Mark> = {
   failed: ["●", red],
   done: ["●", green],
 };
-// A PR with no thread has nothing to say, so it looks like a thread that is waiting.
-const noThread: Mark = ["○", grey];
+// The mark of a PR with no thread. It has nothing to say, so it looks like a thread that is
+// waiting.
+const noThreadMark: Mark = ["○", grey];
 
 // Says whether a thread shows as needing you. A thread that failed can still have its needs you
 // flag, and its word says failed.
@@ -78,8 +79,8 @@ export function threadMark(row: Row): Mark {
 // status and needs you stay as they are: the word only describes them, from what they and the
 // latest review say. Past the limit a thread goes on needing you while its builder submits, so
 // that comes before a round under way. A round that failed keeps its submit or review saved.
-// A thread can need you for what the table of words has no word for, such as a builder that
-// couldn't be told about an event, and that says just so rather than something untrue.
+// A thread can need you for a reason with no word of its own, such as a builder that couldn't be
+// told about an event. Its word is then "needs you", rather than something untrue.
 export function threadWord(thread: Thread, maxRounds: number): string {
   const { status, verdict, checks } = thread;
   // A thread that failed, stopped or is done says just that. Otherwise a question from its builder
@@ -109,13 +110,14 @@ export function threadAge(started: number, now: number): string {
   return minutes < 24 * 60 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 1440)}d`;
 }
 
-// Returns the open repository's rows as the database and tmux have them now: its lead, then
-// each of its threads that isn't done, newest first as in sc ps, each with its word by its
-// round limit, which `maxRounds` gives. Stopped threads come last, newest first too: they need
-// nothing and don't change, so they shouldn't sit between threads at work. It runs each second, so it reads only what shows.
-// Only a thread whose word is working shows its running time. A time on any other row would
-// write to the terminal each minute, and on a Sprite a terminal that stays quiet lets it sleep.
-// Such a thread keeps the Sprite awake anyway, so its time costs nothing.
+// Returns the open repository's rows as the database and tmux have them now. Its lead comes
+// first, then each of its threads that isn't done, newest first as in sc ps. Each word takes the
+// thread's round limit from `maxRounds`. Stopped threads come last, newest first too. They need
+// nothing and don't change, so they shouldn't sit between threads at work. It runs each second,
+// so it reads only what shows. Only a thread whose word is working shows its running time. A
+// time on any other row would write to the terminal each minute, and on a Sprite a terminal that
+// stays quiet lets it sleep. A working thread keeps the Sprite awake anyway, so its time costs
+// nothing.
 export function sidebarRows(
   db: Database,
   running: string[],
@@ -130,8 +132,10 @@ export function sidebarRows(
       ORDER BY status = 'stopped', rowid DESC`);
   const leadRuns = running.includes(open.lead);
   // A repository Skelcrew no longer works on has no lead to name a harness for.
-  const known = db.query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ?");
-  const lead = known.get(open.owner, open.repo) ? leadOf(db, open.owner, open.repo) : null;
+  const knownRepository = db.query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ?");
+  const lead = knownRepository.get(open.owner, open.repo)
+    ? leadOf(db, open.owner, open.repo)
+    : null;
   return [
     {
       name: "lead",
@@ -182,15 +186,16 @@ const ListRow = z.object({
   item: z.string(),
 });
 
-// Returns the open repository's ISSUES and PRS from Skelcrew's copy, up to `most` rows of each, or
-// none of a list its repository has no tracker or forge for: it reads the database and never
-// asks the tracker, as it runs each second. Newest first, with issues that have a thread last,
-// and PRs whose thread is stopped last, as THREADS has their threads. A thread that is done has left THREADS, so its issue counts as
-// waiting again. A PR from a thread takes the word and mark of its row. Both the lists and the
-// rows are of the open repository alone, so a PR's number is enough to find its thread.
+// Returns the open repository's ISSUES and PRS from Skelcrew's copy, up to `most` rows of each.
+// A list is null when the repository has no tracker or forge for it. It reads only the database
+// and never asks the tracker, as it runs each second. Rows are newest first. Issues that have a
+// thread go last, and so do PRs whose thread is stopped, as THREADS already shows those threads.
+// A thread that is done has left THREADS, so its issue counts as waiting again. A PR from a
+// thread takes the word and mark of its row. The lists and the rows are of the open repository
+// alone, so a PR's number is enough to find its thread.
 export function sidebarLists(db: Database, rows: Row[], most: number, open: Open): Lists {
   // Returns one list, of tasks or PRs, with the column that counts all of its kind.
-  const read = (kind: "task" | "pr", column: string): List => {
+  const readList = (kind: "task" | "pr", column: string): List => {
     // The open items of one kind, and for a task whether it has a thread that isn't done, which
     // puts it last and dims it. A PR whose thread is stopped goes last, but isn't dim, as its
     // thread's word already says stopped.
@@ -215,7 +220,7 @@ export function sidebarLists(db: Database, rows: Row[], most: number, open: Open
         word: thread?.word ?? "",
         needing: thread !== undefined && needing(thread),
         dim: threaded,
-        mark: kind === "task" ? null : thread ? threadMark(thread) : noThread,
+        mark: kind === "task" ? null : thread ? threadMark(thread) : noThreadMark,
       };
     });
     // The total is every open one in Skelcrew's copy, counted when the copy was saved, while the
@@ -230,8 +235,8 @@ export function sidebarLists(db: Database, rows: Row[], most: number, open: Open
   // A list is there only when the repository has a tracker for ISSUES or a forge for PRS.
   const repository = repositories(db).find((r) => r.owner === open.owner && r.repo === open.repo);
   return {
-    issues: repository && trackerOf(db, repository) ? read("task", "open_issues") : null,
-    prs: repository && forgeOf(db, repository) ? read("pr", "open_prs") : null,
+    issues: repository && trackerOf(db, repository) ? readList("task", "open_issues") : null,
+    prs: repository && forgeOf(db, repository) ? readList("pr", "open_prs") : null,
   };
 }
 

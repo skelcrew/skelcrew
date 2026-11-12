@@ -10,8 +10,9 @@ import { mainFile, singleFile } from "../version.ts";
 // it is set back after each.
 export const sidebarWidth = 31;
 
-// Run with each opening, ahead of the new session, so a first draw never shows tmux's own
-// look. Your own ~/.tmux.conf never applies.
+// The tmux commands that set up the screen's server. They run each time the screen opens,
+// before its session starts, so a first draw never shows tmux's own look. Your own ~/.tmux.conf
+// never applies.
 const config = [
   // tmux's one status line is at the top, so the agent's height stays the same on every
   // session. The header, the tabs and the strip share it. It starts empty, as the sidebar fills
@@ -85,7 +86,7 @@ const config = [
 // Returns whether this machine's tmux can make the border between the panes blank, which tmux
 // can since 3.6. An older one refuses the whole screen over it. A version that isn't a plain
 // number, such as "next-3.7" or "master", is taken as new.
-function blankBorder(env: Record<string, string>): boolean {
+function canBlankBorder(env: Record<string, string>): boolean {
   const said = Bun.spawnSync(["tmux", "-V"], { env, stderr: "ignore" }).stdout.toString();
   const version = said.match(/^tmux (\d+)\.(\d+)/);
   if (!version) return true;
@@ -103,9 +104,9 @@ export function agentClient(agents: string, session: string, lead: string): stri
   return ["sh", "-c", script, "sh", agents, session, lead];
 }
 
-// Returns the command that runs the Skelcrew you are running, which is a single file on a server,
-// or else this checkout.
-function skel(...words: string[]): string[] {
+// Returns a command that runs this same Skelcrew with the given words. A Skelcrew built as a
+// single file runs itself. Otherwise Bun runs this checkout's main file.
+function skelcrewCommand(...words: string[]): string[] {
   const checkout = singleFile ? [] : [mainFile];
   return [process.execPath, ...checkout, ...words];
 }
@@ -114,18 +115,18 @@ function skel(...words: string[]): string[] {
 // on. Where Skelcrew runs goes along as a word, not in the environment: a tmux server hands its
 // panes the environment of whichever terminal started it, and terminals on this server can
 // come from different laptops.
-const sidebar = (agents: string, session: string, where: string, repository: string) =>
-  skel("sidebar", agents, session, where, repository);
+const sidebarCommand = (agents: string, session: string, where: string, repository: string) =>
+  skelcrewCommand("sidebar", agents, session, where, repository);
 
 // Returns the command for the right pane while it shows a page, with the remote Skelcrew runs
 // on, which decides whether a click on its link opens your browser or copies the link.
-export const pageCommand = (url: string, where: string) => skel("page", url, where);
+export const pageCommand = (url: string, where: string) => skelcrewCommand("page", url, where);
 
-// Opens the screen in your terminal on the named agent session, with the open repository's
-// lead's session and its owner/name, and returns when you leave with Ctrl-Q, saying that
-// nothing stopped. The name of the session here only has to differ from
-// other terminals', and this process runs as long as the terminal has it open. Agents' sessions
-// are never touched.
+// Opens the screen in your terminal on the named agent session. `lead` is the open repository's
+// lead's session and `repository` its owner/name. It returns when you leave with Ctrl-Q, and
+// prints that your agents keep running. Each terminal gets a screen session of its own, named
+// after this process, which runs as long as the terminal has it open. Agents' sessions are never
+// touched.
 export async function openScreen(
   agents: string,
   session: string,
@@ -136,21 +137,21 @@ export async function openScreen(
   // Reports whether this machine knows the terminal, so opening can choose a fallback.
   // tmux refuses unknown terminals, such as Ghostty's xterm-ghostty over ssh.
   // xterm-256color draws Claude Code well enough.
-  const known = (term: string) =>
+  const knownTerminal = (term: string) =>
     !Bun.which("infocmp") ||
     Bun.spawnSync(["infocmp", term], { stdout: "ignore", stderr: "ignore" }).success;
-  if (env.TERM && !known(env.TERM)) env.TERM = "xterm-256color";
+  if (env.TERM && !knownTerminal(env.TERM)) env.TERM = "xterm-256color";
   // The agents' server may have started under an older Skelcrew, so it gets today's settings.
   applyConfig(agents);
   // This screen's session, named by this process, and the sidebar that opens on it.
   const name = `screen-${process.pid}`;
   // The name sc --remote passes along, such as sprite:demo. Empty on this machine.
   const where = env.SKELCREW_REMOTE_NAME ?? "";
-  const left = sidebar(agents, name, where, repository);
+  const left = sidebarCommand(agents, name, where, repository);
   // The title is the session's own: terminals on this server can come from different laptops.
   // tmux's border between the panes is blank where it can be: the sidebar draws its own line,
   // so the border is a gap before the agent. On an older tmux it stays tmux's thin line.
-  const border = blankBorder(env) ? [["set", "-g", "pane-border-lines", "spaces"]] : [];
+  const border = canBlankBorder(env) ? [["set", "-g", "pane-border-lines", "spaces"]] : [];
   const open = [
     ...config,
     ...border,

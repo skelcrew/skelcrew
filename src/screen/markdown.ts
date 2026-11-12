@@ -3,11 +3,11 @@
 // written as.
 import { clean } from "./look.ts";
 
-// Return text bold, as inline code is coloured, or dim as a code block is. Each style is ended
-// on its own, not with a reset, as wrapping carries a style over to the next line only when it
-// knows where that style ends. Code is cyan, one of your terminal's own colours, which its theme
-// keeps quiet. A 256-colour code would look the same everywhere, but wrapping doesn't carry it
-// over, so code wrapped onto a second line would lose it.
+// Return text bold, in inline code's colour, or dim as a code block is. Each style is ended on
+// its own, not with a reset. Wrapping carries a style over to the next line only when it knows
+// where that style ends. Code is cyan, one of your terminal's own colours, which its theme keeps
+// quiet. A 256-colour code would look the same everywhere, but wrapping doesn't carry it over.
+// So code wrapped onto a second line would lose it.
 const bold = (text: string) => `\x1b[1m${text}\x1b[22m`;
 const code = (text: string) => `\x1b[36m${text}\x1b[39m`;
 const dim = (text: string) => `\x1b[90m${text}\x1b[39m`;
@@ -26,20 +26,21 @@ const drawInline = (line: string) =>
     return whole;
   });
 
-// Returns text wrapped at word boundaries to fit a width, with `lead` before its first line and
+// Returns text wrapped at word boundaries to fit a width, with `prefix` before its first line and
 // as many spaces before the others. So a list item's wrapped lines start under its text, not
 // under its bullet, and an indented line stays indented. Words too long for a line are broken,
-// so a line never wraps by itself in the pane. A lead wider than half the width loses columns
-// from its start, so a deep indent in a narrow pane still leaves room for the text: the page cuts
+// so a line never wraps by itself in the pane. A prefix wider than half the width loses columns
+// from its start, so a deep indent in a narrow pane still leaves room for the text. The page cuts
 // lines at the pane's edge, and text pushed past it would vanish.
-function wrap(text: string, given: string, width: number): string[] {
-  const most = Math.floor(width / 2);
-  const lead = Bun.stringWidth(given) <= most ? given : most > 0 ? given.slice(-most) : "";
-  const hang = " ".repeat(Bun.stringWidth(lead));
-  const room = Math.max(width - hang.length, 1);
+function wrap(text: string, prefix: string, width: number): string[] {
+  const widest = Math.floor(width / 2);
+  const firstPrefix =
+    Bun.stringWidth(prefix) <= widest ? prefix : widest > 0 ? prefix.slice(-widest) : "";
+  const indent = " ".repeat(Bun.stringWidth(firstPrefix));
+  const room = Math.max(width - indent.length, 1);
   return Bun.wrapAnsi(text, room, { hard: true })
     .split("\n")
-    .map((line, i) => `${i === 0 ? lead : hang}${line}`);
+    .map((line, i) => `${i === 0 ? firstPrefix : indent}${line}`);
 }
 
 // Returns markdown as lines for your terminal, wrapped to a width: headings bold without their
@@ -52,7 +53,7 @@ export function drawMarkdown(markdown: string, width: number): string[] {
   // The fence that opened the code block we are in, or empty outside one. Only a fence of the
   // same character, at least as long and with nothing after it, closes it, so a block can show
   // shorter fences, or the other kind, as code. A block that never closes runs to the end.
-  let open = "";
+  let openFence = "";
   const lines: string[] = [];
   for (const raw of markdown.split(/\r?\n/)) {
     // Cleans the line, then reads whether it is a fence: its marks, and what follows them. The
@@ -63,15 +64,15 @@ export function drawMarkdown(markdown: string, width: number): string[] {
     const [, indent = "", text = ""] = line.match(/^(\s*)(.*)$/) ?? [];
     // A fence opens a code block or closes it, and shows as nothing either way. Inside a
     // block, a line shows dim and as written, with no marks drawn.
-    if (!open && marks) {
-      open = marks;
+    if (!openFence && marks) {
+      openFence = marks;
       continue;
     }
-    if (open && marks.startsWith(open) && !after.trim()) {
-      open = "";
+    if (openFence && marks.startsWith(openFence) && !after.trim()) {
+      openFence = "";
       continue;
     }
-    if (open) {
+    if (openFence) {
       lines.push(...wrap(text ? dim(text) : "", indent, width));
       continue;
     }
