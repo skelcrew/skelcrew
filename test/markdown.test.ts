@@ -127,3 +127,15 @@ test("no line is wider than its width, long words and wide letters too", () => {
   for (const line of drawMarkdown(markdown, 17))
     expect(Bun.stringWidth(line)).toBeLessThanOrEqual(17);
 });
+
+test("an indent wider than half the width gives way, so the text still shows", () => {
+  const lines = wrapped("                    hidden text", 4);
+  for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(4);
+  expect(lines.map((line) => line.trim()).join("")).toBe("hiddentext");
+});
+
+test("a deeply nested bullet in a narrow pane still shows its text", () => {
+  const lines = wrapped(`${" ".repeat(16)}- deep words`, 12);
+  for (const line of lines) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(12);
+  expect(lines.map((line) => line.trim())).toEqual(["• deep", "words"]);
+});

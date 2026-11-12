@@ -29,8 +29,12 @@ const drawInline = (line: string) =>
 // Returns text wrapped at word boundaries to fit a width, with `lead` before its first line and
 // as many spaces before the others. So a list item's wrapped lines start under its text, not
 // under its bullet, and an indented line stays indented. Words too long for a line are broken,
-// so a line never wraps by itself in the pane.
-function wrap(text: string, lead: string, width: number): string[] {
+// so a line never wraps by itself in the pane. A lead wider than half the width loses columns
+// from its start, so a deep indent in a narrow pane still leaves room for the text: the page cuts
+// lines at the pane's edge, and text pushed past it would vanish.
+function wrap(text: string, given: string, width: number): string[] {
+  const most = Math.floor(width / 2);
+  const lead = Bun.stringWidth(given) <= most ? given : most > 0 ? given.slice(-most) : "";
   const hang = " ".repeat(Bun.stringWidth(lead));
   const room = Math.max(width - hang.length, 1);
   return Bun.wrapAnsi(text, room, { hard: true })
