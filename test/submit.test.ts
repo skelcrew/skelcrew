@@ -339,7 +339,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
       "Come back to the human only for new scope, missing access, or a decision that is theirs. Decide everything else yourself.",
     );
     expect(args.endsWith("Add export\n\nAs JSON\n")).toBe(true);
-  }, 30_000);
+  }, 60_000);
 
   // max_rounds counts rounds of review and fixes, so with 2 the builder submits 3 times.
   test("after max_rounds rounds of changes and fixes, the thread needs you and the builder hears no more", async () => {
@@ -707,7 +707,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("sc review", () => {
     expect(done.code).not.toBe(0);
     expect(done.err).toContain("app-12 is done");
     expect(statuses()).toEqual([]);
-  }, 30_000);
+  }, 60_000);
 
   test("the lead and the thread's own builder can ask, and a review already running is refused", async () => {
     addApp();

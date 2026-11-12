@@ -43,7 +43,7 @@ const conversation = "01a1c003-09b8-7380-b6d9-c7ec08342361";
 const subagent = "01a1c003-ffff-7380-b6d9-c7ec08342361";
 
 // Stands in for Codex. codex debug models lists two models, slowly while the home folder
-// holds a file named slow. Otherwise it keeps its arguments,
+// holds a file named slow, and leaves a file named listed once done. Otherwise it keeps its arguments,
 // environment and folder, and a new session saves its conversation. As the lead, it waits at
 // Codex's prompt and keeps what is typed into it. As a builder, it runs the hook commands the
 // command line gives for an event when the test leaves a file named for it: stop for Stop and
@@ -57,10 +57,12 @@ function fakeCodex(): void {
   : > "$HOME/listing"
   # Slow while the test leaves a file named slow, for 15 seconds at most.
   for i in $(seq 150); do [ -e "$HOME/slow" ] || break; sleep 0.1; done
+  : > "$HOME/listed"
   echo '{"models":[{"slug":"gpt-6.1-sol"},{"slug":"gpt-6-luna"}]}'; exit 0
 fi
 cd "$CODEX_HOME"
-printf '%s\\n' "$@" > args; env > env; echo "$OLDPWD" > pwd
+# Its arguments last, as tests wait for them before reading the others.
+env > env; echo "$OLDPWD" > pwd; printf '%s\\n' "$@" > args
 if [ "$1" != resume ]; then
   mkdir -p sessions/2026/11/09
   meta() { printf '{"type":"session_meta","payload":{"id":"%s","cwd":"%s","source":%s}}\\n' "$1" "$OLDPWD" "$2"; }
@@ -304,9 +306,10 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("codex", () => {
     await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
     expect((await skel(["start", "app-12"])).err).toBe("");
     await until(() => existsSync(join(home, "listing")), 30_000);
-    const asked = Date.now();
+    // The answer comes while the listing is still held. Timing the answer instead failed on a
+    // busy machine, where sc itself can take seconds to start.
     expect((await app12())?.status).toBe("working");
-    expect(Date.now() - asked).toBeLessThan(3000);
+    expect(existsSync(join(home, "listed"))).toBe(false);
     rmSync(join(home, "slow"));
     await until(() => read(join(builder(), "args")) !== "", 30_000);
   }, 60_000);

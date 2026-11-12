@@ -104,8 +104,9 @@ async function stop(run: Subprocess): Promise<void> {
   await run.exited;
 }
 
-// Waits as long as this file's tests expect anything to take, looking often.
-const until = (done: () => boolean) => wait(done, { timeout: 5000, every: 20 });
+// Waits for what the daemon does in its own time, looking often. A busy machine can take many
+// seconds to start a daemon, so the limit is generous: it only ends a test that hangs.
+const until = (done: () => boolean) => wait(done, { timeout: 30_000, every: 20 });
 
 const hasServer = () =>
   Bun.spawnSync(["tmux", "-L", socket, "list-sessions"], { stderr: "pipe" }).success;
@@ -148,7 +149,7 @@ async function answers(): Promise<boolean> {
 }
 
 async function untilAnswers() {
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + 30_000;
   while (!(await answers())) {
     if (Date.now() > deadline) throw new Error("the daemon never answered");
     await Bun.sleep(20);
@@ -408,7 +409,7 @@ const listening = (port: number) =>
   );
 
 async function untilListening(port: number) {
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + 30_000;
   while (!(await listening(port))) {
     if (Date.now() > deadline) throw new Error("nothing listened");
     await Bun.sleep(20);
@@ -880,7 +881,7 @@ c.on("error", () => process.exit(1));`;
     await stop(first);
     const second = serve();
     await until(() => reply().includes(`"pid":${second.pid}`));
-  }, 15_000);
+  }, 60_000);
 
   test("makes the clones of repositories whose lead never started as it starts", async () => {
     setUp();
@@ -919,23 +920,27 @@ c.on("error", () => process.exit(1));`;
     git(work, "add", ".");
     git(work, "commit", "-q", "-m", "more");
     git(work, "push", "-q", "origin", "main");
-    // A slow fetch, so a reply that waited for it would show.
+    // A fetch held while the test leaves a file named hold, so a reply that waited for it
+    // would come only once the clone had moved. Timing the reply instead failed on a busy
+    // machine. The hold ends after 30 seconds, or once the test's folder is gone.
     const real = Bun.which("git") ?? "git";
+    const hold = join(home, "hold");
+    writeFileSync(hold, "");
     writeFileSync(
       join(home, "bin", "git"),
-      `#!/bin/sh\ncase " $* " in *" fetch "*) sleep 2 ;; esac\nexec ${real} "$@"\n`,
+      `#!/bin/sh
+case " $* " in *" fetch "*)
+  for i in $(seq 600); do [ -e "${hold}" ] || break; sleep 0.05; done ;;
+esac
+exec ${real} "$@"
+`,
       { mode: 0o755 },
     );
-    const asked = Date.now();
     expect(await open()).toEqual({ lead: leadName(), repository: "simon/app" });
-    expect(Date.now() - asked).toBeLessThan(1500);
     expect(existsSync(join(clone, "NEWS"))).toBe(false);
-    const deadline = Date.now() + 10_000;
-    while (!existsSync(join(clone, "NEWS"))) {
-      if (Date.now() > deadline) throw new Error("the clone never moved to the new commit");
-      await Bun.sleep(50);
-    }
-  }, 15_000);
+    rmSync(hold);
+    await until(() => existsSync(join(clone, "NEWS")));
+  }, 60_000);
 
   test("a repository removed while it is being cloned stays removed", async () => {
     setUp();
@@ -952,7 +957,7 @@ c.on("error", () => process.exit(1));`;
     // Long enough for the slow clone to finish and be moved in, had nothing stopped it.
     await Bun.sleep(4000);
     expect(existsSync(clone)).toBe(false);
-  }, 15_000);
+  }, 60_000);
 });
 
 // A machine that ran sc with one lead for all its repositories, as the release before leads
@@ -1011,7 +1016,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("the lead from before", ()
     // Every other repository gets a lead of its own, in a folder of its own.
     expect(await open("app")).toEqual({ lead: leadName("app"), repository: "simon/app" });
     expect(claudeLines(leadFolder("app"))).toHaveLength(1);
-  }, 20_000);
+  }, 60_000);
 
   test("brought back after a restart, it keeps its conversation, folder and socket", async () => {
     setUp();
@@ -1028,7 +1033,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("the lead from before", ()
       repositories: [{ name: "app" }],
     });
     await until(() => read(join(keptLead(), "typed")).includes("you are the lead of app"));
-  }, 20_000);
+  }, 60_000);
 });
 
 // A lead started by the release before calls it with each message, until it restarts.

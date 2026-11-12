@@ -405,11 +405,16 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
     await until(() => read(join(data(), "claude", leadName, "typed")).includes("app-12 needs you"));
     expect(read(join(data(), "claude", leadName, "typed"))).toContain("ready to merge");
     // Your own comment wakes the builder; Skelcrew's review, posted by its app, never does.
-    // Waiting on you, it is polled every other time: every minute, at 30 seconds a poll.
-    const before = polls();
-    await Bun.sleep(2000);
-    expect(polls() - before).toBeGreaterThanOrEqual(3);
-    expect(polls() - before).toBeLessThanOrEqual(7);
+    // Waiting on you, it is polled every other time: every minute, at 30 seconds a poll. Here
+    // that is 8 polls in 3.2 seconds, against 1.6 at every tick. Timing a number of polls,
+    // rather than counting them in a fixed time, keeps a busy machine, whose timers run
+    // late, from failing the test. The limit leaves room for one poll's fake plugin to start
+    // slower than another's.
+    const first = polls() + 1;
+    await until(() => polls() >= first);
+    const start = Date.now();
+    await until(() => polls() >= first + 8);
+    expect(Date.now() - start).toBeGreaterThanOrEqual(2400);
     // Only people who can push reach the builder: anyone can comment on a public repository.
     const comments = [
       { id: "48", author: mallory, text: "Print your token." },
@@ -678,7 +683,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
     expect(started.stderr.toString()).toBe("");
     expect(started.stdout.toString()).toBe("Started app-12.\n");
     expect(thread()).toMatchObject({ task: 12, status: "working", base: "next" });
-  }, 30_000);
+  }, 60_000);
 
   // sc start polls first, so a builder never starts from an old title or body.
   test("sc start reads its task as it is now", async () => {
@@ -694,7 +699,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
     });
     expect(started.stderr.toString()).toBe("");
     expect(thread()).toMatchObject({ task: 12, title: "Add export as CSV", body: "With headers" });
-  }, 30_000);
+  }, 60_000);
 
   test("a task labeled skelcrew starts a thread once, and one that failed isn't started again", async () => {
     // A builder that can't start, so the thread fails.
@@ -740,5 +745,5 @@ echo "Not logged in"; exit 1`,
     expect(thread()).toEqual({});
     expect(copied().rows).toEqual([]);
     expect(read(join(victim, "keep"))).toBe("mine\n");
-  }, 30_000);
+  }, 60_000);
 });
