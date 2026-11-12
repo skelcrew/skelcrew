@@ -31,10 +31,13 @@ export function drawPage(page: Page, url: string, width: number, hint: string): 
   const fact = (label: string, lines: string[]) =>
     lines.map((line, i) => `${pad}${paint(grey, (i === 0 ? label : "").padEnd(gap))}${line}`);
   // The link to GitHub is a terminal link, cut to fit beside its label. The hint gives way
-  // first, when the link wouldn't fit whole beside it.
+  // first, when the link wouldn't fit whole beside it. The link is blue and underlined, as
+  // Claude Code draws links, since the screen takes the mouse and the terminal marks a link only
+  // with Shift held. The theme's own blue fits its colours. 39 and 24 end just these two styles,
+  // and they sit inside the terminal link, which a click finds by its start.
   const fits = Bun.stringWidth(url) + 2 + Bun.stringWidth(hint) <= room - gap;
   const after = fits ? `  ${paint(grey, hint)}` : "";
-  const link = `\x1b]8;;${url}\x1b\\${fitted(url, room - gap)}\x1b]8;;\x1b\\${after}`;
+  const link = `\x1b]8;;${url}\x1b\\\x1b[34;4m${fitted(url, room - gap)}\x1b[39;24m\x1b]8;;\x1b\\${after}`;
   // The description wraps as its markdown says, so a list item's lines start under its text.
   const body = page.body.trim()
     ? drawMarkdown(page.body.trim(), Math.max(room, 1))
