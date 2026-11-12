@@ -289,10 +289,13 @@ function answer(folder: string): unknown {
 // always shows "› Ask Codex to do anything", even mid-turn, so that whole line is its prompt:
 // a line holding only › never shows. codex exec reads CODEX_API_KEY: given only
 // OPENAI_API_KEY, it sent no key at all, so both get into the sandbox for those who use a key
-// rather than a login.
+// rather than a login. The first run looks for `program` and, when it is missing, prints the
+// line that installs it.
 export const codex = {
   name: "codex",
   title: "Codex",
+  program: "codex",
+  install: "npm install -g @openai/codex",
   marks: { busy: "esc to interrupt", prompt: "› Ask Codex to do anything" },
   keys: ["OPENAI_API_KEY", "CODEX_API_KEY"],
   start: startCommand,
