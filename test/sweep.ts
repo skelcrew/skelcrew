@@ -67,13 +67,9 @@ if (import.meta.main) {
   // the sweep keeps the run's latest tree. One started since the last look is missed. No test
   // starts such a process: all give a test's HOME to anything that keeps running.
   let tree: number[] = [];
-  // The run sends SIGTERM when its test file is done, as a parallel worker goes on to run
-  // another file in the same process. Clearing up is then the same as after a dead run.
-  let done = false;
-  process.on("SIGTERM", () => {
-    done = true;
-  });
-  while (!done && proc(run, "cmdline") !== "") {
+  // The run writes "done" in its folder when its test file ends, as a parallel worker goes on
+  // to run another file in the same process. Clearing up is then the same as after a dead run.
+  while (!existsSync(join(folder, "done")) && proc(run, "cmdline") !== "") {
     tree = processTree(run)
       .slice(1)
       .filter((pid) => command(pid) !== "");
