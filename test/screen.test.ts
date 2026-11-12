@@ -216,7 +216,8 @@ test("Alt-Down and Alt-Up switch the right side, and you type to whichever agent
   await until(() => seen().includes("I am app-12"), "app-12");
   await until(() => selected() === "● app-12", "the sidebar to follow");
   type("hello\r");
-  await until(() => existsSync(join(home, "app-12.typed")), "the typing");
+  // The agent's shell makes the file before it writes the line, so wait for the whole line.
+  await until(() => read("app-12.typed").endsWith("\n"), "the typing");
   expect(readFileSync(join(home, "app-12.typed"), "utf8")).toBe("hello\n");
   press("M-Up");
   await until(() => seen().includes("I am lead"), "the lead");
@@ -312,7 +313,8 @@ test("the wheel scrolls back through the agent's output, and typing returns you 
   expect(seen()).not.toContain("I am output");
   expect(seen()).toContain("app-12");
   type("æble\r");
-  await until(() => existsSync(join(home, "output.typed")), "the typing");
+  // The agent's shell makes the file before it writes the line, so wait for the whole line.
+  await until(() => read("output.typed").endsWith("\n"), "the typing");
   expect(readFileSync(join(home, "output.typed"), "utf8")).toBe("æble\n");
   await until(() => seen().includes("I am output"), "the live agent");
   expect(scrolledBack()).not.toContain("1");
