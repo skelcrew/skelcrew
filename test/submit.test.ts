@@ -14,6 +14,7 @@ import {
   asked,
   fakePlugin,
   git,
+  hearMonitor,
   homeEnv,
   read,
   runSkel,
@@ -40,7 +41,7 @@ const clone = () => join(data(), "threads", "app-12");
 const script = (name: string, body: string) => writeScript(home, name, body);
 
 // Stands in for Claude Code. As the lead, it waits at a ❯ prompt and keeps what is typed
-// into it. As the builder, it commits a round and runs sc submit, then
+// into it, and runs its plugin's monitor. As the builder, it commits a round and runs sc submit, then
 // waits at a ❯ prompt, keeping what is typed into it. Each typed message ends in a paste mark
 // and an Enter, and it answers each one with another round, as a builder fixing a review
 // would. `submits` false leaves the first round to the test. While the file busy is in its
@@ -48,7 +49,8 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 function fakeClaude(submits = true): void {
   script(
     "claude",
-    `case "$CLAUDE_CONFIG_DIR" in */lead-*) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
+    `${hearMonitor}
+case "$CLAUDE_CONFIG_DIR" in */lead-*) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
 printf '%s\\n' "$@" > "$CLAUDE_CONFIG_DIR/args"
 n=0
 round() {
@@ -357,7 +359,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     expect(reviews()).toHaveLength(3);
     expect(thread()).toMatchObject({ status: "waiting", needs_you: 1, rounds: 3 });
     await until(() =>
-      read(join(lead(), "typed")).includes("app-12 needs you: changes asked for after 2 rounds"),
+      read(join(lead(), "heard")).includes("app-12 needs you: changes asked for after 2 rounds"),
     );
   }, 90_000);
 

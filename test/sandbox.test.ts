@@ -293,6 +293,9 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
       "test -e ~/.config/skelcrew/claude-token || echo no-token-file",
       "test -e ~/.local/share/skelcrew/claude/other || echo no-other-session",
       "echo m > $CLAUDE_CONFIG_DIR/note && echo kept",
+      // The lead's plugin is Skelcrew's, so the lead reads it but can't change its monitor.
+      "cat ~/.local/share/skelcrew/claude-plugin/monitors/monitors.json && echo",
+      "echo x 2>/dev/null > ~/.local/share/skelcrew/claude-plugin/x || echo plugin-read-only",
       "mkdir -p ~/.claude && echo x > ~/.claude/settings.json",
     ]);
     const { argv, env } = claude.start({
@@ -315,6 +318,8 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
         "bypassPermissions",
         "--settings",
         '{"skipDangerousModePermissionPrompt":true,"sandbox":{"enabled":false}}',
+        "--plugin-dir",
+        join(home, ".local", "share", "skelcrew", "claude-plugin"),
         "--resume",
         "abc-123",
         "Fix the bug",
@@ -331,6 +336,8 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
         "no-token-file",
         "no-other-session",
         "kept",
+        '[{"name":"notes","command":"sc notes","description":"Skelcrew"}]',
+        "plugin-read-only",
         "",
       ].join("\n"),
     );

@@ -37,6 +37,16 @@ export const homeEnv = (home: string) => ({
 // Returns what a file holds, or nothing before it exists, for a test watching a file appear.
 export const read = (file: string) => (existsSync(file) ? readFileSync(file, "utf8") : "");
 
+// Shell lines for a fake Claude Code lead: they run the monitor of the plugin that
+// --plugin-dir names, in the background, as Claude Code does for the whole session. What the
+// monitor prints, which Claude Code hands the lead as notices, goes to heard in the lead's
+// config folder.
+export const hearMonitor = `plugin=$(printf '%s\\n' "$@" | sed -n '/^--plugin-dir$/{n;p;}')
+if [ -n "$plugin" ]; then
+  monitor=$(sed -n 's/.*"command":"\\([^"]*\\)".*/\\1/p' "$plugin/monitors/monitors.json")
+  sh -c "$monitor" >> "$CLAUDE_CONFIG_DIR/heard" &
+fi`;
+
 // Writes a shell script into the home's bin folder, where it stands in for a real program.
 export function writeScript(home: string, name: string, body: string): void {
   writeFileSync(join(home, "bin", name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });

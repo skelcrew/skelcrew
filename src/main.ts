@@ -197,10 +197,12 @@ async function pluginCommand(args: string[], json: boolean): Promise<void> {
 }
 
 // Runs what agents and their hooks call: a builder submitting its work, and the hooks that
-// tell the daemon about questions.
+// tell the daemon about questions, and the monitor that brings a lead its notes.
 async function agentCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
-  const { reportQuestion, reportTurnEnded, submitForReview } = await import("./client.ts");
+  const { listenForNotes, reportQuestion, reportTurnEnded, submitForReview } = await import(
+    "./client.ts"
+  );
   if (command === "submit" && sub && rest.length === 0) {
     const thread = await submitForReview(sub);
     console.log(
@@ -224,6 +226,9 @@ async function agentCommand(args: string[]): Promise<void> {
   // until it restarts. It prints nothing, as Claude Code adds what it prints to the message,
   // and a lead with one repository needs no note of where you are.
   if (command === "attached" && args.length === 1) return;
+  // Run by the monitor of a lead on Claude Code, not by people, so usage leaves it out. Each
+  // line it prints reaches the lead as a notice.
+  if (command === "notes" && args.length === 1) return listenForNotes();
   usage(command);
 }
 
@@ -409,6 +414,7 @@ async function runCommand(args: string[]): Promise<void> {
     case "question":
     case "turn":
     case "attached":
+    case "notes":
       return agentCommand(words);
     case "ps":
       return psCommand(words, json);

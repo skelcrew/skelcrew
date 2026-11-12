@@ -133,6 +133,22 @@ export async function tellTheLead(text: string): Promise<void> {
   await request({ command: "tell lead", text });
 }
 
+// Prints each note the daemon has for the lead, for ever, for the monitor of a lead on Claude
+// Code: Claude Code hands the lead each line printed as a notice. The lead's own socket tells
+// the daemon which repository it leads. It asks every second, and goes on asking while the
+// daemon restarts, since the monitor runs for the whole session and nothing starts it again.
+// It stops only when the daemon refuses, such as when you run it rather than a lead.
+export async function listenForNotes(): Promise<never> {
+  for (;;) {
+    const reply = await ask({ command: "notes" }, 10_000);
+    const failed = z.object({ error: z.string() }).safeParse(reply);
+    if (failed.success) throw new Error(failed.data.error);
+    const read = z.object({ notes: z.array(z.string()) }).safeParse(reply);
+    if (read.success) for (const note of read.data.notes) console.log(note);
+    await Bun.sleep(1000);
+  }
+}
+
 // Has the daemon review a thread's last submitted commit again, for sc review, and returns
 // the thread's name. The daemon answers at once, and the review runs after, as a round's.
 export async function reviewAgain(repository: string, task: string): Promise<string> {

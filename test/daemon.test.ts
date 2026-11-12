@@ -16,7 +16,7 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 import { leadPlaces } from "../src/paths.ts";
-import { asked, fakePlugin, read, source, until as wait } from "./harness.ts";
+import { asked, fakePlugin, hearMonitor, read, source, until as wait } from "./harness.ts";
 
 const main = source("main.ts");
 const daemon = source("flow/daemon.ts");
@@ -1018,7 +1018,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("the lead from before", ()
     const id = crypto.randomUUID();
     oneLeadBefore(id, null);
     saveTranscript(id, "lead", keptLead());
-    fakeClaude(atPrompt);
+    fakeClaude(`${hearMonitor}\n${atPrompt}`);
     serve();
     await untilAnswers();
     await until(() => claudeLines(keptLead()).length > 0);
@@ -1027,7 +1027,10 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("the lead from before", ()
     expect(await askAsLead({ command: "repo ls" }, keptSocket())).toMatchObject({
       repositories: [{ name: "app" }],
     });
-    await until(() => read(join(keptLead(), "typed")).includes("you are the lead of app"));
+    // Started anew, it hears its notes through its monitor.
+    const heard = join(home, ".local", "share", "skelcrew", "claude", "lead", "heard");
+    await until(() => read(heard).includes("you are the lead of app"));
+    expect(read(join(keptLead(), "typed"))).toBe("");
   }, 20_000);
 });
 

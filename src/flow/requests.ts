@@ -56,6 +56,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     text: z.string().min(1),
   }),
   z.object({ command: z.literal("tell lead"), text: z.string().min(1) }),
+  z.object({ command: z.literal("notes") }),
   z.object({ command: z.literal("submit"), summary: z.string().min(1) }),
   z.object({ command: z.literal("question asked") }),
   z.object({ command: z.literal("question answered") }),
@@ -95,6 +96,7 @@ export const allowed = {
     "review",
     "stop",
     "tell",
+    "notes",
   ],
   builder: ["status", "submit", "tell lead", "question asked", "question answered", "turn ended"],
 };

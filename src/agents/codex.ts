@@ -287,13 +287,14 @@ function answer(folder: string): unknown {
 
 // Codex as Skelcrew knows it. While a turn runs it shows "esc to interrupt". Its empty input
 // always shows "› Ask Codex to do anything", even mid-turn, so that whole line is its prompt:
-// a line holding only › never shows. codex exec reads CODEX_API_KEY: given only
-// OPENAI_API_KEY, it sent no key at all, so both get into the sandbox for those who use a key
-// rather than a login.
+// a line holding only › never shows. It has no monitor, so a lead on it has its notes typed
+// in. codex exec reads CODEX_API_KEY: given only OPENAI_API_KEY, it sent no key at all, so
+// both get into the sandbox for those who use a key rather than a login.
 export const codex = {
   name: "codex",
   title: "Codex",
   marks: { busy: "esc to interrupt", prompt: "› Ask Codex to do anything" },
+  hearsNotes: false,
   keys: ["OPENAI_API_KEY", "CODEX_API_KEY"],
   start: startCommand,
   saved: savedConversation,

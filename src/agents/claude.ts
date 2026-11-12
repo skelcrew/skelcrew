@@ -13,7 +13,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 import { claudeTokenFile, dataDir } from "../paths.ts";
 import { keptEnv, refuseCredentials, ro, rw, sandboxArgs } from "./sandbox.ts";
@@ -45,6 +45,29 @@ const builderSettings = JSON.stringify({
     UserPromptSubmit: [{ hooks: [answered] }],
   },
 });
+
+// A lead hears Skelcrew's notes through a Claude Code plugin of Skelcrew's own, rather than
+// having them typed into its prompt, where they would read as if you had typed them. The
+// plugin's monitor runs for the whole session, in the lead's sandbox, and Claude Code hands
+// the lead each line it prints as a notice, even mid-turn. `sc notes` asks the daemon over the
+// lead's own socket. Claude Code shows the monitor's description after the notice's first
+// line, so it is one short word.
+const leadPlugin = {
+  ".claude-plugin/plugin.json": { name: "skelcrew", description: "Skelcrew's notes for the lead" },
+  "monitors/monitors.json": [{ name: "notes", command: "sc notes", description: "Skelcrew" }],
+};
+
+// Writes the lead's plugin into Skelcrew's own folder, the same for every lead, and returns
+// where it is. Written at each start, so a lead always gets this release's. Agents never write
+// there: each lead sees it read-only.
+function writeLeadPlugin(home: string): string {
+  const folder = join(dataDir(home), "claude-plugin");
+  for (const [file, json] of Object.entries(leadPlugin)) {
+    mkdirSync(dirname(join(folder, file)), { recursive: true });
+    writeFileSync(join(folder, file), JSON.stringify(json));
+  }
+  return folder;
+}
 
 // A saved login token: any text but blank, without the newline a paste leaves.
 const Token = z.string().trim().min(1);
@@ -179,9 +202,15 @@ function startCommand(given: {
   trustFolder(config, cwd);
 
   // Bypass mode, since nobody is there to approve each tool. Only a builder gets the hooks
-  // that tell Skelcrew it asked you a question.
+  // that tell Skelcrew it asked you a question, and only a lead the plugin it hears notes
+  // through.
   const command = ["claude", "--model", model, "--permission-mode", "bypassPermissions"];
   command.push("--settings", thread ? builderSettings : settings);
+  if (!thread) {
+    const plugin = writeLeadPlugin(home);
+    mounts.push(...ro(plugin));
+    command.push("--plugin-dir", plugin);
+  }
   if (resume) command.push("--resume", resume);
   if (sessionId) command.push("--session-id", sessionId);
   if (system) command.push("--append-system-prompt", system);
@@ -237,12 +266,13 @@ const answer = (_folder: string, out: string): unknown =>
   z.looseObject({ structured_output: z.unknown() }).parse(JSON.parse(out)).structured_output;
 
 // Claude Code as Skelcrew knows it. While a turn runs it shows "esc to interrupt". It is ready for
-// a message once that is gone and a line holding only its ❯ prompt shows. The key is for those
-// who use one rather than a login.
+// a message once that is gone and a line holding only its ❯ prompt shows. A lead on it hears
+// its notes through its plugin's monitor. The key is for those who use one rather than a login.
 export const claude = {
   name: "claude",
   title: "Claude Code",
   marks: { busy: "esc to interrupt", prompt: "❯" },
+  hearsNotes: true,
   keys: ["ANTHROPIC_API_KEY"],
   start: startCommand,
   saved: savedConversation,

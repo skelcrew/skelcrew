@@ -57,15 +57,19 @@ function prepareTables(db: Database): void {
   // conversation. `opened` is when you last opened the repository, in milliseconds since 1970,
   // and null until you first do: its lead starts then, and from then on the daemon brings it
   // back. `lead_harness` is the harness the lead started on, which it keeps, as a conversation
-  // can't move to another harness. `kept_lead` marks the repository whose lead is the one this
-  // machine had before Skelcrew gave each repository its own. `claimed` is whether Skelcrew has
-  // asked the forges installed which of them claims the repository's remote, `forge` is the one
-  // that does, or null, and `author` is who commits in its name, as git writes an author.
+  // can't move to another harness. `lead_hears` is whether the lead, as it last started, hears
+  // its notes through its harness's monitor rather than having them typed in, so a lead started
+  // before it had one keeps getting them typed. `kept_lead` marks the repository whose lead is
+  // the one this machine had before Skelcrew gave each repository its own. `claimed` is whether
+  // Skelcrew has asked the forges installed which of them claims the repository's remote,
+  // `forge` is the one that does, or null, and `author` is who commits in its name, as git
+  // writes an author.
   const columns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
     lead_session: "TEXT",
     lead_harness: "TEXT",
+    lead_hears: "INTEGER NOT NULL DEFAULT 0",
     opened: "INTEGER",
     kept_lead: "INTEGER NOT NULL DEFAULT 0",
     forge: "TEXT",

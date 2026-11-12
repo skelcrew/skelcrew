@@ -22,6 +22,7 @@ import {
   asked,
   fakePlugin,
   git,
+  hearMonitor,
   homeEnv,
   prItem,
   source,
@@ -54,14 +55,16 @@ const typed = () => read(join(builder(), "typed"));
 // Puts a program of the test's on its PATH.
 const script = (name: string, body: string) => writeScript(home, name, body);
 
-// Stands in for Claude Code. As the builder, it commits a round and runs sc submit, then
+// Stands in for Claude Code. As the lead, it runs its plugin's monitor and waits at a ❯
+// prompt. As the builder, it commits a round and runs sc submit, then
 // waits at a ❯ prompt, keeping what is typed into it. Told of a conflict, it fetches
 // origin and merges the base, as Claude Code would, keeping what git said. While the file
 // busy is in its config folder, it looks busy, as Claude Code does mid-turn.
 function fakeClaude(): void {
   script(
     "claude",
-    `case "$CLAUDE_CONFIG_DIR" in */lead-*) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
+    `${hearMonitor}
+case "$CLAUDE_CONFIG_DIR" in */lead-*) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
 echo 1 > change
 git add -A && git commit -qm "round 1"
 sc submit "Round 1" >> "$CLAUDE_CONFIG_DIR/submitted" 2>&1
@@ -398,8 +401,9 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
     pr({ reviews: [skelReview], checks: [approved, check(900, "passed")] });
     await until(() => thread().needs_you === 1);
     expect(handled("1001")).toBe(true);
-    await until(() => read(join(data(), "claude", leadName, "typed")).includes("app-12 needs you"));
-    expect(read(join(data(), "claude", leadName, "typed"))).toContain("ready to merge");
+    const heard = () => read(join(data(), "claude", leadName, "heard"));
+    await until(() => heard().includes("app-12 needs you"));
+    expect(heard()).toContain("ready to merge");
     // Your own comment wakes the builder; Skelcrew's review, posted by its app, never does.
     // Waiting on you, it is polled every other time: every minute, at 30 seconds a poll.
     const before = polls();
@@ -588,13 +592,14 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
     // A builder that can't start, so the thread fails.
     script(
       "claude",
-      `case "$CLAUDE_CONFIG_DIR" in */lead-*) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
+      `${hearMonitor}
+case "$CLAUDE_CONFIG_DIR" in */lead-*) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
 echo "Not logged in"; exit 1`,
     );
     addApp();
     pr({ labeled: true });
     serve();
-    const lead = () => read(join(data(), "claude", leadName, "typed"));
+    const lead = () => read(join(data(), "claude", leadName, "heard"));
     await until(() => lead().includes("started app-12 from github: Add export"));
     const took = () => asked(plugin).filter((q) => q.ask === "took");
     await until(() => took().length > 0);

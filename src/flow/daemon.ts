@@ -25,7 +25,7 @@ import {
 } from "./builder.ts";
 import { saveItems } from "./copy.ts";
 import { stopThread } from "./events.ts";
-import { lastOpened, leadOf, openedRepositories, startLead, tellLead } from "./lead.ts";
+import { lastOpened, leadOf, openedRepositories, startLead, takeNotes, tellLead } from "./lead.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import { pollRepositories } from "./poll.ts";
 import {
@@ -326,6 +326,12 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       case "tell lead":
         messageLead(db, tmux, callingThread(caller), request.text);
         return { told: "lead" };
+      case "notes": {
+        // `allowed` lets only a lead ask, so the throw never runs: it tells the typecheck so.
+        const yours = leadOfCaller(caller);
+        if (yours === null) throw new Error("only a lead hears notes");
+        return { notes: takeNotes(db, yours.owner, yours.repo) };
+      }
       case "submit": {
         const thread = callingThread(caller);
         submitRound(db, tmux, thread.folder, request.summary);

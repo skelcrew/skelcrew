@@ -1,5 +1,5 @@
 // Each repository's lead: your agent session for that repository on this machine, in its own
-// folder, kept alive in tmux, and the notes Skelcrew types into it.
+// folder, kept alive in tmux, and the notes Skelcrew has for it.
 import type { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { z } from "zod";
@@ -30,25 +30,28 @@ import { readThread, record, Thread, threadName } from "./thread.ts";
 const LeadRow = z.object({
   lead_session: z.string().nullable(),
   lead_harness: HarnessName.nullable(),
+  lead_hears: z.coerce.boolean(),
   kept_lead: z.coerce.boolean(),
 });
-// A note waiting to be typed into a lead, or null when none waits.
+// A note waiting for a lead, or null when none waits.
 const Note = z.object({ id: z.number(), text: z.string() }).nullable();
 
 // Returns a repository's lead: where it lives, as leadPlaces gives it, the session ID of its
-// conversation, and the harness it started on, both null before it first started. A lead that
-// started before Skelcrew saved its harness ran on Claude Code, the only one then. Throws when
-// Skelcrew doesn't have the repository.
+// conversation, and the harness it started on, both null before it first started, and whether
+// it hears its notes through its harness's monitor. A lead that started before Skelcrew saved
+// its harness ran on Claude Code, the only one then. Throws when Skelcrew doesn't have the
+// repository.
 export function leadOf(db: Database, owner: string, repo: string) {
   const row = db
     .query(
-      "SELECT lead_session, lead_harness, kept_lead FROM repositories WHERE owner = ? AND repo = ?",
+      "SELECT lead_session, lead_harness, lead_hears, kept_lead FROM repositories WHERE owner = ? AND repo = ?",
     )
     .get(owner, repo);
   if (!row) throw new Error(`Skelcrew doesn't have ${owner}/${repo}`);
-  const { lead_session, lead_harness, kept_lead } = LeadRow.parse(row);
+  const { lead_session, lead_harness, lead_hears, kept_lead } = LeadRow.parse(row);
   const harness = lead_harness ?? (lead_session === null ? null : "claude");
-  return { ...leadPlaces(owner, repo, kept_lead), session: lead_session, harness };
+  const places = leadPlaces(owner, repo, kept_lead);
+  return { ...places, session: lead_session, harness, hears: lead_hears };
 }
 
 // Returns the repositories you have opened, whose leads the daemon keeps running.
@@ -75,7 +78,9 @@ export function lastOpened(db: Database): Repository | null {
 // is one. A lead's first start picks the harness your config names for leads, and the lead
 // keeps it from then on, as a conversation can't move to another harness. The session id and
 // harness are stored before the lead starts, so the lead can be brought back after its session
-// is gone. Codex picks its own id, and its module finds the conversation it saved.
+// is gone. Codex picks its own id, and its module finds the conversation it saved. Whether
+// the lead hears its notes through a monitor is saved too: a lead that started without one
+// still runs, and must get its notes typed.
 export async function startLead(db: Database, tmux: string, repository: Repository): Promise<void> {
   const { owner, repo } = repository;
   const lead = leadOf(db, owner, repo);
@@ -102,8 +107,8 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
   const resume = stored === null ? null : harness.saved(lead.name, lead.folder, stored);
   const session = resume ?? crypto.randomUUID();
   db.run(
-    "UPDATE repositories SET lead_session = ?, lead_harness = ? WHERE owner = ? AND repo = ?",
-    [session, harness.name, owner, repo],
+    "UPDATE repositories SET lead_session = ?, lead_harness = ?, lead_hears = ? WHERE owner = ? AND repo = ?",
+    [session, harness.name, harness.hearsNotes ? 1 : 0, owner, repo],
   );
   const { argv, env } = await harness.start({
     name: lead.name,
@@ -127,14 +132,40 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
   await checkItLived(tmux, lead.name, "lead");
 }
 
+// Returns the notes waiting for a repository's lead, oldest first, then one for each of its
+// threads that started needing you, such as "app-12 needs you: its builder asked a question",
+// and forgets them. A lead on Claude Code takes them this way, through its monitor, which
+// prints each one as it comes. A lead that started without a monitor gets none: its notes are
+// typed in instead, so each lead hears its notes one way only.
+export function takeNotes(db: Database, owner: string, repo: string): string[] {
+  if (!leadOf(db, owner, repo).hears) return [];
+  const where = "owner = ? AND repo = ?";
+  // Saved notes go first, then the threads that need you.
+  const notes = z
+    .array(Note.unwrap())
+    .parse(db.query(`SELECT id, text FROM notes WHERE ${where} ORDER BY id`).all(owner, repo));
+  for (const note of notes) db.run("DELETE FROM notes WHERE id = ?", [note.id]);
+  const rows = db
+    .query(`SELECT * FROM threads WHERE noting IS NOT NULL AND ${where} ORDER BY rowid`)
+    .all(owner, repo);
+  const told = notes.map((note) => note.text);
+  for (const thread of z.array(Thread).parse(rows)) {
+    told.push(`${threadName(db, thread)} needs you: ${thread.noting}`);
+    record(db, thread.folder, { noting: null }, "told the lead it needs you");
+  }
+  return told;
+}
+
 // Types each saved note for a repository's lead into it, one at a time, such as "started
 // app-12 from github: Fix the login redirect" or "app-12 needs you: its builder asked a
 // question", and forgets it once typed. It waits as long as the lead is busy, checking again
 // each time whether a note about a thread needing you is still wanted, so a question you
 // answered meanwhile is never announced. A lead that isn't running, or never started, gets
-// nothing: its notes stay saved until it starts.
+// nothing: its notes stay saved until it starts. A lead that hears its notes through a monitor
+// gets nothing typed either: it takes them itself.
 async function typeNotes(db: Database, tmux: string, owner: string, repo: string): Promise<void> {
-  const { name, harness } = leadOf(db, owner, repo);
+  const { name, harness, hears } = leadOf(db, owner, repo);
+  if (hears) return;
   const where = "owner = ? AND repo = ?";
   // Each pass reads the oldest note and the first thread waiting to be announced, so what was
   // saved while typing is seen too.

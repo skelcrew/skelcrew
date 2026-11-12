@@ -1,7 +1,7 @@
 // Needs you, against a running daemon: a builder's question marks its thread needs you, and
-// Skelcrew types a note into the lead's session when a thread starts needing you. A shell script
-// stands in for Claude Code: as the builder it runs the hook commands in its settings, as
-// Claude Code would around AskUserQuestion, and as the lead it waits at a ❯ prompt.
+// the lead hears a note when a thread starts needing you. A shell script stands in for Claude
+// Code: as the builder it runs the hook commands in its settings, as Claude Code would around
+// AskUserQuestion, and as the lead it waits at a ❯ prompt and runs its plugin's monitor.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -14,6 +14,7 @@ import {
   answer,
   fakePlugin,
   git,
+  hearMonitor,
   homeEnv,
   read,
   runSkel,
@@ -39,7 +40,8 @@ const lead = (repo = "app") => join(data(), "claude", leadPlaces("simon", repo).
 const script = (name: string, body: string) => writeScript(home, name, body);
 
 // Stands in for Claude Code. As the lead, it waits at a ❯ prompt and keeps what is typed into
-// it, looking busy while the file busy is in its config folder. As the builder, it runs the
+// it, looking busy while the file busy is in its config folder, and keeps what its monitor
+// prints in heard. As the builder, it runs the
 // hook commands its settings give for an event when the test leaves a file named for it:
 // ask for AskUserQuestion's PreToolUse, answer for its PostToolUse, and talk for
 // UserPromptSubmit. Each hook gets a line in the file ran once it has finished.
@@ -48,6 +50,7 @@ function fakeClaude(): void {
     "claude",
     `printf '%s\\n' "$@" > "$CLAUDE_CONFIG_DIR/args"
 case "$CLAUDE_CONFIG_DIR" in */lead-*)
+  ${hearMonitor}
   printf '\\033[?2004h'
   stty -echo
   # A shell gives a command run in the background /dev/null as its input, unless told.
@@ -166,7 +169,20 @@ async function hook(step: "ask" | "answer" | "talk") {
   await until(() => read(join(builder(), "ran")).split("\n").length > before);
 }
 
-const notes = (repo = "app") => read(join(lead(repo), "typed")).split("\x1b[201~").length - 1;
+// How many notes a repository's lead heard through its monitor, and how many were typed into it.
+const notes = (repo = "app") =>
+  read(join(lead(repo), "heard"))
+    .split("\n")
+    .filter((line) => line.includes("needs you")).length;
+const typedNotes = () => read(join(lead(), "typed")).split("\x1b[201~").length - 1;
+
+// Marks app's lead as one started without a monitor, as a release before had it.
+function withoutMonitor(): void {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  db.run("UPDATE repositories SET lead_hears = 0 WHERE repo = 'app'");
+  db.close();
+}
 
 function setNeedsYou(): void {
   const db = new Database(join(data(), "skelcrew.db"));
@@ -211,7 +227,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("needs you", () => {
     expect(read(join(builder(), "hooks"))).toBe("");
     await untilNeedsYou(true);
     await until(() => notes() === 1);
-    expect(read(join(lead(), "typed"))).toContain("app-12 needs you: its builder asked a question");
+    expect(read(join(lead(), "heard"))).toContain("app-12 needs you: its builder asked a question");
 
     // A second question while the first still waits is no news.
     await hook("ask");
@@ -240,17 +256,34 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("needs you", () => {
     expect(notes()).toBe(0);
   }, 60_000);
 
-  test("a note waits while the lead is busy, and drops once the thread no longer needs you", async () => {
+  // Claude Code hands a monitor's line to the lead even mid-turn, so nothing waits for it.
+  test("a Claude Code lead hears a note through its monitor while busy, and nothing is typed into it", async () => {
     addApp();
     mkdirSync(lead(), { recursive: true });
     writeFileSync(join(lead(), "busy"), "");
     await startApp12();
     await hook("ask");
     await untilNeedsYou(true);
-    await Bun.sleep(1500);
-    expect(notes()).toBe(0);
-    rmSync(join(lead(), "busy"));
     await until(() => notes() === 1);
+    await Bun.sleep(1000);
+    expect(read(join(lead(), "typed"))).toBe("");
+  }, 60_000);
+
+  // A Claude Code lead started by a release before it had a monitor goes on running through
+  // the upgrade, and hears nothing until it starts again.
+  test("a lead without a monitor has its note typed in once idle, and dropped once the thread no longer needs you", async () => {
+    addApp();
+    mkdirSync(lead(), { recursive: true });
+    writeFileSync(join(lead(), "busy"), "");
+    await startApp12();
+    withoutMonitor();
+    await hook("ask");
+    await untilNeedsYou(true);
+    await Bun.sleep(1500);
+    expect(typedNotes()).toBe(0);
+    rmSync(join(lead(), "busy"));
+    await until(() => typedNotes() === 1);
+    expect(read(join(lead(), "typed"))).toContain("app-12 needs you: its builder asked a question");
 
     writeFileSync(join(lead(), "busy"), "");
     await hook("answer");
@@ -260,11 +293,12 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("needs you", () => {
     await untilNeedsYou(false);
     rmSync(join(lead(), "busy"));
     await Bun.sleep(2000);
-    expect(notes()).toBe(1);
+    expect(typedNotes()).toBe(1);
+    expect(notes()).toBe(0);
   }, 60_000);
 
   // One repository's lead never mentions another's threads.
-  test("a needs-you note is typed into the lead of the thread's repository, and no other", async () => {
+  test("a needs-you note reaches the lead of the thread's repository, and no other", async () => {
     addApp();
     addApp("web");
     await startApp12();
@@ -275,8 +309,8 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("needs you", () => {
     await until(() => notes() === 1);
     await Bun.sleep(1000);
     expect(notes()).toBe(1);
-    expect(read(join(lead(), "typed"))).toContain("app-12 needs you: its builder asked a question");
-    expect(read(join(lead("web"), "typed"))).toBe("");
+    expect(read(join(lead(), "heard"))).toContain("app-12 needs you: its builder asked a question");
+    expect(read(join(lead("web"), "heard"))).toBe("");
   }, 60_000);
 
   test("a note for a repository whose lead never started waits until you open it", async () => {
@@ -288,21 +322,21 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("needs you", () => {
     expect(notes()).toBe(0);
     expect(await askForLead("simon/app")).toContain(leadPlaces("simon", "app").name);
     await until(() => notes() === 1);
-    expect(read(join(lead(), "typed"))).toContain("app-12 needs you: its builder asked a question");
+    expect(read(join(lead(), "heard"))).toContain("app-12 needs you: its builder asked a question");
   }, 60_000);
 
-  test("a note for a lead that isn't running is typed once the lead starts again", async () => {
+  test("a note for a lead that isn't running reaches it once the lead starts again", async () => {
     addApp();
     await startApp12();
     const name = leadPlaces("simon", "app").name;
     Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", `=${name}`]);
-    rmSync(join(lead(), "typed"), { force: true });
+    rmSync(join(lead(), "heard"), { force: true });
     await hook("ask");
     await untilNeedsYou(true);
     await Bun.sleep(1000);
     expect(await askForLead()).toContain(name);
     await until(() => notes() === 1);
-    expect(read(join(lead(), "typed"))).toContain("app-12 needs you: its builder asked a question");
+    expect(read(join(lead(), "heard"))).toContain("app-12 needs you: its builder asked a question");
   }, 60_000);
 });
 
@@ -318,4 +352,13 @@ test("only a builder can say it is asking you a question", async () => {
     expect(run.code).not.toBe(0);
     expect(run.err).toContain("doesn't know that request");
   }
+});
+
+test("only a lead can listen for its notes", async () => {
+  serve();
+  await until(() => existsSync(join(home, "run", "skelcrew.sock")));
+  await Bun.sleep(100);
+  const run = await skel(["notes"]);
+  expect(run.code).not.toBe(0);
+  expect(run.err).toContain("doesn't know that request");
 });
