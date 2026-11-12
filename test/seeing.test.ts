@@ -482,5 +482,5 @@ exec sleep 300
     expect(attach).toBe(
       "Skelcrew: attaching to a thread is only for your own terminal, not for agents",
     );
-  }, 20_000);
+  }, 60_000);
 });

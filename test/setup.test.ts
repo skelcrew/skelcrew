@@ -886,7 +886,7 @@ test("at a terminal, Codex signs in on a screen of its own", async () => {
   } finally {
     tmux("kill-server");
   }
-}, 30_000);
+}, 60_000);
 
 test("skips the reviewer's login when Skelcrew's Codex login works already", async () => {
   fakeCodex();

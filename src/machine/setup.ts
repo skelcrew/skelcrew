@@ -3,14 +3,14 @@
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { codexHome } from "../agents/codex.ts";
-import { HarnessName } from "../agents/harness.ts";
+import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { configFile, readConfig } from "../config.ts";
 import { openDb } from "../db.ts";
 import { claudeTokenFile, configDir } from "../paths.ts";
 import { installPlugin } from "../plugins/install.ts";
 import { installedPlugins } from "../plugins/plugin.ts";
 import { errorText } from "../say.ts";
-import { originHere, pathOf } from "./origin.ts";
+import { originHere, parseRemote } from "./origin.ts";
 import { promptSecret } from "./secret.ts";
 import { installService, loginPath, serviceFile } from "./service.ts";
 import { dropCapabilities, onSprite, spriteServiceInstalled } from "./sprite.ts";
@@ -19,23 +19,15 @@ import { dropCapabilities, onSprite, spriteServiceInstalled } from "./sprite.ts"
 type Env = Record<string, string | undefined>;
 
 // The harnesses agents can run on, in the order the first run offers them.
-const harnesses = [
-  {
-    name: "claude",
-    title: "Claude Code",
-    command: "claude",
-    install: "curl -fsSL https://claude.ai/install.sh | bash",
-  },
-  { name: "codex", title: "Codex", command: "codex", install: "npm install -g @openai/codex" },
-] as const;
+const harnesses = HarnessName.options.map(harnessNamed);
 // The programs agents need on Linux, each with the line that installs it.
-const tools = [
+const linuxTools = [
   { command: "tmux", install: "sudo apt install tmux" },
   { command: "bwrap", install: "sudo apt install bubblewrap" },
   { command: "git", install: "sudo apt install git" },
 ];
 // On a Mac the sandbox comes with the system, and what Homebrew gives goes in one line.
-const brewed = ["tmux", "git"];
+const brewTools = ["tmux", "git"];
 // What a Mac needs beyond Homebrew's tools, with what to do when it is missing.
 const macTools = [
   {
@@ -51,15 +43,15 @@ function missingHarness(env: Env): string[] {
   const saved = readConfig().harness;
   // Before you pick one, any installed harness will do.
   const wanted = harnesses.filter((h) => saved === undefined || h.name === saved);
-  if (wanted.some((h) => Bun.which(h.command, { PATH }))) return [];
-  return wanted.map((h) => `  ${h.command}: ${h.install}`);
+  if (wanted.some((h) => Bun.which(h.program, { PATH }))) return [];
+  return wanted.map((h) => `  ${h.program}: ${h.install}`);
 }
 
 // Checks the programs a Mac needs and tries sandbox-exec, stopping setup with what to install
 // on failure. Homebrew's tools are named in one line that can be pasted as it is.
 function checkMacTools(env: Env): void {
   const PATH = env.PATH ?? "";
-  const brew = brewed.filter((command) => !Bun.which(command, { PATH }));
+  const brew = brewTools.filter((command) => !Bun.which(command, { PATH }));
   const missing = macTools.filter((tool) => !Bun.which(tool.command, { PATH }));
   const lines = missing.map((tool) => `  ${tool.command}: ${tool.install}`);
   lines.push(...missingHarness(env));
@@ -77,12 +69,12 @@ function checkMacTools(env: Env): void {
     throw new Error(`sandbox-exec can't start a sandbox here: ${tried.stderr.toString().trim()}`);
 }
 
-// Checks required programs and tries bubblewrap, stopping setup with installation or
-// sandbox advice on failure.
-function checkTools(env: Env): void {
+// Checks the programs agents need on Linux and tries bubblewrap. Stops setup with what to
+// install, or how to let bubblewrap run.
+function checkLinuxTools(env: Env): void {
   const PATH = env.PATH ?? "";
   const bwrap = Bun.which("bwrap", { PATH });
-  const missing = tools.filter((tool) => !Bun.which(tool.command, { PATH }));
+  const missing = linuxTools.filter((tool) => !Bun.which(tool.command, { PATH }));
   const lines = missing.map((tool) => `  ${tool.command}: ${tool.install}`);
   lines.push(...missingHarness(env));
   // A missing bwrap is in the lines already, and checking it here too tells TypeScript it
@@ -152,7 +144,7 @@ function tokenProblem(token: string): string | null {
 function saveClaudeToken(): void {
   // Each wrong paste asks again, saying what was wrong with the last one.
   let question = "Token:";
-  for (;;) {
+  while (true) {
     const answer = promptSecret(question);
     if (answer === null) throw new Error("no token was pasted, so none is saved");
     const token = answer.trim();
@@ -227,7 +219,7 @@ const hasGitHubPlugin = () => installedPlugins(openDb()).some((p) => p.name === 
 // remote that isn't on github.com, a machine with the plugin, or a repository you said no for.
 // Only the remote is read, with no call to GitHub, as plain sc must start fast.
 function gitHubToOffer(remote: string | null): string | null {
-  const found = remote === null ? null : pathOf(remote);
+  const found = remote === null ? null : parseRemote(remote);
   if (found?.host !== "github.com" || hasGitHubPlugin()) return null;
   const repository = `${found.owner}/${found.repo}`;
   // GitHub's names ignore case, so a no for Simon/App covers simon/app.
@@ -235,10 +227,10 @@ function gitHubToOffer(remote: string | null): string | null {
   return declined.includes(repository.toLowerCase()) ? null : repository;
 }
 
-// Offers the GitHub plugin for a checkout of the repository at `remote`. Your yes is all the install asks for, as you said yes to this plugin by
-// name. A no is saved in config.yaml for the repository, so no checkout of it asks again, and
-// you can undo it there. One that fails to install is only reported: Skelcrew works from git
-// alone until you install it with sc plugin install.
+// Offers to install the GitHub plugin for a checkout of `repository`. A yes installs it
+// without asking again, since you said yes to it by name. A no is saved in config.yaml, so no
+// checkout of the repository asks again, and you can undo it there. A failed install is only
+// reported: Skelcrew works from git alone until you run sc plugin install.
 function offerGitHub(repository: string, remote: string): void {
   console.log("GitHub detected.\n");
   const answer = prompt(
@@ -271,14 +263,14 @@ function pickHarness(env: Env): void {
   console.log("Choose the coding agent:");
   for (const [at, h] of harnesses.entries()) console.log(`  ${at + 1}) ${h.title}`);
   // The first one installed is the default, so Enter picks a harness that works.
-  const installed = harnesses.findIndex((h) => Bun.which(h.command, { PATH }));
+  const installed = harnesses.findIndex((h) => Bun.which(h.program, { PATH }));
   // Bun's prompt answers null both for Ctrl-D and for a bare Enter, unless it has a
   // default: then Enter gives the default and only Ctrl-D gives null.
   const answer = prompt("Number:", String(installed + 1));
   if (answer === null) throw new Error("no harness was picked, so none is saved");
   const picked = harnesses[Number(answer.trim()) - 1];
   if (!picked) throw new Error(`${answer.trim()} isn't one of the numbers, so no harness is saved`);
-  if (!Bun.which(picked.command, { PATH }))
+  if (!Bun.which(picked.program, { PATH }))
     throw new Error(`${picked.title} isn't installed. Install it first: ${picked.install}`);
   config.set("harness", picked.name);
   mkdirSync(configDir(), { recursive: true });
@@ -286,7 +278,7 @@ function pickHarness(env: Env): void {
 }
 
 // Returns the harness your config names for reviews, or none when reviews run on your harness.
-function reviewerSaved(): HarnessName | undefined {
+function savedReviewerHarness(): HarnessName | undefined {
   const read = HarnessName.safeParse(readConfig().config.getIn(["reviewer", "harness"]));
   return read.success ? read.data : undefined;
 }
@@ -319,10 +311,10 @@ function agentsLoggedIn(harness: HarnessName): boolean {
   return existsSync(join(codexHome(), "auth.json"));
 }
 
-// Reports whether saved settings, token and service show that setup finished, avoiding
-// repeated login checks. Setup saves the service last, after the logins, so these
-// files show every step ran. Missing tools or logins fail where used; checking each attach
-// would require a GitHub call.
+// Reports whether setup finished: your harness choice is saved, the agents have their login,
+// and the daemon's service is installed. Setup installs the service last, so with it every
+// step ran. Plain sc checks this each time it starts, so it looks only at files, and at
+// sprite-env on a Sprite.
 export function setupDone(): boolean {
   const service = onSprite() ? spriteServiceInstalled() : existsSync(serviceFile());
   const { harness } = readConfig();
@@ -333,7 +325,7 @@ export function setupDone(): boolean {
 // Completes unfinished machine setup and keeps the daemon service current before attaching
 // to the lead. In a checkout of a GitHub repository it offers the GitHub plugin, on any run. A yes
 // makes GitHub the repository's tracker too, with nothing written into the checkout. `from` is
-// the remote sc --remote brings from your laptop, as the checkout is there.
+// the remote sc --remote brings from your laptop, since the checkout is there.
 export function firstRun(from?: string): void {
   const done = setupDone();
   // The tools are found where your login shell finds them, even over ssh, so a codex
@@ -342,7 +334,7 @@ export function firstRun(from?: string): void {
   const env = done ? process.env : { ...process.env, PATH: loginPath() };
   if (!done) {
     if (process.platform === "darwin") checkMacTools(env);
-    else checkTools(env);
+    else checkLinuxTools(env);
     console.log("Setting up Skelcrew...\n");
   }
   // Read once git is known to be there.
@@ -354,7 +346,7 @@ export function firstRun(from?: string): void {
     // which login comes next.
     let taken = "";
     const asked = { reviewer: false };
-    for (;;) {
+    while (true) {
       const [step] = stepsToTake(env, asked);
       if (!step) break;
       // A step that comes back right after it was taken didn't do its job, and asking again
@@ -369,7 +361,7 @@ export function firstRun(from?: string): void {
     // a line.
     const yours = harnesses.find((h) => h.name === readConfig().harness);
     const other = harnesses.find((h) => h !== yours);
-    if (yours && other && !Bun.which(other.command, { PATH: env.PATH ?? "" }))
+    if (yours && other && !Bun.which(other.program, { PATH: env.PATH ?? "" }))
       console.log(`\n${other.title} isn't installed, so reviews run on ${yours.title}.`);
   }
   installService();
@@ -390,8 +382,8 @@ function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
   const PATH = env.PATH ?? "";
   // Reviews are asked about only when both harnesses are installed, as otherwise there is
   // nothing to pick.
-  const both = harnesses.every((h) => Bun.which(h.command, { PATH }));
-  if (harness && both && !reviewerSaved() && !asked.reviewer)
+  const both = harnesses.every((h) => Bun.which(h.program, { PATH }));
+  if (harness && both && !savedReviewerHarness() && !asked.reviewer)
     steps.push({
       title: "the coding agent for reviews",
       take: () => {
@@ -401,7 +393,8 @@ function stepsToTake(env: Env, asked: { reviewer: boolean }): Step[] {
     });
   // Whether agents or reviews run on the harness, and so need its login.
   const agents = harness ?? "claude";
-  const uses = (name: HarnessName) => agents === name || (reviewerSaved() ?? agents) === name;
+  const uses = (name: HarnessName) =>
+    agents === name || (savedReviewerHarness() ?? agents) === name;
   if (uses("claude") && !existsSync(claudeTokenFile())) {
     const forReviews = harness === "codex" ? " for reviews" : "";
     steps.push({

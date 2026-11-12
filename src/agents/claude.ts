@@ -240,10 +240,13 @@ const answer = (_folder: string, out: string): unknown =>
 
 // Claude Code as Skelcrew knows it. While a turn runs it shows "esc to interrupt". It is ready for
 // a message once that is gone and a line holding only its ❯ prompt shows. The key is for those
-// who use one rather than a login.
+// who use one rather than a login. The first run looks for `program` and, when it is
+// missing, prints the line that installs it.
 export const claude = {
   name: "claude",
   title: "Claude Code",
+  program: "claude",
+  install: "curl -fsSL https://claude.ai/install.sh | bash",
   marks: { busy: "esc to interrupt", prompt: "❯" },
   keys: ["ANTHROPIC_API_KEY"],
   start: startCommand,

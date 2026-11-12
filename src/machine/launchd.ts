@@ -16,7 +16,7 @@ export const daemonLog = () => join(homedir(), "Library", "Logs", "skelcrew.log"
 const domain = () => `gui/${userInfo().uid}`;
 
 // Returns text safe inside a plist, which is XML.
-const xml = (text: string) =>
+const escapeXml = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
 // Returns the agent's definition for the daemon. launchd starts a program with a bare PATH,
@@ -33,13 +33,13 @@ export function plistText(skel: string, path: string, log: string): string {
   <string>${label}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${xml(skel)}</string>
+    <string>${escapeXml(skel)}</string>
     <string>serve</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>${xml(path)}</string>
+    <string>${escapeXml(path)}</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
@@ -51,9 +51,9 @@ export function plistText(skel: string, path: string, log: string): string {
   <key>AbandonProcessGroup</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>${xml(log)}</string>
+  <string>${escapeXml(log)}</string>
   <key>StandardErrorPath</key>
-  <string>${xml(log)}</string>
+  <string>${escapeXml(log)}</string>
 </dict>
 </plist>
 `;
