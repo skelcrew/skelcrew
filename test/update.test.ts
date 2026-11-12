@@ -205,8 +205,8 @@ await Bun.write(${JSON.stringify(ready)}, "");`;
 // service manager was asked.
 async function beforeAttaching(build?: string) {
   const done = await inProcess(
-    `import { onThisSkel } from ${JSON.stringify(source("attach.ts"))};
-await onThisSkel();`,
+    `import { restartStaleDaemon } from ${JSON.stringify(source("attach.ts"))};
+await restartStaleDaemon();`,
     build,
   );
   const calls = existsSync(join(home, "calls")) ? readFileSync(join(home, "calls"), "utf8") : "";

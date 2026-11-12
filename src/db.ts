@@ -61,7 +61,7 @@ function prepareTables(db: Database): void {
   // machine had before Skelcrew gave each repository its own. `claimed` is whether Skelcrew has
   // asked the forges installed which of them claims the repository's remote, `forge` is the one
   // that does, or null, and `author` is who commits in its name, as git writes an author.
-  const columns = {
+  const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
     lead_session: "TEXT",
@@ -73,7 +73,7 @@ function prepareTables(db: Database): void {
     author: "TEXT",
   };
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
-  for (const [column, type] of Object.entries(columns))
+  for (const [column, type] of Object.entries(repositoryColumns))
     if (!db.query("SELECT 1 FROM pragma_table_info('repositories') WHERE name = ?").get(column))
       db.run(`ALTER TABLE repositories ADD COLUMN ${column} ${type}`);
   // Every repository Skelcrew had before it kept remotes came from GitHub, by its GitHub name.
@@ -100,7 +100,7 @@ function prepareTables(db: Database): void {
   // The rest of a thread's columns, added as the repositories' are. `submitting`,
   // `reviewing` and `telling` hold the round under way, so one the daemon's stop cut short
   // carries on when it starts again, and `noting` holds a note for the lead the same way.
-  const added = {
+  const threadColumns = {
     rounds: "INTEGER NOT NULL DEFAULT 0",
     pr: "INTEGER",
     needs_you: "INTEGER NOT NULL DEFAULT 0",
@@ -125,7 +125,7 @@ function prepareTables(db: Database): void {
     body: "TEXT",
     seen: "TEXT",
   };
-  for (const [column, type] of Object.entries(added))
+  for (const [column, type] of Object.entries(threadColumns))
     if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))
       db.run(`ALTER TABLE threads ADD COLUMN ${column} ${type}`);
   // Skelcrew's copy of each repository's open tasks and PRs, as items, kept as JSON. The columns
@@ -146,13 +146,13 @@ function prepareTables(db: Database): void {
   // started from a tracker, kept until they are typed in, since the lead may not be running.
   db.run("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, text TEXT NOT NULL)");
   // A note names its repository, and one from before each repository had its own lead names
-  // none until keepTheLead gives it one.
+  // none until adoptOldLead gives it one.
   for (const column of ["owner", "repo"])
     if (!db.query("SELECT 1 FROM pragma_table_info('notes') WHERE name = ?").get(column))
       db.run(`ALTER TABLE notes ADD COLUMN ${column} TEXT`);
   // A lead table means a database from before each repository had its own lead.
   if (db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lead'").get())
-    keepTheLead(db);
+    adoptOldLead(db);
   // The reviews Skelcrew posted with your gh login, before its forge posted them as its own app.
   db.run("DROP TABLE IF EXISTS posted");
   // The plugins you installed: the folder each runs from, and the GitHub repository it came
@@ -164,12 +164,13 @@ function prepareTables(db: Database): void {
   )`);
 }
 
-// Makes the one lead a machine had before Skelcrew gave each repository its own the lead of the
-// repository you last attached from, or else of the first by name. It keeps its session, so
-// --resume still finds its conversation, and leadPlaces gives it its old name, folder and
-// socket, so a lead running through the upgrade carries on. Notes still waiting for it stay
-// its own, and one more tells it what it now leads. Runs once: the tables it reads go.
-function keepTheLead(db: Database): void {
+// Upgrades a database from before each repository had its own lead. The machine's one lead
+// becomes the lead of the repository you last attached from, or else the first by name. It
+// keeps its session, so --resume still finds its conversation. leadPlaces keeps its old name,
+// folder and socket, so a lead running through the upgrade carries on. Waiting notes stay
+// with it, plus one telling it which repository it now leads. Runs once, as it drops the old
+// tables.
+function adoptOldLead(db: Database): void {
   // The one lead's session, and the repository you last attached from, if that was kept.
   const session = z
     .object({ session: z.string() })
