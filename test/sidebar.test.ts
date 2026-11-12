@@ -1077,6 +1077,29 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5, app) }));`;
     expect(prs?.total).toBe(3);
   });
 
+  test("stopped threads come after the others, each part newest first", () => {
+    const sql = `${repository} INSERT INTO threads (owner, repo, task, folder, branch, status)
+      VALUES ('simon', 'app', 1, 'app-1', 'b', 'working'), ('simon', 'app', 2, 'app-2', 'b', 'stopped'),
+        ('simon', 'app', 3, 'app-3', 'b', 'waiting'), ('simon', 'app', 4, 'app-4', 'b', 'stopped'),
+        ('simon', 'app', 5, 'app-5', 'b', 'failed')`;
+    expect(rowsAfter(sql, 0).map((row) => row.name)).toEqual([
+      "lead",
+      "app-5",
+      "app-3",
+      "app-1",
+      "app-4",
+      "app-2",
+    ]);
+  });
+
+  test("a PR whose thread is stopped comes after the other PRs", () => {
+    const { prs } = after(`${open} ${onTwelve("stopped")}`, 0).lists;
+    expect(prs?.links.map(({ name, word }) => [name, word])).toEqual([
+      ["app#40", ""],
+      ["app#34", "stopped"],
+    ]);
+  });
+
   test("a PR shows the same mark and colour as its thread, in every state", () => {
     const states = [
       ["working", 0, "\x1b[32m●"],

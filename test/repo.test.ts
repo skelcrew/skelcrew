@@ -154,11 +154,13 @@ async function skel(args: string[], typed = "", cwd = home, more: Record<string,
 }
 
 // Returns what Skelcrew ran, with the long tmux line that opens the screen cut to the agent it
-// opens on. The fake daemon names the lead's session app-lead.
+// opens on, and without asking tmux's version, which each opening does. The fake daemon names
+// the lead's session app-lead.
 const calls = () =>
   existsSync(join(home, "calls"))
     ? readFileSync(join(home, "calls"), "utf8")
         .replace(/tmux -L skelcrew -f \/dev\/null source-file -\n/g, "")
+        .replace(/tmux -V\n/g, "")
         .replace(/tmux -L skelcrew-screen .* sh skelcrew (\S+) \S+ ;.*/g, "screen on $1")
     : "";
 const attached = () => calls().endsWith("daemon lead\nscreen on app-lead\n");

@@ -12,6 +12,9 @@ import { drawMarkdown } from "./markdown.ts";
 const wrapped = (text: string, columns: number) =>
   Bun.wrapAnsi(clean(text), Math.max(columns, 1), { hard: true }).split("\n");
 
+// The widest a page's text runs, in columns, however wide its pane.
+const measure = 80;
+
 // Returns a page as lines for a pane of a given width, from the top: the title, then the facts
 // with the link to GitHub and a dim hint saying what a click on it does, then the description,
 // drawn from its markdown. It reads nothing, so what you see can be tested without a terminal.
@@ -20,8 +23,8 @@ const wrapped = (text: string, columns: number) =>
 // under a description that could push it far out of view.
 export function drawPage(page: Page, url: string, width: number, hint: string): string[] {
   // Text stops at the padding on each side, and every fact's text starts in one column, past
-  // the longest label.
-  const room = width - 2 * pad.length;
+  // the longest label. On a wide pane it stops at 80 columns, as longer lines are hard to read.
+  const room = Math.min(width - 2 * pad.length, measure);
   const labels = [...page.facts.map(([label]) => label), "GitHub"];
   const gap = Math.max(...labels.map((label) => label.length)) + 2;
   // Returns a label and what it says, with any more lines lined up under the first.
@@ -32,11 +35,9 @@ export function drawPage(page: Page, url: string, width: number, hint: string): 
   const fits = Bun.stringWidth(url) + 2 + Bun.stringWidth(hint) <= room - gap;
   const after = fits ? `  ${paint(grey, hint)}` : "";
   const link = `\x1b]8;;${url}\x1b\\${fitted(url, room - gap)}\x1b]8;;\x1b\\${after}`;
-  // Already safe to show, so wrapped without cleaning, which would take its styles too.
+  // The description wraps as its markdown says, so a list item's lines start under its text.
   const body = page.body.trim()
-    ? drawMarkdown(page.body.trim()).flatMap((line) =>
-        Bun.wrapAnsi(line, Math.max(room, 1), { hard: true }).split("\n"),
-      )
+    ? drawMarkdown(page.body.trim(), Math.max(room, 1))
     : [paint(grey, "No description.")];
   // A blank line parts the title, in white, from the facts, and the facts from the description.
   return [

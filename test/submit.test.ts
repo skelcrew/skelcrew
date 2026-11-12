@@ -708,7 +708,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("sc review", () => {
     expect(statuses()).toEqual([]);
   }, 30_000);
 
-  test("the lead can ask, a builder can't, and a review already running is refused", async () => {
+  test("the lead and the thread's own builder can ask, and a review already running is refused", async () => {
     addApp();
     mkdirSync(codexHome(), { recursive: true });
     writeFileSync(join(codexHome(), "slow-1"), "");
@@ -719,9 +719,15 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("sc review", () => {
     expect(fromLead.err).toContain(
       "a review of app-12's last commit is already waiting or running",
     );
+    // Refused only as already running, so the builder may ask for its own thread.
     const fromBuilder = await skel(["review", "app-12"], { SKELCREW_SOCKET: builderSocket() });
     expect(fromBuilder.code).not.toBe(0);
-    expect(fromBuilder.err).toContain("doesn't know that request");
+    expect(fromBuilder.err).toContain(
+      "a review of app-12's last commit is already waiting or running",
+    );
+    const another = await skel(["review", "app-13"], { SKELCREW_SOCKET: builderSocket() });
+    expect(another.code).not.toBe(0);
+    expect(another.err).toContain("you may ask for a review of app-12 only");
   }, 60_000);
 
   test("a newer sc submit cancels a review asked for again", async () => {

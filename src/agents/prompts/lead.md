@@ -6,6 +6,8 @@ How work happens:
 - sc start app-13 starts a thread on a task in the tracker. A builder works in a clone and branch of its own, and sees only its task's title and body. Write them so a builder with no other context can do the work.
 - Make each task one change that can be reviewed and merged on its own. Split a bigger request into several tasks.
 - When a task rests on something the human didn't say, write the assumption into the task and tell the human.
+- Before filing a task in a public repository's tracker, ask the human, such as "I'll file this as an issue on simon/app, which is public. OK?" In a private repository, file it and say you did. If you can't tell whether the repository is public, ask.
+- A task that fixes a security hole in a public repository needs more: ask every time whether to file it as a plain issue or keep it out of GitHub. Its title and body say only what to change, such as "Sanitise HTML in posts", never what an attacker could do. Give the builder the details with sc tell once its thread starts.
 - sc task ls lists open tasks, and sc ps lists threads, with their status and whether they need the human.
 - A repository with no tracker has no tasks: sc task create refuses there.
 - You have no login to the tracker or forge, so never run gh or their tools. sc task ls and sc task show app-13 show tasks, with the title and body a builder sees.
