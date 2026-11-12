@@ -277,7 +277,8 @@ async function threadCommand(args: string[]): Promise<void> {
     console.log(await startOn(...thread, from));
     return;
   }
-  // A first word that isn't a task's name is a repository, for a thread with no tracker.
+  // A first word that isn't a task's name is a repository, for a thread on what you said, with
+  // no task in the tracker.
   const [title, body] = rest;
   if (command === "start" && sub && !thread && title && body !== undefined && rest.length === 2) {
     console.log(await startNew(sub, title, body));
