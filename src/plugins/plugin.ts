@@ -122,6 +122,18 @@ export function commandFor(name: string, words: string[]) {
   return { argv, env };
 }
 
+// A plugin's call that exited with code 2, saying the plugin needs its setup again, such as
+// when its sign-in lapsed or GitHub's app isn't on the repository. Its message names the
+// command that fixes it, and `plugin` lets sc run that setup itself when you are at a terminal.
+export class SetupNeeded extends Error {
+  constructor(
+    readonly plugin: string,
+    reason: string,
+  ) {
+    super(`${plugin} failed: ${reason}. Run sc plugin setup ${plugin} to set it up again.`);
+  }
+}
+
 // Asks a tracker or forge one question, as Skelcrew's flow does, and returns its answer checked
 // against `Answer`. The call command gets the question as one JSON line on stdin and prints
 // one JSON answer. A plugin that fails throws its last line of stderr, naming sc plugin
@@ -174,8 +186,7 @@ export async function callPlugin<T>(
     const last = err.trim().split("\n").at(-1) || `its call exited with code ${code}`;
     // Code 2 is how a plugin says it needs its setup again, such as when its sign-in lapsed,
     // so the error says what fixes it.
-    if (code === 2)
-      throw new Error(`${name} failed: ${last}. Run sc plugin setup ${name} to set it up again.`);
+    if (code === 2) throw new SetupNeeded(name, last);
     throw new Error(`${name} failed: ${last}`);
   }
   // Output that isn't JSON fails the check below, with the same error as a wrong answer.

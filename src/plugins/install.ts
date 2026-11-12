@@ -144,15 +144,15 @@ function buildAndSetUp(
   for (const words of commands) runInTerminal(manifest, folder, words, remote);
 }
 
-// Runs an installed plugin's setup again in your terminal, for sc plugin setup, such as to
-// sign in again once its sign-in has lapsed. Reinstalling would do it too, but would fetch and
-// build the plugin again for nothing.
-export function setUpPlugin(name: string): void {
+// Runs an installed plugin's setup again in your terminal, such as to sign in again once its
+// sign-in has lapsed, handing it `remote`, the repository to set itself up for. Reinstalling
+// would do it too, but would fetch and build the plugin again for nothing. sc plugin setup
+// runs it for the checkout you are in, and plain sc for a repository whose forge needs it.
+export function setUpPlugin(name: string, remote: string | null): void {
   const { folder } = findPlugin(openDb(), name);
   const manifest = readManifest(folder);
   if (!manifest.setup) throw new Error(`${name} has no setup to run`);
-  runInTerminal(manifest, folder, manifest.setup, originHere());
-  console.log(`Ran ${name}'s setup.`);
+  runInTerminal(manifest, folder, manifest.setup, remote);
 }
 
 // Has Skelcrew ask again which forge claims each repository that has none, once a forge is

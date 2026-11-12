@@ -729,3 +729,138 @@ test("refuses a clone whose config holds a credential, before the lead could see
   );
   expect((await skel(["repo", "ls"])).out).toBe(`${hint}\n`);
 });
+
+describe("a forge that needs its setup for the repository", () => {
+  // Has the fake forge exit with 2 on claims, as GitHub's does where its app isn't installed,
+  // and gives it a setup that asks for Enter and then fixes that, unless `fails`. The setup
+  // keeps the remote it was handed.
+  function needsSetup(fails = false): void {
+    writeFileSync(
+      join(forge, "setup-claims"),
+      "Skelcrew's GitHub App isn't installed on simon/app",
+    );
+    const folder = join(home, "plugin-github");
+    writeFileSync(
+      join(folder, "setup.sh"),
+      `echo "Install the app. Press Enter."
+read answer
+echo "$SKELCREW_REMOTE" > "$SKELCREW_PLUGIN_CONFIG/setup-remote"
+${fails ? 'echo "GitHub is unreachable" >&2; exit 1' : 'rm "$SKELCREW_PLUGIN_CONFIG/setup-claims"; echo "Installed."'}
+`,
+    );
+    appendFileSync(join(folder, "skelcrew-plugin.yaml"), "setup: [sh, setup.sh]\n");
+  }
+
+  // Runs sc with `args` in the checkout at a real terminal, in tmux on a socket of its own,
+  // presses `key` once the setup asks for Enter, and returns the screen once sc has ended. The
+  // pane stays after sc ends, so the screen also says how it ended, such as by a signal.
+  async function atTerminal(checkout: string, args: string[] = [], key = "Enter"): Promise<string> {
+    const real = Bun.which("tmux") ?? "tmux";
+    const socket = `skelcrew-repo-test-${process.pid}`;
+    const tmux = (...args: string[]) =>
+      Bun.spawnSync([real, "-L", socket, "-f", "/dev/null", ...args], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+    const screen = () => tmux("capture-pane", "-p", "-t", "sc").stdout.toString();
+    const ended = () =>
+      tmux("display-message", "-p", "-t", "sc", "#{pane_dead}").stdout.toString().trim() === "1";
+    // Waits until the terminal shows the text, as a prompt reads keys only once it is up.
+    const waitFor = async (text: string) => {
+      for (let tries = 0; tries < 100 && !screen().includes(text); tries++) await Bun.sleep(100);
+      expect(screen()).toContain(text);
+    };
+    const path = `${join(home, "bin")}:${process.env.PATH ?? ""}`;
+    const env = `PATH=${path} HOME=${home} XDG_RUNTIME_DIR=${join(home, "run")} TERM=xterm-256color`;
+    try {
+      // The command is the session's own, so no shell of yours, with its settings, runs. The
+      // option is set before the session starts, so a quick sc can't end before it holds.
+      tmux(
+        "start-server",
+        ";",
+        "set-option",
+        "-g",
+        "remain-on-exit",
+        "on",
+        ";",
+        "new-session",
+        "-d",
+        "-s",
+        "sc",
+        "-c",
+        checkout,
+        "-x",
+        "120",
+        "-y",
+        "40",
+        `env -i ${env} ${process.execPath} ${main} ${args.join(" ")}`,
+      );
+      await waitFor("Press Enter.");
+      tmux("send-keys", "-t", "sc", key);
+      for (let tries = 0; tries < 100 && !ended(); tries++) await Bun.sleep(100);
+      expect(ended()).toBe(true);
+      return screen();
+    } finally {
+      tmux("kill-server");
+    }
+  }
+
+  test("at a terminal, sc runs that setup there, then brings the repository in", async () => {
+    const checkout = onGitHub("simon/app", "WRITE");
+    needsSetup();
+    const screen = await atTerminal(checkout);
+    // The setup's first line can be gone from the screen by the time sc ends, and waiting for
+    // it already showed it, so only its last words are checked here.
+    expect(screen).toContain("Installed.\n");
+    expect(screen).not.toContain("github failed");
+    expect(screen).not.toContain("Ran github's setup");
+    expect(readFileSync(join(forge, "setup-remote"), "utf8")).toBe(
+      "https://github.com/simon/app\n",
+    );
+    expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
+    expect(attached()).toBe(true);
+  }, 30_000);
+
+  test("sc repo add runs that setup there too, then adds the repository", async () => {
+    const checkout = onGitHub("simon/app", "WRITE");
+    needsSetup();
+    const screen = await atTerminal(checkout, ["repo", "add"]);
+    expect(screen).toContain(
+      "Installed.\nCloning simon/app for Skelcrew.\nAdded simon/app, as app.\n",
+    );
+    expect(existsSync(join(clone("simon/app"), "README"))).toBe(true);
+  }, 30_000);
+
+  test("Ctrl-C at the setup stops sc, with no lead opened", async () => {
+    const checkout = onGitHub("simon/app", "WRITE");
+    needsSetup();
+    const screen = await atTerminal(checkout, [], "C-c");
+    expect(screen).toContain("Pane is dead (signal 2");
+    expect(screen).not.toContain("Installed.");
+    expect(screen).not.toContain(hint);
+    expect(existsSync(clone("simon/app"))).toBe(false);
+    expect(calls()).not.toContain("daemon lead");
+  }, 30_000);
+
+  test("a setup that fails says why, and sc goes on without the repository", async () => {
+    const checkout = onGitHub("simon/app", "WRITE");
+    needsSetup(true);
+    const screen = await atTerminal(checkout);
+    expect(screen).toContain("GitHub is unreachable");
+    expect(screen).toContain(hint);
+    expect(existsSync(clone("simon/app"))).toBe(false);
+    expect(calls()).not.toContain("daemon lead");
+  }, 30_000);
+
+  test("with no terminal, nothing runs, and the error names the command that fixes it", async () => {
+    const checkout = onGitHub("simon/app", "WRITE");
+    needsSetup();
+    const run = await skel([], "\n", checkout);
+    expect(run.code).toBe(0);
+    expect(run.err).toBe(
+      "Skelcrew: github failed: Skelcrew's GitHub App isn't installed on simon/app. Run sc plugin setup github to set it up again.\n",
+    );
+    expect(existsSync(join(forge, "setup-remote"))).toBe(false);
+    expect(existsSync(clone("simon/app"))).toBe(false);
+  });
+});

@@ -1,10 +1,11 @@
 // A tracker and forge for tests, run as a plugin's call command: it keeps each question it is
 // asked in its settings folder, in `asked`, and answers from a file there named after the
 // question, such as `changed.json`, or else as a plugin with nothing to say would. For claims,
-// that file maps each remote it claims to its answer. With a file
-// `fail-<question>`, it fails with that file's words, and while `hold-<question>`, or for a
-// question with a state, `hold-<question>-<state>`, is there, it waits before answering, saying
-// so with `held-<question>`.
+// that file maps each remote it claims to its answer. With a file `fail-<question>`, it fails
+// with that file's words, and with `setup-<question>` it fails the same way with exit code 2,
+// as a plugin that needs its setup again does. While `hold-<question>`, or for a question with
+// a state, `hold-<question>-<state>`, is there, it waits before answering, saying so with
+// `held-<question>`.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -16,6 +17,11 @@ const failing = join(dir, `fail-${name}`);
 if (existsSync(failing)) {
   console.error(readFileSync(failing, "utf8").trim());
   process.exit(1);
+}
+const setup = join(dir, `setup-${name}`);
+if (existsSync(setup)) {
+  console.error(readFileSync(setup, "utf8").trim());
+  process.exit(2);
 }
 const holds = [join(dir, `hold-${name}`), join(dir, `hold-${name}-${question.state}`)];
 const hold = holds.find((file) => existsSync(file));
