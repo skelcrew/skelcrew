@@ -164,7 +164,8 @@ test("the help lists the issue commands in a section of their own, and names thr
   for (const command of ["issue ls", "issue show", "issue create"])
     expect(issues).toContain(`  ${command} `);
   expect(issues).not.toContain("  start ");
-  expect(out).not.toContain("  task ");
+  // A user sees issues and threads only. Task is Skelcrew's own word, never shown.
+  expect(out).not.toMatch(/\btasks?\b/i);
   for (const command of ["stop", "rm", "attach", "review", "tell"])
     expect(out).toContain(`  ${command} <thread>`);
 });

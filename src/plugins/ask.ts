@@ -160,7 +160,7 @@ export async function createTask(
   );
   // Item also covers PRs, and only a task is right here.
   if (task.kind !== "task")
-    throw new Error("the tracker answered with something that isn't a task");
+    throw new Error("the tracker answered with something that isn't an issue");
   return task;
 }
 

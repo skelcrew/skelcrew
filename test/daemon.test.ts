@@ -616,6 +616,8 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a lead per repositor
     for (const line of claudeLines()) {
       expect(line).toContain("--append-system-prompt You are a lead");
       expect(line).toContain("sc issue create");
+      // The lead talks to the human, who sees issues and threads, never Skelcrew's word task.
+      expect(line).not.toMatch(/\btasks?\b/i);
       expect(line).toContain("You are the lead of simon/app.");
     }
   });
