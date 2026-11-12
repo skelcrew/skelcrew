@@ -30,7 +30,7 @@ export const TaskId = z
 // is checked as the plugin answers, so one that isn't a plain name is refused once, there.
 // Times are as the tracker wrote them, which for GitHub sort as text. The link becomes a
 // terminal link, so it may hold only printable characters, with no space.
-const common = {
+const itemFields = {
   id: TaskId,
   title: z.string(),
   body: z.string(),
@@ -45,10 +45,10 @@ const common = {
 // A task or a PR in Skelcrew's words, whichever tracker or forge it came from. A task has the line
 // that closes it when a PR's body holds it. A cancelled check isn't the builder's to fix.
 export const Item = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("task"), ...common, closes: z.string() }),
+  z.object({ kind: z.literal("task"), ...itemFields, closes: z.string() }),
   z.object({
     kind: z.literal("pr"),
-    ...common,
+    ...itemFields,
     branch: z.string(),
     base: z.string(),
     conflicts: z.boolean(),
@@ -73,22 +73,23 @@ export const Item = z.discriminatedUnion("kind", [
 export type Item = z.infer<typeof Item>;
 export type Task = Extract<Item, { kind: "task" }>;
 
-// Brings the copy of a repository up to date with what its tracker or forge just said. For each
-// kind in `everything`, the items are all of that kind that is open, so one the copy has that isn't
-// among them is no longer open. A closed item stays while a thread that isn't over points to it, as
-// its builder and reviewer still read its task. Also saves how many tasks and PRs are open, for the
-// sidebar's count of the rows it has no room for. All at once, so no reader sees half.
+// Brings Skelcrew's copy of a repository up to date with what its tracker or forge just
+// answered. For each kind in `completeKinds`, `items` holds every open item of that kind, so
+// an item of it in the copy that isn't among them is closed. A closed item is kept while a
+// thread that isn't over points to it, as its builder and reviewer still read its task. Also
+// saves how many tasks and PRs are open, for the sidebar's count of the rows it has no room
+// for. It is one transaction, so no reader sees half of it.
 export function saveItems(
   db: Database,
   owner: string,
   repo: string,
   items: Item[],
-  everything: Item["kind"][],
+  completeKinds: Item["kind"][],
 ): void {
   db.transaction(() => {
     // Mark every open item of each kind the answer covers closed, then save the answer over
     // them, so what is still open ends up open again.
-    for (const kind of everything)
+    for (const kind of completeKinds)
       db.run(
         `UPDATE items SET state = 'closed', item = json_set(item, '$.state', 'closed')
           WHERE owner = ? AND repo = ? AND kind = ? AND state = 'open'`,
@@ -124,13 +125,13 @@ export function saveItems(
 
 // Returns the items that the query's rows hold, checked, as what was saved could come from an
 // older Skelcrew.
-const parsed = (rows: unknown[]) =>
+const parseItems = (rows: unknown[]) =>
   rows.map((row) => Item.parse(JSON.parse(z.object({ item: z.string() }).parse(row).item)));
 
 // Returns a task from the copy, open or kept for its thread, for its builder, its reviewer and
 // sc task show. Throws when the copy doesn't have it.
 export function taskOf(db: Database, owner: string, repo: string, task: string): Task {
-  const [found] = parsed(
+  const [found] = parseItems(
     db
       .query("SELECT item FROM items WHERE owner = ? AND repo = ? AND kind = 'task' AND id = ?")
       .all(owner, repo, task),
@@ -148,7 +149,7 @@ export function prOf(
   repo: string,
   pr: number,
 ): Extract<Item, { kind: "pr" }> | null {
-  const [found] = parsed(
+  const [found] = parseItems(
     db
       .query("SELECT item FROM items WHERE owner = ? AND repo = ? AND kind = 'pr' AND id = ?")
       .all(owner, repo, String(pr)),
@@ -160,7 +161,7 @@ export function prOf(
 // on each one labeled to start.
 export function openTasks(db: Database, owner: string, repo: string): Task[] {
   // Tasks made at the same moment sort by ID as numbers, as a longer number is the larger one.
-  return parsed(
+  return parseItems(
     db
       .query(`SELECT item FROM items WHERE owner = ? AND repo = ? AND kind = 'task'
         AND state = 'open' ORDER BY created DESC, length(id) DESC, id DESC`)
@@ -171,7 +172,7 @@ export function openTasks(db: Database, owner: string, repo: string): Task[] {
 // Returns the item a sidebar row links to, for its page, or null when the copy has none there.
 export function itemAt(db: Database, link: string): Item | null {
   const rows = db.query("SELECT item FROM items WHERE json_extract(item, '$.link') = ?").all(link);
-  return parsed(rows)[0] ?? null;
+  return parseItems(rows)[0] ?? null;
 }
 
 // Returns the task a thread works on, for its reviewer and its PR: its item in Skelcrew's copy,

@@ -66,10 +66,10 @@ export const fullNameIs = (r: Repository, name: string | null | undefined) =>
 // https clone.
 const remoteIs = (r: Repository, url: string) => {
   const path = parseRemote(url);
-  const ours = parseRemote(r.remote);
+  const cloned = parseRemote(r.remote);
   return (
     r.remote === url ||
-    (path !== null && path.host === ours?.host && fullNameIs(r, `${path.owner}/${path.repo}`))
+    (path !== null && path.host === cloned?.host && fullNameIs(r, `${path.owner}/${path.repo}`))
   );
 };
 
@@ -95,7 +95,7 @@ async function refreshClone(db: Database, repository: Repository): Promise<void>
   const clone = cloneDir(owner, repo);
   if (existsSync(clone)) {
     await updateClone(db, repository, clone);
-    checkOrDelete(clone);
+    deleteIfCredentials(clone);
     return;
   }
   // Cloned outside the clone's folder, checked, and moved in once whole, so neither a clone
@@ -104,13 +104,13 @@ async function refreshClone(db: Database, repository: Repository): Promise<void>
   rmSync(part, { recursive: true, force: true });
   mkdirSync(dirname(part), { recursive: true });
   await cloneRepository(db, repository, part);
-  checkOrDelete(part);
+  deleteIfCredentials(part);
   mkdirSync(dirname(clone), { recursive: true });
   renameSync(part, clone);
 }
 
-// Rejects and deletes a clone holding credentials, so the lead cannot read your login.
-function checkOrDelete(clone: string): void {
+// Deletes the clone and throws when it holds a credential, so the lead can't read your login.
+function deleteIfCredentials(clone: string): void {
   try {
     refuseCredentials(clone);
   } catch (error) {
@@ -198,16 +198,16 @@ export function refreshClones(db: Database): Promise<void> {
 
 // What Skelcrew knows of a repository it is bringing in: from the forge that claims its remote,
 // or, with none, its remote alone.
-type Found = { owner: string; repo: string; remote: string; claimed: Claimed | null };
+type RepositoryDetails = { owner: string; repo: string; remote: string; claimed: Claimed | null };
 
-// Returns what Skelcrew knows of the repository at a remote URL, or named by its owner/name on its
-// forge: the forge's answer, when one claims it, or else, for a URL, its path. Throws when
-// neither names a repository.
-async function found(db: Database, given: string): Promise<Found> {
+// Returns the owner, name and remote of a repository given as a remote URL, or as its
+// owner/name on its forge. A forge that claims it gives the answer. Otherwise a URL's own path
+// does. Throws when neither names a repository.
+async function identifyRepository(db: Database, given: string): Promise<RepositoryDetails> {
   // A forge's answer wins, as it knows the repository's real owner/name and the URL its login
   // can clone. Without one, only a URL says where the repository is: a bare owner/name
   // names nothing a forge doesn't know.
-  const claimed = await claimsSettingUp(db, given);
+  const claimed = await claimsAfterSetup(db, given);
   if (claimed) {
     const [owner = "", repo = ""] = claimed.key.split("/");
     return { owner, repo, remote: claimed.clone, claimed };
@@ -220,12 +220,12 @@ async function found(db: Database, given: string): Promise<Found> {
   return { owner: path.owner, repo: path.repo, remote: given, claimed: null };
 }
 
-// Asks the forges which one claims the remote, as claims does. When the forge needs its setup
-// again, such as GitHub's where its app isn't on the repository yet, and you are at a terminal,
-// it runs that setup here for the repository and asks once more. So a new user gets the fix
-// where they are, instead of an error to act on. With no terminal, nothing can answer a setup,
-// so the error stays, naming the command. A setup that fails throws, having said why.
-async function claimsSettingUp(db: Database, given: string): Promise<Claimed | null> {
+// Asks the forges which one claims the remote, as claims does. A forge can answer that its
+// setup must run again, such as GitHub's when its app isn't on the repository yet. Then, at a
+// terminal, this runs that setup for the repository and asks once more, so a new user gets
+// the fix where they are. With no terminal nobody can answer the setup, so the error is
+// thrown, naming the command. A setup that fails throws, having said why.
+async function claimsAfterSetup(db: Database, given: string): Promise<Claimed | null> {
   try {
     return await claims(db, given);
   } catch (error) {
@@ -235,12 +235,12 @@ async function claimsSettingUp(db: Database, given: string): Promise<Claimed | n
   }
 }
 
-// Whether Skelcrew may clone a repository without asking you. You vouch for what is in a
+// Returns whether Skelcrew may clone a repository without asking you. You vouch for what is in a
 // repository your forge says you can push to, so asking would only add a step. A fork you own
 // holds someone else's code, and a repository with no forge can't say, so both are asked
 // about. Skelcrew clones from the remote, never from your checkout, so what it clones is what your
 // permission covers.
-function trusted({ owner, repo, claimed }: Found): boolean {
+function mayCloneWithoutAsking({ owner, repo, claimed }: RepositoryDetails): boolean {
   const vouched = claimed?.push === true && !claimed.fork;
   return vouched || trustLines().includes(`${owner}/${repo}`);
 }
@@ -248,7 +248,7 @@ function trusted({ owner, repo, claimed }: Found): boolean {
 // Checks trust, asking you when needed, refreshes the repository clone and records it. A repository
 // with no forge takes Skelcrew's pushes on your own git login, so Skelcrew checks that it can push
 // first. Runs only in your own terminal, where a yes can't come from an injected instruction.
-async function bringIn(db: Database, details: Found): Promise<void> {
+async function bringIn(db: Database, details: RepositoryDetails): Promise<void> {
   const { owner, repo, remote, claimed } = details;
   const fullName = `${owner}/${repo}`;
   const had = repositories(db).find((r) => r.owner === owner && r.repo === repo);
@@ -261,7 +261,7 @@ async function bringIn(db: Database, details: Found): Promise<void> {
     );
   // A repository new to Skelcrew that you haven't vouched for waits for your yes, as its
   // instructions will steer agents.
-  if (!known && !trusted(details)) {
+  if (!known && !mayCloneWithoutAsking(details)) {
     console.log(`Agents will run ${fullName}'s setup and test commands, and follow its AGENTS.md`);
     console.log("and settings as instructions.");
     const answer = prompt(`Do you trust ${fullName}? [y/N]`);
@@ -304,31 +304,32 @@ async function bringIn(db: Database, details: Found): Promise<void> {
     );
 }
 
-// Brings in the repository you attached from, reporting failures without blocking the lead. `from`
-// is a checkout's remote URL, or a repository's owner/name on its forge, and without it, the
-// checkout you are in. Returns its owner/repo once Skelcrew has it, so Skelcrew opens its lead; one
-// waiting for trust isn't in yet. Plain Skelcrew must stay fast, so a repository Skelcrew has costs
-// no call to a forge: the daemon keeps its clone current. A folder with no remote gets no
-// complaint.
+// Brings in the repository you ran sc from, so its lead can open. `from` is a checkout's
+// remote URL or a repository's owner/name on its forge. Without it, the checkout you are in is
+// used. A failure is printed rather than thrown, so sc still attaches. Returns the repository's
+// owner/repo once Skelcrew has it, so sc opens its lead. A repository you didn't trust isn't
+// in, so nothing is returned for it. Plain sc must start fast, so a repository Skelcrew has
+// already costs no call to a forge: the daemon keeps its clone current. A folder with no
+// remote gets no complaint.
 export async function bringInFrom(from: string | undefined): Promise<string | undefined> {
   // Bring in the repository only when Skelcrew doesn't have it, and report a failure rather
   // than throw, so sc still attaches.
   const db = openDb();
   const named = from ?? originHere();
   try {
-    if (named && !repositoryAt(db, named)) await bringIn(db, await found(db, named));
+    if (named && !repositoryAt(db, named)) await bringIn(db, await identifyRepository(db, named));
   } catch (error) {
     console.error(`Skelcrew: ${errorText(error)}`);
   }
   if (repositories(db).length === 0) console.log(noRepositories);
   const at = named ? repositoryAt(db, named) : undefined;
   // A forge can name a repository otherwise than its remote's path, such as after a rename.
-  const opened = at ?? (named ? await claimedNow(db, named) : undefined);
+  const opened = at ?? (named ? await repositoryByForgeName(db, named) : undefined);
   return opened && `${opened.owner}/${opened.repo}`;
 }
 
 // Returns the repository Skelcrew has under the name a forge now gives the remote, or none.
-async function claimedNow(db: Database, url: string): Promise<Repository | undefined> {
+async function repositoryByForgeName(db: Database, url: string): Promise<Repository | undefined> {
   const claimed = await claims(db, url).catch(() => null);
   return claimed ? repositories(db).find((r) => fullNameIs(r, claimed.key)) : undefined;
 }
@@ -356,7 +357,7 @@ export async function addRepo(given?: string): Promise<void> {
     console.log(`Skelcrew has ${had.owner}/${had.repo} already, as ${had.name}.`);
     return;
   }
-  const details = await found(db, url);
+  const details = await identifyRepository(db, url);
   await bringIn(db, details);
   const added = repositories(db).find((r) => r.owner === details.owner && r.repo === details.repo);
   if (added) console.log(`Added ${added.owner}/${added.repo}, as ${added.name}.`);
@@ -370,7 +371,7 @@ const yamlValue = (value: string) => stringify(value).trim();
 // your harness and model for each role as real lines, from your config, and setup and test as
 // commented examples. It names no tracker, so a repository on GitHub keeps its issues as tasks,
 // and shows tracker: none commented out, so you can find how to turn that off.
-function starter(): string {
+function starterConfig(): string {
   // Each role is one line of { key: value } pairs, its name padded so the three line up.
   const roles = agentRoles();
   const line = (name: "lead" | "builder" | "reviewer") => {
@@ -418,7 +419,7 @@ export async function initRepo(): Promise<void> {
   // A new file is made only where none is, so the write never follows a link.
   const file = join(root, "skelcrew.yaml");
   const there = lstatSync(file, { throwIfNoEntry: false }) !== undefined;
-  if (!there) writeFileSync(file, starter(), { flag: "wx" });
+  if (!there) writeFileSync(file, starterConfig(), { flag: "wx" });
   else console.log("skelcrew.yaml is there already, so Skelcrew left it as it is.");
   // Bring the repository in, then say what was written and when Skelcrew will read it.
   await addRepo(root);
@@ -436,16 +437,16 @@ export async function trustRepo(given: string): Promise<void> {
     throw new Error(`there is no repository named ${given}. Name a new one as owner/repo`);
   const details = known
     ? { owner: known.owner, repo: known.repo, remote: known.remote, claimed: null }
-    : await found(db, given);
+    : await identifyRepository(db, given);
   trust(`${details.owner}/${details.repo}`);
   await bringIn(db, details);
 }
 
-// Ends the repository's lead, on Skelcrew's tmux server `tmux`, deletes Skelcrew's clone,
-// registration and saved trust, then updates names that no longer clash, and on a Sprite asks its
-// tracker and forge to stop passing on its wake-ups. Refuses while the repository has live threads,
-// naming them. Left running, the lead would go on with no repository behind it, and the daemon
-// would never bring it back or end it.
+// Removes a repository for sc repo rm. On a Sprite, first asks its tracker and forge to stop
+// sending its wake-ups. Ends its lead on the tmux server `tmux`, then deletes Skelcrew's clone,
+// its row and your trust in it, and names the other repositories again. Refuses while the
+// repository has live threads, naming them. The lead is ended because, left running, it would
+// go on with no repository behind it, and the daemon would never bring it back or end it.
 export async function removeRepo(name: string, tmux: string): Promise<void> {
   const db = openDb();
   const found = repositories(db).find((r) => r.name === name);
@@ -463,7 +464,7 @@ export async function removeRepo(name: string, tmux: string): Promise<void> {
   // Find the lead's session name. The lead this machine had before each repository got its
   // own keeps its old name.
   const fullName = `${found.owner}/${found.repo}`;
-  const kept = z
+  const keptLead = z
     .object({ kept_lead: z.coerce.boolean() })
     .parse(
       db
@@ -477,7 +478,7 @@ export async function removeRepo(name: string, tmux: string): Promise<void> {
       console.error(`Skelcrew: couldn't stop the wake-ups for ${fullName}: ${errorText(error)}`),
     );
   // Ended as a thread's builder is, and waited for, as the lead reads the clone removed next.
-  await stopSession(tmux, leadPlaces(found.owner, found.repo, kept).name);
+  await stopSession(tmux, leadPlaces(found.owner, found.repo, keptLead).name);
   // Remove the clone, the row and your trust in it. The other repositories are named again,
   // as one that shared a name with this one can drop its owner.
   rmSync(cloneDir(found.owner, found.repo), { recursive: true, force: true });

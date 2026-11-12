@@ -153,6 +153,12 @@ that covers the code you are about to write.
 - **Mount the folder of clones, not each clone.** A mount per clone, made when the sandbox
   starts, misses repositories brought in later. Mount their parent folder, and create it
   first: bwrap refuses to mount a folder that doesn't exist.
+- **Start agents' sandboxes under `nice`.** Builders and reviewers running whole test
+  suites at once pushed an 8-CPU server to a load of 18, and each run took twice as long.
+  `nice -n 10` goes first, before `unshare` and the `setpriv` that drops capabilities on a
+  Sprite: lowering a priority needs no capability, and everything started inside keeps it.
+  `nice` replaces itself with the command, so stopping a session still finds the sandbox.
+  The lead stays at normal priority, as it is what you type into.
 - **Don't pass `--new-session`.** It moves Claude Code out of the terminal's process group,
   so it misses resize signals and draws at the wrong width.
 

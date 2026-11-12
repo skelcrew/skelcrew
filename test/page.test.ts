@@ -119,12 +119,23 @@ test("a page reads from the title down, two columns in, with the link among the 
   ]);
 });
 
-test("the link to GitHub is a terminal link, with only its text inside, and the hint dim after it", () => {
+test("the link to GitHub is a blue, underlined terminal link, and the hint dim after it", () => {
   const line = drawPage(page, issueUrl, 80, "click to copy").find((text) =>
     text.includes("GitHub"),
   );
   expect(line).toContain(
-    `\x1b]8;;${issueUrl}\x1b\\${issueUrl}\x1b]8;;\x1b\\  \x1b[90mclick to copy`,
+    `\x1b]8;;${issueUrl}\x1b\\\x1b[34;4m${issueUrl}\x1b[39;24m\x1b]8;;\x1b\\  \x1b[90mclick to copy`,
+  );
+});
+
+test("a link cut short to fit is still blue and underlined inside the terminal link", () => {
+  const line = drawPage(page, issueUrl, 30, "click to open").find((text) =>
+    text.includes("GitHub"),
+  );
+  expect(line).toMatch(
+    new RegExp(
+      `${esc}\\]8;;[^${esc}]+${esc}\\\\${esc}\\[34;4m[^${esc}]+${esc}\\[39;24m${esc}\\]8;;${esc}\\\\$`,
+    ),
   );
 });
 

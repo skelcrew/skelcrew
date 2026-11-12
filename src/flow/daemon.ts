@@ -25,7 +25,7 @@ import {
 } from "./builder.ts";
 import { saveItems } from "./copy.ts";
 import { removeThread, stopThread } from "./events.ts";
-import { lastOpened, leadOf, openedRepositories, startLead, tellLead } from "./lead.ts";
+import { lastOpened, leadOf, openedRepositories, startLead, typeLeadNotes } from "./lead.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import { pollRepositories } from "./poll.ts";
 import {
@@ -98,14 +98,14 @@ function callingThread(caller: Caller): Thread {
   return thread;
 }
 
-// Ends the daemon on a signal: removes its sockets, ends what it started, and exits.
-// The tmux sessions are left running: agents keep working while the daemon is down. They
-// aren't under the daemon. What is, such as a clone or a reviewer, is ended: the service
-// stops only the daemon, and the next daemon starts that work again, so a clone left going
-// would write into the folder the new one clones into. So the daemon waits for it. Asked
-// rather than killed, so git can remove its lock files. The wait blocks on purpose: left to
-// run, the daemon would publish a reviewer it just ended as a failed review, where the next
-// daemon would have run it again, and a refresh would go on to the next clone.
+// Ends the daemon on a signal: removes its sockets, ends the processes it started, and exits.
+// The agents' tmux sessions aren't the daemon's processes, so agents keep working while the
+// daemon is down. The processes it started, such as a git clone or a reviewer, are ended and
+// waited for. The service stops only the daemon, and the next daemon starts that work again.
+// A clone left running would write into the folder the next daemon clones into. Each process
+// gets SIGTERM first, so git can remove its lock files. The wait blocks the daemon on purpose.
+// Otherwise it would save a reviewer it just ended as a failed review, which the next daemon
+// would have run again, and a clone refresh would move on to the next clone.
 function endWhatItStarted(sockets: string[]): void {
   // Remove the sockets first, so no caller reaches a daemon on its way out.
   for (const socket of sockets) rmSync(socket, { force: true });
@@ -124,22 +124,22 @@ function endWhatItStarted(sockets: string[]): void {
   process.exit(0);
 }
 
-// Listens on `port` for wake-ups, so a delivery for a plugin wakes a sleeping Sprite and polls
-// at once every repository the plugin is the tracker or forge of, and asks each repository's
-// tracker and forge to send them. Without the listener, events wait until something else
-// wakes the Sprite, and polling still sees them then.
+// Listens on `port` for wake-ups, and asks each repository's tracker and forge to send them.
+// A delivery for a plugin wakes a sleeping Sprite, and polls at once every repository that
+// uses the plugin. Without the listener, events wait until something else wakes the Sprite,
+// and polling still sees them then.
 function wakeOnDeliveries(
   db: Database,
   port: number,
   poll: (fullName: string) => Promise<void>,
 ): void {
-  // Wakes for a delivery from the named plugin: returns false when no repository uses it, so
-  // the delivery is refused, and otherwise polls each of its repositories.
+  // Handles a delivery for the named plugin. Returns false when no repository uses the plugin,
+  // so the delivery is refused. Otherwise polls each repository that uses it.
   const wakePlugin = async (name: string) => {
-    const theirs = repositories(db).filter((r) =>
+    const usingIt = repositories(db).filter((r) =>
       pluginsOf(db, r).some(({ plugin }) => plugin === name),
     );
-    if (theirs.length === 0) return false;
+    if (usingIt.length === 0) return false;
     // The Sprite sleeps again as soon as the delivery is answered, so it is held for a minute
     // first: long enough for the polls, and for keepAwake to hold it for any work they start.
     await holdAwhile(60).catch((error) =>
@@ -147,7 +147,7 @@ function wakeOnDeliveries(
     );
     // Not waited on, so the plugin hears back at once. A poll that fails is logged, and the
     // next one tries again, but left uncaught it would end the daemon.
-    for (const { owner, repo } of theirs) poll(`${owner}/${repo}`).catch(() => {});
+    for (const { owner, repo } of usingIt) poll(`${owner}/${repo}`).catch(() => {});
     return true;
   };
   // When the port can't be opened, only the wake-ups are lost, so the daemon goes on without them.
@@ -173,9 +173,9 @@ function wakeOnDeliveries(
 export async function serve(tmux: string, every = 30_000, port = urlPort): Promise<void> {
   if (!setupDone()) throw new Error("the first run isn't done on this machine: run sc first");
   const db = openDb();
-  // The checkout and commit this daemon's code came from, read once, as it loaded that code
-  // when it started: a git pull since doesn't change what runs.
-  const started = singleFile
+  // The checkout and commit this daemon's code came from, for sc status. Read once at start,
+  // since a git pull afterwards doesn't change the code that runs.
+  const runningCode = singleFile
     ? {}
     : { folder: checkoutFolder, commit: git("rev-parse", "--short", "HEAD") };
   const sockets: string[] = [];
@@ -187,8 +187,9 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
     await listen(createServer(answer(caller)), socket);
     sockets.push(socket);
   };
-  // Polls one repository at once, for sc start. Until polling starts, sc start waits for
-  // it, so a builder never starts from what an earlier daemon saved of its task.
+  // The function that polls one repository at once, for sc start. It is set once polling
+  // starts, and sc start waits for it until then. So a builder never starts from a task an
+  // earlier daemon saved, which may be out of date.
   const polling = Promise.withResolvers<(fullName: string) => Promise<void>>();
   const listening = new Set<string>();
   // The tasks sc start is starting, as owner/repo#number, which no poll starts by its label.
@@ -201,12 +202,12 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
     listening.add(socket);
     await open(socket, thread);
   };
-  let starting: Promise<void> = Promise.resolve();
+  let leadStarts: Promise<void> = Promise.resolve();
   // Opens a repository's lead's own socket, so the daemon knows which lead calls on it, then
   // keeps the lead running or starts it. One at a time, so two requests at once can't start
   // two sessions.
-  const lead = (repository: Repository) => {
-    starting = starting
+  const ensureLead = (repository: Repository) => {
+    leadStarts = leadStarts
       .catch(() => {})
       .then(async () => {
         const { owner, repo } = repository;
@@ -217,18 +218,18 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         }
         await startLead(db, tmux, repository);
       });
-    return starting;
+    return leadStarts;
   };
-  // Returns the request as a lead may make it: about its own repository. A lead sees only its
-  // own, so a request about another is refused, and it asks you to open that one instead. Skelcrew
-  // ps and sc task ls with no repository mean every one, which for a lead is its own. Your
-  // requests and a builder's are left as they are.
-  const within = (request: DaemonRequest, caller: Caller): DaemonRequest => {
-    const yours = leadOfCaller(caller);
-    if (yours === null) return request;
+  // Returns the request limited to the calling lead's own repository. A request about another
+  // repository is refused, and the error tells the lead to ask you to open that one. sc ps and
+  // sc task ls with no repository mean every repository, which for a lead is its own. Your
+  // requests and a builder's are returned unchanged.
+  const limitToOwnRepository = (request: DaemonRequest, caller: Caller): DaemonRequest => {
+    const leadRepository = leadOfCaller(caller);
+    if (leadRepository === null) return request;
     // A request for every repository becomes one for the lead's own, and a request naming
     // another repository is refused.
-    const own = `${yours.owner}/${yours.repo}`;
+    const own = `${leadRepository.owner}/${leadRepository.repo}`;
     if ((request.command === "ps" || request.command === "task ls") && !request.repo)
       return { ...request, repo: own };
     if (!("repo" in request) || !request.repo || fullNameIs(findRepository(db, request.repo), own))
@@ -239,7 +240,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   };
   // Sets up a new thread's clone, opens its socket and starts its builder, after sc start
   // has had its answer. Marks the thread failed, with the reason, when any of it fails.
-  const begin = async (thread: Thread) => {
+  const setUpAndStart = async (thread: Thread) => {
     try {
       await setUpThread(db, thread);
       await listenFor(thread);
@@ -268,7 +269,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       case "status": {
         const builder = builderOf(caller);
         const thread = builder ? { thread: threadName(db, builder) } : {};
-        return { running: true, pid: process.pid, release, ...started, ...thread };
+        return { running: true, pid: process.pid, release, ...runningCode, ...thread };
       }
       case "lead": {
         // From outside any repository Skelcrew has, the one you opened last.
@@ -282,18 +283,18 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
           owner,
           repo,
         ]);
-        await lead(repository);
+        await ensureLead(repository);
         // A lead that wasn't running kept its notes until now.
-        tellLead(db, tmux);
+        typeLeadNotes(db, tmux);
         // Not waited on, so attaching never waits on a remote.
         refreshClones(db).catch((error) => console.log(errorText(error)));
         return { lead: leadOf(db, owner, repo).name, repository: `${owner}/${repo}` };
       }
       case "repo ls": {
         // A lead sees only its own repository in the list.
-        const yours = leadOfCaller(caller);
+        const leadRepository = leadOfCaller(caller);
         const all = listRepositories(db);
-        const own = yours && `${yours.owner}/${yours.repo}`;
+        const own = leadRepository && `${leadRepository.owner}/${leadRepository.repo}`;
         return { repositories: own ? all.filter((r) => r.repository === own) : all };
       }
       case "ps":
@@ -348,13 +349,13 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       }
       case "question asked":
         record(db, callingThread(caller).folder, { asking: true }, "its builder asked a question");
-        tellLead(db, tmux);
+        typeLeadNotes(db, tmux);
         return { asking: true };
       case "turn ended": {
         const { folder } = callingThread(caller);
         if (!endedTurnAsks(readThread(db, folder))) return { asking: false };
         record(db, folder, { asking: true }, "its builder stopped without submitting");
-        tellLead(db, tmux);
+        typeLeadNotes(db, tmux);
         return { asking: true };
       }
       case "question answered": {
@@ -403,12 +404,12 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
           startingTasks.delete(key);
         }
         // Not waited on: an agent's command must answer quickly, and setup can take minutes.
-        begin(thread);
+        setUpAndStart(thread);
         return { started: `Started ${threadName(db, thread)}.` };
       }
       case "start new": {
         const thread = await startThread(db, request);
-        begin(thread);
+        setUpAndStart(thread);
         return { started: `Started ${threadName(db, thread)}.` };
       }
     }
@@ -434,7 +435,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         reply({ error: "the daemon doesn't know that request" });
       else
         Promise.resolve()
-          .then(() => handle(within(asked.data, caller), caller))
+          .then(() => handle(limitToOwnRepository(asked.data, caller), caller))
           .then(reply, (error) => reply({ error: errorText(error) }));
     };
     connection.on("data", read);
@@ -456,11 +457,11 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   // Bring back the lead of each repository you have opened. One that fails is logged, and the
   // rest still start.
   for (const repository of openedRepositories(db))
-    await lead(repository).catch((error) => console.log(errorText(error)));
+    await ensureLead(repository).catch((error) => console.log(errorText(error)));
   // A lead keeps its clone current as it starts, and a repository with no lead needs it too.
   refreshClones(db).catch((error) => console.log(errorText(error)));
   // Notes the daemon's stop kept from the leads.
-  tellLead(db, tmux);
+  typeLeadNotes(db, tmux);
   // Bring back each thread's builder, without waiting on it, and carry on the round it was in.
   for (const thread of before) {
     await listenFor(thread);
@@ -472,7 +473,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   }
   // Start polling, which also lets any sc start waiting on it go ahead, and keep Skelcrew itself
   // up to date. On a Sprite, also stay awake while there is work, and wake on deliveries.
-  const poll = pollRepositories(db, tmux, every, begin, startingTasks);
+  const poll = pollRepositories(db, tmux, every, setUpAndStart, startingTasks);
   polling.resolve(poll);
   keepUpToDate();
   if (!onSprite()) return;

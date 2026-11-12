@@ -64,7 +64,8 @@ function programLinks(program: string): Map<string, string> {
 // Returns the command that runs an agent in its sandbox, hiding your credentials and exposing
 // only its chosen writable folders: bubblewrap on Linux, sandbox-exec on a Mac. Keeps the
 // terminal connection and network available for the harness and model, and puts Skelcrew's own
-// commands on the agent's PATH. `mounts` is in bubblewrap's words.
+// commands on the agent's PATH. `mounts` is in bubblewrap's words. The sandbox runs at a lower
+// CPU priority unless `normalPriority` says otherwise, as only the lead's does.
 export function sandboxArgs(given: {
   home: string;
   path: string;
@@ -73,6 +74,7 @@ export function sandboxArgs(given: {
   cwd: string;
   command: string[];
   programs?: string[] | undefined;
+  normalPriority?: boolean;
 }): string[] {
   const {
     home,
@@ -83,6 +85,12 @@ export function sandboxArgs(given: {
     command,
     programs: namedPrograms = [command[0]],
   } = given;
+  // Builders and reviewers running test suites at once can load a shared machine past its
+  // CPUs. Started under nice, all they run yields to the screen, the leads and the daemon.
+  // nice comes first, ahead of the setpriv that drops capabilities on a Sprite: lowering a
+  // priority needs none, and every process started inside keeps it. nice replaces itself with
+  // the command, so the process tmux or the reviewer ends is still the sandbox's own.
+  const niced = given.normalPriority ? [] : ["nice", "-n", "10"];
   // Programs often live under the home folder: Claude Code under nvm keeps node beside it,
   // and its package where its link points. So the program's folder and the package its link
   // resolves into come back, as does bun, which Skelcrew's own commands run on. The program is
@@ -110,24 +118,27 @@ export function sandboxArgs(given: {
         .filter((part) => existsSync(part));
   // On a Mac, sandbox-exec draws the same boundary from the same lists.
   if (process.platform === "darwin")
-    return seatbeltArgs({
-      home,
-      path: `${bin}:${path}`,
-      read: [...programFolders, ...skelcrewFiles],
-      links: [...links.keys()],
-      mounts,
-      socket,
-      cwd,
-      command,
-    });
+    return [
+      ...niced,
+      ...seatbeltArgs({
+        home,
+        path: `${bin}:${path}`,
+        read: [...programFolders, ...skelcrewFiles],
+        links: [...links.keys()],
+        mounts,
+        socket,
+        cwd,
+        command,
+      }),
+    ];
   // Its own process list, so your other processes can't be seen or signalled. No
   // --new-session: it moves Claude Code out of the terminal's process group, so it misses
   // resize signals and draws at the wrong width. The network stays shared for the model's
   // API.
   const sprite = onSprite(path);
   const args = sprite
-    ? [...ownProcesses, ...dropCapabilities, "bwrap", "--die-with-parent"]
-    : ["bwrap", "--die-with-parent", "--unshare-pid"];
+    ? [...niced, ...ownProcesses, ...dropCapabilities, "bwrap", "--die-with-parent"]
+    : [...niced, "bwrap", "--die-with-parent", "--unshare-pid"];
   // The whole system read-only, with a /dev, /tmp and /proc of the sandbox's own.
   args.push("--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp");
   args.push(...(sprite ? ro("/proc") : ["--proc", "/proc"]));

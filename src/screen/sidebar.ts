@@ -1,9 +1,8 @@
-// The sidebar: the live left pane of the screen, all of the open repository's. Its lead is on
-// top, then up to three lists. THREADS has every thread that isn't done, with what each is doing.
-// ISSUES and PRS show what is open in its tracker and forge, as links. It only shows, switches, links and opens
-// pages. Picking a thread switches the client in the right pane, and picking an issue or PR puts
-// its page there. It also keeps the row above it all up to date, with the tabs and the strip, and switches to
-// another repository's tab.
+// The sidebar: the live left pane of the screen, showing the open repository. Its lead is on top,
+// then up to three lists. THREADS has every thread that isn't done, with what each is doing.
+// ISSUES and PRS show what is open in its tracker and forge, as links. Picking a thread switches
+// the client in the right pane, and picking an issue or PR puts its page there. The sidebar also
+// keeps the top row up to date, with the header, the tabs and the strip, and switches tabs.
 import {
   paneTty,
   paneWidth,
@@ -23,7 +22,7 @@ import { updateNotice } from "../machine/update.ts";
 import { leadPlaces } from "../paths.ts";
 import { version } from "../version.ts";
 import { draw, noticeLines, type Size } from "./lists.ts";
-import { jumped, picked, stepped } from "./moves.ts";
+import { nextList, nextRow, rowAtLine } from "./moves.ts";
 import {
   type Link,
   type Lists,
@@ -46,8 +45,9 @@ const input = new RegExp(
 );
 
 // Returns the repository open in the sidebar, given its owner/name, with its lead's session.
-// One Skelcrew no longer has, such as one removed this moment, has the name a new lead would.
-function opening(db: ReturnType<typeof openDb>, fullName: string): Open {
+// For a repository Skelcrew no longer has, such as one just removed, the session is named as a
+// new lead's would be.
+function repositoryAndLead(db: ReturnType<typeof openDb>, fullName: string): Open {
   const [owner = "", repo = ""] = fullName.split("/");
   try {
     return { owner, repo, lead: leadOf(db, owner, repo).name };
@@ -71,16 +71,16 @@ export async function runSidebar(
   // What the sidebar keeps between redraws: the open repository and its tabs, the right pane and
   // its terminal, and what it last drew.
   const db = openDb();
-  let open = opening(db, repository);
+  let open = repositoryAndLead(db, repository);
   let tabs = repositoryTabs(db);
-  const right = `=${session}:.1`;
-  let tty = paneTty(screenSocket(agents), right);
+  const rightPane = `=${session}:.1`;
+  let tty = paneTty(screenSocket(agents), rightPane);
   let rows: Row[] = [];
   let lists: Lists = { issues: { links: [], total: 0 }, prs: { links: [], total: 0 } };
   // What is on the right: a session, or a link's url while `page` is that link's row.
   let shown: string | null = null;
   let page: Link | null = null;
-  let last = "";
+  let lastFrame = "";
   let lastStrip = "";
   // The notice's lines, above the lists, which have the height that is left.
   let notice: string[] = [];
@@ -115,11 +115,12 @@ export async function runSidebar(
     rows = sidebarRows(db, runningSessions(agents), maxRounds, Date.now(), open);
     // A row takes two lines, so the sidebar's height is more than any list can show.
     lists = sidebarLists(db, rows, size().height, open);
-    // A page's row can go at a poll, and the page stays until you move, so it keeps its name.
+    // A page's row can leave its list at a refresh. The page stays until you move, so the old
+    // row is kept for the strip.
     if (page) page = linkAt(shown) ?? page;
     else shown = shownSession(agents, tty) ?? shown;
     // The header, the tabs and the strip go to tmux's status line, and only when they changed.
-    const width = paneWidth(screenSocket(agents), right);
+    const width = paneWidth(screenSocket(agents), rightPane);
     const left = size().width + 1;
     const fullName = `${open.owner}/${open.repo}`;
     const look = { rows, shown, page, tabs, open: fullName, where, version };
@@ -130,8 +131,8 @@ export async function runSidebar(
     }
     // Then the sidebar itself, the notice above its lists, also only when it changed.
     const frame = [...notice, draw(rows, lists, shown, size())].join("\n");
-    if (frame === last) return;
-    last = frame;
+    if (frame === lastFrame) return;
+    lastFrame = frame;
     // Every line fills the pane, so nothing of the last frame is left to clear.
     process.stdout.write(`\x1b[H${frame.replaceAll("\n", "\r\n")}`);
   };
@@ -144,10 +145,10 @@ export async function runSidebar(
     // A link's page runs in the pane in place of what was there. Coming from a page, or onto a
     // client still attaching, a new client starts on the agent. Otherwise the client switches.
     const link = linkAt(next);
-    if (link) respawnPane(screenSocket(agents), right, pageCommand(next, where));
+    if (link) respawnPane(screenSocket(agents), rightPane, pageCommand(next, where));
     else if (page || shownSession(agents, tty) === null) {
-      respawnPane(screenSocket(agents), right, agentClient(agents, next, open.lead));
-      tty = paneTty(screenSocket(agents), right);
+      respawnPane(screenSocket(agents), rightPane, agentClient(agents, next, open.lead));
+      tty = paneTty(screenSocket(agents), rightPane);
     } else showSession(agents, tty, next);
     page = link;
     shown = next;
@@ -157,17 +158,17 @@ export async function runSidebar(
   // until the lead's session is there.
   function switchTo(fullName: string) {
     if (fullName === `${open.owner}/${open.repo}`) return;
-    open = opening(db, fullName);
+    open = repositoryAndLead(db, fullName);
     // Not waited on, so the sidebar draws at once. The right pane starts a client on the new
     // lead, and no page shows.
     openRepository(fullName);
-    respawnPane(screenSocket(agents), right, agentClient(agents, open.lead, open.lead));
-    tty = paneTty(screenSocket(agents), right);
+    respawnPane(screenSocket(agents), rightPane, agentClient(agents, open.lead, open.lead));
+    tty = paneTty(screenSocket(agents), rightPane);
     page = null;
     shown = open.lead;
   }
   // Returns the owner/name of the tab before or after the open one, or null at either end.
-  const besideOpen = (by: 1 | -1) => {
+  const tabBeside = (by: 1 | -1) => {
     const here = tabs.findIndex((tab) => tab.fullName === `${open.owner}/${open.repo}`);
     return tabs[here + by]?.fullName ?? null;
   };
@@ -182,7 +183,7 @@ export async function runSidebar(
       if (clicked !== undefined || arrow === "C" || arrow === "D") {
         // A click on a tab, or Alt-Right or Alt-Left for the tab after or before. Past either
         // end, and with Shift, there is nowhere to go.
-        const sideways = kind === "3" ? besideOpen(arrow === "C" ? 1 : -1) : null;
+        const sideways = kind === "3" ? tabBeside(arrow === "C" ? 1 : -1) : null;
         const tab = clicked === undefined ? sideways : tabs[Number(clicked)]?.fullName;
         if (!tab) continue;
         switchTo(tab);
@@ -190,9 +191,9 @@ export async function runSidebar(
         refresh();
       } else if (arrow) {
         // Alt-Up or Alt-Down moves a row, and with Shift a list.
-        const move = kind === "4" ? jumped : stepped;
+        const move = kind === "4" ? nextList : nextRow;
         show(move(rows, lists, shown, size(), arrow === "A" ? -1 : 1));
-      } else if (y) show(picked(rows, lists, shown, size(), Number(y) - 1 - notice.length));
+      } else if (y) show(rowAtLine(rows, lists, shown, size(), Number(y) - 1 - notice.length));
     }
     refresh();
   });

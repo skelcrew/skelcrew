@@ -12,7 +12,7 @@ import { builderHarness, log, readThread, type Thread, threadName } from "./thre
 // with, so the receiving agent never takes it for the human. The tag marks where it starts and
 // ends, and the text inside stays plain. Any <skelcrew or </skelcrew> in the text is removed, so a
 // message can't close its tag early and pass the rest off as coming from outside it.
-function wrapped(from: string, reply: string, text: string): string {
+function wrapMessage(from: string, reply: string, text: string): string {
   let inside = text;
   // One pass isn't enough: removing the inner tag of </skel</skelcrew>crew> leaves a whole
   // </skelcrew>.
@@ -46,7 +46,7 @@ export function messageBuilder(db: Database, tmux: string, thread: Thread, text:
   // Typing waits until the builder is idle, up to half an hour, so it runs on without being
   // awaited. Either way the thread's log says what happened, and the lead hears of a failure,
   // since by then its command has long returned.
-  const message = wrapped("lead", "sc tell lead", text);
+  const message = wrapMessage("lead", "sc tell lead", text);
   typeInto(tmux, thread.folder, builderHarness(thread).marks, message, {
     timeout: 30 * 60_000,
   }).then(
@@ -65,6 +65,6 @@ export function messageBuilder(db: Database, tmux: string, thread: Thread, text:
 // agent command.
 export function messageLead(db: Database, tmux: string, thread: Thread, text: string): void {
   const name = threadName(db, thread);
-  noteForLead(db, tmux, thread, wrapped(name, `sc tell ${name}`, text));
+  noteForLead(db, tmux, thread, wrapMessage(name, `sc tell ${name}`, text));
   log(readThread(db, thread.folder), `its builder told the lead: ${text}`);
 }

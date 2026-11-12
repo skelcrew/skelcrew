@@ -23,7 +23,7 @@ const tinted = (here: boolean, code: number, text: string) =>
   paint(here ? (onShade[code] ?? code) : code, text);
 
 // Returns a line with the grey behind it, out to the end of the row.
-const band = (line: string, width: number) => `\x1b[${shade}m${filled(line, width)}\x1b[49m`;
+const shaded = (line: string, width: number) => `\x1b[${shade}m${filled(line, width)}\x1b[49m`;
 
 // Returns one row as lines: a mark and the whole name, which goes on to more lines when it is
 // too long, then the word and harness. A cut name could hide what tells two threads apart. An
@@ -51,7 +51,7 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
     ...rest.map((part) => `${indent}${styled(part)}`),
     `${indent}${tinted(here, needing(row) ? yellow : grey, word)}${more && tinted(here, grey, more)}`,
   ];
-  return here ? lines.map((line) => band(line, width)) : lines;
+  return here ? lines.map((line) => shaded(line, width)) : lines;
 }
 
 // Returns a row of ISSUES or PRS as two lines, each a terminal link and cut to stop at the
@@ -78,19 +78,19 @@ function linkLines(link: Link, here: boolean, width: number): string[] {
   );
   const mark = link.mark && `${pad}${tinted(here, link.mark[1], link.mark[0])} `;
   const lines = [`${mark ?? pad}${top}`, `${start}${bottom}`];
-  return here ? lines.map((line) => band(line, width)) : lines;
+  return here ? lines.map((line) => shaded(line, width)) : lines;
 }
 
 // Returns what starts a list: its heading, dim, and the blank line that parts it from the rows.
-const headed = (heading: string): Line[] => [
+const listHeading = (heading: string): Line[] => [
   { text: paint(grey, `${pad}${heading}`) },
   { text: "" },
 ];
 
-// Returns a list's lines for a third of `height` lines: its heading and a blank line, as many
-// rows as fit, then a count of the rest. Rows come with the dim ones last, so those are the
-// first to be left out. A third with room for just one row keeps the row, and the count gives
-// way.
+// Returns a list's lines in its share of the sidebar, `height` lines: its heading and a blank
+// line, as many rows as fit, then a count of the rest. Rows come with the dim ones last, so those
+// are the first to be left out. A share with room for just one row keeps the row, and the count
+// gives way.
 function listLines(
   heading: string,
   list: List,
@@ -98,14 +98,15 @@ function listLines(
   height: number,
   width: number,
 ): Line[] {
-  const top = headed(heading);
+  const top = listHeading(heading);
   // Each row takes two lines. When not all of them fit, a line is kept for the count of the
   // rest, unless that would leave no row at all.
   const fit = Math.floor((height - top.length) / 2);
-  const few = list.total > fit ? Math.max(Math.floor((height - top.length - 1) / 2), 1) : fit;
-  const links = list.links.slice(0, few);
+  const shownCount =
+    list.total > fit ? Math.max(Math.floor((height - top.length - 1) / 2), 1) : fit;
+  const links = list.links.slice(0, shownCount);
   const rest = list.total - links.length;
-  // Cutting to the third is what drops the count when only one row fits.
+  // Cutting to the share is what drops the count when only one row fits.
   return [
     ...top,
     ...links.flatMap((link) =>
@@ -134,15 +135,15 @@ function scrolled(blocks: Line[][], here: number, room: number): Line[] {
   return blocks.slice(first).flat().slice(0, room);
 }
 
-// Returns the lines above the hints, and how many there can be. The hints take the bottom lines,
-// until the sidebar can't hold them and the whole row you are looking at: then they give way, as
-// the rows are what you pick from and the keys are also in Skelcrew's help.
-// The lead's row comes first, on its own, with a line under it. Below it, the lists that show, of
-// ISSUES, THREADS and PRS, share the lines left evenly, however full, so each list stays in the
-// same place on screen, and what doesn't divide goes to THREADS. A list shows only with something
-// in it, as an empty list says nothing. On a terminal too short for a heading and a row in each
-// share, or for the row you are looking at in THREADS, the lists go, and the lead and the threads
-// have the whole sidebar together, with no heading, as they are what you move through.
+// Returns the lines above the hints, and how many there can be. The hints take the bottom lines
+// unless that leaves no room for the whole row you are looking at. Then they give way, as the
+// rows are what you pick from and the keys are also in Skelcrew's help.
+// The lead's row comes first, with a line under it. Below it, the lists that show share the lines
+// left evenly, however full, so each list stays in the same place on screen. What doesn't divide
+// goes to THREADS, or to the first list when there is no THREADS. An empty list doesn't show, as
+// it says nothing. A terminal may be too short for a heading and a row in each share, or for your
+// row in THREADS. Then the lists go, and the lead and the threads fill the sidebar with no
+// heading, as they are what you move through.
 export function layout(
   rows: Row[],
   lists: Lists,
@@ -152,15 +153,15 @@ export function layout(
   // A blank line comes first, so the lead's row, grey when you look at it, doesn't touch the
   // header above the sidebar and read as part of it. Clicks find rows in these same lines. Like
   // the hints, it gives way on a sidebar too short for it and the whole row you are looking at.
-  const yours = rows.find((row) => row.session === shown);
-  const tallest = yours ? rowLines(yours, true, size.width - 1).length : 2;
-  if (size.height <= tallest) return listed(rows, lists, shown, size);
-  const below = listed(rows, lists, shown, { ...size, height: size.height - 1 });
+  const shownRow = rows.find((row) => row.session === shown);
+  const tallest = shownRow ? rowLines(shownRow, true, size.width - 1).length : 2;
+  if (size.height <= tallest) return layoutBelowBlank(rows, lists, shown, size);
+  const below = layoutBelowBlank(rows, lists, shown, { ...size, height: size.height - 1 });
   return { lines: [{ text: "" }, ...below.lines], room: below.room + 1 };
 }
 
-// Returns the lines under the sidebar's first, blank, one, as layout says.
-function listed(
+// Lays out the lines below the blank line at the sidebar's top, as layout describes.
+function layoutBelowBlank(
   rows: Row[],
   lists: Lists,
   shown: string | null,
@@ -178,7 +179,9 @@ function listed(
   // The lead is the row with no status of its own.
   const lead = rows.filter((row) => row.status === null).flatMap(linesOf);
   const threads = rows.filter((row) => row.status !== null).map(linesOf);
-  const yours = rows.filter((row) => row.status !== null).findIndex((row) => row.session === shown);
+  const shownThread = rows
+    .filter((row) => row.status !== null)
+    .findIndex((row) => row.session === shown);
   const issues = lists.issues?.links.length ? lists.issues : null;
   const prs = lists.prs?.links.length ? lists.prs : null;
   // Each list that shows, as what draws it in a number of lines. THREADS scrolls to keep yours
@@ -186,7 +189,12 @@ function listed(
   const parts = [
     ...(issues ? [(height: number) => listLines("Issues", issues, shown, height, width)] : []),
     ...(threads.length > 0
-      ? [(height: number) => [...headed("Threads"), ...scrolled(threads, yours, height - 2)]]
+      ? [
+          (height: number) => [
+            ...listHeading("Threads"),
+            ...scrolled(threads, shownThread, height - 2),
+          ],
+        ]
       : []),
     ...(prs ? [(height: number) => listLines("PRs", prs, shown, height, width)] : []),
   ];
@@ -194,13 +202,13 @@ function listed(
   // goes to THREADS, or to the first list without it.
   const below = room - lead.length - (lead.length > 0 ? parts.length : parts.length - 1);
   const share = Math.floor(below / parts.length);
-  const wide = threads.length > 0 && issues ? 1 : 0;
+  const remainderIndex = threads.length > 0 && issues ? 1 : 0;
   const heights = parts.map((_, index) =>
-    index === wide ? below - (parts.length - 1) * share : share,
+    index === remainderIndex ? below - (parts.length - 1) * share : share,
   );
   // Too short for a heading and a row in each list, or for your row in THREADS: no lists.
-  const tallestThread = threads[yours]?.length ?? 2;
-  const threadsFit = threads.length === 0 || (heights[wide] ?? 0) >= 2 + tallestThread;
+  const tallestThread = threads[shownThread]?.length ?? 2;
+  const threadsFit = threads.length === 0 || (heights[remainderIndex] ?? 0) >= 2 + tallestThread;
   if (parts.length === 0 || share < 4 || !threadsFit)
     return { lines: scrolled(blocks, here, room), room };
   // Each list is filled out to its share, so the list after it always starts in the same place.
