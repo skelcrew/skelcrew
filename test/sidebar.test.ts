@@ -73,11 +73,17 @@ test("lists the lead first, then each thread on two lines: a mark and name, then
   ]);
 });
 
+test("a blank line sits above the lead, so the lead doesn't read as part of the header", () => {
+  const lines = read(draw([lead, thread("app-12")], "lead", size));
+  expect(lines[0]).toBe("");
+  expect(lines[1]).toBe("  ◆ lead");
+});
+
 test("rows and hints sit two columns in, and the word two further", () => {
   const lines = plain(draw([lead, thread("app-12")], "lead", size)).split("\n");
   const y = lines.findIndex((line) => line.includes("●"));
-  expect(lines[0]?.indexOf("◆")).toBe(2);
-  expect(lines[1]?.indexOf("running")).toBe(4);
+  expect(lines[1]?.indexOf("◆")).toBe(2);
+  expect(lines[2]?.indexOf("running")).toBe(4);
   expect(lines[y]?.indexOf("●")).toBe(2);
   expect(lines[y]?.indexOf("app-12")).toBe(4);
   expect(lines[y + 1]?.indexOf("working")).toBe(4);
@@ -274,8 +280,9 @@ test("a release installed in the background shows as a notice, cut at words to f
 
 test("a list too long for the sidebar scrolls above the hints, and never runs into them", () => {
   const rows = [lead, ...[1, 2, 3, 4, 5].map((n) => thread(`app-${n}`))];
-  const short = { width: sidebarWidth, height: 7 };
+  const short = { width: sidebarWidth, height: 8 };
   expect(read(draw(rows, "app-4", short))).toEqual([
+    "",
     "  ● app-3",
     "    working · claude",
     "  ● app-4",
@@ -288,24 +295,24 @@ test("a list too long for the sidebar scrolls above the hints, and never runs in
 
 test("a sidebar too short for a row and the hints drops the hints, as the row matters more", () => {
   const rows = [lead, thread("app-1")];
-  for (const height of [1, 2, 3]) {
+  for (const height of [1, 2, 3, 4]) {
     const lines = plain(draw(rows, "app-1", { width: sidebarWidth, height })).split("\n");
     expect(lines.length).toBeLessThanOrEqual(height);
     expect(lines.join("\n")).not.toContain("⌥");
     expect(lines.join("\n")).toContain("  ● app-1");
   }
-  expect(plain(draw(rows, "app-1", { width: sidebarWidth, height: 4 }))).toContain("⌥");
+  expect(plain(draw(rows, "app-1", { width: sidebarWidth, height: 5 }))).toContain("⌥");
 });
 
 test("the hints also give way to a row whose name takes more lines", () => {
   const name = "a-very-long-repository-name-1234";
   const rows = [lead, thread(name)];
-  const tight = { width: sidebarWidth, height: 4 };
+  const tight = { width: sidebarWidth, height: 5 };
   const text = plain(draw(rows, name, tight));
   expect(text).toContain("working · claude");
   expect(text).not.toContain("⌥");
-  expect(picked(rows, name, tight, 2)).toBe(name);
-  expect(plain(draw(rows, name, { width: sidebarWidth, height: 5 }))).toContain("⌥");
+  expect(picked(rows, name, tight, 3)).toBe(name);
+  expect(plain(draw(rows, name, { width: sidebarWidth, height: 6 }))).toContain("⌥");
 });
 
 test("the row you are looking at stays on screen however far down the list it is", () => {
@@ -334,31 +341,33 @@ test("moving from an agent that isn't listed goes to the lead", () => {
 
 test("a click on either line of a row picks it, but no row, nor an agent that isn't running", () => {
   const rows = [lead, thread("app-1"), thread("app-2", { running: false })];
-  // The lead's two lines, the line under it, the heading and its blank line, then the threads.
-  expect(picked(rows, "app-1", size, 0)).toBe("lead");
+  // The blank line on top, the lead's two lines, the line under it, the heading and its blank
+  // line, then the threads.
+  expect(picked(rows, "app-1", size, 0)).toBeNull();
   expect(picked(rows, "app-1", size, 1)).toBe("lead");
-  for (const y of [2, 3, 4]) expect(picked(rows, "lead", size, y)).toBeNull();
-  expect(picked(rows, "lead", size, 5)).toBe("app-1");
+  expect(picked(rows, "app-1", size, 2)).toBe("lead");
+  for (const y of [3, 4, 5]) expect(picked(rows, "lead", size, y)).toBeNull();
   expect(picked(rows, "lead", size, 6)).toBe("app-1");
-  expect(picked(rows, "lead", size, 7)).toBeNull();
-  expect(picked(rows, "lead", size, 9)).toBeNull();
+  expect(picked(rows, "lead", size, 7)).toBe("app-1");
+  expect(picked(rows, "lead", size, 8)).toBeNull();
+  expect(picked(rows, "lead", size, 10)).toBeNull();
 });
 
 test("a click follows the list as it scrolls, and on a hint picks nothing", () => {
   const rows = [lead, ...[1, 2, 3, 4, 5].map((n) => thread(`app-${n}`))];
-  const short = { width: sidebarWidth, height: 7 };
-  expect(picked(rows, "app-4", short, 0)).toBe("app-3");
-  expect(picked(rows, "app-4", short, 2)).toBe("app-4");
+  const short = { width: sidebarWidth, height: 8 };
+  expect(picked(rows, "app-4", short, 1)).toBe("app-3");
   expect(picked(rows, "app-4", short, 3)).toBe("app-4");
-  expect(picked(rows, "app-4", short, 4)).toBe("app-5");
-  expect(picked(rows, "app-4", short, 5)).toBeNull();
+  expect(picked(rows, "app-4", short, 4)).toBe("app-4");
+  expect(picked(rows, "app-4", short, 5)).toBe("app-5");
   expect(picked(rows, "app-4", short, 6)).toBeNull();
+  expect(picked(rows, "app-4", short, 7)).toBeNull();
 });
 
 test("a click goes to the row below a name that took two lines", () => {
   const rows = [thread("a-very-long-repository-name-1234"), thread("app-1")];
-  expect(picked(rows, "lead", size, 4)).toBe("a-very-long-repository-name-1234");
-  expect(picked(rows, "lead", size, 5)).toBe("app-1");
+  expect(picked(rows, "lead", size, 5)).toBe("a-very-long-repository-name-1234");
+  expect(picked(rows, "lead", size, 6)).toBe("app-1");
 });
 
 const link = (name: string, title: string, more: Partial<Link> = {}): Link => ({
@@ -594,14 +603,15 @@ test("an empty list isn't shown, and the others share its room", () => {
   const lines = read(drawLists(threads, { ...nothing, prs: lists.prs }, "lead", tall));
   expect(lines).not.toContain("  Issues");
   expect(lines).not.toContain("  none");
-  expect(lines.indexOf("  Threads")).toBe(3);
+  expect(lines.indexOf("  Threads")).toBe(4);
   expect(lines.filter((line) => line === rule)).toHaveLength(2);
 });
 
 test("with nothing open, only the lead and THREADS show, as no list would say anything", () => {
   const lines = read(draw(threads, "lead", tall));
   for (const heading of ["Issues", "PRs", "none"]) expect(lines.join("\n")).not.toContain(heading);
-  expect(lines.slice(0, 7)).toEqual([
+  expect(lines.slice(0, 8)).toEqual([
+    "",
     "  ◆ lead",
     "    running · claude",
     rule,
@@ -615,9 +625,9 @@ test("with nothing open, only the lead and THREADS show, as no list would say an
 test("with no threads, THREADS isn't shown either, and the lead stands alone", () => {
   const alone = read(draw([lead], "lead", tall)).join("\n");
   for (const text of ["Issues", "Threads", "PRs", "───"]) expect(alone).not.toContain(text);
-  expect(alone).toStartWith("  ◆ lead\n    running · claude");
+  expect(alone).toStartWith("\n  ◆ lead\n    running · claude");
   const issues = read(drawLists([lead], { ...nothing, issues: lists.issues }, "lead", tall));
-  expect(issues.slice(0, 4)).toEqual(["  ◆ lead", "    running · claude", rule, "  Issues"]);
+  expect(issues.slice(0, 5)).toEqual(["", "  ◆ lead", "    running · claude", rule, "  Issues"]);
   expect(issues.join("\n")).not.toContain("Threads");
 });
 
@@ -628,22 +638,22 @@ test("each list has a third of the sidebar above the hints, and THREADS has what
     const at = (text: string) => lines.indexOf(text);
     return [at("  Issues"), at("  Threads"), at("  PRs"), lines.length - 2];
   };
-  // The lead takes the first two lines, and a line goes under it.
-  expect(places(40)).toEqual([3, 15, 27, 38]);
-  expect(places(41)).toEqual([3, 15, 28, 39]);
-  expect(places(42)).toEqual([3, 15, 29, 40]);
-  expect(places(43)).toEqual([3, 16, 29, 41]);
+  // A blank line comes first, the lead takes the next two, and a line goes under it.
+  expect(places(41)).toEqual([4, 16, 28, 39]);
+  expect(places(42)).toEqual([4, 16, 29, 40]);
+  expect(places(43)).toEqual([4, 16, 30, 41]);
+  expect(places(44)).toEqual([4, 17, 30, 42]);
 });
 
 test("each list stays in its place, however full any of them is", () => {
-  const room = { width: sidebarWidth, height: 40 };
+  const room = { width: sidebarWidth, height: 41 };
   const crowded: Lists = { issues: list(links(9), 240), prs: list(links(9), 240) };
   const moreThreads = [lead, ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => thread(`app-${n}`))];
   const places = (rows: Row[], shownLists: Lists) => {
     const lines = read(drawLists(rows, shownLists, "lead", room));
     return ["  Issues", "  Threads", "  PRs"].map((text) => lines.indexOf(text));
   };
-  const expected = [3, 15, 27];
+  const expected = [4, 16, 28];
   const few: Lists = { issues: list(links(1)), prs: list(links(1)) };
   expect(places(threads, few)).toEqual(expected);
   expect(places(threads, lists)).toEqual(expected);
@@ -656,36 +666,37 @@ const full: Lists = { issues: list(many, 40), prs: list(many, 40) };
 const busy = [lead, ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => thread(`app-${n}`))];
 
 test("THREADS scrolls inside its third, and the lists around it stay", () => {
-  const room = { width: sidebarWidth, height: 24 };
+  const room = { width: sidebarWidth, height: 25 };
   for (const { session } of busy) {
     const lines = read(drawLists(busy, full, session, room));
-    expect(lines[0]).toBe("  ◆ lead");
-    expect(lines.indexOf("  Threads")).toBe(9);
-    expect(lines.indexOf("  PRs")).toBe(17);
+    expect(lines[1]).toBe("  ◆ lead");
+    expect(lines.indexOf("  Threads")).toBe(10);
+    expect(lines.indexOf("  PRs")).toBe(18);
     if (session !== "lead") expect(third(lines, "Threads").join("\n")).toContain(`● ${session}`);
   }
 });
 
 test("a third too short for a heading and one row leaves the lead and threads the whole sidebar", () => {
-  const short = { width: sidebarWidth, height: 18 };
+  const short = { width: sidebarWidth, height: 19 };
   const whole = read(drawLists(busy, full, "app-7", short));
   for (const text of ["Issues", "Threads", "PRs", "───"])
     expect(whole.join("\n")).not.toContain(text);
   expect(whole.join("\n")).toContain("● app-7");
   // The lead and threads run on as one list, with nothing between them.
-  expect(read(drawLists(busy, full, "lead", short)).slice(0, 3)).toEqual([
+  expect(read(drawLists(busy, full, "lead", short)).slice(0, 4)).toEqual([
+    "",
     "  ◆ lead",
     "    running · claude",
     "  ● app-1",
   ]);
-  const enough = read(drawLists(busy, full, "app-7", { width: sidebarWidth, height: 19 }));
+  const enough = read(drawLists(busy, full, "app-7", { width: sidebarWidth, height: 20 }));
   expect(enough).toContain("  Issues");
 });
 
 test("a row too tall for THREADS' third leaves THREADS the whole sidebar, as it must stay whole", () => {
   const name = "a-very-long-repository-name-1234";
   const rows = [lead, thread(name)];
-  const room = { width: sidebarWidth, height: 19 };
+  const room = { width: sidebarWidth, height: 20 };
   const lines = read(drawLists(rows, full, name, room));
   expect(lines.join("\n")).not.toContain("Issues");
   expect(lines.join("\n")).toContain("working · claude");
@@ -717,7 +728,7 @@ test("only the lists the repository has show, sharing the height", () => {
   const bare = read(drawLists(threads, { issues: null, prs: null }, "lead", tall));
   for (const heading of ["Issues", "PRs"])
     expect(bare.some((line) => line.includes(heading))).toBe(false);
-  expect(bare[0]).toBe("  ◆ lead");
+  expect(bare[1]).toBe("  ◆ lead");
   expect(bare).toContain("  Threads");
 });
 
@@ -735,9 +746,10 @@ test("a click picks a thread below the other lists or a row of them, and on a he
   // The blank line under a heading is no row, and the first row is just below it.
   expect(click(y("Threads") + 1)).toBeNull();
   expect(click(y("Threads") + 2)).toBe("app-12");
-  // The lead's two lines are the first two of the sidebar.
-  expect(click(0)).toBe("lead");
+  // The lead's two lines are the two below the blank line on top, which is no row.
+  expect(click(0)).toBeNull();
   expect(click(1)).toBe("lead");
+  expect(click(2)).toBe("lead");
 });
 
 test("a click finds its row as THREADS scrolls between the other lists", () => {
