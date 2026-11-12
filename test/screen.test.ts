@@ -1250,8 +1250,9 @@ test("a tab for each repository runs across the top, with a badge for what needs
   await ready("lead");
   await until(() => /^ {2}Skelcrew v[\d.]+ +│ {3}app {4}site •1$/.test(tabRow()), "the tabs");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out.split("\n")[0];
-  // The open one is on a picked row's grey.
-  expect(colours).toContain("48;5;238");
+  // The open one is on its dark grey, the others on a lighter one.
+  expect(colours).toContain("48;5;234");
+  expect(colours).toContain("48;5;237");
   // The sidebar shows only app's threads.
   expect(seen()).not.toContain("site-8");
 });
