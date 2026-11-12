@@ -7,7 +7,12 @@ import type { Link, Row, Tab } from "./rows.ts";
 
 type Size = { left: number; width: number };
 
-const said = { passing: "checks passing", failing: "checks failing", pending: "checks running" };
+// What the strip says for a thread's checks, and for its latest review's verdict.
+const checksText = {
+  passing: "checks passing",
+  failing: "checks failing",
+  pending: "checks running",
+};
 const verdicts: Record<string, string> = {
   approve: "approved",
   changes: "changes",
@@ -35,7 +40,7 @@ function aboutThread(row: Row, width: number): [string, string] {
   // The name, then the PR and checks at the end. With no room left after them, the name shows
   // alone.
   const name = fitted(clean(row.name), width);
-  const tail = [row.pr === null ? "" : `#${row.pr}`, row.checks ? said[row.checks] : ""]
+  const tail = [row.pr === null ? "" : `#${row.pr}`, row.checks ? checksText[row.checks] : ""]
     .filter(Boolean)
     .join("  ");
   const end = tail ? `  ${tail}` : "";
@@ -66,15 +71,15 @@ const skelName = "#[bold,fg=colour231]Skelcrew#[default]";
 function header(where: string, left: number, version: string): string {
   // "  Skelcrew" takes ten columns. The sidebar's edge is two columns left of the agent, and text
   // stops two before it, so what follows the name has `room`.
-  const named = 10;
-  const room = Math.max(left - 4 - named, 0);
+  const nameWidth = 10;
+  const room = Math.max(left - 4 - nameWidth, 0);
   const shown = `v${version}`;
   const taken = Bun.stringWidth(shown) + 1;
   const number = room >= taken ? ` ${shown}` : "";
   // " · " before the place takes three columns.
   const place = fitted(clean(where), Math.max(room - 3 - taken, 0));
   const about = `${number}${place && ` · ${place}`}`;
-  const spare = " ".repeat(Math.max(left - 2 - named - Bun.stringWidth(about), 0));
+  const spare = " ".repeat(Math.max(left - 2 - nameWidth - Bun.stringWidth(about), 0));
   const dim = about && `#[fg=brightblack]${escaped(about)}#[default]`;
   return `  ${skelName}${dim}${spare}`;
 }
@@ -95,7 +100,7 @@ function drawTabs(tabs: Tab[], open: string, width: number): [string, number] {
   // Returns a tab's text: its name, with its count when threads in it need you or failed.
   const label = (tab: Tab) => `  ${tab.name}${tab.count ? ` •${tab.count}` : ""}  `;
   // Returns how many columns the tab at a place in the list takes, or none past either end.
-  const wide = (index: number) => {
+  const tabWidth = (index: number) => {
     const tab = tabs[index];
     return tab ? Bun.stringWidth(label(tab)) : 0;
   };
@@ -104,12 +109,13 @@ function drawTabs(tabs: Tab[], open: string, width: number): [string, number] {
   const room = all <= width ? width : width - `  +${tabs.length}`.length;
   // Takes in tabs out from the open one, one on each side at a time, until neither side fits
   // another. The open tab always shows.
-  let [first, last, used] = [at, at, wide(at)];
+  let [first, last, used] = [at, at, tabWidth(at)];
   let [left, right] = [true, true];
   while (left || right) {
-    if (right && last + 1 < tabs.length && used + wide(last + 1) <= room) used += wide(++last);
+    if (right && last + 1 < tabs.length && used + tabWidth(last + 1) <= room)
+      used += tabWidth(++last);
     else right = false;
-    if (left && first > 0 && used + wide(first - 1) <= room) used += wide(--first);
+    if (left && first > 0 && used + tabWidth(first - 1) <= room) used += tabWidth(--first);
     else left = false;
   }
   // Tabs have greys of their own, so they stand apart from the sidebar and the agent: the open
