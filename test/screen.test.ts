@@ -192,8 +192,9 @@ test("shows the lead and every thread that isn't done, beside the agent", async 
   await ready("lead");
   const lines = seen().split("\n");
   const y = lines.findIndex((line) => line.includes("◆ lead"));
-  // The lead is at the very top of the sidebar, then a line, then THREADS.
-  expect(y).toBe(1);
+  // The lead is at the top of the sidebar, below a blank line, then a line, then THREADS.
+  expect(y).toBe(2);
+  expect(lines[1]?.slice(0, sidebar - 1).trim()).toBe("");
   expect(selected()).toBe("◆ lead");
   expect(lines[1]).toContain("I am lead");
   expect(lines[y + 1]).toContain("running · claude");
@@ -1249,8 +1250,9 @@ test("a tab for each repository runs across the top, with a badge for what needs
   await ready("lead");
   await until(() => /^ {2}Skelcrew v[\d.]+ +│ {3}app {4}site •1$/.test(tabRow()), "the tabs");
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out.split("\n")[0];
-  // The open one is on a picked row's grey.
-  expect(colours).toContain("48;5;238");
+  // The open one is on its dark grey, the others on a lighter one.
+  expect(colours).toContain("48;5;234");
+  expect(colours).toContain("48;5;237");
   // The sidebar shows only app's threads.
   expect(seen()).not.toContain("site-8");
 });
