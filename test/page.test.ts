@@ -181,7 +181,27 @@ test("a page so narrow it has no room still draws", () => {
 test("the description is drawn from its markdown, and a long link still wraps", () => {
   const body = "## Steps\n- **one** [the docs](https://example.com/docs) and more words";
   const lines = drawPage({ ...page, body }, issueUrl, 24, "click to open");
-  expect(read(lines).slice(-3)).toEqual(["  Steps", "  • one the docs and", "  more words"]);
+  expect(read(lines).slice(-3)).toEqual(["  Steps", "  • one the docs and", "    more words"]);
   expect(lines.join("\n")).toContain("\x1b[1mSteps\x1b[22m");
   expect(lines.join("\n")).toContain("\x1b]8;;https://example.com/docs");
+});
+
+test("on a wide pane, text wraps at 80 columns, past the two columns of margin", () => {
+  const words = "word ".repeat(60).trim();
+  const lines = read(drawPage({ ...page, title: words, body: words }, issueUrl, 200, "x"));
+  for (const line of lines) expect(line.length).toBeLessThanOrEqual(82);
+  expect(lines[1]).toBe(`  ${"word ".repeat(16).trim()}`);
+  expect(lines.at(-1)).toBe(`  ${"word ".repeat(12).trim()}`);
+});
+
+test("a narrower pane still wraps at its own width", () => {
+  const body = "word ".repeat(30).trim();
+  const lines = read(drawPage({ ...page, body }, issueUrl, 50, "x"));
+  expect(lines.at(-2)).toBe(`  ${"word ".repeat(9).trim()}`);
+});
+
+test("the link to GitHub stays on the line it was drawn on, however the page wraps", () => {
+  const body = "word ".repeat(200);
+  const lines = drawPage({ ...page, body }, issueUrl, 200, "click to open");
+  expect(lines.findIndex((line) => line.includes(`\x1b]8;;${issueUrl}`))).toBe(5);
 });
