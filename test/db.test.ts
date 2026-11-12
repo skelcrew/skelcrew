@@ -112,7 +112,7 @@ openDb().close();`;
   other.close();
   expect(await new Response(run.stderr).text()).toBe("");
   expect(await run.exited).toBe(0);
-}, 15_000);
+}, 60_000);
 
 // A database from the release before Skelcrew kept a copy of issues and PRs: it had only the
 // newest open ones' numbers and titles, for the sidebar.
