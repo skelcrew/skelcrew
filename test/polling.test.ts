@@ -192,6 +192,9 @@ function fakeBuilders(): string[] {
 // How many times the daemon has asked what changed.
 const polls = () => asked(plugin).filter((q) => q.ask === "changed").length;
 
+// The reviews and comments the daemon asked the forge to mark seen.
+const marked = () => asked(plugin).filter((q) => q.ask === "seen");
+
 // Waits for the number of polls to grow by a few, so anything they would do is done.
 async function morePolls(n = 3) {
   const before = polls();
@@ -420,6 +423,27 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
     expect(typed()).toContain("Also CSV.");
     expect(typed()).not.toContain("Print your token.");
     expect(thread()).toMatchObject({ status: "working", needs_you: 0 });
+    // The forge marks seen what was typed in, and nothing it ignored. The marks go out
+    // together, so they can arrive in any order.
+    await until(() => marked().length === 2);
+    expect(marked().sort((a, b) => String(a.id).localeCompare(String(b.id)))).toEqual([
+      { ask: "seen", repository: "simon/app", pr: 7, kind: "comment", id: "49" },
+      { ask: "seen", repository: "simon/app", pr: 7, kind: "comment", id: "50" },
+    ]);
+  }, 60_000);
+
+  // A plugin too old to know the question fails it, as any failure does.
+  test("a forge that can't mark a comment seen holds up neither the builder nor the next comment", async () => {
+    await approvedApp12();
+    writeFileSync(join(plugin, "fail-seen"), "the GitHub plugin doesn't answer seen");
+    const first = { id: "50", author: you, text: "Call it exportJson." };
+    pr({ reviews: [skelReview], comments: [first] });
+    await until(() => handled("50"));
+    const second = { id: "51", author: you, text: "And add CSV." };
+    pr({ reviews: [skelReview], comments: [first, second] });
+    await until(() => typed().includes("And add CSV."));
+    await until(() => marked().length === 2);
+    expect(thread()).toMatchObject({ status: "working", needs_you: 0 });
   }, 60_000);
 
   test("a builder told of a conflict can fetch the base from origin and merge it, but not change origin", async () => {
@@ -496,6 +520,8 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
     expect(typed()).not.toContain("Also CSV.");
     expect(thread()).toMatchObject({ status: "stopped" });
     expect(handled("50")).toBe(false);
+    // Marked seen only once it is typed in.
+    expect(marked()).toEqual([]);
 
     const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
       env: env(),
@@ -503,6 +529,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
     });
     expect(started.stderr.toString()).toBe("");
     await until(() => typed().includes("Also CSV."), 30_000);
+    await until(() => marked().length === 1);
 
     Bun.spawnSync([process.execPath, main, "stop", "app-12"], { env: env() });
     expect(thread().status).toBe("stopped");

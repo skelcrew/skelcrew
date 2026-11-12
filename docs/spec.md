@@ -200,7 +200,7 @@ The daemon asks each repository's tracker and forge what changed since it last l
 | Reviewer approves | Marks the thread waiting on CI, or needs you if CI is already green |
 | A check fails | Types the failing check's name and log tail into the builder's session |
 | All checks pass after approval | Needs you: ready to merge |
-| A person comments or reviews on the PR | Types it into the builder's session. Your comments always wake the builder, even past the round limit |
+| A person comments or reviews on the PR | Types it into the builder's session. Your comments always wake the builder, even past the round limit. Once it is typed in, the forge marks it seen, so the person can see it was picked up: GitHub reacts with 👀, to a review itself rather than its line comments. One that isn't typed in, such as another person's past the round limit, isn't marked, and one held while the thread is stopped is marked once it is typed in. A mark that fails is logged, and never holds up the builder |
 | Merge conflict with the base branch | Tells the builder to merge it and fix the conflict |
 | PR merged or closed | Ends the thread and cleans up |
 | Bot comments | Ignored |
@@ -256,6 +256,7 @@ When `claims` exits with 2 while Skelcrew brings in a repository in your termina
 | `changed` with a repository, whether the plugin is its tracker, its forge or both, the last `next` (or none), and PR numbers to watch | Tracker, forge | `items`, everything updated since, or everything open without a `next`, and the new `next` |
 | `create task` with a repository, title and body | Tracker | The new item |
 | `took` with a repository and task | Tracker | Nothing. GitHub reacts with 👀 |
+| `seen` with a repository, PR, kind (comment or review) and ID, of a person's comment or review just typed into the builder | Forge | Nothing. GitHub reacts with 👀 |
 | `open pr` with a repository, branch, base, title and body | Forge | Its number, of the PR already open from that branch if there is one |
 | `review` with a repository, PR, commit, verdict and body | Forge | The review's ID |
 | `status` with a repository, commit, state and description | Forge | Nothing |
