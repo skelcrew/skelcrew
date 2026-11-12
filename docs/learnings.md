@@ -106,6 +106,9 @@ that covers the code you are about to write.
 - **bwrap being installed doesn't mean it can run.** On Ubuntu 24.04 and later, AppArmor
   blocks the namespaces it needs unless a profile allows them. Check by running
   `bwrap --ro-bind / / true`, not by finding the binary.
+- **bwrap has overlays only since 0.11.** Reviews see the thread's clone through
+  `--overlay-src` and `--tmp-overlay`. Ubuntu 24.04's bwrap 0.9 passes every other check,
+  then fails every review with "Unknown option --overlay-src". Check `bwrap --version` too.
 - **bwrap can't start inside Skelcrew's own sandbox.** Once Skelcrew builds Skelcrew, tests that start a
   real sandbox can't run there. That is the one place they may skip.
 - **Hide the home folder, then put back only what the agent needs.** Programs often live
@@ -269,6 +272,9 @@ that covers the code you are about to write.
 - **tmux drops terminal links on the way to a terminal it doesn't recognise.** A client under
   `script`, which answers no terminal queries, got no OSC 8 at all until the server set the
   `hyperlinks` feature. A tmux inside tmux hides this, as the outer one is recognised.
+- **tmux before 3.6 refuses `pane-border-lines spaces`.** It says "unknown value: spaces",
+  and the screen never opens, as one bad setting fails the whole command. Ubuntu 24.04 has
+  tmux 3.4 and Debian 13 has 3.5a. Read `tmux -V` and leave the setting out there.
 - **tmux 3.6 doesn't hold a program's synchronized frames back.** It marks only its own full
   redraws, so a frame written in two halves arrives in two, attached directly or nested.
 - **Alt-Shift-Up and Alt-Shift-Down get through.** They arrive as `ESC[1;4A` and `ESC[1;4B`

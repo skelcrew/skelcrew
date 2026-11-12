@@ -19,9 +19,8 @@ const LeadReply = z.union([
 ]);
 
 // What the daemon says it runs: its release, or for a daemon from a checkout, that checkout's
-// folder and the commit it started on. A field the daemon doesn't give, as one from before it
-// said, is empty.
-const Running = z
+// folder and the commit it started on. A field an older daemon doesn't report comes back empty.
+const DaemonBuild = z
   .object({
     release: z.string().catch(""),
     folder: z.string().catch(""),
@@ -30,19 +29,17 @@ const Running = z
   .catch({ release: "", folder: "", commit: "" });
 
 // Returns what the daemon runs, or null when no daemon answers.
-async function daemonRuns(): Promise<z.infer<typeof Running> | null> {
+async function daemonRuns(): Promise<z.infer<typeof DaemonBuild> | null> {
   const reply = await ask({ command: "status" }, 2000);
-  return reply === null ? null : Running.parse(reply);
+  return reply === null ? null : DaemonBuild.parse(reply);
 }
 
-// Returns what this Skelcrew would have the daemon run, in words, or null when the daemon already
-// runs it, or a restart couldn't change what it runs. A release wants the daemon on the same
-// release. A checkout wants it on its current commit, after a git pull, but only a daemon that
-// runs from this same checkout: the service starts one checkout, so restarting a daemon of
-// another, such as your main one while you run sc from a worktree, would change nothing.
-// Changes not committed don't count: the daemon can't say what it loaded, and asking for a
-// restart at every sc while you edit would only get in the way.
-function wanted(running: z.infer<typeof Running>): string | null {
+// Returns what the daemon should run instead, in words, or null when a restart isn't needed or
+// wouldn't help. A release wants the daemon on the same release. A checkout wants it on its
+// current commit, but only when the daemon runs from this same checkout. The service always
+// starts one checkout, so restarting your main one's daemon from a worktree would change
+// nothing. Uncommitted changes don't count, so editing doesn't ask for a restart at every sc.
+function daemonShouldRun(running: z.infer<typeof DaemonBuild>): string | null {
   if (release) return running.release === release ? null : `Skelcrew ${release}`;
   // A single file that isn't a release has no checkout to compare.
   if (singleFile || running.folder !== checkoutFolder) return null;
@@ -51,11 +48,11 @@ function wanted(running: z.infer<typeof Running>): string | null {
 }
 
 // Restarts the daemon when it runs another release than this Skelcrew, or another commit of this
-// checkout, before you attach. So a release installed in the background, or a git pull, takes
-// over once you run sc again. Agents keep running, as only the daemon restarts.
-export async function onThisSkel(): Promise<void> {
+// checkout. So a release installed in the background, or a git pull, takes over the next time
+// you run sc. Agents keep running, as only the daemon restarts.
+export async function restartStaleDaemon(): Promise<void> {
   const running = await daemonRuns();
-  const want = running && wanted(running);
+  const want = running && daemonShouldRun(running);
   if (!want) return;
   console.log(skelLine(`restarting the daemon on ${want}. Your agents keep running.`));
   const log = restartDaemon();
@@ -64,7 +61,7 @@ export async function onThisSkel(): Promise<void> {
   const deadline = Date.now() + 10_000;
   for (;;) {
     const now = await daemonRuns();
-    if (now && !wanted(now)) return;
+    if (now && !daemonShouldRun(now)) return;
     if (Date.now() > deadline)
       throw new Error(
         `Skelcrew's daemon didn't come back on ${want} within 10 seconds: ${log} shows why`,
@@ -73,10 +70,10 @@ export async function onThisSkel(): Promise<void> {
   }
 }
 
-// Makes sure the daemon runs, on this Skelcrew's code, before you attach to an agent it keeps.
-// One on another release or commit is restarted, and one that doesn't answer is started.
-async function daemonUp(): Promise<void> {
-  await onThisSkel();
+// Makes sure the daemon runs this Skelcrew's code before you attach to an agent. A daemon on
+// another release or commit is restarted, and one that doesn't answer is started.
+async function ensureDaemon(): Promise<void> {
+  await restartStaleDaemon();
   if (await daemonRuns()) return;
   const log = startDaemon();
   // The service manager returns before the daemon listens, so wait until it answers.
@@ -88,11 +85,11 @@ async function daemonUp(): Promise<void> {
   }
 }
 
-// Ensures the daemon and the lead of the repository you attached from, as owner/repo, are
-// running, then opens the screen on that lead until you leave with Ctrl-Q. With none, the
-// daemon opens the repository you opened last.
+// Makes sure the daemon and a lead are running, then opens the screen on the lead until you
+// leave with Ctrl-Q. The lead is for `from`, an owner/repo, or else for the repository you
+// opened last.
 export async function attachToLead(tmux: string, from?: string): Promise<void> {
-  await daemonUp();
+  await ensureDaemon();
   // Asking for the lead brings it back if it ended while the daemon kept running. Starting it
   // takes longer than a status, hence the longer wait.
   const reply = await ask({ command: "lead", ...(from ? { from } : {}) }, 15_000);
@@ -104,10 +101,9 @@ export async function attachToLead(tmux: string, from?: string): Promise<void> {
   await openScreen(tmux, lead.data.lead, lead.data.lead, lead.data.repository);
 }
 
-// Opens the screen with the builder of the thread named repo-task on the right, and returns
-// when you leave with Ctrl-Q, with its repository's lead in the sidebar. Only from your own
-// terminal: it takes over the screen, which the lead can't hand to you. The daemon is made
-// sure of as for a lead, once the thread is known to be there.
+// Opens the screen with a thread's builder on the right and its repository's lead in the
+// sidebar, and returns when you leave with Ctrl-Q. Only you can run it, since it takes over
+// your terminal. It checks the builder is running before it starts the daemon.
 export async function attachToThread(
   tmux: string,
   repository: string,
@@ -120,7 +116,7 @@ export async function attachToThread(
     throw new Error(
       `${repository}-${task}'s builder isn't running: the thread is ${thread.status}`,
     );
-  await daemonUp();
+  await ensureDaemon();
   const { name } = leadOf(db, thread.owner, thread.repo);
   await openScreen(tmux, thread.folder, name, `${thread.owner}/${thread.repo}`);
 }

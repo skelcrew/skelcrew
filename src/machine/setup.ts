@@ -90,6 +90,15 @@ function checkTools(env: Env): void {
   if (lines.length > 0 || !bwrap) {
     throw new Error(`Install these first:\n${lines.join("\n")}`);
   }
+  // Reviews look at the thread's clone through an overlay, which bubblewrap has only since
+  // 0.11. An older one, such as Ubuntu 24.04's 0.9, passes every other check here and then fails
+  // every review, so it stops setup before anything is asked.
+  const answer = Bun.spawnSync([bwrap, "--version"], { stderr: "pipe" }).stdout.toString();
+  const version = answer.match(/(\d+)\.(\d+)(\.\d+)?/);
+  if (version && Number(version[1]) === 0 && Number(version[2]) < 11)
+    throw new Error(
+      `bwrap is ${version[0]} here, and Skelcrew needs 0.11 or newer for its reviews. Ubuntu 26.04 has it.`,
+    );
   // Being installed isn't being allowed: on Ubuntu 24.04 and later, AppArmor stops bwrap
   // making the namespaces it needs, and every agent would fail to start.
   const caps = onSprite(PATH) ? dropCapabilities : [];

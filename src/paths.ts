@@ -33,7 +33,7 @@ export const daemonSocket = () => join(runtimeDir(), "skelcrew.sock");
 export const cliSocket = () => process.env.SKELCREW_SOCKET || daemonSocket();
 // Returns a short hash of the text, for a name that must stay short or tell apart names that
 // read alike.
-const short = (text: string) =>
+const shortHash = (text: string) =>
   new Bun.CryptoHasher("sha256").update(text).digest("hex").slice(0, 16);
 
 // Returns where a repository's lead lives: the name of its tmux session and config folder, its
@@ -50,7 +50,7 @@ export function leadPlaces(owner: string, repo: string, kept = false) {
       folder: join(dataDir(), "lead"),
       socket: join(runtimeDir(), "skelcrew", "lead", "skelcrew.sock"),
     };
-  const hash = short(`${owner}/${repo}`);
+  const hash = shortHash(`${owner}/${repo}`);
   // Each of the hash's first eight hex digits becomes one of the letters a to p, so the name
   // ends in a letter.
   const letters = hash
@@ -68,10 +68,10 @@ export function leadPlaces(owner: string, repo: string, kept = false) {
 // socket path over 108 bytes, and a Mac over 104, which a long repository name would make,
 // so the folder is named by a short hash of the thread's folder.
 export const threadSocket = (folder: string) =>
-  join(runtimeDir(), "skelcrew", "threads", short(folder), "skelcrew.sock");
+  join(runtimeDir(), "skelcrew", "threads", shortHash(folder), "skelcrew.sock");
 // Returns the parent folder of Skelcrew's repository clones.
 const reposDir = () => join(dataDir(), "repos");
 // Returns a repository's clone folder so Skelcrew works away from your checkout.
 export const cloneDir = (owner: string, repo: string) => join(reposDir(), owner, repo);
-// Each thread's clone, and the log of its changes beside it.
+// Returns the folder that holds each thread's clone, with the log of its changes beside it.
 export const threadsDir = () => join(dataDir(), "threads");
