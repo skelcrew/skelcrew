@@ -28,6 +28,9 @@ export type Decision =
       seen: string[];
       // What to type into the builder, besides the failed checks, whose logs come from the forge.
       tell: string[];
+      // The people's reviews and comments among those, which the forge marks seen once they
+      // are typed in.
+      typedIn: { kind: "review" | "comment"; id: string }[];
       failed: Check[];
       // The base branch the PR conflicts with, which Skelcrew's clone must hold before the
       // builder, told to merge it, fetches it from there.
@@ -83,7 +86,7 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
   const before = handledBefore(thread, pr);
   if (before === null) {
     const why = "started after the PR's history";
-    return { seen: shown, tell: [], failed: [], conflict: null, change: {}, why };
+    return { seen: shown, tell: [], typedIn: [], failed: [], conflict: null, change: {}, why };
   }
   const past = pastLimit(thread, given.maxRounds);
   // Whether what this author wrote is typed into the builder.
@@ -91,18 +94,24 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
     author !== null && !author.bot && (author.you || (!past && author.push === true));
   const who = (author: Author) => author?.login ?? "someone";
   // New reviews and comments from those who may wake the builder are typed in, a review with
-  // its comments on lines.
+  // its comments on lines. Each is named, for the forge to mark seen.
   const tell: string[] = [];
+  const typedIn: { kind: "review" | "comment"; id: string }[] = [];
   const reviews = pr.reviews.filter((r) => !before.has(r.id));
   for (const r of reviews) {
     if (!wakes(r.author)) continue;
     const lines = r.lines.map((c) => `${c.path}${c.line ? `:${c.line}` : ""}: ${c.text}`);
     const text = [r.text.trim(), ...lines].filter(Boolean).join("\n\n");
-    if (text) tell.push(`${who(r.author)} reviewed the PR:\n\n${text}`);
+    if (!text) continue;
+    tell.push(`${who(r.author)} reviewed the PR:\n\n${text}`);
+    typedIn.push({ kind: "review", id: r.id });
   }
   const comments = pr.comments.filter((c) => !before.has(c.id));
-  for (const c of comments)
-    if (wakes(c.author)) tell.push(`${who(c.author)} commented on the PR:\n\n${c.text}`);
+  for (const c of comments) {
+    if (!wakes(c.author)) continue;
+    tell.push(`${who(c.author)} commented on the PR:\n\n${c.text}`);
+    typedIn.push({ kind: "comment", id: c.id });
+  }
   // Only once nothing is under way, so a conflict or a failed commit status is told once: the
   // builder then works on it until it submits again.
   const quiet =
@@ -136,7 +145,7 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
     // Past the round limit the thread still needs you, as the builder's next round would.
     const change: Change = { status: "working", needs_you: past };
     const why = `told the builder: ${told.join("; ")}`;
-    return { seen, tell, failed, conflict, change, why };
+    return { seen, tell, typedIn, failed, conflict, change, why };
   }
   // Skelcrew's reviewer approves by setting its check, so an approved PR with every check passed,
   // its own included, is ready. With no CI, that check is the only one.
@@ -145,12 +154,13 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
     return {
       seen,
       tell,
+      typedIn,
       failed,
       conflict,
       change: { needs_you: true },
       why: "approved by Skelcrew's reviewer with every check green, so it is ready to merge",
     };
-  return { seen, tell, failed, conflict, change: {}, why: "" };
+  return { seen, tell, typedIn, failed, conflict, change: {}, why: "" };
 }
 
 type Labeled = { id: string; title: string };
