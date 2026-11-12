@@ -99,7 +99,7 @@ async function typeNow(socket: string, name: string, marks: Marks, text: string,
   try {
     // Text typed while Claude Code is starting or busy can be lost, so wait until it is idle.
     // Check the signal after each wait too: the thread may have stopped meanwhile.
-    for (;;) {
+    while (true) {
       if (waits.signal?.aborted) return;
       const why = await notIdle(socket, name, marks, moment);
       if (waits.signal?.aborted) return;
