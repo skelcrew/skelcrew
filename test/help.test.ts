@@ -153,3 +153,16 @@ test("sc runs from a checkout whose folder it may read files in but not list, as
     rmSync(checkout, { recursive: true, force: true });
   }
 });
+
+// Tasks and threads are different things, so the help keeps them apart: a task is what you
+// want done, in the tracker, and a thread is Skelcrew's work on one.
+test("the help lists the task commands in a section of their own, and names threads as threads", () => {
+  const out = skel(["--help"]).out;
+  const tasks = out.slice(out.indexOf("\nTASKS\n"), out.indexOf("\nREPOSITORIES\n"));
+  expect(out).toContain("\nTASKS\n");
+  for (const command of ["task ls", "task show", "task create"])
+    expect(tasks).toContain(`  ${command} `);
+  expect(tasks).not.toContain("  start ");
+  for (const command of ["stop", "rm", "attach", "review"])
+    expect(out).toContain(`  ${command} <thread>`);
+});
