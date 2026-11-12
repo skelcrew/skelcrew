@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
-import { keptEnv, sandboxArgs, throwaway } from "../agents/sandbox.ts";
+import { filterEnv, sandboxArgs, throwawayMounts } from "../agents/sandbox.ts";
 import { onSprite } from "../machine/sprite.ts";
 import { errorText } from "../say.ts";
 
@@ -179,10 +179,10 @@ async function reviewNow(given: {
       signal,
     });
     // Only what a shell and the tests need gets in, with the harness's own keys added.
-    const sandboxEnv = { ...launch.env, ...keptEnv(env, keys) };
+    const sandboxEnv = { ...launch.env, ...filterEnv(env, keys) };
     // Tests and builds write in the clone, so it is seen as a throwaway folder too.
     const copy = join(folder, "clone");
-    const { mounts, at } = await throwaway({ source: clone, copy, sprite, signal });
+    const { mounts, at } = await throwawayMounts({ source: clone, copy, sprite, signal });
     mounts.push("--bind", folder, folder);
     // The builder can go on changing its clone after it submits, so the reviewer sees the
     // submitted commit, with what the builder changed since put aside. Ignored files, such

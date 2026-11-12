@@ -1,7 +1,7 @@
 // The screen: the sidebar on the left of your terminal, with the agent or page you are looking
 // at on the right and the strip above it. It is a second tmux server, one session per open
 // terminal, ended when you leave.
-import { applyConfig, cleanEnv, screenSocket } from "../agents/tmux.ts";
+import { applyConfig, envWithoutTmux, screenSocket } from "../agents/tmux.ts";
 import { windowTitle } from "../say.ts";
 import { mainFile, singleFile } from "../version.ts";
 
@@ -133,7 +133,7 @@ export async function openScreen(
   lead: string,
   repository: string,
 ): Promise<void> {
-  const env = cleanEnv();
+  const env = envWithoutTmux();
   // Reports whether this machine knows the terminal, so opening can choose a fallback.
   // tmux refuses unknown terminals, such as Ghostty's xterm-ghostty over ssh.
   // xterm-256color draws Claude Code well enough.

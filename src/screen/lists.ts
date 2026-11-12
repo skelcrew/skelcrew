@@ -1,6 +1,17 @@
 // The sidebar as lines for its pane: the lead's row on top, then ISSUES, THREADS and PRS, and the
 // keys at the bottom. It reads nothing, so what you see can be tested without a terminal.
-import { clean, edge, fitted, grey, onShade, pad, paint, shade, white, yellow } from "./look.ts";
+import {
+  edge,
+  fitted,
+  grey,
+  onShade,
+  pad,
+  paint,
+  removeControlCodes,
+  shade,
+  white,
+  yellow,
+} from "./look.ts";
 import { type Link, type List, type Lists, needing, type Row, threadMark } from "./rows.ts";
 
 export type Size = { width: number; height: number };
@@ -65,7 +76,7 @@ function linkLines(link: Link, here: boolean, width: number): string[] {
   // the name's line, after a dot of three columns, and is yellow when its thread needs you.
   const start = link.mark ? indent : pad;
   const room = Math.max(width - start.length - pad.length, 0);
-  const title = fitted(clean(link.title), room);
+  const title = fitted(removeControlCodes(link.title), room);
   const name = fitted(link.name, room);
   const word = link.word && fitted(link.word, room - Bun.stringWidth(name) - 3);
   const about =
