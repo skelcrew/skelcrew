@@ -111,7 +111,8 @@ export function threadAge(started: number, now: number): string {
 
 // Returns the open repository's rows as the database and tmux have them now: its lead, then
 // each of its threads that isn't done, newest first as in sc ps, each with its word by its
-// round limit, which `maxRounds` gives. It runs each second, so it reads only what shows.
+// round limit, which `maxRounds` gives. Stopped threads come last, newest first too: they need
+// nothing and don't change, so they shouldn't sit between threads at work. It runs each second, so it reads only what shows.
 // Only a thread whose word is working shows its running time. A time on any other row would
 // write to the terminal each minute, and on a Sprite a terminal that stays quiet lets it sleep.
 // Such a thread keeps the Sprite awake anyway, so its time costs nothing.
@@ -123,10 +124,10 @@ export function sidebarRows(
   open: Open,
 ): Row[] {
   // THREADS has the repository's threads that aren't done, after its lead, which has no status,
-  // PR or review of its own, only whether its session runs.
-  const threads = db.query(
-    "SELECT * FROM threads WHERE status != 'done' AND owner = ? AND repo = ? ORDER BY rowid DESC",
-  );
+  // PR or review of its own, only whether its session runs. In SQLite a comparison is 0 or 1, so
+  // ordering by it puts stopped threads after the rest.
+  const threads = db.query(`SELECT * FROM threads WHERE status != 'done' AND owner = ? AND repo = ?
+      ORDER BY status = 'stopped', rowid DESC`);
   const leadRuns = running.includes(open.lead);
   // A repository Skelcrew no longer works on has no lead to name a harness for.
   const known = db.query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ?");
@@ -183,21 +184,24 @@ const ListRow = z.object({
 
 // Returns the open repository's ISSUES and PRS from Skelcrew's copy, up to `most` rows of each, or
 // none of a list its repository has no tracker or forge for: it reads the database and never
-// asks the tracker, as it runs each second. Newest first, with issues
-// that have a thread last. A thread that is done has left THREADS, so its issue counts as
+// asks the tracker, as it runs each second. Newest first, with issues that have a thread last,
+// and PRs whose thread is stopped last, as THREADS has their threads. A thread that is done has left THREADS, so its issue counts as
 // waiting again. A PR from a thread takes the word and mark of its row. Both the lists and the
 // rows are of the open repository alone, so a PR's number is enough to find its thread.
 export function sidebarLists(db: Database, rows: Row[], most: number, open: Open): Lists {
   // Returns one list, of tasks or PRs, with the column that counts all of its kind.
   const read = (kind: "task" | "pr", column: string): List => {
     // The open items of one kind, and for a task whether it has a thread that isn't done, which
-    // puts it last and dims it.
+    // puts it last and dims it. A PR whose thread is stopped goes last, but isn't dim, as its
+    // thread's word already says stopped.
     const found = db.query(`SELECT r.name, i.item,
         EXISTS (SELECT 1 FROM threads t WHERE i.kind = 'task' AND t.owner = i.owner
-          AND t.repo = i.repo AND CAST(t.task AS TEXT) = i.id AND t.status != 'done') AS threaded
+          AND t.repo = i.repo AND CAST(t.task AS TEXT) = i.id AND t.status != 'done') AS threaded,
+        EXISTS (SELECT 1 FROM threads t WHERE i.kind = 'pr' AND t.owner = i.owner
+          AND t.repo = i.repo AND CAST(t.pr AS TEXT) = i.id AND t.status = 'stopped') AS stopped
       FROM items i JOIN repositories r ON r.owner = i.owner AND r.repo = i.repo
       WHERE i.kind = ? AND i.state = 'open' AND i.owner = ? AND i.repo = ?
-      ORDER BY threaded, i.created DESC, length(i.id) DESC, i.id DESC LIMIT ?`);
+      ORDER BY threaded, stopped, i.created DESC, length(i.id) DESC, i.id DESC LIMIT ?`);
     // Each is named as Skelcrew names it, app-12 for an issue and app#34 for a PR. A PR takes the
     // word and mark of its thread's row, if it has one.
     const links = found.all(kind, open.owner, open.repo, most).map((saved) => {
