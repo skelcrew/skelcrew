@@ -123,15 +123,16 @@ export async function previewRemoval(repository: string, task: string) {
 }
 
 // Has the daemon remove a thread, for sc rm, with the reason its PR's comment gives, and
-// returns the thread's name. The daemon answers once the PR is closed and the clone removed.
-export async function removeOn(repository: string, task: string, reason?: string): Promise<string> {
+// returns the thread's name and the ID of the issue it worked on, or null when it had none.
+// The daemon answers once the PR is closed and the clone removed.
+export async function removeOn(repository: string, task: string, reason?: string) {
   const reply = await request({
     command: "rm",
     repo: repository,
     task,
     ...(reason ? { reason } : {}),
   });
-  return checkReply(z.object({ removed: z.string() }), reply).removed;
+  return checkReply(z.object({ removed: z.string(), issue: z.string().nullable() }), reply);
 }
 
 // Has the daemon start a round for sc submit, run by a builder in its sandbox, and returns

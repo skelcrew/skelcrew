@@ -336,8 +336,14 @@ async function threadCommand(args: string[]): Promise<void> {
       }
     }
     // An empty reason is no reason, so the PR closes with no comment.
-    const name = await removeOn(...task, rest[0] || undefined);
-    console.log(`Removed ${name}. Its task stays open, and sc start ${name} starts it over.`);
+    const { removed: name, issue } = await removeOn(...task, rest[0] || undefined);
+    // The issue stays open in the tracker, so starting over needs no new one. GitHub writes a
+    // number as #12, while a tracker such as Linear has IDs like JOTT-12 that stand alone.
+    if (issue === null) console.log(`Removed ${name}. sc start ${name} starts it over.`);
+    else {
+      const id = /^\d+$/.test(issue) ? `#${issue}` : issue;
+      console.log(`Removed ${name}. Issue ${id} stays open, and sc start ${name} starts it over.`);
+    }
     return;
   }
   if (command === "review" && task && rest.length === 0) {

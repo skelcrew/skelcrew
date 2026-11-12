@@ -578,7 +578,9 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
       "started over as app-14",
     );
     expect(fromLead.stderr.toString()).toBe("");
-    expect(fromLead.stdout.toString()).toContain("Removed app-12.");
+    expect(fromLead.stdout.toString()).toBe(
+      "Removed app-12. Issue #12 stays open, and sc start app-12 starts it over.\n",
+    );
     expect(asked(plugin).filter((q) => q.ask === "close pr")).toEqual([
       {
         ask: "close pr",

@@ -333,7 +333,9 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         const thread = findThread(db, request.repo, request.task);
         const name = threadName(db, thread);
         await removeThread(db, tmux, thread, request.reason);
-        return { removed: name };
+        // The issue it worked on stays open in the tracker, so sc rm can say so. A thread
+        // started on what you told the lead is numbered with a t, such as app-t1, and has none.
+        return { removed: name, issue: /^t\d+$/.test(thread.task) ? null : thread.task };
       }
       case "tell": {
         const thread = findThread(db, request.repo, request.task);

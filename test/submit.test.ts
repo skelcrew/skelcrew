@@ -860,6 +860,8 @@ await serve(${JSON.stringify(socket)}, 200);`;
     await until(() => read(join(data(), "claude", "app-t1", "args")) !== "");
     const removed = await skel(["rm", "app-t1"]);
     expect(removed.err).toBe("");
+    // A thread with no issue has nothing that stays open, so the message names none.
+    expect(removed.out).toBe("Removed app-t1. sc start app-t1 starts it over.\n");
     expect(git(bare, "branch", "--list", "skelcrew/t1-add-export")).not.toBe("");
     expect(existsSync(join(data(), "threads", "app-t1"))).toBe(false);
   }, 60_000);
