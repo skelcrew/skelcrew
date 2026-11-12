@@ -49,6 +49,17 @@ that covers the code you are about to write.
   to fall back, the sandbox hides `/tmp`, and every session opens with "Cross-session
   messaging is off". The variable is Claude Code's internal name, not a documented one, so
   check it still works after an update.
+- **A plugin's monitor reaches the lead without typing.** Each line a monitor prints reaches
+  the session as a notice, whether it is idle or mid-turn, and an idle session wakes and
+  answers it. Claude Code's docs say a monitor runs outside the sandbox, meaning Claude
+  Code's own: it is a child of Claude Code, so it runs inside Skelcrew's bubblewrap, through
+  the Bash tool's shell. The docs also say monitors never start with `-p`.
+- **The screen shows a notice's first line only**, as `● Monitor event: <line> · <description>`,
+  cut to the pane's width. Lines printed within a moment of each other arrive as one notice,
+  and the session reads all of them. Keep the description one short word.
+- **Claude Code takes a monitor's notice as not from you.** Asked in a notice to answer
+  a builder, it refused, since the request came from a monitor rather than the person. So
+  the lead's instructions say the notes are Skelcrew's, and meant for it.
 - **Claude Code can outlive SIGTERM for a few seconds.** Wait for it to exit before
   removing the thread's clone or anything else it uses.
 
