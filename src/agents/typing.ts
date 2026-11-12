@@ -12,6 +12,24 @@ export type Marks = { busy: string; prompt: string };
 const screen = (socket: string, name: string) =>
   mustTmux(socket, ["capture-pane", "-p", "-t", `=${name}:`]);
 
+// Why typing waits while a person has text at the agent's prompt.
+const draft = "an unsent draft is at its prompt";
+
+// Returns why one look at the screen shows the agent not ready, by its harness's marks, or
+// empty text when it shows a bare prompt. A prompt line holding text is a person's unsent
+// draft: a message pasted then would be sent along with it. A numbered menu, such as a
+// permission question, also puts the mark before text, so that isn't taken for a draft.
+function notReady(shown: string, marks: Marks) {
+  if (shown.includes(marks.busy)) return `it shows ${marks.busy}`;
+  const lines = shown.split("\n").map((line) => line.trim());
+  if (lines.includes(marks.prompt)) return "";
+  // The mark alone, without Codex's placeholder, which a draft replaces.
+  const mark = marks.prompt.split(" ")[0] ?? marks.prompt;
+  const input = lines.findLast((line) => line.startsWith(`${mark} `));
+  if (input !== undefined && !/^\S+ \d+\. /.test(input)) return draft;
+  return `it shows no ${marks.prompt} prompt`;
+}
+
 // Returns why the agent is busy, by its harness's marks, or empty text when it is ready to
 // accept a message. A quiet pane alone isn't enough: Claude Code can sit still mid-turn while
 // a tool runs.
@@ -22,9 +40,7 @@ async function notIdle(socket: string, name: string, marks: Marks, moment: numbe
   const after = screen(socket, name);
   if (after.includes(marks.busy)) return `it shows ${marks.busy}`;
   if (before !== after) return "its screen kept changing";
-  if (!after.split("\n").some((line) => line.trim() === marks.prompt))
-    return `it shows no ${marks.prompt} prompt`;
-  return "";
+  return notReady(after, marks);
 }
 
 // Reports whether the agent shows a quiet, ready prompt, by its harness's marks, so Skelcrew can
@@ -85,8 +101,15 @@ async function typeNow(socket: string, name: string, marks: Marks, text: string,
     const why = await notIdle(socket, name, marks, moment);
     if (waits.signal?.aborted) return;
     if (why === "") break;
-    if (Date.now() > deadline)
-      throw new Error(`${name} wasn't idle for ${timeout / 1000}s (${why}), so nothing was typed`);
+    if (Date.now() > deadline) {
+      const waited = `${timeout / 1000}s`;
+      // A person's draft gets a plain answer, as it isn't the agent being busy.
+      if (why === draft)
+        throw new Error(
+          `${name} had an unsent draft at its prompt for ${waited}, so nothing was typed`,
+        );
+      throw new Error(`${name} wasn't idle for ${waited} (${why}), so nothing was typed`);
+    }
   }
   // A paste buffer of its own, so two daemons or two messages never paste each other's text.
   const buffer = `skelcrew-${process.pid}-${buffers++}`;

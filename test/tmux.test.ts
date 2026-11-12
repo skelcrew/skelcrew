@@ -199,6 +199,14 @@ for (const [title, marks, draft] of drafts) {
     await until(() => read("received.txt").endsWith("\n"));
     expect(read("received.txt")).toBe("\x1b[200~hello\x1b[201~\n");
   });
+
+  test(`typing says a draft at ${title}'s prompt is in the way when it gives up`, async () => {
+    writeFileSync(join(home, "draft"), draft);
+    start("lead", drafting(marks));
+    const typing = typeInto(socket, "lead", marks, "hello", { moment, timeout: 500 });
+    await expect(typing).rejects.toThrow("unsent draft");
+    expect(read("received.txt")).toBe("");
+  });
 }
 
 test("a session runs its command in its folder, with its environment", async () => {
