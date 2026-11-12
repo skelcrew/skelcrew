@@ -151,6 +151,8 @@ A repository can say how to set up and test it, and which harness and model each
 
 **Each lead, its own repository.** A repository's lead sees only that repository: its clone, read-only, its threads, and its issues and PRs. Its commands work only there, as the daemon knows which lead is calling from its socket, as it knows a builder's thread. It starts the first time you open its repository, by `sc` or its tab, and from then on runs like any lead. Asked about work in another repository, it says so, and you switch to that repository's tab.
 
+**Tasks in public repositories.** Before the lead files a task in a public repository's tracker, it asks you, such as "I'll file this as an issue on simon/app, which is public. OK?" In a private repository it files the task and says it did. A lead that can't tell whether the repository is public asks. For a task that fixes a security hole, it asks more: each time, whether to file it as a plain issue or keep it out of GitHub. Its title and body say only what to change, such as "Sanitise HTML in posts", never what an attacker could do. The lead gives the builder the details with `sc tell`. The builder's PR description and commit messages likewise say what changed, never how the hole could be used.
+
 ## The daemon
 
 One daemon per machine, run by the systemd user service or Sprite service the first run installed. `sc serve` runs it in the foreground; the folder it is started in makes no difference.
@@ -168,7 +170,7 @@ The tmux sessions keep running when the daemon stops, so agents keep working thr
 
 One thread, from start to merge, in a repository with GitHub as its tracker and forge.
 
-1. **A task is started.** You add the `skelcrew` label to an issue on GitHub, from anywhere, even your phone. Or the lead runs `sc task create app "<title>" "<body>"`, which creates a GitHub issue, then `sc start app-12`. You can run both yourself too.
+1. **A task is started.** You add the `skelcrew` label to an issue on GitHub, from anywhere, even your phone. Or the lead runs `sc task create app "<title>" "<body>"`, which creates a GitHub issue, after asking you when the repository is public, then `sc start app-12`. You can run both yourself too.
 2. **Skelcrew sets up the thread.** A clone of its own at `~/.local/share/skelcrew/threads/app-12/`, made from Skelcrew's clone of the repository, on branch `skelcrew/12-<slug>` from `main` (or `--from <branch>`), with the repository's setup commands run once in it.
 3. **The builder starts.** A session of its harness in the sandbox, in the thread's clone, with the task's title and body as its first message.
 4. **The builder finishes a round.** It commits and runs `sc submit "<summary>"`. The summary becomes the PR's description, so the builder puts code, file names, commands and HTML in backticks, which GitHub would otherwise read as HTML and hide. Skelcrew fetches the branch from the thread's clone into its own and pushes it from there, never running git inside the thread's folder. On the first round Skelcrew opens the PR, with the line that closes its task in its body, such as `Closes #12`.

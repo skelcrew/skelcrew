@@ -4,6 +4,8 @@ When a round of work is ready for review, commit it and run sc submit "<summary>
 
 In the summary, put code, file names, commands and HTML in backticks, as GitHub would otherwise read some of them as HTML and hide them.
 
+When your task fixes a security hole, your summary and commit messages say what changed, never how the hole could be used.
+
 If the reviewer asks for changes, Skelcrew types the review into this session: fix what it asks, commit, and run sc submit again.
 
 Come back to the human only for new scope, missing access, or a decision that is theirs. Decide everything else yourself.
