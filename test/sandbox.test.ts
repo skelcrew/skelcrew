@@ -352,6 +352,28 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
     expect(yours()).toBe(before);
   });
 
+  test("a builder runs at a lower CPU priority than the lead, so the screen stays quick", async () => {
+    repository();
+    saveToken();
+    fakeClaude(["nice"]);
+    const start = (more: { name: string; thread?: string }) =>
+      claude.start({ ...lead(), ...more, socket: socketPath, model: "opus", env: outside() });
+    const thread = join(home, ".local", "share", "skelcrew", "threads", "app-12");
+    const builder = start({ name: "app-12", thread });
+    const theLead = start({ name: "lead" });
+    const own = Number(Bun.spawnSync(["nice"], { stdout: "pipe" }).stdout.toString());
+    expect(Number((await run(builder.argv, builder.env)).out)).toBe(Math.min(own + 10, 19));
+    expect(Number((await run(theLead.argv, theLead.env)).out)).toBe(own);
+  });
+
+  test("a setup command from the repository runs at a lower CPU priority", async () => {
+    const folder = join(home, "work");
+    mkdirSync(folder);
+    const { argv, env } = setupCommand(folder, "nice", outside());
+    const own = Number(Bun.spawnSync(["nice"], { stdout: "pipe" }).stdout.toString());
+    expect(Number((await run(argv, env)).out)).toBe(Math.min(own + 10, 19));
+  });
+
   test("each session gets a config folder of its own", async () => {
     repository();
     saveToken();
@@ -548,6 +570,24 @@ claude.start({ name: "app-12", socket: "x", model: "opus", ...${JSON.stringify(l
     expect(options).not.toContain("--tmpfs /.sprite");
   });
 
+  // Lowering a priority needs no capability, and what unshare, setpriv and bwrap start keeps it.
+  test("on a Sprite, a builder's lower CPU priority comes before capabilities are dropped", () => {
+    repository();
+    saveToken();
+    mkdirSync(join(home, "bin"), { recursive: true });
+    writeFileSync(join(home, "bin", "sprite-env"), "#!/bin/sh\n", { mode: 0o755 });
+    const { argv } = claude.start({
+      ...lead(),
+      thread: join(home, ".local", "share", "skelcrew", "threads", "app-12"),
+      name: "app-12",
+      socket: socketPath,
+      model: "opus",
+      env: outside(),
+    });
+    expect(argv.slice(0, 4)).toEqual(["nice", "-n", "10", "unshare"]);
+    expect(argv.indexOf("setpriv")).toBeLessThan(argv.indexOf("bwrap"));
+  });
+
   test("on a server, gives the agent a /proc of its own", () => {
     repository();
     saveToken();
@@ -586,6 +626,24 @@ test("a setup command from the repository gets no API key", () => {
   const { env } = setupCommand(join(home, "work"), "bun install", withKeys());
   expect(env.ANTHROPIC_API_KEY).toBeUndefined();
   expect(env.OPENAI_API_KEY).toBeUndefined();
+});
+
+test("a Codex builder runs at a lower CPU priority, and its lead doesn't", async () => {
+  const start = (more: { name: string; thread?: string }) =>
+    codex.start({
+      ...lead(),
+      ...more,
+      socket: socketPath,
+      env: { ...outside(), PATH: "/usr/bin:/bin" },
+    });
+  const thread = join(home, ".local", "share", "skelcrew", "threads", "app-12");
+  expect((await start({ name: "app-12", thread })).argv.slice(0, 4)).toEqual([
+    "nice",
+    "-n",
+    "10",
+    "bwrap",
+  ]);
+  expect((await start({ name: "lead" })).argv[0]).toBe("bwrap");
 });
 
 test("a Codex session gets Codex's key and not Claude Code's", async () => {

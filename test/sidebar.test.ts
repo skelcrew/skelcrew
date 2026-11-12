@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Thread } from "../src/flow/thread.ts";
 import { draw as drawLists, noticeLines } from "../src/screen/lists.ts";
-import { jumped, picked as pickedInLists, stepped as steppedInLists } from "../src/screen/moves.ts";
+import { nextList, nextRow, rowAtLine } from "../src/screen/moves.ts";
 import { type Link, type Lists, type Row, threadAge, threadWord } from "../src/screen/rows.ts";
 import { sidebarWidth } from "../src/screen/screen.ts";
 import { fakePlugin, itemSql, source } from "./harness.ts";
@@ -38,9 +38,9 @@ const nothing: Lists = { issues: { links: [], total: 0 }, prs: { links: [], tota
 const draw = (rows: Row[], shown: string | null, room: typeof size) =>
   drawLists(rows, nothing, shown, room);
 const picked = (rows: Row[], shown: string | null, room: typeof size, y: number) =>
-  pickedInLists(rows, nothing, shown, room, y);
+  rowAtLine(rows, nothing, shown, room, y);
 const stepped = (rows: Row[], shown: string | null, by: 1 | -1) =>
-  steppedInLists(rows, nothing, shown, size, by);
+  nextRow(rows, nothing, shown, size, by);
 // Removes the colours, to read a row as text.
 const plain = (screen: string) => Bun.stripANSI(screen);
 // The sidebar's lines as you read them, without what fills them out to the line at its edge.
@@ -735,7 +735,7 @@ test("only the lists the repository has show, sharing the height", () => {
 test("a click picks a thread below the other lists or a row of them, and on a heading nothing", () => {
   const y = (text: string) =>
     read(drawLists(threads, lists, "lead", tall)).findIndex((line) => line.includes(text));
-  const click = (line: number) => pickedInLists(threads, lists, "lead", tall, line);
+  const click = (line: number) => rowAtLine(threads, lists, "lead", tall, line);
   expect(click(y("● app-12"))).toBe("app-12");
   expect(click(y("working · claude"))).toBe("app-12");
   expect(click(y("◆ lead"))).toBe("lead");
@@ -758,7 +758,7 @@ test("a click finds its row as THREADS scrolls between the other lists", () => {
     const lines = read(drawLists(busy, full, session, room));
     const name = session === "lead" ? "◆ lead" : `● ${session}`;
     const y = lines.findIndex((line) => line.endsWith(name));
-    expect(pickedInLists(busy, full, session, room, y)).toBe(session);
+    expect(rowAtLine(busy, full, session, room, y)).toBe(session);
   }
 });
 
@@ -770,9 +770,9 @@ const urls = {
 };
 // Moves from a place, as Alt-Up and Alt-Down or, with Shift, as Alt-Shift-Up and Alt-Shift-Down.
 const step = (from: string | null, by: 1 | -1, rows = threads) =>
-  steppedInLists(rows, lists, from, tall, by);
+  nextRow(rows, lists, from, tall, by);
 const jump = (from: string | null, by: 1 | -1, rows = threads) =>
-  jumped(rows, lists, from, tall, by);
+  nextList(rows, lists, from, tall, by);
 
 test("moving goes from the lead through ISSUES, THREADS and PRS, and stops at the ends", () => {
   const order = ["lead", urls.a, urls.b, "app-12", urls.c, urls.d];
@@ -797,22 +797,22 @@ test("moving lands only on rows you can see, and skips what is under the count",
   const lines = read(drawLists(threads, crowded, "lead", room)).join("\n");
   expect(lines).toContain("app-30");
   expect(lines).not.toContain("app-29");
-  expect(steppedInLists(threads, crowded, links[0]?.url ?? "", room, 1)).toBe(links[1]?.url ?? "");
-  expect(steppedInLists(threads, crowded, links[1]?.url ?? "", room, 1)).toBe("app-12");
+  expect(nextRow(threads, crowded, links[0]?.url ?? "", room, 1)).toBe(links[1]?.url ?? "");
+  expect(nextRow(threads, crowded, links[1]?.url ?? "", room, 1)).toBe("app-12");
 });
 
 test("moving passes straight through a list that is empty", () => {
   const none: Lists = { issues: lists.issues, prs: nothing.prs };
-  expect(steppedInLists(threads, none, "app-12", tall, 1)).toBeNull();
+  expect(nextRow(threads, none, "app-12", tall, 1)).toBeNull();
   const noIssues: Lists = { issues: nothing.issues, prs: lists.prs };
-  expect(steppedInLists(threads, noIssues, "lead", tall, -1)).toBeNull();
+  expect(nextRow(threads, noIssues, "lead", tall, -1)).toBeNull();
 });
 
 test("a terminal too short for ISSUES and PRS moves through THREADS alone", () => {
   const short = { width: sidebarWidth, height: 9 };
   expect(read(drawLists(threads, lists, "lead", short)).join("\n")).not.toContain("app-31");
-  expect(steppedInLists(threads, lists, "lead", short, -1)).toBeNull();
-  expect(steppedInLists(threads, lists, "app-12", short, 1)).toBeNull();
+  expect(nextRow(threads, lists, "lead", short, -1)).toBeNull();
+  expect(nextRow(threads, lists, "app-12", short, 1)).toBeNull();
 });
 
 test("moving from a row that has gone goes to the lead", () => {
@@ -841,7 +841,7 @@ test("jumping passes over a list with nothing in it to land on", () => {
   expect(jump(urls.d, -1, stopped)).toBe(urls.a);
   expect(jump(urls.a, -1, stopped)).toBeNull();
   const noPrs: Lists = { issues: lists.issues, prs: nothing.prs };
-  expect(jumped(threads, noPrs, "app-12", tall, 1)).toBeNull();
+  expect(nextList(threads, noPrs, "app-12", tall, 1)).toBeNull();
 });
 
 test("jumping into THREADS lands on the first agent that runs", () => {

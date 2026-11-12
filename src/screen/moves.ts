@@ -8,8 +8,9 @@ import type { List, Lists, Row } from "./rows.ts";
 type Stop = { place: string; open: boolean };
 
 // Returns what you can move to, list by list, top to bottom, the lead first, on its own. Every
-// thread counts, as THREADS scrolls to keep you in view. Of ISSUES and PRS only the rows on screen do, since they have
-// no scrolling, and a row you can't see would be a page you can't place.
+// thread counts, as THREADS scrolls to keep you in view. Of ISSUES and PRS only the rows on
+// screen count, since those lists don't scroll. A row you can't see would be a page you can't
+// place.
 function stops(rows: Row[], lists: Lists, shown: string | null, size: Size): Stop[][] {
   // The layout says which rows of ISSUES and PRS are on screen now.
   const { lines } = layout(rows, lists, shown, size);
@@ -33,7 +34,7 @@ function stops(rows: Row[], lists: Lists, shown: string | null, size: Size): Sto
 // Returns what is one row up or down, for Alt-Up and Alt-Down, as a session or a link's url, or
 // null at either end. Rows whose agent isn't running are stepped over: nothing could show on
 // the right. From a row that has gone, it goes to the lead.
-export function stepped(
+export function nextRow(
   rows: Row[],
   lists: Lists,
   shown: string | null,
@@ -52,7 +53,7 @@ export function stepped(
 
 // Returns the first row of the list before or after the one you are in, for Alt-Shift-Up and
 // Alt-Shift-Down, or null past the first and last. A list with nothing to land on is passed over.
-export function jumped(
+export function nextList(
   rows: Row[],
   lists: Lists,
   shown: string | null,
@@ -73,7 +74,7 @@ export function jumped(
 // Returns what is at a line of the sidebar, counted from 0, for a click, as a session or a
 // link's url, or null when there is no row there or its agent isn't running. Any line of a row
 // picks it. Your terminal opens a link on Cmd-click by itself, so a plain click is free for this.
-export function picked(
+export function rowAtLine(
   rows: Row[],
   lists: Lists,
   shown: string | null,

@@ -3,7 +3,8 @@
 
 export const [green, yellow, red] = [32, 33, 31];
 export const grey = 90;
-// Returns text in a colour or style, ending just that, as a background behind it must go on.
+// Returns text in a colour or style. It ends just that style, not all of them, so a grey
+// background behind the text goes on after it.
 export const paint = (code: number | string, text: string) => `\x1b[${code}m${text}\x1b[22;39m`;
 // The row you are looking at has a grey background, which is also what parts it from the rows
 // around it. 256-colour numbers, as they reach your terminal through both tmux servers and

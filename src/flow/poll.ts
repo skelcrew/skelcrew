@@ -11,10 +11,10 @@ import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { baseOf, startThread } from "./builder.ts";
 import { type Item, openTasks, prOf, saveItems } from "./copy.ts";
-import { ciChecks, decide, labeledToStart, type PullRequest } from "./decide.ts";
+import { ciState, decide, labeledToStart, type PullRequest } from "./decide.ts";
 import { endThread, tellBuilder, typingEvents } from "./events.ts";
 import { fetchInto, onRemote } from "./git.ts";
-import { noteForLead, tellLead } from "./lead.ts";
+import { noteForLead, typeLeadNotes } from "./lead.ts";
 import { forgeKnown, fullNameIs, repositories } from "./repo.ts";
 import { needsYou, readThread, record, Thread, threadName } from "./thread.ts";
 
@@ -34,7 +34,7 @@ async function startLabeled(
   db: Database,
   tmux: string,
   repository: Repository,
-  begin: (thread: Thread) => Promise<void>,
+  setUpAndStart: (thread: Thread) => Promise<void>,
   starting: Set<string>,
   passed: Set<string>,
 ): Promise<void> {
@@ -83,7 +83,7 @@ async function startLabeled(
     const note = `started ${threadName(db, thread)} from ${trackerOf(db, repository)}: ${task.title}`;
     noteForLead(db, tmux, { owner, repo }, note.replace(/\s+/g, " ").slice(0, 200));
     // Not waited on, as for sc start: setup can take minutes.
-    begin(thread);
+    setUpAndStart(thread);
   }
 }
 
@@ -109,7 +109,7 @@ async function actOnPr(db: Database, tmux: string, before: Thread, pr: PullReque
     thread.rounds !== before.rounds;
   // Saved ahead of what the decision does, so a thread never needs you for an approval while
   // its saved checks still say otherwise. A commit on its way has no checks to speak of yet.
-  const checks = ciChecks(pr);
+  const checks = ciState(pr);
   if (!stale && thread.submitting === null && checks !== thread.checks)
     record(db, folder, { checks });
   // A merge or close ends the thread whatever else is going on. Otherwise new events go to
@@ -126,7 +126,7 @@ async function actOnPr(db: Database, tmux: string, before: Thread, pr: PullReque
     // Most polls find nothing new, and the log stays free of them.
     if (moved || Object.keys(change).length > 0) {
       record(db, folder, { seen, ...change }, why);
-      tellLead(db, tmux);
+      typeLeadNotes(db, tmux);
     }
   }
 }
@@ -136,9 +136,9 @@ async function actOnPr(db: Database, tmux: string, before: Thread, pr: PullReque
 // it is gone from the remote. Only a branch Skelcrew has pushed counts, as before that it isn't on
 // the remote at all.
 async function actOnBranch(db: Database, tmux: string, repository: Repository, thread: Thread) {
-  const ours = cloneDir(thread.owner, thread.repo);
+  const skelcrewClone = cloneDir(thread.owner, thread.repo);
   const ref = (kind: string) => `refs/skelcrew/${kind}/${thread.folder}`;
-  const git = (...args: string[]) => quietly(["git", "-C", ours, ...args]);
+  const git = (...args: string[]) => quietly(["git", "-C", skelcrewClone, ...args]);
   // A push under way has saved its local ref before the remote has the branch, and a failed
   // one keeps its submit, so only a thread with nothing being pushed counts.
   if (thread.submitting !== null) return;
@@ -156,35 +156,35 @@ async function actOnBranch(db: Database, tmux: string, repository: Repository, t
   // Merge the remote branch into its base without touching any files, and compare the result
   // with the base. The same tree means the base already has everything on the branch.
   const base = baseOf(thread);
-  await fetchInto(db, repository, ours, base, ref("bases"));
-  await fetchInto(db, repository, ours, thread.branch, ref("remote"));
+  await fetchInto(db, repository, skelcrewClone, base, ref("bases"));
+  await fetchInto(db, repository, skelcrewClone, thread.branch, ref("remote"));
   const merged = await git("merge-tree", "--write-tree", ref("bases"), ref("remote"));
   const tree = await git("rev-parse", `${ref("bases")}^{tree}`);
   if (merged.ok && tree.ok && merged.out.trim().split("\n")[0] === tree.out.trim() && unchanged())
     await endThread(db, tmux, thread, `its branch ${thread.branch} is merged into ${base}`);
 }
 
-// Polls one repository: asks each of its tracker and forge what changed since its last
-// `next`, kept in `nexts` by plugin, or for everything open without one, and brings Skelcrew's
-// copy up to date, keeping tasks only from its tracker and PRs only from its forge. Then
-// starts threads on its tasks labeled to start, and acts on what each of its threads' PRs
-// means for the thread, or, with no forge, on each thread's branch. Thread rows are read again
-// once the answers are in, since a round can change them meanwhile.
+// Polls one repository. Asks its tracker and its forge what changed since the `next` each
+// plugin last gave, kept in `nexts`, or for everything open when there is none. Brings
+// Skelcrew's copy up to date, taking tasks only from its tracker and PRs only from its forge.
+// Then starts threads on its tasks labeled to start. Then acts on what each thread's PR means
+// for it, or, with no forge, on each thread's branch. Thread rows are read again once the
+// answers are in, since a round can change them meanwhile.
 async function pollRepository(
   db: Database,
   tmux: string,
   repository: Repository,
   threads: Thread[],
-  begin: (thread: Thread) => Promise<void>,
+  setUpAndStart: (thread: Thread) => Promise<void>,
   nexts: Map<string, string | null>,
   starting: Set<string>,
   passed: Set<string>,
 ): Promise<void> {
   const { owner, repo } = repository;
   // Ask each plugin in turn, telling a forge which PRs Skelcrew watches: those of this
-  // repository's threads. A plugin's answer only updates what its
-  // jobs cover, and a first poll, with no `next`, replaces those kinds in the copy outright,
-  // so what closed while the daemon was down goes.
+  // repository's threads. A plugin's answer only updates the kinds its jobs cover. A first
+  // poll, with no `next`, replaces those kinds in the copy outright, so what closed while the
+  // daemon was down goes.
   for (const { plugin, jobs } of pluginsOf(db, repository)) {
     const next = nexts.get(plugin) ?? null;
     const watched = jobs.includes("forge")
@@ -202,10 +202,10 @@ async function pollRepository(
   // With the copy up to date, start labeled tasks, then act on each thread: by its PR with a
   // forge, or by its branch without one.
   if (trackerOf(db, repository) !== null)
-    await startLabeled(db, tmux, repository, begin, starting, passed);
-  const forged = forgeOf(db, repository) !== null;
+    await startLabeled(db, tmux, repository, setUpAndStart, starting, passed);
+  const hasForge = forgeOf(db, repository) !== null;
   for (const before of threads) {
-    if (!forged) await actOnBranch(db, tmux, repository, readThread(db, before.folder));
+    if (!hasForge) await actOnBranch(db, tmux, repository, readThread(db, before.folder));
     else {
       // From the copy, just brought up to date, rather than from the answer: a forge answers
       // only what changed, and events held back for a thread, such as one stopped, were left
@@ -216,25 +216,26 @@ async function pollRepository(
   }
 }
 
-// Polls each repository's tracker and forge for what changed in its tasks and PRs, with the
-// PRs of its live and stopped threads, so a stopped thread's merge still ends it: every
-// `every` milliseconds while any of its threads is working or waits on review or CI, and half
-// as often otherwise, so a label or your comment is seen within a minute. Starts at once, to
-// pick up what happened while the daemon was down. A failed poll, such as a forge answering
-// with an error, is logged and tried again at the next one. Polls run in the background, so
-// they never hold up the daemon. `begin` sets up a thread started from a label and starts its
-// builder, as the daemon does for sc start. `starting` holds the tasks sc start is starting
-// right now, which no poll starts by their label. Returns a function that polls one repository
-// at once, named by its owner/name, for a wake-up or for sc start, and settles once that
-// poll is done, failing as it does.
+// Polls each repository's tracker and forge for what changed in its tasks and PRs. The PRs of
+// stopped threads are polled too, so a stopped thread's merge still ends it. A repository is
+// polled every `every` milliseconds while one of its threads is working or waits on review or
+// CI, and half as often otherwise, so a label or your comment is seen within a minute. The
+// first poll runs at once, to pick up what happened while the daemon was down. A failed poll,
+// such as a forge answering with an error, is logged and tried again at the next one. Polls
+// run in the background, so they never hold up the daemon. `setUpAndStart` sets up a thread
+// started from a label and starts its builder, as the daemon does for sc start. `starting`
+// holds the tasks sc start is starting right now, which no poll starts by their label.
+// Returns a function that polls one repository at once, named by its owner/name, for a
+// wake-up or for sc start. It settles once that poll is done, and fails if the poll fails.
 export function pollRepositories(
   db: Database,
   tmux: string,
   every: number,
-  begin: (thread: Thread) => Promise<void>,
+  setUpAndStart: (thread: Thread) => Promise<void>,
   starting: Set<string>,
 ): (fullName: string) => Promise<void> {
-  const skipped = new Map<string, number>();
+  // How many ticks in a row each repository has gone without a poll, by owner/name.
+  const ticksSkipped = new Map<string, number>();
   // The labeled tasks this daemon won't start by their label, kept for its lifetime.
   const passed = new Set<string>();
   // The poll under way for each repository, and the one that follows it.
@@ -245,22 +246,22 @@ export function pollRepositories(
   // leaves the copy.
   const nexts = new Map<string, Map<string, string | null>>();
   // The threads a poll looks after. A stopped thread's PR or branch still merges or closes.
-  const polled = () =>
+  const threadsToPoll = () =>
     db
       .query("SELECT * FROM threads WHERE status IN ('working', 'waiting', 'stopped')")
       .all()
       .map((row) => Thread.parse(row));
   const poll = (owner: string, repo: string): Promise<void> => {
     const fullName = `${owner}/${repo}`;
-    skipped.set(fullName, 0);
-    const now = running.get(fullName);
-    if (now) {
+    ticksSkipped.set(fullName, 0);
+    const underWay = running.get(fullName);
+    if (underWay) {
       // A delivery that comes in while its repository is being polled may be about an event
       // the poll's query was too early to see, and sc start must see every change up to its
       // asking, so one more poll follows. Everyone who asks meanwhile shares it.
       const next =
         following.get(fullName) ??
-        now
+        underWay
           .catch(() => {})
           .then(() => {
             following.delete(fullName);
@@ -271,12 +272,21 @@ export function pollRepositories(
     }
     // No poll is under way, so start one, and keep it as running until it settles. A
     // repository removed meanwhile has nothing to poll.
-    const threads = polled().filter((t) => t.owner === owner && t.repo === repo);
+    const threads = threadsToPoll().filter((t) => t.owner === owner && t.repo === repo);
     const repository = repositories(db).find((r) => r.owner === owner && r.repo === repo);
     if (!repository) return Promise.resolve();
-    const kept = nexts.get(fullName) ?? new Map<string, string | null>();
-    nexts.set(fullName, kept);
-    const done = pollRepository(db, tmux, repository, threads, begin, kept, starting, passed)
+    const pluginNexts = nexts.get(fullName) ?? new Map<string, string | null>();
+    nexts.set(fullName, pluginNexts);
+    const done = pollRepository(
+      db,
+      tmux,
+      repository,
+      threads,
+      setUpAndStart,
+      pluginNexts,
+      starting,
+      passed,
+    )
       .then(
         () => {},
         (error) => {
@@ -291,7 +301,7 @@ export function pollRepositories(
   // Each tick polls a repository with work under way, and one without every other tick. A
   // repository whose forge isn't known yet waits, and one still being polled is skipped.
   const tick = () => {
-    const live = polled();
+    const live = threadsToPoll();
     for (const repository of repositories(db)) {
       const { owner, repo } = repository;
       const fullName = `${owner}/${repo}`;
@@ -300,9 +310,9 @@ export function pollRepositories(
       const active = threads.some(
         (t) => t.status === "working" || (t.status === "waiting" && !needsYou(t)),
       );
-      const waited = skipped.get(fullName) ?? Number.POSITIVE_INFINITY;
+      const waited = ticksSkipped.get(fullName) ?? Number.POSITIVE_INFINITY;
       if (running.has(fullName) || (!active && waited < 1)) {
-        skipped.set(fullName, waited + 1);
+        ticksSkipped.set(fullName, waited + 1);
         continue;
       }
       // Already logged.

@@ -238,6 +238,21 @@ console.log(JSON.stringify(setupCommand(${JSON.stringify(clone)}, "pwd; echo \\"
   expect(ownHome).not.toBe(home);
 });
 
+test("a setup command runs at a lower CPU priority, and the lead at normal", async () => {
+  const clone = join(home, "clone");
+  mkdirSync(clone);
+  const made =
+    await asMacRun(`import { setupCommand } from ${JSON.stringify(source("agents/sandbox.ts"))};
+console.log(JSON.stringify(setupCommand(${JSON.stringify(clone)}, "nice")));`);
+  expect(made.err).toBe("");
+  const setup = Command(made.out);
+  const own = Number(Bun.spawnSync(["nice"], { stdout: "pipe" }).stdout.toString());
+  const run = Bun.spawnSync(setup.argv, { env: setup.env, stdout: "pipe" });
+  expect(Number(run.stdout.toString())).toBe(Math.min(own + 10, 19));
+  const { argv } = await leadCommand();
+  expect(argv[0]).toBe("/bin/sh");
+});
+
 // Waits until `done` holds, for what a daemon does in its own time.
 const until = (done: () => boolean, timeout = 15_000) => wait(done, { timeout });
 
