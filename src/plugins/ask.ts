@@ -168,6 +168,21 @@ export async function took(db: Database, repository: Repository, task: string): 
   );
 }
 
+// Tells the forge Skelcrew typed a person's comment or review on the PR into its builder, so
+// they can see on the PR that it was picked up. GitHub reacts with 👀.
+export async function markSeen(
+  db: Database,
+  repository: Repository,
+  item: { pr: number; kind: "review" | "comment"; id: string },
+): Promise<void> {
+  await callPlugin(
+    db,
+    forgeFor(db, repository),
+    { ask: "seen", repository: keyOf(repository), ...item },
+    z.null(),
+  );
+}
+
 // Opens a PR from the branch in the repository's forge and returns its number, or the number
 // of the PR already open from that branch.
 export async function openPr(
@@ -182,6 +197,21 @@ export async function openPr(
     z.object({ number: z.number().int().positive() }),
   );
   return opened.number;
+}
+
+// Closes the PR and deletes its branch on the forge, for sc rm, first posting the comment
+// when there is one, so the PR says why it closed.
+export async function closePr(
+  db: Database,
+  repository: Repository,
+  pr: { pr: number; branch: string; comment: string | null },
+): Promise<void> {
+  await callPlugin(
+    db,
+    forgeFor(db, repository),
+    { ask: "close pr", repository: keyOf(repository), ...pr },
+    z.null(),
+  );
 }
 
 // Posts a review's verdict and body on the PR, for the commit it covers, and returns its ID.

@@ -24,7 +24,7 @@ import {
   statusOnceBack,
 } from "./builder.ts";
 import { saveItems } from "./copy.ts";
-import { stopThread } from "./events.ts";
+import { removeThread, stopThread } from "./events.ts";
 import { lastOpened, leadOf, openedRepositories, startLead, tellLead } from "./lead.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import { pollRepositories } from "./poll.ts";
@@ -309,6 +309,11 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         return { task: `${repository.name}-${task.id}` };
       }
       case "review": {
+        // A builder may ask only for its own thread, such as when you ask on its pull request
+        // for another review. Its own thread's name is in the refusal, as nothing else tells it.
+        const builder = builderOf(caller);
+        if (builder && threadOn(db, request.repo, request.task)?.folder !== builder.folder)
+          throw new Error(`you may ask for a review of ${threadName(db, builder)} only`);
         const thread = findThread(db, request.repo, request.task);
         rerunReview(db, tmux, thread.folder);
         return { reviewing: threadName(db, thread) };
@@ -318,6 +323,16 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         const name = threadName(db, thread);
         await stopThread(db, tmux, thread);
         return { stopped: name };
+      }
+      case "rm preview": {
+        const thread = findThread(db, request.repo, request.task);
+        return { thread: threadName(db, thread), status: thread.status, pr: thread.pr };
+      }
+      case "rm": {
+        const thread = findThread(db, request.repo, request.task);
+        const name = threadName(db, thread);
+        await removeThread(db, tmux, thread, request.reason);
+        return { removed: name };
       }
       case "tell": {
         const thread = findThread(db, request.repo, request.task);
@@ -366,7 +381,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         }
         // Refused before the poll, which only a new thread needs, so a slow or failing remote
         // can't hold up the answer. startThread refuses it again, for a thread started meanwhile.
-        if (before && before.status !== "failed")
+        if (before && before.status !== "failed" && before.status !== "done")
           throw new Error(`${threadName(db, before)} has a thread already`);
         // The task's title and body come from Skelcrew's copy, brought up to date first. Meanwhile
         // no poll starts the task by its label, which would leave out this start's options.
@@ -392,11 +407,6 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         return { started: `Started ${threadName(db, thread)}.` };
       }
       case "start new": {
-        // Whether the repository has a tracker, which refuses this start, is in the skelcrew.yaml
-        // of Skelcrew's clone. The daemon may still be making it, and without it, a thread with
-        // no tracker would start in a repository whose tasks belong in one.
-        const { owner, repo } = findRepository(db, request.repo);
-        if (!existsSync(cloneDir(owner, repo))) await refreshClones(db);
         const thread = await startThread(db, request);
         begin(thread);
         return { started: `Started ${threadName(db, thread)}.` };

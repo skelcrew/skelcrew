@@ -275,7 +275,7 @@ exit 0`,
         "ssh simon@workbox systemctl --user restart skelcrew\n",
       );
       expect(done.out).toContain(
-        "updated simon@workbox to Skelcrew 0.4.2 and restarted its daemon",
+        "Updated simon@workbox to Skelcrew 0.4.2 and restarted its daemon",
       );
     } finally {
       fake("ssh", newServer);

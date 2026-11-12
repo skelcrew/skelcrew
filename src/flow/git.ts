@@ -98,6 +98,25 @@ export async function pushCommit(
   ]);
 }
 
+// Deletes a branch from the repository's remote, for sc rm of a thread with no PR to close.
+// Pushed from Skelcrew's clone in the folder, as git push needs a repository to run in, and the
+// daemon may have started anywhere.
+export async function deleteBranch(
+  db: Database,
+  repository: Repository,
+  folder: string,
+  branch: string,
+): Promise<void> {
+  await git(db, repository, [
+    "-C",
+    folder,
+    "push",
+    "--quiet",
+    repository.remote,
+    `:refs/heads/${branch}`,
+  ]);
+}
+
 // Returns whether the branch is on the repository's remote, for a thread with no forge, whose
 // branch going from the remote ends it.
 export async function onRemote(

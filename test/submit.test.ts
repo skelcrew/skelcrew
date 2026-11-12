@@ -17,6 +17,7 @@ import {
   homeEnv,
   read,
   runSkel,
+  runSkelInTerminal,
   source,
   startDaemon,
   taskItem,
@@ -708,7 +709,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("sc review", () => {
     expect(statuses()).toEqual([]);
   }, 30_000);
 
-  test("the lead can ask, a builder can't, and a review already running is refused", async () => {
+  test("the lead and the thread's own builder can ask, and a review already running is refused", async () => {
     addApp();
     mkdirSync(codexHome(), { recursive: true });
     writeFileSync(join(codexHome(), "slow-1"), "");
@@ -719,9 +720,15 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("sc review", () => {
     expect(fromLead.err).toContain(
       "a review of app-12's last commit is already waiting or running",
     );
+    // Refused only as already running, so the builder may ask for its own thread.
     const fromBuilder = await skel(["review", "app-12"], { SKELCREW_SOCKET: builderSocket() });
     expect(fromBuilder.code).not.toBe(0);
-    expect(fromBuilder.err).toContain("doesn't know that request");
+    expect(fromBuilder.err).toContain(
+      "a review of app-12's last commit is already waiting or running",
+    );
+    const another = await skel(["review", "app-13"], { SKELCREW_SOCKET: builderSocket() });
+    expect(another.code).not.toBe(0);
+    expect(another.err).toContain("you may ask for a review of app-12 only");
   }, 60_000);
 
   test("a newer sc submit cancels a review asked for again", async () => {
@@ -825,5 +832,72 @@ await serve(${JSON.stringify(socket)}, 200);`;
     git(work, "push", "-q", bare, "main");
     await until(() => JSON.stringify(row()).includes('"done"'), 30_000);
     expect(log()).toContain("is merged into main");
+  }, 60_000);
+
+  // Runs the daemon from a folder that isn't a git checkout, as the service does, polling every
+  // 200 milliseconds. git that runs outside Skelcrew's clone then fails.
+  const serveOutsideCheckout = () => {
+    const code = `import { serve } from ${JSON.stringify(source("flow/daemon.ts"))};
+await serve(${JSON.stringify(socket)}, 200);`;
+    running.push(
+      Bun.spawn([process.execPath, "-e", code], {
+        cwd: home,
+        env: env(),
+        stdout: "ignore",
+        stderr: "ignore",
+      }),
+    );
+  };
+
+  // A branch of the same name that the thread never pushed isn't the thread's to delete.
+  test("sc rm before the first submit leaves a branch of the same name on the remote", async () => {
+    fakeClaude(false);
+    const bare = addAppOnGit();
+    git(bare, "branch", "skelcrew/t1-add-export", "main");
+    serveOutsideCheckout();
+    await untilCloned();
+    expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
+    await until(() => read(join(data(), "claude", "app-t1", "args")) !== "");
+    const removed = await skel(["rm", "app-t1"]);
+    expect(removed.err).toBe("");
+    expect(git(bare, "branch", "--list", "skelcrew/t1-add-export")).not.toBe("");
+    expect(existsSync(join(data(), "threads", "app-t1"))).toBe(false);
+  }, 60_000);
+
+  // Without a forge there is no PR to close, but Skelcrew pushed the branch, so it deletes it.
+  test("sc rm deletes the thread's branch from the remote and its clone, and the thread can start over", async () => {
+    const bare = addAppOnGit();
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Ready again.");
+    serveOutsideCheckout();
+    await untilCloned();
+    expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
+    const log = () => read(join(data(), "threads", "app-t1.log"));
+    const ready = "app-t1 is ready on branch skelcrew/t1-add-export";
+    await until(() => log().includes(ready), 30_000);
+    const onRemote = () => git(bare, "branch", "--list", "skelcrew/t1-add-export") !== "";
+    expect(onRemote()).toBe(true);
+
+    // With no PR, the question names what goes: the branch and the clone.
+    const removed = await runSkelInTerminal(
+      socket,
+      env(),
+      ["rm", "app-t1", "wrong approach"],
+      "Remove app-t1? This deletes its branch and clone. [y/N]",
+      "y",
+    );
+    expect(removed).toContain("Removed app-t1.");
+    expect(onRemote()).toBe(false);
+    expect(existsSync(join(data(), "threads", "app-t1"))).toBe(false);
+    expect(log()).toContain("wrong approach");
+    expect(asked(plugin).filter((q) => q.ask !== "claims")).toEqual([]);
+
+    // Started over, it isn't taken for a thread whose branch was deleted, and gets as far as
+    // the first did.
+    const before = log().split(ready).length;
+    expect((await skel(["start", "app-t1"])).out).toBe("Started app-t1.\n");
+    await until(() => log().split(ready).length > before, 30_000);
+    expect(log()).not.toContain("was deleted");
+    expect(onRemote()).toBe(true);
   }, 60_000);
 });

@@ -73,9 +73,11 @@ await serve(${JSON.stringify(socket)});`;
 }
 
 // Runs sc with these arguments and environment, and gives back what it printed and its code.
-export async function runSkel(args: string[], env: Record<string, string>) {
+// `input`, when given, is what sc reads on stdin, as from a file or a heredoc.
+export async function runSkel(args: string[], env: Record<string, string>, input?: string) {
   const run = Bun.spawn([process.execPath, source("main.ts"), ...args], {
     env,
+    ...(input === undefined ? {} : { stdin: Buffer.from(input) }),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -196,4 +198,45 @@ export function itemSql(
   const json = JSON.stringify({ ...item, ...pr, ...more }).replaceAll("'", "''");
   return `INSERT OR REPLACE INTO items (owner, repo, kind, id, state, created, item)
     VALUES ('simon', '${repo}', '${kind}', '${id}', 'open', '${created}', '${json}');`;
+}
+
+// Runs sc with these arguments at a terminal of its own, in a tmux session on a socket of its
+// own, for a command that asks you first. Types `answer` and Enter once the screen shows
+// `question`, and returns the screen once sc has ended. The tmux server ends with it.
+export async function runSkelInTerminal(
+  socket: string,
+  env: Record<string, string>,
+  args: string[],
+  question: string,
+  answer: string,
+): Promise<string> {
+  const terminal = `${socket}-terminal`;
+  const tmux = (...words: string[]) =>
+    Bun.spawnSync(["tmux", "-L", terminal, "-f", "/dev/null", ...words], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  const screen = () => tmux("capture-pane", "-p", "-t", "sc").stdout.toString();
+  const vars = Object.entries(env).map(([name, value]) => `${name}='${value}'`);
+  const quoted = args.map((arg) => `'${arg}'`);
+  try {
+    tmux(
+      "new-session",
+      "-d",
+      "-s",
+      "sc",
+      "-x",
+      "200",
+      "-y",
+      "20",
+      `env -i ${vars.join(" ")} ${process.execPath} ${source("main.ts")} ${quoted.join(" ")}; echo ENDED; sleep 30`,
+    );
+    await until(() => screen().includes(question), { what: screen });
+    tmux("send-keys", "-t", "sc", "-l", answer);
+    tmux("send-keys", "-t", "sc", "Enter");
+    await until(() => screen().includes("ENDED"), { timeout: 30_000, what: screen });
+    return screen();
+  } finally {
+    tmux("kill-server");
+  }
 }

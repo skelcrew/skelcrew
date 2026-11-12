@@ -450,6 +450,36 @@ test("the sidebar's line runs to the bottom, with a blank column before the agen
   expect(seen().split("\n")[1]?.indexOf("I am lead")).toBe(sidebar + 1);
 });
 
+// Puts a tmux ahead of the real one that says it is this version, and is the real one for
+// everything else.
+function tmuxSays(version: string): void {
+  const real = Bun.which("tmux") ?? "tmux";
+  mkdirSync(join(home, "versioned"));
+  writeFileSync(
+    join(home, "versioned", "tmux"),
+    `#!/bin/sh\n[ "$1" = -V ] && echo "${version}" && exit 0\nexec ${real} "$@"\n`,
+    { mode: 0o755 },
+  );
+  before = `PATH=${join(home, "versioned")}:$PATH `;
+}
+
+// tmux before 3.6 refuses a blank border, and the screen would never open. There the border is
+// tmux's own thin line. A version that can't be read is taken as new.
+test.each([
+  ["tmux 3.5a", "single"],
+  ["tmux 3.4", "single"],
+  ["tmux 3.6", "spaces"],
+  ["tmux 3.6a", "spaces"],
+  ["tmux next-3.7", "spaces"],
+  ["tmux master", "spaces"],
+  ["tmux openbsd-7.6", "spaces"],
+])("with %p, the border before the agent is %p", async (version, border) => {
+  tmuxSays(version);
+  open("lead");
+  await ready("lead");
+  expect(tmux(screen, "show", "-gv", "pane-border-lines").out.trim()).toBe(border);
+});
+
 test("the sidebar's line stays whole however the terminal is resized", async () => {
   open("lead");
   await ready("lead");
