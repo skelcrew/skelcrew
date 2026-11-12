@@ -1,6 +1,6 @@
 // Skelcrew's help: what you see with sc --help, and with a command Skelcrew doesn't know.
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { source } from "./harness.ts";
@@ -131,4 +131,24 @@ test("the help names the sidebar's keys, switching repositories included", () =>
 
 test("the help names --version", () => {
   expect(skel(["--help"]).out).toContain("--version");
+});
+
+test("sc runs from a checkout whose folder it may read files in but not list, as in a Mac's sandbox", () => {
+  // A copy of the checkout's parts sc runs from, as the sandbox shows them to an agent.
+  const checkout = mkdtempSync(join(tmpdir(), "skelcrew-unlisted-"));
+  try {
+    cpSync(source(), join(checkout, "src"), { recursive: true });
+    cpSync(join(source(), "..", "package.json"), join(checkout, "package.json"));
+    symlinkSync(join(source(), "..", "node_modules"), join(checkout, "node_modules"));
+    // Its files can be opened by name, but the folder can't be listed.
+    chmodSync(checkout, 0o311);
+    const run = Bun.spawnSync([process.execPath, join(checkout, "src", "main.ts"), "--version"], {
+      env: { PATH: process.env.PATH ?? "", HOME: "/nonexistent" },
+    });
+    expect(run.stderr.toString()).toBe("");
+    expect(run.stdout.toString()).toStartWith("skelcrew ");
+  } finally {
+    chmodSync(checkout, 0o755);
+    rmSync(checkout, { recursive: true, force: true });
+  }
 });

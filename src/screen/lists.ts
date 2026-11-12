@@ -149,6 +149,23 @@ export function layout(
   shown: string | null,
   size: Size,
 ): { lines: Line[]; room: number } {
+  // A blank line comes first, so the lead's row, grey when you look at it, doesn't touch the
+  // header above the sidebar and read as part of it. Clicks find rows in these same lines. Like
+  // the hints, it gives way on a sidebar too short for it and the whole row you are looking at.
+  const yours = rows.find((row) => row.session === shown);
+  const tallest = yours ? rowLines(yours, true, size.width - 1).length : 2;
+  if (size.height <= tallest) return listed(rows, lists, shown, size);
+  const below = listed(rows, lists, shown, { ...size, height: size.height - 1 });
+  return { lines: [{ text: "" }, ...below.lines], room: below.room + 1 };
+}
+
+// Returns the lines under the sidebar's first, blank, one, as layout says.
+function listed(
+  rows: Row[],
+  lists: Lists,
+  shown: string | null,
+  size: Size,
+): { lines: Line[]; room: number } {
   // Every row's lines, and how tall the row you are looking at is. The hints keep the bottom
   // lines only while that row still fits above them.
   const width = size.width - 1;
