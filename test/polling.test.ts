@@ -322,6 +322,30 @@ test("the first poll brings everything open into Skelcrew's copy, and later ones
   expect(copied()).toEqual({ rows: ["task 12"], totals: { open_issues: 1, open_prs: 0 } });
 });
 
+// Two machines running Skelcrew on one repository both see the label, and only the one whose
+// claim the tracker grants may start it.
+test("a labeled task claimed elsewhere starts no thread, and a claim that fails is tried again", async () => {
+  addApp();
+  const failing = join(plugin, "fail-took");
+  writeFileSync(failing, "network is down");
+  changes([issue12(true)]);
+  serve();
+  const took = () => asked(plugin).filter((q) => q.ask === "took");
+  // A claim that fails starts nothing, and the next poll asks again.
+  await until(() => took().length >= 2);
+  expect(thread()).toEqual({});
+  // Once the tracker answers that someone else has it, nothing starts, and it isn't asked again.
+  answer(plugin, "took", { took: false });
+  rmSync(failing);
+  const failed = took().length;
+  await morePolls();
+  const asks = took().length;
+  expect(asks).toBeGreaterThan(failed);
+  await morePolls();
+  expect(took()).toHaveLength(asks);
+  expect(thread()).toEqual({});
+}, 30_000);
+
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
 describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
   test("a PR's checks are saved for the strip, without Skelcrew's own review check", async () => {
@@ -696,6 +720,8 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
     expect(thread()).toMatchObject({ task: 12, title: "Add export as CSV", body: "With headers" });
   }, 30_000);
 
+  // The fake tracker answers the claim with nothing, as a plugin not yet updated does, and
+  // that counts as taking it.
   test("a task labeled skelcrew starts a thread once, and one that failed isn't started again", async () => {
     // A builder that can't start, so the thread fails.
     script(
@@ -723,6 +749,17 @@ echo "Not logged in"; exit 1`,
     expect(took()).toHaveLength(1);
     expect(lead().split("started app-12").length - 1).toBe(1);
   }, 60_000);
+
+  test("a labeled task whose claim the tracker grants starts a thread", async () => {
+    addApp();
+    answer(plugin, "took", { took: true });
+    pr({ labeled: true });
+    serve();
+    await until(() => thread().task === 12);
+    expect(asked(plugin).filter((q) => q.ask === "took")).toEqual([
+      { ask: "took", repository: "simon/app", task: "12" },
+    ]);
+  }, 30_000);
 
   // A task's ID names the thread's folder, which setup deletes before it clones, so an ID
   // from a tracker that climbs out of Skelcrew's threads folder must never reach it.
