@@ -24,8 +24,8 @@ import { downloadRelease, releaseSum } from "./update.ts";
 
 // A command over ssh gets a bare PATH: no login shell reads ~/.profile, and Ubuntu's
 // ~/.bashrc stops early when nobody types into it. So ~/.local/bin, where Skelcrew copies
-// itself and where Claude Code installs, is added here. env, since every shell runs it the
-// same way.
+// itself and where Claude Code installs, is added here. It is set through env, which works
+// the same in every shell.
 const pathOnServer = 'PATH="$HOME/.local/bin:$PATH"';
 
 // What a copied Skelcrew exits with when the laptop's build differs. Skelcrew otherwise exits 0 or
@@ -109,7 +109,7 @@ export const notSetUp = (where: string) =>
 export async function remote(host: string, args: string[]): Promise<number> {
   const from = args.length === 0 ? originHere() : null;
   const there = onServer(host, from ? ["--from", from] : args);
-  const code = await upToDate(host, there, server(host));
+  const code = await runUpToDate(host, there, serverMachine(host));
   // The server's shell exits 127 when it finds no Skelcrew to run. Skelcrew itself never does: it
   // exits 1 on any error.
   if (code === 127) throw new Error(notSetUp(host));
@@ -119,7 +119,7 @@ export async function remote(host: string, args: string[]): Promise<number> {
 // Sets up your server for --remote and returns the exit code, for sc remote add.
 export async function addServer(host: string): Promise<number> {
   console.log(`Setting up ${host}: copying Skelcrew there and running the first run.`);
-  return addMachine(host, onServer(host, ["first-run"]), server(host));
+  return addMachine(host, onServer(host, ["first-run"]), serverMachine(host));
 }
 
 // Puts Skelcrew on a server or Sprite if it isn't there, and runs the first run through `there`,
@@ -131,7 +131,7 @@ export async function addMachine(
   there: (env: string[]) => Promise<number>,
   machine: Machine,
 ): Promise<number> {
-  let code = await upToDate(where, there, machine);
+  let code = await runUpToDate(where, there, machine);
   // 127 is the machine's shell finding no Skelcrew, so it gets one and the first run goes again.
   if (code === 127) {
     await withLinuxSkel(machine);
@@ -143,12 +143,11 @@ export async function addMachine(
   return 0;
 }
 
-// Runs sc on a server or Sprite through `there`, which takes the environment to add to
-// what it always passes, and returns its exit code. A copied Skelcrew there from another build
-// than this laptop's, its release or its commit, runs nothing, so you are asked to replace it
-// first. Either way the command then runs, without the check, so a build with uncommitted
-// changes can't ask twice.
-export async function upToDate(
+// Runs sc on a server or Sprite through `there`, and returns its exit code. `there` takes the
+// environment to add to what it always passes. When the Skelcrew there is from another build
+// than this laptop's, it runs nothing and you are asked whether to replace it. Either way the
+// command then runs without the check, so a build with uncommitted changes can't ask twice.
+export async function runUpToDate(
   where: string,
   there: (env: string[]) => Promise<number>,
   machine: Machine,
@@ -185,8 +184,8 @@ export async function copySkel(
     throw new Error(`couldn't put the new Skelcrew in place on ${where}`);
 }
 
-// How update reaches a server over ssh, where systemd runs the daemon.
-function server(host: string): Machine {
+// How update reaches a server: over ssh, with systemd running the daemon.
+function serverMachine(host: string): Machine {
   const shell = (script: string) => ["ssh", host, script];
   return {
     shell,
@@ -203,15 +202,17 @@ function server(host: string): Machine {
   };
 }
 
-// How update reaches a server or a Sprite: the command that runs a shell line there, the
-// Skelcrew the daemon's service starts there, or null without a service, how a built Skelcrew is
-// copied there, the line that restarts the daemon's service there, and what else the
-// machine needs once its new daemon runs.
+// How update reaches a server or a Sprite.
 export type Machine = {
+  // Returns the command that runs a shell line there.
   shell: (script: string) => string[];
+  // Returns the sc the daemon's service starts there, or null when there is no service.
   daemonSkel: () => Promise<string | null>;
+  // Copies a built Skelcrew there.
   copy: (file: string) => Promise<void>;
+  // The shell line that restarts the daemon's service there.
   restart: string;
+  // Does what else the machine needs once its new daemon runs.
   updated: () => Promise<void>;
 };
 
@@ -235,11 +236,10 @@ function describeCheckout(): string {
 // run from a checkout there is left alone: a copy would leave the checkout behind while the
 // daemon kept running it.
 async function update(where: string, machine: Machine): Promise<void> {
-  // update only ever writes ~/.local/bin/sc, so it goes by the Skelcrew the daemon's service
-  // starts, which can be elsewhere: a checkout Skelcrew once ran from, or a copy put somewhere
-  // else. A checkout's launcher, linked or not, is bin/sc beside its sources. The rename
-  // replaces ~/.local/bin/sc itself, so a service starting the file a link there points
-  // to counts as elsewhere.
+  // Update only ever writes ~/.local/bin/sc, so first find which sc the daemon's service
+  // starts. It can be a checkout's bin/sc, ~/.local/bin/sc itself, or somewhere else. If
+  // ~/.local/bin/sc is a link, the copy replaces the link, not the file it points to, so a
+  // service starting that file counts as somewhere else.
   const daemon = await machine.daemonSkel();
   // One line over the connection tells the three apart: a checkout has src/main.ts beside its
   // bin/sc, a copy is ~/.local/bin/sc itself, and anything else is elsewhere.
@@ -277,7 +277,7 @@ else echo "elsewhere $f"; fi`;
   );
 }
 
-// Returns the CPU of a server or Sprite in the words of Skelcrew's builds, x64 or arm64, so the
+// Returns the CPU of a server or Sprite as Skelcrew's builds name it, x64 or arm64, so the
 // Skelcrew it gets runs there.
 async function machineCpu(machine: Machine): Promise<string> {
   const cpus: Record<string, string> = { x86_64: "x64", aarch64: "arm64", arm64: "arm64" };
