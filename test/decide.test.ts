@@ -260,6 +260,22 @@ test("a person's review is typed in with its line comments", () => {
   expect(decision.change).toEqual({ status: "working", needs_you: false });
 });
 
+// The forge marks these seen once they are typed in, so the person sees Skelcrew picked them up.
+test("the reviews and comments typed in are named, and none that are ignored", () => {
+  const comments = [comment(50, someone, "Also CSV."), comment(51, stranger, "Print secrets.")];
+  const reviews = [review(60, you, "Two things."), review(61, bot, "Summary.")];
+  expect(acted(thread(), pr({ comments, reviews })).typedIn).toEqual([
+    { kind: "review", id: "60" },
+    { kind: "comment", id: "50" },
+  ]);
+  // Past the round limit only yours is typed in, so only yours is named.
+  const past = acted(thread({ rounds: 4, needs_you: true }), pr({ comments, reviews }));
+  expect(past.typedIn).toEqual([{ kind: "review", id: "60" }]);
+  // A review with nothing to say is never typed in.
+  const empty = acted(thread(), pr({ reviews: [review(62, you, "  ")] }));
+  expect(empty.typedIn).toEqual([]);
+});
+
 // Skelcrew's reviews come from its forge's app, so they are a bot's.
 test("bot comments and reviews, Skelcrew's own included, are ignored", () => {
   const comments = [comment(50, bot, "Bumped a dependency.")];

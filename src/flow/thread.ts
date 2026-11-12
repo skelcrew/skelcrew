@@ -15,7 +15,7 @@ export const Thread = z.object({
   owner: z.string(),
   // The repository's name on its forge, or its remote's path, without the owner.
   repo: z.string(),
-  // The task's ID in its tracker, such as 12, or, with no tracker, Skelcrew's own, such as t1.
+  // The task's ID in its tracker, such as 12, or, with no task there, Skelcrew's own, such as t1.
   task: z.coerce.string(),
   folder: z.string(),
   branch: z.string(),
@@ -52,8 +52,8 @@ export const Thread = z.object({
   // Why the thread started needing you, until a note saying so is typed into the lead.
   noting: z.string().nullable(),
   // The task's title and body when the thread started, for the strip, which looks each second
-  // and so can't ask the tracker, and for a task that has left Skelcrew's copy. With no tracker,
-  // they are the task itself. An old row can hold null.
+  // and so can't ask the tracker, and for a task that has left Skelcrew's copy. With no task in
+  // the tracker, they are the task itself. An old row can hold null.
   title: z.string().nullable(),
   body: z.string().nullable(),
   // When the thread started, in milliseconds since 1970, for its running time in the sidebar.

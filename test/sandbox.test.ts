@@ -258,6 +258,12 @@ console.log(JSON.stringify(claude.start({ name: "lead", ...${JSON.stringify(lead
     expect(done.out).toBe(`hidden\nskelcrew\n${resolver}skelcrew.sock\nsocket\n1\n`);
   });
 
+  test("Postgres clients reach localhost over TCP, since the sandbox hides their socket in /tmp", async () => {
+    repository();
+    const done = await asLead("echo $PGHOST");
+    expect(done.out).toBe("localhost\n");
+  });
+
   test("the agent runs sc from this checkout", async () => {
     repository();
     const done = await asLead("command -v sc");

@@ -14,6 +14,11 @@ that covers the code you are about to write.
 - **Idle means more than a quiet pane.** Claude Code is idle when "esc to interrupt" is
   gone, a line holding only the `❯` prompt is on screen, and nothing has changed for a
   moment. A bell or a changing window title doesn't mean a turn ended.
+- **A person's draft at the prompt is not idle.** A paste lands after their unsent text, and
+  the Enter sends both. Ready means a line holding the bare prompt mark, so a draft makes
+  typing wait. A person can start a draft after the last look, so look again right before
+  the paste. Codex's draft replaces its placeholder, so its mark alone is `›`. A numbered
+  menu also shows the mark before text, and isn't a draft.
 - **Pass the first message on the command line, not by typing it.** Typed into the input, a
   long message collapses to "[Pasted text]" and can miss its Enter.
 
@@ -106,6 +111,9 @@ that covers the code you are about to write.
 - **bwrap being installed doesn't mean it can run.** On Ubuntu 24.04 and later, AppArmor
   blocks the namespaces it needs unless a profile allows them. Check by running
   `bwrap --ro-bind / / true`, not by finding the binary.
+- **bwrap has overlays only since 0.11.** Reviews see the thread's clone through
+  `--overlay-src` and `--tmp-overlay`. Ubuntu 24.04's bwrap 0.9 passes every other check,
+  then fails every review with "Unknown option --overlay-src". Check `bwrap --version` too.
 - **bwrap can't start inside Skelcrew's own sandbox.** Once Skelcrew builds Skelcrew, tests that start a
   real sandbox can't run there. That is the one place they may skip.
 - **Hide the home folder, then put back only what the agent needs.** Programs often live
@@ -138,6 +146,10 @@ that covers the code you are about to write.
   has one for the machine, so agents could disturb a Postgres you run yourself. Decided by
   Simon: running tests matters more.
 - **Agents share the network.** They can reach ports on localhost and abstract sockets.
+- **Postgres clients look for their socket in `/tmp`, which the sandbox hides.** With no
+  host given they open `/tmp/.s.PGSQL.5432`, so every test that needed the database failed
+  with the socket denied. Skelcrew sets `PGHOST=localhost` in every sandbox, so they connect
+  over TCP instead. A host the project names itself still wins.
 - **Mount the folder of clones, not each clone.** A mount per clone, made when the sandbox
   starts, misses repositories brought in later. Mount their parent folder, and create it
   first: bwrap refuses to mount a folder that doesn't exist.
@@ -271,6 +283,9 @@ that covers the code you are about to write.
 - **tmux drops terminal links on the way to a terminal it doesn't recognise.** A client under
   `script`, which answers no terminal queries, got no OSC 8 at all until the server set the
   `hyperlinks` feature. A tmux inside tmux hides this, as the outer one is recognised.
+- **tmux before 3.6 refuses `pane-border-lines spaces`.** It says "unknown value: spaces",
+  and the screen never opens, as one bad setting fails the whole command. Ubuntu 24.04 has
+  tmux 3.4 and Debian 13 has 3.5a. Read `tmux -V` and leave the setting out there.
 - **tmux 3.6 doesn't hold a program's synchronized frames back.** It marks only its own full
   redraws, so a frame written in two halves arrives in two, attached directly or nested.
 - **Alt-Shift-Up and Alt-Shift-Down get through.** They arrive as `ESC[1;4A` and `ESC[1;4B`

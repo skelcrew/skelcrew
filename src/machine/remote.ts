@@ -6,7 +6,6 @@ import { chmodSync, mkdtempSync, rmSync, writeSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { quietly } from "../run.ts";
-import { skelLine } from "../say.ts";
 import {
   built,
   checkoutFolder,
@@ -45,9 +44,7 @@ export function outOfDate(): boolean {
   if (!laptop || built === undefined || (laptop === built && !built.endsWith(dirty))) return false;
   if (release && isRelease(laptop) && newer(release, laptop)) return false;
   const where = process.env.SKELCREW_REMOTE_NAME;
-  console.log(
-    skelLine(`Skelcrew on ${where} is from ${readable(built)}, yours is ${readable(laptop)}.`),
-  );
+  console.log(`Skelcrew on ${where} is from ${readable(built)}, yours is ${readable(laptop)}.`);
   return true;
 }
 
@@ -121,7 +118,7 @@ export async function remote(host: string, args: string[]): Promise<number> {
 
 // Sets up your server for --remote and returns the exit code, for sc remote add.
 export async function addServer(host: string): Promise<number> {
-  console.log(skelLine(`setting up ${host}: copying Skelcrew there and running the first run.`));
+  console.log(`Setting up ${host}: copying Skelcrew there and running the first run.`);
   return addMachine(host, onServer(host, ["first-run"]), server(host));
 }
 
@@ -141,7 +138,7 @@ export async function addMachine(
     code = await there([]);
   }
   if (code !== 0) return code;
-  console.log(skelLine(`${where} is ready. Connect to it with:`));
+  console.log(`${where} is ready. Connect to it with:`);
   console.log(`  sc --remote ${where}`);
   return 0;
 }
@@ -161,9 +158,8 @@ export async function upToDate(
   const code = await there(build ? [`SKELCREW_LAPTOP_BUILD=${build}`] : []);
   if (code !== outdated) return code;
   // Bun's prompt answers a bare Enter with null, so only a no keeps the old Skelcrew.
-  const answer = prompt(skelLine("Update it? [Y/n]"))?.trim().toLowerCase() ?? "";
-  if (["n", "no"].includes(answer))
-    console.log(skelLine(`running it on the old Skelcrew on ${where}.`));
+  const answer = prompt("Update it? [Y/n]")?.trim().toLowerCase() ?? "";
+  if (["n", "no"].includes(answer)) console.log(`Running it on the old Skelcrew on ${where}.`);
   else await update(where, machine);
   return there([]);
 }
@@ -227,9 +223,9 @@ function describeCheckout(): string {
   // The folder under your home is shown with ~, as you would type it.
   const shown = folder.startsWith(`${homedir()}/`) ? `~${folder.slice(homedir().length)}` : folder;
   if (git("status", "--porcelain") !== "")
-    console.log(skelLine(`${shown} has uncommitted changes, and they are copied too.`));
+    console.log(`${shown} has uncommitted changes, and they are copied too.`);
   const branch = git("rev-parse", "--abbrev-ref", "HEAD");
-  if (branch !== "main") console.log(skelLine(`${shown} is on ${branch}, not main.`));
+  if (branch !== "main") console.log(`${shown} is on ${branch}, not main.`);
   return `the Skelcrew in ${shown} (commit ${git("rev-parse", "--short", "HEAD")})`;
 }
 
@@ -258,9 +254,7 @@ else echo "elsewhere $f"; fi`;
     throw new Error(`couldn't tell how Skelcrew is installed on ${where}:\n${asked.said}`);
   if (found[2]) {
     console.log(
-      skelLine(
-        `Skelcrew on ${where} runs from a checkout at ${found[2]}, so it wasn't replaced. git pull there updates it, and the next sc there restarts its daemon on it.`,
-      ),
+      `Skelcrew on ${where} runs from a checkout at ${found[2]}, so it wasn't replaced. git pull there updates it, and the next sc there restarts its daemon on it.`,
     );
     return;
   }
@@ -279,9 +273,7 @@ else echo "elsewhere $f"; fi`;
     );
   await machine.updated();
   console.log(
-    skelLine(
-      `updated ${where} to ${now} and restarted its daemon. The leads and builders keep running, and each lead picks up new instructions when it's next started.`,
-    ),
+    `Updated ${where} to ${now} and restarted its daemon. The leads and builders keep running, and each lead picks up new instructions when it's next started.`,
   );
 }
 
