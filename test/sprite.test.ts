@@ -207,7 +207,7 @@ test("the raw command sprite puts in the title is replaced, and yours comes back
 test("says it is connecting before anything reaches the Sprite, which can take a while to wake", async () => {
   existing("demo");
   const wrote = await skelInTerminal(["--remote", "sprite:demo", "ps"]);
-  const connecting = wrote.indexOf("Skelcrew · connecting to sprite:demo…");
+  const connecting = wrote.indexOf("Connecting to sprite:demo…");
   expect(connecting).toBeGreaterThan(-1);
   expect(connecting).toBeLessThan(wrote.indexOf("Skelcrew on the Sprite got 1 arguments"));
 });
@@ -331,9 +331,9 @@ test("offers to update an out-of-date Skelcrew on the Sprite, updates it, then r
   existing("demo", "0000000");
   const run = await skel(["--remote", "sprite:demo", "ps"], "y\n");
   expect(run.out).toContain("Skelcrew on sprite:demo is from 0000000\n");
-  expect(run.out).toContain("Skelcrew · Update it? [Y/n]");
+  expect(run.out).toContain("Update it? [Y/n]");
   expect(run.out).toContain(
-    `Skelcrew · updated sprite:demo to the Skelcrew in ~/code/skel (commit ${laptop.commit}) and restarted its daemon.`,
+    `Updated sprite:demo to the Skelcrew in ~/code/skel (commit ${laptop.commit}) and restarted its daemon.`,
   );
   expect(run.out).toEndWith("Skelcrew on the Sprite got 1 arguments\n[ps]\n");
   const sprite = join(home, "sprites", "demo", ".local", "bin", "sc");
@@ -359,7 +359,7 @@ test("offers to update an out-of-date Skelcrew on the Sprite, updates it, then r
 test("runs the command on the old Skelcrew on the Sprite when you say no", async () => {
   existing("demo", "0000000");
   const run = await skel(["--remote", "sprite:demo", "ps"], "n\n");
-  expect(run.out).toContain("Skelcrew · running it on the old Skelcrew on sprite:demo.");
+  expect(run.out).toContain("Running it on the old Skelcrew on sprite:demo.");
   expect(run.out).toEndWith("Skelcrew on the Sprite got 1 arguments\n[ps]\n");
   expect(calls()).not.toContain("file push");
 });
@@ -392,7 +392,7 @@ test("the update goes by what the Sprite service runs, not by ~/.local/bin", asy
   writeFileSync(join(sprite, "service.json"), JSON.stringify(service));
   const run = await skel(["--remote", "sprite:demo", "ps"], "y\n");
   expect(run.out).toContain(
-    `Skelcrew · Skelcrew on sprite:demo runs from a checkout at ${join(sprite, "skel")}, so it wasn't replaced.`,
+    `Skelcrew on sprite:demo runs from a checkout at ${join(sprite, "skel")}, so it wasn't replaced.`,
   );
   expect(run.out).toContain(
     "git pull there updates it, and the next sc there restarts its daemon on it.",
@@ -407,11 +407,11 @@ test("sc remote add creates the Sprite after asking, sets it up, and prints how 
   writeFileSync(join(home, "bin", "uname"), "#!/bin/sh\necho x86_64\n", { mode: 0o755 });
   const run = await skel(["remote", "add", "sprite:demo"], "y\n");
   expect(run.code).toBe(0);
-  expect(run.out).toContain("Skelcrew · setting up sprite:demo: installing bubblewrap,");
-  expect(run.out).toContain("Skelcrew · No Sprite named demo. Create it? [y/N]");
+  expect(run.out).toContain("Setting up sprite:demo: installing bubblewrap,");
+  expect(run.out).toContain("No Sprite named demo. Create it? [y/N]");
   expect(run.out).toContain("the first run on the Sprite\n");
   expect(run.out).toEndWith(
-    "Skelcrew · sprite:demo is ready. Connect to it with:\n  sc --remote sprite:demo\n",
+    "sprite:demo is ready. Connect to it with:\n  sc --remote sprite:demo\n",
   );
   const lines = calls().split("\n");
   expect(lines[0]).toBe("sprite list --json");
@@ -452,7 +452,7 @@ test("sc remote add creates the Sprite after asking, sets it up, and prints how 
 
 test("sc remote add creates nothing when you say no", async () => {
   const run = await skel(["remote", "add", "sprite:demo"], "n\n");
-  expect(run.out).toContain("no Sprite was created");
+  expect(run.out).toContain("No Sprite was created");
   expect(run.code).toBe(1);
   expect(calls()).toBe("sprite list --json\n");
 });
