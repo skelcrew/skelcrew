@@ -113,25 +113,26 @@ function savedConversation(name: string, folder: string, _session: string): stri
 }
 
 // Returns a TOML value for a -c setting. JSON's strings are TOML's too.
-const toml = (text: string) => JSON.stringify(text);
+const tomlString = (text: string) => JSON.stringify(text);
 
 // A builder on Codex asks you a question by ending its turn without sc submit, since Codex
 // has no tool for asking, and its Stop hook tells Skelcrew the turn ended. Whatever is typed into
 // the builder next ends the question, as on Claude Code. The commands print nothing, and run
 // with no trust asked for: Codex would otherwise wait for a person to trust each one.
-const hookOf = (command: string) =>
-  `[{hooks=[{type="command",command=${toml(command)},timeout=10}]}]`;
+const hookToml = (command: string) =>
+  `[{hooks=[{type="command",command=${tomlString(command)},timeout=10}]}]`;
 const builderHooks = [
-  ["-c", `hooks.Stop=${hookOf("sc turn ended")}`],
-  ["-c", `hooks.UserPromptSubmit=${hookOf("sc question answered")}`],
+  ["-c", `hooks.Stop=${hookToml("sc turn ended")}`],
+  ["-c", `hooks.UserPromptSubmit=${hookToml("sc question answered")}`],
 ].flat();
 
 // Throws when Codex doesn't offer the model, saying which it does. An unknown model only shows
-// an error inside the session, which then waits at its prompt with no hook to tell Skelcrew. Asked
-// with Skelcrew's own CODEX_HOME, which reviews can't change, outside the sandbox. It can take
-// seconds, and the daemon must keep answering builders' hooks meanwhile, so it never blocks.
+// an error inside the session, which then waits at its prompt with no hook to tell Skelcrew. It
+// asks Codex outside the sandbox, with Skelcrew's own CODEX_HOME, which reviews can't change. It
+// can take seconds, and the daemon must keep answering builders' hooks meanwhile, so it never
+// blocks.
 async function checkModel(home: string, model: string, env: Record<string, string | undefined>) {
-  const asked = Bun.spawn(["codex", "debug", "models"], {
+  const listing = Bun.spawn(["codex", "debug", "models"], {
     env: { ...env, CODEX_HOME: codexHome(home) },
     stdout: "pipe",
     stderr: "pipe",
@@ -139,9 +140,9 @@ async function checkModel(home: string, model: string, env: Record<string, strin
   });
   // Read both outputs while waiting, so a full pipe can't stall Codex.
   const [out, err] = await Promise.all([
-    new Response(asked.stdout).text(),
-    new Response(asked.stderr).text(),
-    asked.exited,
+    new Response(listing.stdout).text(),
+    new Response(listing.stderr).text(),
+    listing.exited,
   ]);
   // The answer is JSON listing each model by its slug, the name -m takes.
   const Models = z.object({ models: z.array(z.looseObject({ slug: z.string() })) });
@@ -191,23 +192,23 @@ async function startCommand(given: {
   // A folder of its own per session, never your ~/.codex: an agent could write instructions
   // that another session loads. It stays, so codex resume finds the conversation.
   const sessions = join(dataDir(home), "codex-sessions");
-  const own = join(sessions, name);
+  const sessionHome = join(sessions, name);
   // Skelcrew writes here with your rights, and the agent can change what is in its folder. A
   // link it left would send that write to any file of yours.
-  for (const p of [sessions, own])
+  for (const p of [sessions, sessionHome])
     if (lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink())
       throw new Error(`${p} is a link, so Skelcrew won't write through it`);
-  mkdirSync(own, { recursive: true, mode: 0o700 });
+  mkdirSync(sessionHome, { recursive: true, mode: 0o700 });
   // Skelcrew's own folder first, so a login the first run just saved there moves to the shared
   // folder before this session links to it.
   shareLogin(home);
-  const login = shareLogin(home, own);
+  const login = shareLogin(home, sessionHome);
   // The agent sees its own folder, its CODEX_HOME and the shared login, all writable, and
   // nothing else of yours.
   const cwd = thread ?? folder;
   if (!cwd) throw new Error(`Skelcrew has no folder for ${name} to work in`);
   mkdirSync(cwd, { recursive: true });
-  const mounts = [...rw(cwd), ...rw(own), ...rw(login)];
+  const mounts = [...rw(cwd), ...rw(sessionHome), ...rw(login)];
   // Read-only at the same path, as for Claude Code.
   if (origin) {
     refuseCredentials(origin);
@@ -220,11 +221,11 @@ async function startCommand(given: {
   command.push("--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust");
   // The folder trusted, or Codex asks first. No update check, which only fails in the
   // sandbox, and no paste burst, which could take a message typed in for keys.
-  command.push("-c", `projects.${toml(cwd)}.trust_level="trusted"`);
+  command.push("-c", `projects.${tomlString(cwd)}.trust_level="trusted"`);
   command.push("-c", "check_for_update_on_startup=false", "-c", "tui.disable_paste_burst=true");
   command.push("-c", "features.hooks=true");
   if (thread) command.push(...builderHooks);
-  if (system) command.push("-c", `developer_instructions=${toml(system)}`);
+  if (system) command.push("-c", `developer_instructions=${tomlString(system)}`);
   if (model) command.push("-m", model);
   if (resume) command.push(resume);
   // After --, so a message that starts with - is never taken for an option.
@@ -232,17 +233,16 @@ async function startCommand(given: {
 
   // Only the environment the agent needs, plus its own CODEX_HOME.
   const kept = keptEnv(env, codex.keys);
-  kept.CODEX_HOME = own;
+  kept.CODEX_HOME = sessionHome;
   const argv = sandboxArgs({ home, path: env.PATH ?? "", mounts, socket, cwd, command });
   return { argv, env: kept };
 }
 
-// Returns Codex's review command, mounts and environment, protecting instructions shared by
-// reviews. The command reads the review's prompt on stdin and the answer's shape from the
-// review's folder. Skelcrew's Codex folder holds what Codex reads as instructions, and every review
-// shares it. So the reviewer sees it as a throwaway folder, and only its sessions and the
-// login folder reach the real ones.
-async function review(given: {
+// Returns Codex's review command, mounts and environment. The command reads the review's prompt
+// on stdin and the answer's shape from the review's folder. Every review shares Skelcrew's Codex
+// folder, which holds what Codex reads as instructions. So the reviewer sees a throwaway copy of
+// it, and only its sessions and the login folder reach the real ones.
+async function reviewCommand(given: {
   home: string;
   folder: string;
   model?: string | undefined;
@@ -251,14 +251,14 @@ async function review(given: {
 }) {
   const { home, folder, model, sprite, signal } = given;
   // Skelcrew's own CODEX_HOME, with its login shared out and a sessions folder to keep.
-  const shared = codexHome(home);
+  const skelcrewCodexHome = codexHome(home);
   const login = shareLogin(home);
-  const sessions = join(shared, "sessions");
+  const sessions = join(skelcrewCodexHome, "sessions");
   mkdirSync(sessions, { recursive: true, mode: 0o700 });
   // The reviewer gets a throwaway copy of it, with the real sessions and login mounted in.
   const copy = join(folder, "codex");
   const { mounts, at } = await throwaway({
-    source: shared,
+    source: skelcrewCodexHome,
     copy,
     sprite,
     signal,
@@ -266,7 +266,7 @@ async function review(given: {
   });
   mounts.push("--bind", sessions, sessions, "--bind", login, login);
   // A copy at another path can't have the real one mounted into it, so it links to it.
-  if (at !== shared) symlinkSync(sessions, join(at, "sessions"));
+  if (at !== skelcrewCodexHome) symlinkSync(sessions, join(at, "sessions"));
   // --no-daemon belongs to codex itself, not to exec: without it Codex may start a
   // background server that outlives the review.
   const command = ["codex", "--no-daemon", "exec", "--dangerously-bypass-approvals-and-sandbox"];
@@ -279,7 +279,7 @@ async function review(given: {
 
 // Returns the reviewer's answer from the file Codex wrote it to, for the reviewer to check
 // against the shape. Read only after Codex ends, so it can't change the file meanwhile.
-function answer(folder: string): unknown {
+function readAnswer(folder: string): unknown {
   const file = join(folder, "answer.json");
   if (!lstatSync(file, { throwIfNoEntry: false })?.isFile()) throw new Error("it gave no answer");
   return JSON.parse(readFileSync(file, "utf8"));
@@ -300,6 +300,6 @@ export const codex = {
   keys: ["OPENAI_API_KEY", "CODEX_API_KEY"],
   start: startCommand,
   saved: savedConversation,
-  review,
-  answer,
+  review: reviewCommand,
+  answer: readAnswer,
 } as const;

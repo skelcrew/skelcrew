@@ -25,8 +25,9 @@ const ClaudeJson = z.looseObject({
   projects: z.record(z.string(), z.looseObject({})).optional(),
 });
 
-// Bypass mode shows a warning first, which nobody is there to accept. Claude Code's own
-// sandbox fails inside Skelcrew's, so it stays off even if your settings turn it on.
+// The Claude Code settings every agent and review gets. Bypass mode shows a warning first,
+// which nobody is there to accept, so the warning is skipped. Claude Code's own sandbox fails
+// inside Skelcrew's, so it stays off even if your settings turn it on.
 const base = { skipDangerousModePermissionPrompt: true, sandbox: { enabled: false } };
 const settings = JSON.stringify(base);
 
@@ -35,14 +36,14 @@ const settings = JSON.stringify(base);
 // runs PostToolUse, but setting it aside with Esc or "Chat about this" runs no hook at all, so
 // whatever is typed into the builder next also ends it. The commands answer at once, and
 // print nothing, since UserPromptSubmit adds what a hook prints to the message.
-const asked = { type: "command", command: "sc question asked", timeout: 10 };
-const answered = { ...asked, command: "sc question answered" };
+const askedHook = { type: "command", command: "sc question asked", timeout: 10 };
+const answeredHook = { ...askedHook, command: "sc question answered" };
 const builderSettings = JSON.stringify({
   ...base,
   hooks: {
-    PreToolUse: [{ matcher: "AskUserQuestion", hooks: [asked] }],
-    PostToolUse: [{ matcher: "AskUserQuestion", hooks: [answered] }],
-    UserPromptSubmit: [{ hooks: [answered] }],
+    PreToolUse: [{ matcher: "AskUserQuestion", hooks: [askedHook] }],
+    PostToolUse: [{ matcher: "AskUserQuestion", hooks: [answeredHook] }],
+    UserPromptSubmit: [{ hooks: [answeredHook] }],
   },
 });
 
@@ -64,12 +65,12 @@ function claudeToken(home: string): string {
 }
 
 // Returns the conversation a session saved, for --resume to bring back, or null when it saved
-// none. Skelcrew picks Claude Code's session ID, so that is `session` itself. Claude Code saves a
-// conversation only once it has a message, so a session nobody talked to has nothing to
-// resume, and its id can't start a new one either. It saves it in the session's own config
-// folder, under a folder named after the folder it runs in, with every character but letters
-// and digits made a dash. Names over 200 characters get a hash instead, which Skelcrew's folders
-// never come near.
+// none. Skelcrew picks Claude Code's session ID, so the ID to resume is `session` itself.
+// Claude Code saves a conversation only once it has a message, so a session nobody talked to
+// has nothing to resume, and its id can't start a new one either. It saves it in the session's
+// own config folder, under a folder named after the folder it runs in, with every character
+// but letters and digits made a dash. Names over 200 characters get a hash instead, which
+// Skelcrew's folders never come near.
 function savedConversation(name: string, folder: string, session: string): string | null {
   const project = folder.replace(/[^a-zA-Z0-9]/g, "-");
   const file = join(dataDir(), "claude", name, "projects", project, `${session}.jsonl`);
@@ -101,18 +102,18 @@ function trustFolder(config: string, cwd: string): void {
   projects[cwd] = { ...projects[cwd], hasTrustDialogAccepted: true };
   // Written beside it and renamed over it, so even a link made since the check is replaced,
   // never followed. "wx" refuses a link already at the new name.
-  const fresh = join(config, `.claude.json.${process.pid}`);
-  rmSync(fresh, { force: true });
-  const done = { ...json, hasCompletedOnboarding: true, projects };
-  writeFileSync(fresh, JSON.stringify(done), { mode: 0o600, flag: "wx" });
-  renameSync(fresh, file);
+  const temporary = join(config, `.claude.json.${process.pid}`);
+  rmSync(temporary, { force: true });
+  const updated = { ...json, hasCompletedOnboarding: true, projects };
+  writeFileSync(temporary, JSON.stringify(updated), { mode: 0o600, flag: "wx" });
+  renameSync(temporary, file);
 }
 
 // Prepares an agent's own config folder and trusted Claude Code settings, then returns its
 // sandbox command and environment. It starts afresh with `sessionId` and the first message
 // in `prompt`, or brings back a saved conversation with `resume`. A builder, given its thread's
 // clone, works there; a lead works in its own `folder`. Each sees nothing else but `origin`,
-// Skelcrew's clone of its repository, read-only. Each session keeps its own transcripts and logs
+// Skelcrew's clone of its repository, read-only. Each session keeps its own transcripts. It logs
 // in with Skelcrew's agent token, while your other credentials stay hidden.
 function startCommand(given: {
   name: string;
@@ -215,7 +216,7 @@ function startCommand(given: {
 // Returns Claude Code's review command and a config folder of the review's own, so a review
 // leaves no transcript behind. The command reads the review's prompt on stdin and holds the
 // answer to `schema`.
-function review(given: {
+function reviewCommand(given: {
   home: string;
   folder: string;
   model?: string | undefined;
@@ -233,13 +234,13 @@ function review(given: {
 
 // Returns the reviewer's answer from what Claude Code printed, for the reviewer to check
 // against the shape.
-const answer = (_folder: string, out: string): unknown =>
+const parseAnswer = (_folder: string, out: string): unknown =>
   z.looseObject({ structured_output: z.unknown() }).parse(JSON.parse(out)).structured_output;
 
 // Claude Code as Skelcrew knows it. While a turn runs it shows "esc to interrupt". It is ready for
-// a message once that is gone and a line holding only its ❯ prompt shows. The key is for those
-// who use one rather than a login. The first run looks for `program` and, when it is
-// missing, prints the line that installs it.
+// a message once that is gone and a line holding only its ❯ prompt shows. `keys` are the API key
+// variables let into the sandbox, for those who use a key rather than a login. The first run
+// looks for `program` and, when it is missing, prints the line that installs it.
 export const claude = {
   name: "claude",
   title: "Claude Code",
@@ -249,6 +250,6 @@ export const claude = {
   keys: ["ANTHROPIC_API_KEY"],
   start: startCommand,
   saved: savedConversation,
-  review,
-  answer,
+  review: reviewCommand,
+  answer: parseAnswer,
 } as const;
