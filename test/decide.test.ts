@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import {
   afterReview,
   type Check,
-  ciChecks,
+  ciState,
   decide,
   labeledToStart,
   type PullRequest,
@@ -390,11 +390,11 @@ test("a PR's CI reads as passing, failing or still running, and Skelcrew's own c
   const passed = run(30, "test", "passed");
   const failed = run(31, "build", "failed");
   const going = run(32, "lint", "running");
-  expect(ciChecks(pr({ checks: [] }))).toBeNull();
-  expect(ciChecks(pr({ checks: [changes] }))).toBeNull();
-  expect(ciChecks(pr({ checks: [changes, passed] }))).toBe("passing");
-  expect(ciChecks(pr({ checks: [passed, going] }))).toBe("pending");
-  expect(ciChecks(pr({ checks: [failed, going] }))).toBe("failing");
+  expect(ciState(pr({ checks: [] }))).toBeNull();
+  expect(ciState(pr({ checks: [changes] }))).toBeNull();
+  expect(ciState(pr({ checks: [changes, passed] }))).toBe("passing");
+  expect(ciState(pr({ checks: [passed, going] }))).toBe("pending");
+  expect(ciState(pr({ checks: [failed, going] }))).toBe("failing");
 });
 
 const approval = { verdict: "approve" as const, body: "Ready." };

@@ -52,18 +52,20 @@ export function startChoice(thread: Thread | null): "bring back" | "go on" | "ne
 // has a review's changes to be typed in, or no PR yet.
 export function statusOnceBack(stopped: Thread): "waiting" | "working" {
   const { pr, submitting, reviewing, telling } = stopped;
-  const handed = telling === null && (pr !== null || submitting !== null || reviewing !== null);
-  return handed ? "waiting" : "working";
+  const waitsOnRound =
+    telling === null && (pr !== null || submitting !== null || reviewing !== null);
+  return waitsOnRound ? "waiting" : "working";
 }
 
-// Records a new thread and returns it: on a task of the repository's tracker, from Skelcrew's copy,
-// which sc start brings up to date first, or on a title and body, as a task of the thread's own
-// named t1, t2 and on. That works with a tracker too, so you can start work without filing it.
-// Refuses a task the copy doesn't have open, and a task that has a thread already, unless that
-// one failed or is done, such as after sc rm: then it starts over in the same folder, on the
-// task it had. Only records it, since the lead waits on the answer.
-// Setting up its clone and starting its builder come after, and can take minutes. `given` is a
-// start request, so its `repo` is the repository's name in Skelcrew or its owner/name.
+// Records a new thread and returns it. Its task is either one of the tracker's, with its title
+// and body from Skelcrew's copy, which sc start brings up to date first, or a given title and
+// body. A given one becomes a task of the repository's own, named t1, t2 and on. That works
+// with a tracker too, so you can start work without filing it. Refuses a task the copy doesn't
+// have open. Refuses a task that has a thread already, unless that thread failed or is done,
+// such as after sc rm: then it starts over in the same folder. It only records the thread,
+// since the lead waits on the answer. Setting up its clone and starting its builder come
+// after, and can take minutes. `given` is a start request, so its `repo` is the repository's
+// name in Skelcrew or its owner/name.
 export async function startThread(
   db: Database,
   given:
@@ -81,11 +83,11 @@ export async function startThread(
   let body: string;
   if ("title" in given) {
     // The highest number of the repository's own tasks, to name the next one.
-    const ours = db
+    const ownTaskNumbers = db
       .query("SELECT task FROM threads WHERE owner = ? AND repo = ? AND task GLOB 't[0-9]*'")
       .all(owner, repo)
       .map((row) => Number(z.object({ task: z.string() }).parse(row).task.slice(1)));
-    task = `t${Math.max(0, ...ours) + 1}`;
+    task = `t${Math.max(0, ...ownTaskNumbers) + 1}`;
     ({ title, body } = given);
   } else {
     // A named task takes its words from Skelcrew's copy of the tracker. One of the repository's
@@ -259,15 +261,15 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
   // such as its app's bot, with you as co-author, so it is always clear who wrote what. With a
   // forge that names none, or no forge, they are authored by you. Only your global config,
   // since the folder the daemon started in makes no difference.
-  const yours = (key: string) =>
+  const globalGitConfig = (key: string) =>
     Bun.spawnSync(["git", "config", "--global", "--get", key], { stdout: "pipe" })
       .stdout.toString()
       .trim();
-  const you = { name: yours("user.name"), email: yours("user.email") };
+  const you = { name: globalGitConfig("user.name"), email: globalGitConfig("user.email") };
   const author = forgeAuthor(db, thread)?.match(/^(.+) <(.+)>$/);
-  const commits = author ? { name: author[1] ?? "", email: author[2] ?? "" } : you;
-  if (commits.name) await mustRun(["git", "-C", clone, "config", "user.name", commits.name]);
-  if (commits.email) await mustRun(["git", "-C", clone, "config", "user.email", commits.email]);
+  const committer = author ? { name: author[1] ?? "", email: author[2] ?? "" } : you;
+  if (committer.name) await mustRun(["git", "-C", clone, "config", "user.name", committer.name]);
+  if (committer.email) await mustRun(["git", "-C", clone, "config", "user.email", committer.email]);
   // A hook adds you as co-author to each commit the forge's author makes, since the builder
   // writes the message and could leave the trailer out.
   if (author && you.name && you.email) {
@@ -336,10 +338,10 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
   await checkItLived(tmux, thread.folder, "builder");
 }
 
-// Brings back a thread's builder after the daemon restarts, or after sc stop for Skelcrew
-// start: leaves one that runs alone, and starts again one whose session is gone or ended.
-// Throws for a thread with no session, which never got past its setup because the daemon
-// stopped, so it can be started again.
+// Brings back a thread's builder after the daemon restarts, or for sc start after sc stop. A
+// builder still running is left alone. One whose session is gone or ended is started again.
+// Throws for a thread with no session: the daemon stopped before its setup finished, and the
+// error says to run sc start again.
 export async function bringBack(db: Database, tmux: string, thread: Thread): Promise<void> {
   if (thread.session === null)
     throw new Error("the daemon stopped while setting up the thread: run sc start again");

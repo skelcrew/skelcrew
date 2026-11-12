@@ -78,7 +78,12 @@ export const TaskRow = z.object({
 export type TaskRow = z.infer<typeof TaskRow>;
 
 // Returns how the thread on a task stands, or null when it has none.
-function threadOf(db: Database, owner: string, repo: string, task: string): TaskRow["thread"] {
+function threadStatusOf(
+  db: Database,
+  owner: string,
+  repo: string,
+  task: string,
+): TaskRow["thread"] {
   const row = db
     .query("SELECT * FROM threads WHERE owner = ? AND repo = ? AND task = ?")
     .get(owner, repo, task);
@@ -99,7 +104,7 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
         created: task.created,
         task: `${r.name}-${task.id}`,
         title: task.title,
-        thread: threadOf(db, r.owner, r.repo, task.id),
+        thread: threadStatusOf(db, r.owner, r.repo, task.id),
       })),
     )
     .sort((a, b) => b.created.localeCompare(a.created))
@@ -120,7 +125,12 @@ export type TaskView = z.infer<typeof TaskView>;
 export function showTask(db: Database, repository: string, task: string): TaskView {
   const r = findRepository(db, repository);
   const { title, body } = taskOf(db, r.owner, r.repo, task);
-  return { task: `${r.name}-${task}`, title, body, thread: threadOf(db, r.owner, r.repo, task) };
+  return {
+    task: `${r.name}-${task}`,
+    title,
+    body,
+    thread: threadStatusOf(db, r.owner, r.repo, task),
+  };
 }
 
 // Prints rows as columns lined up under their headings, with no spaces left at line ends.
