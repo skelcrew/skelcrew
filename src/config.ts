@@ -8,14 +8,14 @@ import { HarnessName, harnessNamed } from "./agents/harness.ts";
 import { cloneDir, configDir } from "./paths.ts";
 
 // Unknown keys pass through, so settings this version doesn't know survive a save.
-// github_declined lists the repositories, by full name, whose checkouts are never offered the
-// GitHub plugin again, as you said no in one.
+// github_declined lists the repositories, by full name, never offered the GitHub plugin again
+// because you said no in one of their checkouts.
 const SetupConfig = z.looseObject({
   harness: HarnessName.optional(),
   github_declined: z.array(z.string()).optional(),
 });
 
-// Returns the settings file path used to remember your harness choice between runs.
+// Returns the path of your settings file.
 export const configFile = () => join(configDir(), "config.yaml");
 
 // Reads and validates settings, returning the YAML document, the harness choice and the
@@ -66,11 +66,11 @@ type Repository = { owner: string; repo: string };
 // The harness a role runs on, and its model, or none for the harness's default.
 type Role = { harness: HarnessName; model?: string };
 
-// Returns the harness and model a role runs on, given what your config sets for it and your
-// top-level harness and model. The role's own harness, else yours. Its own model, else yours
-// only when it runs on your harness, else none, so the harness picks its default: a model name
-// belongs to its harness, and reviewer: { harness: codex } must never run Codex on opus.
-function roleOn(
+// Returns the harness and model a role runs on. The harness is the role's own, else your
+// top-level one. The model is the role's own, else yours if the role runs on your harness,
+// else none, so the harness picks its default. A model name belongs to its harness, so
+// reviewer: { harness: codex } must never run Codex on opus.
+function resolveRole(
   role: { harness?: HarnessName | undefined; model?: string | undefined } | undefined,
   yours: { harness: HarnessName; model: string | undefined },
 ): Role {
@@ -79,9 +79,9 @@ function roleOn(
   return model === undefined ? { harness } : { harness, model };
 }
 
-// Returns your config read against `schema`, or throws when it isn't valid, rather than run an
-// agent on settings you didn't pick.
-function yoursAgainst<T extends z.ZodType>(schema: T): z.infer<T> {
+// Returns your config.yaml checked against `schema`. Throws when it isn't valid, rather than
+// run an agent on settings you didn't pick.
+function readYourConfig<T extends z.ZodType>(schema: T): z.infer<T> {
   const file = configFile();
   // An empty file, or none, sets nothing.
   const read = schema.safeParse(existsSync(file) ? (parse(readFileSync(file, "utf8")) ?? {}) : {});
@@ -89,11 +89,11 @@ function yoursAgainst<T extends z.ZodType>(schema: T): z.infer<T> {
   return read.data;
 }
 
-// Returns the repository's skelcrew.yaml, read from Skelcrew's own clone against `schema`, as
-// nothing when it has none, or throws when it isn't valid. Skelcrew's clone is at the default
-// branch, so a change counts once it is pushed there. The file comes from the repository and
-// Skelcrew reads it with your rights, so a link, which could show it any file of yours, is refused.
-function sharedAgainst<T extends z.ZodType>(schema: T, repository: Repository): z.infer<T> {
+// Returns the repository's skelcrew.yaml checked against `schema`, or nothing when it has
+// none. Throws when it isn't valid. It is read from Skelcrew's clone, which is at the default
+// branch, so a change counts once it is pushed there. A link is refused, since it could point
+// at any file of yours.
+function readRepositoryConfig<T extends z.ZodType>(schema: T, repository: Repository): z.infer<T> {
   const file = join(cloneDir(repository.owner, repository.repo), "skelcrew.yaml");
   // lstat, so a link is seen as one and refused, not followed.
   const stat = lstatSync(file, { throwIfNoEntry: false });
@@ -105,10 +105,10 @@ function sharedAgainst<T extends z.ZodType>(schema: T, repository: Repository): 
   return read.data;
 }
 
-// Returns a role's harness and model, as the repository's skelcrew.yaml sets them over yours, with
-// `top` your top-level harness. Your model goes along only while the role stays on the harness
-// your config gives it, as a model name belongs to its harness.
-function layered(
+// Returns a role's harness and model, with the repository's skelcrew.yaml over your config.
+// `top` is your top-level harness. Your model goes along only while the role stays on the
+// harness your config gives it, as a model name belongs to its harness.
+function layerRole(
   shared: z.infer<typeof Roles>["reviewer"],
   yours: z.infer<typeof Roles>["reviewer"],
   top: HarnessName,
@@ -120,19 +120,17 @@ function layered(
   return { ...(harness ? { harness } : {}), ...(model ? { model } : {}) };
 }
 
-// Returns the harness and model of the lead, builders and reviews, each by roleOn's rule: for a
-// repository, with its skelcrew.yaml over your config, and with none, from your config alone. A
-// second view on another model is yours to choose, such as with reviewer: { harness: codex }.
+// Returns the harness and model of the lead, builders and reviewers. For a repository, its
+// skelcrew.yaml goes over your config. Without one, only your config counts.
 export function agentRoles(repository?: Repository): { lead: Role; builder: Role; reviewer: Role } {
-  const yours = yoursAgainst(Roles);
-  // Without a repository, such as for the starter skelcrew.yaml sc init writes, only your
-  // config counts.
-  const shared = repository ? sharedAgainst(Roles, repository) : {};
+  const yours = readYourConfig(Roles);
+  // sc init asks without a repository, for the starter skelcrew.yaml it writes.
+  const shared = repository ? readRepositoryConfig(Roles, repository) : {};
   const top = { harness: agentHarness().name, model: yours.model };
   return {
-    lead: roleOn(layered(shared.lead, yours.lead, top.harness), top),
-    builder: roleOn(layered(shared.builder, yours.builder, top.harness), top),
-    reviewer: roleOn(layered(shared.reviewer, yours.reviewer, top.harness), top),
+    lead: resolveRole(layerRole(shared.lead, yours.lead, top.harness), top),
+    builder: resolveRole(layerRole(shared.builder, yours.builder, top.harness), top),
+    reviewer: resolveRole(layerRole(shared.reviewer, yours.reviewer, top.harness), top),
   };
 }
 
@@ -142,15 +140,15 @@ export function threadConfig(
   repository: Repository,
 ): ReturnType<typeof agentRoles> & { maxRounds: number } {
   const maxRounds =
-    sharedAgainst(Rounds, repository).max_rounds ?? yoursAgainst(Rounds).max_rounds ?? 3;
+    readRepositoryConfig(Rounds, repository).max_rounds ?? readYourConfig(Rounds).max_rounds ?? 3;
   return { ...agentRoles(repository), maxRounds };
 }
 
 // Returns the setup commands in the repository's skelcrew.yaml, or none when it has none.
 export const repositorySetup = (repository: Repository): string[] =>
-  sharedAgainst(Setup, repository).setup ?? [];
+  readRepositoryConfig(Setup, repository).setup ?? [];
 
 // Returns the plugin the repository's skelcrew.yaml names as its tracker, or nothing when it
 // names none.
 export const repositoryTracker = (repository: Repository): string | undefined =>
-  sharedAgainst(Tracker, repository).tracker ?? undefined;
+  readRepositoryConfig(Tracker, repository).tracker ?? undefined;
