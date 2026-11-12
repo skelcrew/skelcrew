@@ -54,9 +54,10 @@ function newestTag(source: string): string {
   return `v${newest}`;
 }
 
-// Clones a GitHub repository at a version tag beside the installed plugins, and returns the
-// folder and its manifest, checked against the tag. A clone stopped halfway must not look like
-// a plugin, so it is moved into place only once you agree.
+// Clones a GitHub repository at a version tag into a temporary folder beside the installed
+// plugins. Returns that folder and its manifest, once the manifest's version matches the tag. The
+// caller moves the folder into place only after you agree, so a clone stopped halfway never looks
+// like a plugin.
 function cloneTag(source: string, tag: string): { staged: string; manifest: Manifest } {
   // Staged beside the plugins, so a rename moves it into place. A name starting with a dot
   // can't be a plugin's.
@@ -91,17 +92,17 @@ function cloneTag(source: string, tag: string): { staged: string; manifest: Mani
 
 // Throws when the plugin needs a newer Skelcrew than this one. A build from a checkout has no
 // release to compare, and takes any plugin.
-function fitsThisSkel(manifest: Manifest): void {
+function checkSkelcrewVersion(manifest: Manifest): void {
   if (release && newer(manifest.skelcrew, release))
     throw new Error(
       `${manifest.name} ${manifest.version} needs Skelcrew ${manifest.skelcrew} or newer, and this is Skelcrew ${release}`,
     );
 }
 
-// Says in one line that the plugin runs as you, outside the sandbox, then asks whether to go on,
-// as `verb`, such as Install. Returns whether you said yes. A plugin runs with your rights, so
-// nothing of it runs before you have said yes.
-function agreed(manifest: Manifest, from: string, verb: string): boolean {
+// Warns in one line that the plugin runs as you, outside the sandbox, and asks whether to `verb`
+// it, such as Install. Returns whether you said yes. A plugin runs with your rights, so nothing
+// of it runs before you say yes.
+function confirmPlugin(manifest: Manifest, from: string, verb: string): boolean {
   const { name, version } = manifest;
   // Bun's prompt answers a bare Enter with null, which is no, as the question says.
   const answer = prompt(
@@ -129,8 +130,8 @@ function runInTerminal(
   if (!run.success) throw new Error(`${manifest.name}'s ${clean(words.join(" "))} failed`);
 }
 
-// Runs a plugin's build commands, then its setup, in the plugin's folder, handing each the
-// remote of the checkout sc ran in. Throws when one fails.
+// Runs a plugin's build commands in its folder, then its setup when `setup` is true. Each gets
+// `remote`, the remote of the checkout sc ran in. Throws when one fails.
 function buildAndSetUp(
   manifest: Manifest,
   folder: string,
@@ -155,9 +156,9 @@ export function setUpPlugin(name: string, remote: string | null): void {
   runInTerminal(manifest, folder, manifest.setup, remote);
 }
 
-// Has Skelcrew ask again which forge claims each repository that has none, once a forge is
-// installed, so a repository added before it gains it.
-function askAgain(db: Database, manifest: Manifest): void {
+// When the plugin is a forge, marks each repository with no forge as not yet claimed. Skelcrew
+// then asks the forges again, so a repository added before this forge can gain it.
+function markUnclaimed(db: Database, manifest: Manifest): void {
   if (manifest.jobs.includes("forge"))
     db.run("UPDATE repositories SET claimed = 0 WHERE forge IS NULL");
 }
@@ -168,11 +169,11 @@ function refuseInstalled(db: Database, name: string): void {
     throw new Error(`${name} is installed already: run sc plugin update ${name}`);
 }
 
-// Installs a plugin, for sc plugin install: from the newest version tag of a GitHub
-// repository, given as owner/repo, or from a folder of yours, given as a path, used where it
-// is. It warns that the plugin runs outside the sandbox and asks first, then runs its build and
-// setup, handing them `remote`, the checkout's remote. When sc offered the plugin itself, you
-// said yes to that offer already, so `ask` is false and it only says what it installs.
+// Installs a plugin, for sc plugin install. `given` is either owner/repo, installed from that
+// GitHub repository's newest version tag, or a path to a folder of yours, used where it is. It
+// warns that the plugin runs outside the sandbox and asks first. Then it runs the plugin's build
+// and setup, handing them `remote`, the checkout's remote. When sc offered to install a plugin
+// from GitHub, you said yes already, so `ask` is false and it only says what it installs.
 export function installPlugin(given: string, remote = originHere(), ask = true): void {
   const db = openDb();
   const isPath = given.startsWith(".") || given.startsWith("/");
@@ -182,8 +183,8 @@ export function installPlugin(given: string, remote = originHere(), ask = true):
     const folder = realpathSync(resolve(given));
     const manifest = readManifest(folder);
     refuseInstalled(db, manifest.name);
-    fitsThisSkel(manifest);
-    if (!agreed(manifest, folder, "Install")) {
+    checkSkelcrewVersion(manifest);
+    if (!confirmPlugin(manifest, folder, "Install")) {
       console.log(`Skelcrew didn't install ${manifest.name}.`);
       return;
     }
@@ -192,7 +193,7 @@ export function installPlugin(given: string, remote = originHere(), ask = true):
       manifest.name,
       folder,
     ]);
-    askAgain(db, manifest);
+    markUnclaimed(db, manifest);
     console.log(`Installed ${manifest.name} ${manifest.version}.`);
     return;
   }
@@ -203,9 +204,9 @@ export function installPlugin(given: string, remote = originHere(), ask = true):
   const { staged, manifest } = cloneTag(given, newestTag(given));
   try {
     refuseInstalled(db, manifest.name);
-    fitsThisSkel(manifest);
+    checkSkelcrewVersion(manifest);
     if (!ask) console.log(`Installing ${manifest.name} ${manifest.version} from ${given}...`);
-    else if (!agreed(manifest, given, "Install")) {
+    else if (!confirmPlugin(manifest, given, "Install")) {
       console.log(`Skelcrew didn't install ${manifest.name}.`);
       return;
     }
@@ -227,7 +228,7 @@ export function installPlugin(given: string, remote = originHere(), ask = true):
       folder,
       given,
     ]);
-    askAgain(db, manifest);
+    markUnclaimed(db, manifest);
     console.log(`Installed ${manifest.name} ${manifest.version}.`);
   } finally {
     // Only a clone that never moved into place is still there.
@@ -256,23 +257,23 @@ function updatePlugin(db: Database, plugin: Plugin): void {
   try {
     if (manifest.name !== name)
       throw new Error(`${source} now names its plugin ${manifest.name}, not ${name}`);
-    fitsThisSkel(manifest);
-    if (!agreed(manifest, source, "Update")) {
+    checkSkelcrewVersion(manifest);
+    if (!confirmPlugin(manifest, source, "Update")) {
       console.log(`Skelcrew didn't update ${name}.`);
       return;
     }
     // The new version gets a folder beside the old one, which keeps working until the new
     // one is built and set up, and only then goes.
-    const moved = join(pluginsDir(), name, manifest.version);
-    rmSync(moved, { recursive: true, force: true });
-    renameSync(staged, moved);
+    const newFolder = join(pluginsDir(), name, manifest.version);
+    rmSync(newFolder, { recursive: true, force: true });
+    renameSync(staged, newFolder);
     try {
-      buildAndSetUp(manifest, moved, true, originHere());
+      buildAndSetUp(manifest, newFolder, true, originHere());
     } catch (error) {
-      rmSync(moved, { recursive: true, force: true });
+      rmSync(newFolder, { recursive: true, force: true });
       throw error;
     }
-    db.run("UPDATE plugins SET folder = ? WHERE name = ?", [moved, name]);
+    db.run("UPDATE plugins SET folder = ? WHERE name = ?", [newFolder, name]);
     rmSync(folder, { recursive: true, force: true });
     console.log(`Updated ${name} from ${current.version} to ${manifest.version}.`);
   } finally {
@@ -296,13 +297,13 @@ export function removePlugin(name: string): void {
   const db = openDb();
   const plugin = findPlugin(db, name);
   // The repositories that use it as their tracker, then as their forge.
-  for (const [job, those] of [
+  for (const [job, usingIt] of [
     ["tracker", repositories(db).filter((r) => trackerOf(db, r) === name)],
     ["forge", repositories(db).filter((r) => r.forge === name)],
   ] as const)
-    if (those.length > 0)
+    if (usingIt.length > 0)
       throw new Error(
-        `${name} is the ${job} of ${those.map((r) => r.name).join(", ")}, so Skelcrew keeps it`,
+        `${name} is the ${job} of ${usingIt.map((r) => r.name).join(", ")}, so Skelcrew keeps it`,
       );
   db.run("DELETE FROM plugins WHERE name = ?", [name]);
   // The settings folder is the one settingsDir makes.
