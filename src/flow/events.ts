@@ -1,6 +1,5 @@
-// Acting on what a thread's PR events mean: typing them into its builder, and ending the
-// builder for a merge, for sc stop or for sc rm, as each must cancel the events still being
-// typed in.
+// Acting on a thread's PR events: typing them into its builder. Also ending the builder for a
+// merge, sc stop or sc rm, which must cancel any typing still under way.
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 import { agentRuns, stopSession } from "../agents/tmux.ts";
@@ -12,7 +11,7 @@ import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
 import type { Check, Decision } from "./decide.ts";
 import { deleteBranch, fetchInto, onRemote } from "./git.ts";
-import { tellLead } from "./lead.ts";
+import { typeLeadNotes } from "./lead.ts";
 import { refreshClones } from "./repo.ts";
 import { endRound } from "./round.ts";
 import {
@@ -28,7 +27,11 @@ import {
 // Returns a message for each failed check, with the end of its log, for the builder to fix.
 // A check with no ID, such as a commit status, has no log to read. A log that can't be read
 // is said so in the message, so the builder still hears of the failure.
-async function aboutChecks(db: Database, thread: Thread, failed: Check[]): Promise<string[]> {
+async function failedCheckMessages(
+  db: Database,
+  thread: Thread,
+  failed: Check[],
+): Promise<string[]> {
   const fix = 'Fix it, commit, and run sc submit "<summary>" again.';
   return Promise.all(
     failed.map(async (c) => {
@@ -41,18 +44,20 @@ async function aboutChecks(db: Database, thread: Thread, failed: Check[]): Promi
   );
 }
 
-// Brings Skelcrew's clone of the repository up to date with the base branch, so the builder,
-// whose clone has it as origin, gets the latest base when it fetches. The daemon otherwise
-// refreshes it only when you attach or it starts, and holds only the default branch.
-async function freshBase(db: Database, thread: Thread, base: string): Promise<void> {
+// Brings the base branch up to date in Skelcrew's clone of the repository. The builder's clone
+// has Skelcrew's clone as origin, so its next fetch gets the latest base. Otherwise Skelcrew's
+// clone is refreshed only when you attach or the daemon starts, and holds only the default
+// branch.
+async function refreshBase(db: Database, thread: Thread, base: string): Promise<void> {
   // Refreshing brings the default branch up to date. Any other base is fetched on its own.
   await refreshClones(db);
   if (base !== baseOf({ ...thread, base: null }))
     await fetchInto(db, repositoryOf(db, thread), cloneDir(thread.owner, thread.repo), base);
 }
 
-// Typing in progress per thread. A poll leaves a thread alone while its events are typed in,
-// so they are never typed twice, and a merge cancels the typing.
+// The typing of events under way, by thread folder, with what cancels it. A poll leaves a
+// thread alone while its events are typed in, so they are never typed twice. A merge, sc stop
+// or sc rm cancels the typing.
 export const typingEvents = new Map<string, AbortController>();
 
 // Cancels the round and the typing under way for the thread, ends its builder's session, and
@@ -96,12 +101,12 @@ export async function endThread(
   // Skelcrew's clone keeps refs of the branch it pushed, named by the thread's folder. A thread
   // started over in that folder would be taken for one that pushed already, and without a forge
   // ended at once, as its branch isn't on the remote.
-  const ours = cloneDir(thread.owner, thread.repo);
+  const skelcrewClone = cloneDir(thread.owner, thread.repo);
   for (const kind of ["threads", "bases", "remote"])
     await quietly([
       "git",
       "-C",
-      ours,
+      skelcrewClone,
       "update-ref",
       "-d",
       `refs/skelcrew/${kind}/${thread.folder}`,
@@ -112,10 +117,10 @@ export async function endThread(
 // Removes the thread for sc rm: ends its builder, closes its PR with the reason as a comment,
 // deletes its branch on the forge, removes its clone and marks it done. Its task stays open,
 // so sc start can start the thread over on it. Without a PR, the branch is deleted with git,
-// if Skelcrew pushed it for this thread. A thread still running is marked stopped first, so a builder that
-// submits while it exits is refused. A forge that fails leaves the thread as it is, short of
-// done, so sc rm can be run again. Refuses a thread that is done, or still setting up, whose
-// setup would go on to start its builder.
+// but only if Skelcrew pushed it for this thread. A running thread is marked stopped first, so
+// a builder that submits while it exits is refused. If the forge fails, the thread stays
+// short of done, so sc rm can run again. Refuses a thread that is done, and one still setting
+// up, whose setup would go on to start its builder.
 export async function removeThread(
   db: Database,
   tmux: string,
@@ -140,13 +145,13 @@ export async function removeThread(
   // push in its clone, and a branch of the same name may be someone else's.
   const { pr, branch } = readThread(db, thread.folder);
   const repository = repositoryOf(db, thread);
-  const ours = cloneDir(thread.owner, thread.repo);
-  const pushed = async () =>
+  const skelcrewClone = cloneDir(thread.owner, thread.repo);
+  const threadPushedBranch = async () =>
     (
       await quietly([
         "git",
         "-C",
-        ours,
+        skelcrewClone,
         "rev-parse",
         "--verify",
         "--quiet",
@@ -159,8 +164,8 @@ export async function removeThread(
       branch,
       comment: reason ? `Closed by Skelcrew: ${reason}` : null,
     });
-  else if ((await pushed()) && (await onRemote(db, repository, branch)))
-    await deleteBranch(db, repository, ours, branch);
+  else if ((await threadPushedBranch()) && (await onRemote(db, repository, branch)))
+    await deleteBranch(db, repository, skelcrewClone, branch);
   await endThread(db, tmux, thread, reason ? `removed: ${reason}` : "removed");
 }
 
@@ -182,8 +187,8 @@ export async function tellBuilder(
   const { seen, change, why } = decision;
   try {
     // Gather everything to tell into one message: the failed checks first, then the rest.
-    if (decision.conflict !== null) await freshBase(db, thread, decision.conflict);
-    const checks = await aboutChecks(db, thread, decision.failed);
+    if (decision.conflict !== null) await refreshBase(db, thread, decision.conflict);
+    const checks = await failedCheckMessages(db, thread, decision.failed);
     const text = [...checks, ...decision.tell].join("\n\n---\n\n");
     if (!agentRuns(tmux, thread.folder)) throw new Error("its builder isn't running");
     // A builder can work long after an event, but one busy this long has likely hung.
@@ -224,7 +229,7 @@ export async function tellBuilder(
     if (cancel.signal.aborted) return;
     const said = errorText(error);
     record(db, thread.folder, { seen, needs_you: true }, `couldn't tell: ${said}. ${why}`);
-    tellLead(db, tmux);
+    typeLeadNotes(db, tmux);
   } finally {
     typingEvents.delete(thread.folder);
   }

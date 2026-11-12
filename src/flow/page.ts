@@ -43,15 +43,15 @@ export function pageOf(item: Item): Page {
   const facts: Page["facts"] = [
     ["State", item.state],
     ["Branch", `${item.branch} → ${item.base}`],
-    ["Checks", checksOf(item)],
-    ["Review", latest ? aboutReview(latest) : "none"],
+    ["Checks", ciSummary(item)],
+    ["Review", latest ? reviewSummary(latest) : "none"],
   ];
   return { title: item.title, facts, body: item.body };
 }
 
 // Returns what a PR's CI says, as the strip does: Skelcrew's own check isn't CI, and one
 // failure is enough to say so while the rest still run.
-function checksOf(pr: Extract<Item, { kind: "pr" }>): string {
+function ciSummary(pr: Extract<Item, { kind: "pr" }>): string {
   const ci = pr.checks.filter((check) => check.name !== reviewCheck);
   if (ci.length === 0) return "none";
   if (ci.every((check) => check.state === "passed")) return "passing";
@@ -62,7 +62,7 @@ function checksOf(pr: Extract<Item, { kind: "pr" }>): string {
 // Returns what a review said and who said it. A forge such as GitHub won't let Skelcrew approve its
 // own PR, so Skelcrew's verdict is a comment whose first line says it: for those, that line is what
 // you want to read.
-function aboutReview(review: Extract<Item, { kind: "pr" }>["reviews"][number]) {
+function reviewSummary(review: Extract<Item, { kind: "pr" }>["reviews"][number]) {
   const [first = ""] = review.text.split("\n");
   const said = review.verdict === "commented" ? first.replaceAll("*", "").trim() : "";
   return `${said || review.verdict} · ${review.author?.login ?? "unknown"}`;

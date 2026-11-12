@@ -17,8 +17,8 @@ export type Review = { verdict: "approve" | "changes" | "failed"; body: string }
 // the reviewer's to give: only Skelcrew says a review failed.
 const Verdict = z.strictObject({ verdict: z.enum(["approve", "changes"]), body: z.string() });
 
-// Every harness holds the model to this shape. OpenAI's strict mode asks for
-// every property to be required and no others allowed.
+// The JSON schema of the reviewer's answer, which every harness holds the model to. OpenAI's
+// strict mode needs every property required and no others allowed.
 const schema = JSON.stringify({
   type: "object",
   properties: {
@@ -32,7 +32,7 @@ const schema = JSON.stringify({
 // Returns what the reviewer is told: the task it checks the PR against, where the change
 // starts, and to answer with problems the builder can act on. It tells the reviewer to assume
 // the change is wrong, since a reviewer that trusts the builder misses what the builder missed.
-function prompt(issue: { title: string; body: string }, base: string): string {
+function reviewerPrompt(issue: { title: string; body: string }, base: string): string {
   return `Review this pull request as an adversarial reviewer. Another agent wrote it. Assume it is wrong until you have checked it yourself.
 
 It should resolve this issue:
@@ -159,7 +159,7 @@ async function reviewNow(given: {
   const sprite = onSprite(path);
   // A review can be cancelled or run out of time while its folders are copied, as well as
   // while the reviewer runs.
-  const stopped = (): Review | null => {
+  const whyStopped = (): Review | null => {
     if (given.signal?.aborted) return { verdict: "failed", body: "the review was cancelled" };
     if (timeout.aborted)
       return { verdict: "failed", body: `the reviewer ran past ${limit / 60_000} minutes` };
@@ -179,7 +179,7 @@ async function reviewNow(given: {
       signal,
     });
     // Only what a shell and the tests need gets in, with the harness's own keys added.
-    const kept = { ...launch.env, ...keptEnv(env, keys) };
+    const sandboxEnv = { ...launch.env, ...keptEnv(env, keys) };
     // Tests and builds write in the clone, so it is seen as a throwaway folder too.
     const copy = join(folder, "clone");
     const { mounts, at } = await throwaway({ source: clone, copy, sprite, signal });
@@ -199,10 +199,15 @@ async function reviewNow(given: {
     });
     // Check for cancellation and the time limit on both sides of the run, so a review that was
     // stopped says so rather than reading half an answer.
-    const before = stopped();
+    const before = whyStopped();
     if (before) return before;
-    const finished = await spawnReviewer({ argv, env: kept, input: prompt(issue, base), signal });
-    const after = stopped();
+    const finished = await spawnReviewer({
+      argv,
+      env: sandboxEnv,
+      input: reviewerPrompt(issue, base),
+      signal,
+    });
+    const after = whyStopped();
     if (after) return after;
     return readVerdict(harness, folder, finished);
   } finally {
