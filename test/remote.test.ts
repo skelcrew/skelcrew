@@ -263,9 +263,9 @@ test("offers to update an out-of-date Skelcrew, updates it, then runs the comman
   installed("0000000");
   const run = await skel(["--remote", "simon@workbox", "ps"], "\n");
   expect(run.out).toContain("Skelcrew on simon@workbox is from 0000000\n");
-  expect(run.out).toContain("Skelcrew · Update it? [Y/n]");
+  expect(run.out).toContain("Update it? [Y/n]");
   expect(run.out).toContain(
-    `Skelcrew · updated simon@workbox to the Skelcrew in ~/code/skel (commit ${laptop.commit}) and restarted its daemon.`,
+    `Updated simon@workbox to the Skelcrew in ~/code/skel (commit ${laptop.commit}) and restarted its daemon.`,
   );
   expect(run.out).toContain("each lead picks up new instructions when it's next started");
   expect(run.out).not.toContain("uncommitted");
@@ -288,7 +288,7 @@ test("offers to update an out-of-date Skelcrew, updates it, then runs the comman
 test("runs the command on the old Skelcrew when you say no to the update", async () => {
   installed("0000000");
   const run = await skel(["--remote", "simon@workbox", "ps"], "n\n");
-  expect(run.out).toContain("Skelcrew · running it on the old Skelcrew on simon@workbox.");
+  expect(run.out).toContain("Running it on the old Skelcrew on simon@workbox.");
   expect(run.out).toEndWith("Skelcrew on the server got 1 arguments\n[ps]\n");
   expect(run.code).toBe(3);
   expect(calls()).toBe(`${onServer(" ps")}\n${onServer(" ps", null)}\n`);
@@ -302,10 +302,8 @@ test("a laptop with uncommitted changes always offers, and says what it copies",
   installed(laptop.commit);
   const run = await skel(["--remote", "simon@workbox", "ps"], "y\n");
   expect(calls().split("\n")[0]).toBe(onServer(" ps", `${laptop.commit}-dirty`));
-  expect(run.out).toContain(
-    "Skelcrew · ~/code/skel has uncommitted changes, and they are copied too.",
-  );
-  expect(run.out).toContain("Skelcrew · ~/code/skel is on try, not main.");
+  expect(run.out).toContain("~/code/skel has uncommitted changes, and they are copied too.");
+  expect(run.out).toContain("~/code/skel is on try, not main.");
   expect(calls()).toContain(`--define SKELCREW_BUILD="${laptop.commit}-dirty"`);
   expect(calls()).toContain("systemctl --user restart skelcrew");
 });
@@ -416,7 +414,7 @@ test("a copied Skelcrew runs a command from a laptop with its own commit", () =>
 test("a copied Skelcrew from another commit says so and runs nothing", () => {
   expect(farSkel("abc1234", "def5678")).toEqual({
     code: 98,
-    out: "Skelcrew · Skelcrew on x is from abc1234, yours is def5678.\n",
+    out: "Skelcrew on x is from abc1234, yours is def5678.\n",
   });
 });
 
@@ -437,7 +435,7 @@ test("a page runs whichever laptop's build its tmux server remembers", () => {
 test("a copied Skelcrew built with uncommitted changes is never up to date", () => {
   expect(farSkel("abc1234-dirty", "abc1234-dirty")).toEqual({
     code: 98,
-    out: "Skelcrew · Skelcrew on x is from abc1234 with uncommitted changes, yours is abc1234 with uncommitted changes.\n",
+    out: "Skelcrew on x is from abc1234 with uncommitted changes, yours is abc1234 with uncommitted changes.\n",
   });
 });
 
@@ -456,12 +454,10 @@ test("Skelcrew update is gone", async () => {
 test("sc remote add copies Skelcrew to a server, runs the first run, and prints how to connect", async () => {
   const run = await skel(["remote", "add", "simon@workbox"]);
   expect(run.code).toBe(0);
-  expect(run.out).toContain(
-    "Skelcrew · setting up simon@workbox: copying Skelcrew there and running",
-  );
+  expect(run.out).toContain("Setting up simon@workbox: copying Skelcrew there and running");
   expect(run.out).toContain("the first run on the server\n");
   expect(run.out).toEndWith(
-    "Skelcrew · simon@workbox is ready. Connect to it with:\n  sc --remote simon@workbox\n",
+    "simon@workbox is ready. Connect to it with:\n  sc --remote simon@workbox\n",
   );
   const lines = calls().split("\n");
   expect(lines[0]).toBe(onServer(" first-run"));
