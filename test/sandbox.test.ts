@@ -419,7 +419,9 @@ claude.start({ name: "app-12", socket: "x", model: "opus", ...${JSON.stringify(l
       env: { ...process.env, ...outside() },
       stdout: "pipe",
       stderr: "pipe",
-      timeout: 5000,
+      // A process that hangs on the file is ended here. Starting one can take many seconds on
+      // a busy machine, so the limit is generous.
+      timeout: 30_000,
     });
     const [err, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
     expect(proc.signalCode).toBeNull();

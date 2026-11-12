@@ -1,5 +1,6 @@
-// An installed plugin: its manifest, where it lives, and running its commands, as Skelcrew asks a
-// tracker or forge with a call, or hands git a forge's login.
+// Installed plugins: reading a plugin's manifest, finding its folder, and running its commands.
+// Skelcrew runs a plugin's call to ask a tracker or forge something, and its git_credentials to
+// give git a forge's login.
 import type { Database } from "bun:sqlite";
 import { lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -10,11 +11,13 @@ import { singleFile } from "../version.ts";
 
 // A command is a list of words, never one line for a shell.
 const Command = z.array(z.string().min(1)).min(1);
-// A plugin's version, and the Skelcrew it needs, as three numbers. Its tag is this with a v.
+// A version as three numbers, such as 0.1.0. A manifest gives the plugin's own version this way,
+// and the oldest Skelcrew it runs on. The plugin's git tag is its version with a v in front.
 export const Version = z.string().regex(/^\d+\.\d+\.\d+$/, "must be a version such as 0.1.0");
 
-// The commands each job needs. Chat has none in this version: they come with its first plugin.
-const needs = {
+// The commands a plugin must have for each job it says it does. Chat needs none yet. Its
+// commands come with the first chat plugin.
+const commandsForJob = {
   tracker: ["call"],
   forge: ["call", "git_credentials"],
   chat: [],
@@ -22,8 +25,8 @@ const needs = {
 } as const;
 
 // What a plugin's skelcrew-plugin.yaml says. Its name becomes a folder and an environment value,
-// so it is only lowercase letters, digits and dashes. It is never none, so tracker: none in a
-// repository's skelcrew.yaml always means no tracker.
+// so it is only lowercase letters, digits and dashes. It can't be none, because tracker: none in
+// a repository's skelcrew.yaml means no tracker.
 export const Manifest = z
   .object({
     name: z
@@ -45,7 +48,7 @@ export const Manifest = z
   // A plugin that names a job must have each command that job needs.
   .superRefine((manifest, context) => {
     for (const job of manifest.jobs)
-      for (const command of needs[job])
+      for (const command of commandsForJob[job])
         if (manifest[command] === undefined)
           context.addIssue({
             code: "custom",
@@ -63,19 +66,20 @@ export function readManifest(folder: string): Manifest {
   const stat = lstatSync(file, { throwIfNoEntry: false });
   if (!stat?.isFile())
     throw new Error(`${folder} has no skelcrew-plugin.yaml, so it isn't a plugin`);
-  let read: unknown;
+  let parsed: unknown;
   try {
-    read = parse(readFileSync(file, "utf8"));
+    parsed = parse(readFileSync(file, "utf8"));
   } catch (error) {
     throw new Error(`${file} isn't valid YAML: ${String(error)}`);
   }
-  const manifest = Manifest.safeParse(read);
+  const manifest = Manifest.safeParse(parsed);
   if (!manifest.success) throw new Error(`${file} isn't valid: ${z.prettifyError(manifest.error)}`);
   return manifest.data;
 }
 
-// A plugin as Skelcrew records it: its folder, and the GitHub repository it came from, or null for
-// a folder of yours, used where it is.
+// An installed plugin as the database records it: its name, its folder, and the GitHub repository
+// it came from. The source is null for a plugin installed from a folder of yours, which stays
+// where it is.
 export const Plugin = z.object({
   name: z.string(),
   folder: z.string(),
@@ -106,8 +110,9 @@ export function settingsDir(name: string): string {
   return folder;
 }
 
-// Returns how to run one of a plugin's commands: its words, with `bun` turned into the Bun
-// inside Skelcrew, and the environment it gets. A plugin written for Bun so needs nothing else
+// Returns the program and arguments that run one of a plugin's commands, and the environment
+// values to add. The environment tells the plugin its name and its settings folder. A first word
+// of bun becomes the Bun that runs Skelcrew, so a plugin written for Bun needs nothing else
 // installed. A single-file Skelcrew is Bun too, and acts as Bun when BUN_BE_BUN is set.
 export function commandFor(name: string, words: string[]) {
   const [first, ...rest] = words;
@@ -122,9 +127,10 @@ export function commandFor(name: string, words: string[]) {
   return { argv, env };
 }
 
-// A plugin's call that exited with code 2, saying the plugin needs its setup again, such as
-// when its sign-in lapsed or GitHub's app isn't on the repository. Its message names the
-// command that fixes it, and `plugin` lets sc run that setup itself when you are at a terminal.
+// The error when a plugin's call exits with code 2, which means the plugin needs its setup
+// again. That happens when its sign-in lapsed, or when GitHub's app isn't on the repository. The
+// message names the command that fixes it. `plugin` lets sc run that setup itself when you are at
+// a terminal.
 export class SetupNeeded extends Error {
   constructor(
     readonly plugin: string,
@@ -134,11 +140,11 @@ export class SetupNeeded extends Error {
   }
 }
 
-// Asks a tracker or forge one question, as Skelcrew's flow does, and returns its answer checked
-// against `Answer`. The call command gets the question as one JSON line on stdin and prints
-// one JSON answer. A plugin that fails throws its last line of stderr, naming sc plugin
-// setup when it exits with code 2, which means it needs its setup again. One that takes
-// longer than `timeout` milliseconds is ended, so a hung plugin can't hold up the daemon.
+// Asks a plugin one question through its call command, and returns the answer checked against
+// `Answer`. The call gets the question as one JSON line on stdin and prints one JSON answer. When
+// the call fails, this throws the last line of its stderr. Exit code 2 throws SetupNeeded
+// instead. A call that runs longer than `timeout` milliseconds is killed, so a hung plugin can't
+// hold up the daemon.
 export async function callPlugin<T>(
   db: Database,
   name: string,
@@ -201,13 +207,13 @@ export async function callPlugin<T>(
   return checked.data;
 }
 
-// Quotes a word for sh, which git runs a credential helper with.
-const quoted = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
+// Quotes a word for sh. git runs a credential helper through sh.
+const quoteForSh = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
 
-// Returns the git options that make a forge's git_credentials git's only credential helper,
-// for one git command. Handed over each time and never saved, so no clone's .git/config, which
-// agents read, ever names it. git runs a helper through sh, so every word is quoted, and the
-// helper runs in the plugin's folder with the plugin's environment, as any of its commands do.
+// Returns the git options that make a forge's git_credentials command git's only credential
+// helper, for one git command. The options are passed on each command and never saved. So no
+// clone's .git/config names the helper, and agents read those files. The helper runs in the
+// plugin's folder with the plugin's environment, like any of its commands.
 export function gitCredentials(db: Database, name: string): string[] {
   const plugin = findPlugin(db, name);
   const { git_credentials } = readManifest(plugin.folder);
@@ -215,8 +221,8 @@ export function gitCredentials(db: Database, name: string): string[] {
     throw new Error(`${name} has no git_credentials, so it can't lend git a login`);
   const { argv, env } = commandFor(name, git_credentials);
   // One line for sh: go to the plugin's folder, set its environment, and run the command.
-  const assignments = Object.entries(env).map(([key, value]) => `${key}=${quoted(value)}`);
-  const helper = `cd ${quoted(plugin.folder)} && ${assignments.join(" ")} exec ${argv.map(quoted).join(" ")}`;
+  const assignments = Object.entries(env).map(([key, value]) => `${key}=${quoteForSh(value)}`);
+  const helper = `cd ${quoteForSh(plugin.folder)} && ${assignments.join(" ")} exec ${argv.map(quoteForSh).join(" ")}`;
   // The empty helper first clears any you set, such as gh's, so git asks only this plugin.
   // git leaves out the repository's path unless told, and the forge's login can be for one
   // repository alone.

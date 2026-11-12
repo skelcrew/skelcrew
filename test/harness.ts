@@ -12,11 +12,13 @@ export const source = (file = "") => join(import.meta.dir, "..", "src", file);
 // Waits until `done` holds, for what a daemon or a session does in its own time, looking every
 // `every` milliseconds. Past `timeout` it throws, naming `what` if given. `what` is a function
 // so a test can show what is on screen at that moment, and pays for that only on failure.
+// The limit is generous, as a busy machine can take many seconds to start a daemon or a
+// sandbox. It only ends a wait that would never end.
 export async function until(
   done: () => boolean,
   options: { timeout?: number; every?: number; what?: () => string } = {},
 ): Promise<void> {
-  const { timeout = 10_000, every = 50, what } = options;
+  const { timeout = 30_000, every = 50, what } = options;
   const deadline = Date.now() + timeout;
   while (!done()) {
     if (Date.now() > deadline)

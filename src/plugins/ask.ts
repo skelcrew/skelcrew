@@ -1,4 +1,4 @@
-// What Skelcrew's flow asks a repository's tracker and forge, through their call command, and
+// The questions Skelcrew asks a repository's tracker and forge through their call command, and
 // finding which plugins those are. The flow knows what a tracker or forge does, never which
 // plugin does it.
 import type { Database } from "bun:sqlite";
@@ -9,7 +9,7 @@ import { Item, type Task } from "../flow/copy.ts";
 import { callPlugin, installedPlugins, readManifest } from "./plugin.ts";
 
 // Returns the installed plugins that do the job.
-export function pluginsFor(db: Database, job: "tracker" | "forge"): string[] {
+export function pluginsWithJob(db: Database, job: "tracker" | "forge"): string[] {
   // A plugin whose manifest can't be read does no job, so one broken plugin stops nothing else.
   return installedPlugins(db)
     .filter((plugin) => {
@@ -22,10 +22,11 @@ export function pluginsFor(db: Database, job: "tracker" | "forge"): string[] {
     .map((plugin) => plugin.name);
 }
 
-// Returns the repository's tracker, or null. Its forge is its tracker when the forge can be one,
-// as GitHub can, so a repository on GitHub plans in its issues with nothing to set up. Its
-// skelcrew.yaml can name another, used only when installed, or say none, for git alone. A file
-// that can't be read names none.
+// Returns the plugin that is the repository's tracker, or null for none. By default it is the
+// repository's forge, when that forge can be a tracker, as GitHub can. So a repository on GitHub
+// plans in its issues with nothing to set up. Its skelcrew.yaml can name another tracker, or say
+// none to work from git alone. A named tracker counts only while it is installed. A skelcrew.yaml
+// that can't be read gives none.
 export function trackerOf(db: Database, repository: Repository): string | null {
   let named: string | undefined;
   try {
@@ -36,14 +37,14 @@ export function trackerOf(db: Database, repository: Repository): string | null {
   if (named === "none") return null;
   // A named tracker that isn't installed gives none, not the forge: its tasks are planned elsewhere.
   const tracker = named ?? repository.forge;
-  return tracker !== null && pluginsFor(db, "tracker").includes(tracker) ? tracker : null;
+  return tracker !== null && pluginsWithJob(db, "tracker").includes(tracker) ? tracker : null;
 }
 
-// Returns the repository's forge: the plugin that claimed its remote, while it is installed,
-// or null.
+// Returns the plugin that is the repository's forge: the one that claimed its remote. Returns
+// null when no forge claimed it, or that forge is no longer installed.
 export function forgeOf(db: Database, repository: Repository): string | null {
   const { forge } = repository;
-  return forge !== null && pluginsFor(db, "forge").includes(forge) ? forge : null;
+  return forge !== null && pluginsWithJob(db, "forge").includes(forge) ? forge : null;
 }
 
 // Returns the repository's tracker and forge with the jobs each does for it, one entry per
@@ -63,49 +64,52 @@ export function pluginsOf(
   ];
 }
 
-// The key a forge gives a repository is owner/name, which becomes folders, so neither part
-// may climb out of Skelcrew's.
-const Part = z.string().regex(/^(?!\.\.?$)[\w.-]+$/);
+// One part of the owner/name key a forge gives a repository. Each part becomes a folder name, so
+// . and .. are refused: they would lead outside Skelcrew's folders.
+const KeyPart = z.string().regex(/^(?!\.\.?$)[\w.-]+$/);
 // A forge's answer when the remote is its own: the repository's key, short name, link and
 // clone URL, whether you can push to it and whether it is a fork.
 const Claimed = z.object({
   key: z.string().refine((key) => {
     const parts = key.split("/");
-    return parts.length === 2 && parts.every((part) => Part.safeParse(part).success);
+    return parts.length === 2 && parts.every((part) => KeyPart.safeParse(part).success);
   }, "must be owner/name"),
-  name: Part,
+  name: KeyPart,
   link: z.string(),
   clone: z.string().min(1),
   push: z.boolean(),
   fork: z.boolean(),
-  // Who commits in the forge's name, such as its app's bot, as git writes an author.
+  // The author of commits made in the forge's name, such as its app's bot. The name and email
+  // can't hold characters that would break git's author line.
   author: z
     .object({ name: z.string().regex(/^[^<>\n]+$/), email: z.string().regex(/^[^<>\s]+$/) })
     .optional(),
 });
 export type Claimed = z.infer<typeof Claimed> & { forge: string };
 
-// Asks each installed forge whether the remote is its own, and returns the first one's
-// answer, with its name, or null when none claims it. A forge that claims it but fails, such
-// as one whose app isn't installed there, throws its reason, as the repository is its own.
+// Asks each installed forge whether the remote is its own. Returns the first claiming forge's
+// answer with its name, or null when none claims it. A forge that fails throws its reason and
+// stops the search. GitHub's fails, for one, when the remote is its own but its app isn't
+// installed there.
 export async function claims(db: Database, remote: string): Promise<Claimed | null> {
   // Asked in name order, so the same forge wins each time two would claim one remote.
-  for (const forge of pluginsFor(db, "forge")) {
+  for (const forge of pluginsWithJob(db, "forge")) {
     const claimed = await callPlugin(db, forge, { ask: "claims", remote }, Claimed.nullable());
     if (claimed) return { ...claimed, forge };
   }
   return null;
 }
 
-// The repository as a plugin knows it: the key its forge gave it.
-const keyOf = (repository: Repository) => `${repository.owner}/${repository.repo}`;
+// Returns the key plugins know the repository by: owner/name, as its forge gave it.
+const repositoryKey = (repository: Repository) => `${repository.owner}/${repository.repo}`;
 
 // A plugin's answer to what changed: the issues and PRs, and what to pass as `next` the next
 // time, or null to ask for everything open again.
 const Changed = z.object({ items: z.array(Item), next: z.string().nullable() });
 
-// Asks a plugin what changed in the repository since `next`, or everything open without it,
-// as the jobs it does there, with the PRs Skelcrew watches. Returns its items and the next `next`.
+// Asks a plugin what changed in the repository since `next`, or for everything open when `next`
+// is null. The plugin answers for the jobs it does there, and for `prs`, the PRs Skelcrew
+// watches. Returns the items, and the `next` to pass on the following call.
 export async function changed(
   db: Database,
   plugin: string,
@@ -117,13 +121,14 @@ export async function changed(
   return callPlugin(
     db,
     plugin,
-    { ask: "changed", repository: keyOf(repository), jobs, next, prs },
+    { ask: "changed", repository: repositoryKey(repository), jobs, next, prs },
     Changed,
   );
 }
 
-// Returns the repository's tracker, or throws saying it has none, for what only a tracker does.
-function trackerFor(db: Database, repository: Repository): string {
+// Returns the repository's tracker, or throws saying it has none. Used before asking what only a
+// tracker can do.
+function requireTracker(db: Database, repository: Repository): string {
   const tracker = trackerOf(db, repository);
   if (tracker === null)
     throw new Error(
@@ -132,8 +137,9 @@ function trackerFor(db: Database, repository: Repository): string {
   return tracker;
 }
 
-// Returns the repository's forge, or throws saying it has none, for what only a forge does.
-function forgeFor(db: Database, repository: Repository): string {
+// Returns the repository's forge, or throws saying it has none. Used before asking what only a
+// forge can do.
+function requireForge(db: Database, repository: Repository): string {
   const forge = forgeOf(db, repository);
   if (forge === null) throw new Error(`${repository.name} has no forge`);
   return forge;
@@ -148,8 +154,8 @@ export async function createTask(
 ): Promise<Task> {
   const task = await callPlugin(
     db,
-    trackerFor(db, repository),
-    { ask: "create task", repository: keyOf(repository), title, body },
+    requireTracker(db, repository),
+    { ask: "create task", repository: repositoryKey(repository), title, body },
     Item,
   );
   // Item also covers PRs, and only a task is right here.
@@ -165,8 +171,8 @@ export async function createTask(
 export async function took(db: Database, repository: Repository, task: string): Promise<boolean> {
   const answer = await callPlugin(
     db,
-    trackerFor(db, repository),
-    { ask: "took", repository: keyOf(repository), task },
+    requireTracker(db, repository),
+    { ask: "took", repository: repositoryKey(repository), task },
     z.object({ took: z.boolean() }).nullable(),
   );
   return answer?.took ?? true;
@@ -181,8 +187,8 @@ export async function markSeen(
 ): Promise<void> {
   await callPlugin(
     db,
-    forgeFor(db, repository),
-    { ask: "seen", repository: keyOf(repository), ...item },
+    requireForge(db, repository),
+    { ask: "seen", repository: repositoryKey(repository), ...item },
     z.null(),
   );
 }
@@ -196,8 +202,8 @@ export async function openPr(
 ): Promise<number> {
   const opened = await callPlugin(
     db,
-    forgeFor(db, repository),
-    { ask: "open pr", repository: keyOf(repository), ...pr },
+    requireForge(db, repository),
+    { ask: "open pr", repository: repositoryKey(repository), ...pr },
     z.object({ number: z.number().int().positive() }),
   );
   return opened.number;
@@ -212,8 +218,8 @@ export async function closePr(
 ): Promise<void> {
   await callPlugin(
     db,
-    forgeFor(db, repository),
-    { ask: "close pr", repository: keyOf(repository), ...pr },
+    requireForge(db, repository),
+    { ask: "close pr", repository: repositoryKey(repository), ...pr },
     z.null(),
   );
 }
@@ -226,8 +232,8 @@ export async function postReview(
 ): Promise<string> {
   const posted = await callPlugin(
     db,
-    forgeFor(db, repository),
-    { ask: "review", repository: keyOf(repository), ...review },
+    requireForge(db, repository),
+    { ask: "review", repository: repositoryKey(repository), ...review },
     z.object({ id: z.string() }),
   );
   return posted.id;
@@ -241,8 +247,8 @@ export async function setStatus(
 ): Promise<void> {
   await callPlugin(
     db,
-    forgeFor(db, repository),
-    { ask: "status", repository: keyOf(repository), ...status },
+    requireForge(db, repository),
+    { ask: "status", repository: repositoryKey(repository), ...status },
     z.null(),
   );
 }
@@ -255,8 +261,8 @@ export async function failedLog(
 ): Promise<string> {
   const read = await callPlugin(
     db,
-    forgeFor(db, repository),
-    { ask: "log", repository: keyOf(repository), check },
+    requireForge(db, repository),
+    { ask: "log", repository: repositoryKey(repository), check },
     z.object({ log: z.string() }),
   );
   return read.log;
@@ -274,7 +280,7 @@ export async function wake(
   await callPlugin(
     db,
     plugin,
-    { ask: stop ? "unwake" : "wake", repository: keyOf(repository), url },
+    { ask: stop ? "unwake" : "wake", repository: repositoryKey(repository), url },
     z.null(),
   );
 }
