@@ -144,7 +144,7 @@ function tokenProblem(token: string): string | null {
 function saveClaudeToken(): void {
   // Each wrong paste asks again, saying what was wrong with the last one.
   let question = "Token:";
-  for (;;) {
+  while (true) {
     const answer = promptSecret(question);
     if (answer === null) throw new Error("no token was pasted, so none is saved");
     const token = answer.trim();
@@ -346,7 +346,7 @@ export function firstRun(from?: string): void {
     // which login comes next.
     let taken = "";
     const asked = { reviewer: false };
-    for (;;) {
+    while (true) {
       const [step] = stepsToTake(env, asked);
       if (!step) break;
       // A step that comes back right after it was taken didn't do its job, and asking again

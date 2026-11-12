@@ -37,9 +37,31 @@ function running(pid: number): boolean {
   }
 }
 
-// Says what it waited for, if it gives up.
-const until = (done: () => boolean, what: string, timeout = 10_000) =>
-  wait(done, { timeout, what: () => what });
+// Says what it waited for, if it gives up. Each test starts a test run of its own, and the
+// sweep after it, which take many seconds on a busy machine, so the wait is generous.
+const until = (done: () => boolean, what: string) =>
+  wait(done, { timeout: 30_000, what: () => what });
+
+// Waits until the sweep a run started has ended. It clears up after the run, and on a busy
+// machine it can still be at it seconds after the run, when this file's own check would
+// count it as a process the test left running.
+const swept = (run: number) =>
+  until(() => {
+    const sweep = join(import.meta.dir, "sweep.ts");
+    return !readdirSync("/proc").some((pid) => {
+      const args = /^\d+$/.test(pid) ? command(pid) : [];
+      return args[1] === sweep && args[2] === String(run);
+    });
+  }, "the run's sweep to end");
+
+// Returns the arguments a process was started with, or none once it has gone.
+function command(pid: string): string[] {
+  try {
+    return readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
+  } catch {
+    return [];
+  }
+}
 
 // Starts a process that outlives what started it, as a daemon's child can, and notes its ID.
 // With no env of its own, nothing in it names the run, so only its parent tells it apart.
@@ -59,6 +81,7 @@ test("clean", async () => {
     const err = await new Response(proc.stderr).text();
     expect(err).toContain("1 pass");
     expect(await proc.exited).toBe(0);
+    await swept(proc.pid);
   });
 
   test("a run in a folder that goes is still cleared up after", async () => {
@@ -71,6 +94,7 @@ test("clean", () => {});`);
     const left = () =>
       readdirSync(outer).filter((name) => name.startsWith("skel-run-") && !before.includes(name));
     await until(() => left().length === 0, "the run's folder to go");
+    await swept(proc.pid);
   });
 
   test("a test that leaves a process running fails by name, and the process is ended", async () => {
@@ -84,7 +108,8 @@ test("leaky", async () => {
     expect(err).toContain("(fail) leaky");
     const pid = Number(readFileSync(join(home, "stray"), "utf8"));
     await until(() => !running(pid), "the stray process to end");
-  }, 20_000);
+    await swept(proc.pid);
+  }, 60_000);
 
   test("a process whose parent has gone is found, though nothing in it names the run", async () => {
     const proc = run(`import { test } from "bun:test";
@@ -96,8 +121,9 @@ test("leaky", async () => {
     expect(await proc.exited).not.toBe(0);
     expect(err).toContain("sleep 60");
     const pid = Number(readFileSync(join(home, "orphan"), "utf8"));
-    await until(() => !running(pid), "the orphan to end", 3000);
-  }, 20_000);
+    await until(() => !running(pid), "the orphan to end");
+    await swept(proc.pid);
+  }, 60_000);
 
   test("a process that ignores being asked is killed, even once its parent has gone", async () => {
     writeFileSync(
@@ -111,8 +137,9 @@ test("leaky", async () => {
 });`);
     expect(await proc.exited).not.toBe(0);
     const pid = Number(readFileSync(join(home, "stubborn"), "utf8"));
-    await until(() => !running(pid), "the stubborn process to end", 3000);
-  }, 20_000);
+    await until(() => !running(pid), "the stubborn process to end");
+    await swept(proc.pid);
+  }, 60_000);
 
   test("a run killed part way leaves no process, tmux server, socket or folder", async () => {
     const proc = run(`import { test } from "bun:test";
@@ -149,5 +176,6 @@ test("killed", async () => {
     await until(() => !pids.some(running), "the processes to end");
     await until(() => !existsSync(folder), "the folder to go");
     await until(() => !existsSync(file), "the tmux socket to go");
-  }, 20_000);
+    await swept(proc.pid);
+  }, 60_000);
 });

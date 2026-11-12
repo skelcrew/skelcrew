@@ -438,19 +438,23 @@ try {
 test("a call that hangs in a program it started still ends at its timeout, with that program", async () => {
   publish("skelcrew/skelcrew-fake", "0.1.0");
   await skel(["plugin", "install", "skelcrew/skelcrew-fake"], "y\n");
-  const started = Date.now();
+  // The call itself is timed, inside the daemon's process, as starting that process can take
+  // seconds on a busy machine.
   const { out } =
     await asDaemon(`import { z } from ${JSON.stringify(Bun.resolveSync("zod", import.meta.dir))};
 import { openDb } from ${JSON.stringify(source("db.ts"))};
 import { callPlugin } from ${JSON.stringify(source("plugins/plugin.ts"))};
+const started = Date.now();
 try {
   await callPlugin(openDb(), "fake", { ask: "stuck" }, z.object({}), 500);
 } catch (error) {
   console.log("error: " + error.message);
-}`);
-  expect(out).toBe("error: fake didn't answer within 0.5 seconds\n");
-  expect(Date.now() - started).toBeLessThan(4000);
-}, 40_000);
+}
+console.log(Date.now() - started);`);
+  const [said, took] = out.split("\n");
+  expect(said).toBe("error: fake didn't answer within 0.5 seconds");
+  expect(Number(took)).toBeLessThan(4000);
+}, 60_000);
 
 test("git asks a forge's git_credentials for its login, which is never saved", async () => {
   publish("skelcrew/skelcrew-fake", "0.1.0");

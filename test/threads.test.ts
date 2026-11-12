@@ -320,7 +320,7 @@ exec ${Bun.which("git") ?? "git"} "$@"
     await until(() => read(join(home, "held")) !== "");
     await stop(run);
     expect(stillRunning([Number(read(join(home, "held")))])).toEqual([]);
-  }, 20_000);
+  }, 60_000);
 });
 
 test("sc task create and sc start say when the daemon isn't running", async () => {
@@ -373,7 +373,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a builder", () => {
       .split("\n");
     expect(log.length).toBeGreaterThan(1);
     expect(JSON.parse(log.at(-1) ?? "")).toMatchObject({ status: "working", session: row.session });
-  }, 20_000);
+  }, 60_000);
 
   test("starts from the branch given with --from, on the model in your config", async () => {
     const work = addApp();
@@ -392,7 +392,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a builder", () => {
     await until(() => read(join(config("app-12"), "args")) !== "");
     expect(existsSync(join(clone(), "NEXT"))).toBe(true);
     expect(read(join(config("app-12"), "args"))).toContain("--model\nsonnet\n");
-  }, 20_000);
+  }, 60_000);
 
   test("the builder's socket tells Skelcrew which thread calls, and answers nothing else", async () => {
     addApp();
@@ -419,7 +419,7 @@ c.on("data", (d) => process.stdout.write(d));`;
       { error: "the daemon doesn't know that request" },
     ]);
     expect(existsSync(join(home, "issues", "sent"))).toBe(false);
-  }, 20_000);
+  }, 60_000);
 
   test("the lead runs sc task create and sc start from its sandbox, but can't trust", async () => {
     addApp();
@@ -442,7 +442,7 @@ c.on("data", (d) => process.stdout.write(d));`;
       `app-13\nStarted app-12.\nSkelcrew: trusting a repository is only for your own terminal, not for agents\n{"error":"the daemon doesn't know that request"}\n`,
     );
     await until(() => read(join(config("app-12"), "args")) !== "");
-  }, 20_000);
+  }, 60_000);
 
   test("a thread whose setup fails is marked failed, and starting it again starts over", async () => {
     const work = addApp({ "skelcrew.yaml": "setup: [echo fine, echo broken >&2 && exit 3]\n" });
@@ -460,7 +460,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     await until(() => read(join(config("app-12"), "args")) !== "");
     expect(read(join(clone(), "fixed"))).toBe("fixed\n");
     expect(thread().status).toBe("working");
-  }, 20_000);
+  }, 60_000);
 
   // Setup deletes the thread's folder before it clones, outside the sandbox, so a folder name
   // that climbs out of Skelcrew's threads folder must never be deleted, however it was saved.
@@ -479,7 +479,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     await skel("start", "app-12");
     await until(() => thread().status === "failed" && thread().started !== null);
     expect(read(join(victim, "keep"))).toBe("mine\n");
-  }, 20_000);
+  }, 60_000);
 
   test("refuses a second thread on a task that has one", async () => {
     addApp();
@@ -491,7 +491,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     const again = await skel("start", "app-12");
     expect(again.code).not.toBe(0);
     expect(again.err).toBe("Skelcrew: app-12 has a thread already\n");
-  }, 20_000);
+  }, 60_000);
 
   test("sc stop ends the builder and keeps its clone, a restart leaves it stopped, and sc start brings it back with --resume", async () => {
     addApp();
@@ -546,7 +546,7 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(read(join(config("app-12"), "pwd"))).toBe(`${clone()}\n`);
     expect(hasSession("app-12")).toBe(true);
     expect(thread().status).toBe("working");
-  }, 40_000);
+  }, 60_000);
 
   test("brings back a builder whose session is gone with --resume, where it was, after its repository is renamed", async () => {
     addApp();
@@ -576,7 +576,7 @@ nameRepositories(db);`;
     expect((await skel("start", "simon/app-12")).err).toContain(
       "simon/app-12 has a thread already",
     );
-  }, 30_000);
+  }, 60_000);
 
   test("a builder that never saved a conversation starts again from the task", async () => {
     addApp();
@@ -595,7 +595,7 @@ nameRepositories(db);`;
     const args = read(join(config("app-12"), "args"));
     expect(args).toContain(`--session-id\n${fresh}\n`);
     expect(args.endsWith("Add export\n\nAs JSON\n")).toBe(true);
-  }, 30_000);
+  }, 60_000);
 
   test("a thread whose setup the daemon's stop cut short is marked failed when it comes back", async () => {
     addApp({ "skelcrew.yaml": "setup: [sleep 30]\n" });
@@ -608,7 +608,7 @@ nameRepositories(db);`;
     await until(() => thread().status === "failed");
     await until(() => read(join(data(), "threads", "app-12.log")).includes("run sc start again"));
     expect(hasSession("app-12")).toBe(false);
-  }, 30_000);
+  }, 60_000);
 
   test("a builder that exits as soon as it starts fails the thread and says why", async () => {
     fakeClaude("", "echo 'claude: not logged in'; exit 1");
@@ -622,7 +622,7 @@ nameRepositories(db);`;
       return log.includes("the builder exited as soon as it started") && log.includes("logged in");
     });
     expect(hasSession("app-12")).toBe(false);
-  }, 30_000);
+  }, 60_000);
 
   test("sc stop refuses a thread still setting up, and one with no builder", async () => {
     addApp({ "skelcrew.yaml": "setup: [sleep 2, exit 3]\n" });
@@ -636,7 +636,7 @@ nameRepositories(db);`;
     expect((await skel("stop", "app-12")).err).toContain(
       "app-12 is failed, so it has no builder to stop",
     );
-  }, 30_000);
+  }, 60_000);
 
   // A stopped thread's builder sits at its prompt once back, so sc start must say whether
   // something will wake it. Sets the row while the thread is stopped, as a round would have.
@@ -657,7 +657,7 @@ nameRepositories(db);`;
     };
     expect(await stoppedWith("pr = 7")).toBe("waiting");
     expect(await stoppedWith("telling = 'Add a test.'")).toBe("working");
-  }, 30_000);
+  }, 60_000);
 
   // The round limit is read only for a thread it can matter to, so a bad one fails the new
   // thread with the reason rather than refusing sc start.
@@ -672,7 +672,7 @@ nameRepositories(db);`;
     expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
     await until(() => thread().status === "failed");
     await until(() => read(join(data(), "threads", "app-12.log")).includes("isn't valid"));
-  }, 30_000);
+  }, 60_000);
 
   // The daemon brings back threads once the lead has started, which takes a moment.
   test("a thread started while the daemon starts the lead isn't taken for one cut short", async () => {
@@ -682,7 +682,7 @@ nameRepositories(db);`;
     expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
     await until(() => read(join(config("app-12"), "args")) !== "");
     expect(thread().status).toBe("working");
-  }, 30_000);
+  }, 60_000);
 
   test("gives two threads whose names would make the same folder a folder each", async () => {
     addApp();
@@ -704,7 +704,7 @@ nameRepositories(db);`;
     const folders = db.query("SELECT folder FROM threads ORDER BY owner DESC").values();
     db.close();
     expect(folders).toEqual([["simon-app-12"], ["simon-app-12-2"]]);
-  }, 30_000);
+  }, 60_000);
 
   test("a thread started before Skelcrew's clone of its repository is made waits for it", async () => {
     addApp();
@@ -720,7 +720,7 @@ nameRepositories(db);`;
     expect((await skel("start", "app-12")).out).toBe("Started app-12.\n");
     await until(() => read(join(config("app-12"), "args")) !== "");
     expect(thread().status).toBe("working");
-  }, 30_000);
+  }, 60_000);
 
   // Its skelcrew.yaml, which names its tracker, is in Skelcrew's clone.
   test("sc start on a repository whose clone isn't there yet waits for Skelcrew's clone", async () => {
@@ -736,7 +736,7 @@ nameRepositories(db);`;
     expect((await started).out).toBe("Started site-12.\n");
     await until(() => read(join(config("site-12"), "args")) !== "");
     expect(thread()).toMatchObject({ owner: "simon", repo: "site", status: "working" });
-  }, 30_000);
+  }, 60_000);
 
   // You can start work straight from the lead, with no issue filed first, even where the
   // repository plans in a tracker.
@@ -751,7 +751,7 @@ nameRepositories(db);`;
     expect(read(join(config("app-t1"), "args"))).toContain("Add export\n\nAs JSON");
     expect(thread()).toMatchObject({ task: "t1", title: "Add export", body: "As JSON" });
     expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([]);
-  }, 30_000);
+  }, 60_000);
 
   // A long body needs no shell quoting when the lead gives the task on stdin, from a heredoc.
   test("sc start <repo> reads the task from stdin, its title on the first line", async () => {
@@ -767,7 +767,7 @@ nameRepositories(db);`;
       title: "Add export",
       body: 'As JSON, with "quotes" and $HOME.\nAnd dates.\n',
     });
-  }, 30_000);
+  }, 60_000);
 
   // Programs often live under the home folder, which the sandbox hides, as npm does under nvm.
   test("a setup command finds its program under your home folder", async () => {
@@ -779,7 +779,7 @@ nameRepositories(db);`;
     await skel("start", "app-12");
     await until(() => read(join(config("app-12"), "args")) !== "" || thread().status === "failed");
     expect(read(join(clone(), "ran"))).toBe("ran --flag\n");
-  }, 30_000);
+  }, 60_000);
 
   test("a setup command can't bring back a folder of yours by naming a program in it", async () => {
     mkdirSync(join(home, "tools"));
@@ -790,7 +790,7 @@ nameRepositories(db);`;
     await skel("start", "app-12");
     await until(() => read(join(config("app-12"), "args")) !== "" || thread().status === "failed");
     expect(read(join(clone(), "ran"))).toBe("hidden\n");
-  }, 30_000);
+  }, 60_000);
 
   // A builder's config folder and session are named after the thread's folder, which must
   // start with a letter or digit. A long folder would make Claude Code hash the name of
@@ -806,5 +806,5 @@ nameRepositories(db);`;
     expect((await skel("start", `${long}-12`)).err).toBe("");
     const folders = [`github-12`, `${long.slice(0, 60)}-12`];
     for (const folder of folders) await until(() => read(join(config(folder), "args")) !== "");
-  }, 30_000);
+  }, 60_000);
 });

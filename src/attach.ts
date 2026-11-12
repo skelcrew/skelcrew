@@ -58,7 +58,7 @@ export async function restartStaleDaemon(): Promise<void> {
   // Done once a daemon answers that runs what this Skelcrew wants. The old one can still
   // answer for a moment while it stops.
   const deadline = Date.now() + 10_000;
-  for (;;) {
+  while (true) {
     const now = await daemonRuns();
     if (now && !daemonShouldRun(now)) return;
     if (Date.now() > deadline)
