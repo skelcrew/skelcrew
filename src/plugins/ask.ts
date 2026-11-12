@@ -199,6 +199,21 @@ export async function openPr(
   return opened.number;
 }
 
+// Closes the PR and deletes its branch on the forge, for sc rm, first posting the comment
+// when there is one, so the PR says why it closed.
+export async function closePr(
+  db: Database,
+  repository: Repository,
+  pr: { pr: number; branch: string; comment: string | null },
+): Promise<void> {
+  await callPlugin(
+    db,
+    forgeFor(db, repository),
+    { ask: "close pr", repository: keyOf(repository), ...pr },
+    z.null(),
+  );
+}
+
 // Posts a review's verdict and body on the PR, for the commit it covers, and returns its ID.
 export async function postReview(
   db: Database,

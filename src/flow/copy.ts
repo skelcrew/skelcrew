@@ -17,7 +17,7 @@ const Author = z.object({
 // A comment on an item, or the text of a review on a PR.
 const Comment = z.object({ id: z.string(), text: z.string(), author: Author.nullable() });
 
-// A task's ID in its tracker, or Skelcrew's own for a thread with no tracker, such as t1. It
+// A task's ID in its tracker, or Skelcrew's own for a thread with no task there, such as t1. It
 // names the thread's folder, which setup deletes, and its branch, so it holds only letters,
 // digits, underscores and dashes, starting with a letter or digit: never a / or a .. that
 // would reach outside Skelcrew's threads folder.
@@ -176,7 +176,7 @@ export function itemAt(db: Database, link: string): Item | null {
 
 // Returns the task a thread works on, for its reviewer and its PR: its item in Skelcrew's copy,
 // where the tracker's latest words are, or else what the thread saved as it started, as for a
-// thread with no tracker. Only a task from the copy has a line that closes it.
+// thread with no task in the tracker. Only a task from the copy has a line that closes it.
 export function threadTask(
   db: Database,
   thread: { owner: string; repo: string; task: string; title: string | null; body: string | null },

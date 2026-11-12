@@ -1,7 +1,7 @@
-// Which Skelcrew this is: the release, or the commit of a build from a checkout, as stamped in when
-// it was built. sc --version and the sidebar's header say it, and --remote compares it. Also
-// where this Skelcrew lives, worked out only here, as a moved source file would quietly break any
-// second copy of that.
+// Which Skelcrew this is: the release, or the commit of a build from a checkout, as stamped in
+// when it was built. sc --version and the sidebar's header show it, and --remote compares it.
+// Also where this Skelcrew lives on disk. Only this file works that out, so moving a source file
+// can't break a second copy.
 import { join, resolve } from "node:path";
 import { z } from "zod";
 
@@ -40,8 +40,8 @@ export const version = release || checkoutVersion();
 declare const SKELCREW_RELEASES: string;
 export const releases = typeof SKELCREW_RELEASES === "string" ? SKELCREW_RELEASES : "";
 
-// Follows the commit of a build made with changes not committed. Such a build can't say
-// what it holds, so it never counts as up to date.
+// Added after the commit of a build with uncommitted changes. Such a build can't say what it
+// holds, so it never counts as up to date.
 export const dirty = "-dirty";
 
 // Returns a build as people read it.
