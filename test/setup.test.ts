@@ -114,10 +114,12 @@ afterEach(() => {
 
 function calls(): string {
   const log = join(home, "calls");
-  // The long tmux line that opens the screen is cut to the agent it opens on.
+  // The long tmux line that opens the screen is cut to the agent it opens on. Asking tmux's
+  // version, which each opening does, is left out.
   const said = existsSync(log) ? readFileSync(log, "utf8") : "";
   return said
     .replace(/tmux -L skelcrew -f \/dev\/null source-file -\n/g, "")
+    .replace(/tmux -V\n/g, "")
     .replace(/tmux -L skelcrew-screen .* sh skelcrew (\S+) \S+ ;.*/g, "screen on $1");
 }
 
