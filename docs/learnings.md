@@ -106,6 +106,9 @@ that covers the code you are about to write.
 - **bwrap being installed doesn't mean it can run.** On Ubuntu 24.04 and later, AppArmor
   blocks the namespaces it needs unless a profile allows them. Check by running
   `bwrap --ro-bind / / true`, not by finding the binary.
+- **bwrap has overlays only since 0.11.** Reviews see the thread's clone through
+  `--overlay-src` and `--tmp-overlay`. Ubuntu 24.04's bwrap 0.9 passes every other check,
+  then fails every review with "Unknown option --overlay-src". Check `bwrap --version` too.
 - **bwrap can't start inside Skelcrew's own sandbox.** Once Skelcrew builds Skelcrew, tests that start a
   real sandbox can't run there. That is the one place they may skip.
 - **Hide the home folder, then put back only what the agent needs.** Programs often live

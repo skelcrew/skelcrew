@@ -64,6 +64,16 @@ function fake(name: string, body: string): void {
   });
 }
 
+// A bwrap that says it is this version, and logs every other call as the fakes do. Asking its
+// version isn't logged, so tests that read the calls see only what Skelcrew ran in a sandbox.
+function bwrapVersion(version: string): void {
+  writeFileSync(
+    join(bin, "bwrap"),
+    `#!/bin/sh\n[ "$1" = --version ] && echo "bubblewrap ${version}" && exit 0\necho "bwrap $*" >> "$HOME/calls"\n`,
+    { mode: 0o755 },
+  );
+}
+
 beforeEach(async () => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-setup-test-")));
   checkout = join(home, "skel");
@@ -74,7 +84,7 @@ beforeEach(async () => {
   // PATH holds only this folder, so a test can take a tool away.
   symlinkSync(Bun.which("git") ?? "git", join(bin, "git"));
   fake("tmux", "exit 0");
-  fake("bwrap", "exit 0");
+  bwrapVersion("0.11.1");
   // Only there to be found: you run claude setup-token yourself.
   fake("claude", "exit 0");
   fake(
@@ -669,6 +679,19 @@ test("on a Mac, names git with what Homebrew installs", async () => {
   const run = await skelOnMac();
   expect(run.code).toBe(1);
   expect(run.err).toContain("  brew install git\n");
+});
+
+// Reviews look at the thread's clone through an overlay, which bubblewrap has only since 0.11.
+// Ubuntu 24.04's is 0.9, which would pass every other check and fail every review.
+test("refuses a bwrap too old for reviews, before asking anything", async () => {
+  bwrapVersion("0.9.0");
+  const run = await skel("1\nsk-ant-oat01-good\n");
+  expect(run.code).toBe(1);
+  expect(run.err).toBe(
+    "Skelcrew: bwrap is 0.9.0 here, and Skelcrew needs 0.11 or newer for its reviews. Ubuntu 26.04 has it.\n",
+  );
+  expect(run.out).not.toContain("harness");
+  expect(calls()).toBe("");
 });
 
 test("gives the AppArmor advice when bwrap can't run", async () => {
