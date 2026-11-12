@@ -141,6 +141,10 @@ that covers the code you are about to write.
   has one for the machine, so agents could disturb a Postgres you run yourself. Decided by
   Simon: running tests matters more.
 - **Agents share the network.** They can reach ports on localhost and abstract sockets.
+- **Postgres clients look for their socket in `/tmp`, which the sandbox hides.** With no
+  host given they open `/tmp/.s.PGSQL.5432`, so every test that needed the database failed
+  with the socket denied. Skelcrew sets `PGHOST=localhost` in every sandbox, so they connect
+  over TCP instead. A host the project names itself still wins.
 - **Mount the folder of clones, not each clone.** A mount per clone, made when the sandbox
   starts, misses repositories brought in later. Mount their parent folder, and create it
   first: bwrap refuses to mount a folder that doesn't exist.

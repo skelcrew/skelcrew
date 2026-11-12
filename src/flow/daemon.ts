@@ -309,6 +309,11 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         return { task: `${repository.name}-${task.id}` };
       }
       case "review": {
+        // A builder may ask only for its own thread, such as when you ask on its pull request
+        // for another review. Its own thread's name is in the refusal, as nothing else tells it.
+        const builder = builderOf(caller);
+        if (builder && threadOn(db, request.repo, request.task)?.folder !== builder.folder)
+          throw new Error(`you may ask for a review of ${threadName(db, builder)} only`);
         const thread = findThread(db, request.repo, request.task);
         rerunReview(db, tmux, thread.folder);
         return { reviewing: threadName(db, thread) };
