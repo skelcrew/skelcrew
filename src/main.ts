@@ -61,6 +61,17 @@ function taskFrom(text: string): { title: string; body: string } {
   return { title, body };
 }
 
+// Returns a task's body as given, or throws when it is blank, before anything reaches the
+// tracker or starts a thread. A builder sees only the title and body. A heredoc that failed
+// inside "$(...)" leaves the body empty while the command still runs.
+function bodyFor(command: string, body: string): string {
+  if (!body.trim())
+    throw new Error(
+      `${command} needs a body, which is all a builder sees of the task besides its title.`,
+    );
+  return body;
+}
+
 // Prints why a command can't run as given, and exits with an error. For a command Skelcrew
 // knows, it blames the arguments rather than saying the command doesn't exist.
 function usage(command?: string): never {
@@ -267,7 +278,7 @@ async function taskCommand(args: string[], json: boolean): Promise<void> {
     return;
   }
   // sc task show takes a task's name, such as app-13. sc task create takes a repository
-  // with a title and a body, which may be empty.
+  // with a title and a body.
   const task = splitTaskName(rest[0]);
   if (sub === "show" && task && rest.length === 1) {
     printTask(await askForTask(...task), json);
@@ -275,7 +286,7 @@ async function taskCommand(args: string[], json: boolean): Promise<void> {
   }
   const [repository, title, body] = rest;
   if (sub === "create" && repository && title && body !== undefined && rest.length === 3) {
-    console.log(await createTask(repository, title, body));
+    console.log(await createTask(repository, title, bodyFor("sc task create", body)));
     return;
   }
   usage(command);
@@ -300,7 +311,7 @@ async function threadCommand(args: string[]): Promise<void> {
   // no task in the tracker.
   const [title, body] = rest;
   if (command === "start" && sub && !task && title && body !== undefined && rest.length === 2) {
-    console.log(await startNew(sub, title, body));
+    console.log(await startNew(sub, title, bodyFor("sc start", body)));
     return;
   }
   // With no title and body as words, they come on stdin, so a long body needs no shell

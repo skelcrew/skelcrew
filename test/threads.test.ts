@@ -208,6 +208,38 @@ test("sc task create creates a task in the repository's tracker and prints its n
   ]);
 });
 
+// A builder sees only a task's title and body. A heredoc that failed inside $(...) leaves the
+// body empty while the command still runs, and an issue with no body can't be taken back.
+test("sc task create and sc start <repo> refuse an empty body, and ask the tracker nothing", async () => {
+  addApp();
+  serve();
+  await untilAnswers();
+  for (const body of ["", " \n\t"]) {
+    const made = await skel("task", "create", "app", "Add import", body);
+    expect(made.code).toBe(1);
+    expect(made.err).toBe(
+      "Skelcrew: sc task create needs a body, which is all a builder sees of the task besides its title.\n",
+    );
+    const started = await skel("start", "app", "Add import", body);
+    expect(started.code).toBe(1);
+    expect(started.err).toBe(
+      "Skelcrew: sc start needs a body, which is all a builder sees of the task besides its title.\n",
+    );
+  }
+  // The daemon refuses one too, from a client that doesn't check.
+  await new Promise<void>((done, failed) => {
+    const connection = createConnection(join(home, "run", "skelcrew.sock"));
+    connection.on("error", failed);
+    connection.on("connect", () =>
+      connection.write('{"command":"task create","repo":"app","title":"t","body":"  "}\n'),
+    );
+    connection.on("data", () => {});
+    connection.on("close", () => done());
+  });
+  expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([]);
+  expect(thread()).toEqual({});
+});
+
 test("sc start <repo> says what its stdin left out, and starts nothing", async () => {
   addApp();
   serve();
