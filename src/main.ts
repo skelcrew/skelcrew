@@ -12,11 +12,10 @@ import { addSprite, remoteSprite } from "./machine/sprite.ts";
 import { errorText } from "./say.ts";
 import { versionLine } from "./version.ts";
 
-// What an agent may not run, in its words. Its sandbox hides Skelcrew's database, your settings
-// and your logins, so these would act on an empty database or ask what nobody can answer.
-// Trusting a repository is yours alone even with the database at hand: a yes passed on by
-// the lead could come from an injected instruction.
-const yoursOnly: Record<string, string> = {
+// Each sc command an agent isn't allowed to run, with the start of the error it gets. Most
+// need the database, settings or logins that the sandbox hides. Trusting a repository is
+// refused because a prompt injection could trick an agent into it.
+const agentRefusals: Record<string, string> = {
   "": "attaching to the lead",
   serve: "running the daemon",
   "repo add": "adding a repository",
@@ -35,17 +34,17 @@ const yoursOnly: Record<string, string> = {
   "plugin ls": "listing plugins",
 };
 
-// Returns the repository and task in a name such as app-13, or app-t1 for a thread with no
-// tracker, or nothing when it isn't one. Repository names can hold dashes, so the task is what
-// follows the last one.
-function taskName(word?: string): [string, string] | undefined {
+// Splits a task's name, such as app-13, or app-t1 for a thread with no tracker, into its
+// repository and task. Gives nothing when the word isn't a task's name. Repository names can
+// hold dashes, so the task is what follows the last one.
+function splitTaskName(word?: string): [string, string] | undefined {
   // The greedy first group takes every dash but the last.
   const parts = word?.match(/^(.+)-(t?\d+)$/);
   return parts?.[1] && parts[2] ? [parts[1], parts[2]] : undefined;
 }
 
-// Prints why a command can't run as given, and ends Skelcrew with an error. People who mistype a
-// command Skelcrew knows hear to check its arguments, not that the command doesn't exist.
+// Prints why a command can't run as given, and exits with an error. For a command Skelcrew
+// knows, it blames the arguments rather than saying the command doesn't exist.
 function usage(command?: string): never {
   // The commands that have words after them, so a mistake there is in the arguments.
   const known = [
@@ -75,9 +74,9 @@ function usage(command?: string): never {
   process.exit(1);
 }
 
-// Sets up Skelcrew if it needs it and opens the screen on the lead of the repository you ran sc
-// from, or the one --from names, or else the one you opened last. While Skelcrew has no
-// repositories, bringInFrom has said so, and there is no lead to open.
+// Sets up Skelcrew if needed, then opens the screen on a lead. The lead is for the repository
+// you ran sc from, the one --from names, or else the one you opened last. With no repositories
+// there is no lead to open, and bringInFrom has already said so.
 async function leadCommand(from?: string): Promise<void> {
   // Loaded only here, so sc --remote on your laptop never loads them.
   const { attachToLead } = await import("./attach.ts");
@@ -90,7 +89,7 @@ async function leadCommand(from?: string): Promise<void> {
   if (repositories(openDb()).length > 0) await attachToLead("skelcrew", found);
 }
 
-// Runs what keeps this machine going: its setup, then the daemon.
+// Runs sc first-run, which sets up this machine, or sc serve, which runs the daemon.
 async function machineCommand(args: string[]): Promise<void> {
   const [command] = args;
   const { serve } = await import("./flow/daemon.ts");
@@ -110,28 +109,26 @@ async function machineCommand(args: string[]): Promise<void> {
 // Runs a pane of the screen: the sidebar or a page. The screen starts these, not people, so
 // usage leaves them out.
 async function screenCommand(args: string[]): Promise<void> {
-  const [command, sub, ...rest] = args;
+  const [command, ...rest] = args;
   const { openDb } = await import("./db.ts");
   const { readPage } = await import("./flow/page.ts");
   const { runPage } = await import("./screen/page.ts");
   const { runSidebar } = await import("./screen/sidebar.ts");
-  // A sidebar's third word, and a page's second, is the remote Skelcrew runs on, and empty on
-  // this machine. A sidebar's last is the owner/name of the repository the screen opened on.
-  const [session, where, repository] = rest;
-  if (
-    command === "sidebar" &&
-    sub &&
-    session &&
-    where !== undefined &&
-    repository &&
-    rest.length === 3
-  ) {
-    await runSidebar(sub, session, where, repository);
-    return;
+  // `where` is the remote Skelcrew runs on, and empty on this machine, so check it against
+  // undefined.
+  if (command === "sidebar" && rest.length === 4) {
+    const [agents, session, where, repository] = rest;
+    if (agents && session && where !== undefined && repository) {
+      await runSidebar(agents, session, where, repository);
+      return;
+    }
   }
-  if (command === "page" && sub && session !== undefined && rest.length === 1) {
-    await runPage(sub, session, () => readPage(openDb(), sub));
-    return;
+  if (command === "page" && rest.length === 2) {
+    const [url, where] = rest;
+    if (url && where !== undefined) {
+      await runPage(url, where, () => readPage(openDb(), url));
+      return;
+    }
   }
   usage(command);
 }
@@ -220,9 +217,9 @@ async function agentCommand(args: string[]): Promise<void> {
     await reportTurnEnded();
     return;
   }
-  // A lead started before each repository had its own runs this hook with each message,
-  // until it restarts. It prints nothing, as Claude Code adds what it prints to the message,
-  // and a lead with one repository needs no note of where you are.
+  // Leads started by an older Skelcrew run this hook with each message until they restart.
+  // It does nothing now. It must print nothing, since Claude Code adds a hook's output to the
+  // message.
   if (command === "attached" && args.length === 1) return;
   usage(command);
 }
@@ -252,9 +249,9 @@ async function taskCommand(args: string[], json: boolean): Promise<void> {
   }
   // sc task show takes a task's name, such as app-13. sc task create takes a repository
   // with a title and a body, which may be empty.
-  const shown = taskName(rest[0]);
-  if (sub === "show" && shown && rest.length === 1) {
-    printTask(await askForTask(...shown), json);
+  const task = splitTaskName(rest[0]);
+  if (sub === "show" && task && rest.length === 1) {
+    printTask(await askForTask(...task), json);
     return;
   }
   const [repository, title, body] = rest;
@@ -265,48 +262,49 @@ async function taskCommand(args: string[], json: boolean): Promise<void> {
   usage(command);
 }
 
-// Starts, stops, re-reviews or attaches to the thread on a task, named such as app-13.
+// Starts, stops, re-reviews or attaches to the thread on a task such as app-13. sc start also
+// takes a repository, a title and a body, to start a thread with no tracker.
 async function threadCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
   const { attachToThread } = await import("./attach.ts");
   const { reviewAgain, startNew, startOn, stopOn } = await import("./client.ts");
-  const thread = taskName(sub);
+  const task = splitTaskName(sub);
   // --from takes a branch, and only sc start <task> takes it.
   const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
-  if (command === "start" && thread && (rest.length === 0 || from)) {
-    console.log(await startOn(...thread, from));
+  if (command === "start" && task && (rest.length === 0 || from)) {
+    console.log(await startOn(...task, from));
     return;
   }
   // A first word that isn't a task's name is a repository, for a thread with no tracker.
   const [title, body] = rest;
-  if (command === "start" && sub && !thread && title && body !== undefined && rest.length === 2) {
+  if (command === "start" && sub && !task && title && body !== undefined && rest.length === 2) {
     console.log(await startNew(sub, title, body));
     return;
   }
-  if (command === "stop" && thread && rest.length === 0) {
-    const name = await stopOn(...thread);
+  if (command === "stop" && task && rest.length === 0) {
+    const name = await stopOn(...task);
     console.log(
       `Stopped ${name}. Its clone, branch and pull request stay, and sc start ${name} brings its builder back.`,
     );
     return;
   }
-  if (command === "review" && thread && rest.length === 0) {
-    const name = await reviewAgain(...thread);
+  if (command === "review" && task && rest.length === 0) {
+    const name = await reviewAgain(...task);
     console.log(
       `Reviewing ${name}'s last commit again. Skelcrew posts the review on its pull request, and types any changes into its builder.`,
     );
     return;
   }
-  if (command === "attach" && thread && rest.length === 0) {
-    await attachToThread("skelcrew", ...thread);
+  if (command === "attach" && task && rest.length === 0) {
+    await attachToThread("skelcrew", ...task);
     return;
   }
   usage(command);
 }
 
-// Types a message into a thread's builder, for the lead, or into the lead, for a builder. Who
-// may tell whom is the daemon's to decide, from the socket the call comes in on. You type to
-// a builder yourself, so in your terminal it only says how.
+// Types a message from the lead into a builder, or from a builder into the lead. The daemon
+// decides who may tell whom, from the socket the call comes in on. In your terminal it only
+// says how to type to a builder yourself.
 async function tellCommand(args: string[]): Promise<void> {
   const [command, to, text, ...rest] = args;
   const { tellOn, tellTheLead } = await import("./client.ts");
@@ -314,14 +312,14 @@ async function tellCommand(args: string[]): Promise<void> {
     throw new Error(
       "sc tell is for the lead and builders. To type to a builder, pick it in the sidebar.",
     );
-  const thread = taskName(to);
+  const task = splitTaskName(to);
   if (to === "lead" && text && rest.length === 0) {
     await tellTheLead(text);
     console.log("Telling the lead. Skelcrew types it in once the lead is idle.");
     return;
   }
-  if (thread && text && rest.length === 0) {
-    const name = await tellOn(...thread, text);
+  if (task && text && rest.length === 0) {
+    const name = await tellOn(...task, text);
     console.log(`Telling ${name}'s builder. Skelcrew types it in once the builder is idle.`);
     return;
   }
@@ -333,14 +331,14 @@ async function tellCommand(args: string[]): Promise<void> {
 // in this order, and the functions above run the commands that are left.
 async function runCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
-  // Before the check below, so a server whose Skelcrew differs from the laptop's still says what
-  // it is.
+  // Answered before the out-of-date check, so a server whose Skelcrew differs from the
+  // laptop's can still say which version it runs.
   if (args.length === 1 && command === "--version") {
     console.log(versionLine());
     return;
   }
-  // A sidebar or page is started by a Skelcrew that passed this check, and its tmux server can hand
-  // it the build of whichever laptop started the server, so it would refuse to run.
+  // Sidebars and pages skip the out-of-date check. The Skelcrew that started them already
+  // passed it, and tmux may hand them another laptop's build, which would make them refuse.
   const onScreen = command === "sidebar" || command === "page";
   if (!onScreen && outOfDate()) process.exit(outdated);
   if (args.length === 1 && ["--help", "-h", "help"].includes(command ?? "")) {
@@ -355,21 +353,21 @@ async function runCommand(args: string[]): Promise<void> {
           : remote(sub, rest),
       ),
     );
-  // --json can go anywhere, as tools add it last and people type it where they like. Every
-  // command takes it, and one that only does something prints the same line with it. It is
-  // left in above, so sc --remote hands it on to the sc it runs.
+  // --json can go anywhere, since tools add it last and people type it where they like. Every
+  // command accepts it, and one that only acts prints the same line either way. sc --remote
+  // above keeps it, so the sc it runs on the remote gets it too.
   const json = args.includes("--json");
   const words = args.filter((arg) => arg !== "--json");
   const [first, second] = words;
-  // The command as yoursOnly names it: two words for repo, remote and plugin, and "" for
+  // The command as agentRefusals names it: two words for repo, remote and plugin, and "" for
   // attaching to the lead.
   const named = first === undefined || first === "--from" ? "" : first;
-  const refused =
-    yoursOnly[
+  const refusal =
+    agentRefusals[
       first === "repo" || first === "remote" || first === "plugin" ? `${first} ${second}` : named
     ];
-  if (process.env.SKELCREW_SANDBOX === "1" && refused)
-    throw new Error(`${refused} is only for your own terminal, not for agents`);
+  if (process.env.SKELCREW_SANDBOX === "1" && refusal)
+    throw new Error(`${refusal} is only for your own terminal, not for agents`);
   const host = words[2];
   if (first === "remote" && second === "add" && host && words.length === 3) {
     process.exit(
@@ -381,8 +379,9 @@ async function runCommand(args: string[]): Promise<void> {
   // Commands that run here load what they need only from this point on, so sc --remote
   // starts quickly and loads no part of the daemon on your laptop.
   const { setupDone } = await import("./machine/setup.ts");
-  // A sidebar, a page or an agent can inherit this name from whoever started tmux, and its
-  // sandbox hides what setupDone reads.
+  // On a remote, refuse to run until the machine is set up. Sidebars, pages and agents skip
+  // this: they can inherit the remote's name from whoever started tmux, and an agent's sandbox
+  // hides what setupDone reads.
   const remoteName = process.env.SKELCREW_REMOTE_NAME;
   if (
     remoteName &&
