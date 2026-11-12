@@ -12,7 +12,7 @@ import {
   notSetUp,
   quoted,
   runInTerminal,
-  upToDate,
+  runUpToDate,
 } from "./remote.ts";
 
 // Reports whether Skelcrew runs on a Sprite. It goes by sprite-env, the Sprite's own tool for
@@ -68,12 +68,11 @@ export function startSpriteService(): void {
     );
 }
 
-// Starts Skelcrew's tmux server as a Sprite service of its own, and waits until it answers. A
-// Sprite service ends every process it started when it stops, even one in a session of its
-// own, and while any is left the Sprite takes a crashed service for a running one. So a tmux
-// server the daemon started would end with each restart, taking every agent with it, and
-// keep a crashed daemon from starting again. -D keeps tmux in the foreground for the service,
-// and running with no sessions.
+// Starts the agents' tmux server as a Sprite service of its own, and waits until it answers.
+// It can't be the daemon's child. Stopping a Sprite service ends every process it started, so
+// each daemon restart would end every agent. And while any of them is left, the Sprite takes a
+// crashed daemon for a running one and never restarts it. -D keeps tmux in the foreground, as
+// a service needs, and running with no sessions.
 export function startTmuxService(socket: string): void {
   // Named by the socket, so each tmux server gets a service of its own.
   const name = `skelcrew-tmux-${socket}`;
@@ -104,7 +103,7 @@ export function startTmuxService(socket: string): void {
 export const urlPort = 8080;
 
 // What sprite-env info says about the Sprite, as far as Skelcrew reads it.
-const Info = z.object({ sprite_url: z.string().url() });
+const SpriteInfo = z.object({ sprite_url: z.string().url() });
 
 // Returns the Sprite's URL, for GitHub's webhooks to wake it with, as sprite-env, the
 // Sprite's own tool, says it.
@@ -113,7 +112,7 @@ export function spriteUrl(): string {
   if (!info.success)
     throw new Error(`sprite-env couldn't say the Sprite's URL: ${info.stderr.toString().trim()}`);
   try {
-    return Info.parse(JSON.parse(info.stdout.toString())).sprite_url;
+    return SpriteInfo.parse(JSON.parse(info.stdout.toString())).sprite_url;
   } catch {
     throw new Error("sprite-env described the Sprite in a way this Skelcrew doesn't understand");
   }
@@ -198,10 +197,10 @@ export const holdAwhile = (seconds: number, socket = controlSocket) =>
   holdTask(socket, "PUT", { task: "skelcrew-webhook", expire: seconds });
 
 // What sprite-env says about a Sprite service, as far as Skelcrew reads it.
-const Service = z.object({ cmd: z.string() });
+const SpriteService = z.object({ cmd: z.string() });
 
 // What sprite list --json says about your Sprites, as far as Skelcrew reads it.
-const Listed = z.object({ sprites: z.array(z.object({ name: z.string() })) });
+const SpriteList = z.object({ sprites: z.array(z.object({ name: z.string() })) });
 
 // Returns the names of your Sprites. Before that, checks that sprite is installed and logged
 // in on the laptop, and stops with the command that fixes each, and the one to run again.
@@ -223,7 +222,9 @@ function spriteNames(again: string): string[] {
     throw missing("sprite needs you to log in", "sprite login");
   if (!listed.success) throw new Error(`sprite list failed: ${said}`);
   try {
-    return Listed.parse(JSON.parse(listed.stdout.toString())).sprites.map((sprite) => sprite.name);
+    return SpriteList.parse(JSON.parse(listed.stdout.toString())).sprites.map(
+      (sprite) => sprite.name,
+    );
   } catch {
     throw new Error("sprite list answered in a way this Skelcrew doesn't understand");
   }
@@ -234,7 +235,7 @@ const yes = (question: string) =>
   ["y", "yes"].includes(prompt(question)?.trim().toLowerCase() ?? "");
 
 // Installs bubblewrap on the Sprite and readies its node, which Skelcrew's sandbox needs.
-async function prepare(name: string): Promise<void> {
+async function prepareSprite(name: string): Promise<void> {
   // --no-stdin, since sprite can't reconnect a command whose input it forwards.
   const on = (command: string[]) => ["sprite", "exec", "-s", name, "--no-stdin", "--", ...command];
   // apt over sprite exec has no terminal for its dialogs, and says so in lines that look
@@ -271,7 +272,7 @@ async function makeUrlPublic(name: string): Promise<void> {
 // How updating and setting up reach a Sprite: sprite exec for shell lines, sprite file push
 // for Skelcrew, and the daemon's Sprite service. --no-stdin, since sprite can't reconnect a
 // command whose input it forwards.
-function onTheSprite(name: string): Machine {
+function spriteMachine(name: string): Machine {
   const shell = (script: string) => [
     "sprite",
     "exec",
@@ -302,7 +303,7 @@ function onTheSprite(name: string): Machine {
       });
       if (!ok) return null;
       try {
-        return Service.parse(JSON.parse(out)).cmd;
+        return SpriteService.parse(JSON.parse(out)).cmd;
       } catch {
         throw new Error(
           `sprite-env on sprite:${name} described Skelcrew's service in a way this Skelcrew doesn't understand`,
@@ -362,9 +363,9 @@ export async function addSprite(name: string): Promise<number> {
       throw new Error(`sprite couldn't create ${where}`);
   }
   // Each of these is safe to run again on a Sprite that has it already.
-  await prepare(name);
+  await prepareSprite(name);
   await makeUrlPublic(name);
-  return addMachine(where, skelOnSprite(name, ["first-run"]), onTheSprite(name));
+  return addMachine(where, skelOnSprite(name, ["first-run"]), spriteMachine(name));
 }
 
 // Runs a Skelcrew command on the Sprite and returns its exit code. Plain Skelcrew passes the
@@ -382,10 +383,10 @@ export async function remoteSprite(name: string, args: string[]): Promise<number
   const from = args.length === 0 ? originHere() : null;
   const where = `sprite:${name}`;
   if (!names.includes(name)) throw new Error(notSetUp(where));
-  const code = await upToDate(
+  const code = await runUpToDate(
     where,
     skelOnSprite(name, from ? ["--from", from] : args),
-    onTheSprite(name),
+    spriteMachine(name),
   );
   if (code === 127) throw new Error(notSetUp(where));
   return code;

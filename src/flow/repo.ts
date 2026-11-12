@@ -18,7 +18,7 @@ import { refuseCredentials } from "../agents/sandbox.ts";
 import { stopSession } from "../agents/tmux.ts";
 import { agentRoles } from "../config.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
-import { originHere, pathOf } from "../machine/origin.ts";
+import { originHere, parseRemote } from "../machine/origin.ts";
 import { onSprite } from "../machine/sprite.ts";
 import { cloneDir, configDir, dataDir, leadPlaces } from "../paths.ts";
 import { type Claimed, claims } from "../plugins/ask.ts";
@@ -65,8 +65,8 @@ export const fullNameIs = (r: Repository, name: string | null | undefined) =>
 // the same host whose path ends with its owner/name, as a checkout's ssh remote does for an
 // https clone.
 const remoteIs = (r: Repository, url: string) => {
-  const path = pathOf(url);
-  const ours = pathOf(r.remote);
+  const path = parseRemote(url);
+  const ours = parseRemote(r.remote);
   return (
     r.remote === url ||
     (path !== null && path.host === ours?.host && fullNameIs(r, `${path.owner}/${path.repo}`))
@@ -212,7 +212,7 @@ async function found(db: Database, given: string): Promise<Found> {
     const [owner = "", repo = ""] = claimed.key.split("/");
     return { owner, repo, remote: claimed.clone, claimed };
   }
-  const path = given.includes(":") ? pathOf(given) : null;
+  const path = given.includes(":") ? parseRemote(given) : null;
   if (!path)
     throw new Error(
       `no forge installed knows ${given}: give its remote's URL, or run sc in a checkout of it`,
