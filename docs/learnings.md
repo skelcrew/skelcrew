@@ -150,6 +150,11 @@ that covers the code you are about to write.
   host given they open `/tmp/.s.PGSQL.5432`, so every test that needed the database failed
   with the socket denied. Skelcrew sets `PGHOST=localhost` in every sandbox, so they connect
   over TCP instead. A host the project names itself still wins.
+- **zsh writes heredocs to `/tmp/zsh`, which the Mac sandbox hides.** It ignores `TMPDIR`
+  and goes by `TMPPREFIX`, so every heredoc failed with "can't create temp file for here
+  document". Inside `"$(cat <<'EOF' ...)"` the failure leaves an empty string, and the
+  command around it still runs. Skelcrew sets `TMPPREFIX` into the agent's own temporary
+  folder. On Linux, `/tmp` is the sandbox's own and writable, so it needs nothing.
 - **Mount the folder of clones, not each clone.** A mount per clone, made when the sandbox
   starts, misses repositories brought in later. Mount their parent folder, and create it
   first: bwrap refuses to mount a folder that doesn't exist.

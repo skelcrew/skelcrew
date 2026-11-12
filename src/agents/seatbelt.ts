@@ -215,6 +215,10 @@ export function seatbeltArgs(given: {
   const vars = [`HOME=${ownHome}`, `TMPDIR=${ownTemp}`, "SKELCREW_SANDBOX=1", `PATH=${path}`];
   // Claude Code keeps its working files in /tmp unless told otherwise.
   vars.push(`CLAUDE_CODE_TMPDIR=${ownTemp}`);
+  // zsh ignores TMPDIR and writes each heredoc to a file named from TMPPREFIX, /tmp/zsh by
+  // default. Denied there, a heredoc fails, and a $(cat <<EOF) around it quietly gives
+  // nothing. TMPPREFIX starts each file's name, so zsh makes no folder of it.
+  vars.push(`TMPPREFIX=${ownTemp}/zsh`);
   // Postgres clients default to a socket in /tmp, which is hidden, so they use TCP instead.
   vars.push("PGHOST=localhost");
   if (socket) vars.push(`SKELCREW_SOCKET=${socket}`);
