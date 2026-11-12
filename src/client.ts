@@ -62,22 +62,22 @@ export async function askForThreads(repository?: string): Promise<ThreadRow[]> {
   return checkReply(z.object({ threads: z.array(ThreadRow) }), reply).threads;
 }
 
-// Asks the daemon for the open tasks of every repository, or of one, for sc task ls. The
+// Asks the daemon for the open tasks of every repository, or of one, for sc issue ls. The
 // daemon answers, as only it asks the tracker.
 export async function askForTasks(repository?: string): Promise<TaskRow[]> {
   const reply = await request({ command: "task ls", ...(repository ? { repo: repository } : {}) });
   return checkReply(z.object({ tasks: z.array(TaskRow) }), reply).tasks;
 }
 
-// Asks the daemon for one task, for sc task show. The daemon answers, as only it asks the
+// Asks the daemon for one task, for sc issue show. The daemon answers, as only it asks the
 // tracker.
 export async function askForTask(repository: string, task: string): Promise<TaskView> {
   const reply = await request({ command: "task show", repo: repository, task });
   return checkReply(z.object({ task: TaskView }), reply).task;
 }
 
-// Has the daemon create a task in the repository's tracker, such as a GitHub issue, for Skelcrew
-// task create, and returns the task's name, such as app-13. The daemon asks the tracker, since
+// Has the daemon create a task in the repository's tracker, such as a GitHub issue, for sc
+// issue create, and returns the task's name, such as app-13. The daemon asks the tracker, since
 // agents never hold its login.
 export async function createTask(repository: string, title: string, body: string): Promise<string> {
   const reply = await request({ command: "task create", repo: repository, title, body });

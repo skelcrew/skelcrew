@@ -221,7 +221,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   };
   // Returns the request as a lead may make it: about its own repository. A lead sees only its
   // own, so a request about another is refused, and it asks you to open that one instead. Skelcrew
-  // ps and sc task ls with no repository mean every one, which for a lead is its own. Your
+  // ps and sc issue ls with no repository mean every one, which for a lead is its own. Your
   // requests and a builder's are left as they are.
   const within = (request: DaemonRequest, caller: Caller): DaemonRequest => {
     const yours = leadOfCaller(caller);

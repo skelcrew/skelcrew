@@ -70,7 +70,7 @@ function usage(command?: string): never {
     "init",
     "repo",
     "ps",
-    "task",
+    "issue",
     "start",
     "stop",
     "rm",
@@ -256,9 +256,10 @@ async function psCommand(args: string[], json: boolean): Promise<void> {
   printThreads(all ? rows : rows.filter((row) => row.status !== "done"), json);
 }
 
-// Lists tasks, shows one or creates one, for sc task. --json changes only what ls and show
+// Lists issues, shows one or creates one, for sc issue. The words a user types say issue, as
+// the sidebar does, while Skelcrew calls each one a task. --json changes only what ls and show
 // print.
-async function taskCommand(args: string[], json: boolean): Promise<void> {
+async function issueCommand(args: string[], json: boolean): Promise<void> {
   const [command, sub, ...rest] = args;
   const { askForTask, askForTasks, createTask } = await import("./client.ts");
   const { printTask, printTasks } = await import("./flow/list.ts");
@@ -266,7 +267,7 @@ async function taskCommand(args: string[], json: boolean): Promise<void> {
     printTasks(await askForTasks(rest[0]), json);
     return;
   }
-  // sc task show takes a task's name, such as app-13. sc task create takes a repository
+  // sc issue show takes an issue's name, such as app-13. sc issue create takes a repository
   // with a title and a body, which may be empty.
   const task = splitTaskName(rest[0]);
   if (sub === "show" && task && rest.length === 1) {
@@ -290,7 +291,7 @@ async function threadCommand(args: string[]): Promise<void> {
     "./client.ts"
   );
   const task = splitTaskName(sub);
-  // --from takes a branch, and only sc start <task> takes it.
+  // --from takes a branch, and only sc start <issue> takes it.
   const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
   if (command === "start" && task && (rest.length === 0 || from)) {
     console.log(await startOn(...task, from));
@@ -462,8 +463,8 @@ async function runCommand(args: string[]): Promise<void> {
       return agentCommand(words);
     case "ps":
       return psCommand(words, json);
-    case "task":
-      return taskCommand(words, json);
+    case "issue":
+      return issueCommand(words, json);
     case "start":
     case "stop":
     case "rm":

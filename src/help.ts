@@ -8,8 +8,8 @@ const sections: [string, [string, string][]][] = [
     [
       ["(no command)", "Open this repository's lead, with the sidebar"],
       ["ps [<repo>]", "Threads and whether they need you"],
-      ["start <task> [--from <branch>]", "Start, resume, or go on past the limit"],
-      ['start <repo> "<title>" "<body>"', "Start a thread, with no task in the tracker"],
+      ["start <issue> [--from <branch>]", "Start, resume, or go on past the limit"],
+      ['start <repo> "<title>" "<body>"', "Start a thread, with no issue in the tracker"],
       ["start <repo> < <file>", "The same, with the title on stdin's first line"],
       ["stop <thread>", "End the builder, keeping its clone and PR"],
       ['rm <thread> ["<reason>"]', "Close its PR, delete its branch and clone"],
@@ -18,11 +18,11 @@ const sections: [string, [string, string][]][] = [
     ],
   ],
   [
-    "TASKS",
+    "ISSUES",
     [
-      ["task ls [<repo>]", "Open tasks, with the thread on each"],
-      ["task show <task>", "A task's title and body"],
-      ['task create <repo> "<title>" "<body>"', "Create a task in the repository's tracker"],
+      ["issue ls [<repo>]", "Open issues, with the thread on each"],
+      ["issue show <issue>", "An issue's title and body"],
+      ['issue create <repo> "<title>" "<body>"', "Create an issue in the repository's tracker"],
     ],
   ],
   [
@@ -77,7 +77,7 @@ const sections: [string, [string, string][]][] = [
 // Lines to copy, in the order a new user would run them.
 const examples = [
   "sc",
-  'sc task create app "Fix the login redirect" "Sign-in lands on a 404."',
+  'sc issue create app "Fix the login redirect" "Sign-in lands on a 404."',
   "sc start app-12",
   "sc ps",
   "sc remote add sprite:demo",
@@ -111,7 +111,7 @@ export function help(color = colorful()): string {
   lines.push("", heading("EXAMPLES"), ...examples.map((example) => `  ${dim("%")} ${example}`));
   lines.push(
     "",
-    dim("  A thread is named after its task, such as app-12. --remote keeps"),
+    dim("  A thread is named after its issue, such as app-12. --remote keeps"),
     dim("  Skelcrew on the other side up to date with yours, after asking. See skelcrew.dev."),
     dim("  In the sidebar, click a row or press Alt-Up or Alt-Down. Alt-Shift-Up and"),
     dim("  Alt-Shift-Down jump between lists. Alt-Left and Alt-Right switch to the"),

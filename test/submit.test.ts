@@ -802,7 +802,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
     );
     await untilCloned();
     // It has no tracker to create a task in.
-    const create = await skel(["task", "create", "app", "Add export", "As JSON"]);
+    const create = await skel(["issue", "create", "app", "Add export", "As JSON"]);
     expect(create.err).toContain("app has no tracker");
     const started = await skel(["start", "app", "Add export", "As JSON"]);
     expect(started.err).toBe("");
