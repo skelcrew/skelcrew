@@ -25,7 +25,7 @@ export const pad = "  ";
 
 // Returns text from outside, such as an issue's title, safe to show: its control codes would
 // otherwise reach your terminal, or break the line.
-export const clean = (text: string) => text.replace(/\p{Cc}/gu, " ");
+export const removeControlCodes = (text: string) => text.replace(/\p{Cc}/gu, " ");
 
 // Returns text cut to fit a number of columns, with … where it was cut. Columns, not characters,
 // as a Japanese title takes two for each.

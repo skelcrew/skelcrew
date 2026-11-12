@@ -19,7 +19,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "../paths.ts";
-import { keptEnv, refuseCredentials, ro, rw, sandboxArgs, throwaway } from "./sandbox.ts";
+import { filterEnv, refuseCredentials, ro, rw, sandboxArgs, throwawayMounts } from "./sandbox.ts";
 
 // Returns Skelcrew's own CODEX_HOME, where the first run's codex login goes and reviews run: a
 // login of Skelcrew's own, apart from yours in ~/.codex, so a renewal on either side never breaks
@@ -232,7 +232,7 @@ async function startCommand(given: {
   else if (prompt) command.push("--", prompt);
 
   // Only the environment the agent needs, plus its own CODEX_HOME.
-  const kept = keptEnv(env, codex.keys);
+  const kept = filterEnv(env, codex.keys);
   kept.CODEX_HOME = sessionHome;
   // Only a builder has a thread. The lead is what you type into, so it keeps its priority.
   const path = env.PATH ?? "";
@@ -259,7 +259,7 @@ async function reviewCommand(given: {
   mkdirSync(sessions, { recursive: true, mode: 0o700 });
   // The reviewer gets a throwaway copy of it, with the real sessions and login mounted in.
   const copy = join(folder, "codex");
-  const { mounts, at } = await throwaway({
+  const { mounts, at } = await throwawayMounts({
     source: skelcrewCodexHome,
     copy,
     sprite,

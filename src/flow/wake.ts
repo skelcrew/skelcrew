@@ -5,7 +5,7 @@
 import type { Database } from "bun:sqlite";
 import type { Repository } from "../db.ts";
 import { spriteUrl } from "../machine/sprite.ts";
-import { pluginsOf, wake } from "../plugins/ask.ts";
+import { askForWakeUps, repositoryPlugins } from "../plugins/ask.ts";
 
 // Listens on the port for deliveries to /<plugin>, and passes the plugin's name to
 // `wakePlugin`, which polls its repositories. `wakePlugin` returns false when no repository
@@ -37,6 +37,6 @@ export async function wakeRepository(
   repository: Repository,
   stop = false,
 ): Promise<void> {
-  for (const { plugin } of pluginsOf(db, repository))
-    await wake(db, plugin, repository, `${spriteUrl()}/${plugin}`, stop);
+  for (const { plugin } of repositoryPlugins(db, repository))
+    await askForWakeUps(db, plugin, repository, `${spriteUrl()}/${plugin}`, stop);
 }

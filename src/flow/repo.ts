@@ -21,7 +21,7 @@ import { nameRepositories, openDb, Repository } from "../db.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
 import { onSprite } from "../machine/sprite.ts";
 import { cloneDir, configDir, dataDir, leadPlaces } from "../paths.ts";
-import { type Claimed, claims } from "../plugins/ask.ts";
+import { askWhichForge, type Claimed } from "../plugins/ask.ts";
 import { setUpPlugin } from "../plugins/install.ts";
 import { SetupNeeded } from "../plugins/plugin.ts";
 import { errorText } from "../say.ts";
@@ -149,7 +149,7 @@ async function findForge(db: Database, repository: Repository): Promise<Reposito
   // Saved as claimed even when no forge claims it, so a repository with none isn't asked
   // about again at every refresh.
   if (forgeKnown(db, repository)) return repository;
-  const claimed = await claims(db, repository.remote);
+  const claimed = await askWhichForge(db, repository.remote);
   const forge = claimed?.forge ?? null;
   // The forge's clone URL, as its login works for that one, such as https where your checkout
   // had ssh.
@@ -220,18 +220,18 @@ async function identifyRepository(db: Database, given: string): Promise<Reposito
   return { owner: path.owner, repo: path.repo, remote: given, claimed: null };
 }
 
-// Asks the forges which one claims the remote, as claims does. A forge can answer that its
+// Asks the forges which one claims the remote, as askWhichForge does. A forge can answer that its
 // setup must run again, such as GitHub's when its app isn't on the repository yet. Then, at a
 // terminal, this runs that setup for the repository and asks once more, so a new user gets
 // the fix where they are. With no terminal nobody can answer the setup, so the error is
 // thrown, naming the command. A setup that fails throws, having said why.
 async function claimsAfterSetup(db: Database, given: string): Promise<Claimed | null> {
   try {
-    return await claims(db, given);
+    return await askWhichForge(db, given);
   } catch (error) {
     if (!(error instanceof SetupNeeded) || !process.stdin.isTTY) throw error;
     setUpPlugin(error.plugin, given);
-    return claims(db, given);
+    return askWhichForge(db, given);
   }
 }
 
@@ -330,7 +330,7 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
 
 // Returns the repository Skelcrew has under the name a forge now gives the remote, or none.
 async function repositoryByForgeName(db: Database, url: string): Promise<Repository | undefined> {
-  const claimed = await claims(db, url).catch(() => null);
+  const claimed = await askWhichForge(db, url).catch(() => null);
   return claimed ? repositories(db).find((r) => fullNameIs(r, claimed.key)) : undefined;
 }
 
