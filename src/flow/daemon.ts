@@ -319,6 +319,10 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         await stopThread(db, tmux, thread);
         return { stopped: name };
       }
+      case "rm preview": {
+        const thread = findThread(db, request.repo, request.task);
+        return { thread: threadName(db, thread), status: thread.status, pr: thread.pr };
+      }
       case "rm": {
         const thread = findThread(db, request.repo, request.task);
         const name = threadName(db, thread);

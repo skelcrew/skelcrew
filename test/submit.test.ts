@@ -17,6 +17,7 @@ import {
   homeEnv,
   read,
   runSkel,
+  runSkelInTerminal,
   source,
   startDaemon,
   taskItem,
@@ -845,9 +846,15 @@ await serve(${JSON.stringify(socket)}, 200);`;
     const onRemote = () => git(bare, "branch", "--list", "skelcrew/t1-add-export") !== "";
     expect(onRemote()).toBe(true);
 
-    const removed = await skel(["rm", "app-t1", "wrong approach"]);
-    expect(removed.err).toBe("");
-    expect(removed.out).toContain("Removed app-t1.");
+    // With no PR, the question names what goes: the branch and the clone.
+    const removed = await runSkelInTerminal(
+      socket,
+      env(),
+      ["rm", "app-t1", "wrong approach"],
+      "Remove app-t1? This deletes its branch and clone. [y/N]",
+      "y",
+    );
+    expect(removed).toContain("Removed app-t1.");
     expect(onRemote()).toBe(false);
     expect(existsSync(join(data(), "threads", "app-t1"))).toBe(false);
     expect(log()).toContain("wrong approach");

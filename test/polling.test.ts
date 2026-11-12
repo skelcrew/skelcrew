@@ -24,6 +24,7 @@ import {
   git,
   homeEnv,
   prItem,
+  runSkelInTerminal,
   source,
   taskItem,
   until as wait,
@@ -526,6 +527,16 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
     const hashed = (name: string) =>
       new Bun.CryptoHasher("sha256").update(name).digest("hex").slice(0, 16);
     const runDir = join(home, "run", "skelcrew");
+    // At a terminal, sc rm says what it will do and asks first, and anything but y changes
+    // nothing.
+    const question = "Remove app-12? This closes PR #7 and deletes its branch and clone. [y/N]";
+    const kept = await runSkelInTerminal(socket, env(), ["rm", "app-12"], question, "n");
+    expect(kept).toContain("Skelcrew didn't remove app-12.");
+    expect(asked(plugin).filter((q) => q.ask === "close pr")).toEqual([]);
+    expect(thread().status).toBe("waiting");
+    expect(fakeBuilders()).toHaveLength(1);
+
+    // An agent has no terminal, so it isn't asked.
     const fromBuilder = rmFrom(join(runDir, "threads", hashed("app-12"), "skelcrew.sock"));
     expect(fromBuilder.stderr.toString()).toContain("doesn't know that request");
     expect(thread().status).toBe("waiting");
@@ -569,11 +580,8 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
     expect(started.stderr.toString()).toBe("");
     expect(started.stdout.toString()).toBe("Started app-12.\n");
     await until(() => thread().pr === 7 && thread().submitting === null, 30_000);
-    const removed = Bun.spawnSync([process.execPath, main, "rm", "app-12"], {
-      env: env(),
-      stderr: "pipe",
-    });
-    expect(removed.stderr.toString()).toBe("");
+    const removed = await runSkelInTerminal(socket, env(), ["rm", "app-12"], question, "y");
+    expect(removed).toContain("Removed app-12.");
     expect(
       asked(plugin)
         .filter((q) => q.ask === "close pr")

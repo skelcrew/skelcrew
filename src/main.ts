@@ -270,7 +270,9 @@ async function taskCommand(args: string[], json: boolean): Promise<void> {
 async function threadCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
   const { attachToThread } = await import("./attach.ts");
-  const { removeOn, reviewAgain, startNew, startOn, stopOn } = await import("./client.ts");
+  const { previewRemoval, removeOn, reviewAgain, startNew, startOn, stopOn } = await import(
+    "./client.ts"
+  );
   const thread = taskName(sub);
   // --from takes a branch, and only sc start <task> takes it.
   const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
@@ -291,12 +293,26 @@ async function threadCommand(args: string[]): Promise<void> {
     );
     return;
   }
-  // An empty reason is no reason, so the PR closes with no comment.
   if (command === "rm" && thread && rest.length <= 1) {
+    // At a terminal, say what goes and ask first, as closing a PR can't be taken back. An agent,
+    // such as the lead, has no terminal, and confirms with you in its conversation instead. A
+    // thread that is done is left for the daemon to refuse.
+    if (process.stdin.isTTY) {
+      const { thread: name, status, pr } = await previewRemoval(...thread);
+      const goes =
+        pr === null
+          ? "This deletes its branch and clone."
+          : `This closes PR #${pr} and deletes its branch and clone.`;
+      // Bun's prompt answers a bare Enter with null, which is no, as the question says.
+      const answer = status === "done" ? "y" : prompt(`Remove ${name}? ${goes} [y/N]`);
+      if (!["y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
+        console.log(`Skelcrew didn't remove ${name}.`);
+        return;
+      }
+    }
+    // An empty reason is no reason, so the PR closes with no comment.
     const name = await removeOn(...thread, rest[0] || undefined);
-    console.log(
-      `Removed ${name}. Its pull request is closed and its branch and clone are gone. Its task stays open, and sc start ${name} starts it over.`,
-    );
+    console.log(`Removed ${name}. Its task stays open, and sc start ${name} starts it over.`);
     return;
   }
   if (command === "review" && thread && rest.length === 0) {
