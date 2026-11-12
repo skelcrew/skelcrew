@@ -704,6 +704,32 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
     expect(thread()).toMatchObject({ task: 12, status: "working", base: "next" });
   }, 30_000);
 
+  // The tracker can take its time to answer a claim, and an sc start that comes in meanwhile
+  // must still start the task with its own options.
+  test("sc start that comes in while a labeled task is being claimed starts it from the branch it names", async () => {
+    const work = addApp();
+    git(work, "checkout", "-q", "-b", "next");
+    git(work, "push", "-q", join(home, "github", "simon", "app.git"), "next");
+    const hold = join(plugin, "hold-took");
+    writeFileSync(hold, "");
+    changes([issue12(true)]);
+    serve(3_600_000);
+    await until(() => existsSync(join(plugin, "held-took")));
+    const started = Bun.spawn([process.execPath, main, "start", "app-12", "--from", "next"], {
+      env: env(),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // Nothing outside the daemon shows that sc start's request has arrived, so give it a
+    // moment before the tracker answers. Too short a moment fails the test, never passes it.
+    await Bun.sleep(2000);
+    rmSync(hold);
+    expect(await new Response(started.stderr).text()).toBe("");
+    expect(await new Response(started.stdout).text()).toBe("Started app-12.\n");
+    await started.exited;
+    expect(thread()).toMatchObject({ task: 12, status: "working", base: "next" });
+  }, 30_000);
+
   // sc start polls first, so a builder never starts from an old title or body.
   test("sc start reads its task as it is now", async () => {
     addApp();

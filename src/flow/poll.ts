@@ -64,9 +64,12 @@ async function startLabeled(
       passed.add(key);
       continue;
     }
+    // An sc start that came in while the tracker answered starts the task itself, with its own
+    // options, such as the branch to start from, so the poll leaves it be.
+    if (starting.has(key)) continue;
     // The claim is this daemon's now, so a thread that fails to start isn't started by a
     // later poll either: on another machine, or after a restart, its claim reads as taken.
-    // One sc start took meanwhile also lands here, harmlessly.
+    // One sc start finished meanwhile also lands here, harmlessly.
     const thread = await startThread(db, { repo: fullName, task: task.id }).catch((error) => {
       console.log(
         `couldn't start ${task.id} in ${fullName}, and its label won't start it again; sc start does: ${errorText(error)}`,
