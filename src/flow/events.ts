@@ -6,7 +6,7 @@ import { rmSync } from "node:fs";
 import { agentRuns, stopSession } from "../agents/tmux.ts";
 import { typeInto } from "../agents/typing.ts";
 import { cloneDir } from "../paths.ts";
-import { closePr, failedLog } from "../plugins/ask.ts";
+import { closePr, failedLog, markSeen } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
@@ -166,8 +166,9 @@ export async function removeThread(
 
 // Types what the decision tells into the builder once it is idle, then saves the decision.
 // It is saved only after, so a stop of the daemon meanwhile leaves the events to the next
-// poll. A builder that isn't running, or stays busy for half an hour, isn't told: the events
-// count as handled, and the thread needs you, with what it missed in its log.
+// poll. Then asks the forge to mark the people's reviews and comments seen, so they can see it
+// on the PR. A builder that isn't running, or stays busy for half an hour, isn't told: the
+// events count as handled, and the thread needs you, with what it missed in its log.
 export async function tellBuilder(
   db: Database,
   tmux: string,
@@ -202,6 +203,21 @@ export async function tellBuilder(
       now.submitting !== thread.submitting ||
       now.reviewing !== thread.reviewing;
     record(db, thread.folder, moved ? { seen } : { seen, ...change }, why);
+    // Only now that they are typed in, the forge marks the people's reviews and comments seen.
+    // Not waited on, and a failure, such as from a plugin too old to know the question, is
+    // only logged: the builder already has them, and nothing waits on the forge.
+    const { pr } = thread;
+    if (pr !== null)
+      // The repository is looked up inside the promise, so one removed meanwhile is only
+      // logged too, and never marks the thread as not told.
+      for (const { kind, id } of decision.typedIn)
+        Promise.resolve()
+          .then(() => markSeen(db, repositoryOf(db, thread), { pr, kind, id }))
+          .catch((error) =>
+            console.log(
+              `couldn't mark the ${kind} ${id} seen on ${threadName(db, thread)}'s PR: ${errorText(error)}`,
+            ),
+          );
   } catch (error) {
     // Ending the session for a stop or a merge can make typing fail, and a stopped thread's
     // events must stay unhandled for its builder to hear once it starts again.

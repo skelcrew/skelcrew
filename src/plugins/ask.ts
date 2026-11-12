@@ -168,6 +168,21 @@ export async function took(db: Database, repository: Repository, task: string): 
   );
 }
 
+// Tells the forge Skelcrew typed a person's comment or review on the PR into its builder, so
+// they can see on the PR that it was picked up. GitHub reacts with 👀.
+export async function markSeen(
+  db: Database,
+  repository: Repository,
+  item: { pr: number; kind: "review" | "comment"; id: string },
+): Promise<void> {
+  await callPlugin(
+    db,
+    forgeFor(db, repository),
+    { ask: "seen", repository: keyOf(repository), ...item },
+    z.null(),
+  );
+}
+
 // Opens a PR from the branch in the repository's forge and returns its number, or the number
 // of the PR already open from that branch.
 export async function openPr(
