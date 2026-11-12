@@ -44,6 +44,24 @@ function taskName(word?: string): [string, string] | undefined {
   return parts?.[1] && parts[2] ? [parts[1], parts[2]] : undefined;
 }
 
+// Splits a task given on stdin to sc start <repo>, such as a file or a lead's heredoc: the
+// first line is its title, without a markdown heading's "# ", and the rest is its body, from
+// its first line that isn't blank. Throws saying which is missing, as a builder needs both.
+function taskFrom(text: string): { title: string; body: string } {
+  const [first = "", ...rest] = text.split("\n");
+  const title = first.replace(/^#\s+/, "").trim();
+  const body = rest.join("\n").replace(/^(?:[ \t]*\n)+/, "");
+  if (!title)
+    throw new Error(
+      "sc start read no title on stdin: give the title on the first line, then the body",
+    );
+  if (!body.trim())
+    throw new Error(
+      "sc start read a title but no body on stdin: give the body on the lines after the title",
+    );
+  return { title, body };
+}
+
 // Prints why a command can't run as given, and ends Skelcrew with an error. People who mistype a
 // command Skelcrew knows hear to check its arguments, not that the command doesn't exist.
 function usage(command?: string): never {
@@ -282,6 +300,13 @@ async function threadCommand(args: string[]): Promise<void> {
   const [title, body] = rest;
   if (command === "start" && sub && !thread && title && body !== undefined && rest.length === 2) {
     console.log(await startNew(sub, title, body));
+    return;
+  }
+  // With no title and body as words, they come on stdin, so a long body needs no shell
+  // quoting. A terminal is never waited on: there, a missing title and body is a mistake.
+  if (command === "start" && sub && !thread && rest.length === 0 && !process.stdin.isTTY) {
+    const task = taskFrom(await Bun.stdin.text());
+    console.log(await startNew(sub, task.title, task.body));
     return;
   }
   if (command === "stop" && thread && rest.length === 0) {

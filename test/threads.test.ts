@@ -208,6 +208,19 @@ test("sc task create creates a task in the repository's tracker and prints its n
   ]);
 });
 
+test("sc start <repo> says what its stdin left out, and starts nothing", async () => {
+  addApp();
+  serve();
+  await untilAnswers();
+  const empty = await runSkel(["start", "app"], env(), "");
+  expect(empty.code).toBe(1);
+  expect(empty.err).toContain("no title");
+  const titleOnly = await runSkel(["start", "app"], env(), "# Add export\n\n");
+  expect(titleOnly.code).toBe(1);
+  expect(titleOnly.err).toContain("no body");
+  expect(thread()).toEqual({});
+});
+
 test("more data on a connection doesn't run its request again", async () => {
   addApp();
   serve();
@@ -738,6 +751,22 @@ nameRepositories(db);`;
     expect(read(join(config("app-t1"), "args"))).toContain("Add export\n\nAs JSON");
     expect(thread()).toMatchObject({ task: "t1", title: "Add export", body: "As JSON" });
     expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([]);
+  }, 30_000);
+
+  // A long body needs no shell quoting when the lead gives the task on stdin, from a heredoc.
+  test("sc start <repo> reads the task from stdin, its title on the first line", async () => {
+    addApp();
+    serve();
+    await untilAnswers();
+    const task = '# Add export\n\n\nAs JSON, with "quotes" and $HOME.\nAnd dates.\n';
+    const run = await runSkel(["start", "app"], env(), task);
+    expect(run.err).toBe("");
+    expect(run.out).toBe("Started app-t1.\n");
+    expect(thread()).toMatchObject({
+      task: "t1",
+      title: "Add export",
+      body: 'As JSON, with "quotes" and $HOME.\nAnd dates.\n',
+    });
   }, 30_000);
 
   // Programs often live under the home folder, which the sandbox hides, as npm does under nvm.
