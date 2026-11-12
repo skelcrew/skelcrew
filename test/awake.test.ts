@@ -1,12 +1,13 @@
 // Keeping a Sprite awake while there is work: which threads count as work, decided from their
 // rows alone, and the hold the daemon keeps on a fake of the Sprite's control socket.
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hasWork, type Thread } from "../src/flow/thread.ts";
 import { holdAwhile, keepAwake } from "../src/machine/sprite.ts";
+import { until } from "./harness.ts";
 
 function thread(change: Partial<Thread> = {}): Thread {
   return {
@@ -82,12 +83,13 @@ test("one thread with work is enough", () => {
   expect(hasWork([ready, thread({ folder: "app-13" })])).toBe(true);
 });
 
-// A stand-in for the Sprite's control socket: it notes each request and answers as the real
-// one does, 404 for deleting a task that isn't there.
+// A stand-in for the Sprite's control socket: it notes each request, and when it came, and
+// answers as the real one does, 404 for deleting a task that isn't there.
 let folder = "";
 let socket = "";
 let server: Server | null = null;
 let calls: string[] = [];
+let times: number[] = [];
 let stop: () => void = () => {};
 
 function serveControlSocket(): Promise<void> {
@@ -103,6 +105,7 @@ function serveControlSocket(): Promise<void> {
       if (body.length < length) return;
       const [method = "", path = ""] = text.split(" ");
       calls.push(`${method} ${path} ${body}`.trim());
+      times.push(Date.now());
       const name = path.split("/").pop() ?? "";
       let status = "200 OK";
       if (method === "PUT") held.add(name);
@@ -113,9 +116,10 @@ function serveControlSocket(): Promise<void> {
   return new Promise((done) => server?.listen(socket, done));
 }
 
-// Waits until the fake socket has seen `count` requests, or a second has passed.
+// Waits until the fake socket has seen `count` requests, and returns them all. On a busy
+// machine a timer can fire long after it was due, so the wait is generous.
 async function seen(count: number): Promise<string[]> {
-  for (let tried = 0; tried < 100 && calls.length < count; tried++) await Bun.sleep(10);
+  await until(() => calls.length >= count, { what: () => `${count} requests in ${calls}` });
   return calls;
 }
 
@@ -123,6 +127,7 @@ beforeEach(async () => {
   folder = mkdtempSync(join(tmpdir(), "skel-awake-test-"));
   socket = join(folder, "api.sock");
   calls = [];
+  times = [];
   await serveControlSocket();
 });
 afterEach(() => {
@@ -131,12 +136,16 @@ afterEach(() => {
   rmSync(folder, { recursive: true, force: true });
 });
 
+// It checks far more often than it renews, so a hold taken at each check would come sooner
+// than `renew` after the one before. Timing gaps rather than counting requests in a fixed
+// time keeps a busy machine, whose timers run late, from failing the test.
 test("the daemon holds the Sprite for five minutes and renews the hold", async () => {
-  stop = keepAwake(() => true, { socket, every: 20, renew: 50 });
-  await Bun.sleep(150);
-  expect(calls.length).toBeGreaterThanOrEqual(2);
-  expect(calls.length).toBeLessThanOrEqual(4);
+  const renew = 100;
+  stop = keepAwake(() => true, { socket, every: 20, renew });
+  await seen(3);
   for (const call of calls) expect(call).toBe('PUT /v1/tasks/skelcrew {"expire":300}');
+  for (let at = 1; at < times.length; at++)
+    expect(Number(times[at]) - Number(times[at - 1])).toBeGreaterThanOrEqual(renew);
 });
 
 test("the daemon lets the Sprite sleep once there is no work, and holds it again for new work", async () => {
@@ -145,6 +154,7 @@ test("the daemon lets the Sprite sleep once there is no work, and holds it again
   await seen(1);
   work = false;
   await seen(2);
+  // Some checks pass without work, which must not let go again.
   await Bun.sleep(100);
   work = true;
   expect(await seen(3)).toEqual([
@@ -156,6 +166,8 @@ test("the daemon lets the Sprite sleep once there is no work, and holds it again
 
 test("a daemon started without work lets go of a hold an earlier daemon left", async () => {
   stop = keepAwake(() => false, { socket, every: 20, renew: 60_000 });
+  await seen(1);
+  // Some more checks pass, which must not let go again.
   await Bun.sleep(150);
   expect(calls).toEqual(["DELETE /v1/tasks/skelcrew"]);
 });
@@ -163,8 +175,19 @@ test("a daemon started without work lets go of a hold an earlier daemon left", a
 test("a control socket that doesn't answer is tried again at the next check", async () => {
   server?.close();
   server = null;
-  stop = keepAwake(() => true, { socket, every: 20, renew: 60_000 });
-  await Bun.sleep(60);
+  // The socket answers again only once a check has failed, which the daemon logs. A fixed
+  // wait could end before a slow first check had even run.
+  const logged: string[] = [];
+  const log = spyOn(console, "log").mockImplementation((line: unknown) => {
+    logged.push(String(line));
+  });
+  try {
+    stop = keepAwake(() => true, { socket, every: 20, renew: 60_000 });
+    await until(() => logged.length > 0, { what: () => "a check to fail" });
+  } finally {
+    log.mockRestore();
+  }
+  expect(logged[0]).toContain("couldn't hold the Sprite awake");
   await serveControlSocket();
   expect(await seen(1)).toEqual(['PUT /v1/tasks/skelcrew {"expire":300}']);
 });

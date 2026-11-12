@@ -69,8 +69,18 @@ function start(name: string, command: string[], env: Record<string, string> = {}
   startSession(socket, name, { folder: home, command, env });
 }
 
-// Waits as long as this file's tests expect anything to take, looking often.
-const until = (done: () => boolean) => wait(done, { timeout: 5000, every: 20 });
+// Waits for what a session does in its own time, looking often. A busy machine can take
+// many seconds to start a session, so the limit is generous: it only ends a test that hangs.
+const until = (done: () => boolean) => wait(done, { timeout: 30_000, every: 20 });
+
+// Waits until a session shows this text. A check of how a harness's screen reads waits for
+// the screen to be drawn first, as a fixed wait can end before a slow start has drawn it.
+const showing = (name: string, text: string) =>
+  until(() =>
+    Bun.spawnSync(["tmux", "-L", socket, "capture-pane", "-p", "-t", `=${name}:`])
+      .stdout.toString()
+      .includes(text),
+  );
 
 const read = (file: string) =>
   existsSync(join(home, file)) ? readFileSync(join(home, file), "utf8") : "";
@@ -86,8 +96,7 @@ test("a typed message with several lines arrives whole, as one paste and one Ent
 
 test("a message arrives whole while someone is scrolled back, and the agent reads as idle", async () => {
   start("lead", harness());
-  await until(() => Bun.spawnSync(["tmux", "-L", socket, "capture-pane", "-p"]).success);
-  await Bun.sleep(moment * 2);
+  await showing("lead", claude.marks.prompt);
   Bun.spawnSync(["tmux", "-L", socket, "copy-mode", "-t", "=lead:"]);
   expect(await isIdle(socket, "lead", claude.marks, { moment })).toBe(true);
   await typeInto(socket, "lead", claude.marks, "fix the bug", { moment });
@@ -114,6 +123,7 @@ test("typing goes by the busy and ready marks of the harness it types into", asy
 
 test("typing gives up when the harness stays busy", async () => {
   start("lead", harness(30));
+  await showing("lead", claude.marks.busy);
   const typing = typeInto(socket, "lead", claude.marks, "hello", { moment, timeout: 500 });
   await expect(typing).rejects.toThrow("esc to interrupt");
   expect(read("lost.txt")).toBe("");
@@ -133,6 +143,7 @@ test("a message cancelled while the harness is busy is never typed", async () =>
 
 test("typing says so when it gives up because there is no prompt", async () => {
   start("lead", ["sh", "-c", "echo starting; sleep 30"]);
+  await showing("lead", "starting");
   const typing = typeInto(socket, "lead", claude.marks, "hello", { moment, timeout: 300 });
   await expect(typing).rejects.toThrow("prompt");
 });
@@ -189,6 +200,7 @@ for (const [title, marks, draft] of drafts) {
   test(`typing waits while a draft sits at ${title}'s prompt, then goes through`, async () => {
     writeFileSync(join(home, "draft"), draft);
     start("lead", drafting(marks));
+    await showing("lead", draft);
     const typing = typeInto(socket, "lead", marks, "hello", { moment });
     // Long enough for several looks at the screen, each of which must leave the draft alone.
     await Bun.sleep(moment * 8);
@@ -204,6 +216,7 @@ for (const [title, marks, draft] of drafts) {
   test(`typing says a draft at ${title}'s prompt is in the way when it gives up`, async () => {
     writeFileSync(join(home, "draft"), draft);
     start("lead", drafting(marks));
+    await showing("lead", draft);
     const typing = typeInto(socket, "lead", marks, "hello", { moment, timeout: 500 });
     await expect(typing).rejects.toThrow("unsent draft");
     expect(read("received.txt")).toBe("");
@@ -363,8 +376,11 @@ test("an agent runs only while its session lives and its command hasn't failed",
   expect(agentRuns(socket, "builder")).toBe(false);
   start("builder", ["sh", "-c", "sleep 30"]);
   expect(agentRuns(socket, "builder")).toBe(true);
-  endSession(socket, "builder");
+  // The next session starts before this one ends. The tmux server exits once it has no
+  // session left, and a command that reaches it while it exits fails.
   start("failed", ["sh", "-c", "exit 3"]);
+  endSession(socket, "builder");
+  expect(agentRuns(socket, "builder")).toBe(false);
   await until(() => !agentRuns(socket, "failed"));
   // A failed command leaves its session behind, showing its last screen.
   expect(hasSession(socket, "failed")).toBe(true);
@@ -375,7 +391,10 @@ test("idle means a quiet pane showing the prompt, and not busy", async () => {
   start("busy", harness(30));
   start("drawing", ["sh", "-c", 'echo "❯"; for i in $(seq 1500); do date +%N; sleep 0.02; done']);
   start("other", ["sh", "-c", "echo ready; sleep 30"]);
-  await Bun.sleep(moment * 3);
+  await showing("waiting", claude.marks.prompt);
+  await showing("busy", claude.marks.busy);
+  await showing("drawing", "❯");
+  await showing("other", "ready");
   expect(await isIdle(socket, "waiting", claude.marks, { moment })).toBe(true);
   expect(await isIdle(socket, "busy", claude.marks, { moment })).toBe(false);
   expect(await isIdle(socket, "drawing", claude.marks, { moment })).toBe(false);
