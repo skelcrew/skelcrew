@@ -49,7 +49,7 @@ export function forgeOf(db: Database, repository: Repository): string | null {
 
 // Returns the repository's tracker and forge with the jobs each does for it, one entry per
 // plugin, so a plugin that is both is asked once.
-export function pluginsOf(
+export function repositoryPlugins(
   db: Database,
   repository: Repository,
 ): { plugin: string; jobs: ("tracker" | "forge")[] }[] {
@@ -91,7 +91,7 @@ export type Claimed = z.infer<typeof Claimed> & { forge: string };
 // answer with its name, or null when none claims it. A forge that fails throws its reason and
 // stops the search. GitHub's fails, for one, when the remote is its own but its app isn't
 // installed there.
-export async function claims(db: Database, remote: string): Promise<Claimed | null> {
+export async function askWhichForge(db: Database, remote: string): Promise<Claimed | null> {
   // Asked in name order, so the same forge wins each time two would claim one remote.
   for (const forge of pluginsWithJob(db, "forge")) {
     const claimed = await callPlugin(db, forge, { ask: "claims", remote }, Claimed.nullable());
@@ -110,7 +110,7 @@ const Changed = z.object({ items: z.array(Item), next: z.string().nullable() });
 // Asks a plugin what changed in the repository since `next`, or for everything open when `next`
 // is null. The plugin answers for the jobs it does there, and for `prs`, the PRs Skelcrew
 // watches. Returns the items, and the `next` to pass on the following call.
-export async function changed(
+export async function askWhatChanged(
   db: Database,
   plugin: string,
   repository: Repository,
@@ -168,7 +168,11 @@ export async function createTask(
 // whether this call took it: false when someone, such as Skelcrew on another machine, already
 // had. GitHub reacts with 👀 and says whether the reaction was already there. A plugin that
 // answers nothing counts as taking it, so one not yet updated starts tasks as before.
-export async function took(db: Database, repository: Repository, task: string): Promise<boolean> {
+export async function claimTask(
+  db: Database,
+  repository: Repository,
+  task: string,
+): Promise<boolean> {
   const answer = await callPlugin(
     db,
     requireTracker(db, repository),
@@ -270,7 +274,7 @@ export async function failedLog(
 
 // Asks a plugin to start passing wake-ups for the repository to the address, or with `stop`
 // to stop. A plugin with no wake-ups does nothing.
-export async function wake(
+export async function askForWakeUps(
   db: Database,
   plugin: string,
   repository: Repository,

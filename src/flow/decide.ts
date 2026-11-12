@@ -16,7 +16,7 @@ export const reviewCheck = "skelcrew/check";
 
 // Returns whether the thread has used up its rounds of changes. Past that it goes on needing
 // you, whatever its builder or reviewer does, until you let it go on.
-export const pastLimit = (thread: Thread, maxRounds: number) => thread.rounds > maxRounds;
+export const pastRoundLimit = (thread: Thread, maxRounds: number) => thread.rounds > maxRounds;
 
 // What decide says to do with a thread: end it, with the reason, or tell its builder what is
 // new and change the thread.
@@ -88,7 +88,7 @@ export function decide(thread: Thread, pr: PullRequest, given: { maxRounds: numb
     const why = "started after the PR's history";
     return { seen: shown, tell: [], typedIn: [], failed: [], conflict: null, change: {}, why };
   }
-  const past = pastLimit(thread, given.maxRounds);
+  const past = pastRoundLimit(thread, given.maxRounds);
   // Whether what this author wrote is typed into the builder.
   const wakes = (author: Author) =>
     author !== null && !author.bot && (author.you || (!past && author.push === true));

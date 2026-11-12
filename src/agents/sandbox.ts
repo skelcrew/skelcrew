@@ -8,7 +8,7 @@ import { checkoutFolder, singleFile } from "../version.ts";
 import { seatbeltArgs } from "./seatbelt.ts";
 
 // Where the folder of the agent's socket appears inside, whatever its path outside.
-const socketsInside = "/run/skelcrew";
+const socketFolderInside = "/run/skelcrew";
 
 // On a Sprite, unshare gives the agent a process list of its own, with a /proc to match,
 // before capabilities are dropped. bwrap can't: it runs without capabilities, and the
@@ -30,7 +30,7 @@ const hide = (p: string) => ["--tmpfs", p];
 // another folder of it. Codex's own installer marks a release with codex-package.json, and
 // keeps rg and its bwrap beside bin. Never the home folder itself, nor above it, which would
 // bring back too much.
-function packageOf(folder: string, home: string): string {
+function packageFolder(folder: string, home: string): string {
   for (let at = folder; at !== home && at !== dirname(at); at = dirname(at))
     for (const mark of ["package.json", "codex-package.json"])
       if (existsSync(join(at, mark))) return at;
@@ -43,7 +43,7 @@ function packageOf(folder: string, home: string): string {
 // current, itself a link to the release. It walks one name at a time, as the kernel does,
 // since a link can be any folder on the way, not only the last name. The program must
 // exist, so a loop of links can't reach here.
-function linksTo(program: string): Map<string, string> {
+function programLinks(program: string): Map<string, string> {
   const links = new Map<string, string>();
   const rest = [basename(program)];
   let at = dirname(program);
@@ -76,7 +76,15 @@ export function sandboxArgs(given: {
   programs?: string[] | undefined;
   normalPriority?: boolean;
 }): string[] {
-  const { home, path, mounts, socket, cwd, command, programs: named = [command[0]] } = given;
+  const {
+    home,
+    path,
+    mounts,
+    socket,
+    cwd,
+    command,
+    programs: namedPrograms = [command[0]],
+  } = given;
   // Builders and reviewers running test suites at once can load a shared machine past its
   // CPUs. Started under nice, all they run yields to the screen, the leads and the daemon.
   // nice comes first, ahead of the setpriv that drops capabilities on a Sprite: lowering a
@@ -87,14 +95,14 @@ export function sandboxArgs(given: {
   // and its package where its link points. So the program's folder and the package its link
   // resolves into come back, as does bun, which Skelcrew's own commands run on. The program is
   // the command's first word unless others are named, as for a shell running a setup command.
-  const programs = new Set<string>();
+  const programFolders = new Set<string>();
   const links = new Map<string, string>();
-  for (const name of [...named, "bun"]) {
+  for (const name of [...namedPrograms, "bun"]) {
     const found = name && Bun.which(name, { PATH: path });
     if (found) {
-      programs.add(dirname(found));
-      programs.add(packageOf(dirname(realpathSync(found)), home));
-      for (const [link, target] of linksTo(found))
+      programFolders.add(dirname(found));
+      programFolders.add(packageFolder(dirname(realpathSync(found)), home));
+      for (const [link, target] of programLinks(found))
         if (link.startsWith(`${home}/`)) links.set(link, target);
     }
   }
@@ -103,7 +111,7 @@ export function sandboxArgs(given: {
   // other files aren't the agent's to read. bun runs sc without node_modules by fetching
   // its packages itself, and a sandbox can't show a folder that is missing.
   const bin = singleFile ? dirname(process.execPath) : join(checkoutFolder, "bin");
-  const skel = singleFile
+  const skelcrewFiles = singleFile
     ? [process.execPath]
     : ["bin", "src", "node_modules", "package.json"]
         .map((part) => join(checkoutFolder, part))
@@ -115,7 +123,7 @@ export function sandboxArgs(given: {
       ...seatbeltArgs({
         home,
         path: `${bin}:${path}`,
-        read: [...programs, ...skel],
+        read: [...programFolders, ...skelcrewFiles],
         links: [...links.keys()],
         mounts,
         socket,
@@ -160,19 +168,19 @@ export function sandboxArgs(given: {
   // passes through stays out: bubblewrap can't mount through a link it made, and refuses to
   // start. The mount makes a real folder there instead.
   for (const [link, target] of links)
-    if (![...programs, ...mounts].some((p) => p.startsWith(`${link}/`)))
+    if (![...programFolders, ...mounts].some((p) => p.startsWith(`${link}/`)))
       args.push("--symlink", target, link);
   // Then the programs and Skelcrew read-only, and the caller's own mounts, inside the hidden
   // home folder.
-  for (const p of programs) args.push(...ro(p));
-  for (const p of skel) args.push(...ro(p));
+  for (const p of programFolders) args.push(...ro(p));
+  for (const p of skelcrewFiles) args.push(...ro(p));
   args.push(...mounts);
   // Its folder rather than the socket itself: the daemon makes the socket anew each time it
   // starts, and a mounted file would stay the old one, which nothing answers on. Read-only,
   // so the agent can't replace it. The folder must hold nothing else.
   if (socket) {
-    args.push(...["--ro-bind", dirname(socket), socketsInside]);
-    args.push("--setenv", "SKELCREW_SOCKET", join(socketsInside, basename(socket)));
+    args.push(...["--ro-bind", dirname(socket), socketFolderInside]);
+    args.push("--setenv", "SKELCREW_SOCKET", join(socketFolderInside, basename(socket)));
   }
   // SKELCREW_SANDBOX tells Skelcrew's own commands, and its tests, that they run inside.
   args.push("--setenv", "SKELCREW_SANDBOX", "1", "--setenv", "PATH", `${bin}:${path}`);
@@ -191,7 +199,7 @@ export function sandboxArgs(given: {
 // the reviewer gets a copy instead, made in the review's own folder so it goes with it. A Mac
 // has no overlay either, and can't show a folder at another path, so there the reviewer
 // works in the copy where it lies, which the review's folder already opens to it.
-export async function throwaway(given: {
+export async function throwawayMounts(given: {
   source: string;
   copy: string;
   sprite: boolean;
@@ -266,7 +274,7 @@ const allowedEnv = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "COLORTE
 // those who use a key rather than a login. So tokens and keys in yours stay out of every
 // sandbox, and a key for one harness's model never reaches another harness or a setup
 // command, which comes from the repository.
-export function keptEnv(
+export function filterEnv(
   env: Record<string, string | undefined>,
   keys: readonly string[] = [],
 ): Record<string, string> {
@@ -304,5 +312,5 @@ export function setupCommand(
     // a folder of yours that holds secrets, such as Skelcrew's own token.
     programs: command.split(/\s+/).filter((word) => !word.includes("/")),
   });
-  return { argv, env: keptEnv(env) };
+  return { argv, env: filterEnv(env) };
 }

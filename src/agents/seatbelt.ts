@@ -12,14 +12,14 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
-// What every program needs, and nothing else. All else stays denied, so a Mac service nobody
-// thought of stays closed. com.apple.SecurityServer is the Keychain's service, where gh keeps
-// your GitHub token and Claude Code your login. It is open because Codex checks each site's
-// certificate through it, and with it closed reaches nothing. Your logins stay out of reach
-// all the same: your login keychain is a file in your home folder, which the sandbox hides,
-// so the service finds none of them. com.apple.securityd.xpc, the newer Keychain, has no such
-// file to hide, so it stays closed. lsopen and appleevent-send stay denied too, as open and
-// osascript start programs outside the sandbox.
+// The start of every profile: what every program needs, and nothing else. All else stays
+// denied, so a Mac service nobody thought of stays closed. com.apple.SecurityServer is the
+// Keychain's service, where gh keeps your GitHub token and Claude Code your login. It is open
+// because Codex checks each site's certificate through it, and with it closed reaches nothing.
+// Your logins stay out of reach all the same: your login keychain is a file in your home
+// folder, which the sandbox hides, so the service finds none of them. com.apple.securityd.xpc,
+// the newer Keychain, has no such file to hide, so it stays closed. lsopen and appleevent-send
+// stay denied too, as open and osascript start programs outside the sandbox.
 // Shared memory and semaphores of both kinds are open, as Postgres on a Mac needs the older
 // System V kind to start, and builders run their repository's tests. macOS has one set for
 // the whole machine, where Linux gives each sandbox its own, so an agent could disturb a
@@ -27,7 +27,7 @@ import { basename, dirname, join } from "node:path";
 // lock record there.
 // Local sockets are denied here and opened one by one below: tmux's and the ssh agent's would
 // run commands with your rights, and a Mac has no /run to hide them in.
-const base = `(version 1)
+const baseProfile = `(version 1)
 (deny default (with message "skelcrew"))
 
 (allow process-exec)
@@ -105,7 +105,7 @@ const quoted = (path: string) => JSON.stringify(path);
 
 // Returns every folder above a path, for programs that walk down to it one name at a time,
 // as Node's realpath does.
-function above(path: string): string[] {
+function foldersAbove(path: string): string[] {
   const folders: string[] = [];
   for (let at = dirname(path); at !== "/" && at !== dirname(at); at = dirname(at)) folders.push(at);
   return folders;
@@ -130,7 +130,7 @@ export function seatbeltProfile(given: {
   rules.push(...write.map((path) => `(allow file-read* file-write* (subpath ${quoted(path)}))`));
   // Only the facts of each folder on the way, so a program can find what came back. Their
   // contents stay hidden.
-  const folders = new Set([...read, ...links, ...write].flatMap(above));
+  const folders = new Set([...read, ...links, ...write].flatMap(foldersAbove));
   for (const folder of folders)
     rules.push(`(allow file-read-metadata (literal ${quoted(folder)}))`);
   // Programs may make and reach local sockets in their own writable folders, and the agent may
@@ -141,7 +141,7 @@ export function seatbeltProfile(given: {
   }
   if (socket)
     rules.push(`(allow network-outbound (remote unix-socket (subpath ${quoted(socket)})))`);
-  return `${base}${rules.join("\n")}\n`;
+  return `${baseProfile}${rules.join("\n")}\n`;
 }
 
 // Returns a path with its links resolved, since a profile matches real paths only. /tmp and
@@ -176,24 +176,24 @@ export function seatbeltArgs(given: {
   // Read bubblewrap's mounts three words at a time: writable ones and read-only ones. Only a
   // folder at its own path can be shown, as a profile can't move one.
   const write: string[] = [];
-  const shown = [...read];
+  const readOnly = [...read];
   for (let at = 0; at < mounts.length; at += 3) {
     const [kind, from, to] = mounts.slice(at, at + 3);
     if (!from || from !== to || (kind !== "--bind" && kind !== "--ro-bind"))
       throw new Error(`a Mac's sandbox can't mount ${mounts.join(" ")}`);
-    (kind === "--bind" ? write : shown).push(from);
+    (kind === "--bind" ? write : readOnly).push(from);
   }
   // The agent's own home and temporary folder, made fresh for this sandbox.
-  const own = realpathSync(mkdtempSync(join(tmpdir(), "skelcrew-sandbox-")));
-  const [ownHome, ownTemp] = [join(own, "home"), join(own, "tmp")];
+  const sandboxFolder = realpathSync(mkdtempSync(join(tmpdir(), "skelcrew-sandbox-")));
+  const [ownHome, ownTemp] = [join(sandboxFolder, "home"), join(sandboxFolder, "tmp")];
   for (const folder of [ownHome, ownTemp]) mkdirSync(folder);
   // What comes back of your home folder keeps its place under the agent's own, since agents
   // are told of it by that path: a lead finds its repository in ~/.local/share/skelcrew/repos.
   // Shortest first, so a folder inside one already linked is found there.
-  const under = `${home}/`;
-  for (const folder of [...shown, ...write].sort((a, b) => a.length - b.length)) {
-    const place = join(ownHome, folder.slice(under.length));
-    if (!folder.startsWith(under) || existsSync(place)) continue;
+  const homePrefix = `${home}/`;
+  for (const folder of [...readOnly, ...write].sort((a, b) => a.length - b.length)) {
+    const place = join(ownHome, folder.slice(homePrefix.length));
+    if (!folder.startsWith(homePrefix) || existsSync(place)) continue;
     mkdirSync(dirname(place), { recursive: true });
     symlinkSync(folder, place);
   }
@@ -201,10 +201,10 @@ export function seatbeltArgs(given: {
   // Linux, so like your home folder they are hidden.
   const hidden = [real(home), "/private/tmp", "/private/var/folders"].flatMap(bothPaths);
   // Beside the agent's folders rather than in them: it must never choose its own rules.
-  const profile = join(own, "profile.sb");
+  const profile = join(sandboxFolder, "profile.sb");
   const text = seatbeltProfile({
     hidden,
-    read: [...shown.map(real), ...(socket ? [real(dirname(socket))] : [])],
+    read: [...readOnly.map(real), ...(socket ? [real(dirname(socket))] : [])],
     links: links.map((link) => join(real(dirname(link)), basename(link))),
     write: [...write.map(real), ownHome, ownTemp],
     ...(socket ? { socket: realSocket(socket) } : {}),
@@ -215,16 +215,21 @@ export function seatbeltArgs(given: {
   const vars = [`HOME=${ownHome}`, `TMPDIR=${ownTemp}`, "SKELCREW_SANDBOX=1", `PATH=${path}`];
   // Claude Code keeps its working files in /tmp unless told otherwise.
   vars.push(`CLAUDE_CODE_TMPDIR=${ownTemp}`);
+  // zsh ignores TMPDIR and writes each heredoc to a file named from TMPPREFIX, /tmp/zsh by
+  // default. Denied there, a heredoc fails, and a $(cat <<EOF) around it quietly gives
+  // nothing. TMPPREFIX starts each file's name, so zsh makes no folder of it.
+  vars.push(`TMPPREFIX=${ownTemp}/zsh`);
   // Postgres clients default to a socket in /tmp, which is hidden, so they use TCP instead.
   vars.push("PGHOST=localhost");
   if (socket) vars.push(`SKELCREW_SOCKET=${socket}`);
   // Inside, a shell moves to the agent's folder and runs the command with that environment.
-  const enter = 'cd "$1" && shift && exec /usr/bin/env "$@"';
-  const sandboxed = ["sandbox-exec", "-f", profile, "/bin/sh", "-c", enter, "sh", cwd];
+  const enterScript = 'cd "$1" && shift && exec /usr/bin/env "$@"';
+  const sandboxed = ["sandbox-exec", "-f", profile, "/bin/sh", "-c", enterScript, "sh", cwd];
   // Outside the sandbox, a shell waits for it and then removes its folders, or every review
   // and setup command would leave a home full of caches behind. A hangup, as when tmux ends
   // a session, reaches the agent too, so the shell lets it pass and goes on to clean up. A
   // SIGKILL leaves the folders to macOS.
-  const after = 'own=$1; shift; trap : HUP INT TERM; "$@"; code=$?; rm -rf "$own"; exit $code';
-  return ["/bin/sh", "-c", after, "sh", own, ...sandboxed, ...vars, ...command];
+  const cleanupScript =
+    'own=$1; shift; trap : HUP INT TERM; "$@"; code=$?; rm -rf "$own"; exit $code';
+  return ["/bin/sh", "-c", cleanupScript, "sh", sandboxFolder, ...sandboxed, ...vars, ...command];
 }
