@@ -3,7 +3,7 @@
 // where this Skelcrew lives, worked out only here, as a moved source file would quietly break any
 // second copy of that.
 import { join, resolve } from "node:path";
-import checkout from "../package.json";
+import { z } from "zod";
 
 // What Skelcrew was built from. The release build stamps its release, such as 0.4.2, and
 // withLinuxSkel the commit of the copy it builds for a server or Sprite. A Skelcrew run from a
@@ -18,9 +18,22 @@ export const isRelease = (build: string) => /^\d+\.\d+\.\d+$/.test(build);
 // The release this Skelcrew is, or nothing for a build from a checkout.
 export const release = built !== undefined && isRelease(built) ? built : "";
 
+// Returns the version the checkout's package.json gives, or nothing when it can't be found.
+// A require that can fail rather than an import: Bun finds the file by listing its folder,
+// and on a Mac an agent's sandbox lets it open the checkout's files but not list the
+// checkout, so an import there stopped every sc command an agent ran. Agents never draw the
+// header, so nothing is right for them. A single-file build carries the file inside itself.
+function checkoutVersion(): string {
+  try {
+    return z.object({ version: z.string() }).parse(require("../package.json")).version;
+  } catch {
+    return "";
+  }
+}
+
 // The version the header shows: the release, or for a build from a checkout, the version its
 // package.json gives, so a screenshot always says which Skelcrew it came from.
-export const version = release || checkout.version;
+export const version = release || checkoutVersion();
 
 // Where releases live, stamped in by the release build from the install script, the one place
 // that says so.
