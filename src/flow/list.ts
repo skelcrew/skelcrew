@@ -70,8 +70,10 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
 }
 
 // An open task as sc issue ls shows it, with how its thread stands, or null with no thread.
+// `issue` is its name, such as app-12. The key says issue, as the commands do, and is always
+// one in the tracker: a thread with no issue, such as app-t1, is never listed here.
 export const TaskRow = z.object({
-  task: z.string(),
+  issue: z.string(),
   title: z.string(),
   thread: z.object({ status: Thread.shape.status, needsYou: z.boolean() }).nullable(),
 });
@@ -102,7 +104,7 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
     .flatMap((r) =>
       openTasks(db, r.owner, r.repo).map((task) => ({
         created: task.created,
-        task: `${r.name}-${task.id}`,
+        issue: `${r.name}-${task.id}`,
         title: task.title,
         thread: threadStatusOf(db, r.owner, r.repo, task.id),
       })),
@@ -111,9 +113,9 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
     .map(({ created, ...task }) => task);
 }
 
-// One task as sc issue show shows it.
+// One task as sc issue show shows it, named under `issue` as in sc issue ls.
 export const TaskView = z.object({
-  task: z.string(),
+  issue: z.string(),
   title: z.string(),
   body: z.string(),
   thread: TaskRow.shape.thread,
@@ -126,7 +128,7 @@ export function showTask(db: Database, repository: string, task: string): TaskVi
   const r = findRepository(db, repository);
   const { title, body } = taskOf(db, r.owner, r.repo, task);
   return {
-    task: `${r.name}-${task}`,
+    issue: `${r.name}-${task}`,
     title,
     body,
     thread: threadStatusOf(db, r.owner, r.repo, task),
@@ -184,9 +186,9 @@ export function printTasks(tasks: TaskRow[], json: boolean): void {
   else
     table(
       ["ISSUE", "THREAD", "TITLE"],
-      tasks.map(({ task, title, thread }) => {
+      tasks.map(({ issue, title, thread }) => {
         const status = thread ? `${thread.status}${thread.needsYou ? ", needs you" : ""}` : "";
-        return [task, status, title];
+        return [issue, status, title];
       }),
     );
 }
@@ -198,7 +200,7 @@ export function printTask(task: TaskView, json: boolean): void {
     console.log(JSON.stringify(task));
     return;
   }
-  console.log(`${task.task}  ${task.title}`);
+  console.log(`${task.issue}  ${task.title}`);
   if (task.thread)
     console.log(`Thread: ${task.thread.status}${task.thread.needsYou ? ", needs you" : ""}`);
   if (task.body) console.log(`\n${task.body.trimEnd()}`);

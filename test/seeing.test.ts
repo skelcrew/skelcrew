@@ -249,8 +249,8 @@ describe("sc issue ls", () => {
     const listed = await skel(["issue", "ls", "app", "--json"]);
     expect(listed.err).toBe("");
     expect(JSON.parse(listed.out)).toEqual([
-      { task: "app-12", title: "Add export", thread: { status: "working", needsYou: false } },
-      { task: "app-10", title: "Fix login", thread: null },
+      { issue: "app-12", title: "Add export", thread: { status: "working", needsYou: false } },
+      { issue: "app-10", title: "Fix login", thread: null },
     ]);
   });
 
@@ -309,13 +309,13 @@ describe("sc issue show", () => {
     const shown = await skel(["issue", "show", "app-12", "--json"]);
     expect(shown.err).toBe("");
     expect(JSON.parse(shown.out)).toEqual({
-      task: "app-12",
+      issue: "app-12",
       title: "Add export",
       body: "Export threads as JSON.\n\nKeep it small.",
       thread: { status: "working", needsYou: false },
     });
     expect(JSON.parse((await skel(["issue", "show", "--json", "app-10"])).out)).toEqual({
-      task: "app-10",
+      issue: "app-10",
       title: "Fix login",
       body: "",
       thread: null,
@@ -466,9 +466,9 @@ exec sleep 300
     const [ps, tasks, shown, app, attach] = read(out).trim().split("\n");
     expect(JSON.parse(ps ?? "")).toHaveLength(2);
     expect(JSON.parse(tasks ?? "")).toEqual([
-      { task: "app-12", title: "Add export", thread: { status: "working", needsYou: false } },
+      { issue: "app-12", title: "Add export", thread: { status: "working", needsYou: false } },
     ]);
-    expect(JSON.parse(shown ?? "")).toMatchObject({ task: "app-12", body: "As JSON" });
+    expect(JSON.parse(shown ?? "")).toMatchObject({ issue: "app-12", body: "As JSON" });
     expect(JSON.parse(app ?? "")).toEqual([
       {
         name: "app",
