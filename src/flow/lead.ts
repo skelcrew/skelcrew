@@ -166,20 +166,20 @@ async function typeNotes(db: Database, tmux: string, owner: string, repo: string
   }
 }
 
-// Each repository's notes being typed, by its owner/name.
-const telling = new Map<string, Promise<void>>();
+// The note typing under way for each repository's lead, by its owner/name.
+const noteTyping = new Map<string, Promise<void>>();
 
-// Has the daemon type the saved notes into each repository's lead, and returns at once, so
-// the round or request that saved a note never waits on a lead. Each lead's notes go one
-// after another, so a note is never pasted twice, nor two before either's Enter, while a busy
-// lead holds up no other. A note that fails to be typed stays saved, and the next call, at
-// the next note, the next sc attach or the daemon's next start, tries it again.
-export function tellLead(db: Database, tmux: string): void {
+// Types the saved notes into each repository's lead, and returns at once, so the round or
+// request that saved a note never waits on a lead. Each lead's notes are typed one after
+// another, so a note is never pasted twice, and two notes never share one Enter. A busy lead
+// holds up no other lead. A note that fails to be typed stays saved. The next call tries it
+// again: at the next note, the next time you open a lead with sc, or the daemon's next start.
+export function typeLeadNotes(db: Database, tmux: string): void {
   for (const { owner, repo } of repositories(db)) {
     // Chain onto the lead's typing under way, so its notes go in one after another.
     const key = `${owner}/${repo}`;
-    const before = telling.get(key) ?? Promise.resolve();
-    telling.set(
+    const before = noteTyping.get(key) ?? Promise.resolve();
+    noteTyping.set(
       key,
       before
         .then(() => typeNotes(db, tmux, owner, repo))
@@ -201,5 +201,5 @@ export function noteForLead(
     repository.repo,
     text,
   ]);
-  tellLead(db, tmux);
+  typeLeadNotes(db, tmux);
 }

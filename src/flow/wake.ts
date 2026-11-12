@@ -1,5 +1,5 @@
-// Wake-ups on a Sprite: the listener that has a plugin's next polls come at once when a
-// delivery for it arrives, and asking a repository's tracker and forge to send them. A
+// Wake-ups on a Sprite: a listener that polls a plugin's repositories at once when a delivery
+// for that plugin arrives, and asking a repository's tracker and forge to send deliveries. A
 // delivery only says "look now": what happened is always read by polling, so a missed
 // delivery loses nothing, and a forged one could at most cause a poll.
 import type { Database } from "bun:sqlite";
@@ -7,10 +7,11 @@ import type { Repository } from "../db.ts";
 import { spriteUrl } from "../machine/sprite.ts";
 import { pluginsOf, wake } from "../plugins/ask.ts";
 
-// Listens on the port for deliveries to /<name>, and has `wake` bring that plugin's polls
-// forward. `wake` says whether a plugin has that name. Anyone can reach a Sprite's URL, so a
-// delivery is never read, and one to no plugin's name is refused. It answers once `wake` has
-// taken it in, as the Sprite sleeps again once the delivery is answered.
+// Listens on the port for deliveries to /<plugin>, and passes the plugin's name to
+// `wakePlugin`, which polls its repositories. `wakePlugin` returns false when no repository
+// uses that plugin, and the delivery is then refused. Anyone can reach a Sprite's URL, so a
+// delivery's body is never read. The answer waits until `wakePlugin` returns, as the Sprite
+// sleeps again once the delivery is answered.
 export function listenForWakeUps(
   port: number,
   wakePlugin: (plugin: string) => Promise<boolean>,

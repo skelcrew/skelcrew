@@ -13,7 +13,7 @@ const wrapped = (text: string, columns: number) =>
   Bun.wrapAnsi(clean(text), Math.max(columns, 1), { hard: true }).split("\n");
 
 // The widest a page's text runs, in columns, however wide its pane.
-const measure = 80;
+const maxTextWidth = 80;
 
 // Returns a page as lines for a pane of a given width, from the top: the title, then the facts
 // with the link to GitHub and a dim hint saying what a click on it does, then the description,
@@ -24,20 +24,22 @@ const measure = 80;
 export function drawPage(page: Page, url: string, width: number, hint: string): string[] {
   // Text stops at the padding on each side, and every fact's text starts in one column, past
   // the longest label. On a wide pane it stops at 80 columns, as longer lines are hard to read.
-  const room = Math.min(width - 2 * pad.length, measure);
+  const room = Math.min(width - 2 * pad.length, maxTextWidth);
   const labels = [...page.facts.map(([label]) => label), "GitHub"];
-  const gap = Math.max(...labels.map((label) => label.length)) + 2;
+  const labelWidth = Math.max(...labels.map((label) => label.length)) + 2;
   // Returns a label and what it says, with any more lines lined up under the first.
   const fact = (label: string, lines: string[]) =>
-    lines.map((line, i) => `${pad}${paint(grey, (i === 0 ? label : "").padEnd(gap))}${line}`);
+    lines.map(
+      (line, i) => `${pad}${paint(grey, (i === 0 ? label : "").padEnd(labelWidth))}${line}`,
+    );
   // The link to GitHub is a terminal link, cut to fit beside its label. The hint gives way
   // first, when the link wouldn't fit whole beside it. The link is blue and underlined, as
   // Claude Code draws links, since the screen takes the mouse and the terminal marks a link only
   // with Shift held. The theme's own blue fits its colours. 39 and 24 end just these two styles,
   // and they sit inside the terminal link, which a click finds by its start.
-  const fits = Bun.stringWidth(url) + 2 + Bun.stringWidth(hint) <= room - gap;
+  const fits = Bun.stringWidth(url) + 2 + Bun.stringWidth(hint) <= room - labelWidth;
   const after = fits ? `  ${paint(grey, hint)}` : "";
-  const link = `\x1b]8;;${url}\x1b\\\x1b[34;4m${fitted(url, room - gap)}\x1b[39;24m\x1b]8;;\x1b\\${after}`;
+  const link = `\x1b]8;;${url}\x1b\\\x1b[34;4m${fitted(url, room - labelWidth)}\x1b[39;24m\x1b]8;;\x1b\\${after}`;
   // The description wraps as its markdown says, so a list item's lines start under its text.
   const body = page.body.trim()
     ? drawMarkdown(page.body.trim(), Math.max(room, 1))
@@ -47,7 +49,7 @@ export function drawPage(page: Page, url: string, width: number, hint: string): 
     "",
     ...wrapped(page.title, room).map((line) => `${pad}${paint(white, line)}`),
     "",
-    ...page.facts.flatMap(([label, says]) => fact(label, wrapped(says, room - gap))),
+    ...page.facts.flatMap(([label, says]) => fact(label, wrapped(says, room - labelWidth))),
     ...fact("GitHub", [link]),
     "",
     ...body.map((line) => `${pad}${line}`),
@@ -60,14 +62,14 @@ const esc = "\x1b";
 const wheel = new RegExp(`${esc}\\[<(64|65);\\d+;\\d+M`, "g");
 const press = new RegExp(`${esc}\\[<0;(\\d+);(\\d+)M`, "g");
 // How many lines a notch of the wheel moves, as an agent's history does.
-const notch = 5;
+const linesPerNotch = 5;
 // The command that opens a link in your browser.
-const opener = process.platform === "darwin" ? "open" : "xdg-open";
+const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 
-// Shows the page at a link until its pane goes, as `read` gives it, or why it couldn't. `where`
-// names the remote Skelcrew runs on, and is empty on the machine you sit at. It writes only when
-// you scroll, click or resize: it never asks again and has no clock, as on a Sprite a terminal
-// that stays quiet lets it sleep.
+// Shows the page for a link, as `read` gives it, until its pane closes. A page that can't be read
+// shows why. `where` names the remote Skelcrew runs on, and is empty on the machine you sit at.
+// It writes only when you scroll, click or resize. It never reads the page again and has no
+// clock, as on a Sprite a terminal that stays quiet lets it sleep.
 export async function runPage(url: string, where: string, read: () => Page): Promise<void> {
   // A page that can't be read shows why, in place of its description.
   let page: Page;
@@ -80,11 +82,11 @@ export async function runPage(url: string, where: string, read: () => Page): Pro
   // screen takes the mouse for the sidebar. So a plain click on it opens it here, on the
   // machine you sit at. A Linux machine with no display, such as a server you ssh to, has no
   // browser to open.
-  const here =
+  const canOpen =
     where === "" &&
     (process.platform === "darwin" || !!process.env.DISPLAY || !!process.env.WAYLAND_DISPLAY) &&
-    Bun.which(opener) !== null;
-  let hint = here ? "click to open" : "click to copy";
+    Bun.which(openCommand) !== null;
+  let hint = canOpen ? "click to open" : "click to copy";
   // The page is drawn again for each frame, at the pane's size then, as you can resize it at any
   // moment. `top` is the line it starts at, as far as you scrolled.
   const lines = (columns: number) => drawPage(page, url, columns, hint);
@@ -102,9 +104,9 @@ export async function runPage(url: string, where: string, read: () => Page): Pro
   // Opens the link in your browser, or, on a remote or when opening fails, copies it to your
   // terminal's clipboard with OSC 52, which reaches you over ssh and sprite too, and says so in
   // the hint. The browser is detached, so it outlives the page.
-  const follow = async () => {
-    if (here) {
-      const opening = Bun.spawn([opener, url], {
+  const openLink = async () => {
+    if (canOpen) {
+      const opening = Bun.spawn([openCommand, url], {
         stdio: ["ignore", "ignore", "ignore"],
         detached: true,
       });
@@ -133,10 +135,13 @@ export async function runPage(url: string, where: string, read: () => Page): Pro
     const before = top;
     const text = bytes.toString();
     for (const [, button] of text.matchAll(wheel))
-      top = Math.min(Math.max(top + (button === "64" ? -notch : notch), 0), lastTop());
+      top = Math.min(
+        Math.max(top + (button === "64" ? -linesPerNotch : linesPerNotch), 0),
+        lastTop(),
+      );
     if (top !== before) draw();
     for (const [, column, row] of text.matchAll(press))
-      if (onLink(Number(column), Number(row))) void follow();
+      if (onLink(Number(column), Number(row))) void openLink();
   });
   // Draws now and on each resize, until the pane goes and its input closes.
   process.on("SIGWINCH", draw);
