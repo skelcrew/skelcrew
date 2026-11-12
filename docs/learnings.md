@@ -358,6 +358,9 @@ that covers the code you are about to write.
   worker runs several files one after another, each with a fresh preload and `process.env`.
   What one file's preload started still runs during the next, so the leak check counted an
   earlier file's sweep as a leftover. Each file's sweep ends with that file.
+- **In a test, listen for a socket's errors before connecting.** With the listener added
+  after `createConnection`, Bun can fail the test on a connect to a socket that isn't there
+  yet. Make a `new Socket()`, add the listener, then call `connect`.
 
 ## The agent's shell commands
 
