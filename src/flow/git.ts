@@ -98,6 +98,15 @@ export async function pushCommit(
   ]);
 }
 
+// Deletes a branch from the repository's remote, for sc rm of a thread with no PR to close.
+export async function deleteBranch(
+  db: Database,
+  repository: Repository,
+  branch: string,
+): Promise<void> {
+  await git(db, repository, ["push", "--quiet", repository.remote, `:refs/heads/${branch}`]);
+}
+
 // Returns whether the branch is on the repository's remote, for a thread with no forge, whose
 // branch going from the remote ends it.
 export async function onRemote(

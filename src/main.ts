@@ -56,6 +56,7 @@ function usage(command?: string): never {
     "task",
     "start",
     "stop",
+    "rm",
     "attach",
     "review",
     "submit",
@@ -265,11 +266,11 @@ async function taskCommand(args: string[], json: boolean): Promise<void> {
   usage(command);
 }
 
-// Starts, stops, re-reviews or attaches to the thread on a task, named such as app-13.
+// Starts, stops, removes, re-reviews or attaches to the thread on a task, named such as app-13.
 async function threadCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
   const { attachToThread } = await import("./attach.ts");
-  const { reviewAgain, startNew, startOn, stopOn } = await import("./client.ts");
+  const { removeOn, reviewAgain, startNew, startOn, stopOn } = await import("./client.ts");
   const thread = taskName(sub);
   // --from takes a branch, and only sc start <task> takes it.
   const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
@@ -287,6 +288,14 @@ async function threadCommand(args: string[]): Promise<void> {
     const name = await stopOn(...thread);
     console.log(
       `Stopped ${name}. Its clone, branch and pull request stay, and sc start ${name} brings its builder back.`,
+    );
+    return;
+  }
+  // An empty reason is no reason, so the PR closes with no comment.
+  if (command === "rm" && thread && rest.length <= 1) {
+    const name = await removeOn(...thread, rest[0] || undefined);
+    console.log(
+      `Removed ${name}. Its pull request is closed and its branch and clone are gone. Its task stays open, and sc start ${name} starts it over.`,
     );
     return;
   }
@@ -416,6 +425,7 @@ async function runCommand(args: string[]): Promise<void> {
       return taskCommand(words, json);
     case "start":
     case "stop":
+    case "rm":
     case "review":
     case "attach":
       return threadCommand(words);

@@ -1,15 +1,17 @@
 // Acting on what a thread's PR events mean: typing them into its builder, and ending the
-// builder for a merge or for sc stop, as both must cancel the events still being typed in.
+// builder for a merge, for sc stop or for sc rm, as each must cancel the events still being
+// typed in.
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 import { agentRuns, stopSession } from "../agents/tmux.ts";
 import { typeInto } from "../agents/typing.ts";
 import { cloneDir } from "../paths.ts";
-import { failedLog } from "../plugins/ask.ts";
+import { closePr, failedLog } from "../plugins/ask.ts";
+import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
 import type { Check, Decision } from "./decide.ts";
-import { fetchInto } from "./git.ts";
+import { deleteBranch, fetchInto, onRemote } from "./git.ts";
 import { tellLead } from "./lead.ts";
 import { refreshClones } from "./repo.ts";
 import { endRound } from "./round.ts";
@@ -81,8 +83,8 @@ export async function stopThread(db: Database, tmux: string, thread: Thread): Pr
   await endBuilder(tmux, thread.folder);
 }
 
-// Ends the thread once its PR is merged or closed: ends its builder, and removes its clone by
-// deleting the folder, never running git in it.
+// Ends the thread once its PR is merged or closed, or for sc rm: ends its builder, and removes
+// its clone by deleting the folder, never running git in it.
 export async function endThread(
   db: Database,
   tmux: string,
@@ -91,7 +93,60 @@ export async function endThread(
 ): Promise<void> {
   await endBuilder(tmux, thread.folder);
   rmSync(cloneOf(thread), { recursive: true, force: true });
+  // Skelcrew's clone keeps refs of the branch it pushed, named by the thread's folder. A thread
+  // started over in that folder would be taken for one that pushed already, and without a forge
+  // ended at once, as its branch isn't on the remote.
+  const ours = cloneDir(thread.owner, thread.repo);
+  for (const kind of ["threads", "bases", "remote"])
+    await quietly([
+      "git",
+      "-C",
+      ours,
+      "update-ref",
+      "-d",
+      `refs/skelcrew/${kind}/${thread.folder}`,
+    ]);
   record(db, thread.folder, { status: "done", needs_you: false }, `${why}: ended the thread`);
+}
+
+// Removes the thread for sc rm: ends its builder, closes its PR with the reason as a comment,
+// deletes its branch on the forge, removes its clone and marks it done. Its task stays open,
+// so sc start can start the thread over on it. Without a PR, the branch is deleted with git,
+// if Skelcrew pushed it. A thread still running is marked stopped first, so a builder that
+// submits while it exits is refused. A forge that fails leaves the thread as it is, short of
+// done, so sc rm can be run again. Refuses a thread that is done, or still setting up, whose
+// setup would go on to start its builder.
+export async function removeThread(
+  db: Database,
+  tmux: string,
+  thread: Thread,
+  reason: string | undefined,
+): Promise<void> {
+  // Refuse what can't be removed, then stop a thread still running.
+  const name = threadName(db, thread);
+  if (thread.status === "done") throw new Error(`${name} is done already`);
+  const live = thread.status === "working" || thread.status === "waiting";
+  if (live && thread.session === null)
+    throw new Error(`${name} is still setting up: remove it once its builder has started`);
+  if (live)
+    record(db, thread.folder, { status: "stopped", needs_you: false, asking: false }, "removing");
+  // A push under way would put back the branch, or open a PR after none was closed, so it is
+  // waited for, and the thread read again for the PR it may have opened.
+  const pushing = endRound(thread.folder);
+  await endBuilder(tmux, thread.folder);
+  await pushing;
+  // Close the PR, which deletes its branch on the forge too, or with no PR, delete a branch
+  // Skelcrew pushed, as a repository with no forge has.
+  const { pr, branch } = readThread(db, thread.folder);
+  const repository = repositoryOf(db, thread);
+  if (pr !== null)
+    await closePr(db, repository, {
+      pr,
+      branch,
+      comment: reason ? `Closed by Skelcrew: ${reason}` : null,
+    });
+  else if (await onRemote(db, repository, branch)) await deleteBranch(db, repository, branch);
+  await endThread(db, tmux, thread, reason ? `removed: ${reason}` : "removed");
 }
 
 // Types what the decision tells into the builder once it is idle, then saves the decision.

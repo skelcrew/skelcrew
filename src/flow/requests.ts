@@ -50,6 +50,12 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     task: TaskId,
   }),
   z.object({
+    command: z.literal("rm"),
+    repo: z.string(),
+    task: TaskId,
+    reason: z.string().min(1).optional(),
+  }),
+  z.object({
     command: z.literal("tell"),
     repo: z.string(),
     task: TaskId,
@@ -82,6 +88,7 @@ export const allowed = {
     "start new",
     "review",
     "stop",
+    "rm",
   ],
   lead: [
     "status",
@@ -94,6 +101,7 @@ export const allowed = {
     "start new",
     "review",
     "stop",
+    "rm",
     "tell",
   ],
   builder: ["status", "submit", "tell lead", "question asked", "question answered", "turn ended"],

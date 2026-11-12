@@ -14,6 +14,7 @@ const sections: [string, [string, string][]][] = [
       ["start <task> [--from <branch>]", "Start, resume, or go on past the limit"],
       ['start <repo> "<title>" "<body>"', "Start a thread, with no tracker"],
       ["stop <task>", "End the builder, keeping its clone and PR"],
+      ['rm <task> ["<reason>"]', "Close its PR, delete its branch and clone"],
       ["attach <task>", "Open that builder, with the sidebar"],
       ["review <task>", "Run the thread's last review again"],
     ],

@@ -826,4 +826,39 @@ await serve(${JSON.stringify(socket)}, 200);`;
     await until(() => JSON.stringify(row()).includes('"done"'), 30_000);
     expect(log()).toContain("is merged into main");
   }, 60_000);
+
+  // Without a forge there is no PR to close, but Skelcrew pushed the branch, so it deletes it.
+  test("sc rm deletes the thread's branch from the remote and its clone, and the thread can start over", async () => {
+    const bare = addAppOnGit();
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Ready again.");
+    const code = `import { serve } from ${JSON.stringify(source("flow/daemon.ts"))};
+await serve(${JSON.stringify(socket)}, 200);`;
+    running.push(
+      Bun.spawn([process.execPath, "-e", code], { env: env(), stdout: "ignore", stderr: "ignore" }),
+    );
+    await untilCloned();
+    expect((await skel(["start", "app", "Add export", "As JSON"])).err).toBe("");
+    const log = () => read(join(data(), "threads", "app-t1.log"));
+    const ready = "app-t1 is ready on branch skelcrew/t1-add-export";
+    await until(() => log().includes(ready), 30_000);
+    const onRemote = () => git(bare, "branch", "--list", "skelcrew/t1-add-export") !== "";
+    expect(onRemote()).toBe(true);
+
+    const removed = await skel(["rm", "app-t1", "wrong approach"]);
+    expect(removed.err).toBe("");
+    expect(removed.out).toContain("Removed app-t1.");
+    expect(onRemote()).toBe(false);
+    expect(existsSync(join(data(), "threads", "app-t1"))).toBe(false);
+    expect(log()).toContain("wrong approach");
+    expect(asked(plugin).filter((q) => q.ask !== "claims")).toEqual([]);
+
+    // Started over, it isn't taken for a thread whose branch was deleted, and gets as far as
+    // the first did.
+    const before = log().split(ready).length;
+    expect((await skel(["start", "app-t1"])).out).toBe("Started app-t1.\n");
+    await until(() => log().split(ready).length > before, 30_000);
+    expect(log()).not.toContain("was deleted");
+    expect(onRemote()).toBe(true);
+  }, 60_000);
 });

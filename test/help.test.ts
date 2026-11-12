@@ -42,6 +42,7 @@ test("the help names every command", () => {
     "task create",
     "start",
     "stop",
+    "rm",
     "attach",
     "review",
     "plugin install",
