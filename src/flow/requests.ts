@@ -8,6 +8,10 @@ import type { Thread } from "./thread.ts";
 // for something else.
 const Branch = z.string().regex(/^(?!-)(?!.*\.\.)[\w./-]+$/);
 
+// A task's body, which is all a builder sees of the task besides its title, so one with only
+// blanks is refused. A body that passes keeps its spaces as they were.
+const TaskBody = z.string().regex(/\S/);
+
 // A request's `repo` names a repository the way a command does: by its name in Skelcrew or its
 // owner/name. It keeps that word because clients on other machines send it.
 export const DaemonRequest = z.discriminatedUnion("command", [
@@ -25,7 +29,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     command: z.literal("task create"),
     repo: z.string(),
     title: z.string().min(1),
-    body: z.string(),
+    body: TaskBody,
   }),
   z.object({
     command: z.literal("start"),
@@ -37,7 +41,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     command: z.literal("start new"),
     repo: z.string(),
     title: z.string().min(1),
-    body: z.string(),
+    body: TaskBody,
   }),
   z.object({
     command: z.literal("review"),
