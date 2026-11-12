@@ -259,7 +259,7 @@ When `claims` exits with 2 while Skelcrew brings in a repository in your termina
 | `claims` with a remote, such as `git@github.com:simon/app.git` | Forge | The repository's key, short name, link and clone URL, whether you can push to it and whether it is a fork. Or `null` if it isn't this plugin's. |
 | `changed` with a repository, whether the plugin is its tracker, its forge or both, the last `next` (or none), and PR numbers to watch | Tracker, forge | `items`, everything updated since, or everything open without a `next`, and the new `next` |
 | `create task` with a repository, title and body | Tracker | The new item |
-| `took` with a repository and task, before a labeled task starts | Tracker | Whether this call took it: `{ "took": true }`, or `false` if someone already had. GitHub reacts with 👀, and a reaction already there means it was taken. An answer of `null`, from an older plugin, counts as taken by this call. |
+| `took` with a repository and task, before a labeled task starts | Tracker | Whether this call took it: `{ "took": true }` if it did, or `{ "took": false }` if someone already had. GitHub reacts with 👀, and a reaction already there means it was taken. An answer of `null`, from an older plugin, counts as taken by this call. |
 | `seen` with a repository, PR, kind (comment or review) and ID, of a person's comment or review just typed into the builder | Forge | Nothing. GitHub reacts with 👀 |
 | `open pr` with a repository, branch, base, title and body | Forge | Its number, of the PR already open from that branch if there is one |
 | `close pr` with a repository, PR, branch, and a comment or none | Forge | Nothing. GitHub posts the comment, closes the PR, and deletes the branch |
