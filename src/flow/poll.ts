@@ -21,19 +21,22 @@ import { needsYou, readThread, record, Thread, threadName } from "./thread.ts";
 // The label that starts a thread on a task, added in its tracker by someone who may.
 const startLabel = "skelcrew";
 
-// Starts a thread, as sc start does, on each open task in Skelcrew's copy that is labeled to
-// start and has no thread. For each, it tells the repository's lead, starts the builder, then
-// tells the tracker Skelcrew took the task. Thread rows are read after the tracker answered, so
-// a thread sc start made meanwhile counts. A task in `starting`, named as owner/repo#task, is
-// left to the sc start starting it, which has options of its own, such as the branch to start
-// from. The thread is recorded first, so neither a later poll nor a restart starts it again.
-// If telling the tracker fails, that is only logged and never tried again.
+// Starts a thread on each of the repository's open tasks labeled to start in Skelcrew's copy that
+// has none, exactly as sc start does, once Skelcrew has claimed it in the tracker, and tells the
+// repository's lead. The claim comes first so that when two machines run Skelcrew on one
+// repository, such as a laptop and a Sprite, only one starts the task. Thread rows are read
+// after the tracker answers, so a thread sc start made meanwhile counts. A task in `starting`,
+// named as owner/repo#task, is left to the sc start starting it, which has options of its own,
+// such as the branch to start from. A task in `passed`, named the same way, is one this daemon
+// won't start by its label: another machine claimed it, or its claim was this daemon's but the
+// thread failed to start. Kept in memory, so the tracker isn't asked about it on every poll.
 async function startLabeled(
   db: Database,
   tmux: string,
   repository: Repository,
   setUpAndStart: (thread: Thread) => Promise<void>,
   starting: Set<string>,
+  passed: Set<string>,
 ): Promise<void> {
   const { owner, repo } = repository;
   const fullName = `${owner}/${repo}`;
@@ -43,27 +46,44 @@ async function startLabeled(
     .query("SELECT * FROM threads WHERE owner = ? AND repo = ?")
     .all(owner, repo)
     .map((row) => Thread.parse(row));
-  const labeled = openTasks(db, owner, repo).filter(
-    (task) => task.labels.includes(startLabel) && !starting.has(`${fullName}#${task.id}`),
-  );
+  const labeled = openTasks(db, owner, repo).filter((task) => {
+    const key = `${fullName}#${task.id}`;
+    return task.labels.includes(startLabel) && !starting.has(key) && !passed.has(key);
+  });
   for (const task of labeledToStart(threads, labeled)) {
-    // One sc start took meanwhile waits for the next poll.
-    const thread = await startThread(db, { repo: fullName, task: task.id }).catch((error) => {
-      console.log(`couldn't start ${task.id} in ${fullName}: ${errorText(error)}`);
+    const key = `${fullName}#${task.id}`;
+    // A claim that fails, such as on a network error, starts nothing and is tried again on the
+    // next poll, so a task is never started without its claim.
+    const claimed = await took(db, repository, task.id).catch((error) => {
+      console.log(`couldn't claim ${task.id} in ${fullName}, trying again: ${errorText(error)}`);
       return null;
     });
-    // The lead hears first, then the builder starts, then the tracker hears Skelcrew took the
-    // task. The note is one line, as every note to the lead is.
+    if (claimed === null) continue;
+    if (!claimed) {
+      console.log(`not starting ${task.id} in ${fullName}: it was already claimed elsewhere`);
+      passed.add(key);
+      continue;
+    }
+    // An sc start that came in while the tracker answered starts the task itself, with its own
+    // options, such as the branch to start from, so the poll leaves it be.
+    if (starting.has(key)) continue;
+    // The claim is this daemon's now, so a thread that fails to start isn't started by a
+    // later poll either: on another machine, or after a restart, its claim reads as taken.
+    // One sc start finished meanwhile also lands here, harmlessly.
+    const thread = await startThread(db, { repo: fullName, task: task.id }).catch((error) => {
+      console.log(
+        `couldn't start ${task.id} in ${fullName}, and its label won't start it again; sc start does: ${errorText(error)}`,
+      );
+      passed.add(key);
+      return null;
+    });
     if (thread === null) continue;
+    // The lead hears first, then the builder starts. The note is one line, as every note to
+    // the lead is.
     const note = `started ${threadName(db, thread)} from ${trackerOf(db, repository)}: ${task.title}`;
     noteForLead(db, tmux, { owner, repo }, note.replace(/\s+/g, " ").slice(0, 200));
     // Not waited on, as for sc start: setup can take minutes.
     setUpAndStart(thread);
-    await took(db, repository, task.id).catch((error) =>
-      console.log(
-        `couldn't tell the tracker Skelcrew took ${task.id} in ${fullName}: ${errorText(error)}`,
-      ),
-    );
   }
 }
 
@@ -158,6 +178,7 @@ async function pollRepository(
   setUpAndStart: (thread: Thread) => Promise<void>,
   nexts: Map<string, string | null>,
   starting: Set<string>,
+  passed: Set<string>,
 ): Promise<void> {
   const { owner, repo } = repository;
   // Ask each plugin in turn, telling a forge which PRs Skelcrew watches: those of this
@@ -181,7 +202,7 @@ async function pollRepository(
   // With the copy up to date, start labeled tasks, then act on each thread: by its PR with a
   // forge, or by its branch without one.
   if (trackerOf(db, repository) !== null)
-    await startLabeled(db, tmux, repository, setUpAndStart, starting);
+    await startLabeled(db, tmux, repository, setUpAndStart, starting, passed);
   const hasForge = forgeOf(db, repository) !== null;
   for (const before of threads) {
     if (!hasForge) await actOnBranch(db, tmux, repository, readThread(db, before.folder));
@@ -215,6 +236,8 @@ export function pollRepositories(
 ): (fullName: string) => Promise<void> {
   // How many ticks in a row each repository has gone without a poll, by owner/name.
   const ticksSkipped = new Map<string, number>();
+  // The labeled tasks this daemon won't start by their label, kept for its lifetime.
+  const passed = new Set<string>();
   // The poll under way for each repository, and the one that follows it.
   const running = new Map<string, Promise<void>>();
   const following = new Map<string, Promise<void>>();
@@ -254,7 +277,16 @@ export function pollRepositories(
     if (!repository) return Promise.resolve();
     const pluginNexts = nexts.get(fullName) ?? new Map<string, string | null>();
     nexts.set(fullName, pluginNexts);
-    const done = pollRepository(db, tmux, repository, threads, setUpAndStart, pluginNexts, starting)
+    const done = pollRepository(
+      db,
+      tmux,
+      repository,
+      threads,
+      setUpAndStart,
+      pluginNexts,
+      starting,
+      passed,
+    )
       .then(
         () => {},
         (error) => {

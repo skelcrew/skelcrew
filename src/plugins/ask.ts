@@ -164,14 +164,18 @@ export async function createTask(
   return task;
 }
 
-// Tells the tracker Skelcrew took the task, so you can see on it that Skelcrew started work.
-export async function took(db: Database, repository: Repository, task: string): Promise<void> {
-  await callPlugin(
+// Claims the task in the tracker for Skelcrew, so only one machine starts it, and returns
+// whether this call took it: false when someone, such as Skelcrew on another machine, already
+// had. GitHub reacts with 👀 and says whether the reaction was already there. A plugin that
+// answers nothing counts as taking it, so one not yet updated starts tasks as before.
+export async function took(db: Database, repository: Repository, task: string): Promise<boolean> {
+  const answer = await callPlugin(
     db,
     requireTracker(db, repository),
     { ask: "took", repository: repositoryKey(repository), task },
-    z.null(),
+    z.object({ took: z.boolean() }).nullable(),
   );
+  return answer?.took ?? true;
 }
 
 // Tells the forge Skelcrew typed a person's comment or review on the PR into its builder, so
