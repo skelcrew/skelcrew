@@ -99,7 +99,7 @@ export async function startThread(
     );
     if (tracked && !/^t\d+$/.test(task)) {
       const found = taskOf(db, owner, repo, task);
-      if (found.state !== "open") throw new Error(`there is no open task ${task} in ${name}`);
+      if (found.state !== "open") throw new Error(`there is no open issue ${task} in ${name}`);
       ({ title, body } = found);
     } else if (had?.title) {
       title = had.title;
@@ -107,7 +107,7 @@ export async function startThread(
     } else
       throw new Error(
         tracked
-          ? `there is no open task ${task} in ${name}`
+          ? `there is no open issue ${task} in ${name}`
           : `${name} has no tracker, and no thread ${name}-${task}: start one with sc start ${name} "<title>" "<body>"`,
       );
   }

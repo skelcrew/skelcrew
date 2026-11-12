@@ -37,9 +37,9 @@ test("the help names every command", () => {
     "repo rm",
     "repo trust",
     "ps",
-    "task ls",
-    "task show",
-    "task create",
+    "issue ls",
+    "issue show",
+    "issue create",
     "start",
     "stop",
     "rm",
@@ -152,4 +152,27 @@ test("sc runs from a checkout whose folder it may read files in but not list, as
     chmodSync(checkout, 0o755);
     rmSync(checkout, { recursive: true, force: true });
   }
+});
+
+// Issues and threads are different things, so the help keeps them apart: an issue is what you
+// want done, in the tracker, and a thread is Skelcrew's work on one. The sidebar's list is
+// called ISSUES, so the commands use the same word.
+test("the help lists the issue commands in a section of their own, and names threads as threads", () => {
+  const out = skel(["--help"]).out;
+  const issues = out.slice(out.indexOf("\nISSUES\n"), out.indexOf("\nREPOSITORIES\n"));
+  expect(out).toContain("\nISSUES\n");
+  for (const command of ["issue ls", "issue show", "issue create"])
+    expect(issues).toContain(`  ${command} `);
+  expect(issues).not.toContain("  start ");
+  // A user sees issues and threads only. Task is Skelcrew's own word, never shown.
+  expect(out).not.toMatch(/\btasks?\b/i);
+  for (const command of ["stop", "rm", "attach", "review", "tell"])
+    expect(out).toContain(`  ${command} <thread>`);
+});
+
+// The issue commands replaced the task commands, which are gone with no alias.
+test("sc task is no longer a command", () => {
+  const ran = skel(["task", "ls"]);
+  expect(ran.code).not.toBe(0);
+  expect(ran.err).toContain("that isn't a Skelcrew command");
 });

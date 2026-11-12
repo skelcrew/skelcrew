@@ -1,4 +1,4 @@
-// sc task create and sc start, run as you or the lead would run them, against a running daemon,
+// sc issue create and sc start, run as you or the lead would run them, against a running daemon,
 // a fake tracker and forge, a fake Claude Code and a folder of bare repositories standing in
 // for GitHub.
 import { Database } from "bun:sqlite";
@@ -196,11 +196,11 @@ const hasSession = (name: string) =>
 
 const clone = () => join(data(), "threads", "app-12");
 
-test("sc task create creates a task in the repository's tracker and prints its name", async () => {
+test("sc issue create creates a task in the repository's tracker and prints its name", async () => {
   addApp();
   serve();
   await untilAnswers();
-  const made = await skel("task", "create", "app", "Add import", "From CSV");
+  const made = await skel("issue", "create", "app", "Add import", "From CSV");
   expect(made.err).toBe("");
   expect(made.out).toBe("app-13\n");
   expect(asked(plugin).filter((q) => q.ask === "create task")).toEqual([
@@ -208,22 +208,22 @@ test("sc task create creates a task in the repository's tracker and prints its n
   ]);
 });
 
-// A builder sees only a task's title and body. A heredoc that failed inside $(...) leaves the
+// A builder sees only the title and body. A heredoc that failed inside $(...) leaves the
 // body empty while the command still runs, and an issue with no body can't be taken back.
-test("sc task create and sc start <repo> refuse an empty body, and ask the tracker nothing", async () => {
+test("sc issue create and sc start <repo> refuse an empty body, and ask the tracker nothing", async () => {
   addApp();
   serve();
   await untilAnswers();
   for (const body of ["", " \n\t"]) {
-    const made = await skel("task", "create", "app", "Add import", body);
+    const made = await skel("issue", "create", "app", "Add import", body);
     expect(made.code).toBe(1);
     expect(made.err).toBe(
-      "Skelcrew: sc task create needs a body, which is all a builder sees of the task besides its title.\n",
+      "Skelcrew: sc issue create needs a body, which is all a builder sees besides its title.\n",
     );
     const started = await skel("start", "app", "Add import", body);
     expect(started.code).toBe(1);
     expect(started.err).toBe(
-      "Skelcrew: sc start needs a body, which is all a builder sees of the task besides its title.\n",
+      "Skelcrew: sc start needs a body, which is all a builder sees besides its title.\n",
     );
   }
   // The daemon refuses one too, from a client that doesn't check.
@@ -284,7 +284,7 @@ test("sc start refuses a repository Skelcrew doesn't have, and a task its tracke
   expect(unknown.err).toContain("no repository named site");
   const missing = await skel("start", "app-99");
   expect(missing.code).not.toBe(0);
-  expect(missing.err).toContain("there is no open task 99 in simon/app");
+  expect(missing.err).toContain("there is no open issue 99 in simon/app");
   expect(existsSync(join(data(), "threads", "app-99"))).toBe(false);
 });
 
@@ -294,7 +294,7 @@ test("a repository Skelcrew doesn't have, named by its owner/name, is no reposit
   serve();
   await untilAnswers();
   for (const name of ["simon/site", "site", "-x/site"]) {
-    const listed = await skel("task", "ls", name);
+    const listed = await skel("issue", "ls", name);
     expect(listed.code).not.toBe(0);
     expect(listed.err).toBe(`Skelcrew: there is no repository named ${name}\n`);
   }
@@ -355,8 +355,8 @@ exec ${Bun.which("git") ?? "git"} "$@"
   }, 60_000);
 });
 
-test("sc task create and sc start say when the daemon isn't running", async () => {
-  const made = await skel("task", "create", "app", "Add import", "From CSV");
+test("sc issue create and sc start say when the daemon isn't running", async () => {
+  const made = await skel("issue", "create", "app", "Add import", "From CSV");
   expect(made.code).not.toBe(0);
   expect(made.err).toContain("run sc");
 });
@@ -453,14 +453,14 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(existsSync(join(home, "issues", "sent"))).toBe(false);
   }, 60_000);
 
-  test("the lead runs sc task create and sc start from its sandbox, but can't trust", async () => {
+  test("the lead runs sc issue create and sc start from its sandbox, but can't trust", async () => {
     addApp();
     const asker = `const c = require("node:net").createConnection(process.env.SKELCREW_SOCKET);
 c.on("connect", () => c.write('{"command":"lead"}\\n'));
 c.on("data", (d) => process.stdout.write(d));`;
     writeFileSync(join(home, "bin", "ask.js"), asker);
     fakeClaude(
-      `{ sc task create app "Add import" "From CSV"; sc start app-12; sc repo trust simon/other; bun ${join(home, "bin", "ask.js")}; } > out.new 2>&1; mv out.new out`,
+      `{ sc issue create app "Add import" "From CSV"; sc start app-12; sc repo trust simon/other; bun ${join(home, "bin", "ask.js")}; } > out.new 2>&1; mv out.new out`,
       "",
     );
     // Opened before, so the daemon starts app's lead as it starts.
