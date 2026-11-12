@@ -11,6 +11,7 @@ import {
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { claude } from "../src/agents/claude.ts";
+import { codex } from "../src/agents/codex.ts";
 import {
   agentRuns,
   endSession,
@@ -144,6 +145,61 @@ test("two messages typed at once both arrive whole, in order, each sent", async 
   await until(() => read("received.txt").endsWith("second\x1b[201~\n"));
   expect(read("received.txt")).toBe("\x1b[200~first\nmessage\x1b[201~\n\x1b[200~second\x1b[201~\n");
 });
+
+// A stand-in harness with a person's unsent draft. While the test leaves a file named draft,
+// its prompt line shows what the file holds, as a harness shows text typed but not sent. Once
+// the file is gone it shows the bare prompt. It keeps every byte typed into it, as harness()
+// does. A background job of a script reads /dev/null unless told otherwise, so the terminal
+// is kept on fd 3 for it.
+function drafting(marks: Marks): string[] {
+  const script = join(home, "drafting harness.sh");
+  writeFileSync(
+    script,
+    `#!/bin/sh
+printf '\\033[?2004h'
+stty -echo
+exec 3<&0
+cat <&3 > received.txt &
+shown=""
+while :; do
+  line="${marks.prompt}"
+  [ -f draft ] && line="$(cat draft)"
+  if [ "$line" != "$shown" ]; then clear; echo "$line"; shown="$line"; fi
+  sleep 0.02
+done
+`,
+    { mode: 0o755 },
+  );
+  return [script];
+}
+
+// Each harness's prompt with a draft on it: Claude Code's mark with text after it, and
+// Codex's, whose placeholder the draft replaces.
+const drafts: [string, Marks, string][] = [
+  ["Claude Code", claude.marks, "❯ half-typed"],
+  ["Codex", codex.marks, "› half-typed"],
+];
+
+// Returns what the test's session shows.
+const shown = () =>
+  Bun.spawnSync(["tmux", "-L", socket, "capture-pane", "-p", "-t", "=lead:"]).stdout.toString();
+
+for (const [title, marks, draft] of drafts) {
+  test(`typing waits while a draft sits at ${title}'s prompt, then goes through`, async () => {
+    writeFileSync(join(home, "draft"), draft);
+    start("lead", drafting(marks));
+    const typing = typeInto(socket, "lead", marks, "hello", { moment });
+    // Long enough for several looks at the screen, each of which must leave the draft alone.
+    await Bun.sleep(moment * 8);
+    expect(read("received.txt")).toBe("");
+    expect(shown()).toContain(draft);
+    // The person sends or clears the draft, and the message goes in.
+    rmSync(join(home, "draft"));
+    await typing;
+    await until(() => read("received.txt").endsWith("\n"));
+    expect(read("received.txt")).toBe("\x1b[200~hello\x1b[201~\n");
+  });
+}
 
 test("a session runs its command in its folder, with its environment", async () => {
   start("builder", ["sh", "-c", 'echo "$SKELCREW_THREAD $(pwd)" > seen.txt; sleep 30'], {
