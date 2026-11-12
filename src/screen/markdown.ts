@@ -1,7 +1,7 @@
 // A page's description drawn from its markdown, as the tracker stores it: headings, bold, code,
 // lists and links, wrapped to the page's width. Anything else stays the plain text it was
 // written as.
-import { clean } from "./look.ts";
+import { removeControlCodes } from "./look.ts";
 
 // Return text bold, in inline code's colour, or dim as a code block is. Each style is ended on
 // its own, not with a reset. Wrapping carries a style over to the next line only when it knows
@@ -58,7 +58,7 @@ export function drawMarkdown(markdown: string, width: number): string[] {
   for (const raw of markdown.split(/\r?\n/)) {
     // Cleans the line, then reads whether it is a fence: its marks, and what follows them. The
     // indent is kept apart, so every line it wraps to starts with it too.
-    const line = clean(raw);
+    const line = removeControlCodes(raw);
     const fence = line.match(/^\s*(`{3,}|~{3,})(.*)$/)?.slice(1) ?? [];
     const [marks = "", after = ""] = fence;
     const [, indent = "", text = ""] = line.match(/^(\s*)(.*)$/) ?? [];

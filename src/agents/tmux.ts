@@ -47,7 +47,7 @@ bind -T copy-mode Any { send-keys -X cancel; send-keys }
 
 // Returns the inherited environment without TMUX, which otherwise prevents attaching from
 // inside tmux.
-export function cleanEnv(): Record<string, string> {
+export function envWithoutTmux(): Record<string, string> {
   const kept = Object.entries(process.env).flatMap(([key, value]) =>
     value === undefined || key === "TMUX" ? [] : [[key, value]],
   );
@@ -64,7 +64,7 @@ export function tmux(socket: string, args: string[], input = "") {
   const run = Bun.spawnSync(
     ["tmux", "-L", socket, "-f", "/dev/null", ...args.map(escapeSemicolon)],
     {
-      env: cleanEnv(),
+      env: envWithoutTmux(),
       stdin: new Blob([input]),
       stdout: "pipe",
       stderr: "pipe",
@@ -103,7 +103,7 @@ export function startServer(socket: string): void {
   // Starts the server with Skelcrew's configuration, either in its own scope or directly.
   const run = (command: string[]) =>
     Bun.spawnSync(command, {
-      env: cleanEnv(),
+      env: envWithoutTmux(),
       stdin: new Blob([tmuxConfig]),
       stdout: "pipe",
       stderr: "pipe",
@@ -180,7 +180,7 @@ export function endSession(socket: string, name: string): void {
 // One that can't start, such as one whose login is gone, ends within moments, and attaching
 // would only find it gone. A failed session is ended, so Skelcrew can start the agent again.
 // `who` names the agent in the error: the lead or the builder.
-export async function checkItLived(socket: string, name: string, who: string): Promise<void> {
+export async function checkAgentStarted(socket: string, name: string, who: string): Promise<void> {
   await Bun.sleep(1000);
   // A failed agent leaves its session behind with its last screen; one that is simply gone
   // left nothing to show.

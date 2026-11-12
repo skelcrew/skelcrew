@@ -11,7 +11,7 @@ import { setupDone } from "../machine/setup.ts";
 import { holdAwhile, keepAwake, onSprite, urlPort } from "../machine/sprite.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { cloneDir, daemonSocket, threadSocket } from "../paths.ts";
-import { createTask, pluginsOf } from "../plugins/ask.ts";
+import { createTask, repositoryPlugins } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { checkoutFolder, git, release, singleFile } from "../version.ts";
 import {
@@ -137,7 +137,7 @@ function wakeOnDeliveries(
   // so the delivery is refused. Otherwise polls each repository that uses it.
   const wakePlugin = async (name: string) => {
     const usingIt = repositories(db).filter((r) =>
-      pluginsOf(db, r).some(({ plugin }) => plugin === name),
+      repositoryPlugins(db, r).some(({ plugin }) => plugin === name),
     );
     if (usingIt.length === 0) return false;
     // The Sprite sleeps again as soon as the delivery is answered, so it is held for a minute
