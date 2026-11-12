@@ -792,6 +792,24 @@ echo "Not logged in"; exit 1`,
     ]);
   }, 30_000);
 
+  // The claim only keeps two daemons from both starting by the label. You decide by hand.
+  test("sc start starts a labeled task claimed elsewhere, and never claims it", async () => {
+    addApp();
+    answer(plugin, "took", { took: false });
+    changes([issue12(true)]);
+    serve();
+    const took = () => asked(plugin).filter((q) => q.ask === "took");
+    await until(() => took().length > 0);
+    const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
+      env: env(),
+      stderr: "pipe",
+    });
+    expect(started.stderr.toString()).toBe("");
+    expect(started.stdout.toString()).toBe("Started app-12.\n");
+    expect(thread()).toMatchObject({ task: 12, status: "working" });
+    expect(took()).toHaveLength(1);
+  }, 30_000);
+
   // A task's ID names the thread's folder, which setup deletes before it clones, so an ID
   // from a tracker that climbs out of Skelcrew's threads folder must never reach it.
   test("a task ID from the tracker that isn't a plain name is refused, and nothing is deleted", async () => {

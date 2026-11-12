@@ -25,7 +25,7 @@ const startLabel = "skelcrew";
 // has none, exactly as sc start does, once Skelcrew has claimed it in the tracker, and tells the
 // repository's lead. The claim comes first so that when two machines run Skelcrew on one
 // repository, such as a laptop and a Sprite, only one starts the task. Thread rows are read
-// after the tracker answers, so a thread sc start made meanwhile counts. A task in `starting`,
+// after the tracker says what changed, so a thread sc start made meanwhile counts. A task in `starting`,
 // named as owner/repo#task, is left to the sc start starting it, which has options of its own,
 // such as the branch to start from. A task in `passed`, named the same way, is one this daemon
 // won't start by its label: another machine claimed it, or its claim was this daemon's but the
@@ -60,7 +60,11 @@ async function startLabeled(
     });
     if (claimed === null) continue;
     if (!claimed) {
-      console.log(`not starting ${task.id} in ${fullName}: it was already claimed elsewhere`);
+      // Claimed by another machine, or by this one before a restart, when its thread failed
+      // to start.
+      console.log(
+        `not starting ${task.id} in ${fullName}: it was claimed already; sc start still does`,
+      );
       passed.add(key);
       continue;
     }
@@ -69,7 +73,6 @@ async function startLabeled(
     if (starting.has(key)) continue;
     // The claim is this daemon's now, so a thread that fails to start isn't started by a
     // later poll either: on another machine, or after a restart, its claim reads as taken.
-    // One sc start finished meanwhile also lands here, harmlessly.
     const thread = await startThread(db, { repo: fullName, task: task.id }).catch((error) => {
       console.log(
         `couldn't start ${task.id} in ${fullName}, and its label won't start it again; sc start does: ${errorText(error)}`,
