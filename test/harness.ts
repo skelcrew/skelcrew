@@ -73,9 +73,11 @@ await serve(${JSON.stringify(socket)});`;
 }
 
 // Runs sc with these arguments and environment, and gives back what it printed and its code.
-export async function runSkel(args: string[], env: Record<string, string>) {
+// `input`, when given, is what sc reads on stdin, as from a file or a heredoc.
+export async function runSkel(args: string[], env: Record<string, string>, input?: string) {
   const run = Bun.spawn([process.execPath, source("main.ts"), ...args], {
     env,
+    ...(input === undefined ? {} : { stdin: Buffer.from(input) }),
     stdout: "pipe",
     stderr: "pipe",
   });

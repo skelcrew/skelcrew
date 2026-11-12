@@ -397,11 +397,6 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         return { started: `Started ${threadName(db, thread)}.` };
       }
       case "start new": {
-        // Whether the repository has a tracker, which refuses this start, is in the skelcrew.yaml
-        // of Skelcrew's clone. The daemon may still be making it, and without it, a thread with
-        // no tracker would start in a repository whose tasks belong in one.
-        const { owner, repo } = findRepository(db, request.repo);
-        if (!existsSync(cloneDir(owner, repo))) await refreshClones(db);
         const thread = await startThread(db, request);
         begin(thread);
         return { started: `Started ${threadName(db, thread)}.` };
