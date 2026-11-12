@@ -60,7 +60,8 @@ function fakeCodex(): void {
   echo '{"models":[{"slug":"gpt-6.1-sol"},{"slug":"gpt-6-luna"}]}'; exit 0
 fi
 cd "$CODEX_HOME"
-printf '%s\\n' "$@" > args; env > env; echo "$OLDPWD" > pwd
+# args last, as tests wait for it before they read the rest.
+env > env; echo "$OLDPWD" > pwd; printf '%s\\n' "$@" > args
 if [ "$1" != resume ]; then
   mkdir -p sessions/2026/11/09
   meta() { printf '{"type":"session_meta","payload":{"id":"%s","cwd":"%s","source":%s}}\\n' "$1" "$OLDPWD" "$2"; }
