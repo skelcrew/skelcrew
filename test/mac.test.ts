@@ -163,6 +163,8 @@ test("an agent starts under sandbox-exec, in its folder, with a home of its own"
   expect(ownHome.startsWith(join(home, "tmp", "skelcrew-sandbox-"))).toBe(true);
   const ownTemp = seen.match(/^TMPDIR=(.*)$/m)?.[1] ?? "";
   expect(seen).toContain(`CLAUDE_CODE_TMPDIR=${ownTemp}\n`);
+  // zsh writes a heredoc's text to a file under /tmp unless told otherwise.
+  expect(seen).toContain(`TMPPREFIX=${ownTemp}/zsh\n`);
   // Postgres clients default to a socket in /tmp, which the sandbox hides.
   expect(seen).toContain("PGHOST=localhost\n");
 });
