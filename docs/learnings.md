@@ -155,6 +155,14 @@ that covers the code you are about to write.
   document". Inside `"$(cat <<'EOF' ...)"` the failure leaves an empty string, and the
   command around it still runs. Skelcrew sets `TMPPREFIX` into the agent's own temporary
   folder. On Linux, `/tmp` is the sandbox's own and writable, so it needs nothing.
+- **`bun run` lists every folder above the one it starts in.** On a Mac the sandbox refuses
+  `~` and `~/.local` with "Operation not permitted", and Bun stops with
+  `CouldntReadCurrentDirectory` before running anything. A plain "Permission denied", as from
+  a folder with mode 711, it takes in stride. `bun test` and `bun --version` don't list them,
+  so they work, which hides the cause. npm and node never list them. Allowing the folder's
+  metadata isn't enough. The sandbox lets agents list the folders between the hidden one and
+  their own folders, names only. Never the hidden folder itself: your home may hold a
+  `package.json`, and Bun fails on reading it.
 - **Mount the folder of clones, not each clone.** A mount per clone, made when the sandbox
   starts, misses repositories brought in later. Mount their parent folder, and create it
   first: bwrap refuses to mount a folder that doesn't exist.

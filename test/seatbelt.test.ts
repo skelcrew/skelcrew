@@ -52,6 +52,29 @@ test("lets programs walk down to what came back, without listing the folders abo
   expect(text).not.toContain('(allow file-read* (literal "/Users/simon"))');
 });
 
+test("lets Bun list the folders between a hidden one and where the agent works", () => {
+  const text = seatbeltProfile({
+    hidden: ["/Users/simon", "/private/var/folders"],
+    read: ["/Users/simon/code/skelcrew/src"],
+    links: [],
+    write: ["/Users/simon/.local/share/skelcrew/threads/app-12", "/private/var/folders/x/T/own"],
+  });
+  const listed = (folder: string) => `(allow file-read-data (literal ${JSON.stringify(folder)}))`;
+  // bun run lists every folder above the one it starts in, and stops with
+  // CouldntReadCurrentDirectory when the sandbox refuses one.
+  for (const folder of [
+    "/Users/simon/.local",
+    "/Users/simon/.local/share/skelcrew/threads",
+    "/private/var/folders/x",
+    "/private/var/folders/x/T",
+  ])
+    expect(text).toContain(listed(folder));
+  // Never the hidden folder itself, where Bun would find a package.json it can't read, nor a
+  // folder above only what the agent may read, such as the folder of your code.
+  for (const folder of ["/Users/simon", "/private/var/folders", "/Users/simon/code"])
+    expect(text).not.toContain(listed(folder));
+});
+
 test("writes nowhere but the agent's folders and the terminal", () => {
   const writes = profile()
     .split("\n")

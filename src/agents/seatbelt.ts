@@ -128,11 +128,20 @@ export function seatbeltProfile(given: {
   rules.push(...read.map((path) => `(allow file-read* (subpath ${quoted(path)}))`));
   rules.push(...links.map((path) => `(allow file-read* (literal ${quoted(path)}))`));
   rules.push(...write.map((path) => `(allow file-read* file-write* (subpath ${quoted(path)}))`));
-  // Only the facts of each folder on the way, so a program can find what came back. Their
-  // contents stay hidden.
+  // Only the facts of each folder on the way, so a program can find what came back. What is
+  // in them stays hidden.
   const folders = new Set([...read, ...links, ...write].flatMap(foldersAbove));
   for (const folder of folders)
     rules.push(`(allow file-read-metadata (literal ${quoted(folder)}))`);
+  // The folders between a hidden one and where the agent works may also be listed, by name
+  // only. bun run lists every folder above the one it starts in, and stops with
+  // CouldntReadCurrentDirectory when the sandbox refuses one, though it takes a plain "permission
+  // denied" in stride. The hidden folder itself stays unlisted: Bun would find your home's
+  // package.json there and fail to read it. So do folders above only what the agent may read,
+  // such as the folder holding your code.
+  const inside = (folder: string) => hidden.some((path) => folder.startsWith(`${path}/`));
+  for (const folder of new Set(write.flatMap(foldersAbove).filter(inside)))
+    rules.push(`(allow file-read-data (literal ${quoted(folder)}))`);
   // Programs may make and reach local sockets in their own writable folders, and the agent may
   // reach the daemon's socket. All other local sockets stay denied.
   for (const path of write) {
