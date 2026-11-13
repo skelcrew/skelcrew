@@ -4,7 +4,7 @@ import {
   edge,
   fitted,
   grey,
-  onShade,
+  greyOnShade,
   pad,
   paint,
   removeControlCodes,
@@ -35,10 +35,10 @@ const hints = [`${pad}⌥↑↓ move`, `${pad}⌃Q quit`];
 const filled = (line: string, width: number) =>
   `${line}${" ".repeat(Math.max(width - Bun.stringWidth(line), 0))}`;
 
-// Returns text in a colour, or, on the row you are looking at, the one that stands in for it on
-// the grey.
-const tinted = (here: boolean, code: number, text: string) =>
-  paint(here ? (onShade[code] ?? code) : code, text);
+// Returns text in a colour. Dim text on the row you are looking at takes the light grey that
+// shows on its background.
+const tinted = (here: boolean, code: string, text: string) =>
+  paint(here && code === grey ? greyOnShade : code, text);
 
 // Returns a line with the grey behind it, out to the end of the row.
 const shaded = (line: string, width: number) => `\x1b[${shade}m${filled(line, width)}\x1b[49m`;
@@ -63,7 +63,7 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
   const name = lead ? "" : `${row.name} · `;
   const after = [row.harness, row.age].flatMap((part) => (part ? [` · ${part}`] : [])).join("");
   const below = fitted(`${name}${row.word}${after}`, room);
-  const parts: [number, string][] = [
+  const parts: [string, string][] = [
     [grey, below.slice(0, name.length)],
     [needing(row) ? yellow : grey, below.slice(name.length, name.length + row.word.length)],
     [grey, below.slice(name.length + row.word.length)],

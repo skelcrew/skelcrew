@@ -263,7 +263,7 @@ test("tabs name each repository in order, above the agent, with a badge for what
   // on a dark grey, the others dim on a lighter grey, and the badge yellow.
   const line = top({ tabs, shown: "lead" });
   expect(line).toContain("#[bg=colour234,fg=colour231,bold]  app  #[default]");
-  expect(line).toContain("#[bg=colour237,fg=colour245]  site #[fg=yellow]•1  #[default]");
+  expect(line).toContain("#[bg=colour237,fg=colour245]  site #[fg=colour221]•1  #[default]");
   expect(top({ tabs, open: "simon/site" })).toContain(
     "#[bg=colour234,fg=colour231,bold]  site #[fg=colour221]•1  #[default]",
   );

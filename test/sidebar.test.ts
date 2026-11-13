@@ -142,7 +142,7 @@ test("the second line is cut with … too, with the name and word whole before i
 test("the name is dim on the second line, beside the word in its own colour", () => {
   const needing = thread("app-12", { needsYou: true, word: "approved", title: "Fix login" });
   const screen = draw([needing], "lead", size);
-  expect(screen).toContain("\x1b[90mapp-12 · \x1b[22;39m\x1b[33mapproved");
+  expect(screen).toContain("\x1b[90mapp-12 · \x1b[22;39m\x1b[38;5;221mapproved");
 });
 
 test("control codes in a short title never reach your terminal", () => {
@@ -177,18 +177,30 @@ test("a thread that needs you has a yellow circle and a yellow word, whatever it
     const needing = thread("app-12", { status, needsYou: true, word: "approved" });
     const screen = draw([lead, needing], "lead", size);
     expect(read(screen).join("\n")).toContain("  ● app-12\n    app-12 · approved · claude");
-    expect(screen).toContain("\x1b[33m●");
-    expect(screen).toContain("\x1b[33mapproved");
+    expect(screen).toContain("\x1b[38;5;221m●");
+    expect(screen).toContain("\x1b[38;5;221mapproved");
   }
 });
 
 test("every thread's mark is a circle, in its status's colour", () => {
   const mark = (more: Partial<Row>) => draw([thread("app-12", more)], "lead", size);
-  expect(mark({ status: "working" })).toContain("\x1b[32m●");
-  expect(mark({ status: "failed", word: "failed" })).toContain("\x1b[31m●");
+  expect(mark({ status: "working" })).toContain("\x1b[38;5;120m●");
+  expect(mark({ status: "failed", word: "failed" })).toContain("\x1b[38;5;210m●");
   expect(mark({ status: "waiting", word: "checks" })).toContain("\x1b[90m○");
   expect(mark({ status: "stopped", word: "stopped" })).toContain("\x1b[90m○");
-  expect(mark({ status: "done", word: "done" })).toContain("\x1b[32m●");
+  expect(mark({ status: "done", word: "done" })).toContain("\x1b[38;5;120m●");
+});
+
+test("a mark looks the same whether or not you are on its row", () => {
+  // A theme's own green can be olive, close to the yellow of needs you, so marks never use it.
+  const rows = [lead, thread("app-12")];
+  const markLine = (shown: string) =>
+    draw(rows, shown, size)
+      .split("\n")
+      .find((line) => line.includes("●"));
+  // The colour is the last code before the mark.
+  const colour = (line = "") => line.split("●")[0]?.split("\x1b[").at(-1);
+  expect(colour(markLine("app-12"))).toBe(colour(markLine("lead")));
 });
 
 test("a failed thread is red even while it needs you, as its word says failed", () => {
@@ -197,9 +209,9 @@ test("a failed thread is red even while it needs you, as its word says failed", 
     "lead",
     size,
   );
-  expect(screen).toContain("\x1b[31m●");
+  expect(screen).toContain("\x1b[38;5;210m●");
   expect(screen).toContain("\x1b[90mfailed");
-  expect(screen).not.toContain("\x1b[33m");
+  expect(screen).not.toContain("\x1b[38;5;221m");
 });
 
 test("the lead keeps its diamond", () => {
@@ -440,12 +452,12 @@ const link = (name: string, title: string, more: Partial<Link> = {}): Link => ({
 });
 // A row of PRS, with the dim mark of a PR that has no thread unless it is given another.
 const pr = (name: string, title: string, more: Partial<Link> = {}): Link =>
-  link(name, title, { mark: ["○", 90], ...more });
+  link(name, title, { mark: ["○", "90"], ...more });
 const list = (links: Link[], total = links.length) => ({ links, total });
 const lists: Lists = {
   issues: list([link("app-31", "Add CSV export"), link("app-12", "Fix login", { dim: true })]),
   prs: list([
-    pr("app#34", "Fix login", { word: "approved", needing: true, mark: ["●", 33] }),
+    pr("app#34", "Fix login", { word: "approved", needing: true, mark: ["●", "38;5;221"] }),
     pr("app#33", "Bump deps"),
   ]),
 };
@@ -517,7 +529,7 @@ test("an issue with a thread is dim on both lines, and one without only on its n
 
 test("a PR takes its thread's word, in yellow when the thread needs you, and dim otherwise", () => {
   const needing = drawLists(threads, lists, "lead", tall);
-  expect(needing).toContain("\x1b[33mapproved");
+  expect(needing).toContain("\x1b[38;5;221mapproved");
   const working = pr("app#34", "Fix login", { word: "working" });
   const dim = drawLists(threads, { ...lists, prs: list([working]) }, "lead", tall);
   expect(dim).toContain("\x1b[90mworking");
@@ -579,7 +591,7 @@ test("a PR has a mark in the mark column, with its title and name in the name co
 
 test("a PR's mark takes the colour it was given, and one with no thread is dim", () => {
   const screen = drawLists(threads, lists, "lead", tall);
-  expect(screen).toContain("\x1b[33m●");
+  expect(screen).toContain("\x1b[38;5;221m●");
   expect(screen).toContain("\x1b[90m○");
 });
 
@@ -916,7 +928,6 @@ test("on the grey, an issue's or PR's text takes the fixed light colours", () =>
   expect(shaded).toContain("1;38;5;231");
   expect(shaded).toContain("38;5;221");
   expect(shaded).not.toContain("\x1b[90m");
-  expect(shaded).not.toContain("\x1b[33m");
 });
 
 test("a shaded row is still a terminal link", () => {
@@ -1146,12 +1157,12 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5, app) }));`;
 
   test("a PR shows the same mark and colour as its thread, in every state", () => {
     const states = [
-      ["working", 0, "\x1b[32m●"],
+      ["working", 0, "\x1b[38;5;120m●"],
       ["waiting", 0, "\x1b[90m○"],
       ["stopped", 0, "\x1b[90m○"],
-      ["failed", 0, "\x1b[31m●"],
-      ["failed", 1, "\x1b[31m●"],
-      ["waiting", 1, "\x1b[33m●"],
+      ["failed", 0, "\x1b[38;5;210m●"],
+      ["failed", 1, "\x1b[38;5;210m●"],
+      ["waiting", 1, "\x1b[38;5;221m●"],
     ] as const;
     for (const [status, needing, mark] of states) {
       const seen = after(`${open} ${onTwelve(status, needing)}`, 0);
@@ -1165,13 +1176,13 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5, app) }));`;
 
   test("a PR with no thread shows the dim circle, and an issue has no mark", () => {
     const { issues, prs } = after(open, 0).lists;
-    expect(prs?.links[0]?.mark).toEqual(["○", 90]);
+    expect(prs?.links[0]?.mark).toEqual(["○", "90"]);
     expect(issues?.links[0]?.mark).toBeNull();
   });
 
   test("a PR whose thread is done has no thread left, so it shows the dim circle", () => {
     const { prs } = after(`${open} ${onTwelve("done")}`, 0).lists;
-    expect(prs?.links[0]?.mark).toEqual(["○", 90]);
+    expect(prs?.links[0]?.mark).toEqual(["○", "90"]);
   });
 
   test("a row links to the issue or PR on GitHub", () => {
