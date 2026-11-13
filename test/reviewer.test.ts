@@ -97,7 +97,7 @@ const ownNiceness = () => Number(Bun.spawnSync(["nice"], { stdout: "pipe" }).std
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there these tests can't run.
 describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("reviewer", () => {
-  test("answers with Codex's verdict, given the issue and the base branch", async () => {
+  test("answers with Codex's verdict, given the task and the base branch", async () => {
     fakeCodex('{"verdict":"changes","body":"The retry has no test."}');
     expect(await start()).toEqual({ verdict: "changes", body: "The retry has no test." });
     const args = kept("args").split("\n");
@@ -109,6 +109,9 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("reviewer", () => {
     const prompt = kept("prompt");
     for (const part of [issue.title, issue.body, "origin/main", "adversarial", "tests"])
       expect(prompt).toContain(part);
+    // A thread started without an issue gets its own title and body, so the reviewer
+    // must not be told about an issue that may not exist.
+    expect(prompt.toLowerCase()).not.toContain("issue");
     const schema = JSON.parse(kept("schema"));
     expect(schema.properties.verdict.enum).toEqual(["approve", "changes"]);
     expect(schema.additionalProperties).toBe(false);
