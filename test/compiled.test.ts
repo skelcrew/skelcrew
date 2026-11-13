@@ -136,6 +136,10 @@ test("the sidebar's header shows the release of the Skelcrew that runs it", asyn
       stdout: "pipe",
       stderr: "pipe",
     });
+  // A screen always shows a repository Skelcrew has. With none, it would leave at once.
+  const db = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb().run("INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app')");`;
+  Bun.spawnSync([process.execPath, "-e", db], { env: { HOME: home } });
   try {
     tmux("new-session", "-d", "-s", "one", "-x", "120", "-y", "30", "sleep 60");
     const env = `env HOME=${home} XDG_RUNTIME_DIR=${join(home, "run")}`;
