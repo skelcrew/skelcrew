@@ -627,6 +627,24 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a lead per repositor
     }
   });
 
+  // A lead once filed three issues and started a thread on each from the human's first
+  // brainstorming message. Starting and filing must wait for the human's yes.
+  test("tells the lead to start threads only after the human says yes, and file issues only when asked", async () => {
+    setUp();
+    addRepository("app");
+    serve();
+    await untilAnswers();
+    await open();
+    await until(() => claudeLines().length > 0);
+    const [line] = claudeLines();
+    expect(line).toContain("start no thread and file no issue");
+    expect(line).toContain("Start these?");
+    expect(line).toContain("Run sc start only once the human says yes.");
+    expect(line).toContain("File an issue only when the human asks for one");
+    // Filing in a private repository unasked once read as leave to file without asking.
+    expect(line).not.toContain("file it and say you did");
+  });
+
   // Claude Code can't resume a conversation it never saved, nor start a new one under its id.
   test("starts a lead nobody talked to afresh, with a new session id", async () => {
     setUp();
