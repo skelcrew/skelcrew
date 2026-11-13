@@ -530,6 +530,18 @@ await removeRepo(${JSON.stringify(name)}, ${JSON.stringify(socket)});`;
   return removed.stderr.toString();
 }
 
+// Adds a repository as sc repo add does, but on the test's own tmux server, never Skelcrew's.
+function addRepo(given: string): { out: string; err: string } {
+  const script = `import { addRepo } from ${JSON.stringify(source("flow/repo.ts"))};
+await addRepo(${JSON.stringify(given)}, ${JSON.stringify(socket)});`;
+  const added = Bun.spawnSync([process.execPath, "-e", script], {
+    env: { HOME: home, XDG_RUNTIME_DIR: join(home, "run") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return { out: added.stdout.toString(), err: added.stderr.toString() };
+}
+
 // Has the fake lead wait until the test tells it to exit, then exit with the given code. The
 // wait also ends when its folder goes.
 function leadExitsWhenTold(code: number): void {
@@ -914,20 +926,57 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a lead per repositor
     tellLeadToExit();
     await until(() => tabClosed() && !hasLead());
     rmSync(join(leadFolder(), "exit-now"));
-    const script = `import { addRepo } from ${JSON.stringify(source("flow/repo.ts"))};
-await addRepo("simon/app");`;
-    const added = Bun.spawnSync([process.execPath, "-e", script], {
-      env: { HOME: home, XDG_RUNTIME_DIR: join(home, "run") },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect(added.stderr.toString()).toBe("");
-    expect(added.stdout.toString()).toBe(
-      "Skelcrew has simon/app already, as app. Its tab is open again.\n",
-    );
+    const added = addRepo("simon/app");
+    expect(added.err).toBe("");
+    expect(added.out).toBe("Skelcrew has simon/app already, as app. Its tab is open again.\n");
     expect(tabClosed()).toBe(false);
     expect(hasLead()).toBe(true);
     expect(claudeCalls()).toBe(`--session-id ${id}\n--resume ${id}\n`);
+  });
+
+  // The daemon looks for an exited lead only each second. sc repo add in that moment must not
+  // leave the tab to close after it.
+  test("adding a repository whose lead exited a moment ago keeps its tab open, with its lead", async () => {
+    setUp();
+    addRepository("app");
+    leadExitsWhenTold(0);
+    serve();
+    await untilAnswers();
+    await open();
+    saveTranscript(storedSession());
+    tellLeadToExit();
+    await until(() => leadDead() || tabClosed());
+    rmSync(join(leadFolder(), "exit-now"));
+    expect(addRepo("simon/app").err).toBe("");
+    // Longer than the daemon takes to close a tab.
+    await Bun.sleep(2000);
+    expect(tabClosed()).toBe(false);
+    expect(hasLead() && !leadDead()).toBe(true);
+    expect(claudeCalls()).toContain("--resume");
+  });
+
+  // With the daemon down, its start would find the exited lead and close the tab you just
+  // opened again.
+  test("adding a repository whose lead exited while the daemon was down brings the lead back as it starts", async () => {
+    setUp();
+    addRepository("app");
+    leadExitsWhenTold(0);
+    const first = serve();
+    await untilAnswers();
+    await open();
+    saveTranscript(storedSession());
+    await stop(first);
+    tellLeadToExit();
+    await until(() => leadDead());
+    rmSync(join(leadFolder(), "exit-now"));
+    expect(addRepo("simon/app").err).toBe("");
+    serve();
+    await untilAnswers();
+    await until(() => hasLead() && !leadDead());
+    await Bun.sleep(1500);
+    expect(tabClosed()).toBe(false);
+    expect(hasLead() && !leadDead()).toBe(true);
+    expect(claudeCalls()).toContain("--resume");
   });
 
   // A lead sees only its own repository, so it mustn't act on another's threads or tasks.
