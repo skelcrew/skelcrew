@@ -166,11 +166,31 @@ const realSocket = (path: string) => join(real(dirname(path)), basename(path));
 // is hidden under both.
 const bothPaths = (path: string) => [path, `/System/Volumes/Data${path}`];
 
+// Outside the sandbox, a shell makes tmux's folder, waits for the sandbox and then removes
+// its folders, or every review and setup command would leave a home full of caches behind.
+// mkdir fails on a folder that is there already, so no one else's can become the agent's.
+// A hangup, as when tmux ends a session, reaches the agent too, so the shell lets it pass
+// and goes on to clean up. A SIGKILL ends the shell too, so whoever sends one removes the
+// folders itself, through sandboxFolders.
+const cleanupScript =
+  'own=$1; tmux=$2; shift 2; mkdir -m 700 "$tmux" || exit 1; trap : HUP INT TERM; "$@"; code=$?; rm -rf "$own" "$tmux"; exit $code';
+
+// Returns the folders a Mac sandbox command removes when it ends, the agent's own and tmux's,
+// read from the command. A review that is cancelled or runs out of time, or an agent that
+// won't stop with its session, is ended with SIGKILL, which takes the removing shell with it.
+// So the reviewer and stopSession remove them. Gives none for a command that isn't a Mac
+// sandbox.
+export function sandboxFolders(argv: string[]): string[] {
+  const at = argv.indexOf(cleanupScript);
+  return at < 0 ? [] : argv.slice(at + 2, at + 4);
+}
+
 // Returns the command that runs `command` in the sandbox on a Mac, for the same mounts
 // bubblewrap would get. sandbox-exec can't show a folder empty or elsewhere, only deny it, so
 // the agent gets a home and temporary folder of its own, which programs find through HOME
 // and TMPDIR. A real home folder denied would stop git, which refuses a ~/.gitconfig it may
-// not read. They live in your temporary folder, and go when the sandbox ends.
+// not read. They live in your temporary folder, tmux's beside tmux's own, and go when the
+// sandbox ends.
 export function seatbeltArgs(given: {
   home: string;
   path: string;
@@ -196,6 +216,18 @@ export function seatbeltArgs(given: {
   const sandboxFolder = realpathSync(mkdtempSync(join(tmpdir(), "skelcrew-sandbox-")));
   const [ownHome, ownTemp] = [join(sandboxFolder, "home"), join(sandboxFolder, "tmp")];
   for (const folder of [ownHome, ownTemp]) mkdirSync(folder);
+  // tmux makes its sockets in /tmp, which is hidden, unless TMUX_TMPDIR names another folder.
+  // A socket's path may be at most 104 bytes on a Mac, too few in the agent's own temporary
+  // folder, so tmux gets a short folder of its own in /tmp. Yours and Skelcrew's stay hidden
+  // there: a tmux socket runs commands with your rights. A TMUX_TMPDIR of yours is passed
+  // over, as it may be long. Inside a sandbox, as when a builder runs Skelcrew's tests, /tmp is
+  // refused, so the folder goes in the one Skelcrew gave that sandbox's tmux. Each level adds
+  // 17 bytes, which leaves room for tmux's own folder and a socket name of 40 or more.
+  // It is only named here and made as the sandbox starts, so a command built but never run
+  // leaves nothing behind in /tmp.
+  const inSandbox = process.env.SKELCREW_SANDBOX === "1" && process.env.TMUX_TMPDIR;
+  const tmuxBase = realpathSync(inSandbox || "/tmp");
+  const ownTmux = join(tmuxBase, `sc-tmux-${crypto.randomUUID().slice(0, 8)}`);
   // What comes back of your home folder keeps its place under the agent's own, since agents
   // are told of it by that path: a lead finds its repository in ~/.local/share/skelcrew/repos.
   // Shortest first, so a folder inside one already linked is found there.
@@ -215,7 +247,7 @@ export function seatbeltArgs(given: {
     hidden,
     read: [...readOnly.map(real), ...(socket ? [real(dirname(socket))] : [])],
     links: links.map((link) => join(real(dirname(link)), basename(link))),
-    write: [...write.map(real), ownHome, ownTemp],
+    write: [...write.map(real), ownHome, ownTemp, ownTmux],
     ...(socket ? { socket: realSocket(socket) } : {}),
   });
   writeFileSync(profile, text);
@@ -228,17 +260,13 @@ export function seatbeltArgs(given: {
   // default. Denied there, a heredoc fails, and a $(cat <<EOF) around it quietly gives
   // nothing. TMPPREFIX starts each file's name, so zsh makes no folder of it.
   vars.push(`TMPPREFIX=${ownTemp}/zsh`);
+  vars.push(`TMUX_TMPDIR=${ownTmux}`);
   // Postgres clients default to a socket in /tmp, which is hidden, so they use TCP instead.
   vars.push("PGHOST=localhost");
   if (socket) vars.push(`SKELCREW_SOCKET=${socket}`);
   // Inside, a shell moves to the agent's folder and runs the command with that environment.
   const enterScript = 'cd "$1" && shift && exec /usr/bin/env "$@"';
   const sandboxed = ["sandbox-exec", "-f", profile, "/bin/sh", "-c", enterScript, "sh", cwd];
-  // Outside the sandbox, a shell waits for it and then removes its folders, or every review
-  // and setup command would leave a home full of caches behind. A hangup, as when tmux ends
-  // a session, reaches the agent too, so the shell lets it pass and goes on to clean up. A
-  // SIGKILL leaves the folders to macOS.
-  const cleanupScript =
-    'own=$1; shift; trap : HUP INT TERM; "$@"; code=$?; rm -rf "$own"; exit $code';
-  return ["/bin/sh", "-c", cleanupScript, "sh", sandboxFolder, ...sandboxed, ...vars, ...command];
+  const folders = [sandboxFolder, ownTmux];
+  return ["/bin/sh", "-c", cleanupScript, "sh", ...folders, ...sandboxed, ...vars, ...command];
 }

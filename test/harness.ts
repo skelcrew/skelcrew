@@ -29,12 +29,20 @@ export async function until(
 
 // Returns the environment for a process of a test with this home. Skelcrew, its daemon and what
 // they start find their state, their socket and the test's fake programs through it, and so
-// never reach the real ones.
-export const homeEnv = (home: string) => ({
-  HOME: home,
-  XDG_RUNTIME_DIR: join(home, "run"),
-  PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
-});
+// never reach the real ones. The temporary folders the test was given pass through: inside
+// Skelcrew's sandbox on a Mac /tmp is hidden, and tmux and temporary files must go elsewhere.
+export function homeEnv(home: string): Record<string, string> {
+  const env: Record<string, string> = {
+    HOME: home,
+    XDG_RUNTIME_DIR: join(home, "run"),
+    PATH: `${join(home, "bin")}:${process.env.PATH ?? ""}`,
+  };
+  for (const name of ["TMPDIR", "TMUX_TMPDIR"]) {
+    const value = process.env[name];
+    if (value) env[name] = value;
+  }
+  return env;
+}
 
 // Returns what a file holds, or nothing before it exists, for a test watching a file appear.
 export const read = (file: string) => (existsSync(file) ? readFileSync(file, "utf8") : "");
