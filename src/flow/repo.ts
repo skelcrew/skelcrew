@@ -81,9 +81,28 @@ export function findRepository(db: Database, given: string): Repository {
   return found;
 }
 
-// Returns the repository a checkout's remote URL, or its owner/name, names, or none.
-export const repositoryAt = (db: Database, given: string) =>
-  repositories(db).find((r) => fullNameIs(r, given) || remoteIs(r, given));
+// Returns a remote URL's host and owner/name in lower case, such as github.com/simon/app, as
+// Skelcrew saves a remote that uses a repository's old name. The same repository's ssh and https
+// remotes give the same. Null for a bare owner/name, which no checkout's remote is.
+const remoteKey = (url: string) => {
+  const path = parseRemote(url);
+  return path && `${path.host}/${path.owner}/${path.repo}`.toLowerCase();
+};
+
+// Returns the repository a checkout's remote URL, or its owner/name, names, or none. A remote
+// whose forge said it uses an old name of a repository Skelcrew has matches that one, so plain
+// sc starts with no call to the forge. It matches only when no repository has that name or
+// remote itself, as a new repository can later take the old name.
+export function repositoryAt(db: Database, given: string): Repository | undefined {
+  const all = repositories(db);
+  const found = all.find((r) => fullNameIs(r, given) || remoteIs(r, given));
+  if (found) return found;
+  const row = db
+    .query("SELECT owner, repo FROM repositories WHERE old_remote = ?")
+    .get(remoteKey(given));
+  const old = z.object({ owner: z.string(), repo: z.string() }).nullable().parse(row);
+  return old ? all.find((r) => r.owner === old.owner && r.repo === old.repo) : undefined;
+}
 
 // Creates or updates Skelcrew's repository clone so its lead can read its latest default
 // branch. The lead reads the clone, so a clone whose config holds a credential is deleted
@@ -312,26 +331,50 @@ async function bringIn(db: Database, details: RepositoryDetails): Promise<void> 
 // already costs no call to a forge: the daemon keeps its clone current. A folder with no
 // remote gets no complaint.
 export async function bringInFrom(from: string | undefined): Promise<string | undefined> {
-  // Bring in the repository only when Skelcrew doesn't have it, and report a failure rather
-  // than throw, so sc still attaches.
   const db = openDb();
   const named = from ?? originHere();
+  let opened = named ? repositoryAt(db, named) : undefined;
+  // Bring in the repository only when Skelcrew doesn't have it, and report a failure rather
+  // than throw, so sc still attaches.
   try {
-    if (named && !repositoryAt(db, named)) await bringIn(db, await identifyRepository(db, named));
+    if (named && !opened) {
+      const details = await identifyRepository(db, named);
+      await bringIn(db, details);
+      opened = repositories(db).find((r) => r.owner === details.owner && r.repo === details.repo);
+      // The forge can name a repository Skelcrew has otherwise than the remote does, such as
+      // after a rename. Saved, so the next sc from this checkout asks the forge nothing.
+      if (opened && oldRemoteOf(named, opened))
+        db.run("UPDATE repositories SET old_remote = ? WHERE owner = ? AND repo = ?", [
+          remoteKey(named),
+          opened.owner,
+          opened.repo,
+        ]);
+    }
   } catch (error) {
     console.error(`Skelcrew: ${errorText(error)}`);
   }
   if (repositories(db).length === 0) console.log(noRepositories);
-  const at = named ? repositoryAt(db, named) : undefined;
-  // A forge can name a repository otherwise than its remote's path, such as after a rename.
-  const opened = at ?? (named ? await repositoryByForgeName(db, named) : undefined);
+  // Said each time, not only the first: the line flashes by before the screen opens, and a
+  // remote that names another repository than the one opened should never go unnoticed.
+  const update = named && opened ? oldRemoteOf(named, opened) : null;
+  if (update)
+    console.log(
+      `This checkout's remote still uses the old name ${update.old}. Update it with: git remote set-url origin ${update.url}`,
+    );
   return opened && `${opened.owner}/${opened.repo}`;
 }
 
-// Returns the repository Skelcrew has under the name a forge now gives the remote, or none.
-async function repositoryByForgeName(db: Database, url: string): Promise<Repository | undefined> {
-  const claimed = await askWhichForge(db, url).catch(() => null);
-  return claimed ? repositories(db).find((r) => fullNameIs(r, claimed.key)) : undefined;
+// Returns the old owner/name a remote URL uses for the repository, and the same URL with its
+// current name, in the same form, ssh or https. Null when the remote uses its current name,
+// or is a bare owner/name.
+function oldRemoteOf(url: string, repository: Repository): { old: string; url: string } | null {
+  const path = parseRemote(url);
+  const old = path && `${path.owner}/${path.repo}`;
+  if (!old || fullNameIs(repository, old)) return null;
+  // The last place the old name is written is its path, as a host can't hold a slash.
+  const at = url.lastIndexOf(old);
+  const current = `${repository.owner}/${repository.repo}`;
+  return { old, url: url.slice(0, at) + current + url.slice(at + old.length) };
 }
 
 // Adds a repository for sc repo add: the checkout in the folder given, the repository at a

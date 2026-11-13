@@ -61,6 +61,8 @@ function prepareTables(db: Database): void {
   // machine had before Skelcrew gave each repository its own. `claimed` is whether Skelcrew has
   // asked the forges installed which of them claims the repository's remote, `forge` is the one
   // that does, or null, and `author` is who commits in its name, as git writes an author.
+  // `old_remote` is the host and owner/name in lower case, such as github.com/simon/old, of a
+  // checkout's remote that uses an old name of the repository, once its forge has said so.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -71,6 +73,7 @@ function prepareTables(db: Database): void {
     forge: "TEXT",
     claimed: "INTEGER NOT NULL DEFAULT 0",
     author: "TEXT",
+    old_remote: "TEXT",
   };
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
   for (const [column, type] of Object.entries(repositoryColumns))

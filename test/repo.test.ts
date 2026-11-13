@@ -340,6 +340,42 @@ test("tells the daemon a repository's new name on its forge when your checkout u
   });
 });
 
+// Plain sc must start fast, and asking the forge means starting its plugin and calling GitHub.
+test("asks the forge about a checkout's old name only once", async () => {
+  const app = onGitHub("simon/app", "WRITE");
+  claim("simon/old", "WRITE", false, "simon/app");
+  git(app, "remote", "set-url", "origin", "git@github.com:simon/old.git");
+  await skel([], "", app);
+  const before = claimsAsked().length;
+  const again = await skel([], "", app);
+  expect(again.code).toBe(0);
+  expect(claimsAsked().length).toBe(before);
+  expect(attached()).toBe(true);
+  expect(JSON.parse(readFileSync(join(home, "asked"), "utf8"))).toEqual({
+    command: "lead",
+    from: "simon/app",
+  });
+});
+
+test("says how to update a checkout's remote that uses a repository's old name, keeping its form", async () => {
+  const app = onGitHub("simon/app", "WRITE");
+  claim("simon/old", "WRITE", false, "simon/app");
+  git(app, "remote", "set-url", "origin", "git@github.com:simon/old.git");
+  const ssh =
+    "This checkout's remote still uses the old name simon/old. Update it with: git remote set-url origin git@github.com:simon/app.git\n";
+  // Said every time the old name is used, and never in the way of the screen.
+  for (let run = 0; run < 2; run++) {
+    expect((await skel([], "", app)).out).toContain(ssh);
+    expect(attached()).toBe(true);
+  }
+  git(app, "remote", "set-url", "origin", "https://github.com/simon/old");
+  expect((await skel([], "", app)).out).toContain(
+    "Update it with: git remote set-url origin https://github.com/simon/app\n",
+  );
+  git(app, "remote", "set-url", "origin", "https://github.com/simon/app");
+  expect((await skel([], "", app)).out).not.toContain("old name");
+});
+
 test("repo ls says how to bring a repository in while there is none", async () => {
   expect((await skel(["repo", "ls"])).out).toBe(`${hint}\n`);
 });
