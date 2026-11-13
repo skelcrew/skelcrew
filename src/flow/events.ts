@@ -87,7 +87,7 @@ export async function stopThread(db: Database, tmux: string, thread: Thread): Pr
     throw new Error(`${name} is still setting up: stop it once its builder has started`);
   record(db, thread.folder, { status: "stopped", needs_you: false, asking: false }, "stopped");
   await endBuilder(tmux, thread.folder);
-  await unassignIssue(db, thread.folder);
+  unassignIssue(db, thread.folder);
 }
 
 // Ends the thread once its PR is merged or closed, or for sc rm: ends its builder, and removes
@@ -169,7 +169,7 @@ export async function removeThread(
     });
   else if ((await threadPushedBranch()) && (await onRemote(db, repository, branch)))
     await deleteBranch(db, repository, skelcrewClone, branch);
-  await unassignIssue(db, thread.folder);
+  unassignIssue(db, thread.folder);
   await endThread(db, tmux, thread, reason ? `removed: ${reason}` : "removed");
 }
 

@@ -5,9 +5,10 @@
 // with that file's words, and with `setup-<question>` it fails the same way with exit code 2,
 // as a plugin that needs its setup again does. While `hold-<question>`, or for a question with
 // a state, `hold-<question>-<state>`, is there, it waits before answering, saying so with
-// `held-<question>`. Asked to assign you, it says this call did, and taking you off answers
-// nothing, as GitHub's plugin does.
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+// `held-<question>`. Taking you off an issue counts as the state false, so `hold-assign-false`
+// holds only that. It keeps whether you are assigned in a file `assigned`, as GitHub would:
+// assigning you says whether this call did, and taking you off answers nothing.
+import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const dir = process.env.SKELCREW_PLUGIN_CONFIG ?? "";
@@ -24,7 +25,8 @@ if (existsSync(setup)) {
   console.error(readFileSync(setup, "utf8").trim());
   process.exit(2);
 }
-const holds = [join(dir, `hold-${name}`), join(dir, `hold-${name}-${question.state}`)];
+const state = question.state ?? (question.on === false ? "false" : undefined);
+const holds = [join(dir, `hold-${name}`), join(dir, `hold-${name}-${state}`)];
 const hold = holds.find((file) => existsSync(file));
 if (hold) {
   writeFileSync(join(dir, `held-${name}`), "");
@@ -46,7 +48,16 @@ const answers: Record<string, () => unknown> = {
   "open-pr": () => ({ number: 7 }),
   review: reviewed,
   log: () => ({ log: "expected 2, got 3" }),
-  assign: () => (question.on ? { assigned: true } : null),
+  assign: () => {
+    const assigned = join(dir, "assigned");
+    if (!question.on) {
+      rmSync(assigned, { force: true });
+      return null;
+    }
+    if (existsSync(assigned)) return { assigned: false };
+    writeFileSync(assigned, "");
+    return { assigned: true };
+  },
 };
 const saved = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : undefined;
 // Which remotes it claims is a map from each remote to its answer.

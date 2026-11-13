@@ -130,7 +130,7 @@ async function actOnPr(db: Database, tmux: string, before: Thread, pr: PullReque
   if ("end" in decision) {
     await endThread(db, tmux, thread, decision.end);
     // A merge leaves you assigned, as the closed issue's record of who did it.
-    if (pr.state === "closed") await unassignIssue(db, folder);
+    if (pr.state === "closed") unassignIssue(db, folder);
   }
   // Left unhandled, so a stopped thread's events reach its builder once it starts again.
   else if (thread.status === "stopped" || typingEvents.has(folder) || stale) return;

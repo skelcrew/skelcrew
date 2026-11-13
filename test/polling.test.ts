@@ -638,6 +638,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
       },
     ]);
     // Skelcrew assigned you as the thread started, so removing it takes you off.
+    await until(() => assigns().length === 2);
     expect(assigns()).toEqual([assignOn, assignOff]);
     expect(thread()).toMatchObject({ status: "done", needs_you: 0 });
     expect(existsSync(clone())).toBe(false);
@@ -854,6 +855,7 @@ echo "Not logged in"; exit 1`,
       stderr: "pipe",
     });
     expect(stopped.stderr.toString()).toBe("");
+    await until(() => thread().assigned === 0);
     expect(assigns()).toEqual([assignOn, assignOff]);
     expect(thread()).toMatchObject({ status: "stopped", assigned: 0 });
     const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
@@ -864,6 +866,51 @@ echo "Not logged in"; exit 1`,
     await until(() => thread().assigned === 1);
     expect(claims()).toEqual([claim12, claim12]);
     expect(assigns()).toEqual([assignOn, assignOff, assignOn]);
+  }, 60_000);
+
+  // A tracker can take up to a minute to answer, as long as sc stop waits for its answer, and
+  // the assignment changes only what the tracker shows, so the stop doesn't wait on it.
+  test("sc stop answers at once while the tracker takes its time to take you off", async () => {
+    await approvedApp12();
+    await until(() => thread().assigned === 1);
+    writeFileSync(join(plugin, "hold-assign"), "");
+    const began = Date.now();
+    const stopped = Bun.spawnSync([process.execPath, main, "stop", "app-12"], {
+      env: env(),
+      stderr: "pipe",
+    });
+    expect(stopped.stderr.toString()).toBe("");
+    // The fake holds its answer up to 20 seconds, so a stop that waited on it takes that long.
+    expect(Date.now() - began).toBeLessThan(10_000);
+    expect(thread().status).toBe("stopped");
+    await until(() => existsSync(join(plugin, "held-assign")));
+    rmSync(join(plugin, "hold-assign"));
+    await until(() => thread().assigned === 0);
+    expect(assigns()).toEqual([assignOn, assignOff]);
+  }, 60_000);
+
+  // Starting again right after a stop must not have its assignment overtaken by the stop's
+  // removal, which would leave a running thread's issue with nobody assigned.
+  test("sc start right after sc stop ends with you assigned", async () => {
+    await approvedApp12();
+    await until(() => thread().assigned === 1);
+    writeFileSync(join(plugin, "hold-assign-false"), "");
+    Bun.spawnSync([process.execPath, main, "stop", "app-12"], { env: env() });
+    await until(() => existsSync(join(plugin, "held-assign")));
+    const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
+      env: env(),
+      stderr: "pipe",
+    });
+    expect(started.stderr.toString()).toBe("");
+    // Time for the start's assignment to reach the tracker first, if it could. Too short a
+    // moment passes the test without proving the order, never fails it.
+    await Bun.sleep(2000);
+    rmSync(join(plugin, "hold-assign-false"));
+    const log = () => read(join(data(), "threads", "app-12.log"));
+    await until(() => log().includes("took you off its issue"));
+    await until(() => thread().assigned === 1);
+    expect(assigns()).toEqual([assignOn, assignOff, assignOn]);
+    expect(existsSync(join(plugin, "assigned"))).toBe(true);
   }, 60_000);
 
   // The tracker answers that you were assigned already, so the issue was yours before.
@@ -926,6 +973,7 @@ echo "Not logged in"; exit 1`,
       stderr: "pipe",
     });
     expect(removed.stderr.toString()).toBe("");
+    await until(() => thread().assigned === 0);
     expect(assigns()).toEqual([assignOn, assignOn, assignOff]);
     expect(thread()).toMatchObject({ status: "done", assigned: 0 });
   }, 60_000);
