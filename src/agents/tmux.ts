@@ -145,9 +145,15 @@ export function startSession(
   const start = ["new-session", "-d", "-s", name, "-c", session.folder];
   mustTmux(socket, [...start, "--", ...clean, ...session.command]);
   mustTmux(socket, ["source-file", "-"], tmuxConfig);
-  // The window's own setting wins over the server's. An agent that exits before this is set
-  // takes its session with it, which reads as a crash, never as a clean exit.
-  if (session.keepOnExit) tmux(socket, ["set", "-w", "-t", `=${name}:`, "remain-on-exit", "on"]);
+  if (session.keepOnExit) keepOnExit(socket, name);
+}
+
+// Has the named session stay when its agent exits cleanly too, as startSession's `keepOnExit`
+// does, for a session that is already running, such as a lead started by an older Skelcrew.
+// The window's own setting wins over the server's. An agent that exits before this is set
+// takes its session with it, which reads as a crash, never as a clean exit.
+export function keepOnExit(socket: string, name: string): void {
+  tmux(socket, ["set", "-w", "-t", `=${name}:`, "remain-on-exit", "on"]);
 }
 
 // Gives a running tmux server Skelcrew's settings, so one that outlived an upgrade scrolls too.

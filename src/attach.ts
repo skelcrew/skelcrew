@@ -116,13 +116,12 @@ export async function attachToThread(
       `${repository}-${task}'s builder isn't running: the thread is ${thread.status}`,
     );
   await ensureDaemon();
-  // A repository whose lead you exited has its tab closed. Attaching to one of its threads
-  // opens it again, and starts its lead, as plain sc in a checkout of it would.
+  // Attaching opens the thread's repository, as plain sc in a checkout of it would: its tab
+  // opens again if you closed it by exiting its lead, and its lead starts. It always asks, as a
+  // lead you exited a moment ago may not be marked yet, and the daemon would then close the tab
+  // under the screen that just opened.
   const fullName = `${thread.owner}/${thread.repo}`;
-  const closed = db
-    .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1")
-    .get(thread.owner, thread.repo);
-  if (closed) await ask({ command: "lead", from: fullName }, 60_000);
+  await ask({ command: "lead", from: fullName }, 60_000);
   const { name } = leadOf(db, thread.owner, thread.repo);
   await openScreen(tmux, thread.folder, name, fullName);
 }

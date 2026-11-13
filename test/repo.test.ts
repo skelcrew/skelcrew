@@ -568,8 +568,15 @@ test("repo ls notes a closed tab, and repo add opens it again", async () => {
   expect(JSON.parse((await skel(["repo", "ls", "--json"])).out)).toMatchObject([
     { name: "app", tabClosed: true },
   ]);
+  writeFileSync(join(home, "calls"), "");
   const again = await skel(["repo", "add", "simon/app"]);
   expect(again.out).toBe("Skelcrew has simon/app already, as app. Its tab is open again.\n");
+  // The daemon starts its lead again, with no screen open.
+  expect(calls()).toBe("daemon lead\n");
+  expect(JSON.parse(readFileSync(join(home, "asked"), "utf8"))).toEqual({
+    command: "lead",
+    from: "simon/app",
+  });
   expect(JSON.parse((await skel(["repo", "ls", "--json"])).out)).toMatchObject([
     { name: "app", tabClosed: false },
   ]);

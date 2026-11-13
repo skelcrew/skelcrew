@@ -352,14 +352,19 @@ export async function addRepo(given?: string): Promise<void> {
   if (!url || url.startsWith("-"))
     throw new Error(`${given} is neither a folder nor a repository's URL`);
   // One Skelcrew has already is only named, with no call to a forge.
-  // Adding it again opens its tab, if you had closed it by exiting its lead. Its lead starts
-  // when you land on the tab.
+  // Adding it again opens its tab, if you had closed it by exiting its lead, and the daemon
+  // starts its lead again with its conversation. A daemon that is down brings it back as it
+  // starts.
   const had = repositoryAt(db, url);
   if (had) {
     const reopened = db.run(
       "UPDATE repositories SET tab_closed = 0 WHERE owner = ? AND repo = ? AND tab_closed = 1",
       [had.owner, had.repo],
     ).changes;
+    // Loaded only here: the client reads the lists, which read this file, so a plain import
+    // would leave a module half-made as Skelcrew starts.
+    const { ask } = await import("../client.ts");
+    if (reopened) await ask({ command: "lead", from: `${had.owner}/${had.repo}` }, 60_000);
     const tab = reopened ? " Its tab is open again." : "";
     console.log(`Skelcrew has ${had.owner}/${had.repo} already, as ${had.name}.${tab}`);
     return;

@@ -406,6 +406,23 @@ esac`,
     expect(calls()).toMatch(/new-session .* skelcrew site-7 lead-site-[a-p]+ ;/);
   });
 
+  // The tab of a lead you exited a moment ago may not be closed yet. The daemon settles that
+  // as it opens the repository, so the screen that opens next keeps its tab.
+  test("opens the thread's repository through the daemon, whatever its tab was", async () => {
+    writeFileSync(join(home, "sessions", "site-7"), "");
+    const asked: string[] = [];
+    const daemon = createServer((connection) =>
+      connection.on("data", (data) => {
+        asked.push(data.toString().trim());
+        connection.end('{"running":true,"pid":1}\n');
+      }),
+    );
+    await new Promise<void>((done) => daemon.listen(join(home, "run", "skelcrew.sock"), done));
+    const attached = await skel(["attach", "site-7"]).finally(() => daemon.close());
+    expect(attached.code).toBe(0);
+    expect(asked).toContain('{"command":"lead","from":"simon/site"}');
+  });
+
   test("says when there is no such thread", async () => {
     const missing = await skel(["attach", "app-99"]);
     expect(missing.code).not.toBe(0);
