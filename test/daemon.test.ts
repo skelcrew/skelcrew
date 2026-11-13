@@ -641,6 +641,8 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a lead per repositor
     expect(line).toContain("Start these?");
     expect(line).toContain("Run sc start only once the human says yes.");
     expect(line).toContain("File an issue only when the human asks for one");
+    // A thread's title is what the sidebar shows, so a sentence there is cut to nothing useful.
+    expect(line).toContain("Give the thread a short title, about 40 characters at most");
     // Filing in a private repository unasked once read as leave to file without asking.
     expect(line).not.toContain("file it and say you did");
   });
