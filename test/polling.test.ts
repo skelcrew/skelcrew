@@ -322,6 +322,30 @@ test("the first poll brings everything open into Skelcrew's copy, and later ones
   expect(copied()).toEqual({ rows: ["task 12"], totals: { open_issues: 1, open_prs: 0 } });
 });
 
+// Two machines running Skelcrew on one repository both see the label, and only the one whose
+// claim the tracker grants may start it.
+test("a labeled task claimed elsewhere starts no thread, and a claim that fails is tried again", async () => {
+  addApp();
+  const failing = join(plugin, "fail-took");
+  writeFileSync(failing, "network is down");
+  changes([issue12(true)]);
+  serve();
+  const took = () => asked(plugin).filter((q) => q.ask === "took");
+  // A claim that fails starts nothing, and the next poll asks again.
+  await until(() => took().length >= 2);
+  expect(thread()).toEqual({});
+  // Once the tracker answers that someone else has it, nothing starts, and it isn't asked again.
+  answer(plugin, "took", { took: false });
+  rmSync(failing);
+  const failed = took().length;
+  await morePolls();
+  const asks = took().length;
+  expect(asks).toBeGreaterThan(failed);
+  await morePolls();
+  expect(took()).toHaveLength(asks);
+  expect(thread()).toEqual({});
+}, 30_000);
+
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
 describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
   test("a PR's checks are saved for the strip, without Skelcrew's own review check", async () => {
@@ -687,6 +711,32 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
     expect(thread()).toMatchObject({ task: 12, status: "working", base: "next" });
   }, 60_000);
 
+  // The tracker can take its time to answer a claim, and an sc start that comes in meanwhile
+  // must still start the task with its own options.
+  test("sc start that comes in while a labeled task is being claimed starts it from the branch it names", async () => {
+    const work = addApp();
+    git(work, "checkout", "-q", "-b", "next");
+    git(work, "push", "-q", join(home, "github", "simon", "app.git"), "next");
+    const hold = join(plugin, "hold-took");
+    writeFileSync(hold, "");
+    changes([issue12(true)]);
+    serve(3_600_000);
+    await until(() => existsSync(join(plugin, "held-took")));
+    const started = Bun.spawn([process.execPath, main, "start", "app-12", "--from", "next"], {
+      env: env(),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // Nothing outside the daemon shows that sc start's request has arrived, so give it a
+    // moment before the tracker answers. Too short a moment fails the test, never passes it.
+    await Bun.sleep(2000);
+    rmSync(hold);
+    expect(await new Response(started.stderr).text()).toBe("");
+    expect(await new Response(started.stdout).text()).toBe("Started app-12.\n");
+    await started.exited;
+    expect(thread()).toMatchObject({ task: 12, status: "working", base: "next" });
+  }, 30_000);
+
   // sc start polls first, so a builder never starts from an old title or body.
   test("sc start reads its task as it is now", async () => {
     addApp();
@@ -703,6 +753,8 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
     expect(thread()).toMatchObject({ task: 12, title: "Add export as CSV", body: "With headers" });
   }, 60_000);
 
+  // The fake tracker answers the claim with nothing, as a plugin not yet updated does, and
+  // that counts as taking it.
   test("a task labeled skelcrew starts a thread once, and one that failed isn't started again", async () => {
     // A builder that can't start, so the thread fails.
     script(
@@ -730,6 +782,35 @@ echo "Not logged in"; exit 1`,
     expect(took()).toHaveLength(1);
     expect(lead().split("started app-12").length - 1).toBe(1);
   }, 60_000);
+
+  test("a labeled task whose claim the tracker grants starts a thread", async () => {
+    addApp();
+    answer(plugin, "took", { took: true });
+    pr({ labeled: true });
+    serve();
+    await until(() => thread().task === 12);
+    expect(asked(plugin).filter((q) => q.ask === "took")).toEqual([
+      { ask: "took", repository: "simon/app", task: "12" },
+    ]);
+  }, 30_000);
+
+  // The claim only keeps two daemons from both starting by the label. You decide by hand.
+  test("sc start starts a labeled task claimed elsewhere, and never claims it", async () => {
+    addApp();
+    answer(plugin, "took", { took: false });
+    changes([issue12(true)]);
+    serve();
+    const took = () => asked(plugin).filter((q) => q.ask === "took");
+    await until(() => took().length > 0);
+    const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
+      env: env(),
+      stderr: "pipe",
+    });
+    expect(started.stderr.toString()).toBe("");
+    expect(started.stdout.toString()).toBe("Started app-12.\n");
+    expect(thread()).toMatchObject({ task: 12, status: "working" });
+    expect(took()).toHaveLength(1);
+  }, 30_000);
 
   // A task's ID names the thread's folder, which setup deletes before it clones, so an ID
   // from a tracker that climbs out of Skelcrew's threads folder must never reach it.
