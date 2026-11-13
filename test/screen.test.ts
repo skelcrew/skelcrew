@@ -1603,3 +1603,29 @@ test("a repository removed while the screen shows it loses its tab, and the scre
   await until(() => !/\bapp\b/.test(tabRow()), "app's tab to go");
   expect(seen()).not.toContain("can't find session");
 });
+
+// sc repo rm ends the lead and waits for it before it removes the repository. A screen that
+// finds the lead gone meanwhile must not take it for a crash and ask the daemon to bring back
+// the lead of a repository on its way out.
+test("sc repo rm while the screen shows the repository moves the screen on, and never asks for its lead", async () => {
+  addSite();
+  daemon();
+  sql("UPDATE threads SET status = 'stopped' WHERE repo = 'app'");
+  // A lead that takes a few seconds to end, as a real one can.
+  tmux(agents, "kill-session", "-t", "=lead");
+  startSession(agents, "lead", {
+    folder: home,
+    command: ["sh", "-c", "trap 'sleep 3; exit' HUP; echo I am lead; while :; do sleep 0.2; done"],
+    env: { PATH: pathNow },
+  });
+  open("lead");
+  await ready("lead");
+  const script = `import { removeRepo } from ${JSON.stringify(source("flow/repo.ts"))};
+await removeRepo("app", ${JSON.stringify(agents)});`;
+  const removed = Bun.spawn([process.execPath, "-e", script], { env: env(), stderr: "pipe" });
+  expect(await removed.exited).toBe(0);
+  await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
+  await until(() => !/\bapp\b/.test(tabRow()), "app's tab to go");
+  expect(asked.filter((open) => open.includes("simon/app"))).toEqual([]);
+  expect(seen()).not.toContain("can't find session");
+});

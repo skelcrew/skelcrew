@@ -541,6 +541,12 @@ export async function removeRepo(name: string, tmux: string): Promise<void> {
     await wakeRepository(db, found, true).catch((error) =>
       console.error(`Skelcrew: couldn't stop the wake-ups for ${fullName}: ${errorText(error)}`),
     );
+  // Its tab closes first, so an open screen moves on at once. A screen that found the lead
+  // gone while its tab was still there would take it for a crash and ask for it back.
+  db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [
+    found.owner,
+    found.repo,
+  ]);
   // Ended as a thread's builder is, and waited for, as the lead reads the clone removed next.
   await stopSession(tmux, leadPlaces(found.owner, found.repo, keptLead).name);
   // Remove the clone, the row and your trust in it. The other repositories are named again,
