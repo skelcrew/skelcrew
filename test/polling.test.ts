@@ -913,6 +913,32 @@ echo "Not logged in"; exit 1`,
     expect(existsSync(join(plugin, "assigned"))).toBe(true);
   }, 60_000);
 
+  // sc stop waits for its builder to exit, and an sc start meanwhile finds the thread stopped
+  // already, so it must not assign you before the stop takes you off.
+  test("sc start while a stopped builder is still exiting ends with you assigned", async () => {
+    // Agents start through nice, outside their sandbox, so this one makes each agent's session
+    // take 4 seconds to end, as Claude Code can.
+    script("nice", "shift 2\ntrap 'sleep 4; exit 0' HUP TERM\n\"$@\"");
+    await approvedApp12();
+    await until(() => thread().assigned === 1);
+    const stopping = Bun.spawn([process.execPath, main, "stop", "app-12"], {
+      env: env(),
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await until(() => thread().status === "stopped");
+    Bun.spawnSync([process.execPath, main, "start", "app-12"], { env: env() });
+    const log = () => read(join(data(), "threads", "app-12.log"));
+    await stopping.exited;
+    // The old builder takes up to 10 seconds to be killed, as it ignores its session's end.
+    await until(() => log().includes("took you off its issue"), 30_000);
+    await until(() => thread().assigned === 1);
+    expect(assigns()).toEqual([assignOn, assignOff, assignOn]);
+    expect(existsSync(join(plugin, "assigned"))).toBe(true);
+    // Stopped again, so its builder is gone before the test ends.
+    Bun.spawnSync([process.execPath, main, "stop", "app-12"], { env: env() });
+  }, 90_000);
+
   // The tracker answers that you were assigned already, so the issue was yours before.
   test("an issue you were assigned already stays yours when its thread stops", async () => {
     answer(plugin, "assign", { assigned: false });
@@ -946,7 +972,7 @@ echo "Not logged in"; exit 1`,
     await until(() => thread().status === "done");
     await until(() => assigns().length === 2);
     expect(assigns()).toEqual([assignOn, assignOff]);
-    expect(thread().assigned).toBe(0);
+    await until(() => thread().assigned === 0);
   }, 60_000);
 
   // A thread that failed still holds its issue, so you stay assigned, and starting it over

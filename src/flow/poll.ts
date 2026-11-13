@@ -128,9 +128,10 @@ async function actOnPr(db: Database, tmux: string, before: Thread, pr: PullReque
   // A merge or close ends the thread whatever else is going on. Otherwise new events go to
   // the builder, and with none, only what is seen and what changed is saved.
   if ("end" in decision) {
-    await endThread(db, tmux, thread, decision.end);
-    // A merge leaves you assigned, as the closed issue's record of who did it.
+    // A merge leaves you assigned, as the closed issue's record of who did it. Asked before
+    // the thread ends, so an sc start that starts it over once it is done assigns you after.
     if (pr.state === "closed") unassignIssue(db, folder);
+    await endThread(db, tmux, thread, decision.end);
   }
   // Left unhandled, so a stopped thread's events reach its builder once it starts again.
   else if (thread.status === "stopped" || typingEvents.has(folder) || stale) return;
