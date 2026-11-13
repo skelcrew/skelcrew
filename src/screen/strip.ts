@@ -120,13 +120,13 @@ function drawTabs(tabs: Tab[], open: string, width: number): [string, number] {
     else left = false;
   }
   // Tabs have greys of their own, so they stand apart from the sidebar and the agent: the open
-  // one bold white on a dark grey, the others dim on a lighter one. The open tab's dot is the
-  // yellow that shows on its grey. A dim count of those left out ends the row.
+  // one bold white on a dark grey, the others dim on a lighter one. Every tab's dot is the
+  // sidebar's fixed yellow, as a theme's own can look like another colour. A dim count of those
+  // left out ends the row.
   const shown = tabs.slice(first, last + 1).map((tab, offset) => {
     const here = first + offset === at;
     const style = here ? "#[bg=colour234,fg=colour231,bold]" : "#[bg=colour237,fg=colour245]";
-    const dot = here ? "#[fg=colour221]" : "#[fg=yellow]";
-    const badge = tab.count ? ` ${dot}•${tab.count}` : "";
+    const badge = tab.count ? ` #[fg=colour221]•${tab.count}` : "";
     return `#[range=user|${first + offset}]${style}  ${escaped(tab.name)}${badge}  #[default]#[norange]`;
   });
   const out = tabs.length - shown.length;

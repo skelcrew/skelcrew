@@ -38,7 +38,7 @@ export function drawList(
   // its longest. A column empty on every row takes none. Text from outside is made safe first.
   const rows = groups.flatMap((group) => group.rows);
   const ends = rows.map((row) =>
-    row.ends.map(([text, code]): [string, number] => [removeControlCodes(text), code]),
+    row.ends.map(([text, code]): [string, string] => [removeControlCodes(text), code]),
   );
   const nameWidth = Math.max(...rows.map((row) => Bun.stringWidth(row.name)));
   const columns = Array.from({ length: Math.max(...ends.map((end) => end.length)) }, (_, i) =>
@@ -52,9 +52,10 @@ export function drawList(
     const row = rows[index];
     if (!row) return "";
     const on = index === here;
-    // Returns text in a colour, dim on a row that can't be opened, and in a light colour on the
-    // grey. Plain text is white on the grey, as a theme's own text can be dark there.
-    const colour = (code: number | null, text: string) => {
+    // Returns text in a colour, dim on a row that can't be opened. A mark keeps its colour on the
+    // grey, so it looks the same whether or not you are on its row, while dim text turns light
+    // grey there. Plain text is white on the grey, as a theme's own text can be dark there.
+    const colour = (code: string | null, text: string) => {
       if (row.dim) return tinted(on, grey, text);
       if (code !== null) return tinted(on, code, text);
       return on ? paint(white, text) : text;

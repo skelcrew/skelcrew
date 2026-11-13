@@ -110,8 +110,8 @@ ${thread("14", "", "'stopped'")}`;
   ]);
   // The marks have no colour, and a word that needs you is yellow.
   expect(issues[1]?.rows[0]?.mark[1]).toBeNull();
-  expect(issues[1]?.rows[0]?.ends[0]?.[1]).toBe(33);
-  expect(issues[1]?.rows[1]?.ends[0]?.[1]).toBe(90);
+  expect(issues[1]?.rows[0]?.ends[0]?.[1]).toBe("38;5;221");
+  expect(issues[1]?.rows[1]?.ends[0]?.[1]).toBe("90");
   expect(issues[1]?.rows[0]?.link).toBe("https://github.com/simon/app/issues/12");
 });
 
@@ -150,8 +150,8 @@ ${thread("14", ", pr", "'failed', 35")}`;
     ],
   ]);
   // A PR from a thread takes its colour where that means something, and is plain otherwise.
-  expect(prs[0]?.rows.map((row) => row.mark[1])).toEqual([null, 33]);
-  expect(prs[1]?.rows.map((row) => row.mark[1])).toEqual([31, null, null]);
+  expect(prs[0]?.rows.map((row) => row.mark[1])).toEqual([null, "38;5;221"]);
+  expect(prs[1]?.rows.map((row) => row.mark[1])).toEqual(["38;5;210", null, null]);
 });
 
 // Returns a review on a PR with no thread, by a reviewer, with a verdict.
@@ -240,7 +240,12 @@ ${thread("15", ", title", "'failed', 'Broke'")}`;
     ["Stopped", [["○", "app-13", "Old", "stopped", "claude", "#13", "2 Nov"]]],
   ]);
   // Each mark and word has its colour in THREADS, and a stopped one is dim.
-  expect(threads.flatMap((g) => g.rows.map((row) => row.mark[1]))).toEqual([31, 33, 32, 90]);
+  expect(threads.flatMap((g) => g.rows.map((row) => row.mark[1]))).toEqual([
+    "38;5;210",
+    "38;5;221",
+    "38;5;120",
+    "90",
+  ]);
   expect(threads.flatMap((g) => g.rows.map((row) => row.dim))).toEqual([false, false, false, true]);
   expect(threads[0]?.rows[1]?.session).toBe("app-t1");
 });
@@ -317,7 +322,7 @@ const issues: Group[] = [
   { heading: "Not started", rows: [listRow("app-31", "Add CSV export")] },
   {
     heading: "Started",
-    rows: [listRow("app-9", "Fix login", { mark: ["◐", null], ends: [["working", 90]] })],
+    rows: [listRow("app-9", "Fix login", { mark: ["◐", null], ends: [["working", "90"]] })],
   },
 ];
 // The list's lines as you read them, without colours or what fills them out.
@@ -347,20 +352,20 @@ test("the threads' ends line up in columns: word, harness, issue and PR, and whe
       rows: [
         listRow("app-12", "Fix login", {
           ends: [
-            ["working", 90],
-            ["codex", 90],
-            ["#12 #31", 90],
-            ["14:32", 90],
+            ["working", "90"],
+            ["codex", "90"],
+            ["#12 #31", "90"],
+            ["14:32", "90"],
           ],
           link: null,
           session: "app-12",
         }),
         listRow("app-t1", "Tidy up", {
           ends: [
-            ["question", 33],
-            ["claude", 90],
-            ["", 90],
-            ["12 Nov", 90],
+            ["question", "38;5;221"],
+            ["claude", "90"],
+            ["", "90"],
+            ["12 Nov", "90"],
           ],
           link: null,
           session: "app-t1",
@@ -381,6 +386,14 @@ test("the row you are on is shaded across the whole width, in the light colours"
   expect(Bun.stringWidth(shaded[0]?.text ?? "")).toBe(60);
   expect(shaded[0]?.text).toContain("1;38;5;231");
   expect(shaded[0]?.text).not.toContain("\x1b[90m");
+});
+
+// A theme's own colours could look like another one on the grey, so a mark keeps one colour.
+test("a mark is the same colour whether or not you are on its row", () => {
+  const waiting = listRow("app#34", "Fix login", { mark: ["◐", "38;5;221"] });
+  const groups = [{ heading: "In review", rows: [waiting] }];
+  for (const here of [0, -1])
+    expect(drawList(groups, "prs", here, 60)[3]?.text).toContain("\x1b[38;5;221m◐");
 });
 
 test("each line says which row a click on it opens, and other lines open nothing", () => {
@@ -406,7 +419,7 @@ test("an issue's or PR's row is a terminal link, and a thread's isn't", () => {
 test("a title is cut with … only on a pane too narrow for it, and the ends stay", () => {
   const long = "A title long enough to need cutting on a narrow pane";
   const groups = [
-    { heading: "Started", rows: [listRow("app-9", long, { ends: [["working", 90]] })] },
+    { heading: "Started", rows: [listRow("app-9", long, { ends: [["working", "90"]] })] },
   ];
   expect(lines(groups, 0, 90)[3]).toContain(long);
   const narrow = lines(groups, 0, 40)[3] ?? "";
@@ -416,7 +429,7 @@ test("a title is cut with … only on a pane too narrow for it, and the ends sta
 });
 
 test("a stopped thread's row is dim, as opening it does nothing", () => {
-  const stopped = listRow("app-13", "Old", { mark: ["○", 90], dim: true, link: null });
+  const stopped = listRow("app-13", "Old", { mark: ["○", "90"], dim: true, link: null });
   const row = drawList([{ heading: "Stopped", rows: [stopped] }], "threads", -1, 60)[3];
   expect(row?.text).toContain("\x1b[90mapp-13");
   expect(row?.text).toContain("\x1b[90mOld");
@@ -429,7 +442,7 @@ test("a list with nothing in it says so", () => {
 });
 
 test("control codes from outside never reach your terminal", () => {
-  const bad = listRow("app-1", "Bad\x1b[2J\x07title", { ends: [["al\x1b]0;x\x07ice", 90]] });
+  const bad = listRow("app-1", "Bad\x1b[2J\x07title", { ends: [["al\x1b]0;x\x07ice", "90"]] });
   const text = drawList([{ heading: "In review", rows: [bad] }], "prs", 0, 60)
     .map((line) => line.text)
     .join("\n");

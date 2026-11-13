@@ -1,23 +1,22 @@
 // The look: what the sidebar, the strip and a page share to draw text, which is the colours, the
 // padding, and making text from outside safe and fit to show.
 
-export const [green, yellow, red] = [32, 33, 31];
-export const grey = 90;
+// The colours of marks and words. 256-colour numbers, as they reach your terminal through both
+// tmux servers and sprite, and mean the same whatever your theme. A theme's own green can be olive,
+// close to the yellow of needs you. They are the same on the row you are looking at, so a mark
+// never changes colour as you move onto it.
+export const [green, yellow, red] = ["38;5;120", "38;5;221", "38;5;210"];
+// Dim text is the theme's own grey, so it stays quiet whatever the theme.
+export const grey = "90";
 // Returns text in a colour or style. It ends just that style, not all of them, so a grey
 // background behind the text goes on after it.
-export const paint = (code: number | string, text: string) => `\x1b[${code}m${text}\x1b[22;39m`;
+export const paint = (code: string, text: string) => `\x1b[${code}m${text}\x1b[22;39m`;
 // The row you are looking at has a grey background, which is also what parts it from the rows
-// around it. 256-colour numbers, as they reach your terminal through both tmux servers and
-// sprite, and mean the same whatever your theme. So do the colours on the grey: a theme's own
-// red or grey can vanish there, and its default text can be dark.
+// around it. Dim text is a fixed light grey there, as a theme's own grey can vanish on it, and
+// the title is white, as a theme's default text can be dark.
 export const shade = "48;5;238";
 export const white = "1;38;5;231";
-export const onShade: Record<number, string> = {
-  [green]: "38;5;120",
-  [yellow]: "38;5;221",
-  [red]: "38;5;210",
-  [grey]: "38;5;250",
-};
+export const greyOnShade = "38;5;250";
 // The line at the sidebar's edge, a shade quieter than dim text, as it only parts two things.
 export const edge = "38;5;237";
 // The padding on each side, in columns, which also starts every heading and mark.
@@ -44,10 +43,11 @@ export function fitted(text: string, width: number): string {
 export const filled = (line: string, width: number) =>
   `${line}${" ".repeat(Math.max(width - Bun.stringWidth(line), 0))}`;
 
-// Returns text in a colour, or, on the row you are looking at, the one that stands in for it on
-// the grey.
-export const tinted = (here: boolean, code: number, text: string) =>
-  paint(here ? (onShade[code] ?? code) : code, text);
+// Returns text in a colour. Dim text on the row you are looking at takes the light grey that
+// shows on its background. Other colours stay as they are, so a mark looks the same whether or
+// not you are on its row.
+export const tinted = (here: boolean, code: string, text: string) =>
+  paint(here && code === grey ? greyOnShade : code, text);
 
 // Returns a line with the grey behind it, out to the end of the row.
 export const shaded = (line: string, width: number) =>

@@ -59,7 +59,7 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
   const name = lead ? "" : `${row.name} · `;
   const after = [row.harness, row.age].flatMap((part) => (part ? [` · ${part}`] : [])).join("");
   const below = fitted(`${name}${row.word}${after}`, room);
-  const parts: [number, string][] = [
+  const parts: [string, string][] = [
     [grey, below.slice(0, name.length)],
     [needing(row) ? yellow : grey, below.slice(name.length, name.length + row.word.length)],
     [grey, below.slice(name.length + row.word.length)],

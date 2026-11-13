@@ -28,7 +28,7 @@ export type Row = {
   review: { round: number; reviewer: string; verdict: string } | null;
 };
 // A sign, and the colour it is drawn in.
-type Mark = [string, number];
+type Mark = [string, string];
 // The repository open in the sidebar, by its owner and name, and its lead's session.
 export type Open = { owner: string; repo: string; lead: string };
 // A repository's tab: its name in Skelcrew, its owner/name, and how many of its threads need you

@@ -17,10 +17,10 @@ export type Entry = "issues" | "threads" | "prs";
 // its title, each in its colour. An issue or PR has the `link` its page opens, and a thread the
 // `session` its agent runs in. A stopped thread is `dim`, as it can't be opened.
 export type ListRow = {
-  mark: [string, number | null];
+  mark: [string, string | null];
   name: string;
   title: string;
-  ends: [string, number][];
+  ends: [string, string][];
   link: string | null;
   session: string | null;
   dim: boolean;
@@ -62,7 +62,7 @@ function openThreads(db: Database, open: Open): Known[] {
 const needing = ({ thread }: Known) => needsYou(thread) && thread.status !== "failed";
 
 // Returns a thread's word as the end of a row, yellow when it needs you and dim otherwise.
-const wordEnd = (open: Known): [string, number] => [open.word, needing(open) ? yellow : grey];
+const wordEnd = (open: Known): [string, string] => [open.word, needing(open) ? yellow : grey];
 
 // Returns the repository's name in Skelcrew, which names its issues and PRs, such as app-12.
 function repositoryName(db: Database, open: Open): string {

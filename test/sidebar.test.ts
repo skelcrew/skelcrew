@@ -142,7 +142,7 @@ test("the second line is cut with … too, with the name and word whole before i
 test("the name is dim on the second line, beside the word in its own colour", () => {
   const needing = thread("app-12", { needsYou: true, word: "approved", title: "Fix login" });
   const screen = draw([needing], "lead", size);
-  expect(screen).toContain("\x1b[90mapp-12 · \x1b[22;39m\x1b[33mapproved");
+  expect(screen).toContain("\x1b[90mapp-12 · \x1b[22;39m\x1b[38;5;221mapproved");
 });
 
 test("control codes in a short title never reach your terminal", () => {
@@ -177,18 +177,30 @@ test("a thread that needs you has a yellow circle and a yellow word, whatever it
     const needing = thread("app-12", { status, needsYou: true, word: "approved" });
     const screen = draw([lead, needing], "lead", size);
     expect(read(screen).join("\n")).toContain("  ● app-12\n    app-12 · approved · claude");
-    expect(screen).toContain("\x1b[33m●");
-    expect(screen).toContain("\x1b[33mapproved");
+    expect(screen).toContain("\x1b[38;5;221m●");
+    expect(screen).toContain("\x1b[38;5;221mapproved");
   }
 });
 
 test("every thread's mark is a circle, in its status's colour", () => {
   const mark = (more: Partial<Row>) => draw([thread("app-12", more)], "lead", size);
-  expect(mark({ status: "working" })).toContain("\x1b[32m●");
-  expect(mark({ status: "failed", word: "failed" })).toContain("\x1b[31m●");
+  expect(mark({ status: "working" })).toContain("\x1b[38;5;120m●");
+  expect(mark({ status: "failed", word: "failed" })).toContain("\x1b[38;5;210m●");
   expect(mark({ status: "waiting", word: "checks" })).toContain("\x1b[90m○");
   expect(mark({ status: "stopped", word: "stopped" })).toContain("\x1b[90m○");
-  expect(mark({ status: "done", word: "done" })).toContain("\x1b[32m●");
+  expect(mark({ status: "done", word: "done" })).toContain("\x1b[38;5;120m●");
+});
+
+test("a mark looks the same whether or not you are on its row", () => {
+  // A theme's own green can be olive, close to the yellow of needs you, so marks never use it.
+  const rows = [lead, thread("app-12")];
+  const markLine = (shown: string) =>
+    draw(rows, shown, size)
+      .split("\n")
+      .find((line) => line.includes("●"));
+  // The colour is the last code before the mark.
+  const colour = (line = "") => line.split("●")[0]?.split("\x1b[").at(-1);
+  expect(colour(markLine("app-12"))).toBe(colour(markLine("lead")));
 });
 
 test("a failed thread is red even while it needs you, as its word says failed", () => {
@@ -197,9 +209,9 @@ test("a failed thread is red even while it needs you, as its word says failed", 
     "lead",
     size,
   );
-  expect(screen).toContain("\x1b[31m●");
+  expect(screen).toContain("\x1b[38;5;210m●");
   expect(screen).toContain("\x1b[90mfailed");
-  expect(screen).not.toContain("\x1b[33m");
+  expect(screen).not.toContain("\x1b[38;5;221m");
 });
 
 test("the lead keeps its diamond", () => {
@@ -458,8 +470,8 @@ test("an entry's count is dim, and what needs you on Threads and PRs is yellow",
   const ready = entries.map((e) => (e.entry === "prs" ? { ...e, note: "2 ready" } : e));
   const screen = drawWith(threads, ready, "lead", tall);
   expect(screen).toContain("\x1b[90m4 new\x1b[22;39m\x1b[90m · 12");
-  expect(screen).toContain("\x1b[33m1 needs you\x1b[22;39m\x1b[90m · 6");
-  expect(screen).toContain("\x1b[33m2 ready\x1b[22;39m\x1b[90m · 5");
+  expect(screen).toContain("\x1b[38;5;221m1 needs you\x1b[22;39m\x1b[90m · 6");
+  expect(screen).toContain("\x1b[38;5;221m2 ready\x1b[22;39m\x1b[90m · 5");
 });
 
 test("each line between the parts has the colour of the sidebar's edge, and joins it", () => {
