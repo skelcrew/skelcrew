@@ -352,9 +352,16 @@ export async function addRepo(given?: string): Promise<void> {
   if (!url || url.startsWith("-"))
     throw new Error(`${given} is neither a folder nor a repository's URL`);
   // One Skelcrew has already is only named, with no call to a forge.
+  // Adding it again opens its tab, if you had closed it by exiting its lead. Its lead starts
+  // when you land on the tab.
   const had = repositoryAt(db, url);
   if (had) {
-    console.log(`Skelcrew has ${had.owner}/${had.repo} already, as ${had.name}.`);
+    const reopened = db.run(
+      "UPDATE repositories SET tab_closed = 0 WHERE owner = ? AND repo = ? AND tab_closed = 1",
+      [had.owner, had.repo],
+    ).changes;
+    const tab = reopened ? " Its tab is open again." : "";
+    console.log(`Skelcrew has ${had.owner}/${had.repo} already, as ${had.name}.${tab}`);
     return;
   }
   const details = await identifyRepository(db, url);

@@ -474,6 +474,7 @@ test("repo ls lists each repository with its tracker and forge, as text and for 
       forge: "github",
       missing: "linear",
       clone: clone("simon/app"),
+      tabClosed: false,
     },
   ]);
   writeFileSync(join(clone("simon/app"), "skelcrew.yaml"), "tracker: github\n");
@@ -549,6 +550,33 @@ test("repo add says so for a repository Skelcrew has, and fetches nothing", asyn
   expect(again.err).toBe("");
   expect(again.out).toBe("Skelcrew has simon/app already, as app.\n");
   expect(calls()).toBe("");
+});
+
+// Exiting a repository's lead closes its tab. The repository stays, and adding it opens the tab.
+test("repo ls notes a closed tab, and repo add opens it again", async () => {
+  const checkout = onGitHub("simon/app", "WRITE");
+  await skel(["repo", "add"], "", checkout);
+  const closeTab = (closed: number) => {
+    const db = new Database(join(home, ".local", "share", "skelcrew", "skelcrew.db"));
+    db.run("UPDATE repositories SET tab_closed = ?", [closed]);
+    db.close();
+  };
+  closeTab(1);
+  expect((await skel(["repo", "ls"])).out).toBe(
+    `NAME  REPOSITORY  TRACKER  FORGE   CLONE\napp   simon/app   github   github  ${clone("simon/app")}  tab closed\n`,
+  );
+  expect(JSON.parse((await skel(["repo", "ls", "--json"])).out)).toMatchObject([
+    { name: "app", tabClosed: true },
+  ]);
+  const again = await skel(["repo", "add", "simon/app"]);
+  expect(again.out).toBe("Skelcrew has simon/app already, as app. Its tab is open again.\n");
+  expect(JSON.parse((await skel(["repo", "ls", "--json"])).out)).toMatchObject([
+    { name: "app", tabClosed: false },
+  ]);
+  // A tab that is open needs no word about it.
+  expect((await skel(["repo", "add", "simon/app"])).out).toBe(
+    "Skelcrew has simon/app already, as app.\n",
+  );
 });
 
 test("repo add says why outside a checkout with a remote, and for a name no forge knows", async () => {

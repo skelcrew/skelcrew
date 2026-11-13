@@ -61,6 +61,8 @@ function prepareTables(db: Database): void {
   // machine had before Skelcrew gave each repository its own. `claimed` is whether Skelcrew has
   // asked the forges installed which of them claims the repository's remote, `forge` is the one
   // that does, or null, and `author` is who commits in its name, as git writes an author.
+  // `tab_closed` marks a repository whose lead you exited, so its tab stays hidden and the
+  // daemon doesn't bring its lead back until you open it again.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -71,6 +73,7 @@ function prepareTables(db: Database): void {
     forge: "TEXT",
     claimed: "INTEGER NOT NULL DEFAULT 0",
     author: "TEXT",
+    tab_closed: "INTEGER NOT NULL DEFAULT 0",
   };
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
   for (const [column, type] of Object.entries(repositoryColumns))

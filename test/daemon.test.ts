@@ -530,6 +530,34 @@ await removeRepo(${JSON.stringify(name)}, ${JSON.stringify(socket)});`;
   return removed.stderr.toString();
 }
 
+// Has the fake lead wait until the test tells it to exit, then exit with the given code. The
+// wait also ends when its folder goes.
+function leadExitsWhenTold(code: number): void {
+  fakeClaude(`while [ ! -e exit-now ] && [ -d "$PWD" ]; do sleep 0.1; done; exit ${code}`);
+}
+const tellLeadToExit = () => writeFileSync(join(leadFolder(), "exit-now"), "");
+
+// Whether the lead's session is there with its agent ended, as a lead kept on exit leaves it.
+const leadDead = () =>
+  Bun.spawnSync([
+    "tmux",
+    "-L",
+    socket,
+    "display-message",
+    "-p",
+    "-t",
+    `=${leadName()}:`,
+    "#{pane_dead}",
+  ])
+    .stdout.toString()
+    .trim() === "1";
+
+// Whether Skelcrew has closed the repository's tab.
+const tabClosed = (repo = "app") =>
+  JSON.stringify(
+    onDb((db) => db.query("SELECT tab_closed FROM repositories WHERE repo = ?").get(repo)),
+  ) === '{"tab_closed":1}';
+
 // A stopped thread of the repository, for what lists threads.
 function addThread(repo: string, task: number): void {
   onDb((db) =>
@@ -697,6 +725,93 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a lead per repositor
     await untilAnswers();
     expect(await ask({ command: "lead" })).toEqual({
       error: "Skelcrew has no repositories yet. Run sc in a checkout of one.",
+    });
+  });
+
+  // Exiting a repository's lead closes its tab, as exiting a shell closes a terminal's.
+  test("a lead that exits cleanly closes its tab, changes nothing else, and comes back with its conversation", async () => {
+    setUp();
+    const clone = addRepository("app");
+    addThread("app", 1);
+    leadExitsWhenTold(0);
+    serve();
+    await untilAnswers();
+    await open();
+    const id = storedSession();
+    saveTranscript(id);
+    tellLeadToExit();
+    await until(() => tabClosed());
+    // The daemon ends the session, so nothing brings the lead back by itself.
+    await until(() => !hasLead());
+    expect(storedSession()).toBe(id);
+    expect(existsSync(join(clone, "README"))).toBe(true);
+    expect(await ask({ command: "ps" })).toEqual({
+      threads: [{ thread: "app-1", status: "stopped", needsYou: false }],
+    });
+    expect(await ask({ command: "repo ls" })).toMatchObject({
+      repositories: [{ name: "app", tabClosed: true }],
+    });
+    // A tab never brings it back, not even one a screen still shows, and the daemon's start
+    // doesn't either.
+    expect(await ask({ command: "lead", from: "simon/app", tab: true })).toEqual({
+      error: "simon/app's tab is closed. Run sc in a checkout of it to open it.",
+    });
+    expect(tabClosed()).toBe(true);
+    expect(hasLead()).toBe(false);
+    // Opening the repository again opens its tab and resumes its lead.
+    rmSync(join(leadFolder(), "exit-now"));
+    expect(await open()).toEqual({ lead: leadName(), repository: "simon/app" });
+    expect(tabClosed()).toBe(false);
+    expect(claudeCalls()).toBe(`--session-id ${id}\n--resume ${id}\n`);
+    expect(hasLead()).toBe(true);
+  });
+
+  test("a lead that fails keeps its tab, and opening it brings the lead back", async () => {
+    setUp();
+    addRepository("app");
+    leadExitsWhenTold(1);
+    serve();
+    await untilAnswers();
+    await open();
+    saveTranscript(storedSession());
+    tellLeadToExit();
+    await until(() => leadDead());
+    // Longer than the daemon takes to close a tab.
+    await Bun.sleep(2000);
+    expect(tabClosed()).toBe(false);
+    rmSync(join(leadFolder(), "exit-now"));
+    await open();
+    expect(claudeCalls()).toContain("--resume");
+    expect(hasLead() && !leadDead()).toBe(true);
+  });
+
+  test("a lead that exited while the daemon was down has its tab closed, and isn't brought back", async () => {
+    setUp();
+    addRepository("app");
+    addRepository("web");
+    leadExitsWhenTold(0);
+    const first = serve();
+    await untilAnswers();
+    await open("web");
+    await open("app");
+    await stop(first);
+    tellLeadToExit();
+    await until(() => leadDead());
+    const second = serve();
+    await untilAnswers();
+    await until(() => tabClosed());
+    expect(claudeLines()).toHaveLength(1);
+    // Nor at the start after.
+    await stop(second);
+    serve();
+    await untilAnswers();
+    await Bun.sleep(1000);
+    expect(hasLead()).toBe(false);
+    expect(claudeLines()).toHaveLength(1);
+    // Outside any repository, sc opens the one you opened last whose tab is open.
+    expect(await ask({ command: "lead" })).toEqual({
+      lead: leadName("web"),
+      repository: "simon/web",
     });
   });
 

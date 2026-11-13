@@ -4,6 +4,7 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { repositoryTracker } from "../config.ts";
+import { colorful } from "../help.ts";
 import { cloneDir } from "../paths.ts";
 import { forgeOf, trackerOf } from "../plugins/ask.ts";
 import { openTasks, taskOf } from "./copy.ts";
@@ -19,6 +20,7 @@ export const RepositoryRow = z.object({
   forge: z.string().nullable(),
   missing: z.string().nullable(),
   clone: z.string(),
+  tabClosed: z.boolean(),
 });
 export type RepositoryRow = z.infer<typeof RepositoryRow>;
 
@@ -42,8 +44,17 @@ export function listRepositories(db: Database): RepositoryRow[] {
       forge: forgeOf(db, r),
       missing: tracker === null ? named : null,
       clone: cloneDir(r.owner, r.repo),
+      tabClosed: tabClosed(db, r),
     };
   });
+}
+
+// Returns whether you closed a repository's tab by exiting its lead.
+function tabClosed(db: Database, r: { owner: string; repo: string }): boolean {
+  const row = db
+    .query("SELECT tab_closed FROM repositories WHERE owner = ? AND repo = ?")
+    .get(r.owner, r.repo);
+  return z.object({ tab_closed: z.coerce.boolean() }).parse(row).tab_closed;
 }
 
 // A thread as sc ps shows it.
@@ -150,7 +161,9 @@ function table(heading: string[], rows: string[][]): void {
 
 // Prints repositories for sc repo ls: as JSON for tools, or else as a table, with the
 // plugin to install for a tracker a repository's skelcrew.yaml names that isn't installed, or
-// how to bring in the first one.
+// how to bring in the first one. A repository whose tab you closed ends in a dim note, as it
+// has no tab to find it by. The note goes last, so its colour codes can't put the columns out
+// of line.
 export function printRepositories(repositories: RepositoryRow[], json: boolean): void {
   if (json) console.log(JSON.stringify(repositories));
   else if (repositories.length === 0) console.log(noRepositories);
@@ -163,6 +176,7 @@ export function printRepositories(repositories: RepositoryRow[], json: boolean):
         r.tracker ?? (r.missing ? `${r.missing}, not installed` : "none"),
         r.forge ?? "none",
         r.clone,
+        ...(r.tabClosed ? [colorful() ? "\x1b[2mtab closed\x1b[0m" : "tab closed"] : []),
       ]),
     );
 }
