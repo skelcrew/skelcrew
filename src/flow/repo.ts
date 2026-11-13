@@ -16,7 +16,6 @@ import { stringify } from "yaml";
 import { z } from "zod";
 import { refuseCredentials } from "../agents/sandbox.ts";
 import { stopSession } from "../agents/tmux.ts";
-import { ask } from "../client.ts";
 import { agentRoles } from "../config.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
@@ -408,6 +407,9 @@ export async function addRepo(given?: string): Promise<void> {
       .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1")
       .get(had.owner, had.repo);
     if (closed) {
+      // Imported here, as the client's replies are checked with what sc repo ls lists, which
+      // imports this file, and a loop of imports leaves one of them unset as the other loads.
+      const { ask } = await import("../client.ts");
       const reply = await ask({ command: "lead", from: `${had.owner}/${had.repo}` }, 60_000);
       if (reply === null)
         db.run("UPDATE repositories SET tab_closed = 0 WHERE owner = ? AND repo = ?", [
