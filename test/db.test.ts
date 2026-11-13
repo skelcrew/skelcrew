@@ -174,3 +174,29 @@ console.log(JSON.stringify({ before, task: taskOf(db, "simon", "app", 12), count
     threads: ["app-12"],
   });
 });
+
+test("each change that goes in a thread's log saves when it happened, for the list of threads", () => {
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { log, readThread, record } from ${JSON.stringify(source("flow/thread.ts"))};
+const db = openDb();
+db.run("INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'working')");
+const before = readThread(db, "app-12").changed;
+const start = Date.now();
+record(db, "app-12", { status: "waiting" });
+const recorded = readThread(db, "app-12").changed;
+db.run("UPDATE threads SET changed = 0");
+log(db, readThread(db, "app-12"), "the lead told its builder: hello");
+console.log(JSON.stringify({ before, start, recorded, logged: readThread(db, "app-12").changed,
+  end: Date.now() }));`;
+  const run = Bun.spawnSync([process.execPath, "-e", code], {
+    env: { ...process.env, HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(run.stderr.toString()).toBe("");
+  const { before, start, recorded, logged, end } = JSON.parse(run.stdout.toString());
+  expect(before).toBeNull();
+  expect(recorded).toBeGreaterThanOrEqual(start);
+  expect(recorded).toBeLessThanOrEqual(end);
+  expect(logged).toBeGreaterThanOrEqual(start);
+});

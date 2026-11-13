@@ -1,6 +1,6 @@
 // What the top row says: the header above the sidebar, then the tabs and the strip above the agent.
 import { expect, test } from "bun:test";
-import type { Link, Row, Tab } from "../src/screen/rows.ts";
+import type { Row, Tab } from "../src/screen/rows.ts";
 import { drawTop, type Top } from "../src/screen/strip.ts";
 
 const lead: Row = {
@@ -220,21 +220,18 @@ test("a title or review can't reach your terminal with control codes", () => {
   expect(read({ rows: [thread({ title: "x\x1b[2Jy", review })] })).toContain("x [2Jy");
 });
 
-const issue: Link = {
-  name: "app-31",
-  title: "Add CSV export",
-  url: "https://github.com/simon/app/issues/31",
-  word: "",
-  needing: false,
-  dim: false,
-  mark: null,
-};
-// The strip while a page shows, as you see it.
-const aboutPage = (page: Link, room = 90) => read({ shown: page.url, page }, roomFor(room));
+const issue = { name: "app-31", title: "Add CSV export" };
+// The strip while a page from the list of issues shows, as you see it.
+const aboutPage = (page: typeof issue, room = 90) =>
+  read({ shown: ":issues", page }, roomFor(room));
 
 test("while a page shows, the strip has the row's name and title", () => {
   expect(aboutPage(issue)).toBe("app-31  Add CSV export");
-  expect(top({ shown: issue.url, page: issue })).toContain("#[fg=brightblack,bold]app-31#[nobold]");
+  expect(top({ shown: ":issues", page: issue })).toContain("#[fg=brightblack,bold]app-31#[nobold]");
+});
+
+test("a list has no strip, as the list says what is there", () => {
+  expect(read({ shown: ":issues", page: null })).toBe("");
 });
 
 test("a page's long title is cut to the strip", () => {
@@ -245,7 +242,7 @@ test("a page's long title is cut to the strip", () => {
 
 test("what a page's title says is shown, never run or read as a format", () => {
   const page = { ...issue, title: "#(touch owned) 100%\x1b[31m" };
-  const line = top({ shown: page.url, page });
+  const line = top({ shown: ":issues", page });
   expect(line).toContain("##(touch owned) 100%%");
   expect(line).not.toContain("\x1b");
 });

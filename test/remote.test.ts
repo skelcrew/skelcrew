@@ -426,8 +426,16 @@ test("a sidebar runs whichever laptop's build its tmux server remembers", () => 
   expect(run.out).toBe("");
 });
 
-test("a page runs whichever laptop's build its tmux server remembers", () => {
-  const run = farSkel("abc1234", "def5678", ["page", "https://github.com/simon/app/issues/1"]);
+test("a list runs whichever laptop's build its tmux server remembers", () => {
+  const socket = `skel-test-${process.pid}-no-server`;
+  const run = farSkel("abc1234", "def5678", [
+    "list",
+    socket,
+    "screen-1",
+    "issues",
+    "",
+    "simon/app",
+  ]);
   expect(run.code).toBe(1);
   expect(run.out).toBe("");
 });

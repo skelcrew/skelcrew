@@ -38,3 +38,17 @@ export function fitted(text: string, width: number): string {
   }
   return width > 0 ? `${cut}…` : "";
 }
+
+// Returns a line with spaces added out to a width.
+export const filled = (line: string, width: number) =>
+  `${line}${" ".repeat(Math.max(width - Bun.stringWidth(line), 0))}`;
+
+// Returns text in a colour. Dim text on the row you are looking at takes the light grey that
+// shows on its background. Other colours stay as they are, so a mark looks the same whether or
+// not you are on its row.
+export const tinted = (here: boolean, code: string, text: string) =>
+  paint(here && code === grey ? greyOnShade : code, text);
+
+// Returns a line with the grey behind it, out to the end of the row.
+export const shaded = (line: string, width: number) =>
+  `\x1b[${shade}m${filled(line, width)}\x1b[49m`;

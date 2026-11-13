@@ -82,6 +82,9 @@ export const Thread = z.object({
   // Whether Skelcrew assigned you the thread's issue, rather than you being assigned already, so
   // it takes you off only an issue it put you on.
   assigned: z.coerce.boolean(),
+  // When anything last went in the thread's log, in milliseconds since 1970, for the list of
+  // threads. Null in a row from before Skelcrew kept it.
+  changed: z.number().nullable(),
 });
 export type Thread = z.infer<typeof Thread>;
 
@@ -125,10 +128,18 @@ export function cloneOf(thread: Thread): string {
 }
 
 // Appends the whole thread as it now is, with the reason when there is one, as a line to
-// its log. Every change goes there too, so the thread's history can be read and replayed.
-export function log(thread: Thread, why?: string): void {
+// its log. Every change goes there too, so the thread's history can be read and replayed. It
+// also saves when this happened, as the list of threads shows when each one last changed.
+export function log(db: Database, thread: Thread, why?: string): void {
+  const now = Date.now();
+  db.run("UPDATE threads SET changed = ? WHERE folder = ?", [now, thread.folder]);
   mkdirSync(threadsDir(), { recursive: true });
-  const line = { at: new Date().toISOString(), ...thread, ...(why ? { why } : {}) };
+  const line = {
+    at: new Date(now).toISOString(),
+    ...thread,
+    changed: now,
+    ...(why ? { why } : {}),
+  };
   appendFileSync(join(threadsDir(), `${thread.folder}.log`), `${JSON.stringify(line)}\n`);
 }
 
@@ -144,7 +155,10 @@ export function record(
   db: Database,
   folder: string,
   change: Partial<
-    Omit<Thread, "owner" | "repo" | "task" | "folder" | "branch" | "base" | "title" | "started">
+    Omit<
+      Thread,
+      "owner" | "repo" | "task" | "folder" | "branch" | "base" | "title" | "started" | "changed"
+    >
   >,
   why?: string,
 ): Thread {
@@ -168,7 +182,7 @@ export function record(
   // Read the thread back rather than merging the change in memory, so the log and the caller
   // see exactly what the database holds.
   const thread = readThread(db, folder);
-  log(thread, why);
+  log(db, thread, why);
   return thread;
 }
 

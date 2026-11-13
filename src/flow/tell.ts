@@ -50,10 +50,14 @@ export function messageBuilder(db: Database, tmux: string, thread: Thread, text:
   typeInto(tmux, thread.folder, builderHarness(thread).marks, message, {
     timeout: 30 * 60_000,
   }).then(
-    () => log(readThread(db, thread.folder), `the lead told its builder: ${text}`),
+    () => log(db, readThread(db, thread.folder), `the lead told its builder: ${text}`),
     (error) => {
       const said = errorText(error);
-      log(readThread(db, thread.folder), `couldn't tell its builder what the lead said: ${said}`);
+      log(
+        db,
+        readThread(db, thread.folder),
+        `couldn't tell its builder what the lead said: ${said}`,
+      );
       noteForLead(db, tmux, thread, `${name}'s builder didn't get your message: ${said}`);
     },
   );
@@ -66,5 +70,5 @@ export function messageBuilder(db: Database, tmux: string, thread: Thread, text:
 export function messageLead(db: Database, tmux: string, thread: Thread, text: string): void {
   const name = threadName(db, thread);
   noteForLead(db, tmux, thread, wrapMessage(name, `sc tell ${name}`, text));
-  log(readThread(db, thread.folder), `its builder told the lead: ${text}`);
+  log(db, readThread(db, thread.folder), `its builder told the lead: ${text}`);
 }

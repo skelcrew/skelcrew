@@ -1,5 +1,5 @@
-// What a page says: the issue or PR behind a row of ISSUES or PRS, read from Skelcrew's copy, so it
-// opens at once and asks the tracker nothing.
+// What a page says: the issue or PR behind a row of the list of issues or PRs, read from
+// Skelcrew's copy, so it opens at once and asks the tracker nothing.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { type Item, itemAt } from "./copy.ts";
@@ -14,7 +14,7 @@ export const Page = z.object({
 });
 export type Page = z.infer<typeof Page>;
 
-// Returns the page of the issue or PR at a sidebar row's link. Throws when Skelcrew's copy has
+// Returns the page of the issue or PR at a list row's link. Throws when Skelcrew's copy has
 // nothing there, such as once it closed.
 export function readPage(db: Database, link: string): Page {
   const item = itemAt(db, link);

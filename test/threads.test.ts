@@ -854,7 +854,8 @@ nameRepositories(db);`;
     // The tracker would hear of a claim or assignment within moments of the answer.
     await Bun.sleep(1000);
     expect(tracker()).toHaveLength(asks);
-    expect(thread()).toEqual({ ...before, short: "Export" });
+    // Naming it goes in its log, which is a change the list of threads shows.
+    expect(thread()).toEqual({ ...before, short: "Export", changed: expect.any(Number) });
     expect(read(join(config("app-12"), "calls"))).toBe(calls);
     expect(hasSession("app-12")).toBe(true);
     // Without --short, starting it again is still refused.

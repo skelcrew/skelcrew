@@ -6,7 +6,7 @@ import { z } from "zod";
 import { repositoryTracker } from "../config.ts";
 import { cloneDir } from "../paths.ts";
 import { forgeOf, trackerOf } from "../plugins/ask.ts";
-import { titleRoom } from "../screen/lists.ts";
+import { titleRoom } from "../screen/layout.ts";
 import { fitted, removeControlCodes } from "../screen/look.ts";
 import { sidebarWidth } from "../screen/screen.ts";
 import { openTasks, taskOf } from "./copy.ts";
