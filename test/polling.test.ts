@@ -289,6 +289,17 @@ function copied(): { rows: string[]; totals: unknown } {
   return { rows: rows.map((row) => Object.values(Object(row)).join(" ")), totals };
 }
 
+// PR 7 as Skelcrew's copy holds it, as JSON, or nothing before a poll brought it. A test looks
+// here for what the forge sent, since the forge sends each change only once.
+function copiedPr(): string {
+  const db = new Database(join(data(), "skelcrew.db"), { readonly: true });
+  // The daemon can be saving a poll just as this reads, which would otherwise fail the test.
+  db.run("PRAGMA busy_timeout = 5000");
+  const row = db.query("SELECT item FROM items WHERE kind = 'pr' AND id = '7'").get();
+  db.close();
+  return row ? JSON.stringify(row) : "";
+}
+
 test("the first poll brings everything open into Skelcrew's copy, and later ones what changed", async () => {
   addApp();
   changes([issue12(), taskItem("13", "Fix login"), prItem("34", "Bump deps")]);
@@ -352,8 +363,10 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
     await approvedApp12();
     await morePolls();
     pr({ reviews: [skelReview], checks: [approved, check(900, "passed")] });
-    await until(() => thread().checks === "passing");
-    expect(thread()).toMatchObject({ status: "waiting", needs_you: 1 });
+    // The checks are saved a moment before the thread needs you, in a write of their own, so
+    // wait for the later write.
+    await until(() => thread().needs_you === 1);
+    expect(thread()).toMatchObject({ status: "waiting", needs_you: 1, checks: "passing" });
   });
 
   test("a failed check reaches the builder once, even after the forge fails and the daemon restarts", async () => {
@@ -661,7 +674,9 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
     Bun.spawnSync([process.execPath, main, "stop", "app-12"], { env: env() });
     expect(thread().status).toBe("stopped");
     pr({ reviews: [skelReview], comments: [{ id: "50", author: you, text: "Also CSV." }] });
-    await morePolls(1);
+    // The forge stops sending the comment only once Skelcrew's copy has it. A poll counts as
+    // soon as the forge is asked, which is before its answer is read.
+    await until(() => copiedPr().includes("Also CSV."));
     changes([]);
     await morePolls();
     expect(handled("50")).toBe(false);
