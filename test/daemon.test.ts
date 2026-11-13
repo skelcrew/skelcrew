@@ -645,6 +645,20 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a lead per repositor
     expect(line).not.toContain("file it and say you did");
   });
 
+  // The sidebar shows each thread by the short title the lead gives it, and a thread started
+  // from GitHub has none until its note reaches the lead.
+  test("tells the lead to give each thread it starts a short title, and one from GitHub too", async () => {
+    setUp();
+    addRepository("app");
+    serve();
+    await untilAnswers();
+    await open();
+    await until(() => claudeLines().length > 0);
+    const [line] = claudeLines();
+    expect(line).toContain('--short "<words>"');
+    expect(line).toContain('sc start app-12 --short "Login redirect"');
+  });
+
   // Claude Code can't resume a conversation it never saved, nor start a new one under its id.
   test("starts a lead nobody talked to afresh, with a new session id", async () => {
     setUp();
