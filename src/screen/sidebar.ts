@@ -1,5 +1,5 @@
 // The sidebar: the live left pane of the screen, showing the open repository. Its lead is on top,
-// then up to three lists. THREADS has every thread that isn't done, with what each is doing.
+// then up to three lists. THREADS has the active threads, with what each is doing.
 // ISSUES and PRS show what is open in its tracker and forge, as links. Picking a thread switches
 // the client in the right pane, and picking an issue or PR puts its page there. The sidebar also
 // keeps the top row up to date, with the header, the tabs and the strip, and switches tabs.

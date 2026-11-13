@@ -1142,8 +1142,19 @@ test("when the agent you are looking at ends, the right side goes to the lead", 
   await until(() => selected() === "◆ lead", "the sidebar to follow");
 });
 
+test("when the thread you are on stops, its row goes and the right side goes to the lead", async () => {
+  open("app-7");
+  await ready("app-7");
+  sql("UPDATE threads SET status = 'stopped' WHERE task = 7");
+  tmux(agents, "kill-session", "-t", "=app-7");
+  await until(() => seen().includes("I am lead"), "the lead");
+  await until(() => selected() === "◆ lead", "the sidebar to follow");
+  await until(() => !seen().includes("app-7"), "the stopped thread to go");
+  expect(seen()).toContain("● app-12");
+});
+
 test("a row whose agent isn't running can't be picked", async () => {
-  sql("UPDATE threads SET status = 'stopped' WHERE task = 12");
+  sql("UPDATE threads SET status = 'failed' WHERE task = 12");
   tmux(agents, "kill-session", "-t", "=app-12");
   open("lead");
   await ready("lead");

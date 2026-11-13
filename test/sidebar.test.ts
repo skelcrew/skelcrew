@@ -1074,19 +1074,13 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5, app) }));`;
     expect(prs?.total).toBe(3);
   });
 
-  test("stopped threads come after the others, each part newest first", () => {
+  // A stopped thread needs nothing and doesn't change, so only the active ones are listed.
+  test("THREADS has only active threads, newest first, and no stopped or done one", () => {
     const sql = `${repository} INSERT INTO threads (owner, repo, task, folder, branch, status)
       VALUES ('simon', 'app', 1, 'app-1', 'b', 'working'), ('simon', 'app', 2, 'app-2', 'b', 'stopped'),
         ('simon', 'app', 3, 'app-3', 'b', 'waiting'), ('simon', 'app', 4, 'app-4', 'b', 'stopped'),
-        ('simon', 'app', 5, 'app-5', 'b', 'failed')`;
-    expect(rowsAfter(sql, 0).map((row) => row.name)).toEqual([
-      "lead",
-      "app-5",
-      "app-3",
-      "app-1",
-      "app-4",
-      "app-2",
-    ]);
+        ('simon', 'app', 5, 'app-5', 'b', 'failed'), ('simon', 'app', 6, 'app-6', 'b', 'done')`;
+    expect(rowsAfter(sql, 0).map((row) => row.name)).toEqual(["lead", "app-5", "app-3", "app-1"]);
   });
 
   test("a PR whose thread is stopped comes after the other PRs", () => {
@@ -1109,7 +1103,9 @@ console.log(JSON.stringify({ rows, lists: sidebarLists(db, rows, 5, app) }));`;
     for (const [status, needing, mark] of states) {
       const seen = after(`${open} ${onTwelve(status, needing)}`, 0);
       const screen = drawLists(seen.rows, seen.lists, "lead", tall);
-      expect(screen).toContain(`${mark}\x1b[22;39m app-12`);
+      // A stopped thread has left THREADS, and its PR keeps the mark it would have.
+      if (status === "stopped") expect(plain(screen)).not.toContain("○ app-12");
+      else expect(screen).toContain(`${mark}\x1b[22;39m app-12`);
       expect(screen).toContain(`${mark}\x1b[22;39m \x1b]8;;https://github.com/simon/app/pull/34`);
     }
   });

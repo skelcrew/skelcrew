@@ -113,9 +113,9 @@ export function threadAge(started: number, now: number): string {
 }
 
 // Returns the open repository's rows as the database and tmux have them now. Its lead comes
-// first, then each of its threads that isn't done, newest first as in sc ps. Each word takes the
-// thread's round limit from `maxRounds`. Stopped threads come last, newest first too. They need
-// nothing and don't change, so they shouldn't sit between threads at work. It runs each second,
+// first, then each of its active threads, newest first as in sc ps: working, waiting, needing you
+// or failed. Each word takes the thread's round limit from `maxRounds`. A stopped thread needs
+// nothing and doesn't change, so it leaves THREADS, as a done one does. It runs each second,
 // so it reads only what shows. Only a thread whose word is working shows its running time. A
 // time on any other row would write to the terminal each minute, and on a Sprite a terminal that
 // stays quiet lets it sleep. A working thread keeps the Sprite awake anyway, so its time costs
@@ -127,11 +127,11 @@ export function sidebarRows(
   now: number,
   open: Open,
 ): Row[] {
-  // THREADS has the repository's threads that aren't done, after its lead, which has no status,
-  // PR or review of its own, only whether its session runs. In SQLite a comparison is 0 or 1, so
-  // ordering by it puts stopped threads after the rest.
-  const threads = db.query(`SELECT * FROM threads WHERE status != 'done' AND owner = ? AND repo = ?
-      ORDER BY status = 'stopped', rowid DESC`);
+  // THREADS has the repository's active threads, after its lead, which has no status, PR or
+  // review of its own, only whether its session runs.
+  const threads = db.query(`SELECT * FROM threads
+      WHERE status IN ('working', 'waiting', 'failed') AND owner = ? AND repo = ?
+      ORDER BY rowid DESC`);
   const leadRuns = running.includes(open.lead);
   // A repository Skelcrew no longer works on has no lead to name a harness for.
   const knownRepository = db.query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ?");
@@ -187,15 +187,17 @@ export function sidebarRows(
 const ListRow = z.object({
   name: z.string(),
   threaded: z.coerce.boolean(),
+  stopped: z.coerce.boolean(),
   item: z.string(),
 });
 
 // Returns the open repository's ISSUES and PRS from Skelcrew's copy, up to `most` rows of each.
 // A list is null when the repository has no tracker or forge for it. It reads only the database
 // and never asks the tracker, as it runs each second. Rows are newest first. Issues that have a
-// thread go last, and so do PRs whose thread is stopped, as THREADS already shows those threads.
-// A thread that is done has left THREADS, so its issue counts as waiting again. A PR from a
-// thread takes the word and mark of its row. The lists and the rows are of the open repository
+// thread go last, as work on them is under way, and so do PRs whose thread is stopped, as those
+// need nothing. A thread that is done is over, so its issue counts as waiting again. A PR from a
+// thread takes the word and mark of its row. A stopped thread has no row, so its PR says stopped
+// itself, with a stopped thread's mark. The lists and the rows are of the open repository
 // alone, so a PR's number is enough to find its thread.
 export function sidebarLists(db: Database, rows: Row[], most: number, open: Open): Lists {
   // Returns one list, of tasks or PRs, with the column that counts all of its kind.
@@ -214,17 +216,18 @@ export function sidebarLists(db: Database, rows: Row[], most: number, open: Open
     // Each is named as Skelcrew names it, app-12 for an issue and app#34 for a PR. A PR takes the
     // word and mark of its thread's row, if it has one.
     const links = found.all(kind, open.owner, open.repo, most).map((saved) => {
-      const { name, threaded, item } = ListRow.parse(saved);
+      const { name, threaded, stopped, item } = ListRow.parse(saved);
       const { id, title, link } = Item.parse(JSON.parse(item));
       const thread = rows.find((row) => row.pr === Number(id));
+      const pr = kind === "pr";
       return {
-        name: kind === "pr" ? `${name}#${id}` : `${name}-${id}`,
+        name: pr ? `${name}#${id}` : `${name}-${id}`,
         title,
         url: link,
-        word: thread?.word ?? "",
+        word: thread?.word ?? (stopped ? "stopped" : ""),
         needing: thread !== undefined && needing(thread),
         dim: threaded,
-        mark: kind === "task" ? null : thread ? threadMark(thread) : noThreadMark,
+        mark: !pr ? null : thread ? threadMark(thread) : stopped ? marks.stopped : noThreadMark,
       };
     });
     // The total is every open one in Skelcrew's copy, counted when the copy was saved, while the

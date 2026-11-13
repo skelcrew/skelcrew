@@ -61,7 +61,7 @@ export function nextList(
   by: 1 | -1,
 ): string | null {
   // A list counts when it has a row to land on, or holds the row you are on, so you can leave
-  // a list of stopped threads but never land in one.
+  // a list whose agents aren't running but never land in one.
   const landable = stops(rows, lists, shown, size).filter(
     (list) => list.some((stop) => stop.open) || list.some((stop) => stop.place === shown),
   );
