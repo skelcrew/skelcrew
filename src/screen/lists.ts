@@ -21,6 +21,8 @@ type Line = { text: string; row?: Row; link?: Link; joins?: boolean };
 
 // Where a name starts, past its mark.
 const indent = `${pad}  `;
+// How many lines a row of the lead or THREADS takes.
+const rowHeight = 2;
 // The keys you need most, at the bottom of the sidebar. The others are in Skelcrew's help.
 const hints = [`${pad}⌥↑↓ move`, `${pad}⌃Q quit`];
 
@@ -36,31 +38,35 @@ const tinted = (here: boolean, code: number, text: string) =>
 // Returns a line with the grey behind it, out to the end of the row.
 const shaded = (line: string, width: number) => `\x1b[${shade}m${filled(line, width)}\x1b[49m`;
 
-// Returns one row as lines: a mark and the whole name, which goes on to more lines when it is
-// too long, then the word and harness. A cut name could hide what tells two threads apart. An
-// agent that isn't running is dim, as it can't be picked. The one you are looking at is shaded
-// across the whole width, on all its lines.
+// Returns one row as two lines, each cut with … to stop at the padding. A thread's first line
+// is a mark and its short title, or its title when the lead gave it none, and its second, dim,
+// is its name, word, harness and running time. The name and word come first, so they are the
+// last to be cut. The lead's row has its name on top and no name below. An agent that isn't
+// running is dim, as it can't be picked. The one you are looking at is shaded across the whole
+// width, on both lines.
 function rowLines(row: Row, here: boolean, width: number): string[] {
-  // Returns part of the name as this row shows it.
-  const styled = (name: string) => {
-    if (here) return paint(white, name);
-    return row.running ? name : paint(grey, name);
-  };
-  // The name is cut into pieces that fit between the indent and the padding, so a long one
-  // goes on to more lines instead of being cut short.
-  const room = Math.max(width - indent.length - pad.length, 1);
-  const [first = "", ...rest] = row.name.match(new RegExp(`.{1,${room}}`, "g")) ?? [];
-  // The last line has the word, then the harness and age in what room the word leaves.
-  const [sign, colour] = threadMark(row);
-  const word = row.word.slice(0, room);
+  // The short title and title come from an agent and from outside, so they are made safe. A
+  // thread from before Skelcrew kept titles has only its name to show.
+  const room = Math.max(width - indent.length - pad.length, 0);
+  const lead = row.status === null;
+  const heading = lead ? row.name : removeControlCodes(row.short ?? row.title ?? row.name);
+  const top = fitted(heading, room);
+  const styled = here ? paint(white, top) : row.running ? top : paint(grey, top);
+  // The second line is cut as a whole, then split back into the name, the word and the rest,
+  // so each keeps its colour. The word is yellow when the thread needs you. Names, words and
+  // harnesses are plain letters, so a split by letters is a split by columns.
+  const name = lead ? "" : `${row.name} · `;
   const after = [row.harness, row.age].flatMap((part) => (part ? [` · ${part}`] : [])).join("");
-  const more = after.slice(0, room - word.length);
-  // The mark starts the first line, and the rest line up under the name. The word is yellow
-  // when the thread needs you.
+  const below = fitted(`${name}${row.word}${after}`, room);
+  const parts: [number, string][] = [
+    [grey, below.slice(0, name.length)],
+    [needing(row) ? yellow : grey, below.slice(name.length, name.length + row.word.length)],
+    [grey, below.slice(name.length + row.word.length)],
+  ];
+  const [sign, colour] = threadMark(row);
   const lines = [
-    `${pad}${tinted(here, colour, sign)} ${styled(first)}`,
-    ...rest.map((part) => `${indent}${styled(part)}`),
-    `${indent}${tinted(here, needing(row) ? yellow : grey, word)}${more && tinted(here, grey, more)}`,
+    `${pad}${tinted(here, colour, sign)} ${styled}`,
+    `${indent}${parts.map(([code, text]) => (text ? tinted(here, code, text) : "")).join("")}`,
   ];
   return here ? lines.map((line) => shaded(line, width)) : lines;
 }
@@ -163,10 +169,9 @@ export function layout(
 ): { lines: Line[]; room: number } {
   // A blank line comes first, so the lead's row, grey when you look at it, doesn't touch the
   // header above the sidebar and read as part of it. Clicks find rows in these same lines. Like
-  // the hints, it gives way on a sidebar too short for it and the whole row you are looking at.
-  const shownRow = rows.find((row) => row.session === shown);
-  const tallest = shownRow ? rowLines(shownRow, true, size.width - 1).length : 2;
-  if (size.height <= tallest) return layoutBelowBlank(rows, lists, shown, size);
+  // the hints, it gives way on a sidebar too short for it and the whole row you are looking at,
+  // which is two lines.
+  if (size.height <= rowHeight) return layoutBelowBlank(rows, lists, shown, size);
   const below = layoutBelowBlank(rows, lists, shown, { ...size, height: size.height - 1 });
   return { lines: [{ text: "" }, ...below.lines], room: below.room + 1 };
 }
@@ -178,15 +183,14 @@ function layoutBelowBlank(
   shown: string | null,
   size: Size,
 ): { lines: Line[]; room: number } {
-  // Every row's lines, and how tall the row you are looking at is. The hints keep the bottom
-  // lines only while that row still fits above them.
+  // Every row's lines. The hints keep the bottom lines only while the row you are looking at
+  // still fits above them.
   const width = size.width - 1;
   const linesOf = (row: Row) =>
     rowLines(row, row.session === shown, width).map((text) => ({ text, row }));
   const blocks = rows.map(linesOf);
   const here = rows.findIndex((row) => row.session === shown);
-  const tallest = blocks[here]?.length ?? 2;
-  const room = size.height >= tallest + hints.length ? size.height - hints.length : size.height;
+  const room = size.height >= rowHeight + hints.length ? size.height - hints.length : size.height;
   // The lead is the row with no status of its own.
   const lead = rows.filter((row) => row.status === null).flatMap(linesOf);
   const threads = rows.filter((row) => row.status !== null).map(linesOf);
@@ -218,8 +222,7 @@ function layoutBelowBlank(
     index === remainderIndex ? below - (parts.length - 1) * share : share,
   );
   // Too short for a heading and a row in each list, or for your row in THREADS: no lists.
-  const tallestThread = threads[shownThread]?.length ?? 2;
-  const threadsFit = threads.length === 0 || (heights[remainderIndex] ?? 0) >= 2 + tallestThread;
+  const threadsFit = threads.length === 0 || (heights[remainderIndex] ?? 0) >= 2 + rowHeight;
   if (parts.length === 0 || share < 4 || !threadsFit)
     return { lines: scrolled(blocks, here, room), room };
   // Each list is filled out to its share, so the list after it always starts in the same place.

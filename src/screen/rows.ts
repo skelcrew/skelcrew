@@ -12,7 +12,8 @@ import { forgeOf, trackerOf } from "../plugins/ask.ts";
 import { green, grey, red, yellow } from "./look.ts";
 
 // One row of the sidebar, with what the strip says of the agent too. The lead has no status of
-// its own, and a row's age is empty unless it shows a running time.
+// its own, and a row's age is empty unless it shows a running time. `short` is the short title
+// the lead gave a thread, which its row shows in place of its title.
 export type Row = {
   name: string;
   session: string;
@@ -24,6 +25,7 @@ export type Row = {
   age: string;
   fullName: string | null;
   title: string | null;
+  short: string | null;
   pr: number | null;
   checks: Thread["checks"];
   review: { round: number; reviewer: string; verdict: string } | null;
@@ -148,6 +150,7 @@ export function sidebarRows(
       age: "",
       fullName: null,
       title: null,
+      short: null,
       pr: null,
       checks: null,
       review: null,
@@ -171,6 +174,7 @@ export function sidebarRows(
         age: word === "working" && thread.started !== null ? threadAge(thread.started, now) : "",
         fullName: fullNameOf(thread),
         title: thread.title,
+        short: thread.short,
         pr: thread.pr,
         checks: thread.checks,
         review: round !== null && verdict !== null ? { round, reviewer: by ?? "", verdict } : null,

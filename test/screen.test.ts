@@ -380,7 +380,7 @@ test("an agent drawing the full screen with the mouse gets the wheel itself", as
   wheel(64);
   await until(() => existsSync(join(home, "drawn.bytes")), "the wheel");
   await until(
-    () => readFileSync(join(home, "drawn.bytes"), "utf8").startsWith("\x1b[<64;28;4M"),
+    () => readFileSync(join(home, "drawn.bytes"), "utf8").startsWith("\x1b[<64;21;4M"),
     "the wheel at its place in the agent's window",
   );
   expect(scrolledBack()).not.toContain("1");
@@ -415,16 +415,16 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
   open("lead");
   await ready("lead");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "29 88\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "29 81\n",
     "the agent's size",
   );
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "40");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "39 118\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "39 111\n",
     "the agent to resize",
   );
   const widths = tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out.trim().split("\n");
-  expect(widths).toEqual(["31", "118"]);
+  expect(widths).toEqual(["38", "111"]);
   // A terminal shorter than the list keeps the row you are looking at in view.
   press("M-Down");
   press("M-Down");
@@ -891,7 +891,7 @@ test("keys pressed together when leaving a page all count, however slowly the cl
 
 test("a pane too narrow for a page's lines cuts them, so every line keeps its own row", async () => {
   openOnGitHub();
-  open("lead", "one", "xterm-256color", "42");
+  open("lead", "one", "xterm-256color", "49");
   await until(() => seen().includes("app-31"), "the issue");
   clickRow("app-31");
   await until(() => right().includes("Author"), "the page");
