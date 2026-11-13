@@ -33,12 +33,13 @@ function fake(name: string, body: string): void {
 }
 
 // XDG_RUNTIME_DIR is set, as a Mac has no /run/user but this machine does, and Skelcrew's real
-// daemon listens there.
+// daemon listens there. TMUX_TMPDIR passes through, as inside a sandbox /tmp is refused.
 const env = () => ({
   HOME: home,
   XDG_RUNTIME_DIR: join(home, "run"),
   PATH: `${bin}:${dirname(process.execPath)}:/usr/local/bin:/usr/bin:/bin`,
   TMPDIR: join(home, "tmp"),
+  ...(process.env.TMUX_TMPDIR ? { TMUX_TMPDIR: process.env.TMUX_TMPDIR } : {}),
   SECRET_TOKEN: "secret",
 });
 
@@ -123,12 +124,17 @@ test("a sandbox's home and temporary folder go when it ends, and its exit code s
   mkdirSync(clone);
   const made =
     await asMacRun(`import { setupCommand } from ${JSON.stringify(source("agents/sandbox.ts"))};
-console.log(JSON.stringify(setupCommand(${JSON.stringify(clone)}, "echo left > $TMPDIR/file; exit 3")));`);
+console.log(JSON.stringify(setupCommand(${JSON.stringify(clone)}, "echo left > $TMPDIR/file; echo left > $TMUX_TMPDIR/file; exit 3")));`);
   const { argv, env: given } = Command(made.out);
   expect(existsSync(rules(argv))).toBe(true);
+  const tmux = argv.find((word) => word.startsWith("TMUX_TMPDIR="))?.slice(12) ?? "";
+  // tmux's folder is made only as the sandbox starts, so a command never run leaves none.
+  expect(existsSync(tmux)).toBe(false);
+  // It is made as the sandbox starts: had mkdir failed, the code would be 1.
   const run = Bun.spawnSync(argv, { env: given });
   expect(run.exitCode).toBe(3);
   expect(readdirSync(join(home, "tmp"))).toEqual([]);
+  expect(existsSync(tmux)).toBe(false);
 });
 
 test("a sandbox's folders go even when the terminal hangs up on it", async () => {
@@ -165,6 +171,11 @@ test("an agent starts under sandbox-exec, in its folder, with a home of its own"
   expect(seen).toContain(`CLAUDE_CODE_TMPDIR=${ownTemp}\n`);
   // zsh writes a heredoc's text to a file under /tmp unless told otherwise.
   expect(seen).toContain(`TMPPREFIX=${ownTemp}/zsh\n`);
+  // tmux makes its sockets under /tmp unless told otherwise, and a Mac allows a socket's
+  // path 104 bytes at most, so tmux's folder must be short.
+  const tmux = seen.match(/^TMUX_TMPDIR=(.*)$/m)?.[1] ?? "";
+  const tmuxBase = realpathSync(process.env.TMUX_TMPDIR ?? "/tmp");
+  expect(tmux.startsWith(join(tmuxBase, "skelcrew-tmux-"))).toBe(true);
   // Postgres clients default to a socket in /tmp, which the sandbox hides.
   expect(seen).toContain("PGHOST=localhost\n");
 });
