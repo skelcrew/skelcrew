@@ -359,22 +359,25 @@ export async function bringInFrom(from: string | undefined): Promise<string | un
   const update = named && opened ? oldRemoteOf(named, opened) : null;
   if (update)
     console.log(
-      `This checkout's remote still uses the old name ${update.old}. Update it with: git remote set-url origin ${update.url}`,
+      `${update.old} moved to ${update.current}. To update this checkout, run:\n  git remote set-url origin ${update.url}`,
     );
   return opened && `${opened.owner}/${opened.repo}`;
 }
 
-// Returns the old owner/name a remote URL uses for the repository, and the same URL with its
-// current name, in the same form, ssh or https. Null when the remote uses its current name,
+// Returns the old owner/name a remote URL uses for the repository, its current owner/name, and
+// the same URL with the current name, in the same form, ssh or https. Null when the remote uses its current name,
 // or is a bare owner/name.
-function oldRemoteOf(url: string, repository: Repository): { old: string; url: string } | null {
+function oldRemoteOf(
+  url: string,
+  repository: Repository,
+): { old: string; current: string; url: string } | null {
   const path = parseRemote(url);
   const old = path && `${path.owner}/${path.repo}`;
   if (!old || fullNameIs(repository, old)) return null;
   // The last place the old name is written is its path, as a host can't hold a slash.
   const at = url.lastIndexOf(old);
   const current = `${repository.owner}/${repository.repo}`;
-  return { old, url: url.slice(0, at) + current + url.slice(at + old.length) };
+  return { old, current, url: url.slice(0, at) + current + url.slice(at + old.length) };
 }
 
 // Adds a repository for sc repo add: the checkout in the folder given, the repository at a

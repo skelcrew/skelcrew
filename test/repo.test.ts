@@ -362,7 +362,7 @@ test("says how to update a checkout's remote that uses a repository's old name, 
   claim("simon/old", "WRITE", false, "simon/app");
   git(app, "remote", "set-url", "origin", "git@github.com:simon/old.git");
   const ssh =
-    "This checkout's remote still uses the old name simon/old. Update it with: git remote set-url origin git@github.com:simon/app.git\n";
+    "simon/old moved to simon/app. To update this checkout, run:\n  git remote set-url origin git@github.com:simon/app.git\n";
   // Said every time the old name is used, and never in the way of the screen.
   for (let run = 0; run < 2; run++) {
     expect((await skel([], "", app)).out).toContain(ssh);
@@ -370,10 +370,10 @@ test("says how to update a checkout's remote that uses a repository's old name, 
   }
   git(app, "remote", "set-url", "origin", "https://github.com/simon/old");
   expect((await skel([], "", app)).out).toContain(
-    "Update it with: git remote set-url origin https://github.com/simon/app\n",
+    "  git remote set-url origin https://github.com/simon/app\n",
   );
   git(app, "remote", "set-url", "origin", "https://github.com/simon/app");
-  expect((await skel([], "", app)).out).not.toContain("old name");
+  expect((await skel([], "", app)).out).not.toContain("moved to");
 });
 
 test("repo ls says how to bring a repository in while there is none", async () => {
