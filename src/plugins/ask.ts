@@ -182,6 +182,25 @@ export async function claimTask(
   return answer?.took ?? true;
 }
 
+// Assigns you the task in the tracker, or with `on` false takes you off it, leaving anyone
+// else assigned be. You are the person the tracker's plugin signed in as. Returns whether this
+// call assigned you, so Skelcrew takes you off later only if it put you on. A tracker that
+// answers nothing, such as an older plugin, counts as not assigning you.
+export async function assignTask(
+  db: Database,
+  repository: Repository,
+  task: string,
+  on: boolean,
+): Promise<boolean> {
+  const answer = await callPlugin(
+    db,
+    requireTracker(db, repository),
+    { ask: "assign", repository: repositoryKey(repository), task, on },
+    z.object({ assigned: z.boolean() }).nullable(),
+  );
+  return answer?.assigned ?? false;
+}
+
 // Tells the forge Skelcrew typed a person's comment or review on the PR into its builder, so
 // they can see on the PR that it was picked up. GitHub reacts with 👀.
 export async function markSeen(

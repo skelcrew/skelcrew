@@ -79,6 +79,9 @@ export const Thread = z.object({
   // row shows in place of its title. Only for that row: the builder never sees it. Null until
   // the lead gives one, and in a row from before Skelcrew kept them.
   short: z.string().nullable(),
+  // Whether Skelcrew assigned you the thread's issue, rather than you being assigned already, so
+  // it takes you off only an issue it put you on.
+  assigned: z.coerce.boolean(),
 });
 export type Thread = z.infer<typeof Thread>;
 

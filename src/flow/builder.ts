@@ -170,12 +170,15 @@ export async function startThread(
       review_line: null,
       harness: null,
       short: given.short ?? null,
+      // A thread that failed still holds its issue, so starting it over keeps that Skelcrew
+      // assigned you.
+      assigned: before?.assigned ?? false,
     };
     // A failed or done thread's row gives way to the new one.
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run(
       `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, title,
-        body, started, short, seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]')`,
+        body, started, short, assigned, seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]')`,
       [
         owner,
         repo,
@@ -189,6 +192,7 @@ export async function startThread(
         body,
         thread.started,
         thread.short,
+        thread.assigned,
       ],
     );
     log(thread);

@@ -842,11 +842,18 @@ nameRepositories(db);`;
     await untilCloned();
     await skel("start", "app-12");
     await until(() => read(join(config("app-12"), "args")) !== "");
+    // Starting it claimed the issue and assigned it to you, which naming it mustn't do again.
+    const tracker = () => asked(plugin).filter((q) => q.ask === "took" || q.ask === "assign");
+    await until(() => tracker().some((q) => q.ask === "assign") && thread().assigned === 1);
+    const asks = tracker().length;
     const before = thread();
     const calls = read(join(config("app-12"), "calls"));
     const named = await skel("start", "app-12", "--short", "Export");
     expect(named.err).toBe("");
     expect(named.out).toBe('Gave app-12 the short title "Export".\n');
+    // The tracker would hear of a claim or assignment within moments of the answer.
+    await Bun.sleep(1000);
+    expect(tracker()).toHaveLength(asks);
     expect(thread()).toEqual({ ...before, short: "Export" });
     expect(read(join(config("app-12"), "calls"))).toBe(calls);
     expect(hasSession("app-12")).toBe(true);
