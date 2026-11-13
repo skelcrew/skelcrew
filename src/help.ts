@@ -98,8 +98,8 @@ export function help(color = colorful()): string {
   const width = Math.max(...rows.map(([command]) => command.length)) + 3;
   const lines = [
     "",
-    "  Claude Code, but always on, in parallel, isolated, and seeing each change",
-    "  through to the merge.",
+    "  A crew of coding agents, always on, in parallel and isolated, from issue to",
+    "  merged PR. Bring your own harness and model.",
     "",
     heading("USAGE"),
     `  ${dim("%")} sc ${dim("[command] [options]")}`,

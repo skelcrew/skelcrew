@@ -4,7 +4,7 @@ Nov 3, 2026 · @Simon · updated Nov 6 for the launch on Nov 16
 
 ## Goal
 
-Skelcrew is Claude Code, but always on, in parallel, isolated, and seeing each task through to the merge.
+Skelcrew is a crew of coding agents, always on, in parallel and isolated, from issue to merged PR. Bring your own harness and model.
 
 You run `sc` in a checkout and talk to that repository's lead: a Claude Code or Codex session on your server that knows the repository. The lead writes tasks and starts threads. Each thread works in one repository, as a builder agent in its own branch, clone and sandbox. It opens a PR, a fresh reviewer, on another model if you choose one, reviews it adversarially, and they go back and forth until it is ready. CI failures and your PR comments wake the builder again. You merge.
 

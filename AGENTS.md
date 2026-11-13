@@ -1,7 +1,8 @@
 # Skelcrew
 
-Skelcrew is Claude Code, but always on, in parallel, isolated, and seeing each task through
-to the merge. The design is in `docs/spec.md`. Read it before changing anything it covers.
+Skelcrew is a crew of coding agents, always on, in parallel and isolated, from issue to
+merged PR. Bring your own harness and model. The design is in `docs/spec.md`. Read it
+before changing anything it covers.
 The traps earlier versions found are in `docs/learnings.md`. Read the part that covers
 typing into a session, starting Claude Code or the sandbox before touching them.
 
