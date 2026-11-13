@@ -8,7 +8,7 @@
     "sc": "bin/sc"
   },
   "scripts": {
-    "check": "biome ci . && tsc --noEmit && bun test --timeout 60000",
+    "check": "biome ci . && tsc --noEmit && bun test --timeout 60000 --parallel=4",
     "fix": "biome check --write ."
   },
   "devDependencies": {

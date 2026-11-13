@@ -1,8 +1,8 @@
-// Loaded before every test run: fails a test that leaves a process running, and ends that
+// Loaded before every test file: fails a test that leaves a process running, and ends that
 // process, so a run leaves nothing even when a test fails or the run is killed.
 import { dlopen, FFIType } from "bun:ffi";
-import { afterEach } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { afterAll, afterEach } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { command, endAll, leftovers } from "./sweep.ts";
@@ -40,5 +40,16 @@ if (process.platform === "linux") {
     if (left.length === 0) return;
     await endAll(run, sweep.pid);
     throw new Error(`this test left processes running:\n${left.join("\n")}`);
+  });
+
+  // A parallel run loads this file again for each test file, in a worker process that runs
+  // its files one after another. An earlier file's sweep would still be running there, under
+  // the same process, and look like something this file left. So the sweep clears up and
+  // ends with its file, and the next file waits for that, so the sweep can't end its processes.
+  // It is told with a file rather than a signal: a sweep still starting up when a short file
+  // ends would die of the signal without clearing up.
+  afterAll(async () => {
+    writeFileSync(join(run.folder, "done"), "");
+    await sweep.exited;
   });
 }
