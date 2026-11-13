@@ -352,8 +352,10 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
     await approvedApp12();
     await morePolls();
     pr({ reviews: [skelReview], checks: [approved, check(900, "passed")] });
-    await until(() => thread().checks === "passing");
-    expect(thread()).toMatchObject({ status: "waiting", needs_you: 1 });
+    // The checks are saved a moment before the thread needs you, in a write of their own, so
+    // wait for the later write.
+    await until(() => thread().needs_you === 1);
+    expect(thread()).toMatchObject({ status: "waiting", needs_you: 1, checks: "passing" });
   });
 
   test("a failed check reaches the builder once, even after the forge fails and the daemon restarts", async () => {
