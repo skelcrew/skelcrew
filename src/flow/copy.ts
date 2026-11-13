@@ -169,7 +169,21 @@ export function openTasks(db: Database, owner: string, repo: string): Task[] {
   ).flatMap((item) => (item.kind === "task" ? [item] : []));
 }
 
-// Returns the item a sidebar row links to, for its page, or null when the copy has none there.
+// Returns a repository's open PRs, newest first, for the list of PRs.
+export function openPrs(
+  db: Database,
+  owner: string,
+  repo: string,
+): Extract<Item, { kind: "pr" }>[] {
+  return parseItems(
+    db
+      .query(`SELECT item FROM items WHERE owner = ? AND repo = ? AND kind = 'pr'
+        AND state = 'open' ORDER BY created DESC, length(id) DESC, id DESC`)
+      .all(owner, repo),
+  ).flatMap((item) => (item.kind === "pr" ? [item] : []));
+}
+
+// Returns the item a list's row links to, for its page, or null when the copy has none there.
 export function itemAt(db: Database, link: string): Item | null {
   const rows = db.query("SELECT item FROM items WHERE json_extract(item, '$.link') = ?").all(link);
   return parseItems(rows)[0] ?? null;

@@ -21,7 +21,7 @@ import type { Thread } from "../flow/thread.ts";
 import { updateNotice } from "../machine/update.ts";
 import { leadPlaces } from "../paths.ts";
 import { version } from "../version.ts";
-import { draw, noticeLines, type Size } from "./lists.ts";
+import { draw, noticeLines, type Size } from "./layout.ts";
 import { nextList, nextRow, rowAtLine } from "./moves.ts";
 import {
   type Link,

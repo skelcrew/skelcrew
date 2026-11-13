@@ -69,10 +69,11 @@ const noThreadMark: Mark = ["○", grey];
 
 // Says whether a thread shows as needing you. A thread that failed can still have its needs you
 // flag, and its word says failed.
-export const needing = (row: Row) => row.needsYou && row.status !== "failed";
+export const needing = (row: Pick<Row, "status" | "needsYou">) =>
+  row.needsYou && row.status !== "failed";
 
 // Returns the mark of a row of THREADS, which a PR from that thread shows too.
-export function threadMark(row: Row): Mark {
+export function threadMark(row: Pick<Row, "status" | "needsYou">): Mark {
   if (row.status === null) return ["◆", grey];
   return needing(row) ? ["●", yellow] : marks[row.status];
 }

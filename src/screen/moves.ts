@@ -1,6 +1,6 @@
 // Where a key or a click in the sidebar lands: a row up or down, the first row of another
 // list, or the row at a line. It reads nothing, so it can be tested without a terminal.
-import { layout, type Size } from "./lists.ts";
+import { layout, type Size } from "./layout.ts";
 import type { List, Lists, Row } from "./rows.ts";
 
 // A row you can move to, by what names it: a thread's session or a link's url. `open` says

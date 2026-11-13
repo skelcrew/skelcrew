@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { printThreads } from "../src/flow/list.ts";
 import type { Thread } from "../src/flow/thread.ts";
-import { draw as drawLists, noticeLines } from "../src/screen/lists.ts";
+import { draw as drawLists, noticeLines } from "../src/screen/layout.ts";
 import { nextList, nextRow, rowAtLine } from "../src/screen/moves.ts";
 import { type Link, type Lists, type Row, threadAge, threadWord } from "../src/screen/rows.ts";
 import { sidebarWidth } from "../src/screen/screen.ts";
