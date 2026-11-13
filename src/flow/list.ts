@@ -6,6 +6,7 @@ import { z } from "zod";
 import { repositoryTracker } from "../config.ts";
 import { cloneDir } from "../paths.ts";
 import { forgeOf, trackerOf } from "../plugins/ask.ts";
+import { fitted } from "../screen/look.ts";
 import { openTasks, taskOf } from "./copy.ts";
 import { findRepository, noRepositories, repositories } from "./repo.ts";
 import { needsYou, Thread, threadName } from "./thread.ts";
@@ -46,9 +47,12 @@ export function listRepositories(db: Database): RepositoryRow[] {
   });
 }
 
-// A thread as sc ps shows it.
+// A thread as sc ps shows it, with the short title the lead gave it, if any, and its whole
+// title, which an old row may lack.
 export const ThreadRow = z.object({
   thread: z.string(),
+  short: z.string().nullable(),
+  title: z.string().nullable(),
   status: Thread.shape.status,
   needsYou: z.boolean(),
 });
@@ -65,7 +69,13 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
     : db.query("SELECT * FROM threads ORDER BY rowid DESC").all();
   return all.map((row) => {
     const thread = Thread.parse(row);
-    return { thread: threadName(db, thread), status: thread.status, needsYou: needsYou(thread) };
+    return {
+      thread: threadName(db, thread),
+      short: thread.short,
+      title: thread.title,
+      status: thread.status,
+      needsYou: needsYou(thread),
+    };
   });
 }
 
@@ -167,14 +177,21 @@ export function printRepositories(repositories: RepositoryRow[], json: boolean):
     );
 }
 
-// Prints threads for sc ps: as JSON for tools, or else as a table.
+// Prints threads for sc ps: as JSON for tools, or else as a table. Its title column has each
+// thread's short title, or its title cut to the 31 columns the sidebar gives one, so a long
+// title doesn't push the status out of sight.
 export function printThreads(threads: ThreadRow[], json: boolean): void {
   if (json) console.log(JSON.stringify(threads));
   else if (threads.length === 0) console.log("There are no threads.");
   else
     table(
-      ["THREAD", "STATUS", "NEEDS YOU"],
-      threads.map((t) => [t.thread, t.status, t.needsYou ? "yes" : ""]),
+      ["THREAD", "TITLE", "STATUS", "NEEDS YOU"],
+      threads.map((t) => [
+        t.thread,
+        t.short ?? fitted(t.title ?? "", 31),
+        t.status,
+        t.needsYou ? "yes" : "",
+      ]),
     );
 }
 

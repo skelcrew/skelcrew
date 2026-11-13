@@ -714,7 +714,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a lead per repositor
       repositories: [{ name: "app", repository: "simon/app" }],
     });
     expect(await askAsLead({ command: "ps" })).toEqual({
-      threads: [{ thread: "app-1", status: "stopped", needsYou: false }],
+      threads: [{ thread: "app-1", short: null, title: null, status: "stopped", needsYou: false }],
     });
     const refused = {
       error:
