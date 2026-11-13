@@ -1,7 +1,7 @@
 // The screen: the sidebar on the left of your terminal, with the agent or list you are looking
 // at on the right and the strip above it. It is a second tmux server, one session per open
 // terminal, ended when you leave.
-import { applyConfig, envWithoutTmux, screenSocket } from "../agents/tmux.ts";
+import { applyConfig, envWithoutTmux, screenSocket, tmuxIsAtLeast } from "../agents/tmux.ts";
 import { windowTitle } from "../say.ts";
 import { mainFile, singleFile } from "../version.ts";
 import type { Entry } from "./lists.ts";
@@ -85,23 +85,18 @@ const config = [
   // tmux drops them on the way to a terminal it doesn't recognise, and a row would be plain
   // text you can't open. set-clipboard on passes a page's copy of its link on to your
   // terminal, as tmux otherwise keeps a program's copies from it.
-  ["set", "-s", "terminal-features[90]", "*:sync:hyperlinks:clipboard"],
+  ["set", "-s", "terminal-features[90]", "*:sync:hyperlinks:clipboard:extkeys"],
   ["set", "-s", "set-clipboard", "on"],
+  // Extended keys, with the extkeys feature above, let Shift+Enter through as a key of its own,
+  // for the agents' server to hand on, instead of as plain Enter, which sends the prompt. tmux
+  // asks your terminal for them; Terminal.app can't, and still sends Enter. A modified key
+  // still fires the bindings above, and the sidebar and lists, which don't ask, get keys as
+  // before.
+  ["set", "-s", "extended-keys", "on"],
   // tmux shares a resize out among panes, so tmux itself sets the sidebar's width back after
   // each, with no process of Skelcrew's to do it.
   ["set-hook", "-g", "window-resized", `resize-pane -t :.0 -x ${sidebarWidth}`],
 ];
-
-// Returns whether this machine's tmux can make the border between the panes blank, which tmux
-// can since 3.6. An older one refuses the whole screen over it. A version that isn't a plain
-// number, such as "next-3.7" or "master", is taken as new.
-function canBlankBorder(env: Record<string, string>): boolean {
-  const said = Bun.spawnSync(["tmux", "-V"], { env, stderr: "ignore" }).stdout.toString();
-  const version = said.match(/^tmux (\d+)\.(\d+)/);
-  if (!version) return true;
-  const [major, minor] = [Number(version[1]), Number(version[2])];
-  return major > 3 || (major === 3 && minor >= 6);
-}
 
 // Returns the command for the right pane: an ordinary tmux client attached to the session.
 // When the client ends, because the agent you were looking at ended or you left its session
@@ -171,7 +166,8 @@ export async function openScreen(
   // The title is the session's own: terminals on this server can come from different laptops.
   // tmux's border between the panes is blank where it can be: the sidebar draws its own line,
   // so the border is a gap before the agent. On an older tmux it stays tmux's thin line.
-  const border = canBlankBorder(env) ? [["set", "-g", "pane-border-lines", "spaces"]] : [];
+  // tmux can since 3.6, and an older one refuses the whole screen over it.
+  const border = tmuxIsAtLeast(3, 6) ? [["set", "-g", "pane-border-lines", "spaces"]] : [];
   const open = [
     ...config,
     ...border,

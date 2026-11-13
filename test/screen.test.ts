@@ -15,7 +15,7 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import checkout from "../package.json";
-import { startSession, stillRunning } from "../src/agents/tmux.ts";
+import { startSession, stillRunning, tmuxIsAtLeast } from "../src/agents/tmux.ts";
 import type { Page } from "../src/flow/page.ts";
 import { leadPlaces } from "../src/paths.ts";
 import { drawPage } from "../src/screen/page.ts";
@@ -105,6 +105,9 @@ while test -d ${JSON.stringify(home)}; do read -r line && echo "$line" >> ${name
 
 // What goes ahead of Skelcrew in a terminal's command, such as a PATH that changes what it finds.
 let before = "";
+// Whether the terminals send Shift+Enter and other modified keys as keys of their own when asked,
+// as Ghostty, kitty and WezTerm do. Terminal.app never does.
+let extendedKeys = false;
 
 // Opens the screen on an agent in a terminal of its own, whose title until then is "my shell",
 // and which logs how Skelcrew exited. `where` is the name a laptop's sc --remote passes along.
@@ -125,7 +128,11 @@ await Bun.write(${JSON.stringify(join(home, `left-${window}`))}, "left");`,
   const named = `${where ? `SKELCREW_REMOTE_NAME=${where} ` : ""}${before}`;
   const title = `printf '\\033]2;my shell\\007'`;
   const command = `${title}; ${named}TERM=${term} ${process.execPath} ${script}; sleep 300`;
-  tmux(terminal, "new-session", "-d", "-s", window, "-x", width, "-y", "30", command);
+  const start = ["new-session", "-d", "-s", window, "-x", width, "-y", "30", command];
+  // The terminal must already send extended keys when the screen asks for them, as tmux ignores
+  // a request it got while they were off.
+  const extended = extendedKeys ? [";", "set", "-s", "extended-keys", "on"] : [];
+  tmux(terminal, ...start, ...extended);
 }
 
 // Presses keys in a terminal. Text goes as it would from a real one, including escape codes.
@@ -146,6 +153,7 @@ openDb().run(${JSON.stringify(statements)});`;
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-screen-test-")));
   before = "";
+  extendedKeys = false;
   agents = `skel-test-${process.pid}-${Math.random().toString(36).slice(2)}`;
   screen = `${agents}-screen`;
   terminal = `${agents}-terminal`;
@@ -283,6 +291,55 @@ test("Ctrl-Q leaves the whole screen, ends no agent, and says so", async () => {
     expect(tmux(agents, "has-session", "-t", `=${name}`).ok).toBe(true);
   expect(tmux(agents, "list-clients", "-F", "#{client_tty}").out).toBe("");
   await until(() => seen().includes(leaving), "the line that says what happened");
+});
+
+// Replaces the lead with an agent that asks for extended keys, as Claude Code and Codex do, says
+// its name, and logs every byte it reads to lead.keys.
+function keyLoggingLead(): void {
+  tmux(agents, "kill-session", "-t", "=lead");
+  const script = join(home, "keys.sh");
+  writeFileSync(
+    script,
+    `#!/bin/sh
+cd ${JSON.stringify(home)}
+printf '\\033[>4;2m'
+echo "I am lead"
+stty raw -echo
+exec cat > lead.keys
+`,
+    { mode: 0o755 },
+  );
+  startSession(agents, "lead", { folder: home, command: [script], env: { PATH: pathNow } });
+}
+
+test("Shift+Enter reaches the agent as a key of its own, through both tmux servers", async () => {
+  extendedKeys = true;
+  keyLoggingLead();
+  open("lead");
+  await ready("lead");
+  type("a");
+  press("S-Enter");
+  type("b");
+  press("Enter");
+  await until(() => read("lead.keys").endsWith("\r"), "the Enter");
+  // CSI u, the form Claude Code and Codex both read as Shift+Enter. tmux before 3.5 has only
+  // the xterm form, which Claude Code reads too. Plain Enter stays a CR.
+  const shiftEnter = tmuxIsAtLeast(3, 5) ? "\x1b[13;2u" : "\x1b[27;2;13~";
+  expect(read("lead.keys")).toBe(`a${shiftEnter}b\r`);
+});
+
+test("with a terminal that sends extended keys, the screen's own keys still work", async () => {
+  extendedKeys = true;
+  open("lead");
+  await ready("lead");
+  toSecondThread();
+  await until(() => selected() === "● app-7", "Alt-Shift-Down and Alt-Down to move");
+  await until(() => seen().includes("I am app-7"), "app-7");
+  type("hello");
+  press("Enter");
+  await until(() => read("app-7.typed") === "hello\n", "the typing");
+  press("C-q");
+  await until(() => existsSync(join(home, "left-one")), "Ctrl-Q to leave");
 });
 
 test("Ctrl-] no longer leaves", async () => {
