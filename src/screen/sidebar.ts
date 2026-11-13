@@ -110,6 +110,18 @@ export async function runSidebar(
       }
       switchTo(next.fullName);
     }
+    notice = noticeLines(updateNotice(), size().width);
+    rows = sidebarRows(db, running, roundLimit, Date.now(), open);
+    entries = entryCounts(db, open);
+    // An agent can end and its client move to the lead by itself, so the session shown is asked
+    // of tmux, unless a list shows. With no client on the right while the lead isn't running,
+    // the right side is waiting for the lead, such as after a builder ended while its lead was
+    // gone, so the lead is what it shows.
+    if (!isEntry(shown)) {
+      const client = shownSession(agents, tty);
+      if (client) shown = client;
+      else if (!running.includes(open.lead)) shown = open.lead;
+    }
     // A lead that crashed while you look at it is brought back with its conversation, once,
     // as the daemon does at its start. One you exited closes its tab instead.
     if (running.includes(open.lead)) asked = null;
@@ -117,12 +129,6 @@ export async function runSidebar(
       asked = open.lead;
       openRepository(`${open.owner}/${open.repo}`);
     }
-    notice = noticeLines(updateNotice(), size().width);
-    rows = sidebarRows(db, running, roundLimit, Date.now(), open);
-    entries = entryCounts(db, open);
-    // An agent can end and its client move to the lead by itself, so the session shown is asked
-    // of tmux, unless a list shows.
-    if (!isEntry(shown)) shown = shownSession(agents, tty) ?? shown;
     // The header, the tabs and the strip go to tmux's status line, and only when they changed.
     const width = paneWidth(screenSocket(agents), rightPane);
     const left = size().width + 1;

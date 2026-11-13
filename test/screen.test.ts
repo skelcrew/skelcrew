@@ -1578,6 +1578,23 @@ test("a lead that stops while you look at it is brought back, once", async () =>
   expect(seen()).not.toContain("can't find session");
 });
 
+// The right side falls back to the lead when the builder you look at ends. A lead that went
+// while you looked at the builder must be asked back then, or the right side waits forever.
+test("a lead that stopped while you look at a builder is brought back once the builder ends", async () => {
+  daemon();
+  open("app-7");
+  await ready("app-7");
+  tmux(agents, "kill-session", "-t", "=lead");
+  await Bun.sleep(1500);
+  expect(asked).toEqual([]);
+  tmux(agents, "kill-session", "-t", "=app-7");
+  await until(
+    () => asked.includes("open simon/app from a tab"),
+    "the daemon to bring the lead back",
+  );
+  await until(() => right().includes("Waiting for the lead to start."), "the waiting line");
+});
+
 test("a lead you exited isn't brought back, as its tab closes", async () => {
   daemon();
   open("lead");
