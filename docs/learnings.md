@@ -320,6 +320,14 @@ that covers the code you are about to write.
 - **tmux takes keys that arrive together for a paste.** Keys less than `assume-paste-time`
   (1 ms) apart skip key bindings and go to the active pane as text. Three Alt keys in one
   write reached the sidebar as two, and the third was typed into the agent. Set it to 0.
+- **tmux turns Shift+Enter into Enter**, so the prompt is sent instead of a newline. Both
+  servers need `extended-keys on` and the `extkeys` terminal feature: the screen's asks your
+  terminal for extended keys, and the agents' asks the screen in front of it. Either one alone
+  still delivers Enter. tmux ignores a pane's request made while the option was off, and
+  hands extended keys only to a program that asked, as Claude Code and Codex do with
+  `CSI > 4;2 m`. Codex reads Shift+Enter only in the CSI u form (`ESC[13;2u`), so the agents'
+  server sets `extended-keys-format csi-u`, which tmux before 3.5 refuses. Claude Code reads
+  both forms. Terminal.app sends plain Enter for Shift+Enter whatever tmux does.
 - **A click on a status line reaches no pane.** `MouseDown1Status` fires, and a range drawn
   with `#[range=user|X]` names what was clicked in `#{mouse_status_range}`. `send-keys -F`
   doesn't expand that in the text it types, so `run-shell -C` must expand the whole
