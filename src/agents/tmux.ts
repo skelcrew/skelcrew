@@ -1,6 +1,9 @@
 // Skelcrew's tmux sessions: one for each repository's lead and one per builder, on Skelcrew's own
 // tmux server (`tmux -L skelcrew`; tests pass a socket of their own).
+import { rmSync } from "node:fs";
+import { z } from "zod";
 import { onSprite, startTmuxService } from "../machine/sprite.ts";
+import { sandboxFolders } from "./seatbelt.ts";
 
 // Returns the screen's tmux server beside the agents': skelcrew-screen beside skelcrew, and a
 // test's own beside the test's.
@@ -145,6 +148,17 @@ export function startSession(
   const start = ["new-session", "-d", "-s", name, "-c", session.folder];
   mustTmux(socket, [...start, "--", ...clean, ...session.command]);
   mustTmux(socket, ["source-file", "-"], tmuxConfig);
+  // On a Mac the sandbox's folders are removed by a shell that a SIGKILL takes with it, so
+  // the session keeps their names for stopSession to remove them.
+  const folders = sandboxFolders(session.command);
+  if (folders.length > 0)
+    mustTmux(socket, [
+      "set-option",
+      "-t",
+      `=${name}:`,
+      "@sandbox-folders",
+      JSON.stringify(folders),
+    ]);
   if (session.keepOnExit) keepOnExit(socket, name);
 }
 
@@ -257,13 +271,16 @@ export function stillRunning(tree: number[]): number[] {
 
 // Ends the named session and returns once every process it ran has exited, so what it was
 // using, such as a thread's clone, can be removed. Claude Code can outlive the end of its
-// session for a few seconds, so it gets `timeout` milliseconds before being killed.
+// session for a few seconds, so it gets `timeout` milliseconds before being killed. On a Mac
+// it then removes the sandbox's folders, which a killed agent would leave behind in /tmp.
 export async function stopSession(socket: string, name: string, timeout = 10_000): Promise<void> {
-  // Find the pane's process first, as its processes can't be listed once the session is gone.
-  // No pane means no session, so there is nothing to stop.
-  const pane = Number(
-    tmux(socket, ["display-message", "-p", "-t", `=${name}:`, "#{pane_pid}"]).out,
-  );
+  // Find the pane's process and the sandbox's folders first, as neither can be found once the
+  // session is gone. No pane means no session, so there is nothing to stop. The folders are
+  // a JSON list after the process number, or nothing outside a Mac.
+  const format = "#{pane_pid} #{@sandbox-folders}";
+  const found = tmux(socket, ["display-message", "-p", "-t", `=${name}:`, format]).out.trim();
+  const [pid = "", ...folders] = found.split(" ");
+  const pane = Number(pid);
   if (!pane) return;
   // Note every process under the pane, then end the session.
   const tree = processTree(pane);
@@ -279,6 +296,9 @@ export async function stopSession(socket: string, name: string, timeout = 10_000
         } catch {}
     await Bun.sleep(100);
   }
+  // A sandbox that ended on its own removed them already, so they may be gone.
+  const named = z.array(z.string()).parse(JSON.parse(folders.join(" ") || "[]"));
+  for (const folder of named) rmSync(folder, { recursive: true, force: true });
 }
 
 // Returns the sessions whose agent is running, for the sidebar. A builder that exited keeps
