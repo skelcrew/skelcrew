@@ -763,11 +763,14 @@ async function openList(entry: "Issues" | "Threads" | "PRs", width = "120"): Pro
   clickRow(entry === "Threads" ? "    Threads" : entry);
   await onRight("↑↓ move");
 }
-// Opens the issue's page, from its list.
+// Opens the issue's page, from its list. The list's pane draws the page, then the sidebar, told
+// by that pane, names it in the strip a moment later, so this waits for both. Otherwise what a
+// test reads first could change on its own while it looks.
 async function openIssue(width = "120"): Promise<void> {
   await openList("Issues", width);
   press("Enter");
   await onRight("line 1 of the description");
+  await until(() => right().split("\n")[0]?.includes("app-31") ?? false, "the strip");
 }
 // How many of the processes under the screen's tmux server run a list.
 const listsRunning = () => {
