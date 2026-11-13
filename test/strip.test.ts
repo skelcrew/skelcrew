@@ -14,6 +14,7 @@ const lead: Row = {
   age: "",
   fullName: null,
   title: null,
+  short: null,
   pr: null,
   checks: null,
   review: null,

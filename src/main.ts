@@ -300,24 +300,31 @@ async function threadCommand(args: string[]): Promise<void> {
     "./client.ts"
   );
   const task = splitTaskName(sub);
+  // --short takes the thread's short title for the sidebar, on every form of sc start, and is
+  // taken out before the other words are read. A blank one would show nothing, so it is a
+  // mistake, like a --short with no words after it.
+  const shortAt = command === "start" ? rest.indexOf("--short") : -1;
+  const short = shortAt === -1 ? undefined : rest[shortAt + 1]?.trim();
+  if (shortAt !== -1 && !short) usage(command);
+  const words = rest.filter((_, i) => shortAt === -1 || (i !== shortAt && i !== shortAt + 1));
   // --from takes a branch, and only sc start <issue> takes it.
-  const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
-  if (command === "start" && task && (rest.length === 0 || from)) {
-    console.log(await startOn(...task, from));
+  const from = words[0] === "--from" && words[1] && words.length === 2 ? words[1] : undefined;
+  if (command === "start" && task && (words.length === 0 || from)) {
+    console.log(await startOn(...task, from, short));
     return;
   }
   // A first word that isn't a task's name is a repository, for a thread on what you said, with
   // no task in the tracker.
-  const [title, body] = rest;
-  if (command === "start" && sub && !task && title && body !== undefined && rest.length === 2) {
-    console.log(await startNew(sub, title, bodyFor("sc start", body)));
+  const [title, body] = words;
+  if (command === "start" && sub && !task && title && body !== undefined && words.length === 2) {
+    console.log(await startNew(sub, title, bodyFor("sc start", body), short));
     return;
   }
   // With no title and body as words, they come on stdin, so a long body needs no shell
   // quoting. A terminal is never waited on: there, a missing title and body is a mistake.
-  if (command === "start" && sub && !task && rest.length === 0 && !process.stdin.isTTY) {
+  if (command === "start" && sub && !task && words.length === 0 && !process.stdin.isTTY) {
     const given = taskFrom(await Bun.stdin.text());
-    console.log(await startNew(sub, given.title, given.body));
+    console.log(await startNew(sub, given.title, given.body, short));
     return;
   }
   if (command === "stop" && task && rest.length === 0) {

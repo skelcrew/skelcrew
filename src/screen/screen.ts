@@ -5,10 +5,11 @@ import { applyConfig, envWithoutTmux, screenSocket } from "../agents/tmux.ts";
 import { windowTitle } from "../say.ts";
 import { mainFile, singleFile } from "../version.ts";
 
-// How wide the sidebar is, with the line it draws at its edge: room for 24 columns of a name or
-// title, between its mark and two columns of padding. tmux shares a resize out among panes, so
-// it is set back after each.
-export const sidebarWidth = 31;
+// How wide the sidebar is, with the line it draws at its edge: room for 31 columns of a title,
+// between its mark and two columns of padding, so a thread's name, word, harness and time
+// usually fit on one line whole. tmux shares a resize out among panes, so it is set back after
+// each.
+export const sidebarWidth = 38;
 
 // The tmux commands that set up the screen's server. They run each time the screen opens,
 // before its session starts, so a first draw never shows tmux's own look. Your own ~/.tmux.conf

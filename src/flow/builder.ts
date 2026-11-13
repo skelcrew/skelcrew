@@ -65,12 +65,12 @@ export function statusOnceBack(stopped: Thread): "waiting" | "working" {
 // such as after sc rm: then it starts over in the same folder. It only records the thread,
 // since the lead waits on the answer. Setting up its clone and starting its builder come
 // after, and can take minutes. `given` is a start request, so its `repo` is the repository's
-// name in Skelcrew or its owner/name.
+// name in Skelcrew or its owner/name, and its `short` the short title the lead gave, if any.
 export async function startThread(
   db: Database,
   given:
-    | { repo: string; task: string; from?: string | undefined }
-    | { repo: string; title: string; body: string },
+    | { repo: string; task: string; from?: string | undefined; short?: string | undefined }
+    | { repo: string; title: string; body: string; short?: string | undefined },
 ): Promise<Thread> {
   // Find the repository and whether a tracker holds its tasks, which decides where a named
   // task's title and body come from.
@@ -169,6 +169,7 @@ export async function startThread(
       verdict: null,
       review_line: null,
       harness: null,
+      short: given.short ?? null,
       // A thread that failed still holds its issue, so starting it over keeps that Skelcrew
       // assigned you.
       assigned: before?.assigned ?? false,
@@ -177,7 +178,7 @@ export async function startThread(
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
     db.run(
       `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, title,
-        body, started, assigned, seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]')`,
+        body, started, short, assigned, seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]')`,
       [
         owner,
         repo,
@@ -190,6 +191,7 @@ export async function startThread(
         title,
         body,
         thread.started,
+        thread.short,
         thread.assigned,
       ],
     );
