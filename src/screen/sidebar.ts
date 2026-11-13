@@ -90,8 +90,11 @@ export async function runSidebar(
   // Returns whether a place is one of the entries', whose list runs in the right pane.
   const isEntry = (place: string | null) =>
     entries.some((entry) => entryPlace(entry.entry) === place);
+  // Whether the screen is leaving, as no tab is left.
+  let leaving = false;
   // Looks at the database and tmux again, and redraws what that changed.
   const refresh = () => {
+    if (leaving) return;
     // tmux first, then the tabs: the daemon closes a tab before it ends the lead's session, so
     // a lead found gone here with its tab still read as open has crashed.
     const running = runningSessions(agents);
@@ -105,7 +108,13 @@ export async function runSidebar(
     if (!tabs.some((tab) => tab.fullName === `${open.owner}/${open.repo}`)) {
       const next = tabs[Math.min(Math.max(here, 0), tabs.length - 1)];
       if (!next) {
-        tmux(screenSocket(agents), ["detach-client", "-s", `=${session}`]);
+        // The session is ended, not detached. Detaching it from here made tmux 3.6 crash
+        // about one time in six on a busy machine, as destroy-unattached ended the session,
+        // and your terminal showed "server exited unexpectedly" in place of the usual line.
+        // The server ends it itself a moment after this command is gone, so no one-off
+        // command disconnects as it goes, and the sidebar asks tmux nothing more.
+        leaving = true;
+        tmux(screenSocket(agents), ["run-shell", "-d", "0.5", "-C", `kill-session -t =${session}`]);
         return;
       }
       switchTo(next.fullName);

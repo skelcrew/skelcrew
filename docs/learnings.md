@@ -326,7 +326,9 @@ that covers the code you are about to write.
   server with a busy `list-clients` loop crashed within 8 rounds. Every terminal on that
   server loses its screen, and agents keep running. The sidebar's own commands hit this about
   once in 500 leavings on a loaded machine, so a screen test can fail with `server exited
-  unexpectedly`.
+  unexpectedly`. A `detach-client` sent from the sidebar crashed it about one time in six. To
+  leave from the sidebar, have the server run `kill-session` itself, with `run-shell -d -C`:
+  that crashed in none of 32 runs.
 - **tmux takes keys that arrive together for a paste.** Keys less than `assume-paste-time`
   (1 ms) apart skip key bindings and go to the active pane as text. Three Alt keys in one
   write reached the sidebar as two, and the third was typed into the agent. Set it to 0.
