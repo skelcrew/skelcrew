@@ -25,10 +25,17 @@ export const screenSocket = (agents: string) => `${agents}-screen`;
 // reaches it too, as send-keys alone sends the key that ran it. mode-keys is set to emacs
 // because when $EDITOR says vi, tmux uses vi's copy-mode table, which these bindings don't
 // touch.
+//
+// Extended keys let Shift+Enter reach the agent as a key of its own, which Claude Code and
+// Codex take for a newline. Without them, tmux reads it from your terminal as plain Enter, and
+// the prompt is sent. The extkeys feature makes tmux ask your terminal for them, or the screen
+// in front of this server; a terminal that can't, such as Terminal.app, still sends Enter.
+// tmux hands them on only to an agent that asked for them, as Claude Code and Codex do.
 const tmuxConfig = `set -g status off
 bind -n C-q detach-client
 set -g remain-on-exit failed
-set -s terminal-features[90] "*:sync"
+set -s terminal-features[90] "*:sync:extkeys"
+set -s extended-keys on
 set -g mouse on
 set -g mode-keys emacs
 bind -n WheelUpPane {
@@ -44,6 +51,24 @@ bind -T copy-mode WheelUpPane send-keys -X -N 5 scroll-up
 bind -T copy-mode WheelDownPane send-keys -X -N 5 scroll-down
 bind -T copy-mode Any { send-keys -X cancel; send-keys }
 `;
+
+// Returns whether this machine's tmux is the given version or newer, for settings an older
+// one refuses. One bad setting fails the whole command, so the screen or a session wouldn't
+// start. A version that isn't a plain number, such as "next-3.7" or "master", is taken as new.
+export function tmuxIsAtLeast(major: number, minor: number): boolean {
+  const said = Bun.spawnSync(["tmux", "-V"], { env: envWithoutTmux(), stderr: "ignore" });
+  const version = said.stdout.toString().match(/^tmux (\d+)\.(\d+)/);
+  if (!version) return true;
+  const [has, hasMinor] = [Number(version[1]), Number(version[2])];
+  return has > major || (has === major && hasMinor >= minor);
+}
+
+// Returns Skelcrew's tmux settings for this machine's tmux. tmux sends extended keys in the
+// xterm form unless told otherwise, and Codex reads Shift+Enter only in the CSI u form, which
+// Claude Code reads too. tmux before 3.5 has only the xterm form, and refuses the setting.
+function settings(): string {
+  return tmuxIsAtLeast(3, 5) ? `${tmuxConfig}set -s extended-keys-format csi-u\n` : tmuxConfig;
+}
 
 // Returns the inherited environment without TMUX, which otherwise prevents attaching from
 // inside tmux.
@@ -104,7 +129,7 @@ export function startServer(socket: string): void {
   const run = (command: string[]) =>
     Bun.spawnSync(command, {
       env: envWithoutTmux(),
-      stdin: new Blob([tmuxConfig]),
+      stdin: new Blob([settings()]),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -138,13 +163,13 @@ export function startSession(
   // first.
   const start = ["new-session", "-d", "-s", name, "-c", session.folder];
   mustTmux(socket, [...start, "--", ...clean, ...session.command]);
-  mustTmux(socket, ["source-file", "-"], tmuxConfig);
+  mustTmux(socket, ["source-file", "-"], settings());
 }
 
 // Gives a running tmux server Skelcrew's settings, so one that outlived an upgrade scrolls too.
 // Quietly does nothing without a server.
 export function applyConfig(socket: string): void {
-  tmux(socket, ["source-file", "-"], tmuxConfig);
+  tmux(socket, ["source-file", "-"], settings());
 }
 
 // Reports whether the exact session exists so Skelcrew can reconnect instead of starting it
