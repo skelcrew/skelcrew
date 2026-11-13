@@ -161,8 +161,9 @@ that covers the code you are about to write.
   either: a socket's path may be at most 104 bytes on a Mac, and that folder's path is about
   84, so tmux failed with "File name too long". Skelcrew gives tmux a short folder of its
   own in `/tmp` and sets `TMUX_TMPDIR` to it. Your tmux and Skelcrew's stay hidden, as they
-  must: a tmux socket runs commands with your rights. Inside a sandbox `/tmp` is refused, so
-  the folder goes where `TMUX_TMPDIR` points, as tmux's own would.
+  must: a tmux socket runs commands with your rights. A `TMUX_TMPDIR` of yours is passed
+  over, as it may be long. Inside a sandbox `/tmp` is refused, so the folder goes in the one
+  Skelcrew gave that sandbox's tmux, which is short.
 - **`bun run` lists every folder above the one it starts in.** On a Mac the sandbox refuses
   `~` and `~/.local` with "Operation not permitted", and Bun stops with
   `CouldntReadCurrentDirectory` before running anything. A plain "Permission denied", as from

@@ -33,21 +33,24 @@ function fake(name: string, body: string): void {
 }
 
 // XDG_RUNTIME_DIR is set, as a Mac has no /run/user but this machine does, and Skelcrew's real
-// daemon listens there. TMUX_TMPDIR passes through, as inside a sandbox /tmp is refused.
+// daemon listens there. tmux's folder is on PATH, as Homebrew keeps it in /opt/homebrew/bin.
+// Inside Skelcrew's sandbox /tmp is refused, so what tells Skelcrew so passes through.
+const tmuxFolder = dirname(Bun.which("tmux") ?? "/usr/bin/tmux");
 const env = () => ({
   HOME: home,
   XDG_RUNTIME_DIR: join(home, "run"),
-  PATH: `${bin}:${dirname(process.execPath)}:/usr/local/bin:/usr/bin:/bin`,
+  PATH: `${bin}:${dirname(process.execPath)}:${tmuxFolder}:/usr/local/bin:/usr/bin:/bin`,
   TMPDIR: join(home, "tmp"),
+  ...(process.env.SKELCREW_SANDBOX ? { SKELCREW_SANDBOX: process.env.SKELCREW_SANDBOX } : {}),
   ...(process.env.TMUX_TMPDIR ? { TMUX_TMPDIR: process.env.TMUX_TMPDIR } : {}),
   SECRET_TOKEN: "secret",
 });
 
 // Runs a script as a Mac would, in a process of its own: Skelcrew's home folder must be the
 // test's, and only a HOME set from the start reaches it.
-async function asMacRun(script: string) {
+async function asMacRun(script: string, more: Record<string, string> = {}) {
   const run = Bun.spawn([process.execPath, "--preload", asMac, "-e", script], {
-    env: env(),
+    env: { ...env(), ...more },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -137,6 +140,20 @@ console.log(JSON.stringify(setupCommand(${JSON.stringify(clone)}, "echo left > $
   expect(existsSync(tmux)).toBe(false);
 });
 
+test("tmux runs in the sandbox, with room for a socket name as long as the tests'", async () => {
+  const clone = join(home, "clone");
+  mkdirSync(clone);
+  const name = `skel-test-${"x".repeat(30)}`;
+  const command = `tmux -L ${name} new-session -d sleep 30 && tmux -L ${name} kill-server && echo ran`;
+  const made =
+    await asMacRun(`import { setupCommand } from ${JSON.stringify(source("agents/sandbox.ts"))};
+console.log(JSON.stringify(setupCommand(${JSON.stringify(clone)}, ${JSON.stringify(command)})));`);
+  const { argv, env: given } = Command(made.out);
+  const run = Bun.spawnSync(argv, { env: given, stdout: "pipe", stderr: "pipe" });
+  expect(run.stderr.toString()).not.toContain("tmux");
+  expect(run.stdout.toString()).toBe("ran\n");
+});
+
 test("a sandbox's folders go even when the terminal hangs up on it", async () => {
   fake("claude", 'trap "exit 0" HUP; echo up > "$CLAUDE_CONFIG_DIR/up"; sleep 30 & wait');
   const { argv, env: given } = await leadCommand();
@@ -174,8 +191,8 @@ test("an agent starts under sandbox-exec, in its folder, with a home of its own"
   // tmux makes its sockets under /tmp unless told otherwise, and a Mac allows a socket's
   // path 104 bytes at most, so tmux's folder must be short.
   const tmux = seen.match(/^TMUX_TMPDIR=(.*)$/m)?.[1] ?? "";
-  const tmuxBase = realpathSync(process.env.TMUX_TMPDIR ?? "/tmp");
-  expect(tmux.startsWith(join(tmuxBase, "skelcrew-tmux-"))).toBe(true);
+  const inSandbox = process.env.SKELCREW_SANDBOX === "1" && process.env.TMUX_TMPDIR;
+  expect(tmux.startsWith(join(realpathSync(inSandbox || "/tmp"), "sc-tmux-"))).toBe(true);
   // Postgres clients default to a socket in /tmp, which the sandbox hides.
   expect(seen).toContain("PGHOST=localhost\n");
 });
@@ -360,10 +377,13 @@ printf '%s' '{"verdict":"approve","body":"Fine."}' > "$out"`,
 }
 
 // Runs a review as a Mac would, and returns its verdict.
-async function reviewOnMac(clone: string, more = "") {
-  const ran = await asMacRun(`import { review } from ${JSON.stringify(source("flow/reviewer.ts"))};
+async function reviewOnMac(clone: string, more = "", vars: Record<string, string> = {}) {
+  const ran = await asMacRun(
+    `import { review } from ${JSON.stringify(source("flow/reviewer.ts"))};
 console.log(JSON.stringify(await review({ clone: ${JSON.stringify(clone)}, issue: { title: "t", body: "b" }, base: "origin/main", commit: ${JSON.stringify(git(clone, "rev-parse", "HEAD"))}, model: "opus", harness: "codex", ${more} })));
-process.exit(0);`);
+process.exit(0);`,
+    vars,
+  );
   expect(ran.err).toBe("");
   return JSON.parse(ran.out);
 }
@@ -421,7 +441,12 @@ left.unref();`,
 
 test("a review that runs out of time ends, with all it started", async () => {
   const clone = reviewable("sleep 300");
-  const verdict = await reviewOnMac(clone, "limit: 500");
+  // The review is ended with SIGKILL, and the shell that would remove tmux's folder with it.
+  // So the folder goes in this test's home, as it would inside a sandbox, not in /tmp.
+  const tmux = join(home, "tmux");
+  mkdirSync(tmux);
+  const inside = { SKELCREW_SANDBOX: "1", TMUX_TMPDIR: tmux };
+  const verdict = await reviewOnMac(clone, "limit: 500", inside);
   expect(verdict.verdict).toBe("failed");
   expect(verdict.body).toContain("ran past");
 });

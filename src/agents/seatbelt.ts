@@ -199,13 +199,16 @@ export function seatbeltArgs(given: {
   for (const folder of [ownHome, ownTemp]) mkdirSync(folder);
   // tmux makes its sockets in /tmp, which is hidden, unless TMUX_TMPDIR names another folder.
   // A socket's path may be at most 104 bytes on a Mac, too few in the agent's own temporary
-  // folder, so tmux gets a short folder of its own where tmux would make one. Yours and
-  // Skelcrew's stay hidden in /tmp: a tmux socket runs commands with your rights. Inside a
-  // sandbox, as when a builder runs Skelcrew's tests, /tmp is refused but TMUX_TMPDIR is set.
+  // folder, so tmux gets a short folder of its own in /tmp. Yours and Skelcrew's stay hidden
+  // there: a tmux socket runs commands with your rights. A TMUX_TMPDIR of yours is passed
+  // over, as it may be long. Inside a sandbox, as when a builder runs Skelcrew's tests, /tmp is
+  // refused, so the folder goes in the one Skelcrew gave that sandbox's tmux. Each level adds
+  // 17 bytes, which leaves room for tmux's own folder and a socket name of 40 or more.
   // It is only named here and made as the sandbox starts, so a command built but never run
   // leaves nothing behind in /tmp.
-  const tmuxBase = realpathSync(process.env.TMUX_TMPDIR ?? "/tmp");
-  const ownTmux = join(tmuxBase, `skelcrew-tmux-${crypto.randomUUID().slice(0, 8)}`);
+  const inSandbox = process.env.SKELCREW_SANDBOX === "1" && process.env.TMUX_TMPDIR;
+  const tmuxBase = realpathSync(inSandbox || "/tmp");
+  const ownTmux = join(tmuxBase, `sc-tmux-${crypto.randomUUID().slice(0, 8)}`);
   // What comes back of your home folder keeps its place under the agent's own, since agents
   // are told of it by that path: a lead finds its repository in ~/.local/share/skelcrew/repos.
   // Shortest first, so a folder inside one already linked is found there.
