@@ -170,14 +170,15 @@ const TabRow = z.object({
 
 // Returns a tab for each repository, in name order, with how many of its threads need you or
 // failed, which its badge shows. The badges are how you hear of other repositories, as one
-// repository's lead never mentions another's threads.
+// repository's lead never mentions another's threads. A repository whose lead you exited has
+// no tab, and no badge, until you open it again.
 export function repositoryTabs(db: Database): Tab[] {
   return db
     .query(
       `SELECT r.name, r.owner, r.repo, (SELECT COUNT(*) FROM threads t
         WHERE t.owner = r.owner AND t.repo = r.repo AND t.status != 'done'
           AND (t.status = 'failed' OR t.needs_you = 1 OR t.asking = 1)) AS count
-      FROM repositories r ORDER BY r.name`,
+      FROM repositories r WHERE r.tab_closed = 0 ORDER BY r.name`,
     )
     .all()
     .map((row) => {

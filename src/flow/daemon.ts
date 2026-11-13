@@ -26,7 +26,14 @@ import {
 } from "./builder.ts";
 import { saveItems } from "./copy.ts";
 import { removeThread, stopThread } from "./events.ts";
-import { lastOpened, leadOf, openedRepositories, startLead, typeLeadNotes } from "./lead.ts";
+import {
+  closeExitedLeads,
+  lastOpened,
+  leadOf,
+  openedRepositories,
+  startLead,
+  typeLeadNotes,
+} from "./lead.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import { pollRepositories } from "./poll.ts";
 import {
@@ -275,13 +282,28 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         return { running: true, pid: process.pid, release, ...runningCode, ...thread };
       }
       case "lead": {
+        // A lead you exited this second is closed first, so the daemon's next look can't close
+        // the tab again while the lead starts, and a tab can't bring it back. It comes before
+        // the choice of repository, so plain sc doesn't pick the one whose tab just closed.
+        closeExitedLeads(db, tmux);
         // From outside any repository Skelcrew has, the one you opened last.
         const repository =
           (request.from === undefined ? undefined : repositoryAt(db, request.from)) ??
           lastOpened(db);
         if (!repository) throw new Error(noRepositories);
         const { owner, repo } = repository;
-        db.run("UPDATE repositories SET opened = ? WHERE owner = ? AND repo = ?", [
+        // A tab never brings back a lead you exited, not even from a screen that still shows
+        // its tab. Only opening the repository does: sc in a checkout of it, sc repo add, or sc
+        // attach on one of its threads.
+        const closed = db
+          .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1")
+          .get(owner, repo);
+        if (request.tab && closed)
+          throw new Error(
+            `${owner}/${repo}'s tab is closed. Run sc in a checkout of it to open it.`,
+          );
+        // Opening a repository opens its tab too, if you had closed it by exiting its lead.
+        db.run("UPDATE repositories SET opened = ?, tab_closed = 0 WHERE owner = ? AND repo = ?", [
           Date.now(),
           owner,
           repo,
@@ -470,6 +492,10 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   // Taken before any request comes in, so a thread started meanwhile, still setting up,
   // isn't taken for one whose setup the daemon's stop cut short.
   const before = liveThreads(db);
+  // A lead you exited while the daemon was down closes its tab, before any request could open
+  // it, and isn't brought back. From here on, the daemon looks each second for a lead you exit.
+  closeExitedLeads(db, tmux);
+  setInterval(() => closeExitedLeads(db, tmux), 1000);
   // Open your socket, and end cleanly on the service's stop or on Ctrl-C.
   await open(path, "you");
   for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => endWhatItStarted(sockets));

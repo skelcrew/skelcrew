@@ -408,6 +408,24 @@ esac`,
     expect(calls()).toMatch(/new-session .* skelcrew site-7 lead-site-[a-p]+ ;/);
   });
 
+  // A lead you exited a moment ago still reads as open until the daemon's next look, which
+  // would then close the tab under the screen you just opened. So attaching always has the
+  // daemon open the repository, which notices the exit first.
+  test("has the daemon open the thread's repository, even one whose tab reads as open", async () => {
+    writeFileSync(join(home, "sessions", "site-7"), "");
+    const requests: unknown[] = [];
+    const daemon = createServer((connection) =>
+      connection.on("data", (data) => {
+        requests.push(JSON.parse(data.toString()));
+        connection.end('{"running":true,"pid":1}\n');
+      }),
+    );
+    await new Promise<void>((done) => daemon.listen(join(home, "run", "skelcrew.sock"), done));
+    const attached = await skel(["attach", "site-7"]).finally(() => daemon.close());
+    expect(attached.err).toBe("");
+    expect(requests).toContainEqual({ command: "lead", from: "simon/site" });
+  });
+
   test("says when there is no such thread", async () => {
     const missing = await skel(["attach", "app-99"]);
     expect(missing.code).not.toBe(0);
@@ -479,6 +497,7 @@ exec sleep 300
         forge: null,
         missing: null,
         clone: `${data()}/repos/simon/app`,
+        tabClosed: false,
       },
     ]);
     expect(attach).toBe(

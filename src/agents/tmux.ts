@@ -147,11 +147,17 @@ export function startServer(socket: string): void {
 }
 
 // Starts a named agent session with only its supplied environment and Skelcrew's terminal
-// settings.
+// settings. With `keepOnExit`, the session stays when its agent exits cleanly too, so Skelcrew
+// can tell a lead you exited from one that crashed: the first closes its tab, the second doesn't.
 export function startSession(
   socket: string,
   name: string,
-  session: { folder: string; command: string[]; env: Record<string, string> },
+  session: {
+    folder: string;
+    command: string[];
+    env: Record<string, string>;
+    keepOnExit?: boolean;
+  },
 ): void {
   // tmux would quietly rename the session, and then never find it under the name asked for.
   if (/[.:]/.test(name)) throw new Error(`a session can't be named ${name}: tmux changes . and :`);
@@ -178,6 +184,15 @@ export function startSession(
       "@sandbox-folders",
       JSON.stringify(folders),
     ]);
+  if (session.keepOnExit) keepOnExit(socket, name);
+}
+
+// Has a session stay when its agent exits cleanly too, so Skelcrew can read how it ended. The
+// window's own setting wins over the server's, which keeps only failed sessions. An agent that
+// exits before this is set takes its session with it, which reads as a crash, never as a clean
+// exit.
+export function keepOnExit(socket: string, name: string): void {
+  tmux(socket, ["set", "-w", "-t", `=${name}:`, "remain-on-exit", "on"]);
 }
 
 // Gives a running tmux server Skelcrew's settings, so one that outlived an upgrade scrolls too.
@@ -193,8 +208,9 @@ export function hasSession(socket: string, name: string): boolean {
   return tmux(socket, ["has-session", "-t", `=${name}`]).ok;
 }
 
-// Returns a failed session's last screen so Skelcrew can explain why the agent ended. Returns
-// null while the command runs or no dead pane is found.
+// Returns an ended agent's last screen, left behind by a failed command or a session kept on
+// exit, so Skelcrew can explain why the agent ended. Returns null while the command runs or no
+// dead pane is found.
 export function failedScreen(socket: string, name: string): string | null {
   // A pane still running its command, or no pane at all, has no last screen to give.
   if (tmux(socket, ["display-message", "-p", "-t", `=${name}:`, "#{pane_dead}"]).out.trim() !== "1")
@@ -202,6 +218,14 @@ export function failedScreen(socket: string, name: string): string | null {
   // The visible screen can come back blank once the pane is dead; its history keeps the
   // text.
   return mustTmux(socket, ["capture-pane", "-p", "-S", "-", "-t", `=${name}:`]).trim();
+}
+
+// Reports whether the agent in the named session exited with code 0 and left its session
+// behind, as one started with `keepOnExit` does. False while it runs, after it failed, and
+// when its session is gone.
+export function exitedCleanly(socket: string, name: string): boolean {
+  const target = ["display-message", "-p", "-t", `=${name}:`, "#{pane_dead} #{pane_dead_status}"];
+  return tmux(socket, target).out.trim() === "1 0";
 }
 
 // Reports whether the agent in the named session is still running, so Skelcrew only types into

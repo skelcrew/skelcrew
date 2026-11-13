@@ -13,8 +13,10 @@ import {
   agentRuns,
   checkAgentStarted,
   endSession,
+  exitedCleanly,
   failedScreen,
   hasSession,
+  keepOnExit,
   startServer,
   startSession,
 } from "../agents/tmux.ts";
@@ -51,21 +53,23 @@ export function leadOf(db: Database, owner: string, repo: string) {
   return { ...leadPlaces(owner, repo, kept_lead), session: lead_session, harness };
 }
 
-// Returns the repositories you have opened, whose leads the daemon keeps running.
+// Returns the repositories you have opened and whose tabs are open, whose leads the daemon
+// keeps running.
 export const openedRepositories = (db: Database) =>
   db
     .query(
-      "SELECT name, owner, repo, forge, remote FROM repositories WHERE opened IS NOT NULL ORDER BY name",
+      "SELECT name, owner, repo, forge, remote FROM repositories WHERE opened IS NOT NULL AND tab_closed = 0 ORDER BY name",
     )
     .all()
     .map((row) => Repository.parse(row));
 
 // Returns the repository you opened last, for plain sc outside any repository, or the first
-// by name while you have opened none. Null while Skelcrew has no repositories.
+// by name while you have opened none. One whose tab is open comes before any whose tab you
+// closed, which opens only when no tab is left. Null while Skelcrew has no repositories.
 export function lastOpened(db: Database): Repository | null {
   const row = db
     .query(
-      "SELECT name, owner, repo, forge, remote FROM repositories ORDER BY opened IS NULL, opened DESC, name LIMIT 1",
+      "SELECT name, owner, repo, forge, remote FROM repositories ORDER BY tab_closed, opened IS NULL, opened DESC, name LIMIT 1",
     )
     .get();
   return Repository.nullable().parse(row);
@@ -79,11 +83,16 @@ export function lastOpened(db: Database): Repository | null {
 export async function startLead(db: Database, tmux: string, repository: Repository): Promise<void> {
   const { owner, repo } = repository;
   const lead = leadOf(db, owner, repo);
-  // A lead still running is kept. One whose harness ended leaves its screen behind, which is
-  // logged before its session is ended to make room for the new one.
+  // A lead still running is kept. One started by a release before leads stayed on a clean exit
+  // is given that setting now, or exiting it would end its session and never close its tab.
+  // One whose harness ended leaves its screen behind, which is logged before its session is
+  // ended to make room for the new one.
   if (hasSession(tmux, lead.name)) {
     const failed = failedScreen(tmux, lead.name);
-    if (failed === null) return;
+    if (failed === null) {
+      keepOnExit(tmux, lead.name);
+      return;
+    }
     console.log(`${owner}/${repo}'s lead had ended:\n${failed}`);
     endSession(tmux, lead.name);
   }
@@ -118,13 +127,31 @@ export async function startLead(db: Database, tmux: string, repository: Reposito
     system: `${instructions}\nYou are the lead of ${owner}/${repo}. Skelcrew's clone of it is at ${clone}.`,
     ...(resume ? { resume } : { sessionId: session }),
   });
-  startSession(tmux, lead.name, { folder: lead.folder, command: argv, env });
+  // The session stays when the lead exits, so closeExitedLeads can tell exiting it from a crash.
+  startSession(tmux, lead.name, { folder: lead.folder, command: argv, env, keepOnExit: true });
   // A remote can be slow or away, and attaching waits on this.
   refreshClones(db).catch((error) => console.log(errorText(error)));
   console.log(
     `${resume ? "Brought back" : "Started"} ${owner}/${repo}'s lead, session ${session}.`,
   );
   await checkAgentStarted(tmux, lead.name, "lead");
+}
+
+// Closes the tab of each repository whose lead you exited, such as with /exit, and ends its
+// session. A lead that crashed exits with another code and keeps its tab. The daemon looks at
+// its start and every second, so a lead that exited while no screen was open, or while the
+// daemon was down, has its tab closed too. Only the lead ends: the repository, its threads and
+// its clone stay, and its conversation is kept for when you open it again. The tab is marked
+// closed before the session ends, so a sidebar that finds the session gone also finds the tab
+// closed, and doesn't bring the lead back.
+export function closeExitedLeads(db: Database, tmux: string): void {
+  for (const { owner, repo } of openedRepositories(db)) {
+    const { name } = leadOf(db, owner, repo);
+    if (!exitedCleanly(tmux, name)) continue;
+    db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [owner, repo]);
+    endSession(tmux, name);
+    console.log(`${owner}/${repo}'s lead exited, so its tab is closed until you open it again.`);
+  }
 }
 
 // Types each saved note for a repository's lead into it, one at a time, such as "started

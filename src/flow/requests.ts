@@ -19,7 +19,12 @@ const ShortTitle = z.string().trim().min(1);
 // owner/name. It keeps that word because clients on other machines send it.
 export const DaemonRequest = z.discriminatedUnion("command", [
   z.object({ command: z.literal("status") }),
-  z.object({ command: z.literal("lead"), from: z.string().optional() }),
+  // `tab` comes from the screen's tabs, which must never open a tab you closed.
+  z.object({
+    command: z.literal("lead"),
+    from: z.string().optional(),
+    tab: z.literal(true).optional(),
+  }),
   z.object({ command: z.literal("repo ls") }),
   z.object({ command: z.literal("ps"), repo: z.string().optional() }),
   z.object({ command: z.literal("task ls"), repo: z.string().optional() }),

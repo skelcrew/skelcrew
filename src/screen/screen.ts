@@ -101,10 +101,13 @@ const config = [
 // Returns the command for the right pane: an ordinary tmux client attached to the session.
 // When the client ends, because the agent you were looking at ended or you left its session
 // with its own keys, it comes back on the lead's session, trying again while the lead
-// restarts. TMUX must go, or tmux refuses to attach from inside tmux.
+// restarts. While there is no session to attach to, such as for a lead starting or a
+// repository just removed, it says so in one line, not tmux's error each second. TMUX must go,
+// or tmux refuses to attach from inside tmux.
 export function agentClient(agents: string, session: string, lead: string): string[] {
   const client = `tmux -L "$1" -f /dev/null attach -t`;
-  const script = `unset TMUX; ${client} "=$2"; while sleep 1; do ${client} "=$3"; done`;
+  const wait = `[ -n "$said" ] || { echo; echo 'Waiting for the lead to start.'; said=1; }`;
+  const script = `unset TMUX; ${client} "=$2" 2>/dev/null || ${wait}; while sleep 1; do ${client} "=$3" 2>/dev/null && said= || { ${wait}; }; done`;
   return ["sh", "-c", script, "sh", agents, session, lead];
 }
 

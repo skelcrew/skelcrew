@@ -196,9 +196,11 @@ export async function reportTurnEnded(): Promise<void> {
   await request({ command: "turn ended" });
 }
 
-// Has the daemon open a repository, by its owner/name, when the sidebar switches to its tab.
-// The daemon starts the repository's lead if it never has, and marks it as the one you opened
-// last. The sidebar doesn't wait for an answer, and if the daemon is down nothing happens.
+// Has the daemon open a repository, by its owner/name, when the sidebar switches to its tab or
+// finds its lead crashed. The daemon starts the repository's lead if it isn't running, and marks
+// it as the one you opened last. A repository whose tab you closed stays closed, as the screen
+// may still show its tab for a moment. The sidebar doesn't wait for an answer, and if the
+// daemon is down nothing happens.
 export async function openRepository(fullName: string): Promise<void> {
-  await ask({ command: "lead", from: fullName }, 60_000);
+  await ask({ command: "lead", from: fullName, tab: true }, 60_000);
 }

@@ -4,6 +4,7 @@
 // list there. The sidebar also keeps the top row up to date, with the header, the tabs and the
 // strip, and switches tabs.
 import {
+  exitedCleanly,
   paneTty,
   paneWidth,
   respawnPane,
@@ -78,6 +79,9 @@ export async function runSidebar(
   let lastStrip = "";
   // The notice's lines, above the rest, which has the height that is left.
   let notice: string[] = [];
+  // The lead this sidebar last asked the daemon to start, until it runs, so a lead that can't
+  // start isn't asked for again each second. Whatever opened the screen asked already.
+  let asked: string | null = open.lead;
   // Returns the size the rest has now, as the terminal can change it at any time.
   const size = (): Size => ({
     width: process.stdout.columns || sidebarWidth,
@@ -86,19 +90,54 @@ export async function runSidebar(
   // Returns whether a place is one of the entries', whose list runs in the right pane.
   const isEntry = (place: string | null) =>
     entries.some((entry) => entryPlace(entry.entry) === place);
+  // Whether the screen is leaving, as no tab is left.
+  let leaving = false;
   // Looks at the database and tmux again, and redraws what that changed.
   const refresh = () => {
+    if (leaving) return;
+    // tmux first, then the tabs: the daemon closes a tab before it ends the lead's session, so
+    // a lead found gone here with its tab still read as open has crashed.
+    const running = runningSessions(agents);
+    const exited = exitedCleanly(agents, open.lead);
+    const before = tabs;
     tabs = repositoryTabs(db);
-    // A repository you removed has no tab left, and the sidebar moves to the first one.
-    const first = tabs[0];
-    if (first && !tabs.some((tab) => tab.fullName === `${open.owner}/${open.repo}`))
-      switchTo(first.fullName);
+    // A repository you removed, or whose lead you exited, has no tab left. The sidebar moves to
+    // the tab that took its place, or the one before when it was last. With no tab left, the
+    // screen leaves as Ctrl-Q does.
+    const here = before.findIndex((tab) => tab.fullName === `${open.owner}/${open.repo}`);
+    if (!tabs.some((tab) => tab.fullName === `${open.owner}/${open.repo}`)) {
+      const next = tabs[Math.min(Math.max(here, 0), tabs.length - 1)];
+      if (!next) {
+        // The session is ended, not detached. Detaching it from here made tmux 3.6 crash
+        // about one time in six on a busy machine, as destroy-unattached ended the session,
+        // and your terminal showed "server exited unexpectedly" in place of the usual line.
+        // The server ends it itself a moment after this command is gone, so no one-off
+        // command disconnects as it goes, and the sidebar asks tmux nothing more.
+        leaving = true;
+        tmux(screenSocket(agents), ["run-shell", "-d", "0.5", "-C", `kill-session -t =${session}`]);
+        return;
+      }
+      switchTo(next.fullName);
+    }
     notice = noticeLines(updateNotice(), size().width);
-    rows = sidebarRows(db, runningSessions(agents), roundLimit, Date.now(), open);
+    rows = sidebarRows(db, running, roundLimit, Date.now(), open);
     entries = entryCounts(db, open);
     // An agent can end and its client move to the lead by itself, so the session shown is asked
-    // of tmux, unless a list shows.
-    if (!isEntry(shown)) shown = shownSession(agents, tty) ?? shown;
+    // of tmux, unless a list shows. With no client on the right while the lead isn't running,
+    // the right side is waiting for the lead, such as after a builder ended while its lead was
+    // gone, so the lead is what it shows.
+    if (!isEntry(shown)) {
+      const client = shownSession(agents, tty);
+      if (client) shown = client;
+      else if (!running.includes(open.lead)) shown = open.lead;
+    }
+    // A lead that crashed while you look at it is brought back with its conversation, once,
+    // as the daemon does at its start. One you exited closes its tab instead.
+    if (running.includes(open.lead)) asked = null;
+    else if (shown === open.lead && asked !== open.lead && !exited) {
+      asked = open.lead;
+      openRepository(`${open.owner}/${open.repo}`);
+    }
     // The header, the tabs and the strip go to tmux's status line, and only when they changed.
     const width = paneWidth(screenSocket(agents), rightPane);
     const left = size().width + 1;
@@ -153,6 +192,7 @@ export async function runSidebar(
     // Not waited on, so the sidebar draws at once. The right pane starts a client on the new
     // lead, and no list shows.
     openRepository(fullName);
+    asked = open.lead;
     respawnPane(screenSocket(agents), rightPane, agentClient(agents, open.lead, open.lead));
     tty = paneTty(screenSocket(agents), rightPane);
     page = null;

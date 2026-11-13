@@ -125,6 +125,6 @@ export function help(color = colorful()): string {
 }
 
 // Returns whether stdout is a terminal that shows color, honoring NO_COLOR.
-function colorful(): boolean {
+export function colorful(): boolean {
   return Boolean(process.stdout.isTTY) && !process.env.NO_COLOR && process.env.TERM !== "dumb";
 }

@@ -63,6 +63,8 @@ function prepareTables(db: Database): void {
   // that does, or null, and `author` is who commits in its name, as git writes an author.
   // `old_remote` is the host and owner/name in lower case, such as github.com/simon/old, of a
   // checkout's remote that uses an old name of the repository, once its forge has said so.
+  // `tab_closed` marks a repository whose lead you exited, so its tab stays hidden and the
+  // daemon doesn't bring its lead back until you open it again.
   const repositoryColumns = {
     open_issues: "INTEGER NOT NULL DEFAULT 0",
     open_prs: "INTEGER NOT NULL DEFAULT 0",
@@ -74,6 +76,7 @@ function prepareTables(db: Database): void {
     claimed: "INTEGER NOT NULL DEFAULT 0",
     author: "TEXT",
     old_remote: "TEXT",
+    tab_closed: "INTEGER NOT NULL DEFAULT 0",
   };
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
   for (const [column, type] of Object.entries(repositoryColumns))

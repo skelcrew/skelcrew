@@ -760,16 +760,21 @@ test("the screen's server turns terminal links on, whatever your terminal says i
   expect(tmux(screen, "show", "-s", "terminal-features").out).toContain("hyperlinks");
 });
 
-// Stands in for the daemon on the test's own socket: it logs each repository asked to open, and
-// answers with nothing to say.
+// Stands in for the daemon on the test's own socket: it logs each repository asked to open,
+// saying when a tab asked, which must never open a tab you closed, and answers with nothing to
+// say.
 const asked: string[] = [];
 function daemon(): void {
   const answer = (connection: Socket) =>
     connection.on("data", (data) => {
-      const { command, from } = z
-        .object({ command: z.string(), from: z.string().default("") })
+      const { command, from, tab } = z
+        .object({
+          command: z.string(),
+          from: z.string().default(""),
+          tab: z.boolean().default(false),
+        })
         .parse(JSON.parse(data.toString()));
-      if (command === "lead") asked.push(`open ${from}`);
+      if (command === "lead") asked.push(`open ${from}${tab ? " from a tab" : ""}`);
       connection.end("{}\n");
     });
   mkdirSync(join(home, "run"), { recursive: true, mode: 0o700 });
@@ -1512,7 +1517,7 @@ test("Alt-Right and Alt-Left switch both sides to the repository beside, and ope
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
   await until(() => seen().includes("site-8") && !seen().includes("app-12"), "site's threads");
   expect(selected()).toBe("◆ lead");
-  await until(() => asked.includes("open simon/site"), "the daemon to open site");
+  await until(() => asked.includes("open simon/site from a tab"), "the daemon to open site");
   type("hello\r");
   await until(() => existsSync(join(home, `${siteLead}.typed`)), "the typing");
   // There is no tab after the last.
@@ -1571,4 +1576,130 @@ test("Alt-Right then Alt-Shift-Down twice, typed together, lands on the new repo
   await until(() => seen().includes("I am site-8"), "site-8");
   await until(() => selected() === "● site-8", "the sidebar to follow");
   expect(seen()).not.toContain("app-12");
+});
+
+// The daemon closes a repository's tab when you exit its lead, by marking it in the database.
+const closeTab = (repo: string) =>
+  sql(`UPDATE repositories SET tab_closed = 1 WHERE repo = '${repo}'`);
+
+test("a tab that closes moves the screen to the tab after it, and leaves the threads alone", async () => {
+  addSite();
+  daemon();
+  open("lead");
+  await ready("lead");
+  await until(() => tabRow().includes("site"), "the tabs");
+  closeTab("app");
+  await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
+  await until(() => seen().includes("site-8") && !/\bapp\b/.test(tabRow()), "app's tab to go");
+  expect(asked).toContain("open simon/site from a tab");
+  // Nothing of app's ended: its builders still run.
+  expect(tmux(agents, "has-session", "-t", "=app-7").ok).toBe(true);
+});
+
+test("the last tab closing moves the screen to the tab before it", async () => {
+  addSite();
+  daemon();
+  open("lead");
+  await ready("lead");
+  press("M-Right");
+  await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
+  closeTab("site");
+  await until(() => seen().includes("I am lead") && seen().includes("app-12"), "app again");
+  expect(tabRow()).not.toContain("site");
+});
+
+test("with no tab left, the screen leaves as Ctrl-Q does", async () => {
+  open("lead");
+  await ready("lead");
+  closeTab("app");
+  await until(() => read("left-one") === "left", "the screen to leave");
+  expect(seen()).toContain(leaving);
+  expect(screenSessions()).toEqual([]);
+  expect(tmux(agents, "has-session", "-t", "=lead").ok).toBe(true);
+});
+
+test("a lead that stops while you look at it is brought back, once", async () => {
+  daemon();
+  open("lead");
+  await ready("lead");
+  tmux(agents, "kill-session", "-t", "=lead");
+  await until(
+    () => asked.includes("open simon/app from a tab"),
+    "the daemon to bring the lead back",
+  );
+  // The stand-in brings nothing back, and the sidebar doesn't ask again each second. The right
+  // side says once that it waits, never tmux's error each second.
+  await Bun.sleep(3000);
+  expect(asked.filter((open) => open === "open simon/app from a tab")).toHaveLength(1);
+  expect(right().split("Waiting for the lead to start.")).toHaveLength(2);
+  expect(seen()).not.toContain("can't find session");
+});
+
+// The right side falls back to the lead when the builder you look at ends. A lead that went
+// while you looked at the builder must be asked back then, or the right side waits forever.
+test("a lead that stopped while you look at a builder is brought back once the builder ends", async () => {
+  daemon();
+  open("app-7");
+  await ready("app-7");
+  tmux(agents, "kill-session", "-t", "=lead");
+  await Bun.sleep(1500);
+  expect(asked).toEqual([]);
+  tmux(agents, "kill-session", "-t", "=app-7");
+  await until(
+    () => asked.includes("open simon/app from a tab"),
+    "the daemon to bring the lead back",
+  );
+  await until(() => right().includes("Waiting for the lead to start."), "the waiting line");
+});
+
+test("a lead you exited isn't brought back, as its tab closes", async () => {
+  daemon();
+  open("lead");
+  await ready("lead");
+  tmux(agents, "set", "-w", "-t", "=lead:", "remain-on-exit", "on");
+  tmux(agents, "respawn-pane", "-k", "-t", "=lead:", "sh", "-c", "exit 0");
+  await until(
+    () => tmux(agents, "display-message", "-p", "-t", "=lead:", "#{pane_dead}").out.trim() === "1",
+    "the lead to exit",
+  );
+  await Bun.sleep(2000);
+  expect(asked).toEqual([]);
+});
+
+test("a repository removed while the screen shows it loses its tab, and the screen moves on", async () => {
+  addSite();
+  daemon();
+  open("lead");
+  await ready("lead");
+  sql("DELETE FROM repositories WHERE repo = 'app'");
+  tmux(agents, "kill-session", "-t", "=lead");
+  await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
+  await until(() => !/\bapp\b/.test(tabRow()), "app's tab to go");
+  expect(seen()).not.toContain("can't find session");
+});
+
+// sc repo rm ends the lead and waits for it before it removes the repository. A screen that
+// finds the lead gone meanwhile must not take it for a crash and ask the daemon to bring back
+// the lead of a repository on its way out.
+test("sc repo rm while the screen shows the repository moves the screen on, and never asks for its lead", async () => {
+  addSite();
+  daemon();
+  sql("UPDATE threads SET status = 'stopped' WHERE repo = 'app'");
+  // A lead that takes a few seconds to end, as a real one can.
+  tmux(agents, "kill-session", "-t", "=lead");
+  startSession(agents, "lead", {
+    folder: home,
+    command: ["sh", "-c", "trap 'sleep 3; exit' HUP; echo I am lead; while :; do sleep 0.2; done"],
+    env: { PATH: pathNow },
+  });
+  open("lead");
+  await ready("lead");
+  const script = `import { removeRepo } from ${JSON.stringify(source("flow/repo.ts"))};
+await removeRepo("app", ${JSON.stringify(agents)});`;
+  const removed = Bun.spawn([process.execPath, "-e", script], { env: env(), stderr: "pipe" });
+  expect(await removed.exited).toBe(0);
+  await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
+  await until(() => !/\bapp\b/.test(tabRow()), "app's tab to go");
+  expect(asked.filter((open) => open.includes("simon/app"))).toEqual([]);
+  expect(seen()).not.toContain("can't find session");
 });

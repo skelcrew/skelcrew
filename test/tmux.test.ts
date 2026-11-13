@@ -16,6 +16,7 @@ import { codex } from "../src/agents/codex.ts";
 import {
   agentRuns,
   endSession,
+  exitedCleanly,
   hasSession,
   startSession,
   stillRunning,
@@ -384,6 +385,30 @@ test("an agent runs only while its session lives and its command hasn't failed",
   await until(() => !agentRuns(socket, "failed"));
   // A failed command leaves its session behind, showing its last screen.
   expect(hasSession(socket, "failed")).toBe(true);
+});
+
+// A lead's tab closes when its lead exits cleanly, and stays when it fails, so its session must
+// keep how it ended.
+test("a session kept on exit tells an agent that exited cleanly from one that failed", async () => {
+  const keep = (name: string, code: number) =>
+    startSession(socket, name, {
+      folder: home,
+      command: ["sh", "-c", `while [ ! -e ${name}.done ]; do sleep 0.05; done; exit ${code}`],
+      env: {},
+      keepOnExit: true,
+    });
+  keep("clean", 0);
+  keep("crashed", 1);
+  expect(exitedCleanly(socket, "clean")).toBe(false);
+  writeFileSync(join(home, "clean.done"), "");
+  writeFileSync(join(home, "crashed.done"), "");
+  await until(() => !agentRuns(socket, "clean") && !agentRuns(socket, "crashed"));
+  expect(exitedCleanly(socket, "clean")).toBe(true);
+  expect(exitedCleanly(socket, "crashed")).toBe(false);
+  expect(exitedCleanly(socket, "nobody")).toBe(false);
+  // A session not kept on exit goes as its agent exits cleanly, as a builder's does.
+  start("builder", ["sh", "-c", "exit 0"]);
+  await until(() => !hasSession(socket, "builder"));
 });
 
 test("idle means a quiet pane showing the prompt, and not busy", async () => {
