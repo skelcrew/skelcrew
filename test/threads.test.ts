@@ -570,9 +570,11 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(read(join(config("app-12"), "calls"))).toBe("");
     expect(thread().status).toBe("stopped");
 
-    const started = await skel("start", "app-12");
+    // A short title given as it comes back is saved with it.
+    const started = await skel("start", "app-12", "--short", "Export");
     expect(started.err).toBe("");
     expect(started.out).toContain("Started app-12 again");
+    expect(thread().short).toBe("Export");
     await until(() => read(join(config("app-12"), "calls")).includes("--resume"));
     expect(read(join(config("app-12"), "calls"))).toContain(`--resume ${session}`);
     expect(read(join(config("app-12"), "pwd"))).toBe(`${clone()}\n`);
@@ -799,6 +801,57 @@ nameRepositories(db);`;
       title: "Add export",
       body: 'As JSON, with "quotes" and $HOME.\nAnd dates.\n',
     });
+  }, 60_000);
+
+  // The lead names each thread it starts in two or three words, for the sidebar's row.
+  test("sc start --short gives a thread its short title, however the task is given", async () => {
+    addApp();
+    serve();
+    await untilCloned();
+    const named = await skel("start", "app", "Add export", "As JSON", "--short", "JSON export");
+    expect(named.err).toBe("");
+    expect(named.out).toBe("Started app-t1.\n");
+    expect(thread()).toMatchObject({ task: "t1", title: "Add export", short: "JSON export" });
+    const piped = await runSkel(
+      ["start", "app", "--short", "Notes"],
+      env(),
+      "Add notes\n\nAs text",
+    );
+    expect(piped.err).toBe("");
+    expect(piped.out).toBe("Started app-t2.\n");
+    const issue = await skel("start", "app-12", "--short", "Export");
+    expect(issue.err).toBe("");
+    expect(issue.out).toBe("Started app-12.\n");
+    const db = new Database(join(data(), "skelcrew.db"));
+    const shorts = db.query("SELECT task, short FROM threads ORDER BY task").all();
+    db.close();
+    expect(shorts).toEqual([
+      { task: 12, short: "Export" },
+      { task: "t1", short: "JSON export" },
+      { task: "t2", short: "Notes" },
+    ]);
+    expect((await skel("start", "app-12", "--short", " ")).code).not.toBe(0);
+    expect((await skel("start", "app-12", "--short")).code).not.toBe(0);
+  }, 60_000);
+
+  // A thread started from GitHub gets its short title once the lead hears of it, while its
+  // builder works. Naming it must not start, stop or tell the builder anything.
+  test("sc start --short on a thread at work sets only its short title", async () => {
+    addApp();
+    serve();
+    await untilCloned();
+    await skel("start", "app-12");
+    await until(() => read(join(config("app-12"), "args")) !== "");
+    const before = thread();
+    const calls = read(join(config("app-12"), "calls"));
+    const named = await skel("start", "app-12", "--short", "Export");
+    expect(named.err).toBe("");
+    expect(named.out).toBe('Gave app-12 the short title "Export".\n');
+    expect(thread()).toEqual({ ...before, short: "Export" });
+    expect(read(join(config("app-12"), "calls"))).toBe(calls);
+    expect(hasSession("app-12")).toBe(true);
+    // Without --short, starting it again is still refused.
+    expect((await skel("start", "app-12")).err).toBe("Skelcrew: app-12 has a thread already\n");
   }, 60_000);
 
   // Programs often live under the home folder, which the sandbox hides, as npm does under nvm.

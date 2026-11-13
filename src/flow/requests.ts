@@ -12,6 +12,9 @@ const Branch = z.string().regex(/^(?!-)(?!.*\.\.)[\w./-]+$/);
 // blanks is refused. A body that passes keeps its spaces as they were.
 const TaskBody = z.string().regex(/\S/);
 
+// A thread's short title for the sidebar, which says nothing when blank, so one is refused.
+const ShortTitle = z.string().trim().min(1);
+
 // A request's `repo` names a repository the way a command does: by its name in Skelcrew or its
 // owner/name. It keeps that word because clients on other machines send it.
 export const DaemonRequest = z.discriminatedUnion("command", [
@@ -36,12 +39,14 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     repo: z.string(),
     task: TaskId,
     from: Branch.optional(),
+    short: ShortTitle.optional(),
   }),
   z.object({
     command: z.literal("start new"),
     repo: z.string(),
     title: z.string().min(1),
     body: TaskBody,
+    short: ShortTitle.optional(),
   }),
   z.object({
     command: z.literal("review"),

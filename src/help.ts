@@ -68,6 +68,7 @@ const sections: [string, [string, string][]][] = [
     [
       ["--json", "Output for tools"],
       ["--all", "Done threads too, on ps"],
+      ['--short "<words>"', "A thread's short title for the sidebar, on start"],
       ["--from <remote>", "The repository you're in"],
       ["--version", "Which release of Skelcrew this is"],
     ],

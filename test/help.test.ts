@@ -178,3 +178,8 @@ test("sc task is no longer a command", () => {
   expect(ran.code).not.toBe(0);
   expect(ran.err).toContain("that isn't a Skelcrew command");
 });
+
+// The lead names each thread it starts for the sidebar, and you can too.
+test("the help says sc start takes a short title", () => {
+  expect(skel(["--help"]).out).toContain('  --short "<words>" ');
+});

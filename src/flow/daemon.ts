@@ -251,9 +251,11 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   };
   // Brings back a stopped thread's builder for sc start, with --resume on its last session
   // in the same clone, then carries on the round its stop cut short, as after a restart.
-  // Marks the thread failed, with the reason, when the builder can't start.
-  const resume = async (stopped: Thread) => {
-    const thread = record(db, stopped.folder, { status: statusOnceBack(stopped) }, "started again");
+  // Marks the thread failed, with the reason, when the builder can't start. A short title
+  // given with it is saved with it.
+  const resume = async (stopped: Thread, short?: string) => {
+    const change = { status: statusOnceBack(stopped), ...(short ? { short } : {}) };
+    const thread = record(db, stopped.folder, change, "started again");
     try {
       await listenFor(thread);
       await bringBack(db, tmux, thread);
@@ -372,10 +374,16 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         // A thread the task already has is brought back or let past its round limit, with no
         // poll, as nothing new is read from the tracker.
         const before = threadOn(db, request.repo, request.task);
+        // A short title for a thread already at work, such as one started from GitHub, only
+        // names it for the sidebar. Its builder goes on as it was, and nothing else changes.
+        if (before && request.short && ["working", "waiting"].includes(before.status)) {
+          record(db, before.folder, { short: request.short }, "given a short title");
+          return { started: `Gave ${threadName(db, before)} the short title "${request.short}".` };
+        }
         const choice = startChoice(before);
         if (before && choice === "bring back") {
           const name = threadName(db, before);
-          resume(before);
+          resume(before, request.short);
           return { started: `Started ${name} again: its builder is back where it was.` };
         }
         if (before && choice === "go on") {
