@@ -101,6 +101,39 @@ test("sc ps cuts a long title where the sidebar does", () => {
   expect(said[1]).toBe(`app-9   ${sidebar}  failed`);
 });
 
+// A title comes from the tracker and a short title from the lead, so either could hold a line
+// break or a code your terminal would act on.
+test("sc ps prints a title or short title with control codes as one clean row", () => {
+  const said: string[] = [];
+  const log = spyOn(console, "log").mockImplementation((line: string) => said.push(line));
+  try {
+    printThreads(
+      [
+        {
+          thread: "app-9",
+          short: null,
+          title: "Fix\nlogin\x1b[2J",
+          status: "working",
+          needsYou: false,
+        },
+        {
+          thread: "app-8",
+          short: "Bad\x1b]8;;http://x\x07 one",
+          title: "Ok",
+          status: "working",
+          needsYou: false,
+        },
+      ],
+      false,
+    );
+  } finally {
+    log.mockRestore();
+  }
+  expect(said).toHaveLength(3);
+  for (const line of said) expect(line).not.toMatch(/\p{Cc}/u);
+  expect(said[1]).toStartWith("app-9   Fix login [2J");
+});
+
 test("the second line is cut with … too, with the name and word whole before it", () => {
   const long = thread("repository-12", { word: "reviewing", harness: "codex", age: "5m" });
   expect(listed(draw([long], "lead", size))[1]).toBe("    repository-12 · reviewing · co…");

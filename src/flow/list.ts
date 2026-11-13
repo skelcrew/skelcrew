@@ -7,7 +7,7 @@ import { repositoryTracker } from "../config.ts";
 import { cloneDir } from "../paths.ts";
 import { forgeOf, trackerOf } from "../plugins/ask.ts";
 import { titleRoom } from "../screen/lists.ts";
-import { fitted } from "../screen/look.ts";
+import { fitted, removeControlCodes } from "../screen/look.ts";
 import { sidebarWidth } from "../screen/screen.ts";
 import { openTasks, taskOf } from "./copy.ts";
 import { findRepository, noRepositories, repositories } from "./repo.ts";
@@ -181,7 +181,9 @@ export function printRepositories(repositories: RepositoryRow[], json: boolean):
 
 // Prints threads for sc ps: as JSON for tools, or else as a table. Its title column has each
 // thread's short title, or its title cut to the room the sidebar gives one, so a long title
-// doesn't push the status out of sight.
+// doesn't push the status out of sight. The title comes from the tracker and the short title
+// from the lead, so their control codes are removed, which could break a row or reach your
+// terminal.
 export function printThreads(threads: ThreadRow[], json: boolean): void {
   if (json) console.log(JSON.stringify(threads));
   else if (threads.length === 0) console.log("There are no threads.");
@@ -190,7 +192,9 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
       ["THREAD", "TITLE", "STATUS", "NEEDS YOU"],
       threads.map((t) => [
         t.thread,
-        t.short ?? fitted(t.title ?? "", titleRoom(sidebarWidth)),
+        t.short === null
+          ? fitted(removeControlCodes(t.title ?? ""), titleRoom(sidebarWidth))
+          : removeControlCodes(t.short),
         t.status,
         t.needsYou ? "yes" : "",
       ]),
