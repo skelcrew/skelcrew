@@ -759,7 +759,7 @@ async function openList(entry: "Issues" | "Threads" | "PRs", width = "120"): Pro
   openOnGitHub();
   open("lead", "one", "xterm-256color", width);
   await ready("lead");
-  await until(() => seen().includes("1 new · 2"), "the entries");
+  await until(() => seen().includes(" new · "), "the entries");
   clickRow(entry === "Threads" ? "    Threads" : entry);
   await onRight("↑↓ move");
 }
@@ -1094,6 +1094,47 @@ test("a list follows Skelcrew's copy as it changes", async () => {
   sql(itemSql("app", "task", 40, "A new issue", "2026-11-06T10:00:00Z"));
   await onRight("A new issue");
   await until(() => seen().includes("2 new · 3"), "the count");
+});
+
+test("a row that moves out of view as the list changes is scrolled back into view", async () => {
+  const many = Array.from({ length: 40 }, (_, n) =>
+    itemSql(
+      "app",
+      "task",
+      100 + n,
+      `Issue ${100 + n}`,
+      `2026-11-06T10:${String(n).padStart(2, "0")}:00Z`,
+    ),
+  );
+  sql(many.join("\n"));
+  await openList("Issues");
+  await onRight("app-139");
+  // The issue you are on gets a thread, which moves it under Started, far below.
+  sql(`INSERT INTO threads (owner, repo, task, folder, branch, status)
+    VALUES ('simon', 'app', 139, 'app-139', 'skelcrew/139', 'working')`);
+  await until(() => right().includes("Started") && right().includes("app-139"), "the row in view");
+  press("Enter");
+  await onRight("← back");
+  expect(right()).toContain("Issue 139");
+});
+
+test("a list scrolled with the wheel stays where you put it as it reads the copy again", async () => {
+  const many = Array.from({ length: 40 }, (_, n) =>
+    itemSql(
+      "app",
+      "task",
+      100 + n,
+      `Issue ${100 + n}`,
+      `2026-11-06T10:${String(n).padStart(2, "0")}:00Z`,
+    ),
+  );
+  sql(many.join("\n"));
+  await openList("Issues");
+  for (let i = 0; i < 4; i++) wheel(65);
+  await until(() => !right().includes("app-139"), "the list to scroll");
+  const scrolled = right();
+  await Bun.sleep(2500);
+  expect(right()).toBe(scrolled);
 });
 
 // Returns the process running the right pane, which is the list while one shows.

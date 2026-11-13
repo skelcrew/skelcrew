@@ -178,13 +178,17 @@ export async function runPane(
     process.stdout.write(`\x1b[H${frame}`);
   };
   // Reads the list again, keeping you on the same row by its name, or at the same place when it
-  // went.
+  // went. A row that moved, such as an issue that started and went under Started, is scrolled
+  // back into view, so Enter never opens a row you can't see. A list whose row didn't move stays
+  // where the wheel put it.
   const refresh = () => {
     const name = rows()[here]?.name;
+    const line = () => drawList(groups, entry, here, width()).findIndex((l) => l.row === here);
+    const before = line();
     groups = listGroups(db, open, entry, Date.now());
     const at = rows().findIndex((row) => row.name === name);
     here = at >= 0 ? at : Math.max(Math.min(here, rows().length - 1), 0);
-    draw();
+    draw(line() !== before);
   };
   // Opens a row: an issue's or PR's page here, read from Skelcrew's copy, or a thread's agent,
   // which the sidebar shows in place of this pane. A page that can't be read shows why. A
