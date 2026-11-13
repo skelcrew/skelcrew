@@ -125,6 +125,8 @@ test("the help names the sidebar's keys, switching repositories included", () =>
     "Alt-Shift-Down",
     "Alt-Left",
     "Alt-Right",
+    "Alt-Shift-Left",
+    "Alt-Shift-Right",
     "Ctrl-Q",
   ])
     expect(out).toContain(key);

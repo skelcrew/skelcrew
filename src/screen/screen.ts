@@ -45,6 +45,8 @@ const config = [
   ["bind", "-n", "M-S-Down", "send-keys", "-t", ":.0", "M-S-Down"],
   ["bind", "-n", "M-Left", "send-keys", "-t", ":.0", "M-Left"],
   ["bind", "-n", "M-Right", "send-keys", "-t", ":.0", "M-Right"],
+  ["bind", "-n", "M-S-Left", "send-keys", "-t", ":.0", "M-S-Left"],
+  ["bind", "-n", "M-S-Right", "send-keys", "-t", ":.0", "M-S-Right"],
   // A click on the tabs, in a status line, reaches no pane, so tmux types which tab it was
   // into the sidebar, as an OSC naming the tab's range. send-keys -F expands no format in what
   // it types, so run-shell -C expands it first. A second click soon after the first is a
