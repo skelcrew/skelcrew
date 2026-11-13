@@ -882,6 +882,26 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a lead per repositor
     expect(hasLead() && !leadDead()).toBe(true);
   });
 
+  // Plain sc outside any repository opens the one you opened last. One whose lead you exited a
+  // moment ago, before the daemon's next look, is no longer that one.
+  test("plain sc just after you exit the last opened lead opens another tab, not that one", async () => {
+    setUp();
+    addRepository("app");
+    addRepository("web");
+    leadExitsWhenTold(0);
+    serve();
+    await untilAnswers();
+    await open("web");
+    await open("app");
+    tellLeadToExit();
+    await until(() => leadDead() || tabClosed());
+    expect(await ask({ command: "lead" })).toEqual({
+      lead: leadName("web"),
+      repository: "simon/web",
+    });
+    expect(tabClosed()).toBe(true);
+  });
+
   test("a lead that exited while the daemon was down has its tab closed, and isn't brought back", async () => {
     setUp();
     addRepository("app");

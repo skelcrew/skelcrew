@@ -282,15 +282,16 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         return { running: true, pid: process.pid, release, ...runningCode, ...thread };
       }
       case "lead": {
+        // A lead you exited this second is closed first, so the daemon's next look can't close
+        // the tab again while the lead starts, and a tab can't bring it back. It comes before
+        // the choice of repository, so plain sc doesn't pick the one whose tab just closed.
+        closeExitedLeads(db, tmux);
         // From outside any repository Skelcrew has, the one you opened last.
         const repository =
           (request.from === undefined ? undefined : repositoryAt(db, request.from)) ??
           lastOpened(db);
         if (!repository) throw new Error(noRepositories);
         const { owner, repo } = repository;
-        // A lead you exited this second is closed first, so the daemon's next look can't close
-        // the tab again while the lead starts, and a tab can't bring it back.
-        closeExitedLeads(db, tmux);
         // A tab never brings back a lead you exited, not even from a screen that still shows
         // its tab. Only opening the repository does: sc in a checkout of it, sc repo add, or sc
         // attach on one of its threads.
