@@ -33,12 +33,16 @@ function fake(name: string, body: string): void {
 }
 
 // XDG_RUNTIME_DIR is set, as a Mac has no /run/user but this machine does, and Skelcrew's real
-// daemon listens there.
+// daemon listens there. tmux's folder is on PATH, as Homebrew keeps it in /opt/homebrew/bin.
+// Inside Skelcrew's sandbox /tmp is refused, so what tells Skelcrew so passes through.
+const tmuxFolder = dirname(Bun.which("tmux") ?? "/usr/bin/tmux");
 const env = () => ({
   HOME: home,
   XDG_RUNTIME_DIR: join(home, "run"),
-  PATH: `${bin}:${dirname(process.execPath)}:/usr/local/bin:/usr/bin:/bin`,
+  PATH: `${bin}:${dirname(process.execPath)}:${tmuxFolder}:/usr/local/bin:/usr/bin:/bin`,
   TMPDIR: join(home, "tmp"),
+  ...(process.env.SKELCREW_SANDBOX ? { SKELCREW_SANDBOX: process.env.SKELCREW_SANDBOX } : {}),
+  ...(process.env.TMUX_TMPDIR ? { TMUX_TMPDIR: process.env.TMUX_TMPDIR } : {}),
   SECRET_TOKEN: "secret",
 });
 
@@ -112,6 +116,9 @@ afterEach(async () => {
   Bun.spawnSync(["tmux", "-L", socket, "kill-server"], { stderr: "pipe" });
   const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
   rmSync(join(folder, socket), { force: true });
+  // A test that failed may have left a sandbox's tmux folder behind in /tmp.
+  const seen = join(home, "tmux-seen");
+  if (existsSync(seen)) rmSync(readFileSync(seen, "utf8").trim(), { recursive: true, force: true });
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -123,12 +130,31 @@ test("a sandbox's home and temporary folder go when it ends, and its exit code s
   mkdirSync(clone);
   const made =
     await asMacRun(`import { setupCommand } from ${JSON.stringify(source("agents/sandbox.ts"))};
-console.log(JSON.stringify(setupCommand(${JSON.stringify(clone)}, "echo left > $TMPDIR/file; exit 3")));`);
+console.log(JSON.stringify(setupCommand(${JSON.stringify(clone)}, "echo left > $TMPDIR/file; echo left > $TMUX_TMPDIR/file; exit 3")));`);
   const { argv, env: given } = Command(made.out);
   expect(existsSync(rules(argv))).toBe(true);
+  const tmux = argv.find((word) => word.startsWith("TMUX_TMPDIR="))?.slice(12) ?? "";
+  // tmux's folder is made only as the sandbox starts, so a command never run leaves none.
+  expect(existsSync(tmux)).toBe(false);
+  // It is made as the sandbox starts: had mkdir failed, the code would be 1.
   const run = Bun.spawnSync(argv, { env: given });
   expect(run.exitCode).toBe(3);
   expect(readdirSync(join(home, "tmp"))).toEqual([]);
+  expect(existsSync(tmux)).toBe(false);
+});
+
+test("tmux runs in the sandbox, with room for a socket name as long as the tests'", async () => {
+  const clone = join(home, "clone");
+  mkdirSync(clone);
+  const name = `skel-test-${"x".repeat(30)}`;
+  const command = `tmux -L ${name} new-session -d sleep 30 && tmux -L ${name} kill-server && echo ran`;
+  const made =
+    await asMacRun(`import { setupCommand } from ${JSON.stringify(source("agents/sandbox.ts"))};
+console.log(JSON.stringify(setupCommand(${JSON.stringify(clone)}, ${JSON.stringify(command)})));`);
+  const { argv, env: given } = Command(made.out);
+  const run = Bun.spawnSync(argv, { env: given, stdout: "pipe", stderr: "pipe" });
+  expect(run.stderr.toString()).not.toContain("tmux");
+  expect(run.stdout.toString()).toBe("ran\n");
 });
 
 test("a sandbox's folders go even when the terminal hangs up on it", async () => {
@@ -139,6 +165,27 @@ test("a sandbox's folders go even when the terminal hangs up on it", async () =>
   await until(() => existsSync(up));
   process.kill(-run.pid, "SIGHUP");
   await run.exited;
+  expect(readdirSync(join(home, "tmp"))).toEqual([]);
+});
+
+test("a sandbox's folders go when its stuck agent is killed as its session stops", async () => {
+  const seen = join(home, "tmux-seen");
+  fake("claude", `trap "" HUP TERM; echo "$TMUX_TMPDIR" > ${seen}; exec sleep 300`);
+  fake("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
+  const { argv, env: given } = await leadCommand();
+  // The agent ignores the hangup, so stopping its session ends in SIGKILL, which takes the
+  // shell that removes the sandbox's folders with it.
+  const script = `import { existsSync } from "node:fs";
+import { startServer, startSession, stopSession } from ${JSON.stringify(source("agents/tmux.ts"))};
+startServer(${JSON.stringify(socket)});
+startSession(${JSON.stringify(socket)}, "lead", { folder: ${JSON.stringify(home)}, command: ${JSON.stringify(argv)}, env: ${JSON.stringify(given)} });
+for (let i = 0; i < 150 && !existsSync(${JSON.stringify(seen)}); i++) await Bun.sleep(100);
+await stopSession(${JSON.stringify(socket)}, "lead", 500);`;
+  const stopped = await asMacRun(script);
+  expect(stopped.err).toBe("");
+  const tmux = readFileSync(seen, "utf8").trim();
+  expect(tmux).toContain("sc-tmux-");
+  expect(existsSync(tmux)).toBe(false);
   expect(readdirSync(join(home, "tmp"))).toEqual([]);
 });
 
@@ -165,6 +212,11 @@ test("an agent starts under sandbox-exec, in its folder, with a home of its own"
   expect(seen).toContain(`CLAUDE_CODE_TMPDIR=${ownTemp}\n`);
   // zsh writes a heredoc's text to a file under /tmp unless told otherwise.
   expect(seen).toContain(`TMPPREFIX=${ownTemp}/zsh\n`);
+  // tmux makes its sockets under /tmp unless told otherwise, and a Mac allows a socket's
+  // path 104 bytes at most, so tmux's folder must be short.
+  const tmux = seen.match(/^TMUX_TMPDIR=(.*)$/m)?.[1] ?? "";
+  const inSandbox = process.env.SKELCREW_SANDBOX === "1" && process.env.TMUX_TMPDIR;
+  expect(tmux.startsWith(join(realpathSync(inSandbox || "/tmp"), "sc-tmux-"))).toBe(true);
   // Postgres clients default to a socket in /tmp, which the sandbox hides.
   expect(seen).toContain("PGHOST=localhost\n");
 });
@@ -409,8 +461,18 @@ left.unref();`,
 });
 
 test("a review that runs out of time ends, with all it started", async () => {
-  const clone = reviewable("sleep 300");
-  const verdict = await reviewOnMac(clone, "limit: 500");
+  const seen = join(home, "tmux-seen");
+  const clone = reviewable(
+    `echo "$TMUX_TMPDIR" > ${seen}; echo left > "$TMUX_TMPDIR/file"; sleep 300`,
+  );
+  // Long enough for the reviewer to start and say where tmux's folder is, even on a busy machine.
+  const verdict = await reviewOnMac(clone, "limit: 3000");
   expect(verdict.verdict).toBe("failed");
   expect(verdict.body).toContain("ran past");
+  // The review is ended with SIGKILL, and the shell that removes the sandbox's folders goes
+  // with it, so the reviewer removes them: tmux's in /tmp, and the agent's own.
+  const tmux = readFileSync(seen, "utf8").trim();
+  expect(tmux).toContain("sc-tmux-");
+  expect(existsSync(tmux)).toBe(false);
+  expect(readdirSync(join(home, "tmp"))).toEqual([]);
 });

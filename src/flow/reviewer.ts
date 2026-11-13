@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { filterEnv, sandboxArgs, throwawayMounts } from "../agents/sandbox.ts";
+import { sandboxFolders } from "../agents/seatbelt.ts";
 import { onSprite } from "../machine/sprite.ts";
 import { errorText } from "../say.ts";
 
@@ -165,6 +166,7 @@ async function reviewNow(given: {
       return { verdict: "failed", body: `the reviewer ran past ${limit / 60_000} minutes` };
     return null;
   };
+  let argv: string[] = [];
   try {
     // The harness gets the answer's shape from a file, and says how to start the reviewer
     // and what it needs from outside the sandbox.
@@ -189,7 +191,7 @@ async function reviewNow(given: {
     // as installed packages, stay for the tests. git runs in the sandbox, as the clone's
     // .git is the builder's to plant settings in.
     const checkout = 'git checkout -q -f --detach "$0" && git clean -q -fd && exec "$@"';
-    const argv = sandboxArgs({
+    argv = sandboxArgs({
       home,
       path,
       mounts: [...mounts, ...launch.mounts],
@@ -211,7 +213,10 @@ async function reviewNow(given: {
     if (after) return after;
     return readVerdict(harness, folder, finished);
   } finally {
-    rmSync(folder, { recursive: true, force: true });
+    // On a Mac the review may have been ended with SIGKILL, before the sandbox could remove
+    // its own folders, one of them in /tmp.
+    for (const own of [folder, ...sandboxFolders(argv)])
+      rmSync(own, { recursive: true, force: true });
   }
 }
 

@@ -42,6 +42,7 @@ beforeAll(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-compiled-test-")));
   mkdirSync(join(home, "bin"));
   mkdirSync(join(home, "run"), { mode: 0o700 });
+  mkdirSync(join(home, "tmp"));
   skel = join(home, ".local", "bin", "sc");
   compile(source("main.ts"), skel);
 });
@@ -56,6 +57,8 @@ async function run(args: string[], file = skel, typed = "") {
       PATH: `${join(home, "bin")}:/usr/bin:/bin`,
       HOME: home,
       XDG_RUNTIME_DIR: join(home, "run"),
+      // Without it Skelcrew's temporary files go to /tmp, which a Mac sandbox hides.
+      TMPDIR: join(home, "tmp"),
     },
     stdin: new Blob([typed]),
     stdout: "pipe",
