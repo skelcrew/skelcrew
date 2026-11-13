@@ -1,9 +1,10 @@
 // What the sidebar shows and which row a key or click picks, given the rows it was handed, and
 // the word each thread gets.
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { printThreads } from "../src/flow/list.ts";
 import type { Thread } from "../src/flow/thread.ts";
 import { draw as drawLists, noticeLines } from "../src/screen/lists.ts";
 import { nextList, nextRow, rowAtLine } from "../src/screen/moves.ts";
@@ -80,6 +81,24 @@ test("the sidebar is 38 columns wide, with room for 31 of a title", () => {
   expect(listed(draw([thread("app-9", { title })], "lead", size))[0]).toBe(
     "  ● Send people back to the page t…",
   );
+});
+
+// sc ps shows a thread with no short title by its title, cut as the sidebar cuts it.
+test("sc ps cuts a long title where the sidebar does", () => {
+  const title = "Send people back to the page they came from after signing in";
+  const said: string[] = [];
+  const log = spyOn(console, "log").mockImplementation((line: string) => said.push(line));
+  try {
+    printThreads(
+      [{ thread: "app-9", short: null, title, status: "failed", needsYou: false }],
+      false,
+    );
+  } finally {
+    log.mockRestore();
+  }
+  const sidebar = listed(draw([thread("app-9", { title })], "lead", size))[0]?.slice(4) ?? "";
+  expect(sidebar).toEndWith("…");
+  expect(said[1]).toBe(`app-9   ${sidebar}  failed`);
 });
 
 test("the second line is cut with … too, with the name and word whole before it", () => {

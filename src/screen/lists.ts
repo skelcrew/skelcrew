@@ -23,6 +23,11 @@ type Line = { text: string; row?: Row; link?: Link; joins?: boolean };
 const indent = `${pad}  `;
 // How many lines a row of the lead or THREADS takes.
 const rowHeight = 2;
+
+// Returns how many columns a thread's title has in a sidebar `width` columns wide: what is left
+// once the line at its edge, the mark and the padding on each side are taken. sc ps cuts a title
+// to the same room, so it reads as the sidebar shows it.
+export const titleRoom = (width: number) => Math.max(width - 1 - indent.length - pad.length, 0);
 // The keys you need most, at the bottom of the sidebar. The others are in Skelcrew's help.
 const hints = [`${pad}⌥↑↓ move`, `${pad}⌃Q quit`];
 
@@ -43,11 +48,11 @@ const shaded = (line: string, width: number) => `\x1b[${shade}m${filled(line, wi
 // is its name, word, harness and running time. The name and word come first, so they are the
 // last to be cut. The lead's row has its name on top and no name below. An agent that isn't
 // running is dim, as it can't be picked. The one you are looking at is shaded across the whole
-// width, on both lines.
+// width, on both lines. `width` leaves out the line at the sidebar's edge.
 function rowLines(row: Row, here: boolean, width: number): string[] {
   // The short title and title come from an agent and from outside, so they are made safe. A
   // thread from before Skelcrew kept titles has only its name to show.
-  const room = Math.max(width - indent.length - pad.length, 0);
+  const room = titleRoom(width + 1);
   const lead = row.status === null;
   const heading = lead ? row.name : removeControlCodes(row.short ?? row.title ?? row.name);
   const top = fitted(heading, room);

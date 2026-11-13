@@ -406,9 +406,14 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
           // may still be making.
           if (!existsSync(cloneDir(owner, repo))) await refreshClones(db);
           await (await polling.promise)(`${owner}/${repo}`);
-          // A poll already past its labels as this began may have started the thread itself.
+          // A poll already past its labels as this began may have started the thread itself. A
+          // short title given here still goes on that thread, so it isn't lost.
           const started = threadOn(db, request.repo, request.task);
-          if (!before && started) return { started: `Started ${threadName(db, started)}.` };
+          if (!before && started) {
+            if (request.short)
+              record(db, started.folder, { short: request.short }, "given a short title");
+            return { started: `Started ${threadName(db, started)}.` };
+          }
           thread = await startThread(db, request);
         } finally {
           startingTasks.delete(key);
