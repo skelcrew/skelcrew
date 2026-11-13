@@ -132,6 +132,12 @@ test("the help names the sidebar's keys, switching repositories included", () =>
     expect(out).toContain(key);
 });
 
+test("the help names the keys of the lists and their pages", () => {
+  const out = skel(["--help"]).out.replace(/\s+/g, " ");
+  for (const keys of ["Up and Down move", "Enter opens", "Esc or Left goes back"])
+    expect(out).toContain(keys);
+});
+
 test("the help names --version", () => {
   expect(skel(["--help"]).out).toContain("--version");
 });
