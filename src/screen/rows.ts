@@ -31,7 +31,7 @@ export type Row = {
   review: { round: number; reviewer: string; verdict: string } | null;
 };
 // A sign, and the colour it is drawn in.
-type Mark = [string, number];
+type Mark = [string, string];
 // One row of ISSUES or PRS: a link to the issue or PR, and a page you can land on. `word` is
 // the word of the thread a PR comes from, and `needing` says whether that thread needs you. A
 // PR has a mark, and an issue has none, so it starts where the headings do.
