@@ -798,6 +798,59 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a lead per repositor
     expect(hasLead()).toBe(true);
   });
 
+  // A lead an older Skelcrew started goes with its session when it exits, and its tab would
+  // never close.
+  test("a lead started before the upgrade closes its tab too when it exits", async () => {
+    setUp();
+    addRepository("app");
+    leadExitsWhenTold(0);
+    const first = serve();
+    await untilAnswers();
+    await open();
+    await stop(first);
+    // As an older Skelcrew left it: no setting of its own, so the server's applies.
+    Bun.spawnSync([
+      "tmux",
+      "-L",
+      socket,
+      "set",
+      "-w",
+      "-u",
+      "-t",
+      `=${leadName()}:`,
+      "remain-on-exit",
+    ]);
+    serve();
+    await untilAnswers();
+    await until(() =>
+      Bun.spawnSync(["tmux", "-L", socket, "show", "-w", "-t", `=${leadName()}:`, "remain-on-exit"])
+        .stdout.toString()
+        .includes("on"),
+    );
+    tellLeadToExit();
+    await until(() => tabClosed());
+    expect(claudeLines()).toHaveLength(1);
+  });
+
+  test("opening a repository whose lead exited a moment ago keeps its tab open", async () => {
+    setUp();
+    addRepository("app");
+    leadExitsWhenTold(0);
+    serve();
+    await untilAnswers();
+    await open();
+    saveTranscript(storedSession());
+    tellLeadToExit();
+    await until(() => leadDead() || tabClosed());
+    rmSync(join(leadFolder(), "exit-now"));
+    // Before the daemon's next look, as sc attach right after /exit would be.
+    expect(await open()).toEqual({ lead: leadName(), repository: "simon/app" });
+    // Longer than the daemon takes to close a tab.
+    await Bun.sleep(2000);
+    expect(tabClosed()).toBe(false);
+    expect(hasLead() && !leadDead()).toBe(true);
+  });
+
   test("a lead that fails keeps its tab, and opening it brings the lead back", async () => {
     setUp();
     addRepository("app");
@@ -875,26 +928,6 @@ await addRepo("simon/app");`;
     expect(tabClosed()).toBe(false);
     expect(hasLead()).toBe(true);
     expect(claudeCalls()).toBe(`--session-id ${id}\n--resume ${id}\n`);
-  });
-
-  // A release before this one let a lead's session go when the lead exited cleanly. A lead
-  // still running from then must close its tab too once the new daemon starts.
-  test("a lead running from before an upgrade closes its tab when you exit it", async () => {
-    setUp();
-    addRepository("app");
-    leadExitsWhenTold(0);
-    const old = serve();
-    await untilAnswers();
-    await open();
-    await stop(old);
-    // The setting an older Skelcrew gave a lead: the server's, which keeps only failed sessions.
-    Bun.spawnSync(["tmux", "-L", socket, "set", "-wu", "-t", `=${leadName()}:`, "remain-on-exit"]);
-    serve();
-    await untilAnswers();
-    await open();
-    tellLeadToExit();
-    await until(() => tabClosed());
-    expect(claudeLines()).toHaveLength(1);
   });
 
   // A lead sees only its own repository, so it mustn't act on another's threads or tasks.
