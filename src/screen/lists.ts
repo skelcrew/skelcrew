@@ -102,17 +102,27 @@ function issueGroups(db: Database, open: Open, threads: Known[]): Group[] {
   ]);
 }
 
-// Says whether the forge says a PR Skelcrew didn't open is approved, by its latest review that
-// approves or asks for changes, and every check passed.
+// Says whether the forge says a PR Skelcrew didn't open is approved and every check passed. As on
+// GitHub, each reviewer's latest approval or request for changes stands until a dismissal clears
+// it, and a comment changes nothing. The PR is approved when someone approves and nobody asks
+// for changes.
 function approvedOnForge(pr: Extract<Item, { kind: "pr" }>): boolean {
-  const verdicts = pr.reviews.filter((r) => ["approved", "changes requested"].includes(r.verdict));
+  const standing = new Map<string, string>();
+  for (const { author, verdict } of pr.reviews) {
+    const who = author?.login ?? "";
+    if (verdict === "dismissed") standing.delete(who);
+    else if (verdict !== "commented") standing.set(who, verdict);
+  }
+  const verdicts = [...standing.values()];
   return (
-    verdicts.at(-1)?.verdict === "approved" && pr.checks.every((check) => check.state === "passed")
+    verdicts.includes("approved") &&
+    !verdicts.includes("changes requested") &&
+    pr.checks.every((check) => check.state === "passed")
   );
 }
 
 // Returns the open repository's PRs, as `Ready to merge`, then `In review`. A PR's mark is ○
-// before its first review, ◐ while the rounds go on and ● once it is approved and its checks
+// before its first review, ◐ from the moment it runs while the rounds go on, and ● once it is approved and its checks
 // pass. A PR Skelcrew didn't open has no rounds, so it is ○ until the forge says it is approved
 // and its checks pass. A PR from a thread takes the thread's yellow when it needs you, or red
 // when it failed, and ends with its word. One with no thread ends with its author.
@@ -121,7 +131,9 @@ function prGroups(db: Database, open: Open, threads: Known[]): Group[] {
   const rows = openPrs(db, open.owner, open.repo).map((pr) => {
     const on = threads.find(({ thread }) => thread.pr === Number(pr.id));
     const ready = on ? on.word === "approved" : approvedOnForge(pr);
-    const sign = ready ? "●" : on && on.thread.review_round !== null ? "◐" : "○";
+    // A review under way counts as a round going on, the first one included.
+    const reviewed = on && (on.thread.review_round !== null || on.word === "reviewing");
+    const sign = ready ? "●" : reviewed ? "◐" : "○";
     const colour = !on ? null : on.thread.status === "failed" ? red : needing(on) ? yellow : null;
     const row: ListRow = {
       mark: [sign, colour],
@@ -213,36 +225,31 @@ export function entryCounts(db: Database, open: Open): EntryCount[] {
   const ours = count(threadGroups(threads, 0), "Needs you");
   const prs = count(repository ? prGroups(db, open, threads) : [], "Ready to merge");
   const needYou = ours.flagged === 1 ? "needs you" : "need you";
+  const issuesEntry: EntryCount = {
+    entry: "issues",
+    name: "Issues",
+    total: issues.total,
+    note: issues.flagged ? `${issues.flagged} new` : "",
+    warn: false,
+  };
+  const threadsEntry: EntryCount = {
+    entry: "threads",
+    name: "Threads",
+    total: ours.total,
+    note: ours.flagged ? `${ours.flagged} ${needYou}` : "",
+    warn: true,
+  };
+  const prsEntry: EntryCount = {
+    entry: "prs",
+    name: "PRs",
+    total: prs.total,
+    note: prs.flagged ? `${prs.flagged} ready` : "",
+    warn: true,
+  };
   return [
-    ...(repository && trackerOf(db, repository)
-      ? [
-          {
-            entry: "issues" as const,
-            name: "Issues",
-            total: issues.total,
-            note: issues.flagged ? `${issues.flagged} new` : "",
-            warn: false,
-          },
-        ]
-      : []),
-    {
-      entry: "threads",
-      name: "Threads",
-      total: ours.total,
-      note: ours.flagged ? `${ours.flagged} ${needYou}` : "",
-      warn: true,
-    },
-    ...(repository && forgeOf(db, repository)
-      ? [
-          {
-            entry: "prs" as const,
-            name: "PRs",
-            total: prs.total,
-            note: prs.flagged ? `${prs.flagged} ready` : "",
-            warn: true,
-          },
-        ]
-      : []),
+    ...(repository && trackerOf(db, repository) ? [issuesEntry] : []),
+    threadsEntry,
+    ...(repository && forgeOf(db, repository) ? [prsEntry] : []),
   ];
 }
 

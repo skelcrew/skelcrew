@@ -92,16 +92,26 @@ test("an issue whose thread is approved is full, and one whose thread is done is
   const sql = `${repository}
 ${itemSql("app", "task", 12, "Fix login", "2026-11-04T10:00:00Z")}
 ${itemSql("app", "task", 13, "Fix logout", "2026-11-04T10:00:00Z")}
+${itemSql("app", "task", 14, "Fix signup", "2026-11-03T10:00:00Z")}
 ${thread("12", ", needs_you, verdict", "'waiting', 1, 'approve'")}
-${thread("13", "", "'done'")}`;
+${thread("13", "", "'done'")}
+${thread("14", "", "'stopped'")}`;
   const { issues } = after(sql);
+  // A stopped thread still holds its issue, so the issue has started.
   expect(shape(issues)).toEqual([
     ["Not started", [["○", "app-13", "Fix logout"]]],
-    ["Started", [["●", "app-12", "Fix login", "approved"]]],
+    [
+      "Started",
+      [
+        ["●", "app-12", "Fix login", "approved"],
+        ["◐", "app-14", "Fix signup", "stopped"],
+      ],
+    ],
   ]);
   // The marks have no colour, and a word that needs you is yellow.
   expect(issues[1]?.rows[0]?.mark[1]).toBeNull();
   expect(issues[1]?.rows[0]?.ends[0]?.[1]).toBe(33);
+  expect(issues[1]?.rows[1]?.ends[0]?.[1]).toBe(90);
   expect(issues[1]?.rows[0]?.link).toBe("https://github.com/simon/app/issues/12");
 });
 
@@ -144,6 +154,70 @@ ${thread("14", ", pr", "'failed', 35")}`;
   expect(prs[1]?.rows.map((row) => row.mark[1])).toEqual([31, null, null]);
 });
 
+// Returns a review on a PR with no thread, by a reviewer, with a verdict.
+const review = (id: string, login: string, verdict: string) => ({
+  id,
+  text: "",
+  author: { login, bot: false, you: false },
+  verdict,
+  lines: [],
+});
+const passing = { checks: [{ name: "test", id: "1", state: "passed" }] };
+
+test("a PR with no thread is ready only when someone approves, nobody asks for changes, and checks pass", () => {
+  const pr = (id: number, more: object) =>
+    itemSql("app", "pr", id, `PR ${id}`, `2026-11-0${id}T10:00:00Z`, { ...passing, ...more });
+  const sql = `${repository}
+${pr(1, { reviews: [review("1", "ana", "approved")] })}
+${pr(2, { reviews: [review("1", "ana", "approved"), review("2", "ana", "dismissed")] })}
+${pr(3, { reviews: [review("1", "bob", "changes requested"), review("2", "ana", "approved")] })}
+${pr(4, { reviews: [review("1", "bob", "changes requested"), review("2", "bob", "approved")] })}
+${pr(5, { reviews: [review("1", "ana", "approved"), review("2", "ana", "commented")] })}
+${pr(6, { reviews: [review("1", "ana", "approved")], checks: [{ name: "test", id: "1", state: "failed" }] })}
+${pr(7, { reviews: [] })}`;
+  const { prs, entries } = after(sql);
+  expect(shape(prs)).toEqual([
+    [
+      "Ready to merge",
+      [
+        ["●", "app#5", "PR 5", ""],
+        ["●", "app#4", "PR 4", ""],
+        ["●", "app#1", "PR 1", ""],
+      ],
+    ],
+    [
+      "In review",
+      [
+        ["○", "app#7", "PR 7", ""],
+        ["○", "app#6", "PR 6", ""],
+        ["○", "app#3", "PR 3", ""],
+        ["○", "app#2", "PR 2", ""],
+      ],
+    ],
+  ]);
+  expect(entries.find((e) => e.entry === "prs")?.note).toBe("3 ready");
+});
+
+test("a PR from a thread is ○ before its first review, and ◐ once a review runs or has run", () => {
+  const sql = `${repository}
+${itemSql("app", "pr", 31, "Waiting", "2026-11-01T10:00:00Z")}
+${itemSql("app", "pr", 32, "Reviewing", "2026-11-02T10:00:00Z")}
+${itemSql("app", "pr", 33, "Fixing", "2026-11-03T10:00:00Z")}
+${thread("12", ", pr", "'working', 31")}
+${thread("13", ", pr, reviewing", "'waiting', 32, 'abc'")}
+${thread("14", ", pr, review_round, verdict", "'working', 33, 1, 'changes'")}`;
+  expect(shape(after(sql).prs)).toEqual([
+    [
+      "In review",
+      [
+        ["◐", "app#33", "Fixing", "working"],
+        ["◐", "app#32", "Reviewing", "reviewing"],
+        ["○", "app#31", "Waiting", "working"],
+      ],
+    ],
+  ]);
+});
+
 test("threads come as needs you, working, then stopped, with all THREADS hasn't room for", () => {
   const today = new Date(2026, 10, 13, 16, 0).getTime();
   const at = (day: number, hour: number) => new Date(2026, 10, day, hour, 32).getTime();
@@ -169,6 +243,13 @@ ${thread("15", ", title", "'failed', 'Broke'")}`;
   expect(threads.flatMap((g) => g.rows.map((row) => row.mark[1]))).toEqual([31, 33, 32, 90]);
   expect(threads.flatMap((g) => g.rows.map((row) => row.dim))).toEqual([false, false, false, true]);
   expect(threads[0]?.rows[1]?.session).toBe("app-t1");
+});
+
+test("while a review runs, a thread's harness is its reviewer's", () => {
+  const sql = `${repository} ${thread("12", ", harness, reviewing, reviewer", "'waiting', 'claude', 'abc', 'codex'")}`;
+  expect(shape(after(sql).threads)[0]?.[1]).toEqual([
+    ["○", "app-12", "", "reviewing", "codex", "#12", ""],
+  ]);
 });
 
 test("a change is shown by its clock time today and its date before, so it ticks only at midnight", () => {
