@@ -1,9 +1,10 @@
 // The top row of the screen. Above the sidebar, the header says Skelcrew, its version and, on a
 // remote, where it runs. Above the agent, a tab for each repository, then the strip, which says
 // what you are looking at: for a thread, its name, task, PR and checks, then its latest review,
-// and for a page, its row's name and title. The lead has none, as the sidebar says it all.
+// and for a page, its row's name and title. The lead and a list have none, as the sidebar and
+// the list say it all.
 import { fitted, removeControlCodes } from "./look.ts";
-import type { Link, Row, Tab } from "./rows.ts";
+import type { Row, Tab } from "./rows.ts";
 
 type Size = { left: number; width: number };
 
@@ -54,7 +55,7 @@ function aboutThread(row: Row, width: number): [string, string] {
 }
 
 // Returns the strip for a page: its row's name, and its title in what room is left.
-function aboutPage(page: Link, width: number): [string, string] {
+function aboutPage(page: { name: string; title: string }, width: number): [string, string] {
   const name = fitted(removeControlCodes(page.name), width);
   return [name, fitted(`  ${removeControlCodes(page.title)}`, width - Bun.stringWidth(name))];
 }
@@ -136,13 +137,13 @@ function drawTabs(tabs: Tab[], open: string, width: number): [string, number] {
   ];
 }
 
-// What the top row shows: the rows, the session on the right, the row of the page there, if that
-// is what shows, the tabs and the open one's owner/name, the remote Skelcrew runs on, if any, and
+// What the top row shows: the rows, the session on the right, the name and title of the issue or
+// PR whose page is there, if that is what shows, the tabs and the open one's owner/name, the remote Skelcrew runs on, if any, and
 // the version of the Skelcrew running here.
 export type Top = {
   rows: Row[];
   shown: string | null;
-  page: Link | null;
+  page: { name: string; title: string } | null;
   tabs: Tab[];
   open: string;
   where: string;
@@ -154,7 +155,7 @@ export type Top = {
 // Above the sidebar is the header, with the sidebar's edge carried up through the row, so the
 // edge runs from top to bottom. Above the agent are the tabs, then, dim and at the right end,
 // the strip: what you are looking at. The tabs come first, so the strip gives way before any
-// tab. A page shows its row, a thread its own strip, and the lead none. It reads nothing, so
+// tab. A page shows its row, a thread its own strip, and the lead and a list none. It reads nothing, so
 // what you see can be tested without a terminal.
 export function drawTop(top: Top, size: Size): string {
   const { left, width } = size;

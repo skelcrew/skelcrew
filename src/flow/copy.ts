@@ -77,8 +77,7 @@ export type Task = Extract<Item, { kind: "task" }>;
 // answered. For each kind in `completeKinds`, `items` holds every open item of that kind, so
 // an item of it in the copy that isn't among them is closed. A closed item is kept while a
 // thread that isn't over points to it, as its builder and reviewer still read its task. Also
-// saves how many tasks and PRs are open, for the sidebar's count of the rows it has no room
-// for. It is one transaction, so no reader sees half of it.
+// saves how many tasks and PRs are open with the repository. It is one transaction, so no reader sees half of it.
 export function saveItems(
   db: Database,
   owner: string,
@@ -110,7 +109,7 @@ export function saveItems(
           AND items.id = CAST((CASE items.kind WHEN 'task' THEN t.task ELSE t.pr END) AS TEXT))`,
       [owner, repo],
     );
-    // Count what is left open, for the sidebar.
+    // Count what is left open.
     db.run(
       `UPDATE repositories SET
         open_issues = (SELECT COUNT(*) FROM items i WHERE i.owner = repositories.owner

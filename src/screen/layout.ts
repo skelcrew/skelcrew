@@ -1,23 +1,27 @@
-// The sidebar as lines for its pane: the lead's row on top, then ISSUES, THREADS and PRS, and the
-// keys at the bottom. It reads nothing, so what you see can be tested without a terminal.
+// The sidebar as lines for its pane: the lead's row on top, then the entries Issues, Threads and
+// PRs, then THREADS, and the keys at the bottom. It reads nothing, so what you see can be tested
+// without a terminal.
+import type { Entry, EntryCount } from "./lists.ts";
 import {
   edge,
+  filled,
   fitted,
   grey,
-  onShade,
   pad,
   paint,
   removeControlCodes,
-  shade,
+  shaded,
+  tinted,
   white,
   yellow,
 } from "./look.ts";
-import { type Link, type List, type Lists, needing, type Row, threadMark } from "./rows.ts";
+import { needing, type Row, threadMark } from "./rows.ts";
 
 export type Size = { width: number; height: number };
-// One line of the sidebar, with the row it belongs to, if any, for a click. A line that `joins`
-// the sidebar's edge runs into it, as the lines between lists do.
-type Line = { text: string; row?: Row; link?: Link; joins?: boolean };
+// One line of the sidebar, with where a click on it goes, if anywhere: a row's session or an
+// entry's place. A line that `joins` the sidebar's edge runs into it, as the lines between the
+// parts do.
+type Line = { text: string; place?: string; joins?: boolean };
 
 // Where a name starts, past its mark.
 const indent = `${pad}  `;
@@ -31,17 +35,9 @@ export const titleRoom = (width: number) => Math.max(width - 1 - indent.length -
 // The keys you need most, at the bottom of the sidebar. The others are in Skelcrew's help.
 const hints = [`${pad}⌥↑↓ move`, `${pad}⌃Q quit`];
 
-// Returns a line with spaces added out to a width.
-const filled = (line: string, width: number) =>
-  `${line}${" ".repeat(Math.max(width - Bun.stringWidth(line), 0))}`;
-
-// Returns text in a colour, or, on the row you are looking at, the one that stands in for it on
-// the grey.
-const tinted = (here: boolean, code: number, text: string) =>
-  paint(here ? (onShade[code] ?? code) : code, text);
-
-// Returns a line with the grey behind it, out to the end of the row.
-const shaded = (line: string, width: number) => `\x1b[${shade}m${filled(line, width)}\x1b[49m`;
+// Returns the place that names an entry where the sidebar names a row by its session. tmux
+// changes a : in a session's name, so no session can be named so.
+export const entryPlace = (entry: Entry) => `:${entry}`;
 
 // Returns one row as two lines, each cut with … to stop at the padding. A thread's first line
 // is a mark and its short title, or its title when the lead gave it none, and its second, dim,
@@ -76,66 +72,20 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
   return here ? lines.map((line) => shaded(line, width)) : lines;
 }
 
-// Returns a row of ISSUES or PRS as two lines, each a terminal link and cut to stop at the
-// padding: its title, then, dim, its name and a PR's word, in the colours a thread gives that
-// word. A PR's mark comes before its title, outside the link. An issue has none, so its lines
-// start at the padding. Skelcrew may run on another machine than your browser, so your terminal
-// opens the link. The title comes from outside, so it is made safe. The one you are looking at
-// is shaded as a thread's row is.
-function linkLines(link: Link, here: boolean, width: number): string[] {
-  // Each part is cut to fit between where its line starts and the padding. The word shares
-  // the name's line, after a dot of three columns, and is yellow when its thread needs you.
-  const start = link.mark ? indent : pad;
-  const room = Math.max(width - start.length - pad.length, 0);
-  const title = fitted(removeControlCodes(link.title), room);
-  const name = fitted(link.name, room);
-  const word = link.word && fitted(link.word, room - Bun.stringWidth(name) - 3);
-  const about =
-    word && `${tinted(here, grey, " · ")}${tinted(here, link.needing ? yellow : grey, word)}`;
-  // The title is white on the row you are looking at, and dim for an issue that already has a
-  // thread. Both lines are the link, so either one opens it.
-  const heading = here ? paint(white, title) : link.dim ? paint(grey, title) : title;
-  const [top, bottom] = [heading, `${tinted(here, grey, name)}${about}`].map(
-    (text) => `\x1b]8;;${link.url}\x1b\\${text}\x1b]8;;\x1b\\`,
+// Returns an entry as one line: its name where a thread's title starts, and at the end, dim,
+// how many its list has, after its note, such as 4 new · 12. A note on what needs you is
+// yellow. The entry you are on is shaded across the whole width.
+function entryLine(entry: EntryCount, here: boolean, width: number): string {
+  // The count stops at the padding before the edge, and the name gives way to it.
+  const count = `${entry.note && " · "}${entry.total}`;
+  const end = `${entry.note}${count}`;
+  const name = fitted(entry.name, Math.max(width - indent.length - pad.length - end.length - 1, 0));
+  const gap = " ".repeat(
+    Math.max(width - indent.length - name.length - end.length - pad.length, 1),
   );
-  const mark = link.mark && `${pad}${tinted(here, link.mark[1], link.mark[0])} `;
-  const lines = [`${mark ?? pad}${top}`, `${start}${bottom}`];
-  return here ? lines.map((line) => shaded(line, width)) : lines;
-}
-
-// Returns what starts a list: its heading, dim, and the blank line that parts it from the rows.
-const listHeading = (heading: string): Line[] => [
-  { text: paint(grey, `${pad}${heading}`) },
-  { text: "" },
-];
-
-// Returns a list's lines in its share of the sidebar, `height` lines: its heading and a blank
-// line, as many rows as fit, then a count of the rest. Rows come with the dim ones last, so those
-// are the first to be left out. A share with room for just one row keeps the row, and the count
-// gives way.
-function listLines(
-  heading: string,
-  list: List,
-  shown: string | null,
-  height: number,
-  width: number,
-): Line[] {
-  const top = listHeading(heading);
-  // Each row takes two lines. When not all of them fit, a line is kept for the count of the
-  // rest, unless that would leave no row at all.
-  const fit = Math.floor((height - top.length) / 2);
-  const shownCount =
-    list.total > fit ? Math.max(Math.floor((height - top.length - 1) / 2), 1) : fit;
-  const links = list.links.slice(0, shownCount);
-  const rest = list.total - links.length;
-  // Cutting to the share is what drops the count when only one row fits.
-  return [
-    ...top,
-    ...links.flatMap((link) =>
-      linkLines(link, link.url === shown, width).map((text) => ({ text, link })),
-    ),
-    ...(rest > 0 ? [{ text: paint(grey, `${pad}+ ${rest} more`) }] : []),
-  ].slice(0, height);
+  const note = entry.note ? tinted(here, entry.warn ? yellow : grey, entry.note) : "";
+  const line = `${indent}${here ? paint(white, name) : name}${gap}${note}${tinted(here, grey, count)}`;
+  return here ? shaded(line, width) : line;
 }
 
 // Returns lines with blank ones added, out to a height.
@@ -160,15 +110,13 @@ function scrolled(blocks: Line[][], here: number, room: number): Line[] {
 // Returns the lines above the hints, and how many there can be. The hints take the bottom lines
 // unless that leaves no room for the whole row you are looking at. Then they give way, as the
 // rows are what you pick from and the keys are also in Skelcrew's help.
-// The lead's row comes first, with a line under it. Below it, the lists that show share the lines
-// left evenly, however full, so each list stays in the same place on screen. What doesn't divide
-// goes to THREADS, or to the first list when there is no THREADS. An empty list doesn't show, as
-// it says nothing. A terminal may be too short for a heading and a row in each share, or for your
-// row in THREADS. Then the lists go, and the lead and the threads fill the sidebar with no
-// heading, as they are what you move through.
+// The lead's row comes first, then the entries, then THREADS, which has the rest of the height
+// and scrolls in it. A terminal may be too short for the lead, the entries, THREADS' heading and
+// the row you are on. Then the entries and the heading go, and the lead and the threads fill the
+// sidebar with no heading, as they are what you move through.
 export function layout(
   rows: Row[],
-  lists: Lists,
+  entries: EntryCount[],
   shown: string | null,
   size: Size,
 ): { lines: Line[]; room: number } {
@@ -176,15 +124,15 @@ export function layout(
   // header above the sidebar and read as part of it. Clicks find rows in these same lines. Like
   // the hints, it gives way on a sidebar too short for it and the whole row you are looking at,
   // which is two lines.
-  if (size.height <= rowHeight) return layoutBelowBlank(rows, lists, shown, size);
-  const below = layoutBelowBlank(rows, lists, shown, { ...size, height: size.height - 1 });
+  if (size.height <= rowHeight) return layoutBelowBlank(rows, entries, shown, size);
+  const below = layoutBelowBlank(rows, entries, shown, { ...size, height: size.height - 1 });
   return { lines: [{ text: "" }, ...below.lines], room: below.room + 1 };
 }
 
 // Lays out the lines below the blank line at the sidebar's top, as layout describes.
 function layoutBelowBlank(
   rows: Row[],
-  lists: Lists,
+  entries: EntryCount[],
   shown: string | null,
   size: Size,
 ): { lines: Line[]; room: number } {
@@ -192,62 +140,42 @@ function layoutBelowBlank(
   // still fits above them.
   const width = size.width - 1;
   const linesOf = (row: Row) =>
-    rowLines(row, row.session === shown, width).map((text) => ({ text, row }));
+    rowLines(row, row.session === shown, width).map((text) => ({ text, place: row.session }));
   const blocks = rows.map(linesOf);
   const here = rows.findIndex((row) => row.session === shown);
   const room = size.height >= rowHeight + hints.length ? size.height - hints.length : size.height;
-  // The lead is the row with no status of its own.
+  // The lead is the row with no status of its own, and THREADS has the rest.
   const lead = rows.filter((row) => row.status === null).flatMap(linesOf);
-  const threads = rows.filter((row) => row.status !== null).map(linesOf);
-  const shownThread = rows
-    .filter((row) => row.status !== null)
-    .findIndex((row) => row.session === shown);
-  const issues = lists.issues?.links.length ? lists.issues : null;
-  const prs = lists.prs?.links.length ? lists.prs : null;
-  // Each list that shows, as what draws it in a number of lines. THREADS scrolls to keep yours
-  // in view.
-  const parts = [
-    ...(issues ? [(height: number) => listLines("Issues", issues, shown, height, width)] : []),
-    ...(threads.length > 0
-      ? [
-          (height: number) => [
-            ...listHeading("Threads"),
-            ...scrolled(threads, shownThread, height - 2),
-          ],
-        ]
-      : []),
-    ...(prs ? [(height: number) => listLines("PRs", prs, shown, height, width)] : []),
-  ];
-  // One line goes under the lead, and one between each list and the next. What doesn't divide
-  // goes to THREADS, or to the first list without it.
-  const below = room - lead.length - (lead.length > 0 ? parts.length : parts.length - 1);
-  const share = Math.floor(below / parts.length);
-  const remainderIndex = threads.length > 0 && issues ? 1 : 0;
-  const heights = parts.map((_, index) =>
-    index === remainderIndex ? below - (parts.length - 1) * share : share,
-  );
-  // Too short for a heading and a row in each list, or for your row in THREADS: no lists.
-  const threadsFit = threads.length === 0 || (heights[remainderIndex] ?? 0) >= 2 + rowHeight;
-  if (parts.length === 0 || share < 4 || !threadsFit)
-    return { lines: scrolled(blocks, here, room), room };
-  // Each list is filled out to its share, so the list after it always starts in the same place.
+  const threads = rows.filter((row) => row.status !== null);
+  const shownThread = threads.findIndex((row) => row.session === shown);
   const divider = { text: paint(edge, "─".repeat(Math.max(width, 0))), joins: true };
-  const sections = [
-    ...(lead.length > 0 ? [lead] : []),
-    ...parts.map((part, index) => padded(part(heights[index] ?? share), heights[index] ?? share)),
+  const heading = threads.length > 0 ? [{ text: paint(grey, `${pad}Threads`) }, { text: "" }] : [];
+  const top: Line[] = [
+    ...lead,
+    ...(lead.length > 0 && entries.length > 0 ? [divider] : []),
+    ...entries.map((entry) => {
+      const place = entryPlace(entry.entry);
+      return { text: entryLine(entry, place === shown, width), place };
+    }),
+    ...(heading.length > 0 ? [divider, ...heading] : []),
   ];
-  const lines = sections.flatMap((section, index) => (index > 0 ? [divider, ...section] : section));
-  return { lines, room };
+  // Too short for all of that and the row you are on, or a row when you are on none of them:
+  // the lead and the threads alone.
+  const left = room - top.length;
+  if (left < (threads.length > 0 ? rowHeight : 0))
+    return { lines: scrolled(blocks, here, room), room };
+  const below = scrolled(threads.map(linesOf), Math.max(shownThread, 0), left);
+  return { lines: [...top, ...below], room };
 }
 
-// Returns the whole sidebar as lines, given the rows, the lists, what is on the right, as a
-// session or a link's url, and the sidebar's size. It reads nothing, so what you see can be
-// tested without a terminal. Every line fills the pane and ends with the sidebar's edge, in the
-// last column. tmux's own border beside it is blank, which leaves a gap before the agent.
-export function draw(rows: Row[], lists: Lists, shown: string | null, size: Size): string {
-  // The hints are cut to the sidebar's width, and come below the lists only when the layout left
+// Returns the whole sidebar as lines, given the rows, the entries, what is on the right, as a
+// row's session or an entry's place, and the sidebar's size. It reads nothing, so what you see
+// can be tested without a terminal. Every line fills the pane and ends with the sidebar's edge,
+// in the last column. tmux's own border beside it is blank, which leaves a gap before the agent.
+export function draw(rows: Row[], entries: EntryCount[], shown: string | null, size: Size): string {
+  // The hints are cut to the sidebar's width, and come below the rest only when the layout left
   // room for them.
-  const { lines, room } = layout(rows, lists, shown, size);
+  const { lines, room } = layout(rows, entries, shown, size);
   const width = size.width - 1;
   const keys = hints.map((hint) => ({
     text: paint(grey, hint.slice(0, Math.max(width - pad.length, 0))),
@@ -259,9 +187,9 @@ export function draw(rows: Row[], lists: Lists, shown: string | null, size: Size
     .join("\n");
 }
 
-// Returns the lines that go above the lists for a notice, such as a release installed in the
+// Returns the lines that go above the rest of the sidebar for a notice, such as a release installed in the
 // background, or none without one. Cut at words to fit a sidebar `width` columns wide, and
-// parted from the lists by a blank line. Each fills the pane and ends with the sidebar's edge.
+// parted from what follows by a blank line. Each fills the pane and ends with the sidebar's edge.
 export function noticeLines(notice: string, width: number): string[] {
   if (!notice) return [];
   const room = Math.max(width - 1 - 2 * pad.length, 1);

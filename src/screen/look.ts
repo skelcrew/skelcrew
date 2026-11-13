@@ -39,3 +39,16 @@ export function fitted(text: string, width: number): string {
   }
   return width > 0 ? `${cut}…` : "";
 }
+
+// Returns a line with spaces added out to a width.
+export const filled = (line: string, width: number) =>
+  `${line}${" ".repeat(Math.max(width - Bun.stringWidth(line), 0))}`;
+
+// Returns text in a colour, or, on the row you are looking at, the one that stands in for it on
+// the grey.
+export const tinted = (here: boolean, code: number, text: string) =>
+  paint(here ? (onShade[code] ?? code) : code, text);
+
+// Returns a line with the grey behind it, out to the end of the row.
+export const shaded = (line: string, width: number) =>
+  `\x1b[${shade}m${filled(line, width)}\x1b[49m`;

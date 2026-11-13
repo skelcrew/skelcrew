@@ -437,9 +437,9 @@ esac`,
   });
 });
 
-// A page reads Skelcrew's copy in your own terminal, so an agent has nothing to ask the daemon.
-test("an agent can't run the page command", async () => {
-  const refused = await skel(["page", "https://github.com/simon/app/issues/31"], {
+// A list reads Skelcrew's copy in your own terminal, so an agent has nothing to ask the daemon.
+test("an agent can't run the list command", async () => {
+  const refused = await skel(["list", "a", "s", "issues", "", "simon/app"], {
     SKELCREW_SANDBOX: "1",
   });
   expect(refused.err).toContain("your own terminal");

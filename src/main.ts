@@ -24,7 +24,7 @@ const agentRefusals: Record<string, string> = {
   "repo trust": "trusting a repository",
   attach: "attaching to a thread",
   sidebar: "showing the sidebar",
-  page: "showing a page",
+  list: "showing a list",
   "first-run": "setting up this machine",
   "remote add": "setting up a machine",
   "plugin install": "installing a plugin",
@@ -134,13 +134,11 @@ async function machineCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
-// Runs a pane of the screen: the sidebar or a page. The screen starts these, not people, so
-// usage leaves them out.
+// Runs a pane of the screen: the sidebar, or a list and its pages on the right. The screen
+// starts these, not people, so usage leaves them out.
 async function screenCommand(args: string[]): Promise<void> {
   const [command, ...rest] = args;
-  const { openDb } = await import("./db.ts");
-  const { readPage } = await import("./flow/page.ts");
-  const { runPage } = await import("./screen/page.ts");
+  const { runPane } = await import("./screen/pane.ts");
   const { runSidebar } = await import("./screen/sidebar.ts");
   // `where` is the remote Skelcrew runs on, and empty on this machine, so check it against
   // undefined.
@@ -151,10 +149,16 @@ async function screenCommand(args: string[]): Promise<void> {
       return;
     }
   }
-  if (command === "page" && rest.length === 2) {
-    const [url, where] = rest;
-    if (url && where !== undefined) {
-      await runPage(url, where, () => readPage(openDb(), url));
+  if (command === "list" && rest.length === 5) {
+    const [agents, session, entry, where, repository] = rest;
+    if (
+      agents &&
+      session &&
+      (entry === "issues" || entry === "threads" || entry === "prs") &&
+      where !== undefined &&
+      repository
+    ) {
+      await runPane(agents, session, entry, where, repository);
       return;
     }
   }
@@ -411,9 +415,9 @@ async function runCommand(args: string[]): Promise<void> {
     console.log(versionLine());
     return;
   }
-  // Sidebars and pages skip the out-of-date check. The Skelcrew that started them already
+  // Sidebars and lists skip the out-of-date check. The Skelcrew that started them already
   // passed it, and tmux may hand them another laptop's build, which would make them refuse.
-  const onScreen = command === "sidebar" || command === "page";
+  const onScreen = command === "sidebar" || command === "list";
   if (!onScreen && outOfDate()) process.exit(outdated);
   if (args.length === 1 && ["--help", "-h", "help"].includes(command ?? "")) {
     console.log(help());
@@ -453,7 +457,7 @@ async function runCommand(args: string[]): Promise<void> {
   // Commands that run here load what they need only from this point on, so sc --remote
   // starts quickly and loads no part of the daemon on your laptop.
   const { setupDone } = await import("./machine/setup.ts");
-  // On a remote, refuse to run until the machine is set up. Sidebars, pages and agents skip
+  // On a remote, refuse to run until the machine is set up. Sidebars, lists and agents skip
   // this: they can inherit the remote's name from whoever started tmux, and an agent's sandbox
   // hides what setupDone reads.
   const remoteName = process.env.SKELCREW_REMOTE_NAME;
@@ -473,7 +477,7 @@ async function runCommand(args: string[]): Promise<void> {
     case "serve":
       return machineCommand(words);
     case "sidebar":
-    case "page":
+    case "list":
       return screenCommand(words);
     case "repo":
     case "init":

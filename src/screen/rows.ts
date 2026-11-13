@@ -1,14 +1,11 @@
 // The rows: what the sidebar, the strip and the tabs have to show, read from the database. The
-// open repository's lead and threads, with the word that says what each is doing, its ISSUES
-// and PRS as links, and a tab for each repository.
+// open repository's lead and threads, with the word that says what each is doing, and a tab for
+// each repository.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
-import { Item } from "../flow/copy.ts";
 import { pastRoundLimit } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
-import { repositories } from "../flow/repo.ts";
 import { fullNameOf, needsYou, Thread, threadName } from "../flow/thread.ts";
-import { forgeOf, trackerOf } from "../plugins/ask.ts";
 import { green, grey, red, yellow } from "./look.ts";
 
 // One row of the sidebar, with what the strip says of the agent too. The lead has no status of
@@ -32,28 +29,11 @@ export type Row = {
 };
 // A sign, and the colour it is drawn in.
 type Mark = [string, number];
-// One row of ISSUES or PRS: a link to the issue or PR, and a page you can land on. `word` is
-// the word of the thread a PR comes from, and `needing` says whether that thread needs you. A
-// PR has a mark, and an issue has none, so it starts where the headings do.
-export type Link = {
-  name: string;
-  title: string;
-  url: string;
-  word: string;
-  needing: boolean;
-  dim: boolean;
-  mark: Mark | null;
-};
 // The repository open in the sidebar, by its owner and name, and its lead's session.
 export type Open = { owner: string; repo: string; lead: string };
 // A repository's tab: its name in Skelcrew, its owner/name, and how many of its threads need you
 // or failed.
 export type Tab = { name: string; fullName: string; count: number };
-// The rows to show, and how many are open in all, which can be far more.
-export type List = { links: Link[]; total: number };
-// ISSUES is there when the repository has a tracker, and PRS when it has a forge.
-export type Lists = { issues: List | null; prs: List | null };
-
 // Each thread's mark is a circle in its status's colour. Waiting and stopped look alike, and the
 // word under the name tells every status apart, so nothing is told by colour alone.
 const marks: Record<Thread["status"], Mark> = {
@@ -63,16 +43,12 @@ const marks: Record<Thread["status"], Mark> = {
   failed: ["●", red],
   done: ["●", green],
 };
-// The mark of a PR with no thread. It has nothing to say, so it looks like a thread that is
-// waiting.
-const noThreadMark: Mark = ["○", grey];
-
 // Says whether a thread shows as needing you. A thread that failed can still have its needs you
 // flag, and its word says failed.
 export const needing = (row: Pick<Row, "status" | "needsYou">) =>
   row.needsYou && row.status !== "failed";
 
-// Returns the mark of a row of THREADS, which a PR from that thread shows too.
+// Returns the mark of a row of THREADS, which the list of threads shows too.
 export function threadMark(row: Pick<Row, "status" | "needsYou">): Mark {
   if (row.status === null) return ["◆", grey];
   return needing(row) ? ["●", yellow] : marks[row.status];
@@ -182,70 +158,6 @@ export function sidebarRows(
       };
     }),
   ];
-}
-
-// What a row of ISSUES or PRS holds as the database gives it, checked, since it is read from disk.
-const ListRow = z.object({
-  name: z.string(),
-  threaded: z.coerce.boolean(),
-  stopped: z.coerce.boolean(),
-  item: z.string(),
-});
-
-// Returns the open repository's ISSUES and PRS from Skelcrew's copy, up to `most` rows of each.
-// A list is null when the repository has no tracker or forge for it. It reads only the database
-// and never asks the tracker, as it runs each second. Rows are newest first. Issues that have a
-// thread go last, as work on them is under way, and so do PRs whose thread is stopped, as those
-// need nothing. A thread that is done is over, so its issue counts as waiting again. A PR from a
-// thread takes the word and mark of its row. A stopped thread has no row, so its PR says stopped
-// itself, with a stopped thread's mark. The lists and the rows are of the open repository
-// alone, so a PR's number is enough to find its thread.
-export function sidebarLists(db: Database, rows: Row[], most: number, open: Open): Lists {
-  // Returns one list, of tasks or PRs, with the column that counts all of its kind.
-  const readList = (kind: "task" | "pr", column: string): List => {
-    // The open items of one kind, and for a task whether it has a thread that isn't done, which
-    // puts it last and dims it. A PR whose thread is stopped goes last, but isn't dim, as its
-    // thread's word already says stopped.
-    const found = db.query(`SELECT r.name, i.item,
-        EXISTS (SELECT 1 FROM threads t WHERE i.kind = 'task' AND t.owner = i.owner
-          AND t.repo = i.repo AND CAST(t.task AS TEXT) = i.id AND t.status != 'done') AS threaded,
-        EXISTS (SELECT 1 FROM threads t WHERE i.kind = 'pr' AND t.owner = i.owner
-          AND t.repo = i.repo AND CAST(t.pr AS TEXT) = i.id AND t.status = 'stopped') AS stopped
-      FROM items i JOIN repositories r ON r.owner = i.owner AND r.repo = i.repo
-      WHERE i.kind = ? AND i.state = 'open' AND i.owner = ? AND i.repo = ?
-      ORDER BY threaded, stopped, i.created DESC, length(i.id) DESC, i.id DESC LIMIT ?`);
-    // Each is named as Skelcrew names it, app-12 for an issue and app#34 for a PR. A PR takes the
-    // word and mark of its thread's row, if it has one.
-    const links = found.all(kind, open.owner, open.repo, most).map((saved) => {
-      const { name, threaded, stopped, item } = ListRow.parse(saved);
-      const { id, title, link } = Item.parse(JSON.parse(item));
-      const thread = rows.find((row) => row.pr === Number(id));
-      const pr = kind === "pr";
-      return {
-        name: pr ? `${name}#${id}` : `${name}-${id}`,
-        title,
-        url: link,
-        word: thread?.word ?? (stopped ? "stopped" : ""),
-        needing: thread !== undefined && needing(thread),
-        dim: threaded,
-        mark: !pr ? null : thread ? threadMark(thread) : stopped ? marks.stopped : noThreadMark,
-      };
-    });
-    // The total is every open one in Skelcrew's copy, counted when the copy was saved, while the
-    // rows stop at `most`.
-    const sum = db
-      .query(
-        `SELECT COALESCE(SUM(${column}), 0) AS total FROM repositories WHERE owner = ? AND repo = ?`,
-      )
-      .get(open.owner, open.repo);
-    return { links, total: z.object({ total: z.number() }).parse(sum).total };
-  };
-  // A list is there only when the repository has a tracker for ISSUES or a forge for PRS.
-  const repository = repositories(db).find((r) => r.owner === open.owner && r.repo === open.repo);
-  return {
-    issues: repository && trackerOf(db, repository) ? readList("task", "open_issues") : null,
-    prs: repository && forgeOf(db, repository) ? readList("pr", "open_prs") : null,
-  };
 }
 
 // What a tab's row holds as the database gives it, checked, since it is read from disk.

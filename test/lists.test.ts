@@ -4,7 +4,14 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { changedAt, type EntryCount, type Group } from "../src/screen/lists.ts";
+import {
+  changedAt,
+  type Entry,
+  type EntryCount,
+  type Group,
+  type ListRow,
+} from "../src/screen/lists.ts";
+import { drawList } from "../src/screen/pane.ts";
 import { fakePlugin, itemSql, source } from "./harness.ts";
 
 let home = "";
@@ -212,4 +219,140 @@ INSERT INTO threads (owner, repo, task, folder, branch, status)
   VALUES ('simon', 'site', 1, 'site-1', 'skelcrew/1', 'working');`;
   const { issues, threads, prs } = after(sql);
   expect([issues, threads, prs]).toEqual([[], [], []]);
+});
+
+// A row of a list, as the database would give it, with more as given.
+const listRow = (name: string, title: string, more: Partial<ListRow> = {}): ListRow => ({
+  mark: ["○", null],
+  name,
+  title,
+  ends: [],
+  link: `https://github.com/simon/app/issues/${name.slice(4)}`,
+  session: null,
+  dim: false,
+  ...more,
+});
+const issues: Group[] = [
+  { heading: "Not started", rows: [listRow("app-31", "Add CSV export")] },
+  {
+    heading: "Started",
+    rows: [listRow("app-9", "Fix login", { mark: ["◐", null], ends: [["working", 90]] })],
+  },
+];
+// The list's lines as you read them, without colours or what fills them out.
+const lines = (groups: Group[], here: number, width = 60, entry: Entry = "issues") =>
+  drawList(groups, entry, here, width).map(({ text }) => Bun.stripANSI(text).trimEnd());
+
+test("a list starts with its keys, then each group under its heading, with the ends lined up", () => {
+  // The word ends two columns before the edge of a pane 60 wide.
+  expect(lines(issues, 0)).toEqual([
+    "  ↑↓ move  ⏎ open",
+    "",
+    "  Not started",
+    "  ○ app-31  Add CSV export",
+    "",
+    "  Started",
+    "  ◐ app-9   Fix login                              working",
+  ]);
+  const drawn = drawList(issues, "issues", 0, 60).map(({ text }) => text);
+  expect(drawn[0]).toContain("\x1b[90m  ↑↓ move  ⏎ open");
+  expect(drawn[2]).toContain("\x1b[90m  Not started");
+});
+
+test("the threads' ends line up in columns: word, harness, issue and PR, and when it changed", () => {
+  const threads: Group[] = [
+    {
+      heading: "Working",
+      rows: [
+        listRow("app-12", "Fix login", {
+          ends: [
+            ["working", 90],
+            ["codex", 90],
+            ["#12 #31", 90],
+            ["14:32", 90],
+          ],
+          link: null,
+          session: "app-12",
+        }),
+        listRow("app-t1", "Tidy up", {
+          ends: [
+            ["question", 33],
+            ["claude", 90],
+            ["", 90],
+            ["12 Nov", 90],
+          ],
+          link: null,
+          session: "app-t1",
+        }),
+      ],
+    },
+  ];
+  expect(lines(threads, 0, 70, "threads").slice(3)).toEqual([
+    "  ○ app-12  Fix login              working   codex   #12 #31  14:32",
+    "  ○ app-t1  Tidy up                question  claude           12 Nov",
+  ]);
+});
+
+test("the row you are on is shaded across the whole width, in the light colours", () => {
+  const drawn = drawList(issues, "issues", 1, 60);
+  const shaded = drawn.filter(({ text }) => text.includes("48;5;238"));
+  expect(shaded.map(({ row }) => row)).toEqual([1]);
+  expect(Bun.stringWidth(shaded[0]?.text ?? "")).toBe(60);
+  expect(shaded[0]?.text).toContain("1;38;5;231");
+  expect(shaded[0]?.text).not.toContain("\x1b[90m");
+});
+
+test("each line says which row a click on it opens, and other lines open nothing", () => {
+  expect(drawList(issues, "issues", 0, 60).map(({ row }) => row)).toEqual([
+    null,
+    null,
+    null,
+    0,
+    null,
+    null,
+    1,
+  ]);
+});
+
+test("an issue's or PR's row is a terminal link, and a thread's isn't", () => {
+  const drawn = drawList(issues, "issues", 0, 60).map(({ text }) => text);
+  expect(drawn[3]).toContain("\x1b]8;;https://github.com/simon/app/issues/31\x1b\\");
+  const thread = listRow("app-12", "Fix", { link: null, session: "app-12" });
+  const row = drawList([{ heading: "Working", rows: [thread] }], "threads", 0, 60)[3];
+  expect(row?.text).not.toContain("\x1b]8;");
+});
+
+test("a title is cut with … only on a pane too narrow for it, and the ends stay", () => {
+  const long = "A title long enough to need cutting on a narrow pane";
+  const groups = [
+    { heading: "Started", rows: [listRow("app-9", long, { ends: [["working", 90]] })] },
+  ];
+  expect(lines(groups, 0, 90)[3]).toContain(long);
+  const narrow = lines(groups, 0, 40)[3] ?? "";
+  expect(narrow).toStartWith("  ○ app-9  A title");
+  expect(narrow).toEndWith("…  working");
+  expect(Bun.stringWidth(narrow)).toBe(38);
+});
+
+test("a stopped thread's row is dim, as opening it does nothing", () => {
+  const stopped = listRow("app-13", "Old", { mark: ["○", 90], dim: true, link: null });
+  const row = drawList([{ heading: "Stopped", rows: [stopped] }], "threads", -1, 60)[3];
+  expect(row?.text).toContain("\x1b[90mapp-13");
+  expect(row?.text).toContain("\x1b[90mOld");
+});
+
+test("a list with nothing in it says so", () => {
+  expect(lines([], 0, 60, "issues")).toEqual(["", "  No open issues"]);
+  expect(lines([], 0, 60, "prs")).toEqual(["", "  No open PRs"]);
+  expect(lines([], 0, 60, "threads")).toEqual(["", "  No threads"]);
+});
+
+test("control codes from outside never reach your terminal", () => {
+  const bad = listRow("app-1", "Bad\x1b[2J\x07title", { ends: [["al\x1b]0;x\x07ice", 90]] });
+  const text = drawList([{ heading: "In review", rows: [bad] }], "prs", 0, 60)
+    .map((line) => line.text)
+    .join("\n");
+  expect(text).not.toContain("\x1b[2J");
+  expect(text).not.toContain("\x07");
+  expect(text).not.toContain("\x1b]0;");
 });
