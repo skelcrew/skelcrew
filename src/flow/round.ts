@@ -10,7 +10,7 @@ import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
 import { threadTask } from "./copy.ts";
-import { afterReview, pastLimit } from "./decide.ts";
+import { afterReview, pastRoundLimit } from "./decide.ts";
 import { pushCommit } from "./git.ts";
 import { typeLeadNotes } from "./lead.ts";
 import { review } from "./reviewer.ts";
@@ -246,7 +246,7 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
   if (thread.status === "stopped")
     throw new Error("this thread was stopped, so Skelcrew won't push it");
   // Past the round limit the thread still needs you, whatever the builder does.
-  const needs_you = pastLimit(thread, maxRounds);
+  const needs_you = pastRoundLimit(thread, maxRounds);
   record(
     db,
     folder,
@@ -304,7 +304,7 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
     throw new Error(`${name} has no submitted commit to review yet`);
   const { maxRounds } = threadConfig(thread);
   // Past the round limit the thread still needs you, whatever the review says.
-  const needs_you = pastLimit(thread, maxRounds);
+  const needs_you = pastRoundLimit(thread, maxRounds);
   // The commit is saved as under review at once, so a second sc review asked before the
   // check is pending again is refused rather than cancelling this one.
   const change = {

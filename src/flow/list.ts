@@ -1,5 +1,5 @@
 // What Skelcrew shows you about its work: repositories for sc repo ls, threads for sc ps,
-// open tasks for sc task ls and one task for sc task show, as short text for a terminal
+// open tasks for sc issue ls and one task for sc issue show, as short text for a terminal
 // or JSON for tools.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
@@ -69,9 +69,11 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
   });
 }
 
-// An open task as sc task ls shows it, with how its thread stands, or null with no thread.
+// An open task as sc issue ls shows it, with how its thread stands, or null with no thread.
+// `issue` is its name, such as app-12. The key says issue, as the commands do, and is always
+// one in the tracker: a thread with no issue, such as app-t1, is never listed here.
 export const TaskRow = z.object({
-  task: z.string(),
+  issue: z.string(),
   title: z.string(),
   thread: z.object({ status: Thread.shape.status, needsYou: z.boolean() }).nullable(),
 });
@@ -92,7 +94,7 @@ function threadStatusOf(
 }
 
 // Returns the open tasks of every repository, or of one, newest first, with the thread on
-// each one that has one, for sc task ls. They come from Skelcrew's copy, so the tracker isn't
+// each one that has one, for sc issue ls. They come from Skelcrew's copy, so the tracker isn't
 // asked.
 export function listTasks(db: Database, repository?: string): TaskRow[] {
   const chosen = repository ? [findRepository(db, repository)] : repositories(db);
@@ -102,7 +104,7 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
     .flatMap((r) =>
       openTasks(db, r.owner, r.repo).map((task) => ({
         created: task.created,
-        task: `${r.name}-${task.id}`,
+        issue: `${r.name}-${task.id}`,
         title: task.title,
         thread: threadStatusOf(db, r.owner, r.repo, task.id),
       })),
@@ -111,9 +113,9 @@ export function listTasks(db: Database, repository?: string): TaskRow[] {
     .map(({ created, ...task }) => task);
 }
 
-// One task as sc task show shows it.
+// One task as sc issue show shows it, named under `issue` as in sc issue ls.
 export const TaskView = z.object({
-  task: z.string(),
+  issue: z.string(),
   title: z.string(),
   body: z.string(),
   thread: TaskRow.shape.thread,
@@ -121,12 +123,12 @@ export const TaskView = z.object({
 export type TaskView = z.infer<typeof TaskView>;
 
 // Returns one task's title and body, which is all its builder sees, with the thread on it if
-// it has one, for sc task show. It comes from Skelcrew's copy, so the tracker isn't asked.
+// it has one, for sc issue show. It comes from Skelcrew's copy, so the tracker isn't asked.
 export function showTask(db: Database, repository: string, task: string): TaskView {
   const r = findRepository(db, repository);
   const { title, body } = taskOf(db, r.owner, r.repo, task);
   return {
-    task: `${r.name}-${task}`,
+    issue: `${r.name}-${task}`,
     title,
     body,
     thread: threadStatusOf(db, r.owner, r.repo, task),
@@ -176,29 +178,29 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
     );
 }
 
-// Prints open tasks for sc task ls: as JSON for tools, or else as a table whose thread
+// Prints open tasks for sc issue ls: as JSON for tools, or else as a table whose thread
 // column is empty for a task with no thread.
 export function printTasks(tasks: TaskRow[], json: boolean): void {
   if (json) console.log(JSON.stringify(tasks));
-  else if (tasks.length === 0) console.log("There are no open tasks.");
+  else if (tasks.length === 0) console.log("There are no open issues.");
   else
     table(
-      ["TASK", "THREAD", "TITLE"],
-      tasks.map(({ task, title, thread }) => {
+      ["ISSUE", "THREAD", "TITLE"],
+      tasks.map(({ issue, title, thread }) => {
         const status = thread ? `${thread.status}${thread.needsYou ? ", needs you" : ""}` : "";
-        return [task, status, title];
+        return [issue, status, title];
       }),
     );
 }
 
-// Prints one task for sc task show: as JSON for tools, or else its name and title, the
+// Prints one task for sc issue show: as JSON for tools, or else its name and title, the
 // thread on it if it has one, and its body after a blank line.
 export function printTask(task: TaskView, json: boolean): void {
   if (json) {
     console.log(JSON.stringify(task));
     return;
   }
-  console.log(`${task.task}  ${task.title}`);
+  console.log(`${task.issue}  ${task.title}`);
   if (task.thread)
     console.log(`Thread: ${task.thread.status}${task.thread.needsYou ? ", needs you" : ""}`);
   if (task.body) console.log(`\n${task.body.trimEnd()}`);

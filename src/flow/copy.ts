@@ -1,5 +1,5 @@
 // Skelcrew's copy of each repository's open tasks, from its tracker, and open PRs, from its forge,
-// as items. The sidebar, pages, sc task and a builder's first message read it, so none of
+// as items. The sidebar, pages, sc issue and a builder's first message read it, so none of
 // them waits on the tracker.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
@@ -129,14 +129,14 @@ const parseItems = (rows: unknown[]) =>
   rows.map((row) => Item.parse(JSON.parse(z.object({ item: z.string() }).parse(row).item)));
 
 // Returns a task from the copy, open or kept for its thread, for its builder, its reviewer and
-// sc task show. Throws when the copy doesn't have it.
+// sc issue show. Throws when the copy doesn't have it.
 export function taskOf(db: Database, owner: string, repo: string, task: string): Task {
   const [found] = parseItems(
     db
       .query("SELECT item FROM items WHERE owner = ? AND repo = ? AND kind = 'task' AND id = ?")
       .all(owner, repo, task),
   );
-  if (found?.kind !== "task") throw new Error(`there is no open task ${task} in ${owner}/${repo}`);
+  if (found?.kind !== "task") throw new Error(`there is no open issue ${task} in ${owner}/${repo}`);
   return found;
 }
 
@@ -157,7 +157,7 @@ export function prOf(
   return found?.kind === "pr" ? found : null;
 }
 
-// Returns a repository's open tasks, newest first, for sc task ls and for starting a thread
+// Returns a repository's open tasks, newest first, for sc issue ls and for starting a thread
 // on each one labeled to start.
 export function openTasks(db: Database, owner: string, repo: string): Task[] {
   // Tasks made at the same moment sort by ID as numbers, as a longer number is the larger one.

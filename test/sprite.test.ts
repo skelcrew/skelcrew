@@ -233,12 +233,12 @@ test("a command reaches the Sprite exactly as typed", async () => {
   existing("demo");
   const body = "Don't crash; it's \"bad\" when $HOME * `x` \\ happens\nTwice.";
   const run = await skel(
-    ["--remote", "sprite:demo", "task", "create", "app", "Fix it", body, ""],
+    ["--remote", "sprite:demo", "issue", "create", "app", "Fix it", body, ""],
     "",
     checkout("simon/app"),
   );
   expect(run.out).toBe(
-    `Skelcrew on the Sprite got 6 arguments\n[task]\n[create]\n[app]\n[Fix it]\n[${body}]\n[]\n`,
+    `Skelcrew on the Sprite got 6 arguments\n[issue]\n[create]\n[app]\n[Fix it]\n[${body}]\n[]\n`,
   );
 });
 

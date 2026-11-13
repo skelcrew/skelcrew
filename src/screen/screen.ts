@@ -1,7 +1,7 @@
 // The screen: the sidebar on the left of your terminal, with the agent or page you are looking
 // at on the right and the strip above it. It is a second tmux server, one session per open
 // terminal, ended when you leave.
-import { applyConfig, cleanEnv, screenSocket } from "../agents/tmux.ts";
+import { applyConfig, envWithoutTmux, screenSocket } from "../agents/tmux.ts";
 import { windowTitle } from "../say.ts";
 import { mainFile, singleFile } from "../version.ts";
 
@@ -45,6 +45,8 @@ const config = [
   ["bind", "-n", "M-S-Down", "send-keys", "-t", ":.0", "M-S-Down"],
   ["bind", "-n", "M-Left", "send-keys", "-t", ":.0", "M-Left"],
   ["bind", "-n", "M-Right", "send-keys", "-t", ":.0", "M-Right"],
+  ["bind", "-n", "M-S-Left", "send-keys", "-t", ":.0", "M-S-Left"],
+  ["bind", "-n", "M-S-Right", "send-keys", "-t", ":.0", "M-S-Right"],
   // A click on the tabs, in a status line, reaches no pane, so tmux types which tab it was
   // into the sidebar, as an OSC naming the tab's range. send-keys -F expands no format in what
   // it types, so run-shell -C expands it first. A second click soon after the first is a
@@ -133,7 +135,7 @@ export async function openScreen(
   lead: string,
   repository: string,
 ): Promise<void> {
-  const env = cleanEnv();
+  const env = envWithoutTmux();
   // Reports whether this machine knows the terminal, so opening can choose a fallback.
   // tmux refuses unknown terminals, such as Ghostty's xterm-ghostty over ssh.
   // xterm-256color draws Claude Code well enough.
