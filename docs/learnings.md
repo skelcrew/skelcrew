@@ -317,6 +317,9 @@ that covers the code you are about to write.
   server loses its screen, and agents keep running. The sidebar's own commands hit this about
   once in 500 leavings on a loaded machine, so a screen test can fail with `server exited
   unexpectedly`.
+- **tmux takes keys that arrive together for a paste.** Keys less than `assume-paste-time`
+  (1 ms) apart skip key bindings and go to the active pane as text. Three Alt keys in one
+  write reached the sidebar as two, and the third was typed into the agent. Set it to 0.
 - **A click on a status line reaches no pane.** `MouseDown1Status` fires, and a range drawn
   with `#[range=user|X]` names what was clicked in `#{mouse_status_range}`. `send-keys -F`
   doesn't expand that in the text it types, so `run-shell -C` must expand the whole

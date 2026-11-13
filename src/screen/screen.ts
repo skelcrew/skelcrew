@@ -39,6 +39,11 @@ const config = [
   ["set", "-g", "prefix2", "None"],
   ["unbind", "-a", "-T", "root"],
   ["bind", "-n", "C-q", "detach-client"],
+  // Keys that arrive faster than a millisecond apart are taken for a paste, and tmux then hands
+  // them to the pane you type to rather than act on them. Several Alt keys in one read, as fast
+  // typing, key repeat or a slow link bring, would lose all but the first two, and type the rest
+  // into the agent. A paste that matters comes bracketed anyway.
+  ["set", "-g", "assume-paste-time", "0"],
   // Alt with an arrow, and the same with Shift, go to the sidebar, in pane 0, without moving
   // your typing from the agent.
   ["bind", "-n", "M-Up", "send-keys", "-t", ":.0", "M-Up"],

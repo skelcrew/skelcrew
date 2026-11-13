@@ -1450,15 +1450,23 @@ test("a click on a tab switches to its repository", async () => {
 });
 
 // A terminal can hand both keys over at once, and the second must move in the new repository.
-test("Alt-Right then Alt-Shift-Down twice, pressed quickly, lands on the new repository's thread", async () => {
+test("several Alt keys typed together all move, and none is typed into the agent", async () => {
+  open("lead");
+  await ready("lead");
+  type("\x1b[1;3B\x1b[1;3B\x1b[1;3B\x1b[1;3B");
+  await until(() => seen().includes("I am app-12"), "the first thread, past the three entries");
+  await until(() => selected() === "● app-12", "the sidebar to follow");
+  await Bun.sleep(300);
+  expect(read("lead.typed")).toBe("");
+});
+
+test("Alt-Right then Alt-Shift-Down twice, typed together, lands on the new repository's thread", async () => {
   addSite();
   agent("site-8");
   daemon();
   open("lead");
   await ready("lead");
-  type("\x1b[1;3C");
-  type("\x1b[1;4B");
-  type("\x1b[1;4B");
+  type("\x1b[1;3C\x1b[1;4B\x1b[1;4B");
   await until(() => seen().includes("I am site-8"), "site-8");
   await until(() => selected() === "● site-8", "the sidebar to follow");
   expect(seen()).not.toContain("app-12");
