@@ -59,7 +59,7 @@ The repositories in the video are small real apps with fast CI and real issues, 
 | Builder | The thread's agent. A session of its harness that stays alive from start until the PR merges or closes. |
 | Reviewer | A fresh agent for each review round, on the harness your config names for it, reading the PR adversarially. It runs once and answers with a verdict, with no session to attach to. It never inherits the builder's context. |
 | Event | Something that happened to a thread: a review, a PR comment, a failed check, a merge. |
-| Needs you | A flag on a thread: the builder asked a question, review hit its round limit, or the PR is approved and green, or, without a forge, the branch is approved. |
+| Needs you | A flag on a thread: the builder asked a question, its harness stopped on an error, review hit its round limit, or the PR is approved and green, or, without a forge, the branch is approved. |
 | Plugin | A program in a repository of its own that connects Skelcrew to one outside tool, such as GitHub or Slack. You install it with `sc plugin install`. |
 
 A thread's status is one of `working`, `waiting` (on review, CI or you), `failed`, `stopped` or `done`. Needs you is a separate flag, so a thread can wait on CI and need you at once.
@@ -92,6 +92,7 @@ On a server or Sprite, `sc remote add` runs these steps from your laptop and ins
 | `checks` | Waiting on CI |
 | `changes` | The reviewer asked for changes, and the builder hasn't picked them up yet |
 | `question` | Needs you: the builder asked a question |
+| `error` | Needs you: the builder's harness stopped on an error, such as a lapsed login |
 | `approved` | Needs you: approved and green, ready to merge |
 | `round limit` | Needs you: review hit its round limit |
 | `review failed` | Needs you: the review itself couldn't run |
@@ -197,6 +198,8 @@ One thread, from start to merge, in a repository with GitHub as its tracker and 
 **Assigning the issue.** A thread on an issue assigns the issue to you, the person whose Skelcrew works on it, so GitHub's list of issues shows which ones Skelcrew is on, and for whom. You are the person the tracker's plugin signed in as. Every start of a thread on an issue assigns you, however it started: by the `skelcrew` label, or by `sc start`, yours or the lead's, and `sc start` on a stopped thread does it again. It adds you, and never takes another assignee off. The thread keeps whether Skelcrew assigned you, or you were assigned already. When the thread stops, is removed, or its PR is closed without merging, Skelcrew takes you off, but only if it put you on. So an issue you were assigned to before stays yours. A merge leaves you assigned, as the closed issue's record of who did it. A thread that failed keeps you assigned, as it still holds the issue until you start it again, stop it or remove it. A thread with no issue, such as `app-t1`, assigns nobody. An assignment that fails, such as on a repository GitHub won't assign you in, is logged and not tried again, as it changes only what the tracker shows. It never stops a thread from starting or stopping. A tracker with no assignees does nothing.
 
 At any point the builder can ask you a question. On Claude Code it uses Claude Code's own `AskUserQuestion`. Codex has no such tool, so there the builder ends its turn without `sc submit`, and Codex's `Stop` hook tells Skelcrew. Either way Skelcrew notices, and the thread needs you until you pick it in the sidebar and answer it.
+
+A builder's harness can also stop on an error it can't get past alone, such as a lapsed login or a usage limit. The builder then sits idle, and its row would still say `working`. On Claude Code, Claude Code's `StopFailure` hook tells Skelcrew when a turn ends on an error, and the thread needs you, with the word `error`. You pick it in the sidebar, fix what it says, such as with `/login`, and type to it, which clears the flag as answering a question does. On Codex, a turn that ends on an error ends without `sc submit`, so it already needs you, with the word `question`. A lead that stops on an error isn't flagged, as you see it whenever you open its repository.
 
 **Telling you.** When a thread starts needing you, Skelcrew types a one line note into the session of its repository's lead (when that lead is idle), so you hear it where you already are. A note for a repository whose lead hasn't started yet is kept until it starts, as notes already wait for a lead that isn't running.
 
