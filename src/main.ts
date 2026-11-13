@@ -66,9 +66,7 @@ function taskFrom(text: string): { title: string; body: string } {
 // inside "$(...)" leaves the body empty while the command still runs.
 function bodyFor(command: string, body: string): string {
   if (!body.trim())
-    throw new Error(
-      `${command} needs a body, which is all a builder sees of the task besides its title.`,
-    );
+    throw new Error(`${command} needs a body, which is all a builder sees besides its title.`);
   return body;
 }
 
@@ -81,7 +79,7 @@ function usage(command?: string): never {
     "init",
     "repo",
     "ps",
-    "task",
+    "issue",
     "start",
     "stop",
     "rm",
@@ -267,9 +265,10 @@ async function psCommand(args: string[], json: boolean): Promise<void> {
   printThreads(all ? rows : rows.filter((row) => row.status !== "done"), json);
 }
 
-// Lists tasks, shows one or creates one, for sc task. --json changes only what ls and show
+// Lists issues, shows one or creates one, for sc issue. The words a user types say issue, as
+// the sidebar does, while Skelcrew calls each one a task. --json changes only what ls and show
 // print.
-async function taskCommand(args: string[], json: boolean): Promise<void> {
+async function issueCommand(args: string[], json: boolean): Promise<void> {
   const [command, sub, ...rest] = args;
   const { askForTask, askForTasks, createTask } = await import("./client.ts");
   const { printTask, printTasks } = await import("./flow/list.ts");
@@ -277,7 +276,7 @@ async function taskCommand(args: string[], json: boolean): Promise<void> {
     printTasks(await askForTasks(rest[0]), json);
     return;
   }
-  // sc task show takes a task's name, such as app-13. sc task create takes a repository
+  // sc issue show takes an issue's name, such as app-13. sc issue create takes a repository
   // with a title and a body.
   const task = splitTaskName(rest[0]);
   if (sub === "show" && task && rest.length === 1) {
@@ -286,7 +285,7 @@ async function taskCommand(args: string[], json: boolean): Promise<void> {
   }
   const [repository, title, body] = rest;
   if (sub === "create" && repository && title && body !== undefined && rest.length === 3) {
-    console.log(await createTask(repository, title, bodyFor("sc task create", body)));
+    console.log(await createTask(repository, title, bodyFor("sc issue create", body)));
     return;
   }
   usage(command);
@@ -301,7 +300,7 @@ async function threadCommand(args: string[]): Promise<void> {
     "./client.ts"
   );
   const task = splitTaskName(sub);
-  // --from takes a branch, and only sc start <task> takes it.
+  // --from takes a branch, and only sc start <issue> takes it.
   const from = rest[0] === "--from" && rest[1] && rest.length === 2 ? rest[1] : undefined;
   if (command === "start" && task && (rest.length === 0 || from)) {
     console.log(await startOn(...task, from));
@@ -346,8 +345,14 @@ async function threadCommand(args: string[]): Promise<void> {
       }
     }
     // An empty reason is no reason, so the PR closes with no comment.
-    const name = await removeOn(...task, rest[0] || undefined);
-    console.log(`Removed ${name}. Its task stays open, and sc start ${name} starts it over.`);
+    const { removed: name, issue } = await removeOn(...task, rest[0] || undefined);
+    // The issue stays open in the tracker, so starting over needs no new one. GitHub writes a
+    // number as #12, while a tracker such as Linear has IDs like JOTT-12 that stand alone.
+    if (issue === null) console.log(`Removed ${name}. sc start ${name} starts it over.`);
+    else {
+      const id = /^\d+$/.test(issue) ? `#${issue}` : issue;
+      console.log(`Removed ${name}. Issue ${id} stays open, and sc start ${name} starts it over.`);
+    }
     return;
   }
   if (command === "review" && task && rest.length === 0) {
@@ -473,8 +478,8 @@ async function runCommand(args: string[]): Promise<void> {
       return agentCommand(words);
     case "ps":
       return psCommand(words, json);
-    case "task":
-      return taskCommand(words, json);
+    case "issue":
+      return issueCommand(words, json);
     case "start":
     case "stop":
     case "rm":

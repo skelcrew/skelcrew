@@ -181,9 +181,10 @@ export async function runSidebar(
   process.stdin.on("data", (bytes) => {
     for (const [, kind, arrow, y, clicked] of bytes.toString().matchAll(input)) {
       if (clicked !== undefined || arrow === "C" || arrow === "D") {
-        // A click on a tab, or Alt-Right or Alt-Left for the tab after or before. Past either
-        // end, and with Shift, there is nowhere to go.
-        const sideways = kind === "3" ? tabBeside(arrow === "C" ? 1 : -1) : null;
+        // A click on a tab, or Alt-Right or Alt-Left for the tab after or before, with or
+        // without Shift. Ghostty on a Mac turns Alt-Left and Alt-Right into word jumps, so
+        // they never arrive, while the Shift ones do. Past either end there is nowhere to go.
+        const sideways = kind === "3" || kind === "4" ? tabBeside(arrow === "C" ? 1 : -1) : null;
         const tab = clicked === undefined ? sideways : tabs[Number(clicked)]?.fullName;
         if (!tab) continue;
         switchTo(tab);

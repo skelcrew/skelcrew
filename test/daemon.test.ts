@@ -11,7 +11,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { createConnection } from "node:net";
+import { Socket } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
@@ -129,17 +129,20 @@ const claudeCalls = (folder = leadFolder()) =>
     .join("");
 const cliSocket = () => join(home, "run", "skelcrew.sock");
 
-// What the daemon replies on the CLI socket, or null when nothing answers.
+// What the daemon replies on the CLI socket, or null when nothing answers. The error
+// listener goes on before connecting: in a test, Bun can report a connect to a missing
+// socket as an error of the test when the listener is added after createConnection.
 function ask(request: object): Promise<unknown> {
   return new Promise((done) => {
-    const connection = createConnection(cliSocket());
+    const connection = new Socket();
+    connection.on("error", () => {});
     let reply = "";
     connection.on("connect", () => connection.write(`${JSON.stringify(request)}\n`));
     connection.on("data", (data) => {
       reply += data.toString();
     });
     connection.on("close", () => done(reply ? JSON.parse(reply) : null));
-    connection.on("error", () => {});
+    connection.connect(cliSocket());
   });
 }
 
@@ -499,17 +502,19 @@ const leadSocket = (repo = "app") => {
 };
 const keptSocket = () => join(home, "run", "skelcrew", "lead", "skelcrew.sock");
 
-// What the daemon replies on a lead's socket, or null when nothing answers.
+// What the daemon replies on a lead's socket, or null when nothing answers. Like ask, it
+// listens for errors before connecting.
 function askAsLead(request: object, path = leadSocket()): Promise<unknown> {
   return new Promise((done) => {
-    const connection = createConnection(path);
+    const connection = new Socket();
+    connection.on("error", () => {});
     let reply = "";
     connection.on("connect", () => connection.write(`${JSON.stringify(request)}\n`));
     connection.on("data", (data) => {
       reply += data.toString();
     });
     connection.on("close", () => done(reply ? JSON.parse(reply) : null));
-    connection.on("error", () => {});
+    connection.connect(path);
   });
 }
 
@@ -615,7 +620,9 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a lead per repositor
     await until(() => claudeCalls().includes("--resume"));
     for (const line of claudeLines()) {
       expect(line).toContain("--append-system-prompt You are a lead");
-      expect(line).toContain("sc task create");
+      expect(line).toContain("sc issue create");
+      // The lead talks to the human, who sees issues and threads, never Skelcrew's word task.
+      expect(line).not.toMatch(/\btasks?\b/i);
       expect(line).toContain("You are the lead of simon/app.");
     }
   });

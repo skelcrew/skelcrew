@@ -1,5 +1,5 @@
 // Skelcrew's copy of a repository's issues and PRs, as polls bring it up to date, and as the
-// sidebar's readers, sc task and a builder read it.
+// sidebar's readers, sc issue and a builder read it.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -66,7 +66,7 @@ console.log(JSON.stringify({ open: ids(), kept: taskOf(db, "simon", "app", "12")
   counts: db.query("SELECT open_issues FROM repositories").get() }));`),
   ).toEqual({ open: ["14"], kept: "closed", counts: { open_issues: 1 } });
   expect(() => run(`taskOf(db, "simon", "app", "13");`)).toThrow(
-    "there is no open task 13 in simon/app",
+    "there is no open issue 13 in simon/app",
   );
 });
 

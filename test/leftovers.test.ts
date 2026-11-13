@@ -16,11 +16,17 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// Starts a run of the given test file, with the check, as bun test would start one. Handed
-// this run's TMPDIR, its folder goes with this run's, even if this run is killed.
-function run(body: string) {
-  writeFileSync(join(home, "fixture.test.ts"), body);
-  return Bun.spawn([process.execPath, "test", "--preload", preload, "./fixture.test.ts"], {
+// Starts a run of the given test files, with the check, as bun test would start one. Handed
+// this run's TMPDIR, its folder goes with this run's, even if this run is killed. Several
+// files run in parallel, as `bun run check` runs them, on one worker, so that worker runs
+// them one after another in the same process.
+function run(...bodies: string[]) {
+  const files = bodies.map((body, i) => {
+    writeFileSync(join(home, `fixture${i}.test.ts`), body);
+    return `./fixture${i}.test.ts`;
+  });
+  const parallel = files.length > 1 ? ["--parallel=1"] : [];
+  return Bun.spawn([process.execPath, "test", ...parallel, "--preload", preload, ...files], {
     cwd: home,
     env: process.env,
     stdout: "pipe",
@@ -42,17 +48,19 @@ function running(pid: number): boolean {
 const until = (done: () => boolean, what: string) =>
   wait(done, { timeout: 30_000, what: () => what });
 
-// Waits until the sweep a run started has ended. It clears up after the run, and on a busy
-// machine it can still be at it seconds after the run, when this file's own check would
-// count it as a process the test left running.
-const swept = (run: number) =>
+// Waits until the sweeps a run started have ended. They clear up after the run, and on a
+// busy machine one can still be at it seconds after the run, when this file's own check
+// would count it as a process the test left running. A sweep is known by its folder, which
+// lands in this run's: a parallel run's sweeps belong to its workers, not to the run itself.
+const swept = () =>
   until(() => {
     const sweep = join(import.meta.dir, "sweep.ts");
+    const inside = `${process.env.TMPDIR ?? tmpdir()}/`;
     return !readdirSync("/proc").some((pid) => {
       const args = /^\d+$/.test(pid) ? command(pid) : [];
-      return args[1] === sweep && args[2] === String(run);
+      return args[1] === sweep && (args[3] ?? "").startsWith(inside);
     });
-  }, "the run's sweep to end");
+  }, "the run's sweeps to end");
 
 // Returns the arguments a process was started with, or none once it has gone.
 function command(pid: string): string[] {
@@ -81,7 +89,7 @@ test("clean", async () => {
     const err = await new Response(proc.stderr).text();
     expect(err).toContain("1 pass");
     expect(await proc.exited).toBe(0);
-    await swept(proc.pid);
+    await swept();
   });
 
   test("a run in a folder that goes is still cleared up after", async () => {
@@ -94,7 +102,7 @@ test("clean", () => {});`);
     const left = () =>
       readdirSync(outer).filter((name) => name.startsWith("skel-run-") && !before.includes(name));
     await until(() => left().length === 0, "the run's folder to go");
-    await swept(proc.pid);
+    await swept();
   });
 
   test("a test that leaves a process running fails by name, and the process is ended", async () => {
@@ -108,7 +116,70 @@ test("leaky", async () => {
     expect(err).toContain("(fail) leaky");
     const pid = Number(readFileSync(join(home, "stray"), "utf8"));
     await until(() => !running(pid), "the stray process to end");
-    await swept(proc.pid);
+    await swept();
+  }, 60_000);
+
+  test("files a parallel worker runs one after another pass when each ends what it started", async () => {
+    const clean = `import { test } from "bun:test";
+test("clean", async () => {
+  await Bun.spawn(["sh", "-c", "exit 0"]).exited;
+});`;
+    const proc = run(clean, clean, clean);
+    const err = await new Response(proc.stderr).text();
+    expect(err).toContain("3 pass");
+    expect(await proc.exited).toBe(0);
+    await swept();
+  }, 60_000);
+
+  test("a leaky file on a parallel worker fails by name, and the process is ended", async () => {
+    const proc = run(
+      `import { test } from "bun:test";
+test("clean", () => {});`,
+      `import { test } from "bun:test";
+test("leaky", async () => {
+  ${stray("stray")}
+});`,
+    );
+    const err = await new Response(proc.stderr).text();
+    expect(await proc.exited).not.toBe(0);
+    expect(err).toContain("sleep 60");
+    expect(err).toContain("(fail) leaky");
+    expect(err).toContain("1 pass");
+    const pid = Number(readFileSync(join(home, "stray"), "utf8"));
+    await until(() => !running(pid), "the stray process to end");
+    await swept();
+  }, 60_000);
+
+  test("a parallel worker killed part way leaves no process", async () => {
+    const proc = run(
+      `import { test } from "bun:test";
+test("clean", () => {});`,
+      `import { test } from "bun:test";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+test("killed", async () => {
+  ${stray("unnamed")}
+  // Two looks by the sweep, as the first may have begun before this process started.
+  const looked = join(process.env.TMPDIR ?? "", "looked");
+  for (const look of [1, 2]) {
+    rmSync(looked, { force: true });
+    while (!existsSync(looked)) await Bun.sleep(10);
+  }
+  writeFileSync("worker", String(process.pid));
+  await Bun.sleep(60_000);
+}, 70_000);`,
+    );
+    const worker = join(home, "worker");
+    await until(
+      () => existsSync(worker) && readFileSync(worker, "utf8") !== "",
+      "the run to start",
+    );
+    const pid = Number(readFileSync(join(home, "unnamed"), "utf8"));
+    expect(running(pid)).toBe(true);
+    process.kill(Number(readFileSync(worker, "utf8")), "SIGKILL");
+    await proc.exited;
+    await until(() => !running(pid), "the stray process to end");
+    await swept();
   }, 60_000);
 
   test("a process whose parent has gone is found, though nothing in it names the run", async () => {
@@ -122,7 +193,7 @@ test("leaky", async () => {
     expect(err).toContain("sleep 60");
     const pid = Number(readFileSync(join(home, "orphan"), "utf8"));
     await until(() => !running(pid), "the orphan to end");
-    await swept(proc.pid);
+    await swept();
   }, 60_000);
 
   test("a process that ignores being asked is killed, even once its parent has gone", async () => {
@@ -138,7 +209,7 @@ test("leaky", async () => {
     expect(await proc.exited).not.toBe(0);
     const pid = Number(readFileSync(join(home, "stubborn"), "utf8"));
     await until(() => !running(pid), "the stubborn process to end");
-    await swept(proc.pid);
+    await swept();
   }, 60_000);
 
   test("a run killed part way leaves no process, tmux server, socket or folder", async () => {
@@ -176,6 +247,6 @@ test("killed", async () => {
     await until(() => !pids.some(running), "the processes to end");
     await until(() => !existsSync(folder), "the folder to go");
     await until(() => !existsSync(file), "the tmux socket to go");
-    await swept(proc.pid);
+    await swept();
   }, 60_000);
 });

@@ -1,4 +1,4 @@
-// sc ps, sc task ls, sc task show and sc attach, run as you or the lead would run
+// sc ps, sc issue ls, sc issue show and sc attach, run as you or the lead would run
 // them, against a running daemon, a fake gh, a fake Claude Code and a fake tmux for attaching.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -218,7 +218,7 @@ function issues(repo: string, list: { number: number; title: string; createdAt: 
     sql(itemSql(repo, "task", number, title, createdAt));
 }
 
-describe("sc task ls", () => {
+describe("sc issue ls", () => {
   beforeEach(() => {
     threads();
     issues("app", [
@@ -228,13 +228,13 @@ describe("sc task ls", () => {
     issues("site", [{ number: 7, title: "New landing page", createdAt: "2026-11-02T12:00:00Z" }]);
   });
 
-  test("lists every repository's open tasks newest first, with the thread on each", async () => {
+  test("lists every repository's open issues newest first, with the thread on each", async () => {
     serve();
     await untilAnswers();
-    const listed = await skel(["task", "ls"]);
+    const listed = await skel(["issue", "ls"]);
     expect(listed.err).toBe("");
     expect(listed.out).toBe(
-      "TASK    THREAD              TITLE\n" +
+      "ISSUE   THREAD              TITLE\n" +
         "app-12  working             Add export\n" +
         "site-7  waiting, needs you  New landing page\n" +
         "app-10                      Fix login\n",
@@ -243,22 +243,22 @@ describe("sc task ls", () => {
     expect(read(join(home, "calls"))).not.toContain("issue");
   });
 
-  test("lists one repository's open tasks, as JSON for tools", async () => {
+  test("lists one repository's open issues, as JSON for tools", async () => {
     serve();
     await untilAnswers();
-    const listed = await skel(["task", "ls", "app", "--json"]);
+    const listed = await skel(["issue", "ls", "app", "--json"]);
     expect(listed.err).toBe("");
     expect(JSON.parse(listed.out)).toEqual([
-      { task: "app-12", title: "Add export", thread: { status: "working", needsYou: false } },
-      { task: "app-10", title: "Fix login", thread: null },
+      { issue: "app-12", title: "Add export", thread: { status: "working", needsYou: false } },
+      { issue: "app-10", title: "Fix login", thread: null },
     ]);
   });
 
-  test("says when there are no open tasks", async () => {
+  test("says when there are no open issues", async () => {
     sql("DELETE FROM items WHERE repo = 'app'");
     serve();
     await untilAnswers();
-    expect((await skel(["task", "ls", "app"])).out).toBe("There are no open tasks.\n");
+    expect((await skel(["issue", "ls", "app"])).out).toBe("There are no open issues.\n");
   });
 });
 
@@ -283,7 +283,7 @@ function issue(repo: string, number: number, title: string, body: string) {
   sql(itemSql(repo, "task", number, title, "2026-11-01T12:00:00Z", { body }));
 }
 
-describe("sc task show", () => {
+describe("sc issue show", () => {
   beforeEach(() => {
     threads();
     issue("app", 12, "Add export", "Export threads as JSON.\n\nKeep it small.");
@@ -294,28 +294,28 @@ describe("sc task show", () => {
   test("shows a task's title and body, and the thread on it", async () => {
     serve();
     await untilAnswers();
-    const shown = await skel(["task", "show", "site-7"]);
+    const shown = await skel(["issue", "show", "site-7"]);
     expect(shown.err).toBe("");
     expect(shown.out).toBe(
       "site-7  New landing page\nThread: waiting, needs you\n\nMake it calm.\n",
     );
     expect(read(join(home, "calls"))).not.toContain("issues");
-    expect((await skel(["task", "show", "app-10"])).out).toBe("app-10  Fix login\n");
+    expect((await skel(["issue", "show", "app-10"])).out).toBe("app-10  Fix login\n");
   });
 
   test("shows a task as JSON for tools", async () => {
     serve();
     await untilAnswers();
-    const shown = await skel(["task", "show", "app-12", "--json"]);
+    const shown = await skel(["issue", "show", "app-12", "--json"]);
     expect(shown.err).toBe("");
     expect(JSON.parse(shown.out)).toEqual({
-      task: "app-12",
+      issue: "app-12",
       title: "Add export",
       body: "Export threads as JSON.\n\nKeep it small.",
       thread: { status: "working", needsYou: false },
     });
-    expect(JSON.parse((await skel(["task", "show", "--json", "app-10"])).out)).toEqual({
-      task: "app-10",
+    expect(JSON.parse((await skel(["issue", "show", "--json", "app-10"])).out)).toEqual({
+      issue: "app-10",
       title: "Fix login",
       body: "",
       thread: null,
@@ -325,10 +325,10 @@ describe("sc task show", () => {
   test("says when the task or the repository doesn't exist", async () => {
     serve();
     await untilAnswers();
-    const missing = await skel(["task", "show", "app-99"]);
+    const missing = await skel(["issue", "show", "app-99"]);
     expect(missing.code).not.toBe(0);
-    expect(missing.err).toBe("Skelcrew: there is no open task 99 in simon/app\n");
-    const unknown = await skel(["task", "show", "web-1"]);
+    expect(missing.err).toBe("Skelcrew: there is no open issue 99 in simon/app\n");
+    const unknown = await skel(["issue", "show", "web-1"]);
     expect(unknown.code).not.toBe(0);
     expect(unknown.err).toContain("no repository named web");
   });
@@ -337,10 +337,10 @@ describe("sc task show", () => {
     serve();
     await untilAnswers();
     await openApp();
-    const lead = await asAgent(["task", "show", "app-12"], leadSocket());
+    const lead = await asAgent(["issue", "show", "app-12"], leadSocket());
     expect(lead.err).toBe("");
-    expect(lead.out).toBe((await skel(["task", "show", "app-12"])).out);
-    const refused = await asAgent(["task", "show", "app-12"], await builderSocket());
+    expect(lead.out).toBe((await skel(["issue", "show", "app-12"])).out);
+    const refused = await asAgent(["issue", "show", "app-12"], await builderSocket());
     expect(refused.code).not.toBe(0);
     expect(refused.err).toBe("Skelcrew: the daemon doesn't know that request\n");
   });
@@ -445,14 +445,14 @@ test("an agent can't run the page command", async () => {
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there the lead can't start.
 describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("from the lead", () => {
-  test("a lead runs sc ps, sc task ls, sc task show and sc repo ls from its sandbox, but can't attach", async () => {
+  test("a lead runs sc ps, sc issue ls, sc issue show and sc repo ls from its sandbox, but can't attach", async () => {
     threads();
     issue("app", 12, "Add export", "As JSON");
     writeFileSync(
       join(home, "bin", "claude"),
       `#!/bin/sh
 case "$CLAUDE_CONFIG_DIR" in
-*/lead-*) { sc ps app --json; sc task ls app --json; sc task show app-12 --json; sc repo ls --json; sc attach app-12; } > out.new 2>&1; mv out.new out ;;
+*/lead-*) { sc ps app --json; sc issue ls app --json; sc issue show app-12 --json; sc repo ls --json; sc attach app-12; } > out.new 2>&1; mv out.new out ;;
 esac
 exec sleep 300
 `,
@@ -466,9 +466,9 @@ exec sleep 300
     const [ps, tasks, shown, app, attach] = read(out).trim().split("\n");
     expect(JSON.parse(ps ?? "")).toHaveLength(2);
     expect(JSON.parse(tasks ?? "")).toEqual([
-      { task: "app-12", title: "Add export", thread: { status: "working", needsYou: false } },
+      { issue: "app-12", title: "Add export", thread: { status: "working", needsYou: false } },
     ]);
-    expect(JSON.parse(shown ?? "")).toMatchObject({ task: "app-12", body: "As JSON" });
+    expect(JSON.parse(shown ?? "")).toMatchObject({ issue: "app-12", body: "As JSON" });
     expect(JSON.parse(app ?? "")).toEqual([
       {
         name: "app",
