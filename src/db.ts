@@ -103,6 +103,7 @@ function prepareTables(db: Database): void {
   // The rest of a thread's columns, added as the repositories' are. `submitting`,
   // `reviewing` and `telling` hold the round under way, so one the daemon's stop cut short
   // carries on when it starts again, and `noting` holds a note for the lead the same way.
+  // `assigned` is whether Skelcrew assigned you the thread's issue, so it takes you off only then.
   const threadColumns = {
     rounds: "INTEGER NOT NULL DEFAULT 0",
     pr: "INTEGER",
@@ -127,6 +128,7 @@ function prepareTables(db: Database): void {
     harness: "TEXT",
     body: "TEXT",
     seen: "TEXT",
+    assigned: "INTEGER NOT NULL DEFAULT 0",
   };
   for (const [column, type] of Object.entries(threadColumns))
     if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))

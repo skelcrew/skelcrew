@@ -5,7 +5,8 @@
 // with that file's words, and with `setup-<question>` it fails the same way with exit code 2,
 // as a plugin that needs its setup again does. While `hold-<question>`, or for a question with
 // a state, `hold-<question>-<state>`, is there, it waits before answering, saying so with
-// `held-<question>`.
+// `held-<question>`. Asked to assign you, it says this call did, and taking you off answers
+// nothing, as GitHub's plugin does.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -45,6 +46,7 @@ const answers: Record<string, () => unknown> = {
   "open-pr": () => ({ number: 7 }),
   review: reviewed,
   log: () => ({ log: "expected 2, got 3" }),
+  assign: () => (question.on ? { assigned: true } : null),
 };
 const saved = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : undefined;
 // Which remotes it claims is a map from each remote to its answer.

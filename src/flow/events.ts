@@ -8,6 +8,7 @@ import { cloneDir } from "../paths.ts";
 import { closePr, failedLog, markSeen } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
+import { unassignIssue } from "./assign.ts";
 import { baseOf } from "./builder.ts";
 import type { Check, Decision } from "./decide.ts";
 import { deleteBranch, fetchInto, onRemote } from "./git.ts";
@@ -74,7 +75,7 @@ async function endBuilder(tmux: string, folder: string): Promise<void> {
 // but keeps its clone, branch and PR, so sc start can bring the builder back where it was.
 // A submit, review or review's changes under way stay saved and carry on once it starts
 // again. It no longer needs you: you stopped it, and its builder's question ended with it.
-// Marked first, so a builder that submits while it exits is refused. Refuses a thread that
+// It takes you off its issue, if Skelcrew assigned you. Marked first, so a builder that submits while it exits is refused. Refuses a thread that
 // has no builder to stop, or whose builder hasn't started yet.
 export async function stopThread(db: Database, tmux: string, thread: Thread): Promise<void> {
   const name = threadName(db, thread);
@@ -86,6 +87,7 @@ export async function stopThread(db: Database, tmux: string, thread: Thread): Pr
     throw new Error(`${name} is still setting up: stop it once its builder has started`);
   record(db, thread.folder, { status: "stopped", needs_you: false, asking: false }, "stopped");
   await endBuilder(tmux, thread.folder);
+  await unassignIssue(db, thread.folder);
 }
 
 // Ends the thread once its PR is merged or closed, or for sc rm: ends its builder, and removes
@@ -115,7 +117,8 @@ export async function endThread(
 }
 
 // Removes the thread for sc rm: ends its builder, closes its PR with the reason as a comment,
-// deletes its branch on the forge, removes its clone and marks it done. Its task stays open,
+// deletes its branch on the forge, removes its clone, takes you off its issue if Skelcrew
+// assigned you, and marks it done. Its task stays open,
 // so sc start can start the thread over on it. Without a PR, the branch is deleted with git,
 // but only if Skelcrew pushed it for this thread. A running thread is marked stopped first, so
 // a builder that submits while it exits is refused. If the forge fails, the thread stays
@@ -166,6 +169,7 @@ export async function removeThread(
     });
   else if ((await threadPushedBranch()) && (await onRemote(db, repository, branch)))
     await deleteBranch(db, repository, skelcrewClone, branch);
+  await unassignIssue(db, thread.folder);
   await endThread(db, tmux, thread, reason ? `removed: ${reason}` : "removed");
 }
 

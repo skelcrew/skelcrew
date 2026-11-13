@@ -196,6 +196,13 @@ const polls = () => asked(plugin).filter((q) => q.ask === "changed").length;
 // The reviews and comments the daemon asked the forge to mark seen.
 const marked = () => asked(plugin).filter((q) => q.ask === "seen");
 
+// What the daemon asked the tracker to assign or claim, as the plugin was asked it.
+const assigns = () => asked(plugin).filter((q) => q.ask === "assign");
+const claims = () => asked(plugin).filter((q) => q.ask === "took");
+const assignOn = { ask: "assign", repository: "simon/app", task: "12", on: true };
+const assignOff = { ...assignOn, on: false };
+const claim12 = { ask: "took", repository: "simon/app", task: "12" };
+
 // Waits for the number of polls to grow by a few, so anything they would do is done.
 async function morePolls(n = 3) {
   const before = polls();
@@ -547,6 +554,9 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
       false,
     );
     expect(fakeBuilders()).toEqual([]);
+    // The merge leaves you assigned, as the closed issue's record of who did it.
+    expect(assigns()).toEqual([assignOn]);
+    expect(thread().assigned).toBe(1);
   }, 60_000);
 
   test("a stopped thread holds your comment until it starts again, and its merge still ends it", async () => {
@@ -627,6 +637,8 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
         comment: "Closed by Skelcrew: started over as app-14",
       },
     ]);
+    // Skelcrew assigned you as the thread started, so removing it takes you off.
+    expect(assigns()).toEqual([assignOn, assignOff]);
     expect(thread()).toMatchObject({ status: "done", needs_you: 0 });
     expect(existsSync(clone())).toBe(false);
     expect(Bun.spawnSync(["tmux", "-L", socket, "has-session", "-t", "=app-12"]).success).toBe(
@@ -804,13 +816,15 @@ echo "Not logged in"; exit 1`,
     pr({ labeled: true });
     serve();
     await until(() => thread().task === 12);
-    expect(asked(plugin).filter((q) => q.ask === "took")).toEqual([
-      { ask: "took", repository: "simon/app", task: "12" },
-    ]);
+    // Assigning you comes after the thread started, and the claim isn't asked twice.
+    await until(() => thread().assigned === 1);
+    expect(claims()).toEqual([claim12]);
+    expect(assigns()).toEqual([assignOn]);
   }, 30_000);
 
-  // The claim only keeps two daemons from both starting by the label. You decide by hand.
-  test("sc start starts a labeled task claimed elsewhere, and never claims it", async () => {
+  // The claim only keeps two daemons from both starting by the label. You decide by hand, and
+  // sc start claims it too, so the issue shows Skelcrew took it.
+  test("sc start starts a labeled task claimed elsewhere, claiming it without looking at the answer", async () => {
     addApp();
     answer(plugin, "took", { took: false });
     changes([issue12(true)]);
@@ -824,8 +838,115 @@ echo "Not logged in"; exit 1`,
     expect(started.stderr.toString()).toBe("");
     expect(started.stdout.toString()).toBe("Started app-12.\n");
     expect(thread()).toMatchObject({ task: 12, status: "working" });
-    expect(took()).toHaveLength(1);
+    await until(() => took().length === 2);
+    expect(took()).toEqual([claim12, claim12]);
   }, 30_000);
+
+  // You are assigned so the tracker shows which issues Skelcrew works on, and for whom. Each
+  // start claims the issue too, as a labeled start does.
+  test("sc start claims the issue and assigns you, sc stop takes you off, and starting again puts you back", async () => {
+    await approvedApp12();
+    await until(() => thread().assigned === 1);
+    expect(claims()).toEqual([claim12]);
+    expect(assigns()).toEqual([assignOn]);
+    const stopped = Bun.spawnSync([process.execPath, main, "stop", "app-12"], {
+      env: env(),
+      stderr: "pipe",
+    });
+    expect(stopped.stderr.toString()).toBe("");
+    expect(assigns()).toEqual([assignOn, assignOff]);
+    expect(thread()).toMatchObject({ status: "stopped", assigned: 0 });
+    const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
+      env: env(),
+      stderr: "pipe",
+    });
+    expect(started.stderr.toString()).toBe("");
+    await until(() => thread().assigned === 1);
+    expect(claims()).toEqual([claim12, claim12]);
+    expect(assigns()).toEqual([assignOn, assignOff, assignOn]);
+  }, 60_000);
+
+  // The tracker answers that you were assigned already, so the issue was yours before.
+  test("an issue you were assigned already stays yours when its thread stops", async () => {
+    answer(plugin, "assign", { assigned: false });
+    await approvedApp12();
+    await until(() => assigns().length === 1);
+    Bun.spawnSync([process.execPath, main, "stop", "app-12"], { env: env() });
+    expect(thread()).toMatchObject({ status: "stopped", assigned: 0 });
+    expect(assigns()).toEqual([assignOn]);
+  }, 60_000);
+
+  // An older plugin, which knows no assign, fails it, and so may a tracker that won't assign
+  // you. Neither claim nor assignment changes only what the tracker shows.
+  test("a tracker that fails to claim or assign changes nothing about starting and stopping", async () => {
+    writeFileSync(join(plugin, "fail-assign"), "the GitHub plugin doesn't answer assign");
+    writeFileSync(join(plugin, "fail-took"), "network is down");
+    await approvedApp12();
+    await until(() => assigns().length === 1);
+    const stopped = Bun.spawnSync([process.execPath, main, "stop", "app-12"], {
+      env: env(),
+      stderr: "pipe",
+    });
+    expect(stopped.stderr.toString()).toBe("");
+    expect(thread()).toMatchObject({ status: "stopped", assigned: 0 });
+    expect(assigns()).toEqual([assignOn]);
+  }, 60_000);
+
+  test("a PR closed without merging takes you off its issue", async () => {
+    await approvedApp12();
+    await until(() => thread().assigned === 1);
+    pr({ state: "closed", reviews: [skelReview], checks: [approved] });
+    await until(() => thread().status === "done");
+    await until(() => assigns().length === 2);
+    expect(assigns()).toEqual([assignOn, assignOff]);
+    expect(thread().assigned).toBe(0);
+  }, 60_000);
+
+  // A thread that failed still holds its issue, so you stay assigned, and starting it over
+  // keeps that Skelcrew assigned you, though the tracker now says you were already.
+  test("a failed thread keeps you assigned, and sc rm takes you off once it started over", async () => {
+    script(
+      "claude",
+      `case "$CLAUDE_CONFIG_DIR" in */lead-*) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
+echo "Not logged in"; exit 1`,
+    );
+    addApp();
+    changes([issue12()]);
+    serve();
+    await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
+    Bun.spawnSync([process.execPath, main, "start", "app-12"], { env: env() });
+    await until(() => thread().status === "failed" && thread().assigned === 1);
+    answer(plugin, "assign", { assigned: false });
+    Bun.spawnSync([process.execPath, main, "start", "app-12"], { env: env() });
+    await until(() => assigns().length === 2);
+    await until(() => thread().status === "failed");
+    expect(thread().assigned).toBe(1);
+    const removed = Bun.spawnSync([process.execPath, main, "rm", "app-12"], {
+      env: env(),
+      stderr: "pipe",
+    });
+    expect(removed.stderr.toString()).toBe("");
+    expect(assigns()).toEqual([assignOn, assignOn, assignOff]);
+    expect(thread()).toMatchObject({ status: "done", assigned: 0 });
+  }, 60_000);
+
+  test("a thread with no issue claims and assigns nothing", async () => {
+    addApp();
+    serve();
+    await until(() => existsSync(join(data(), "repos", "simon", "app", "README")));
+    const started = Bun.spawnSync(
+      [process.execPath, main, "start", "app", "Add export", "As JSON"],
+      {
+        env: env(),
+        stderr: "pipe",
+      },
+    );
+    expect(started.stderr.toString()).toBe("");
+    await until(() => thread().status === "waiting", 30_000);
+    Bun.spawnSync([process.execPath, main, "stop", "app-t1"], { env: env() });
+    expect(thread().status).toBe("stopped");
+    expect([...claims(), ...assigns()]).toEqual([]);
+  }, 60_000);
 
   // A task's ID names the thread's folder, which setup deletes before it clones, so an ID
   // from a tracker that climbs out of Skelcrew's threads folder must never reach it.

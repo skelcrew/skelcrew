@@ -45,6 +45,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     verdict: null,
     review_line: null,
     harness: null,
+    assigned: false,
     ...change,
   };
 }

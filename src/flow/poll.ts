@@ -15,6 +15,7 @@ import {
 } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
+import { assignIssue, unassignIssue } from "./assign.ts";
 import { baseOf, startThread } from "./builder.ts";
 import { type Item, openTasks, prOf, saveItems } from "./copy.ts";
 import { ciState, decide, labeledToStart, type PullRequest } from "./decide.ts";
@@ -88,6 +89,8 @@ async function startLabeled(
       return null;
     });
     if (thread === null) continue;
+    // Claimed already, so only assigned.
+    assignIssue(db, thread, false);
     // The lead hears first, then the builder starts. The note is one line, as every note to
     // the lead is.
     const note = `started ${threadName(db, thread)} from ${trackerOf(db, repository)}: ${task.title}`;
@@ -124,7 +127,11 @@ async function actOnPr(db: Database, tmux: string, before: Thread, pr: PullReque
     record(db, folder, { checks });
   // A merge or close ends the thread whatever else is going on. Otherwise new events go to
   // the builder, and with none, only what is seen and what changed is saved.
-  if ("end" in decision) await endThread(db, tmux, thread, decision.end);
+  if ("end" in decision) {
+    await endThread(db, tmux, thread, decision.end);
+    // A merge leaves you assigned, as the closed issue's record of who did it.
+    if (pr.state === "closed") await unassignIssue(db, folder);
+  }
   // Left unhandled, so a stopped thread's events reach its builder once it starts again.
   else if (thread.status === "stopped" || typingEvents.has(folder) || stale) return;
   else if (decision.tell.length > 0 || decision.failed.length > 0)
