@@ -9,7 +9,7 @@ import instructions from "../agents/prompts/builder.md" with { type: "text" };
 import { refuseCredentials, setupCommand } from "../agents/sandbox.ts";
 import {
   agentRuns,
-  checkItLived,
+  checkAgentStarted,
   endSession,
   hasSession,
   startServer,
@@ -21,7 +21,7 @@ import { trackerOf } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { taskOf } from "./copy.ts";
-import { pastLimit } from "./decide.ts";
+import { pastRoundLimit } from "./decide.ts";
 import { fetchBranch } from "./git.ts";
 import { findRepository, forgeAuthor, refreshClones } from "./repo.ts";
 import {
@@ -42,7 +42,7 @@ import {
 export function startChoice(thread: Thread | null): "bring back" | "go on" | "new thread" {
   if (thread?.status === "stopped") return "bring back";
   const live = thread?.status === "working" || thread?.status === "waiting";
-  if (thread && live && pastLimit(thread, threadConfig(thread).maxRounds)) return "go on";
+  if (thread && live && pastRoundLimit(thread, threadConfig(thread).maxRounds)) return "go on";
   return "new thread";
 }
 
@@ -99,7 +99,7 @@ export async function startThread(
     );
     if (tracked && !/^t\d+$/.test(task)) {
       const found = taskOf(db, owner, repo, task);
-      if (found.state !== "open") throw new Error(`there is no open task ${task} in ${name}`);
+      if (found.state !== "open") throw new Error(`there is no open issue ${task} in ${name}`);
       ({ title, body } = found);
     } else if (had?.title) {
       title = had.title;
@@ -107,7 +107,7 @@ export async function startThread(
     } else
       throw new Error(
         tracked
-          ? `there is no open task ${task} in ${name}`
+          ? `there is no open issue ${task} in ${name}`
           : `${name} has no tracker, and no thread ${name}-${task}: start one with sc start ${name} "<title>" "<body>"`,
       );
   }
@@ -335,7 +335,7 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
   startServer(tmux);
   startSession(tmux, thread.folder, { folder: clone, command: argv, env });
   console.log(`${resume ? "Brought back" : "Started"} the builder of ${thread.folder}.`);
-  await checkItLived(tmux, thread.folder, "builder");
+  await checkAgentStarted(tmux, thread.folder, "builder");
 }
 
 // Brings back a thread's builder after the daemon restarts, or for sc start after sc stop. A

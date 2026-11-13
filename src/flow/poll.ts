@@ -6,7 +6,13 @@ import type { Database } from "bun:sqlite";
 import { threadConfig } from "../config.ts";
 import type { Repository } from "../db.ts";
 import { cloneDir } from "../paths.ts";
-import { changed, forgeOf, pluginsOf, took, trackerOf } from "../plugins/ask.ts";
+import {
+  askWhatChanged,
+  forgeOf,
+  markTaskTaken,
+  repositoryPlugins,
+  trackerOf,
+} from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { baseOf, startThread } from "./builder.ts";
@@ -59,7 +65,7 @@ async function startLabeled(
     noteForLead(db, tmux, { owner, repo }, note.replace(/\s+/g, " ").slice(0, 200));
     // Not waited on, as for sc start: setup can take minutes.
     setUpAndStart(thread);
-    await took(db, repository, task.id).catch((error) =>
+    await markTaskTaken(db, repository, task.id).catch((error) =>
       console.log(
         `couldn't tell the tracker Skelcrew took ${task.id} in ${fullName}: ${errorText(error)}`,
       ),
@@ -164,12 +170,12 @@ async function pollRepository(
   // repository's threads. A plugin's answer only updates the kinds its jobs cover. A first
   // poll, with no `next`, replaces those kinds in the copy outright, so what closed while the
   // daemon was down goes.
-  for (const { plugin, jobs } of pluginsOf(db, repository)) {
+  for (const { plugin, jobs } of repositoryPlugins(db, repository)) {
     const next = nexts.get(plugin) ?? null;
     const watched = jobs.includes("forge")
       ? threads.flatMap((t) => (t.pr === null ? [] : [t.pr]))
       : [];
-    const answer = await changed(db, plugin, repository, jobs, next, watched);
+    const answer = await askWhatChanged(db, plugin, repository, jobs, next, watched);
     const kinds: Item["kind"][] = [
       ...(jobs.includes("tracker") ? ["task" as const] : []),
       ...(jobs.includes("forge") ? ["pr" as const] : []),

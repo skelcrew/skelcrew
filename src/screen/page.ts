@@ -4,13 +4,13 @@
 // see it.
 import type { Page } from "../flow/page.ts";
 import { errorText } from "../say.ts";
-import { clean, fitted, grey, pad, paint, white } from "./look.ts";
+import { fitted, grey, pad, paint, removeControlCodes, white } from "./look.ts";
 import { drawMarkdown } from "./markdown.ts";
 
 // Returns text from outside, safe to show, on as many lines as it takes to fit a number of
 // columns. Words that are too long are broken, so a line never wraps by itself.
 const wrapped = (text: string, columns: number) =>
-  Bun.wrapAnsi(clean(text), Math.max(columns, 1), { hard: true }).split("\n");
+  Bun.wrapAnsi(removeControlCodes(text), Math.max(columns, 1), { hard: true }).split("\n");
 
 // The widest a page's text runs, in columns, however wide its pane.
 const maxTextWidth = 80;

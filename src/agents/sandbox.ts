@@ -199,7 +199,7 @@ export function sandboxArgs(given: {
 // the reviewer gets a copy instead, made in the review's own folder so it goes with it. A Mac
 // has no overlay either, and can't show a folder at another path, so there the reviewer
 // works in the copy where it lies, which the review's folder already opens to it.
-export async function throwaway(given: {
+export async function throwawayMounts(given: {
   source: string;
   copy: string;
   sprite: boolean;
@@ -274,7 +274,7 @@ const allowedEnv = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "COLORTE
 // those who use a key rather than a login. So tokens and keys in yours stay out of every
 // sandbox, and a key for one harness's model never reaches another harness or a setup
 // command, which comes from the repository.
-export function keptEnv(
+export function filterEnv(
   env: Record<string, string | undefined>,
   keys: readonly string[] = [],
 ): Record<string, string> {
@@ -312,5 +312,5 @@ export function setupCommand(
     // a folder of yours that holds secrets, such as Skelcrew's own token.
     programs: command.split(/\s+/).filter((word) => !word.includes("/")),
   });
-  return { argv, env: keptEnv(env) };
+  return { argv, env: filterEnv(env) };
 }

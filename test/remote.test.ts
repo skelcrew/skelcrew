@@ -194,12 +194,12 @@ test("a command reaches the server exactly as typed", async () => {
   installed();
   const body = "Don't crash; it's \"bad\" when $HOME * `x` \\ happens\nTwice.";
   const run = await skel(
-    ["--remote", "simon@workbox", "task", "create", "app", "Fix it", body, ""],
+    ["--remote", "simon@workbox", "issue", "create", "app", "Fix it", body, ""],
     "",
     checkout("simon/app"),
   );
   expect(run.out).toBe(
-    `Skelcrew on the server got 6 arguments\n[task]\n[create]\n[app]\n[Fix it]\n[${body}]\n[]\n`,
+    `Skelcrew on the server got 6 arguments\n[issue]\n[create]\n[app]\n[Fix it]\n[${body}]\n[]\n`,
   );
 });
 

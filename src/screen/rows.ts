@@ -4,7 +4,7 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { Item } from "../flow/copy.ts";
-import { pastLimit } from "../flow/decide.ts";
+import { pastRoundLimit } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
 import { repositories } from "../flow/repo.ts";
 import { fullNameOf, needsYou, Thread, threadName } from "../flow/thread.ts";
@@ -89,7 +89,7 @@ export function threadWord(thread: Thread, maxRounds: number): string {
   const underWay = thread.submitting !== null || thread.reviewing !== null;
   if (thread.asking) return "question";
   if (thread.needs_you) {
-    if (pastLimit(thread, maxRounds)) return "round limit";
+    if (pastRoundLimit(thread, maxRounds)) return "round limit";
     if (underWay || verdict === "failed") return "review failed";
     if (verdict === "approve" && (checks === "passing" || checks === null)) return "approved";
     return "needs you";
