@@ -847,6 +847,36 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a lead per repositor
     });
   });
 
+  // sc repo add is one way to open the repository again, so it brings the lead back too, with
+  // no screen open.
+  test("adding a repository whose tab you closed brings its lead back with its conversation", async () => {
+    setUp();
+    addRepository("app");
+    leadExitsWhenTold(0);
+    serve();
+    await untilAnswers();
+    await open();
+    const id = storedSession();
+    saveTranscript(id);
+    tellLeadToExit();
+    await until(() => tabClosed() && !hasLead());
+    rmSync(join(leadFolder(), "exit-now"));
+    const script = `import { addRepo } from ${JSON.stringify(source("flow/repo.ts"))};
+await addRepo("simon/app");`;
+    const added = Bun.spawnSync([process.execPath, "-e", script], {
+      env: { HOME: home, XDG_RUNTIME_DIR: join(home, "run") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(added.stderr.toString()).toBe("");
+    expect(added.stdout.toString()).toBe(
+      "Skelcrew has simon/app already, as app. Its tab is open again.\n",
+    );
+    expect(tabClosed()).toBe(false);
+    expect(hasLead()).toBe(true);
+    expect(claudeCalls()).toBe(`--session-id ${id}\n--resume ${id}\n`);
+  });
+
   // A release before this one let a lead's session go when the lead exited cleanly. A lead
   // still running from then must close its tab too once the new daemon starts.
   test("a lead running from before an upgrade closes its tab when you exit it", async () => {

@@ -604,8 +604,17 @@ test("repo ls notes a closed tab, and repo add opens it again", async () => {
   expect(JSON.parse((await skel(["repo", "ls", "--json"])).out)).toMatchObject([
     { name: "app", tabClosed: true },
   ]);
+  // The daemon opens it, as sc in a checkout of it does, which starts its lead.
   const again = await skel(["repo", "add", "simon/app"]);
   expect(again.out).toBe("Skelcrew has simon/app already, as app. Its tab is open again.\n");
+  expect(JSON.parse(readFileSync(join(home, "asked"), "utf8"))).toEqual({
+    command: "lead",
+    from: "simon/app",
+  });
+  // With no daemon running, the tab opens all the same, and the daemon's start brings the lead.
+  daemon?.close();
+  const alone = await skel(["repo", "add", "simon/app"]);
+  expect(alone.out).toBe("Skelcrew has simon/app already, as app. Its tab is open again.\n");
   expect(JSON.parse((await skel(["repo", "ls", "--json"])).out)).toMatchObject([
     { name: "app", tabClosed: false },
   ]);

@@ -16,6 +16,7 @@ import { stringify } from "yaml";
 import { z } from "zod";
 import { refuseCredentials } from "../agents/sandbox.ts";
 import { stopSession } from "../agents/tmux.ts";
+import { ask } from "../client.ts";
 import { agentRoles } from "../config.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
@@ -398,15 +399,25 @@ export async function addRepo(given?: string): Promise<void> {
   if (!url || url.startsWith("-"))
     throw new Error(`${given} is neither a folder nor a repository's URL`);
   // One Skelcrew has already is only named, with no call to a forge.
-  // Adding it again opens its tab, if you had closed it by exiting its lead. Its lead starts
-  // when you land on the tab.
   const had = repositoryAt(db, url);
   if (had) {
-    const reopened = db.run(
-      "UPDATE repositories SET tab_closed = 0 WHERE owner = ? AND repo = ? AND tab_closed = 1",
-      [had.owner, had.repo],
-    ).changes;
-    const tab = reopened ? " Its tab is open again." : "";
+    // Adding it again opens its tab, if you had closed it by exiting its lead. The daemon opens
+    // it as sc in a checkout of it would, and its lead starts again with its conversation, even
+    // with no screen open. A daemon that isn't running brings the lead back when it starts.
+    const closed = db
+      .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1")
+      .get(had.owner, had.repo);
+    if (closed) {
+      const reply = await ask({ command: "lead", from: `${had.owner}/${had.repo}` }, 60_000);
+      if (reply === null)
+        db.run("UPDATE repositories SET tab_closed = 0 WHERE owner = ? AND repo = ?", [
+          had.owner,
+          had.repo,
+        ]);
+      const failed = z.object({ error: z.string() }).safeParse(reply);
+      if (failed.success) console.error(`Skelcrew: ${failed.data.error}`);
+    }
+    const tab = closed ? " Its tab is open again." : "";
     console.log(`Skelcrew has ${had.owner}/${had.repo} already, as ${had.name}.${tab}`);
     return;
   }
