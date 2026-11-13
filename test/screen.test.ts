@@ -15,7 +15,7 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import checkout from "../package.json";
-import { startSession, stillRunning } from "../src/agents/tmux.ts";
+import { startSession, stillRunning, tmuxIsAtLeast } from "../src/agents/tmux.ts";
 import type { Page } from "../src/flow/page.ts";
 import { leadPlaces } from "../src/paths.ts";
 import { drawPage } from "../src/screen/page.ts";
@@ -322,8 +322,10 @@ test("Shift+Enter reaches the agent as a key of its own, through both tmux serve
   type("b");
   press("Enter");
   await until(() => read("lead.keys").endsWith("\r"), "the Enter");
-  // CSI u, the form Claude Code and Codex both read as Shift+Enter. Plain Enter stays a CR.
-  expect(read("lead.keys")).toBe("a\x1b[13;2ub\r");
+  // CSI u, the form Claude Code and Codex both read as Shift+Enter. tmux before 3.5 has only
+  // the xterm form, which Claude Code reads too. Plain Enter stays a CR.
+  const shiftEnter = tmuxIsAtLeast(3, 5) ? "\x1b[13;2u" : "\x1b[27;2;13~";
+  expect(read("lead.keys")).toBe(`a${shiftEnter}b\r`);
 });
 
 test("with a terminal that sends extended keys, the screen's own keys still work", async () => {
