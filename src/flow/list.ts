@@ -7,6 +7,9 @@ import { repositoryTracker } from "../config.ts";
 import { colorful } from "../help.ts";
 import { cloneDir } from "../paths.ts";
 import { forgeOf, trackerOf } from "../plugins/ask.ts";
+import { titleRoom } from "../screen/layout.ts";
+import { fitted, removeControlCodes } from "../screen/look.ts";
+import { sidebarWidth } from "../screen/screen.ts";
 import { openTasks, taskOf } from "./copy.ts";
 import { findRepository, noRepositories, repositories } from "./repo.ts";
 import { needsYou, Thread, threadName } from "./thread.ts";
@@ -57,9 +60,12 @@ function tabClosed(db: Database, r: { owner: string; repo: string }): boolean {
   return z.object({ tab_closed: z.coerce.boolean() }).parse(row).tab_closed;
 }
 
-// A thread as sc ps shows it.
+// A thread as sc ps shows it, with the short title the lead gave it, if any, and its whole
+// title, which an old row may lack.
 export const ThreadRow = z.object({
   thread: z.string(),
+  short: z.string().nullable(),
+  title: z.string().nullable(),
   status: Thread.shape.status,
   needsYou: z.boolean(),
 });
@@ -76,7 +82,13 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
     : db.query("SELECT * FROM threads ORDER BY rowid DESC").all();
   return all.map((row) => {
     const thread = Thread.parse(row);
-    return { thread: threadName(db, thread), status: thread.status, needsYou: needsYou(thread) };
+    return {
+      thread: threadName(db, thread),
+      short: thread.short,
+      title: thread.title,
+      status: thread.status,
+      needsYou: needsYou(thread),
+    };
   });
 }
 
@@ -181,14 +193,25 @@ export function printRepositories(repositories: RepositoryRow[], json: boolean):
     );
 }
 
-// Prints threads for sc ps: as JSON for tools, or else as a table.
+// Prints threads for sc ps: as JSON for tools, or else as a table. Its title column has each
+// thread's short title, or its title cut to the room the sidebar gives one, so a long title
+// doesn't push the status out of sight. The title comes from the tracker and the short title
+// from the lead, so their control codes are removed, which could break a row or reach your
+// terminal.
 export function printThreads(threads: ThreadRow[], json: boolean): void {
   if (json) console.log(JSON.stringify(threads));
   else if (threads.length === 0) console.log("There are no threads.");
   else
     table(
-      ["THREAD", "STATUS", "NEEDS YOU"],
-      threads.map((t) => [t.thread, t.status, t.needsYou ? "yes" : ""]),
+      ["THREAD", "TITLE", "STATUS", "NEEDS YOU"],
+      threads.map((t) => [
+        t.thread,
+        t.short === null
+          ? fitted(removeControlCodes(t.title ?? ""), titleRoom(sidebarWidth))
+          : removeControlCodes(t.short),
+        t.status,
+        t.needsYou ? "yes" : "",
+      ]),
     );
 }
 

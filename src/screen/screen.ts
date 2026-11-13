@@ -1,14 +1,16 @@
-// The screen: the sidebar on the left of your terminal, with the agent or page you are looking
+// The screen: the sidebar on the left of your terminal, with the agent or list you are looking
 // at on the right and the strip above it. It is a second tmux server, one session per open
 // terminal, ended when you leave.
 import { applyConfig, envWithoutTmux, screenSocket } from "../agents/tmux.ts";
 import { windowTitle } from "../say.ts";
 import { mainFile, singleFile } from "../version.ts";
+import type { Entry } from "./lists.ts";
 
-// How wide the sidebar is, with the line it draws at its edge: room for 24 columns of a name or
-// title, between its mark and two columns of padding. tmux shares a resize out among panes, so
-// it is set back after each.
-export const sidebarWidth = 31;
+// How wide the sidebar is, with the line it draws at its edge: room for 31 columns of a title,
+// between its mark and two columns of padding, so a thread's name, word, harness and time
+// usually fit on one line whole. tmux shares a resize out among panes, so it is set back after
+// each.
+export const sidebarWidth = 38;
 
 // The tmux commands that set up the screen's server. They run each time the screen opens,
 // before its session starts, so a first draw never shows tmux's own look. Your own ~/.tmux.conf
@@ -37,6 +39,11 @@ const config = [
   ["set", "-g", "prefix2", "None"],
   ["unbind", "-a", "-T", "root"],
   ["bind", "-n", "C-q", "detach-client"],
+  // Keys that arrive faster than a millisecond apart are taken for a paste, and tmux then hands
+  // them to the pane you type to rather than act on them. Several Alt keys in one read, as fast
+  // typing, key repeat or a slow link bring, would lose all but the first two, and type the rest
+  // into the agent. A paste that matters comes bracketed anyway.
+  ["set", "-g", "assume-paste-time", "0"],
   // Alt with an arrow, and the same with Shift, go to the sidebar, in pane 0, without moving
   // your typing from the agent.
   ["bind", "-n", "M-Up", "send-keys", "-t", ":.0", "M-Up"],
@@ -123,9 +130,17 @@ function skelcrewCommand(...words: string[]): string[] {
 const sidebarCommand = (agents: string, session: string, where: string, repository: string) =>
   skelcrewCommand("sidebar", agents, session, where, repository);
 
-// Returns the command for the right pane while it shows a page, with the remote Skelcrew runs
-// on, which decides whether a click on its link opens your browser or copies the link.
-export const pageCommand = (url: string, where: string) => skelcrewCommand("page", url, where);
+// Returns the command for the right pane while it shows an entry's list of the repository named
+// by its owner/name. It gets the agents' server and the screen's session, to tell the sidebar
+// what it opens, and the remote Skelcrew runs on, which decides whether a click on a page's link
+// opens your browser or copies the link.
+export const paneCommand = (
+  agents: string,
+  session: string,
+  entry: Entry,
+  where: string,
+  repository: string,
+) => skelcrewCommand("list", agents, session, entry, where, repository);
 
 // Opens the screen in your terminal on the named agent session. `lead` is the open repository's
 // lead's session and `repository` its owner/name. It returns when you leave with Ctrl-Q, and
@@ -163,7 +178,7 @@ export async function openScreen(
     ["new-session", "-s", name, "--", ...agentClient(agents, session, lead)],
     ["set", "set-titles-string", windowTitle(env.SKELCREW_REMOTE_NAME)],
     ["split-window", "-hbd", "-l", String(sidebarWidth), "--", ...left],
-    // Ctrl-C reaches a page until it has made its terminal raw, and Bun won't stay ignoring it.
+    // Ctrl-C reaches a list until it has made its terminal raw, and Bun won't stay ignoring it.
     // A pane that ended would give the whole screen to the sidebar. A dead one stays in its
     // place, and moving away starts it again.
     ["set", "-p", "-t", ":.1", "remain-on-exit", "on"],

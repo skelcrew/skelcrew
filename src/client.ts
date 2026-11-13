@@ -87,21 +87,40 @@ export async function createTask(repository: string, title: string, body: string
 // Has the daemon start a thread on a task, for sc start, and returns what it did, in a
 // sentence: started a new thread, brought back a stopped one's builder, or let one past the
 // round limit go on. The daemon answers once the thread is recorded; its setup and builder
-// come after.
-export async function startOn(repository: string, task: string, from?: string): Promise<string> {
+// come after. `short` is the thread's short title for the sidebar, which on a thread already
+// at work is all that changes.
+export async function startOn(
+  repository: string,
+  task: string,
+  from?: string,
+  short?: string,
+): Promise<string> {
   const reply = await request({
     command: "start",
     repo: repository,
     task,
     ...(from ? { from } : {}),
+    ...(short ? { short } : {}),
   });
   return checkReply(z.object({ started: z.string() }), reply).started;
 }
 
 // Has the daemon start a thread on a title and body, for sc start in a repository with no
-// tracker, and returns what it did, in a sentence naming the thread, such as app-t1.
-export async function startNew(repository: string, title: string, body: string): Promise<string> {
-  const reply = await request({ command: "start new", repo: repository, title, body });
+// tracker, and returns what it did, in a sentence naming the thread, such as app-t1. `short` is
+// its short title for the sidebar.
+export async function startNew(
+  repository: string,
+  title: string,
+  body: string,
+  short?: string,
+): Promise<string> {
+  const reply = await request({
+    command: "start new",
+    repo: repository,
+    title,
+    body,
+    ...(short ? { short } : {}),
+  });
   return checkReply(z.object({ started: z.string() }), reply).started;
 }
 

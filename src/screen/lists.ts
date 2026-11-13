@@ -1,273 +1,267 @@
-// The sidebar as lines for its pane: the lead's row on top, then ISSUES, THREADS and PRS, and the
-// keys at the bottom. It reads nothing, so what you see can be tested without a terminal.
-import {
-  edge,
-  fitted,
-  grey,
-  onShade,
-  pad,
-  paint,
-  removeControlCodes,
-  shade,
-  white,
-  yellow,
-} from "./look.ts";
-import { type Link, type List, type Lists, needing, type Row, threadMark } from "./rows.ts";
+// The lists: what the right pane shows on landing on the sidebar's Issues, Threads or PRs entry,
+// in groups, and the counts beside those entries. Read from Skelcrew's database and its copy of
+// the tracker, never the tracker itself, as the sidebar and an open list read them each second.
+import type { Database } from "bun:sqlite";
+import { z } from "zod";
+import { threadConfig } from "../config.ts";
+import { type Item, itemAt, openPrs, openTasks } from "../flow/copy.ts";
+import { repositories } from "../flow/repo.ts";
+import { needsYou, Thread, threadName } from "../flow/thread.ts";
+import { forgeOf, trackerOf } from "../plugins/ask.ts";
+import { grey, red, yellow } from "./look.ts";
+import { type Open, threadMark, threadWord } from "./rows.ts";
 
-export type Size = { width: number; height: number };
-// One line of the sidebar, with the row it belongs to, if any, for a click. A line that `joins`
-// the sidebar's edge runs into it, as the lines between lists do.
-type Line = { text: string; row?: Row; link?: Link; joins?: boolean };
+// The three entries of the sidebar, each of which shows a list.
+export type Entry = "issues" | "threads" | "prs";
+// One row of a list. Its mark's colour is null when it is plain. `ends` are the columns after
+// its title, each in its colour. An issue or PR has the `link` its page opens, and a thread the
+// `session` its agent runs in. A stopped thread is `dim`, as it can't be opened.
+export type ListRow = {
+  mark: [string, string | null];
+  name: string;
+  title: string;
+  ends: [string, string][];
+  link: string | null;
+  session: string | null;
+  dim: boolean;
+};
+// Rows under a dim heading, such as Ready to merge.
+export type Group = { heading: string; rows: ListRow[] };
+// An entry of the sidebar: its name, how many its list has, and a note on what you act on,
+// such as 2 ready, in yellow when it is `warn`.
+export type EntryCount = { entry: Entry; name: string; total: number; note: string; warn: boolean };
 
-// Where a name starts, past its mark.
-const indent = `${pad}  `;
-// The keys you need most, at the bottom of the sidebar. The others are in Skelcrew's help.
-const hints = [`${pad}⌥↑↓ move`, `${pad}⌃Q quit`];
+// A thread that isn't done, as the lists know it: with its name and the word that says what it
+// is doing.
+type Known = { thread: Thread; name: string; word: string };
 
-// Returns a line with spaces added out to a width.
-const filled = (line: string, width: number) =>
-  `${line}${" ".repeat(Math.max(width - Bun.stringWidth(line), 0))}`;
+// Returns a thread's round limit, from its repository's skelcrew.yaml or your config. Settings
+// that aren't valid already stop rounds, with the reason, and mustn't also take the sidebar or a
+// list away. Such a thread then reads as never past the limit.
+export function roundLimit(thread: Thread): number {
+  try {
+    return threadConfig(thread).maxRounds;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
 
-// Returns text in a colour, or, on the row you are looking at, the one that stands in for it on
-// the grey.
-const tinted = (here: boolean, code: number, text: string) =>
-  paint(here ? (onShade[code] ?? code) : code, text);
+// Returns the open repository's threads that aren't done, newest first, each with its name and
+// word.
+function openThreads(db: Database, open: Open): Known[] {
+  const found = db.query(`SELECT * FROM threads
+      WHERE status != 'done' AND owner = ? AND repo = ? ORDER BY rowid DESC`);
+  return found.all(open.owner, open.repo).map((row) => {
+    const thread = Thread.parse(row);
+    return { thread, name: threadName(db, thread), word: threadWord(thread, roundLimit(thread)) };
+  });
+}
 
-// Returns a line with the grey behind it, out to the end of the row.
-const shaded = (line: string, width: number) => `\x1b[${shade}m${filled(line, width)}\x1b[49m`;
+// Says whether a thread shows as needing you. A thread that failed can still have its needs you
+// flag, and its word says failed.
+const needing = ({ thread }: Known) => needsYou(thread) && thread.status !== "failed";
 
-// Returns one row as lines: a mark and the whole name, which goes on to more lines when it is
-// too long, then the word and harness. A cut name could hide what tells two threads apart. An
-// agent that isn't running is dim, as it can't be picked. The one you are looking at is shaded
-// across the whole width, on all its lines.
-function rowLines(row: Row, here: boolean, width: number): string[] {
-  // Returns part of the name as this row shows it.
-  const styled = (name: string) => {
-    if (here) return paint(white, name);
-    return row.running ? name : paint(grey, name);
+// Returns a thread's word as the end of a row, yellow when it needs you and dim otherwise.
+const wordEnd = (open: Known): [string, string] => [open.word, needing(open) ? yellow : grey];
+
+// Returns the repository's name in Skelcrew, which names its issues and PRs, such as app-12.
+function repositoryName(db: Database, open: Open): string {
+  const row = db
+    .query("SELECT name FROM repositories WHERE owner = ? AND repo = ?")
+    .get(open.owner, open.repo);
+  return z.object({ name: z.string() }).nullable().parse(row)?.name ?? open.repo;
+}
+
+// Returns the open groups only, as a group with nothing in it isn't shown.
+const filled = (groups: Group[]) => groups.filter((group) => group.rows.length > 0);
+
+// Returns the open repository's issues, as `Not started`, the ones no thread works on, then
+// `Started`. An issue's mark is ○ with no thread, ◐ while its thread works on it and ● once its
+// thread is approved and waits for you to merge. The marks are plain, as an issue never needs
+// you on its own. One with a thread ends with its word. A thread that is done is over, so its
+// issue counts as not started again.
+function issueGroups(db: Database, open: Open, threads: Known[]): Group[] {
+  const name = repositoryName(db, open);
+  const rows = openTasks(db, open.owner, open.repo).map((task) => {
+    const on = threads.find(({ thread }) => thread.task === task.id);
+    const sign = !on ? "○" : on.word === "approved" ? "●" : "◐";
+    const row: ListRow = {
+      mark: [sign, null],
+      name: `${name}-${task.id}`,
+      title: task.title,
+      ends: on ? [wordEnd(on)] : [],
+      link: task.link,
+      session: null,
+      dim: false,
+    };
+    return { row, started: on !== undefined };
+  });
+  return filled([
+    { heading: "Not started", rows: rows.filter((r) => !r.started).map((r) => r.row) },
+    { heading: "Started", rows: rows.filter((r) => r.started).map((r) => r.row) },
+  ]);
+}
+
+// Says whether the forge says a PR Skelcrew didn't open is approved and every check passed. As on
+// GitHub, each reviewer's latest approval or request for changes stands until a dismissal clears
+// it, and a comment changes nothing. The PR is approved when someone approves and nobody asks
+// for changes.
+function approvedOnForge(pr: Extract<Item, { kind: "pr" }>): boolean {
+  const standing = new Map<string, string>();
+  for (const { author, verdict } of pr.reviews) {
+    const who = author?.login ?? "";
+    if (verdict === "dismissed") standing.delete(who);
+    else if (verdict !== "commented") standing.set(who, verdict);
+  }
+  const verdicts = [...standing.values()];
+  return (
+    verdicts.includes("approved") &&
+    !verdicts.includes("changes requested") &&
+    pr.checks.every((check) => check.state === "passed")
+  );
+}
+
+// Returns the open repository's PRs, as `Ready to merge`, then `In review`. A PR's mark is ○
+// before its first review, ◐ from the moment it runs while the rounds go on, and ● once it is approved and its checks
+// pass. A PR Skelcrew didn't open has no rounds, so it is ○ until the forge says it is approved
+// and its checks pass. A PR from a thread takes the thread's yellow when it needs you, or red
+// when it failed, and ends with its word. One with no thread ends with its author.
+function prGroups(db: Database, open: Open, threads: Known[]): Group[] {
+  const name = repositoryName(db, open);
+  const rows = openPrs(db, open.owner, open.repo).map((pr) => {
+    const on = threads.find(({ thread }) => thread.pr === Number(pr.id));
+    const ready = on ? on.word === "approved" : approvedOnForge(pr);
+    // A review under way counts as a round going on, the first one included.
+    const reviewed = on && (on.thread.review_round !== null || on.word === "reviewing");
+    const sign = ready ? "●" : reviewed ? "◐" : "○";
+    const colour = !on ? null : on.thread.status === "failed" ? red : needing(on) ? yellow : null;
+    const row: ListRow = {
+      mark: [sign, colour],
+      name: `${name}#${pr.id}`,
+      title: pr.title,
+      ends: [on ? wordEnd(on) : [pr.author?.login ?? "", grey]],
+      link: pr.link,
+      session: null,
+      dim: false,
+    };
+    return { row, ready };
+  });
+  return filled([
+    { heading: "Ready to merge", rows: rows.filter((r) => r.ready).map((r) => r.row) },
+    { heading: "In review", rows: rows.filter((r) => !r.ready).map((r) => r.row) },
+  ]);
+}
+
+// Returns when a thread last changed as a clock time for a moment today, such as 14:32, and as
+// a date for an earlier one, such as 12 Nov, in this machine's time zone. It changes only when
+// the thread does, or at midnight, so a list left open writes nothing.
+export function changedAt(at: number, now: number): string {
+  const when = new Date(at);
+  if (when.toDateString() === new Date(now).toDateString())
+    return `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
+  return `${when.getDate()} ${when.toLocaleString("en-GB", { month: "short" })}`;
+}
+
+// Returns the open repository's threads that aren't done, as `Needs you`, those that need you
+// or failed, then `Working`, every other one working or waiting, then `Stopped`. Each ends with
+// its word, harness, its issue and PR if it has them, such as #12 #31, and when it last changed.
+// A stopped thread's agent isn't running, so its row is dim.
+function threadGroups(threads: Known[], now: number): Group[] {
+  const rows = threads.map((open) => {
+    const { thread, word } = open;
+    // Only a review is on another harness, and a thread with no harness saved started before
+    // Skelcrew saved it, when builders ran only on Claude Code. A thread with no issue in the
+    // tracker has a task such as t1.
+    const harness = word === "reviewing" ? (thread.reviewer ?? "") : (thread.harness ?? "claude");
+    const issue = /^t\d+$/.test(thread.task) ? "" : `#${thread.task}`;
+    const refs = [issue, thread.pr === null ? "" : `#${thread.pr}`].filter(Boolean).join(" ");
+    const changed = thread.changed ?? thread.started;
+    const row: ListRow = {
+      mark: threadMark({ status: thread.status, needsYou: needsYou(thread) }),
+      name: open.name,
+      title: thread.title ?? "",
+      ends: [
+        wordEnd(open),
+        [harness, grey],
+        [refs, grey],
+        [changed === null ? "" : changedAt(changed, now), grey],
+      ],
+      link: null,
+      session: thread.folder,
+      dim: thread.status === "stopped",
+    };
+    return { row, open };
+  });
+  const stopped = (r: (typeof rows)[number]) => r.open.thread.status === "stopped";
+  const urgent = (r: (typeof rows)[number]) => needing(r.open) || r.open.thread.status === "failed";
+  return filled([
+    { heading: "Needs you", rows: rows.filter(urgent).map((r) => r.row) },
+    { heading: "Working", rows: rows.filter((r) => !urgent(r) && !stopped(r)).map((r) => r.row) },
+    { heading: "Stopped", rows: rows.filter(stopped).map((r) => r.row) },
+  ]);
+}
+
+// Returns an entry's list for the open repository, in its groups, at a moment in milliseconds.
+export function listGroups(db: Database, open: Open, entry: Entry, now: number): Group[] {
+  const threads = openThreads(db, open);
+  if (entry === "issues") return issueGroups(db, open, threads);
+  if (entry === "prs") return prGroups(db, open, threads);
+  return threadGroups(threads, now);
+}
+
+// Returns the sidebar's entries for the open repository, with their counts: Issues when it has a
+// tracker, Threads always, and PRs when it has a forge. Issues says how many have no thread yet,
+// Threads how many need you or failed, and PRs how many are ready to merge. These last two are
+// yellow and only there when there are any.
+export function entryCounts(db: Database, open: Open): EntryCount[] {
+  const repository = repositories(db).find((r) => r.owner === open.owner && r.repo === open.repo);
+  const threads = openThreads(db, open);
+  // Returns how many rows a list has, and how many under its first heading if that is `first`.
+  const count = (groups: Group[], first: string) => ({
+    total: groups.reduce((sum, group) => sum + group.rows.length, 0),
+    flagged: groups[0]?.heading === first ? groups[0].rows.length : 0,
+  });
+  const issues = count(repository ? issueGroups(db, open, threads) : [], "Not started");
+  const ours = count(threadGroups(threads, 0), "Needs you");
+  const prs = count(repository ? prGroups(db, open, threads) : [], "Ready to merge");
+  const needYou = ours.flagged === 1 ? "needs you" : "need you";
+  const issuesEntry: EntryCount = {
+    entry: "issues",
+    name: "Issues",
+    total: issues.total,
+    note: issues.flagged ? `${issues.flagged} new` : "",
+    warn: false,
   };
-  // The name is cut into pieces that fit between the indent and the padding, so a long one
-  // goes on to more lines instead of being cut short.
-  const room = Math.max(width - indent.length - pad.length, 1);
-  const [first = "", ...rest] = row.name.match(new RegExp(`.{1,${room}}`, "g")) ?? [];
-  // The last line has the word, then the harness and age in what room the word leaves.
-  const [sign, colour] = threadMark(row);
-  const word = row.word.slice(0, room);
-  const after = [row.harness, row.age].flatMap((part) => (part ? [` · ${part}`] : [])).join("");
-  const more = after.slice(0, room - word.length);
-  // The mark starts the first line, and the rest line up under the name. The word is yellow
-  // when the thread needs you.
-  const lines = [
-    `${pad}${tinted(here, colour, sign)} ${styled(first)}`,
-    ...rest.map((part) => `${indent}${styled(part)}`),
-    `${indent}${tinted(here, needing(row) ? yellow : grey, word)}${more && tinted(here, grey, more)}`,
-  ];
-  return here ? lines.map((line) => shaded(line, width)) : lines;
-}
-
-// Returns a row of ISSUES or PRS as two lines, each a terminal link and cut to stop at the
-// padding: its title, then, dim, its name and a PR's word, in the colours a thread gives that
-// word. A PR's mark comes before its title, outside the link. An issue has none, so its lines
-// start at the padding. Skelcrew may run on another machine than your browser, so your terminal
-// opens the link. The title comes from outside, so it is made safe. The one you are looking at
-// is shaded as a thread's row is.
-function linkLines(link: Link, here: boolean, width: number): string[] {
-  // Each part is cut to fit between where its line starts and the padding. The word shares
-  // the name's line, after a dot of three columns, and is yellow when its thread needs you.
-  const start = link.mark ? indent : pad;
-  const room = Math.max(width - start.length - pad.length, 0);
-  const title = fitted(removeControlCodes(link.title), room);
-  const name = fitted(link.name, room);
-  const word = link.word && fitted(link.word, room - Bun.stringWidth(name) - 3);
-  const about =
-    word && `${tinted(here, grey, " · ")}${tinted(here, link.needing ? yellow : grey, word)}`;
-  // The title is white on the row you are looking at, and dim for an issue that already has a
-  // thread. Both lines are the link, so either one opens it.
-  const heading = here ? paint(white, title) : link.dim ? paint(grey, title) : title;
-  const [top, bottom] = [heading, `${tinted(here, grey, name)}${about}`].map(
-    (text) => `\x1b]8;;${link.url}\x1b\\${text}\x1b]8;;\x1b\\`,
-  );
-  const mark = link.mark && `${pad}${tinted(here, link.mark[1], link.mark[0])} `;
-  const lines = [`${mark ?? pad}${top}`, `${start}${bottom}`];
-  return here ? lines.map((line) => shaded(line, width)) : lines;
-}
-
-// Returns what starts a list: its heading, dim, and the blank line that parts it from the rows.
-const listHeading = (heading: string): Line[] => [
-  { text: paint(grey, `${pad}${heading}`) },
-  { text: "" },
-];
-
-// Returns a list's lines in its share of the sidebar, `height` lines: its heading and a blank
-// line, as many rows as fit, then a count of the rest. Rows come with the dim ones last, so those
-// are the first to be left out. A share with room for just one row keeps the row, and the count
-// gives way.
-function listLines(
-  heading: string,
-  list: List,
-  shown: string | null,
-  height: number,
-  width: number,
-): Line[] {
-  const top = listHeading(heading);
-  // Each row takes two lines. When not all of them fit, a line is kept for the count of the
-  // rest, unless that would leave no row at all.
-  const fit = Math.floor((height - top.length) / 2);
-  const shownCount =
-    list.total > fit ? Math.max(Math.floor((height - top.length - 1) / 2), 1) : fit;
-  const links = list.links.slice(0, shownCount);
-  const rest = list.total - links.length;
-  // Cutting to the share is what drops the count when only one row fits.
+  const threadsEntry: EntryCount = {
+    entry: "threads",
+    name: "Threads",
+    total: ours.total,
+    note: ours.flagged ? `${ours.flagged} ${needYou}` : "",
+    warn: true,
+  };
+  const prsEntry: EntryCount = {
+    entry: "prs",
+    name: "PRs",
+    total: prs.total,
+    note: prs.flagged ? `${prs.flagged} ready` : "",
+    warn: true,
+  };
   return [
-    ...top,
-    ...links.flatMap((link) =>
-      linkLines(link, link.url === shown, width).map((text) => ({ text, link })),
-    ),
-    ...(rest > 0 ? [{ text: paint(grey, `${pad}+ ${rest} more`) }] : []),
-  ].slice(0, height);
-}
-
-// Returns lines with blank ones added, out to a height.
-const padded = (lines: Line[], height: number) => [
-  ...lines,
-  ...Array<Line>(height - lines.length).fill({ text: "" }),
-];
-
-// Returns what fits of the threads in a number of lines, by whole rows from the top, just far
-// enough down to keep the row you are looking at in view, so Alt-Down never moves off the bottom.
-function scrolled(blocks: Line[][], here: number, room: number): Line[] {
-  // Starts with every row down to yours, then drops rows from the top until that fits.
-  let used = blocks.slice(0, here + 1).flat().length;
-  let first = 0;
-  while (first < here && used > room) {
-    used -= blocks[first]?.length ?? 0;
-    first++;
-  }
-  return blocks.slice(first).flat().slice(0, room);
-}
-
-// Returns the lines above the hints, and how many there can be. The hints take the bottom lines
-// unless that leaves no room for the whole row you are looking at. Then they give way, as the
-// rows are what you pick from and the keys are also in Skelcrew's help.
-// The lead's row comes first, with a line under it. Below it, the lists that show share the lines
-// left evenly, however full, so each list stays in the same place on screen. What doesn't divide
-// goes to THREADS, or to the first list when there is no THREADS. An empty list doesn't show, as
-// it says nothing. A terminal may be too short for a heading and a row in each share, or for your
-// row in THREADS. Then the lists go, and the lead and the threads fill the sidebar with no
-// heading, as they are what you move through.
-export function layout(
-  rows: Row[],
-  lists: Lists,
-  shown: string | null,
-  size: Size,
-): { lines: Line[]; room: number } {
-  // A blank line comes first, so the lead's row, grey when you look at it, doesn't touch the
-  // header above the sidebar and read as part of it. Clicks find rows in these same lines. Like
-  // the hints, it gives way on a sidebar too short for it and the whole row you are looking at.
-  const shownRow = rows.find((row) => row.session === shown);
-  const tallest = shownRow ? rowLines(shownRow, true, size.width - 1).length : 2;
-  if (size.height <= tallest) return layoutBelowBlank(rows, lists, shown, size);
-  const below = layoutBelowBlank(rows, lists, shown, { ...size, height: size.height - 1 });
-  return { lines: [{ text: "" }, ...below.lines], room: below.room + 1 };
-}
-
-// Lays out the lines below the blank line at the sidebar's top, as layout describes.
-function layoutBelowBlank(
-  rows: Row[],
-  lists: Lists,
-  shown: string | null,
-  size: Size,
-): { lines: Line[]; room: number } {
-  // Every row's lines, and how tall the row you are looking at is. The hints keep the bottom
-  // lines only while that row still fits above them.
-  const width = size.width - 1;
-  const linesOf = (row: Row) =>
-    rowLines(row, row.session === shown, width).map((text) => ({ text, row }));
-  const blocks = rows.map(linesOf);
-  const here = rows.findIndex((row) => row.session === shown);
-  const tallest = blocks[here]?.length ?? 2;
-  const room = size.height >= tallest + hints.length ? size.height - hints.length : size.height;
-  // The lead is the row with no status of its own.
-  const lead = rows.filter((row) => row.status === null).flatMap(linesOf);
-  const threads = rows.filter((row) => row.status !== null).map(linesOf);
-  const shownThread = rows
-    .filter((row) => row.status !== null)
-    .findIndex((row) => row.session === shown);
-  const issues = lists.issues?.links.length ? lists.issues : null;
-  const prs = lists.prs?.links.length ? lists.prs : null;
-  // Each list that shows, as what draws it in a number of lines. THREADS scrolls to keep yours
-  // in view.
-  const parts = [
-    ...(issues ? [(height: number) => listLines("Issues", issues, shown, height, width)] : []),
-    ...(threads.length > 0
-      ? [
-          (height: number) => [
-            ...listHeading("Threads"),
-            ...scrolled(threads, shownThread, height - 2),
-          ],
-        ]
-      : []),
-    ...(prs ? [(height: number) => listLines("PRs", prs, shown, height, width)] : []),
+    ...(repository && trackerOf(db, repository) ? [issuesEntry] : []),
+    threadsEntry,
+    ...(repository && forgeOf(db, repository) ? [prsEntry] : []),
   ];
-  // One line goes under the lead, and one between each list and the next. What doesn't divide
-  // goes to THREADS, or to the first list without it.
-  const below = room - lead.length - (lead.length > 0 ? parts.length : parts.length - 1);
-  const share = Math.floor(below / parts.length);
-  const remainderIndex = threads.length > 0 && issues ? 1 : 0;
-  const heights = parts.map((_, index) =>
-    index === remainderIndex ? below - (parts.length - 1) * share : share,
-  );
-  // Too short for a heading and a row in each list, or for your row in THREADS: no lists.
-  const tallestThread = threads[shownThread]?.length ?? 2;
-  const threadsFit = threads.length === 0 || (heights[remainderIndex] ?? 0) >= 2 + tallestThread;
-  if (parts.length === 0 || share < 4 || !threadsFit)
-    return { lines: scrolled(blocks, here, room), room };
-  // Each list is filled out to its share, so the list after it always starts in the same place.
-  const divider = { text: paint(edge, "─".repeat(Math.max(width, 0))), joins: true };
-  const sections = [
-    ...(lead.length > 0 ? [lead] : []),
-    ...parts.map((part, index) => padded(part(heights[index] ?? share), heights[index] ?? share)),
-  ];
-  const lines = sections.flatMap((section, index) => (index > 0 ? [divider, ...section] : section));
-  return { lines, room };
 }
 
-// Returns the whole sidebar as lines, given the rows, the lists, what is on the right, as a
-// session or a link's url, and the sidebar's size. It reads nothing, so what you see can be
-// tested without a terminal. Every line fills the pane and ends with the sidebar's edge, in the
-// last column. tmux's own border beside it is blank, which leaves a gap before the agent.
-export function draw(rows: Row[], lists: Lists, shown: string | null, size: Size): string {
-  // The hints are cut to the sidebar's width, and come below the lists only when the layout left
-  // room for them.
-  const { lines, room } = layout(rows, lists, shown, size);
-  const width = size.width - 1;
-  const keys = hints.map((hint) => ({
-    text: paint(grey, hint.slice(0, Math.max(width - pad.length, 0))),
-  }));
-  const all: Line[] = [...padded(lines, room), ...(room < size.height ? keys : [])];
-  // Each line is filled out to the edge, which a divider meets with a ┤.
-  return all
-    .map(({ text, joins }) => `${filled(text, width)}${paint(edge, joins ? "┤" : "│")}`)
-    .join("\n");
-}
-
-// Returns the lines that go above the lists for a notice, such as a release installed in the
-// background, or none without one. Cut at words to fit a sidebar `width` columns wide, and
-// parted from the lists by a blank line. Each fills the pane and ends with the sidebar's edge.
-export function noticeLines(notice: string, width: number): string[] {
-  if (!notice) return [];
-  const room = Math.max(width - 1 - 2 * pad.length, 1);
-  // A word goes on the last line while it fits, and starts a new one when it doesn't. A word
-  // longer than a whole line has one to itself.
-  const lines = [""];
-  for (const word of notice.split(" ")) {
-    const last = lines.length - 1;
-    const longer = lines[last] ? `${lines[last]} ${word}` : word;
-    if (Bun.stringWidth(longer) <= room || !lines[last]) lines[last] = longer;
-    else lines.push(word);
-  }
-  // Each line is padded, a blank one follows, and all of them end at the sidebar's edge.
-  return [...lines.map((line) => `${pad}${line}`), ""].map(
-    (line) => `${filled(line, width - 1)}${paint(edge, "│")}`,
-  );
+// Returns the name and title of the issue or PR at a link, as the strip shows a page, or null
+// when Skelcrew's copy has nothing there.
+export function pageRow(
+  db: Database,
+  open: Open,
+  link: string,
+): { name: string; title: string } | null {
+  const item = itemAt(db, link);
+  if (!item) return null;
+  const name = repositoryName(db, open);
+  return { name: `${name}${item.kind === "task" ? "-" : "#"}${item.id}`, title: item.title };
 }

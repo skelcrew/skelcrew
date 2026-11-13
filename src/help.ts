@@ -68,6 +68,7 @@ const sections: [string, [string, string][]][] = [
     [
       ["--json", "Output for tools"],
       ["--all", "Done threads too, on ps"],
+      ['--short "<words>"', "A thread's short title for the sidebar, on start"],
       ["--from <remote>", "The repository you're in"],
       ["--version", "Which release of Skelcrew this is"],
     ],
@@ -114,8 +115,10 @@ export function help(color = colorful()): string {
     dim("  A thread is named after its issue, such as app-12. --remote keeps"),
     dim("  Skelcrew on the other side up to date with yours, after asking. See skelcrew.dev."),
     dim("  In the sidebar, click a row or press Alt-Up or Alt-Down. Alt-Shift-Up and"),
-    dim("  Alt-Shift-Down jump between lists. Alt-Left and Alt-Right, or Alt-Shift-Left"),
-    dim("  and Alt-Shift-Right, switch to the repository before or after. Ctrl-Q leaves."),
+    dim("  Alt-Shift-Down jump between the lead, the lists and the threads. Alt-Left and"),
+    dim("  Alt-Right, or Alt-Shift-Left and Alt-Shift-Right, switch to the repository"),
+    dim("  before or after. In a list, Up and Down move and Enter opens. On a page, Up and"),
+    dim("  Down scroll, and Esc or Left goes back. Ctrl-Q leaves."),
     "",
   );
   return lines.join("\n");

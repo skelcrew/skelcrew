@@ -77,8 +77,7 @@ export type Task = Extract<Item, { kind: "task" }>;
 // answered. For each kind in `completeKinds`, `items` holds every open item of that kind, so
 // an item of it in the copy that isn't among them is closed. A closed item is kept while a
 // thread that isn't over points to it, as its builder and reviewer still read its task. Also
-// saves how many tasks and PRs are open, for the sidebar's count of the rows it has no room
-// for. It is one transaction, so no reader sees half of it.
+// saves how many tasks and PRs are open with the repository. It is one transaction, so no reader sees half of it.
 export function saveItems(
   db: Database,
   owner: string,
@@ -110,7 +109,7 @@ export function saveItems(
           AND items.id = CAST((CASE items.kind WHEN 'task' THEN t.task ELSE t.pr END) AS TEXT))`,
       [owner, repo],
     );
-    // Count what is left open, for the sidebar.
+    // Count what is left open.
     db.run(
       `UPDATE repositories SET
         open_issues = (SELECT COUNT(*) FROM items i WHERE i.owner = repositories.owner
@@ -169,7 +168,21 @@ export function openTasks(db: Database, owner: string, repo: string): Task[] {
   ).flatMap((item) => (item.kind === "task" ? [item] : []));
 }
 
-// Returns the item a sidebar row links to, for its page, or null when the copy has none there.
+// Returns a repository's open PRs, newest first, for the list of PRs.
+export function openPrs(
+  db: Database,
+  owner: string,
+  repo: string,
+): Extract<Item, { kind: "pr" }>[] {
+  return parseItems(
+    db
+      .query(`SELECT item FROM items WHERE owner = ? AND repo = ? AND kind = 'pr'
+        AND state = 'open' ORDER BY created DESC, length(id) DESC, id DESC`)
+      .all(owner, repo),
+  ).flatMap((item) => (item.kind === "pr" ? [item] : []));
+}
+
+// Returns the item a list's row links to, for its page, or null when the copy has none there.
 export function itemAt(db: Database, link: string): Item | null {
   const rows = db.query("SELECT item FROM items WHERE json_extract(item, '$.link') = ?").all(link);
   return parseItems(rows)[0] ?? null;

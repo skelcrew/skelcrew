@@ -61,6 +61,8 @@ function prepareTables(db: Database): void {
   // machine had before Skelcrew gave each repository its own. `claimed` is whether Skelcrew has
   // asked the forges installed which of them claims the repository's remote, `forge` is the one
   // that does, or null, and `author` is who commits in its name, as git writes an author.
+  // `old_remote` is the host and owner/name in lower case, such as github.com/simon/old, of a
+  // checkout's remote that uses an old name of the repository, once its forge has said so.
   // `tab_closed` marks a repository whose lead you exited, so its tab stays hidden and the
   // daemon doesn't bring its lead back until you open it again.
   const repositoryColumns = {
@@ -73,6 +75,7 @@ function prepareTables(db: Database): void {
     forge: "TEXT",
     claimed: "INTEGER NOT NULL DEFAULT 0",
     author: "TEXT",
+    old_remote: "TEXT",
     tab_closed: "INTEGER NOT NULL DEFAULT 0",
   };
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each column is looked up first.
@@ -103,6 +106,9 @@ function prepareTables(db: Database): void {
   // The rest of a thread's columns, added as the repositories' are. `submitting`,
   // `reviewing` and `telling` hold the round under way, so one the daemon's stop cut short
   // carries on when it starts again, and `noting` holds a note for the lead the same way.
+  // `short` is the short title the lead gave the thread for the sidebar.
+  // `assigned` is whether Skelcrew assigned you the thread's issue, so it takes you off only then.
+  // `changed` is when anything last went in the thread's log.
   const threadColumns = {
     rounds: "INTEGER NOT NULL DEFAULT 0",
     pr: "INTEGER",
@@ -127,6 +133,9 @@ function prepareTables(db: Database): void {
     harness: "TEXT",
     body: "TEXT",
     seen: "TEXT",
+    short: "TEXT",
+    assigned: "INTEGER NOT NULL DEFAULT 0",
+    changed: "INTEGER",
   };
   for (const [column, type] of Object.entries(threadColumns))
     if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))

@@ -79,11 +79,11 @@ openDb().run(${JSON.stringify(statements)});`;
 // builders running, so the daemon leaves them be as it starts.
 function threads(): void {
   sql(`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app'), ('site', 'simon', 'site');
-INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you, session) VALUES
-  ('simon', 'app', 3, 'app-3', 'skelcrew/3', 'done', 0, NULL),
-  ('simon', 'site', 7, 'site-7', 'skelcrew/7', 'waiting', 1, 's7'),
-  ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'working', 0, 's12'),
-  ('simon', 'app', 9, 'app-9', 'skelcrew/9', 'failed', 0, NULL);`);
+INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you, session, title, short) VALUES
+  ('simon', 'app', 3, 'app-3', 'skelcrew/3', 'done', 0, NULL, 'Fix typo', 'Typo'),
+  ('simon', 'site', 7, 'site-7', 'skelcrew/7', 'waiting', 1, 's7', 'Add docs', NULL),
+  ('simon', 'app', 12, 'app-12', 'skelcrew/12', 'working', 0, 's12', 'Add export', 'JSON export'),
+  ('simon', 'app', 9, 'app-9', 'skelcrew/9', 'failed', 0, NULL, 'Send people back to the page they came from after signing in', NULL);`);
   for (const live of ["site-7", "app-12"])
     Bun.spawnSync([
       "tmux",
@@ -122,17 +122,19 @@ async function openApp(): Promise<void> {
 }
 
 describe("sc ps", () => {
-  test("lists live threads newest first, with their status and whether they need you", async () => {
+  // A thread's short title says what it is in a few words. One with none shows its title, cut
+  // to the room the sidebar gives it, so a long title doesn't push the other columns away.
+  test("lists live threads newest first, with their short title, status and whether they need you", async () => {
     threads();
     serve();
     await untilAnswers();
     const listed = await skel(["ps"]);
     expect(listed.err).toBe("");
     expect(listed.out).toBe(
-      "THREAD  STATUS   NEEDS YOU\n" +
-        "app-9   failed\n" +
-        "app-12  working\n" +
-        "site-7  waiting  yes\n",
+      "THREAD  TITLE                            STATUS   NEEDS YOU\n" +
+        "app-9   Send people back to the page t…  failed\n" +
+        "app-12  JSON export                      working\n" +
+        "site-7  Add docs                         waiting  yes\n",
     );
   });
 
@@ -144,11 +146,11 @@ describe("sc ps", () => {
     const listed = await skel(["ps", "--all"]);
     expect(listed.err).toBe("");
     expect(listed.out).toBe(
-      "THREAD  STATUS   NEEDS YOU\n" +
-        "app-9   failed\n" +
-        "app-12  working\n" +
-        "site-7  waiting  yes\n" +
-        "app-3   done\n",
+      "THREAD  TITLE                            STATUS   NEEDS YOU\n" +
+        "app-9   Send people back to the page t…  failed\n" +
+        "app-12  JSON export                      working\n" +
+        "site-7  Add docs                         waiting  yes\n" +
+        "app-3   Typo                             done\n",
     );
     expect(JSON.parse((await skel(["ps", "app", "--json", "--all"])).out)).toHaveLength(3);
   });
@@ -160,7 +162,7 @@ describe("sc ps", () => {
     const listed = await skel(["ps", "site", "--json"]);
     expect(listed.err).toBe("");
     expect(JSON.parse(listed.out)).toEqual([
-      { thread: "site-7", status: "waiting", needsYou: true },
+      { thread: "site-7", short: null, title: "Add docs", status: "waiting", needsYou: true },
     ]);
     expect(JSON.parse((await skel(["ps", "--json", "app"])).out)).toHaveLength(2);
   });
@@ -201,7 +203,7 @@ describe("sc ps", () => {
     serve();
     await untilAnswers();
     expect(JSON.parse((await skel(["ps", "--json"])).out)).toEqual([
-      { thread: "app-12", status: "working", needsYou: false },
+      { thread: "app-12", short: null, title: null, status: "working", needsYou: false },
     ]);
   });
 
@@ -435,9 +437,9 @@ esac`,
   });
 });
 
-// A page reads Skelcrew's copy in your own terminal, so an agent has nothing to ask the daemon.
-test("an agent can't run the page command", async () => {
-  const refused = await skel(["page", "https://github.com/simon/app/issues/31"], {
+// A list reads Skelcrew's copy in your own terminal, so an agent has nothing to ask the daemon.
+test("an agent can't run the list command", async () => {
+  const refused = await skel(["list", "a", "s", "issues", "", "simon/app"], {
     SKELCREW_SANDBOX: "1",
   });
   expect(refused.err).toContain("your own terminal");

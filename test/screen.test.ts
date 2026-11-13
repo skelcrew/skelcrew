@@ -63,14 +63,14 @@ const seen = (window = "one") => tmux(terminal, "capture-pane", "-p", "-t", `=${
 // agent.
 const tabRow = () => (seen().split("\n")[0] ?? "").trimEnd();
 // The row you are looking at, as the name line with the grey background shows it, below the
-// status line, where the open tab has the same grey. Empty until the sidebar has drawn
-// one.
+// status line, where the open tab has the same grey, and left of the sidebar's edge, as the
+// row you are on in a list on the right has it too. Empty until the sidebar has drawn one.
 function selected(window = "one"): string {
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", `=${window}:`).out;
   const line = colours
     .split("\n")
     .slice(1)
-    .find((text) => text.includes("48;5;238"));
+    .find((text) => (text.split(/[│┤]/)[0] ?? "").includes("48;5;238"));
   return Bun.stripANSI(line ?? "")
     .slice(0, sidebar - 1)
     .trim();
@@ -179,6 +179,16 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
+// Moves from the lead to the first thread that runs, past the entries, or to the one after it.
+const toFirstThread = () => {
+  press("M-S-Down");
+  press("M-S-Down");
+};
+const toSecondThread = () => {
+  toFirstThread();
+  press("M-Down");
+};
+
 // Waits until the screen shows the sidebar and the agent you opened it on.
 const ready = (name: string, window = "one") =>
   until(
@@ -192,17 +202,22 @@ test("shows the lead and every thread that isn't done, beside the agent", async 
   await ready("lead");
   const lines = seen().split("\n");
   const y = lines.findIndex((line) => line.includes("◆ lead"));
-  // The lead is at the top of the sidebar, below a blank line, then a line, then THREADS.
+  // The lead is at the top of the sidebar, below a blank line, then a line, the entries, another
+  // line, then THREADS.
   expect(y).toBe(2);
   expect(lines[1]?.slice(0, sidebar - 1).trim()).toBe("");
   expect(selected()).toBe("◆ lead");
   expect(lines[1]).toContain("I am lead");
   expect(lines[y + 1]).toContain("running · claude");
   expect(lines[y + 2]?.slice(0, sidebar - 1)).toMatch(/^─+$/);
-  expect(lines[y + 3]).toContain("Threads");
-  expect(lines[y + 5]).toContain("● app-12");
-  expect(lines[y + 6]).toContain("working · claude");
-  expect(lines[y + 7]).toContain("● app-7");
+  expect(lines[y + 3]).toContain("Issues");
+  expect(lines[y + 4]).toContain("Threads");
+  expect(lines[y + 5]).toContain("PRs");
+  expect(lines[y + 6]?.slice(0, sidebar - 1)).toMatch(/^─+$/);
+  expect(lines[y + 7]).toContain("Threads");
+  expect(lines[y + 9]).toContain("● app-12");
+  expect(lines[y + 10]).toContain("working · claude");
+  expect(lines[y + 11]).toContain("● app-7");
   expect(seen()).not.toContain("app-3");
   // Nothing of the screen is left in agents' sessions: each stays one pane.
   const panes = tmux(agents, "list-panes", "-a", "-F", "#{session_name}").out.trim().split("\n");
@@ -210,19 +225,19 @@ test("shows the lead and every thread that isn't done, beside the agent", async 
 });
 
 test("Alt-Down and Alt-Up switch the right side, and you type to whichever agent it shows", async () => {
-  open("lead");
-  await ready("lead");
+  open("app-12");
+  await ready("app-12");
   press("M-Down");
-  await until(() => seen().includes("I am app-12"), "app-12");
-  await until(() => selected() === "● app-12", "the sidebar to follow");
+  await until(() => seen().includes("I am app-7"), "app-7");
+  await until(() => selected() === "● app-7", "the sidebar to follow");
   type("hello\r");
   // The agent's shell makes the file before it writes the line, so wait for the whole line.
-  await until(() => read("app-12.typed").endsWith("\n"), "the typing");
-  expect(readFileSync(join(home, "app-12.typed"), "utf8")).toBe("hello\n");
+  await until(() => read("app-7.typed").endsWith("\n"), "the typing");
+  expect(readFileSync(join(home, "app-7.typed"), "utf8")).toBe("hello\n");
   press("M-Up");
-  await until(() => seen().includes("I am lead"), "the lead");
+  await until(() => seen().includes("I am app-12"), "app-12");
   type("back\r");
-  await until(() => existsSync(join(home, "lead.typed")), "the typing");
+  await until(() => existsSync(join(home, "app-12.typed")), "the typing");
 });
 
 test("clicking a row switches the right side and leaves your typing there", async () => {
@@ -248,7 +263,7 @@ test("updates on its own, with needs you in the sidebar", async () => {
   await ready("lead");
   sql("UPDATE threads SET needs_you = 1 WHERE task = 12");
   const colours = () => tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
-  await until(() => colours().includes("\x1b[33m●"), "needs you");
+  await until(() => colours().includes("\x1b[38;5;221m●"), "needs you");
   expect(seen()).toContain("● app-12");
   expect(seen()).toContain("needs you");
   // Its tab says so too, as other repositories' tabs would.
@@ -380,7 +395,7 @@ test("an agent drawing the full screen with the mouse gets the wheel itself", as
   wheel(64);
   await until(() => existsSync(join(home, "drawn.bytes")), "the wheel");
   await until(
-    () => readFileSync(join(home, "drawn.bytes"), "utf8").startsWith("\x1b[<64;28;4M"),
+    () => readFileSync(join(home, "drawn.bytes"), "utf8").startsWith("\x1b[<64;21;4M"),
     "the wheel at its place in the agent's window",
   );
   expect(scrolledBack()).not.toContain("1");
@@ -415,19 +430,18 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
   open("lead");
   await ready("lead");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "29 88\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "29 81\n",
     "the agent's size",
   );
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "40");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "39 118\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "39 111\n",
     "the agent to resize",
   );
   const widths = tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out.trim().split("\n");
-  expect(widths).toEqual(["31", "118"]);
+  expect(widths).toEqual(["38", "111"]);
   // A terminal shorter than the list keeps the row you are looking at in view.
-  press("M-Down");
-  press("M-Down");
+  toSecondThread();
   await until(() => selected() === "● app-7", "app-7");
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "4");
   await until(() => !seen().includes("⌥↑↓ move"), "the hints to give way");
@@ -535,8 +549,7 @@ test("the strip ends the top row, and the agent's height stays as you switch", a
   open("lead");
   await ready("lead");
   const height = readFileSync(join(home, "lead.size"), "utf8");
-  press("M-Down");
-  press("M-Down");
+  toSecondThread();
   const line = "app-7  Fix the login  #34  checks passing  round 2 · codex · changes";
   await until(() => tabRow().endsWith(line), "the strip");
   expect(seen()).not.toContain("A test is missing.");
@@ -550,8 +563,7 @@ test("the header, the tabs and the strip share one row, and the agent starts rig
   sql("UPDATE threads SET title = 'Fix the login', pr = 34 WHERE task = 7");
   open("lead");
   await ready("lead");
-  press("M-Down");
-  press("M-Down");
+  toSecondThread();
   await until(() => seen().includes("#34"), "the strip");
   const lines = seen().split("\n");
   // Skelcrew above the sidebar, its edge, and the tab above the agent, then the strip.
@@ -668,16 +680,21 @@ ${itemSql("app", "pr", 34, "Bump deps", "2026-11-05T10:00:00Z", {
 })}
 UPDATE repositories SET open_issues = 2, open_prs = 1;`);
 
-test("open issues and PRs reach your terminal as links, through both tmux servers", async () => {
+test("the entries sit between the lead and THREADS, counting what their lists have", async () => {
   openOnGitHub();
   open("lead");
   await ready("lead");
-  await until(() => seen().includes("Add CSV export"), "the issue");
-  const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
-  expect(colours).toContain("https://github.com/simon/app/issues/31");
-  expect(colours).toContain("https://github.com/simon/app/pull/34");
-  expect(seen()).toContain("Bump deps");
-  expect(seen()).toContain("app#34");
+  await until(() => seen().includes("1 new · 2"), "the entries");
+  const lines = seen()
+    .split("\n")
+    .map((line) => line.slice(0, sidebar - 1).trimEnd());
+  const at = (text: string) => lines.findIndex((line) => line.includes(text));
+  // Each count ends two columns before the sidebar's edge.
+  expect(lines[at("Issues")]).toBe(`${"    Issues".padEnd(26)}1 new · 2`);
+  expect(lines[at("    Threads")]).toBe(`${"    Threads".padEnd(34)}2`);
+  expect(lines[at("PRs")]).toBe(`${"    PRs".padEnd(34)}1`);
+  expect(at("◆ lead")).toBeLessThan(at("Issues"));
+  expect(at("PRs")).toBeLessThan(lines.indexOf("  Threads"));
 });
 
 test("the screen's server turns terminal links on, whatever your terminal says it is", async () => {
@@ -719,14 +736,6 @@ const issuePage: Page = {
   body: Array.from({ length: 80 }, (_, i) => `line ${i + 1} of the description`).join("\n"),
 };
 
-// Opens the screen on the lead with the lists filled, ready to land on their rows.
-async function openWithPages(width = "120"): Promise<void> {
-  openOnGitHub();
-  open("lead", "one", "xterm-256color", width);
-  await ready("lead");
-  await until(() => seen().includes("app-31"), "the issue");
-}
-
 // Clicks a row of the sidebar, found by what it says.
 function clickRow(text: string): void {
   const y = seen()
@@ -734,50 +743,144 @@ function clickRow(text: string): void {
     .findIndex((line) => line.slice(0, sidebar).includes(text));
   click(6, y + 1);
 }
-// Waits for a page's body or facts to be on screen.
-const onPage = (text: string) => until(() => seen().includes(text), `the page to say ${text}`);
 // What the right side shows, without the sidebar.
 const right = () =>
   seen()
     .split("\n")
     .map((line) => line.slice(sidebar + 1))
     .join("\n");
-// How many of the processes under the screen's tmux server run a page.
-const pagesRunning = () => {
+// Clicks a row of the list on the right, found by what it says.
+function clickListRow(text: string): void {
+  const y = right()
+    .split("\n")
+    .findIndex((line) => line.includes(text));
+  click(sidebar + 8, y + 1);
+}
+// Waits for text on the right.
+const onRight = (text: string) =>
+  until(() => right().includes(text), `the right side to say ${text}`);
+// Opens the screen on the lead with issues and PRs open, and lands on an entry's list.
+async function openList(entry: "Issues" | "Threads" | "PRs", width = "120"): Promise<void> {
+  openOnGitHub();
+  open("lead", "one", "xterm-256color", width);
+  await ready("lead");
+  await until(() => seen().includes(" new · "), "the entries");
+  clickRow(entry === "Threads" ? "    Threads" : entry);
+  await onRight("↑↓ move");
+}
+// Opens the issue's page, from its list. The list's pane draws the page, then the sidebar, told
+// by that pane, names it in the strip a moment later, so this waits for both. Otherwise what a
+// test reads first could change on its own while it looks.
+async function openIssue(width = "120"): Promise<void> {
+  await openList("Issues", width);
+  press("Enter");
+  await onRight("line 1 of the description");
+  await until(() => right().split("\n")[0]?.includes("app-31") ?? false, "the strip");
+}
+// How many of the processes under the screen's tmux server run a list.
+const listsRunning = () => {
   const panes = tmux(screen, "list-panes", "-a", "-F", "#{pane_pid}").out.trim().split("\n");
   return panes.filter((pid) => {
     const about = Bun.spawnSync(["ps", "-o", "args=", "-p", pid], { stdout: "pipe" });
-    return about.stdout.toString().includes(" page ");
+    return about.stdout.toString().includes(" list ");
   }).length;
 };
 
-test("a click on an issue shows its page on the right, marks its row, and fills the strip", async () => {
-  await openWithPages();
-  clickRow("app-31");
-  await onPage("line 1 of the description");
-  await until(() => selected().includes("Add CSV export"), "the row to be shaded");
-  const lines = right();
-  expect(lines).toContain("State");
-  expect(lines).toContain("ana");
-  expect(lines).not.toContain("I am lead");
-  expect(tabRow()).toEndWith("app-31  Add CSV export");
+test("landing on an entry shows its list across the right side, in groups, with no strip", async () => {
+  await openList("Issues");
+  await onRight("Not started");
+  const lines = right().split("\n");
+  const at = (text: string) => lines.findIndex((line) => line.includes(text));
+  expect(at("Not started")).toBeLessThan(at("app-31"));
+  expect(at("app-31")).toBeLessThan(at("Started"));
+  expect(lines[at("app-12")]).toContain("◐ app-12  Fix login");
+  expect(lines[at("app-12")]?.trimEnd()).toEndWith("working");
+  expect(right()).not.toContain("I am lead");
+  await until(() => !tabRow().includes("Add CSV"), "no strip");
+  expect(tabRow()).toMatch(/app$/);
+});
+
+test("an issue's or PR's row reaches your terminal as a link, through both tmux servers", async () => {
+  await openList("Issues");
+  const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
+  // tmux gives each link an id of its own, ahead of the url.
+  expect(colours).toContain(`;${issueUrl}\x1b\\`);
+});
+
+test("Up and Down move in the list, and Enter opens the issue's page, which fills the strip", async () => {
+  await openList("Issues");
+  press("Down");
+  press("Up");
+  press("Enter");
+  await onRight("line 1 of the description");
+  expect(right()).toContain("← back");
+  expect(right()).toContain("Author");
+  await until(() => tabRow().endsWith("app-31  Add CSV export"), "the strip");
+  // The sidebar stays on the entry.
+  expect(selected()).toContain("Issues");
+});
+
+test("Esc or Left goes back from a page to its list, on the row you opened", async () => {
+  await openList("Issues");
+  press("Down");
+  press("Enter");
+  await onRight("Fix login");
+  await onRight("← back");
+  press("Left");
+  await onRight("↑↓ move");
+  await until(() => !tabRow().includes("Fix login"), "the strip to go");
+  press("Enter");
+  await onRight("← back");
+  expect(right()).toContain("Fix login");
+  press("Escape");
+  await onRight("↑↓ move");
+  press("Up");
+  press("Enter");
+  await onRight("line 1 of the description");
+});
+
+test("a click on a row opens it, and a click on its entry goes back to the list", async () => {
+  await openList("Issues");
+  clickListRow("Add CSV export");
+  await onRight("line 1 of the description");
+  clickRow("Issues");
+  await onRight("↑↓ move");
+  expect(right()).toContain("Fix login");
+});
+
+test("Enter on a thread in the list of threads shows its agent, and the sidebar moves to its row", async () => {
+  await openList("Threads");
+  await onRight("Working");
+  expect(right()).toContain("app-12");
+  press("Enter");
+  await until(() => seen().includes("I am app-12"), "the agent");
+  await until(() => selected() === "● app-12", "the sidebar to follow");
+  type("from the list\r");
+  await until(() => read("app-12.typed").includes("from the list"), "what you typed");
+});
+
+test("a stopped thread is listed under Stopped, and opening it does nothing", async () => {
+  sql("UPDATE threads SET status = 'stopped' WHERE task = 7");
+  await openList("Threads");
+  await onRight("Stopped");
+  clickListRow("app-7");
+  await Bun.sleep(500);
+  expect(right()).toContain("Stopped");
+  expect(listsRunning()).toBe(1);
 });
 
 test("a PR's page shows its branch, checks and latest review", async () => {
-  await openWithPages();
-  clickRow("app#34");
-  await onPage("Approved. · codex");
+  await openList("PRs");
+  press("Enter");
+  await onRight("Approved. · codex");
   expect(right()).toContain("skelcrew/12 → main");
   expect(right()).toContain("passing");
   expect(right()).toContain("All of them.");
 });
 
 test("the page's link reaches your terminal as a terminal link, through tmux", async () => {
-  await openWithPages();
-  clickRow("app-31");
-  await onPage("line 1 of the description");
+  await openIssue();
   const colours = tmux(terminal, "capture-pane", "-p", "-e", "-t", "=one:").out;
-  // tmux gives each link an id of its own, ahead of the url.
   expect(colours).toContain(`;${issueUrl}\x1b\\`);
   expect(seen()).toContain(`GitHub  ${issueUrl}`);
 });
@@ -800,9 +903,8 @@ function clickLink(): void {
 
 test("a plain click on the page's link opens it in your browser, on the machine you sit at", async () => {
   fakeOpener();
-  await openWithPages();
-  clickRow("app-31");
-  await onPage("click to open");
+  await openIssue();
+  await onRight("click to open");
   // A click elsewhere on the page opens nothing.
   const lines = seen().split("\n");
   click(sidebar + 6, lines.findIndex((line) => line.includes("Author")) + 1);
@@ -819,60 +921,66 @@ test("on a remote, a click on the page's link copies it to your terminal's clipb
   await ready("lead");
   // Your terminal keeps what a program copies, as Ghostty does.
   tmux(terminal, "set", "-s", "set-clipboard", "on");
-  await until(() => seen().includes("app-31"), "the issue");
-  clickRow("app-31");
-  await onPage("click to copy");
+  await until(() => seen().includes("1 new · 2"), "the entries");
+  clickRow("Issues");
+  await onRight("↑↓ move");
+  press("Enter");
+  await onRight("click to copy");
   clickLink();
-  await onPage("copied");
+  await onRight("copied");
   expect(tmux(terminal, "show-buffer").out).toBe(issueUrl);
   expect(read("opened")).toBe("");
 });
 
-test("Alt-Down moves from the lead into ISSUES, and Alt-Up back puts you in the agent", async () => {
-  await openWithPages();
+test("Alt-Down moves from the lead through the entries, and Alt-Up back puts you in the agent", async () => {
+  openOnGitHub();
+  open("lead");
+  await ready("lead");
   press("M-Down");
-  await onPage("line 1 of the description");
-  await until(() => right().includes("Author"), "the page");
-  expect(selected()).toContain("Add CSV export");
+  await onRight("Not started");
+  expect(selected()).toContain("Issues");
+  press("M-Down");
+  await onRight("Working");
+  press("M-Down");
+  await onRight("In review");
+  press("M-Down");
+  await until(() => seen().includes("I am app-12"), "the first thread");
   press("M-Up");
+  await onRight("In review");
+  press("M-S-Up");
   await until(() => seen().includes("I am lead"), "the lead");
   await until(() => selected() === "◆ lead", "the lead's row");
   type("straight back\r");
   await until(() => read("lead.typed").includes("straight back"), "what you typed");
 });
 
-test("Alt-Shift-Down and Alt-Shift-Up jump from list to list, through tmux", async () => {
-  await openWithPages();
+test("Alt-Shift-Down and Alt-Shift-Up jump between the lead, the entries and THREADS", async () => {
+  openOnGitHub();
+  open("lead");
+  await ready("lead");
   press("M-S-Down");
-  await until(() => right().includes("Author"), "the first row of ISSUES");
+  await onRight("Not started");
   press("M-S-Down");
   await until(() => selected() === "● app-12", "the first row of THREADS");
-  press("M-S-Down");
-  await onPage("All of them.");
+  await until(() => seen().includes("I am app-12"), "its agent");
   press("M-S-Up");
-  await until(() => selected() === "● app-12", "THREADS again");
-  press("M-S-Up");
-  await until(() => right().includes("Author"), "ISSUES again");
+  await onRight("Not started");
   press("M-S-Up");
   await until(() => seen().includes("I am lead"), "the lead");
 });
 
-test("moving from a thread to a page and back returns to that thread, not the lead", async () => {
-  await openWithPages();
+test("landing on an entry from elsewhere starts its list on the first row", async () => {
+  await openList("Issues");
+  press("Down");
   press("M-S-Down");
-  await until(() => right().includes("Author"), "the first issue");
-  press("M-S-Down");
-  await until(() => selected() === "● app-12", "the thread");
-  press("M-S-Down");
-  await onPage("All of them.");
-  press("M-Up");
-  await until(() => selected() === "● app-7", "the last thread");
-  await until(() => seen().includes("I am app-7"), "its agent");
-  type("to the agent\r");
-  await until(() => read("app-7.typed").includes("to the agent"), "what you typed");
+  await until(() => seen().includes("I am app-12"), "the thread");
+  press("M-S-Up");
+  await onRight("↑↓ move");
+  press("Enter");
+  await onRight("line 1 of the description");
 });
 
-test("keys pressed together when leaving a page all count, however slowly the client attaches", async () => {
+test("keys pressed together when leaving a list all count, however slowly the client attaches", async () => {
   // A client attaching slowly, as over a busy Sprite, can't be switched yet.
   const real = Bun.which("tmux") ?? "tmux";
   mkdirSync(join(home, "slow"));
@@ -882,11 +990,7 @@ test("keys pressed together when leaving a page all count, however slowly the cl
     { mode: 0o755 },
   );
   before = `PATH=${join(home, "slow")}:$PATH `;
-  await openWithPages();
-  press("M-Down");
-  await until(() => right().includes("Author"), "the first page");
-  press("M-Down");
-  await until(() => selected().includes("Fix login"), "the last page");
+  await openList("PRs");
   type("\x1b[1;3B\x1b[1;3B");
   await until(() => seen().includes("I am app-7"), "the second row's agent");
   await Bun.sleep(1200);
@@ -895,56 +999,53 @@ test("keys pressed together when leaving a page all count, however slowly the cl
 });
 
 test("a pane too narrow for a page's lines cuts them, so every line keeps its own row", async () => {
-  openOnGitHub();
-  open("lead", "one", "xterm-256color", "42");
-  await until(() => seen().includes("app-31"), "the issue");
-  clickRow("app-31");
-  await until(() => right().includes("Author"), "the page");
+  await openList("Issues", "49");
+  press("Enter");
+  await onRight("Author");
   const panes = tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out.trim().split("\n");
   const width = Number(panes.at(-1));
   expect(width).toBeLessThan(11);
-  const rows = right().split("\n").slice(1, 19);
+  const rows = right().split("\n").slice(2, 20);
   const lines = drawPage(issuePage, issueUrl, width, "click to open").map((line) =>
     Bun.stripANSI(line).slice(0, width).trimEnd(),
   );
   expect(rows.map((row) => row.trimEnd())).toEqual(lines.slice(0, 18));
 });
 
-test("a page leaves none of its terminal's modes behind on the agent", async () => {
-  await openWithPages();
+test("a list leaves none of its terminal's modes behind on the agent", async () => {
+  openOnGitHub();
+  open("lead");
+  await ready("lead");
   const modes = () =>
     tmux(screen, "list-panes", "-a", "-F", "#{wrap_flag} #{cursor_flag} #{mouse_any_flag}").out;
   const before = modes();
-  clickRow("app-31");
-  await onPage("line 1 of the description");
+  press("M-Down");
+  await onRight("Not started");
   expect(modes()).not.toBe(before);
-  press("M-S-Up");
+  press("M-Up");
   await until(() => seen().includes("I am lead"), "the lead");
   await until(() => modes() === before, "the modes to come back");
 });
 
-test("the wheel scrolls a page and stops at both ends, and the keys scroll nothing", async () => {
-  await openWithPages();
-  clickRow("app-31");
-  await onPage("line 1 of the description");
+test("the wheel, Up and Down scroll a page and stop at both ends", async () => {
+  await openIssue();
   wheel(65);
-  await until(() => !right().includes("Author"), "the page to scroll");
+  await until(() => !right().includes("State"), "the page to scroll");
   for (let i = 0; i < 30; i++) wheel(65);
-  await onPage("line 80 of the description");
+  await onRight("line 80 of the description");
   await Bun.sleep(200);
-  expect(right()).toContain("line 80 of the description");
   const atEnd = right();
-  press("Up");
+  press("Down");
   await Bun.sleep(200);
   expect(right()).toBe(atEnd);
+  press("Up");
+  await until(() => right() !== atEnd, "a key to scroll");
   for (let i = 0; i < 30; i++) wheel(64);
-  await onPage("Author");
+  await onRight("Author");
 });
 
-test("typing on a page goes nowhere, and the agent never gets it", async () => {
-  await openWithPages();
-  clickRow("app-31");
-  await onPage("line 1 of the description");
+test("other typing on a list or page goes nowhere, and the agent never gets it", async () => {
+  await openIssue();
   const before = right();
   type("not for anyone\r");
   press("C-c");
@@ -958,12 +1059,14 @@ test("typing on a page goes nowhere, and the agent never gets it", async () => {
   expect(read("lead.typed")).toBe("");
 });
 
-test("Ctrl-C pressed the moment a page opens can't take the right side away", async () => {
-  await openWithPages();
+test("Ctrl-C pressed the moment a list opens can't take the right side away", async () => {
+  openOnGitHub();
+  open("lead");
+  await ready("lead");
   const running = () => tmux(screen, "list-panes", "-a", "-F", "#{pane_pid}").out;
   const before = running();
   press("M-Down");
-  await until(() => running() !== before, "the pane to start the page");
+  await until(() => running() !== before, "the pane to start the list");
   for (let i = 0; i < 10; i++) {
     press("C-c");
     await Bun.sleep(10);
@@ -976,97 +1079,140 @@ test("Ctrl-C pressed the moment a page opens can't take the right side away", as
   await until(() => read("lead.typed").includes("still here"), "what you typed");
 });
 
-test("a page left open writes nothing", async () => {
-  sql("UPDATE threads SET status = 'waiting' WHERE status = 'working'");
-  await openWithPages();
-  clickRow("app-31");
-  await onPage("line 1 of the description");
+test("a list or page left open writes nothing", async () => {
+  sql("UPDATE threads SET status = 'waiting', changed = 0 WHERE status = 'working'");
+  await openList("Threads");
   await Bun.sleep(1500);
   const written = join(home, "written");
   tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
   await Bun.sleep(3000);
   expect(existsSync(written) ? readFileSync(written, "utf8") : "").toBe("");
+  clickRow("Issues");
+  await onRight("Not started");
+  press("Enter");
+  await onRight("line 1 of the description");
+  await Bun.sleep(1500);
+  rmSync(written, { force: true });
+  await Bun.sleep(3000);
+  expect(existsSync(written) ? readFileSync(written, "utf8") : "").toBe("");
 });
 
-// Returns the process running the right pane, which is the page while one shows.
+test("a list follows Skelcrew's copy as it changes", async () => {
+  await openList("Issues");
+  sql(itemSql("app", "task", 40, "A new issue", "2026-11-06T10:00:00Z"));
+  await onRight("A new issue");
+  await until(() => seen().includes("2 new · 3"), "the count");
+});
+
+test("a row that moves out of view as the list changes is scrolled back into view", async () => {
+  const many = Array.from({ length: 40 }, (_, n) =>
+    itemSql(
+      "app",
+      "task",
+      100 + n,
+      `Issue ${100 + n}`,
+      `2026-11-06T10:${String(n).padStart(2, "0")}:00Z`,
+    ),
+  );
+  sql(many.join("\n"));
+  await openList("Issues");
+  await onRight("app-139");
+  // The issue you are on gets a thread, which moves it under Started, far below.
+  sql(`INSERT INTO threads (owner, repo, task, folder, branch, status)
+    VALUES ('simon', 'app', 139, 'app-139', 'skelcrew/139', 'working')`);
+  await until(() => right().includes("Started") && right().includes("app-139"), "the row in view");
+  press("Enter");
+  await onRight("← back");
+  expect(right()).toContain("Issue 139");
+});
+
+test("a list scrolled with the wheel stays where you put it as it reads the copy again", async () => {
+  const many = Array.from({ length: 40 }, (_, n) =>
+    itemSql(
+      "app",
+      "task",
+      100 + n,
+      `Issue ${100 + n}`,
+      `2026-11-06T10:${String(n).padStart(2, "0")}:00Z`,
+    ),
+  );
+  sql(many.join("\n"));
+  await openList("Issues");
+  for (let i = 0; i < 4; i++) wheel(65);
+  await until(() => !right().includes("app-139"), "the list to scroll");
+  const scrolled = right();
+  await Bun.sleep(2500);
+  expect(right()).toBe(scrolled);
+});
+
+// Returns the process running the right pane, which is the list while one shows.
 const rightPane = () =>
   tmux(screen, "list-panes", "-a", "-F", "#{pane_pid}").out.trim().split("\n").at(-1);
 
-test("clicking the row of the page you are on doesn't open it again", async () => {
-  await openWithPages();
-  clickRow("app-31");
-  await onPage("line 1 of the description");
-  const page = rightPane();
-  clickRow("app-31");
+test("clicking the entry of the list you are on doesn't start it again", async () => {
+  await openList("Issues");
+  const list = rightPane();
+  clickRow("Issues");
   await Bun.sleep(300);
-  expect(rightPane()).toBe(page);
+  expect(rightPane()).toBe(list);
 });
 
 test("a page Skelcrew's copy no longer has says so, and you can still move on", async () => {
-  await openWithPages();
+  await openList("Issues");
   sql("DELETE FROM items WHERE id = '31'");
-  clickRow("app-31");
-  await onPage("Skelcrew has no open issue or PR at this link now");
+  press("Enter");
+  await onRight("Skelcrew has no open issue or PR at this link now");
   expect(seen()).toContain(`GitHub  ${issueUrl}`);
   press("M-S-Down");
-  await until(() => seen().includes("I am lead"), "the lead");
+  await until(() => seen().includes("I am app-12"), "the thread");
 });
 
 test("a page follows a resize, and the sidebar stays as wide", async () => {
-  await openWithPages();
-  clickRow("app-31");
-  await onPage("line 1 of the description");
+  await openIssue();
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "80", "-y", "24");
   await until(() => seen().split("\n").length <= 25, "the terminal");
-  await onPage("line 1 of the description");
+  await onRight("line 1 of the description");
   expect(tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out).toContain(`${sidebar}\n`);
 });
 
-test("the wheel over an agent still scrolls it after a page came and went", async () => {
+test("the wheel over an agent still scrolls it after a list came and went", async () => {
   openOnGitHub();
   agent("app-5", "seq 1 200");
   sql(`INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you) VALUES
   ('simon', 'app', 5, 'app-5', 'skelcrew/5', 'working', 0);`);
   open("app-5");
   await ready("app-5");
-  await until(() => seen().includes("Add CSV export"), "the issue");
-  clickRow("app-31");
-  await onPage("line 1 of the description");
+  clickRow("Issues");
+  await onRight("Not started");
   clickRow("app-5");
   await until(() => seen().includes("I am app-5"), "the agent");
   wheel(64);
   await until(() => !seen().includes("I am app-5"), "the agent's history");
 });
 
-test("Ctrl-Q leaves from a page, and no page is left running", async () => {
-  await openWithPages();
-  clickRow("app-31");
-  await onPage("line 1 of the description");
-  expect(pagesRunning()).toBe(1);
+test("Ctrl-Q leaves from a page, and no list is left running", async () => {
+  await openIssue();
+  expect(listsRunning()).toBe(1);
   const panes = tmux(screen, "list-panes", "-a", "-F", "#{pane_pid}").out.trim().split("\n");
   press("C-q");
   await until(() => seen().includes(leaving), "Skelcrew to say goodbye");
   await until(() => stillRunning(panes.map(Number)).length === 0, "the panes' processes to end");
 });
 
-test("leaving a page for an agent ends the page, and no client is left behind it", async () => {
-  await openWithPages();
-  clickRow("app-31");
-  await onPage("line 1 of the description");
+test("leaving a list for an agent ends the list, and no client is left behind it", async () => {
+  await openIssue();
   press("M-S-Up");
   await until(() => seen().includes("I am lead"), "the lead");
-  await until(() => pagesRunning() === 0, "the page to end");
+  await until(() => listsRunning() === 0, "the list to end");
   expect(tmux(agents, "list-clients").out.trim().split("\n")).toHaveLength(1);
 });
 
-test("two terminals can each be on a page of their own", async () => {
-  await openWithPages();
+test("two terminals can each be on a list of their own", async () => {
+  await openIssue();
   open("lead", "two");
   await ready("lead", "two");
-  await until(() => seen("two").includes("Add CSV export"), "the issue", "two");
-  clickRow("app-31");
-  await onPage("line 1 of the description");
   expect(seen("two")).toContain("I am lead");
+  expect(right()).toContain("line 1 of the description");
 });
 
 test("with nothing working, an open screen sends your terminal nothing at all", async () => {
@@ -1147,8 +1293,19 @@ test("when the agent you are looking at ends, the right side goes to the lead", 
   await until(() => selected() === "◆ lead", "the sidebar to follow");
 });
 
+test("when the thread you are on stops, its row goes and the right side goes to the lead", async () => {
+  open("app-7");
+  await ready("app-7");
+  sql("UPDATE threads SET status = 'stopped' WHERE task = 7");
+  tmux(agents, "kill-session", "-t", "=app-7");
+  await until(() => seen().includes("I am lead"), "the lead");
+  await until(() => selected() === "◆ lead", "the sidebar to follow");
+  await until(() => !seen().includes("app-7"), "the stopped thread to go");
+  expect(seen()).toContain("● app-12");
+});
+
 test("a row whose agent isn't running can't be picked", async () => {
-  sql("UPDATE threads SET status = 'stopped' WHERE task = 12");
+  sql("UPDATE threads SET status = 'failed' WHERE task = 12");
   tmux(agents, "kill-session", "-t", "=app-12");
   open("lead");
   await ready("lead");
@@ -1157,7 +1314,7 @@ test("a row whose agent isn't running can't be picked", async () => {
     .split("\n")
     .findIndex((line) => line.includes("app-12"));
   click(5, y + 1);
-  press("M-Down");
+  toFirstThread();
   await until(() => seen().includes("I am app-7"), "the row after it");
 });
 
@@ -1230,7 +1387,7 @@ test("two terminals on one machine keep a title each", async () => {
   open("lead", "two");
   await ready("lead", "two");
   await until(() => title("two") === "Skelcrew", "the second title");
-  press("M-Down");
+  toFirstThread();
   await until(() => seen().includes("I am app-12"), "app-12");
   expect(title()).toBe("Skelcrew · sprite:demo");
 });
@@ -1242,7 +1399,7 @@ test("an agent's own title never reaches the terminal, even after switching", as
   expect(tmux(agents, "list-panes", "-t", "=lead:", "-F", "#{pane_title}").out).toContain(
     "title of lead",
   );
-  press("M-Down");
+  toFirstThread();
   await until(() => seen().includes("I am app-12"), "app-12");
   expect(title()).toBe("Skelcrew");
 });
@@ -1342,13 +1499,23 @@ test("a click on a tab switches to its repository", async () => {
 });
 
 // A terminal can hand both keys over at once, and the second must move in the new repository.
-test("Alt-Right then Alt-Down, typed together, lands on the new repository's thread", async () => {
+test("several Alt keys typed together all move, and none is typed into the agent", async () => {
+  open("lead");
+  await ready("lead");
+  type("\x1b[1;3B\x1b[1;3B\x1b[1;3B\x1b[1;3B");
+  await until(() => seen().includes("I am app-12"), "the first thread, past the three entries");
+  await until(() => selected() === "● app-12", "the sidebar to follow");
+  await Bun.sleep(300);
+  expect(read("lead.typed")).toBe("");
+});
+
+test("Alt-Right then Alt-Shift-Down twice, typed together, lands on the new repository's thread", async () => {
   addSite();
   agent("site-8");
   daemon();
   open("lead");
   await ready("lead");
-  type("\x1b[1;3C\x1b[1;3B");
+  type("\x1b[1;3C\x1b[1;4B\x1b[1;4B");
   await until(() => seen().includes("I am site-8"), "site-8");
   await until(() => selected() === "● site-8", "the sidebar to follow");
   expect(seen()).not.toContain("app-12");
