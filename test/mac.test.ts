@@ -116,6 +116,9 @@ afterEach(async () => {
   Bun.spawnSync(["tmux", "-L", socket, "kill-server"], { stderr: "pipe" });
   const folder = join(process.env.TMUX_TMPDIR ?? "/tmp", `tmux-${userInfo().uid}`);
   rmSync(join(folder, socket), { force: true });
+  // A test that failed may have left a sandbox's tmux folder behind in /tmp.
+  const seen = join(home, "tmux-seen");
+  if (existsSync(seen)) rmSync(readFileSync(seen, "utf8").trim(), { recursive: true, force: true });
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -162,6 +165,27 @@ test("a sandbox's folders go even when the terminal hangs up on it", async () =>
   await until(() => existsSync(up));
   process.kill(-run.pid, "SIGHUP");
   await run.exited;
+  expect(readdirSync(join(home, "tmp"))).toEqual([]);
+});
+
+test("a sandbox's folders go when its stuck agent is killed as its session stops", async () => {
+  const seen = join(home, "tmux-seen");
+  fake("claude", `trap "" HUP TERM; echo "$TMUX_TMPDIR" > ${seen}; exec sleep 300`);
+  fake("systemd-run", 'while [ "$1" != -- ]; do shift; done; shift; exec "$@"');
+  const { argv, env: given } = await leadCommand();
+  // The agent ignores the hangup, so stopping its session ends in SIGKILL, which takes the
+  // shell that removes the sandbox's folders with it.
+  const script = `import { existsSync } from "node:fs";
+import { startServer, startSession, stopSession } from ${JSON.stringify(source("agents/tmux.ts"))};
+startServer(${JSON.stringify(socket)});
+startSession(${JSON.stringify(socket)}, "lead", { folder: ${JSON.stringify(home)}, command: ${JSON.stringify(argv)}, env: ${JSON.stringify(given)} });
+for (let i = 0; i < 150 && !existsSync(${JSON.stringify(seen)}); i++) await Bun.sleep(100);
+await stopSession(${JSON.stringify(socket)}, "lead", 500);`;
+  const stopped = await asMacRun(script);
+  expect(stopped.err).toBe("");
+  const tmux = readFileSync(seen, "utf8").trim();
+  expect(tmux).toContain("sc-tmux-");
+  expect(existsSync(tmux)).toBe(false);
   expect(readdirSync(join(home, "tmp"))).toEqual([]);
 });
 

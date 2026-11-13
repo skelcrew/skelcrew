@@ -176,9 +176,10 @@ const cleanupScript =
   'own=$1; tmux=$2; shift 2; mkdir -m 700 "$tmux" || exit 1; trap : HUP INT TERM; "$@"; code=$?; rm -rf "$own" "$tmux"; exit $code';
 
 // Returns the folders a Mac sandbox command removes when it ends, the agent's own and tmux's,
-// read from the command. A review that is cancelled or runs out of time is ended with SIGKILL,
-// which takes the removing shell with it, so the reviewer removes them. Gives none for a
-// command that isn't a Mac sandbox.
+// read from the command. A review that is cancelled or runs out of time, or an agent that
+// won't stop with its session, is ended with SIGKILL, which takes the removing shell with it.
+// So the reviewer and stopSession remove them. Gives none for a command that isn't a Mac
+// sandbox.
 export function sandboxFolders(argv: string[]): string[] {
   const at = argv.indexOf(cleanupScript);
   return at < 0 ? [] : argv.slice(at + 2, at + 4);
