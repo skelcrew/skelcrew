@@ -75,6 +75,9 @@ export const Thread = z.object({
   // can't move to another harness. Null before then, and in a row from before Skelcrew saved it,
   // when every builder ran on Claude Code.
   harness: HarnessName.nullable(),
+  // Whether Skelcrew assigned you the thread's issue, rather than you being assigned already, so
+  // it takes you off only an issue it put you on.
+  assigned: z.coerce.boolean(),
 });
 export type Thread = z.infer<typeof Thread>;
 

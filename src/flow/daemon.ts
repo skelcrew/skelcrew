@@ -14,6 +14,7 @@ import { cloneDir, daemonSocket, threadSocket } from "../paths.ts";
 import { createTask, repositoryPlugins } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { checkoutFolder, git, release, singleFile } from "../version.ts";
+import { assignIssue } from "./assign.ts";
 import {
   bringBack,
   failThread,
@@ -376,6 +377,8 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         if (before && choice === "bring back") {
           const name = threadName(db, before);
           resume(before);
+          // Its stop took you off its issue, so starting it again puts you back.
+          assignIssue(db, before, true);
           return { started: `Started ${name} again: its builder is back where it was.` };
         }
         if (before && choice === "go on") {
@@ -406,6 +409,8 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
           startingTasks.delete(key);
         }
         // Not waited on: an agent's command must answer quickly, and setup can take minutes.
+        // The claim and assignment wait on the tracker, and change only what it shows.
+        assignIssue(db, thread, true);
         setUpAndStart(thread);
         return { started: `Started ${threadName(db, thread)}.` };
       }
