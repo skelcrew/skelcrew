@@ -48,9 +48,9 @@ const env = () => ({
 
 // Runs a script as a Mac would, in a process of its own: Skelcrew's home folder must be the
 // test's, and only a HOME set from the start reaches it.
-async function asMacRun(script: string, more: Record<string, string> = {}) {
+async function asMacRun(script: string) {
   const run = Bun.spawn([process.execPath, "--preload", asMac, "-e", script], {
-    env: { ...env(), ...more },
+    env: env(),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -377,13 +377,10 @@ printf '%s' '{"verdict":"approve","body":"Fine."}' > "$out"`,
 }
 
 // Runs a review as a Mac would, and returns its verdict.
-async function reviewOnMac(clone: string, more = "", vars: Record<string, string> = {}) {
-  const ran = await asMacRun(
-    `import { review } from ${JSON.stringify(source("flow/reviewer.ts"))};
+async function reviewOnMac(clone: string, more = "") {
+  const ran = await asMacRun(`import { review } from ${JSON.stringify(source("flow/reviewer.ts"))};
 console.log(JSON.stringify(await review({ clone: ${JSON.stringify(clone)}, issue: { title: "t", body: "b" }, base: "origin/main", commit: ${JSON.stringify(git(clone, "rev-parse", "HEAD"))}, model: "opus", harness: "codex", ${more} })));
-process.exit(0);`,
-    vars,
-  );
+process.exit(0);`);
   expect(ran.err).toBe("");
   return JSON.parse(ran.out);
 }
@@ -440,13 +437,18 @@ left.unref();`,
 });
 
 test("a review that runs out of time ends, with all it started", async () => {
-  const clone = reviewable("sleep 300");
-  // The review is ended with SIGKILL, and the shell that would remove tmux's folder with it.
-  // So the folder goes in this test's home, as it would inside a sandbox, not in /tmp.
-  const tmux = join(home, "tmux");
-  mkdirSync(tmux);
-  const inside = { SKELCREW_SANDBOX: "1", TMUX_TMPDIR: tmux };
-  const verdict = await reviewOnMac(clone, "limit: 500", inside);
+  const seen = join(home, "tmux-seen");
+  const clone = reviewable(
+    `echo "$TMUX_TMPDIR" > ${seen}; echo left > "$TMUX_TMPDIR/file"; sleep 300`,
+  );
+  // Long enough for the reviewer to start and say where tmux's folder is, even on a busy machine.
+  const verdict = await reviewOnMac(clone, "limit: 3000");
   expect(verdict.verdict).toBe("failed");
   expect(verdict.body).toContain("ran past");
+  // The review is ended with SIGKILL, and the shell that removes the sandbox's folders goes
+  // with it, so the reviewer removes them: tmux's in /tmp, and the agent's own.
+  const tmux = readFileSync(seen, "utf8").trim();
+  expect(tmux).toContain("sc-tmux-");
+  expect(existsSync(tmux)).toBe(false);
+  expect(readdirSync(join(home, "tmp"))).toEqual([]);
 });

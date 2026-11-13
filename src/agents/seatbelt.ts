@@ -166,6 +166,24 @@ const realSocket = (path: string) => join(real(dirname(path)), basename(path));
 // is hidden under both.
 const bothPaths = (path: string) => [path, `/System/Volumes/Data${path}`];
 
+// Outside the sandbox, a shell makes tmux's folder, waits for the sandbox and then removes
+// its folders, or every review and setup command would leave a home full of caches behind.
+// mkdir fails on a folder that is there already, so no one else's can become the agent's.
+// A hangup, as when tmux ends a session, reaches the agent too, so the shell lets it pass
+// and goes on to clean up. A SIGKILL ends the shell too, so whoever sends one removes the
+// folders itself, through sandboxFolders.
+const cleanupScript =
+  'own=$1; tmux=$2; shift 2; mkdir -m 700 "$tmux" || exit 1; trap : HUP INT TERM; "$@"; code=$?; rm -rf "$own" "$tmux"; exit $code';
+
+// Returns the folders a Mac sandbox command removes when it ends, the agent's own and tmux's,
+// read from the command. A review that is cancelled or runs out of time is ended with SIGKILL,
+// which takes the removing shell with it, so the reviewer removes them. Gives none for a
+// command that isn't a Mac sandbox.
+export function sandboxFolders(argv: string[]): string[] {
+  const at = argv.indexOf(cleanupScript);
+  return at < 0 ? [] : argv.slice(at + 2, at + 4);
+}
+
 // Returns the command that runs `command` in the sandbox on a Mac, for the same mounts
 // bubblewrap would get. sandbox-exec can't show a folder empty or elsewhere, only deny it, so
 // the agent gets a home and temporary folder of its own, which programs find through HOME
@@ -248,13 +266,6 @@ export function seatbeltArgs(given: {
   // Inside, a shell moves to the agent's folder and runs the command with that environment.
   const enterScript = 'cd "$1" && shift && exec /usr/bin/env "$@"';
   const sandboxed = ["sandbox-exec", "-f", profile, "/bin/sh", "-c", enterScript, "sh", cwd];
-  // Outside the sandbox, a shell makes tmux's folder, waits for the sandbox and then removes
-  // its folders, or every review and setup command would leave a home full of caches behind.
-  // mkdir fails on a folder that is there already, so no one else's can become the agent's.
-  // A hangup, as when tmux ends a session, reaches the agent too, so the shell lets it pass
-  // and goes on to clean up. A SIGKILL leaves the folders to macOS.
-  const cleanupScript =
-    'own=$1; tmux=$2; shift 2; mkdir -m 700 "$tmux" || exit 1; trap : HUP INT TERM; "$@"; code=$?; rm -rf "$own" "$tmux"; exit $code';
   const folders = [sandboxFolder, ownTmux];
   return ["/bin/sh", "-c", cleanupScript, "sh", ...folders, ...sandboxed, ...vars, ...command];
 }
