@@ -16,6 +16,7 @@ import {
   exitedCleanly,
   failedScreen,
   hasSession,
+  keepOnExit,
   startServer,
   startSession,
 } from "../agents/tmux.ts";
@@ -82,11 +83,16 @@ export function lastOpened(db: Database): Repository | null {
 export async function startLead(db: Database, tmux: string, repository: Repository): Promise<void> {
   const { owner, repo } = repository;
   const lead = leadOf(db, owner, repo);
-  // A lead still running is kept. One whose harness ended leaves its screen behind, which is
-  // logged before its session is ended to make room for the new one.
+  // A lead still running is kept. One started by a release before leads stayed on a clean exit
+  // is given that setting now, or exiting it would end its session and never close its tab.
+  // One whose harness ended leaves its screen behind, which is logged before its session is
+  // ended to make room for the new one.
   if (hasSession(tmux, lead.name)) {
     const failed = failedScreen(tmux, lead.name);
-    if (failed === null) return;
+    if (failed === null) {
+      keepOnExit(tmux, lead.name);
+      return;
+    }
     console.log(`${owner}/${repo}'s lead had ended:\n${failed}`);
     endSession(tmux, lead.name);
   }

@@ -847,6 +847,26 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a lead per repositor
     });
   });
 
+  // A release before this one let a lead's session go when the lead exited cleanly. A lead
+  // still running from then must close its tab too once the new daemon starts.
+  test("a lead running from before an upgrade closes its tab when you exit it", async () => {
+    setUp();
+    addRepository("app");
+    leadExitsWhenTold(0);
+    const old = serve();
+    await untilAnswers();
+    await open();
+    await stop(old);
+    // The setting an older Skelcrew gave a lead: the server's, which keeps only failed sessions.
+    Bun.spawnSync(["tmux", "-L", socket, "set", "-wu", "-t", `=${leadName()}:`, "remain-on-exit"]);
+    serve();
+    await untilAnswers();
+    await open();
+    tellLeadToExit();
+    await until(() => tabClosed());
+    expect(claudeLines()).toHaveLength(1);
+  });
+
   // A lead sees only its own repository, so it mustn't act on another's threads or tasks.
   test("a lead's commands reach only its own repository", async () => {
     setUp();
