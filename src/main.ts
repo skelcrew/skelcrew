@@ -134,12 +134,17 @@ async function machineCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
-// Runs a pane of the screen: the sidebar, or a list and its pages on the right. The screen
-// starts these, not people, so usage leaves them out.
+// Runs a part of the screen: the sidebar, a list and its pages on the right, or the list of
+// keys in its box. The screen starts these, not people, so usage leaves them out.
 async function screenCommand(args: string[]): Promise<void> {
   const [command, ...rest] = args;
   const { runPane } = await import("./screen/pane.ts");
   const { runSidebar } = await import("./screen/sidebar.ts");
+  const { runKeys } = await import("./screen/keys.ts");
+  if (command === "keys" && rest.length === 0) {
+    await runKeys();
+    return;
+  }
   // `where` is the remote Skelcrew runs on, and empty on this machine, so check it against
   // undefined.
   if (command === "sidebar" && rest.length === 4) {
@@ -415,9 +420,10 @@ async function runCommand(args: string[]): Promise<void> {
     console.log(versionLine());
     return;
   }
-  // Sidebars and lists skip the out-of-date check. The Skelcrew that started them already
-  // passed it, and tmux may hand them another laptop's build, which would make them refuse.
-  const onScreen = command === "sidebar" || command === "list";
+  // Sidebars, lists and the list of keys skip the out-of-date check. The Skelcrew that started
+  // them already passed it, and tmux may hand them another laptop's build, which would make them
+  // refuse.
+  const onScreen = command === "sidebar" || command === "list" || command === "keys";
   if (!onScreen && outOfDate()) process.exit(outdated);
   if (args.length === 1 && ["--help", "-h", "help"].includes(command ?? "")) {
     console.log(help());
@@ -478,6 +484,7 @@ async function runCommand(args: string[]): Promise<void> {
       return machineCommand(words);
     case "sidebar":
     case "list":
+    case "keys":
       return screenCommand(words);
     case "repo":
     case "init":

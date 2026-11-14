@@ -8,6 +8,7 @@ import { errorText } from "../say.ts";
 import { type Entry, type Group, listGroups } from "./lists.ts";
 import { fitted, grey, pad, paint, removeControlCodes, shaded, tinted, white } from "./look.ts";
 import { drawPage } from "./page.ts";
+import { showKeys } from "./screen.ts";
 
 // What a list with nothing in it says.
 const nothing: Record<Entry, string> = {
@@ -88,11 +89,11 @@ export function drawList(
 }
 
 // What the pane reads: a mouse report, with its button, column and row counted from 1 and
-// whether it is a press, an arrow key, Enter, and Esc on its own. tmux holds Esc a moment, to
+// whether it is a press, an arrow key, Enter, Esc on its own, and ?. tmux holds Esc a moment, to
 // tell it from the start of another key, then sends it alone.
 const esc = "\x1b";
 const input = new RegExp(
-  `${esc}\\[<(\\d+);(\\d+);(\\d+)([Mm])|${esc}[[O]([ABCD])|(\\r)|(${esc})(?![[O])`,
+  `${esc}\\[<(\\d+);(\\d+);(\\d+)([Mm])|${esc}[[O]([ABCD])|(\\r)|(${esc})(?![[O])|(\\?)`,
   "g",
 );
 // How many lines a notch of the wheel moves, as an agent's history does.
@@ -106,9 +107,10 @@ const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 // names the remote Skelcrew runs on, and is empty on the machine you sit at.
 // Up and Down move a list, and Enter or a click opens a row: an issue's or PR's page here, or a
 // thread's agent, which the sidebar puts in place of this pane. On a page, Up, Down and the
-// wheel scroll, and Esc or Left goes back to the list, on the row you opened. All else you type
-// goes nowhere. It reads the list again each second, and writes only when what shows changed,
-// so a list left open lets a Sprite sleep. A page is read once.
+// wheel scroll, and Esc or Left goes back to the list, on the row you opened. ? opens the list
+// of keys on either. All else you type goes nowhere. It reads the list again each second, and
+// writes only when what shows changed, so a list left open lets a Sprite sleep. A page is read
+// once.
 export async function runPane(
   agents: string,
   session: string,
@@ -248,11 +250,13 @@ export async function runPane(
   process.stdout.write("\x1b[?25l\x1b[?1000h\x1b[?1006h\x1b[?7l");
   // Acts on each key, click and notch of the wheel that came together.
   process.stdin.on("data", (bytes) => {
-    for (const [, button, column, y, press, arrow, enter, alone] of bytes
+    for (const [, button, column, y, press, arrow, enter, alone, question] of bytes
       .toString()
       .matchAll(input)) {
       const notch = button === "64" ? -linesPerNotch : button === "65" ? linesPerNotch : 0;
-      if (page) {
+      // ? opens the list of keys over the screen, on a list as on a page.
+      if (question) showKeys(agents, session);
+      else if (page) {
         // A page scrolls, goes back, or follows its link.
         if (arrow === "A" || arrow === "B") page.top += arrow === "A" ? -1 : 1;
         else if (notch) page.top += notch;
