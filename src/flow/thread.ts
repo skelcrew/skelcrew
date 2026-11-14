@@ -49,6 +49,9 @@ export const Thread = z.object({
   // Whether the builder is asking you a question with AskUserQuestion. Kept apart from
   // needs_you, so answering it leaves the thread needing you for any other reason.
   asking: z.coerce.boolean(),
+  // Whether the builder's harness stopped on an error it can't get past alone, such as a lapsed
+  // login. The builder then sits idle, so the thread needs you until you type to it.
+  erred: z.coerce.boolean(),
   // Why the thread started needing you, until a note saying so is typed into the lead.
   noting: z.string().nullable(),
   // The task's title and body when the thread started, for the strip, which looks each second
@@ -91,9 +94,9 @@ export type Thread = z.infer<typeof Thread>;
 // Returns the harness the thread's builder runs on, for starting it again and typing into it.
 export const builderHarness = (thread: Thread) => harnessNamed(thread.harness ?? "claude");
 
-// Returns whether the thread needs you: for a review, the round limit or an approval, or for
-// the builder's question.
-export const needsYou = (thread: Thread) => thread.needs_you || thread.asking;
+// Returns whether the thread needs you: for a review, the round limit or an approval, for the
+// builder's question, or for its harness stopping on an error.
+export const needsYou = (thread: Thread) => thread.needs_you || thread.asking || thread.erred;
 
 // Returns whether a builder that just ended its turn is waiting on you, for a harness with no
 // tool for asking, such as Codex. A builder that works and stops without sc submit has a
@@ -108,7 +111,8 @@ export const endedTurnAsks = (thread: Thread) => thread.status === "working" && 
 // don't count as work on a thread that needs you.
 export const hasWork = (threads: Thread[]) =>
   threads.some(
-    (t) => (t.status === "working" && !t.asking) || (t.status === "waiting" && !needsYou(t)),
+    (t) =>
+      (t.status === "working" && !t.asking && !t.erred) || (t.status === "waiting" && !needsYou(t)),
   );
 
 // Returns the thread's repository as owner/name.

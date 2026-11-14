@@ -183,7 +183,8 @@ export async function reviewAgain(repository: string, task: string): Promise<str
 }
 
 // Tells the daemon, for a builder's hook, that its builder is asking you a question, so the
-// thread needs you, or that the question is over. The builder's own socket tells the daemon
+// thread needs you, or that the question is over. Over also ends a builder's error, as it is
+// sent whenever you type to the builder. The builder's own socket tells the daemon
 // which thread it is. The daemon answers at once, as Claude Code waits on its hooks.
 export async function reportQuestion(asking: boolean): Promise<void> {
   await request({ command: asking ? "question asked" : "question answered" });
@@ -194,6 +195,13 @@ export async function reportQuestion(asking: boolean): Promise<void> {
 // thread.
 export async function reportTurnEnded(): Promise<void> {
   await request({ command: "turn ended" });
+}
+
+// Tells the daemon, for a Claude Code builder's hook, that its builder's turn ended on an
+// error, such as a lapsed login, so the thread needs you. The builder's own socket says which
+// thread.
+export async function reportTurnFailed(): Promise<void> {
+  await request({ command: "turn failed" });
 }
 
 // Has the daemon open a repository, by its owner/name, when the sidebar switches to its tab or

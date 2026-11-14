@@ -34,6 +34,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     last_comment: null,
     last_check: null,
     asking: false,
+    erred: false,
     noting: null,
     title: null,
     body: null,

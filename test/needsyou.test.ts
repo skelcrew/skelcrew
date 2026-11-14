@@ -1,7 +1,9 @@
-// Needs you, against a running daemon: a builder's question marks its thread needs you, and
+// Needs you, against a running daemon: a builder's question, or its harness stopping on an
+// error, marks its thread needs you, and
 // Skelcrew types a note into the lead's session when a thread starts needing you. A shell script
 // stands in for Claude Code: as the builder it runs the hook commands in its settings, as
-// Claude Code would around AskUserQuestion, and as the lead it waits at a ❯ prompt.
+// Claude Code would around AskUserQuestion or a turn that ends on an error, and as the lead it
+// waits at a ❯ prompt.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -41,8 +43,9 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // Stands in for Claude Code. As the lead, it waits at a ❯ prompt and keeps what is typed into
 // it, looking busy while the file busy is in its config folder. As the builder, it runs the
 // hook commands its settings give for an event when the test leaves a file named for it:
-// ask for AskUserQuestion's PreToolUse, answer for its PostToolUse, and talk for
-// UserPromptSubmit. Each hook gets a line in the file ran once it has finished.
+// ask for AskUserQuestion's PreToolUse, answer for its PostToolUse, talk for UserPromptSubmit,
+// and fail for StopFailure, which Claude Code runs when a turn ends on an error such as a lapsed
+// login. Each hook gets a line in the file ran once it has finished.
 function fakeClaude(): void {
   script(
     "claude",
@@ -75,6 +78,7 @@ for i in $(seq 3000); do
   test -e "$CLAUDE_CONFIG_DIR/ask" && { rm "$CLAUDE_CONFIG_DIR/ask"; hook PreToolUse AskUserQuestion; }
   test -e "$CLAUDE_CONFIG_DIR/answer" && { rm "$CLAUDE_CONFIG_DIR/answer"; hook PostToolUse AskUserQuestion; }
   test -e "$CLAUDE_CONFIG_DIR/talk" && { rm "$CLAUDE_CONFIG_DIR/talk"; hook UserPromptSubmit; }
+  test -e "$CLAUDE_CONFIG_DIR/fail" && { rm "$CLAUDE_CONFIG_DIR/fail"; hook StopFailure authentication_failed; }
   sleep 0.1
 done`,
   );
@@ -160,7 +164,7 @@ async function untilNeedsYou(wanted: boolean) {
 }
 
 // Has the fake builder run the hooks for an event, as Claude Code would, and waits for them.
-async function hook(step: "ask" | "answer" | "talk") {
+async function hook(step: "ask" | "answer" | "talk" | "fail") {
   const before = read(join(builder(), "ran")).split("\n").length;
   writeFileSync(join(builder(), step), "");
   await until(() => read(join(builder(), "ran")).split("\n").length > before);
@@ -225,6 +229,21 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("needs you", () => {
     await hook("ask");
     await untilNeedsYou(true);
     await until(() => notes() === 2);
+    await hook("talk");
+    await untilNeedsYou(false);
+  }, 60_000);
+
+  test("a builder whose harness stops on an error needs you, tells the lead, and clears when you type to it", async () => {
+    addApp();
+    await startApp12();
+    await hook("fail");
+    expect(read(join(builder(), "hooks"))).toBe("");
+    await untilNeedsYou(true);
+    await until(() => notes() === 1);
+    expect(read(join(lead(), "typed"))).toContain(
+      "app-12 needs you: its builder's harness stopped on an error",
+    );
+    // You fix it, such as with /login, and type to the builder.
     await hook("talk");
     await untilNeedsYou(false);
   }, 60_000);
@@ -306,13 +325,14 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("needs you", () => {
   }, 60_000);
 });
 
-test("only a builder can say it is asking you a question", async () => {
+test("only a builder can say it is asking you a question or stopped on an error", async () => {
   serve();
   await until(() => existsSync(join(home, "run", "skelcrew.sock")));
   await Bun.sleep(100);
   for (const args of [
     ["question", "asked"],
     ["question", "answered"],
+    ["turn", "failed"],
   ]) {
     const run = await skel(args);
     expect(run.code).not.toBe(0);
