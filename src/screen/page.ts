@@ -1,5 +1,6 @@
 // The page of an issue or PR, opened from its list on the right: drawn as lines from what
-// Skelcrew's copy says of it. Read-only: you scroll it and click its link to GitHub.
+// Skelcrew's copy says of it. You scroll it and click its link to GitHub, and it shows no diff
+// and no comments.
 import type { Page } from "../flow/page.ts";
 import { fitted, grey, pad, paint, removeControlCodes, white } from "./look.ts";
 import { drawMarkdown } from "./markdown.ts";

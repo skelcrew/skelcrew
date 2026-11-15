@@ -27,7 +27,7 @@ import { type EntryCount, entryCounts, pageRow, roundLimit } from "./lists.ts";
 import { nextList, nextRow, rowAtLine } from "./moves.ts";
 import { type Open, type Row, repositoryTabs, sidebarRows } from "./rows.ts";
 import { agentClient, paneCommand, showKeys, sidebarWidth } from "./screen.ts";
-import { drawFooter, drawTop } from "./strip.ts";
+import { drawFooter, drawTop, footerText } from "./strip.ts";
 
 // What the sidebar reads: Alt with an arrow as tmux sends it, 3 without Shift and 4 with it,
 // the left button going down, with its column and line on screen, Alt-/ or Alt-B, and what the
@@ -155,9 +155,12 @@ export async function runSidebar(
       lastStrip = top;
       showStrip(screenSocket(agents), session, top);
     }
-    // The footer below the agent, blank under a list or page, also only when it changed.
+    // The footer below the agent, list or page, also only when it changed. A list or page
+    // writes its own line there while it asks you something, and puts this back after, so the
+    // sidebar leaves it be until what it would say changes.
     const agent = isEntry(shown) ? null : (rows.find((row) => row.session === shown) ?? null);
-    const footer = drawFooter(agent);
+    const entry = entries.find((candidate) => entryPlace(candidate.entry) === shown)?.entry;
+    const footer = drawFooter(footerText(agent, entry ?? null));
     if (footer !== lastFooter) {
       lastFooter = footer;
       showFooter(screenSocket(agents), session, footer);

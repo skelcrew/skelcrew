@@ -3,6 +3,8 @@ import { expect, test } from "bun:test";
 import { chmodSync, cpSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { keyLines } from "../src/screen/keys.ts";
+import { sidebarWidth } from "../src/screen/screen.ts";
 import { source } from "./harness.ts";
 
 const main = source("main.ts");
@@ -127,6 +129,26 @@ test("the help lists the screen's keys, anywhere first, then lists, then pages",
   expect([...order].sort((a, b) => a - b)).toEqual(order);
   expect(out).not.toContain("ctrl + q");
   expect(out).not.toContain("⌃Q");
+});
+
+// s and m work on a list and on the page opened from it, so they come after the other keys
+// for lists and before those for pages.
+test("the help lists s to start a thread on an issue and m to merge a PR, after the keys for lists", () => {
+  const out = skel(["--help"]).out;
+  const keys = out.slice(out.indexOf("\nKEYS\n"), out.indexOf("\nEXAMPLES\n"));
+  const order = ["enter/→ ", "s ", "m ", "← "].map((key) => keys.indexOf(`\n  ${key}`));
+  expect(order.every((at) => at > 0)).toBe(true);
+  expect([...order].sort((a, b) => a - b)).toEqual(order);
+  expect(keys).toMatch(/\n {2}s +start a thread on an issue\n/);
+  expect(keys).toMatch(/\n {2}m +merge a ready PR\n/);
+});
+
+// The right side of a 120-column terminal is what is left beside the sidebar and the gap after it.
+test("beside the sidebar on a 120-column terminal, the list of keys fits in two columns", () => {
+  const lines = keyLines(120 - sidebarWidth - 1);
+  expect(lines).toHaveLength(7);
+  expect(lines.every((line) => line.trim().split(/\s{3,}/).length === 2)).toBe(true);
+  expect(lines.join("\n")).toContain("m to merge a ready PR");
 });
 
 test("the help names --version", () => {

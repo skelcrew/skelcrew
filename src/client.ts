@@ -124,6 +124,13 @@ export async function startNew(
   return checkReply(z.object({ started: z.string() }), reply).started;
 }
 
+// Has the daemon start a thread on an issue or merge a PR, for s or m on the screen's lists
+// and pages, which hold the request ready. Throws the daemon's error, such as the forge's
+// reason for refusing a merge. Only your own socket takes a merge, so no agent can merge.
+export async function startOrMerge(asked: DaemonRequest): Promise<void> {
+  await request(asked);
+}
+
 // Has the daemon stop a thread, for sc stop, and returns the thread's name. The daemon
 // answers once the builder has exited.
 export async function stopOn(repository: string, task: string): Promise<string> {

@@ -13,6 +13,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { Socket } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
@@ -285,6 +286,21 @@ async function approvedApp12(from?: string): Promise<string> {
   return work;
 }
 
+// Sends one request to the daemon on a socket, yours or an agent's, and returns its reply.
+function askOn(path: string, request: object): Promise<unknown> {
+  return new Promise((done) => {
+    const connection = new Socket();
+    connection.on("error", () => {});
+    let reply = "";
+    connection.on("connect", () => connection.write(`${JSON.stringify(request)}\n`));
+    connection.on("data", (data) => {
+      reply += data.toString();
+    });
+    connection.on("close", () => done(reply ? JSON.parse(reply) : null));
+    connection.connect(path);
+  });
+}
+
 // What Skelcrew's copy holds open, as kind and ID, and the totals the sidebar counts with.
 function copied(): { rows: string[]; totals: unknown } {
   const db = new Database(join(data(), "skelcrew.db"), { readonly: true });
@@ -534,6 +550,48 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("polling a forge", () => {
     // A thread that is done isn't polled again. Its repository still is, for labeled issues.
     await morePolls();
     expect(asked(plugin).at(-1)).toMatchObject({ ask: "changed", prs: [] });
+  }, 60_000);
+
+  // m on the screen's list of PRs asks on your socket. The lead's and builders' sockets refuse it,
+  // so merging stays your choice, and no sc command an agent runs can merge.
+  test("a merge asked on your socket goes to the forge at the commit you saw, and agents can't ask", async () => {
+    await approvedApp12();
+    const merge = { command: "merge", repo: "app", pr: 7, commit: "c".repeat(40) };
+    const hashed = (name: string) =>
+      new Bun.CryptoHasher("sha256").update(name).digest("hex").slice(0, 16);
+    const runDir = join(home, "run", "skelcrew");
+    const unknown = { error: "the daemon doesn't know that request" };
+    const lead = join(runDir, "leads", hashed("simon/app"), "skelcrew.sock");
+    const builder = join(runDir, "threads", hashed("app-12"), "skelcrew.sock");
+    expect(await askOn(lead, merge)).toEqual(unknown);
+    expect(await askOn(builder, merge)).toEqual(unknown);
+    const merges = () => asked(plugin).filter((q) => q.ask === "merge pr");
+    expect(merges()).toEqual([]);
+
+    // The forge says why it won't merge, such as a rule on the branch, and that is the error.
+    answer(plugin, "merge pr", { refused: "At least 2 approving reviews are required" });
+    expect(await askOn(join(home, "run", "skelcrew.sock"), merge)).toEqual({
+      error: "At least 2 approving reviews are required",
+    });
+    expect(merges()).toEqual([
+      { ask: "merge pr", repository: "simon/app", pr: 7, commit: "c".repeat(40) },
+    ]);
+
+    // An older plugin doesn't know the question, and its own error says so.
+    writeFileSync(join(plugin, "fail-merge-pr"), "the GitHub plugin doesn't answer merge pr");
+    expect(await askOn(join(home, "run", "skelcrew.sock"), merge)).toEqual({
+      error: "github failed: the GitHub plugin doesn't answer merge pr",
+    });
+    rmSync(join(plugin, "fail-merge-pr"));
+
+    // Once the forge merged, the next poll ends the thread, as a merge on GitHub does.
+    answer(plugin, "merge pr", null);
+    pr({ state: "merged", reviews: [skelReview], checks: [approved] });
+    expect(await askOn(join(home, "run", "skelcrew.sock"), merge)).toEqual({
+      merged: "Merged app#7.",
+    });
+    await until(() => thread().status === "done");
+    expect(merges()).toHaveLength(3);
   }, 60_000);
 
   test("a PR merged while the daemon was down leaves its thread done, not failed", async () => {

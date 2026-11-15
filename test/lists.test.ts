@@ -220,6 +220,75 @@ ${pr(7, { reviews: [] })}`;
   expect(entries.find((e) => e.entry === "prs")?.note).toBe("3 ready");
 });
 
+// What s on each issue's row, or m on each PR's row, does, in the list's order.
+const actions = (groups: Group[]) => groups.flatMap((group) => group.rows.map((row) => row.action));
+
+test("s on an issue no thread works on asks to start one, and on one that has a thread says which", () => {
+  const sql = `${repository}
+${itemSql("app", "task", 31, "Add CSV export", "2026-11-05T10:00:00Z")}
+${itemSql("app", "task", 12, "Fix login", "2026-11-04T10:00:00Z")}
+${itemSql("app", "task", 13, "Fix logout", "2026-11-03T10:00:00Z")}
+${thread("12")}
+${thread("13", "", "'stopped'")}`;
+  expect(actions(after(sql).issues)).toEqual([
+    {
+      key: "s",
+      ask: "Start a thread on app#31? y/n",
+      working: "Starting app-31…",
+      request: { command: "start", repo: "simon/app", task: "31" },
+    },
+    { key: "s", refused: "app#12 already has app-12" },
+    { key: "s", refused: "app#13 already has app-13" },
+  ]);
+});
+
+// The commit is the PR's head as the forge last sent it, which it merges only while it is still
+// the head. A forge too old to send one can't be asked to merge.
+test("m on a PR ready to merge asks to merge it into its base, and elsewhere says what it waits on", () => {
+  const head = { head: "c".repeat(40) };
+  const sql = `${repository}
+${itemSql("app", "pr", 31, "Fix login", "2026-11-04T10:00:00Z", head)}
+${itemSql("app", "pr", 32, "Bump deps", "2026-11-05T10:00:00Z", { ...passing, ...head, base: "next", reviews: [review("1", "ana", "approved")] })}
+${itemSql("app", "pr", 33, "Tidy", "2026-11-06T10:00:00Z", { ...passing, reviews: [review("1", "ana", "approved")] })}
+${itemSql("app", "pr", 34, "Fix logout", "2026-11-07T10:00:00Z", { ...head, reviews: [review("1", "ana", "approved")], checks: [{ name: "test", id: "1", state: "running" }] })}
+${itemSql("app", "pr", 35, "Fix signup", "2026-11-08T10:00:00Z", { ...passing, ...head })}
+${itemSql("app", "pr", 36, "Fix export", "2026-11-09T10:00:00Z", head)}
+${itemSql("app", "pr", 37, "Fix import", "2026-11-10T10:00:00Z", head)}
+${thread("12", ", pr, needs_you, verdict, review_round", "'waiting', 31, 1, 'approve', 1")}
+${thread("13", ", pr, verdict, review_round", "'waiting', 36, 'approve', 1")}
+${thread("14", ", pr, review_round, verdict", "'working', 37, 1, 'changes'")}`;
+  const { prs } = after(sql);
+  expect(prs.map((group) => group.rows.map((row) => row.name))).toEqual([
+    ["app#33", "app#32", "app#31"],
+    ["app#37", "app#36", "app#35", "app#34"],
+  ]);
+  expect(actions(prs)).toEqual([
+    { key: "m", refused: "app#33 needs a newer forge plugin to merge here: run sc plugin update" },
+    {
+      key: "m",
+      ask: "Merge app#32 into next? y/n",
+      working: "Merging app#32…",
+      request: { command: "merge", repo: "simon/app", pr: 32, commit: "c".repeat(40) },
+    },
+    {
+      key: "m",
+      ask: "Merge app#31 into main? y/n",
+      working: "Merging app#31…",
+      request: { command: "merge", repo: "simon/app", pr: 31, commit: "c".repeat(40) },
+    },
+    { key: "m", refused: "app#37 isn't approved yet" },
+    { key: "m", refused: "app#36's checks haven't passed yet" },
+    { key: "m", refused: "app#35 isn't approved yet" },
+    { key: "m", refused: "app#34's checks haven't passed yet" },
+  ]);
+});
+
+test("a thread's row has nothing for s or m to do", () => {
+  const sql = `${repository}
+${thread("12")}`;
+  expect(actions(after(sql).threads)).toEqual([null]);
+});
+
 test("a PR from a thread is ○ before its first review, and ◐ once a review runs or has run", () => {
   const sql = `${repository}
 ${itemSql("app", "pr", 31, "Waiting", "2026-11-01T10:00:00Z")}
@@ -343,6 +412,7 @@ const listRow = (name: string, title: string, more: Partial<ListRow> = {}): List
   link: `https://github.com/simon/app/issues/${name.slice(4)}`,
   session: null,
   dim: false,
+  action: null,
   ...more,
 });
 const issues: Group[] = [

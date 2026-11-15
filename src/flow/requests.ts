@@ -81,6 +81,13 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     task: TaskId,
     text: z.string().min(1),
   }),
+  // `commit` is the PR's head you saw approved: the forge merges only while it is still the head.
+  z.object({
+    command: z.literal("merge"),
+    repo: z.string(),
+    pr: z.number().int().positive(),
+    commit: z.string().regex(/^[0-9a-f]{40,64}$/),
+  }),
   z.object({ command: z.literal("tell lead"), text: z.string().min(1) }),
   z.object({ command: z.literal("submit"), summary: z.string().min(1) }),
   z.object({ command: z.literal("question asked") }),
@@ -94,7 +101,8 @@ export type DaemonRequest = z.infer<typeof DaemonRequest>;
 // agent may ask only for what its commands need. Trusting a repository is never a request:
 // only you can, in your own terminal. A builder may tell only its repository's lead, never
 // another thread, and may ask for a review of its own thread only. You type to a builder
-// yourself in the sidebar, so you have no tell.
+// yourself in the sidebar, so you have no tell. Merging is yours alone, from the screen: no
+// agent may merge, as merging stays a human's choice.
 export type Caller = "you" | { lead: { owner: string; repo: string } } | Thread;
 // The requests each kind of caller may make. The daemon refuses any other before acting.
 export const allowed = {
@@ -112,6 +120,7 @@ export const allowed = {
     "stop",
     "rm preview",
     "rm",
+    "merge",
   ],
   lead: [
     "status",

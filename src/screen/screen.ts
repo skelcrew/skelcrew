@@ -105,7 +105,7 @@ const config = [
   // It is always there, so the agent's height doesn't change as a list comes and goes. It
   // starts blank, with the sidebar's edge, as the sidebar fills it in.
   ["set", "-g", "pane-border-status", "bottom"],
-  ["set", "-g", "pane-border-format", drawFooter(null)],
+  ["set", "-g", "pane-border-format", drawFooter("")],
   // tmux shares a resize out among panes, so tmux itself sets the sidebar's width back after
   // each, with no process of Skelcrew's to do it.
   ["set-hook", "-g", "window-resized", `resize-pane -t :.0 -x ${sidebarWidth}`],

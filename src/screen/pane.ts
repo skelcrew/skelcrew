@@ -1,14 +1,16 @@
 // The right pane while you are on one of the sidebar's entries: the entry's list, and the pages
 // of the issues and PRs opened from it. It is a process of its own, in the screen's right pane,
 // so it ends with the screen and agents' sessions never see it.
-import { screenSocket, tmux } from "../agents/tmux.ts";
+import { screenSocket, showFooter, tmux } from "../agents/tmux.ts";
+import { startOrMerge } from "../client.ts";
 import { openDb } from "../db.ts";
 import { type Page, readPage } from "../flow/page.ts";
 import { errorText } from "../say.ts";
-import { type Entry, type Group, listGroups } from "./lists.ts";
+import { type Action, type Entry, type Group, listGroups } from "./lists.ts";
 import { fitted, grey, pad, paint, removeControlCodes, shaded, tinted, white } from "./look.ts";
 import { drawPage } from "./page.ts";
 import { showKeys } from "./screen.ts";
+import { drawFooter, footerText } from "./strip.ts";
 
 // What a list with nothing in it says.
 const nothing: Record<Entry, string> = {
@@ -89,11 +91,12 @@ export function drawList(
 }
 
 // What the pane reads: a mouse report, with its button, column and row counted from 1 and
-// whether it is a press, an arrow key, Enter, and ?. Esc is left out: in an agent it stops its
-// turn, so here it does nothing, or your hand would learn to reach for it to leave an agent.
+// whether it is a press, an arrow key, Enter, ?, and s or m. Esc is left out: in an agent it
+// stops its turn, so here it does nothing, or your hand would learn to reach for it to leave an
+// agent.
 const esc = "\x1b";
 const input = new RegExp(
-  `${esc}\\[<(\\d+);(\\d+);(\\d+)([Mm])|${esc}[[O]([ABCD])|(\\r)|(\\?)`,
+  `${esc}\\[<(\\d+);(\\d+);(\\d+)([Mm])|${esc}[[O]([ABCD])|(\\r)|(\\?)|([sm])`,
   "g",
 );
 // How many lines a notch of the wheel moves, as an agent's history does.
@@ -111,9 +114,10 @@ const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 // or a thread's agent, which the sidebar puts in place of this pane. Right opens as Left goes
 // back, so the arrows alone take you in and out. On a page, Up, Down and the
 // wheel scroll, and Left goes back to the list, on the row you opened. ? opens the list
-// of keys on either. All else you type goes nowhere. It reads the list again each second, and
-// writes only when what shows changed, so a list left open lets a Sprite sleep. A page is read
-// once.
+// of keys on either. s on an issue starts a thread on it and m on a PR merges it, on its list
+// or its page, after asking in the line in place of the footer. All else you type goes
+// nowhere. It reads the list again each second, and writes only when what shows changed, so a
+// list left open lets a Sprite sleep. A page is read once.
 export async function runPane(
   agents: string,
   session: string,
@@ -136,6 +140,12 @@ export async function runPane(
   let top = 0;
   let page: { read: Page; url: string; top: number } | null = null;
   let lastFrame = "";
+  // The line in place of the footer: the question s or m asks while it waits for y, whether the
+  // daemon is starting or merging, and whether the line says something, such as why a row can't
+  // be started or merged, until the next key.
+  let asking: Extract<Action, { ask: string }> | null = null;
+  let working = false;
+  let saying = false;
   const rows = () => groups.flatMap((group) => group.rows);
   const width = () => process.stdout.columns || 80;
   const height = () => process.stdout.rows || 24;
@@ -220,6 +230,48 @@ export async function runPane(
     } else if (row.session && !row.dim) tell("thread", row.session);
     draw(true);
   };
+  // Says something in the line in place of the footer, or with null puts the footer back. The
+  // sidebar sets the footer only when what it says changes, so it leaves this line be, and
+  // sets the footer anew when you move away from this list.
+  const say = (text: string | null) =>
+    showFooter(
+      screenSocket(agents),
+      session,
+      drawFooter(text === null ? footerText(null, entry) : text),
+    );
+  // Acts on s or m: on an issue's or PR's row, asks first, or says why it can't. The page shows
+  // the row it was opened from. A key that isn't this row's does nothing, such as m on an issue.
+  // The row is read again from Skelcrew's copy, by its name, as a page stops the list reading
+  // it: a PR that became ready, or an issue just started, would otherwise keep what it was when
+  // the page opened. Nothing is drawn again, so the page stays as it is.
+  const act = (key: string) => {
+    const name = rows()[here]?.name;
+    const now = listGroups(db, open, entry, Date.now()).flatMap((group) => group.rows);
+    const action = now.find((row) => row.name === name)?.action;
+    if (working || action?.key !== key) return;
+    if ("refused" in action) {
+      saying = true;
+      say(action.refused);
+      return;
+    }
+    asking = action;
+    say(action.ask);
+  };
+  // Has the daemon start or merge once you said y, saying so meanwhile. The footer comes back
+  // once it is done, and the list shows the row move as Skelcrew's copy changes. When the daemon
+  // or the forge refuses, the line says why until the next key.
+  const goAhead = async (action: Extract<Action, { ask: string }>) => {
+    working = true;
+    say(action.working);
+    try {
+      await startOrMerge(action.request);
+      say(null);
+    } catch (error) {
+      saying = true;
+      say(errorText(error));
+    }
+    working = false;
+  };
   // Goes back from a page to its list, on the row you opened.
   const back = () => {
     page = null;
@@ -257,12 +309,26 @@ export async function runPane(
   process.stdout.write("\x1b[?25l\x1b[?1000h\x1b[?1006h\x1b[?7l");
   // Acts on each key, click and notch of the wheel that came together.
   process.stdin.on("data", (bytes) => {
-    for (const [, button, column, y, press, arrow, enter, question] of bytes
+    // A question waits for y. Any other key leaves it be, and does nothing else.
+    if (asking) {
+      const action = asking;
+      asking = null;
+      if (bytes.toString() === "y") void goAhead(action);
+      else say(null);
+      return;
+    }
+    // A line that says why goes at the next key, which then does what it does.
+    if (saying) {
+      saying = false;
+      if (!working) say(null);
+    }
+    for (const [, button, column, y, press, arrow, enter, question, key] of bytes
       .toString()
       .matchAll(input)) {
       const notch = button === "64" ? -linesPerNotch : button === "65" ? linesPerNotch : 0;
       // ? opens the list of keys over the screen, on a list as on a page.
       if (question) showKeys(agents, session);
+      else if (key) act(key);
       else if (page) {
         // A page scrolls, goes back, or follows its link.
         if (arrow === "A" || arrow === "B") page.top += arrow === "A" ? -1 : 1;

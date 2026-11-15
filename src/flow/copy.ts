@@ -43,13 +43,16 @@ const itemFields = {
 };
 
 // A task or a PR in Skelcrew's words, whichever tracker or forge it came from. A task has the line
-// that closes it when a PR's body holds it. A cancelled check isn't the builder's to fix.
+// that closes it when a PR's body holds it. A PR has its head commit, which m on the screen merges
+// only while it is still the head, or null from a forge too old to send it. A cancelled check
+// isn't the builder's to fix.
 export const Item = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("task"), ...itemFields, closes: z.string() }),
   z.object({
     kind: z.literal("pr"),
     ...itemFields,
     branch: z.string(),
+    head: z.string().nullable().default(null),
     base: z.string(),
     conflicts: z.boolean(),
     checks: z.array(

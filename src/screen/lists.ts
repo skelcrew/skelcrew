@@ -6,6 +6,7 @@ import { z } from "zod";
 import { threadConfig } from "../config.ts";
 import { type Item, itemAt, openPrs, openTasks } from "../flow/copy.ts";
 import { repositories } from "../flow/repo.ts";
+import type { DaemonRequest } from "../flow/requests.ts";
 import { needsYou, Thread, threadName } from "../flow/thread.ts";
 import { forgeOf, trackerOf } from "../plugins/ask.ts";
 import { green, grey, yellow } from "./look.ts";
@@ -13,9 +14,17 @@ import { type Open, threadMark, threadWord } from "./rows.ts";
 
 // The three entries of the sidebar, each of which shows a list.
 export type Entry = "issues" | "threads" | "prs";
+// What s does on an issue's row, or m on a PR's row, on its list or its page: the question the
+// line at the bottom of the pane asks first, what it says while the daemon works, and what the
+// daemon is asked once you press y. On a row it can't act on, it says why instead, such as an
+// issue a thread already works on.
+export type Action =
+  | { key: "s" | "m"; ask: string; working: string; request: DaemonRequest }
+  | { key: "s" | "m"; refused: string };
 // One row of a list. Its mark's colour is null when it is plain. `ends` are the columns after
 // its title, each in its colour. An issue or PR has the `link` its page opens, and a thread the
-// `session` its agent runs in. A stopped thread is `dim`, as it can't be opened.
+// `session` its agent runs in. A stopped thread is `dim`, as it can't be opened. An issue or PR
+// has the `action` s or m takes on it, and a thread none.
 export type ListRow = {
   mark: [string, string | null];
   name: string;
@@ -24,6 +33,7 @@ export type ListRow = {
   link: string | null;
   session: string | null;
   dim: boolean;
+  action: Action | null;
 };
 // Rows under a dim heading, such as Ready to merge.
 export type Group = { heading: string; rows: ListRow[] };
@@ -86,11 +96,20 @@ const filled = (groups: Group[]) => groups.filter((group) => group.rows.length >
 // thread is approved and waits for you to merge. The marks are plain, as an issue never needs
 // you on its own. One with a thread ends with its word. A thread that is done is over, so its
 // issue counts as not started again.
+// s on an issue starts a thread on it, as sc start does, only while no thread works on it.
 function issueGroups(db: Database, open: Open, threads: Known[]): Group[] {
   const name = repositoryName(db, open);
   const rows = openTasks(db, open.owner, open.repo).map((task) => {
     const on = threads.find(({ thread }) => thread.task === task.id);
     const sign = !on ? "○" : on.word === "approved" ? "●" : "◐";
+    const action: Action = on
+      ? { key: "s", refused: `${name}#${task.id} already has ${on.name}` }
+      : {
+          key: "s",
+          ask: `Start a thread on ${name}#${task.id}? y/n`,
+          working: `Starting ${name}-${task.id}…`,
+          request: { command: "start", repo: `${open.owner}/${open.repo}`, task: task.id },
+        };
     const row: ListRow = {
       mark: [sign, null],
       name: `${name}-${task.id}`,
@@ -99,6 +118,7 @@ function issueGroups(db: Database, open: Open, threads: Known[]): Group[] {
       link: task.link,
       session: null,
       dim: false,
+      action,
     };
     return { row, started: on !== undefined };
   });
@@ -108,10 +128,9 @@ function issueGroups(db: Database, open: Open, threads: Known[]): Group[] {
   ]);
 }
 
-// Says whether the forge says a PR Skelcrew didn't open is approved and every check passed. As on
-// GitHub, each reviewer's latest approval or request for changes stands until a dismissal clears
-// it, and a comment changes nothing. The PR is approved when someone approves and nobody asks
-// for changes.
+// Says whether the forge says a PR Skelcrew didn't open is approved. As on GitHub, each
+// reviewer's latest approval or request for changes stands until a dismissal clears it, and a
+// comment changes nothing. The PR is approved when someone approves and nobody asks for changes.
 function approvedOnForge(pr: Extract<Item, { kind: "pr" }>): boolean {
   const standing = new Map<string, string>();
   for (const { author, verdict } of pr.reviews) {
@@ -120,11 +139,7 @@ function approvedOnForge(pr: Extract<Item, { kind: "pr" }>): boolean {
     else if (verdict !== "commented") standing.set(who, verdict);
   }
   const verdicts = [...standing.values()];
-  return (
-    verdicts.includes("approved") &&
-    !verdicts.includes("changes requested") &&
-    pr.checks.every((check) => check.state === "passed")
-  );
+  return verdicts.includes("approved") && !verdicts.includes("changes requested");
 }
 
 // Returns the open repository's PRs, as `Ready to merge`, then `In review`. A PR's mark is ○
@@ -134,11 +149,37 @@ function approvedOnForge(pr: Extract<Item, { kind: "pr" }>): boolean {
 // green when approved, yellow when it needs you, red when it failed or hit an error. A thread
 // that is only working or waiting leaves the mark plain. A PR from a thread ends with its word,
 // and one with no thread with its author.
+// m merges a PR ready to merge, at the head commit the forge last sent, which is the one you saw
+// approved. On any other PR it says what the PR waits on: an approval, or its checks.
 function prGroups(db: Database, open: Open, threads: Known[]): Group[] {
   const name = repositoryName(db, open);
   const rows = openPrs(db, open.owner, open.repo).map((pr) => {
     const on = threads.find(({ thread }) => thread.pr === Number(pr.id));
-    const ready = on ? on.word === "approved" : approvedOnForge(pr);
+    const approved = on ? on.thread.verdict === "approve" : approvedOnForge(pr);
+    const passing = pr.checks.every((check) => check.state === "passed");
+    const ready = on ? on.word === "approved" : approved && passing;
+    const named = `${name}#${pr.id}`;
+    let action: Action;
+    if (!ready && !approved) action = { key: "m", refused: `${named} isn't approved yet` };
+    else if (!ready) action = { key: "m", refused: `${named}'s checks haven't passed yet` };
+    // A forge too old to send the head commit can't merge either, as it lacks the call too.
+    else if (pr.head === null)
+      action = {
+        key: "m",
+        refused: `${named} needs a newer forge plugin to merge here: run sc plugin update`,
+      };
+    else
+      action = {
+        key: "m",
+        ask: `Merge ${named} into ${pr.base}? y/n`,
+        working: `Merging ${named}…`,
+        request: {
+          command: "merge",
+          repo: `${open.owner}/${open.repo}`,
+          pr: Number(pr.id),
+          commit: pr.head,
+        },
+      };
     // A review under way counts as a round going on, the first one included.
     const reviewed = on && (on.thread.review_round !== null || on.word === "reviewing");
     const sign = ready ? "●" : reviewed ? "◐" : "○";
@@ -147,12 +188,13 @@ function prGroups(db: Database, open: Open, threads: Known[]): Group[] {
     const plain = colour === grey || (colour === green && on?.word !== "approved");
     const row: ListRow = {
       mark: [sign, plain ? null : colour],
-      name: `${name}#${pr.id}`,
+      name: named,
       title: pr.title,
       ends: [on ? wordEnd(on) : [pr.author?.login ?? "", grey]],
       link: pr.link,
       session: null,
       dim: false,
+      action,
     };
     return { row, ready };
   });
@@ -199,6 +241,7 @@ function threadGroups(threads: Known[], now: number): Group[] {
       link: null,
       session: thread.folder,
       dim: thread.status === "stopped",
+      action: null,
     };
     return { row, open };
   });

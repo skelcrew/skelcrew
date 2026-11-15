@@ -90,6 +90,7 @@ function pr(change: Partial<PullRequest> = {}): PullRequest {
     created: "2026-11-05T10:00:00Z",
     updated: "2026-11-05T10:00:00Z",
     branch: "skelcrew/12-add-export",
+    head: null,
     base: "main",
     conflicts: false,
     reviews: [],
