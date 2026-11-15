@@ -1591,7 +1591,9 @@ test("a tab that closes moves the screen to the tab after it, and leaves the thr
   closeTab("app");
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
   await until(() => seen().includes("site-8") && !/\bapp\b/.test(tabRow()), "app's tab to go");
-  expect(asked).toContain("open simon/site from a tab");
+  // The sidebar asks the daemon without waiting, and its request goes out only after it has
+  // shown site, so site can show before the request lands.
+  await until(() => asked.includes("open simon/site from a tab"), "the daemon to open site");
   // Nothing of app's ended: its builders still run.
   expect(tmux(agents, "has-session", "-t", "=app-7").ok).toBe(true);
 });
