@@ -1196,7 +1196,9 @@ test("a list scrolled with the wheel stays where you put it as it reads the copy
   sql(many.join("\n"));
   await openList("Issues");
   for (let i = 0; i < 4; i++) wheel(65);
-  await until(() => !right().includes("app-139"), "the list to scroll");
+  // Four notches reach the list's end, where app-124 is the first issue. The first notch alone
+  // already hides app-139, and the last moves fewer lines, so the wait is for the end.
+  await until(() => !right().includes("app-125"), "the list to scroll to its end");
   const scrolled = right();
   await Bun.sleep(2500);
   expect(right()).toBe(scrolled);
@@ -1699,7 +1701,9 @@ test("a tab that closes moves the screen to the tab after it, and leaves the thr
   closeTab("app");
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
   await until(() => seen().includes("site-8") && !/\bapp\b/.test(tabRow()), "app's tab to go");
-  expect(asked).toContain("open simon/site from a tab");
+  // The sidebar asks the daemon without waiting, and its request goes out only after it has
+  // shown site, so site can show before the request lands.
+  await until(() => asked.includes("open simon/site from a tab"), "the daemon to open site");
   // Nothing of app's ended: its builders still run.
   expect(tmux(agents, "has-session", "-t", "=app-7").ok).toBe(true);
 });
