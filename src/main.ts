@@ -135,7 +135,7 @@ async function machineCommand(args: string[]): Promise<void> {
 }
 
 // Runs a part of the screen: the sidebar, a list and its pages on the right, or the list of
-// keys in its box. The screen starts these, not people, so usage leaves them out.
+// keys in its popup. The screen starts these, not people, so usage leaves them out.
 async function screenCommand(args: string[]): Promise<void> {
   const [command, ...rest] = args;
   const { runPane } = await import("./screen/pane.ts");

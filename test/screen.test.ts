@@ -1408,33 +1408,41 @@ test("the hints stay at the bottom, and a click there picks nothing", async () =
   expect(keysOpen()).toBe(false);
 });
 
-// The lines inside the box the list of keys draws over the screen, without its sides. None while
-// it is closed.
-function keysBox(): string[] {
-  const lines = seen().split("\n");
-  const top = lines.findIndex((line) => line.includes("┌"));
-  if (top < 0) return [];
-  const left = lines[top]?.indexOf("┌") ?? 0;
-  const right = lines[top]?.indexOf("┐") ?? 0;
-  const bottom = lines.findIndex((line, at) => at > top && line[left] === "└");
-  return lines.slice(top + 1, bottom).map((line) => line.slice(left + 1, right).trimEnd());
+// The rows of keys along the bottom of the right side, below the thin line across it. None while
+// they are closed.
+function keysShown(): string[] {
+  // The capture ends with a newline, which leaves an empty piece after the bottom row.
+  const lines = right().split("\n").slice(0, -1);
+  const line = lines.findIndex((text) => text.startsWith("─".repeat(20)));
+  return line < 0 ? [] : lines.slice(line + 1).map((text) => text.trimEnd());
 }
-const keysOpen = () => keysBox().some((line) => line.trim() !== "");
-// Each line of the list of keys, with its spaces made single.
-const keyLine = (line: string) => line.trim().replace(/\s+/g, " ");
+const keysOpen = () => keysShown().some((line) => line.trim() !== "");
+// Each key shown, as "key to what it does", down the first column, then the next.
+function keyItems(): string[] {
+  const cells = keysShown().map((line) => line.trim().split(/\s{3,}/));
+  const columns = Math.max(0, ...cells.map((row) => row.length));
+  return Array.from({ length: columns }, (_, column) =>
+    cells.flatMap((row) => (row[column] ? [row[column]] : [])),
+  ).flat();
+}
 
-test("? on a list opens the list of keys over it, and Esc closes it", async () => {
+test("? on a list shows the keys in columns along the bottom, and Esc closes them", async () => {
   await openList("Issues");
   type("?");
-  await until(() => keysBox().map(keyLine).includes("Anywhere"), "the list of keys");
-  expect(keysBox().map(keyLine)).toContain("⏎ Open the row");
+  await until(() => keyItems().includes("enter to open a row"), "the list of keys");
+  // The keys end on the bottom row, in more than one column, with no headings.
+  expect((seen().split("\n")[29] ?? "").slice(sidebar + 1).trim()).not.toBe("");
+  expect(keysShown().some((line) => line.trim().split(/\s{3,}/).length > 1)).toBe(true);
+  expect(keyItems()[0]).toBe("alt + ↑/↓ to move in the sidebar");
+  expect(keyItems().at(-1)).toBe("← to go back from a page");
+  expect(right()).not.toContain("Anywhere");
   press("Escape");
   await until(() => !keysOpen(), "the list of keys to close");
   expect(right()).toContain("↑↓ move");
   expect(right()).toContain("app-31");
 });
 
-test("? on a page opens the list of keys, and q closes it on the page as it was", async () => {
+test("? on a page shows the keys, and q or ? closes them on the page as it was", async () => {
   await openIssue();
   type("?");
   await until(keysOpen, "the list of keys");
@@ -1442,16 +1450,21 @@ test("? on a page opens the list of keys, and q closes it on the page as it was"
   await until(() => !keysOpen(), "the list of keys to close");
   expect(right()).toContain("line 1 of the description");
   expect(right()).toContain("← back");
+  type("?");
+  await until(keysOpen, "the list of keys again");
+  type("?");
+  await until(() => !keysOpen(), "the list of keys to close again");
+  expect(right()).toContain("← back");
 });
 
-test("Alt-/ opens the list of keys over an agent, which gets no key while it is open", async () => {
+test("Alt-/ shows the keys over an agent, which gets no key until Alt-/ closes them", async () => {
   keyLoggingLead();
   open("lead");
   await ready("lead");
   type("\x1b/");
   await until(keysOpen, "the list of keys");
   type("x");
-  press("Escape");
+  type("\x1b/");
   await until(() => !keysOpen(), "the list of keys to close");
   type("y");
   await until(() => read("lead.keys").includes("y"), "the agent to get y");
@@ -1467,7 +1480,7 @@ test("plain ? on an agent is the agent's, and opens nothing", async () => {
   expect(keysOpen()).toBe(false);
 });
 
-test("a click on ? keys at the bottom of the sidebar opens the list of keys, and a click closes it", async () => {
+test("a click on ? keys at the bottom of the sidebar shows the keys, and a click on them closes them", async () => {
   open("lead");
   await ready("lead");
   await until(() => seen().includes("? keys"), "the hint");
@@ -1475,44 +1488,46 @@ test("a click on ? keys at the bottom of the sidebar opens the list of keys, and
   const y = lines.findIndex((line) => line.includes("? keys"));
   click((lines[y]?.indexOf("? keys") ?? 0) + 2, y + 1);
   await until(keysOpen, "the list of keys");
-  click(60, 15);
+  click(60, 30);
   await until(() => !keysOpen(), "the list of keys to close");
   expect(seen()).toContain("I am lead");
 });
 
-test("the list of keys has the same keys as sc --help, in the same groups", async () => {
+test("the list of keys has the same keys as sc --help, in the same order", async () => {
   open("lead");
   await ready("lead");
   type("\x1b/");
   await until(keysOpen, "the list of keys");
-  const box = keysBox().map(keyLine).filter(Boolean);
   const run = Bun.spawnSync([process.execPath, source("main.ts"), "--help"], { env: env() });
   const help = run.stdout.toString();
   const keys = help
-    .slice(help.indexOf("\nKEYS: "), help.indexOf("\nEXAMPLES\n"))
+    .slice(help.indexOf("\nKEYS\n") + "\nKEYS\n".length, help.indexOf("\nEXAMPLES\n"))
     .split("\n")
-    .map(keyLine)
-    .filter(Boolean)
+    .filter((line) => line.trim())
     .map((line) =>
-      line.replace(/^KEYS: (\w)(\w*)$/, (_, first, rest) => first + rest.toLowerCase()),
+      line
+        .trim()
+        .split(/\s{2,}/)
+        .join(" to "),
     );
-  expect(box).toEqual(keys);
-  expect(box).toContain("Pages");
-  expect(box).toContain("⌥/ Show the list of keys");
+  expect(keyItems()).toEqual(keys);
+  expect(keyItems()).toContain("alt + b to go back");
 });
 
-test("a terminal shorter than the list of keys scrolls it with Up and Down", async () => {
+test("keys that need more than a third of the pane scroll with Up and Down", async () => {
   open("lead");
   await ready("lead");
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "120", "-y", "12");
   type("\x1b/");
-  await until(() => keysBox().map(keyLine).includes("Anywhere"), "the list of keys");
-  expect(keysBox().map(keyLine)).not.toContain("Pages");
+  await until(() => keyItems().includes("alt + ↑/↓ to move in the sidebar"), "the list of keys");
+  // The agent's pane has ten rows, so the keys have three.
+  expect(keysShown()).toHaveLength(3);
+  expect(keyItems()).not.toContain("← to go back from a page");
   for (let n = 0; n < 25; n++) press("Down");
-  await until(() => keysBox().map(keyLine).includes("← Go back to the list"), "the end");
-  expect(keysBox().map(keyLine)).not.toContain("Anywhere");
+  await until(() => keyItems().includes("← to go back from a page"), "the end");
+  expect(keyItems()).not.toContain("alt + ↑/↓ to move in the sidebar");
   for (let n = 0; n < 25; n++) press("Up");
-  await until(() => keysBox().map(keyLine).includes("Anywhere"), "the start");
+  await until(() => keyItems().includes("alt + ↑/↓ to move in the sidebar"), "the start");
 });
 
 test("two terminals each get their own session, and leaving one leaves the other", async () => {

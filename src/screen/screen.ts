@@ -152,32 +152,43 @@ export const paneCommand = (
   start: string,
 ) => skelcrewCommand("list", agents, session, entry, where, repository, start);
 
-// Opens the list of keys in a box over the middle of the screen whose session is named. It is a
-// tmux popup, so it draws over the agent without touching it, takes every key while it is open,
-// and leaves the screen as it was when it closes. The box fits its keys, or the terminal when
-// that is smaller, as tmux opens no popup larger than the terminal, and what is cut off
-// scrolls. tmux waits for a popup to close before the command that opened it returns, so it
-// isn't waited for here.
+// Shows the list of keys along the bottom of the right side of the screen whose session is
+// named, over the agent's last rows and its footer, as Claude Code does with ?. It is a tmux
+// popup with no border, so it draws over the agent without touching it, takes every key while
+// it is open, and leaves the screen as it was when it closes. Its first row is a thin line
+// across the pane. It has as many rows as its keys need, up to a third of the pane, and the rest
+// scroll. It is never taller than the terminal, as tmux then opens nothing. tmux waits for a
+// popup to close before the command that opened it returns, so it isn't waited for here.
 export function showKeys(agents: string, session: string): void {
   const socket = screenSocket(agents);
-  // The terminal that has the session open, and its size.
-  const format = "#{client_name} #{client_width} #{client_height}";
+  // The terminal that has the session open, and how many rows it has.
+  const format = "#{client_name} #{client_height}";
   const said = tmux(socket, ["list-clients", "-t", `=${session}:`, "-F", format]).out;
-  const [client, columns = "0", rows = "0"] = said.trim().split(" ");
+  const [client, rows = "0"] = said.trim().split(" ");
   if (!client) return;
-  // The box's border takes a column on each side and a line above and below.
-  const lines = keyLines();
-  const width = Math.min(
-    Math.max(...lines.map((line) => Bun.stringWidth(line))) + 2,
-    Number(columns),
+  // Where the right side is, and how big.
+  const pane = [
+    "display-message",
+    "-p",
+    "-t",
+    `=${session}:.1`,
+    "#{pane_left} #{pane_width} #{pane_height}",
+  ];
+  const [left = "0", width = "0", paneHeight = "0"] = tmux(socket, pane).out.trim().split(" ");
+  if (Number(width) < 1) return;
+  const shown = Math.min(
+    keyLines(Number(width)).length,
+    Math.max(Math.floor(Number(paneHeight) / 3), 1),
   );
-  const height = Math.min(lines.length + 2, Number(rows));
+  const height = Math.min(shown + 1, Number(rows));
   // tmux hands the popup's command to a shell as one line, so each word is quoted.
   const command = skelcrewCommand("keys")
     .map((word) => `'${word.replaceAll("'", "'\\''")}'`)
     .join(" ");
-  const size = ["-w", String(width), "-h", String(height)];
-  const popup = ["display-popup", "-c", client, "-x", "C", "-y", "C", ...size, "-E", command];
+  // tmux places a popup by its bottom row, so the terminal's height puts it at the bottom.
+  const size = ["-w", width, "-h", String(height)];
+  const place = ["-x", left, "-y", rows];
+  const popup = ["display-popup", "-c", client, "-B", ...place, ...size, "-E", command];
   Bun.spawn(["tmux", "-L", socket, "-f", "/dev/null", ...popup], {
     env: envWithoutTmux(),
     stdio: ["ignore", "ignore", "ignore"],
