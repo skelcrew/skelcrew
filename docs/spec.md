@@ -152,7 +152,7 @@ The sidebar only shows, switches, and opens lists and pages. It has no commands 
 
 From a laptop, `sc --remote simon@workbox` runs `ssh -t simon@workbox sc --from <owner/repo>`, passing the GitHub name of the repository you are in on the laptop, so it opens that repository there. Any command works the same way: `sc --remote simon@workbox ls`. There is no protocol of our own; SSH (and Tailscale, if you use it) does the connecting.
 
-`--remote` only connects, and never sets a machine up. On a machine where Skelcrew is missing, or its first run hasn't finished, it says so and prints the `sc remote add` to run. A mistyped name never creates or installs anything.
+`--remote` never sets a machine up without asking. On a machine where Skelcrew is missing, or its first run hasn't finished, it says so and asks whether to set it up now: `simon@workbox isn't set up. Set it up now? [Y/n]`. Yes runs `sc remote add simon@workbox`, then connects as you asked. No stops, and prints the `sc remote add` to run later. Without a terminal it doesn't ask, and only prints the command. A mistyped name still creates and installs nothing you didn't agree to: an SSH host that doesn't exist fails to connect before anything is asked, and a new Sprite is created only after `sc remote add` asks for it too.
 
 `--remote` also keeps Skelcrew there up to date. The Skelcrew it copies to a server or Sprite carries the commit it was built from, and each command passes along the laptop's. When they differ, or either has changes not committed, Skelcrew asks before running the command: "Skelcrew on sprite:demo is from abc1234, yours is def5678. Update it?" Yes replaces Skelcrew there with one built from your checkout and restarts the daemon, and agents keep running. No runs the command on the old Skelcrew. A Skelcrew run from a checkout there is never offered an update: `git pull` there updates it, and the next `sc` there restarts its daemon on it.
 
@@ -343,7 +343,7 @@ For you, and for the lead:
 | --- | --- |
 | `Skelcrew [--from <owner/repo>]` | Attaches to the lead of the repository you are in, starting the daemon and that lead if needed, and adding the repository first if it is new. Outside a repository, the one you opened last, or with every tab closed, none. In a repository with no remote, none. `--remote` passes `--from` for you. |
 | `sc init` | Run in a checkout: writes a starter `skelcrew.yaml` there, which you commit and push, and adds the repository. Only you can run it. |
-| `sc --remote <host> [command]` | Runs any `sc` command on the server, over `ssh -t`. With `sprite:<name>` as the host, runs it on that Sprite instead. Keeps Skelcrew there up to date with your checkout, after asking. |
+| `sc --remote <host> [command]` | Runs any `sc` command on the server, over `ssh -t`. With `sprite:<name>` as the host, runs it on that Sprite instead. Keeps Skelcrew there up to date with your checkout, after asking. On a machine that isn't set up, asks whether to set it up first. |
 | `sc remote add <host>` | Sets up a server, or with `sprite:<name>` a Sprite, creating it after asking if it doesn't exist. Runs the first run there and prints the `sc --remote` command that connects. Run it on your laptop. |
 | `sc serve` | Runs the daemon in the foreground, for systemd or a Sprite service. One per machine. |
 | `sc repo add [<path> \| <owner/repo>]` | Adds a repository: the checkout at the path, the one named, or the checkout you are in. Asks whether you trust it when it needs to. Only you can run it. |
