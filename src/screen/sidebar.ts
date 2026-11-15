@@ -1,5 +1,5 @@
 // The sidebar: the live left pane of the screen, showing the open repository. Its lead is on top,
-// then the entries Issues, Threads and PRs, then THREADS, with the active threads and what each
+// then the entries Issues, Threads and PRs, then ACTIVE, with the active threads and what each
 // is doing. Picking a thread switches the client in the right pane, and picking an entry puts its
 // list there. The sidebar also keeps the top row up to date, with the header, the tabs and the
 // strip, and switches tabs.
@@ -230,7 +230,7 @@ export async function runSidebar(
         // The list on the right opened a page, or went back from one.
         page = about ? pageRow(db, open, about) : null;
       } else if (said === "skel-thread") {
-        // A thread picked in the list of threads shows as picking it in THREADS does, while its
+        // A thread picked in the list of threads shows as picking it in ACTIVE does, while its
         // agent runs.
         if (rows.some((row) => row.session === about && row.running)) show(about);
       } else if (said === "skel-tab" || arrow === "C" || arrow === "D") {

@@ -210,8 +210,8 @@ test("shows the lead and every thread that isn't done, beside the agent", async 
   await ready("lead");
   const lines = seen().split("\n");
   const y = lines.findIndex((line) => line.includes("◆ lead"));
-  // The lead is at the top of the sidebar, below a blank line, then a line, the entries, another
-  // line, then THREADS.
+  // The lead is at the top of the sidebar, below a blank line, then a line, the entries with a
+  // blank line between each, another line, then ACTIVE.
   expect(y).toBe(2);
   expect(lines[1]?.slice(0, sidebar - 1).trim()).toBe("");
   expect(selected()).toBe("◆ lead");
@@ -219,13 +219,15 @@ test("shows the lead and every thread that isn't done, beside the agent", async 
   expect(lines[y + 1]).toContain("running · claude");
   expect(lines[y + 2]?.slice(0, sidebar - 1)).toMatch(/^─+$/);
   expect(lines[y + 3]).toContain("Issues");
-  expect(lines[y + 4]).toContain("Threads");
-  expect(lines[y + 5]).toContain("PRs");
-  expect(lines[y + 6]?.slice(0, sidebar - 1)).toMatch(/^─+$/);
-  expect(lines[y + 7]).toContain("Threads");
-  expect(lines[y + 9]).toContain("● app-12");
-  expect(lines[y + 10]).toContain("working · claude");
-  expect(lines[y + 11]).toContain("● app-7");
+  expect(lines[y + 4]?.slice(0, sidebar - 1).trim()).toBe("");
+  expect(lines[y + 5]).toContain("Threads");
+  expect(lines[y + 6]?.slice(0, sidebar - 1).trim()).toBe("");
+  expect(lines[y + 7]).toContain("PRs");
+  expect(lines[y + 8]?.slice(0, sidebar - 1)).toMatch(/^─+$/);
+  expect(lines[y + 9]).toContain("Active");
+  expect(lines[y + 11]).toContain("● app-12");
+  expect(lines[y + 12]).toContain("working · claude");
+  expect(lines[y + 13]).toContain("● app-7");
   expect(seen()).not.toContain("app-3");
   // Nothing of the screen is left in agents' sessions: each stays one pane.
   const panes = tmux(agents, "list-panes", "-a", "-F", "#{session_name}").out.trim().split("\n");
@@ -737,7 +739,7 @@ ${itemSql("app", "pr", 34, "Bump deps", "2026-11-05T10:00:00Z", {
 })}
 UPDATE repositories SET open_issues = 2, open_prs = 1;`);
 
-test("the entries sit between the lead and THREADS, counting what their lists have", async () => {
+test("the entries sit between the lead and ACTIVE, counting what their lists have", async () => {
   openOnGitHub();
   open("lead");
   await ready("lead");
@@ -751,7 +753,7 @@ test("the entries sit between the lead and THREADS, counting what their lists ha
   expect(lines[at("    Threads")]).toBe(`${"    Threads".padEnd(34)}2`);
   expect(lines[at("PRs")]).toBe(`${"    PRs".padEnd(34)}1`);
   expect(at("◆ lead")).toBeLessThan(at("Issues"));
-  expect(at("PRs")).toBeLessThan(lines.indexOf("  Threads"));
+  expect(at("PRs")).toBeLessThan(lines.indexOf("  Active"));
 });
 
 test("the screen's server turns terminal links on, whatever your terminal says it is", async () => {
@@ -1030,14 +1032,14 @@ test("Alt-Down moves from the lead through the entries, and Alt-Up back puts you
   await until(() => read("lead.typed").includes("straight back"), "what you typed");
 });
 
-test("Alt-Shift-Down and Alt-Shift-Up jump between the lead, the entries and THREADS", async () => {
+test("Alt-Shift-Down and Alt-Shift-Up jump between the lead, the entries and ACTIVE", async () => {
   openOnGitHub();
   open("lead");
   await ready("lead");
   press("M-S-Down");
   await onRight("Not started");
   press("M-S-Down");
-  await until(() => selected() === "● app-12", "the first row of THREADS");
+  await until(() => selected() === "● app-12", "the first row of ACTIVE");
   await until(() => seen().includes("I am app-12"), "its agent");
   press("M-S-Up");
   await onRight("Not started");

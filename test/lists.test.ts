@@ -108,9 +108,9 @@ ${thread("14", "", "'stopped'")}`;
       ],
     ],
   ]);
-  // The marks have no colour, and a word that needs you is yellow.
+  // The marks have no colour, and a word has its thread's mark colour: green once approved.
   expect(issues[1]?.rows[0]?.mark[1]).toBeNull();
-  expect(issues[1]?.rows[0]?.ends[0]?.[1]).toBe("38;5;221");
+  expect(issues[1]?.rows[0]?.ends[0]?.[1]).toBe("38;5;120");
   expect(issues[1]?.rows[1]?.ends[0]?.[1]).toBe("90");
   expect(issues[1]?.rows[0]?.link).toBe("https://github.com/simon/app/issues/12");
 });
@@ -130,7 +130,11 @@ ${itemSql("app", "pr", 34, "Fix logout", "2026-11-07T10:00:00Z")}
 ${itemSql("app", "pr", 35, "Fix signup", "2026-11-08T10:00:00Z")}
 ${thread("12", ", pr, needs_you, verdict, review_round", "'waiting', 31, 1, 'approve', 1")}
 ${thread("13", ", pr, review_round, verdict", "'working', 34, 1, 'changes'")}
-${thread("14", ", pr", "'failed', 35")}`;
+${thread("14", ", pr", "'failed', 35")}
+${itemSql("app", "pr", 36, "Fix export", "2026-11-09T10:00:00Z")}
+${itemSql("app", "pr", 37, "Fix import", "2026-11-10T10:00:00Z")}
+${thread("15", ", pr, erred", "'working', 36, 1")}
+${thread("16", ", pr, asking", "'working', 37, 1")}`;
   const { prs } = after(sql);
   expect(shape(prs)).toEqual([
     [
@@ -143,15 +147,33 @@ ${thread("14", ", pr", "'failed', 35")}`;
     [
       "In review",
       [
+        ["○", "app#37", "Fix import", "question"],
+        ["○", "app#36", "Fix export", "error"],
         ["○", "app#35", "Fix signup", "failed"],
         ["◐", "app#34", "Fix logout", "working"],
         ["○", "app#33", "Tidy", "bob"],
       ],
     ],
   ]);
-  // A PR from a thread takes its colour where that means something, and is plain otherwise.
-  expect(prs[0]?.rows.map((row) => row.mark[1])).toEqual([null, "38;5;221"]);
-  expect(prs[1]?.rows.map((row) => row.mark[1])).toEqual(["38;5;210", null, null]);
+  // A PR from a thread takes its colour where that means something: green when approved,
+  // yellow when it needs you, and red when it failed or hit an error. It is plain otherwise.
+  expect(prs[0]?.rows.map((row) => row.mark[1])).toEqual([null, "38;5;120"]);
+  expect(prs[1]?.rows.map((row) => row.mark[1])).toEqual([
+    "38;5;221",
+    "38;5;210",
+    "38;5;210",
+    null,
+    null,
+  ]);
+  // The word has the thread's mark colour, and the author is dim.
+  expect(prs[0]?.rows.map((row) => row.ends[0]?.[1])).toEqual(["90", "38;5;120"]);
+  expect(prs[1]?.rows.map((row) => row.ends[0]?.[1])).toEqual([
+    "38;5;221",
+    "38;5;210",
+    "38;5;210",
+    "38;5;120",
+    "90",
+  ]);
 });
 
 // Returns a review on a PR with no thread, by a reviewer, with a verdict.
@@ -218,7 +240,7 @@ ${thread("14", ", pr, review_round, verdict", "'working', 33, 1, 'changes'")}`;
   ]);
 });
 
-test("threads come as needs you, working, then stopped, with all THREADS hasn't room for", () => {
+test("threads come as needs you, working, then stopped, with all ACTIVE hasn't room for", () => {
   const today = new Date(2026, 10, 13, 16, 0).getTime();
   const at = (day: number, hour: number) => new Date(2026, 10, day, hour, 32).getTime();
   const sql = `${repository}
@@ -226,12 +248,14 @@ ${thread("12", ", pr, harness, title, changed", `'working', 31, 'codex', 'Fix lo
 ${thread("t1", ", title, changed, needs_you, asking", `'waiting', 'Tidy up', ${at(12, 9)}, 0, 1`)}
 ${thread("13", ", title, started", `'stopped', 'Old', ${at(2, 9)}`)}
 ${thread("14", ", title", "'done', 'Gone'")}
-${thread("15", ", title", "'failed', 'Broke'")}`;
+${thread("15", ", title", "'failed', 'Broke'")}
+${thread("16", ", title, erred", "'working', 'Stuck', 1")}`;
   const { threads } = after(sql, today);
   expect(shape(threads)).toEqual([
     [
       "Needs you",
       [
+        ["●", "app-16", "Stuck", "error", "claude", "#16", ""],
         ["●", "app-15", "Broke", "failed", "claude", "#15", ""],
         ["●", "app-t1", "Tidy up", "question", "claude", "", "12 Nov"],
       ],
@@ -239,15 +263,18 @@ ${thread("15", ", title", "'failed', 'Broke'")}`;
     ["Working", [["●", "app-12", "Fix login", "working", "codex", "#12 #31", "14:32"]]],
     ["Stopped", [["○", "app-13", "Old", "stopped", "claude", "#13", "2 Nov"]]],
   ]);
-  // Each mark and word has its colour in THREADS, and a stopped one is dim.
-  expect(threads.flatMap((g) => g.rows.map((row) => row.mark[1]))).toEqual([
-    "38;5;210",
-    "38;5;221",
-    "38;5;120",
-    "90",
+  // Each mark and word has its colour in ACTIVE, and a stopped one is dim.
+  const colours = ["38;5;210", "38;5;210", "38;5;221", "38;5;120", "90"];
+  expect(threads.flatMap((g) => g.rows.map((row) => row.mark[1]))).toEqual(colours);
+  expect(threads.flatMap((g) => g.rows.map((row) => row.ends[0]?.[1]))).toEqual(colours);
+  expect(threads.flatMap((g) => g.rows.map((row) => row.dim))).toEqual([
+    false,
+    false,
+    false,
+    false,
+    true,
   ]);
-  expect(threads.flatMap((g) => g.rows.map((row) => row.dim))).toEqual([false, false, false, true]);
-  expect(threads[0]?.rows[1]?.session).toBe("app-t1");
+  expect(threads[0]?.rows[2]?.session).toBe("app-t1");
 });
 
 test("while a review runs, a thread's harness is its reviewer's", () => {
@@ -273,17 +300,17 @@ ${thread("12", ", pr, needs_you, verdict", "'waiting', 34, 1, 'approve'")}
 ${thread("13", "", "'stopped'")}
 ${thread("14", "", "'done'")}`;
   expect(after(sql).entries).toEqual([
-    { entry: "issues", name: "Issues", total: 2, note: "1 new", warn: false },
-    { entry: "threads", name: "Threads", total: 2, note: "1 needs you", warn: true },
-    { entry: "prs", name: "PRs", total: 1, note: "1 ready", warn: true },
+    { entry: "issues", name: "Issues", total: 2, note: "1 new", colour: "90" },
+    { entry: "threads", name: "Threads", total: 2, note: "1 needs you", colour: "38;5;221" },
+    { entry: "prs", name: "PRs", total: 1, note: "1 ready", colour: "38;5;120" },
   ]);
 });
 
 test("each entry is there with nothing open, so the threads below never move", () => {
   expect(after(repository).entries).toEqual([
-    { entry: "issues", name: "Issues", total: 0, note: "", warn: false },
-    { entry: "threads", name: "Threads", total: 0, note: "", warn: true },
-    { entry: "prs", name: "PRs", total: 0, note: "", warn: true },
+    { entry: "issues", name: "Issues", total: 0, note: "", colour: "90" },
+    { entry: "threads", name: "Threads", total: 0, note: "", colour: "38;5;221" },
+    { entry: "prs", name: "PRs", total: 0, note: "", colour: "38;5;120" },
   ]);
 });
 

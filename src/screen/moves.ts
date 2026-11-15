@@ -9,10 +9,10 @@ import type { Row } from "./rows.ts";
 type Stop = { place: string; open: boolean };
 
 // Returns what you can move to, part by part, top to bottom: the lead, the entries, then every
-// thread, as THREADS scrolls to keep you in view. The entries count only while the sidebar has
+// thread, as ACTIVE scrolls to keep you in view. The entries count only while the sidebar has
 // room to show them.
 function stops(rows: Row[], entries: EntryCount[], shown: string | null, size: Size): Stop[][] {
-  // The lead and every row of THREADS are stops, open only while their agent runs. The lead has
+  // The lead and every row of ACTIVE are stops, open only while their agent runs. The lead has
   // no status of its own. An entry always has its list to show.
   const { lines } = layout(rows, entries, shown, size);
   const seen = entries
@@ -47,7 +47,7 @@ export function nextRow(
 }
 
 // Returns the first row of the part before or after the one you are in, for Alt-Shift-Up and
-// Alt-Shift-Down: the lead, the entries or THREADS. It returns null past the first and last. A
+// Alt-Shift-Down: the lead, the entries or ACTIVE. It returns null past the first and last. A
 // part with nothing to land on is passed over.
 export function nextList(
   rows: Row[],
