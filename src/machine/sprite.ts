@@ -9,10 +9,11 @@ import {
   addMachine,
   copySkel,
   type Machine,
-  notSetUp,
   quoted,
   runInTerminal,
   runUpToDate,
+  setUpFirst,
+  unfinished,
 } from "./remote.ts";
 
 // Reports whether Skelcrew runs on a Sprite. It goes by sprite-env, the Sprite's own tool for
@@ -369,8 +370,9 @@ export async function addSprite(name: string): Promise<number> {
 }
 
 // Runs a Skelcrew command on the Sprite and returns its exit code. Plain Skelcrew passes the
-// repository you are in on the laptop, so it opens that repository's lead there. Stops at a
-// Sprite that doesn't exist or has no Skelcrew.
+// repository you are in on the laptop, so it opens that repository's lead there. Offers to set up
+// a Sprite that doesn't exist, has no Skelcrew, or hasn't finished its first run. A Sprite that
+// doesn't exist is created only after sc remote add asks too, so a mistyped name costs nothing.
 export async function remoteSprite(name: string, args: string[]): Promise<number> {
   checkName(name);
   // A sleeping Sprite can take a while to answer, which looks like a hang with nothing on
@@ -382,12 +384,12 @@ export async function remoteSprite(name: string, args: string[]): Promise<number
   const names = spriteNames(again);
   const from = args.length === 0 ? originHere() : null;
   const where = `sprite:${name}`;
-  if (!names.includes(name)) throw new Error(notSetUp(where));
-  const code = await runUpToDate(
-    where,
-    skelOnSprite(name, from ? ["--from", from] : args),
-    spriteMachine(name),
-  );
-  if (code === 127) throw new Error(notSetUp(where));
-  return code;
+  const add = () => addSprite(name);
+  const connect = () =>
+    runUpToDate(where, skelOnSprite(name, from ? ["--from", from] : args), spriteMachine(name));
+  if (!names.includes(name)) return setUpFirst(where, add, connect);
+  const code = await connect();
+  // The Sprite's shell exits 127 when it finds no Skelcrew to run.
+  if (code !== 127 && code !== unfinished) return code;
+  return setUpFirst(where, add, connect);
 }

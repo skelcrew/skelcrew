@@ -1069,13 +1069,12 @@ test("sc first-run takes the steps and installs the service, without attaching",
   expect(calls()).not.toContain("attach");
 });
 
-// Logging in on a machine is what sc remote add is for, so --remote never starts it.
-test("over --remote, a machine whose first run isn't done says so and takes no step", async () => {
+// Logging in on a machine is what sc remote add is for, so --remote never starts it. The laptop
+// tells the exit code apart from a failure, and offers to set the machine up.
+test("over --remote, a machine whose first run isn't done exits with its own code and takes no step", async () => {
   const run = await skel("", bin, main(), home, { SKELCREW_REMOTE_NAME: "simon@workbox" });
-  expect(run.err).toBe(
-    "Skelcrew: simon@workbox isn't set up. Run this on your laptop:\n  sc remote add simon@workbox\n",
-  );
-  expect(run.code).toBe(1);
+  expect(run.err).toBe("");
+  expect(run.code).toBe(97);
   expect(calls()).not.toContain("claude");
 });
 

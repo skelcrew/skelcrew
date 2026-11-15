@@ -31,6 +31,9 @@ const pathOnServer = 'PATH="$HOME/.local/bin:$PATH"';
 // What a copied Skelcrew exits with when the laptop's build differs. Skelcrew otherwise exits 0 or
 // 1, and the server's shell 127 when it finds no Skelcrew.
 export const outdated = 98;
+// What Skelcrew exits with when --remote reaches it before its first run has finished there, so
+// the laptop can offer to finish it.
+export const unfinished = 97;
 
 // Reports whether this Skelcrew, copied to a server or Sprite, is from another build than the
 // laptop that runs it there with --remote, and says so. The laptop passes its build along
@@ -98,22 +101,42 @@ const onServer = (host: string, words: string[]) => (env: string[]) =>
     ].join(" "),
   ]);
 
-// Says a machine isn't set up, and how to do that. --remote only connects, as setting up
-// means logins and can mean a Sprite you pay for, which nobody expects from a mistyped name.
+// Says a machine isn't set up, and how to do that.
 export const notSetUp = (where: string) =>
   `${where} isn't set up. Run this on your laptop:\n  sc remote add ${where}`;
 
+// Offers to set up a machine that --remote found not set up, and returns the exit code. A yes
+// runs `add`, which is what sc remote add runs, then `connect`, the command you asked for. Setting
+// up means logins and can mean a Sprite you pay for, so it never happens without your yes. Without
+// a terminal nobody can answer, so it only says what to run.
+export async function setUpFirst(
+  where: string,
+  add: () => Promise<number>,
+  connect: () => Promise<number>,
+): Promise<number> {
+  if (!process.stdin.isTTY) throw new Error(notSetUp(where));
+  // Bun's prompt answers a bare Enter with null, which takes the default, yes.
+  const answer = prompt(`${where} isn't set up. Set it up now? [Y/n]`);
+  if (!["", "y", "yes"].includes(answer?.trim().toLowerCase() ?? "")) {
+    console.log(`Nothing was set up. To set it up later, run:\n  sc remote add ${where}`);
+    return 1;
+  }
+  const added = await add();
+  return added === 0 ? connect() : added;
+}
+
 // Runs a Skelcrew command on the host and returns its exit code. Plain Skelcrew passes the
-// repository you are in on the laptop, so it opens that repository's lead there. Stops when
-// the host has no Skelcrew.
+// repository you are in on the laptop, so it opens that repository's lead there. Offers to set
+// the host up when it has no Skelcrew, or its first run hasn't finished.
 export async function remote(host: string, args: string[]): Promise<number> {
   const from = args.length === 0 ? originHere() : null;
   const there = onServer(host, from ? ["--from", from] : args);
-  const code = await runUpToDate(host, there, serverMachine(host));
+  const connect = () => runUpToDate(host, there, serverMachine(host));
+  const code = await connect();
   // The server's shell exits 127 when it finds no Skelcrew to run. Skelcrew itself never does: it
   // exits 1 on any error.
-  if (code === 127) throw new Error(notSetUp(host));
-  return code;
+  if (code !== 127 && code !== unfinished) return code;
+  return setUpFirst(host, () => addServer(host), connect);
 }
 
 // Sets up your server for --remote and returns the exit code, for sc remote add.

@@ -3,10 +3,10 @@ import { help } from "./help.ts";
 import {
   addServer,
   keepingTitle,
-  notSetUp,
   outdated,
   outOfDate,
   remote,
+  unfinished,
 } from "./machine/remote.ts";
 import { addSprite, remoteSprite } from "./machine/sprite.ts";
 import { errorText } from "./say.ts";
@@ -488,9 +488,9 @@ async function runCommand(args: string[]): Promise<void> {
   // Commands that run here load what they need only from this point on, so sc --remote
   // starts quickly and loads no part of the daemon on your laptop.
   const { setupDone } = await import("./machine/setup.ts");
-  // On a remote, refuse to run until the machine is set up. Sidebars, lists and agents skip
-  // this: they can inherit the remote's name from whoever started tmux, and an agent's sandbox
-  // hides what setupDone reads.
+  // On a remote, refuse to run until the machine is set up, with the exit code that lets the
+  // laptop offer to finish it. Sidebars, lists and agents skip this: they can inherit the
+  // remote's name from whoever started tmux, and an agent's sandbox hides what setupDone reads.
   const remoteName = process.env.SKELCREW_REMOTE_NAME;
   if (
     remoteName &&
@@ -499,7 +499,7 @@ async function runCommand(args: string[]): Promise<void> {
     process.env.SKELCREW_SANDBOX !== "1" &&
     !setupDone()
   )
-    throw new Error(notSetUp(remoteName));
+    process.exit(unfinished);
   // Plain sc, or sc --from <remote> as sc --remote sends it.
   if (words.length === 0 || (first === "--from" && second && words.length === 2))
     return leadCommand(second);
