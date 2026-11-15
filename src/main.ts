@@ -116,16 +116,20 @@ async function leadCommand(from?: string): Promise<void> {
   // Adds the repository you ran sc from if Skelcrew doesn't have it yet.
   const found = await bringInFrom(from);
   if (repositories(openDb()).length === 0) return;
-  // Away from a checkout with a remote, sc opens the repository you opened last only while it
-  // has a tab. With every tab closed, you closed them on purpose, so it opens none and says
-  // what sc needs instead.
-  const away = from === undefined && originHere() === null;
+  // In a repository with no remote, sc opens nothing, even with tabs open: opening another
+  // repository there would look as if Skelcrew had ignored where you are.
+  const origin = originHere();
+  if (from === undefined && origin === null && checkoutTop() !== null) {
+    console.error(
+      "This git repository has no remote. Add one, push, and run sc again:\n\n  git remote add origin <url>\n  git push -u origin HEAD",
+    );
+    process.exit(1);
+  }
+  // Outside any repository, sc opens the repository you opened last only while it has a tab.
+  // With every tab closed, you closed them on purpose, so it opens none and says what sc needs.
+  const away = from === undefined && origin === null;
   if (await attachToLead("skelcrew", found, away)) return;
-  console.error(
-    checkoutTop() === null
-      ? "No git repository found. Run sc inside a git repository to open it."
-      : "This git repository has no remote. Run sc inside a git repository with a remote to open it.",
-  );
+  console.error("No git repository found. Run sc inside a git repository to open it.");
   process.exit(1);
 }
 

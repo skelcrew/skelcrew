@@ -311,9 +311,12 @@ test("--from says why it can't bring a repository in, and attaches to the one yo
   expect(attached()).toBe(true);
 });
 
-// Exiting each lead closes every tab, on purpose, so plain sc away from a checkout with a remote
-// opens none and says why.
-test("outside a checkout with a remote and with every tab closed, sc opens nothing and says why", async () => {
+const noRemoteLine =
+  "This git repository has no remote. Add one, push, and run sc again:\n\n  git remote add origin <url>\n  git push -u origin HEAD\n";
+
+// Exiting each lead closes every tab, on purpose, so plain sc outside a repository opens none and
+// says why.
+test("outside a repository and with every tab closed, sc opens nothing and says why", async () => {
   await skel([], "", onGitHub("simon/app", "WRITE"));
   daemonReply = '{"closed":true}';
   writeFileSync(join(home, "calls"), "");
@@ -326,13 +329,20 @@ test("outside a checkout with a remote and with every tab closed, sc opens nothi
   const loose = join(home, "loose");
   mkdirSync(loose);
   git(loose, "init", "-q");
-  const noRemote = await skel([], "", loose);
-  expect(noRemote).toEqual({
-    out: "",
-    err: "This git repository has no remote. Run sc inside a git repository with a remote to open it.\n",
-    code: 1,
-  });
+  expect(await skel([], "", loose)).toEqual({ out: "", err: noRemoteLine, code: 1 });
   expect(calls()).not.toContain("screen on");
+});
+
+// Opening another repository there would look as if Skelcrew had ignored where you are.
+test("in a repository with no remote, sc opens nothing even with tabs open, and says how to add one", async () => {
+  await skel([], "", onGitHub("simon/app", "WRITE"));
+  writeFileSync(join(home, "calls"), "");
+  const loose = join(home, "loose");
+  mkdirSync(loose);
+  git(loose, "init", "-q");
+  expect(await skel([], "", loose)).toEqual({ out: "", err: noRemoteLine, code: 1 });
+  expect(calls()).not.toContain("screen on");
+  expect(calls()).not.toContain("daemon lead");
 });
 
 // The daemon opens that repository's lead, or the one you opened last when it names none.
