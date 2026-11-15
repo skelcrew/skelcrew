@@ -1161,6 +1161,42 @@ test("m on a ready PR asks first, y merges it at the commit you saw, and a refus
   await says("m merge");
 });
 
+// A page is read once, but what s and m do follows Skelcrew's copy as it changes meanwhile.
+test("m on a PR's page asks to merge once the PR became ready while the page was open", async () => {
+  daemon();
+  sql(itemSql("app", "pr", 35, "Add export", "2026-11-06T10:00:00Z", { head: "c".repeat(40) }));
+  await openList("PRs");
+  await onRight("app#35");
+  press("Enter");
+  await until(() => tabRow().includes("app#35"), "the PR's strip");
+  type("m");
+  await says("app#35 isn't approved yet");
+  press("Down");
+  await says("m merge");
+  readyPr();
+  type("m");
+  await says("Merge app#35 into main? y/n");
+  type("n");
+  await says("m merge");
+  expect(acted).toEqual([]);
+});
+
+test("s on an issue's page, once its thread started, says the issue has it", async () => {
+  daemon();
+  await openIssue();
+  type("s");
+  await says("Start a thread on app#31? y/n");
+  type("y");
+  await until(() => acted.length === 1, "the start");
+  await says("s start");
+  // The daemon records the thread, as sc start does.
+  sql(`INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you)
+    VALUES ('simon', 'app', 31, 'app-31', 'skelcrew/31', 'working', 0);`);
+  type("s");
+  await says("app#31 already has app-31");
+  expect(acted).toEqual(["start simon/app 31"]);
+});
+
 test("m on a PR that isn't ready says what it waits on, and merges nothing", async () => {
   daemon();
   await openList("PRs");

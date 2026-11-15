@@ -241,8 +241,13 @@ export async function runPane(
     );
   // Acts on s or m: on an issue's or PR's row, asks first, or says why it can't. The page shows
   // the row it was opened from. A key that isn't this row's does nothing, such as m on an issue.
+  // The row is read again from Skelcrew's copy, by its name, as a page stops the list reading
+  // it: a PR that became ready, or an issue just started, would otherwise keep what it was when
+  // the page opened. Nothing is drawn again, so the page stays as it is.
   const act = (key: string) => {
-    const action = rows()[here]?.action;
+    const name = rows()[here]?.name;
+    const now = listGroups(db, open, entry, Date.now()).flatMap((group) => group.rows);
+    const action = now.find((row) => row.name === name)?.action;
     if (working || action?.key !== key) return;
     if ("refused" in action) {
       saying = true;
