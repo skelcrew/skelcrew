@@ -98,9 +98,9 @@ On a server or Sprite, `sc remote add` runs these steps from your laptop and ins
 
 - your choices in `config.yaml`, such as the harness and models, and what you declined, such as `github_declined`;
 - the agents' Claude Code token, which is long-lived;
-- your plugins, each installed there at the same version, with its settings, as `sc plugin install` does but without asking again, as you trusted it on the laptop. A plugin you removed on the laptop is removed there too.
+- your plugins, each installed there at the same version as on the laptop, as `sc plugin install` does but without asking again, as you trusted it on the laptop. A plugin you removed on the laptop is removed there too. A plugin installed from a folder of yours has no version to match, so it isn't copied: install it there yourself.
 
-A sign-in that renews itself isn't copied, because each renewal cancels the one before, so two machines sharing it would break each other. The GitHub plugin's sign-in and the Codex login are like that. Each machine signs in once on its own: the plugin's setup, or `codex login`, runs on the server in your terminal during `sc remote add`, as the first run does, and isn't asked again. A laptop with no setup yet, such as when you go straight to a Sprite, has nothing to copy, and the first run there asks as it would on the laptop.
+No plugin's files are copied. A plugin keeps its settings and sign-ins together, in a format of its own, and a sign-in that renews itself cancels the one before at each renewal, so two machines sharing it would break each other. The GitHub plugin's sign-in is like that, and so is the Codex login. So each plugin's setup runs there once, in your terminal, during `sc remote add` or the first `sc --remote` after you install it, and sets what it needs, as it did on the laptop. `codex login` runs there the same way. Neither is asked again. A laptop with no setup yet, such as when you go straight to a Sprite, has nothing to copy, and the first run there asks as it would on the laptop.
 
 Only your setup goes there. What runs stays on the machine that runs it: threads, their clones, the daemon and its state. Nothing comes back to the laptop, and a change made on the server, such as `sc --remote simon@workbox plugin install`, is replaced by the laptop's setup at the next `sc --remote`. So you change your setup on the laptop.
 
