@@ -182,10 +182,20 @@ export async function runPane(
     top = Math.min(Math.max(top, 0), Math.max(lines.length - height(), 0));
     return lines;
   };
-  // Returns the footer's keys for the row you are on: s or m only when it can be started or
+  // Returns the row s and m act on, in a list of rows read from Skelcrew's copy. On a page it is
+  // the issue or PR the page shows, found by its link, as the list behind a page reads the copy
+  // again and another row can take its place when it closes. On a list it is the row you are on,
+  // found by its name. Nothing when it is gone.
+  const chosen = (list: Group["rows"]) => {
+    const shown = page;
+    if (shown) return list.find((row) => row.link === shown.url);
+    const name = rows()[here]?.name;
+    return list.find((row) => row.name === name);
+  };
+  // Returns the footer's keys for the row s and m act on: s or m only when it can be started or
   // merged.
   const footerKeys = () => {
-    const action = rows()[here]?.action;
+    const action = chosen(rows())?.action;
     return listFooter(action && !("refused" in action) ? action.key : null);
   };
   // Says something in the footer in place of its keys, or with null puts its keys back.
@@ -244,16 +254,24 @@ export async function runPane(
     } else if (row.session && !row.dim) tell("thread", row.session);
     draw(true);
   };
-  // Acts on s or m: on an issue's or PR's row, asks first, or says why it can't. The page shows
-  // the row it was opened from. A key that isn't this row's does nothing, such as m on an issue.
-  // The row is read again from Skelcrew's copy, by its name, as a page stops the list reading
-  // it: a PR that became ready, or an issue just started, would otherwise keep what it was when
-  // the page opened. Nothing is drawn again, so the page stays as it is.
+  // Acts on s or m: on an issue's or PR's row, asks first, or says why it can't. A key that
+  // isn't this row's does nothing, such as m on an issue. The row is read again from Skelcrew's
+  // copy, so a PR that just became ready, or an issue just started, counts as it is now. A page's
+  // issue or PR that closed since says so, and nothing is done. Nothing is drawn again, so the
+  // page stays as it is. Once asked, y acts on the issue or PR the question named, however the
+  // list moves meanwhile.
   const act = (key: string) => {
-    const name = rows()[here]?.name;
+    if (working) return;
     const now = listGroups(db, open, entry, Date.now()).flatMap((group) => group.rows);
-    const action = now.find((row) => row.name === name)?.action;
-    if (working || action?.key !== key) return;
+    const row = chosen(now);
+    const own = entry === "prs" ? "m" : entry === "issues" ? "s" : "";
+    if (!row && key === own) {
+      saying = true;
+      say(`This ${key === "m" ? "PR" : "issue"} is no longer open`);
+      return;
+    }
+    const action = row?.action;
+    if (action?.key !== key) return;
     if ("refused" in action) {
       saying = true;
       say(action.refused);

@@ -1128,9 +1128,9 @@ test("s on an issue's page starts a thread on that issue", async () => {
 });
 
 // A PR approved with its checks passing, which the forge last sent at a head commit.
-const readyPr = () =>
+const readyPr = (id = 35, created = "2026-11-06T10:00:00Z") =>
   sql(
-    itemSql("app", "pr", 35, "Add export", "2026-11-06T10:00:00Z", {
+    itemSql("app", "pr", id, `Add export ${id}`, created, {
       head: "c".repeat(40),
       checks: [{ name: "test", id: "1", state: "passed" }],
       reviews: [
@@ -1194,6 +1194,54 @@ test("m on a PR's page asks to merge once the PR became ready while the page was
   type("n");
   await says(mergeKeys);
   expect(acted).toEqual([]);
+});
+
+// A page shows one issue or PR, so s and m act on that one, even when the list behind it
+// changed and another row took its place.
+test("m on the page of a PR that closed meanwhile merges nothing, though another ready PR took its row", async () => {
+  daemon();
+  readyPr(35, "2026-11-06T10:00:00Z");
+  readyPr(36, "2026-11-01T10:00:00Z");
+  await openList("PRs");
+  await onRight("app#36");
+  press("Enter");
+  await until(() => tabRow().includes("app#35"), "the PR's strip");
+  await says(mergeKeys);
+  sql("UPDATE items SET state = 'closed' WHERE kind = 'pr' AND id = '35'");
+  await says(listKeys);
+  type("m");
+  await says("This PR is no longer open");
+  await Bun.sleep(300);
+  expect(acted).toEqual([]);
+  expect(right()).toContain("Add export 35");
+});
+
+test("s on the page of an issue that closed meanwhile starts nothing", async () => {
+  daemon();
+  await openIssue();
+  await says(startKeys);
+  sql("UPDATE items SET state = 'closed' WHERE kind = 'task' AND id = '31'");
+  await says(listKeys);
+  type("s");
+  await says("This issue is no longer open");
+  await Bun.sleep(300);
+  expect(acted).toEqual([]);
+});
+
+// The question names one PR, and y merges that one, however the list moved meanwhile.
+test("y merges the PR the question named, even after the list moved under it", async () => {
+  daemon();
+  readyPr(35, "2026-11-06T10:00:00Z");
+  readyPr(36, "2026-11-01T10:00:00Z");
+  await openList("PRs");
+  await onRight("app#36");
+  type("m");
+  await says("Merge app#35 into main? y/n");
+  sql("UPDATE items SET state = 'closed' WHERE kind = 'pr' AND id = '35'");
+  await until(() => !right().includes("app#35"), "the list to drop app#35");
+  type("y");
+  await until(() => acted.length === 1, "the merge");
+  expect(acted).toEqual([`merge simon/app 35 ${"c".repeat(40)}`]);
 });
 
 test("s on an issue's page, once its thread started, says the issue has it", async () => {
