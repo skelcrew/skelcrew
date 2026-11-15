@@ -218,7 +218,7 @@ ${thread("14", ", pr, review_round, verdict", "'working', 33, 1, 'changes'")}`;
   ]);
 });
 
-test("threads come as needs you, working, then stopped, with all THREADS hasn't room for", () => {
+test("threads come as needs you, working, then stopped, with all ACTIVE hasn't room for", () => {
   const today = new Date(2026, 10, 13, 16, 0).getTime();
   const at = (day: number, hour: number) => new Date(2026, 10, day, hour, 32).getTime();
   const sql = `${repository}
@@ -239,7 +239,7 @@ ${thread("15", ", title", "'failed', 'Broke'")}`;
     ["Working", [["●", "app-12", "Fix login", "working", "codex", "#12 #31", "14:32"]]],
     ["Stopped", [["○", "app-13", "Old", "stopped", "claude", "#13", "2 Nov"]]],
   ]);
-  // Each mark and word has its colour in THREADS, and a stopped one is dim.
+  // Each mark and word has its colour in ACTIVE, and a stopped one is dim.
   expect(threads.flatMap((g) => g.rows.map((row) => row.mark[1]))).toEqual([
     "38;5;210",
     "38;5;221",

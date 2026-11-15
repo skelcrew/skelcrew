@@ -57,7 +57,7 @@ const rule = "─".repeat(sidebarWidth - 1);
 const listed = (screen: string) =>
   read(screen)
     .slice(0, -2)
-    .filter((line) => line && line !== rule && !["  Issues", "  Threads", "  PRs"].includes(line));
+    .filter((line) => line && line !== rule && line !== "  Active");
 
 test("a thread's first line is its short title, and its second its name, word and harness", () => {
   const rows = [
@@ -451,18 +451,22 @@ const threads = [lead, thread("app-12", { age: "5m" })];
 const drawn = (shown: string | null, room = tall, rows = threads) =>
   drawWith(rows, entries, shown, room);
 
-test("the lead sits on top, then the entries, then THREADS, with a line between each part", () => {
-  expect(read(drawn("lead")).filter(Boolean).slice(0, -2)).toEqual([
+test("the lead sits on top, then the entries, then ACTIVE, with a line between each part", () => {
+  expect(read(drawn("lead")).slice(1, 15)).toEqual([
     "  ◆ lead",
     "    running · claude",
     rule,
     "    Issues               4 new · 12",
+    "",
     "    Threads         1 needs you · 6",
+    "",
     "    PRs                           5",
     rule,
-    "  Threads",
+    "  Active",
+    "",
     "  ● app-12",
     "    app-12 · working · claude · 5m",
+    "",
   ]);
 });
 
@@ -493,7 +497,7 @@ test("the entry you are on is shaded across the whole width, with its text in th
   expect(shaded[0]).not.toContain("\x1b[90m");
 });
 
-test("only the entries the repository has show, and THREADS sits below them", () => {
+test("only the entries the repository has show, and ACTIVE sits below them", () => {
   const lines = read(drawWith(threads, entries.slice(1, 2), "lead", tall));
   expect(lines.slice(1, 8)).toEqual([
     "  ◆ lead",
@@ -501,38 +505,39 @@ test("only the entries the repository has show, and THREADS sits below them", ()
     rule,
     "    Threads         1 needs you · 6",
     rule,
-    "  Threads",
+    "  Active",
     "",
   ]);
 });
 
-test("with no active threads, the entries stay and THREADS isn't shown", () => {
+test("with no active threads, the entries stay and ACTIVE isn't shown", () => {
   const lines = read(drawn("lead", tall, [lead])).join("\n");
   expect(lines).toContain("    PRs");
-  expect(lines.match(/Threads/g)).toHaveLength(1);
+  expect(lines).not.toContain("Active");
 });
 
 const busy = [lead, ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => thread(`app-${n}`))];
 
-test("THREADS has the rest of the height and scrolls in it, as the parts above stay", () => {
-  const room = { width: sidebarWidth, height: 16 };
+test("ACTIVE has the rest of the height and scrolls in it, as the parts above stay", () => {
+  const room = { width: sidebarWidth, height: 18 };
   for (const { session } of busy) {
     const lines = read(drawn(session, room, busy));
     expect(lines[1]).toBe("  ◆ lead");
-    expect(lines[5]).toBe("    Threads         1 needs you · 6");
-    expect(lines[8]).toBe("  Threads");
+    expect(lines[6]).toBe("    Threads         1 needs you · 6");
+    expect(lines[10]).toBe("  Active");
     if (session !== "lead") expect(lines.join("\n")).toContain(`● ${session}`);
   }
 });
 
 test("a terminal too short for the entries, the heading and your row leaves the lead and threads", () => {
-  // The blank line, the lead, a line, three entries, a line, the heading and its blank line,
-  // a row and the hints.
-  const enough = { width: sidebarWidth, height: 14 };
-  expect(read(drawn("app-7", enough, busy))).toContain("  Threads");
-  const short = { width: sidebarWidth, height: 13 };
+  // The blank line, the lead, a line, three entries with a blank line between each, a line, the
+  // heading and its blank line, a row and the hints.
+  const enough = { width: sidebarWidth, height: 16 };
+  expect(read(drawn("app-7", enough, busy))).toContain("  Active");
+  const short = { width: sidebarWidth, height: 15 };
   const whole = read(drawn("app-7", short, busy)).join("\n");
-  for (const text of ["Issues", "Threads", "PRs", "───"]) expect(whole).not.toContain(text);
+  for (const text of ["Issues", "Threads", "PRs", "Active", "───"])
+    expect(whole).not.toContain(text);
   expect(whole).toContain("● app-7");
   expect(read(drawn("lead", short, busy)).slice(0, 4)).toEqual([
     "",
@@ -554,7 +559,7 @@ test("the row you are on stays on screen with the entries, at every height", () 
     }
 });
 
-test("a click on an entry picks it, and on a line or heading nothing", () => {
+test("a click on an entry picks it, and on a line, heading or blank between entries nothing", () => {
   const y = (text: string) => read(drawn("lead")).findIndex((line) => line.includes(text));
   const click = (line: number) => rowAtLine(threads, entries, "lead", tall, line);
   expect(click(y("Issues"))).toBe(":issues");
@@ -562,7 +567,8 @@ test("a click on an entry picks it, and on a line or heading nothing", () => {
   expect(click(y("PRs"))).toBe(":prs");
   expect(click(y("● app-12"))).toBe("app-12");
   expect(click(y("───"))).toBeNull();
-  expect(click(read(drawn("lead")).indexOf("  Threads"))).toBeNull();
+  expect(click(read(drawn("lead")).indexOf("  Active"))).toBeNull();
+  expect(click(y("    Threads") + 1)).toBeNull();
 });
 
 // Moves from a place, as Alt-Up and Alt-Down or, with Shift, as Alt-Shift-Up and Alt-Shift-Down.
@@ -591,7 +597,7 @@ test("moving steps over agents that aren't running, but never over an entry", ()
   expect(step(":issues", -1, rows)).toBeNull();
 });
 
-test("jumping goes to the first row of the part before or after: the lead, the entries or THREADS", () => {
+test("jumping goes to the first row of the part before or after: the lead, the entries or ACTIVE", () => {
   const rows = [lead, thread("app-12"), thread("app-13")];
   expect(jump("lead", 1, rows)).toBe(":issues");
   expect(jump(":prs", 1, rows)).toBe("app-12");

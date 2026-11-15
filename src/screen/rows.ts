@@ -48,7 +48,7 @@ const marks: Record<Thread["status"], Mark> = {
 export const needing = (row: Pick<Row, "status" | "needsYou">) =>
   row.needsYou && row.status !== "failed";
 
-// Returns the mark of a row of THREADS, which the list of threads shows too.
+// Returns the mark of a row of ACTIVE, which the list of threads shows too.
 export function threadMark(row: Pick<Row, "status" | "needsYou">): Mark {
   if (row.status === null) return ["◆", grey];
   return needing(row) ? ["●", yellow] : marks[row.status];
@@ -92,7 +92,7 @@ export function threadAge(started: number, now: number): string {
 // Returns the open repository's rows as the database and tmux have them now. Its lead comes
 // first, then each of its active threads, newest first as in sc ps: working, waiting, needing you
 // or failed. Each word takes the thread's round limit from `maxRounds`. A stopped thread needs
-// nothing and doesn't change, so it leaves THREADS, as a done one does. It runs each second,
+// nothing and doesn't change, so it leaves ACTIVE, as a done one does. It runs each second,
 // so it reads only what shows. Only a thread whose word is working shows its running time. A
 // time on any other row would write to the terminal each minute, and on a Sprite a terminal that
 // stays quiet lets it sleep. A working thread keeps the Sprite awake anyway, so its time costs
@@ -104,7 +104,7 @@ export function sidebarRows(
   now: number,
   open: Open,
 ): Row[] {
-  // THREADS has the repository's active threads, after its lead, which has no status, PR or
+  // ACTIVE has the repository's active threads, after its lead, which has no status, PR or
   // review of its own, only whether its session runs.
   const threads = db.query(`SELECT * FROM threads
       WHERE status IN ('working', 'waiting', 'failed') AND owner = ? AND repo = ?
