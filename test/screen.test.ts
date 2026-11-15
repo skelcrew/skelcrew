@@ -940,7 +940,9 @@ test("Right opens the row on each kind of list, as Enter does", async () => {
   press("Left");
   await onRight("↑↓ move");
   clickRow("PRs");
-  await onRight("↑↓ move");
+  // The issues list says "↑↓ move" too, so wait until its rows have gone, or Right could open an
+  // issue before the PRs list draws.
+  await until(() => right().includes("Bump deps") && !right().includes("Fix login"), "the PRs");
   press("Right");
   await onRight("Approved. · codex");
   clickRow("    Threads");
