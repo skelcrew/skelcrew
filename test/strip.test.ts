@@ -1,7 +1,7 @@
 // What the top row says: the header above the sidebar, then the tabs and the strip above the agent.
 import { expect, test } from "bun:test";
 import type { Row, Tab } from "../src/screen/rows.ts";
-import { drawFooter, drawTop, type Top } from "../src/screen/strip.ts";
+import { drawFooter, drawTop, footerText, type Top } from "../src/screen/strip.ts";
 
 const lead: Row = {
   name: "lead",
@@ -300,21 +300,26 @@ function footerSays(format: string): { agent: string; sidebar: string } {
   return { agent: plain(agent), sidebar: plain(sidebar) };
 }
 
+// The footer under each agent, or under an entry's list and its pages.
+const footer = (row: Row | null, entry: "issues" | "threads" | "prs" | null = null) =>
+  footerSays(drawFooter(footerText(row, entry)));
+
 test("the footer says how to go back and what Esc stops, with the agent's harness", () => {
-  expect(footerSays(drawFooter(lead)).agent).toBe("⌥B back  Esc stops claude");
-  expect(footerSays(drawFooter(thread({ agentHarness: "codex" }))).agent).toBe(
-    "⌥B back  Esc stops codex",
-  );
+  expect(footer(lead).agent).toBe("⌥B back  Esc stops claude");
+  expect(footer(thread({ agentHarness: "codex" })).agent).toBe("⌥B back  Esc stops codex");
 });
 
 // While a review runs, the row names the reviewer's harness, but the agent on the right is still
 // the builder.
 test("under a thread being reviewed, Esc stops the builder's harness, not the reviewer's", () => {
   const reviewed = thread({ word: "reviewing", harness: "codex", agentHarness: "claude" });
-  expect(footerSays(drawFooter(reviewed)).agent).toBe("⌥B back  Esc stops claude");
+  expect(footer(reviewed).agent).toBe("⌥B back  Esc stops claude");
 });
 
-test("under a list or a page the footer is blank, and the sidebar's edge runs on below it", () => {
-  expect(footerSays(drawFooter(null))).toEqual({ agent: "", sidebar: "│" });
-  expect(footerSays(drawFooter(lead)).sidebar).toBe("│");
+// The issues list and an issue's page share the entry, as do the PRs list and a PR's page.
+test("under issues the footer says s start, under PRs m merge, and under threads nothing", () => {
+  expect(footer(null, "issues")).toEqual({ agent: "s start", sidebar: "│" });
+  expect(footer(null, "prs")).toEqual({ agent: "m merge", sidebar: "│" });
+  expect(footer(null, "threads")).toEqual({ agent: "", sidebar: "│" });
+  expect(footer(lead).sidebar).toBe("│");
 });

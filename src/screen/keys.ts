@@ -3,8 +3,8 @@
 import { grey, pad, paint } from "./look.ts";
 
 // Each key in words and what it does, read as "alt + b to go back". The keys for anywhere come
-// first, then those for lists, then those for pages. There are no headings, so each says where
-// it works. Ctrl-Q leaves too, but isn't listed: it is there for a Mac terminal that doesn't
+// first, then those for lists, then those for pages. s and m work on a list and on a page opened
+// from it, so they sit between the two. There are no headings, so each says where it works. Ctrl-Q leaves too, but isn't listed: it is there for a Mac terminal that doesn't
 // send Option as Alt.
 export const keys: [string, string][] = [
   ["alt + ↑/↓", "move in the sidebar"],
@@ -17,6 +17,8 @@ export const keys: [string, string][] = [
   ["↑/↓", "move in a list"],
   ["enter/→", "open a row"],
   ["?", "show these keys on a list"],
+  ["s", "start a thread on an issue"],
+  ["m", "merge a ready PR"],
   ["↑/↓", "scroll a page"],
   ["←", "go back from a page"],
 ];

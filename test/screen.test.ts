@@ -178,6 +178,9 @@ afterEach(() => {
   standIn?.close();
   standIn = null;
   asked.length = 0;
+  acted.length = 0;
+  mergeAnswer = { merged: "Merged app#35." };
+  release();
   for (const socket of [terminal, screen, agents]) {
     tmux(socket, "kill-server");
     // tmux leaves the socket file behind after kill-server.
@@ -640,12 +643,21 @@ test("the footer under the agent says how to go back and what Esc stops", async 
   await until(() => footer() === "  ⌥B back  Esc stops codex", "app-7's footer");
 });
 
-test("under a list or a page the footer is blank, and the agent's height stays", async () => {
-  await openList("Issues");
-  await until(() => footer() === "", "a blank footer");
+test("under issues the footer says s start, under PRs m merge, under threads nothing, and the agent's height stays", async () => {
+  await openIssue();
+  expect(footer()).toBe("  s start");
+  press("Left");
+  await until(() => !tabRow().includes("app-31"), "the strip to go");
+  expect(footer()).toBe("  s start");
+  clickRow("PRs");
+  await until(() => footer() === "  m merge", "m merge");
+  // The issues list says "↑↓ move" too, so Enter waits for the PRs list's rows.
+  await until(() => right().includes("Bump deps") && !right().includes("Fix login"), "the PRs");
   press("Enter");
-  await onRight("← back");
-  expect(footer()).toBe("");
+  await until(() => tabRow().includes("app#34"), "the PR's strip");
+  expect(footer()).toBe("  m merge");
+  clickRow("    Threads");
+  await until(() => footer() === "", "a blank footer");
   press("M-S-Up");
   await until(() => footer() === "  ⌥B back  Esc stops claude", "the lead's footer");
   expect(readFileSync(join(home, "lead.size"), "utf8")).toBe("28 81\n");
@@ -798,19 +810,42 @@ test("the screen's server turns terminal links on, whatever your terminal says i
 // Stands in for the daemon on the test's own socket: it logs each repository asked to open,
 // saying when a tab asked, which must never open a tab you closed, and answers with nothing to
 // say.
+// It also logs each thread started and PR merged, in `acted`, answering a merge with
+// `mergeAnswer`. While `holding`, those wait for `release`, so a test sees what the screen says
+// meanwhile.
 const asked: string[] = [];
+const acted: string[] = [];
+let mergeAnswer: object = { merged: "Merged app#35." };
+let holding = false;
+const waiting: (() => void)[] = [];
+const release = () => {
+  holding = false;
+  for (const reply of waiting.splice(0)) reply();
+};
 function daemon(): void {
   const answer = (connection: Socket) =>
     connection.on("data", (data) => {
-      const { command, from, tab } = z
+      const { command, from, tab, repo, task, pr, commit } = z
         .object({
           command: z.string(),
           from: z.string().default(""),
           tab: z.boolean().default(false),
+          repo: z.string().default(""),
+          task: z.string().default(""),
+          pr: z.number().default(0),
+          commit: z.string().default(""),
         })
         .parse(JSON.parse(data.toString()));
       if (command === "lead") asked.push(`open ${from}${tab ? " from a tab" : ""}`);
-      connection.end("{}\n");
+      if (command !== "start" && command !== "merge") {
+        connection.end("{}\n");
+        return;
+      }
+      acted.push(command === "start" ? `start ${repo} ${task}` : `merge ${repo} ${pr} ${commit}`);
+      const said = command === "start" ? { started: `Started app-${task}.` } : mergeAnswer;
+      const reply = () => connection.end(`${JSON.stringify(said)}\n`);
+      if (holding) waiting.push(reply);
+      else reply();
     });
   mkdirSync(join(home, "run"), { recursive: true, mode: 0o700 });
   standIn = createServer(answer).listen(join(home, "run", "skelcrew.sock"));
@@ -1024,6 +1059,115 @@ test("Alt-B on a page goes back to its list, as Left does", async () => {
   await onRight("↑↓ move");
   await until(() => !tabRow().includes("Add CSV"), "the strip to go");
   expect(selected()).toContain("Issues");
+});
+
+// The line in place of the footer, as you see it.
+const says = (text: string) => until(() => footer() === `  ${text}`, `the line to say ${text}`);
+
+test("s on an issue asks first, any key but y leaves it be, and y starts a thread on it", async () => {
+  daemon();
+  await openList("Issues");
+  await says("s start");
+  type("s");
+  await says("Start a thread on app#31? y/n");
+  type("n");
+  await says("s start");
+  // The key that left it be does nothing else: the list stays on its row.
+  type("s");
+  await says("Start a thread on app#31? y/n");
+  press("Down");
+  await says("s start");
+  expect(acted).toEqual([]);
+  type("s");
+  await says("Start a thread on app#31? y/n");
+  holding = true;
+  type("y");
+  await says("Starting app-31…");
+  expect(acted).toEqual(["start simon/app 31"]);
+  release();
+  await says("s start");
+});
+
+test("s on an issue a thread works on says which thread, until the next key", async () => {
+  daemon();
+  await openList("Issues");
+  press("Down");
+  type("s");
+  await says("app#12 already has app-12");
+  // The next key does what it does, and the footer comes back.
+  press("Enter");
+  await says("s start");
+  await onRight("← back");
+  expect(right()).toContain("Fix login");
+  expect(acted).toEqual([]);
+});
+
+test("s on an issue's page starts a thread on that issue", async () => {
+  daemon();
+  await openIssue();
+  type("s");
+  await says("Start a thread on app#31? y/n");
+  type("y");
+  await until(() => acted.length === 1, "the start");
+  expect(acted).toEqual(["start simon/app 31"]);
+  await says("s start");
+});
+
+// A PR approved with its checks passing, which the forge last sent at a head commit.
+const readyPr = () =>
+  sql(
+    itemSql("app", "pr", 35, "Add export", "2026-11-06T10:00:00Z", {
+      head: "c".repeat(40),
+      checks: [{ name: "test", id: "1", state: "passed" }],
+      reviews: [
+        {
+          id: "1",
+          text: "Fine.",
+          author: { login: "ana", bot: false, you: false },
+          verdict: "approved",
+          lines: [],
+        },
+      ],
+    }),
+  );
+
+// The forge's reason comes from outside, so it is shown as written: never read as tmux's
+// format, which would restyle the row, run a command, or cut it at the comma.
+test("m on a ready PR asks first, y merges it at the commit you saw, and a refusal says why", async () => {
+  daemon();
+  readyPr();
+  await openList("PRs");
+  await onRight("Ready to merge");
+  type("m");
+  await says("Merge app#35 into main? y/n");
+  holding = true;
+  mergeAnswer = { error: "Blocked, by rule #[fg=red]2 #{pane_index} {main} 100%" };
+  type("y");
+  await says("Merging app#35…");
+  expect(acted).toEqual([`merge simon/app 35 ${"c".repeat(40)}`]);
+  release();
+  await says("Blocked, by rule #[fg=red]2 #{pane_index} {main} 100%");
+  press("Down");
+  await says("m merge");
+  mergeAnswer = { merged: "Merged app#35." };
+  press("Up");
+  type("m");
+  await says("Merge app#35 into main? y/n");
+  type("y");
+  await until(() => acted.length === 2, "the second merge");
+  await says("m merge");
+});
+
+test("m on a PR that isn't ready says what it waits on, and merges nothing", async () => {
+  daemon();
+  await openList("PRs");
+  press("Enter");
+  await onRight("← back");
+  type("m");
+  await says("app#34 isn't approved yet");
+  press("Left");
+  await says("m merge");
+  expect(acted).toEqual([]);
 });
 
 test("a stopped thread is listed under Stopped, and opening it does nothing", async () => {
