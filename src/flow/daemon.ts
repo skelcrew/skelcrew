@@ -298,6 +298,9 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         const closed = db
           .query("SELECT 1 FROM repositories WHERE owner = ? AND repo = ? AND tab_closed = 1")
           .get(owner, repo);
+        // lastOpened puts open tabs first, so a closed one here means every tab is closed. Plain
+        // sc then opens none, and says why in the words of the folder you ran it in.
+        if (request.tab && closed && request.from === undefined) return { closed: true };
         if (request.tab && closed)
           throw new Error(
             `${owner}/${repo}'s tab is closed. Run sc in a checkout of it to open it.`,

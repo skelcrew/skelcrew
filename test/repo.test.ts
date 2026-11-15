@@ -31,6 +31,9 @@ const left = "Your agents keep running. Run sc to come back.\n";
 const clone = (full: string) => join(home, ".local", "share", "skelcrew", "repos", full);
 const trustFile = () => join(home, ".config", "skelcrew", "trusted");
 
+// What the fake daemon answers when asked for a lead.
+let daemonReply = "";
+
 function fake(name: string, body: string): void {
   writeFileSync(
     join(home, "bin", name),
@@ -40,6 +43,7 @@ function fake(name: string, body: string): void {
 }
 
 beforeEach(async () => {
+  daemonReply = '{"lead":"app-lead","repository":"simon/app"}';
   for (const remote of Object.keys(claimed)) delete claimed[remote];
   home = realpathSync(mkdtempSync(join(tmpdir(), "skel-repo-test-")));
   mkdirSync(join(home, "bin"));
@@ -64,7 +68,7 @@ beforeEach(async () => {
     connection.on("data", (data) => {
       appendFileSync(join(home, "calls"), "daemon lead\n");
       writeFileSync(join(home, "asked"), data.toString());
-      connection.end('{"lead":"app-lead","repository":"simon/app"}\n');
+      connection.end(`${daemonReply}\n`);
     }),
   );
   await new Promise<void>((listening) =>
@@ -307,6 +311,30 @@ test("--from says why it can't bring a repository in, and attaches to the one yo
   expect(attached()).toBe(true);
 });
 
+// Exiting each lead closes every tab, on purpose, so plain sc away from a checkout with a remote
+// opens none and says why.
+test("outside a checkout with a remote and with every tab closed, sc opens nothing and says why", async () => {
+  await skel([], "", onGitHub("simon/app", "WRITE"));
+  daemonReply = '{"closed":true}';
+  writeFileSync(join(home, "calls"), "");
+  const outside = await skel([]);
+  expect(outside).toEqual({
+    out: "",
+    err: "No git repository found. Run sc inside a git repository to open it.\n",
+    code: 1,
+  });
+  const loose = join(home, "loose");
+  mkdirSync(loose);
+  git(loose, "init", "-q");
+  const noRemote = await skel([], "", loose);
+  expect(noRemote).toEqual({
+    out: "",
+    err: "This git repository has no remote. Run sc inside a git repository with a remote to open it.\n",
+    code: 1,
+  });
+  expect(calls()).not.toContain("screen on");
+});
+
 // The daemon opens that repository's lead, or the one you opened last when it names none.
 test("tells the daemon the repository you attached from, once Skelcrew has it", async () => {
   const asked = () => JSON.parse(readFileSync(join(home, "asked"), "utf8"));
@@ -318,8 +346,9 @@ test("tells the daemon the repository you attached from, once Skelcrew has it", 
   expect(asked()).toEqual({ command: "lead", from: "simon/app" });
   await skel(["--from", "simon/app"]);
   expect(asked()).toEqual({ command: "lead", from: "simon/app" });
+  // Outside a checkout, only a repository whose tab is open.
   await skel([]);
-  expect(asked()).toEqual({ command: "lead" });
+  expect(asked()).toEqual({ command: "lead", tab: true });
   // Not yet in Skelcrew, as you didn't trust it.
   await skel([], "n\n", onGitHub("other/tool"));
   expect(asked()).toEqual({ command: "lead" });

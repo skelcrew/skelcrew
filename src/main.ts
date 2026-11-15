@@ -109,12 +109,24 @@ async function leadCommand(from?: string): Promise<void> {
   // Loaded only here, so sc --remote on your laptop never loads them.
   const { attachToLead } = await import("./attach.ts");
   const { openDb } = await import("./db.ts");
-  const { bringInFrom, repositories } = await import("./flow/repo.ts");
+  const { bringInFrom, checkoutTop, repositories } = await import("./flow/repo.ts");
+  const { originHere } = await import("./machine/origin.ts");
   const { firstRun } = await import("./machine/setup.ts");
   firstRun(from);
   // Adds the repository you ran sc from if Skelcrew doesn't have it yet.
   const found = await bringInFrom(from);
-  if (repositories(openDb()).length > 0) await attachToLead("skelcrew", found);
+  if (repositories(openDb()).length === 0) return;
+  // Away from a checkout with a remote, sc opens the repository you opened last only while it
+  // has a tab. With every tab closed, you closed them on purpose, so it opens none and says
+  // what sc needs instead.
+  const away = from === undefined && originHere() === null;
+  if (await attachToLead("skelcrew", found, away)) return;
+  console.error(
+    checkoutTop() === null
+      ? "No git repository found. Run sc inside a git repository to open it."
+      : "This git repository has no remote. Run sc inside a git repository with a remote to open it.",
+  );
+  process.exit(1);
 }
 
 // Runs sc first-run, which sets up this machine, or sc serve, which runs the daemon.

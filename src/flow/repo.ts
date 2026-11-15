@@ -480,7 +480,7 @@ function starterConfig(): string {
 }
 
 // Returns the top folder of the checkout you are in, or null outside one.
-function checkoutTop(): string | null {
+export function checkoutTop(): string | null {
   const top = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"], {
     stdout: "pipe",
     stderr: "pipe",

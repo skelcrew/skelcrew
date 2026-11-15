@@ -74,7 +74,7 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
 }
 
 // Returns an entry as one line: its name where a thread's title starts, and at the end, dim,
-// how many its list has, after its note, such as 4 new · 12, which is in the entry's colour. The
+// how many its list has, after its note, such as 2 ready · 5, which is in the entry's colour. The
 // entry you are on is shaded across the whole width.
 function entryLine(entry: EntryCount, here: boolean, width: number): string {
   // The count stops at the padding before the edge, and the name gives way to it.
