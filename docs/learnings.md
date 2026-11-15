@@ -353,6 +353,13 @@ that covers the code you are about to write.
 - **tmux keeps a program's OSC 52 copy from your terminal** unless `set-clipboard` is `on`.
   Its default, `external`, lets only tmux itself set your clipboard. A terminal tmux doesn't
   recognise also needs the `clipboard` feature.
+- **tmux opens no popup larger than the terminal.** `display-popup` with `-h` taller than the
+  terminal says nothing and shows nothing. Its `-w` and `-h` take no formats, so read the
+  client's size first and fit the box to it.
+- **`display-popup` waits for the popup to close.** Run from a program, the command returns
+  only after the popup ends, so a sidebar that waited for it would stop drawing.
+- **A popup swallows a click outside it.** tmux 3.6 hands the popup's program only clicks
+  inside the box. A click elsewhere on the screen does nothing, with or without `-k`.
 - **`capture-pane -e` shows a terminal link with an id tmux made up**, as `ESC]8;id=...;url`.
   A test that looks for `ESC]8;;url` finds nothing.
 

@@ -116,26 +116,17 @@ test("sc --version answers on a server whose Skelcrew differs from the laptop's"
   expect(seen.out).toStartWith("skelcrew ");
 });
 
-test("the help names the sidebar's keys, switching repositories included", () => {
-  const out = skel(["--help"]).out.replace(/\s+/g, " ");
-  for (const key of [
-    "Alt-Up",
-    "Alt-Down",
-    "Alt-Shift-Up",
-    "Alt-Shift-Down",
-    "Alt-Left",
-    "Alt-Right",
-    "Alt-Shift-Left",
-    "Alt-Shift-Right",
-    "Ctrl-Q",
-  ])
-    expect(out).toContain(key);
-});
-
-test("the help names the keys of the lists and their pages", () => {
-  const out = skel(["--help"]).out.replace(/\s+/g, " ");
-  for (const keys of ["Up and Down move", "Enter opens", "Esc or Left goes back"])
-    expect(out).toContain(keys);
+// The screen's keys, written as the sidebar writes them, in the groups the list of keys has.
+test("the help lists the screen's keys, anywhere, in lists and on pages", () => {
+  const out = skel(["--help"]).out;
+  const section = (from: string, to: string) => out.slice(out.indexOf(from), out.indexOf(to));
+  const anywhere = section("\nKEYS: ANYWHERE\n", "\nKEYS: LISTS\n");
+  for (const key of ["⌥↑↓", "⌥⇧↑↓", "⌥←→", "⌥⇧←→", "⌥/", "⌃Q"])
+    expect(anywhere).toContain(`  ${key} `);
+  const lists = section("\nKEYS: LISTS\n", "\nKEYS: PAGES\n");
+  for (const key of ["↑↓", "⏎", "?"]) expect(lists).toContain(`  ${key} `);
+  const pages = section("\nKEYS: PAGES\n", "\nEXAMPLES\n");
+  for (const key of ["↑↓", "Esc ←", "?"]) expect(pages).toContain(`  ${key} `);
 });
 
 test("the help names --version", () => {

@@ -25,18 +25,20 @@ import { draw, entryPlace, noticeLines, type Size } from "./layout.ts";
 import { type EntryCount, entryCounts, pageRow, roundLimit } from "./lists.ts";
 import { nextList, nextRow, rowAtLine } from "./moves.ts";
 import { type Open, type Row, repositoryTabs, sidebarRows } from "./rows.ts";
-import { agentClient, paneCommand, sidebarWidth } from "./screen.ts";
+import { agentClient, paneCommand, showKeys, sidebarWidth } from "./screen.ts";
 import { drawTop } from "./strip.ts";
 
 // What the sidebar reads: Alt with an arrow as tmux sends it, 3 without Shift and 4 with it,
-// the left button going down, with its place on screen, and what the screen's tmux and the right
-// pane type into it as an OSC: a click on a tab, with the tab's place in the row, the page now
-// open on the right, or none, and a thread picked in the list of threads.
+// the left button going down, with its column and line on screen, Alt-/, and what the screen's
+// tmux and the right pane type into it as an OSC: a click on a tab, with the tab's place in the
+// row, the page now open on the right, or none, and a thread picked in the list of threads.
 const esc = "\x1b";
 const input = new RegExp(
-  `${esc}\\[1;([34])([ABCD])|${esc}\\[<0;\\d+;(\\d+)M|${esc}\\](skel-(?:tab|page|thread));([^\x07]*)\x07`,
+  `${esc}\\[1;([34])([ABCD])|${esc}\\[<0;(\\d+);(\\d+)M|${esc}(/)|${esc}\\](skel-(?:tab|page|thread));([^\x07]*)\x07`,
   "g",
 );
+// The hint at the bottom of the sidebar that a click opens the list of keys from.
+const keysHint = "? keys";
 
 // Returns the repository open in the sidebar, given its owner/name, with its lead's session.
 // For a repository Skelcrew no longer has, such as one just removed, the session is named as a
@@ -207,11 +209,24 @@ export async function runSidebar(
   // Without the cursor hidden it would blink at the end of the sidebar. 1000 and 1006 ask for
   // clicks, in the form tmux can give a place of any size.
   process.stdout.write("\x1b[?25l\x1b[?1000h\x1b[?1006h");
+  // Returns whether a click at a column and line of the sidebar, counted from 1, is on the hint
+  // that opens the list of keys, as last drawn. The hint is on the bottom line, so a thread
+  // whose title says the same is never taken for it.
+  const onKeysHint = (x: number, y: number) => {
+    const lines = lastFrame.split("\n");
+    const line = y === lines.length ? Bun.stripANSI(lines[y - 1] ?? "") : "";
+    const at = line.indexOf(keysHint);
+    const start = Bun.stringWidth(line.slice(0, at));
+    return at >= 0 && x > start && x <= start + keysHint.length;
+  };
   // Acts on each key and click that came together, then redraws. A click on a row picks it by
   // its line, counted from the top, below the notice.
   process.stdin.on("data", (bytes) => {
-    for (const [, kind, arrow, y, said, about = ""] of bytes.toString().matchAll(input)) {
-      if (said === "skel-page") {
+    for (const [, kind, arrow, x, y, slash, said, about = ""] of bytes.toString().matchAll(input)) {
+      if (slash || (x && y && onKeysHint(Number(x), Number(y)))) {
+        // Alt-/, or a click on its hint, opens the list of keys over the screen.
+        showKeys(agents, session);
+      } else if (said === "skel-page") {
         // The list on the right opened a page, or went back from one.
         page = about ? pageRow(db, open, about) : null;
       } else if (said === "skel-thread") {
