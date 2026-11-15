@@ -43,15 +43,15 @@ const marks: Record<Thread["status"], Mark> = {
   failed: ["●", red],
   done: ["●", green],
 };
-// Says whether a thread shows as needing you. A thread that failed can still have its needs you
-// flag, and its word says failed.
-export const needing = (row: Pick<Row, "status" | "needsYou">) =>
-  row.needsYou && row.status !== "failed";
-
-// Returns the mark of a row of THREADS, which the list of threads shows too.
-export function threadMark(row: Pick<Row, "status" | "needsYou">): Mark {
+// Returns the mark of a row of ACTIVE, which the lists show too, and whose colour its word takes.
+// Green is good, yellow wants you, and red is wrong. So a thread that needs you is yellow, except
+// once it is approved, which is good news, and when its harness stopped on an error, which is
+// wrong. A thread that failed stays red even if it also needs you.
+export function threadMark(row: Pick<Row, "status" | "needsYou" | "word">): Mark {
   if (row.status === null) return ["◆", grey];
-  return needing(row) ? ["●", yellow] : marks[row.status];
+  if (row.status === "failed" || row.word === "error") return ["●", red];
+  if (row.word === "approved") return ["●", green];
+  return row.needsYou ? ["●", yellow] : marks[row.status];
 }
 
 // Returns the word for what the thread is doing, given the rounds of changes it may have. Its
@@ -94,7 +94,7 @@ export function threadAge(started: number, now: number): string {
 // Returns the open repository's rows as the database and tmux have them now. Its lead comes
 // first, then each of its active threads, newest first as in sc ps: working, waiting, needing you
 // or failed. Each word takes the thread's round limit from `maxRounds`. A stopped thread needs
-// nothing and doesn't change, so it leaves THREADS, as a done one does. It runs each second,
+// nothing and doesn't change, so it leaves ACTIVE, as a done one does. It runs each second,
 // so it reads only what shows. Only a thread whose word is working shows its running time. A
 // time on any other row would write to the terminal each minute, and on a Sprite a terminal that
 // stays quiet lets it sleep. A working thread keeps the Sprite awake anyway, so its time costs
@@ -106,7 +106,7 @@ export function sidebarRows(
   now: number,
   open: Open,
 ): Row[] {
-  // THREADS has the repository's active threads, after its lead, which has no status, PR or
+  // ACTIVE has the repository's active threads, after its lead, which has no status, PR or
   // review of its own, only whether its session runs.
   const threads = db.query(`SELECT * FROM threads
       WHERE status IN ('working', 'waiting', 'failed') AND owner = ? AND repo = ?

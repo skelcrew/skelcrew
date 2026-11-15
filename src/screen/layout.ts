@@ -1,5 +1,5 @@
 // The sidebar as lines for its pane: the lead's row on top, then the entries Issues, Threads and
-// PRs, then THREADS, and the keys at the bottom. It reads nothing, so what you see can be tested
+// PRs, then ACTIVE, and the keys at the bottom. It reads nothing, so what you see can be tested
 // without a terminal.
 import type { Entry, EntryCount } from "./lists.ts";
 import {
@@ -13,9 +13,8 @@ import {
   shaded,
   tinted,
   white,
-  yellow,
 } from "./look.ts";
-import { needing, type Row, threadMark } from "./rows.ts";
+import { type Row, threadMark } from "./rows.ts";
 
 export type Size = { width: number; height: number };
 // One line of the sidebar, with where a click on it goes, if anywhere: a row's session or an
@@ -25,7 +24,7 @@ type Line = { text: string; place?: string; joins?: boolean };
 
 // Where a name starts, past its mark.
 const indent = `${pad}  `;
-// How many lines a row of the lead or THREADS takes.
+// How many lines a row of the lead or ACTIVE takes.
 const rowHeight = 2;
 
 // Returns how many columns a thread's title has in a sidebar `width` columns wide: what is left
@@ -41,8 +40,9 @@ const hints = [`${pad}⌥↑↓ move`, `${pad}⌃Q quit  ? keys`];
 export const entryPlace = (entry: Entry) => `:${entry}`;
 
 // Returns one row as two lines, each cut with … to stop at the padding. A thread's first line
-// is a mark and its short title, or its title when the lead gave it none, and its second, dim,
-// is its name, word, harness and running time. The name and word come first, so they are the
+// is a mark and its short title, or its title when the lead gave it none, and its second is its
+// name, word, harness and running time, all dim but the word, which takes its mark's colour so
+// a green approved or a red error reads at a glance. The name and word come first, so they are the
 // last to be cut. The lead's row has its name on top and no name below. An agent that isn't
 // running is dim, as it can't be picked. The one you are looking at is shaded across the whole
 // width, on both lines. `width` leaves out the line at the sidebar's edge.
@@ -55,17 +55,17 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
   const top = fitted(heading, room);
   const styled = here ? paint(white, top) : row.running ? top : paint(grey, top);
   // The second line is cut as a whole, then split back into the name, the word and the rest,
-  // so each keeps its colour. The word is yellow when the thread needs you. Names, words and
-  // harnesses are plain letters, so a split by letters is a split by columns.
+  // so each keeps its colour. The word takes its mark's colour. Names, words and harnesses are
+  // plain letters, so a split by letters is a split by columns.
+  const [sign, colour] = threadMark(row);
   const name = lead ? "" : `${row.name} · `;
   const after = [row.harness, row.age].flatMap((part) => (part ? [` · ${part}`] : [])).join("");
   const below = fitted(`${name}${row.word}${after}`, room);
   const parts: [string, string][] = [
     [grey, below.slice(0, name.length)],
-    [needing(row) ? yellow : grey, below.slice(name.length, name.length + row.word.length)],
+    [colour, below.slice(name.length, name.length + row.word.length)],
     [grey, below.slice(name.length + row.word.length)],
   ];
-  const [sign, colour] = threadMark(row);
   const lines = [
     `${pad}${tinted(here, colour, sign)} ${styled}`,
     `${indent}${parts.map(([code, text]) => (text ? tinted(here, code, text) : "")).join("")}`,
@@ -74,8 +74,8 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
 }
 
 // Returns an entry as one line: its name where a thread's title starts, and at the end, dim,
-// how many its list has, after its note, such as 4 new · 12. A note on what needs you is
-// yellow. The entry you are on is shaded across the whole width.
+// how many its list has, after its note, such as 4 new · 12, which is in the entry's colour. The
+// entry you are on is shaded across the whole width.
 function entryLine(entry: EntryCount, here: boolean, width: number): string {
   // The count stops at the padding before the edge, and the name gives way to it.
   const count = `${entry.note && " · "}${entry.total}`;
@@ -84,7 +84,7 @@ function entryLine(entry: EntryCount, here: boolean, width: number): string {
   const gap = " ".repeat(
     Math.max(width - indent.length - name.length - end.length - pad.length, 1),
   );
-  const note = entry.note ? tinted(here, entry.warn ? yellow : grey, entry.note) : "";
+  const note = entry.note ? tinted(here, entry.colour, entry.note) : "";
   const line = `${indent}${here ? paint(white, name) : name}${gap}${note}${tinted(here, grey, count)}`;
   return here ? shaded(line, width) : line;
 }
@@ -111,8 +111,8 @@ function scrolled(blocks: Line[][], here: number, room: number): Line[] {
 // Returns the lines above the hints, and how many there can be. The hints take the bottom lines
 // unless that leaves no room for the whole row you are looking at. Then they give way, as the
 // rows are what you pick from and the keys are also in Skelcrew's help.
-// The lead's row comes first, then the entries, then THREADS, which has the rest of the height
-// and scrolls in it. A terminal may be too short for the lead, the entries, THREADS' heading and
+// The lead's row comes first, then the entries, then ACTIVE, which has the rest of the height
+// and scrolls in it. A terminal may be too short for the lead, the entries, ACTIVE's heading and
 // the row you are on. Then the entries and the heading go, and the lead and the threads fill the
 // sidebar with no heading, as they are what you move through.
 export function layout(
@@ -145,18 +145,22 @@ function layoutBelowBlank(
   const blocks = rows.map(linesOf);
   const here = rows.findIndex((row) => row.session === shown);
   const room = size.height >= rowHeight + hints.length ? size.height - hints.length : size.height;
-  // The lead is the row with no status of its own, and THREADS has the rest.
+  // The lead is the row with no status of its own, and ACTIVE has the rest. Its heading says
+  // Active, as Threads would repeat the entry above it.
   const lead = rows.filter((row) => row.status === null).flatMap(linesOf);
   const threads = rows.filter((row) => row.status !== null);
   const shownThread = threads.findIndex((row) => row.session === shown);
   const divider = { text: paint(edge, "─".repeat(Math.max(width, 0))), joins: true };
-  const heading = threads.length > 0 ? [{ text: paint(grey, `${pad}Threads`) }, { text: "" }] : [];
+  const heading = threads.length > 0 ? [{ text: paint(grey, `${pad}Active`) }, { text: "" }] : [];
   const top: Line[] = [
     ...lead,
     ...(lead.length > 0 && entries.length > 0 ? [divider] : []),
-    ...entries.map((entry) => {
+    // A blank line parts each entry from the next, so each stands apart. It has no place, so
+    // a click on it picks nothing.
+    ...entries.flatMap((entry, i) => {
       const place = entryPlace(entry.entry);
-      return { text: entryLine(entry, place === shown, width), place };
+      const line = { text: entryLine(entry, place === shown, width), place };
+      return i === 0 ? [line] : [{ text: "" }, line];
     }),
     ...(heading.length > 0 ? [divider, ...heading] : []),
   ];
