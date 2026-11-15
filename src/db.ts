@@ -121,6 +121,7 @@ function prepareTables(db: Database): void {
     last_comment: "INTEGER",
     last_check: "INTEGER",
     asking: "INTEGER NOT NULL DEFAULT 0",
+    erred: "INTEGER NOT NULL DEFAULT 0",
     noting: "TEXT",
     title: "TEXT",
     started: "INTEGER",
