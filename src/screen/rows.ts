@@ -43,15 +43,15 @@ const marks: Record<Thread["status"], Mark> = {
   failed: ["●", red],
   done: ["●", green],
 };
-// Says whether a thread shows as needing you. A thread that failed can still have its needs you
-// flag, and its word says failed.
-export const needing = (row: Pick<Row, "status" | "needsYou">) =>
-  row.needsYou && row.status !== "failed";
-
-// Returns the mark of a row of ACTIVE, which the list of threads shows too.
-export function threadMark(row: Pick<Row, "status" | "needsYou">): Mark {
+// Returns the mark of a row of ACTIVE, which the lists show too, and whose colour its word takes.
+// Green is good, yellow wants you, and red is wrong. So a thread that needs you is yellow, except
+// once it is approved, which is good news, and when its harness stopped on an error, which is
+// wrong. A thread that failed stays red even if it also needs you.
+export function threadMark(row: Pick<Row, "status" | "needsYou" | "word">): Mark {
   if (row.status === null) return ["◆", grey];
-  return needing(row) ? ["●", yellow] : marks[row.status];
+  if (row.status === "failed" || row.word === "error") return ["●", red];
+  if (row.word === "approved") return ["●", green];
+  return row.needsYou ? ["●", yellow] : marks[row.status];
 }
 
 // Returns the word for what the thread is doing, given the rounds of changes it may have. Its

@@ -140,9 +140,9 @@ test("the second line is cut with … too, with the name and word whole before i
 });
 
 test("the name is dim on the second line, beside the word in its own colour", () => {
-  const needing = thread("app-12", { needsYou: true, word: "approved", title: "Fix login" });
+  const needing = thread("app-12", { needsYou: true, word: "question", title: "Fix login" });
   const screen = draw([needing], "lead", size);
-  expect(screen).toContain("\x1b[90mapp-12 · \x1b[22;39m\x1b[38;5;221mapproved");
+  expect(screen).toContain("\x1b[90mapp-12 · \x1b[22;39m\x1b[38;5;221mquestion");
 });
 
 test("control codes in a short title never reach your terminal", () => {
@@ -167,19 +167,40 @@ test("rows and hints sit two columns in, and the line below a mark two further",
   expect(lines.at(-2)?.indexOf("⌥")).toBe(2);
 });
 
-test("the word and harness are grey, so the names stand out", () => {
-  expect(draw([thread("app-12")], "lead", size)).toContain("\x1b[90mworking");
+test("the name and harness are grey, so the titles stand out", () => {
+  expect(draw([thread("app-12")], "lead", size)).toContain("\x1b[90mapp-12 · ");
   expect(draw([thread("app-12")], "lead", size)).toContain("\x1b[90m · claude");
 });
 
-test("a thread that needs you has a yellow circle and a yellow word, whatever its status", () => {
+test("a thread that needs you for anything but an approval has a yellow circle and word", () => {
+  for (const status of ["working", "waiting"] as const)
+    for (const word of ["question", "round limit", "review failed", "needs you"]) {
+      const needing = thread("app-12", { status, needsYou: true, word });
+      const screen = draw([lead, needing], "lead", size);
+      expect(read(screen).join("\n")).toContain(`  ● app-12\n    app-12 · ${word} · claude`);
+      expect(screen).toContain("\x1b[38;5;221m●");
+      expect(screen).toContain(`\x1b[38;5;221m${word}`);
+    }
+});
+
+test("an approved thread is green, as it is good news, though it waits on you to merge", () => {
   for (const status of ["working", "waiting"] as const) {
-    const needing = thread("app-12", { status, needsYou: true, word: "approved" });
-    const screen = draw([lead, needing], "lead", size);
-    expect(read(screen).join("\n")).toContain("  ● app-12\n    app-12 · approved · claude");
-    expect(screen).toContain("\x1b[38;5;221m●");
-    expect(screen).toContain("\x1b[38;5;221mapproved");
+    const screen = draw(
+      [thread("app-12", { status, needsYou: true, word: "approved" })],
+      "lead",
+      size,
+    );
+    expect(screen).toContain("\x1b[38;5;120m●");
+    expect(screen).toContain("\x1b[38;5;120mapproved");
+    expect(screen).not.toContain("\x1b[38;5;221m");
   }
+});
+
+test("a thread whose harness stopped on an error is red, though it needs you", () => {
+  const screen = draw([thread("app-12", { needsYou: true, word: "error" })], "lead", size);
+  expect(screen).toContain("\x1b[38;5;210m●");
+  expect(screen).toContain("\x1b[38;5;210merror");
+  expect(screen).not.toContain("\x1b[38;5;221m");
 });
 
 test("every thread's mark is a circle, in its status's colour", () => {
@@ -210,7 +231,7 @@ test("a failed thread is red even while it needs you, as its word says failed", 
     size,
   );
   expect(screen).toContain("\x1b[38;5;210m●");
-  expect(screen).toContain("\x1b[90mfailed");
+  expect(screen).toContain("\x1b[38;5;210mfailed");
   expect(screen).not.toContain("\x1b[38;5;221m");
 });
 
@@ -218,11 +239,14 @@ test("the lead keeps its diamond", () => {
   expect(draw([lead], "app-12", size)).toContain("\x1b[90m◆");
 });
 
-test("only the word of a thread that needs you takes a colour", () => {
-  for (const status of ["working", "failed", "waiting", "stopped"] as const)
-    expect(draw([thread("app-12", { status, word: "said" })], "lead", size)).toContain(
-      "\x1b[90msaid",
-    );
+test("a thread's word takes its mark's colour, and a dim circle gives a dim word", () => {
+  const word = (status: Row["status"], said: string) =>
+    draw([thread("app-12", { status, word: said })], "lead", size);
+  expect(word("working", "working")).toContain("\x1b[38;5;120mworking");
+  expect(word("working", "reviewing")).toContain("\x1b[38;5;120mreviewing");
+  expect(word("failed", "failed")).toContain("\x1b[38;5;210mfailed");
+  expect(word("waiting", "checks")).toContain("\x1b[90mchecks");
+  expect(word("stopped", "stopped")).toContain("\x1b[90mstopped");
 });
 
 // The lines of a drawn sidebar that have the grey background of the row you are looking at.
@@ -262,21 +286,22 @@ test("on the grey, every colour is a fixed light one, as a theme's own can vanis
   const rows = [
     thread("app-1"),
     thread("app-2", { status: "done" }),
-    thread("app-3", { status: "waiting" }),
+    thread("app-3", { status: "waiting", word: "checks" }),
     thread("app-4", { needsYou: true, word: "approved" }),
     thread("app-5", { status: "failed", word: "failed" }),
   ];
   const on = (session: string) => selected(draw(rows, session, size)).join("\n");
   expect(on("app-1")).toContain("\x1b[38;5;120m●");
   expect(on("app-1")).toContain("\x1b[1;38;5;231mapp-1");
-  expect(on("app-1")).toContain("\x1b[38;5;250mworking");
+  expect(on("app-1")).toContain("\x1b[38;5;120mworking");
   expect(on("app-1")).toContain("\x1b[38;5;250m · claude");
   expect(on("app-2")).toContain("\x1b[38;5;120m●");
   expect(on("app-3")).toContain("\x1b[38;5;250m○");
-  expect(on("app-4")).toContain("\x1b[38;5;221m●");
-  expect(on("app-4")).toContain("\x1b[38;5;221mapproved");
+  expect(on("app-3")).toContain("\x1b[38;5;250mchecks");
+  expect(on("app-4")).toContain("\x1b[38;5;120m●");
+  expect(on("app-4")).toContain("\x1b[38;5;120mapproved");
   expect(on("app-5")).toContain("\x1b[38;5;210m●");
-  expect(on("app-5")).toContain("\x1b[38;5;250mfailed");
+  expect(on("app-5")).toContain("\x1b[38;5;210mfailed");
   expect(selected(draw([lead], "lead", size)).join("\n")).toContain("\x1b[38;5;250m◆");
 });
 
@@ -442,9 +467,9 @@ test("a click follows the list as it scrolls, and on a hint picks nothing", () =
 
 // The entries of a repository with a tracker and a forge, with what each counts.
 const entries: EntryCount[] = [
-  { entry: "issues", name: "Issues", total: 12, note: "4 new", warn: false },
-  { entry: "threads", name: "Threads", total: 6, note: "1 needs you", warn: true },
-  { entry: "prs", name: "PRs", total: 5, note: "", warn: true },
+  { entry: "issues", name: "Issues", total: 12, note: "4 new", colour: "90" },
+  { entry: "threads", name: "Threads", total: 6, note: "1 needs you", colour: "38;5;221" },
+  { entry: "prs", name: "PRs", total: 5, note: "", colour: "38;5;120" },
 ];
 const tall = { width: sidebarWidth, height: 30 };
 const threads = [lead, thread("app-12", { age: "5m" })];
@@ -470,12 +495,12 @@ test("the lead sits on top, then the entries, then ACTIVE, with a line between e
   ]);
 });
 
-test("an entry's count is dim, and what needs you on Threads and PRs is yellow", () => {
+test("an entry's count is dim, what needs you on Threads is yellow, and ready PRs are green", () => {
   const ready = entries.map((e) => (e.entry === "prs" ? { ...e, note: "2 ready" } : e));
   const screen = drawWith(threads, ready, "lead", tall);
   expect(screen).toContain("\x1b[90m4 new\x1b[22;39m\x1b[90m · 12");
   expect(screen).toContain("\x1b[38;5;221m1 needs you\x1b[22;39m\x1b[90m · 6");
-  expect(screen).toContain("\x1b[38;5;221m2 ready\x1b[22;39m\x1b[90m · 5");
+  expect(screen).toContain("\x1b[38;5;120m2 ready\x1b[22;39m\x1b[90m · 5");
 });
 
 test("each line between the parts has the colour of the sidebar's edge, and joins it", () => {
