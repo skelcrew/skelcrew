@@ -1196,7 +1196,9 @@ test("a list scrolled with the wheel stays where you put it as it reads the copy
   sql(many.join("\n"));
   await openList("Issues");
   for (let i = 0; i < 4; i++) wheel(65);
-  await until(() => !right().includes("app-139"), "the list to scroll");
+  // Four notches reach the list's end, where app-124 is the first issue. The first notch alone
+  // already hides app-139, and the last moves fewer lines, so the wait is for the end.
+  await until(() => !right().includes("app-125"), "the list to scroll to its end");
   const scrolled = right();
   await Bun.sleep(2500);
   expect(right()).toBe(scrolled);
