@@ -19,7 +19,8 @@ const ShortTitle = z.string().trim().min(1);
 // owner/name. It keeps that word because clients on other machines send it.
 export const DaemonRequest = z.discriminatedUnion("command", [
   z.object({ command: z.literal("status") }),
-  // `tab` comes from the screen's tabs, which must never open a tab you closed.
+  // `tab` comes from the screen's tabs, and from plain sc away from a checkout with a remote.
+  // Neither may open a tab you closed.
   z.object({
     command: z.literal("lead"),
     from: z.string().optional(),

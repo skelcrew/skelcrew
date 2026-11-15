@@ -902,6 +902,22 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a lead per repositor
     expect(tabClosed()).toBe(true);
   });
 
+  // Plain sc away from a checkout with a remote asks only for a repository whose tab is open.
+  // With every tab closed, it gets none.
+  test("asked from a tab or plain sc, opens no repository once every tab is closed", async () => {
+    setUp();
+    addRepository("app");
+    leadExitsWhenTold(0);
+    serve();
+    await untilAnswers();
+    await open();
+    tellLeadToExit();
+    await until(() => tabClosed());
+    expect(await ask({ command: "lead", tab: true })).toEqual({ closed: true });
+    expect(tabClosed()).toBe(true);
+    expect(claudeLines()).toHaveLength(1);
+  });
+
   test("a lead that exited while the daemon was down has its tab closed, and isn't brought back", async () => {
     setUp();
     addRepository("app");

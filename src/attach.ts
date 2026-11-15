@@ -11,9 +11,10 @@ import { openScreen } from "./screen/screen.ts";
 import { checkoutFolder, git, release, singleFile } from "./version.ts";
 
 // The daemon's answer when asked for a lead: the lead's tmux session and its repository's
-// owner/name, or why it has none.
+// owner/name, that every tab is closed when only an open tab would do, or why it has none.
 const LeadReply = z.union([
   z.object({ lead: z.string(), repository: z.string() }),
+  z.object({ closed: z.literal(true) }),
   z.object({ error: z.string() }),
 ]);
 
@@ -86,18 +87,24 @@ async function ensureDaemon(): Promise<void> {
 
 // Makes sure the daemon and a lead are running, then opens the screen on the lead until you
 // leave with Alt-Q. The lead is for `from`, an owner/repo, or else for the repository you
-// opened last.
-export async function attachToLead(tmux: string, from?: string): Promise<void> {
+// opened last. With `tab`, only a repository whose tab is open will do. Returns false, with no
+// screen opened, when every tab is closed.
+export async function attachToLead(tmux: string, from?: string, tab = false): Promise<boolean> {
   await ensureDaemon();
   // Asking for the lead brings it back if it ended while the daemon kept running. Starting it
   // takes longer than a status, hence the longer wait.
-  const reply = await ask({ command: "lead", ...(from ? { from } : {}) }, 15_000);
+  const reply = await ask(
+    { command: "lead", ...(from ? { from } : {}), ...(tab ? { tab } : {}) },
+    15_000,
+  );
   if (reply === null) throw new Error("the daemon didn't answer: run sc to start it");
   const lead = LeadReply.safeParse(reply);
   if (!lead.success)
     throw new Error("the daemon answered in a way this Skelcrew doesn't understand");
   if ("error" in lead.data) throw new Error(lead.data.error);
+  if ("closed" in lead.data) return false;
   await openScreen(tmux, lead.data.lead, lead.data.lead, lead.data.repository);
+  return true;
 }
 
 // Opens the screen with a thread's builder on the right and its repository's lead in the
