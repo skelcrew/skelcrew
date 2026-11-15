@@ -15,7 +15,7 @@ export const keys: [string, string][] = [
   ["alt + /", "show these keys"],
   ["alt + q", "quit, agents run on"],
   ["↑/↓", "move in a list"],
-  ["enter", "open a row"],
+  ["enter/→", "open a row"],
   ["?", "show these keys on a list"],
   ["↑/↓", "scroll a page"],
   ["←", "go back from a page"],

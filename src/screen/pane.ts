@@ -107,8 +107,9 @@ const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 // names the remote Skelcrew runs on, and is empty on the machine you sit at. `start` is the
 // session of the thread whose row the list starts on, for Alt-B back from its agent, or empty to
 // start on the first row.
-// Up and Down move a list, and Enter or a click opens a row: an issue's or PR's page here, or a
-// thread's agent, which the sidebar puts in place of this pane. On a page, Up, Down and the
+// Up and Down move a list, and Enter, Right or a click opens a row: an issue's or PR's page here,
+// or a thread's agent, which the sidebar puts in place of this pane. Right opens as Left goes
+// back, so the arrows alone take you in and out. On a page, Up, Down and the
 // wheel scroll, and Left goes back to the list, on the row you opened. ? opens the list
 // of keys on either. All else you type goes nowhere. It reads the list again each second, and
 // writes only when what shows changed, so a list left open lets a Sprite sleep. A page is read
@@ -274,7 +275,7 @@ export async function runPane(
         // A list moves a row, and keeps it in view.
         here = Math.min(Math.max(here + (arrow === "A" ? -1 : 1), 0), rows().length - 1);
         draw(true);
-      } else if (enter) openRow(here);
+      } else if (enter || arrow === "C") openRow(here);
       else if (notch) {
         top += notch;
         draw();

@@ -932,6 +932,25 @@ test("Left goes back from a page to its list, on the row you opened", async () =
   await onRight("line 1 of the description");
 });
 
+// Right opens as Left goes back, so the arrows alone take you in and out of a list.
+test("Right opens the row on each kind of list, as Enter does", async () => {
+  await openList("Issues");
+  press("Right");
+  await onRight("line 1 of the description");
+  press("Left");
+  await onRight("↑↓ move");
+  clickRow("PRs");
+  // The issues list says "↑↓ move" too, so wait until its rows have gone, or Right could open an
+  // issue before the PRs list draws.
+  await until(() => right().includes("Bump deps") && !right().includes("Fix login"), "the PRs");
+  press("Right");
+  await onRight("Approved. · codex");
+  clickRow("    Threads");
+  await onRight("Working");
+  press("Right");
+  await until(() => seen().includes("I am app-12"), "the agent");
+});
+
 // In an agent Esc stops its turn, so Esc going back on a page would teach your hand to reach for
 // it to leave an agent too. An Esc takes about half a second to arrive through the terminals, so
 // each wait is longer than that.
@@ -1429,7 +1448,7 @@ function keyItems(): string[] {
 test("? on a list shows the keys in columns along the bottom, and Esc closes them", async () => {
   await openList("Issues");
   type("?");
-  await until(() => keyItems().includes("enter to open a row"), "the list of keys");
+  await until(() => keyItems().includes("enter/→ to open a row"), "the list of keys");
   // The keys end on the bottom row, in more than one column, with no headings.
   expect((seen().split("\n")[29] ?? "").slice(sidebar + 1).trim()).not.toBe("");
   expect(keysShown().some((line) => line.trim().split(/\s{3,}/).length > 1)).toBe(true);
