@@ -266,7 +266,7 @@ test("asks its forge nothing and fetches nothing for a repository Skelcrew has",
 });
 
 const noRemoteLine =
-  "This git repository has no remote. Add one, push, and run sc again:\n\n  git remote add origin <url>\n  git push -u origin HEAD\n";
+  "This git repository has no remote. To add a remote and push it:\n\n  git remote add origin <url>\n  git push -u origin HEAD\n\nThen run sc again.\n\n";
 
 // With no forge to say you can push to it, Skelcrew can't vouch for what is in it.
 test("asks about a repository no forge claims, and does nothing in one with no origin", async () => {
