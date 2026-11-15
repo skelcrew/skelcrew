@@ -118,7 +118,7 @@ async function leadCommand(from?: string): Promise<void> {
   const origin = originHere();
   if (from === undefined && origin === null && checkoutTop() !== null) {
     console.error(
-      "This git repository has no remote. Add one, push, and run sc again:\n\n  git remote add origin <url>\n  git push -u origin HEAD",
+      "This git repository has no remote. To add a remote and push it:\n\n  git remote add origin <url>\n  git push -u origin HEAD\n\nThen run sc again.\n",
     );
     process.exit(1);
   }

@@ -68,13 +68,15 @@ A thread's status is one of `working`, `waiting` (on review, CI or you), `failed
 
 Skelcrew runs on a Linux machine that stays on: a server of your own, or a Sprite, a Linux machine Skelcrew creates for you on Fly.io. `sc`, from any folder, attaches your terminal to a repository's lead, and starts the daemon and that lead first if they are not running. Alt-Q detaches; the lead keeps running.
 
-The repository is the context, as the folder is for `claude` in a terminal. `sc` in a checkout opens that repository, matched by its remote: its lead on the right, and its threads, issues and PRs in the sidebar. A remote that still uses a repository's old name, such as from before a rename, is matched by asking its forge once. Skelcrew remembers the answer, so later runs there ask nothing, and each prints the `git remote set-url` that updates the remote. A repository Skelcrew doesn't have yet is added first, as `sc repo add` does, so the first `sc` in a checkout, yours or a teammate's clone, goes straight to work. Outside any repository, `sc` opens the repository you opened last, while it still has a tab. With every tab closed, you closed them on purpose, so it opens none and says so: `No git repository found. Run sc inside a git repository to open it.` In a repository with no remote, `sc` opens nothing, even with tabs open, as opening another repository there would look as if Skelcrew had ignored where you are. It says, with each command on a line of its own:
+The repository is the context, as the folder is for `claude` in a terminal. `sc` in a checkout opens that repository, matched by its remote: its lead on the right, and its threads, issues and PRs in the sidebar. A remote that still uses a repository's old name, such as from before a rename, is matched by asking its forge once. Skelcrew remembers the answer, so later runs there ask nothing, and each prints the `git remote set-url` that updates the remote. A repository Skelcrew doesn't have yet is added first, as `sc repo add` does, so the first `sc` in a checkout, yours or a teammate's clone, goes straight to work. Outside any repository, `sc` opens the repository you opened last, while it still has a tab. With every tab closed, you closed them on purpose, so it opens none and says so: `No git repository found. Run sc inside a git repository to open it.` In a repository with no remote, `sc` opens nothing, even with tabs open, as opening another repository there would look as if Skelcrew had ignored where you are. It says, with each command on a line of its own and a blank line at the end:
 
 ```
-This git repository has no remote. Add one, push, and run sc again:
+This git repository has no remote. To add a remote and push it:
 
   git remote add origin <url>
   git push -u origin HEAD
+
+Then run sc again.
 ```
 
 The folder only names the repository: agents never work in your checkout, and Skelcrew never sees changes you haven't pushed. The one thing Skelcrew writes there is the starter `skelcrew.yaml` of `sc init`, a command you run yourself. While Skelcrew has no repositories yet, `sc` outside one says so and attaches to nothing: "Skelcrew has no repositories yet. Run sc in a checkout of one."
