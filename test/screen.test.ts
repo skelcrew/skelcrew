@@ -1311,6 +1311,114 @@ test("the hints stay at the bottom, and a click there picks nothing", async () =
   click(5, 30);
   await Bun.sleep(200);
   expect(selected()).toBe("◆ lead");
+  expect(keysOpen()).toBe(false);
+});
+
+// The lines inside the box the list of keys draws over the screen, without its sides. None while
+// it is closed.
+function keysBox(): string[] {
+  const lines = seen().split("\n");
+  const top = lines.findIndex((line) => line.includes("┌"));
+  if (top < 0) return [];
+  const left = lines[top]?.indexOf("┌") ?? 0;
+  const right = lines[top]?.indexOf("┐") ?? 0;
+  const bottom = lines.findIndex((line, at) => at > top && line[left] === "└");
+  return lines.slice(top + 1, bottom).map((line) => line.slice(left + 1, right).trimEnd());
+}
+const keysOpen = () => keysBox().some((line) => line.trim() !== "");
+// Each line of the list of keys, with its spaces made single.
+const keyLine = (line: string) => line.trim().replace(/\s+/g, " ");
+
+test("? on a list opens the list of keys over it, and Esc closes it", async () => {
+  await openList("Issues");
+  type("?");
+  await until(() => keysBox().map(keyLine).includes("Anywhere"), "the list of keys");
+  expect(keysBox().map(keyLine)).toContain("⏎ Open the row");
+  press("Escape");
+  await until(() => !keysOpen(), "the list of keys to close");
+  expect(right()).toContain("↑↓ move");
+  expect(right()).toContain("app-31");
+});
+
+test("? on a page opens the list of keys, and q closes it on the page as it was", async () => {
+  await openIssue();
+  type("?");
+  await until(keysOpen, "the list of keys");
+  type("q");
+  await until(() => !keysOpen(), "the list of keys to close");
+  expect(right()).toContain("line 1 of the description");
+  expect(right()).toContain("← back");
+});
+
+test("Alt-/ opens the list of keys over an agent, which gets no key while it is open", async () => {
+  keyLoggingLead();
+  open("lead");
+  await ready("lead");
+  type("\x1b/");
+  await until(keysOpen, "the list of keys");
+  type("x");
+  press("Escape");
+  await until(() => !keysOpen(), "the list of keys to close");
+  type("y");
+  await until(() => read("lead.keys").includes("y"), "the agent to get y");
+  expect(read("lead.keys")).toBe("y");
+});
+
+test("plain ? on an agent is the agent's, and opens nothing", async () => {
+  open("lead");
+  await ready("lead");
+  type("?");
+  press("Enter");
+  await until(() => read("lead.typed") === "?\n", "the agent to get ?");
+  expect(keysOpen()).toBe(false);
+});
+
+test("a click on ? keys at the bottom of the sidebar opens the list of keys, and a click closes it", async () => {
+  open("lead");
+  await ready("lead");
+  await until(() => seen().includes("? keys"), "the hint");
+  const lines = seen().trimEnd().split("\n");
+  const y = lines.findIndex((line) => line.includes("? keys"));
+  click((lines[y]?.indexOf("? keys") ?? 0) + 2, y + 1);
+  await until(keysOpen, "the list of keys");
+  click(60, 15);
+  await until(() => !keysOpen(), "the list of keys to close");
+  expect(seen()).toContain("I am lead");
+});
+
+test("the list of keys has the same keys as sc --help, in the same groups", async () => {
+  open("lead");
+  await ready("lead");
+  type("\x1b/");
+  await until(keysOpen, "the list of keys");
+  const box = keysBox().map(keyLine).filter(Boolean);
+  const run = Bun.spawnSync([process.execPath, source("main.ts"), "--help"], { env: env() });
+  const help = run.stdout.toString();
+  const keys = help
+    .slice(help.indexOf("\nKEYS: "), help.indexOf("\nEXAMPLES\n"))
+    .split("\n")
+    .map(keyLine)
+    .filter(Boolean)
+    .map((line) =>
+      line.replace(/^KEYS: (\w)(\w*)$/, (_, first, rest) => first + rest.toLowerCase()),
+    );
+  expect(box).toEqual(keys);
+  expect(box).toContain("Pages");
+  expect(box).toContain("⌥/ Show the list of keys");
+});
+
+test("a terminal shorter than the list of keys scrolls it with Up and Down", async () => {
+  open("lead");
+  await ready("lead");
+  tmux(terminal, "resize-window", "-t", "=one:", "-x", "120", "-y", "12");
+  type("\x1b/");
+  await until(() => keysBox().map(keyLine).includes("Anywhere"), "the list of keys");
+  expect(keysBox().map(keyLine)).not.toContain("Pages");
+  for (let n = 0; n < 25; n++) press("Down");
+  await until(() => keysBox().map(keyLine).includes("Esc ← Go back to the list"), "the end");
+  expect(keysBox().map(keyLine)).not.toContain("Anywhere");
+  for (let n = 0; n < 25; n++) press("Up");
+  await until(() => keysBox().map(keyLine).includes("Anywhere"), "the start");
 });
 
 test("two terminals each get their own session, and leaving one leaves the other", async () => {

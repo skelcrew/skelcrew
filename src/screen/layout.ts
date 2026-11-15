@@ -31,8 +31,9 @@ const rowHeight = 2;
 // once the line at its edge, the mark and the padding on each side are taken. sc ps cuts a title
 // to the same room, so it reads as the sidebar shows it.
 export const titleRoom = (width: number) => Math.max(width - 1 - indent.length - pad.length, 0);
-// The keys you need most, at the bottom of the sidebar. The others are in Skelcrew's help.
-const hints = [`${pad}⌥↑↓ move`, `${pad}⌃Q quit`];
+// The keys you need most, at the bottom of the sidebar. The others are in the list of keys,
+// which a click on its hint opens, and in Skelcrew's help.
+const hints = [`${pad}⌥↑↓ move`, `${pad}⌃Q quit  ? keys`];
 
 // Returns the place that names an entry where the sidebar names a row by its session. tmux
 // changes a : in a session's name, so no session can be named so.

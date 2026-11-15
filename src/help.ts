@@ -1,5 +1,6 @@
 // Skelcrew's help page: what sc --help shows, laid out in sections with skelcrew.dev's amber for
 // the headings, so it reads as help and not as an error.
+import { keyGroups } from "./screen/keys.ts";
 
 // The help page's sections, each a heading and its rows of a command and what it does.
 const sections: [string, [string, string][]][] = [
@@ -73,6 +74,11 @@ const sections: [string, [string, string][]][] = [
       ["--version", "Which release of Skelcrew this is"],
     ],
   ],
+  // The screen's keys, from the same groups as its list of keys.
+  ...keyGroups.map(([heading, keys]): [string, [string, string][]] => [
+    `KEYS: ${heading.toUpperCase()}`,
+    keys,
+  ]),
 ];
 
 // Lines to copy, in the order a new user would run them.
@@ -114,11 +120,6 @@ export function help(color = colorful()): string {
     "",
     dim("  A thread is named after its issue, such as app-12. --remote keeps"),
     dim("  Skelcrew on the other side up to date with yours, after asking. See skelcrew.dev."),
-    dim("  In the sidebar, click a row or press Alt-Up or Alt-Down. Alt-Shift-Up and"),
-    dim("  Alt-Shift-Down jump between the lead, the lists and the threads. Alt-Left and"),
-    dim("  Alt-Right, or Alt-Shift-Left and Alt-Shift-Right, switch to the repository"),
-    dim("  before or after. In a list, Up and Down move and Enter opens. On a page, Up and"),
-    dim("  Down scroll, and Esc or Left goes back. Ctrl-Q leaves."),
     "",
   );
   return lines.join("\n");
