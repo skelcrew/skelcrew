@@ -221,26 +221,27 @@ export function listGroups(db: Database, open: Open, entry: Entry, now: number):
 }
 
 // Returns the sidebar's entries for the open repository, with their counts: Issues when it has a
-// tracker, Threads always, and PRs when it has a forge. Issues says how many have no thread yet,
-// Threads how many need you or failed, in yellow, and PRs how many are ready to merge, in green.
-// These last two are only there when there are any.
+// tracker, Threads always, and PRs when it has a forge. Issues has only its count, as an issue
+// never needs you on its own. Threads says how many need you or failed, in yellow, and PRs how
+// many are ready to merge, in green, only when there are any.
 export function entryCounts(db: Database, open: Open): EntryCount[] {
   const repository = repositories(db).find((r) => r.owner === open.owner && r.repo === open.repo);
   const threads = openThreads(db, open);
+  // Returns how many rows a list has.
+  const total = (groups: Group[]) => groups.reduce((sum, group) => sum + group.rows.length, 0);
   // Returns how many rows a list has, and how many under its first heading if that is `first`.
   const count = (groups: Group[], first: string) => ({
-    total: groups.reduce((sum, group) => sum + group.rows.length, 0),
+    total: total(groups),
     flagged: groups[0]?.heading === first ? groups[0].rows.length : 0,
   });
-  const issues = count(repository ? issueGroups(db, open, threads) : [], "Not started");
   const ours = count(threadGroups(threads, 0), "Needs you");
   const prs = count(repository ? prGroups(db, open, threads) : [], "Ready to merge");
   const needYou = ours.flagged === 1 ? "needs you" : "need you";
   const issuesEntry: EntryCount = {
     entry: "issues",
     name: "Issues",
-    total: issues.total,
-    note: issues.flagged ? `${issues.flagged} new` : "",
+    total: total(repository ? issueGroups(db, open, threads) : []),
+    note: "",
     colour: grey,
   };
   const threadsEntry: EntryCount = {

@@ -300,7 +300,7 @@ ${thread("12", ", pr, needs_you, verdict", "'waiting', 34, 1, 'approve'")}
 ${thread("13", "", "'stopped'")}
 ${thread("14", "", "'done'")}`;
   expect(after(sql).entries).toEqual([
-    { entry: "issues", name: "Issues", total: 2, note: "1 new", colour: "90" },
+    { entry: "issues", name: "Issues", total: 2, note: "", colour: "90" },
     { entry: "threads", name: "Threads", total: 2, note: "1 needs you", colour: "38;5;221" },
     { entry: "prs", name: "PRs", total: 1, note: "1 ready", colour: "38;5;120" },
   ]);

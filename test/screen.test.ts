@@ -776,13 +776,13 @@ test("the entries sit between the lead and ACTIVE, counting what their lists hav
   openOnGitHub();
   open("lead");
   await ready("lead");
-  await until(() => seen().includes("1 new · 2"), "the entries");
+  await until(() => /Issues +2/.test(seen()), "the entries");
   const lines = seen()
     .split("\n")
     .map((line) => line.slice(0, sidebar - 1).trimEnd());
   const at = (text: string) => lines.findIndex((line) => line.includes(text));
   // Each count ends two columns before the sidebar's edge.
-  expect(lines[at("Issues")]).toBe(`${"    Issues".padEnd(26)}1 new · 2`);
+  expect(lines[at("Issues")]).toBe(`${"    Issues".padEnd(34)}2`);
   expect(lines[at("    Threads")]).toBe(`${"    Threads".padEnd(34)}2`);
   expect(lines[at("PRs")]).toBe(`${"    PRs".padEnd(34)}1`);
   expect(at("◆ lead")).toBeLessThan(at("Issues"));
@@ -856,7 +856,7 @@ async function openList(entry: "Issues" | "Threads" | "PRs", width = "120"): Pro
   openOnGitHub();
   open("lead", "one", "xterm-256color", width);
   await ready("lead");
-  await until(() => seen().includes(" new · "), "the entries");
+  await until(() => /Issues +\d/.test(seen()), "the entries");
   clickRow(entry === "Threads" ? "    Threads" : entry);
   await onRight("↑↓ move");
 }
@@ -1069,7 +1069,7 @@ test("on a remote, a click on the page's link copies it to your terminal's clipb
   await ready("lead");
   // Your terminal keeps what a program copies, as Ghostty does.
   tmux(terminal, "set", "-s", "set-clipboard", "on");
-  await until(() => seen().includes("1 new · 2"), "the entries");
+  await until(() => /Issues +2/.test(seen()), "the entries");
   clickRow("Issues");
   await onRight("↑↓ move");
   press("Enter");
@@ -1249,7 +1249,7 @@ test("a list follows Skelcrew's copy as it changes", async () => {
   await openList("Issues");
   sql(itemSql("app", "task", 40, "A new issue", "2026-11-06T10:00:00Z"));
   await onRight("A new issue");
-  await until(() => seen().includes("2 new · 3"), "the count");
+  await until(() => /Issues +3/.test(seen()), "the count");
 });
 
 test("a row that moves out of view as the list changes is scrolled back into view", async () => {

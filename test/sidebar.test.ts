@@ -468,7 +468,7 @@ test("a click follows the list as it scrolls, and on a hint picks nothing", () =
 
 // The entries of a repository with a tracker and a forge, with what each counts.
 const entries: EntryCount[] = [
-  { entry: "issues", name: "Issues", total: 12, note: "4 new", colour: "90" },
+  { entry: "issues", name: "Issues", total: 12, note: "", colour: "90" },
   { entry: "threads", name: "Threads", total: 6, note: "1 needs you", colour: "38;5;221" },
   { entry: "prs", name: "PRs", total: 5, note: "", colour: "38;5;120" },
 ];
@@ -482,7 +482,7 @@ test("the lead sits on top, then the entries, then ACTIVE, with a line between e
     "  ◆ lead",
     "    running · claude",
     rule,
-    "    Issues               4 new · 12",
+    "    Issues                       12",
     "",
     "    Threads         1 needs you · 6",
     "",
@@ -499,7 +499,7 @@ test("the lead sits on top, then the entries, then ACTIVE, with a line between e
 test("an entry's count is dim, what needs you on Threads is yellow, and ready PRs are green", () => {
   const ready = entries.map((e) => (e.entry === "prs" ? { ...e, note: "2 ready" } : e));
   const screen = drawWith(threads, ready, "lead", tall);
-  expect(screen).toContain("\x1b[90m4 new\x1b[22;39m\x1b[90m · 12");
+  expect(screen).toContain(`Issues${" ".repeat(23)}\x1b[90m12\x1b[22;39m`);
   expect(screen).toContain("\x1b[38;5;221m1 needs you\x1b[22;39m\x1b[90m · 6");
   expect(screen).toContain("\x1b[38;5;120m2 ready\x1b[22;39m\x1b[90m · 5");
 });
