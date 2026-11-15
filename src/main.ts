@@ -113,11 +113,8 @@ async function leadCommand(from?: string): Promise<void> {
   const { originHere } = await import("./machine/origin.ts");
   const { firstRun } = await import("./machine/setup.ts");
   firstRun(from);
-  // Adds the repository you ran sc from if Skelcrew doesn't have it yet.
-  const found = await bringInFrom(from);
-  if (repositories(openDb()).length === 0) return;
-  // In a repository with no remote, sc opens nothing, even with tabs open: opening another
-  // repository there would look as if Skelcrew had ignored where you are.
+  // In a repository with no remote, sc opens nothing, even with tabs open or no repositories
+  // yet. Opening another repository there would look as if Skelcrew had ignored where you are.
   const origin = originHere();
   if (from === undefined && origin === null && checkoutTop() !== null) {
     console.error(
@@ -125,6 +122,9 @@ async function leadCommand(from?: string): Promise<void> {
     );
     process.exit(1);
   }
+  // Adds the repository you ran sc from if Skelcrew doesn't have it yet.
+  const found = await bringInFrom(from);
+  if (repositories(openDb()).length === 0) return;
   // Outside any repository, sc opens the repository you opened last only while it has a tab.
   // With every tab closed, you closed them on purpose, so it opens none and says what sc needs.
   const away = from === undefined && origin === null;

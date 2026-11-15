@@ -265,6 +265,9 @@ test("asks its forge nothing and fetches nothing for a repository Skelcrew has",
   expect(existsSync(join(clone("simon/app"), "NEWS"))).toBe(false);
 });
 
+const noRemoteLine =
+  "This git repository has no remote. Add one, push, and run sc again:\n\n  git remote add origin <url>\n  git push -u origin HEAD\n";
+
 // With no forge to say you can push to it, Skelcrew can't vouch for what is in it.
 test("asks about a repository no forge claims, and does nothing in one with no origin", async () => {
   const checkout = onGitHub("simon/app", "WRITE");
@@ -275,9 +278,7 @@ test("asks about a repository no forge claims, and does nothing in one with no o
   expect(elsewhere.out).toContain(hint);
   expect(calls()).not.toContain("daemon lead");
   git(checkout, "remote", "remove", "origin");
-  const none = await skel([], "", checkout);
-  expect(none.err).toBe("");
-  expect(none.out).toBe(`${hint}\n`);
+  expect(await skel([], "", checkout)).toEqual({ out: "", err: noRemoteLine, code: 1 });
   expect(existsSync(clone("simon/app"))).toBe(false);
 });
 
@@ -310,9 +311,6 @@ test("--from says why it can't bring a repository in, and attaches to the one yo
   expect(run.err).toContain("nobody/none");
   expect(attached()).toBe(true);
 });
-
-const noRemoteLine =
-  "This git repository has no remote. Add one, push, and run sc again:\n\n  git remote add origin <url>\n  git push -u origin HEAD\n";
 
 // Exiting each lead closes every tab, on purpose, so plain sc outside a repository opens none and
 // says why.
