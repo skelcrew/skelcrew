@@ -86,7 +86,12 @@ export async function stopThread(db: Database, tmux: string, thread: Thread): Pr
   // Its setup would go on to start the builder after the stop.
   if (thread.session === null)
     throw new Error(`${name} is still setting up: stop it once its builder has started`);
-  record(db, thread.folder, { status: "stopped", needs_you: false, asking: false }, "stopped");
+  record(
+    db,
+    thread.folder,
+    { status: "stopped", needs_you: false, asking: false, erred: false },
+    "stopped",
+  );
   // Asked as it is marked stopped, before anything is waited on: an sc start that finds it
   // stopped meanwhile asks to assign you, and that must come after.
   unassignIssue(db, thread.folder);
@@ -140,7 +145,12 @@ export async function removeThread(
   if (live && thread.session === null)
     throw new Error(`${name} is still setting up: remove it once its builder has started`);
   if (live)
-    record(db, thread.folder, { status: "stopped", needs_you: false, asking: false }, "removing");
+    record(
+      db,
+      thread.folder,
+      { status: "stopped", needs_you: false, asking: false, erred: false },
+      "removing",
+    );
   // Asked before anything is waited on, so an sc start meanwhile assigns you after it, as for
   // sc stop. A forge that fails leaves the thread stopped, which takes you off too.
   unassignIssue(db, thread.folder);

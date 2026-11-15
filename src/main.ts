@@ -229,7 +229,9 @@ async function pluginCommand(args: string[], json: boolean): Promise<void> {
 // tell the daemon about questions.
 async function agentCommand(args: string[]): Promise<void> {
   const [command, sub, ...rest] = args;
-  const { reportQuestion, reportTurnEnded, submitForReview } = await import("./client.ts");
+  const { reportQuestion, reportTurnEnded, reportTurnFailed, submitForReview } = await import(
+    "./client.ts"
+  );
   if (command === "submit" && sub && rest.length === 0) {
     const thread = await submitForReview(sub);
     console.log(
@@ -247,6 +249,12 @@ async function agentCommand(args: string[]): Promise<void> {
   // nothing, as Codex reads what a Stop hook prints.
   if (command === "turn" && sub === "ended" && rest.length === 0) {
     await reportTurnEnded();
+    return;
+  }
+  // Run by a Claude Code builder's StopFailure hook, not by people, so usage leaves it out.
+  // Claude Code ignores what that hook prints.
+  if (command === "turn" && sub === "failed" && rest.length === 0) {
+    await reportTurnFailed();
     return;
   }
   // Leads started by an older Skelcrew run this hook with each message until they restart.

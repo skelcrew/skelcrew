@@ -385,12 +385,25 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         typeLeadNotes(db, tmux);
         return { asking: true };
       }
+      case "turn failed":
+        record(
+          db,
+          callingThread(caller).folder,
+          { erred: true },
+          "its builder's harness stopped on an error",
+        );
+        typeLeadNotes(db, tmux);
+        return { erred: true };
       case "question answered": {
         const { folder } = callingThread(caller);
-        // Run before every message typed into the builder, so only a question that was open
-        // is logged.
-        if (readThread(db, folder).asking)
-          record(db, folder, { asking: false }, "its builder's question is over");
+        const thread = readThread(db, folder);
+        // Run before every message typed into the builder, so only a question or an error that
+        // was open is logged. Typing to a builder that stopped on an error means you fixed it,
+        // such as with /login, so it ends the error as it ends a question.
+        if (thread.asking)
+          record(db, folder, { asking: false, erred: false }, "its builder's question is over");
+        else if (thread.erred)
+          record(db, folder, { erred: false }, "its builder was typed to after its error");
         return { asking: false };
       }
       case "start": {
