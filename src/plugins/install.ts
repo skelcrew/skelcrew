@@ -100,15 +100,16 @@ function checkSkelcrewVersion(manifest: Manifest): void {
 }
 
 // Warns in one line that the plugin runs as you, outside the sandbox, and asks whether to `verb`
-// it, such as Install. Returns whether you said yes. A plugin runs with your rights, so nothing
-// of it runs before you say yes.
+// it, such as Install. Returns whether you went ahead: a bare Enter, y or yes. Anything else,
+// such as a typo, stops it, since a plugin runs with your rights and nothing of it runs before
+// this.
 function confirmPlugin(manifest: Manifest, from: string, verb: string): boolean {
   const { name, version } = manifest;
-  // Bun's prompt answers a bare Enter with null, which is no, as the question says.
+  // Bun's prompt answers a bare Enter with null, which is yes, as the question says.
   const answer = prompt(
-    `${name} ${version} from ${removeControlCodes(from)} runs as you, outside Skelcrew's sandbox. ${verb} it? [y/N]`,
+    `${name} ${version} from ${removeControlCodes(from)} runs as you, outside Skelcrew's sandbox. ${verb} it? [Y/n]`,
   );
-  return ["y", "yes"].includes(answer?.trim().toLowerCase() ?? "");
+  return ["", "y", "yes"].includes(answer?.trim().toLowerCase() ?? "");
 }
 
 // Runs one of a plugin's commands in your terminal, in the plugin's folder, so a setup can ask
