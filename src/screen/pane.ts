@@ -1,16 +1,15 @@
 // The right pane while you are on one of the sidebar's entries: the entry's list, and the pages
 // of the issues and PRs opened from it. It is a process of its own, in the screen's right pane,
 // so it ends with the screen and agents' sessions never see it.
-import { screenSocket, showFooter, tmux } from "../agents/tmux.ts";
+import { screenSocket, tmux } from "../agents/tmux.ts";
 import { startOrMerge } from "../client.ts";
 import { openDb } from "../db.ts";
 import { type Page, readPage } from "../flow/page.ts";
 import { errorText } from "../say.ts";
+import { listFooter, tellFooter } from "./footer.ts";
 import { type Action, type Entry, type Group, listGroups } from "./lists.ts";
 import { fitted, grey, pad, paint, removeControlCodes, shaded, tinted, white } from "./look.ts";
 import { drawPage } from "./page.ts";
-import { showKeys } from "./screen.ts";
-import { drawFooter, footerText } from "./strip.ts";
 
 // What a list with nothing in it says.
 const nothing: Record<Entry, string> = {
@@ -113,11 +112,12 @@ const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 // Up and Down move a list, and Enter, Right or a click opens a row: an issue's or PR's page here,
 // or a thread's agent, which the sidebar puts in place of this pane. Right opens as Left goes
 // back, so the arrows alone take you in and out. On a page, Up, Down and the
-// wheel scroll, and Left goes back to the list, on the row you opened. ? opens the list
-// of keys on either. s on an issue starts a thread on it and m on a PR merges it, on its list
-// or its page, after asking in the line in place of the footer. All else you type goes
-// nowhere. It reads the list again each second, and writes only when what shows changed, so a
-// list left open lets a Sprite sleep. A page is read once.
+// wheel scroll, and Left goes back to the list, on the row you opened. ? shows or hides the
+// list of keys on either. s on an issue starts a thread on it and m on a PR merges it, on its
+// list or its page, after asking in the footer. All else you type goes nowhere. It tells the
+// footer what to say, with s or m only while the row you are on can be started or merged. It
+// reads the list again each second, and writes only when what shows changed, so a list left
+// open lets a Sprite sleep. A page is read once.
 export async function runPane(
   agents: string,
   session: string,
@@ -140,12 +140,13 @@ export async function runPane(
   let top = 0;
   let page: { read: Page; url: string; top: number } | null = null;
   let lastFrame = "";
-  // The line in place of the footer: the question s or m asks while it waits for y, whether the
-  // daemon is starting or merging, and whether the line says something, such as why a row can't
-  // be started or merged, until the next key.
+  // What the footer says in place of its keys: the question s or m asks while it waits for y,
+  // whether the daemon is starting or merging, and whether it says something, such as why a row
+  // can't be started or merged, until the next key. `said` is what the footer was last told.
   let asking: Extract<Action, { ask: string }> | null = null;
   let working = false;
   let saying = false;
+  let said = "";
   const rows = () => groups.flatMap((group) => group.rows);
   const width = () => process.stdout.columns || 80;
   const height = () => process.stdout.rows || 24;
@@ -181,8 +182,21 @@ export async function runPane(
     top = Math.min(Math.max(top, 0), Math.max(lines.length - height(), 0));
     return lines;
   };
-  // Draws what shows, filling the pane, only when it changed.
+  // Returns the footer's keys for the row you are on: s or m only when it can be started or
+  // merged.
+  const footerKeys = () => {
+    const action = rows()[here]?.action;
+    return listFooter(action && !("refused" in action) ? action.key : null);
+  };
+  // Says something in the footer in place of its keys, or with null puts its keys back.
+  const say = (text: string | null) => {
+    said = text ?? footerKeys();
+    tellFooter(agents, session, "footer", said);
+  };
+  // Draws what shows, filling the pane, only when it changed. The footer's keys follow the row
+  // you are on, unless the footer is saying something else.
   const draw = (follow = false) => {
+    if (!asking && !working && !saying && footerKeys() !== said) say(null);
     let shown: string[];
     if (page) {
       const lines = pageLines(page);
@@ -230,15 +244,6 @@ export async function runPane(
     } else if (row.session && !row.dim) tell("thread", row.session);
     draw(true);
   };
-  // Says something in the line in place of the footer, or with null puts the footer back. The
-  // sidebar sets the footer only when what it says changes, so it leaves this line be, and
-  // sets the footer anew when you move away from this list.
-  const say = (text: string | null) =>
-    showFooter(
-      screenSocket(agents),
-      session,
-      drawFooter(text === null ? footerText(null, entry) : text),
-    );
   // Acts on s or m: on an issue's or PR's row, asks first, or says why it can't. The page shows
   // the row it was opened from. A key that isn't this row's does nothing, such as m on an issue.
   // The row is read again from Skelcrew's copy, by its name, as a page stops the list reading
@@ -326,8 +331,8 @@ export async function runPane(
       .toString()
       .matchAll(input)) {
       const notch = button === "64" ? -linesPerNotch : button === "65" ? linesPerNotch : 0;
-      // ? opens the list of keys over the screen, on a list as on a page.
-      if (question) showKeys(agents, session);
+      // ? shows or hides the list of keys, on a list as on a page.
+      if (question) tellFooter(agents, session, "keys", "toggle");
       else if (key) act(key);
       else if (page) {
         // A page scrolls, goes back, or follows its link.
@@ -353,12 +358,12 @@ export async function runPane(
     }
   });
   // Draws now, on each resize and, with the list read again, each second, until the pane goes
-  // and its input closes. A page is read once, so a page left open writes nothing.
+  // and its input closes. A page is read once, so a page left open writes nothing. Its row is
+  // read again with the list, so the footer offers m once a PR became ready while its page was
+  // open.
   process.on("SIGWINCH", () => draw(true));
   draw(true);
-  setInterval(() => {
-    if (!page) refresh();
-  }, 1000);
+  setInterval(refresh, 1000);
   await new Promise((gone) => process.stdin.on("close", gone));
   process.exit(0);
 }

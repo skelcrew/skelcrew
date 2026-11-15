@@ -1,10 +1,8 @@
-// The top and bottom rows of the screen. Above the sidebar, the header says Skelcrew, its version and, on a
+// The top row of the screen. Above the sidebar, the header says Skelcrew, its version and, on a
 // remote, where it runs. Above the agent, a tab for each repository, then the strip, which says
 // what you are looking at: for a thread, its name, task, PR and checks, then its latest review,
 // and for a page, its row's name and title. The lead and a list have none, as the sidebar and
-// the list say it all. Below the agent, the footer says how to go back and what Esc stops, and
-// below a list or page what s or m does there.
-import type { Entry } from "./lists.ts";
+// the list say it all.
 import { fitted, removeControlCodes } from "./look.ts";
 import type { Row, Tab } from "./rows.ts";
 
@@ -174,32 +172,4 @@ export function drawTop(top: Top, size: Size): string {
   const strip = name && `#[fg=brightblack,bold]${escaped(name)}#[nobold]${escaped(rest)}#[default]`;
   const edge = "#[fg=colour237]│#[default] ";
   return `${header(top.where, left, top.version)}${edge}${tabs}${spare}${strip}`;
-}
-
-// Returns what the footer says under the right side: under an agent, given its row, how to go
-// back and what Esc stops there, with the agent's harness. Under the issues list or an issue's
-// page, given the entry, that s starts a thread, and under the PRs list or a PR's page that m
-// merges. Nothing under the list of threads.
-export function footerText(row: Row | null, entry: Entry | null): string {
-  if (row?.agentHarness) return `⌥B back  Esc stops ${row.agentHarness}`;
-  if (entry === "issues") return "s start";
-  if (entry === "prs") return "m merge";
-  return "";
-}
-
-// Returns the bottom row of the screen as tmux's pane-border-format, with `said` under the right
-// side, dim, such as the footer's text or the line asking whether to merge. tmux draws it on the
-// row below each pane, so one format covers both panes: `said` under pane 1, and under the
-// sidebar its edge, so the edge still runs from top to bottom. `said` can hold a forge's words,
-// so it is shown as it is: tmux reads it as a format inside a choice between the two panes,
-// where #, a comma or a brace would restyle the row, run a command or end the choice early, and
-// it goes through strftime, so % is doubled.
-export function drawFooter(said: string): string {
-  const shown = removeControlCodes(said)
-    .replaceAll("#", "##")
-    .replaceAll(",", "#,")
-    .replaceAll("}", "#}")
-    .replaceAll("%", "%%");
-  const under = shown && `#[fg=brightblack]${shown}#[default]`;
-  return `#{?#{==:#{pane_index},1},${under},#[align=right]#[fg=colour237]│#[default]}`;
 }

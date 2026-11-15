@@ -1,12 +1,10 @@
 // The screen: the sidebar on the left of your terminal, with the agent or list you are looking
-// at on the right and the strip above it. It is a second tmux server, one session per open
-// terminal, ended when you leave.
-import { applyConfig, envWithoutTmux, screenSocket, tmux, tmuxIsAtLeast } from "../agents/tmux.ts";
+// at on the right, the strip above it and the footer across the bottom. It is a second tmux
+// server, one session per open terminal, ended when you leave.
+import { applyConfig, envWithoutTmux, screenSocket, tmuxIsAtLeast } from "../agents/tmux.ts";
 import { windowTitle } from "../say.ts";
 import { mainFile, singleFile } from "../version.ts";
-import { keyLines } from "./keys.ts";
 import type { Entry } from "./lists.ts";
-import { drawFooter } from "./strip.ts";
 
 // How wide the sidebar is, with the line it draws at its edge: room for 31 columns of a title,
 // between its mark and two columns of padding, so a thread's name, word, harness and time
@@ -58,9 +56,7 @@ const config = [
   ["bind", "-n", "M-Right", "send-keys", "-t", ":.0", "M-Right"],
   ["bind", "-n", "M-S-Left", "send-keys", "-t", ":.0", "M-S-Left"],
   ["bind", "-n", "M-S-Right", "send-keys", "-t", ":.0", "M-S-Right"],
-  // Alt-/ goes to the sidebar too, which opens the list of keys, as a click on its hint does,
-  // and so does Alt-B, which goes back.
-  ["bind", "-n", "M-/", "send-keys", "-t", ":.0", "M-/"],
+  // Alt-B goes to the sidebar too, which goes back.
   ["bind", "-n", "M-b", "send-keys", "-t", ":.0", "M-b"],
   // A click on the tabs, in a status line, reaches no pane, so tmux types which tab it was
   // into the sidebar, as an OSC naming the tab's range. send-keys -F expands no format in what
@@ -75,7 +71,8 @@ const config = [
     'send-keys -t :.0 -l "\x1b]skel-tab;#{mouse_status_range}\x07"',
   ]),
   // A click needs its own key: left alone, it reaches only the pane you type to. The wheel
-  // goes on to the pane under it, as the agents' server decides what scrolling means.
+  // goes on to the pane under it, as the agents' server decides what scrolling means, and the
+  // footer scrolls the list of keys with it.
   ["bind", "-n", "MouseDown1Pane", "send-keys", "-M"],
   ["bind", "-n", "MouseUp1Pane", "send-keys", "-M"],
   ["bind", "-n", "WheelUpPane", "send-keys", "-M"],
@@ -101,11 +98,13 @@ const config = [
   // still fires the bindings above, and the sidebar and lists, which don't ask, get keys as
   // before.
   ["set", "-s", "extended-keys", "on"],
-  // The bottom row is the footer under the agent, which tmux draws as each pane's border line.
-  // It is always there, so the agent's height doesn't change as a list comes and goes. It
-  // starts blank, with the sidebar's edge, as the sidebar fills it in.
-  ["set", "-g", "pane-border-status", "bottom"],
-  ["set", "-g", "pane-border-format", drawFooter("")],
+  // The footer is a pane of its own. A screen server an older Skelcrew started, still open in
+  // another terminal, drew it as tmux's border line, which would add a row under every pane.
+  ["set", "-g", "pane-border-status", "off"],
+  // tmux 3.8 has colour themes of its own, which grey a popup and may change other colours. The
+  // screen keeps your terminal's own. An older tmux doesn't know the option, and -q keeps it
+  // from refusing the whole screen over it.
+  ["set", "-sq", "theme", "terminal"],
   // tmux shares a resize out among panes, so tmux itself sets the sidebar's width back after
   // each, with no process of Skelcrew's to do it.
   ["set-hook", "-g", "window-resized", `resize-pane -t :.0 -x ${sidebarWidth}`],
@@ -131,6 +130,11 @@ function skelcrewCommand(...words: string[]): string[] {
   return [process.execPath, ...checkout, ...words];
 }
 
+// Returns the command that runs the footer across the bottom of the screen whose session is
+// named.
+const footerCommand = (agents: string, session: string) =>
+  skelcrewCommand("footer", agents, session);
+
 // Returns the command that runs Skelcrew's sidebar, with the owner/name of the repository it opens
 // on. Where Skelcrew runs goes along as a word, not in the environment: a tmux server hands its
 // panes the environment of whichever terminal started it, and terminals on this server can
@@ -151,49 +155,6 @@ export const paneCommand = (
   repository: string,
   start: string,
 ) => skelcrewCommand("list", agents, session, entry, where, repository, start);
-
-// Shows the list of keys along the bottom of the right side of the screen whose session is
-// named, over the agent's last rows and its footer, as Claude Code does with ?. It is a tmux
-// popup with no border, so it draws over the agent without touching it, takes every key while
-// it is open, and leaves the screen as it was when it closes. Its first row is a thin line
-// across the pane. It has as many rows as its keys need, up to a third of the pane, and the rest
-// scroll. It is never taller than the terminal, as tmux then opens nothing. tmux waits for a
-// popup to close before the command that opened it returns, so it isn't waited for here.
-export function showKeys(agents: string, session: string): void {
-  const socket = screenSocket(agents);
-  // The terminal that has the session open, and how many rows it has.
-  const format = "#{client_name} #{client_height}";
-  const said = tmux(socket, ["list-clients", "-t", `=${session}:`, "-F", format]).out;
-  const [client, rows = "0"] = said.trim().split(" ");
-  if (!client) return;
-  // Where the right side is, and how big.
-  const pane = [
-    "display-message",
-    "-p",
-    "-t",
-    `=${session}:.1`,
-    "#{pane_left} #{pane_width} #{pane_height}",
-  ];
-  const [left = "0", width = "0", paneHeight = "0"] = tmux(socket, pane).out.trim().split(" ");
-  if (Number(width) < 1) return;
-  const shown = Math.min(
-    keyLines(Number(width)).length,
-    Math.max(Math.floor(Number(paneHeight) / 3), 1),
-  );
-  const height = Math.min(shown + 1, Number(rows));
-  // tmux hands the popup's command to a shell as one line, so each word is quoted.
-  const command = skelcrewCommand("keys")
-    .map((word) => `'${word.replaceAll("'", "'\\''")}'`)
-    .join(" ");
-  // tmux places a popup by its bottom row, so the terminal's height puts it at the bottom.
-  const size = ["-w", width, "-h", String(height)];
-  const place = ["-x", left, "-y", rows];
-  const popup = ["display-popup", "-c", client, "-B", ...place, ...size, "-E", command];
-  Bun.spawn(["tmux", "-L", socket, "-f", "/dev/null", ...popup], {
-    env: envWithoutTmux(),
-    stdio: ["ignore", "ignore", "ignore"],
-  });
-}
 
 // Opens the screen in your terminal on the named agent session. `lead` is the open repository's
 // lead's session and `repository` its owner/name. It returns when you leave with Alt-Q, and
@@ -226,12 +187,17 @@ export async function openScreen(
   // so the border is a gap before the agent. On an older tmux it stays tmux's thin line.
   // tmux can since 3.6, and an older one refuses the whole screen over it.
   const border = tmuxIsAtLeast(3, 6) ? [["set", "-g", "pane-border-lines", "spaces"]] : [];
+  // The footer's pane starts as its line and its row, or its row alone where tmux's border above
+  // it is a thin line already, and sizes itself from then on.
+  const footerHeight = border.length > 0 ? "2" : "1";
   const open = [
     ...config,
     ...border,
     ["new-session", "-s", name, "--", ...agentClient(agents, session, lead)],
     ["set", "set-titles-string", windowTitle(env.SKELCREW_REMOTE_NAME)],
     ["split-window", "-hbd", "-l", String(sidebarWidth), "--", ...left],
+    // The footer goes across the whole width, below both, as the screen's third pane.
+    ["split-window", "-vfd", "-l", footerHeight, "--", ...footerCommand(agents, name)],
     // Ctrl-C reaches a list until it has made its terminal raw, and Bun won't stay ignoring it.
     // A pane that ended would give the whole screen to the sidebar. A dead one stays in its
     // place, and moving away starts it again.

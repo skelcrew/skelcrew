@@ -352,12 +352,6 @@ export function showStrip(socket: string, session: string, line: string): void {
   tmux(socket, ["set", "-t", `=${session}:`, "status-format[0]", escapeSemicolon(line)]);
 }
 
-// Sets the bottom row of a session's screen, as tmux's pane-border-format: the footer under the
-// agent. Like the strip, each set redraws the whole screen, so it is set only when it changed.
-export function showFooter(socket: string, session: string, format: string): void {
-  tmux(socket, ["set", "-w", "-t", `=${session}:`, "pane-border-format", format]);
-}
-
 // Returns the session a client on the given terminal is showing, or null while it has none,
 // such as the moment between an agent ending and the client attaching to the lead.
 export function shownSession(socket: string, tty: string): string | null {

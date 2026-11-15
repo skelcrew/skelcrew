@@ -4,7 +4,6 @@ import { chmodSync, cpSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } fr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { keyLines } from "../src/screen/keys.ts";
-import { sidebarWidth } from "../src/screen/screen.ts";
 import { source } from "./harness.ts";
 
 const main = source("main.ts");
@@ -143,12 +142,18 @@ test("the help lists s to start a thread on an issue and m to merge a PR, after 
   expect(keys).toMatch(/\n {2}m +merge a ready PR\n/);
 });
 
-// The right side of a 120-column terminal is what is left beside the sidebar and the gap after it.
-test("beside the sidebar on a 120-column terminal, the list of keys fits in two columns", () => {
-  const lines = keyLines(120 - sidebarWidth - 1);
-  expect(lines).toHaveLength(7);
-  expect(lines.every((line) => line.trim().split(/\s{3,}/).length === 2)).toBe(true);
+// The list of keys runs across the whole screen, above the footer.
+test("across a 120-column terminal, the list of keys fits in three columns and five rows", () => {
+  const lines = keyLines(120);
+  expect(lines).toHaveLength(5);
+  expect(lines[0]?.trim().split(/\s{3,}/)).toHaveLength(3);
   expect(lines.join("\n")).toContain("m to merge a ready PR");
+});
+
+test("the keys have no Alt-/, as ? on a list or a page shows and hides them", () => {
+  expect(keyLines(200).join("\n")).not.toContain("alt + /");
+  expect(skel(["--help"]).out).not.toContain("alt + /");
+  expect(keyLines(200).join("\n")).toContain("? to show or hide these keys");
 });
 
 test("the help names --version", () => {

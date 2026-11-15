@@ -372,7 +372,7 @@ test("the mouse wheel and a drag over the agent leave you typing to it", async (
   type("\x1b[<0;60;5M\x1b[<32;62;6M\x1b[<0;62;6m");
   await Bun.sleep(200);
   const modes = tmux(screen, "list-panes", "-a", "-F", "#{pane_in_mode}").out.trim().split("\n");
-  expect(modes).toEqual(["0", "0"]);
+  expect(modes).toEqual(["0", "0", "0"]);
   type("hello\r");
   await until(() => existsSync(join(home, "lead.typed")), "the typing");
 });
@@ -501,34 +501,33 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
   open("lead");
   await ready("lead");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "28 81\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "26 81\n",
     "the agent's size",
   );
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "40");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "38 111\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "36 111\n",
     "the agent to resize",
   );
   const widths = tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out.trim().split("\n");
-  expect(widths).toEqual(["38", "111"]);
+  expect(widths).toEqual(["38", "111", "150"]);
   // A terminal shorter than the list keeps the row you are looking at in view.
   toSecondThread();
   await until(() => selected() === "● app-7", "app-7");
-  tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "4");
-  await until(() => !seen().includes("⌥↑↓ move"), "the hints to give way");
+  tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "6");
   await until(() => selected() === "● app-7", "the sidebar to scroll");
 });
 
-// The columns at the sidebar's edge, on each line below the thin line: the sidebar's line, where
-// the lines between lists join it, then tmux's border. Blank past the end of a line that holds
-// nothing else.
+// The columns at the sidebar's edge, on each line of a screen `height` rows high above the
+// footer, its line and the gap tmux leaves above them: the sidebar's line, where the lines between
+// lists join it, then tmux's border. Blank past the end of a line that holds nothing else.
 const edge = (height: number) =>
   seen()
     .split("\n")
-    .slice(0, height)
+    .slice(0, height - 3)
     .map((line) => `${line[sidebar - 1]}${line[sidebar] ?? " "}`);
 
-test("the sidebar's line runs to the bottom, with a blank column before the agent", async () => {
+test("the sidebar's line runs down to the footer, with a blank column before the agent", async () => {
   open("lead");
   await ready("lead");
   expect(new Set(edge(30))).toEqual(new Set(["│ ", "┤ "]));
@@ -608,7 +607,7 @@ test("a terminal a few lines high still shows the agent, and Ctrl-Q still leaves
   }
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "120", "-y", "30");
   await until(() => seen().includes("I am lead"), "the agent to come back");
-  await until(() => seen().includes("⌥↑↓ move"), "the hints to come back");
+  await until(() => seen().includes("⌥↑↓ move"), "the footer to come back");
   press("C-q");
   await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
 });
@@ -630,37 +629,46 @@ test("the strip ends the top row, and the agent's height stays as you switch", a
   expect(readFileSync(join(home, "app-12.size"), "utf8")).toBe(height);
 });
 
-// The bottom row as you see it, right of the sidebar.
-const footer = () => (seen().split("\n")[29] ?? "").slice(sidebar + 1).trimEnd();
+// The bottom row as you see it, across the whole screen, and the row above it.
+const footer = () => (seen().split("\n")[29] ?? "").trimEnd();
+const aboveFooter = () => (seen().split("\n")[28] ?? "").trimEnd();
+// What the footer says under a list or page: the keys you need most and ? keys, then s or m on a
+// row that can be started or merged.
+const listKeys = "  ⌥↑↓ move  ⌥Q quit  ? keys";
+const startKeys = `${listKeys}  s start`;
+const mergeKeys = `${listKeys}  m merge`;
 
-test("the footer under the agent says how to go back and what Esc stops", async () => {
+test("the footer runs across the screen under a thin line, with move and quit, then back and Esc", async () => {
   sql("UPDATE threads SET harness = 'codex' WHERE task = 7");
   open("lead");
   await ready("lead");
-  await until(() => footer() === "  ⌥B back  Esc stops claude", "the lead's footer");
+  const lead = "  ⌥↑↓ move  ⌥Q quit  ⌥B back  Esc stops claude";
+  await until(() => footer() === lead, "the lead's footer");
+  expect(aboveFooter()).toBe("─".repeat(120));
   toSecondThread();
   await until(() => seen().includes("I am app-7"), "app-7");
-  await until(() => footer() === "  ⌥B back  Esc stops codex", "app-7's footer");
+  await until(() => footer() === "  ⌥↑↓ move  ⌥Q quit  ⌥B back  Esc stops codex", "app-7's footer");
 });
 
-test("under issues the footer says s start, under PRs m merge, under threads nothing, and the agent's height stays", async () => {
+test("under a list or page the footer adds ? keys, and s or m while the row can take it, and the agent's height stays", async () => {
   await openIssue();
-  expect(footer()).toBe("  s start");
+  expect(footer()).toBe(startKeys);
   press("Left");
   await until(() => !tabRow().includes("app-31"), "the strip to go");
-  expect(footer()).toBe("  s start");
+  expect(footer()).toBe(startKeys);
+  // app#12 has a thread already, so it can't be started.
+  press("Down");
+  await until(() => footer() === listKeys, "no s on a started issue");
   clickRow("PRs");
-  await until(() => footer() === "  m merge", "m merge");
-  // The issues list says "↑↓ move" too, so Enter waits for the PRs list's rows.
+  // The PR isn't approved yet, so it can't be merged.
   await until(() => right().includes("Bump deps") && !right().includes("Fix login"), "the PRs");
-  press("Enter");
-  await until(() => tabRow().includes("app#34"), "the PR's strip");
-  expect(footer()).toBe("  m merge");
+  await until(() => footer() === listKeys, "no m on a PR that isn't ready");
   clickRow("    Threads");
-  await until(() => footer() === "", "a blank footer");
+  await until(() => right().includes("Working"), "the threads");
+  expect(footer()).toBe(listKeys);
   press("M-S-Up");
-  await until(() => footer() === "  ⌥B back  Esc stops claude", "the lead's footer");
-  expect(readFileSync(join(home, "lead.size"), "utf8")).toBe("28 81\n");
+  await until(() => footer().endsWith("⌥B back  Esc stops claude"), "the lead's footer");
+  expect(readFileSync(join(home, "lead.size"), "utf8")).toBe("26 81\n");
 });
 
 test("the header, the tabs and the strip share one row, and the agent starts right under it", async () => {
@@ -707,13 +715,13 @@ test("each terminal says where it came from, as they can come from different lap
   );
 });
 
-test("the sidebar's edge runs from the top row to the bottom, at every width", async () => {
+test("the sidebar's edge runs from the top row down to the footer, at every width", async () => {
   open("lead");
   await ready("lead");
   const column = () =>
     seen()
       .split("\n")
-      .slice(0, 30)
+      .slice(0, 27)
       .map((line) => line[sidebar - 1]);
   await until(() => column().every((mark) => mark === "│" || mark === "┤"), "the edge");
   for (const width of [150, 90, 120]) {
@@ -755,7 +763,7 @@ test("clicking the strip, or turning the wheel over it, does nothing", async () 
   type("\x1b[<64;100;1M");
   await Bun.sleep(200);
   const modes = tmux(screen, "list-panes", "-a", "-F", "#{pane_in_mode}").out.trim().split("\n");
-  expect(modes).toEqual(["0", "0"]);
+  expect(modes).toEqual(["0", "0", "0"]);
   expect(scrolledBack()).not.toContain("1");
   expect(seen()).toContain("I am lead");
 });
@@ -1061,22 +1069,26 @@ test("Alt-B on a page goes back to its list, as Left does", async () => {
   expect(selected()).toContain("Issues");
 });
 
-// The line in place of the footer, as you see it.
-const says = (text: string) => until(() => footer() === `  ${text}`, `the line to say ${text}`);
+// What the footer says, as you see it: a line in place of its keys, or its keys back.
+const says = (text: string) =>
+  until(
+    () => footer() === (text.startsWith("  ") ? text : `  ${text}`),
+    `the footer to say ${text}`,
+  );
 
 test("s on an issue asks first, any key but y leaves it be, and y starts a thread on it", async () => {
   daemon();
   await openList("Issues");
-  await says("s start");
+  await says(startKeys);
   type("s");
   await says("Start a thread on app#31? y/n");
   type("n");
-  await says("s start");
+  await says(startKeys);
   // The key that left it be does nothing else: the list stays on its row.
   type("s");
   await says("Start a thread on app#31? y/n");
   press("Down");
-  await says("s start");
+  await says(startKeys);
   expect(acted).toEqual([]);
   type("s");
   await says("Start a thread on app#31? y/n");
@@ -1087,7 +1099,7 @@ test("s on an issue asks first, any key but y leaves it be, and y starts a threa
   await until(() => acted.length === 1, "the start");
   expect(acted).toEqual(["start simon/app 31"]);
   release();
-  await says("s start");
+  await says(startKeys);
 });
 
 test("s on an issue a thread works on says which thread, until the next key", async () => {
@@ -1096,9 +1108,9 @@ test("s on an issue a thread works on says which thread, until the next key", as
   press("Down");
   type("s");
   await says("app#12 already has app-12");
-  // The next key does what it does, and the footer comes back.
+  // The next key does what it does, and the footer's keys come back, with no s on this issue.
   press("Enter");
-  await says("s start");
+  await says(listKeys);
   await onRight("← back");
   expect(right()).toContain("Fix login");
   expect(acted).toEqual([]);
@@ -1112,7 +1124,7 @@ test("s on an issue's page starts a thread on that issue", async () => {
   type("y");
   await until(() => acted.length === 1, "the start");
   expect(acted).toEqual(["start simon/app 31"]);
-  await says("s start");
+  await says(startKeys);
 });
 
 // A PR approved with its checks passing, which the forge last sent at a head commit.
@@ -1150,15 +1162,16 @@ test("m on a ready PR asks first, y merges it at the commit you saw, and a refus
   expect(acted).toEqual([`merge simon/app 35 ${"c".repeat(40)}`]);
   release();
   await says("Blocked, by rule #[fg=red]2 #{pane_index} {main} 100%");
+  // app#34 isn't ready, so the footer has no m on it.
   press("Down");
-  await says("m merge");
+  await says(listKeys);
   mergeAnswer = { merged: "Merged app#35." };
   press("Up");
   type("m");
   await says("Merge app#35 into main? y/n");
   type("y");
   await until(() => acted.length === 2, "the second merge");
-  await says("m merge");
+  await says(mergeKeys);
 });
 
 // A page is read once, but what s and m do follows Skelcrew's copy as it changes meanwhile.
@@ -1172,12 +1185,14 @@ test("m on a PR's page asks to merge once the PR became ready while the page was
   type("m");
   await says("app#35 isn't approved yet");
   press("Down");
-  await says("m merge");
+  await says(listKeys);
   readyPr();
+  // The page's row is read again, so m shows once the PR is ready.
+  await says(mergeKeys);
   type("m");
   await says("Merge app#35 into main? y/n");
   type("n");
-  await says("m merge");
+  await says(mergeKeys);
   expect(acted).toEqual([]);
 });
 
@@ -1188,7 +1203,7 @@ test("s on an issue's page, once its thread started, says the issue has it", asy
   await says("Start a thread on app#31? y/n");
   type("y");
   await until(() => acted.length === 1, "the start");
-  await says("s start");
+  await says(startKeys);
   // The daemon records the thread, as sc start does.
   sql(`INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you)
     VALUES ('simon', 'app', 31, 'app-31', 'skelcrew/31', 'working', 0);`);
@@ -1205,7 +1220,7 @@ test("m on a PR that isn't ready says what it waits on, and merges nothing", asy
   type("m");
   await says("app#34 isn't approved yet");
   press("Left");
-  await says("m merge");
+  await says(listKeys);
   expect(acted).toEqual([]);
 });
 
@@ -1353,7 +1368,8 @@ test("a pane too narrow for a page's lines cuts them, so every line keeps its ow
   press("Enter");
   await onRight("Author");
   const panes = tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out.trim().split("\n");
-  const width = Number(panes.at(-1));
+  // The right side is the second pane, after the sidebar and before the footer.
+  const width = Number(panes[1]);
   expect(width).toBeLessThan(11);
   const rows = right().split("\n").slice(2, 20);
   const lines = drawPage(issuePage, issueUrl, width, "click to open").map((line) =>
@@ -1422,7 +1438,8 @@ test("Ctrl-C pressed the moment a list opens can't take the right side away", as
     await Bun.sleep(10);
   }
   await Bun.sleep(500);
-  expect(running().trim().split("\n")).toHaveLength(2);
+  // The sidebar, the right side and the footer.
+  expect(running().trim().split("\n")).toHaveLength(3);
   press("M-Up");
   await until(() => seen().includes("I am lead"), "the lead");
   type("still here\r");
@@ -1593,30 +1610,31 @@ test("a working thread's time moves on by itself, and writes when it does", asyn
   await until(() => existsSync(written) && readFileSync(written, "utf8") !== "", "the write");
 });
 
-// The bottom row is the footer's, so the hints are the sidebar's last two lines, just above it.
-test("the hints stay at the bottom, and a click there picks nothing", async () => {
+test("the footer has only the keys you need most, and a click on it away from ? keys does nothing", async () => {
   open("lead");
   await ready("lead");
-  const lines = seen().split("\n");
-  expect(lines[27]).toContain("⌥↑↓ move");
-  expect(lines[28]).toContain("⌥Q quit");
+  await until(() => footer().startsWith("  ⌥↑↓ move  ⌥Q quit"), "the footer");
+  expect(seen()).not.toContain("? keys");
   expect(seen()).not.toContain("⌃Q");
   expect(seen()).not.toContain("⌥⇧↑↓");
   expect(seen()).not.toContain("⌥←→");
-  click(5, 29);
   click(5, 30);
+  click(5, 29);
+  click(5, 28);
   await Bun.sleep(200);
   expect(selected()).toBe("◆ lead");
   expect(keysOpen()).toBe(false);
 });
 
-// The rows of keys along the bottom of the right side, below the thin line across it. None while
-// they are closed.
+// The rows of keys across the screen, between the thin line above them and the one above the
+// footer. None while they are hidden.
 function keysShown(): string[] {
-  // The capture ends with a newline, which leaves an empty piece after the bottom row.
-  const lines = right().split("\n").slice(0, -1);
-  const line = lines.findIndex((text) => text.startsWith("─".repeat(20)));
-  return line < 0 ? [] : lines.slice(line + 1).map((text) => text.trimEnd());
+  // The footer is the last row with anything on it, under its line.
+  const lines = seen().trimEnd().split("\n");
+  const footerLine = lines.length - 2;
+  const rule = (line: string) => /^─{40,}$/.test(line.trimEnd());
+  const above = lines.findLastIndex((line, at) => at < footerLine && rule(line));
+  return above < 0 ? [] : lines.slice(above + 1, footerLine).map((text) => text.trimEnd());
 }
 const keysOpen = () => keysShown().some((line) => line.trim() !== "");
 // Each key shown, as "key to what it does", down the first column, then the next.
@@ -1627,78 +1645,92 @@ function keyItems(): string[] {
     cells.flatMap((row) => (row[column] ? [row[column]] : [])),
   ).flat();
 }
+// How many rows the right side has.
+const rightHeight = () =>
+  Number(tmux(screen, "display-message", "-p", "-t", ":.1", "#{pane_height}").out.trim());
 
-test("? on a list shows the keys in columns along the bottom, and Esc closes them", async () => {
+test("? on a list shows the keys in columns across the screen above the footer, and ? hides them", async () => {
   await openList("Issues");
+  const height = rightHeight();
   type("?");
   await until(() => keyItems().includes("enter/→ to open a row"), "the list of keys");
-  // The keys end on the bottom row, in more than one column, with no headings.
-  expect((seen().split("\n")[29] ?? "").slice(sidebar + 1).trim()).not.toBe("");
+  // The keys sit just above the footer's line, across the sidebar too, in more than one column,
+  // with no headings.
+  expect(aboveFooter()).toBe("─".repeat(120));
+  expect(footer()).toBe(startKeys);
+  expect(keysShown().at(-1)?.trim()).not.toBe("");
+  expect(keysShown()[0]?.startsWith("  alt + ↑/↓")).toBe(true);
   expect(keysShown().some((line) => line.trim().split(/\s{3,}/).length > 1)).toBe(true);
   expect(keyItems()[0]).toBe("alt + ↑/↓ to move in the sidebar");
   expect(keyItems().at(-1)).toBe("← to go back from a page");
-  expect(right()).not.toContain("Anywhere");
-  press("Escape");
-  await until(() => !keysOpen(), "the list of keys to close");
+  expect(seen()).not.toContain("Anywhere");
+  // The sidebar and the right side are that many rows shorter, and nothing is drawn over them.
+  expect(rightHeight()).toBe(height - keysShown().length - 1);
   expect(right()).toContain("↑↓ move");
   expect(right()).toContain("app-31");
+  type("?");
+  await until(() => !keysOpen(), "the list of keys to hide");
+  expect(rightHeight()).toBe(height);
 });
 
-test("? on a page shows the keys, and q or ? closes them on the page as it was", async () => {
+test("while the keys show every key works as usual, and they stay until ? hides them", async () => {
   await openIssue();
   type("?");
   await until(keysOpen, "the list of keys");
-  type("q");
-  await until(() => !keysOpen(), "the list of keys to close");
-  expect(right()).toContain("line 1 of the description");
-  expect(right()).toContain("← back");
+  // Up and Down scroll the page, and Left goes back to the list.
+  press("Down");
+  await until(() => !right().includes("← back"), "the page to scroll");
+  press("Left");
+  await onRight("↑↓ move");
+  press("Down");
+  await until(() => footer() === listKeys, "the next row");
+  // A click in the sidebar still opens another list.
+  clickRow("PRs");
+  await until(() => right().includes("Bump deps"), "the PRs");
+  expect(keysOpen()).toBe(true);
   type("?");
-  await until(keysOpen, "the list of keys again");
-  type("?");
-  await until(() => !keysOpen(), "the list of keys to close again");
-  expect(right()).toContain("← back");
+  await until(() => !keysOpen(), "the list of keys to hide");
+  expect(right()).toContain("Bump deps");
 });
 
-test("Alt-/ shows the keys over an agent, which gets no key until Alt-/ closes them", async () => {
-  keyLoggingLead();
-  open("lead");
-  await ready("lead");
-  type("\x1b/");
+test("moving onto an agent hides the keys", async () => {
+  await openList("Issues");
+  type("?");
   await until(keysOpen, "the list of keys");
-  type("x");
-  type("\x1b/");
-  await until(() => !keysOpen(), "the list of keys to close");
-  type("y");
-  await until(() => read("lead.keys").includes("y"), "the agent to get y");
-  expect(read("lead.keys")).toBe("y");
-});
-
-test("plain ? on an agent is the agent's, and opens nothing", async () => {
-  open("lead");
-  await ready("lead");
-  type("?");
-  press("Enter");
-  await until(() => read("lead.typed") === "?\n", "the agent to get ?");
-  expect(keysOpen()).toBe(false);
-});
-
-test("a click on ? keys at the bottom of the sidebar shows the keys, and a click on them closes them", async () => {
-  open("lead");
-  await ready("lead");
-  await until(() => seen().includes("? keys"), "the hint");
-  const lines = seen().trimEnd().split("\n");
-  const y = lines.findIndex((line) => line.includes("? keys"));
-  click((lines[y]?.indexOf("? keys") ?? 0) + 2, y + 1);
-  await until(keysOpen, "the list of keys");
-  click(60, 30);
-  await until(() => !keysOpen(), "the list of keys to close");
+  press("M-S-Up");
+  await until(() => footer().endsWith("⌥B back  Esc stops claude"), "the lead's footer");
+  await until(() => !keysOpen(), "the list of keys to hide");
   expect(seen()).toContain("I am lead");
 });
 
-test("the list of keys has the same keys as sc --help, in the same order", async () => {
+test("Alt-/ is no key of Skelcrew's, and plain ? on an agent is the agent's, so neither shows the keys", async () => {
   open("lead");
   await ready("lead");
   type("\x1b/");
+  type("?");
+  press("Enter");
+  await until(() => read("lead.typed").includes("?"), "the agent to get ?");
+  expect(keysOpen()).toBe(false);
+});
+
+test("a click on ? keys in the footer shows the keys, and a click on them hides them", async () => {
+  await openList("Issues");
+  await until(() => footer() === startKeys, "the footer");
+  const x = footer().indexOf("? keys") + 2;
+  click(x, 30);
+  await until(keysOpen, "the list of keys");
+  click(10, 28 - 1);
+  await until(() => !keysOpen(), "the list of keys to hide");
+  click(x, 30);
+  await until(keysOpen, "the list of keys again");
+  click(x, 30);
+  await until(() => !keysOpen(), "the list of keys to hide again");
+  expect(right()).toContain("app-31");
+});
+
+test("the list of keys has the same keys as sc --help, in the same order", async () => {
+  await openList("Issues");
+  type("?");
   await until(keysOpen, "the list of keys");
   const run = Bun.spawnSync([process.execPath, source("main.ts"), "--help"], { env: env() });
   const help = run.stdout.toString();
@@ -1716,20 +1748,27 @@ test("the list of keys has the same keys as sc --help, in the same order", async
   expect(keyItems()).toContain("alt + b to go back");
 });
 
-test("keys that need more than a third of the pane scroll with Up and Down", async () => {
-  open("lead");
-  await ready("lead");
-  tmux(terminal, "resize-window", "-t", "=one:", "-x", "120", "-y", "12");
-  type("\x1b/");
+test("keys that need more than a third of the screen scroll with the wheel", async () => {
+  await openList("Issues", "80");
+  tmux(terminal, "resize-window", "-t", "=one:", "-x", "80", "-y", "15");
+  await until(() => seen().split("\n")[14]?.trimEnd() === startKeys, "the resize");
+  type("?");
   await until(() => keyItems().includes("alt + ↑/↓ to move in the sidebar"), "the list of keys");
-  // The agent's pane has ten rows, so the keys have three.
-  expect(keysShown()).toHaveLength(3);
-  expect(keyItems()).not.toContain("← to go back from a page");
-  for (let n = 0; n < 25; n++) press("Down");
-  await until(() => keyItems().includes("← to go back from a page"), "the end");
-  expect(keyItems()).not.toContain("alt + ↑/↓ to move in the sidebar");
-  for (let n = 0; n < 25; n++) press("Up");
-  await until(() => keyItems().includes("alt + ↑/↓ to move in the sidebar"), "the start");
+  // The screen has fifteen rows, so the keys have five of the seven they need at this width.
+  expect(keysShown()).toHaveLength(5);
+  const lines = seen().split("\n");
+  const keysAt = lines.findIndex((line) => line.startsWith("  alt + ↑/↓"));
+  const scrolled = () =>
+    seen()
+      .split("\n")
+      .slice(keysAt, keysAt + 5)
+      .join("\n");
+  expect(scrolled()).not.toContain("← to go back from a page");
+  for (let n = 0; n < 10; n++) type(`\x1b[<65;60;${keysAt + 2}M`);
+  await until(() => scrolled().includes("← to go back from a page"), "the end");
+  expect(scrolled()).not.toContain("alt + ↑/↓ to move in the sidebar");
+  for (let n = 0; n < 10; n++) type(`\x1b[<64;60;${keysAt + 2}M`);
+  await until(() => scrolled().includes("alt + ↑/↓ to move in the sidebar"), "the start");
 });
 
 test("two terminals each get their own session, and leaving one leaves the other", async () => {
