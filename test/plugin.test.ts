@@ -151,13 +151,13 @@ async function asDaemon(code: string) {
   return { out, err, code: code_ };
 }
 
-test("installing from GitHub warns in one line, asks, and installs its newest tag", async () => {
+test("installing from GitHub warns in one line, asks, and on a bare Enter installs its newest tag", async () => {
   publish("skelcrew/skelcrew-fake", "0.1.0", "0.9.0", "0.10.0");
-  const { out, err, code } = await skel(["plugin", "install", "skelcrew/skelcrew-fake"], "y\n");
+  const { out, err, code } = await skel(["plugin", "install", "skelcrew/skelcrew-fake"], "\n");
   expect(err).toBe("");
   expect(code).toBe(0);
   expect(out).toStartWith(
-    "fake 0.10.0 from skelcrew/skelcrew-fake runs as you, outside Skelcrew's sandbox. Install it? [y/N]",
+    "fake 0.10.0 from skelcrew/skelcrew-fake runs as you, outside Skelcrew's sandbox. Install it? [Y/n]",
   );
   expect(out).not.toContain("Tasks from a fake tracker");
   expect(out).not.toContain("bun call.ts");
@@ -288,10 +288,10 @@ test("update moves a plugin to its newest tag after asking, and removes the old 
   expect(declined.out).toContain("Skelcrew didn't update fake.");
   expect((await skel(["plugin", "ls"])).out).toBe("fake 0.1.0 tracker, forge\n");
 
-  const updated = await skel(["plugin", "update", "fake"], "y\n");
+  const updated = await skel(["plugin", "update", "fake"], "\n");
   expect(updated.err).toBe("");
   expect(updated.out).toContain(
-    "fake 0.2.0 from skelcrew/skelcrew-fake runs as you, outside Skelcrew's sandbox. Update it? [y/N]",
+    "fake 0.2.0 from skelcrew/skelcrew-fake runs as you, outside Skelcrew's sandbox. Update it? [Y/n]",
   );
   expect(updated.out).toContain("Updated fake from 0.1.0 to 0.2.0.");
   expect((await skel(["plugin", "ls"])).out).toBe("fake 0.2.0 tracker, forge\n");
