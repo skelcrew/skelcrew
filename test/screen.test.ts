@@ -282,16 +282,25 @@ test("updates on its own, with needs you in the sidebar", async () => {
   await until(() => !seen().includes("app-7"), "the done thread to go");
 });
 
-test("Ctrl-Q leaves the whole screen, ends no agent, and says so", async () => {
+test("Alt-Q leaves the whole screen, ends no agent, and says so", async () => {
   open("lead");
   await ready("lead");
-  press("C-q");
+  press("M-q");
   await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
   await until(() => screenSessions().length === 0, "the session to end");
   expect(tmux(screen, "list-sessions").ok).toBe(false);
   for (const name of ["lead", "app-7", "app-12"])
     expect(tmux(agents, "has-session", "-t", `=${name}`).ok).toBe(true);
   expect(tmux(agents, "list-clients", "-F", "#{client_tty}").out).toBe("");
+  await until(() => seen().includes(leaving), "the line that says what happened");
+});
+
+// A Mac terminal that doesn't send Option as Alt can't press Alt-Q, so Ctrl-Q leaves too.
+test("Ctrl-Q still leaves, though nothing shows it", async () => {
+  open("lead");
+  await ready("lead");
+  press("C-q");
+  await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
   await until(() => seen().includes(leaving), "the line that says what happened");
 });
 
@@ -568,7 +577,7 @@ test("the sidebar's line stays whole however the terminal is resized", async () 
     const whole = () =>
       edge(height ?? 0).every((columns) => ["│ ", "┤ "].includes(columns)) &&
       seen().split("◆ lead").length === 2 &&
-      seen().includes("⌃Q quit");
+      seen().includes("⌥Q quit");
     await until(whole, "the sidebar to be whole");
   }
 });
@@ -1326,7 +1335,8 @@ test("the hints stay at the bottom, and a click there picks nothing", async () =
   await ready("lead");
   const lines = seen().trimEnd().split("\n");
   expect(lines.at(-2)).toContain("⌥↑↓ move");
-  expect(lines.at(-1)).toContain("⌃Q quit");
+  expect(lines.at(-1)).toContain("⌥Q quit");
+  expect(seen()).not.toContain("⌃Q");
   expect(seen()).not.toContain("⌥⇧↑↓");
   expect(seen()).not.toContain("⌥←→");
   click(5, 30);

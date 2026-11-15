@@ -105,7 +105,7 @@ export async function runSidebar(
     tabs = repositoryTabs(db);
     // A repository you removed, or whose lead you exited, has no tab left. The sidebar moves to
     // the tab that took its place, or the one before when it was last. With no tab left, the
-    // screen leaves as Ctrl-Q does.
+    // screen leaves as Alt-Q does.
     const here = before.findIndex((tab) => tab.fullName === `${open.owner}/${open.repo}`);
     if (!tabs.some((tab) => tab.fullName === `${open.owner}/${open.repo}`)) {
       const next = tabs[Math.min(Math.max(here, 0), tabs.length - 1)];

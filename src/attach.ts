@@ -85,7 +85,7 @@ async function ensureDaemon(): Promise<void> {
 }
 
 // Makes sure the daemon and a lead are running, then opens the screen on the lead until you
-// leave with Ctrl-Q. The lead is for `from`, an owner/repo, or else for the repository you
+// leave with Alt-Q. The lead is for `from`, an owner/repo, or else for the repository you
 // opened last.
 export async function attachToLead(tmux: string, from?: string): Promise<void> {
   await ensureDaemon();
@@ -101,7 +101,7 @@ export async function attachToLead(tmux: string, from?: string): Promise<void> {
 }
 
 // Opens the screen with a thread's builder on the right and its repository's lead in the
-// sidebar, and returns when you leave with Ctrl-Q. Only you can run it, since it takes over
+// sidebar, and returns when you leave with Alt-Q. Only you can run it, since it takes over
 // your terminal. It checks the builder is running before it starts the daemon.
 export async function attachToThread(
   tmux: string,

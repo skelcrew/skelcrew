@@ -33,7 +33,7 @@ const rowHeight = 2;
 export const titleRoom = (width: number) => Math.max(width - 1 - indent.length - pad.length, 0);
 // The keys you need most, at the bottom of the sidebar. The others are in the list of keys,
 // which a click on its hint opens, and in Skelcrew's help.
-const hints = [`${pad}⌥↑↓ move`, `${pad}⌃Q quit  ? keys`];
+const hints = [`${pad}⌥↑↓ move`, `${pad}⌥Q quit  ? keys`];
 
 // Returns the place that names an entry where the sidebar names a row by its session. tmux
 // changes a : in a session's name, so no session can be named so.

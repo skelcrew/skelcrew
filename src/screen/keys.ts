@@ -13,7 +13,7 @@ export const keyGroups: [string, [string, string][]][] = [
       ["⌥←→", "Switch to the repository before or after"],
       ["⌥⇧←→", "The same, where ⌥←→ jumps words"],
       ["⌥/", "Show the list of keys"],
-      ["⌃Q", "Leave the screen, with your agents still running"],
+      ["⌥Q", "Leave the screen, with your agents still running"],
     ],
   ],
   [

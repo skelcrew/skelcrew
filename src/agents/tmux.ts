@@ -11,10 +11,10 @@ export const screenSocket = (agents: string) => `${agents}-screen`;
 
 // Skelcrew's tmux settings. They are sent on stdin with each new session instead of kept in a
 // file, so there is no file to find or keep in step, and a server that outlives an upgrade
-// picks up changes. Your own ~/.tmux.conf never applies: -f /dev/null replaces it. Ctrl-Q with
-// no prefix and no status bar make attaching feel like being inside Claude Code. A session
-// whose command fails keeps its last screen, so Skelcrew can say why it ended instead of
-// finding it gone. tmux only passes synchronized output on to terminals it knows have it, and
+// picks up changes. Your own ~/.tmux.conf never applies: -f /dev/null replaces it. Alt-Q and
+// Ctrl-Q with no prefix and no status bar make attaching feel like being inside Claude Code. A
+// session whose command fails keeps its last screen, so Skelcrew can say why it ended instead
+// of finding it gone. tmux only passes synchronized output on to terminals it knows have it, and
 // without it Claude Code's redraws arrive in pieces, so the prompt flickers over a slow link
 // such as a Sprite's. Terminals without it ignore the codes. That setting has a fixed index,
 // since these settings run again with each new session, and appending would add it every time.
@@ -35,6 +35,7 @@ export const screenSocket = (agents: string) => `${agents}-screen`;
 // in front of this server; a terminal that can't, such as Terminal.app, still sends Enter.
 // tmux hands them on only to an agent that asked for them, as Claude Code and Codex do.
 const tmuxConfig = `set -g status off
+bind -n M-q detach-client
 bind -n C-q detach-client
 set -g remain-on-exit failed
 set -s terminal-features[90] "*:sync:extkeys"

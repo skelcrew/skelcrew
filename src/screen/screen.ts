@@ -34,11 +34,13 @@ const config = [
   ["set", "-g", "set-titles", "on"],
   ["set", "-s", "terminal-overrides[90]", "*:tsl=\\E]2;:fsl=\\007"],
   // All of tmux's own keys go: its default mouse keys pull a drag or the wheel into copy mode,
-  // which would swallow your typing, and its prefix belongs to the agents' server. Ctrl-Q
-  // here, not there, leaves the whole screen.
+  // which would swallow your typing, and its prefix belongs to the agents' server. Alt-Q
+  // here, not there, leaves the whole screen. Ctrl-Q does too, though nothing shows it, for a
+  // Mac terminal that doesn't send Option as Alt.
   ["set", "-g", "prefix", "None"],
   ["set", "-g", "prefix2", "None"],
   ["unbind", "-a", "-T", "root"],
+  ["bind", "-n", "M-q", "detach-client"],
   ["bind", "-n", "C-q", "detach-client"],
   // Keys that arrive faster than a millisecond apart are taken for a paste, and tmux then hands
   // them to the pane you type to rather than act on them. Several Alt keys in one read, as fast
@@ -76,7 +78,7 @@ const config = [
   ["bind", "-n", "WheelUpPane", "send-keys", "-M"],
   ["bind", "-n", "WheelDownPane", "send-keys", "-M"],
   ["set", "-g", "mouse", "on"],
-  // Ends a session as its client goes, by Ctrl-Q or by a terminal or ssh link that drops, and
+  // Ends a session as its client goes, by Alt-Q or by a terminal or ssh link that drops, and
   // the server goes with its last session. It would also end a session made detached, so the
   // session is made attached, in one go.
   ["set", "-g", "destroy-unattached", "on"],
@@ -173,7 +175,7 @@ export function showKeys(agents: string, session: string): void {
 }
 
 // Opens the screen in your terminal on the named agent session. `lead` is the open repository's
-// lead's session and `repository` its owner/name. It returns when you leave with Ctrl-Q, and
+// lead's session and `repository` its owner/name. It returns when you leave with Alt-Q, and
 // prints that your agents keep running. Each terminal gets a screen session of its own, named
 // after this process, which runs as long as the terminal has it open. Agents' sessions are never
 // touched.

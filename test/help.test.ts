@@ -121,8 +121,9 @@ test("the help lists the screen's keys, anywhere, in lists and on pages", () => 
   const out = skel(["--help"]).out;
   const section = (from: string, to: string) => out.slice(out.indexOf(from), out.indexOf(to));
   const anywhere = section("\nKEYS: ANYWHERE\n", "\nKEYS: LISTS\n");
-  for (const key of ["⌥↑↓", "⌥⇧↑↓", "⌥←→", "⌥⇧←→", "⌥/", "⌃Q"])
+  for (const key of ["⌥↑↓", "⌥⇧↑↓", "⌥←→", "⌥⇧←→", "⌥/", "⌥Q"])
     expect(anywhere).toContain(`  ${key} `);
+  expect(out).not.toContain("⌃Q");
   const lists = section("\nKEYS: LISTS\n", "\nKEYS: PAGES\n");
   for (const key of ["↑↓", "⏎", "?"]) expect(lists).toContain(`  ${key} `);
   const pages = section("\nKEYS: PAGES\n", "\nEXAMPLES\n");
