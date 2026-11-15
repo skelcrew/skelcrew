@@ -1083,6 +1083,8 @@ test("s on an issue asks first, any key but y leaves it be, and y starts a threa
   holding = true;
   type("y");
   await says("Starting app-31…");
+  // The line changes as the request goes out, so it can show before the daemon has it.
+  await until(() => acted.length === 1, "the start");
   expect(acted).toEqual(["start simon/app 31"]);
   release();
   await says("s start");
@@ -1144,6 +1146,7 @@ test("m on a ready PR asks first, y merges it at the commit you saw, and a refus
   mergeAnswer = { error: "Blocked, by rule #[fg=red]2 #{pane_index} {main} 100%" };
   type("y");
   await says("Merging app#35…");
+  await until(() => acted.length === 1, "the merge");
   expect(acted).toEqual([`merge simon/app 35 ${"c".repeat(40)}`]);
   release();
   await says("Blocked, by rule #[fg=red]2 #{pane_index} {main} 100%");
