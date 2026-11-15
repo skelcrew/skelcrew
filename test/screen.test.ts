@@ -1224,7 +1224,7 @@ test("a PR's page shows its branch, checks and latest review", async () => {
   press("Enter");
   await onRight("Approved. · codex");
   expect(right()).toContain("skelcrew/12 → main");
-  expect(right()).toContain("passing");
+  expect(right()).toContain("passed");
   expect(right()).toContain("All of them.");
 });
 
