@@ -85,6 +85,7 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   z.object({ command: z.literal("question asked") }),
   z.object({ command: z.literal("question answered") }),
   z.object({ command: z.literal("turn ended") }),
+  z.object({ command: z.literal("turn failed") }),
 ]);
 export type DaemonRequest = z.infer<typeof DaemonRequest>;
 
@@ -134,6 +135,7 @@ export const allowed = {
     "question asked",
     "question answered",
     "turn ended",
+    "turn failed",
   ],
 };
 
