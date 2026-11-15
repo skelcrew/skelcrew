@@ -10,7 +10,9 @@ import { green, grey, red, yellow } from "./look.ts";
 
 // One row of the sidebar, with what the strip says of the agent too. The lead has no status of
 // its own, and a row's age is empty unless it shows a running time. `short` is the short title
-// the lead gave a thread, which its row shows in place of its title.
+// the lead gave a thread, which its row shows in place of its title. `harness` names whoever has
+// the thread now, its reviewer while a review runs, and `agentHarness` the agent itself, which
+// Esc stops.
 export type Row = {
   name: string;
   session: string;
@@ -19,6 +21,7 @@ export type Row = {
   running: boolean;
   word: string;
   harness: string;
+  agentHarness: string;
   age: string;
   fullName: string | null;
   title: string | null;
@@ -126,6 +129,7 @@ export function sidebarRows(
       running: leadRuns,
       word: leadRuns ? "running" : "stopped",
       harness: lead?.harness ?? "",
+      agentHarness: lead?.harness ?? "",
       age: "",
       fullName: null,
       title: null,
@@ -150,6 +154,7 @@ export function sidebarRows(
         // is only there for a field that stays null until the first submit. A thread with no
         // harness saved started before Skelcrew saved it, when builders ran only on Claude Code.
         harness: word === "reviewing" ? (reviewer ?? "") : (thread.harness ?? "claude"),
+        agentHarness: thread.harness ?? "claude",
         age: word === "working" && thread.started !== null ? threadAge(thread.started, now) : "",
         fullName: fullNameOf(thread),
         title: thread.title,

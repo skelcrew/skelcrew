@@ -353,10 +353,11 @@ test("stopping a session kills what won't exit", async () => {
 // run ends, as the run adopts orphans, so asking the system for its ID would still find it.
 const alive = (pid: number) => stillRunning([pid]).length > 0;
 
-test("Ctrl-Q detaches with no prefix, and there is no status bar", () => {
+test("Alt-Q and Ctrl-Q detach with no prefix, and there is no status bar", () => {
   start("lead", ["sleep", "30"]);
   const tmux = (args: string[]) => Bun.spawnSync(["tmux", "-L", socket, ...args]).stdout.toString();
   expect(tmux(["show-options", "-g", "status"])).toBe("status off\n");
+  expect(tmux(["list-keys", "-T", "root", "M-q"])).toContain("detach-client");
   expect(tmux(["list-keys", "-T", "root", "C-q"])).toContain("detach-client");
   expect(tmux(["list-keys", "-T", "root", "C-]"])).toBe("");
 });

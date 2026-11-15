@@ -282,16 +282,25 @@ test("updates on its own, with needs you in the sidebar", async () => {
   await until(() => !seen().includes("app-7"), "the done thread to go");
 });
 
-test("Ctrl-Q leaves the whole screen, ends no agent, and says so", async () => {
+test("Alt-Q leaves the whole screen, ends no agent, and says so", async () => {
   open("lead");
   await ready("lead");
-  press("C-q");
+  press("M-q");
   await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
   await until(() => screenSessions().length === 0, "the session to end");
   expect(tmux(screen, "list-sessions").ok).toBe(false);
   for (const name of ["lead", "app-7", "app-12"])
     expect(tmux(agents, "has-session", "-t", `=${name}`).ok).toBe(true);
   expect(tmux(agents, "list-clients", "-F", "#{client_tty}").out).toBe("");
+  await until(() => seen().includes(leaving), "the line that says what happened");
+});
+
+// A Mac terminal that doesn't send Option as Alt can't press Alt-Q, so Ctrl-Q leaves too.
+test("Ctrl-Q still leaves, though nothing shows it", async () => {
+  open("lead");
+  await ready("lead");
+  press("C-q");
+  await until(() => existsSync(join(home, "left-one")), "Skelcrew to return");
   await until(() => seen().includes(leaving), "the line that says what happened");
 });
 
@@ -489,12 +498,12 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
   open("lead");
   await ready("lead");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "29 81\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "28 81\n",
     "the agent's size",
   );
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "40");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "39 111\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "38 111\n",
     "the agent to resize",
   );
   const widths = tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out.trim().split("\n");
@@ -568,7 +577,7 @@ test("the sidebar's line stays whole however the terminal is resized", async () 
     const whole = () =>
       edge(height ?? 0).every((columns) => ["│ ", "┤ "].includes(columns)) &&
       seen().split("◆ lead").length === 2 &&
-      seen().includes("⌃Q quit");
+      seen().includes("⌥Q quit");
     await until(whole, "the sidebar to be whole");
   }
 });
@@ -616,6 +625,30 @@ test("the strip ends the top row, and the agent's height stays as you switch", a
   press("M-Up");
   await until(() => tabRow().endsWith("app-12"), "app-12's strip");
   expect(readFileSync(join(home, "app-12.size"), "utf8")).toBe(height);
+});
+
+// The bottom row as you see it, right of the sidebar.
+const footer = () => (seen().split("\n")[29] ?? "").slice(sidebar + 1).trimEnd();
+
+test("the footer under the agent says how to go back and what Esc stops", async () => {
+  sql("UPDATE threads SET harness = 'codex' WHERE task = 7");
+  open("lead");
+  await ready("lead");
+  await until(() => footer() === "  ⌥B back  Esc stops claude", "the lead's footer");
+  toSecondThread();
+  await until(() => seen().includes("I am app-7"), "app-7");
+  await until(() => footer() === "  ⌥B back  Esc stops codex", "app-7's footer");
+});
+
+test("under a list or a page the footer is blank, and the agent's height stays", async () => {
+  await openList("Issues");
+  await until(() => footer() === "", "a blank footer");
+  press("Enter");
+  await onRight("← back");
+  expect(footer()).toBe("");
+  press("M-S-Up");
+  await until(() => footer() === "  ⌥B back  Esc stops claude", "the lead's footer");
+  expect(readFileSync(join(home, "lead.size"), "utf8")).toBe("28 81\n");
 });
 
 test("the header, the tabs and the strip share one row, and the agent starts right under it", async () => {
@@ -879,7 +912,7 @@ test("Up and Down move in the list, and Enter opens the issue's page, which fill
   expect(selected()).toContain("Issues");
 });
 
-test("Esc or Left goes back from a page to its list, on the row you opened", async () => {
+test("Left goes back from a page to its list, on the row you opened", async () => {
   await openList("Issues");
   press("Down");
   press("Enter");
@@ -891,11 +924,30 @@ test("Esc or Left goes back from a page to its list, on the row you opened", asy
   press("Enter");
   await onRight("← back");
   expect(right()).toContain("Fix login");
-  press("Escape");
+  press("Up");
+  press("Left");
   await onRight("↑↓ move");
   press("Up");
   press("Enter");
   await onRight("line 1 of the description");
+});
+
+// In an agent Esc stops its turn, so Esc going back on a page would teach your hand to reach for
+// it to leave an agent too. An Esc takes about half a second to arrive through the terminals, so
+// each wait is longer than that.
+test("Esc does nothing on a list or a page", async () => {
+  await openList("Issues");
+  press("Down");
+  press("Escape");
+  await Bun.sleep(1500);
+  expect(right()).toContain("↑↓ move");
+  expect(selected()).toContain("Issues");
+  press("Enter");
+  await onRight("← back");
+  press("Escape");
+  await Bun.sleep(1500);
+  expect(right()).toContain("← back");
+  expect(right()).toContain("Fix login");
 });
 
 test("a click on a row opens it, and a click on its entry goes back to the list", async () => {
@@ -916,6 +968,43 @@ test("Enter on a thread in the list of threads shows its agent, and the sidebar 
   await until(() => selected() === "● app-12", "the sidebar to follow");
   type("from the list\r");
   await until(() => read("app-12.typed").includes("from the list"), "what you typed");
+});
+
+test("Alt-B from an agent opened in the list of threads goes back to the list, on its row", async () => {
+  await openList("Threads");
+  await onRight("Working");
+  press("Down");
+  press("Enter");
+  await until(() => seen().includes("I am app-7"), "the agent");
+  press("M-b");
+  await onRight("↑↓ move");
+  expect(selected()).toContain("Threads");
+  press("Enter");
+  await until(() => seen().includes("I am app-7"), "the same agent again");
+});
+
+test("Alt-B from the lead, or a thread picked in the sidebar, goes to the list of threads", async () => {
+  openOnGitHub();
+  open("lead");
+  await ready("lead");
+  press("M-b");
+  await onRight("Working");
+  expect(selected()).toContain("Threads");
+  toSecondThread();
+  await until(() => seen().includes("I am app-7"), "the second thread");
+  press("M-b");
+  await onRight("Working");
+  // The list starts on its first row, as landing on it from elsewhere does.
+  press("Enter");
+  await until(() => seen().includes("I am app-12"), "the first row's agent");
+});
+
+test("Alt-B on a page goes back to its list, as Left does", async () => {
+  await openIssue();
+  press("M-b");
+  await onRight("↑↓ move");
+  await until(() => !tabRow().includes("Add CSV"), "the strip to go");
+  expect(selected()).toContain("Issues");
 });
 
 test("a stopped thread is listed under Stopped, and opening it does nothing", async () => {
@@ -1302,47 +1391,58 @@ test("a working thread's time moves on by itself, and writes when it does", asyn
   await until(() => existsSync(written) && readFileSync(written, "utf8") !== "", "the write");
 });
 
+// The bottom row is the footer's, so the hints are the sidebar's last two lines, just above it.
 test("the hints stay at the bottom, and a click there picks nothing", async () => {
   open("lead");
   await ready("lead");
-  const lines = seen().trimEnd().split("\n");
-  expect(lines.at(-2)).toContain("⌥↑↓ move");
-  expect(lines.at(-1)).toContain("⌃Q quit");
+  const lines = seen().split("\n");
+  expect(lines[27]).toContain("⌥↑↓ move");
+  expect(lines[28]).toContain("⌥Q quit");
+  expect(seen()).not.toContain("⌃Q");
   expect(seen()).not.toContain("⌥⇧↑↓");
   expect(seen()).not.toContain("⌥←→");
+  click(5, 29);
   click(5, 30);
   await Bun.sleep(200);
   expect(selected()).toBe("◆ lead");
   expect(keysOpen()).toBe(false);
 });
 
-// The lines inside the box the list of keys draws over the screen, without its sides. None while
-// it is closed.
-function keysBox(): string[] {
-  const lines = seen().split("\n");
-  const top = lines.findIndex((line) => line.includes("┌"));
-  if (top < 0) return [];
-  const left = lines[top]?.indexOf("┌") ?? 0;
-  const right = lines[top]?.indexOf("┐") ?? 0;
-  const bottom = lines.findIndex((line, at) => at > top && line[left] === "└");
-  return lines.slice(top + 1, bottom).map((line) => line.slice(left + 1, right).trimEnd());
+// The rows of keys along the bottom of the right side, below the thin line across it. None while
+// they are closed.
+function keysShown(): string[] {
+  // The capture ends with a newline, which leaves an empty piece after the bottom row.
+  const lines = right().split("\n").slice(0, -1);
+  const line = lines.findIndex((text) => text.startsWith("─".repeat(20)));
+  return line < 0 ? [] : lines.slice(line + 1).map((text) => text.trimEnd());
 }
-const keysOpen = () => keysBox().some((line) => line.trim() !== "");
-// Each line of the list of keys, with its spaces made single.
-const keyLine = (line: string) => line.trim().replace(/\s+/g, " ");
+const keysOpen = () => keysShown().some((line) => line.trim() !== "");
+// Each key shown, as "key to what it does", down the first column, then the next.
+function keyItems(): string[] {
+  const cells = keysShown().map((line) => line.trim().split(/\s{3,}/));
+  const columns = Math.max(0, ...cells.map((row) => row.length));
+  return Array.from({ length: columns }, (_, column) =>
+    cells.flatMap((row) => (row[column] ? [row[column]] : [])),
+  ).flat();
+}
 
-test("? on a list opens the list of keys over it, and Esc closes it", async () => {
+test("? on a list shows the keys in columns along the bottom, and Esc closes them", async () => {
   await openList("Issues");
   type("?");
-  await until(() => keysBox().map(keyLine).includes("Anywhere"), "the list of keys");
-  expect(keysBox().map(keyLine)).toContain("⏎ Open the row");
+  await until(() => keyItems().includes("enter to open a row"), "the list of keys");
+  // The keys end on the bottom row, in more than one column, with no headings.
+  expect((seen().split("\n")[29] ?? "").slice(sidebar + 1).trim()).not.toBe("");
+  expect(keysShown().some((line) => line.trim().split(/\s{3,}/).length > 1)).toBe(true);
+  expect(keyItems()[0]).toBe("alt + ↑/↓ to move in the sidebar");
+  expect(keyItems().at(-1)).toBe("← to go back from a page");
+  expect(right()).not.toContain("Anywhere");
   press("Escape");
   await until(() => !keysOpen(), "the list of keys to close");
   expect(right()).toContain("↑↓ move");
   expect(right()).toContain("app-31");
 });
 
-test("? on a page opens the list of keys, and q closes it on the page as it was", async () => {
+test("? on a page shows the keys, and q or ? closes them on the page as it was", async () => {
   await openIssue();
   type("?");
   await until(keysOpen, "the list of keys");
@@ -1350,16 +1450,21 @@ test("? on a page opens the list of keys, and q closes it on the page as it was"
   await until(() => !keysOpen(), "the list of keys to close");
   expect(right()).toContain("line 1 of the description");
   expect(right()).toContain("← back");
+  type("?");
+  await until(keysOpen, "the list of keys again");
+  type("?");
+  await until(() => !keysOpen(), "the list of keys to close again");
+  expect(right()).toContain("← back");
 });
 
-test("Alt-/ opens the list of keys over an agent, which gets no key while it is open", async () => {
+test("Alt-/ shows the keys over an agent, which gets no key until Alt-/ closes them", async () => {
   keyLoggingLead();
   open("lead");
   await ready("lead");
   type("\x1b/");
   await until(keysOpen, "the list of keys");
   type("x");
-  press("Escape");
+  type("\x1b/");
   await until(() => !keysOpen(), "the list of keys to close");
   type("y");
   await until(() => read("lead.keys").includes("y"), "the agent to get y");
@@ -1375,7 +1480,7 @@ test("plain ? on an agent is the agent's, and opens nothing", async () => {
   expect(keysOpen()).toBe(false);
 });
 
-test("a click on ? keys at the bottom of the sidebar opens the list of keys, and a click closes it", async () => {
+test("a click on ? keys at the bottom of the sidebar shows the keys, and a click on them closes them", async () => {
   open("lead");
   await ready("lead");
   await until(() => seen().includes("? keys"), "the hint");
@@ -1383,44 +1488,46 @@ test("a click on ? keys at the bottom of the sidebar opens the list of keys, and
   const y = lines.findIndex((line) => line.includes("? keys"));
   click((lines[y]?.indexOf("? keys") ?? 0) + 2, y + 1);
   await until(keysOpen, "the list of keys");
-  click(60, 15);
+  click(60, 30);
   await until(() => !keysOpen(), "the list of keys to close");
   expect(seen()).toContain("I am lead");
 });
 
-test("the list of keys has the same keys as sc --help, in the same groups", async () => {
+test("the list of keys has the same keys as sc --help, in the same order", async () => {
   open("lead");
   await ready("lead");
   type("\x1b/");
   await until(keysOpen, "the list of keys");
-  const box = keysBox().map(keyLine).filter(Boolean);
   const run = Bun.spawnSync([process.execPath, source("main.ts"), "--help"], { env: env() });
   const help = run.stdout.toString();
   const keys = help
-    .slice(help.indexOf("\nKEYS: "), help.indexOf("\nEXAMPLES\n"))
+    .slice(help.indexOf("\nKEYS\n") + "\nKEYS\n".length, help.indexOf("\nEXAMPLES\n"))
     .split("\n")
-    .map(keyLine)
-    .filter(Boolean)
+    .filter((line) => line.trim())
     .map((line) =>
-      line.replace(/^KEYS: (\w)(\w*)$/, (_, first, rest) => first + rest.toLowerCase()),
+      line
+        .trim()
+        .split(/\s{2,}/)
+        .join(" to "),
     );
-  expect(box).toEqual(keys);
-  expect(box).toContain("Pages");
-  expect(box).toContain("⌥/ Show the list of keys");
+  expect(keyItems()).toEqual(keys);
+  expect(keyItems()).toContain("alt + b to go back");
 });
 
-test("a terminal shorter than the list of keys scrolls it with Up and Down", async () => {
+test("keys that need more than a third of the pane scroll with Up and Down", async () => {
   open("lead");
   await ready("lead");
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "120", "-y", "12");
   type("\x1b/");
-  await until(() => keysBox().map(keyLine).includes("Anywhere"), "the list of keys");
-  expect(keysBox().map(keyLine)).not.toContain("Pages");
+  await until(() => keyItems().includes("alt + ↑/↓ to move in the sidebar"), "the list of keys");
+  // The agent's pane has ten rows, so the keys have three.
+  expect(keysShown()).toHaveLength(3);
+  expect(keyItems()).not.toContain("← to go back from a page");
   for (let n = 0; n < 25; n++) press("Down");
-  await until(() => keysBox().map(keyLine).includes("Esc ← Go back to the list"), "the end");
-  expect(keysBox().map(keyLine)).not.toContain("Anywhere");
+  await until(() => keyItems().includes("← to go back from a page"), "the end");
+  expect(keyItems()).not.toContain("alt + ↑/↓ to move in the sidebar");
   for (let n = 0; n < 25; n++) press("Up");
-  await until(() => keysBox().map(keyLine).includes("Anywhere"), "the start");
+  await until(() => keyItems().includes("alt + ↑/↓ to move in the sidebar"), "the start");
 });
 
 test("two terminals each get their own session, and leaving one leaves the other", async () => {

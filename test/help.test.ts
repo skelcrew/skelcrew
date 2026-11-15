@@ -116,17 +116,17 @@ test("sc --version answers on a server whose Skelcrew differs from the laptop's"
   expect(seen.out).toStartWith("skelcrew ");
 });
 
-// The screen's keys, written as the sidebar writes them, in the groups the list of keys has.
-test("the help lists the screen's keys, anywhere, in lists and on pages", () => {
+// The screen's keys, in words, as the list of keys shows them.
+test("the help lists the screen's keys, anywhere first, then lists, then pages", () => {
   const out = skel(["--help"]).out;
-  const section = (from: string, to: string) => out.slice(out.indexOf(from), out.indexOf(to));
-  const anywhere = section("\nKEYS: ANYWHERE\n", "\nKEYS: LISTS\n");
-  for (const key of ["⌥↑↓", "⌥⇧↑↓", "⌥←→", "⌥⇧←→", "⌥/", "⌃Q"])
-    expect(anywhere).toContain(`  ${key} `);
-  const lists = section("\nKEYS: LISTS\n", "\nKEYS: PAGES\n");
-  for (const key of ["↑↓", "⏎", "?"]) expect(lists).toContain(`  ${key} `);
-  const pages = section("\nKEYS: PAGES\n", "\nEXAMPLES\n");
-  for (const key of ["↑↓", "Esc ←", "?"]) expect(pages).toContain(`  ${key} `);
+  const keys = out.slice(out.indexOf("\nKEYS\n"), out.indexOf("\nEXAMPLES\n"));
+  const order = ["alt + ↑/↓ ", "alt + b ", "alt + q ", "enter ", "← "].map((key) =>
+    keys.indexOf(`  ${key}`),
+  );
+  expect(order.every((at) => at > 0)).toBe(true);
+  expect([...order].sort((a, b) => a - b)).toEqual(order);
+  expect(out).not.toContain("ctrl + q");
+  expect(out).not.toContain("⌃Q");
 });
 
 test("the help names --version", () => {

@@ -89,11 +89,11 @@ export function drawList(
 }
 
 // What the pane reads: a mouse report, with its button, column and row counted from 1 and
-// whether it is a press, an arrow key, Enter, Esc on its own, and ?. tmux holds Esc a moment, to
-// tell it from the start of another key, then sends it alone.
+// whether it is a press, an arrow key, Enter, and ?. Esc is left out: in an agent it stops its
+// turn, so here it does nothing, or your hand would learn to reach for it to leave an agent.
 const esc = "\x1b";
 const input = new RegExp(
-  `${esc}\\[<(\\d+);(\\d+);(\\d+)([Mm])|${esc}[[O]([ABCD])|(\\r)|(${esc})(?![[O])|(\\?)`,
+  `${esc}\\[<(\\d+);(\\d+);(\\d+)([Mm])|${esc}[[O]([ABCD])|(\\r)|(\\?)`,
   "g",
 );
 // How many lines a notch of the wheel moves, as an agent's history does.
@@ -104,10 +104,12 @@ const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 // Shows an entry's list of the repository named by its owner/name, and the pages opened from it,
 // until the pane goes. `agents` names the agents' tmux server and `session` the screen's session,
 // whose sidebar this tells which page is open, for the strip, and which thread to show. `where`
-// names the remote Skelcrew runs on, and is empty on the machine you sit at.
+// names the remote Skelcrew runs on, and is empty on the machine you sit at. `start` is the
+// session of the thread whose row the list starts on, for Alt-B back from its agent, or empty to
+// start on the first row.
 // Up and Down move a list, and Enter or a click opens a row: an issue's or PR's page here, or a
 // thread's agent, which the sidebar puts in place of this pane. On a page, Up, Down and the
-// wheel scroll, and Esc or Left goes back to the list, on the row you opened. ? opens the list
+// wheel scroll, and Left goes back to the list, on the row you opened. ? opens the list
 // of keys on either. All else you type goes nowhere. It reads the list again each second, and
 // writes only when what shows changed, so a list left open lets a Sprite sleep. A page is read
 // once.
@@ -117,6 +119,7 @@ export async function runPane(
   entry: Entry,
   where: string,
   repository: string,
+  start: string,
 ): Promise<void> {
   const db = openDb();
   const [owner = "", repo = ""] = repository.split("/");
@@ -125,7 +128,10 @@ export async function runPane(
   // name, so a row that moves as the list changes keeps you on it. `top` is the first line
   // shown, as far as the list or page scrolled.
   let groups = listGroups(db, open, entry, Date.now());
-  let here = 0;
+  let here = Math.max(
+    groups.flatMap((group) => group.rows).findIndex((row) => start && row.session === start),
+    0,
+  );
   let top = 0;
   let page: { read: Page; url: string; top: number } | null = null;
   let lastFrame = "";
@@ -250,7 +256,7 @@ export async function runPane(
   process.stdout.write("\x1b[?25l\x1b[?1000h\x1b[?1006h\x1b[?7l");
   // Acts on each key, click and notch of the wheel that came together.
   process.stdin.on("data", (bytes) => {
-    for (const [, button, column, y, press, arrow, enter, alone, question] of bytes
+    for (const [, button, column, y, press, arrow, enter, question] of bytes
       .toString()
       .matchAll(input)) {
       const notch = button === "64" ? -linesPerNotch : button === "65" ? linesPerNotch : 0;
@@ -260,7 +266,7 @@ export async function runPane(
         // A page scrolls, goes back, or follows its link.
         if (arrow === "A" || arrow === "B") page.top += arrow === "A" ? -1 : 1;
         else if (notch) page.top += notch;
-        else if (alone || arrow === "D") back();
+        else if (arrow === "D") back();
         else if (button === "0" && press === "M" && onLink(page, Number(column), Number(y)))
           void openLink(page.url);
         if (page) draw();
@@ -282,7 +288,7 @@ export async function runPane(
   // Draws now, on each resize and, with the list read again, each second, until the pane goes
   // and its input closes. A page is read once, so a page left open writes nothing.
   process.on("SIGWINCH", () => draw(true));
-  draw();
+  draw(true);
   setInterval(() => {
     if (!page) refresh();
   }, 1000);

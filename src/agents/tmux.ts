@@ -11,10 +11,10 @@ export const screenSocket = (agents: string) => `${agents}-screen`;
 
 // Skelcrew's tmux settings. They are sent on stdin with each new session instead of kept in a
 // file, so there is no file to find or keep in step, and a server that outlives an upgrade
-// picks up changes. Your own ~/.tmux.conf never applies: -f /dev/null replaces it. Ctrl-Q with
-// no prefix and no status bar make attaching feel like being inside Claude Code. A session
-// whose command fails keeps its last screen, so Skelcrew can say why it ended instead of
-// finding it gone. tmux only passes synchronized output on to terminals it knows have it, and
+// picks up changes. Your own ~/.tmux.conf never applies: -f /dev/null replaces it. Alt-Q and
+// Ctrl-Q with no prefix and no status bar make attaching feel like being inside Claude Code. A
+// session whose command fails keeps its last screen, so Skelcrew can say why it ended instead
+// of finding it gone. tmux only passes synchronized output on to terminals it knows have it, and
 // without it Claude Code's redraws arrive in pieces, so the prompt flickers over a slow link
 // such as a Sprite's. Terminals without it ignore the codes. That setting has a fixed index,
 // since these settings run again with each new session, and appending would add it every time.
@@ -35,6 +35,7 @@ export const screenSocket = (agents: string) => `${agents}-screen`;
 // in front of this server; a terminal that can't, such as Terminal.app, still sends Enter.
 // tmux hands them on only to an agent that asked for them, as Claude Code and Codex do.
 const tmuxConfig = `set -g status off
+bind -n M-q detach-client
 bind -n C-q detach-client
 set -g remain-on-exit failed
 set -s terminal-features[90] "*:sync:extkeys"
@@ -349,6 +350,12 @@ export const paneWidth = (socket: string, target: string) =>
 // set makes tmux redraw the whole screen, so the sidebar calls this only when the line changed.
 export function showStrip(socket: string, session: string, line: string): void {
   tmux(socket, ["set", "-t", `=${session}:`, "status-format[0]", escapeSemicolon(line)]);
+}
+
+// Sets the bottom row of a session's screen, as tmux's pane-border-format: the footer under the
+// agent. Like the strip, each set redraws the whole screen, so it is set only when it changed.
+export function showFooter(socket: string, session: string, format: string): void {
+  tmux(socket, ["set", "-w", "-t", `=${session}:`, "pane-border-format", format]);
 }
 
 // Returns the session a client on the given terminal is showing, or null while it has none,

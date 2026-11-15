@@ -6,6 +6,7 @@ import { windowTitle } from "../say.ts";
 import { mainFile, singleFile } from "../version.ts";
 import { keyLines } from "./keys.ts";
 import type { Entry } from "./lists.ts";
+import { drawFooter } from "./strip.ts";
 
 // How wide the sidebar is, with the line it draws at its edge: room for 31 columns of a title,
 // between its mark and two columns of padding, so a thread's name, word, harness and time
@@ -34,11 +35,13 @@ const config = [
   ["set", "-g", "set-titles", "on"],
   ["set", "-s", "terminal-overrides[90]", "*:tsl=\\E]2;:fsl=\\007"],
   // All of tmux's own keys go: its default mouse keys pull a drag or the wheel into copy mode,
-  // which would swallow your typing, and its prefix belongs to the agents' server. Ctrl-Q
-  // here, not there, leaves the whole screen.
+  // which would swallow your typing, and its prefix belongs to the agents' server. Alt-Q
+  // here, not there, leaves the whole screen. Ctrl-Q does too, though nothing shows it, for a
+  // Mac terminal that doesn't send Option as Alt.
   ["set", "-g", "prefix", "None"],
   ["set", "-g", "prefix2", "None"],
   ["unbind", "-a", "-T", "root"],
+  ["bind", "-n", "M-q", "detach-client"],
   ["bind", "-n", "C-q", "detach-client"],
   // Keys that arrive faster than a millisecond apart are taken for a paste, and tmux then hands
   // them to the pane you type to rather than act on them. Several Alt keys in one read, as fast
@@ -55,8 +58,10 @@ const config = [
   ["bind", "-n", "M-Right", "send-keys", "-t", ":.0", "M-Right"],
   ["bind", "-n", "M-S-Left", "send-keys", "-t", ":.0", "M-S-Left"],
   ["bind", "-n", "M-S-Right", "send-keys", "-t", ":.0", "M-S-Right"],
-  // Alt-/ goes to the sidebar too, which opens the list of keys, as a click on its hint does.
+  // Alt-/ goes to the sidebar too, which opens the list of keys, as a click on its hint does,
+  // and so does Alt-B, which goes back.
   ["bind", "-n", "M-/", "send-keys", "-t", ":.0", "M-/"],
+  ["bind", "-n", "M-b", "send-keys", "-t", ":.0", "M-b"],
   // A click on the tabs, in a status line, reaches no pane, so tmux types which tab it was
   // into the sidebar, as an OSC naming the tab's range. send-keys -F expands no format in what
   // it types, so run-shell -C expands it first. A second click soon after the first is a
@@ -76,7 +81,7 @@ const config = [
   ["bind", "-n", "WheelUpPane", "send-keys", "-M"],
   ["bind", "-n", "WheelDownPane", "send-keys", "-M"],
   ["set", "-g", "mouse", "on"],
-  // Ends a session as its client goes, by Ctrl-Q or by a terminal or ssh link that drops, and
+  // Ends a session as its client goes, by Alt-Q or by a terminal or ssh link that drops, and
   // the server goes with its last session. It would also end a session made detached, so the
   // session is made attached, in one go.
   ["set", "-g", "destroy-unattached", "on"],
@@ -96,6 +101,11 @@ const config = [
   // still fires the bindings above, and the sidebar and lists, which don't ask, get keys as
   // before.
   ["set", "-s", "extended-keys", "on"],
+  // The bottom row is the footer under the agent, which tmux draws as each pane's border line.
+  // It is always there, so the agent's height doesn't change as a list comes and goes. It
+  // starts blank, with the sidebar's edge, as the sidebar fills it in.
+  ["set", "-g", "pane-border-status", "bottom"],
+  ["set", "-g", "pane-border-format", drawFooter(null)],
   // tmux shares a resize out among panes, so tmux itself sets the sidebar's width back after
   // each, with no process of Skelcrew's to do it.
   ["set-hook", "-g", "window-resized", `resize-pane -t :.0 -x ${sidebarWidth}`],
@@ -131,41 +141,54 @@ const sidebarCommand = (agents: string, session: string, where: string, reposito
 // Returns the command for the right pane while it shows an entry's list of the repository named
 // by its owner/name. It gets the agents' server and the screen's session, to tell the sidebar
 // what it opens, and the remote Skelcrew runs on, which decides whether a click on a page's link
-// opens your browser or copies the link.
+// opens your browser or copies the link. `start` is the session of the thread whose row the list
+// starts on, or empty for its first row.
 export const paneCommand = (
   agents: string,
   session: string,
   entry: Entry,
   where: string,
   repository: string,
-) => skelcrewCommand("list", agents, session, entry, where, repository);
+  start: string,
+) => skelcrewCommand("list", agents, session, entry, where, repository, start);
 
-// Opens the list of keys in a box over the middle of the screen whose session is named. It is a
-// tmux popup, so it draws over the agent without touching it, takes every key while it is open,
-// and leaves the screen as it was when it closes. The box fits its keys, or the terminal when
-// that is smaller, as tmux opens no popup larger than the terminal, and what is cut off
-// scrolls. tmux waits for a popup to close before the command that opened it returns, so it
-// isn't waited for here.
+// Shows the list of keys along the bottom of the right side of the screen whose session is
+// named, over the agent's last rows and its footer, as Claude Code does with ?. It is a tmux
+// popup with no border, so it draws over the agent without touching it, takes every key while
+// it is open, and leaves the screen as it was when it closes. Its first row is a thin line
+// across the pane. It has as many rows as its keys need, up to a third of the pane, and the rest
+// scroll. It is never taller than the terminal, as tmux then opens nothing. tmux waits for a
+// popup to close before the command that opened it returns, so it isn't waited for here.
 export function showKeys(agents: string, session: string): void {
   const socket = screenSocket(agents);
-  // The terminal that has the session open, and its size.
-  const format = "#{client_name} #{client_width} #{client_height}";
+  // The terminal that has the session open, and how many rows it has.
+  const format = "#{client_name} #{client_height}";
   const said = tmux(socket, ["list-clients", "-t", `=${session}:`, "-F", format]).out;
-  const [client, columns = "0", rows = "0"] = said.trim().split(" ");
+  const [client, rows = "0"] = said.trim().split(" ");
   if (!client) return;
-  // The box's border takes a column on each side and a line above and below.
-  const lines = keyLines();
-  const width = Math.min(
-    Math.max(...lines.map((line) => Bun.stringWidth(line))) + 2,
-    Number(columns),
+  // Where the right side is, and how big.
+  const pane = [
+    "display-message",
+    "-p",
+    "-t",
+    `=${session}:.1`,
+    "#{pane_left} #{pane_width} #{pane_height}",
+  ];
+  const [left = "0", width = "0", paneHeight = "0"] = tmux(socket, pane).out.trim().split(" ");
+  if (Number(width) < 1) return;
+  const shown = Math.min(
+    keyLines(Number(width)).length,
+    Math.max(Math.floor(Number(paneHeight) / 3), 1),
   );
-  const height = Math.min(lines.length + 2, Number(rows));
+  const height = Math.min(shown + 1, Number(rows));
   // tmux hands the popup's command to a shell as one line, so each word is quoted.
   const command = skelcrewCommand("keys")
     .map((word) => `'${word.replaceAll("'", "'\\''")}'`)
     .join(" ");
-  const size = ["-w", String(width), "-h", String(height)];
-  const popup = ["display-popup", "-c", client, "-x", "C", "-y", "C", ...size, "-E", command];
+  // tmux places a popup by its bottom row, so the terminal's height puts it at the bottom.
+  const size = ["-w", width, "-h", String(height)];
+  const place = ["-x", left, "-y", rows];
+  const popup = ["display-popup", "-c", client, "-B", ...place, ...size, "-E", command];
   Bun.spawn(["tmux", "-L", socket, "-f", "/dev/null", ...popup], {
     env: envWithoutTmux(),
     stdio: ["ignore", "ignore", "ignore"],
@@ -173,7 +196,7 @@ export function showKeys(agents: string, session: string): void {
 }
 
 // Opens the screen in your terminal on the named agent session. `lead` is the open repository's
-// lead's session and `repository` its owner/name. It returns when you leave with Ctrl-Q, and
+// lead's session and `repository` its owner/name. It returns when you leave with Alt-Q, and
 // prints that your agents keep running. Each terminal gets a screen session of its own, named
 // after this process, which runs as long as the terminal has it open. Agents' sessions are never
 // touched.

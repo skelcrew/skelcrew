@@ -10,6 +10,7 @@ import {
   respawnPane,
   runningSessions,
   screenSocket,
+  showFooter,
   shownSession,
   showSession,
   showStrip,
@@ -26,15 +27,16 @@ import { type EntryCount, entryCounts, pageRow, roundLimit } from "./lists.ts";
 import { nextList, nextRow, rowAtLine } from "./moves.ts";
 import { type Open, type Row, repositoryTabs, sidebarRows } from "./rows.ts";
 import { agentClient, paneCommand, showKeys, sidebarWidth } from "./screen.ts";
-import { drawTop } from "./strip.ts";
+import { drawFooter, drawTop } from "./strip.ts";
 
 // What the sidebar reads: Alt with an arrow as tmux sends it, 3 without Shift and 4 with it,
-// the left button going down, with its column and line on screen, Alt-/, and what the screen's
-// tmux and the right pane type into it as an OSC: a click on a tab, with the tab's place in the
-// row, the page now open on the right, or none, and a thread picked in the list of threads.
+// the left button going down, with its column and line on screen, Alt-/ or Alt-B, and what the
+// screen's tmux and the right pane type into it as an OSC: a click on a tab, with the tab's
+// place in the row, the page now open on the right, or none, and a thread picked in the list of
+// threads.
 const esc = "\x1b";
 const input = new RegExp(
-  `${esc}\\[1;([34])([ABCD])|${esc}\\[<0;(\\d+);(\\d+)M|${esc}(/)|${esc}\\](skel-(?:tab|page|thread));([^\x07]*)\x07`,
+  `${esc}\\[1;([34])([ABCD])|${esc}\\[<0;(\\d+);(\\d+)M|${esc}([/b])|${esc}\\](skel-(?:tab|page|thread));([^\x07]*)\x07`,
   "g",
 );
 // The hint at the bottom of the sidebar that a click opens the list of keys from.
@@ -77,8 +79,11 @@ export async function runSidebar(
   // `page` is the issue or PR whose page is open there, for the strip.
   let shown: string | null = null;
   let page: { name: string; title: string } | null = null;
+  // The thread whose agent shows because you opened it in the list of threads, if it does.
+  let fromList: string | null = null;
   let lastFrame = "";
   let lastStrip = "";
+  let lastFooter = "";
   // The notice's lines, above the rest, which has the height that is left.
   let notice: string[] = [];
   // The lead this sidebar last asked the daemon to start, until it runs, so a lead that can't
@@ -105,7 +110,7 @@ export async function runSidebar(
     tabs = repositoryTabs(db);
     // A repository you removed, or whose lead you exited, has no tab left. The sidebar moves to
     // the tab that took its place, or the one before when it was last. With no tab left, the
-    // screen leaves as Ctrl-Q does.
+    // screen leaves as Alt-Q does.
     const here = before.findIndex((tab) => tab.fullName === `${open.owner}/${open.repo}`);
     if (!tabs.some((tab) => tab.fullName === `${open.owner}/${open.repo}`)) {
       const next = tabs[Math.min(Math.max(here, 0), tabs.length - 1)];
@@ -150,6 +155,13 @@ export async function runSidebar(
       lastStrip = top;
       showStrip(screenSocket(agents), session, top);
     }
+    // The footer below the agent, blank under a list or page, also only when it changed.
+    const agent = isEntry(shown) ? null : (rows.find((row) => row.session === shown) ?? null);
+    const footer = drawFooter(agent);
+    if (footer !== lastFooter) {
+      lastFooter = footer;
+      showFooter(screenSocket(agents), session, footer);
+    }
     // Then the sidebar itself, the notice above the rest, also only when it changed.
     const frame = [...notice, draw(rows, entries, shown, size())].join("\n");
     if (frame === lastFrame) return;
@@ -162,7 +174,8 @@ export async function runSidebar(
   // can't switch yet: keys pressed together when leaving a list would be lost. Landing on the
   // entry whose page shows goes back to its list, on the row you opened. Landing anywhere else
   // you are does nothing, so a list isn't started again.
-  const show = (next: string | null) => {
+  // `start` is the thread whose row a list starts on, for going back to the list of threads.
+  const show = (next: string | null, start = "") => {
     if (next === null) return;
     if (next === shown) {
       if (page && isEntry(next)) tmux(screenSocket(agents), ["send-keys", "-t", rightPane, "Left"]);
@@ -176,7 +189,7 @@ export async function runSidebar(
       respawnPane(
         screenSocket(agents),
         rightPane,
-        paneCommand(agents, session, entry.entry, where, fullName),
+        paneCommand(agents, session, entry.entry, where, fullName, start),
       );
     else if (isEntry(shown) || shownSession(agents, tty) === null) {
       respawnPane(screenSocket(agents), rightPane, agentClient(agents, next, open.lead));
@@ -184,6 +197,17 @@ export async function runSidebar(
     } else showSession(agents, tty, next);
     page = null;
     shown = next;
+    fromList = null;
+  };
+  // Goes back, for Alt-B. A page goes back to its list, as Left does, and a list has nowhere to
+  // go. An agent goes to the list of threads: on its row when that list opened it, and on the
+  // first row from the lead or a thread picked in the sidebar.
+  const back = () => {
+    if (isEntry(shown)) {
+      if (page) tmux(screenSocket(agents), ["send-keys", "-t", rightPane, "Left"]);
+      return;
+    }
+    show(entryPlace("threads"), fromList !== null && fromList === shown ? fromList : "");
   };
   // Opens another repository: its sidebar on the left at once, and its lead on the right, which
   // the daemon starts then if it never has. The client on the right tries again each second
@@ -222,8 +246,9 @@ export async function runSidebar(
   // Acts on each key and click that came together, then redraws. A click on a row picks it by
   // its line, counted from the top, below the notice.
   process.stdin.on("data", (bytes) => {
-    for (const [, kind, arrow, x, y, slash, said, about = ""] of bytes.toString().matchAll(input)) {
-      if (slash || (x && y && onKeysHint(Number(x), Number(y)))) {
+    for (const [, kind, arrow, x, y, alt, said, about = ""] of bytes.toString().matchAll(input)) {
+      if (alt === "b") back();
+      else if (alt === "/" || (x && y && onKeysHint(Number(x), Number(y)))) {
         // Alt-/, or a click on its hint, opens the list of keys over the screen.
         showKeys(agents, session);
       } else if (said === "skel-page") {
@@ -232,7 +257,11 @@ export async function runSidebar(
       } else if (said === "skel-thread") {
         // A thread picked in the list of threads shows as picking it in ACTIVE does, while its
         // agent runs.
-        if (rows.some((row) => row.session === about && row.running)) show(about);
+        // Alt-B then goes back to the list, on its row.
+        if (rows.some((row) => row.session === about && row.running)) {
+          show(about);
+          fromList = about;
+        }
       } else if (said === "skel-tab" || arrow === "C" || arrow === "D") {
         // A click on a tab, or Alt-Right or Alt-Left for the tab after or before, with or
         // without Shift. Ghostty on a Mac turns Alt-Left and Alt-Right into word jumps, so

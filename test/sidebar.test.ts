@@ -22,6 +22,7 @@ const row = {
   needsYou: false,
   running: true,
   harness: "claude",
+  agentHarness: "claude",
   age: "",
   fullName: null,
 } satisfies Partial<Row>;
@@ -375,7 +376,7 @@ test("the grey stops at the line, which keeps its own background", () => {
 test("two hints with the keys stay at the bottom, below however few rows there are", () => {
   const lines = read(draw([lead], "lead", size));
   expect(lines).toHaveLength(size.height);
-  expect(lines.slice(-3)).toEqual(["", "  ⌥↑↓ move", "  ⌃Q quit  ? keys"]);
+  expect(lines.slice(-3)).toEqual(["", "  ⌥↑↓ move", "  ⌥Q quit  ? keys"]);
   expect(draw([lead], "lead", size)).toContain("\x1b[90m  ⌥↑↓ move");
 });
 
@@ -401,7 +402,7 @@ test("a list too long for the sidebar scrolls above the hints, and never runs in
     "    app-4 · working · claude",
     "  ● app-5",
     "  ⌥↑↓ move",
-    "  ⌃Q quit  ? keys",
+    "  ⌥Q quit  ? keys",
   ]);
 });
 
