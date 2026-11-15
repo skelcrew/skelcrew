@@ -150,16 +150,19 @@ async function machineCommand(args: string[]): Promise<void> {
   usage(command);
 }
 
-// Runs a part of the screen: the sidebar, a list and its pages on the right, or the list of
-// keys in its popup. The screen starts these, not people, so usage leaves them out.
+// Runs a part of the screen: the sidebar, a list and its pages on the right, or the footer
+// across the bottom. The screen starts these, not people, so usage leaves them out.
 async function screenCommand(args: string[]): Promise<void> {
   const [command, ...rest] = args;
   const { runPane } = await import("./screen/pane.ts");
   const { runSidebar } = await import("./screen/sidebar.ts");
-  const { runKeys } = await import("./screen/keys.ts");
-  if (command === "keys" && rest.length === 0) {
-    await runKeys();
-    return;
+  const { runFooter } = await import("./screen/footer.ts");
+  if (command === "footer" && rest.length === 2) {
+    const [agents, session] = rest;
+    if (agents && session) {
+      await runFooter(agents, session);
+      return;
+    }
   }
   // `where` is the remote Skelcrew runs on, and empty on this machine, so check it against
   // undefined, as is a list's `start`, empty when it starts on its first row.
@@ -445,10 +448,10 @@ async function runCommand(args: string[]): Promise<void> {
     console.log(versionLine());
     return;
   }
-  // Sidebars, lists and the list of keys skip the out-of-date check. The Skelcrew that started
+  // Sidebars, lists and footers skip the out-of-date check. The Skelcrew that started
   // them already passed it, and tmux may hand them another laptop's build, which would make them
   // refuse.
-  const onScreen = command === "sidebar" || command === "list" || command === "keys";
+  const onScreen = command === "sidebar" || command === "list" || command === "footer";
   if (!onScreen && outOfDate()) process.exit(outdated);
   if (args.length === 1 && ["--help", "-h", "help"].includes(command ?? "")) {
     console.log(help());
@@ -509,7 +512,7 @@ async function runCommand(args: string[]): Promise<void> {
       return machineCommand(words);
     case "sidebar":
     case "list":
-    case "keys":
+    case "footer":
       return screenCommand(words);
     case "repo":
     case "init":

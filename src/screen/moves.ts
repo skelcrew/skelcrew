@@ -14,7 +14,7 @@ type Stop = { place: string; open: boolean };
 function stops(rows: Row[], entries: EntryCount[], shown: string | null, size: Size): Stop[][] {
   // The lead and every row of ACTIVE are stops, open only while their agent runs. The lead has
   // no status of its own. An entry always has its list to show.
-  const { lines } = layout(rows, entries, shown, size);
+  const lines = layout(rows, entries, shown, size);
   const seen = entries
     .map((entry) => entryPlace(entry.entry))
     .filter((place) => lines.some((line) => line.place === place));
@@ -78,7 +78,7 @@ export function rowAtLine(
 ): string | null {
   // The line clicked, in the layout drawn now. An entry's line always picks it, and a row's
   // line its agent, only while that runs.
-  const place = layout(rows, entries, shown, size).lines[y]?.place;
+  const place = layout(rows, entries, shown, size)[y]?.place;
   const row = rows.find((candidate) => candidate.session === place);
   return row ? (row.running ? row.session : null) : (place ?? null);
 }

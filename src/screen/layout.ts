@@ -1,5 +1,5 @@
 // The sidebar as lines for its pane: the lead's row on top, then the entries Issues, Threads and
-// PRs, then ACTIVE, and the keys at the bottom. It reads nothing, so what you see can be tested
+// PRs, then ACTIVE. It reads nothing, so what you see can be tested
 // without a terminal.
 import type { Entry, EntryCount } from "./lists.ts";
 import {
@@ -31,10 +31,6 @@ const rowHeight = 2;
 // once the line at its edge, the mark and the padding on each side are taken. sc ps cuts a title
 // to the same room, so it reads as the sidebar shows it.
 export const titleRoom = (width: number) => Math.max(width - 1 - indent.length - pad.length, 0);
-// The keys you need most, at the bottom of the sidebar. The others are in the list of keys,
-// which a click on its hint opens, and in Skelcrew's help.
-const hints = [`${pad}⌥↑↓ move`, `${pad}⌥Q quit  ? keys`];
-
 // Returns the place that names an entry where the sidebar names a row by its session. tmux
 // changes a : in a session's name, so no session can be named so.
 export const entryPlace = (entry: Entry) => `:${entry}`;
@@ -108,9 +104,7 @@ function scrolled(blocks: Line[][], here: number, room: number): Line[] {
   return blocks.slice(first).flat().slice(0, room);
 }
 
-// Returns the lines above the hints, and how many there can be. The hints take the bottom lines
-// unless that leaves no room for the whole row you are looking at. Then they give way, as the
-// rows are what you pick from and the keys are also in Skelcrew's help.
+// Returns the sidebar's lines, as many as its height holds at most.
 // The lead's row comes first, then the entries, then ACTIVE, which has the rest of the height
 // and scrolls in it. A terminal may be too short for the lead, the entries, ACTIVE's heading and
 // the row you are on. Then the entries and the heading go, and the lead and the threads fill the
@@ -120,14 +114,16 @@ export function layout(
   entries: EntryCount[],
   shown: string | null,
   size: Size,
-): { lines: Line[]; room: number } {
+): Line[] {
   // A blank line comes first, so the lead's row, grey when you look at it, doesn't touch the
-  // header above the sidebar and read as part of it. Clicks find rows in these same lines. Like
-  // the hints, it gives way on a sidebar too short for it and the whole row you are looking at,
-  // which is two lines.
+  // header above the sidebar and read as part of it. Clicks find rows in these same lines. It
+  // gives way on a sidebar too short for it and the whole row you are looking at, which is two
+  // lines.
   if (size.height <= rowHeight) return layoutBelowBlank(rows, entries, shown, size);
-  const below = layoutBelowBlank(rows, entries, shown, { ...size, height: size.height - 1 });
-  return { lines: [{ text: "" }, ...below.lines], room: below.room + 1 };
+  return [
+    { text: "" },
+    ...layoutBelowBlank(rows, entries, shown, { ...size, height: size.height - 1 }),
+  ];
 }
 
 // Lays out the lines below the blank line at the sidebar's top, as layout describes.
@@ -136,15 +132,13 @@ function layoutBelowBlank(
   entries: EntryCount[],
   shown: string | null,
   size: Size,
-): { lines: Line[]; room: number } {
-  // Every row's lines. The hints keep the bottom lines only while the row you are looking at
-  // still fits above them.
+): Line[] {
+  // Every row's lines.
   const width = size.width - 1;
   const linesOf = (row: Row) =>
     rowLines(row, row.session === shown, width).map((text) => ({ text, place: row.session }));
   const blocks = rows.map(linesOf);
   const here = rows.findIndex((row) => row.session === shown);
-  const room = size.height >= rowHeight + hints.length ? size.height - hints.length : size.height;
   // The lead is the row with no status of its own, and ACTIVE has the rest. Its heading says
   // Active, as Threads would repeat the entry above it.
   const lead = rows.filter((row) => row.status === null).flatMap(linesOf);
@@ -166,11 +160,9 @@ function layoutBelowBlank(
   ];
   // Too short for all of that and the row you are on, or a row when you are on none of them:
   // the lead and the threads alone.
-  const left = room - top.length;
-  if (left < (threads.length > 0 ? rowHeight : 0))
-    return { lines: scrolled(blocks, here, room), room };
-  const below = scrolled(threads.map(linesOf), Math.max(shownThread, 0), left);
-  return { lines: [...top, ...below], room };
+  const left = size.height - top.length;
+  if (left < (threads.length > 0 ? rowHeight : 0)) return scrolled(blocks, here, size.height);
+  return [...top, ...scrolled(threads.map(linesOf), Math.max(shownThread, 0), left)];
 }
 
 // Returns the whole sidebar as lines, given the rows, the entries, what is on the right, as a
@@ -178,16 +170,9 @@ function layoutBelowBlank(
 // can be tested without a terminal. Every line fills the pane and ends with the sidebar's edge,
 // in the last column. tmux's own border beside it is blank, which leaves a gap before the agent.
 export function draw(rows: Row[], entries: EntryCount[], shown: string | null, size: Size): string {
-  // The hints are cut to the sidebar's width, and come below the rest only when the layout left
-  // room for them.
-  const { lines, room } = layout(rows, entries, shown, size);
   const width = size.width - 1;
-  const keys = hints.map((hint) => ({
-    text: paint(grey, hint.slice(0, Math.max(width - pad.length, 0))),
-  }));
-  const all: Line[] = [...padded(lines, room), ...(room < size.height ? keys : [])];
   // Each line is filled out to the edge, which a divider meets with a ┤.
-  return all
+  return padded(layout(rows, entries, shown, size), size.height)
     .map(({ text, joins }) => `${filled(text, width)}${paint(edge, joins ? "┤" : "│")}`)
     .join("\n");
 }
