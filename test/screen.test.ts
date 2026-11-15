@@ -877,7 +877,7 @@ test("Up and Down move in the list, and Enter opens the issue's page, which fill
   expect(selected()).toContain("Issues");
 });
 
-test("Esc or Left goes back from a page to its list, on the row you opened", async () => {
+test("Left goes back from a page to its list, on the row you opened", async () => {
   await openList("Issues");
   press("Down");
   press("Enter");
@@ -889,11 +889,30 @@ test("Esc or Left goes back from a page to its list, on the row you opened", asy
   press("Enter");
   await onRight("← back");
   expect(right()).toContain("Fix login");
-  press("Escape");
+  press("Up");
+  press("Left");
   await onRight("↑↓ move");
   press("Up");
   press("Enter");
   await onRight("line 1 of the description");
+});
+
+// In an agent Esc stops its turn, so Esc going back on a page would teach your hand to reach for
+// it to leave an agent too. An Esc takes about half a second to arrive through the terminals, so
+// each wait is longer than that.
+test("Esc does nothing on a list or a page", async () => {
+  await openList("Issues");
+  press("Down");
+  press("Escape");
+  await Bun.sleep(1500);
+  expect(right()).toContain("↑↓ move");
+  expect(selected()).toContain("Issues");
+  press("Enter");
+  await onRight("← back");
+  press("Escape");
+  await Bun.sleep(1500);
+  expect(right()).toContain("← back");
+  expect(right()).toContain("Fix login");
 });
 
 test("a click on a row opens it, and a click on its entry goes back to the list", async () => {
@@ -1415,7 +1434,7 @@ test("a terminal shorter than the list of keys scrolls it with Up and Down", asy
   await until(() => keysBox().map(keyLine).includes("Anywhere"), "the list of keys");
   expect(keysBox().map(keyLine)).not.toContain("Pages");
   for (let n = 0; n < 25; n++) press("Down");
-  await until(() => keysBox().map(keyLine).includes("Esc ← Go back to the list"), "the end");
+  await until(() => keysBox().map(keyLine).includes("← Go back to the list"), "the end");
   expect(keysBox().map(keyLine)).not.toContain("Anywhere");
   for (let n = 0; n < 25; n++) press("Up");
   await until(() => keysBox().map(keyLine).includes("Anywhere"), "the start");

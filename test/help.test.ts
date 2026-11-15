@@ -126,7 +126,7 @@ test("the help lists the screen's keys, anywhere, in lists and on pages", () => 
   const lists = section("\nKEYS: LISTS\n", "\nKEYS: PAGES\n");
   for (const key of ["↑↓", "⏎", "?"]) expect(lists).toContain(`  ${key} `);
   const pages = section("\nKEYS: PAGES\n", "\nEXAMPLES\n");
-  for (const key of ["↑↓", "Esc ←", "?"]) expect(pages).toContain(`  ${key} `);
+  for (const key of ["↑↓", "←", "?"]) expect(pages).toContain(`  ${key} `);
 });
 
 test("the help names --version", () => {

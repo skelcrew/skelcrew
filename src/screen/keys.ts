@@ -28,7 +28,7 @@ export const keyGroups: [string, [string, string][]][] = [
     "Pages",
     [
       ["↑↓", "Scroll"],
-      ["Esc ←", "Go back to the list"],
+      ["←", "Go back to the list"],
       ["?", "Show the list of keys"],
     ],
   ],
