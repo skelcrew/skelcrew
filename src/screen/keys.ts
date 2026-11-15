@@ -12,6 +12,7 @@ export const keyGroups: [string, [string, string][]][] = [
       ["⌥⇧↑↓", "Jump to the lead, the lists or the threads"],
       ["⌥←→", "Switch to the repository before or after"],
       ["⌥⇧←→", "The same, where ⌥←→ jumps words"],
+      ["⌥B", "Go back"],
       ["⌥/", "Show the list of keys"],
       ["⌥Q", "Leave the screen, with your agents still running"],
     ],

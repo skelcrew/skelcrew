@@ -946,6 +946,43 @@ test("Enter on a thread in the list of threads shows its agent, and the sidebar 
   await until(() => read("app-12.typed").includes("from the list"), "what you typed");
 });
 
+test("Alt-B from an agent opened in the list of threads goes back to the list, on its row", async () => {
+  await openList("Threads");
+  await onRight("Working");
+  press("Down");
+  press("Enter");
+  await until(() => seen().includes("I am app-7"), "the agent");
+  press("M-b");
+  await onRight("↑↓ move");
+  expect(selected()).toContain("Threads");
+  press("Enter");
+  await until(() => seen().includes("I am app-7"), "the same agent again");
+});
+
+test("Alt-B from the lead, or a thread picked in the sidebar, goes to the list of threads", async () => {
+  openOnGitHub();
+  open("lead");
+  await ready("lead");
+  press("M-b");
+  await onRight("Working");
+  expect(selected()).toContain("Threads");
+  toSecondThread();
+  await until(() => seen().includes("I am app-7"), "the second thread");
+  press("M-b");
+  await onRight("Working");
+  // The list starts on its first row, as landing on it from elsewhere does.
+  press("Enter");
+  await until(() => seen().includes("I am app-12"), "the first row's agent");
+});
+
+test("Alt-B on a page goes back to its list, as Left does", async () => {
+  await openIssue();
+  press("M-b");
+  await onRight("↑↓ move");
+  await until(() => !tabRow().includes("Add CSV"), "the strip to go");
+  expect(selected()).toContain("Issues");
+});
+
 test("a stopped thread is listed under Stopped, and opening it does nothing", async () => {
   sql("UPDATE threads SET status = 'stopped' WHERE task = 7");
   await openList("Threads");

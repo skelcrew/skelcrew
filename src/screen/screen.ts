@@ -57,8 +57,10 @@ const config = [
   ["bind", "-n", "M-Right", "send-keys", "-t", ":.0", "M-Right"],
   ["bind", "-n", "M-S-Left", "send-keys", "-t", ":.0", "M-S-Left"],
   ["bind", "-n", "M-S-Right", "send-keys", "-t", ":.0", "M-S-Right"],
-  // Alt-/ goes to the sidebar too, which opens the list of keys, as a click on its hint does.
+  // Alt-/ goes to the sidebar too, which opens the list of keys, as a click on its hint does,
+  // and so does Alt-B, which goes back.
   ["bind", "-n", "M-/", "send-keys", "-t", ":.0", "M-/"],
+  ["bind", "-n", "M-b", "send-keys", "-t", ":.0", "M-b"],
   // A click on the tabs, in a status line, reaches no pane, so tmux types which tab it was
   // into the sidebar, as an OSC naming the tab's range. send-keys -F expands no format in what
   // it types, so run-shell -C expands it first. A second click soon after the first is a
@@ -133,14 +135,16 @@ const sidebarCommand = (agents: string, session: string, where: string, reposito
 // Returns the command for the right pane while it shows an entry's list of the repository named
 // by its owner/name. It gets the agents' server and the screen's session, to tell the sidebar
 // what it opens, and the remote Skelcrew runs on, which decides whether a click on a page's link
-// opens your browser or copies the link.
+// opens your browser or copies the link. `start` is the session of the thread whose row the list
+// starts on, or empty for its first row.
 export const paneCommand = (
   agents: string,
   session: string,
   entry: Entry,
   where: string,
   repository: string,
-) => skelcrewCommand("list", agents, session, entry, where, repository);
+  start: string,
+) => skelcrewCommand("list", agents, session, entry, where, repository, start);
 
 // Opens the list of keys in a box over the middle of the screen whose session is named. It is a
 // tmux popup, so it draws over the agent without touching it, takes every key while it is open,

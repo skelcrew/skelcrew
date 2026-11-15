@@ -104,7 +104,9 @@ const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 // Shows an entry's list of the repository named by its owner/name, and the pages opened from it,
 // until the pane goes. `agents` names the agents' tmux server and `session` the screen's session,
 // whose sidebar this tells which page is open, for the strip, and which thread to show. `where`
-// names the remote Skelcrew runs on, and is empty on the machine you sit at.
+// names the remote Skelcrew runs on, and is empty on the machine you sit at. `start` is the
+// session of the thread whose row the list starts on, for Alt-B back from its agent, or empty to
+// start on the first row.
 // Up and Down move a list, and Enter or a click opens a row: an issue's or PR's page here, or a
 // thread's agent, which the sidebar puts in place of this pane. On a page, Up, Down and the
 // wheel scroll, and Left goes back to the list, on the row you opened. ? opens the list
@@ -117,6 +119,7 @@ export async function runPane(
   entry: Entry,
   where: string,
   repository: string,
+  start: string,
 ): Promise<void> {
   const db = openDb();
   const [owner = "", repo = ""] = repository.split("/");
@@ -125,7 +128,10 @@ export async function runPane(
   // name, so a row that moves as the list changes keeps you on it. `top` is the first line
   // shown, as far as the list or page scrolled.
   let groups = listGroups(db, open, entry, Date.now());
-  let here = 0;
+  let here = Math.max(
+    groups.flatMap((group) => group.rows).findIndex((row) => start && row.session === start),
+    0,
+  );
   let top = 0;
   let page: { read: Page; url: string; top: number } | null = null;
   let lastFrame = "";
@@ -282,7 +288,7 @@ export async function runPane(
   // Draws now, on each resize and, with the list read again, each second, until the pane goes
   // and its input closes. A page is read once, so a page left open writes nothing.
   process.on("SIGWINCH", () => draw(true));
-  draw();
+  draw(true);
   setInterval(() => {
     if (!page) refresh();
   }, 1000);
