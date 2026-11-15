@@ -67,7 +67,8 @@ export function writeSent(file: string, setup: Setup, remote: string | null): vo
 // Takes the setup the laptop sent, for sc take-setup on a server or Sprite. config.yaml and the
 // token become the laptop's. Each plugin is installed, or moved, to the laptop's version without
 // asking, as you trusted it there, and its setup runs here in your terminal so it signs in on its
-// own. A plugin gone from the laptop goes here too, and one from a folder here stays.
+// own. A plugin gone from the laptop goes here too, and one from a folder here stays. A plugin is
+// matched by its name and the repository it came from, as that repository's code is what runs.
 export async function takeSetup(): Promise<void> {
   const file = sentFile();
   let sent: z.infer<typeof Sent>;
@@ -94,7 +95,10 @@ export async function takeSetup(): Promise<void> {
     try {
       removePlugin(plugin.name);
     } catch (error) {
-      console.log(`Couldn't remove ${plugin.name}, as on your laptop: ${errorText(error)}`);
+      const what = keep
+        ? `replace ${plugin.name} from ${plugin.source} here with the one from ${keep.source} on your laptop`
+        : `remove ${plugin.name} here, as on your laptop`;
+      console.log(`Skelcrew couldn't ${what}: ${errorText(error)}. Your command still runs.`);
     }
   }
   for (const { name, source, version } of sent.plugins) {
@@ -104,6 +108,9 @@ export async function takeSetup(): Promise<void> {
       throw new Error(
         `${name} here is installed from a folder, so the one on your laptop can't be: sc plugin rm ${name} here first`,
       );
+    // One from another repository that couldn't be removed above is never moved to the
+    // laptop's version, which would run code from a repository you didn't pick.
+    else if (here.source !== source) continue;
     else if (readManifest(here.folder).version !== version)
       updatePlugin(db, here, `v${version}`, sent.remote);
   }

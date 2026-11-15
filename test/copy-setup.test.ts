@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 import { git, source } from "./harness.ts";
 
 let root = "";
@@ -63,12 +64,12 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-// Puts a plugin named fake on the fake GitHub as owner/fake, with a commit and a tag for each
+// Puts a plugin named fake on the fake GitHub as owner/<repo>, with a commit and a tag for each
 // version. Its setup says it ran, and leaves a sign-in of the machine it ran on. `machine` makes
 // it a machine plugin, which belongs on the laptop.
-function publish(versions: string[], machine = false): void {
+function publish(versions: string[], machine = false, repo = "fake"): void {
   const jobs = machine ? '[machine]\nadd: ["true"]\nexec: ["true"]\npush: ["true"]' : "[tracker]";
-  const folder = join(root, "github", "owner", "fake");
+  const folder = join(root, "github", "owner", repo);
   mkdirSync(folder, { recursive: true });
   for (const version of versions) {
     writeFileSync(
@@ -122,6 +123,14 @@ const calls = () =>
   existsSync(join(root, "calls")) ? readFileSync(join(root, "calls"), "utf8") : "";
 const serverFile = (file: string) => readFileSync(join(serverConfig(), file), "utf8");
 const serverPlugins = async () => (await skel(server(), ["plugin", "ls"])).out;
+// Returns the repository each plugin on the server came from, by name.
+const serverSources = async () =>
+  Object.fromEntries(
+    z
+      .array(z.object({ name: z.string(), from: z.string() }))
+      .parse(JSON.parse((await skel(server(), ["plugin", "ls", "--json"])).out))
+      .map((plugin) => [plugin.name, plugin.from]),
+  );
 
 test("the first sc --remote copies your config, token and plugins, and runs each plugin's setup there", async () => {
   setUpLaptop();
@@ -193,6 +202,38 @@ test("a plugin installed from a folder isn't copied", async () => {
   await remote("ps");
   expect(serverFile("config.yaml")).toBe("harness: claude\n");
   expect(await serverPlugins()).toBe("No plugins installed.\n");
+});
+
+// A plugin is the code of the repository it came from, so one of the same name from another
+// repository is never kept or updated in its place.
+test("a plugin there of the same name from another repository is replaced by the laptop's", async () => {
+  setUpLaptop();
+  publish(["0.1.0"]);
+  publish(["0.1.0"], false, "other");
+  await skel(laptop(), ["plugin", "install", "owner/fake"], "\n");
+  expect((await skel(server(), ["plugin", "install", "owner/other"], "\n")).code).toBe(0);
+  await remote("ps");
+  expect(await serverSources()).toEqual({ fake: "owner/fake" });
+});
+
+test("a plugin there from another repository that is a forge stays, says so, and isn't updated", async () => {
+  setUpLaptop();
+  publish(["0.1.0"]);
+  publish(["0.1.0", "0.2.0"], false, "other");
+  await skel(laptop(), ["plugin", "install", "owner/fake"], "\n");
+  await skel(server(), ["plugin", "install", "owner/other"], "\n");
+  // The server's plugin is the forge of a repository there, so it can't be removed.
+  const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+openDb().run("INSERT INTO repositories (owner, repo, name, forge) VALUES ('simon', 'app', 'app', 'fake')");`;
+  const env = { HOME: server(), PATH: "/usr/bin:/bin" };
+  expect(Bun.spawnSync([process.execPath, "-e", code], { env }).success).toBe(true);
+  const run = await remote("ps");
+  expect(run.out).toContain(
+    "Skelcrew couldn't replace fake from owner/other here with the one from owner/fake on your laptop",
+  );
+  expect(run.out).toContain("Your command still runs.");
+  expect(await serverSources()).toEqual({ fake: "owner/other" });
+  expect(await serverPlugins()).toBe("fake 0.2.0 tracker\n");
 });
 
 test("a machine plugin stays on the laptop", async () => {
