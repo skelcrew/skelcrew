@@ -175,8 +175,14 @@ function refuseInstalled(db: Database, name: string): void {
 // GitHub repository's newest version tag, or a path to a folder of yours, used where it is. It
 // warns that the plugin runs outside the sandbox and asks first. Then it runs the plugin's build
 // and setup, handing them `remote`, the checkout's remote. When sc offered to install a plugin
-// from GitHub, you said yes already, so `ask` is false and it only says what it installs.
-export function installPlugin(given: string, remote = originHere(), ask = true): void {
+// from GitHub, or the laptop's setup brings it, you said yes already, so `ask` is false and it
+// only says what it installs. `tag` picks the version, such as v0.1.0, in place of the newest.
+export function installPlugin(
+  given: string,
+  remote = originHere(),
+  ask = true,
+  tag?: string,
+): void {
   const db = openDb();
   const isPath = given.startsWith(".") || given.startsWith("/");
   // A folder of yours is used where it is, found by its real path so a link that moves later
@@ -203,7 +209,7 @@ export function installPlugin(given: string, remote = originHere(), ask = true):
   if (!/^[\w.][\w.-]*\/[\w.-]+$/.test(given))
     throw new Error(`${given} is neither a folder, such as ./skelcrew-linear, nor owner/repo`);
   // Nothing of the clone runs before the checks and your yes.
-  const { staged, manifest } = cloneTag(given, newestTag(given));
+  const { staged, manifest } = cloneTag(given, tag ?? newestTag(given));
   try {
     refuseInstalled(db, manifest.name);
     checkSkelcrewVersion(manifest);
@@ -240,8 +246,14 @@ export function installPlugin(given: string, remote = originHere(), ask = true):
 
 // Updates one plugin. One from a folder is built again from it, so your edits count. One from
 // GitHub moves to its newest version tag, after warning and asking, as installing
-// does, and its old version's folder goes.
-function updatePlugin(db: Database, plugin: Plugin): void {
+// does, and its old version's folder goes. With `wanted`, a tag such as v0.1.0, it moves there
+// instead without asking, older or newer, as the laptop's setup brings it and you said yes there.
+export function updatePlugin(
+  db: Database,
+  plugin: Plugin,
+  wanted?: string,
+  remote = originHere(),
+): void {
   const { name, folder, source } = plugin;
   const current = readManifest(folder);
   // A folder of yours gets only its build again. Its setup is for sc plugin setup.
@@ -250,8 +262,8 @@ function updatePlugin(db: Database, plugin: Plugin): void {
     console.log(`Built ${name} ${current.version} again from ${folder}.`);
     return;
   }
-  const tag = newestTag(source);
-  if (!newer(tag.slice(1), current.version)) {
+  const tag = wanted ?? newestTag(source);
+  if (!wanted && !newer(tag.slice(1), current.version)) {
     console.log(`${name} is at its newest version, ${current.version}.`);
     return;
   }
@@ -260,7 +272,7 @@ function updatePlugin(db: Database, plugin: Plugin): void {
     if (manifest.name !== name)
       throw new Error(`${source} now names its plugin ${manifest.name}, not ${name}`);
     checkSkelcrewVersion(manifest);
-    if (!confirmPlugin(manifest, source, "Update")) {
+    if (!wanted && !confirmPlugin(manifest, source, "Update")) {
       console.log(`Skelcrew didn't update ${name}.`);
       return;
     }
@@ -270,7 +282,7 @@ function updatePlugin(db: Database, plugin: Plugin): void {
     rmSync(newFolder, { recursive: true, force: true });
     renameSync(staged, newFolder);
     try {
-      buildAndSetUp(manifest, newFolder, true, originHere());
+      buildAndSetUp(manifest, newFolder, true, remote);
     } catch (error) {
       rmSync(newFolder, { recursive: true, force: true });
       throw error;

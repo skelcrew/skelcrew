@@ -26,9 +26,12 @@ let laptop = { folder: "", main: "", commit: "" };
 // can see that each one arrived exactly as typed. Built with a commit, it stops as a copied
 // Skelcrew does when the laptop's build differs. Without one, it is a Skelcrew from before builds
 // carried their commit. On a server whose first run hasn't finished, it runs nothing but the
-// first run, which finishes it.
+// first run, which finishes it. Until it takes the laptop's setup, it stops on a laptop that
+// has one, as a copied Skelcrew does when its setup differs.
 const serverSkel = (built?: string) => `#!/bin/sh
-${built === undefined ? "" : `test -n "$SKELCREW_LAPTOP_BUILD" && test "$SKELCREW_LAPTOP_BUILD" != "${built}" && { echo "Skelcrew on $SKELCREW_REMOTE_NAME is from ${built}"; exit 98; }\n`}test "$1" = first-run && { echo "the first run on the server"; rm -f first-run-unfinished; test ! -f first-run-fails; exit; }
+${built === undefined ? "" : `test -n "$SKELCREW_LAPTOP_BUILD" && test "$SKELCREW_LAPTOP_BUILD" != "${built}" && { echo "Skelcrew on $SKELCREW_REMOTE_NAME is from ${built}"; exit 98; }\n`}test -n "$SKELCREW_LAPTOP_SETUP" && test ! -f setup-taken && exit 96
+test "$1" = take-setup && { echo "took the laptop's setup"; cp .config/skelcrew/laptop-setup.json setup-taken; exit; }
+test "$1" = first-run && { echo "the first run on the server"; rm -f first-run-unfinished; test ! -f first-run-fails; exit; }
 test -f first-run-unfinished && exit 97
 echo "Skelcrew on the server got $# arguments"
 for word in "$@"; do echo "[$word]"; done
@@ -537,6 +540,29 @@ test("sc remote add copies Skelcrew to a server, runs the first run, and prints 
   expect(readFileSync(join(home, "server", ".local", "bin", "sc"), "utf8")).toBe(
     serverSkel(laptop.commit),
   );
+});
+
+test("sc remote add copies your setup there before the first run", async () => {
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\n");
+  const run = await skel(["remote", "add", "simon@workbox"]);
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("took the laptop's setup\nthe first run on the server\n");
+  const lines = calls().trim().split("\n");
+  const send = ".config/skelcrew/laptop-setup.json";
+  expect(lines).toContain(
+    `ssh simon@workbox umask 077 && mkdir -p .config/skelcrew && rm -f ${send} && : > ${send}`,
+  );
+  expect(lines.at(-1)).toMatch(/ sc first-run$/);
+  expect(lines.at(-2)).toMatch(/ sc take-setup$/);
+  // The file sent holds the token, so it is readable only by you there.
+  const taken = join(home, "server", "setup-taken");
+  expect(JSON.parse(readFileSync(taken, "utf8"))).toMatchObject({
+    config: "harness: codex\n",
+    token: null,
+    plugins: [],
+  });
+  expect(lstatSync(join(home, "server", send)).mode & 0o777).toBe(0o600);
 });
 
 test("sc remote add builds Skelcrew for the server's CPU", async () => {

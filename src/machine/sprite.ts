@@ -285,18 +285,12 @@ function spriteMachine(name: string): Machine {
     "-c",
     script,
   ];
+  const push = (file: string, to: string) => ["sprite", "file", "push", "-s", name, file, to];
   return {
     shell,
-    copy: (file) =>
-      copySkel(`sprite:${name}`, shell, [
-        "sprite",
-        "file",
-        "push",
-        "-s",
-        name,
-        file,
-        ".local/bin/sc.new",
-      ]),
+    push,
+    sc: (words) => skelOnSprite(name, words),
+    copy: (file) => copySkel(`sprite:${name}`, shell, push(file, ".local/bin/sc.new")),
     // A Sprite service keeps the command it was made with, even after Skelcrew moves.
     daemonSkel: async () => {
       const { out, ok } = await quietly(shell("sprite-env services get skelcrew"), {

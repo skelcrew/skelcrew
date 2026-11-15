@@ -3,6 +3,7 @@ import { help } from "./help.ts";
 import {
   addServer,
   keepingTitle,
+  otherSetup,
   outdated,
   outOfDate,
   remote,
@@ -26,6 +27,7 @@ const agentRefusals: Record<string, string> = {
   sidebar: "showing the sidebar",
   list: "showing a list",
   "first-run": "setting up this machine",
+  "take-setup": "taking your laptop's setup",
   "remote add": "setting up a machine",
   "plugin install": "installing a plugin",
   "plugin update": "updating a plugin",
@@ -133,9 +135,16 @@ async function leadCommand(from?: string): Promise<void> {
   process.exit(1);
 }
 
-// Runs sc first-run, which sets up this machine, or sc serve, which runs the daemon.
+// Runs sc first-run, which sets up this machine, sc take-setup, which takes the setup your laptop
+// sent, or sc serve, which runs the daemon.
 async function machineCommand(args: string[]): Promise<void> {
   const [command] = args;
+  // Run by sc --remote and sc remote add from your laptop, not by people, so usage leaves it out.
+  if (command === "take-setup" && args.length === 1) {
+    const { takeSetup } = await import("./machine/copy-setup.ts");
+    await takeSetup();
+    return;
+  }
   const { serve } = await import("./flow/daemon.ts");
   const { firstRun } = await import("./machine/setup.ts");
   // Run by sc remote add on the machine it sets up, not by people, so usage leaves it out.
@@ -450,6 +459,12 @@ async function runCommand(args: string[]): Promise<void> {
   // refuse.
   const onScreen = command === "sidebar" || command === "list" || command === "keys";
   if (!onScreen && outOfDate()) process.exit(outdated);
+  // A machine whose setup differs from the laptop's runs nothing, so the laptop copies its own
+  // there first. An agent's sandbox hides what this reads.
+  if (!onScreen && process.env.SKELCREW_LAPTOP_SETUP && process.env.SKELCREW_SANDBOX !== "1") {
+    const { setupDiffers } = await import("./machine/copy-setup.ts");
+    if (setupDiffers()) process.exit(otherSetup);
+  }
   if (args.length === 1 && ["--help", "-h", "help"].includes(command ?? "")) {
     console.log(help());
     return;
@@ -495,6 +510,7 @@ async function runCommand(args: string[]): Promise<void> {
   if (
     remoteName &&
     first !== "first-run" &&
+    first !== "take-setup" &&
     !onScreen &&
     process.env.SKELCREW_SANDBOX !== "1" &&
     !setupDone()
@@ -505,6 +521,7 @@ async function runCommand(args: string[]): Promise<void> {
     return leadCommand(second);
   switch (first) {
     case "first-run":
+    case "take-setup":
     case "serve":
       return machineCommand(words);
     case "sidebar":
