@@ -68,8 +68,8 @@ test("a PR's page has its title, state, branch, checks, latest review and descri
     facts: [
       ["State", "open"],
       ["Branch", "skelcrew/12 → main"],
-      ["Checks", "passing"],
-      ["Review", "approved · ana"],
+      ["Checks", "passed", "green"],
+      ["Review", "approved · ana", "green"],
     ],
     body: "Sign-in landed on a 404.",
   });
@@ -77,21 +77,38 @@ test("a PR's page has its title, state, branch, checks, latest review and descri
 
 test("a PR with no checks or reviews says so", () => {
   const { facts } = pageFor(pull());
-  expect(facts).toContainEqual(["Checks", "none"]);
-  expect(facts).toContainEqual(["Review", "none"]);
+  expect(facts).toContainEqual(["Checks", "none", "dim"]);
+  expect(facts).toContainEqual(["Review", "none", "dim"]);
 });
 
 test("checks read as the strip reads them, leaving out Skelcrew's own check", () => {
   const running = [check("test", "passed"), check("lint", "running")];
   const pr = pull({ checks: [...running, check("skelcrew/check", "failed")] });
-  expect(pageFor(pr).facts).toContainEqual(["Checks", "running"]);
+  expect(pageFor(pr).facts).toContainEqual(["Checks", "running", "dim"]);
   const failing = pull({ checks: [check("test", "failed"), check("lint", "running")] });
-  expect(pageFor(failing).facts).toContainEqual(["Checks", "failing"]);
+  expect(pageFor(failing).facts).toContainEqual(["Checks", "failed", "red"]);
+});
+
+test("a review asking for changes is yellow, and a plain comment takes no colour", () => {
+  const changes = pull({ reviews: [review("changes requested", "No.")] });
+  expect(pageFor(changes).facts).toContainEqual([
+    "Review",
+    "changes requested · codex-bot",
+    "yellow",
+  ]);
+  const comment = pull({ reviews: [review("commented", "Nice work so far.", "ana")] });
+  expect(pageFor(comment).facts).toContainEqual(["Review", "Nice work so far. · ana"]);
 });
 
 test("a review Skelcrew posted says its verdict, as a forge may only have it as a comment", () => {
   const pr = pull({ reviews: [review("commented", "**Approved.**\n\nLooks right.")] });
-  expect(pageFor(pr).facts).toContainEqual(["Review", "Approved. · codex-bot"]);
+  expect(pageFor(pr).facts).toContainEqual(["Review", "Approved. · codex-bot", "green"]);
+  const changes = pull({ reviews: [review("commented", "**Changes requested.**\n\nA test.")] });
+  expect(pageFor(changes).facts).toContainEqual([
+    "Review",
+    "Changes requested. · codex-bot",
+    "yellow",
+  ]);
 });
 
 const page: Page = {
@@ -117,6 +134,18 @@ test("a page reads from the title down, two columns in, with the link among the 
     "",
     "  Keep it small.",
   ]);
+});
+
+test("a fact with a colour shows in its mark's colour, and dim ones in dim grey", () => {
+  const facts: Page["facts"] = [
+    ["Checks", "failed", "red"],
+    ["Review", "none", "dim"],
+    ["State", "open"],
+  ];
+  const lines = drawPage({ ...page, facts }, issueUrl, 80, "click to open");
+  expect(lines).toContainEqual(expect.stringContaining("\x1b[38;5;210mfailed\x1b[22;39m"));
+  expect(lines).toContainEqual(expect.stringContaining("\x1b[90mnone\x1b[22;39m"));
+  expect(lines.find((line) => line.includes("open"))).toEndWith("\x1b[22;39mopen");
 });
 
 test("the link to GitHub is a blue, underlined terminal link, and the hint dim after it", () => {

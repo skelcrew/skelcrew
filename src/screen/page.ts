@@ -2,7 +2,7 @@
 // Skelcrew's copy says of it. You scroll it and click its link to GitHub, and it shows no diff
 // and no comments.
 import type { Page } from "../flow/page.ts";
-import { fitted, grey, pad, paint, removeControlCodes, white } from "./look.ts";
+import { fitted, green, grey, pad, paint, red, removeControlCodes, white, yellow } from "./look.ts";
 import { drawMarkdown } from "./markdown.ts";
 
 // Returns text from outside, safe to show, on as many lines as it takes to fit a number of
@@ -30,6 +30,8 @@ export function drawPage(page: Page, url: string, width: number, hint: string): 
     lines.map(
       (line, i) => `${pad}${paint(grey, (i === 0 ? label : "").padEnd(labelWidth))}${line}`,
     );
+  // The codes for the colours a fact can take, from the marks'.
+  const colours = { green, yellow, red, dim: grey };
   // The link to GitHub is a terminal link, cut to fit beside its label. The hint gives way
   // first, when the link wouldn't fit whole beside it. The link is blue and underlined, as
   // Claude Code draws links, since the screen takes the mouse and the terminal marks a link only
@@ -47,7 +49,14 @@ export function drawPage(page: Page, url: string, width: number, hint: string): 
     "",
     ...wrapped(page.title, room).map((line) => `${pad}${paint(white, line)}`),
     "",
-    ...page.facts.flatMap(([label, says]) => fact(label, wrapped(says, room - labelWidth))),
+    ...page.facts.flatMap(([label, says, colour]) =>
+      fact(
+        label,
+        wrapped(says, room - labelWidth).map((line) =>
+          colour ? paint(colours[colour], line) : line,
+        ),
+      ),
+    ),
     ...fact("GitHub", [link]),
     "",
     ...body.map((line) => `${pad}${line}`),

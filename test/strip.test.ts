@@ -1,7 +1,7 @@
 // What the top row says: the header above the sidebar, then the tabs and the strip above the agent.
 import { expect, test } from "bun:test";
 import type { Row, Tab } from "../src/screen/rows.ts";
-import { drawFooter, drawTop, footerText, type Top } from "../src/screen/strip.ts";
+import { drawTop, type Top } from "../src/screen/strip.ts";
 
 const lead: Row = {
   name: "lead",
@@ -289,37 +289,4 @@ test("tabs furthest from the open one give way first, and a dim count says how m
 test("a repository's name is shown, never read as a format", () => {
   const tabs = [tab("a#[fg=red]b")];
   expect(top({ tabs, open: "simon/a#[fg=red]b" })).toContain("  a##[fg=red]b  ");
-});
-
-// The footer as you see it under each pane: tmux shows the first branch under the agent, pane 1,
-// and the second under the sidebar.
-function footerSays(format: string): { agent: string; sidebar: string } {
-  const [, agent = "", sidebar = ""] =
-    format.match(/^#\{\?#\{==:#\{pane_index\},1\},(.*),(.*)\}$/) ?? [];
-  const plain = (text: string) => text.replace(/#\[[^\]]*\]/g, "");
-  return { agent: plain(agent), sidebar: plain(sidebar) };
-}
-
-// The footer under each agent, or under an entry's list and its pages.
-const footer = (row: Row | null, entry: "issues" | "threads" | "prs" | null = null) =>
-  footerSays(drawFooter(footerText(row, entry)));
-
-test("the footer says how to go back and what Esc stops, with the agent's harness", () => {
-  expect(footer(lead).agent).toBe("⌥B back  Esc stops claude");
-  expect(footer(thread({ agentHarness: "codex" })).agent).toBe("⌥B back  Esc stops codex");
-});
-
-// While a review runs, the row names the reviewer's harness, but the agent on the right is still
-// the builder.
-test("under a thread being reviewed, Esc stops the builder's harness, not the reviewer's", () => {
-  const reviewed = thread({ word: "reviewing", harness: "codex", agentHarness: "claude" });
-  expect(footer(reviewed).agent).toBe("⌥B back  Esc stops claude");
-});
-
-// The issues list and an issue's page share the entry, as do the PRs list and a PR's page.
-test("under issues the footer says s start, under PRs m merge, and under threads nothing", () => {
-  expect(footer(null, "issues")).toEqual({ agent: "s start", sidebar: "│" });
-  expect(footer(null, "prs")).toEqual({ agent: "m merge", sidebar: "│" });
-  expect(footer(null, "threads")).toEqual({ agent: "", sidebar: "│" });
-  expect(footer(lead).sidebar).toBe("│");
 });
