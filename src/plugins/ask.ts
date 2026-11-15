@@ -232,6 +232,23 @@ export async function openPr(
   return opened.number;
 }
 
+// Merges the PR on the forge, for m on the screen, but only while its head is still the commit
+// you saw approved, so a push after you looked is never merged unseen. Returns null once merged,
+// or the forge's reason for refusing, such as a conflict or a rule on the branch.
+export async function mergePr(
+  db: Database,
+  repository: Repository,
+  merge: { pr: number; commit: string },
+): Promise<string | null> {
+  const answer = await callPlugin(
+    db,
+    requireForge(db, repository),
+    { ask: "merge pr", repository: repositoryKey(repository), ...merge },
+    z.object({ refused: z.string() }).nullable(),
+  );
+  return answer?.refused ?? null;
+}
+
 // Closes the PR and deletes its branch on the forge, for sc rm, first posting the comment
 // when there is one, so the PR says why it closed.
 export async function closePr(

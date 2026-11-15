@@ -11,7 +11,7 @@ import { setupDone } from "../machine/setup.ts";
 import { holdAwhile, keepAwake, onSprite, urlPort } from "../machine/sprite.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { cloneDir, daemonSocket, threadSocket } from "../paths.ts";
-import { createTask, repositoryPlugins } from "../plugins/ask.ts";
+import { createTask, mergePr, repositoryPlugins } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { checkoutFolder, git, release, singleFile } from "../version.ts";
 import { assignIssue } from "./assign.ts";
@@ -364,6 +364,19 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         // The issue it worked on stays open in the tracker, so sc rm can say so. A thread
         // started on what you told the lead is numbered with a t, such as app-t1, and has none.
         return { removed: name, issue: /^t\d+$/.test(thread.task) ? null : thread.task };
+      }
+      case "merge": {
+        const repository = findRepository(db, request.repo);
+        const { owner, repo } = repository;
+        const refused = await mergePr(db, repository, { pr: request.pr, commit: request.commit });
+        if (refused !== null) throw new Error(refused);
+        // The merge ends the PR's thread and takes the PR off the screen's list once a poll
+        // sees it. Polled now, so that happens before the screen stops saying it is merging. A
+        // poll that fails changes nothing about the merge, which is done.
+        await (await polling.promise)(`${owner}/${repo}`).catch((error) =>
+          console.log(errorText(error)),
+        );
+        return { merged: `Merged ${repository.name}#${request.pr}.` };
       }
       case "tell": {
         const thread = findThread(db, request.repo, request.task);
