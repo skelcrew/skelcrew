@@ -10,6 +10,7 @@ import {
   respawnPane,
   runningSessions,
   screenSocket,
+  showFooter,
   shownSession,
   showSession,
   showStrip,
@@ -26,7 +27,7 @@ import { type EntryCount, entryCounts, pageRow, roundLimit } from "./lists.ts";
 import { nextList, nextRow, rowAtLine } from "./moves.ts";
 import { type Open, type Row, repositoryTabs, sidebarRows } from "./rows.ts";
 import { agentClient, paneCommand, showKeys, sidebarWidth } from "./screen.ts";
-import { drawTop } from "./strip.ts";
+import { drawFooter, drawTop } from "./strip.ts";
 
 // What the sidebar reads: Alt with an arrow as tmux sends it, 3 without Shift and 4 with it,
 // the left button going down, with its column and line on screen, Alt-/ or Alt-B, and what the
@@ -82,6 +83,7 @@ export async function runSidebar(
   let fromList: string | null = null;
   let lastFrame = "";
   let lastStrip = "";
+  let lastFooter = "";
   // The notice's lines, above the rest, which has the height that is left.
   let notice: string[] = [];
   // The lead this sidebar last asked the daemon to start, until it runs, so a lead that can't
@@ -152,6 +154,13 @@ export async function runSidebar(
     if (top !== lastStrip) {
       lastStrip = top;
       showStrip(screenSocket(agents), session, top);
+    }
+    // The footer below the agent, blank under a list or page, also only when it changed.
+    const agent = isEntry(shown) ? null : (rows.find((row) => row.session === shown) ?? null);
+    const footer = drawFooter(agent);
+    if (footer !== lastFooter) {
+      lastFooter = footer;
+      showFooter(screenSocket(agents), session, footer);
     }
     // Then the sidebar itself, the notice above the rest, also only when it changed.
     const frame = [...notice, draw(rows, entries, shown, size())].join("\n");

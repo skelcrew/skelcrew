@@ -1,8 +1,8 @@
-// The top row of the screen. Above the sidebar, the header says Skelcrew, its version and, on a
+// The top and bottom rows of the screen. Above the sidebar, the header says Skelcrew, its version and, on a
 // remote, where it runs. Above the agent, a tab for each repository, then the strip, which says
 // what you are looking at: for a thread, its name, task, PR and checks, then its latest review,
 // and for a page, its row's name and title. The lead and a list have none, as the sidebar and
-// the list say it all.
+// the list say it all. Below the agent, the footer says how to go back and what Esc stops.
 import { fitted, removeControlCodes } from "./look.ts";
 import type { Row, Tab } from "./rows.ts";
 
@@ -172,4 +172,16 @@ export function drawTop(top: Top, size: Size): string {
   const strip = name && `#[fg=brightblack,bold]${escaped(name)}#[nobold]${escaped(rest)}#[default]`;
   const edge = "#[fg=colour237]│#[default] ";
   return `${header(top.where, left, top.version)}${edge}${tabs}${spare}${strip}`;
+}
+
+// Returns the bottom row of the screen as tmux's pane-border-format, given the row whose agent
+// shows on the right, or null while a list or page shows. tmux draws it on the row below each
+// pane, so one format covers both: under the agent, pane 1, dim, how to go back and what Esc
+// stops there, with the agent's harness, and nothing under a list or page. Under the sidebar,
+// its edge, so the edge still runs from top to bottom. A harness is one of Skelcrew's own
+// names, so it needs no escaping, not even of the comma that parts the two.
+export function drawFooter(row: Row | null): string {
+  const agent =
+    row?.agentHarness && `#[fg=brightblack]⌥B back  Esc stops ${row.agentHarness}#[default]`;
+  return `#{?#{==:#{pane_index},1},${agent ?? ""},#[align=right]#[fg=colour237]│#[default]}`;
 }

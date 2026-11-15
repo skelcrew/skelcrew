@@ -1,7 +1,7 @@
 // What the top row says: the header above the sidebar, then the tabs and the strip above the agent.
 import { expect, test } from "bun:test";
 import type { Row, Tab } from "../src/screen/rows.ts";
-import { drawTop, type Top } from "../src/screen/strip.ts";
+import { drawFooter, drawTop, type Top } from "../src/screen/strip.ts";
 
 const lead: Row = {
   name: "lead",
@@ -11,6 +11,7 @@ const lead: Row = {
   running: true,
   word: "running",
   harness: "claude",
+  agentHarness: "claude",
   age: "",
   fullName: null,
   title: null,
@@ -288,4 +289,32 @@ test("tabs furthest from the open one give way first, and a dim count says how m
 test("a repository's name is shown, never read as a format", () => {
   const tabs = [tab("a#[fg=red]b")];
   expect(top({ tabs, open: "simon/a#[fg=red]b" })).toContain("  a##[fg=red]b  ");
+});
+
+// The footer as you see it under each pane: tmux shows the first branch under the agent, pane 1,
+// and the second under the sidebar.
+function footerSays(format: string): { agent: string; sidebar: string } {
+  const [, agent = "", sidebar = ""] =
+    format.match(/^#\{\?#\{==:#\{pane_index\},1\},(.*),(.*)\}$/) ?? [];
+  const plain = (text: string) => text.replace(/#\[[^\]]*\]/g, "");
+  return { agent: plain(agent), sidebar: plain(sidebar) };
+}
+
+test("the footer says how to go back and what Esc stops, with the agent's harness", () => {
+  expect(footerSays(drawFooter(lead)).agent).toBe("⌥B back  Esc stops claude");
+  expect(footerSays(drawFooter(thread({ agentHarness: "codex" }))).agent).toBe(
+    "⌥B back  Esc stops codex",
+  );
+});
+
+// While a review runs, the row names the reviewer's harness, but the agent on the right is still
+// the builder.
+test("under a thread being reviewed, Esc stops the builder's harness, not the reviewer's", () => {
+  const reviewed = thread({ word: "reviewing", harness: "codex", agentHarness: "claude" });
+  expect(footerSays(drawFooter(reviewed)).agent).toBe("⌥B back  Esc stops claude");
+});
+
+test("under a list or a page the footer is blank, and the sidebar's edge runs on below it", () => {
+  expect(footerSays(drawFooter(null))).toEqual({ agent: "", sidebar: "│" });
+  expect(footerSays(drawFooter(lead)).sidebar).toBe("│");
 });

@@ -498,12 +498,12 @@ test("resizing the terminal resizes the agent and keeps the sidebar narrow", asy
   open("lead");
   await ready("lead");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "29 81\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "28 81\n",
     "the agent's size",
   );
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "150", "-y", "40");
   await until(
-    () => readFileSync(join(home, "lead.size"), "utf8") === "39 111\n",
+    () => readFileSync(join(home, "lead.size"), "utf8") === "38 111\n",
     "the agent to resize",
   );
   const widths = tmux(screen, "list-panes", "-a", "-F", "#{pane_width}").out.trim().split("\n");
@@ -625,6 +625,30 @@ test("the strip ends the top row, and the agent's height stays as you switch", a
   press("M-Up");
   await until(() => tabRow().endsWith("app-12"), "app-12's strip");
   expect(readFileSync(join(home, "app-12.size"), "utf8")).toBe(height);
+});
+
+// The bottom row as you see it, right of the sidebar.
+const footer = () => (seen().split("\n")[29] ?? "").slice(sidebar + 1).trimEnd();
+
+test("the footer under the agent says how to go back and what Esc stops", async () => {
+  sql("UPDATE threads SET harness = 'codex' WHERE task = 7");
+  open("lead");
+  await ready("lead");
+  await until(() => footer() === "  ⌥B back  Esc stops claude", "the lead's footer");
+  toSecondThread();
+  await until(() => seen().includes("I am app-7"), "app-7");
+  await until(() => footer() === "  ⌥B back  Esc stops codex", "app-7's footer");
+});
+
+test("under a list or a page the footer is blank, and the agent's height stays", async () => {
+  await openList("Issues");
+  await until(() => footer() === "", "a blank footer");
+  press("Enter");
+  await onRight("← back");
+  expect(footer()).toBe("");
+  press("M-S-Up");
+  await until(() => footer() === "  ⌥B back  Esc stops claude", "the lead's footer");
+  expect(readFileSync(join(home, "lead.size"), "utf8")).toBe("28 81\n");
 });
 
 test("the header, the tabs and the strip share one row, and the agent starts right under it", async () => {
@@ -1367,15 +1391,17 @@ test("a working thread's time moves on by itself, and writes when it does", asyn
   await until(() => existsSync(written) && readFileSync(written, "utf8") !== "", "the write");
 });
 
+// The bottom row is the footer's, so the hints are the sidebar's last two lines, just above it.
 test("the hints stay at the bottom, and a click there picks nothing", async () => {
   open("lead");
   await ready("lead");
-  const lines = seen().trimEnd().split("\n");
-  expect(lines.at(-2)).toContain("⌥↑↓ move");
-  expect(lines.at(-1)).toContain("⌥Q quit");
+  const lines = seen().split("\n");
+  expect(lines[27]).toContain("⌥↑↓ move");
+  expect(lines[28]).toContain("⌥Q quit");
   expect(seen()).not.toContain("⌃Q");
   expect(seen()).not.toContain("⌥⇧↑↓");
   expect(seen()).not.toContain("⌥←→");
+  click(5, 29);
   click(5, 30);
   await Bun.sleep(200);
   expect(selected()).toBe("◆ lead");

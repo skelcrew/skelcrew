@@ -22,6 +22,7 @@ const row = {
   needsYou: false,
   running: true,
   harness: "claude",
+  agentHarness: "claude",
   age: "",
   fullName: null,
 } satisfies Partial<Row>;
