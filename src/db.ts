@@ -130,6 +130,8 @@ function prepareTables(db: Database): void {
     limit_reset: "INTEGER",
     review_limited: "INTEGER NOT NULL DEFAULT 0",
     review_reset: "INTEGER",
+    stalled: "INTEGER NOT NULL DEFAULT 0",
+    submitted: "INTEGER NOT NULL DEFAULT 0",
     noting: "TEXT",
     title: "TEXT",
     started: "INTEGER",

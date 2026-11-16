@@ -38,7 +38,7 @@ import { pollRepositories } from "./poll.ts";
 import { findRepository, fullNameIs, noRepositories, refreshClones, repositoryAt } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
-import { messageBuilder, messageLead } from "./tell.ts";
+import { messageBuilder, messageLead, untagged } from "./tell.ts";
 import {
   builderHarness,
   endedTurnAsks,
@@ -294,7 +294,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         if (builder && threadOn(db, request.repo, request.task)?.folder !== builder.folder)
           throw new Error(`you may ask for a review of ${threadName(db, builder)} only`);
         const thread = findThread(db, request.repo, request.task);
-        rerunReview(db, tmux, thread.folder);
+        rerunReview(db, tmux, thread.folder, builder !== null);
         return { reviewing: threadName(db, thread) };
       }
       case "stop": {
@@ -345,9 +345,17 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         typeLeadNotes(db, tmux);
         return { asking: true };
       case "turn ended": {
+        // The note quotes what the builder last said, so you see what it waits on. In quotes,
+        // and with no tags of Skelcrew's, it can't pass for Skelcrew's own words or another's.
+        // The quote, escapes included, is kept to 100 characters, as a note is cut at 200,
+        // which would lose the closing quote. Each " or \ doubles in length once escaped, so
+        // the words are cut until the quote fits.
         const { folder } = callingThread(caller);
         if (!endedTurnAsks(readThread(db, folder))) return { asking: false };
-        record(db, folder, { asking: true }, "its builder stopped without submitting");
+        let words = untagged(request.said ?? "").slice(0, 100);
+        while (JSON.stringify(words).length > 100) words = words.slice(0, -1);
+        const said = words ? `, saying ${JSON.stringify(words)}` : "";
+        record(db, folder, { stalled: true }, `its builder stopped without submitting${said}`);
         typeLeadNotes(db, tmux);
         return { asking: true };
       }
@@ -381,6 +389,16 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         typeLeadNotes(db, tmux);
         return { erred: true };
       }
+      case "question closed": {
+        // AskUserQuestion returned your answer, and the builder goes on in the same turn, so a
+        // submit earlier in it still counts. Your answer starts a new stretch of work all the
+        // same, which the sidebar times, as anything typed into the builder does.
+        const { folder } = callingThread(caller);
+        db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), folder]);
+        if (readThread(db, folder).asking)
+          record(db, folder, { asking: false }, "its builder's question is over");
+        return { asking: false };
+      }
       case "question answered": {
         const { folder } = callingThread(caller);
         const thread = readThread(db, folder);
@@ -391,13 +409,23 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         // Run before every message typed into the builder, so only a question or an error that
         // was open is logged. Typing to a builder that stopped on an error means you fixed it,
         // such as with /login, so it ends the error as it ends a question. A usage limit it
-        // stopped on ends too, as the builder now works again or meets it again.
-        const over = { erred: false, limited: false, limit_reset: null };
+        // stopped on ends too, as the builder now works again or meets it again. Typing to one
+        // that stopped without submitting answers it, whether you typed or the lead told it.
+        // Each message starts a new turn, with no submit in it yet.
+        const over = {
+          asking: false,
+          stalled: false,
+          erred: false,
+          submitted: false,
+          limited: false,
+          limit_reset: null,
+        };
         // Its error is over, so a "continue" still waiting to be typed for it must not land.
         if (thread.erred) endWake(folder);
-        if (thread.asking)
-          record(db, folder, { asking: false, ...over }, "its builder's question is over");
+        if (thread.asking || thread.stalled)
+          record(db, folder, over, "its builder's question is over");
         else if (thread.erred) record(db, folder, over, "its builder was typed to after its error");
+        else if (thread.submitted) record(db, folder, { submitted: false });
         return { asking: false };
       }
       case "start": {

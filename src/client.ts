@@ -189,19 +189,27 @@ export async function reviewAgain(repository: string, task: string): Promise<str
   return checkReply(z.object({ reviewing: z.string() }), reply).reviewing;
 }
 
-// Tells the daemon, for a builder's hook, that its builder is asking you a question, so the
-// thread needs you, or that the question is over. Over also ends a builder's error, as it is
-// sent whenever you type to the builder. The builder's own socket tells the daemon
-// which thread it is. The daemon answers at once, as Claude Code waits on its hooks.
-export async function reportQuestion(asking: boolean): Promise<void> {
-  await request({ command: asking ? "question asked" : "question answered" });
+// Tells the daemon, for a builder's hook, about its builder's question: asked, so the thread
+// needs you, or closed, as AskUserQuestion returned its answer within the same turn. Answered is
+// sent whenever something is typed into the builder. It ends any question or error, and starts a
+// new turn. The builder's own socket tells the daemon which thread it is. The daemon answers at
+// once, as Claude Code waits on its hooks.
+export async function reportQuestion(state: "asked" | "answered" | "closed"): Promise<void> {
+  await request({ command: `question ${state}` });
 }
 
-// Tells the daemon, for a Codex builder's hook, that its builder ended its turn, so the thread
-// needs you if the builder stopped without submitting. The builder's own socket says which
-// thread.
+// Tells the daemon, for a builder's Stop hook, that its builder ended its turn, so the thread
+// needs you if the builder stopped without submitting. The hook's input on stdin can hold the
+// builder's last message, whose first line goes in the lead's note, so you see what it waits
+// on. Input that isn't the hook's is left out, and a terminal isn't read, as it would wait for
+// you. The builder's own socket says which thread.
 export async function reportTurnEnded(): Promise<void> {
-  await request({ command: "turn ended" });
+  const Input = z.object({ last_assistant_message: z.string().nullish() });
+  const text = process.stdin.isTTY ? "" : await Bun.stdin.text();
+  const input = Input.safeParse(parseJson(text));
+  const message = input.success ? (input.data.last_assistant_message ?? "") : "";
+  const said = message.trim().split("\n")[0]?.trim();
+  await request({ command: "turn ended", ...(said ? { said } : {}) });
 }
 
 // What Claude Code's StopFailure hook gets on stdin: the kind of error, such as rate_limit, and

@@ -43,14 +43,17 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 const conversation = "01a1c003-09b8-7380-b6d9-c7ec08342361";
 const subagent = "01a1c003-ffff-7380-b6d9-c7ec08342361";
 
-// Stands in for Codex. codex debug models lists two models, slowly while the home folder
-// holds a file named slow, and leaves a file named listed once done. Otherwise it keeps its arguments,
+// Stands in for Codex. codex debug models lists two models, slowly while the home folder holds a
+// file named slow, and leaves a file named listed once done. Otherwise it keeps its arguments,
 // environment and folder, and a new session saves its conversation. As the lead, it waits at
 // Codex's prompt and keeps what is typed into it. As a builder, it runs the hook commands the
-// command line gives for an event when the test leaves a file named for it: stop for Stop and
-// talk for UserPromptSubmit, adding a line to the file ran once they have finished. renew
-// renews the login as Codex does from 0.167: it follows the link to it, writes the renewal
-// beside its target and renames it over it.
+// command line gives for an event when the test leaves a file named for it, then adds a line to
+// the file ran. stop runs Stop, talk UserPromptSubmit, and interrupt Interrupt. Interrupt is what
+// Codex runs when you press Esc: an interrupted turn returns before its Stop hooks, and its abort
+// runs the Interrupt hooks instead. A hook's input is what the test left in its file, or {}. Text
+// typed into the builder goes in its file typed, and runs UserPromptSubmit, as talk does. renew
+// renews the login as Codex does from 0.167: it follows the link to it, writes the renewal beside
+// its target and renames it over it.
 function fakeCodex(): void {
   script(
     "codex",
@@ -86,17 +89,27 @@ case "$CODEX_HOME" in */lead-*)
   done ;;
 esac
 hook() {
+  input=$2; [ -n "$input" ] || input='{}'
   bun -e 'const name = \`hooks.\${process.argv[1]}=\`;
 for (const arg of (await Bun.file("args").text()).split("\\n"))
   if (arg.startsWith(name))
     for (const group of Bun.TOML.parse(\`x=\${arg.slice(name.length)}\`).x)
       for (const hook of group.hooks) console.log(hook.command);' "$1" |
-  while IFS= read -r command; do echo '{}' | sh -c "$command" >> hooks 2>&1; done
+  while IFS= read -r command; do printf '%s' "$input" | sh -c "$command" >> hooks 2>&1; done
   echo "$1" >> ran
 }
+printf '\\033[?2004h'
+stty -echo
+exec 3<&0
+end=$(printf '\\033[201~')
+while IFS= read -r line; do
+  printf '%s\\n' "$line" >> typed
+  case "$line" in *"$end"*) : > talk ;; esac
+done <&3 &
 echo "› Ask Codex to do anything"
 for i in $(seq 3000); do
-  test -e stop && { rm stop; hook Stop; }
+  test -e stop && { said=$(cat stop); rm stop; hook Stop "$said"; }
+  test -e interrupt && { rm interrupt; hook Interrupt; }
   test -e talk && { rm talk; hook UserPromptSubmit; }
   test -e renew && { rm renew; login=$(readlink -f auth.json); echo renewed > "$login.new" && mv "$login.new" "$login"; echo renewed >> ran; }
   sleep 0.1
@@ -185,10 +198,11 @@ async function untilNeedsYou(wanted: boolean) {
   }
 }
 
-// Has the fake builder do something, as Codex would, and waits until it has.
-async function act(step: "stop" | "talk" | "renew") {
+// Has the fake builder do something, as Codex would, with `input` as what its hooks read, and
+// waits until it has.
+async function act(step: "stop" | "talk" | "interrupt" | "renew", input = "") {
   const before = read(join(builder(), "ran")).split("\n").length;
-  writeFileSync(join(builder(), step), "");
+  writeFileSync(join(builder(), step), input);
   await until(() => read(join(builder(), "ran")).split("\n").length > before);
 }
 
@@ -217,6 +231,16 @@ async function startApp12() {
   expect(await askForLead()).toContain(leadPlaces("simon", "app").name);
   expect((await skel(["start", "app-12"])).err).toBe("");
   await until(() => read(join(builder(), "args")) !== "", 30_000);
+}
+
+// How many notes about app-12 needing you the lead has been typed.
+const notesAbout12 = () => read(join(lead(), "typed")).split("app-12 needs you").length - 1;
+
+// The socket the daemon opens for app's lead, which tells it the lead calls. It is named by a
+// short hash.
+function leadSocket(): string {
+  const short = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
+  return join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
 }
 
 // Changes app-12 in the database, as a round would.
@@ -252,22 +276,74 @@ describe.skipIf(insideSandbox)("codex", () => {
     expect(args().filter((arg) => arg.startsWith("hooks."))).toHaveLength(2);
   }, 60_000);
 
-  test("a builder that stops without submitting needs you, and the Codex lead hears it", async () => {
+  test("a builder that stops without submitting needs you, and the Codex lead hears what it said", async () => {
     await startApp12();
-    await act("stop");
+    const said = "Should the export keep empty rows?\nI can do either.";
+    await act("stop", JSON.stringify({ hook_event_name: "Stop", last_assistant_message: said }));
     expect(read(join(builder(), "hooks"))).toBe("");
     await untilNeedsYou(true);
     await until(() => read(join(lead(), "typed")).includes("app-12 needs you"));
     expect(read(join(lead(), "typed"))).toContain(
-      "app-12 needs you: its builder stopped without submitting",
+      'app-12 needs you: its builder stopped without submitting, saying "Should the export keep empty rows?"',
     );
+    // Another turn ending while it still waits is no news.
+    await act("stop");
+    await Bun.sleep(1000);
+    expect(notesAbout12()).toBe(1);
+    expect(read(join(lead(), "typed"))).not.toContain("I can do either.");
     // What you type to it next ends that.
     await act("talk");
     await untilNeedsYou(false);
-    // A turn that ends once the builder has submitted waits on its review, not on you.
-    setThread("UPDATE threads SET status = 'waiting'");
+    // A turn that ends once the builder has submitted in it waits on its review, not on you,
+    // even when the review already set the thread working again.
+    setThread("UPDATE threads SET submitted = 1, status = 'working'");
     await act("stop");
     await Bun.sleep(500);
+    expect((await app12())?.needsYou).toBe(false);
+    // A review's changes typed in start a new turn, which needs you if it ends without a submit,
+    // though the thread waits on its review.
+    await act("talk");
+    setThread("UPDATE threads SET status = 'waiting'");
+    await act("stop");
+    await untilNeedsYou(true);
+  }, 60_000);
+
+  test("a Codex builder that stopped without submitting can be told, which clears it", async () => {
+    await startApp12();
+    await act("stop");
+    await untilNeedsYou(true);
+    const told = await runSkel(["tell", "app-12", "Keep them."], {
+      ...env(),
+      SKELCREW_SANDBOX: "1",
+      SKELCREW_SOCKET: leadSocket(),
+    });
+    expect(told.err).toBe("");
+    await until(() => read(join(builder(), "typed")).includes("Keep them."));
+    await untilNeedsYou(false);
+  }, 60_000);
+
+  test("a Codex builder still needs you after the daemon starts again, with no second note", async () => {
+    await startApp12();
+    await act("stop");
+    await untilNeedsYou(true);
+    await until(() => notesAbout12() === 1);
+    for (const daemon of running.splice(0)) {
+      daemon.kill();
+      await daemon.exited;
+    }
+    startDaemon(socket, env(), running);
+    await until(() => existsSync(join(home, "run", "skelcrew.sock")));
+    await Bun.sleep(1500);
+    expect((await app12())?.needsYou).toBe(true);
+    expect(notesAbout12()).toBe(1);
+  }, 60_000);
+
+  // Esc runs Codex's Interrupt hooks, not Stop, and Skelcrew gives builders none: you are looking
+  // at the builder when you press Esc. So any hook Skelcrew adds for Interrupt must keep this.
+  test("pressing Esc in a Codex builder's turn doesn't mark it needing you", async () => {
+    await startApp12();
+    await act("interrupt");
+    await Bun.sleep(1000);
     expect((await app12())?.needsYou).toBe(false);
   }, 60_000);
 
@@ -299,6 +375,9 @@ describe.skipIf(insideSandbox)("codex", () => {
     expect(given.at(-1)).toBe(conversation);
     // A model named for Claude Code isn't Codex's.
     expect(given).not.toContain("-m");
+    // Coming back ends no turn, so it isn't taken for a builder waiting on you.
+    await Bun.sleep(1000);
+    expect((await app12())?.needsYou).toBe(false);
   }, 60_000);
 
   test("the daemon keeps answering while Codex lists its models", async () => {

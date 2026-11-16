@@ -217,6 +217,8 @@ const thread = (change: Partial<Thread>): Thread => ({
   assigned: false,
   changed: null,
   updates: [],
+  stalled: false,
+  submitted: false,
   ...change,
 });
 
