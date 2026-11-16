@@ -732,6 +732,22 @@ describe.skipIf(insideSandbox)("sc review", () => {
     expect(read(join(data(), "threads", "app-12.log"))).not.toContain("without submitting");
   }, 90_000);
 
+  // Only the builder's own sc review is a submit in its turn.
+  test("a review the lead asks for doesn't hide a builder that then stops without submitting", async () => {
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Still ready.");
+    await startApp12();
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"), 30_000);
+    const asBuilder = { SKELCREW_SOCKET: builderSocket() };
+    // Something typed in starts the builder's turn, and meanwhile the lead asks for a review.
+    expect((await skel(["question", "answered"], asBuilder)).code).toBe(0);
+    expect((await skel(["review", "app-12"], { SKELCREW_SOCKET: leadSocketPath() })).err).toBe("");
+    expect((await skel(["turn", "ended"], asBuilder)).code).toBe(0);
+    await until(() => thread().stalled === 1);
+    await until(() => finished("success").length === 2, 45_000);
+  }, 90_000);
+
   test("refuses a thread with nothing submitted yet, and a thread that is done", async () => {
     addApp();
     fakeClaude(false);

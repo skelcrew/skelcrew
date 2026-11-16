@@ -43,17 +43,17 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 const conversation = "01a1c003-09b8-7380-b6d9-c7ec08342361";
 const subagent = "01a1c003-ffff-7380-b6d9-c7ec08342361";
 
-// Stands in for Codex. codex debug models lists two models, slowly while the home folder
-// holds a file named slow, and leaves a file named listed once done. Otherwise it keeps its arguments,
+// Stands in for Codex. codex debug models lists two models, slowly while the home folder holds a
+// file named slow, and leaves a file named listed once done. Otherwise it keeps its arguments,
 // environment and folder, and a new session saves its conversation. As the lead, it waits at
 // Codex's prompt and keeps what is typed into it. As a builder, it runs the hook commands the
-// command line gives for an event when the test leaves a file named for it: stop for Stop and
-// talk for UserPromptSubmit and interrupt for Interrupt, which Codex runs in Stop's place when you
-// press Esc, adding a line to the file ran once they have finished. A hook's input is what the
-// test left in its file, or {}. Text typed into the builder goes in its file typed, and runs
-// UserPromptSubmit, as talk does. renew
-// renews the login as Codex does from 0.167: it follows the link to it, writes the renewal
-// beside its target and renames it over it.
+// command line gives for an event when the test leaves a file named for it, then adds a line to
+// the file ran. stop runs Stop, talk UserPromptSubmit, and interrupt Interrupt. Interrupt is what
+// Codex runs when you press Esc: an interrupted turn returns before its Stop hooks, and its abort
+// runs the Interrupt hooks instead. A hook's input is what the test left in its file, or {}. Text
+// typed into the builder goes in its file typed, and runs UserPromptSubmit, as talk does. renew
+// renews the login as Codex does from 0.167: it follows the link to it, writes the renewal beside
+// its target and renames it over it.
 function fakeCodex(): void {
   script(
     "codex",
@@ -338,8 +338,8 @@ describe.skipIf(insideSandbox)("codex", () => {
     expect(notesAbout12()).toBe(1);
   }, 60_000);
 
-  // Esc runs Codex's Interrupt hook, not Stop, and Skelcrew gives builders none for it: you are
-  // looking at the builder when you press Esc.
+  // Esc runs Codex's Interrupt hooks, not Stop, and Skelcrew gives builders none: you are looking
+  // at the builder when you press Esc. So any hook Skelcrew adds for Interrupt must keep this.
   test("pressing Esc in a Codex builder's turn doesn't mark it needing you", async () => {
     await startApp12();
     await act("interrupt");

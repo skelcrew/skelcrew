@@ -47,7 +47,8 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // hook commands its settings give for an event when the test leaves a file named for it:
 // ask for AskUserQuestion's PreToolUse, answer for its PostToolUse, talk for UserPromptSubmit,
 // stop for Stop, which Claude Code runs when a turn ends, and fail for StopFailure, which it runs
-// in Stop's place when a turn ends on an error such as a lapsed login. A hook's input is what
+// in Stop's place when a turn ends on an error such as a lapsed login. interrupt runs no hook at
+// all, as Claude Code's hooks reference says of a turn you stop with Esc. A hook's input is what
 // the test left in its file, or {}. Each hook gets a line in the file ran once it has finished.
 // Text typed into the builder goes in its file typed, and runs UserPromptSubmit, as talk does.
 function fakeClaude(): void {
@@ -92,6 +93,7 @@ for i in $(seq 3000); do
   test -e "$CLAUDE_CONFIG_DIR/answer" && { rm "$CLAUDE_CONFIG_DIR/answer"; hook PostToolUse AskUserQuestion; }
   test -e "$CLAUDE_CONFIG_DIR/talk" && { rm "$CLAUDE_CONFIG_DIR/talk"; hook UserPromptSubmit; }
   test -e "$CLAUDE_CONFIG_DIR/fail" && { rm "$CLAUDE_CONFIG_DIR/fail"; hook StopFailure authentication_failed; }
+  test -e "$CLAUDE_CONFIG_DIR/interrupt" && { rm "$CLAUDE_CONFIG_DIR/interrupt"; echo Esc >> "$CLAUDE_CONFIG_DIR/ran"; }
   test -e "$CLAUDE_CONFIG_DIR/stop" && { said=$(cat "$CLAUDE_CONFIG_DIR/stop"); rm "$CLAUDE_CONFIG_DIR/stop"; hook Stop "" "$said"; }
   sleep 0.1
 done`,
@@ -179,7 +181,7 @@ async function untilNeedsYou(wanted: boolean) {
 
 // Has the fake builder run the hooks for an event, as Claude Code would, with `input` as what
 // the hook reads, and waits for them.
-async function hook(step: "ask" | "answer" | "talk" | "fail" | "stop", input = "") {
+async function hook(step: "ask" | "answer" | "talk" | "fail" | "stop" | "interrupt", input = "") {
   const before = read(join(builder(), "ran")).split("\n").length;
   writeFileSync(join(builder(), step), input);
   await until(() => read(join(builder(), "ran")).split("\n").length > before);
@@ -308,6 +310,34 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(read(join(lead(), "typed"))).toContain(
       "app-12 needs you: its builder stopped without submitting",
     );
+  }, 60_000);
+
+  test("a turn that ends right after sc submit waits on the review, not on you", async () => {
+    addApp();
+    await startApp12();
+    setColumn("submitted");
+    await hook("stop");
+    await Bun.sleep(1000);
+    expect(await needsYou()).toBe(false);
+    expect(notes()).toBe(0);
+  }, 60_000);
+
+  test("a turn that ends on an error needs you for the error alone", async () => {
+    addApp();
+    await startApp12();
+    await hook("fail");
+    await until(() => notes() === 1);
+    await Bun.sleep(1000);
+    expect(notes()).toBe(1);
+    expect(read(join(lead(), "typed"))).not.toContain("without submitting");
+  }, 60_000);
+
+  test("pressing Esc in a builder's turn doesn't mark it needing you", async () => {
+    addApp();
+    await startApp12();
+    await hook("interrupt");
+    await Bun.sleep(1000);
+    expect(await needsYou()).toBe(false);
   }, 60_000);
 
   test("a lead's message to a builder that stopped without submitting is typed in and clears it", async () => {

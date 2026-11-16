@@ -292,7 +292,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         if (builder && threadOn(db, request.repo, request.task)?.folder !== builder.folder)
           throw new Error(`you may ask for a review of ${threadName(db, builder)} only`);
         const thread = findThread(db, request.repo, request.task);
-        rerunReview(db, tmux, thread.folder);
+        rerunReview(db, tmux, thread.folder, builder !== null);
         return { reviewing: threadName(db, thread) };
       }
       case "stop": {
