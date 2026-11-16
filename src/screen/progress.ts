@@ -7,13 +7,21 @@ import { noProgress, type Progress } from "../agents/progress.ts";
 import { builderHarness, cloneOf, type Thread } from "../flow/thread.ts";
 
 // What was read of a builder's conversation file: which file, if it has one yet, how far, what
-// that said, and when it was last looked at.
-type Read = { file: string | null; offset: number; progress: Progress; at: number };
+// that said, and when it was last looked at. `skipping` says the read stopped inside a line too
+// long to read whole, whose rest the next read passes over.
+type Read = {
+  file: string | null;
+  offset: number;
+  skipping: boolean;
+  progress: Progress;
+  at: number;
+};
 // The reads, by the thread's folder, kept for as long as the sidebar runs.
 const reads = new Map<string, Read>();
 // How long what was read is shown before the file is looked at again.
 const every = 10_000;
-// The most read at once, so a huge file is read over a few looks rather than all in one.
+// The most read at once, so a huge file is read over a few looks rather than all in one. A line
+// longer than this is passed over, as no harness writes what the sidebar shows in one so long.
 const most = 16 * 1024 * 1024;
 
 // Returns what the thread's builder's conversation says of its work so far, at a moment in
@@ -37,17 +45,18 @@ export function builderProgress(thread: Thread, now: number): Progress {
   let read: Read =
     before && before.file === file
       ? { ...before, at: now }
-      : { file, offset: 0, progress: noProgress, at: now };
+      : { file, offset: 0, skipping: false, progress: noProgress, at: now };
   // Reads what was added since. A file that shrank was written anew, so it is read again from
   // its start. The file is the agent's to write, so a reader that fails on what it finds there
   // leaves the progress as it was rather than end the sidebar.
-  const added = file ? readAdded(file, read.offset) : null;
+  const added = file ? readAdded(file, read.offset, read.skipping) : null;
   if (file && added) {
+    const { end: offset, skipping } = added;
     try {
       const progress = harness.progress(added.lines, added.shrank ? noProgress : read.progress);
-      read = { file, offset: added.end, progress, at: now };
+      read = { file, offset, skipping, progress, at: now };
     } catch {
-      read = { ...read, offset: added.end };
+      read = { ...read, offset, skipping };
     }
   }
   reads.set(thread.folder, read);
@@ -59,10 +68,14 @@ export function builderProgress(thread: Thread, now: number): Progress {
 // for the next read. `shrank` says the file is now shorter than `offset`, and the lines are then
 // from its start. The agent can write in the folder, so a link or a pipe is never read: opening
 // a pipe would wait forever.
+// A line longer than a whole read would leave the next read where this one began, forever, so
+// it is passed over: `skipping` says a read is inside such a line, and the next read drops what
+// is left of it.
 function readAdded(
   file: string,
   offset: number,
-): { lines: string[]; end: number; shrank: boolean } | null {
+  skipping: boolean,
+): { lines: string[]; end: number; shrank: boolean; skipping: boolean } | null {
   let fd: number;
   try {
     fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -74,12 +87,20 @@ function readAdded(
     if (!stat.isFile()) return null;
     const shrank = stat.size < offset;
     const from = shrank ? 0 : offset;
-    // Read what was added, up to the last newline in it.
     const buffer = Buffer.alloc(Math.min(stat.size - from, most));
-    const got = readSync(fd, buffer, 0, buffer.length, from);
-    const whole = buffer.subarray(0, got).lastIndexOf(0x0a) + 1;
-    const lines = buffer.subarray(0, whole).toString("utf8").split("\n");
-    return { lines, end: from + whole, shrank };
+    const read = buffer.subarray(0, readSync(fd, buffer, 0, buffer.length, from));
+    // Past the rest of a line too long to read, when a read stopped inside one.
+    let start = 0;
+    if (skipping && !shrank) {
+      start = read.indexOf(0x0a) + 1;
+      if (start === 0) return { lines: [], end: from + read.length, shrank, skipping: true };
+    }
+    // Up to the last newline. A whole read with none is inside a line too long to read.
+    const whole = read.lastIndexOf(0x0a) + 1;
+    if (whole === 0 && read.length === most)
+      return { lines: [], end: from + read.length, shrank, skipping: true };
+    const lines = whole > start ? read.subarray(start, whole).toString("utf8").split("\n") : [];
+    return { lines, end: from + Math.max(whole, start), shrank, skipping: false };
   } catch {
     return null;
   } finally {

@@ -915,6 +915,40 @@ console.log(JSON.stringify(sidebarRows(db, ["lead", "app-12"], () => 3, ${now}, 
     expect(rows("session", "'half'")[1]).toBe("    claude · <1m · 850 tok");
   });
 
+  // A line too long for one read would hold every later read where it began.
+  test("a line too long to read whole is passed over, and what follows it still counts", () => {
+    const usage = { input_tokens: 1, cache_creation_input_tokens: 0, output_tokens: 849 };
+    const bash = { type: "tool_use", name: "Bash", input: { command: "bun test" } };
+    const answer = JSON.stringify({
+      type: "assistant",
+      message: { id: "m1", usage, content: [bash] },
+    });
+    const huge = `{"type":"user","pad":"${"a".repeat(17 * 1024 * 1024)}"}`;
+    writeFileSync(join(claudeFolder(), "s1.jsonl"), `${huge}\n${answer}\n`);
+    // Three looks at the sidebar, ten seconds apart, in one process, as the sidebar keeps what
+    // it read between them.
+    const code = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { sidebarRows } from ${JSON.stringify(source("screen/rows.ts"))};
+const db = openDb();
+db.run(${JSON.stringify(`${repository} INSERT INTO threads
+  (owner, repo, task, folder, branch, started, status, session)
+  VALUES ('simon', 'app', 12, 'app-12', 'skelcrew/12', 0, 'working', 's1')`)});
+const app = { owner: "simon", repo: "app", lead: "lead" };
+const looks = [0, 10_000, 20_000].map((now) => sidebarRows(db, [], () => 3, now, app)[1]);
+console.log(JSON.stringify(looks.map((row) => [row?.tokens, row?.step])));`;
+    const run = Bun.spawnSync([process.execPath, "-e", code], {
+      env: { ...process.env, HOME: home },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(run.stderr.toString()).toBe("");
+    expect(JSON.parse(run.stdout.toString())).toEqual([
+      ["", "working"],
+      ["850 tok", "bun test"],
+      ["850 tok", "bun test"],
+    ]);
+  });
+
   test("a working thread shows its builder's tokens, plan and step from its conversation", () => {
     const folder = claudeFolder();
     const usage = {
