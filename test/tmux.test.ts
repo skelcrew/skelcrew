@@ -15,12 +15,14 @@ import { claude } from "../src/agents/claude.ts";
 import { codex } from "../src/agents/codex.ts";
 import {
   agentRuns,
+  applyConfig,
   endSession,
   exitedCleanly,
   hasSession,
   startSession,
   stillRunning,
   stopSession,
+  tmuxIsAtLeast,
 } from "../src/agents/tmux.ts";
 import { isIdle, type Marks, typeInto } from "../src/agents/typing.ts";
 import { source, until as wait } from "./harness.ts";
@@ -307,6 +309,36 @@ startSession(${JSON.stringify(socket)}, "builder", {
   ]);
   expect(read("env.txt")).not.toContain("TERM=dumb");
   expect(read("env.txt")).toContain("TERM_PROGRAM=tmux\n");
+});
+
+// A lead or builder started before its session kept TERM_PROGRAM runs on after an upgrade, and
+// its Claude Code never asked for extended keys. Opening the screen must still give it
+// Shift+Enter as a key of its own, without restarting it.
+test("an agent that never asked for extended keys gets Shift+Enter once the settings apply again", async () => {
+  start("new", ["sleep", "30"]);
+  const script = join(home, "old.sh");
+  writeFileSync(script, "#!/bin/sh\nstty raw -echo\nexec cat > keys.txt\n", { mode: 0o755 });
+  const tmux = ["tmux", "-L", socket, "-f", "/dev/null"];
+  Bun.spawnSync([
+    ...tmux,
+    "new-session",
+    "-d",
+    "-s",
+    "old",
+    "-c",
+    home,
+    "env",
+    "-u",
+    "TERM_PROGRAM",
+    script,
+  ]);
+  await until(() => existsSync(join(home, "keys.txt")));
+  applyConfig(socket);
+  Bun.spawnSync([...tmux, "send-keys", "-t", "=old:", "a", "S-Enter", "b", "Enter"]);
+  await until(() => readFileSync(join(home, "keys.txt"), "utf8").endsWith("\r"));
+  // tmux before 3.5 has only the xterm form, which Claude Code reads too.
+  const shiftEnter = tmuxIsAtLeast(3, 5) ? "\x1b[13;2u" : "\x1b[27;2;13~";
+  expect(readFileSync(join(home, "keys.txt"), "utf8")).toBe(`a${shiftEnter}b\r`);
 });
 
 test("a name tmux would change is refused", () => {

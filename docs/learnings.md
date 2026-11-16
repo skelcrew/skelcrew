@@ -346,6 +346,9 @@ that covers the code you are about to write.
   hands it plain Enter, and Shift+Enter sends the prompt, though every tmux setting is right.
   A test agent that asks for extended keys unconditionally hides this. `extended-keys always`
   would also work, but only for panes made after it is set, so running agents keep Enter.
+  An agent already running can't get a new environment. Writing `CSI > 4;2 m` into its pane's
+  terminal (`pane_tty`) asks for it instead: tmux reads it as the agent's own request, and
+  Claude Code then reads `ESC[13;2u` as a newline.
 - **The screen's tmux asks your terminal for extended keys only once it knows the terminal.**
   It sends `CSI > 4;2 m` after the terminal answers its `CSI > c` and `CSI > q` queries. A test
   pty that answers nothing never gets asked.

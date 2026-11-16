@@ -1,6 +1,6 @@
 // Skelcrew's tmux sessions: one for each repository's lead and one per builder, on Skelcrew's own
 // tmux server (`tmux -L skelcrew`; tests pass a socket of their own).
-import { rmSync } from "node:fs";
+import { closeSync, constants, openSync, rmSync, writeSync } from "node:fs";
 import { z } from "zod";
 import { onSprite, startTmuxService } from "../machine/sprite.ts";
 import { sandboxFolders } from "./seatbelt.ts";
@@ -201,9 +201,31 @@ export function keepOnExit(socket: string, name: string): void {
 }
 
 // Gives a running tmux server Skelcrew's settings, so one that outlived an upgrade scrolls too.
-// Quietly does nothing without a server.
+// Quietly does nothing without a server. It also turns on extended keys for every agent that
+// never asked for them: a Claude Code started before sessions kept TERM_PROGRAM, which would
+// otherwise send the prompt on Shift+Enter until it restarts. Codex, the other harness, always
+// asks, so only those are left.
 export function applyConfig(socket: string): void {
   tmux(socket, ["source-file", "-"], settings());
+  // The request goes into the pane's terminal, where tmux reads it as if the agent had sent
+  // it. A tmux that doesn't know pane_key_mode leaves it empty, and nothing is written.
+  // O_NOCTTY keeps the terminal from becoming Skelcrew's own.
+  const panes = tmux(socket, [
+    "list-panes",
+    "-a",
+    "-F",
+    "#{pane_dead} #{pane_key_mode} #{pane_tty}",
+  ]);
+  for (const line of panes.out.split("\n")) {
+    const tty = line.match(/^0 VT10x (\S+)$/)?.[1];
+    if (!tty) continue;
+    // A pane that ended in the meantime has no terminal left, and needs nothing.
+    try {
+      const fd = openSync(tty, constants.O_WRONLY | constants.O_NOCTTY);
+      writeSync(fd, "\x1b[>4;2m");
+      closeSync(fd);
+    } catch {}
+  }
 }
 
 // Reports whether the exact session exists so Skelcrew can reconnect instead of starting it
