@@ -15,6 +15,7 @@ import {
   fakePlugin,
   git,
   homeEnv,
+  insideSandbox,
   read,
   runSkel,
   runSkelInTerminal,
@@ -239,7 +240,7 @@ async function startApp12() {
 }
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
-describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("sc submit", () => {
+describe.skipIf(insideSandbox)("sc submit", () => {
   test("each review's round, reviewer, verdict and first line go in the thread's log, and the task's title too", async () => {
     addApp();
     verdict(1, "changes", "\n  The export has no test.\n\nMore detail here.");
@@ -815,7 +816,7 @@ const leadSocketPath = () => {
   return join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
 };
 
-describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("sc review", () => {
+describe.skipIf(insideSandbox)("sc review", () => {
   test("reviews a failed review's commit again: posts the verdict, sets the check, and types changes in as a round", async () => {
     addApp();
     verdict(2, "changes", "The export has no test.");
@@ -944,7 +945,7 @@ openDb().run("INSERT INTO repositories (name, owner, repo, opened, remote, claim
 }
 
 // A repository with neither: you tell the lead what to do, and the branch is what you get.
-describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with no tracker and no forge", () => {
+describe.skipIf(insideSandbox)("with no tracker and no forge", () => {
   test("a thread on what you said is pushed with git, reviewed in Skelcrew, and ends once merged", async () => {
     const bare = addAppOnGit();
     verdict(1, "approve", "Ready to merge.");

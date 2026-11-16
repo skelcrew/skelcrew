@@ -17,7 +17,7 @@ import { dirname, join } from "node:path";
 import type { Subprocess } from "bun";
 import { stillRunning } from "../src/agents/tmux.ts";
 import { leadPlaces } from "../src/paths.ts";
-import { source, until as wait } from "./harness.ts";
+import { insideSandbox, source, until as wait } from "./harness.ts";
 
 const asMac = join(import.meta.dir, "as-mac.ts");
 let home = "";
@@ -41,7 +41,7 @@ const env = () => ({
   XDG_RUNTIME_DIR: join(home, "run"),
   PATH: `${bin}:${dirname(process.execPath)}:${tmuxFolder}:/usr/local/bin:/usr/bin:/bin`,
   TMPDIR: join(home, "tmp"),
-  ...(process.env.SKELCREW_SANDBOX ? { SKELCREW_SANDBOX: process.env.SKELCREW_SANDBOX } : {}),
+  ...(insideSandbox ? { SKELCREW_SANDBOX: "1" } : {}),
   ...(process.env.TMUX_TMPDIR ? { TMUX_TMPDIR: process.env.TMUX_TMPDIR } : {}),
   SECRET_TOKEN: "secret",
 });
@@ -215,7 +215,7 @@ test("an agent starts under sandbox-exec, in its folder, with a home of its own"
   // tmux makes its sockets under /tmp unless told otherwise, and a Mac allows a socket's
   // path 104 bytes at most, so tmux's folder must be short.
   const tmux = seen.match(/^TMUX_TMPDIR=(.*)$/m)?.[1] ?? "";
-  const inSandbox = process.env.SKELCREW_SANDBOX === "1" && process.env.TMUX_TMPDIR;
+  const inSandbox = insideSandbox && process.env.TMUX_TMPDIR;
   expect(tmux.startsWith(join(realpathSync(inSandbox || "/tmp"), "sc-tmux-"))).toBe(true);
   // Postgres clients default to a socket in /tmp, which the sandbox hides.
   expect(seen).toContain("PGHOST=localhost\n");

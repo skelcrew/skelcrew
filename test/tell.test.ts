@@ -15,6 +15,7 @@ import {
   fakePlugin,
   git,
   homeEnv,
+  insideSandbox,
   read,
   runSkel,
   source,
@@ -174,7 +175,7 @@ const typed = (agent: string) => read(join(agent, "typed"));
 const threadLog = () => read(join(data(), "threads", "app-12.log"));
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
-describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("sc tell", () => {
+describe.skipIf(insideSandbox)("sc tell", () => {
   test("the lead's message is typed into the builder once it is idle, and logged", async () => {
     await startApp12();
     writeFileSync(join(builder(), "busy"), "");
