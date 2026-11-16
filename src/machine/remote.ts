@@ -3,10 +3,11 @@
 // older release than yours, or was built from another commit, and copies your setup there when
 // it changed. Your laptop can be a Mac, so this file loads nothing of the Skelcrew that runs on
 // the server.
-import { chmodSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { isIP } from "node:net";
-import { homedir, tmpdir } from "node:os";
+import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
+import { sshFolder } from "../paths.ts";
 import { quietly } from "../run.ts";
 import {
   built,
@@ -74,16 +75,94 @@ export const quoted = (word: string) =>
 export const runInTerminal = (argv: string[]) =>
   Bun.spawn(argv, { stdio: ["inherit", "inherit", "inherit"] }).exited;
 
-// Returns how to run sc on the host with these words. It takes the environment to add to
-// what it always passes, and gives back the exit code. With a terminal, ssh says
-// "Connection to <host> closed." each time it ends, several times in one setup, so it is
-// told to say only errors.
-const onServer = (host: string, words: string[]) => (env: string[]) =>
+// Says whether your ssh config, or a file it includes, sets ControlMaster or ControlPath on any
+// line, for any host. Then you manage shared connections yourself, and Skelcrew adds none. ssh -G
+// can't tell ControlPath none or ControlMaster no from nothing set, so only reading the files
+// finds them. `seen` stops a loop of Includes.
+function sharesItself(file: string, seen = new Set<string>()): boolean {
+  if (seen.has(file)) return false;
+  seen.add(file);
+  // A file that isn't there, or can't be read, sets nothing.
+  let text = "";
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return false;
+  }
+  for (const line of text.split("\n")) {
+    // A setting is a keyword, then its value after spaces or an =. A comment starts with #, so
+    // it never matches.
+    const [, keyword = "", value = ""] = line.trim().match(/^(\w+)(?:\s*=\s*|\s+)(.*)$/) ?? [];
+    if (/^control(master|path)$/i.test(keyword)) return true;
+    if (/^include$/i.test(keyword) && included(value).some((each) => sharesItself(each, seen)))
+      return true;
+  }
+  return false;
+}
+
+// Returns the files an Include line of your ssh config names, as ssh finds them: each word, in
+// double quotes when it has spaces, under ~/.ssh unless it starts at / or ~, with its globs
+// expanded.
+function included(value: string): string[] {
+  const home = homedir();
+  return (value.match(/"[^"]*"|\S+/g) ?? []).flatMap((word) => {
+    const name = word.replace(/^"(.*)"$/, "$1");
+    const path = name.startsWith("~/")
+      ? join(home, name.slice(2))
+      : name.startsWith("/")
+        ? name
+        : join(home, ".ssh", name);
+    if (!/[*?[]/.test(path)) return [path];
+    // The glob is matched from / so the whole path counts.
+    return [...new Bun.Glob(path.slice(1)).scanSync({ cwd: "/", absolute: true, dot: true })];
+  });
+}
+
+// Returns the ssh options that make every ssh and scp Skelcrew runs for the host share one
+// connection. One setup takes five or more of them, and each new connection can ask for your
+// passphrase or a touch of your key. The shared connection ends a minute after the last
+// command, which covers one setup or connect. Options given to ssh beat your ssh config, so
+// when your config says anything about sharing connections, there are none.
+function sharedConnection(host: string): string[] {
+  // Your own config, read as text, catches ControlPath none and ControlMaster no, for any host.
+  if (sharesItself(join(homedir(), ".ssh", "config"))) return [];
+  // ssh -G prints what ssh would use for the host, from the system's config too, without
+  // connecting. A read that fails prints no controlmaster, and then nothing is added either.
+  const said = Bun.spawnSync(["ssh", "-G", host], { stdout: "pipe", stderr: "ignore" });
+  const settings = said.stdout.toString();
+  const master = settings.match(/^controlmaster (.*)$/m)?.[1];
+  if (master === undefined || !["false", "no"].includes(master)) return [];
+  if (/^controlpath /m.test(settings)) return [];
+  // Anyone who can reach the sockets can run commands on your servers as you, so the folder must
+  // be yours alone. Someone else can make it first in /tmp, or put a link there, and then
+  // nothing is shared. It is made private again each time, in case its mode changed.
+  const folder = sshFolder();
+  // Two sc commands starting at once can both find it missing, so one made by the other, or
+  // anything else already there, is left to the check below.
+  try {
+    mkdirSync(folder, { mode: 0o700 });
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+  }
+  const made = lstatSync(folder);
+  if (!made.isDirectory() || made.uid !== userInfo().uid) return [];
+  chmodSync(folder, 0o700);
+  // %C is a hash of the connection, so each host, a ProxyJump host too, gets its own socket.
+  const path = `ControlPath=${folder}/%C`;
+  return ["-o", "ControlMaster=auto", "-o", "ControlPersist=60", "-o", path];
+}
+
+// Returns how to run sc on the host with these words, with `shared` from sharedConnection. It
+// takes the environment to add to what it always passes, and gives back the exit code. With a
+// terminal, ssh says "Connection to <host> closed." each time it ends, several times in one
+// setup, so it is told to say only errors.
+const onServer = (host: string, shared: string[], words: string[]) => (env: string[]) =>
   runInTerminal([
     "ssh",
     "-o",
     "LogLevel=ERROR",
     "-t",
+    ...shared,
     host,
     [
       "env",
@@ -135,8 +214,9 @@ function checkHost(host: string): void {
 export async function remote(host: string, args: string[]): Promise<number> {
   checkHost(host);
   const from = args.length === 0 ? originHere() : null;
-  const there = onServer(host, from ? ["--from", from] : args);
-  const connect = () => runUpToDate(host, there, serverMachine(host));
+  const machine = serverMachine(host);
+  const there = machine.sc(from ? ["--from", from] : args);
+  const connect = () => runUpToDate(host, there, machine);
   const code = await connect();
   // The server's shell exits 127 when it finds no Skelcrew to run. Skelcrew itself never does: it
   // exits 1 on any error.
@@ -148,7 +228,8 @@ export async function remote(host: string, args: string[]): Promise<number> {
 export async function addServer(host: string): Promise<number> {
   checkHost(host);
   console.log(`Setting up ${host}: copying Skelcrew there and setting it up.`);
-  return addMachine(host, onServer(host, ["first-run"]), serverMachine(host));
+  const machine = serverMachine(host);
+  return addMachine(host, machine.sc(["first-run"]), machine);
 }
 
 // Puts Skelcrew on a server if it isn't there, and runs the first run through `there`,
@@ -240,14 +321,16 @@ async function copySkel(where: string, shell: Machine["shell"], push: string[]):
     throw new Error(`couldn't put the new Skelcrew in place on ${where}`);
 }
 
-// How update reaches a server: over ssh, with systemd running the daemon.
+// How update reaches a server: over ssh, with systemd running the daemon. Its ssh and scp
+// commands share one connection.
 function serverMachine(host: string): Machine {
-  const shell = (script: string) => ["ssh", host, script];
-  const push = (file: string, to: string) => ["scp", file, `${host}:${to}`];
+  const shared = sharedConnection(host);
+  const shell = (script: string) => ["ssh", ...shared, host, script];
+  const push = (file: string, to: string) => ["scp", ...shared, file, `${host}:${to}`];
   return {
     shell,
     push,
-    sc: (words) => onServer(host, words),
+    sc: (words) => onServer(host, shared, words),
     // The unit names the Skelcrew the daemon runs, with each % doubled for systemd.
     daemonSkel: async () => {
       const unit = ".config/systemd/user/skelcrew.service";

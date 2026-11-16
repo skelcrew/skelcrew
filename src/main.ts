@@ -172,7 +172,7 @@ async function screenCommand(args: string[]): Promise<void> {
     }
   }
   // `where` is the remote Skelcrew runs on, and empty on this machine, so check it against
-  // undefined, as is a list's `start`, empty when it starts on its first row.
+  // undefined.
   if (command === "sidebar" && rest.length === 4) {
     const [agents, session, where, repository] = rest;
     if (agents && session && where !== undefined && repository) {
@@ -180,17 +180,16 @@ async function screenCommand(args: string[]): Promise<void> {
       return;
     }
   }
-  if (command === "list" && rest.length === 6) {
-    const [agents, session, entry, where, repository, start] = rest;
+  if (command === "list" && rest.length === 5) {
+    const [agents, session, entry, where, repository] = rest;
     if (
       agents &&
       session &&
       (entry === "issues" || entry === "threads" || entry === "prs") &&
       where !== undefined &&
-      repository &&
-      start !== undefined
+      repository
     ) {
-      await runPane(agents, session, entry, where, repository, start);
+      await runPane(agents, session, entry, where, repository);
       return;
     }
   }
@@ -273,12 +272,14 @@ async function agentCommand(args: string[]): Promise<void> {
   }
   // Run by a builder's Claude Code hooks, not by people, so usage leaves it out. It prints
   // nothing: Claude Code adds what a UserPromptSubmit hook prints to the builder's message.
-  if (command === "question" && (sub === "asked" || sub === "answered") && rest.length === 0) {
-    await reportQuestion(sub === "asked");
-    return;
+  if (command === "question" && rest.length === 0) {
+    if (sub === "asked" || sub === "answered" || sub === "closed") {
+      await reportQuestion(sub);
+      return;
+    }
   }
-  // Run by a Codex builder's Stop hook, not by people, so usage leaves it out. It prints
-  // nothing, as Codex reads what a Stop hook prints.
+  // Run by a builder's Stop hook, on Claude Code or Codex, not by people, so usage leaves it
+  // out. It prints nothing, as both harnesses read what a Stop hook prints.
   if (command === "turn" && sub === "ended" && rest.length === 0) {
     await reportTurnEnded();
     return;

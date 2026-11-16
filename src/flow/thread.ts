@@ -8,6 +8,10 @@ import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { threadsDir } from "../paths.ts";
 import { findRepository } from "./repo.ts";
 
+// One message the lead told a thread's builder: who sent it, when it was typed in, in
+// milliseconds since 1970, and its text.
+const TaskUpdate = z.object({ from: z.literal("lead"), at: z.number(), text: z.string() });
+
 // A thread as Skelcrew's database keeps it, one row per thread. It is checked on every read,
 // since the row comes back from disk. Its folder names it inside Skelcrew: its clone, session
 // and log are all named after it.
@@ -49,6 +53,12 @@ export const Thread = z.object({
   // Whether the builder is asking you a question with AskUserQuestion. Kept apart from
   // needs_you, so answering it leaves the thread needing you for any other reason.
   asking: z.coerce.boolean(),
+  // Whether the builder ended its turn without sc submit, a question or an error, and so sits
+  // waiting on you. Kept apart from asking: no question is open, so the lead may still tell it.
+  stalled: z.coerce.boolean(),
+  // Whether the builder ran sc submit in its current turn, so the turn's end waits on a review
+  // rather than on you. Whatever is typed into the builder starts a new turn, and clears it.
+  submitted: z.coerce.boolean(),
   // Whether the builder's harness stopped on an error it can't get past alone, such as a lapsed
   // login. The builder then sits idle, so the thread needs you until you type to it.
   erred: z.coerce.boolean(),
@@ -88,6 +98,14 @@ export const Thread = z.object({
   // When anything last went in the thread's log, in milliseconds since 1970, for the list of
   // threads. Null in a row from before Skelcrew kept it.
   changed: z.number().nullable(),
+  // The lead's messages to the builder, oldest first, with when each was typed in. They change
+  // the task after the thread started, such as a new design you agreed to, so the reviewer and
+  // sc issue show get them with the task. Only the lead's count: a builder must never change
+  // what it is reviewed against. A row from before Skelcrew kept them holds null, read as none.
+  updates: z
+    .string()
+    .nullable()
+    .transform((saved) => TaskUpdate.array().parse(saved === null ? [] : JSON.parse(saved))),
 });
 export type Thread = z.infer<typeof Thread>;
 
@@ -95,14 +113,22 @@ export type Thread = z.infer<typeof Thread>;
 export const builderHarness = (thread: Thread) => harnessNamed(thread.harness ?? "claude");
 
 // Returns whether the thread needs you: for a review, the round limit or an approval, for the
-// builder's question, or for its harness stopping on an error.
-export const needsYou = (thread: Thread) => thread.needs_you || thread.asking || thread.erred;
+// builder's question or its stopping without submitting, or for its harness stopping on an error.
+export const needsYou = (thread: Thread) =>
+  thread.needs_you || thread.asking || thread.stalled || thread.erred;
 
-// Returns whether a builder that just ended its turn is waiting on you, for a harness with no
-// tool for asking, such as Codex. A builder that works and stops without sc submit has a
-// question for you, or is stuck. One that submitted waits on its review, and one already asking
-// has nothing new to say.
-export const endedTurnAsks = (thread: Thread) => thread.status === "working" && !thread.asking;
+// Returns whether a builder that just ended its turn is waiting on you, on any harness. A
+// builder that stops without sc submit in that turn has a question for you, written as plain
+// text, or is stuck, and nothing else would tell you. One that submitted waits on its review.
+// One asking with AskUserQuestion, or stopped on an error, already needs you, and one already
+// waiting has nothing new to say. The status is not enough: a review can set it back to working
+// while the builder that submitted is still finishing its turn.
+export const endedTurnAsks = (thread: Thread) =>
+  (thread.status === "working" || thread.status === "waiting") &&
+  !thread.submitted &&
+  !thread.asking &&
+  !thread.stalled &&
+  !thread.erred;
 
 // Returns the thread's repository as owner/name.
 export const fullNameOf = (thread: Thread) => `${thread.owner}/${thread.repo}`;

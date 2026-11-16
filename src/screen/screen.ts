@@ -43,18 +43,15 @@ const config = [
   // typing, key repeat or a slow link bring, would lose all but the first two, and type the rest
   // into the agent. A paste that matters comes bracketed anyway.
   ["set", "-g", "assume-paste-time", "0"],
-  // Alt with an arrow, and the same with Shift, go to the sidebar, in pane 0, without moving
-  // your typing from the agent.
+  // Alt-Up and Alt-Down, with or without Shift, and Alt-Shift-Left and Alt-Shift-Right go to
+  // the sidebar, in pane 0, without moving your typing from the agent. Plain Alt-Left and
+  // Alt-Right stay the agent's, as some terminals send them to move a word while you type.
   ["bind", "-n", "M-Up", "send-keys", "-t", ":.0", "M-Up"],
   ["bind", "-n", "M-Down", "send-keys", "-t", ":.0", "M-Down"],
   ["bind", "-n", "M-S-Up", "send-keys", "-t", ":.0", "M-S-Up"],
   ["bind", "-n", "M-S-Down", "send-keys", "-t", ":.0", "M-S-Down"],
-  ["bind", "-n", "M-Left", "send-keys", "-t", ":.0", "M-Left"],
-  ["bind", "-n", "M-Right", "send-keys", "-t", ":.0", "M-Right"],
   ["bind", "-n", "M-S-Left", "send-keys", "-t", ":.0", "M-S-Left"],
   ["bind", "-n", "M-S-Right", "send-keys", "-t", ":.0", "M-S-Right"],
-  // Alt-B goes to the sidebar too, which goes back.
-  ["bind", "-n", "M-b", "send-keys", "-t", ":.0", "M-b"],
   // A click on the tabs, in a status line, reaches no pane, so tmux types which tab it was
   // into the sidebar, as an OSC naming the tab's range. send-keys -F expands no format in what
   // it types, so run-shell -C expands it first. A second click soon after the first is a
@@ -176,16 +173,14 @@ const sidebarCommand = (agents: string, session: string, where: string, reposito
 // Returns the command for the right pane while it shows an entry's list of the repository named
 // by its owner/name. It gets the agents' server and the screen's session, to tell the sidebar
 // what it opens, and the remote Skelcrew runs on, which decides whether a click on a page's link
-// opens your browser or copies the link. `start` is the session of the thread whose row the list
-// starts on, or empty for its first row.
+// opens your browser or copies the link.
 export const paneCommand = (
   agents: string,
   session: string,
   entry: Entry,
   where: string,
   repository: string,
-  start: string,
-) => skelcrewCommand("list", agents, session, entry, where, repository, start);
+) => skelcrewCommand("list", agents, session, entry, where, repository);
 
 // Opens the screen in your terminal on the named agent session. `lead` is the open repository's
 // lead's session and `repository` its owner/name. It returns when you leave with Alt-Q, and

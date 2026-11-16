@@ -42,16 +42,23 @@ const clone = () => join(data(), "threads", "app-12");
 const script = (name: string, body: string) => writeScript(home, name, body);
 
 // Stands in for Claude Code. As the lead, it waits at a ❯ prompt and keeps what is typed
-// into it. As the builder, it commits a round and runs sc submit, then
-// waits at a ❯ prompt, keeping what is typed into it. Each typed message ends in a paste mark
-// and an Enter, and it answers each one with another round, as a builder fixing a review
-// would. `submits` false leaves the first round to the test. While the file busy is in its
-// config folder after a round, it looks busy, as Claude Code does mid-turn.
+// into it. As the builder, it commits a round and runs sc submit, then ends its turn, running
+// the Stop hooks its settings give, and waits at a ❯ prompt, keeping what is typed into it. Each
+// typed message ends in a paste mark and an Enter, and it runs the UserPromptSubmit hooks, then
+// answers it with another round, as a builder fixing a review would. `submits` false leaves the
+// first round to the test. While the file busy is in its config folder after a round, it looks
+// busy, as Claude Code does mid-turn, and its turn ends once the file is gone.
 function fakeClaude(submits = true): void {
   script(
     "claude",
     `case "$CLAUDE_CONFIG_DIR" in */lead-*) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
 printf '%s\\n' "$@" > "$CLAUDE_CONFIG_DIR/args"
+for a; do [ "$prev" = --settings ] && settings=$a; prev=$a; done
+hook() {
+  bun -e 'for (const group of JSON.parse(process.argv[1]).hooks?.[process.argv[2]] ?? [])
+  for (const hook of group.hooks) console.log(hook.command);' "$settings" "$1" |
+  while IFS= read -r command; do echo '{}' | sh -c "$command" >> "$CLAUDE_CONFIG_DIR/hooks" 2>&1; done
+}
 n=0
 round() {
   n=$((n+1))
@@ -59,6 +66,7 @@ round() {
   git add -A && git commit -qm "round $n"
   sc submit "Round $n" >> "$CLAUDE_CONFIG_DIR/submitted" 2>&1
   while test -e "$CLAUDE_CONFIG_DIR/busy"; do echo "esc to interrupt"; sleep 0.2; done
+  hook Stop
   clear
 }
 ${submits ? "round" : ""}
@@ -68,7 +76,7 @@ echo "❯"
 end=$(printf '\\033[201~')
 while IFS= read -r line; do
   printf '%s\\n' "$line" >> "$CLAUDE_CONFIG_DIR/typed"
-  case "$line" in *"$end"*) round; echo "❯" ;; esac
+  case "$line" in *"$end"*) hook UserPromptSubmit; round; echo "❯" ;; esac
 done
 exec sleep 300`,
   );
@@ -254,6 +262,30 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(lines.some((line) => line.reviewer === "codex" && line.submitting !== null)).toBe(true);
   });
 
+  // The lead's message changes the task after the thread started, such as a design you agreed
+  // to, so the reviewer judges the round by it rather than asking to undo it.
+  test("the reviewer gets the lead's messages to the builder after the task", async () => {
+    fakeClaude(false);
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => read(join(builder(), "args")) !== "", 30_000);
+    const short = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
+    const leadSocket = join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
+    await until(() => existsSync(leadSocket));
+    // The builder answers the message with its first round.
+    const told = await skel(["tell", "app-12", "Keep the CSV export too."], {
+      SKELCREW_SANDBOX: "1",
+      SKELCREW_SOCKET: leadSocket,
+    });
+    expect(told.err).toBe("");
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    const prompt = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(prompt).toMatch(
+      /# Add export\n\nAs JSON\n\n## Changes to the task from the lead, after the thread started\n\nThese override the task above where they differ\. The latest comes last\.\n\n### .* UTC\n\nKeep the CSV export too\.\n/,
+    );
+  }, 60_000);
+
   test("pushes the round, opens the PR, has it reviewed, types the changes in, and waits on CI once approved", async () => {
     addApp();
     verdict(1, "changes", "The export has no test.");
@@ -297,7 +329,16 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(read(join(codexHome(), "sessions", "branches-1"))).toContain("origin/main");
 
     // Approved, it waits on CI: polling GitHub marks it needs you once every check is green.
-    expect(thread()).toMatchObject({ status: "waiting", needs_you: 0, rounds: 1, pr: 7 });
+    // Each turn ended with a submit, so the builder never waited on you.
+    expect(thread()).toMatchObject({
+      status: "waiting",
+      needs_you: 0,
+      rounds: 1,
+      pr: 7,
+      stalled: 0,
+    });
+    expect(read(join(builder(), "hooks"))).toBe("");
+    expect(read(join(data(), "threads", "app-12.log"))).not.toContain("without submitting");
     expect(thread().reviewing).toBeNull();
     // The daemon saves a thread before it appends the thread to its log.
     await until(() => read(join(data(), "threads", "app-12.log")).includes("approved"));
@@ -506,6 +547,9 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
         .map((s) => s.state),
     ).toEqual(["pending", "failure"]);
     await until(() => thread().telling === null);
+    // The review set the thread working again before the builder's turn ended, but that turn
+    // had its submit, so the builder never waited on you.
+    expect(read(join(data(), "threads", "app-12.log"))).not.toContain("without submitting");
   }, 60_000);
 
   test("keeps a review it couldn't type in, and needs you", async () => {
@@ -693,6 +737,39 @@ describe.skipIf(insideSandbox)("sc review", () => {
     expect(read(join(builder(), "typed"))).toContain("The export has no test.");
     await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"));
     expect(thread()).toMatchObject({ status: "waiting", needs_you: 0, rounds: 1 });
+  }, 90_000);
+
+  // sc review, like sc submit, leaves the builder's turn waiting on a review, not on you.
+  test("a builder that asks for another review and ends its turn doesn't need you", async () => {
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Still ready.");
+    await startApp12();
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"), 30_000);
+    const asBuilder = { SKELCREW_SOCKET: builderSocket() };
+    // You ask the builder for another review: a new turn, in which it runs sc review.
+    expect((await skel(["question", "answered"], asBuilder)).code).toBe(0);
+    expect((await skel(["review", "app-12"], asBuilder)).err).toBe("");
+    expect((await skel(["turn", "ended"], asBuilder)).code).toBe(0);
+    await until(() => finished("success").length === 2, 45_000);
+    expect(thread().stalled).toBe(0);
+    expect(read(join(data(), "threads", "app-12.log"))).not.toContain("without submitting");
+  }, 90_000);
+
+  // Only the builder's own sc review is a submit in its turn.
+  test("a review the lead asks for doesn't hide a builder that then stops without submitting", async () => {
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    verdict(2, "approve", "Still ready.");
+    await startApp12();
+    await until(() => read(join(data(), "threads", "app-12.log")).includes("waits on CI"), 30_000);
+    const asBuilder = { SKELCREW_SOCKET: builderSocket() };
+    // Something typed in starts the builder's turn, and meanwhile the lead asks for a review.
+    expect((await skel(["question", "answered"], asBuilder)).code).toBe(0);
+    expect((await skel(["review", "app-12"], { SKELCREW_SOCKET: leadSocketPath() })).err).toBe("");
+    expect((await skel(["turn", "ended"], asBuilder)).code).toBe(0);
+    await until(() => thread().stalled === 1);
+    await until(() => finished("success").length === 2, 45_000);
   }, 90_000);
 
   test("refuses a thread with nothing submitted yet, and a thread that is done", async () => {
