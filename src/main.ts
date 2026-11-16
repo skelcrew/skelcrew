@@ -2,14 +2,12 @@
 import { help } from "./help.ts";
 import {
   addServer,
-  keepingTitle,
   otherSetup,
   outdated,
   outOfDate,
   remote,
   unfinished,
 } from "./machine/remote.ts";
-import { addSprite, remoteSprite } from "./machine/sprite.ts";
 import { errorText } from "./say.ts";
 import { versionLine } from "./version.ts";
 
@@ -94,9 +92,9 @@ function usage(command?: string): never {
   const first = command ?? "";
   console.error(
     first === "--remote"
-      ? "Skelcrew: --remote needs a host, such as sc --remote simon@workbox or sc --remote sprite:demo."
+      ? "Skelcrew: --remote needs a host, such as sc --remote simon@workbox."
       : first === "remote"
-        ? "Skelcrew: sc remote add needs a host, such as sc remote add simon@workbox or sc remote add sprite:demo."
+        ? "Skelcrew: sc remote add needs a host, such as sc remote add simon@workbox."
         : known.includes(first)
           ? `Skelcrew: sc ${first} was given arguments it doesn't take. Run sc --help to see how to use it.`
           : "Skelcrew: that isn't a Skelcrew command. Run sc --help to see them.",
@@ -472,14 +470,7 @@ async function runCommand(args: string[]): Promise<void> {
     console.log(help());
     return;
   }
-  if (command === "--remote" && sub)
-    process.exit(
-      await keepingTitle(() =>
-        sub.startsWith("sprite:")
-          ? remoteSprite(sub.slice("sprite:".length), rest)
-          : remote(sub, rest),
-      ),
-    );
+  if (command === "--remote" && sub) process.exit(await remote(sub, rest));
   // --json can go anywhere, since tools add it last and people type it where they like. Every
   // command accepts it, and one that only acts prints the same line either way. sc --remote
   // above keeps it, so the sc it runs on the remote gets it too.
@@ -497,9 +488,7 @@ async function runCommand(args: string[]): Promise<void> {
     throw new Error(`${refusal} is only for your own terminal, not for agents`);
   const host = words[2];
   if (first === "remote" && second === "add" && host && words.length === 3) {
-    const code = await keepingTitle(() =>
-      host.startsWith("sprite:") ? addSprite(host.slice("sprite:".length)) : addServer(host),
-    );
+    const code = await addServer(host);
     // Setting up doesn't connect, so that logging in there stays separate from starting work.
     if (code === 0) console.log(`${host} is ready. Connect to it with:\n  sc --remote ${host}`);
     process.exit(code);

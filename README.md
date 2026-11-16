@@ -26,11 +26,10 @@ Within 2 minutes Skelcrew starts a thread on it, and the lead tells you. A revie
 ## Keep working with the laptop closed
 
 ```sh
-sc remote add sprite:<name>   # a Sprite
-sc remote add <host>          # a server of your own
+sc remote add <host>   # a server of your own, such as simon@workbox
 ```
 
-It sets the machine up and prints the command that connects to it, such as `sc --remote sprite:<name>`. Run that, and the work carries on after you close the laptop.
+It sets the machine up and prints the command that connects to it, such as `sc --remote <host>`. Run that, and the work carries on after you close the laptop.
 
 ## Key commands
 
@@ -41,7 +40,7 @@ It sets the machine up and prints the command that connects to it, such as `sc -
 | `sc ps` | Lists threads, with their status and which need you. |
 | `sc attach <thread>` | Opens a thread's builder. Ctrl-Q detaches. |
 | `sc stop <thread>` | Ends a thread and keeps its branch and PR. |
-| `sc remote add <host>` | Sets up a server or Sprite to run Skelcrew. |
+| `sc remote add <host>` | Sets up a server to run Skelcrew. |
 | `sc --remote <host>` | Connects to Skelcrew on that server. |
 
 The full list is in [the spec](docs/spec.md#commands).

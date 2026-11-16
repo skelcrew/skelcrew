@@ -24,14 +24,11 @@ const config = [
   ["set", "-g", "status-interval", "0"],
   ["set", "-g", "status-style", "default"],
   ["set", "-g", "status-format[0]", ""],
-  // tmux writes the title to your terminal, over whatever sprite or your shell put there. An
-  // agent's own title stops at its pane, on the agents' server: Claude Code changes its title
-  // as it works, and the title says where you are, which switching agents doesn't change. tmux
-  // saves your terminal's title on the way in and puts it back on the way out, on terminals
-  // that keep one. It goes out as OSC 2, since sprite writes the Sprite's name in front of a
-  // title sent as OSC 0, tmux's usual way.
+  // tmux writes the title to your terminal, over whatever your shell put there. An agent's own
+  // title stops at its pane, on the agents' server: Claude Code changes its title as it works,
+  // and the title says where you are, which switching agents doesn't change. tmux saves your
+  // terminal's title on the way in and puts it back on the way out, on terminals that keep one.
   ["set", "-g", "set-titles", "on"],
-  ["set", "-s", "terminal-overrides[90]", "*:tsl=\\E]2;:fsl=\\007"],
   // All of tmux's own keys go: its default mouse keys pull a drag or the wheel into copy mode,
   // which would swallow your typing, and its prefix belongs to the agents' server. Alt-Q
   // here, not there, leaves the whole screen. Ctrl-Q does too, though nothing shows it, for a
@@ -77,6 +74,40 @@ const config = [
   ["bind", "-n", "MouseUp1Pane", "send-keys", "-M"],
   ["bind", "-n", "WheelUpPane", "send-keys", "-M"],
   ["bind", "-n", "WheelDownPane", "send-keys", "-M"],
+  // A drag, and the second and third press of a double or triple click, go on as they come,
+  // so the agents' server selects and copies the agent's text itself, with its history.
+  // DoubleClick1Pane stays unbound: tmux fires it a moment after the second press, which the
+  // agents' server already got, and would count it as a press of its own.
+  ["bind", "-n", "MouseDrag1Pane", "send-keys", "-M"],
+  ["bind", "-n", "SecondClick1Pane", "send-keys", "-M"],
+  ["bind", "-n", "TripleClick1Pane", "send-keys", "-M"],
+  // A drag over the agent that is let go over the sidebar, the footer or the top row would end
+  // in that other place, and the agents' server would wait for a release that never comes,
+  // copying nothing. So the agent's pane gets the drag's end at its nearest edge: the start of
+  // the same row beside the sidebar, the top left under the top row, the end of its last row
+  // above the footer. It is a move there and a release, as tmux ends a selection where the
+  // last move was, and ignores a place outside its window. Lists and the sidebar act only on
+  // presses, so a stray release there does nothing.
+  [
+    "bind",
+    "-n",
+    "MouseDragEnd1Pane",
+    "if",
+    "-F",
+    "#{==:#{pane_index},1}",
+    "send-keys -M",
+    `if -F "#{==:#{pane_index},0}" { run-shell -C 'send-keys -t :.1 -l "\x1b[<32;1;#{e|+:#{mouse_y},1}M\x1b[<0;1;#{e|+:#{mouse_y},1}m"' } { run-shell -C -t :.1 'send-keys -t :.1 -l "\x1b[<32;#{pane_width};#{pane_height}M\x1b[<0;#{pane_width};#{pane_height}m"' }`,
+  ],
+  [
+    "bind",
+    "-n",
+    "MouseDragEnd1Status",
+    "send-keys",
+    "-t",
+    ":.1",
+    "-l",
+    "\x1b[<32;1;1M\x1b[<0;1;1m",
+  ],
   ["set", "-g", "mouse", "on"],
   // Ends a session as its client goes, by Alt-Q or by a terminal or ssh link that drops, and
   // the server goes with its last session. It would also end a session made detached, so the
@@ -179,7 +210,7 @@ export async function openScreen(
   applyConfig(agents);
   // This screen's session, named by this process, and the sidebar that opens on it.
   const name = `screen-${process.pid}`;
-  // The name sc --remote passes along, such as sprite:demo. Empty on this machine.
+  // The name sc --remote passes along, such as simon@workbox. Empty on this machine.
   const where = env.SKELCREW_REMOTE_NAME ?? "";
   const left = sidebarCommand(agents, name, where, repository);
   // The title is the session's own: terminals on this server can come from different laptops.

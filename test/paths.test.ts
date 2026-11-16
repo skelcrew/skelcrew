@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { userInfo } from "node:os";
-import { dropCapabilities, onSprite } from "../src/machine/sprite";
 import { cliSocket, threadSocket } from "../src/paths";
 import { insideSandbox, source } from "./harness.ts";
 
@@ -15,7 +14,7 @@ afterEach(() => {
 async function socketWith(folders: string[]): Promise<string> {
   const paths = source("paths.ts");
   const made = folders.flatMap((folder) => ["--dir", folder]);
-  const argv = [...(onSprite() ? dropCapabilities : []), "bwrap", "--dev-bind", "/", "/"];
+  const argv = ["bwrap", "--dev-bind", "/", "/"];
   argv.push("--tmpfs", "/run", ...made, "--", process.execPath, "-e");
   argv.push(`import { cliSocket } from ${JSON.stringify(paths)}; console.log(cliSocket());`);
   const run = Bun.spawn(argv, {
@@ -32,7 +31,7 @@ describe.skipIf(insideSandbox)("without XDG_RUNTIME_DIR", () => {
     expect(await socketWith([`/run/user/${uid}`])).toBe(`/run/user/${uid}/skelcrew.sock`);
   });
 
-  // As on a Sprite, which has no systemd to make /run/user/<uid>, nor a /run you can write to.
+  // As on a machine without systemd to make /run/user/<uid>, nor a /run you can write to.
   test("uses a folder in Skelcrew's own data folder where systemd made none", async () => {
     expect(await socketWith([])).toBe("/home/someone/.local/share/skelcrew/run/skelcrew.sock");
   });
