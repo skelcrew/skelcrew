@@ -46,7 +46,8 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // hook commands its settings give for an event when the test leaves a file named for it:
 // ask for AskUserQuestion's PreToolUse, answer for its PostToolUse, talk for UserPromptSubmit,
 // and fail for StopFailure, which Claude Code runs when a turn ends on an error such as a lapsed
-// login. Each hook gets a line in the file ran once it has finished.
+// login. limit runs StopFailure too, for a usage limit, given what the file limit holds. Each
+// hook gets a line in the file ran once it has finished. It keeps what is typed into it.
 function fakeClaude(): void {
   script(
     "claude",
@@ -67,19 +68,26 @@ case "$CLAUDE_CONFIG_DIR" in */lead-*)
 esac
 for a; do [ "$prev" = --settings ] && settings=$a; prev=$a; done
 hook() {
+  input=$3; [ -n "$input" ] || input='{}'
   bun -e 'const [settings, event, tool] = process.argv.slice(1);
 for (const group of JSON.parse(settings).hooks?.[event] ?? [])
   if (!group.matcher || group.matcher === tool)
     for (const hook of group.hooks) console.log(hook.command);' "$settings" "$1" "$2" |
-  while IFS= read -r command; do echo '{}' | sh -c "$command" >> "$CLAUDE_CONFIG_DIR/hooks" 2>&1; done
+  while IFS= read -r command; do
+    printf '%s' "$input" | sh -c "$command" >> "$CLAUDE_CONFIG_DIR/hooks" 2>&1
+  done
   echo "$1" >> "$CLAUDE_CONFIG_DIR/ran"
 }
 echo "❯"
+stty -echo
+exec 3<&0
+while IFS= read -r line; do printf '%s\\n' "$line" >> "$CLAUDE_CONFIG_DIR/typed"; done <&3 &
 for i in $(seq 3000); do
   test -e "$CLAUDE_CONFIG_DIR/ask" && { rm "$CLAUDE_CONFIG_DIR/ask"; hook PreToolUse AskUserQuestion; }
   test -e "$CLAUDE_CONFIG_DIR/answer" && { rm "$CLAUDE_CONFIG_DIR/answer"; hook PostToolUse AskUserQuestion; }
   test -e "$CLAUDE_CONFIG_DIR/talk" && { rm "$CLAUDE_CONFIG_DIR/talk"; hook UserPromptSubmit; }
   test -e "$CLAUDE_CONFIG_DIR/fail" && { rm "$CLAUDE_CONFIG_DIR/fail"; hook StopFailure authentication_failed; }
+  test -e "$CLAUDE_CONFIG_DIR/limit" && { given=$(cat "$CLAUDE_CONFIG_DIR/limit"); rm "$CLAUDE_CONFIG_DIR/limit"; hook StopFailure rate_limit "$given"; }
   sleep 0.1
 done`,
   );
@@ -165,9 +173,9 @@ async function untilNeedsYou(wanted: boolean) {
 }
 
 // Has the fake builder run the hooks for an event, as Claude Code would, and waits for them.
-async function hook(step: "ask" | "answer" | "talk" | "fail") {
+async function hook(step: "ask" | "answer" | "talk" | "fail" | "limit", input = "") {
   const before = read(join(builder(), "ran")).split("\n").length;
-  writeFileSync(join(builder(), step), "");
+  writeFileSync(join(builder(), step), input);
   await until(() => read(join(builder(), "ran")).split("\n").length > before);
 }
 
@@ -180,6 +188,15 @@ function workingSince(): number | null {
   const row = db.query("SELECT working_since FROM threads WHERE folder = 'app-12'").get();
   db.close();
   return z.object({ working_since: z.number().nullable() }).parse(row).working_since;
+}
+
+// app-12's row in Skelcrew's database.
+function thread(): Record<string, unknown> {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  const row = db.query("SELECT * FROM threads WHERE folder = 'app-12'").get();
+  db.close();
+  return row && typeof row === "object" ? { ...row } : {};
 }
 
 function setNeedsYou(): void {
@@ -256,6 +273,23 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("needs you", () => {
     // You fix it, such as with /login, and type to the builder.
     await hook("talk");
     await untilNeedsYou(false);
+  }, 60_000);
+
+  test("a builder stopped by its usage limit waits for the reset without needing you, then is told to continue", async () => {
+    addApp();
+    await startApp12();
+    // Claude Code's StopFailure hook is given the kind of error and what it showed.
+    const reset = Math.ceil(Date.now() / 1000) + 3;
+    const said = `Claude AI usage limit reached|${reset}`;
+    await hook("limit", JSON.stringify({ error: "rate_limit", last_assistant_message: said }));
+    expect(read(join(builder(), "hooks"))).toBe("");
+    await until(() => thread().limited === 1);
+    expect(thread()).toMatchObject({ erred: 1, limit_reset: reset * 1000 });
+    expect(await needsYou()).toBe(false);
+    // At the reset, Skelcrew types continue into the builder, and nobody hears of it.
+    await until(() => read(join(builder(), "typed")).includes("continue"));
+    expect(thread()).toMatchObject({ erred: 0, limited: 0, limit_reset: null });
+    expect(notes()).toBe(0);
   }, 60_000);
 
   test("starting the builder starts a stretch of work, and typing to it starts another", async () => {

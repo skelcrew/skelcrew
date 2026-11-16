@@ -467,7 +467,7 @@ test("a review that runs out of time ends, with all it started", async () => {
   );
   // Long enough for the reviewer to start and say where tmux's folder is, even on a busy machine.
   const verdict = await reviewOnMac(clone, "limit: 3000");
-  expect(verdict.verdict).toBe("failed");
+  expect(verdict.verdict).toBe("timed out");
   expect(verdict.body).toContain("ran past");
   // The review is ended with SIGKILL, and the shell that removes the sandbox's folders goes
   // with it, so the reviewer removes them: tmux's in /tmp, and the agent's own.

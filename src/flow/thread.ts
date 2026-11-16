@@ -52,6 +52,12 @@ export const Thread = z.object({
   // Whether the builder's harness stopped on an error it can't get past alone, such as a lapsed
   // login. The builder then sits idle, so the thread needs you until you type to it.
   erred: z.coerce.boolean(),
+  // Whether whoever has the thread now waits out its harness's usage limit: a review held until
+  // the limit resets, or a builder whose harness stopped on it, which also has erred. Either goes
+  // on by itself once the limit resets, so it doesn't need you. `limit_reset` is when, in
+  // milliseconds since 1970, or null when the harness didn't say.
+  limited: z.coerce.boolean(),
+  limit_reset: z.number().nullable(),
   // Why the thread started needing you, until a note saying so is typed into the lead.
   noting: z.string().nullable(),
   // The task's title and body when the thread started, for the strip, which looks each second
@@ -72,7 +78,7 @@ export const Thread = z.object({
   // Each one is saved here, so it reaches the thread's log with the rest of the thread.
   reviewed_by: HarnessName.nullable(),
   review_round: z.number().nullable(),
-  verdict: z.enum(["approve", "changes", "failed"]).nullable(),
+  verdict: z.enum(["approve", "changes", "failed", "timed out"]).nullable(),
   review_line: z.string().nullable(),
   // The harness its builder runs on, saved when the builder first starts, since a conversation
   // can't move to another harness. Null before then, and in a row from before Skelcrew saved it,
@@ -95,8 +101,10 @@ export type Thread = z.infer<typeof Thread>;
 export const builderHarness = (thread: Thread) => harnessNamed(thread.harness ?? "claude");
 
 // Returns whether the thread needs you: for a review, the round limit or an approval, for the
-// builder's question, or for its harness stopping on an error.
-export const needsYou = (thread: Thread) => thread.needs_you || thread.asking || thread.erred;
+// builder's question, or for its harness stopping on an error. A usage limit isn't one, as the
+// builder is woken once it resets.
+export const needsYou = (thread: Thread) =>
+  thread.needs_you || thread.asking || (thread.erred && !thread.limited);
 
 // Returns whether a builder that just ended its turn is waiting on you, for a harness with no
 // tool for asking, such as Codex. A builder that works and stops without sc submit has a
@@ -106,13 +114,15 @@ export const endedTurnAsks = (thread: Thread) => thread.status === "working" && 
 
 // Returns whether any thread has work under way that the machine must stay awake for: a
 // builder working, a review waiting or running, or a PR waiting on CI. A thread that only
-// waits on you is no work, and a builder working on your comment past the round limit is.
+// waits on you is no work, and a builder working on your comment past the round limit is. A
+// builder waiting out a usage limit is too, as the daemon must be awake to wake it.
 // A round that failed keeps its submit or review saved, to carry on after a restart, so those
 // don't count as work on a thread that needs you.
 export const hasWork = (threads: Thread[]) =>
   threads.some(
     (t) =>
-      (t.status === "working" && !t.asking && !t.erred) || (t.status === "waiting" && !needsYou(t)),
+      (t.status === "working" && !t.asking && (!t.erred || t.limited)) ||
+      (t.status === "waiting" && !needsYou(t)),
   );
 
 // Returns the thread's repository as owner/name.

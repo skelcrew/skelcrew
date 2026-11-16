@@ -33,6 +33,8 @@ function thread(change: Partial<Thread> = {}): Thread {
     last_check: 0,
     asking: false,
     erred: false,
+    limited: false,
+    limit_reset: null,
     noting: null,
     title: null,
     started: null,

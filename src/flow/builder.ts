@@ -159,6 +159,8 @@ export async function startThread(
       last_check: null,
       asking: false,
       erred: false,
+      limited: false,
+      limit_reset: null,
       noting: null,
       title,
       body,

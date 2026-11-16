@@ -204,11 +204,31 @@ export async function reportTurnEnded(): Promise<void> {
   await request({ command: "turn ended" });
 }
 
+// What Claude Code's StopFailure hook gets on stdin: the kind of error, such as rate_limit, and
+// what it showed, such as "You've hit your limit · resets 2pm".
+const StopFailure = z.looseObject({
+  error: z.string().optional(),
+  error_details: z.string().optional(),
+  last_assistant_message: z.string().optional(),
+});
+
 // Tells the daemon, for a Claude Code builder's hook, that its builder's turn ended on an
-// error, such as a lapsed login, so the thread needs you. The builder's own socket says which
-// thread.
-export async function reportTurnFailed(): Promise<void> {
-  await request({ command: "turn failed" });
+// error, such as a lapsed login or a usage limit, with what the hook was told of it, so the
+// thread needs you or waits for the limit to reset. The builder's own socket says which
+// thread. A hook input that can't be read still reports the error, only without its words.
+export async function reportTurnFailed(input: string): Promise<void> {
+  let given: unknown = {};
+  try {
+    given = JSON.parse(input);
+  } catch {}
+  const hook = StopFailure.safeParse(given);
+  const { error, error_details, last_assistant_message } = hook.success ? hook.data : {};
+  const message = [last_assistant_message, error_details].filter(Boolean).join("\n");
+  await request({
+    command: "turn failed",
+    ...(error ? { error } : {}),
+    ...(message ? { message } : {}),
+  });
 }
 
 // Has the daemon open a repository, by its owner/name, when the sidebar switches to its tab or

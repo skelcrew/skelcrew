@@ -17,6 +17,7 @@ import { basename, join } from "node:path";
 import { z } from "zod";
 import { claudeTokenFile, dataDir } from "../paths.ts";
 import { editing, type Progress, stepText, toolWords } from "./progress.ts";
+import { resetTime } from "./reset.ts";
 import { filterEnv, refuseCredentials, ro, rw, sandboxArgs } from "./sandbox.ts";
 
 const { O_NONBLOCK, O_NOFOLLOW, O_RDONLY } = constants;
@@ -366,6 +367,46 @@ function reviewCommand(given: {
 const parseAnswer = (_folder: string, out: string): unknown =>
   z.looseObject({ structured_output: z.unknown() }).parse(JSON.parse(out)).structured_output;
 
+// What claude -p prints with --output-format json when its turn ends on an error: the error's
+// words as its result, or a list of errors.
+const ErrorResult = z.looseObject({
+  is_error: z.boolean().optional(),
+  subtype: z.string().optional(),
+  result: z.string().optional(),
+  errors: z.array(z.string()).optional(),
+});
+
+// Returns the error a reviewer's claude -p ended on, from its JSON result, or null when it
+// printed no error result. Its result is what Claude Code said went wrong, such as a usage
+// limit, and never the prompt it was given.
+function reportedError(out: string, _err: string): string | null {
+  let printed: unknown;
+  try {
+    printed = JSON.parse(out);
+  } catch {
+    return null;
+  }
+  const result = ErrorResult.safeParse(printed);
+  if (!result.success) return null;
+  const { is_error, subtype = "", result: said, errors = [] } = result.data;
+  if (!is_error && !subtype.startsWith("error")) return null;
+  return said?.trim() || errors.join("; ").trim() || null;
+}
+
+// Returns whether Claude Code's error says its usage limit is reached, and when it resets, or
+// null when it says something else. It says "You've hit your limit · resets 2pm (Europe/London)",
+// "5-hour limit reached ∙ resets 3pm" and the like, or, in older versions, "Claude AI usage limit
+// reached|<seconds since 1970>". A rate limit with no time is a limit too: it passes on its own,
+// so it is waited out. "Context limit reached" is no usage limit: waiting never fixes it.
+function usageLimit(error: string, now: number): { reset: number | null } | null {
+  const older = /usage limit reached\|(\d{9,})/i.exec(error);
+  if (older) return { reset: Number(older[1]) * 1000 };
+  const limits = /hit your .*limit|usage limit|(?:hour|week|weekly|session|opus|sonnet) limit/i;
+  if (!limits.test(error) && !/out of extra usage|rate limit/i.test(error)) return null;
+  const resets = /resets? (?:at )?(.*)/i.exec(error)?.[1];
+  return { reset: resets === undefined ? null : resetTime(resets, now) };
+}
+
 // Claude Code as Skelcrew knows it. While a turn runs it shows "esc to interrupt". It is ready for
 // a message once that is gone and a line holding only its ❯ prompt shows. `keys` are the API key
 // variables let into the sandbox, for those who use a key rather than a login. The first run
@@ -383,4 +424,6 @@ export const claude = {
   progress: readProgress,
   review: reviewCommand,
   answer: parseAnswer,
+  failure: reportedError,
+  usageLimit,
 } as const;

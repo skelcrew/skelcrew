@@ -34,6 +34,7 @@ import {
   startLead,
   typeLeadNotes,
 } from "./lead.ts";
+import { wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import { pollRepositories } from "./poll.ts";
 import {
@@ -48,6 +49,7 @@ import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
 import { messageBuilder, messageLead } from "./tell.ts";
 import {
+  builderHarness,
   endedTurnAsks,
   findThread,
   hasWork,
@@ -401,15 +403,29 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         typeLeadNotes(db, tmux);
         return { asking: true };
       }
-      case "turn failed":
-        record(
-          db,
-          callingThread(caller).folder,
-          { erred: true },
-          "its builder's harness stopped on an error",
-        );
+      case "turn failed": {
+        // A usage limit, or a rate limit, passes by itself, so the builder is woken once it
+        // resets, and the thread doesn't need you for it. Any other error does.
+        const thread = callingThread(caller);
+        const said = request.message ?? "";
+        const limit =
+          builderHarness(thread).usageLimit(said, Date.now()) ??
+          (request.error === "rate_limit" ? { reset: null } : null);
+        if (limit !== null) {
+          const change = { erred: true, limited: true, limit_reset: limit.reset };
+          record(
+            db,
+            thread.folder,
+            change,
+            `its builder's harness reached its usage limit: ${said}`,
+          );
+          wakeAfterLimit(db, tmux, thread.folder);
+          return { erred: true };
+        }
+        record(db, thread.folder, { erred: true }, "its builder's harness stopped on an error");
         typeLeadNotes(db, tmux);
         return { erred: true };
+      }
       case "question answered": {
         const { folder } = callingThread(caller);
         const thread = readThread(db, folder);
@@ -419,11 +435,12 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), folder]);
         // Run before every message typed into the builder, so only a question or an error that
         // was open is logged. Typing to a builder that stopped on an error means you fixed it,
-        // such as with /login, so it ends the error as it ends a question.
+        // such as with /login, so it ends the error as it ends a question. A usage limit it
+        // stopped on ends too, as the builder now works again or meets it again.
+        const over = { erred: false, limited: false, limit_reset: null };
         if (thread.asking)
-          record(db, folder, { asking: false, erred: false }, "its builder's question is over");
-        else if (thread.erred)
-          record(db, folder, { erred: false }, "its builder was typed to after its error");
+          record(db, folder, { asking: false, ...over }, "its builder's question is over");
+        else if (thread.erred) record(db, folder, over, "its builder was typed to after its error");
         return { asking: false };
       }
       case "start": {
@@ -545,8 +562,12 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
   for (const thread of before) {
     await listenFor(thread);
     // After the builder is back, since the round may type into its session.
+    // A builder that stopped on a usage limit is woken once it resets, as it would have been.
     bringBack(db, tmux, thread).then(
-      () => resumeRound(db, tmux, thread.folder),
+      () => {
+        resumeRound(db, tmux, thread.folder);
+        if (thread.erred && thread.limited) wakeAfterLimit(db, tmux, thread.folder);
+      },
       (error) => failThread(db, thread, error),
     );
   }

@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { dataDir } from "../paths.ts";
 import { editing, type Progress, stepText, toolWords } from "./progress.ts";
+import { resetTime } from "./reset.ts";
 import { filterEnv, refuseCredentials, ro, rw, sandboxArgs, throwawayMounts } from "./sandbox.ts";
 
 // Returns Skelcrew's own CODEX_HOME, where the first run's codex login goes and reviews run: a
@@ -411,6 +412,49 @@ function readAnswer(folder: string): unknown {
   return JSON.parse(readFileSync(file, "utf8"));
 }
 
+// An error in Codex's JSON events: one on its own, or the error a turn failed with.
+const ErrorEvent = z.union([
+  z.looseObject({ type: z.literal("error"), message: z.string() }),
+  z.looseObject({
+    type: z.literal("turn.failed"),
+    error: z.looseObject({ message: z.string() }),
+  }),
+]);
+
+// Returns the error a reviewer's codex exec ended on, or null when it printed none. codex exec
+// echoes the whole prompt before it works, so the end of what it printed can be the task's
+// text. Its own error is the last line it starts with "ERROR:", or, in its JSON events, the
+// last error event.
+function reportedError(out: string, err: string): string | null {
+  // Read the lines from the end, as the error that ended the run comes last.
+  const lines = `${out}\n${err}`.split("\n").reverse();
+  for (const line of lines) {
+    const plain = /^ERROR:\s*(.+)/.exec(line.trim());
+    if (plain?.[1]) return plain[1].trim();
+    if (!line.trim().startsWith("{")) continue;
+    let event: unknown;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const error = ErrorEvent.safeParse(event);
+    if (!error.success) continue;
+    return error.data.type === "error" ? error.data.message : error.data.error.message;
+  }
+  return null;
+}
+
+// Returns whether Codex's error says its usage limit is reached, and when it resets, or null
+// when it says something else. It says "You've hit your usage limit. ... try again at 1:59 PM.",
+// with the day before the time when the reset isn't today. A rate limit with no time is a limit
+// too: it passes on its own, so it is waited out.
+function usageLimit(error: string, now: number): { reset: number | null } | null {
+  if (!/usage limit|rate limit|too many requests/i.test(error)) return null;
+  const again = /try again at (.*)/i.exec(error)?.[1];
+  return { reset: again === undefined ? null : resetTime(again, now) };
+}
+
 // Codex as Skelcrew knows it. While a turn runs it shows "esc to interrupt". Its empty input
 // always shows "› Ask Codex to do anything", even mid-turn, so that whole line is its prompt:
 // a line holding only › never shows. codex exec reads CODEX_API_KEY: given only
@@ -430,4 +474,6 @@ export const codex = {
   progress: readProgress,
   review: reviewCommand,
   answer: readAnswer,
+  failure: reportedError,
+  usageLimit,
 } as const;

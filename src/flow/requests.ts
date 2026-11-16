@@ -93,7 +93,13 @@ export const DaemonRequest = z.discriminatedUnion("command", [
   z.object({ command: z.literal("question asked") }),
   z.object({ command: z.literal("question answered") }),
   z.object({ command: z.literal("turn ended") }),
-  z.object({ command: z.literal("turn failed") }),
+  // `error` is the kind of error Claude Code's StopFailure hook gives, such as rate_limit, and
+  // `message` what it said, such as when the limit resets.
+  z.object({
+    command: z.literal("turn failed"),
+    error: z.string().optional(),
+    message: z.string().optional(),
+  }),
 ]);
 export type DaemonRequest = z.infer<typeof DaemonRequest>;
 

@@ -50,6 +50,15 @@ const Roles = z.looseObject({
   builder: RoleSettings.optional(),
   reviewer: RoleSettings.optional(),
 });
+// How long a review may run before it is ended, in minutes. Yours alone, like the fallback.
+const ReviewTimeout = z.looseObject({
+  review: z.looseObject({ timeout_minutes: z.number().positive().optional() }).optional(),
+});
+// The harness reviews run on while the reviewer's own waits out its usage limit. Only yours: a
+// limit belongs to your account, not to the repository.
+const Fallback = z.looseObject({
+  reviewer: z.looseObject({ fallback: HarnessName.optional() }).optional(),
+});
 // Apart from Roles, so a bad max_rounds stops a thread, not the lead.
 const Rounds = z.looseObject({ max_rounds: z.number().int().positive().optional() });
 // The commands that set up a thread's clone, run once in it. The reviewer reads the test
@@ -135,13 +144,26 @@ export function agentRoles(repository?: Repository): { lead: Role; builder: Role
 }
 
 // Returns what a repository's threads run with: each agent's harness and model, as agentRoles
-// gives them, and the round limit, from its skelcrew.yaml, else your config, else 3.
-export function threadConfig(
-  repository: Repository,
-): ReturnType<typeof agentRoles> & { maxRounds: number } {
+// gives them, the round limit, from its skelcrew.yaml, else your config, else 3, and the
+// harness reviews fall back to during a usage limit, from your config, or null with none. A
+// fallback that is the reviewer's own harness is none. Also how many minutes a review may run,
+// from your config, else 30.
+export function threadConfig(repository: Repository): ReturnType<typeof agentRoles> & {
+  maxRounds: number;
+  fallback: HarnessName | null;
+  reviewMinutes: number;
+} {
   const maxRounds =
     readRepositoryConfig(Rounds, repository).max_rounds ?? readYourConfig(Rounds).max_rounds ?? 3;
-  return { ...agentRoles(repository), maxRounds };
+  const roles = agentRoles(repository);
+  const fallback = readYourConfig(Fallback).reviewer?.fallback ?? null;
+  const reviewMinutes = readYourConfig(ReviewTimeout).review?.timeout_minutes ?? 30;
+  return {
+    ...roles,
+    maxRounds,
+    fallback: fallback === roles.reviewer.harness ? null : fallback,
+    reviewMinutes,
+  };
 }
 
 // Returns the setup commands in the repository's skelcrew.yaml, or none when it has none.

@@ -18,6 +18,7 @@ const verdicts: Record<string, string> = {
   approve: "approved",
   changes: "changes",
   failed: "review failed",
+  "timed out": "review timed out",
 };
 
 // Returns text as tmux shows it as is. tmux reads the strip as a format, where #(...) would run

@@ -721,6 +721,8 @@ const state: Thread = {
   last_check: 0,
   asking: false,
   erred: false,
+  limited: false,
+  limit_reset: null,
   noting: null,
   body: null,
   title: null,
@@ -758,6 +760,7 @@ test("each reason a thread needs you has its own word", () => {
   expect(word({ ...needing, verdict: "approve" })).toBe("approved");
   expect(word({ ...needing, verdict: "changes", rounds: 4, held: "fix" })).toBe("round limit");
   expect(word({ ...needing, verdict: "failed" })).toBe("review failed");
+  expect(word({ ...needing, verdict: "timed out" })).toBe("review timed out");
 });
 
 test("a round that failed before its review answered reads as a failed review", () => {
