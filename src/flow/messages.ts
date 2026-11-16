@@ -75,7 +75,9 @@ export async function whyWaiting(db: Database, tmux: string, thread: Thread): Pr
 
 // Saves a message for the thread's builder and has the daemon type it in as soon as the builder
 // can take it. Skelcrew's own message isn't saved twice while the same one still waits, such as
-// a conflict found again after a submit.
+// a conflict found again after a submit. The reviews and comments the second one carries join
+// the waiting one, so each is still marked seen once it is typed in: two comments can say the
+// same words.
 export function queueMessage(
   db: Database,
   tmux: string,
@@ -83,12 +85,21 @@ export function queueMessage(
   message: Pick<Message, "sender" | "text" | "said" | "typed_in">,
 ): void {
   const { sender, text, said, typed_in } = message;
-  const same = db.query("SELECT 1 FROM messages WHERE folder = ? AND sender = ? AND text = ?");
-  if (sender === "skelcrew" && same.get(folder, sender, text)) return;
-  db.run(
-    "INSERT INTO messages (folder, sender, text, said, at, typed_in) VALUES (?, ?, ?, ?, ?, ?)",
-    [folder, sender, text, said, Date.now(), JSON.stringify(typed_in)],
-  );
+  const query = db.query("SELECT * FROM messages WHERE folder = ? AND sender = ? AND text = ?");
+  const same =
+    sender === "skelcrew" ? Message.nullable().parse(query.get(folder, sender, text)) : null;
+  if (same === null)
+    db.run(
+      "INSERT INTO messages (folder, sender, text, said, at, typed_in) VALUES (?, ?, ?, ?, ?, ?)",
+      [folder, sender, text, said, Date.now(), JSON.stringify(typed_in)],
+    );
+  else {
+    const added = typed_in.filter(
+      (event) => !same.typed_in.some((had) => had.kind === event.kind && had.id === event.id),
+    );
+    const joined = JSON.stringify([...same.typed_in, ...added]);
+    db.run("UPDATE messages SET typed_in = ? WHERE id = ?", [joined, same.id]);
+  }
   deliverMessages(db, tmux, folder);
 }
 
@@ -124,17 +135,25 @@ function afterTyped(db: Database, folder: string, message: Message): void {
       );
 }
 
-// Tells the lead, once, that its message has waited 10 minutes, naming the thread and why, so
-// it can ask the human to press Esc in a builder that should stop its turn.
-function noteIfLate(db: Database, tmux: string, thread: Thread, message: Message, why: string) {
-  if (message.sender !== "lead" || message.noted || Date.now() - message.at < lateAfter) return;
-  db.run("UPDATE messages SET noted = 1 WHERE id = ?", [message.id]);
+// Tells the lead, once per message, that its messages to the thread's builder have waited 10
+// minutes, naming the thread and why, so it can ask the human to press Esc in a builder that
+// should stop its turn. Every waiting message of the lead's counts, not only the next one to go
+// in, as one can wait behind a message of Skelcrew's.
+function noteLate(db: Database, tmux: string, thread: Thread, why: string) {
+  const rows = db
+    .query("SELECT * FROM messages WHERE folder = ? AND sender = 'lead' AND noted = 0 AND at <= ?")
+    .all(thread.folder, Date.now() - lateAfter);
+  const late = z.array(Message).parse(rows);
+  if (late.length === 0) return;
+  for (const { id } of late) db.run("UPDATE messages SET noted = 1 WHERE id = ?", [id]);
   const name = threadName(db, thread);
+  const [yours, it] =
+    late.length === 1 ? ["your message", "it"] : [`${late.length} of your messages`, "them"];
   noteForLead(
     db,
     tmux,
     thread,
-    `${name}'s builder hasn't got your message after 10 minutes: ${why}. Skelcrew types it in once it can. To have it sooner, ask the human to press Esc in ${name}.`,
+    `${name}'s builder hasn't got ${yours} after 10 minutes: ${why}. Skelcrew types ${it} in once it can. To have ${it} sooner, ask the human to press Esc in ${name}.`,
   );
 }
 
@@ -150,7 +169,7 @@ async function deliver(db: Database, tmux: string, folder: string, signal: Abort
     const thread = readThread(db, folder);
     const why = await whyWaiting(db, tmux, thread);
     if (signal.aborted) return;
-    if (why !== "") return noteIfLate(db, tmux, thread, message, why);
+    if (why !== "") return noteLate(db, tmux, thread, why);
     // The builder looked ready a moment ago, so typing shouldn't wait long. If it does, the
     // message stays saved for the next attempt.
     const { marks } = builderHarness(thread);
