@@ -307,8 +307,9 @@ test("Ctrl-Q still leaves, though nothing shows it", async () => {
   await until(() => seen().includes(leaving), "the line that says what happened");
 });
 
-// Replaces the lead with an agent that asks for extended keys, as Claude Code and Codex do, says
-// its name, and logs every byte it reads to lead.keys.
+// Replaces the lead with an agent that asks for extended keys, says its name, and logs every
+// byte it reads to lead.keys. Like Claude Code, it asks only when TERM_PROGRAM says it runs in
+// tmux, as it can't tell from a TERM of tmux-256color alone.
 function keyLoggingLead(): void {
   tmux(agents, "kill-session", "-t", "=lead");
   const script = join(home, "keys.sh");
@@ -316,7 +317,7 @@ function keyLoggingLead(): void {
     script,
     `#!/bin/sh
 cd ${JSON.stringify(home)}
-printf '\\033[>4;2m'
+[ "$TERM_PROGRAM" = tmux ] && printf '\\033[>4;2m'
 echo "I am lead"
 stty raw -echo
 exec cat > lead.keys

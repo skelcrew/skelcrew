@@ -281,14 +281,14 @@ test("a first message and an environment value ending in ; arrive as given", asy
 });
 
 // The tmux server hands its own environment to every session, so a token in the daemon's
-// environment would reach every agent.
-test("a session gets only the environment it is given, and tmux's TERM", async () => {
+// environment would reach every agent. Claude Code needs TERM_PROGRAM=tmux to ask for Shift+Enter.
+test("a session gets only the environment it is given, and tmux's TERM and TERM_PROGRAM", async () => {
   const tmux = source("agents/tmux.ts");
   const script = `import { startSession } from ${JSON.stringify(tmux)};
 startSession(${JSON.stringify(socket)}, "builder", {
   folder: ${JSON.stringify(home)},
   command: ["sh", "-c", "env > env.txt; sleep 30"],
-  env: { PATH: process.env.PATH, KEPT: "yes", TERM: "dumb" },
+  env: { PATH: process.env.PATH, KEPT: "yes", TERM: "dumb", TERM_PROGRAM: "ghostty" },
 });`;
   const run = Bun.spawnSync(["bun", "-e", script], {
     env: { ...process.env, GH_TOKEN: "secret", CLAUDE_CODE_CHILD_SESSION: "1", CLAUDECODE: "1" },
@@ -303,8 +303,10 @@ startSession(${JSON.stringify(socket)}, "builder", {
     "KEPT",
     "PATH",
     "TERM",
+    "TERM_PROGRAM",
   ]);
   expect(read("env.txt")).not.toContain("TERM=dumb");
+  expect(read("env.txt")).toContain("TERM_PROGRAM=tmux\n");
 });
 
 test("a name tmux would change is refused", () => {
