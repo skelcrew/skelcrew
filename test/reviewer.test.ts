@@ -89,7 +89,7 @@ const start = (
     limit?: number;
     harness?: "claude";
     model?: string;
-    ci?: () => Promise<string>;
+    ci?: { has: () => boolean; read: () => Promise<string> };
   } = {},
 ) => review({ ...given(), ...more });
 
@@ -343,7 +343,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
   test("a reviewer on either harness reads CI's result from the file its prompt names", async () => {
     mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
     writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-tok\n");
-    const ci = async () => "CI failed on this commit.\n";
+    const ci = { has: () => true, read: async () => "CI failed on this commit.\n" };
     // Codex answers in a file, and Claude Code on its output.
     fakeCodex(approve, [
       'prompt="$CODEX_HOME/sessions/prompt"',
@@ -365,7 +365,7 @@ describe.skipIf(insideSandbox)("reviewer", () => {
 
   test("keeps CI's result current while the review runs", async () => {
     let asked = 0;
-    const ci = async () => `asked ${++asked}\n`;
+    const ci = { has: () => true, read: async () => `asked ${++asked}\n` };
     fakeCodex(approve, [
       'prompt="$CODEX_HOME/sessions/prompt"',
       ciFile,
@@ -374,6 +374,45 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     expect((await start({ ci })).verdict).toBe("approve");
     expect(kept("ci")).toBe("asked 1\nasked 2\n");
   }, 40_000);
+
+  test("whether the repository has CI is asked as the review starts, not when it was queued", async () => {
+    let has = false;
+    fakeCodex(approve, ["sleep 1"]);
+    const first = start();
+    const second = start({ ci: { has: () => has, read: async () => "CI passed.\n" } });
+    // CI shows up while the first review still runs, and the second waits its turn.
+    await Bun.sleep(300);
+    has = true;
+    await Promise.all([first, second]);
+    expect(kept("prompt")).toContain("ci.md");
+    fakeCodex(approve);
+    await start({ ci: { has: () => false, read: async () => "CI passed.\n" } });
+    expect(kept("prompt")).toContain("The repository has no CI, so run its whole test suite");
+  });
+
+  // Asking the forge for a failed log can take a minute. A review that ends must not wait for
+  // it, or every review queued after it would wait too.
+  test("a slow answer about CI never holds up a review that was cancelled or ran out of time", async () => {
+    fakeCodex(approve);
+    // An answer that comes only once the test lets it, after every review has ended.
+    let answer = () => {};
+    const late = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    const slow = { has: () => true, read: () => late.then(() => "late\n") };
+    const cancel = new AbortController();
+    setTimeout(() => cancel.abort(), 500);
+    const began = Date.now();
+    const cancelled = start({ signal: cancel.signal, ci: slow });
+    const timedOut = start({ limit: 1000, ci: slow });
+    const next = start();
+    expect(await cancelled).toEqual({ verdict: "failed", body: "the review was cancelled" });
+    expect(await timedOut).toMatchObject({ verdict: "failed" });
+    expect((await timedOut).body).toContain("ran past");
+    expect((await next).verdict).toBe("approve");
+    expect(Date.now() - began).toBeLessThan(15_000);
+    answer();
+  });
 });
 
 // These never start bubblewrap, so they run inside Skelcrew's sandbox too.

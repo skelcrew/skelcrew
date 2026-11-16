@@ -408,10 +408,12 @@ test("a PR's CI reads as passing, failing or still running, and Skelcrew's own c
   expect(ciState(pr({ checks: [failed, going] }))).toBe("failing");
 });
 
-test("a repository has CI once one of its PRs shows a CI check, besides Skelcrew's own", () => {
-  expect(hasCi([])).toBe(false);
-  expect(hasCi([pr({ checks: [approved] })])).toBe(false);
-  expect(hasCi([pr(), pr({ checks: [approved, run(30, "test", "running")] })])).toBe(true);
+test("a repository has CI when its default branch sets it up, or one of its PRs shows a CI check", () => {
+  expect(hasCi([], [])).toBe(false);
+  expect(hasCi([pr({ checks: [approved] })], [])).toBe(false);
+  expect(hasCi([pr(), pr({ checks: [approved, run(30, "test", "running")] })], [])).toBe(true);
+  // A first PR, before any check has started anywhere, as Skelcrew's copy of it may not exist yet.
+  expect(hasCi([], [".github/workflows"])).toBe(true);
 });
 
 test("tells the reviewer CI hasn't reported until the PR's head is the commit under review", () => {

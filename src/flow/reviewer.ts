@@ -1,6 +1,6 @@
 // Runs a fresh adversarial reviewer in the sandbox for each thread's PR, on the harness your
 // config names for reviews.
-import { mkdtempSync, renameSync, rmSync } from "node:fs";
+import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -140,9 +140,10 @@ function readVerdict(
 
 // Runs a fresh reviewer against a throwaway view of the clone and returns its verdict or failure
 // reason. Enforces cancellation and a time limit, then removes the review's temporary
-// files. With `ci`, which says what CI says about the commit, the reviewer reads CI's result
-// rather than running the whole test suite. It is asked again every 15 seconds while the
-// review runs, as CI usually finishes during it.
+// files. `ci` says whether the repository has CI, asked as the review starts, since CI may have
+// shown up while it waited its turn, and what CI says about the commit. With CI, the reviewer
+// reads CI's result rather than running the whole test suite. It is asked again every 15
+// seconds while the review runs, as CI usually finishes during it.
 async function reviewNow(given: {
   clone: string;
   issue: { title: string; body: string };
@@ -153,7 +154,7 @@ async function reviewNow(given: {
   signal?: AbortSignal;
   limit?: number;
   env?: Record<string, string | undefined>;
-  ci?: (() => Promise<string>) | undefined;
+  ci?: { has: () => boolean; read: () => Promise<string> } | undefined;
 }): Promise<Review> {
   const { clone, issue, base, model, harness, limit = 30 * 60_000, env = process.env } = given;
   // Fail at once, with a reason you can act on, when the review was cancelled before its turn
@@ -185,13 +186,25 @@ async function reviewNow(given: {
   // CI's result goes in the review's folder, which the reviewer sees. It is written whole and
   // then moved in, so the reviewer never reads half of it. A failure to ask is written there
   // too, so the reviewer says it couldn't tell rather than taking an old result for current.
+  // Asking the forge for a failed log can take a minute, longer than between two refreshes,
+  // so a refresh is skipped while the one before still runs. Once the review ends, an answer
+  // that comes late writes nothing, and the review never waits for it: the next review in the
+  // queue would wait too.
   const ciFile = join(folder, "ci.md");
+  let ended = false;
+  let refreshing = false;
   const writeCi = async (read: () => Promise<string>) => {
-    const text = await read().catch((error) => `Skelcrew couldn't read CI: ${errorText(error)}\n`);
-    await Bun.write(`${ciFile}.new`, text);
-    renameSync(`${ciFile}.new`, ciFile);
+    refreshing = true;
+    try {
+      const text = await read().catch((e) => `Skelcrew couldn't read CI: ${errorText(e)}\n`);
+      // No await between this check and the write, so it never lands in a removed folder.
+      if (ended) return;
+      writeFileSync(`${ciFile}.new`, text);
+      renameSync(`${ciFile}.new`, ciFile);
+    } finally {
+      refreshing = false;
+    }
   };
-  let writing: Promise<void> = Promise.resolve();
   let refresh: ReturnType<typeof setInterval> | undefined;
   try {
     // The harness gets the answer's shape from a file, and says how to start the reviewer
@@ -224,13 +237,16 @@ async function reviewNow(given: {
       command: ["sh", "-c", checkout, given.commit, ...launch.command],
       programs: launch.command.slice(0, 1),
     });
-    // CI's result is there before the reviewer starts, and kept current while it runs. Each
-    // write waits for the one before, so a slow forge never has two race to the file.
-    const { ci } = given;
-    if (ci) {
-      await writeCi(ci);
+    // CI's result is there before the reviewer starts, and kept current while it runs. The
+    // first answer is waited for, but never past a cancellation or the time limit.
+    const ci = given.ci?.has() ? given.ci.read : undefined;
+    if (ci && !signal.aborted) {
+      const stopped = new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+      await Promise.race([writeCi(ci), stopped]);
       refresh = setInterval(() => {
-        writing = writing.then(() => writeCi(ci)).catch(() => {});
+        if (!refreshing) writeCi(ci).catch(() => {});
       }, 15_000);
     }
     // Check for cancellation and the time limit on both sides of the run, so a review that was
@@ -248,8 +264,8 @@ async function reviewNow(given: {
     return readVerdict(harness, folder, finished);
   } finally {
     // No write of CI's result may land after the folder is gone, or it would make it again.
+    ended = true;
     clearInterval(refresh);
-    await writing.catch(() => {});
     // On a Mac the review may have been ended with SIGKILL, before the sandbox could remove
     // its own folders, one of them in /tmp.
     for (const own of [folder, ...sandboxFolders(argv)])

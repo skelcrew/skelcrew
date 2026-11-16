@@ -2,6 +2,8 @@
 // its PR opened on the first round, reviewed by a fresh reviewer, and the review typed back
 // into the builder's session when it asks for changes.
 import type { Database } from "bun:sqlite";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { typeInto } from "../agents/typing.ts";
 import { threadConfig } from "../config.ts";
 import { cloneDir } from "../paths.ts";
@@ -10,7 +12,7 @@ import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
 import { openPrs, prOf, threadTask } from "./copy.ts";
-import { afterReview, ciResult, hasCi, pastRoundLimit } from "./decide.ts";
+import { afterReview, ciConfigs, ciResult, hasCi, pastRoundLimit } from "./decide.ts";
 import { pushCommit } from "./git.ts";
 import { typeLeadNotes } from "./lead.ts";
 import { review } from "./reviewer.ts";
@@ -137,11 +139,19 @@ async function reviewRound(
     harness: reviewer,
     signal,
     // With CI on the forge, CI runs the whole test suite and the reviewer reads its result.
-    // Without, the reviewer runs the suite itself.
+    // Without, the reviewer runs the suite itself. CI's files are looked for in Skelcrew's
+    // clone, on the default branch, never in the builder's clone, which the builder controls.
     ci:
-      pr !== null && hasCi(openPrs(db, thread.owner, thread.repo))
-        ? ciOfCommit(db, thread, pr, sha)
-        : undefined,
+      pr === null
+        ? undefined
+        : {
+            has: () => {
+              const skelcrewClone = cloneDir(thread.owner, thread.repo);
+              const found = ciConfigs.filter((file) => existsSync(join(skelcrewClone, file)));
+              return hasCi(openPrs(db, thread.owner, thread.repo), found);
+            },
+            read: ciOfCommit(db, thread, pr, sha),
+          },
   });
   // Decide what the verdict means for the thread, then post it on the PR. A failed review is
   // Skelcrew's problem, not the PR's, so it is never posted.
