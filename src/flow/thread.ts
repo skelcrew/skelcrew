@@ -8,6 +8,10 @@ import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { threadsDir } from "../paths.ts";
 import { findRepository } from "./repo.ts";
 
+// One message the lead told a thread's builder: who sent it, when it was typed in, in
+// milliseconds since 1970, and its text.
+const TaskUpdate = z.object({ from: z.literal("lead"), at: z.number(), text: z.string() });
+
 // A thread as Skelcrew's database keeps it, one row per thread. It is checked on every read,
 // since the row comes back from disk. Its folder names it inside Skelcrew: its clone, session
 // and log are all named after it.
@@ -88,6 +92,14 @@ export const Thread = z.object({
   // When anything last went in the thread's log, in milliseconds since 1970, for the list of
   // threads. Null in a row from before Skelcrew kept it.
   changed: z.number().nullable(),
+  // The lead's messages to the builder, oldest first, with when each was typed in. They change
+  // the task after the thread started, such as a new design you agreed to, so the reviewer and
+  // sc issue show get them with the task. Only the lead's count: a builder must never change
+  // what it is reviewed against. A row from before Skelcrew kept them holds null, read as none.
+  updates: z
+    .string()
+    .nullable()
+    .transform((saved) => TaskUpdate.array().parse(saved === null ? [] : JSON.parse(saved))),
 });
 export type Thread = z.infer<typeof Thread>;
 

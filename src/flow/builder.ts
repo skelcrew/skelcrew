@@ -175,6 +175,7 @@ export async function startThread(
       // assigned you.
       assigned: before?.assigned ?? false,
       changed: null,
+      updates: [],
     };
     // A failed or done thread's row gives way to the new one.
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);

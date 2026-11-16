@@ -99,6 +99,10 @@ INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you, sessi
     ]);
 }
 
+// Runs tmux on this test's own server, where the threads' sessions are.
+const tmux = (...args: string[]) =>
+  Bun.spawnSync(["tmux", "-L", socket, "-f", "/dev/null", ...args], { stderr: "pipe" });
+
 // The socket the daemon opens for a repository's lead, named by a short hash of its GitHub name.
 const leadSocket = (repo = "app") => {
   const short = new Bun.CryptoHasher("sha256").update(`simon/${repo}`).digest("hex").slice(0, 16);
@@ -333,6 +337,55 @@ describe("sc issue show", () => {
     const unknown = await skel(["issue", "show", "web-1"]);
     expect(unknown.code).not.toBe(0);
     expect(unknown.err).toContain("no repository named web");
+  });
+
+  // The lead's messages to a builder change its task after the thread started, so they show
+  // after the body, oldest first, as the thread's reviewer gets them. A builder's message to
+  // the lead never does: a builder must not change what it is reviewed against.
+  test("shows the lead's messages to the builder after the task, and not the builder's", async () => {
+    // app-12's builder waits at a bare prompt, so the lead's messages are typed in at once.
+    tmux("kill-session", "-t", "=app-12");
+    tmux("new-session", "-d", "-s", "app-12", "stty -echo; echo ❯; exec sleep 300");
+    serve();
+    await untilAnswers();
+    await openApp();
+    const builder = await builderSocket();
+    for (const text of ["Keep the CSV export too.", "Name the file export.json."])
+      expect((await asAgent(["tell", "app-12", text], leadSocket())).err).toBe("");
+    expect((await asAgent(["tell", "lead", "Done with the CSV part."], builder)).err).toBe("");
+    const log = () => read(join(data(), "threads", "app-12.log"));
+    await until(() => log().includes("export.json"), { timeout: 15_000 });
+    const shown = await skel(["issue", "show", "app-12"]);
+    expect(shown.err).toBe("");
+    expect(shown.out).toMatch(
+      /^app-12 {2}Add export\nThread: working\n\nExport threads as JSON\.\n\nKeep it small\.\n\n## Changes to the task from the lead, after the thread started\n\nThese override the task above where they differ\. The latest comes last\.\n\n### \d{4}-\d\d-\d\d \d\d:\d\d UTC\n\nKeep the CSV export too\.\n\n### \d{4}-\d\d-\d\d \d\d:\d\d UTC\n\nName the file export\.json\.\n$/,
+    );
+    expect(shown.out).not.toContain("Done with the CSV part.");
+    // The thread's log keeps each one, with who sent it and when.
+    const last = JSON.parse(log().trim().split("\n").at(-1) ?? "{}");
+    expect(last.updates).toEqual([
+      { from: "lead", at: expect.any(Number), text: "Keep the CSV export too." },
+      { from: "lead", at: expect.any(Number), text: "Name the file export.json." },
+    ]);
+  });
+
+  // A thread with no task in the tracker shows the title and body it started with.
+  test("shows a thread with no task in the tracker, with the lead's messages", async () => {
+    sql(`INSERT INTO threads (owner, repo, task, folder, branch, status, session, title, body)
+      VALUES ('simon', 'app', 't1', 'app-t1', 'skelcrew/t1', 'working', 's1', 'Add docs', 'A page.')`);
+    tmux("new-session", "-d", "-s", "app-t1", "stty -echo; echo ❯; exec sleep 300");
+    serve();
+    await untilAnswers();
+    await openApp();
+    expect((await asAgent(["tell", "app-t1", "Two pages."], leadSocket())).err).toBe("");
+    await until(() => read(join(data(), "threads", "app-t1.log")).includes("Two pages."), {
+      timeout: 15_000,
+    });
+    const shown = JSON.parse((await skel(["issue", "show", "app-t1", "--json"])).out);
+    expect(shown).toMatchObject({ issue: "app-t1", title: "Add docs" });
+    expect(shown.body).toMatch(
+      /^A page\.\n\n## Changes to the task from the lead.*\n\nTwo pages\.$/s,
+    );
   });
 
   test("the lead can show a task from its sandbox, and a builder can't", async () => {

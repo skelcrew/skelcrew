@@ -108,7 +108,8 @@ function prepareTables(db: Database): void {
   // carries on when it starts again, and `noting` holds a note for the lead the same way.
   // `short` is the short title the lead gave the thread for the sidebar.
   // `assigned` is whether Skelcrew assigned you the thread's issue, so it takes you off only then.
-  // `changed` is when anything last went in the thread's log.
+  // `changed` is when anything last went in the thread's log. `updates` holds the lead's
+  // messages to the builder, as JSON, since they change the task its reviewer checks against.
   const threadColumns = {
     rounds: "INTEGER NOT NULL DEFAULT 0",
     pr: "INTEGER",
@@ -137,6 +138,7 @@ function prepareTables(db: Database): void {
     short: "TEXT",
     assigned: "INTEGER NOT NULL DEFAULT 0",
     changed: "INTEGER",
+    updates: "TEXT",
   };
   for (const [column, type] of Object.entries(threadColumns))
     if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))
