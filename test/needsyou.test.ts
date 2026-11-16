@@ -280,7 +280,8 @@ describe.skipIf(insideSandbox)("needs you", () => {
     addApp();
     await startApp12();
     // Claude Code's StopFailure hook is given the kind of error and what it showed.
-    const reset = Math.ceil(Date.now() / 1000) + 3;
+    // Far enough off to see the thread wait before the reset comes.
+    const reset = Math.ceil(Date.now() / 1000) + 8;
     const said = `Claude AI usage limit reached|${reset}`;
     await hook("limit", JSON.stringify({ error: "rate_limit", last_assistant_message: said }));
     expect(read(join(builder(), "hooks"))).toBe("");
@@ -288,7 +289,7 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(thread()).toMatchObject({ erred: 1, limit_reset: reset * 1000 });
     expect(await needsYou()).toBe(false);
     // At the reset, Skelcrew types continue into the builder, and nobody hears of it.
-    await until(() => read(join(builder(), "typed")).includes("continue"));
+    await until(() => read(join(builder(), "typed")).includes("continue"), 30_000);
     expect(thread()).toMatchObject({ erred: 0, limited: 0, limit_reset: null });
     expect(notes()).toBe(0);
   }, 60_000);

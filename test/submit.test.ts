@@ -55,9 +55,9 @@ function fakeClaude(submits = true): void {
     `case "$CLAUDE_CONFIG_DIR" in */lead-*) stty -echo; echo "❯"; exec cat > "$CLAUDE_CONFIG_DIR/typed" ;; esac
 case " $* " in *" -p "*)
   cat > /dev/null
-  until=$(cat "$(dirname "$0")/claude-limit" 2>/dev/null)
-  if [ -n "$until" ] && [ "$(date +%s)" -lt "$until" ]; then
-    echo '{"type":"result","is_error":true,"result":"Claude AI usage limit reached|'"$until"'"}'
+  reset=$(cat "$(dirname "$0")/claude-limit" 2>/dev/null)
+  if [ -n "$reset" ] && [ "$(date +%s)" -lt "$reset" ]; then
+    echo '{"type":"result","is_error":true,"result":"Claude AI usage limit reached|'"$reset"'"}'
     exit 1
   fi
   echo '{"type":"result","structured_output":{"verdict":"approve","body":"Ready to merge."}}'
@@ -494,13 +494,14 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
       join(home, ".config", "skelcrew", "config.yaml"),
       "harness: claude\nreviewer: { harness: claude }\n",
     );
-    // Claude Code says when its limit resets, in seconds since 1970.
-    const reset = Math.ceil(Date.now() / 1000) + 8;
+    // Claude Code says when its limit resets, in seconds since 1970. Far enough off that the
+    // first review meets it however slowly the builder starts.
+    const reset = Math.ceil(Date.now() / 1000) + 30;
     writeFileSync(join(home, "bin", "claude-limit"), `${reset}\n`);
     await startApp12();
     await until(() => thread().review_limited === 1, 30_000);
     expect(thread()).toMatchObject({ needs_you: 0, review_reset: reset * 1000 });
-    await until(() => finished("success").length === 1, 30_000);
+    await until(() => finished("success").length === 1, 45_000);
     expect(thread()).toMatchObject({ review_limited: 0, review_reset: null, needs_you: 0 });
     expect(reviews()).toEqual([{ commit: pushed(), verdict: "approve", body: "Ready to merge." }]);
     await until(() =>
@@ -509,11 +510,11 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
       ),
     );
     expect(read(join(lead(), "typed"))).toContain("Claude Code's usage limit is reached until");
-  }, 60_000);
+  }, 90_000);
 
   test("a review that runs past its time limit is ended and run once more, and the lead hears of it", async () => {
     addApp();
-    config("review: { timeout_minutes: 0.05 }\n");
+    config("review: { timeout_minutes: 0.1 }\n");
     mkdirSync(codexHome(), { recursive: true });
     writeFileSync(join(codexHome(), "slow-1"), "");
     verdict(2, "approve", "Ready to merge.");
@@ -521,16 +522,16 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     await until(() => finished("success").length === 1, 30_000);
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
     const log = read(join(data(), "threads", "app-12.log"));
-    expect(log).toContain("app-12's review timed out after 0.05m; retrying");
+    expect(log).toContain("app-12's review timed out after 0.1m; retrying");
     await until(() =>
-      read(join(lead(), "typed")).includes("app-12's review timed out after 0.05m; retrying"),
+      read(join(lead(), "typed")).includes("app-12's review timed out after 0.1m; retrying"),
     );
     expect(thread()).toMatchObject({ needs_you: 0, verdict: "approve" });
   }, 60_000);
 
   test("a review that times out twice needs you, and the lead hears why", async () => {
     addApp();
-    config("review: { timeout_minutes: 0.05 }\n");
+    config("review: { timeout_minutes: 0.1 }\n");
     mkdirSync(codexHome(), { recursive: true });
     writeFileSync(join(codexHome(), "slow-1"), "");
     writeFileSync(join(codexHome(), "slow-2"), "");
@@ -541,11 +542,9 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     expect(finished("failure")[0]?.description).toBe("review timed out");
     expect(reviews()).toEqual([]);
     await until(() =>
-      read(join(lead(), "typed")).includes("app-12 needs you: its review timed out twice (0.05m)"),
+      read(join(lead(), "typed")).includes("app-12 needs you: its review timed out twice (0.1m)"),
     );
-    expect(read(join(lead(), "typed"))).toContain(
-      "app-12's review timed out after 0.05m; retrying",
-    );
+    expect(read(join(lead(), "typed"))).toContain("app-12's review timed out after 0.1m; retrying");
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("2");
   }, 60_000);
 
