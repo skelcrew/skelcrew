@@ -577,6 +577,8 @@ c.on("data", (d) => process.stdout.write(d));`;
     expect(thread().short).toBe("Export");
     await until(() => read(join(config("app-12"), "calls")).includes("--resume"));
     expect(read(join(config("app-12"), "calls"))).toContain(`--resume ${session}`);
+    // The fake harness writes where it runs after it logs its call, so the test waits for both.
+    await until(() => read(join(config("app-12"), "pwd")) !== "");
     expect(read(join(config("app-12"), "pwd"))).toBe(`${clone()}\n`);
     expect(hasSession("app-12")).toBe(true);
     expect(thread().status).toBe("working");
@@ -604,6 +606,7 @@ nameRepositories(db);`;
     serve();
     await until(() => read(join(config("app-12"), "calls")).includes("--resume"));
     expect(read(join(config("app-12"), "calls"))).toContain(`--resume ${session}`);
+    await until(() => read(join(config("app-12"), "pwd")) !== "");
     expect(read(join(config("app-12"), "pwd"))).toBe(`${clone()}\n`);
     expect(hasSession("app-12")).toBe(true);
     expect(thread().session).toBe(session);
