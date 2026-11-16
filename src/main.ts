@@ -459,6 +459,22 @@ async function runCommand(args: string[]): Promise<void> {
   // them already passed it, and tmux may hand them another laptop's build, which would make them
   // refuse.
   const onScreen = command === "sidebar" || command === "list" || command === "footer";
+  // On a remote, refuse to run until the machine is set up, with the exit code that lets the
+  // laptop offer to finish it. This comes before the build and setup checks, since they would
+  // copy and install things there, and --remote must ask before setting a machine up. Sidebars,
+  // lists and agents skip it: they can inherit the remote's name from whoever started tmux, and
+  // an agent's sandbox hides what setupDone reads. Only a remote loads setup.ts this early, so
+  // sc --remote on the laptop still starts quickly.
+  if (
+    process.env.SKELCREW_REMOTE_NAME &&
+    command !== "first-run" &&
+    command !== "take-setup" &&
+    !onScreen &&
+    process.env.SKELCREW_SANDBOX !== "1"
+  ) {
+    const { setupDone } = await import("./machine/setup.ts");
+    if (!setupDone()) process.exit(unfinished);
+  }
   if (!onScreen && outOfDate()) process.exit(outdated);
   // A machine whose setup differs from the laptop's runs nothing, so the laptop copies its own
   // there first. An agent's sandbox hides what this reads.
@@ -493,22 +509,6 @@ async function runCommand(args: string[]): Promise<void> {
     if (code === 0) console.log(`${host} is ready. Connect to it with:\n  sc --remote ${host}`);
     process.exit(code);
   }
-  // Commands that run here load what they need only from this point on, so sc --remote
-  // starts quickly and loads no part of the daemon on your laptop.
-  const { setupDone } = await import("./machine/setup.ts");
-  // On a remote, refuse to run until the machine is set up, with the exit code that lets the
-  // laptop offer to finish it. Sidebars, lists and agents skip this: they can inherit the
-  // remote's name from whoever started tmux, and an agent's sandbox hides what setupDone reads.
-  const remoteName = process.env.SKELCREW_REMOTE_NAME;
-  if (
-    remoteName &&
-    first !== "first-run" &&
-    first !== "take-setup" &&
-    !onScreen &&
-    process.env.SKELCREW_SANDBOX !== "1" &&
-    !setupDone()
-  )
-    process.exit(unfinished);
   // Plain sc, or sc --from <remote> as sc --remote sends it.
   if (words.length === 0 || (first === "--from" && second && words.length === 2))
     return leadCommand(second);

@@ -60,6 +60,7 @@ cd "${server()}" && HOME="${server()}" XDG_RUNTIME_DIR="${server()}/run" PATH="$
     `#!/bin/sh\nexec "${process.execPath}" "${source("main.ts")}" "$@"\n`,
     { mode: 0o755 },
   );
+  setUpServer();
 });
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
@@ -95,6 +96,22 @@ function setUpLaptop(config = "harness: claude\n"): void {
   writeFileSync(join(laptopConfig(), "claude-token"), "sk-ant-oat01-laptop\n", { mode: 0o600 });
 }
 
+// Gives the server a finished first run of its own: a harness, the agents' token and the
+// daemon's service. Skelcrew there runs nothing for a machine that isn't set up, so the setup is
+// only ever copied to one that is.
+function setUpServer(): void {
+  const units = join(server(), ".config", "systemd", "user");
+  mkdirSync(units, { recursive: true });
+  mkdirSync(serverConfig(), { recursive: true });
+  writeFileSync(join(serverConfig(), "config.yaml"), "harness: claude\nmodel: sonnet\n");
+  writeFileSync(join(serverConfig(), "claude-token"), "sk-ant-oat01-server\n", { mode: 0o600 });
+  writeFileSync(join(units, "skelcrew.service"), "");
+}
+
+// Undoes the server's first run, as if it stopped partway: everything but the daemon's service.
+const firstRunUnfinished = () =>
+  rmSync(join(server(), ".config", "systemd"), { recursive: true, force: true });
+
 // Runs sc on a machine with this home, with what you type, and returns what it said.
 async function skel(home: string, args: string[], typed = "") {
   const run = Bun.spawn([process.execPath, source("main.ts"), ...args], {
@@ -116,8 +133,8 @@ async function skel(home: string, args: string[], typed = "") {
   return { out, err, code };
 }
 
-// Runs sc --remote from the laptop. The server's first run never finishes in these tests, so
-// each run ends saying it isn't set up, after the setup is copied.
+// Runs sc --remote from the laptop. No daemon runs on the server in these tests, so each command
+// there ends saying the daemon didn't answer, after the setup is copied.
 const remote = (...args: string[]) => skel(laptop(), ["--remote", "simon@workbox", ...args]);
 
 const calls = () =>
@@ -190,7 +207,7 @@ test("a plugin removed on the laptop is removed there", async () => {
 test("a change made on the server is replaced by the laptop's setup", async () => {
   setUpLaptop();
   await remote("ps");
-  writeFileSync(join(serverConfig(), "config.yaml"), "harness: codex\n");
+  writeFileSync(join(serverConfig(), "config.yaml"), "harness: claude\nmodel: haiku\n");
   await remote("ps");
   expect(serverFile("config.yaml")).toBe("harness: claude\n");
 });
@@ -247,8 +264,22 @@ test("a machine plugin stays on the laptop", async () => {
 });
 
 test("a laptop with no setup copies nothing", async () => {
+  await remote("ps");
+  expect(calls()).not.toContain("scp");
+  expect(serverFile("config.yaml")).toBe("harness: claude\nmodel: sonnet\n");
+});
+
+// Your setup installs plugins and signs in to them there, which is setting the server up, so
+// a server whose first run hasn't finished gets none of it until you agree.
+test("a server whose first run isn't done gets none of your setup without asking", async () => {
+  setUpLaptop();
+  publish(["0.1.0"]);
+  await skel(laptop(), ["plugin", "install", "owner/fake"], "\n");
+  firstRunUnfinished();
   const run = await remote("ps");
   expect(run.err).toContain("simon@workbox isn't set up");
+  expect(run.out).not.toContain("setting up fake");
   expect(calls()).not.toContain("scp");
-  expect(existsSync(join(serverConfig(), "config.yaml"))).toBe(false);
+  expect(serverFile("config.yaml")).toBe("harness: claude\nmodel: sonnet\n");
+  expect(await serverPlugins()).toBe("No plugins installed.\n");
 });
