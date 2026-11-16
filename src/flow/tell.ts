@@ -81,14 +81,6 @@ export function messageLead(db: Database, tmux: string, thread: Thread, text: st
   log(db, readThread(db, thread.folder), `its builder told the lead: ${text}`);
 }
 
-// Returns how long ago a moment in seconds since 1970 was, in one unit, such as 40s, 12m or 3h.
-function ago(seconds: number): string {
-  const passed = Math.max(0, Math.round(Date.now() / 1000 - seconds));
-  if (passed < 60) return `${passed}s`;
-  if (passed < 3600) return `${Math.floor(passed / 60)}m`;
-  return `${Math.floor(passed / 3600)}h`;
-}
-
 // Returns what the builder is doing by its screen, for sc peek and sc interrupt: asking the
 // human a question, mid-turn while its harness shows its busy mark, or else idle. Only the
 // visible screen counts, as an old busy mark can sit in the history above it.
@@ -101,8 +93,10 @@ function builderState(tmux: string, thread: Thread): "asking" | "mid-turn" | "id
 // Returns the last lines of the builder's screen, for sc peek, so the lead can see what a builder
 // busy for a long time is doing without guessing from its PR. It is wrapped as a report from the
 // thread, as a builder's screen holds whatever its commands printed, which must never pass for
-// the human. Above the screen, one line says the thread's status, what the builder is doing, and
-// how long its screen has been still. It changes nothing.
+// the human. Above the screen, one line says the thread's status and what the builder is doing.
+// It doesn't say how long the screen has been still: Claude Code redraws its spinner every
+// second mid-turn, so a builder stuck on a hung command would look as if it just moved. It
+// changes nothing.
 export function peekAtBuilder(db: Database, tmux: string, thread: Thread, lines: number): string {
   const name = runningBuilder(db, tmux, thread);
   // -J joins lines the pane wrapped, so a long line reads as one. -S reaches into the history
@@ -120,10 +114,8 @@ export function peekAtBuilder(db: Database, tmux: string, thread: Thread, lines:
     .trimEnd()
     .split("\n")
     .slice(-lines);
-  // tmux notes when a window last printed anything, which is how long its screen has been still.
-  const changed = Number(mustTmux(tmux, ["display", "-p", "-t", target, "#{window_activity}"]));
   const doing = { asking: "asking the human a question", "mid-turn": "mid-turn", idle: "idle" };
-  const heading = `${name} · ${thread.status} · ${doing[builderState(tmux, thread)]} · its screen last changed ${ago(changed)} ago`;
+  const heading = `${name} · ${thread.status} · ${doing[builderState(tmux, thread)]}`;
   return wrapMessage(`from="${name}" kind="peek"`, [heading, ...shown].join("\n"));
 }
 

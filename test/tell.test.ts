@@ -289,19 +289,23 @@ describe.skipIf(insideSandbox)("sc peek and sc interrupt", () => {
     expect(peek.err).toBe("");
     const lines = peek.out.trimEnd().split("\n");
     expect(lines[0]).toBe('<skelcrew from="app-12" kind="peek">');
-    expect(lines[1]).toMatch(/^app-12 · working · mid-turn · its screen last changed \d+s ago$/);
+    expect(lines[1]).toBe("app-12 · working · mid-turn");
     expect(lines.at(-1)).toBe("</skelcrew>");
     expect(peek.out).toContain("esc to interrupt\n$ bun test\n\nstill running");
     expect(peek.out.match(/<\/?skelcrew/gi)).toHaveLength(2);
     // --lines keeps only the last lines of the screen.
     const last = await skel(["peek", "app-12", "--lines", "2"], "lead");
     expect(last.out.trimEnd().split("\n").slice(2, -1)).toEqual(["", "still running"]);
+    // More lines than the screen and its history hold shows all there is.
+    const many = await skel(["peek", "app-12", "--lines", "1000"], "lead");
+    expect(many.err).toBe("");
+    expect(many.out).toContain("esc to interrupt\n$ bun test");
     // You can peek too, from your own terminal, and an idle builder says so.
     rmSync(join(builder(), "busy"));
     await until(() => tmuxScreen().includes("❯"));
     const yours = await skel(["peek", "app-12"]);
     expect(yours.err).toBe("");
-    expect(yours.out).toMatch(/app-12 · working · idle · /);
+    expect(yours.out).toContain("\napp-12 · working · idle\n");
   }, 60_000);
 
   test("builders and other repositories' leads can't peek or interrupt", async () => {

@@ -81,12 +81,13 @@ export const DaemonRequest = z.discriminatedUnion("command", [
     task: TaskId,
     text: z.string().min(1),
   }),
-  // How many of the screen's last lines to show: up to a few screens, as more says nothing new.
+  // How many of the screen's last lines to show. tmux keeps only so much history, so a large
+  // number shows what it has.
   z.object({
     command: z.literal("peek"),
     repo: z.string(),
     task: TaskId,
-    lines: z.number().int().min(1).max(500),
+    lines: z.number().int().positive(),
   }),
   z.object({
     command: z.literal("interrupt"),

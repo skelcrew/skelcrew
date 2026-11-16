@@ -415,8 +415,7 @@ async function threadCommand(args: string[]): Promise<void> {
     );
     return;
   }
-  // --lines says how many of the screen's last lines to show, and the daemon refuses too many.
-  // About a screenful by default.
+  // --lines says how many of the screen's last lines to show. About a screenful by default.
   const lines = rest.length === 0 ? 50 : rest[0] === "--lines" ? Number(rest[1]) : Number.NaN;
   if (command === "peek" && task && rest.length <= 2 && Number.isInteger(lines) && lines > 0) {
     console.log(await peekAt(...task, lines));
