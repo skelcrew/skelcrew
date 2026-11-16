@@ -113,8 +113,7 @@ export function threadAge(started: number, now: number): string {
 // nothing and doesn't change, so it leaves ACTIVE, as a done one does. It runs each second,
 // so it reads only what shows. Only a thread whose word is working shows how long its builder
 // has worked since it was last started or typed to, its tokens, its plan and its step. Any of
-// them on another row would write to the terminal, and on a Sprite a terminal that stays quiet
-// lets it sleep. A working thread keeps the Sprite awake anyway, so they cost nothing.
+// them on another row would write to the terminal, which costs over a slow link.
 export function sidebarRows(
   db: Database,
   running: string[],

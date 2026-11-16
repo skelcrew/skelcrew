@@ -1,5 +1,5 @@
-// Running a short program and reading what it printed, as the commands that reach GitHub,
-// servers and Sprites do.
+// Running a short program and reading what it printed, as the commands that reach GitHub and
+// servers do.
 import { afterEach, expect, test } from "bun:test";
 import { quietly } from "../src/run.ts";
 

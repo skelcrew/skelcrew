@@ -179,14 +179,16 @@ that covers the code you are about to write.
   first: bwrap refuses to mount a folder that doesn't exist.
 - **Start agents' sandboxes under `nice`.** Builders and reviewers running whole test
   suites at once pushed an 8-CPU server to a load of 18, and each run took twice as long.
-  `nice -n 10` goes first, before `unshare` and the `setpriv` that drops capabilities on a
-  Sprite: lowering a priority needs no capability, and everything started inside keeps it.
+  `nice -n 10` goes first, and everything started inside keeps it. If something that drops
+  capabilities ever comes before bwrap, nice still goes first: lowering a priority needs none.
   `nice` replaces itself with the command, so stopping a session still finds the sandbox.
   The lead stays at normal priority, as it is what you type into.
 - **Don't pass `--new-session`.** It moves Claude Code out of the terminal's process group,
   so it misses resize signals and draws at the wrong width.
 
 ## On a Sprite
+
+Skelcrew no longer supports Sprites itself. These are for the Sprite machine plugin to come.
 
 - **Drop capabilities before starting bwrap.** Commands on a Sprite run with a large set of
   capabilities, and bwrap refuses to start with them ("Unexpected capabilities but not
@@ -366,6 +368,27 @@ that covers the code you are about to write.
 - **tmux keeps a program's OSC 52 copy from your terminal** unless `set-clipboard` is `on`.
   Its default, `external`, lets only tmux itself set your clipboard. A terminal tmux doesn't
   recognise also needs the `clipboard` feature.
+- **A drag through two tmux servers needs every raw mouse event passed on.** The front one
+  must hand on `MouseDrag1Pane`, `MouseDragEnd1Pane`, `SecondClick1Pane` and
+  `TripleClick1Pane` with `send-keys -M`. tmux fires `DoubleClick1Pane` a moment after the
+  second press, so passing that on too gives the inner server a press of its own.
+- **A drag that leaves a pane ends in the other pane.** tmux sends the moves and the release
+  to the pane under the mouse, so the pane where the drag began never gets its release.
+  tmux ends a selection where the last move was, and ignores a place outside its window.
+- **tmux picks a mouse event's binding as the event arrives.** A press, a drag and a release
+  in one read reach the inner server before `copy-mode -M` has run, so the release finds no
+  binding. A test must pace them, as a hand does.
+- **In copy mode, a mouse event with no binding goes to `Any`.** With `Any` bound to leave
+  copy mode, a press while scrolled back threw you back to the live agent. Bind the press and
+  the release.
+- **tmux sends no OSC 52 while the pane waits to be drawn.** A copy straight after
+  `copy-mode` reached no terminal. tmux's own double click waits 0.3 seconds first.
+- **`set-clipboard on` lets any program read tmux's newest copy.** tmux answers `OSC 52 ?`
+  with it, so an agent could read what you copied from another. `external` answers nothing but
+  also drops an agent's own copy. Delete each copy once it is sent, and use the
+  `pane-set-clipboard` hook for the agents' own.
+- **Claude Code copies on its own.** Its full-screen drawing selects with the mouse, then copies
+  by OSC 52, and also with `pbcopy` on a Mac or `tmux load-buffer` when it finds tmux.
 - **tmux opens no popup larger than the terminal.** `display-popup` with `-h` taller than the
   terminal says nothing and shows nothing. Its `-w` and `-h` take no formats, so read the
   client's size first and fit the box to it.

@@ -65,8 +65,7 @@ afterEach(async () => {
 });
 
 // The environment of Skelcrew in these tests. Its PATH holds the test's fakes, bun and the
-// system's own folders, and nothing else of this machine's, so the real sprite-env of a Sprite
-// is never found. systemctl and launchctl are in the system's folders, so every test that can
+// system's own folders, and nothing else of this machine's. systemctl and launchctl are in the system's folders, so every test that can
 // reach them puts fakes in front.
 const env = () => ({
   ...homeEnv(home),

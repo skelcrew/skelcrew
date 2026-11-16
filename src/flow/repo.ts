@@ -19,14 +19,12 @@ import { endSession, exitedCleanly, stopSession } from "../agents/tmux.ts";
 import { agentRoles } from "../config.ts";
 import { nameRepositories, openDb, Repository } from "../db.ts";
 import { originHere, parseRemote } from "../machine/origin.ts";
-import { onSprite } from "../machine/sprite.ts";
 import { cloneDir, configDir, dataDir, leadPlaces } from "../paths.ts";
 import { askWhichForge, type Claimed } from "../plugins/ask.ts";
 import { setUpPlugin } from "../plugins/install.ts";
 import { SetupNeeded } from "../plugins/plugin.ts";
 import { errorText } from "../say.ts";
 import { checkPush, cloneRepository, updateClone } from "./git.ts";
-import { wakeRepository } from "./wake.ts";
 
 // What sc says outside any repository while Skelcrew has none yet, so you know where to run it.
 export const noRepositories = "Skelcrew has no repositories yet. Run sc in a checkout of one.";
@@ -315,12 +313,6 @@ async function bringIn(db: Database, details: RepositoryDetails): Promise<void> 
     [owner, repo, fullName, repository.forge, remote, authorOf(claimed)],
   );
   nameRepositories(db);
-  // The daemon asks again when it next starts, so a failure here costs only the wake-ups
-  // until then: polling sees every event once the Sprite is awake.
-  if (onSprite())
-    await wakeRepository(db, repository).catch((error) =>
-      console.error(`Skelcrew: couldn't ask for wake-ups for ${fullName}: ${errorText(error)}`),
-    );
 }
 
 // Brings in the repository you ran sc from, so its lead can open. `from` is a checkout's
@@ -531,10 +523,9 @@ export async function trustRepo(given: string): Promise<void> {
   await bringIn(db, details);
 }
 
-// Removes a repository for sc repo rm. On a Sprite, first asks its tracker and forge to stop
-// sending its wake-ups. Ends its lead on the tmux server `tmux`, then deletes Skelcrew's clone,
-// its row and your trust in it, and names the other repositories again. Refuses while the
-// repository has live threads, naming them. The lead is ended because, left running, it would
+// Removes a repository for sc repo rm. Ends its lead on the tmux server `tmux`, then deletes
+// Skelcrew's clone, its row and your trust in it, and names the other repositories again.
+// Refuses while the repository has live threads, naming them. The lead is ended because, left running, it would
 // go on with no repository behind it, and the daemon would never bring it back or end it.
 export async function removeRepo(name: string, tmux: string): Promise<void> {
   const db = openDb();
@@ -560,12 +551,6 @@ export async function removeRepo(name: string, tmux: string): Promise<void> {
         .query("SELECT kept_lead FROM repositories WHERE owner = ? AND repo = ?")
         .get(found.owner, found.repo),
     ).kept_lead;
-  // Asked first, while Skelcrew still knows its tracker and forge. Left on, wake-ups would only
-  // wake the Sprite for a repository Skelcrew no longer polls.
-  if (onSprite())
-    await wakeRepository(db, found, true).catch((error) =>
-      console.error(`Skelcrew: couldn't stop the wake-ups for ${fullName}: ${errorText(error)}`),
-    );
   // Its tab closes first, so an open screen moves on at once. A screen that found the lead
   // gone while its tab was still there would take it for a crash and ask for it back.
   db.run("UPDATE repositories SET tab_closed = 1 WHERE owner = ? AND repo = ?", [

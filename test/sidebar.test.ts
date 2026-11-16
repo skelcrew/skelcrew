@@ -92,11 +92,18 @@ test("a working thread has three lines: its name and title, harness, time and to
   ]);
 });
 
-test("a working thread's second and third lines are dim", () => {
+test("a working thread's second line is a light grey and its third is dim, so they read apart", () => {
   const working = thread("app-12", { age: "5m", tokens: "850 tok", step: "Editing rows.ts" });
   const screen = draw([working], "lead", size);
-  expect(screen).toContain("\x1b[90mclaude · 5m · 850 tok");
+  expect(screen).toContain("\x1b[38;5;250mclaude · 5m · 850 tok");
   expect(screen).toContain("\x1b[90mEditing rows.ts");
+});
+
+test("on the grey, a working thread's second line is lighter than its third", () => {
+  const working = thread("app-12", { age: "5m", step: "Editing rows.ts" });
+  const on = selected(draw([working], "app-12", size)).join("\n");
+  expect(on).toContain("\x1b[38;5;253mclaude · 5m");
+  expect(on).toContain("\x1b[38;5;250mEditing rows.ts");
 });
 
 test("a working thread's plan follows its tokens, as a count, and a bar when there is room", () => {
@@ -240,7 +247,7 @@ test("rows sit two columns in, and the line below a mark two further", () => {
 });
 
 test("the harness is grey, so the titles stand out", () => {
-  expect(draw([thread("app-12")], "lead", size)).toContain("\x1b[90mclaude");
+  expect(draw([thread("app-12")], "lead", size)).toContain("\x1b[38;5;250mclaude");
   const waiting = thread("app-12", { status: "waiting", word: "checks" });
   expect(draw([waiting], "lead", size)).toContain("\x1b[90m · claude");
 });
@@ -366,7 +373,7 @@ test("on the grey, every colour is a fixed light one, as a theme's own can vanis
   const on = (session: string) => selected(draw(rows, session, size)).join("\n");
   expect(on("app-1")).toContain("\x1b[38;5;120m●");
   expect(on("app-1")).toContain("\x1b[1;38;5;231m1 app-1");
-  expect(on("app-1")).toContain("\x1b[38;5;250mclaude");
+  expect(on("app-1")).toContain("\x1b[38;5;253mclaude");
   expect(on("app-1")).toContain("\x1b[38;5;250mworking");
   expect(on("app-2")).toContain("\x1b[38;5;120m●");
   expect(on("app-3")).toContain("\x1b[38;5;250m○");
@@ -378,10 +385,10 @@ test("on the grey, every colour is a fixed light one, as a theme's own can vanis
   expect(selected(draw([lead], "lead", size)).join("\n")).toContain("\x1b[38;5;250m◆");
 });
 
-test("a running time follows the harness on the second line, dim like the rest of it", () => {
+test("a running time follows the harness on the second line, in the same grey as the rest of it", () => {
   const screen = draw([thread("app-12", { age: "5m" })], "lead", size);
   expect(listed(screen)).toEqual(["  ● 12 app-12", "    claude · 5m", "    working"]);
-  expect(screen).toContain("\x1b[90mclaude · 5m");
+  expect(screen).toContain("\x1b[38;5;250mclaude · 5m");
 });
 
 test("the longest time and a large count of tokens fit on the line whole", () => {
