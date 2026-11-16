@@ -176,6 +176,11 @@ test("a thread that needs you says why, whatever limit it also waits on", () => 
   expect(threadWord(thread({ review_limited: true, asking: true }), 3, now)).toBe("question");
 });
 
+test("a builder's limit shows only while its builder is still stopped on it", () => {
+  const over = thread({ status: "working", reviewing: null, limited: true, limit_reset: now });
+  expect(threadWord(over, 3, now)).toBe("working");
+});
+
 test("a builder's limit and a review's hold don't undo each other", () => {
   // The builder's own limit still shows while its review is held, and the other way round.
   const both = thread({ erred: true, limited: true, review_limited: true });

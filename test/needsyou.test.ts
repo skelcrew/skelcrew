@@ -294,6 +294,30 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(notes()).toBe(0);
   }, 60_000);
 
+  // The builder's own last words can mention rate limits, such as the code it was writing.
+  test("a login error is no usage limit, whatever the builder last said, and needs you", async () => {
+    addApp();
+    await startApp12();
+    const said =
+      "I added rate limit handling to the API client.\nOAuth token has expired. Please run /login";
+    await hook(
+      "limit",
+      JSON.stringify({ error: "authentication_failed", last_assistant_message: said }),
+    );
+    await untilNeedsYou(true);
+    expect(thread()).toMatchObject({ erred: 1, limited: 0 });
+  }, 60_000);
+
+  test("stopping a builder that waits out a usage limit forgets the limit", async () => {
+    addApp();
+    await startApp12();
+    const said = `Claude AI usage limit reached|${Math.ceil(Date.now() / 1000) + 3600}`;
+    await hook("limit", JSON.stringify({ error: "rate_limit", last_assistant_message: said }));
+    await until(() => thread().limited === 1);
+    expect((await skel(["stop", "app-12"])).err).toBe("");
+    expect(thread()).toMatchObject({ status: "stopped", erred: 0, limited: 0, limit_reset: null });
+  }, 60_000);
+
   test("starting the builder starts a stretch of work, and typing to it starts another", async () => {
     addApp();
     await startApp12();

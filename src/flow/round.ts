@@ -205,14 +205,16 @@ async function reviewWithinLimits(
     if (limit !== null) tellOfLimit(db, tmux, role.harness, repository, spare);
     if (limit !== null && spare === null && fallback !== null)
       tellOfLimit(db, tmux, fallback, repository, null);
-    // With no harness free, hold the review until the limit resets, and show that on the
-    // thread.
+    // With no harness free, hold the review until a limit resets, and show that on the
+    // thread. With the fallback limited too, it waits for whichever frees first.
     if (limit !== null && spare === null) {
-      const held = { review_limited: true, review_reset: limit.reset };
+      const other = fallback === null ? null : limitOn(fallback, now);
+      const first = other !== null && other.until < limit.until ? other : limit;
+      const held = { review_limited: true, review_reset: first.reset };
       const thread = readThread(db, folder);
-      if (!thread.review_limited || thread.review_reset !== limit.reset)
+      if (!thread.review_limited || thread.review_reset !== first.reset)
         record(db, folder, held, `${role.harness}'s usage limit holds the review`);
-      await waitUntil(limit.until, signal);
+      await waitUntil(first.until, signal);
       continue;
     }
     // Run it, and show which harness has the thread now.

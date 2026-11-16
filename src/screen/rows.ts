@@ -97,7 +97,7 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   // Not needing you: a builder or a review waiting out a usage limit says until when.
   const limitWord = (reset: number | null) =>
     reset === null ? "limit" : `limit · ${clockTime(reset, now)}`;
-  if (thread.limited) return limitWord(thread.limit_reset);
+  if (thread.erred && thread.limited) return limitWord(thread.limit_reset);
   if (thread.review_limited) return limitWord(thread.review_reset);
   // A round under way shows as reviewing, and a review's changes still waiting
   // to be typed into the builder as changes. Otherwise it works or waits on checks.
@@ -109,7 +109,7 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
 // Returns whether the thread's reviewer has it now: a review running, or one held on its
 // harness's usage limit, when the builder isn't held on one of its own.
 export const onReviewer = (thread: Thread, word: string) =>
-  word === "reviewing" || (word.startsWith("limit") && !thread.limited);
+  word === "reviewing" || (word.startsWith("limit") && !(thread.erred && thread.limited));
 
 // What the sidebar reads of a thread beyond what its log keeps: when its builder's current
 // stretch of work began. Null before the builder first started.

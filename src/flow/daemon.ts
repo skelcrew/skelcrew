@@ -353,12 +353,15 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
       }
       case "turn failed": {
         // A usage limit, or a rate limit, passes by itself, so the builder is woken once it
-        // resets, and the thread doesn't need you for it. Any other error does.
+        // resets, and the thread doesn't need you for it. Any other error does. Only the kind of
+        // error the hook names decides: its message can hold the builder's own last words,
+        // such as about the rate limiting it was writing. The message only gives the reset.
         const thread = callingThread(caller);
         const said = request.message ?? "";
         const limit =
-          builderHarness(thread).usageLimit(said, Date.now()) ??
-          (request.error === "rate_limit" ? { reset: null } : null);
+          request.error === "rate_limit"
+            ? { reset: builderHarness(thread).usageLimit(said, Date.now())?.reset ?? null }
+            : null;
         if (limit !== null) {
           const change = { erred: true, limited: true, limit_reset: limit.reset };
           record(

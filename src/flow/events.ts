@@ -89,7 +89,14 @@ export async function stopThread(db: Database, tmux: string, thread: Thread): Pr
   record(
     db,
     thread.folder,
-    { status: "stopped", needs_you: false, asking: false, erred: false },
+    {
+      status: "stopped",
+      needs_you: false,
+      asking: false,
+      erred: false,
+      limited: false,
+      limit_reset: null,
+    },
     "stopped",
   );
   // Asked as it is marked stopped, before anything is waited on: an sc start that finds it
@@ -148,7 +155,14 @@ export async function removeThread(
     record(
       db,
       thread.folder,
-      { status: "stopped", needs_you: false, asking: false, erred: false },
+      {
+        status: "stopped",
+        needs_you: false,
+        asking: false,
+        erred: false,
+        limited: false,
+        limit_reset: null,
+      },
       "removing",
     );
   // Asked before anything is waited on, so an sc start meanwhile assigns you after it, as for

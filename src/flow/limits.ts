@@ -4,7 +4,7 @@ import type { Database } from "bun:sqlite";
 import { type HarnessName, harnessNamed } from "../agents/harness.ts";
 import { typeInto } from "../agents/typing.ts";
 import { errorText } from "../say.ts";
-import { noteForLead } from "./lead.ts";
+import { noteForLead, typeLeadNotes } from "./lead.ts";
 import { builderHarness, readThread, record } from "./thread.ts";
 
 // How long to wait when the harness gave no reset time: 15 minutes after the first try that
@@ -170,12 +170,29 @@ export function wakeAfterLimit(db: Database, tmux: string, folder: string): void
   wakes.set(folder, cancel);
 }
 
-// Types "continue" into a builder still idle on its harness's usage limit. The flags are cleared
-// first: a builder that meets the limit again sets them again as its turn ends.
+// Types "continue" into a builder still idle on its harness's usage limit, whether the thread
+// works or waits, such as on CI, since you can talk to a builder in either. The flags are
+// cleared once it is typed, unless the thread changed meanwhile, such as by a new limit. A builder that
+// couldn't be told is idle on its error with nobody to wake it, so the thread then needs you.
 async function continueBuilder(db: Database, tmux: string, folder: string): Promise<void> {
   const thread = readThread(db, folder);
-  if (!thread.erred || !thread.limited || thread.status !== "working") return;
-  const change = { erred: false, limited: false, limit_reset: null };
-  record(db, folder, change, "its harness's usage limit reset, so Skelcrew typed continue");
-  await typeInto(tmux, folder, builderHarness(thread).marks, "continue", { timeout: 60_000 });
+  const live = thread.status === "working" || thread.status === "waiting";
+  if (!live || !thread.erred || !thread.limited) return;
+  try {
+    await typeInto(tmux, folder, builderHarness(thread).marks, "continue", { timeout: 60_000 });
+  } catch (error) {
+    const why = `its harness's usage limit reset, but Skelcrew couldn't type continue: ${errorText(error)}`;
+    record(db, folder, { limited: false, limit_reset: null }, why);
+    typeLeadNotes(db, tmux);
+    return;
+  }
+  // Typing to it ran its UserPromptSubmit hook, which may have cleared these already, and the
+  // builder may have met the limit again since. Either changed the thread, so it is left as is.
+  if (readThread(db, folder).changed === thread.changed)
+    record(
+      db,
+      folder,
+      { erred: false, limited: false, limit_reset: null },
+      "its harness's usage limit reset, so Skelcrew typed continue",
+    );
 }
