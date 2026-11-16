@@ -179,7 +179,33 @@ function runAt(at: number, run: () => void): () => void {
 // folder, which cancels both the wait and the typing of "continue", and how many waits in a row
 // had no reset time, so the wait grows, with when it was last woken.
 const wakes = new Map<string, () => void>();
-const builderTries = new Map<string, { tries: number; woken: number }>();
+const builderTries = new Map<string, Wakes>();
+
+// What a builder's wakes so far were: how many waits in a row had no reset time to go by, when
+// it was last woken, and the reset time, already past, it was last woken for.
+export type Wakes = { tries: number; woken: number; reset: number | null };
+
+// Decides when to wake a builder its harness's usage limit stopped, given the reset time the
+// harness gave, if any, and its wakes so far. Returns the moment, and its wakes from then on.
+// - A reset still to come is when.
+// - A reset already past wakes it at once, such as after a restart, or at the end of the reset's
+//   minute when that is still to come, as a clock showing only minutes names a whole minute.
+// - With no reset time, or the same past one again after a wake, the wait is 15 minutes, then
+//   30, then an hour. A builder that worked an hour since it was last woken got past that
+//   limit, so the wait starts short again.
+export function wakeTime(
+  reset: number | null,
+  now: number,
+  before: Wakes | undefined,
+): { at: number; wakes: Wakes | undefined } {
+  if (reset !== null && reset > now) return { at: reset, wakes: undefined };
+  const woken = before?.woken ?? now;
+  if (reset !== null && before?.reset !== reset)
+    return { at: Math.max(now, reset + 60_000), wakes: { tries: 0, woken, reset } };
+  const recovered = before === undefined || now - before.woken > 60 * 60_000;
+  const tries = recovered ? 1 : before.tries + 1;
+  return { at: now + backoffAfter(tries), wakes: { tries, woken, reset } };
+}
 
 // Cancels the wake planned for the thread's builder, for when the error it was planned for ends:
 // you typed to the builder, it stopped, or it met another error. Typing still waiting for the
@@ -193,19 +219,11 @@ export function endWake(folder: string): void {
 // with no reset time, after a wait that grows each time the limit stops it again. The builder
 // sits idle on the error until then, and nobody needs to type to it.
 export function wakeAfterLimit(db: Database, tmux: string, folder: string): void {
-  // Find when: the reset time, or the next wait with none.
-  const now = Date.now();
+  // Find when, and remember the wakes so far.
   const { limit_reset: reset } = readThread(db, folder);
-  let at = reset ?? 0;
-  // A builder that worked an hour since it was last woken got past that limit, so the wait
-  // starts short again.
-  if (at <= now) {
-    const before = builderTries.get(folder);
-    const recovered = before === undefined || now - before.woken > 60 * 60_000;
-    const tries = recovered ? 1 : before.tries + 1;
-    builderTries.set(folder, { tries, woken: before?.woken ?? now });
-    at = now + backoffAfter(tries);
-  } else builderTries.delete(folder);
+  const { at, wakes: next } = wakeTime(reset, Date.now(), builderTries.get(folder));
+  if (next === undefined) builderTries.delete(folder);
+  else builderTries.set(folder, next);
   // One wake per builder: a newer limit replaces the one planned.
   endWake(folder);
   const typing = new AbortController();

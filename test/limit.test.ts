@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { claude } from "../src/agents/claude.ts";
 import { codex } from "../src/agents/codex.ts";
 import { resetTime } from "../src/agents/reset.ts";
-import { waitUntil } from "../src/flow/limits.ts";
+import { waitUntil, wakeTime } from "../src/flow/limits.ts";
 import { needsYou, type Thread } from "../src/flow/thread.ts";
 import { threadMark, threadWord } from "../src/screen/rows.ts";
 import { source } from "./harness.ts";
@@ -258,6 +258,31 @@ test("a builder's limit and a review's hold don't undo each other", () => {
   const reviewRuns = thread({ erred: true, limited: true, review_limited: false });
   expect(needsYou(reviewRuns)).toBe(false);
   expect(threadWord(reviewRuns, 3, now)).toBe("limit");
+});
+
+test("a builder stopped by a usage limit is woken at its reset, at once once it has passed", () => {
+  const minutes = (m: number) => m * 60_000;
+  // A reset still to come is when.
+  expect(wakeTime(now + minutes(5), now, undefined)).toEqual({
+    at: now + minutes(5),
+    wakes: undefined,
+  });
+  // Long past, such as after a restart: at once.
+  const past = now - minutes(30);
+  expect(wakeTime(past, now, undefined)).toEqual({
+    at: now,
+    wakes: { tries: 0, woken: now, reset: past },
+  });
+  // Read in its own minute, as "1:59 PM" at 1:59:20: at the end of that minute.
+  expect(wakeTime(now - 20_000, now, undefined).at).toBe(now + 40_000);
+  // The same past reset again after a wake means it hasn't reset: the growing wait.
+  const again = wakeTime(past, now, { tries: 0, woken: now, reset: past });
+  expect(again.at).toBe(now + minutes(15));
+  // With no reset time, 15 minutes, then 30, and short again after an hour's work.
+  const first = wakeTime(null, now, undefined);
+  expect(first.at).toBe(now + minutes(15));
+  expect(wakeTime(null, now, first.wakes).at).toBe(now + minutes(30));
+  expect(wakeTime(null, now + minutes(61), first.wakes).at).toBe(now + minutes(61 + 15));
 });
 
 test("a wait for a reset months away waits, rather than ending at once", async () => {
