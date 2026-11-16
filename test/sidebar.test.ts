@@ -867,20 +867,56 @@ console.log(JSON.stringify(sidebarRows(db, ["lead", "app-12"], () => 3, ${now}, 
   });
 
   // Claude Code writes one line per part of an answer, each with the answer's whole usage.
-  test("a working thread shows its builder's tokens, plan and step from its conversation", () => {
+  // The folder where Claude Code keeps app-12's builder's conversations, made empty.
+  function claudeFolder(): string {
     const clone = join(home, ".local", "share", "skelcrew", "threads", "app-12");
     const project = clone.replace(/[^a-zA-Z0-9]/g, "-");
-    const folder = join(
-      home,
-      ".local",
-      "share",
-      "skelcrew",
-      "claude",
-      "app-12",
-      "projects",
-      project,
-    );
+    const data = join(home, ".local", "share", "skelcrew");
+    const folder = join(data, "claude", "app-12", "projects", project);
     mkdirSync(folder, { recursive: true });
+    return folder;
+  }
+
+  // A working thread whose builder has nothing to read, or nothing that makes sense, still has
+  // its row: the sidebar must go on drawing whatever the agent left in its folder.
+  test("a working thread's row stands when its conversation is missing, empty, half-written or nonsense", () => {
+    const rows = (columns: string, values: string) =>
+      listed(shown(`status, ${columns}`, `'working', ${values}`, 0)).slice(2);
+    const plainRow = ["  ● 12 app-12", "    claude · <1m", "    working"];
+    // No session yet, then a session whose file isn't there yet, on either harness.
+    expect(rows("session", "NULL")).toEqual(plainRow);
+    expect(rows("session", "'s1'")).toEqual(plainRow);
+    expect(rows("session, harness", "'s1', 'codex'")).toEqual([
+      "  ● 12 app-12",
+      "    codex · <1m",
+      "    working",
+    ]);
+    // An empty file, a folder where the file should be, and lines that aren't what a harness
+    // writes.
+    writeFileSync(join(claudeFolder(), "empty.jsonl"), "");
+    expect(rows("session", "'empty'")).toEqual(plainRow);
+    mkdirSync(join(claudeFolder(), "folder.jsonl"));
+    expect(rows("session", "'folder'")).toEqual(plainRow);
+    const nonsense = [
+      "not json",
+      "[]",
+      "null",
+      '{"type":"assistant"}',
+      '{"type":"assistant","message":{"id":7,"usage":"lots","content":"text"}}',
+      '{"type":"assistant","message":{"id":"m","content":[{"type":"tool_use","name":"TodoWrite","input":{"todos":"x"}}]}}',
+      '{"type":"assistant","message":{"id":"m","content":[null,{"type":"tool_use","name":"Bash","input":null}]}}',
+    ];
+    writeFileSync(join(claudeFolder(), "nonsense.jsonl"), `${nonsense.join("\n")}\n`);
+    expect(rows("session", "'nonsense'")).toEqual(plainRow);
+    // A last line still being written is left for the next read.
+    const usage = { input_tokens: 1, cache_creation_input_tokens: 0, output_tokens: 849 };
+    const whole = JSON.stringify({ type: "assistant", message: { id: "m1", usage } });
+    writeFileSync(join(claudeFolder(), "half.jsonl"), `${whole}\n{"type":"assistant","mess`);
+    expect(rows("session", "'half'")[1]).toBe("    claude · <1m · 850 tok");
+  });
+
+  test("a working thread shows its builder's tokens, plan and step from its conversation", () => {
+    const folder = claudeFolder();
     const usage = {
       input_tokens: 2,
       cache_creation_input_tokens: 30_000,

@@ -2083,7 +2083,7 @@ test("Alt-Right then Alt-Shift-Down twice, typed together, lands on the new repo
   await ready("lead");
   type("\x1b[1;3C\x1b[1;4B\x1b[1;4B");
   await until(() => seen().includes("I am site-8"), "site-8");
-  await until(() => selected() === "● site-8", "the sidebar to follow");
+  await until(() => selected() === "● 8 site-8", "the sidebar to follow");
   expect(seen()).not.toContain("app-12");
 });
 

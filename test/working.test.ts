@@ -154,3 +154,22 @@ test("tokens show in the fewest letters, rounded down", () => {
   expect(tokenText(1_290_000)).toBe("1.2M");
   expect(tokenText(25_000_000)).toBe("25M");
 });
+
+// The file is the agent's to write, so a reader must take anything there without failing.
+test("Codex: lines that aren't what Codex writes give nothing", () => {
+  const nonsense = [
+    "",
+    "not json",
+    "null",
+    '{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":"x"}}}',
+    '{"type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{not json"}}',
+    '{"type":"response_item","payload":{"type":"function_call","name":"update_plan","arguments":"{\\"plan\\":7}"}}',
+    '{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"no files"}}',
+    '{"type":"response_item","payload":{"type":"local_shell_call"}}',
+  ];
+  const read = codex.progress(nonsense, noProgress);
+  expect(read.tokens).toBeNull();
+  expect(read.plan).toBeNull();
+  // A call with nothing better to say is named by its tool, and one with no name says nothing.
+  expect(read.step).toBe("Apply patch");
+});

@@ -39,11 +39,16 @@ export function builderProgress(thread: Thread, now: number): Progress {
       ? { ...before, at: now }
       : { file, offset: 0, progress: noProgress, at: now };
   // Reads what was added since. A file that shrank was written anew, so it is read again from
-  // its start.
+  // its start. The file is the agent's to write, so a reader that fails on what it finds there
+  // leaves the progress as it was rather than end the sidebar.
   const added = file ? readAdded(file, read.offset) : null;
   if (file && added) {
-    const progress = harness.progress(added.lines, added.shrank ? noProgress : read.progress);
-    read = { file, offset: added.end, progress, at: now };
+    try {
+      const progress = harness.progress(added.lines, added.shrank ? noProgress : read.progress);
+      read = { file, offset: added.end, progress, at: now };
+    } catch {
+      read = { ...read, offset: added.end };
+    }
   }
   reads.set(thread.folder, read);
   return read.progress;
