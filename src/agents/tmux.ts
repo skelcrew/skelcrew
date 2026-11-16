@@ -1,6 +1,6 @@
 // Skelcrew's tmux sessions: one for each repository's lead and one per builder, on Skelcrew's own
 // tmux server (`tmux -L skelcrew`; tests pass a socket of their own).
-import { rmSync } from "node:fs";
+import { closeSync, constants, openSync, rmSync, writeSync } from "node:fs";
 import { z } from "zod";
 import { sandboxFolders } from "./seatbelt.ts";
 
@@ -32,7 +32,8 @@ export const screenSocket = (agents: string) => `${agents}-screen`;
 // Codex take for a newline. Without them, tmux reads it from your terminal as plain Enter, and
 // the prompt is sent. The extkeys feature makes tmux ask your terminal for them, or the screen
 // in front of this server; a terminal that can't, such as Terminal.app, still sends Enter.
-// tmux hands them on only to an agent that asked for them, as Claude Code and Codex do.
+// tmux hands them on only to an agent that asked for them. Claude Code asks only when it can
+// tell it runs in tmux, which is why a session keeps tmux's TERM_PROGRAM.
 const tmuxConfig = `set -g status off
 bind -n M-q detach-client
 bind -n C-q detach-client
@@ -158,12 +159,15 @@ export function startSession(
   // tmux would quietly rename the session, and then never find it under the name asked for.
   if (/[.:]/.test(name)) throw new Error(`a session can't be named ${name}: tmux changes . and :`);
   // The server hands its own environment to every session and -e only adds to it, so a
-  // token the daemon has would reach the agent. env -i starts from nothing. TERM is the one
-  // value the pane's own must win for: tmux sets it to what it draws.
+  // token the daemon has would reach the agent. env -i starts from nothing. TERM and
+  // TERM_PROGRAM are the values the pane's own must win for: tmux sets TERM to what it draws,
+  // and TERM_PROGRAM to tmux. Claude Code asks for Shift+Enter as a key of its own only when
+  // TERM_PROGRAM or TMUX says tmux, so without it Shift+Enter sends the prompt.
   const env = Object.entries(session.env).flatMap(([key, value]) =>
-    key === "TERM" ? [] : [`${key}=${value}`],
+    key === "TERM" || key === "TERM_PROGRAM" ? [] : [`${key}=${value}`],
   );
-  const clean = ["sh", "-c", 'exec env -i TERM="$TERM" "$@"', "sh", ...env];
+  const keep = 'TERM="$TERM" TERM_PROGRAM="$TERM_PROGRAM"';
+  const clean = ["sh", "-c", `exec env -i ${keep} "$@"`, "sh", ...env];
   // With a single word, tmux would run the command through a shell, so sh always goes
   // first.
   const start = ["new-session", "-d", "-s", name, "-c", session.folder];
@@ -192,9 +196,31 @@ export function keepOnExit(socket: string, name: string): void {
 }
 
 // Gives a running tmux server Skelcrew's settings, so one that outlived an upgrade scrolls too.
-// Quietly does nothing without a server.
+// Quietly does nothing without a server. It also turns on extended keys for every agent that
+// never asked for them: a Claude Code started before sessions kept TERM_PROGRAM, which would
+// otherwise send the prompt on Shift+Enter until it restarts. Codex, the other harness, always
+// asks, so only those are left.
 export function applyConfig(socket: string): void {
   tmux(socket, ["source-file", "-"], settings());
+  // The request goes into the pane's terminal, where tmux reads it as if the agent had sent
+  // it. A tmux that doesn't know pane_key_mode leaves it empty, and nothing is written.
+  // O_NOCTTY keeps the terminal from becoming Skelcrew's own.
+  const panes = tmux(socket, [
+    "list-panes",
+    "-a",
+    "-F",
+    "#{pane_dead} #{pane_key_mode} #{pane_tty}",
+  ]);
+  for (const line of panes.out.split("\n")) {
+    const tty = line.match(/^0 VT10x (\S+)$/)?.[1];
+    if (!tty) continue;
+    // A pane that ended in the meantime has no terminal left, and needs nothing.
+    try {
+      const fd = openSync(tty, constants.O_WRONLY | constants.O_NOCTTY);
+      writeSync(fd, "\x1b[>4;2m");
+      closeSync(fd);
+    } catch {}
+  }
 }
 
 // Reports whether the exact session exists so Skelcrew can reconnect instead of starting it

@@ -5,6 +5,7 @@ import { drawTop, type Top } from "../src/screen/strip.ts";
 
 const lead: Row = {
   name: "lead",
+  task: "",
   session: "lead",
   status: null,
   needsYou: false,
@@ -13,6 +14,9 @@ const lead: Row = {
   harness: "claude",
   agentHarness: "claude",
   age: "",
+  tokens: "",
+  step: "",
+  plan: null,
   fullName: null,
   title: null,
   short: null,

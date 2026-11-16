@@ -338,10 +338,22 @@ Skelcrew no longer supports Sprites itself. These are for the Sprite machine plu
   servers need `extended-keys on` and the `extkeys` terminal feature: the screen's asks your
   terminal for extended keys, and the agents' asks the screen in front of it. Either one alone
   still delivers Enter. tmux ignores a pane's request made while the option was off, and
-  hands extended keys only to a program that asked, as Claude Code and Codex do with
-  `CSI > 4;2 m`. Codex reads Shift+Enter only in the CSI u form (`ESC[13;2u`), so the agents'
-  server sets `extended-keys-format csi-u`, which tmux before 3.5 refuses. Claude Code reads
-  both forms. Terminal.app sends plain Enter for Shift+Enter whatever tmux does.
+  hands extended keys only to a program that asked with `CSI > 4;2 m`. Codex reads Shift+Enter
+  only in the CSI u form (`ESC[13;2u`), so the agents' server sets `extended-keys-format csi-u`,
+  which tmux before 3.5 refuses. Claude Code reads both forms. Terminal.app sends plain Enter
+  for Shift+Enter whatever tmux does.
+- **Claude Code asks for extended keys only in a terminal it recognises.** It reads `TERM`,
+  `TERM_PROGRAM` and `TMUX`. `TERM=tmux-256color` alone is not enough, so a session started
+  with `env -i` must keep tmux's `TERM_PROGRAM=tmux`. Without it Claude Code never asks, tmux
+  hands it plain Enter, and Shift+Enter sends the prompt, though every tmux setting is right.
+  A test agent that asks for extended keys unconditionally hides this. `extended-keys always`
+  would also work, but only for panes made after it is set, so running agents keep Enter.
+  An agent already running can't get a new environment. Writing `CSI > 4;2 m` into its pane's
+  terminal (`pane_tty`) asks for it instead: tmux reads it as the agent's own request, and
+  Claude Code then reads `ESC[13;2u` as a newline.
+- **The screen's tmux asks your terminal for extended keys only once it knows the terminal.**
+  It sends `CSI > 4;2 m` after the terminal answers its `CSI > c` and `CSI > q` queries. A test
+  pty that answers nothing never gets asked.
 - **A click on a status line reaches no pane.** `MouseDown1Status` fires, and a range drawn
   with `#[range=user|X]` names what was clicked in `#{mouse_status_range}`. `send-keys -F`
   doesn't expand that in the text it types, so `run-shell -C` must expand the whole

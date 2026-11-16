@@ -488,7 +488,10 @@ async function runCommand(args: string[]): Promise<void> {
     throw new Error(`${refusal} is only for your own terminal, not for agents`);
   const host = words[2];
   if (first === "remote" && second === "add" && host && words.length === 3) {
-    process.exit(await addServer(host));
+    const code = await addServer(host);
+    // Setting up doesn't connect, so that logging in there stays separate from starting work.
+    if (code === 0) console.log(`${host} is ready. Connect to it with:\n  sc --remote ${host}`);
+    process.exit(code);
   }
   // Commands that run here load what they need only from this point on, so sc --remote
   // starts quickly and loads no part of the daemon on your laptop.

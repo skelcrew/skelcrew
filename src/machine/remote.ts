@@ -75,10 +75,14 @@ export const runInTerminal = (argv: string[]) =>
   Bun.spawn(argv, { stdio: ["inherit", "inherit", "inherit"] }).exited;
 
 // Returns how to run sc on the host with these words. It takes the environment to add to
-// what it always passes, and gives back the exit code.
+// what it always passes, and gives back the exit code. With a terminal, ssh says
+// "Connection to <host> closed." each time it ends, several times in one setup, so it is
+// told to say only errors.
 const onServer = (host: string, words: string[]) => (env: string[]) =>
   runInTerminal([
     "ssh",
+    "-o",
+    "LogLevel=ERROR",
     "-t",
     host,
     [
@@ -143,14 +147,15 @@ export async function remote(host: string, args: string[]): Promise<number> {
 // Sets up your server for --remote and returns the exit code, for sc remote add.
 export async function addServer(host: string): Promise<number> {
   checkHost(host);
-  console.log(`Setting up ${host}: copying Skelcrew there and running the first run.`);
+  console.log(`Setting up ${host}: copying Skelcrew there and setting it up.`);
   return addMachine(host, onServer(host, ["first-run"]), serverMachine(host));
 }
 
 // Puts Skelcrew on a server if it isn't there, and runs the first run through `there`,
-// without attaching, so that logging in there stays separate from starting to work. Ends
-// with the command that connects. Running it again is safe, as the first run skips what is
-// done, which is how a setup that stopped partway gets finished.
+// without attaching, so that logging in there stays separate from starting to work. It prints
+// no way to connect, as --remote connects right after it and only sc remote add prints one.
+// Running it again is safe, as the first run skips what is done, which is how a setup that
+// stopped partway gets finished.
 async function addMachine(
   where: string,
   there: (env: string[]) => Promise<number>,
@@ -163,10 +168,7 @@ async function addMachine(
     await withLinuxSkel(machine);
     code = await runUpToDate(where, there, machine, null);
   }
-  if (code !== 0) return code;
-  console.log(`${where} is ready. Connect to it with:`);
-  console.log(`  sc --remote ${where}`);
-  return 0;
+  return code;
 }
 
 // Runs sc on a server through `there`, and returns its exit code. `there` takes the
@@ -194,13 +196,13 @@ async function runUpToDate(
     code = await there(setupCheck);
   }
   if (code !== otherSetup || !setup) return code;
-  const taken = await sendSetup(machine, setup);
+  const taken = await sendSetup(where, machine, setup);
   return taken === 0 ? there([]) : taken;
 }
 
 // Copies the laptop's setup to a server, and has Skelcrew there take it in your
 // terminal, where a plugin's setup can ask you things. Returns the exit code of taking it.
-async function sendSetup(machine: Machine, setup: Setup): Promise<number> {
+async function sendSetup(where: string, machine: Machine, setup: Setup): Promise<number> {
   const to = ".config/skelcrew/laptop-setup.json";
   // The file holds the token, so it is made there readable only by you before it is filled.
   // scp keeps the mode of a file that is already there.
@@ -211,8 +213,11 @@ async function sendSetup(machine: Machine, setup: Setup): Promise<number> {
   try {
     const file = join(folder, "setup.json");
     writeSent(file, setup, originHere());
-    if ((await runInTerminal(machine.push(file, to))) !== 0)
-      throw new Error("couldn't copy your setup there");
+    // scp shows a progress bar named after the temporary file, which
+    // means nothing to you, so the copy runs out of your terminal and says why it failed.
+    console.log(`Copying your settings, Claude sign-in and plugins to ${where}.`);
+    const pushed = await quietly(machine.push(file, to));
+    if (!pushed.ok) throw new Error(`couldn't copy your setup to ${where}:\n${pushed.said}`);
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }

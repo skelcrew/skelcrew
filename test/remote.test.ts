@@ -79,7 +79,8 @@ beforeEach(() => {
   // first, so the server's systemctl is a fake and never the real one of this machine.
   fake(
     "ssh",
-    `test "$1" = -t && shift
+    `test "$1" = -o && shift 2
+test "$1" = -t && shift
 shift
 bin="$HOME/serverbin"
 cd "$HOME/server" && HOME="$HOME/server" PATH="$bin:/usr/bin:/bin" exec sh -c "$*"`,
@@ -146,11 +147,12 @@ async function skel(args: string[], typed = "", cwd = home) {
 const calls = () =>
   existsSync(join(home, "calls")) ? readFileSync(join(home, "calls"), "utf8") : "";
 
-// The line ssh runs on the server: with the laptop's build, so a copied Skelcrew can tell it is
+// The line ssh runs on the server, saying only errors so that ssh doesn't say each time the
+// connection closes: with the laptop's build, so a copied Skelcrew can tell it is
 // out of date, or without, to run whatever Skelcrew is there. Always with the server's name, for
 // the title of your terminal.
 const onServer = (words: string, build: string | null = laptop.commit) =>
-  `ssh -t simon@workbox env PATH="$HOME/.local/bin:$PATH" SKELCREW_REMOTE_NAME=simon@workbox ${build ? `SKELCREW_LAPTOP_BUILD=${build} ` : ""}sc${words}`;
+  `ssh -o LogLevel=ERROR -t simon@workbox env PATH="$HOME/.local/bin:$PATH" SKELCREW_REMOTE_NAME=simon@workbox ${build ? `SKELCREW_LAPTOP_BUILD=${build} ` : ""}sc${words}`;
 
 // Runs sc in a terminal and types the next of `answers` at each [Y/n] or [y/N] question it asks.
 // Returns all it wrote there, escape codes included, and its exit code.
@@ -231,6 +233,8 @@ test("in a terminal, --remote offers to set up a server without Skelcrew, then r
   expect(wrote).toContain("simon@workbox isn't set up. Set it up now? [Y/n]");
   expect(wrote).toContain("the first run on the server");
   expect(wrote).toContain("Skelcrew on the server got 1 arguments\r\n[ps]\r\n");
+  // It connects right away, so it prints no command to connect.
+  expect(wrote).not.toContain("Connect to it with");
   expect(code).toBe(3);
   const lines = calls().trim().split("\n");
   expect(lines[0]).toBe(onServer(" ps"));
@@ -507,7 +511,7 @@ test("Skelcrew update is gone", async () => {
 test("sc remote add copies Skelcrew to a server, runs the first run, and prints how to connect", async () => {
   const run = await skel(["remote", "add", "simon@workbox"]);
   expect(run.code).toBe(0);
-  expect(run.out).toContain("Setting up simon@workbox: copying Skelcrew there and running");
+  expect(run.out).toContain("Setting up simon@workbox: copying Skelcrew there and setting it up.");
   expect(run.out).toContain("the first run on the server\n");
   expect(run.out).toEndWith(
     "simon@workbox is ready. Connect to it with:\n  sc --remote simon@workbox\n",
@@ -539,7 +543,9 @@ test("sc remote add copies your setup there before the first run", async () => {
   writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\n");
   const run = await skel(["remote", "add", "simon@workbox"]);
   expect(run.code).toBe(0);
-  expect(run.out).toContain("took the laptop's setup\nthe first run on the server\n");
+  expect(run.out).toContain(
+    "Copying your settings, Claude sign-in and plugins to simon@workbox.\ntook the laptop's setup\nthe first run on the server\n",
+  );
   const lines = calls().trim().split("\n");
   const send = ".config/skelcrew/laptop-setup.json";
   expect(lines).toContain(
