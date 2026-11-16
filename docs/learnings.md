@@ -56,6 +56,9 @@ that covers the code you are about to write.
   check it still works after an update.
 - **Claude Code can outlive SIGTERM for a few seconds.** Wait for it to exit before
   removing the thread's clone or anything else it uses.
+- **`Stop` runs on neither an error nor Esc.** Its hooks reference says `Stop` "does not run if
+  the stoppage occurred due to a user interrupt", and a turn that ends on an API error runs
+  `StopFailure` instead. Its input has `last_assistant_message`, the turn's last text.
 
 ## Starting Codex
 
@@ -102,6 +105,9 @@ that covers the code you are about to write.
   from `@openai/codex-linux-x64`, or the Mac's. A global install puts that inside Codex's own
   package, but a local one puts it beside it, and a sandbox that brings back only Codex's
   package fails with "Missing optional dependency".
+- **Esc runs `Interrupt`, not `Stop`.** In Codex's `run_turn`, an interrupted turn returns
+  before its `Stop` hooks, which run only when the model needs no follow-up. The abort path
+  runs the `Interrupt` hooks instead. `Stop`'s input has `last_assistant_message`.
 
 ## The sandbox
 

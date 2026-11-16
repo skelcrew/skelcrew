@@ -240,9 +240,10 @@ function callStep(
 const tomlString = (text: string) => JSON.stringify(text);
 
 // A builder on Codex asks you a question by ending its turn without sc submit, since Codex
-// has no tool for asking, and its Stop hook tells Skelcrew the turn ended. Whatever is typed into
-// the builder next ends the question, as on Claude Code. The commands print nothing, and run
-// with no trust asked for: Codex would otherwise wait for a person to trust each one.
+// has no tool for asking, and its Stop hook tells Skelcrew the turn ended, as Claude Code's does.
+// Whatever is typed into the builder next ends the question, and starts a new turn. The commands
+// print nothing, and run with no trust asked for: Codex would otherwise wait for a person to
+// trust each one.
 const hookToml = (command: string) =>
   `[{hooks=[{type="command",command=${tomlString(command)},timeout=10}]}]`;
 const builderHooks = [
