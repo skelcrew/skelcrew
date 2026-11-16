@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { claude } from "../src/agents/claude.ts";
 import { codex } from "../src/agents/codex.ts";
 import { setupCommand } from "../src/agents/sandbox.ts";
-import { source } from "./harness.ts";
+import { insideSandbox, source } from "./harness.ts";
 
 let home = "";
 let socket: ReturnType<typeof Bun.listen> | undefined;
@@ -109,7 +109,7 @@ function asLead(script: string) {
 }
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there these tests can't run.
-describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("sandbox", () => {
+describe.skipIf(insideSandbox)("sandbox", () => {
   test("the lead writes in its folder and nowhere else", async () => {
     const repo = repository();
     const { folder } = lead();
@@ -672,29 +672,26 @@ test("a Claude Code session gets Claude Code's key and not Codex's", () => {
 
 // Only a Sprite has its control socket, so these run only there, as when checking Skelcrew on a
 // test Sprite, and never inside Skelcrew's own sandbox, where bubblewrap can't start.
-describe.if(existsSync("/.sprite/api.sock") && process.env.SKELCREW_SANDBOX !== "1")(
-  "on a Sprite",
-  () => {
-    test("the agent can't reach the control socket or sprite-env, but runs the Sprite's tools", async () => {
-      repository();
-      const done = await asLead(
-        "test -S /.sprite/api.sock || echo hidden; command -v sprite-env || echo no-sprite-env; command -v gh; test -d /proc/1 && echo proc",
-      );
-      expect(done.err).toBe("");
-      expect(done.out).toBe("hidden\nno-sprite-env\n/.sprite/bin/gh\nproc\n");
-    });
+describe.if(existsSync("/.sprite/api.sock") && !insideSandbox)("on a Sprite", () => {
+  test("the agent can't reach the control socket or sprite-env, but runs the Sprite's tools", async () => {
+    repository();
+    const done = await asLead(
+      "test -S /.sprite/api.sock || echo hidden; command -v sprite-env || echo no-sprite-env; command -v gh; test -d /proc/1 && echo proc",
+    );
+    expect(done.err).toBe("");
+    expect(done.out).toBe("hidden\nno-sprite-env\n/.sprite/bin/gh\nproc\n");
+  });
 
-    // Programs find themselves in /proc by their own process number, as setpriv does, and
-    // stopping a process tree reads it too.
-    test("the agent's /proc shows its own processes, by the numbers they have inside", async () => {
-      repository();
-      const done = await asLead(
-        `cut -d" " -f1 /proc/$$/stat; echo $$; test -e /proc/${process.pid}/cmdline || echo outside-hidden`,
-      );
-      expect(done.err).toBe("");
-      const [inProc, own, hidden] = done.out.split("\n");
-      expect(inProc).toBe(own);
-      expect(hidden).toBe("outside-hidden");
-    });
-  },
-);
+  // Programs find themselves in /proc by their own process number, as setpriv does, and
+  // stopping a process tree reads it too.
+  test("the agent's /proc shows its own processes, by the numbers they have inside", async () => {
+    repository();
+    const done = await asLead(
+      `cut -d" " -f1 /proc/$$/stat; echo $$; test -e /proc/${process.pid}/cmdline || echo outside-hidden`,
+    );
+    expect(done.err).toBe("");
+    const [inProc, own, hidden] = done.out.split("\n");
+    expect(inProc).toBe(own);
+    expect(hidden).toBe("outside-hidden");
+  });
+});

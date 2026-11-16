@@ -115,7 +115,8 @@ that covers the code you are about to write.
   `--overlay-src` and `--tmp-overlay`. Ubuntu 24.04's bwrap 0.9 passes every other check,
   then fails every review with "Unknown option --overlay-src". Check `bwrap --version` too.
 - **bwrap can't start inside Skelcrew's own sandbox.** Once Skelcrew builds Skelcrew, tests that start a
-  real sandbox can't run there. That is the one place they may skip.
+  real sandbox can't run there. That is the one place they may skip. They skip on
+  `SKELCREW_TESTS_IN_SANDBOX`, which `scripts/test.ts` sets, never on `SKELCREW_SANDBOX`.
 - **Hide the home folder, then put back only what the agent needs.** Programs often live
   under it: Claude Code under nvm keeps node beside it, and its package where its link
   points. Bring back the command's folder and the folder its link resolves into,
@@ -385,13 +386,21 @@ that covers the code you are about to write.
 - **Bun gives each test five seconds unless told otherwise.** On a busy machine, a test that
   starts daemons, sandboxes or many processes takes longer, and failed with nothing wrong.
   `setDefaultTimeout` in a preload only reaches the first test file of a run, so
-  `bun run check` passes `--timeout` instead.
+  `scripts/test.ts` passes `--timeout` instead.
 - **A fixed wait fails on a busy machine.** Timers fire late and processes start slowly, so
   a test that looks after a set time, or counts what happened in it, can look too early.
   Wait for the thing itself: a file, a line on screen, a row, a process gone. Time only
   what can't come too soon, such as the gap between two renewals.
 - **`Bun.spawn` without `env` ignores changes to `process.env`.** It hands on the environment
   the process started with. Pass `env: process.env` to hand on a change.
+- **Tests must not inherit the agent's `SKELCREW_SANDBOX` and `SKELCREW_SOCKET`.** A builder's
+  `bun test` handed them to every sc, tmux server and daemon its tests started. The sidebar
+  refused to start, sc called the real daemon, and dozens of screen tests each failed only
+  after a 20 second wait. The run looked hung. `scripts/test.ts` starts the run without them,
+  and `test/inherited.ts` stops a plain `bun test` inside the sandbox with a message.
+- **A parallel run prints a test file only once it ends.** A file whose tests each fail
+  slowly kept the screen blank for over half an hour. `--dots` shows each test as it ends,
+  and `scripts/test.ts` stops the whole run after 15 minutes.
 - **`--parallel` loads the preload again for each test file, in the same process.** A
   worker runs several files one after another, each with a fresh preload and `process.env`.
   What one file's preload started still runs during the next, so the leak check counted an

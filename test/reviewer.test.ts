@@ -14,7 +14,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { review } from "../src/flow/reviewer.ts";
-import { source } from "./harness.ts";
+import { insideSandbox, source } from "./harness.ts";
 
 let home = "";
 let clone = "";
@@ -96,7 +96,7 @@ const start = (
 const ownNiceness = () => Number(Bun.spawnSync(["nice"], { stdout: "pipe" }).stdout.toString());
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there these tests can't run.
-describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("reviewer", () => {
+describe.skipIf(insideSandbox)("reviewer", () => {
   test("answers with Codex's verdict, given the task and the base branch", async () => {
     fakeCodex('{"verdict":"changes","body":"The retry has no test."}');
     expect(await start()).toEqual({ verdict: "changes", body: "The retry has no test." });
