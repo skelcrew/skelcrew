@@ -387,6 +387,30 @@ test("on a Mac, starts the daemon through launchd when it doesn't answer", async
   expect(calls()).toContain(`launchctl kickstart gui/${uid}/dev.skelcrew.daemon\n`);
 });
 
+// launchd can lose the agent while its file stays, so Skelcrew thinks the daemon installed.
+test("on a Mac, loads the agent from its file when launchd doesn't have it", async () => {
+  asMac();
+  // Like launchd, it knows the agent only once it is loaded.
+  fake(
+    "launchctl",
+    `case "$1" in
+  bootstrap) : > "$HOME/loaded"; : > "$HOME/started" ;;
+  bootout) rm -f "$HOME/loaded" ;;
+  kickstart|print)
+    test -e "$HOME/loaded" || { echo "Could not find service" >&2; exit 113; }
+    : > "$HOME/started" ;;
+esac`,
+  );
+  await skelOnMac("1\nsk-ant-oat01-good\n");
+  rmSync(join(home, "loaded"));
+  rmSync(join(home, "started"));
+  writeFileSync(join(home, "calls"), "");
+  const run = await skelOnMac();
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(calls()).toContain(`launchctl bootstrap gui/${uid} ${plist()}\n`);
+});
+
 test("on a Mac, reloads the agent when the PATH it needs moved", async () => {
   asMac();
   await skelOnMac("1\nsk-ant-oat01-good\n");

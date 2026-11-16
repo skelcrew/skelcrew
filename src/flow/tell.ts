@@ -7,19 +7,24 @@ import { agentRuns, mustTmux } from "../agents/tmux.ts";
 import { typeInto } from "../agents/typing.ts";
 import { errorText } from "../say.ts";
 import { noteForLead } from "./lead.ts";
-import { builderHarness, log, readThread, type Thread, threadName } from "./thread.ts";
+import { builderHarness, log, readThread, record, type Thread, threadName } from "./thread.ts";
 
-// Returns the message wrapped in Skelcrew's tag, whose attributes say who it is from and what it
-// is, so the receiving agent never takes it for the human. The tag marks where it starts and
-// ends, and the text inside stays plain. Any <skelcrew or </skelcrew> in the text is removed, so a
-// message can't close its tag early and pass the rest off as coming from outside it.
-function wrapMessage(attributes: string, text: string): string {
+// Returns an agent's text with any <skelcrew or </skelcrew> removed, so it can't open or close
+// Skelcrew's tag and pass what follows off as coming from someone else.
+export function untagged(text: string): string {
   let inside = text;
   // One pass isn't enough: removing the inner tag of </skel</skelcrew>crew> leaves a whole
   // </skelcrew>.
   while (/<\/skelcrew>|<skelcrew/i.test(inside))
     inside = inside.replace(/<\/skelcrew>|<skelcrew/gi, "");
-  return `<skelcrew ${attributes}>\n${inside}\n</skelcrew>`;
+  return inside;
+}
+
+// Returns the message wrapped in Skelcrew's tag, saying who it is from and the command to answer
+// with, so the receiving agent never takes it for the human. The tag marks where it starts and
+// ends, and the text inside stays plain, without tags of its own.
+function wrapMessage(from: string, reply: string, text: string): string {
+  return `<skelcrew from="${from}" reply="${reply}">\n${untagged(text)}\n</skelcrew>`;
 }
 
 // Returns the thread's name when its builder has a session to type into or look at, and
@@ -38,10 +43,13 @@ function runningBuilder(db: Database, tmux: string, thread: Thread): string {
   return name;
 }
 
-// Types the lead's message into the thread's builder once it is idle, and returns the
-// thread's name at once, as an agent's command must answer quickly. Refuses a builder that
-// isn't running rather than keeping the message, which could reach it long after it
-// mattered. Refuses one asking you a question too: typing then would answer it for you.
+// Types the lead's message into the thread's builder once it is idle, and keeps it with the
+// thread as a change to its task. Returns the thread's name at once, as an agent's command
+// must answer quickly. Refuses a builder that isn't running rather than keeping the message,
+// which could reach it long after it mattered. Refuses one asking you a question with its
+// harness's question tool too: typing then would answer it for you. One that stopped without
+// submitting may be told, as the lead can often answer what it waits on, and the message typed
+// in ends its needing you.
 // A message that can't be typed in, such as to a builder busy for half an hour, is logged,
 // and the lead hears that it didn't arrive.
 export function messageBuilder(db: Database, tmux: string, thread: Thread, text: string): string {
@@ -53,12 +61,23 @@ export function messageBuilder(db: Database, tmux: string, thread: Thread, text:
     );
   // Typing waits until the builder is idle, up to half an hour, so it runs on without being
   // awaited. Either way the thread's log says what happened, and the lead hears of a failure,
-  // since by then its command has long returned.
-  const message = wrapMessage('from="lead" reply="sc tell lead"', text);
+  // since by then its command has long returned. A message typed in becomes a change to the
+  // thread's task, so its reviewer judges the builder by what the lead last said. It is kept
+  // only once typed: then the reviewer never sees what the builder didn't, and messages keep
+  // their order, as typing into a session goes one message at a time.
+  const message = wrapMessage("lead", "sc tell lead", text);
   typeInto(tmux, thread.folder, builderHarness(thread).marks, message, {
     timeout: 30 * 60_000,
   }).then(
-    () => log(db, readThread(db, thread.folder), `the lead told its builder: ${text}`),
+    () => {
+      const { updates } = readThread(db, thread.folder);
+      record(
+        db,
+        thread.folder,
+        { updates: [...updates, { from: "lead", at: Date.now(), text }] },
+        `the lead told its builder: ${text}`,
+      );
+    },
     (error) => {
       const said = errorText(error);
       log(
@@ -77,7 +96,7 @@ export function messageBuilder(db: Database, tmux: string, thread: Thread, text:
 // agent command.
 export function messageLead(db: Database, tmux: string, thread: Thread, text: string): void {
   const name = threadName(db, thread);
-  noteForLead(db, tmux, thread, wrapMessage(`from="${name}" reply="sc tell ${name}"`, text));
+  noteForLead(db, tmux, thread, wrapMessage(name, `sc tell ${name}`, text));
   log(db, readThread(db, thread.folder), `its builder told the lead: ${text}`);
 }
 
@@ -116,7 +135,7 @@ export function peekAtBuilder(db: Database, tmux: string, thread: Thread, lines:
     .slice(-lines);
   const doing = { asking: "asking the human a question", "mid-turn": "mid-turn", idle: "idle" };
   const heading = `${name} · ${thread.status} · ${doing[builderState(tmux, thread)]}`;
-  return wrapMessage(`from="${name}" kind="peek"`, [heading, ...shown].join("\n"));
+  return `<skelcrew from="${name}" kind="peek">\n${untagged([heading, ...shown].join("\n"))}\n</skelcrew>`;
 }
 
 // Presses Esc in the builder's session to stop its turn, for sc interrupt, such as when a test

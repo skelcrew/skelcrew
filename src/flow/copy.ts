@@ -191,18 +191,38 @@ export function itemAt(db: Database, link: string): Item | null {
   return parseItems(rows)[0] ?? null;
 }
 
-// Returns the task a thread works on, for its reviewer and its PR: its item in Skelcrew's copy,
-// where the tracker's latest words are, or else what the thread saved as it started, as for a
-// thread with no task in the tracker. Only a task from the copy has a line that closes it.
+// Returns the task a thread works on, for its reviewer, its PR and sc issue show: its item in
+// Skelcrew's copy, where the tracker's latest words are, or else what the thread saved as it
+// started, as for a thread with no task in the tracker. Only a task from the copy has a line
+// that closes it. The lead's messages to the builder follow the body, oldest first, as changes
+// to the task: a reviewer that didn't see them would ask the builder to undo what you agreed.
 export function threadTask(
   db: Database,
-  thread: { owner: string; repo: string; task: string; title: string | null; body: string | null },
+  thread: {
+    owner: string;
+    repo: string;
+    task: string;
+    title: string | null;
+    body: string | null;
+    updates: { at: number; text: string }[];
+  },
 ): { title: string; body: string; closes: string | null } {
   // taskOf throws when the copy has no such task, which is the sign to use the thread's own.
+  let task: { title: string; body: string; closes: string | null };
   try {
     const { title, body, closes } = taskOf(db, thread.owner, thread.repo, thread.task);
-    return { title, body, closes };
+    task = { title, body, closes };
   } catch {
-    return { title: thread.title ?? "", body: thread.body ?? "", closes: null };
+    task = { title: thread.title ?? "", body: thread.body ?? "", closes: null };
   }
+  if (thread.updates.length === 0) return task;
+  // Each message under the time it was typed in, in UTC, as the reviewer has no time zone.
+  const updates = thread.updates.map(
+    ({ at, text }) =>
+      `### ${new Date(at).toISOString().slice(0, 16).replace("T", " ")} UTC\n\n${text.trim()}`,
+  );
+  const heading =
+    "## Changes to the task from the lead, after the thread started\n\nThese override the task above where they differ. The latest comes last.";
+  const body = [task.body.trimEnd(), heading, ...updates].filter((part) => part !== "");
+  return { ...task, body: body.join("\n\n") };
 }
