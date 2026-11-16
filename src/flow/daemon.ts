@@ -36,7 +36,7 @@ import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import { pollRepositories } from "./poll.ts";
 import { findRepository, fullNameIs, noRepositories, refreshClones, repositoryAt } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
-import { goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
+import { endRound, goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
 import { messageBuilder, messageLead, untagged } from "./tell.ts";
 import {
   endedTurnAsks,
@@ -494,6 +494,18 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
   // Taken before any request comes in, so a thread started meanwhile, still setting up,
   // isn't taken for one whose setup the daemon's stop cut short.
   const before = liveThreads(db);
+  // Reviews the daemon's stop cut short join the queue of reviews first, before any request or
+  // builder could start one, and in the order they had: those that were running, then those
+  // that waited, by when they joined. A review doesn't need its builder until it types changes
+  // in, so those wait until the builder is back, or has failed and ended the round.
+  const reviewsCutShort = before.filter((t) => t.submitting === null && t.reviewing !== null);
+  reviewsCutShort.sort((a, b) => (a.queued ?? 0) - (b.queued ?? 0));
+  const builderBack = new Map<string, () => void>();
+  for (const thread of reviewsCutShort) {
+    const back = Promise.withResolvers<void>();
+    builderBack.set(thread.folder, back.resolve);
+    resumeRound(db, tmux, thread.folder, back.promise);
+  }
   // A lead you exited while the daemon was down closes its tab, before any request could open
   // it, and isn't brought back. From here on, the daemon looks each second for a lead you exit.
   closeExitedLeads(db, tmux);
@@ -511,12 +523,22 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
   // Notes the daemon's stop kept from the leads.
   typeLeadNotes(db, tmux);
   // Bring back each thread's builder, without waiting on it, and carry on the round it was in.
+  // A thread whose builder can't come back ends its review, which would otherwise mark it
+  // waiting again once it ended. Either way a review already brought back hears of it.
   for (const thread of before) {
     await listenFor(thread);
+    const settled = builderBack.get(thread.folder) ?? (() => {});
     // After the builder is back, since the round may type into its session.
     bringBack(db, tmux, thread).then(
-      () => resumeRound(db, tmux, thread.folder),
-      (error) => failThread(db, thread, error),
+      () => {
+        settled();
+        resumeRound(db, tmux, thread.folder);
+      },
+      (error) => {
+        endRound(thread.folder);
+        settled();
+        failThread(db, thread, error);
+      },
     );
   }
   // Start polling, which also lets any sc start waiting on it go ahead, and keep Skelcrew itself

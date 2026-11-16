@@ -169,7 +169,7 @@ test("sc ps cuts a long title to the room of the sidebar's first line", () => {
   const log = spyOn(console, "log").mockImplementation((line: string) => said.push(line));
   try {
     printThreads(
-      [{ thread: "app-9", short: null, title, status: "failed", needsYou: false }],
+      [{ thread: "app-9", short: null, title, status: "failed", needsYou: false, queued: false }],
       false,
     );
   } finally {
@@ -178,6 +178,28 @@ test("sc ps cuts a long title to the room of the sidebar's first line", () => {
   const sidebar = listed(draw([thread("app-9", { title })], "lead", size))[0]?.slice(4) ?? "";
   expect(sidebar).toEndWith("…");
   expect(said[1]).toBe(`app-9   ${title.slice(0, sidebar.length - 1)}…  failed`);
+});
+
+test("sc ps says a thread whose review waits for a place is queued for review", () => {
+  const said: string[] = [];
+  const log = spyOn(console, "log").mockImplementation((line: string) => said.push(line));
+  try {
+    const row = { short: "Export", title: null, status: "waiting", needsYou: false } as const;
+    printThreads(
+      [
+        { ...row, thread: "app-9", queued: true },
+        { ...row, thread: "app-8", queued: false },
+      ],
+      false,
+    );
+  } finally {
+    log.mockRestore();
+  }
+  expect(said).toEqual([
+    "THREAD  TITLE   STATUS             NEEDS YOU",
+    "app-9   Export  queued for review",
+    "app-8   Export  waiting",
+  ]);
 });
 
 // A title comes from the tracker and a short title from the lead, so either could hold a line
@@ -194,6 +216,7 @@ test("sc ps prints a title or short title with control codes as one clean row", 
           title: "Fix\nlogin\x1b[2J",
           status: "working",
           needsYou: false,
+          queued: false,
         },
         {
           thread: "app-8",
@@ -201,6 +224,7 @@ test("sc ps prints a title or short title with control codes as one clean row", 
           title: "Ok",
           status: "working",
           needsYou: false,
+          queued: false,
         },
       ],
       false,
@@ -720,6 +744,7 @@ const state: Thread = {
   needs_you: false,
   submitting: null,
   reviewing: null,
+  queued: null,
   telling: null,
   held: null,
   seen: [],
@@ -753,8 +778,17 @@ test("a thread's word says who has it right now", () => {
   expect(word({})).toBe("working");
   expect(word({ status: "waiting", submitting: "the fix" })).toBe("reviewing");
   expect(word({ status: "waiting", reviewing: "abc" })).toBe("reviewing");
+  expect(word({ status: "waiting", reviewing: "abc", queued: 5 })).toBe("queued for review");
   expect(word({ status: "waiting", verdict: "approve" })).toBe("checks");
   expect(word({ telling: "fix it", verdict: "changes" })).toBe("changes");
+});
+
+// A review that waited when the daemon stopped is saved with when it joined the queue, which a
+// newer submit leaves behind until its own review joins.
+test("a newer submit is reviewing, not queued, until its own review waits", () => {
+  const waited = { status: "waiting", reviewing: "abc", queued: 5 } satisfies Partial<Thread>;
+  expect(word({ ...waited, submitting: "the fix" })).toBe("reviewing");
+  expect(word({ ...waited, needs_you: true })).toBe("review failed");
 });
 
 // A builder that replied to you or the lead and stopped must not hide what you must do next.

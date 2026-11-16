@@ -269,20 +269,15 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     expect(existsSync(join(sessions(), "late"))).toBe(false);
   });
 
-  test("runs one review at a time, and none that was cancelled while it waited", async () => {
-    fakeCodex(approve, [
-      'mkdir "$CODEX_HOME/sessions/busy" || echo overlap >> "$CODEX_HOME/sessions/overlap"',
-      'echo ran >> "$CODEX_HOME/sessions/ran"; sleep 0.5; rmdir "$CODEX_HOME/sessions/busy"',
-    ]);
+  // How many reviews run at once is the round's queue to limit, so a review only has to stay
+  // out of the way once it is cancelled.
+  test("a review cancelled before it starts never runs", async () => {
+    fakeCodex(approve, ['echo ran >> "$CODEX_HOME/sessions/ran"']);
     const cancel = new AbortController();
-    const reviews = [start(), start(), start({ signal: cancel.signal })];
     cancel.abort();
-    const [first, second, third] = await Promise.all(reviews);
-    expect(first?.verdict).toBe("approve");
-    expect(second?.verdict).toBe("approve");
-    expect(third?.verdict).toBe("failed");
-    expect(kept("ran")).toBe("ran\nran\n");
-    expect(existsSync(join(sessions(), "overlap"))).toBe(false);
+    const done = await start({ signal: cancel.signal });
+    expect(done).toEqual({ verdict: "failed", body: "the review was cancelled" });
+    expect(existsSync(join(sessions(), "ran"))).toBe(false);
   });
 
   // Stands in for Claude Code in print mode. Its config folder is gone after the review,
@@ -375,23 +370,22 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     expect(kept("ci")).toBe("asked 1\nasked 2\n");
   }, 40_000);
 
-  test("whether the repository has CI is asked as the review starts, not when it was queued", async () => {
+  // A review waits in the round's queue for its place, and CI may show a check meanwhile. So the
+  // reviewer is told about CI from what holds as each review starts.
+  test("whether the repository has CI is asked as each review starts", async () => {
     let has = false;
-    fakeCodex(approve, ["sleep 1"]);
-    const first = start();
-    const second = start({ ci: { has: () => has, read: async () => "CI passed.\n" } });
-    // CI shows up while the first review still runs, and the second waits its turn.
-    await Bun.sleep(300);
-    has = true;
-    await Promise.all([first, second]);
-    expect(kept("prompt")).toContain("ci.md");
+    const ci = { has: () => has, read: async () => "CI passed.\n" };
     fakeCodex(approve);
-    await start({ ci: { has: () => false, read: async () => "CI passed.\n" } });
+    await start({ ci });
     expect(kept("prompt")).toContain("The repository has no CI, so run its whole test suite");
+    has = true;
+    await start({ ci });
+    expect(kept("prompt")).toContain("ci.md");
   });
 
   // Asking the forge for a failed log can take a minute. A review that ends must not wait for
-  // it, or every review queued after it would wait too.
+  // it, or it would keep its place among the reviews that run at once, and those queued for one
+  // would wait too.
   test("a slow answer about CI never holds up a review that was cancelled or ran out of time", async () => {
     fakeCodex(approve);
     // An answer that comes only once the test lets it, after every review has ended.
