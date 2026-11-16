@@ -6,6 +6,7 @@
 import { readFileSync } from "node:fs";
 import { cpus } from "node:os";
 import { screenSocket, tmux, tmuxIsAtLeast } from "../agents/tmux.ts";
+import { openDb } from "../db.ts";
 import { keyLines } from "./keys.ts";
 import { cpuBusy, cpuSample, loadText, memoryInUse } from "./load.ts";
 import { edge, fitted, grey, pad, paint, removeControlCodes } from "./look.ts";
@@ -82,8 +83,8 @@ const input = new RegExp(
 // screen's session, whose third pane this is. It shows what it was last told, and the list of
 // keys while they are toggled on, taking as many rows as they need, up to a third of the screen.
 // More keys than that scroll with the wheel. A click on ? keys shows or hides them, and a click
-// on them hides them. It reads the machine's load every 5 seconds. It writes only when what shows
-// changed, so a quiet screen lets a Sprite sleep.
+// on them hides them. It reads the machine's load every 5 seconds, and shows it only while work
+// runs. It writes only when what shows changed, so a quiet screen lets a Sprite sleep.
 export async function runFooter(agents: string, session: string): Promise<void> {
   const socket = screenSocket(agents);
   const self = `=${session}:.2`;
@@ -147,8 +148,15 @@ export async function runFooter(agents: string, session: string): Promise<void> 
     }
     draw();
   });
+  // Whether a builder works, or a submit or review is under way, in any repository: what the
+  // sidebar calls working and reviewing. A thread waiting on CI or on you doesn't count.
+  const db = openDb();
+  const working = db.query(`SELECT 1 FROM threads WHERE status = 'working'
+    OR (status = 'waiting' AND (submitting IS NOT NULL OR reviewing IS NOT NULL))`);
   // Reads the load every 5 seconds, and draws only when its text changed, as drawing asks tmux
-  // for the window's height. A Mac has no /proc/meminfo, so memory comes from os.freemem() there.
+  // for the window's height. The load goes while nothing works, as figures that change on their
+  // own would write to the terminal and keep a Sprite awake. A Mac has no /proc/meminfo, so
+  // memory comes from os.freemem() there.
   setInterval(() => {
     const now = cpuSample(cpus());
     let meminfo: string | null = null;
@@ -156,7 +164,8 @@ export async function runFooter(agents: string, session: string): Promise<void> 
       meminfo = readFileSync("/proc/meminfo", "utf8");
     } catch {}
     const memory = memoryInUse(meminfo);
-    const text = loadText(cpuBusy(sample, now), memory.used, memory.total);
+    const busy = working.get() !== null;
+    const text = busy ? loadText(cpuBusy(sample, now), memory.used, memory.total) : "";
     sample = now;
     if (text === load) return;
     load = text;

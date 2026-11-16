@@ -629,8 +629,10 @@ test("the strip ends the top row, and the agent's height stays as you switch", a
   expect(readFileSync(join(home, "app-12.size"), "utf8")).toBe(height);
 });
 
-// The bottom row as you see it, across the whole screen, and the row above it.
-const footer = () => (seen().split("\n")[29] ?? "").trimEnd();
+// The bottom row as you see it, across the whole screen, without the machine's load at its right
+// end, which comes and changes on its own, and the row above it.
+const footer = () =>
+  (seen().split("\n")[29] ?? "").replace(/ +cpu \d+% {2}mem [\d.]+\/\d+G *$/, "").trimEnd();
 const aboveFooter = () => (seen().split("\n")[28] ?? "").trimEnd();
 // What the footer says under a list or page: the keys you need most and ? keys, then s or m on a
 // row that can be started or merged.
@@ -648,6 +650,17 @@ test("the footer runs across the screen under a thin line, with move and quit, t
   toSecondThread();
   await until(() => seen().includes("I am app-7"), "app-7");
   await until(() => footer() === "  ⌥↑↓ move  ⌥Q quit  ⌥B back  Esc stops codex", "app-7's footer");
+});
+
+test("while a thread works, the footer ends with the machine's load", async () => {
+  open("lead");
+  await ready("lead");
+  // The load shows from its second sample, 5 seconds after the footer starts.
+  await until(
+    () => /cpu \d+% {2}mem [\d.]+\/\d+G *$/.test(seen().split("\n")[29] ?? ""),
+    "the load",
+  );
+  expect(footer()).toBe("  ⌥↑↓ move  ⌥Q quit  ⌥B back  Esc stops claude");
 });
 
 test("under a list or page the footer adds ? keys, and s or m while the row can take it, and the agent's height stays", async () => {
@@ -1645,6 +1658,8 @@ test("with nothing working, an open screen sends your terminal nothing at all", 
   tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
   await Bun.sleep(4000);
   expect(existsSync(written) ? readFileSync(written, "utf8") : "").toBe("");
+  // The machine's load shows only while work runs.
+  expect(seen()).not.toContain("cpu ");
 });
 
 test("a working thread's time moves on by itself, and writes when it does", async () => {
