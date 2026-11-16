@@ -20,7 +20,7 @@ import { cloneDir, threadSocket } from "../paths.ts";
 import { trackerOf } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
-import { taskOf } from "./copy.ts";
+import { taskOf, threadTask } from "./copy.ts";
 import { pastRoundLimit } from "./decide.ts";
 import { fetchBranch } from "./git.ts";
 import { findRepository, forgeAuthor, refreshClones } from "./repo.ts";
@@ -299,8 +299,8 @@ export async function setUpThread(db: Database, thread: Thread): Promise<void> {
 }
 
 // Starts the thread's builder in tmux, in the sandbox in its clone: bringing back the conversation
-// it saved, or else afresh with the task's title and body from Skelcrew's copy as its first
-// message. Throws when it exits as soon as it starts. A builder's first start picks the harness
+// it saved, or else afresh with the task as its reviewer gets it as its first message: the
+// title and body from Skelcrew's copy, and the lead's messages after them. Throws when it exits as soon as it starts. A builder's first start picks the harness
 // your config names, and saves it with the thread, which keeps it from then on: a conversation
 // can't move to another harness. The session id is stored before the builder starts, so the builder
 // can be brought back after its session is gone.
@@ -315,9 +315,10 @@ export async function startBuilder(db: Database, tmux: string, thread: Thread): 
   const session = resume ?? crypto.randomUUID();
   let start: { resume: string } | { sessionId: string; prompt: string } = { resume: session };
   if (!resume) {
-    // Saved as the thread started, from Skelcrew's copy brought up to date just before.
-    const title = thread.title ?? "";
-    const body = thread.body ?? "";
+    // The same task its reviewer gets: Skelcrew's copy, brought up to date just before a first
+    // start, with the lead's messages after it. A builder starting afresh on a thread the lead
+    // already steered would otherwise be judged by changes it was never told.
+    const { title, body } = threadTask(db, thread);
     start = { sessionId: session, prompt: body ? `${title}\n\n${body}` : title };
   }
   record(db, thread.folder, { session, harness: harness.name });
