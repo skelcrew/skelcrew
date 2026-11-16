@@ -39,7 +39,9 @@ const lead = () => join(data(), "claude", leadPlaces("simon", "app").name);
 const script = (name: string, body: string) => writeScript(home, name, body);
 
 // Stands in for Claude Code, as the lead and as the builder alike: it waits at a ❯ prompt,
-// keeps what is typed into it, and shows esc to interrupt while the file busy is there.
+// keeps what is typed into it, and shows esc to interrupt while the file busy is there. While
+// the file quoting is there, it is idle at its prompt with esc to interrupt in its own text, as
+// a builder is after it read Skelcrew's code.
 function fakeClaude(): void {
   script(
     "claude",
@@ -50,9 +52,16 @@ stty -echo
 exec 3<&0
 while IFS= read -r line; do printf '%s\\n' "$line" >> "$CLAUDE_CONFIG_DIR/typed"; done <&3 &
 for i in $(seq 3000); do
-  now=idle; test -e "$CLAUDE_CONFIG_DIR/busy" && now=busy
+  now=idle; test -e "$CLAUDE_CONFIG_DIR/quoting" && now=quoting
+  test -e "$CLAUDE_CONFIG_DIR/busy" && now=busy
   if [ "$now" != "$shown" ]; then
-    clear; if [ $now = busy ]; then echo "esc to interrupt"; else echo "❯"; fi; shown=$now
+    clear
+    case $now in
+      busy) echo "esc to interrupt" ;;
+      quoting) echo 'marks: { busy: "esc to interrupt" }'; echo "❯" ;;
+      *) echo "❯" ;;
+    esac
+    shown=$now
   fi
   sleep 0.1
 done`,
@@ -163,6 +172,21 @@ async function startApp12() {
   await until(() => read(join(builder(), "args")) !== "", 30_000);
 }
 
+// Changes app-12's thread, or its waiting messages, as the daemon or a hook would.
+function changeDb(sql: string): void {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  db.run(sql);
+  db.close();
+}
+
+// Returns app-12's row of sc ps --json, as the lead would read it.
+async function ps(): Promise<Record<string, unknown>> {
+  const listed = await skel(["ps", "--json"], "lead");
+  const rows: unknown = JSON.parse(listed.out);
+  return Array.isArray(rows) ? Object(rows[0]) : {};
+}
+
 // Marks the builder as asking you a question, or with `stalled` as having stopped without
 // submitting, as its hooks would.
 function setAsking(column: "asking" | "stalled" = "asking"): void {
@@ -260,5 +284,58 @@ describe.skipIf(insideSandbox)("sc tell", () => {
     expect(stopped.code).not.toBe(0);
     expect(stopped.err).toContain("app-12's builder isn't running: the thread is stopped");
     expect(stopped.err).toContain("sc start app-12");
+  }, 60_000);
+
+  // Approved and ready to merge, the thread needs you, but its builder takes messages as any
+  // other does. Its screen quoting the busy mark doesn't hold them, once its hook said its turn
+  // ended.
+  test("a message to an approved builder, idle at its prompt, is typed in", async () => {
+    await startApp12();
+    changeDb("UPDATE threads SET status = 'waiting', needs_you = 1, verdict = 'approve'");
+    writeFileSync(join(builder(), "quoting"), "");
+    expect((await skel(["turn", "ended"], "builder")).err).toBe("");
+    const told = await skel(["tell", "app-12", "Rename it."], "lead");
+    expect(told.err).toBe("");
+    expect(told.out).toContain("Telling app-12's builder now");
+    await until(() => typed(builder()).includes("Rename it."));
+    await until(() => threadLog().includes("the lead told its builder: Rename it."));
+  }, 60_000);
+
+  test("sc tell says why a message waits, and sc ps counts it until it goes in", async () => {
+    await startApp12();
+    writeFileSync(join(builder(), "busy"), "");
+    const told = await skel(["tell", "app-12", "Use the v2 API."], "lead");
+    expect(told.err).toBe("");
+    expect(told.out).toContain("app-12's builder can't take it yet: it is mid-turn");
+    expect(await ps()).toMatchObject({ thread: "app-12", waiting: 1 });
+    const again = await skel(["tell", "app-12", "And v3 later."], "lead");
+    expect(again.out).toContain("1 earlier message waits");
+    expect(await ps()).toMatchObject({ waiting: 2 });
+    rmSync(join(builder(), "busy"));
+    await until(() => typed(builder()).includes("And v3 later."));
+    expect(typed(builder()).indexOf("Use the v2 API.")).toBeLessThan(
+      typed(builder()).indexOf("And v3 later."),
+    );
+    await until(() => threadLog().includes("the lead told its builder: And v3 later."));
+    expect(await ps()).toMatchObject({ waiting: 0 });
+  }, 60_000);
+
+  test("a message still waiting after 10 minutes brings the lead a note saying why", async () => {
+    await startApp12();
+    writeFileSync(join(builder(), "busy"), "");
+    expect((await skel(["tell", "app-12", "Use the v2 API."], "lead")).err).toBe("");
+    // As if it was sent 11 minutes ago.
+    changeDb("UPDATE messages SET at = at - 11 * 60000");
+    await until(() => typed(lead()).includes("hasn't got your message after 10 minutes"));
+    const note = typed(lead());
+    expect(note).toContain(
+      "app-12's builder hasn't got your message after 10 minutes: it is mid-turn",
+    );
+    expect(note).toContain("press Esc in app-12");
+    // Said once, however long it still waits.
+    await Bun.sleep(5000);
+    expect(typed(lead()).split("after 10 minutes").length - 1).toBe(1);
+    rmSync(join(builder(), "busy"));
+    await until(() => typed(builder()).includes("Use the v2 API."));
   }, 60_000);
 });

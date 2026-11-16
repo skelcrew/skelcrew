@@ -44,9 +44,10 @@ export const entryPlace = (entry: Entry) => `:${entry}`;
 // a mark, its name without its repository's, such as t5, and its short title, or its title when
 // the lead gave it none. A working thread has two more lines, in two greys so they read apart:
 // what its builder has done, as workLine says, in a light grey, then the step it is on, dim, as
-// it matters least. Any other thread has one more: its word, then its harness and its round, dim
-// but the word, which takes its mark's colour so a green approved or a red error reads at a
-// glance. The word comes first, so it is the last to be cut. The lead's row has its name on top
+// it matters least, or in its place how many messages wait for the builder, which tells why one
+// hasn't reached it. Any other thread has one more: its word, how many messages wait, its harness
+// and its round, dim but the word, which takes its mark's colour so a green approved or a red
+// error reads at a glance. The word comes first, so it is the last to be cut. The lead's row has its name on top
 // and its word below. An agent that isn't running is dim, as it can't be picked. The one you are
 // looking at is shaded across the whole width, on all its lines. `width` leaves out the line at
 // the sidebar's edge.
@@ -66,7 +67,7 @@ function rowLines(row: Row, here: boolean, width: number): string[] {
     ? [
         first,
         `${indent}${paint(light, fitted(workLine(row, room), room))}`,
-        `${indent}${tinted(here, grey, fitted(removeControlCodes(row.step), room))}`,
+        `${indent}${tinted(here, grey, fitted(row.waiting || removeControlCodes(row.step), room))}`,
       ]
     : [first, wordLine(row, here, room)];
   return here ? lines.map((line) => shaded(line, width)) : lines;
@@ -103,13 +104,13 @@ function planBar(plan: { done: number; total: number }): string {
   return "▰".repeat(filled) + "▱".repeat(cells - filled);
 }
 
-// Returns a row's line with its word, in its mark's colour, then its harness and round, dim, cut
-// as a whole to `room`. It is split back into the word and the rest after the cut, so each keeps
-// its colour. Words, harnesses and rounds are plain letters, so a split by letters is a split by
-// columns.
+// Returns a row's line with its word, in its mark's colour, then how many messages wait, its
+// harness and round, dim, cut as a whole to `room`. It is split back into the word and the rest
+// after the cut, so each keeps its colour. These are all plain letters, so a split by letters is
+// a split by columns.
 function wordLine(row: Row, here: boolean, room: number): string {
   const [, colour] = threadMark(row);
-  const parts = [row.word, row.harness, roundText(row)].filter((part) => part);
+  const parts = [row.word, row.waiting, row.harness, roundText(row)].filter((part) => part);
   const below = fitted(parts.join(" · "), room);
   const word = below.slice(0, row.word.length);
   const rest = below.slice(row.word.length);

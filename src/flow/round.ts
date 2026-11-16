@@ -154,9 +154,10 @@ async function reviewRound(
   if (tell) await typeChanges(db, tmux, folder, tell, signal);
 }
 
-// Types a review's changes into the builder once it is idle, then forgets them. They are
-// saved until then, so a stop of the daemon while the builder is busy doesn't lose them.
-// A newer round makes them stale, so they are never typed once one starts.
+// Types a review's changes into the builder once it is idle, however long that takes, then
+// forgets them. They are saved until then, so a stop of the daemon while the builder is busy
+// doesn't lose them, and sc ps counts them as waiting. A newer round makes them stale, so they
+// are never typed once one starts.
 async function typeChanges(
   db: Database,
   tmux: string,
@@ -164,12 +165,15 @@ async function typeChanges(
   text: string,
   signal: AbortSignal,
 ): Promise<void> {
-  // A builder can work long after it submits, but one busy this long has likely hung.
-  await typeInto(tmux, folder, builderHarness(readThread(db, folder)).marks, text, {
-    timeout: 30 * 60_000,
+  // Its hook saying its turn ended counts as idle, whatever its screen still shows.
+  const turnOver = () => readThread(db, folder).turn_ended;
+  const { marks } = builderHarness(readThread(db, folder));
+  const typed = await typeInto(tmux, folder, marks, text, {
+    timeout: Number.POSITIVE_INFINITY,
     signal,
+    turnOver,
   });
-  if (!signal.aborted) record(db, folder, { telling: null }, "typed the review into the builder");
+  if (typed) record(db, folder, { telling: null }, "typed the review into the builder");
 }
 
 // A thread's latest round, with what cancels its review. The next round pushes only after this

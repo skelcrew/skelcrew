@@ -4,8 +4,16 @@ import { mustTmux, tmux } from "./tmux.ts";
 
 // How typing waits, in milliseconds. `moment` is the pause between two looks at the screen,
 // and between a paste and its Enter. `timeout` is how long to wait for the prompt to be ready
-// before giving up. Once `signal` is aborted, nothing is typed.
-type Waits = { moment?: number; timeout?: number; signal?: AbortSignal };
+// before giving up, which may be Infinity. Once `signal` is aborted, nothing is typed.
+// `turnOver` says whether the agent's own hooks report that its last turn ended. The busy mark is
+// then ignored, as it can sit in the agent's own text, such as a builder's grep through
+// Skelcrew's code quoting "esc to interrupt", and would make an idle agent look busy forever.
+type Waits = {
+  moment?: number;
+  timeout?: number;
+  signal?: AbortSignal;
+  turnOver?: () => boolean;
+};
 // What a harness's screen shows: `busy` while a turn runs, and a line holding only `prompt`
 // once it is ready for a message.
 export type Marks = { busy: string; prompt: string };
@@ -22,8 +30,8 @@ const draftReason = "an unsent draft is at its prompt";
 // empty text when it shows a bare prompt. A prompt line holding text is a person's unsent
 // draft: a message pasted then would be sent along with it. A numbered menu, such as a
 // permission question, also puts the mark before text, so that isn't taken for a draft.
-function notReady(shown: string, marks: Marks) {
-  if (shown.includes(marks.busy)) return `it shows ${marks.busy}`;
+function notReady(shown: string, marks: Marks, turnOver = false) {
+  if (!turnOver && shown.includes(marks.busy)) return `it is mid-turn (it shows ${marks.busy})`;
   const lines = shown.split("\n").map((line) => line.trim());
   if (lines.includes(marks.prompt)) return "";
   // The mark alone, without Codex's placeholder, which a draft replaces.
@@ -33,17 +41,23 @@ function notReady(shown: string, marks: Marks) {
   return `it shows no ${marks.prompt} prompt`;
 }
 
-// Returns why the agent is busy, by its harness's marks, or empty text when it is ready to
-// accept a message. A quiet pane alone isn't enough: Claude Code can sit still mid-turn while
-// a tool runs.
-async function notIdle(socket: string, name: string, marks: Marks, moment: number) {
+// Returns why the agent isn't ready for a message, in plain words, by its harness's marks, or
+// empty text when it is. Skelcrew says why to whoever waits on the message. A quiet pane alone
+// isn't enough: Claude Code can sit still mid-turn while a tool runs.
+export async function whyBusy(
+  socket: string,
+  name: string,
+  marks: Marks,
+  waits: Waits = {},
+): Promise<string> {
   // Look twice, a moment apart, so a screen still drawing shows as busy.
+  const turnOver = waits.turnOver?.() ?? false;
   const before = readScreen(socket, name);
-  await Bun.sleep(moment);
+  await Bun.sleep(waits.moment ?? 500);
   const after = readScreen(socket, name);
-  if (after.includes(marks.busy)) return `it shows ${marks.busy}`;
+  if (!turnOver && after.includes(marks.busy)) return `it is mid-turn (it shows ${marks.busy})`;
   if (before !== after) return "its screen kept changing";
-  return notReady(after, marks);
+  return notReady(after, marks, turnOver);
 }
 
 // Reports whether the agent shows a quiet, ready prompt, by its harness's marks, so Skelcrew can
@@ -54,14 +68,14 @@ export async function isIdle(
   marks: Marks,
   waits: Waits = {},
 ): Promise<boolean> {
-  return (await notIdle(socket, name, marks, waits.moment ?? 500)) === "";
+  return (await whyBusy(socket, name, marks, waits)) === "";
 }
 
 // One message at a time per session, so two pastes can't land before either's Enter.
 const typingQueues = new Map<string, Promise<void>>();
 
 // Queues a message for the session and returns a promise that settles after its typing
-// attempt. Messages wait their turn so two pastes cannot arrive before either message's
+// attempt, with whether it was typed. Messages wait their turn so two pastes cannot arrive before either message's
 // Enter. `marks` are those of the harness running in the session.
 export function typeInto(
   socket: string,
@@ -92,9 +106,16 @@ export function typeInto(
 let buffersMade = 0;
 
 // Waits for the agent to be ready, then pastes and submits the message without losing long
-// text. Throws if it stays busy too long, and removes the temporary paste buffer after the
-// attempt. Types nothing once the signal is aborted, however long it waited.
-async function typeNow(socket: string, name: string, marks: Marks, text: string, waits: Waits) {
+// text, and returns true. Throws if it stays busy too long, and removes the temporary paste
+// buffer after the attempt. Types nothing, and returns false, once the signal is aborted,
+// however long it waited.
+async function typeNow(
+  socket: string,
+  name: string,
+  marks: Marks,
+  text: string,
+  waits: Waits,
+): Promise<boolean> {
   const moment = waits.moment ?? 500;
   const timeout = waits.timeout ?? 60_000;
   const deadline = Date.now() + timeout;
@@ -104,9 +125,9 @@ async function typeNow(socket: string, name: string, marks: Marks, text: string,
     // Text typed while Claude Code is starting or busy can be lost, so wait until it is idle.
     // Check the signal after each wait too: the thread may have stopped meanwhile.
     while (true) {
-      if (waits.signal?.aborted) return;
-      const why = await notIdle(socket, name, marks, moment);
-      if (waits.signal?.aborted) return;
+      if (waits.signal?.aborted) return false;
+      const why = await whyBusy(socket, name, marks, waits);
+      if (waits.signal?.aborted) return false;
       if (why === "") {
         // Someone scrolled back would swallow the Enter below, and the message would never be
         // sent. Being scrolled back shows in neither the check above nor the pane's text, so
@@ -116,7 +137,7 @@ async function typeNow(socket: string, name: string, marks: Marks, text: string,
         // A person can start typing after the last look, and the paste would send their draft
         // along with the message. So look once more right before pasting, and wait again if
         // the prompt isn't bare. A moment remains, but only a tmux call long.
-        if (notReady(readScreen(socket, name), marks) === "") break;
+        if (notReady(readScreen(socket, name), marks, waits.turnOver?.()) === "") break;
       } else if (Date.now() > deadline) {
         const waited = `${timeout / 1000}s`;
         // A person's draft gets a plain answer, as it isn't the agent being busy.
@@ -133,6 +154,7 @@ async function typeNow(socket: string, name: string, marks: Marks, text: string,
     mustTmux(socket, ["paste-buffer", "-p", "-b", buffer, "-t", `=${name}:`]);
     await Bun.sleep(moment);
     mustTmux(socket, ["send-keys", "-t", `=${name}:`, "Enter"]);
+    return true;
   } finally {
     tmux(socket, ["delete-buffer", "-b", buffer]);
   }

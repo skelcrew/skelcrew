@@ -1,11 +1,10 @@
-// Acting on a thread's PR events: typing them into its builder. Also ending the builder for a
+// Acting on a thread's PR events: telling its builder of them. Also ending the builder for a
 // merge, sc stop or sc rm, which must cancel any typing still under way.
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
-import { agentRuns, stopSession } from "../agents/tmux.ts";
-import { typeInto } from "../agents/typing.ts";
+import { stopSession } from "../agents/tmux.ts";
 import { cloneDir } from "../paths.ts";
-import { closePr, failedLog, markSeen } from "../plugins/ask.ts";
+import { closePr, failedLog } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { unassignIssue } from "./assign.ts";
@@ -13,17 +12,10 @@ import { baseOf } from "./builder.ts";
 import type { Check, Decision } from "./decide.ts";
 import { deleteBranch, fetchInto, onRemote } from "./git.ts";
 import { typeLeadNotes } from "./lead.ts";
+import { queueMessage, stopDelivering } from "./messages.ts";
 import { refreshClones } from "./repo.ts";
 import { endRound } from "./round.ts";
-import {
-  builderHarness,
-  cloneOf,
-  readThread,
-  record,
-  repositoryOf,
-  type Thread,
-  threadName,
-} from "./thread.ts";
+import { cloneOf, readThread, record, repositoryOf, type Thread, threadName } from "./thread.ts";
 
 // Returns a message for each failed check, with the end of its log, for the builder to fix.
 // A check with no ID, such as a commit status, has no log to read. A log that can't be read
@@ -56,15 +48,16 @@ async function refreshBase(db: Database, thread: Thread, base: string): Promise<
     await fetchInto(db, repositoryOf(db, thread), cloneDir(thread.owner, thread.repo), base);
 }
 
-// The typing of events under way, by thread folder, with what cancels it. A poll leaves a
-// thread alone while its events are typed in, so they are never typed twice. A merge, sc stop
-// or sc rm cancels the typing.
-export const typingEvents = new Map<string, AbortController>();
+// The threads whose events are being made into a message for the builder, by folder. A poll
+// leaves such a thread alone, so its events are never told twice.
+export const tellingEvents = new Set<string>();
 
-// Cancels the round and the typing under way for the thread, ends its builder's session, and
+// Cancels the round and any typing under way into the thread's builder, ends its session, and
 // waits for the builder to exit, so nothing types into it or changes the thread afterwards.
-async function endBuilder(tmux: string, folder: string): Promise<void> {
-  typingEvents.get(folder)?.abort();
+// Messages still waiting for it are dropped once the thread ends, with `drop`, and otherwise
+// kept for when sc start brings the builder back.
+async function endBuilder(db: Database, tmux: string, folder: string, drop: boolean) {
+  stopDelivering(db, folder, drop);
   endRound(folder);
   // Claude Code can outlive the end of its session for a few seconds, still writing in the
   // clone.
@@ -95,7 +88,7 @@ export async function stopThread(db: Database, tmux: string, thread: Thread): Pr
   // Asked as it is marked stopped, before anything is waited on: an sc start that finds it
   // stopped meanwhile asks to assign you, and that must come after.
   unassignIssue(db, thread.folder);
-  await endBuilder(tmux, thread.folder);
+  await endBuilder(db, tmux, thread.folder, false);
 }
 
 // Ends the thread once its PR is merged or closed, or for sc rm: ends its builder, and removes
@@ -106,7 +99,7 @@ export async function endThread(
   thread: Thread,
   why: string,
 ): Promise<void> {
-  await endBuilder(tmux, thread.folder);
+  await endBuilder(db, tmux, thread.folder, true);
   rmSync(cloneOf(thread), { recursive: true, force: true });
   // Skelcrew's clone keeps refs of the branch it pushed, named by the thread's folder. A thread
   // started over in that folder would be taken for one that pushed already, and without a forge
@@ -157,7 +150,7 @@ export async function removeThread(
   // A push under way would put back the branch, or open a PR after none was closed, so it is
   // waited for, and the thread read again for the PR it may have opened.
   const pushing = endRound(thread.folder);
-  await endBuilder(tmux, thread.folder);
+  await endBuilder(db, tmux, thread.folder, true);
   await pushing;
   // Close the PR, which deletes its branch on the forge too. With no PR, as a repository with
   // no forge has, delete the branch only if this thread pushed it: Skelcrew keeps a ref of each
@@ -188,68 +181,50 @@ export async function removeThread(
   await endThread(db, tmux, thread, reason ? `removed: ${reason}` : "removed");
 }
 
-// Types what the decision tells into the builder once it is idle, then saves the decision.
-// It is saved only after, so a stop of the daemon meanwhile leaves the events to the next
-// poll. Then asks the forge to mark the people's reviews and comments seen, so they can see it
-// on the PR. A builder that isn't running, or stays busy for half an hour, isn't told: the
-// events count as handled, and the thread needs you, with what it missed in its log.
+// Makes what the decision tells into one message for the builder, saved to be typed in as soon
+// as the builder can take it, however long that takes, and saves the decision at once. So a
+// thread approved and ready to merge whose PR now conflicts leaves ready to merge right away,
+// and the thread shows that a message waits. The forge marks the people's reviews and comments
+// seen once the message is typed in. Fetching a failed check's log or the base branch can fail,
+// such as on a network error: then nothing is saved, and the next poll tries again.
 export async function tellBuilder(
   db: Database,
   tmux: string,
   thread: Thread,
   decision: Exclude<Decision, { end: string }>,
 ): Promise<void> {
-  // Mark the typing under way, so a poll leaves the thread alone and a stop or merge can
-  // cancel it.
-  const cancel = new AbortController();
-  typingEvents.set(thread.folder, cancel);
+  // Mark the events as being told, so a poll meanwhile leaves the thread alone.
+  tellingEvents.add(thread.folder);
   const { seen, change, why } = decision;
   try {
     // Gather everything to tell into one message: the failed checks first, then the rest.
     if (decision.conflict !== null) await refreshBase(db, thread, decision.conflict);
     const checks = await failedCheckMessages(db, thread, decision.failed);
     const text = [...checks, ...decision.tell].join("\n\n---\n\n");
-    if (!agentRuns(tmux, thread.folder)) throw new Error("its builder isn't running");
-    // A builder can work long after an event, but one busy this long has likely hung.
-    const { marks } = builderHarness(thread);
-    await typeInto(tmux, thread.folder, marks, text, {
-      timeout: 30 * 60_000,
-      signal: cancel.signal,
-    });
-    if (cancel.signal.aborted) return;
-    // Typing can wait a long time, and a newer round may have moved the thread on meanwhile,
-    // such as to approved. Its state then stands, and only the events count as handled.
+    // Fetching can take a while, and the thread may have stopped or ended meanwhile, whose
+    // events stay unhandled. Or a newer round may have moved it on, such as to approved. Its
+    // state then stands, and only the events count as handled.
     const now = readThread(db, thread.folder);
+    if (now.status !== "working" && now.status !== "waiting") return;
     const moved =
       now.status !== thread.status ||
       now.needs_you !== thread.needs_you ||
       now.rounds !== thread.rounds ||
       now.submitting !== thread.submitting ||
       now.reviewing !== thread.reviewing;
+    queueMessage(db, tmux, thread.folder, {
+      sender: "skelcrew",
+      text,
+      said: why,
+      typed_in: decision.typedIn,
+    });
     record(db, thread.folder, moved ? { seen } : { seen, ...change }, why);
-    // Only now that they are typed in, the forge marks the people's reviews and comments seen.
-    // Not waited on, and a failure, such as from a plugin too old to know the question, is
-    // only logged: the builder already has them, and nothing waits on the forge.
-    const { pr } = thread;
-    if (pr !== null)
-      // The repository is looked up inside the promise, so one removed meanwhile is only
-      // logged too, and never marks the thread as not told.
-      for (const { kind, id } of decision.typedIn)
-        Promise.resolve()
-          .then(() => markSeen(db, repositoryOf(db, thread), { pr, kind, id }))
-          .catch((error) =>
-            console.log(
-              `couldn't mark the ${kind} ${id} seen on ${threadName(db, thread)}'s PR: ${errorText(error)}`,
-            ),
-          );
-  } catch (error) {
-    // Ending the session for a stop or a merge can make typing fail, and a stopped thread's
-    // events must stay unhandled for its builder to hear once it starts again.
-    if (cancel.signal.aborted) return;
-    const said = errorText(error);
-    record(db, thread.folder, { seen, needs_you: true }, `couldn't tell: ${said}. ${why}`);
     typeLeadNotes(db, tmux);
+  } catch (error) {
+    console.log(
+      `couldn't tell ${threadName(db, thread)}'s builder, trying again: ${errorText(error)}`,
+    );
   } finally {
-    typingEvents.delete(thread.folder);
+    tellingEvents.delete(thread.folder);
   }
 }

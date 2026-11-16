@@ -24,7 +24,7 @@ import {
   stopSession,
   tmuxIsAtLeast,
 } from "../src/agents/tmux.ts";
-import { isIdle, type Marks, typeInto } from "../src/agents/typing.ts";
+import { isIdle, type Marks, typeInto, whyBusy } from "../src/agents/typing.ts";
 import { source, until as wait } from "./harness.ts";
 
 const moment = 100;
@@ -142,6 +142,40 @@ test("a message cancelled while the harness is busy is never typed", async () =>
   typeInto(socket, "lead", claude.marks, "fresh", { moment });
   await until(() => read("received.txt").endsWith("\n"));
   expect(read("received.txt")).toBe("\x1b[200~fresh\x1b[201~\n");
+});
+
+// A builder idle at its prompt can still show the busy mark in its own text, such as a grep
+// through Skelcrew's code. Its Stop hook saying its turn ended is what tells it is idle then.
+test("a message goes in once the hook says the turn ended, though the screen quotes the busy mark", async () => {
+  const script = join(home, "quoting.sh");
+  writeFileSync(
+    script,
+    `#!/bin/sh
+printf '\\033[?2004h'
+stty -echo
+echo 'marks: { busy: "${claude.marks.busy}", prompt: "❯" }'
+echo "${claude.marks.prompt}"
+cat > received.txt
+`,
+    { mode: 0o755 },
+  );
+  start("lead", [script]);
+  await showing("lead", "marks:");
+  expect(await whyBusy(socket, "lead", claude.marks, { moment })).toBe(
+    "it is mid-turn (it shows esc to interrupt)",
+  );
+  let ended = false;
+  const typing = typeInto(socket, "lead", claude.marks, "hello", {
+    moment,
+    timeout: Number.POSITIVE_INFINITY,
+    turnOver: () => ended,
+  });
+  await Bun.sleep(moment * 5);
+  expect(read("received.txt")).toBe("");
+  ended = true;
+  expect(await typing).toBe(true);
+  await until(() => read("received.txt").endsWith("\n"));
+  expect(read("received.txt")).toBe("\x1b[200~hello\x1b[201~\n");
 });
 
 test("typing says so when it gives up because there is no prompt", async () => {

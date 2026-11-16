@@ -14,6 +14,10 @@ that covers the code you are about to write.
 - **Idle means more than a quiet pane.** Claude Code is idle when "esc to interrupt" is
   gone, a line holding only the `❯` prompt is on screen, and nothing has changed for a
   moment. A bell or a changing window title doesn't mean a turn ended.
+- **The busy mark can sit in the agent's own text.** A builder that greps Skelcrew's code, or
+  quotes it, leaves "esc to interrupt" on its screen after its turn ends, and looks busy
+  forever. Trust the harness's Stop hook first: once it says the turn ended, ignore the mark
+  until something is typed in. Esc runs no hook, so after it only the screen tells.
 - **A person's draft at the prompt is not idle.** A paste lands after their unsent text, and
   the Enter sends both. Ready means a line holding the bare prompt mark, so a draft makes
   typing wait. A person can start a draft after the last look, so look again right before

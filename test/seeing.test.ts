@@ -137,16 +137,19 @@ async function openApp(): Promise<void> {
 describe("sc ps", () => {
   // A thread's short title says what it is in a few words. One with none shows its title, cut
   // to the room the sidebar gives it, so a long title doesn't push the other columns away.
-  test("lists live threads newest first, with their short title, status and whether they need you", async () => {
+  test("lists live threads newest first, with their short title, status, whether they need you and messages waiting", async () => {
     threads();
+    sql(
+      "INSERT INTO messages (folder, sender, text, said, at) VALUES ('app-12', 'skelcrew', 'Fix it.', 'Fix it.', 0)",
+    );
     serve();
     await untilAnswers();
     const listed = await skel(["ps"]);
     expect(listed.err).toBe("");
     expect(listed.out).toBe(
-      "THREAD  TITLE                            STATUS   NEEDS YOU\n" +
+      "THREAD  TITLE                            STATUS   NEEDS YOU  WAITING\n" +
         "app-9   Send people back to the page t…  failed\n" +
-        "app-12  JSON export                      working\n" +
+        "app-12  JSON export                      working             1 message waiting\n" +
         "site-7  Add docs                         waiting  yes\n",
     );
   });
@@ -159,7 +162,7 @@ describe("sc ps", () => {
     const listed = await skel(["ps", "--all"]);
     expect(listed.err).toBe("");
     expect(listed.out).toBe(
-      "THREAD  TITLE                            STATUS   NEEDS YOU\n" +
+      "THREAD  TITLE                            STATUS   NEEDS YOU  WAITING\n" +
         "app-9   Send people back to the page t…  failed\n" +
         "app-12  JSON export                      working\n" +
         "site-7  Add docs                         waiting  yes\n" +
@@ -175,7 +178,14 @@ describe("sc ps", () => {
     const listed = await skel(["ps", "site", "--json"]);
     expect(listed.err).toBe("");
     expect(JSON.parse(listed.out)).toEqual([
-      { thread: "site-7", short: null, title: "Add docs", status: "waiting", needsYou: true },
+      {
+        thread: "site-7",
+        short: null,
+        title: "Add docs",
+        status: "waiting",
+        needsYou: true,
+        waiting: 0,
+      },
     ]);
     expect(JSON.parse((await skel(["ps", "--json", "app"])).out)).toHaveLength(2);
   });
@@ -216,7 +226,14 @@ describe("sc ps", () => {
     serve();
     await untilAnswers();
     expect(JSON.parse((await skel(["ps", "--json"])).out)).toEqual([
-      { thread: "app-12", short: null, title: null, status: "working", needsYou: false },
+      {
+        thread: "app-12",
+        short: null,
+        title: null,
+        status: "working",
+        needsYou: false,
+        waiting: 0,
+      },
     ]);
   });
 

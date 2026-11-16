@@ -6,6 +6,7 @@ import { z } from "zod";
 import { noProgress } from "../agents/progress.ts";
 import { pastRoundLimit } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
+import { messagesWaiting, waitingText } from "../flow/messages.ts";
 import { fullNameOf, needsYou, Thread, threadName } from "../flow/thread.ts";
 import { green, grey, red, yellow } from "./look.ts";
 import { builderProgress, tokenText } from "./progress.ts";
@@ -17,7 +18,8 @@ import { builderProgress, tokenText } from "./progress.ts";
 // while a review runs, and `agentHarness` the agent itself, which Esc stops. A working thread
 // also has its builder's `tokens`, as text, its `step`, what it is doing, and its `plan`, how
 // many steps of its plan are done of how many. Each is empty or null on other rows, and when the
-// builder's harness doesn't give it.
+// builder's harness doesn't give it. `waiting` says how many messages wait to be typed into the
+// builder, such as 1 message waiting, or is empty.
 export type Row = {
   name: string;
   task: string;
@@ -32,6 +34,7 @@ export type Row = {
   tokens: string;
   step: string;
   plan: { done: number; total: number } | null;
+  waiting: string;
   fullName: string | null;
   title: string | null;
   short: string | null;
@@ -70,8 +73,8 @@ export function threadMark(row: Pick<Row, "status" | "needsYou" | "word">): Mark
 // status and needs you stay as they are: the word only describes them, from what they and the
 // latest review say. Past the limit a thread goes on needing you while its builder submits, so
 // that comes before a round under way. A round that failed keeps its submit or review saved.
-// A thread can need you for a reason with no word of its own, such as a builder that couldn't be
-// told about an event. Its word is then "needs you", rather than something untrue.
+// A thread can need you for a reason with no word of its own, such as a builder an older Skelcrew
+// gave up telling about an event. Its word is then "needs you", rather than something untrue.
 export function threadWord(thread: Thread, maxRounds: number): string {
   const { status, verdict, checks } = thread;
   // A thread that failed, stopped or is done says just that. Otherwise a question from its builder
@@ -152,6 +155,7 @@ export function sidebarRows(
       tokens: "",
       step: "",
       plan: null,
+      waiting: "",
       fullName: null,
       title: null,
       short: null,
@@ -187,6 +191,7 @@ export function sidebarRows(
         // A builder that has run no tool yet has no step to show, so it says only that it works.
         step: working ? (progress.step ?? "working") : "",
         plan: progress.plan,
+        waiting: waitingText(messagesWaiting(db, thread)),
         fullName: fullNameOf(thread),
         title: thread.title,
         short: thread.short,

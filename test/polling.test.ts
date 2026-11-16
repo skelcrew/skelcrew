@@ -183,6 +183,19 @@ function thread(): Record<string, unknown> {
   }
 }
 
+// How many messages wait to be typed into the builder.
+function waiting(): number {
+  const db = new Database(join(data(), "skelcrew.db"));
+  db.run("PRAGMA busy_timeout = 5000");
+  try {
+    return (
+      Object.values(Object(db.query("SELECT COUNT(*) FROM messages").get())).map(Number)[0] ?? 0
+    );
+  } finally {
+    db.close();
+  }
+}
+
 // The processes running this test's fake builder. Its own process ID would be one inside
 // its sandbox, so they are found by the script they run.
 function fakeBuilders(): string[] {
@@ -413,21 +426,53 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     expect(typed().split("The check test failed").length - 1).toBe(1);
   }, 60_000);
 
-  test("an event typed into a busy builder doesn't undo what a newer round saved meanwhile", async () => {
+  // An event is handled at once, and its message waits for the builder however long it is busy.
+  test("a comment for a busy builder is handled at once, waits as a message, and goes in once it is idle", async () => {
     mkdirSync(builder(), { recursive: true });
     writeFileSync(join(builder(), "busy"), "");
     await approvedApp12();
     pr({ reviews: [skelReview], comments: [{ id: "50", author: you, text: "Also CSV." }] });
+    await until(() => handled("50"));
+    expect(thread()).toMatchObject({ status: "working", needs_you: 0 });
+    expect(waiting()).toBe(1);
     await morePolls();
-    // As a newer round would leave it, approved and ready, while the comment waits.
-    const db = new Database(join(data(), "skelcrew.db"));
-    db.run("PRAGMA busy_timeout = 5000");
-    db.run("UPDATE threads SET rounds = 1, needs_you = 1");
-    db.close();
+    expect(typed()).not.toContain("Also CSV.");
+    expect(waiting()).toBe(1);
     rmSync(join(builder(), "busy"));
     await until(() => typed().includes("Also CSV."));
-    await until(() => handled("50"));
-    expect(thread()).toMatchObject({ status: "waiting", needs_you: 1, rounds: 1 });
+    await until(() => waiting() === 0);
+    expect(typed().split("Also CSV.").length - 1).toBe(1);
+  }, 60_000);
+
+  // GitHub can't merge a PR that conflicts, so the human must not be told it is ready.
+  test("an approved PR that starts conflicting leaves ready to merge at once, and its builder is told once idle", async () => {
+    mkdirSync(builder(), { recursive: true });
+    writeFileSync(join(builder(), "busy"), "");
+    await approvedApp12();
+    pr({ reviews: [skelReview], checks: [approved] });
+    await until(() => thread().needs_you === 1);
+    pr({ conflicts: true, reviews: [skelReview], checks: [approved] });
+    await until(() => thread().status === "working" && thread().needs_you === 0);
+    expect(waiting()).toBe(1);
+    await morePolls();
+    expect(typed()).not.toContain("conflicts with main");
+    rmSync(join(builder(), "busy"));
+    await until(() => typed().includes("conflicts with main"));
+    await until(() => waiting() === 0);
+  }, 60_000);
+
+  // An earlier Skelcrew gave up typing after half an hour, and left the thread approved, needing
+  // you, while its PR still conflicted.
+  test("a conflict whose notice an earlier attempt gave up on is told on the next poll", async () => {
+    await approvedApp12();
+    pr({ conflicts: true, reviews: [skelReview], checks: [approved] });
+    await until(() => typed().includes("conflicts with main"));
+    const db = new Database(join(data(), "skelcrew.db"));
+    db.run("PRAGMA busy_timeout = 5000");
+    db.run("UPDATE threads SET status = 'waiting', needs_you = 1");
+    db.close();
+    await until(() => typed().split("conflicts with main").length - 1 === 2);
+    expect(thread()).toMatchObject({ status: "working", needs_you: 0 });
   }, 60_000);
 
   test("a poll the forge answered slowly, while a newer round was pushed, isn't acted on", async () => {
@@ -760,22 +805,27 @@ describe.skipIf(insideSandbox)("polling a forge", () => {
     await until(() => typed().includes("Also CSV."), 30_000);
   }, 60_000);
 
-  test("a comment still waiting for a busy builder when it is stopped stays unhandled", async () => {
+  test("a comment still waiting for a busy builder when it is stopped goes in once it starts again", async () => {
     mkdirSync(builder(), { recursive: true });
     writeFileSync(join(builder(), "busy"), "");
     await approvedApp12();
     pr({ reviews: [skelReview], comments: [{ id: "50", author: you, text: "Also CSV." }] });
-    await morePolls();
+    await until(() => handled("50"));
     const stopped = Bun.spawnSync([process.execPath, main, "stop", "app-12"], {
       env: env(),
       stderr: "pipe",
     });
     expect(stopped.stderr.toString()).toBe("");
-    await morePolls();
-    // Typing gives up within a moment of the session ending.
-    await Bun.sleep(1500);
     expect(thread()).toMatchObject({ status: "stopped", needs_you: 0 });
-    expect(handled("50")).toBe(false);
+    expect(waiting()).toBe(1);
+    rmSync(join(builder(), "busy"));
+    const started = Bun.spawnSync([process.execPath, main, "start", "app-12"], {
+      env: env(),
+      stderr: "pipe",
+    });
+    expect(started.stderr.toString()).toBe("");
+    await until(() => typed().includes("Also CSV."), 30_000);
+    await until(() => waiting() === 0);
   }, 60_000);
 
   // sc start polls first, and that poll can find the label and start the thread itself.

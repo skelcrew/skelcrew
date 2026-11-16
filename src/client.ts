@@ -169,8 +169,9 @@ export async function submitForReview(summary: string): Promise<string> {
   return checkReply(z.object({ submitted: z.string() }), reply).submitted;
 }
 
-// Has the daemon type the lead's message into a thread's builder, for sc tell, and returns
-// the thread's name. The daemon answers at once, and types it in once the builder is idle.
+// Has the daemon type the lead's message into a thread's builder, for sc tell, and returns the
+// line to print: whether it goes in now, or why it waits. The daemon answers at once, and types
+// it in once the builder can take it.
 export async function tellOn(repository: string, task: string, text: string): Promise<string> {
   const reply = await request({ command: "tell", repo: repository, task, text });
   return checkReply(z.object({ told: z.string() }), reply).told;

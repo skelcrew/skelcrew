@@ -27,6 +27,7 @@ const row = {
   tokens: "",
   step: "",
   plan: null,
+  waiting: "",
   fullName: null,
 } satisfies Partial<Row>;
 const lead: Row = {
@@ -153,6 +154,58 @@ test("a step too long for its line is cut with …, and its control codes never 
   expect(screen).not.toContain("\x1b[2J");
 });
 
+// A message that hasn't reached a builder is never held silently: its row says so, after the
+// word on a waiting row, and in place of the step on a working one.
+test("a thread with messages waiting for its builder says how many on its row", () => {
+  const rows = [
+    lead,
+    thread("app-12", { step: "Run the tests", waiting: "1 message waiting" }),
+    thread("app-13", { status: "waiting", word: "approved", waiting: "2 messages waiting" }),
+  ];
+  expect(listed(draw(rows, "lead", { width: sidebarWidth, height: 14 }))).toEqual([
+    "  ◆ lead",
+    "    running · claude",
+    "  ● 12 app-12",
+    "    claude",
+    "    1 message waiting",
+    "  ● 13 app-13",
+    "    approved · 2 messages waiting …",
+  ]);
+});
+
+test("sc ps says how many messages wait for each builder, and --json counts them", () => {
+  const said: string[] = [];
+  const log = spyOn(console, "log").mockImplementation((line: string) => said.push(line));
+  const rows = [
+    {
+      thread: "app-9",
+      short: "Fix",
+      title: null,
+      status: "working" as const,
+      needsYou: false,
+      waiting: 1,
+    },
+    {
+      thread: "app-8",
+      short: "Ok",
+      title: null,
+      status: "waiting" as const,
+      needsYou: true,
+      waiting: 0,
+    },
+  ];
+  try {
+    printThreads(rows, false);
+    printThreads(rows, true);
+  } finally {
+    log.mockRestore();
+  }
+  expect(said[0]).toEndWith("WAITING");
+  expect(said[1]).toEndWith("1 message waiting");
+  expect(said[2]).toEndWith("yes");
+  expect(JSON.parse(said[3] ?? "")).toEqual(rows);
+});
+
 test("the sidebar is 38 columns wide, with room for 31 of a name and title", () => {
   expect(sidebarWidth).toBe(38);
   const title = "Send people back to the page they came from after signing in";
@@ -169,7 +222,7 @@ test("sc ps cuts a long title to the room of the sidebar's first line", () => {
   const log = spyOn(console, "log").mockImplementation((line: string) => said.push(line));
   try {
     printThreads(
-      [{ thread: "app-9", short: null, title, status: "failed", needsYou: false }],
+      [{ thread: "app-9", short: null, title, status: "failed", needsYou: false, waiting: 0 }],
       false,
     );
   } finally {
@@ -194,6 +247,7 @@ test("sc ps prints a title or short title with control codes as one clean row", 
           title: "Fix\nlogin\x1b[2J",
           status: "working",
           needsYou: false,
+          waiting: 0,
         },
         {
           thread: "app-8",
@@ -201,6 +255,7 @@ test("sc ps prints a title or short title with control codes as one clean row", 
           title: "Ok",
           status: "working",
           needsYou: false,
+          waiting: 0,
         },
       ],
       false,
@@ -730,6 +785,7 @@ const state: Thread = {
   stalled: false,
   submitted: false,
   erred: false,
+  turn_ended: false,
   noting: null,
   body: null,
   title: null,

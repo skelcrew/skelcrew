@@ -11,6 +11,7 @@ import { titleRoom } from "../screen/layout.ts";
 import { fitted, removeControlCodes } from "../screen/look.ts";
 import { sidebarWidth } from "../screen/screen.ts";
 import { openTasks, taskOf, threadTask } from "./copy.ts";
+import { messagesWaiting, waitingText } from "./messages.ts";
 import { findRepository, noRepositories, repositories } from "./repo.ts";
 import { needsYou, Thread, threadName, threadOn } from "./thread.ts";
 
@@ -60,14 +61,15 @@ function tabClosed(db: Database, r: { owner: string; repo: string }): boolean {
   return z.object({ tab_closed: z.coerce.boolean() }).parse(row).tab_closed;
 }
 
-// A thread as sc ps shows it, with the short title the lead gave it, if any, and its whole
-// title, which an old row may lack.
+// A thread as sc ps shows it, with the short title the lead gave it, if any, its whole title,
+// which an old row may lack, and how many messages wait to be typed into its builder.
 export const ThreadRow = z.object({
   thread: z.string(),
   short: z.string().nullable(),
   title: z.string().nullable(),
   status: Thread.shape.status,
   needsYou: z.boolean(),
+  waiting: z.number(),
 });
 export type ThreadRow = z.infer<typeof ThreadRow>;
 
@@ -88,6 +90,7 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
       title: thread.title,
       status: thread.status,
       needsYou: needsYou(thread),
+      waiting: messagesWaiting(db, thread),
     };
   });
 }
@@ -210,7 +213,7 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
   else if (threads.length === 0) console.log("There are no threads.");
   else
     table(
-      ["THREAD", "TITLE", "STATUS", "NEEDS YOU"],
+      ["THREAD", "TITLE", "STATUS", "NEEDS YOU", "WAITING"],
       threads.map((t) => [
         t.thread,
         t.short === null
@@ -218,6 +221,7 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
           : removeControlCodes(t.short),
         t.status,
         t.needsYou ? "yes" : "",
+        waitingText(t.waiting),
       ]),
     );
 }

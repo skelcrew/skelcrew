@@ -112,7 +112,8 @@ function prepareTables(db: Database): void {
   // messages to the builder, as JSON, since they change the task its reviewer checks against.
   // `working_since` is when the builder's current stretch of work began, for the sidebar. It
   // changes with every message typed into the builder, so it is kept out of the thread's log,
-  // which would otherwise fill with it.
+  // which would otherwise fill with it. `turn_ended` is whether the builder's harness said, by
+  // its hook, that its last turn ended, with nothing typed in since.
   const threadColumns = {
     rounds: "INTEGER NOT NULL DEFAULT 0",
     pr: "INTEGER",
@@ -145,6 +146,7 @@ function prepareTables(db: Database): void {
     changed: "INTEGER",
     updates: "TEXT",
     working_since: "INTEGER",
+    turn_ended: "INTEGER NOT NULL DEFAULT 0",
   };
   for (const [column, type] of Object.entries(threadColumns))
     if (!db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = ?").get(column))
@@ -174,6 +176,22 @@ function prepareTables(db: Database): void {
   // A lead table means a database from before each repository had its own lead.
   if (db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lead'").get())
     adoptOldLead(db);
+  // Messages waiting to be typed into a thread's builder, by its folder, oldest first: the lead's
+  // sc tell, and what Skelcrew tells it of its PR's events. Kept until typed in, so none is lost
+  // while the builder is busy or stopped, or the daemon restarts. `sender` is lead or skelcrew,
+  // `text` is what is typed, `said` the lead's own words, `at` when it was sent, in milliseconds
+  // since 1970, `noted` whether the lead heard it still waits, and `typed_in` the PR's reviews
+  // and comments it carries, as JSON, for the forge to mark seen.
+  db.run(`CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY,
+    folder TEXT NOT NULL,
+    sender TEXT NOT NULL,
+    text TEXT NOT NULL,
+    said TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    noted INTEGER NOT NULL DEFAULT 0,
+    typed_in TEXT NOT NULL DEFAULT '[]'
+  )`);
   // The reviews Skelcrew posted with your gh login, before its forge posted them as its own app.
   db.run("DROP TABLE IF EXISTS posted");
   // The plugins you installed: the folder each runs from, and the GitHub repository it came

@@ -17,6 +17,7 @@ const lead: Row = {
   tokens: "",
   step: "",
   plan: null,
+  waiting: "",
   fullName: null,
   title: null,
   short: null,

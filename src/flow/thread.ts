@@ -62,6 +62,10 @@ export const Thread = z.object({
   // Whether the builder's harness stopped on an error it can't get past alone, such as a lapsed
   // login. The builder then sits idle, so the thread needs you until you type to it.
   erred: z.coerce.boolean(),
+  // Whether the builder's harness said, by its Stop hook, that its last turn ended, and nothing
+  // was typed in since. Typing then trusts that the builder is idle, even when its screen quotes
+  // the busy mark. Pressing Esc runs no hook, so after it the screen alone tells.
+  turn_ended: z.coerce.boolean(),
   // Why the thread started needing you, until a note saying so is typed into the lead.
   noting: z.string().nullable(),
   // The task's title and body when the thread started, for the strip, which looks each second

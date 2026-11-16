@@ -161,6 +161,7 @@ export async function startThread(
       stalled: false,
       submitted: false,
       erred: false,
+      turn_ended: false,
       noting: null,
       title,
       body,
@@ -179,8 +180,10 @@ export async function startThread(
       changed: null,
       updates: [],
     };
-    // A failed or done thread's row gives way to the new one.
+    // A failed or done thread's row gives way to the new one, and messages that waited for its
+    // builder go with it, as they were about the old work.
     db.run(`DELETE FROM threads ${where}`, [owner, repo, task]);
+    db.run("DELETE FROM messages WHERE folder = ?", [thread.folder]);
     db.run(
       `INSERT INTO threads (owner, repo, task, folder, branch, base, status, session, title,
         body, started, short, assigned, seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]')`,
