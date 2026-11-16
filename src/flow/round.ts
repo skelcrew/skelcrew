@@ -3,7 +3,7 @@
 // into the builder's session when it asks for changes.
 import type { Database } from "bun:sqlite";
 import { typeInto } from "../agents/typing.ts";
-import { threadConfig } from "../config.ts";
+import { reviewLimit, threadConfig } from "../config.ts";
 import { cloneDir } from "../paths.ts";
 import { forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
@@ -13,6 +13,7 @@ import { threadTask } from "./copy.ts";
 import { afterReview, pastRoundLimit } from "./decide.ts";
 import { pushCommit } from "./git.ts";
 import { typeLeadNotes } from "./lead.ts";
+import { Queue } from "./queue.ts";
 import { review } from "./reviewer.ts";
 import {
   builderHarness,
@@ -78,19 +79,26 @@ async function push(db: Database, folder: string, summary: string): Promise<stri
   return sha;
 }
 
+// The reviews of every thread, kept to limits.reviews at once. Each review runs the repository's
+// tests, so too many at once slow every one of them down.
+const reviews = new Queue();
+
 // Reviews the commit and acts on the verdict: with a forge, posts it on the PR and sets Skelcrew's
 // check; saves what it means for the thread, and types changes into the builder. Without a
 // forge the review stays in Skelcrew, and an approved branch needs you at once. Stops without a
-// word once a newer round cancels it, since that round now owns the thread.
+// word once a newer round cancels it, since that round now owns the thread. The review waits its
+// turn among all reviews, in order of `since`, when it joined: now, unless it is one the
+// daemon's stop cut short, which keeps its place.
 async function reviewRound(
   db: Database,
   tmux: string,
   folder: string,
   sha: string,
   signal: AbortSignal,
+  since = Date.now(),
 ): Promise<void> {
   // Read what the round needs: the thread's PR, whether there is a forge to post on, and the
-  // reviewer and round limit your config names.
+  // reviewer, round limit and limit on reviews at once your config names.
   if (signal.aborted) return;
   const thread = readThread(db, folder);
   const repository = repositoryOf(db, thread);
@@ -99,6 +107,7 @@ async function reviewRound(
   if (hasForge && pr === null) throw new Error("the thread has no pull request to review");
   const { reviewer: reviewerRole, maxRounds } = threadConfig(thread);
   const reviewer = reviewerRole.harness;
+  const limit = reviewLimit();
   const setCheck = async (state: "pending" | "success" | "failure", description: string) => {
     if (hasForge) await setStatus(db, repository, { commit: sha, state, description });
   };
@@ -106,16 +115,25 @@ async function reviewRound(
   // each await is there because a newer round may have taken over while it waited.
   await setCheck("pending", "Skelcrew's reviewer is reviewing");
   if (signal.aborted) return;
-  record(db, folder, { reviewing: sha, submitting: null, reviewer }, `reviewing ${sha}`);
-  const verdict = await review({
-    clone: cloneOf(thread),
-    issue: threadTask(db, thread),
-    // Setting up the thread's clone put the base branch there under origin/.
-    base: `origin/${baseOf(thread)}`,
-    commit: sha,
-    model: reviewerRole.model,
-    harness: reviewer,
-    signal,
+  // Join the queue of reviews. A review that has to wait is saved as queued, with when it
+  // joined, so the thread says so, and a restart puts it back in the same place. One that
+  // starts at once is saved as reviewing, with no queued step in between.
+  const waits = reviews.full(limit);
+  const joined = { reviewing: sha, submitting: null, reviewer, queued: waits ? since : null };
+  record(db, folder, joined, waits ? `queued ${sha} for review` : `reviewing ${sha}`);
+  // Cancelled while it waits, the review rejects, and the round ends as cancelled rounds do.
+  const verdict = await reviews.run({ limit, order: since, signal }, () => {
+    if (waits) record(db, folder, { queued: null }, `reviewing ${sha}`);
+    return review({
+      clone: cloneOf(thread),
+      issue: threadTask(db, thread),
+      // Setting up the thread's clone put the base branch there under origin/.
+      base: `origin/${baseOf(thread)}`,
+      commit: sha,
+      model: reviewerRole.model,
+      harness: reviewer,
+      signal,
+    });
   });
   // Decide what the verdict means for the thread, then post it on the PR. A failed review is
   // Skelcrew's problem, not the PR's, so it is never posted.
@@ -254,6 +272,8 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
       status: "waiting",
       needs_you,
       submitting: summary,
+      // A review of the older commit that waited for a place no longer does.
+      queued: null,
       telling: null,
       held: null,
       // What CI said was about the commit before this one.
@@ -313,6 +333,7 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
     telling: null,
     held: null,
     reviewing: sha,
+    queued: null,
   } satisfies Partial<Thread>;
   record(db, folder, change, "asked to review again");
   // A submit not yet pushed goes through the whole round. A commit already pushed only needs
@@ -331,12 +352,14 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
 // Carries on with a round the daemon's stop cut short: a submit not yet pushed and
 // reviewed, a review whose Skelcrew's check was left pending, or changes not yet typed
 // into the builder. Pushing again is harmless: the remote has the commit, or gets it now. A
-// builder brought back can submit before this runs, and then its newer round wins.
+// builder brought back can submit before this runs, and then its newer round wins. A review
+// joins the queue of reviews again rather than starting at once: one that waited keeps its
+// place, and one that was running goes first, as it was ahead of every review that waited.
 export function resumeRound(db: Database, tmux: string, folder: string): void {
   // A thread with a round of its own already is past this. Otherwise carry on from the
   // furthest the round got: its push, its review, or typing its changes in.
   if (latestRounds.has(folder)) return;
-  const { submitting, reviewing, telling } = readThread(db, folder);
+  const { submitting, reviewing, queued, telling } = readThread(db, folder);
   const cancel = new AbortController();
   const none = Promise.resolve();
   if (submitting !== null) pushAndReview(db, tmux, folder, submitting, undefined);
@@ -347,7 +370,7 @@ export function resumeRound(db: Database, tmux: string, folder: string): void {
       folder,
       cancel,
       none,
-      reviewRound(db, tmux, folder, reviewing, cancel.signal),
+      reviewRound(db, tmux, folder, reviewing, cancel.signal, queued ?? 0),
     );
   else if (telling !== null)
     trackRound(

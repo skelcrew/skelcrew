@@ -34,6 +34,10 @@ export const Thread = z.object({
   submitting: z.string().nullable(),
   // The commit whose review check is pending, while its review waits or runs.
   reviewing: z.string().nullable(),
+  // When that review joined the queue of reviews, in milliseconds since 1970, while it waits
+  // there for a place. Null once it runs, and with no review. A review the daemon's stop cut
+  // short while it ran is put back first, with 0. Only means something while `reviewing` does.
+  queued: z.number().nullable(),
   // A posted review's changes, until they are typed into the builder.
   telling: z.string().nullable(),
   // The changes of a review past the round limit, which aren't typed in, kept for when you
@@ -109,6 +113,12 @@ export const builderHarness = (thread: Thread) => harnessNamed(thread.harness ??
 // Returns whether the thread needs you: for a review, the round limit or an approval, for the
 // builder's question, or for its harness stopping on an error.
 export const needsYou = (thread: Thread) => thread.needs_you || thread.asking || thread.erred;
+
+// Returns whether the thread's review waits in the queue for a place, as limits.reviews already
+// runs. A newer submit still pushing doesn't, as the queued time left from its older round's
+// review isn't about it.
+export const queuedForReview = (thread: Thread) =>
+  thread.submitting === null && thread.reviewing !== null && thread.queued !== null;
 
 // Returns whether a builder that just ended its turn is waiting on you, for a harness with no
 // tool for asking, such as Codex. A builder that works and stops without sc submit has a

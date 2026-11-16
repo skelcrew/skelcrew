@@ -175,7 +175,14 @@ describe("sc ps", () => {
     const listed = await skel(["ps", "site", "--json"]);
     expect(listed.err).toBe("");
     expect(JSON.parse(listed.out)).toEqual([
-      { thread: "site-7", short: null, title: "Add docs", status: "waiting", needsYou: true },
+      {
+        thread: "site-7",
+        short: null,
+        title: "Add docs",
+        status: "waiting",
+        needsYou: true,
+        queued: false,
+      },
     ]);
     expect(JSON.parse((await skel(["ps", "--json", "app"])).out)).toHaveLength(2);
   });
@@ -216,7 +223,14 @@ describe("sc ps", () => {
     serve();
     await untilAnswers();
     expect(JSON.parse((await skel(["ps", "--json"])).out)).toEqual([
-      { thread: "app-12", short: null, title: null, status: "working", needsYou: false },
+      {
+        thread: "app-12",
+        short: null,
+        title: null,
+        status: "working",
+        needsYou: false,
+        queued: false,
+      },
     ]);
   });
 

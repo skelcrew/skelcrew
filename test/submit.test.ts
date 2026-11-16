@@ -75,8 +75,9 @@ exec sleep 300`,
 }
 
 // Stands in for Codex. Review n answers with the verdict in Skelcrew's Codex folder's verdict-n,
-// and fails without one. It sleeps first when slow-n is there. What it was given, and the
-// branches it saw, go in the sessions folder, the one place a review writes that lasts.
+// and fails without one. It sleeps first when slow-n is there, and while held-n is there it
+// waits for the test to put go-n in the sessions folder. What it was given, and the branches it
+// saw, go in the sessions folder, the one place a review writes that lasts.
 function fakeCodex(): void {
   script(
     "codex",
@@ -87,6 +88,7 @@ cat > "$s/prompt-$n"
 git branch -r > "$s/branches-$n"
 git rev-parse origin/main > "$s/main-$n" 2>&1
 test -e "$CODEX_HOME/slow-$n" && sleep 30
+i=0; while test -e "$CODEX_HOME/held-$n" && ! test -e "$s/go-$n" && [ $i -lt 300 ]; do sleep 0.1; i=$((i+1)); done
 test -e "$CODEX_HOME/verdict-$n" || { echo "no verdict for review $n" >&2; exit 1; }
 cp "$CODEX_HOME/verdict-$n" "$out"`,
   );
@@ -892,6 +894,100 @@ await serve(${JSON.stringify(socket)}, 200);`;
     expect(git(bare, "branch", "--list", "skelcrew/t1-add-export")).not.toBe("");
     expect(existsSync(join(data(), "threads", "app-t1"))).toBe(false);
   }, 60_000);
+
+  // Each review runs the repository's tests, so the limit keeps them from slowing each other.
+  describe("with limits.reviews at 1", () => {
+    // Holds reviews 1 to 3 until the test lets each go, so it can see which wait.
+    const holdReviews = () => {
+      mkdirSync(join(codexHome(), "sessions"), { recursive: true });
+      for (const n of [1, 2, 3]) {
+        writeFileSync(join(codexHome(), `held-${n}`), "");
+        verdict(n, "approve", "Ready to merge.");
+      }
+    };
+    const letGo = (n: number) => writeFileSync(join(codexHome(), "sessions", `go-${n}`), "");
+    const prompt = (n: number) => read(join(codexHome(), "sessions", `prompt-${n}`));
+    const reviewsRun = () => Number(read(join(codexHome(), "sessions", "count")) || 0);
+    // The thread's row as the database has it now.
+    const row = (folder: string) => {
+      const db = new Database(join(data(), "skelcrew.db"));
+      db.run("PRAGMA busy_timeout = 5000");
+      try {
+        type Row = { reviewing: string | null; queued: number | null };
+        const query = db.query<Row, [string]>(
+          "SELECT reviewing, queued FROM threads WHERE folder = ?",
+        );
+        return query.get(folder) ?? { reviewing: null, queued: null };
+      } finally {
+        db.close();
+      }
+    };
+    const queued = (folder: string) => row(folder).queued !== null;
+    const ready = (folder: string) =>
+      read(join(data(), "threads", `${folder}.log`)).includes(`${folder} is ready on branch`);
+    // Starts a thread on what you said, whose builder submits at once.
+    const start = async (title: string) =>
+      expect((await skel(["start", "app", title, "Do it"])).err).toBe("");
+
+    test("a review waits while another runs, and they run in the order they came", async () => {
+      config("limits: { reviews: 1 }\n");
+      addAppOnGit();
+      holdReviews();
+      serveOutsideCheckout();
+      await untilCloned();
+      await start("First");
+      await until(() => prompt(1) !== "", 30_000);
+      await start("Second");
+      await until(() => queued("app-t2"), 30_000);
+      await start("Third");
+      await until(() => queued("app-t3"), 30_000);
+      // Only the first review runs. sc ps and the sidebar say the others wait.
+      expect(reviewsRun()).toBe(1);
+      const listed = (await skel(["ps"])).out;
+      expect(listed).toMatch(/app-t2 .*queued for review/);
+      expect(listed).toMatch(/app-t3 .*queued for review/);
+      // As each ends, the one that came next starts.
+      letGo(1);
+      await until(() => prompt(2) !== "", 30_000);
+      expect(prompt(2)).toContain("# Second");
+      expect(queued("app-t2")).toBe(false);
+      expect(queued("app-t3")).toBe(true);
+      letGo(2);
+      await until(() => prompt(3) !== "", 30_000);
+      expect(prompt(3)).toContain("# Third");
+      letGo(3);
+      await until(() => ["app-t1", "app-t2", "app-t3"].every(ready), 30_000);
+    }, 60_000);
+
+    test("after a restart, a review that waited waits again rather than all starting at once", async () => {
+      config("limits: { reviews: 1 }\n");
+      addAppOnGit();
+      holdReviews();
+      serveOutsideCheckout();
+      const first = running.at(-1);
+      await untilCloned();
+      await start("First");
+      await until(() => prompt(1) !== "", 30_000);
+      await start("Second");
+      await until(() => queued("app-t2"), 30_000);
+      first?.kill();
+      await first?.exited;
+      // Both reviews are still to do, and the second still waits.
+      expect(row("app-t1").reviewing).not.toBeNull();
+      expect(row("app-t1").queued).toBeNull();
+      expect(queued("app-t2")).toBe(true);
+      serveOutsideCheckout();
+      // One review starts again, and the other waits until it ends.
+      await until(() => prompt(2) !== "", 30_000);
+      await Bun.sleep(1000);
+      expect(reviewsRun()).toBe(2);
+      expect(queued("app-t1") || queued("app-t2")).toBe(true);
+      letGo(2);
+      await until(() => prompt(3) !== "", 30_000);
+      letGo(3);
+      await until(() => ready("app-t1") && ready("app-t2"), 30_000);
+    }, 60_000);
+  });
 
   // Without a forge there is no PR to close, but Skelcrew pushed the branch, so it deletes it.
   test("sc rm deletes the thread's branch from the remote and its clone, and the thread can start over", async () => {

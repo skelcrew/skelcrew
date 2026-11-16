@@ -27,6 +27,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     needs_you: false,
     submitting: null,
     reviewing: null,
+    queued: null,
     telling: null,
     held: null,
     seen: [],
