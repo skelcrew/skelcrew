@@ -148,6 +148,7 @@ async function reviewRound(
     review_round: before + 1,
     verdict: verdict.verdict,
     review_line: verdict.body.trim().split("\n")[0]?.slice(0, 200) ?? "",
+    review_at: Date.now(),
   };
   record(db, folder, change, outcome.why);
   typeLeadNotes(db, tmux);
@@ -203,7 +204,8 @@ function trackRound(
     if (cancel.signal.aborted) return;
     const why = errorText(error);
     // A review not yet typed in stays saved, so starting the daemon again can type it.
-    record(db, folder, { needs_you: true, status: "waiting" }, `the round failed: ${why}`);
+    const change = { needs_you: true, status: "waiting", review_at: Date.now() } as const;
+    record(db, folder, change, `the round failed: ${why}`);
     typeLeadNotes(db, tmux);
   });
   const round = { cancel, pushed, done, ended: false };
@@ -261,6 +263,7 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
       // What CI said was about the commit before this one.
       checks: null,
       reviewer: reviewer.harness,
+      review_at: Date.now(),
     },
     `submitted: ${summary}`,
   );
@@ -319,6 +322,7 @@ export function rerunReview(db: Database, tmux: string, folder: string, byBuilde
     telling: null,
     held: null,
     reviewing: sha,
+    review_at: Date.now(),
   } satisfies Partial<Thread>;
   record(db, folder, change, "asked to review again");
   // A submit not yet pushed goes through the whole round. A commit already pushed only needs

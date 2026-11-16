@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { printThreads } from "../src/flow/list.ts";
+import { printThreads, type ThreadRow } from "../src/flow/list.ts";
 import type { Thread } from "../src/flow/thread.ts";
 import { draw as drawWith, noticeLines } from "../src/screen/layout.ts";
 import type { EntryCount } from "../src/screen/lists.ts";
@@ -161,23 +161,49 @@ test("the sidebar is 38 columns wide, with room for 31 of a name and title", () 
   );
 });
 
-// sc ps shows a thread with no short title by its title, cut to the room the sidebar has for
-// its first line.
-test("sc ps cuts a long title to the room of the sidebar's first line", () => {
+// A row of sc ps for a thread, with no PR or review unless given.
+const psRow = (change: Partial<ThreadRow>): ThreadRow => ({
+  thread: "app-9",
+  short: null,
+  title: "Ok",
+  status: "working",
+  needsYou: false,
+  branch: "skelcrew/9",
+  pr: null,
+  prUrl: null,
+  checks: null,
+  review: null,
+  ...change,
+});
+
+// sc ps shows a thread with no short title by its title, cut so the whole row, with its PR, CI
+// and review, fits a terminal 80 columns wide.
+test("sc ps cuts a long title so each row fits 80 columns", () => {
   const title = "Send people back to the page they came from after signing in";
   const said: string[] = [];
   const log = spyOn(console, "log").mockImplementation((line: string) => said.push(line));
   try {
     printThreads(
-      [{ thread: "app-9", short: null, title, status: "failed", needsYou: false }],
+      [
+        psRow({
+          thread: "dotfiles-t12",
+          title,
+          status: "waiting",
+          needsYou: true,
+          pr: 242,
+          checks: "running",
+          review: { state: "reviewing", round: 12, at: null },
+        }),
+      ],
       false,
     );
   } finally {
     log.mockRestore();
   }
-  const sidebar = listed(draw([thread("app-9", { title })], "lead", size))[0]?.slice(4) ?? "";
-  expect(sidebar).toEndWith("…");
-  expect(said[1]).toBe(`app-9   ${title.slice(0, sidebar.length - 1)}…  failed`);
+  expect(said).toHaveLength(2);
+  for (const line of said) expect(line.length).toBeLessThanOrEqual(80);
+  expect(said[1]).toStartWith("dotfiles-t12  Send people");
+  expect(said[1]).toContain("…  waiting  #242  running  reviewing r12  yes");
 });
 
 // A title comes from the tracker and a short title from the lead, so either could hold a line
@@ -188,20 +214,8 @@ test("sc ps prints a title or short title with control codes as one clean row", 
   try {
     printThreads(
       [
-        {
-          thread: "app-9",
-          short: null,
-          title: "Fix\nlogin\x1b[2J",
-          status: "working",
-          needsYou: false,
-        },
-        {
-          thread: "app-8",
-          short: "Bad\x1b]8;;http://x\x07 one",
-          title: "Ok",
-          status: "working",
-          needsYou: false,
-        },
+        psRow({ title: "Fix\nlogin\x1b[2J" }),
+        psRow({ thread: "app-8", short: "Bad\x1b]8;;http://x\x07 one" }),
       ],
       false,
     );
@@ -740,6 +754,7 @@ const state: Thread = {
   review_round: null,
   verdict: null,
   review_line: null,
+  review_at: null,
   harness: null,
   short: null,
   assigned: false,

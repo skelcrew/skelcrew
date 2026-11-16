@@ -1,18 +1,21 @@
 // What Skelcrew shows you about its work: repositories for sc repo ls, threads for sc ps,
-// open tasks for sc issue ls and one task for sc issue show, as short text for a terminal
-// or JSON for tools.
+// open tasks for sc issue ls, one task for sc issue show and one PR for sc pr show, as short
+// text for a terminal or JSON for tools.
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { repositoryTracker } from "../config.ts";
 import { colorful } from "../help.ts";
 import { cloneDir } from "../paths.ts";
-import { forgeOf, trackerOf } from "../plugins/ask.ts";
-import { titleRoom } from "../screen/layout.ts";
+import { failedLog, forgeOf, trackerOf } from "../plugins/ask.ts";
+import { errorText } from "../say.ts";
+import { roundLimit } from "../screen/lists.ts";
 import { fitted, removeControlCodes } from "../screen/look.ts";
-import { sidebarWidth } from "../screen/screen.ts";
-import { openTasks, taskOf, threadTask } from "./copy.ts";
-import { findRepository, noRepositories, repositories } from "./repo.ts";
-import { needsYou, Thread, threadName, threadOn } from "./thread.ts";
+import { threadWord } from "../screen/rows.ts";
+import { openTasks, prOf, taskOf, threadTask } from "./copy.ts";
+import { reviewCheck } from "./decide.ts";
+import { ciSummary, reviewVerdict } from "./page.ts";
+import { findRepository, noRepositories, repositories, repositoryAt } from "./repo.ts";
+import { findThread, needsYou, Thread, threadName, threadOn } from "./thread.ts";
 
 // A repository as sc repo ls shows it. `missing` is a tracker its skelcrew.yaml names that
 // isn't installed, so it has none until you install that plugin.
@@ -61,18 +64,53 @@ function tabClosed(db: Database, r: { owner: string; repo: string }): boolean {
 }
 
 // A thread as sc ps shows it, with the short title the lead gave it, if any, and its whole
-// title, which an old row may lack.
+// title, which an old row may lack. `pr`, `prUrl` and `checks` are null without a PR, and
+// `review` without a forge, where sc ps leaves those columns empty. `checks` is what the PR's CI
+// says, without Skelcrew's own check. `review` is where Skelcrew's reviewer stands: its round,
+// and when it was asked for or ended, as an ISO time.
 export const ThreadRow = z.object({
   thread: z.string(),
   short: z.string().nullable(),
   title: z.string().nullable(),
   status: Thread.shape.status,
   needsYou: z.boolean(),
+  branch: z.string(),
+  pr: z.number().nullable(),
+  prUrl: z.string().nullable(),
+  checks: z.enum(["passed", "failed", "running", "none"]).nullable(),
+  review: z
+    .object({
+      state: z.enum(["approved", "changes", "reviewing", "failed", "none"]),
+      round: z.number().nullable(),
+      at: z.string().nullable(),
+    })
+    .nullable(),
 });
 export type ThreadRow = z.infer<typeof ThreadRow>;
 
+// What CI says in sc ps, from the word Skelcrew saved as it last polled the PR.
+const ciWords = { passing: "passed", failing: "failed", pending: "running" } as const;
+
+// Returns where a thread's review stands, for sc ps. A round under way counts as the next
+// one. A round that failed before its review ended, such as on a push, counts too, as it is
+// what the thread needs you for. Otherwise it is the latest review's verdict and round.
+function reviewOf(thread: Thread): NonNullable<ThreadRow["review"]> {
+  const at = thread.review_at === null ? null : new Date(thread.review_at).toISOString();
+  // The sidebar's word already knows when a round is under way and when one failed.
+  const word = threadWord(thread, roundLimit(thread));
+  const underWay = thread.submitting !== null || thread.reviewing !== null;
+  if (word === "reviewing") return { state: "reviewing", round: thread.rounds + 1, at };
+  if (word === "review failed" && underWay)
+    return { state: "failed", round: thread.rounds + 1, at };
+  if (thread.verdict === null) return { state: "none", round: null, at: null };
+  const states = { approve: "approved", changes: "changes", failed: "failed" } as const;
+  return { state: states[thread.verdict], round: thread.review_round, at };
+}
+
 // Returns the threads, or one repository's, newest first, for sc ps. A thread that starts
-// over gets a new row, so it counts as started when it last started.
+// over gets a new row, so it counts as started when it last started. Its PR's link comes from
+// Skelcrew's copy, which has a PR while it is open or its thread isn't over. The title comes
+// from the tracker and the short title from the lead, so tools get them with no control codes.
 export function listThreads(db: Database, repository?: string): ThreadRow[] {
   const one = repository ? findRepository(db, repository) : null;
   const all = one
@@ -80,14 +118,23 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
         .query("SELECT * FROM threads WHERE owner = ? AND repo = ? ORDER BY rowid DESC")
         .all(one.owner, one.repo)
     : db.query("SELECT * FROM threads ORDER BY rowid DESC").all();
+  // A thread whose repository Skelcrew no longer has has no forge either.
+  const withForge = repositories(db).filter((r) => forgeOf(db, r) !== null);
   return all.map((row) => {
     const thread = Thread.parse(row);
+    const forge = withForge.some((r) => r.owner === thread.owner && r.repo === thread.repo);
+    const pr = forge ? thread.pr : null;
     return {
       thread: threadName(db, thread),
-      short: thread.short,
-      title: thread.title,
+      short: thread.short && removeControlCodes(thread.short),
+      title: thread.title && removeControlCodes(thread.title),
       status: thread.status,
       needsYou: needsYou(thread),
+      branch: thread.branch,
+      pr,
+      prUrl: pr === null ? null : (prOf(db, thread.owner, thread.repo, pr)?.link ?? null),
+      checks: pr === null ? null : thread.checks === null ? "none" : ciWords[thread.checks],
+      review: forge ? reviewOf(thread) : null,
     };
   });
 }
@@ -200,26 +247,48 @@ export function printRepositories(repositories: RepositoryRow[], json: boolean):
     );
 }
 
+// The width sc ps keeps its rows to, so they fit a terminal of the usual size.
+const psWidth = 80;
+
 // Prints threads for sc ps: as JSON for tools, or else as a table. Its title column has each
-// thread's short title, or its title cut to the room the sidebar gives one, so a long title
-// doesn't push the status out of sight. The title comes from the tracker and the short title
+// thread's short title, or its title cut to what the other columns leave of a row, so a long
+// title doesn't push the rest out of sight. The title comes from the tracker and the short title
 // from the lead, so their control codes are removed, which could break a row or reach your
-// terminal.
+// terminal. A review shows its round, such as changes r3.
 export function printThreads(threads: ThreadRow[], json: boolean): void {
-  if (json) console.log(JSON.stringify(threads));
-  else if (threads.length === 0) console.log("There are no threads.");
-  else
-    table(
-      ["THREAD", "TITLE", "STATUS", "NEEDS YOU"],
-      threads.map((t) => [
-        t.thread,
-        t.short === null
-          ? fitted(removeControlCodes(t.title ?? ""), titleRoom(sidebarWidth))
-          : removeControlCodes(t.short),
-        t.status,
-        t.needsYou ? "yes" : "",
-      ]),
-    );
+  if (json) {
+    console.log(JSON.stringify(threads));
+    return;
+  }
+  if (threads.length === 0) {
+    console.log("There are no threads.");
+    return;
+  }
+  // Every column but the title, as it will show.
+  const rows = threads.map((t) => {
+    const review = t.review === null ? "" : t.review.state;
+    const round = t.review?.round == null ? "" : ` r${t.review.round}`;
+    return [
+      t.thread,
+      t.status,
+      t.pr === null ? "" : `#${t.pr}`,
+      t.checks ?? "",
+      `${review}${round}`,
+      t.needsYou ? "yes" : "",
+    ];
+  });
+  // The title takes what the other columns and the two spaces between each leave of a row.
+  const heading = ["THREAD", "STATUS", "PR", "CI", "REVIEW", "NEEDS YOU"];
+  const others = heading.reduce(
+    (sum, h, i) => sum + Math.max(h.length, ...rows.map((r) => r[i]?.length ?? 0)) + 2,
+    0,
+  );
+  const room = Math.max(psWidth - others, "TITLE".length);
+  const titles = threads.map((t) => fitted(removeControlCodes(t.short ?? t.title ?? ""), room));
+  table(
+    ["THREAD", "TITLE", ...heading.slice(1)],
+    rows.map(([name = "", ...rest], i) => [name, titles[i] ?? "", ...rest]),
+  );
 }
 
 // Prints open tasks for sc issue ls: as JSON for tools, or else as a table whose thread
@@ -248,4 +317,149 @@ export function printTask(task: TaskView, json: boolean): void {
   if (task.thread)
     console.log(`Thread: ${task.thread.status}${task.thread.needsYou ? ", needs you" : ""}`);
   if (task.body) console.log(`\n${task.body.trimEnd()}`);
+}
+
+// One PR as sc pr show shows it, from Skelcrew's copy: what its page on the screen shows, with
+// the thread on it, if any, and its latest review's text. `ci` is what its CI says as a whole,
+// and `checks` each CI check, with the end of its log for a failed one, as the forge gives it,
+// or null. Everything here that came from the forge has its control codes removed.
+export const PrView = z.object({
+  pr: z.number(),
+  title: z.string(),
+  state: z.enum(["open", "closed", "merged"]),
+  branch: z.string(),
+  base: z.string(),
+  thread: z.string().nullable(),
+  ci: z.enum(["passed", "failed", "running", "none"]),
+  checks: z.array(
+    z.object({
+      name: z.string(),
+      state: z.enum(["running", "passed", "failed", "cancelled"]),
+      log: z.string().nullable(),
+    }),
+  ),
+  review: z.object({ verdict: z.string(), author: z.string(), body: z.string() }).nullable(),
+  body: z.string(),
+  link: z.string(),
+});
+export type PrView = z.infer<typeof PrView>;
+
+// Returns text from the forge safe to print, line breaks kept. A check's log often colours its
+// lines, and those codes are removed whole, so no stray "[31m" is left behind.
+function safeText(text: string): string {
+  const colours = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g");
+  return text.replace(colours, "").split(/\r?\n/).map(removeControlCodes).join("\n");
+}
+
+// Returns a PR for sc pr show, named by its number or by its thread's task, in the repository
+// `repo` names, or else in the one whose remote is `from`, the checkout sc ran in. It reads
+// Skelcrew's copy, so it asks the forge only for the logs of failed checks. A log that can't be
+// read says why in its place. Throws when the repository has no forge, and so no PRs, and when
+// the copy has no such PR, such as one closed with no thread at work on it.
+export async function showPr(
+  db: Database,
+  which: {
+    repo?: string | undefined;
+    from?: string | undefined;
+    pr?: number | undefined;
+    task?: string | undefined;
+  },
+): Promise<PrView> {
+  // Find the repository, then the PR's number, from its thread when a thread names it.
+  const repository =
+    which.repo !== undefined
+      ? findRepository(db, which.repo)
+      : which.from !== undefined
+        ? repositoryAt(db, which.from)
+        : undefined;
+  if (!repository)
+    throw new Error(
+      "name the PR's thread, such as app-12, or run sc pr show in a checkout of its repository",
+    );
+  const { owner, repo, name } = repository;
+  if (forgeOf(db, repository) === null)
+    throw new Error(`${name} has no forge, so there are no PRs`);
+  let number = which.pr;
+  if (which.task !== undefined) {
+    const thread = findThread(db, name, which.task);
+    if (thread.pr === null) throw new Error(`${name}-${which.task} has no PR yet`);
+    number = thread.pr;
+  }
+  if (number === undefined) throw new Error("sc pr show needs a PR number or a thread");
+  const pr = prOf(db, owner, repo, number);
+  if (!pr) throw new Error(`Skelcrew has no PR #${number} in ${owner}/${repo}`);
+  // The thread on the PR, the newest, as a thread that starts over keeps its PR's number.
+  const row = db
+    .query("SELECT * FROM threads WHERE owner = ? AND repo = ? AND pr = ? ORDER BY rowid DESC")
+    .get(owner, repo, number);
+  const thread = Thread.nullable().parse(row);
+  // Each CI check, with the end of its log when it failed and has one.
+  const checks = await Promise.all(
+    pr.checks
+      .filter((check) => check.name !== reviewCheck)
+      .map(async (check) => {
+        const log =
+          check.state === "failed" && check.id !== null
+            ? await failedLog(db, repository, check.id).catch(
+                (error) => `(Skelcrew couldn't read its log: ${errorText(error)})`,
+              )
+            : null;
+        return { name: safeText(check.name), state: check.state, log: log && safeText(log) };
+      }),
+  );
+  const latest = pr.reviews.at(-1);
+  const [ci] = ciSummary(pr);
+  return PrView.parse({
+    pr: number,
+    title: removeControlCodes(pr.title),
+    state: pr.state,
+    branch: removeControlCodes(pr.branch),
+    base: removeControlCodes(pr.base),
+    thread: thread && threadName(db, thread),
+    ci,
+    checks,
+    review: latest
+      ? {
+          verdict: removeControlCodes(reviewVerdict(latest)),
+          author: removeControlCodes(latest.author?.login ?? "unknown"),
+          body: safeText(latest.text),
+        }
+      : null,
+    body: safeText(pr.body),
+    link: pr.link,
+  });
+}
+
+// Prints one PR for sc pr show: as JSON for tools, or else its number and title, its facts as
+// its page shows them, then its latest review, its description and the logs of failed checks,
+// each under a heading that says where it came from.
+export function printPr(pr: PrView, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(pr));
+    return;
+  }
+  const review = pr.review ? `${pr.review.verdict} · ${pr.review.author}` : "none";
+  const facts = [
+    ["State", pr.state],
+    ["Branch", `${pr.branch} → ${pr.base}`],
+    ["Thread", pr.thread ?? "none"],
+    ["Checks", pr.ci],
+    // Each CI check on a line of its own, under the summary.
+    ...pr.checks.map((check) => ["", `${check.name}: ${check.state}`]),
+    ["Review", review],
+    ["Link", pr.link],
+  ];
+  console.log(`#${pr.pr}  ${pr.title}`);
+  for (const [label = "", value = ""] of facts) console.log(`${label.padEnd(8)}${value}`);
+  // The longer texts, each after a blank line, with only those that have something to say.
+  const texts: [string, string][] = [
+    ["Latest review", pr.review?.body ?? ""],
+    ["Description", pr.body],
+    ...pr.checks.map((check): [string, string] => [
+      `Log of ${check.name}, from the forge`,
+      check.log ?? "",
+    ]),
+  ];
+  for (const [heading, text] of texts)
+    if (text.trim()) console.log(`\n${heading}\n${text.trimEnd()}`);
 }

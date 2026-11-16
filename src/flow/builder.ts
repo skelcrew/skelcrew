@@ -171,6 +171,7 @@ export async function startThread(
       review_round: null,
       verdict: null,
       review_line: null,
+      review_at: null,
       harness: null,
       short: given.short ?? null,
       // A thread that failed still holds its issue, so starting it over keeps that Skelcrew
