@@ -3,7 +3,15 @@
 // older release than yours, or was built from another commit, and copies your setup there when
 // it changed. Your laptop can be a Mac, so this file loads nothing of the Skelcrew that runs on
 // the server.
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { sshSocket } from "../paths.ts";
@@ -92,18 +100,37 @@ export async function keepingTitle<T>(go: () => Promise<T>): Promise<T> {
 // Returns the ssh options that make every ssh and scp Skelcrew runs for the host share one
 // connection. One setup takes five or more of them, and each new connection can ask for your
 // passphrase or a touch of your key. The shared connection ends a minute after the last
-// command, which covers one setup or connect. When your ssh config already shares connections
-// for the host, it gives nothing, so yours is used: options given to ssh beat its config.
+// command, which covers one setup or connect. The options name a config file of Skelcrew's that
+// reads yours first. ssh keeps the first value it finds for each setting, so what you set, even
+// ControlPath none or ControlMaster no, wins. The same settings given as -o would beat yours.
 function sharedConnection(host: string): string[] {
-  // ssh -G prints what your config sets for the host, without connecting. It prints no
-  // controlpath when none is set, or it is set to none.
-  const config = Bun.spawnSync(["ssh", "-G", host], { stdout: "pipe", stderr: "ignore" });
-  if (/^controlpath /m.test(config.stdout.toString())) return [];
-  // Anyone who can reach the socket can run commands on the server as you, so its folder is
-  // yours alone.
   const socket = sshSocket(host);
-  mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
-  return ["-o", "ControlMaster=auto", "-o", `ControlPath=${socket}`, "-o", "ControlPersist=60"];
+  // A Mac refuses a socket path over 103 bytes, and ssh adds 17 while it makes the socket. A
+  // longer runtime folder, or a quote the config can't hold, means no sharing, and every
+  // command still works on its own connection.
+  if (Buffer.byteLength(socket) > 86 || socket.includes('"')) return [];
+  // Anyone who can reach the socket can run commands on the server as you, so its folder is
+  // made yours alone, also when it was there before.
+  const folder = dirname(socket);
+  mkdirSync(folder, { recursive: true, mode: 0o700 });
+  chmodSync(folder, 0o700);
+  // Given a config file, ssh reads neither yours nor the system's, so both are included, in the
+  // order ssh reads them. ssh would read a % in the path as a token, so it is doubled.
+  const config = [
+    "Include ~/.ssh/config",
+    "Include /etc/ssh/ssh_config",
+    "Host *",
+    "  ControlMaster auto",
+    `  ControlPath "${socket.replaceAll("%", "%%")}"`,
+    "  ControlPersist 60",
+    "",
+  ].join("\n");
+  // Written beside it and renamed into place, so an sc starting at the same moment never
+  // reads half a file. ssh refuses a config file others can write to.
+  const file = `${socket}.conf`;
+  writeFileSync(`${file}.${process.pid}`, config, { mode: 0o600 });
+  renameSync(`${file}.${process.pid}`, file);
+  return ["-F", file];
 }
 
 // Returns how to run sc on the host with these words, with `shared` from sharedConnection. It
