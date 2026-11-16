@@ -52,6 +52,39 @@ export function ciState(pr: PullRequest): Thread["checks"] {
   return ci.some((c) => c.state === "failed" || c.state === "cancelled") ? "failing" : "pending";
 }
 
+// Returns whether a repository has CI on its forge, judged from its open PRs: any CI check on
+// one of them counts. The reviewer of a repository with CI leaves the whole test suite to it,
+// so the suite runs once per commit. A repository whose PRs show no check yet, such as before
+// its first PR, counts as having none, and its reviewer runs the suite itself.
+export const hasCi = (prs: PullRequest[]) => prs.some((pr) => ciOf(pr).length > 0);
+
+// Returns what the reviewer reads about CI on the commit it reviews: whether CI passed, failed
+// or still runs, each check's state, and the end of each failed check's log, from `logs` by
+// check ID. CI the forge shows for another commit, such as the one before, is never this
+// commit's, so the reviewer is told CI hasn't reported yet.
+export function ciResult(
+  pr: PullRequest | null,
+  commit: string,
+  logs: Map<string, string>,
+): string {
+  // Nothing about this commit yet: the forge's copy holds an older head, or no check started.
+  const state = pr?.head === commit ? ciState(pr) : null;
+  if (pr === null || state === null)
+    return "CI is still running: it hasn't reported on this commit yet.\n";
+  // The whole result first, in the words the PR's page uses, then each check.
+  const ci = ciOf(pr);
+  const word = { passing: "passed", failing: "failed", pending: "is still running" };
+  const lines = [`CI ${word[state]} on this commit.`, ""];
+  for (const check of ci) lines.push(`- ${check.name}: ${check.state}`);
+  // Each failed check's log ends with the failing tests, which the reviewer names.
+  for (const check of ci) {
+    const log = check.id === null ? undefined : logs.get(check.id);
+    if (check.state === "failed" && log !== undefined)
+      lines.push("", `The end of the log of ${check.name}:`, "", log.trimEnd());
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 // Returns the IDs the thread has handled, as a set. A thread saved before Skelcrew kept them has
 // the last ID of each kind it handled instead, from a forge whose IDs only grow: everything up
 // to those counts as handled. One that never took in its PR's history has neither.

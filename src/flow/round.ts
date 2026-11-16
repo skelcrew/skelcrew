@@ -5,12 +5,12 @@ import type { Database } from "bun:sqlite";
 import { typeInto } from "../agents/typing.ts";
 import { threadConfig } from "../config.ts";
 import { cloneDir } from "../paths.ts";
-import { forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";
+import { failedLog, forgeOf, openPr, postReview, setStatus } from "../plugins/ask.ts";
 import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
-import { threadTask } from "./copy.ts";
-import { afterReview, pastRoundLimit } from "./decide.ts";
+import { openPrs, prOf, threadTask } from "./copy.ts";
+import { afterReview, ciResult, hasCi, pastRoundLimit } from "./decide.ts";
 import { pushCommit } from "./git.ts";
 import { typeLeadNotes } from "./lead.ts";
 import { review } from "./reviewer.ts";
@@ -78,6 +78,26 @@ async function push(db: Database, folder: string, summary: string): Promise<stri
   return sha;
 }
 
+// Returns what tells the reviewer CI's result for the commit, from Skelcrew's copy of the
+// thread's PR, which each poll brings up to date. The end of each failed check's log comes from
+// the forge, once per check, so a review that reads the result again doesn't ask again. A log
+// the forge won't give is left out, and asked for again next time.
+function ciOfCommit(db: Database, thread: Thread, pr: number, sha: string): () => Promise<string> {
+  const repository = repositoryOf(db, thread);
+  const logs = new Map<string, string>();
+  return async () => {
+    const shown = prOf(db, thread.owner, thread.repo, pr);
+    const failed = shown?.head === sha ? shown.checks.filter((c) => c.state === "failed") : [];
+    for (const { id } of failed)
+      if (id !== null && !logs.has(id))
+        await failedLog(db, repository, id).then(
+          (log) => logs.set(id, log),
+          () => {},
+        );
+    return ciResult(shown, sha, logs);
+  };
+}
+
 // Reviews the commit and acts on the verdict: with a forge, posts it on the PR and sets Skelcrew's
 // check; saves what it means for the thread, and types changes into the builder. Without a
 // forge the review stays in Skelcrew, and an approved branch needs you at once. Stops without a
@@ -116,6 +136,12 @@ async function reviewRound(
     model: reviewerRole.model,
     harness: reviewer,
     signal,
+    // With CI on the forge, CI runs the whole test suite and the reviewer reads its result.
+    // Without, the reviewer runs the suite itself.
+    ci:
+      pr !== null && hasCi(openPrs(db, thread.owner, thread.repo))
+        ? ciOfCommit(db, thread, pr, sha)
+        : undefined,
   });
   // Decide what the verdict means for the thread, then post it on the PR. A failed review is
   // Skelcrew's problem, not the PR's, so it is never posted.

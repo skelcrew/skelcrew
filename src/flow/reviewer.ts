@@ -1,6 +1,6 @@
 // Runs a fresh adversarial reviewer in the sandbox for each thread's PR, on the harness your
 // config names for reviews.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -30,9 +30,21 @@ const schema = JSON.stringify({
 });
 
 // Returns what the reviewer is told: the task it checks the PR against, where the change
-// starts, and to answer with problems the builder can act on. It tells the reviewer to assume
-// the change is wrong, since a reviewer that trusts the builder misses what the builder missed.
-function reviewerPrompt(issue: { title: string; body: string }, base: string): string {
+// starts, how to learn whether the tests pass, and to answer with problems the builder can act
+// on. It tells the reviewer to assume the change is wrong, since a reviewer that trusts the
+// builder misses what the builder missed. `ci` is the file holding CI's result for the commit,
+// or null for a repository with no CI. The whole test suite runs once per commit: CI runs it
+// where there is CI, and the reviewer only where there is none, as several threads running it
+// at once overload the machine.
+export function reviewerPrompt(
+  issue: { title: string; body: string },
+  base: string,
+  ci: string | null,
+): string {
+  const tests =
+    ci === null
+      ? "The repository has no CI, so run its whole test suite, using the commands under test: in the repository's skelcrew.yaml if there is one."
+      : `The repository's CI runs the whole test suite on this commit, so don't run it yourself. Run a single test only to settle a doubt. CI's result for this commit is in ${ci}: whether it passed, failed or is still running, and the end of each failed check's log. Skelcrew updates that file as CI goes on, so read it when you start and again just before you answer. When CI failed, name the failing tests as problems. When CI is still running as you answer, review the code anyway, and say in the body that CI is still running.`;
   return `Review this pull request as an adversarial reviewer. Another agent wrote it. Assume it is wrong until you have checked it yourself.
 
 It should do this:
@@ -41,7 +53,9 @@ It should do this:
 
 ${issue.body}
 
-The change is everything on HEAD since ${base}. Read the whole diff with \`git diff ${base}...HEAD\`, and the code around it. Run the tests, using the commands under test: in the repository's skelcrew.yaml if there is one. Anything you change here is thrown away after the review, so run what you need, but don't fix the code.
+The change is everything on HEAD since ${base}. Read the whole diff with \`git diff ${base}...HEAD\`, and the code around it. Anything you change here is thrown away after the review, so run what you need, but don't fix the code.
+
+${tests}
 
 Check that it does what this asks and nothing else, and look for bugs, edge cases it misses, missing tests and failing ones.
 
@@ -126,7 +140,9 @@ function readVerdict(
 
 // Runs a fresh reviewer against a throwaway view of the clone and returns its verdict or failure
 // reason. Enforces cancellation and a time limit, then removes the review's temporary
-// files.
+// files. With `ci`, which says what CI says about the commit, the reviewer reads CI's result
+// rather than running the whole test suite. It is asked again every 15 seconds while the
+// review runs, as CI usually finishes during it.
 async function reviewNow(given: {
   clone: string;
   issue: { title: string; body: string };
@@ -137,6 +153,7 @@ async function reviewNow(given: {
   signal?: AbortSignal;
   limit?: number;
   env?: Record<string, string | undefined>;
+  ci?: (() => Promise<string>) | undefined;
 }): Promise<Review> {
   const { clone, issue, base, model, harness, limit = 30 * 60_000, env = process.env } = given;
   // Fail at once, with a reason you can act on, when the review was cancelled before its turn
@@ -165,6 +182,17 @@ async function reviewNow(given: {
     return null;
   };
   let argv: string[] = [];
+  // CI's result goes in the review's folder, which the reviewer sees. It is written whole and
+  // then moved in, so the reviewer never reads half of it. A failure to ask is written there
+  // too, so the reviewer says it couldn't tell rather than taking an old result for current.
+  const ciFile = join(folder, "ci.md");
+  const writeCi = async (read: () => Promise<string>) => {
+    const text = await read().catch((error) => `Skelcrew couldn't read CI: ${errorText(error)}\n`);
+    await Bun.write(`${ciFile}.new`, text);
+    renameSync(`${ciFile}.new`, ciFile);
+  };
+  let writing: Promise<void> = Promise.resolve();
+  let refresh: ReturnType<typeof setInterval> | undefined;
   try {
     // The harness gets the answer's shape from a file, and says how to start the reviewer
     // and what it needs from outside the sandbox.
@@ -196,6 +224,15 @@ async function reviewNow(given: {
       command: ["sh", "-c", checkout, given.commit, ...launch.command],
       programs: launch.command.slice(0, 1),
     });
+    // CI's result is there before the reviewer starts, and kept current while it runs. Each
+    // write waits for the one before, so a slow forge never has two race to the file.
+    const { ci } = given;
+    if (ci) {
+      await writeCi(ci);
+      refresh = setInterval(() => {
+        writing = writing.then(() => writeCi(ci)).catch(() => {});
+      }, 15_000);
+    }
     // Check for cancellation and the time limit on both sides of the run, so a review that was
     // stopped says so rather than reading half an answer.
     const before = whyStopped();
@@ -203,13 +240,16 @@ async function reviewNow(given: {
     const finished = await spawnReviewer({
       argv,
       env: sandboxEnv,
-      input: reviewerPrompt(issue, base),
+      input: reviewerPrompt(issue, base, ci ? ciFile : null),
       signal,
     });
     const after = whyStopped();
     if (after) return after;
     return readVerdict(harness, folder, finished);
   } finally {
+    // No write of CI's result may land after the folder is gone, or it would make it again.
+    clearInterval(refresh);
+    await writing.catch(() => {});
     // On a Mac the review may have been ended with SIGKILL, before the sandbox could remove
     // its own folders, one of them in /tmp.
     for (const own of [folder, ...sandboxFolders(argv)])

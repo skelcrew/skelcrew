@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { review } from "../src/flow/reviewer.ts";
+import { review, reviewerPrompt } from "../src/flow/reviewer.ts";
 import { insideSandbox, source } from "./harness.ts";
 
 let home = "";
@@ -84,7 +84,13 @@ const given = () => ({
   env: env(),
 });
 const start = (
-  more: { signal?: AbortSignal; limit?: number; harness?: "claude"; model?: string } = {},
+  more: {
+    signal?: AbortSignal;
+    limit?: number;
+    harness?: "claude";
+    model?: string;
+    ci?: () => Promise<string>;
+  } = {},
 ) => review({ ...given(), ...more });
 
 // What `nice` prints here, so a test can tell the reviewer's CPU priority from the test's own.
@@ -330,6 +336,44 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     expect(done.verdict).toBe("failed");
     expect(done.body).toContain("shape");
   });
+
+  // The file CI's result is in, as the reviewer's prompt names it.
+  const ciFile = `f=$(grep -o '/[^ ]*/ci\\.md' "$prompt" | head -1)`;
+
+  test("a reviewer on either harness reads CI's result from the file its prompt names", async () => {
+    mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+    writeFileSync(join(home, ".config", "skelcrew", "claude-token"), "sk-ant-oat01-tok\n");
+    const ci = async () => "CI failed on this commit.\n";
+    // Codex answers in a file, and Claude Code on its output.
+    fakeCodex(approve, [
+      'prompt="$CODEX_HOME/sessions/prompt"',
+      ciFile,
+      'cat "$f" > "$CODEX_HOME/sessions/ci"',
+    ]);
+    expect((await start({ ci })).verdict).toBe("approve");
+    expect(kept("ci")).toBe("CI failed on this commit.\n");
+    expect(kept("prompt")).not.toContain("run its whole test suite");
+    fakeClaude([
+      'prompt="$CLAUDE_CONFIG_DIR/prompt"; cat > "$prompt"',
+      ciFile,
+      'body=$(cat "$f" | tr -d "\\n")',
+      'echo "{\\"type\\":\\"result\\",\\"structured_output\\":{\\"verdict\\":\\"approve\\",\\"body\\":\\"$body\\"}}"',
+    ]);
+    const done = await start({ harness: "claude", ci });
+    expect(done).toEqual({ verdict: "approve", body: "CI failed on this commit." });
+  });
+
+  test("keeps CI's result current while the review runs", async () => {
+    let asked = 0;
+    const ci = async () => `asked ${++asked}\n`;
+    fakeCodex(approve, [
+      'prompt="$CODEX_HOME/sessions/prompt"',
+      ciFile,
+      'cat "$f" > "$CODEX_HOME/sessions/ci"; sleep 17; cat "$f" >> "$CODEX_HOME/sessions/ci"',
+    ]);
+    expect((await start({ ci })).verdict).toBe("approve");
+    expect(kept("ci")).toBe("asked 1\nasked 2\n");
+  }, 40_000);
 });
 
 // These never start bubblewrap, so they run inside Skelcrew's sandbox too.
@@ -423,5 +467,28 @@ test("keeps reviewing after a review that couldn't start", async () => {
   expect(await start({ signal: cancel.signal })).toEqual({
     verdict: "failed",
     body: "the review was cancelled",
+  });
+});
+
+describe("what the reviewer is told about the tests", () => {
+  // CI runs the whole suite once per commit, so the reviewer runs it only where there is none.
+  test("without CI, the reviewer runs the whole test suite itself", () => {
+    const prompt = reviewerPrompt(issue, "origin/main", null);
+    expect(prompt).toContain("The repository has no CI, so run its whole test suite");
+    expect(prompt).toContain("under test: in the repository's skelcrew.yaml");
+    expect(prompt).not.toContain("ci.md");
+  });
+
+  test("with CI, the reviewer reads CI's result, and says when CI is still running", () => {
+    const prompt = reviewerPrompt(issue, "origin/main", "/tmp/review/ci.md");
+    expect(prompt).not.toContain("run its whole test suite");
+    expect(prompt).toContain(
+      "CI runs the whole test suite on this commit, so don't run it yourself",
+    );
+    expect(prompt).toContain("CI's result for this commit is in /tmp/review/ci.md");
+    expect(prompt).toContain("whether it passed, failed or is still running");
+    expect(prompt).toContain("read it when you start and again just before you answer");
+    expect(prompt).toContain("When CI failed, name the failing tests as problems");
+    expect(prompt).toContain("say in the body that CI is still running");
   });
 });

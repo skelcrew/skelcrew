@@ -5,8 +5,10 @@ import { expect, test } from "bun:test";
 import {
   afterReview,
   type Check,
+  ciResult,
   ciState,
   decide,
+  hasCi,
   labeledToStart,
   type PullRequest,
   reviewCheck,
@@ -404,6 +406,52 @@ test("a PR's CI reads as passing, failing or still running, and Skelcrew's own c
   expect(ciState(pr({ checks: [changes, passed] }))).toBe("passing");
   expect(ciState(pr({ checks: [passed, going] }))).toBe("pending");
   expect(ciState(pr({ checks: [failed, going] }))).toBe("failing");
+});
+
+test("a repository has CI once one of its PRs shows a CI check, besides Skelcrew's own", () => {
+  expect(hasCi([])).toBe(false);
+  expect(hasCi([pr({ checks: [approved] })])).toBe(false);
+  expect(hasCi([pr(), pr({ checks: [approved, run(30, "test", "running")] })])).toBe(true);
+});
+
+test("tells the reviewer CI hasn't reported until the PR's head is the commit under review", () => {
+  const older = pr({ head: "old", checks: [run(30, "test", "failed")] });
+  const waiting = "CI is still running: it hasn't reported on this commit yet.\n";
+  expect(ciResult(null, "new", new Map())).toBe(waiting);
+  expect(ciResult(older, "new", new Map())).toBe(waiting);
+  expect(ciResult(pr({ head: "new", checks: [approved] }), "new", new Map())).toBe(waiting);
+});
+
+test("tells the reviewer whether CI passed, failed or still runs, with each check", () => {
+  const passed = pr({ head: "c1", checks: [approved, run(30, "test", "passed")] });
+  expect(ciResult(passed, "c1", new Map())).toBe("CI passed on this commit.\n\n- test: passed\n");
+  const going = pr({ head: "c1", checks: [run(30, "test", "passed"), run(31, "lint", "running")] });
+  expect(ciResult(going, "c1", new Map())).toBe(
+    "CI is still running on this commit.\n\n- test: passed\n- lint: running\n",
+  );
+});
+
+test("gives the reviewer the end of each failed check's log, which names the failing tests", () => {
+  const failed = pr({
+    head: "c1",
+    checks: [run(30, "test", "failed"), run(31, "lint", "passed"), run(32, "e2e", "failed")],
+  });
+  // A log the forge didn't give is left out, and the check is still listed.
+  const logs = new Map([["30", "FAIL test/login.test.ts > redirects\n"]]);
+  expect(ciResult(failed, "c1", logs)).toBe(
+    [
+      "CI failed on this commit.",
+      "",
+      "- test: failed",
+      "- lint: passed",
+      "- e2e: failed",
+      "",
+      "The end of the log of test:",
+      "",
+      "FAIL test/login.test.ts > redirects",
+      "",
+    ].join("\n"),
+  );
 });
 
 const approval = { verdict: "approve" as const, body: "Ready." };
