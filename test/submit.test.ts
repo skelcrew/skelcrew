@@ -959,7 +959,7 @@ await serve(${JSON.stringify(socket)}, 200);`;
       await until(() => ["app-t1", "app-t2", "app-t3"].every(ready), 30_000);
     }, 60_000);
 
-    test("after a restart, a review that waited waits again rather than all starting at once", async () => {
+    test("after a restart, the review that was running goes first, and the one that waited waits again", async () => {
       config("limits: { reviews: 1 }\n");
       addAppOnGit();
       holdReviews();
@@ -977,13 +977,17 @@ await serve(${JSON.stringify(socket)}, 200);`;
       expect(row("app-t1").queued).toBeNull();
       expect(queued("app-t2")).toBe(true);
       serveOutsideCheckout();
-      // One review starts again, and the other waits until it ends.
+      // The review that was running starts again first, and the one that waited waits again
+      // until it ends.
       await until(() => prompt(2) !== "", 30_000);
+      expect(prompt(2)).toContain("# First");
       await Bun.sleep(1000);
       expect(reviewsRun()).toBe(2);
-      expect(queued("app-t1") || queued("app-t2")).toBe(true);
+      expect(queued("app-t1")).toBe(false);
+      expect(queued("app-t2")).toBe(true);
       letGo(2);
       await until(() => prompt(3) !== "", 30_000);
+      expect(prompt(3)).toContain("# Second");
       letGo(3);
       await until(() => ready("app-t1") && ready("app-t2"), 30_000);
     }, 60_000);

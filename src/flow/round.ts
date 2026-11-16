@@ -111,30 +111,41 @@ async function reviewRound(
   const setCheck = async (state: "pending" | "success" | "failure", description: string) => {
     if (hasForge) await setStatus(db, repository, { commit: sha, state, description });
   };
-  // Show the review under way, on the PR and in the thread, before it starts. The check on
-  // each await is there because a newer round may have taken over while it waited.
-  await setCheck("pending", "Skelcrew's reviewer is reviewing");
-  if (signal.aborted) return;
-  // Join the queue of reviews. A review that has to wait is saved as queued, with when it
-  // joined, so the thread says so, and a restart puts it back in the same place. One that
-  // starts at once is saved as reviewing, with no queued step in between.
+  // Show the review under way on the PR while it joins the queue of reviews. It joins before
+  // any await, so reviews take their places in the order they are asked for: after a restart
+  // the daemon asks for them in their saved order. A failed check fails the round at once,
+  // rather than once its turn comes.
+  const pending = setCheck("pending", "Skelcrew's reviewer is reviewing");
+  const checkFailed = new AbortController();
+  pending.catch(() => checkFailed.abort());
+  // A review that has to wait is saved as queued, with when it joined, so the thread says so,
+  // and a restart puts it back in the same place. One that starts at once is saved as
+  // reviewing, with no queued step in between.
   const waits = reviews.full(limit);
   const joined = { reviewing: sha, submitting: null, reviewer, queued: waits ? since : null };
   record(db, folder, joined, waits ? `queued ${sha} for review` : `reviewing ${sha}`);
-  // Cancelled while it waits, the review rejects, and the round ends as cancelled rounds do.
-  const verdict = await reviews.run({ limit, order: since, signal }, () => {
-    if (waits) record(db, folder, { queued: null }, `reviewing ${sha}`);
-    return review({
-      clone: cloneOf(thread),
-      issue: threadTask(db, thread),
-      // Setting up the thread's clone put the base branch there under origin/.
-      base: `origin/${baseOf(thread)}`,
-      commit: sha,
-      model: reviewerRole.model,
-      harness: reviewer,
-      signal,
+  const queue = { limit, order: since, signal: AbortSignal.any([signal, checkFailed.signal]) };
+  const verdict = await reviews
+    .run(queue, async () => {
+      await pending;
+      if (waits) record(db, folder, { queued: null }, `reviewing ${sha}`);
+      return review({
+        clone: cloneOf(thread),
+        issue: threadTask(db, thread),
+        // Setting up the thread's clone put the base branch there under origin/.
+        base: `origin/${baseOf(thread)}`,
+        commit: sha,
+        model: reviewerRole.model,
+        harness: reviewer,
+        signal,
+      });
+    })
+    // Leaving the queue early says why: the check's own error, or else that it was cancelled,
+    // which a newer round did, so the round ends as cancelled rounds do.
+    .catch(async (error) => {
+      await pending;
+      throw error;
     });
-  });
   // Decide what the verdict means for the thread, then post it on the PR. A failed review is
   // Skelcrew's problem, not the PR's, so it is never posted.
   if (signal.aborted) return;
@@ -354,7 +365,9 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
 // into the builder. Pushing again is harmless: the remote has the commit, or gets it now. A
 // builder brought back can submit before this runs, and then its newer round wins. A review
 // joins the queue of reviews again rather than starting at once: one that waited keeps its
-// place, and one that was running goes first, as it was ahead of every review that waited.
+// place, and one that was running goes ahead of every review that waited. The daemon asks for
+// the reviews before anything else can start one, in that order, as the first to join a queue
+// with room starts at once.
 export function resumeRound(db: Database, tmux: string, folder: string): void {
   // A thread with a round of its own already is past this. Otherwise carry on from the
   // furthest the round got: its push, its review, or typing its changes in.
