@@ -13,9 +13,10 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { z } from "zod";
 import { claudeTokenFile, dataDir } from "../paths.ts";
+import { editing, type Progress, stepText, toolWords } from "./progress.ts";
 import { filterEnv, refuseCredentials, ro, rw, sandboxArgs } from "./sandbox.ts";
 
 const { O_NONBLOCK, O_NOFOLLOW, O_RDONLY } = constants;
@@ -78,9 +79,107 @@ function claudeToken(home: string): string {
 // but letters and digits made a dash. Names over 200 characters get a hash instead, which
 // Skelcrew's folders never come near.
 function savedConversation(name: string, folder: string, session: string): string | null {
+  return existsSync(conversationFile(name, folder, session)) ? session : null;
+}
+
+// Returns the file a session saves its conversation in, as savedConversation describes, whether
+// or not it is there yet. The sidebar reads it for the builder's progress.
+function conversationFile(name: string, folder: string, session: string): string {
   const project = folder.replace(/[^a-zA-Z0-9]/g, "-");
-  const file = join(dataDir(), "claude", name, "projects", project, `${session}.jsonl`);
-  return existsSync(file) ? session : null;
+  return join(dataDir(), "claude", name, "projects", project, `${session}.jsonl`);
+}
+
+// A line of a conversation file with a model's answer: what it cost, and its parts, such as its
+// thinking, text and tool calls. Claude Code writes one line per part, each with the answer's ID
+// and its whole usage, so an answer's tokens are counted once, by its ID.
+const AnswerLine = z.object({
+  type: z.literal("assistant"),
+  message: z.object({
+    id: z.string(),
+    usage: z
+      .object({
+        input_tokens: z.number(),
+        output_tokens: z.number(),
+        cache_creation_input_tokens: z.number().optional(),
+      })
+      .optional(),
+    content: z.array(z.unknown()).optional(),
+  }),
+});
+// A tool call within an answer, with what the tool was given.
+const ToolUse = z.object({
+  type: z.literal("tool_use"),
+  name: z.string(),
+  input: z.looseObject({}),
+});
+// What TodoWrite is given: the builder's whole plan, each item with its status.
+const Todos = z.object({ todos: z.array(z.object({ status: z.string() })) });
+
+// Adds what `lines` of a builder's conversation file say to its progress so far: its tokens, its
+// latest step and its latest plan. Cache reads are left out of the tokens: each answer reads the
+// whole conversation again, so counting them would grow the number with the square of its
+// length. Cache writes are counted. Claude Code sends nearly every token of input as a cache
+// write, and its plain input is a few tokens an answer, so without them an hour of work would
+// read as a few thousand tokens. Counted so, the number comes close to what Claude Code shows for
+// a subagent, the size of its whole conversation.
+function readProgress(lines: string[], before: Progress): Progress {
+  let { step, tokens, plan, last } = before;
+  for (const line of lines) {
+    // Most lines are something else, and parsing each would be slow on a long conversation.
+    if (!line.includes('"assistant"')) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const answer = AnswerLine.safeParse(parsed);
+    if (!answer.success) continue;
+    const { id, usage, content = [] } = answer.data.message;
+    if (usage && id !== last) {
+      tokens =
+        (tokens ?? 0) +
+        usage.input_tokens +
+        (usage.cache_creation_input_tokens ?? 0) +
+        usage.output_tokens;
+      last = id;
+    }
+    // TodoWrite sets the plan, and every other tool call is a step.
+    for (const part of content) {
+      const call = ToolUse.safeParse(part);
+      if (!call.success) continue;
+      const todos = call.data.name === "TodoWrite" ? Todos.safeParse(call.data.input) : null;
+      if (todos?.success) {
+        const items = todos.data.todos;
+        plan = {
+          done: items.filter((item) => item.status === "completed").length,
+          total: items.length,
+        };
+      } else if (call.data.name !== "TodoWrite")
+        step = toolStep(call.data.name, call.data.input) ?? step;
+    }
+  }
+  return { step, tokens, plan, last };
+}
+
+// Returns the step a tool call says the builder is on, in a few words. A command says what it
+// does in its own description, or else is the command itself. A file is named without its
+// folder, and a subagent by what it was asked to do. Any other tool is its name in words.
+function toolStep(tool: string, input: Record<string, unknown>): string | null {
+  // The tool's input as text, or empty when it has no such field or it isn't text.
+  const field = (key: string) => {
+    const value = input[key];
+    return typeof value === "string" ? value : "";
+  };
+  // Agent was called Task in earlier releases of Claude Code.
+  if (tool === "Bash") return stepText(field("description")) ?? stepText(field("command"));
+  if (tool === "Agent" || tool === "Task") return stepText(field("description")) ?? toolWords(tool);
+  if (["Edit", "Write", "MultiEdit"].includes(tool) && field("file_path"))
+    return editing(field("file_path"));
+  if (tool === "NotebookEdit" && field("notebook_path")) return editing(field("notebook_path"));
+  if (tool === "Read" && field("file_path"))
+    return stepText(`Reading ${basename(field("file_path"))}`);
+  return toolWords(tool);
 }
 
 // Returns what a JSON file in an agent's config folder holds, or {} when there is none. It
@@ -280,6 +379,8 @@ export const claude = {
   keys: ["ANTHROPIC_API_KEY"],
   start: startCommand,
   saved: savedConversation,
+  conversation: conversationFile,
+  progress: readProgress,
   review: reviewCommand,
   answer: parseAnswer,
 } as const;
