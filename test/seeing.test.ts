@@ -7,7 +7,16 @@ import { createConnection, createServer } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
-import { homeEnv, itemSql, read, runSkel, source, startDaemon, until } from "./harness.ts";
+import {
+  homeEnv,
+  insideSandbox,
+  itemSql,
+  read,
+  runSkel,
+  source,
+  startDaemon,
+  until,
+} from "./harness.ts";
 
 const dbFile = source("db.ts");
 let home = "";
@@ -534,7 +543,7 @@ test("an agent can't run the list command", async () => {
 });
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there the lead can't start.
-describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("from the lead", () => {
+describe.skipIf(insideSandbox)("from the lead", () => {
   test("a lead runs sc ps, sc issue ls, sc issue show and sc repo ls from its sandbox, but can't attach", async () => {
     threads();
     issue("app", 12, "Add export", "As JSON");

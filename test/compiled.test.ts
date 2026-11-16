@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { source } from "./harness.ts";
+import { insideSandbox, source } from "./harness.ts";
 
 let home = "";
 let skel = "";
@@ -299,7 +299,7 @@ exit 0`,
   });
 });
 
-describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("in the sandbox", () => {
+describe.skipIf(insideSandbox)("in the sandbox", () => {
   test("agents run sc itself", async () => {
     // A program built like Skelcrew that starts a sandbox and runs itself in it, standing in
     // for the daemon starting an agent that runs Skelcrew.
