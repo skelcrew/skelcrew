@@ -12,7 +12,7 @@ import { quietly } from "../run.ts";
 import { errorText } from "../say.ts";
 import { baseOf } from "./builder.ts";
 import { openPrs, prOf, threadTask } from "./copy.ts";
-import { afterReview, ciConfigs, ciResult, hasCi, pastRoundLimit } from "./decide.ts";
+import { afterReview, ciConfigs, ciResult, pastRoundLimit, whoRunsTheSuite } from "./decide.ts";
 import { pushCommit } from "./git.ts";
 import { typeLeadNotes } from "./lead.ts";
 import { review } from "./reviewer.ts";
@@ -80,6 +80,11 @@ async function push(db: Database, folder: string, summary: string): Promise<stri
   return sha;
 }
 
+// How long a review waits for CI's first check on a PR, where the default branch sets CI up
+// and no PR has shown one yet. A forge shows a check within seconds of a push, and Skelcrew's
+// copy has it by the next poll, 30 seconds later.
+const ciWait = 2 * 60_000;
+
 // Returns what tells the reviewer CI's result for the commit, from Skelcrew's copy of the
 // thread's PR, which each poll brings up to date. The end of each failed check's log comes from
 // the forge, once per check, so a review that reads the result again doesn't ask again. A log
@@ -129,6 +134,20 @@ async function reviewRound(
   await setCheck("pending", "Skelcrew's reviewer is reviewing");
   if (signal.aborted) return;
   record(db, folder, { reviewing: sha, submitting: null, reviewer }, `reviewing ${sha}`);
+  // On a first PR CI may not have shown a check yet. Where the default branch sets CI up,
+  // wait a little for one, before the review takes its turn, so the queue never waits. CI
+  // that never runs on PRs, such as a release workflow, then leaves the suite to the reviewer.
+  // The files are looked for in Skelcrew's clone, never the builder's, which the builder
+  // controls.
+  const skelcrewClone = cloneDir(thread.owner, thread.repo);
+  const found = ciConfigs.filter((file) => existsSync(join(skelcrewClone, file)));
+  const prs = () => openPrs(db, thread.owner, thread.repo);
+  const waitUntil = Date.now() + ciWait;
+  while (true) {
+    if (signal.aborted) return;
+    if (pr === null || whoRunsTheSuite(prs(), found, Date.now() > waitUntil) !== "wait") break;
+    await Bun.sleep(5_000);
+  }
   const verdict = await review({
     clone: cloneOf(thread),
     issue: threadTask(db, thread),
@@ -139,17 +158,13 @@ async function reviewRound(
     harness: reviewer,
     signal,
     // With CI on the forge, CI runs the whole test suite and the reviewer reads its result.
-    // Without, the reviewer runs the suite itself. CI's files are looked for in Skelcrew's
-    // clone, on the default branch, never in the builder's clone, which the builder controls.
+    // Without, the reviewer runs the suite itself. Asked again as the review starts, as CI
+    // may show a check while the review waits its turn.
     ci:
       pr === null
         ? undefined
         : {
-            has: () => {
-              const skelcrewClone = cloneDir(thread.owner, thread.repo);
-              const found = ciConfigs.filter((file) => existsSync(join(skelcrewClone, file)));
-              return hasCi(openPrs(db, thread.owner, thread.repo), found);
-            },
+            has: () => whoRunsTheSuite(prs(), found, true) === "ci",
             read: ciOfCommit(db, thread, pr, sha),
           },
   });

@@ -16,6 +16,7 @@ import {
   git,
   homeEnv,
   insideSandbox,
+  prItem,
   read,
   runSkel,
   runSkelInTerminal,
@@ -367,10 +368,20 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     );
   }, 60_000);
 
-  // CI runs the whole test suite once per commit, so the reviewer leaves it to CI. On a first
-  // PR no check has started yet, and the repository's CI files say CI will run.
-  test("on a repository's first PR, the reviewer reads CI's result rather than running the suite", async () => {
+  // CI runs the whole test suite once per commit, so the reviewer leaves it to CI. The PR's own
+  // check shows CI runs on PRs, even on a repository's first PR.
+  test("once CI shows a check on the PR, the reviewer reads CI's result rather than running the suite", async () => {
     addApp({ ".github/workflows/ci.yml": "on: pull_request\n" });
+    answer(plugin, "changed", {
+      items: [
+        taskItem("12", "Add export", { body: "As JSON" }),
+        prItem("7", "Add export", {
+          branch: "skelcrew/12-add-export",
+          checks: [{ name: "test", id: "900", state: "running" }],
+        }),
+      ],
+      next: null,
+    });
     verdict(1, "approve", "Ready to merge.");
     await startApp12();
     await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
