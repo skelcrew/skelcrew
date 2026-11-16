@@ -144,38 +144,59 @@ test("a message cancelled while the harness is busy is never typed", async () =>
   expect(read("received.txt")).toBe("\x1b[200~fresh\x1b[201~\n");
 });
 
-// A builder idle at its prompt can still show the busy mark in its own text, such as a grep
-// through Skelcrew's code. Its Stop hook saying its turn ended is what tells it is idle then.
-test("a message goes in once the hook says the turn ended, though the screen quotes the busy mark", async () => {
-  const script = join(home, "quoting.sh");
+// A stand-in for Claude Code that draws the screen given, laid out as Claude Code's: what the
+// agent said, then its input between two rules, then its footer. It keeps what is typed in.
+function screen(said: string[]): string[] {
+  const footer = ["", "────────", claude.marks.prompt, "────────", "  ⏵⏵ accept edits on"];
+  writeFileSync(join(home, "screen.txt"), `${[...said, ...footer].join("\n")}\n`);
+  const script = join(home, "screen.sh");
   writeFileSync(
     script,
     `#!/bin/sh
 printf '\\033[?2004h'
 stty -echo
-echo 'marks: { busy: "${claude.marks.busy}", prompt: "❯" }'
-echo "${claude.marks.prompt}"
+cat screen.txt
 cat > received.txt
 `,
     { mode: 0o755 },
   );
-  start("lead", [script]);
-  await showing("lead", "marks:");
+  return [script];
+}
+
+// A builder idle at its prompt can show the busy mark in its own text, such as a grep through
+// Skelcrew's code. Only where Claude Code draws its spinner tells it is busy.
+test("a message goes in though the agent's own text quotes the busy mark", async () => {
+  start(
+    "lead",
+    screen([
+      "● Bash(grep -rn busy src)",
+      `  ⎿  src/agents/claude.ts:383:  marks: { busy: "${claude.marks.busy}", prompt: "❯" },`,
+      "",
+      "● The marks are in claude.ts.",
+    ]),
+  );
+  await showing("lead", "accept edits");
+  expect(await whyBusy(socket, "lead", claude.marks, { moment })).toBe("");
+  expect(await typeInto(socket, "lead", claude.marks, "hello", { moment })).toBe(true);
+  await until(() => read("received.txt").endsWith("\n"));
+  expect(read("received.txt")).toBe("\x1b[200~hello\x1b[201~\n");
+});
+
+test("the spinner above the input shows the agent busy, todo list and all", async () => {
+  start(
+    "lead",
+    screen([
+      "● Reading the code.",
+      "",
+      `✻ Thinking… (3s · ${claude.marks.busy})`,
+      "  ⎿  ☐ Read the code",
+      "     ☐ Write the test",
+    ]),
+  );
+  await showing("lead", "accept edits");
   expect(await whyBusy(socket, "lead", claude.marks, { moment })).toBe(
     "it is mid-turn (it shows esc to interrupt)",
   );
-  let ended = false;
-  const typing = typeInto(socket, "lead", claude.marks, "hello", {
-    moment,
-    timeout: Number.POSITIVE_INFINITY,
-    turnOver: () => ended,
-  });
-  await Bun.sleep(moment * 5);
-  expect(read("received.txt")).toBe("");
-  ended = true;
-  expect(await typing).toBe(true);
-  await until(() => read("received.txt").endsWith("\n"));
-  expect(read("received.txt")).toBe("\x1b[200~hello\x1b[201~\n");
 });
 
 test("typing says so when it gives up because there is no prompt", async () => {

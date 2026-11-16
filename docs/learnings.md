@@ -16,8 +16,11 @@ that covers the code you are about to write.
   moment. A bell or a changing window title doesn't mean a turn ended.
 - **The busy mark can sit in the agent's own text.** A builder that greps Skelcrew's code, or
   quotes it, leaves "esc to interrupt" on its screen after its turn ends, and looks busy
-  forever. Trust the harness's Stop hook first: once it says the turn ended, ignore the mark
-  until something is typed in. Esc runs no hook, so after it only the screen tells.
+  forever, Esc or not. Look for the mark only where the harness draws it: the first line of
+  the block just above the input, ahead of any todo list, and the footer below the input.
+  A hook saying the turn ended can't stand in: a builder running before the upgrade fires
+  none, Esc runs none, and a turn may start with nothing typed in, such as when a background
+  task ends.
 - **A person's draft at the prompt is not idle.** A paste lands after their unsent text, and
   the Enter sends both. Ready means a line holding the bare prompt mark, so a draft makes
   typing wait. A person can start a draft after the last look, so look again right before

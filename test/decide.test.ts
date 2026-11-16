@@ -38,7 +38,6 @@ function thread(change: Partial<Thread> = {}): Thread {
     stalled: false,
     submitted: false,
     erred: false,
-    turn_ended: false,
     noting: null,
     title: null,
     body: null,

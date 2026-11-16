@@ -350,9 +350,6 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         // which would lose the closing quote. Each " or \ doubles in length once escaped, so
         // the words are cut until the quote fits.
         const { folder } = callingThread(caller);
-        // The builder is idle now, whatever its screen still shows, so messages waiting for it
-        // can be typed in. Not logged, as it changes with every turn.
-        db.run("UPDATE threads SET turn_ended = 1 WHERE folder = ?", [folder]);
         if (!endedTurnAsks(readThread(db, folder))) return { asking: false };
         let words = untagged(request.said ?? "").slice(0, 100);
         while (JSON.stringify(words).length > 100) words = words.slice(0, -1);
@@ -365,7 +362,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         record(
           db,
           callingThread(caller).folder,
-          { erred: true, turn_ended: true },
+          { erred: true },
           "its builder's harness stopped on an error",
         );
         typeLeadNotes(db, tmux);
@@ -386,11 +383,7 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         // Whatever is typed into the builder starts a new stretch of work: a review's changes,
         // a message from the lead, or your answer. The sidebar times the stretch. Not logged,
         // as only the sidebar shows it.
-        // A new turn starts too, so the builder is busy until its hook says the turn ended.
-        db.run("UPDATE threads SET working_since = ?, turn_ended = 0 WHERE folder = ?", [
-          Date.now(),
-          folder,
-        ]);
+        db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), folder]);
         // Run before every message typed into the builder, so only a question or an error that
         // was open is logged. Typing to a builder that stopped on an error means you fixed it,
         // such as with /login, so it ends the error as it ends a question. Typing to one that

@@ -165,13 +165,10 @@ async function typeChanges(
   text: string,
   signal: AbortSignal,
 ): Promise<void> {
-  // Its hook saying its turn ended counts as idle, whatever its screen still shows.
-  const turnOver = () => readThread(db, folder).turn_ended;
   const { marks } = builderHarness(readThread(db, folder));
   const typed = await typeInto(tmux, folder, marks, text, {
     timeout: Number.POSITIVE_INFINITY,
     signal,
-    turnOver,
   });
   if (typed) record(db, folder, { telling: null }, "typed the review into the builder");
 }

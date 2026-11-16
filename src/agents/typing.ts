@@ -5,15 +5,7 @@ import { mustTmux, tmux } from "./tmux.ts";
 // How typing waits, in milliseconds. `moment` is the pause between two looks at the screen,
 // and between a paste and its Enter. `timeout` is how long to wait for the prompt to be ready
 // before giving up, which may be Infinity. Once `signal` is aborted, nothing is typed.
-// `turnOver` says whether the agent's own hooks report that its last turn ended. The busy mark is
-// then ignored, as it can sit in the agent's own text, such as a builder's grep through
-// Skelcrew's code quoting "esc to interrupt", and would make an idle agent look busy forever.
-type Waits = {
-  moment?: number;
-  timeout?: number;
-  signal?: AbortSignal;
-  turnOver?: () => boolean;
-};
+type Waits = { moment?: number; timeout?: number; signal?: AbortSignal };
 // What a harness's screen shows: `busy` while a turn runs, and a line holding only `prompt`
 // once it is ready for a message.
 export type Marks = { busy: string; prompt: string };
@@ -26,17 +18,42 @@ const readScreen = (socket: string, name: string) =>
 // The reason typing gives for waiting while a person has unsent text at the agent's prompt.
 const draftReason = "an unsent draft is at its prompt";
 
+// The start of the reason typing gives while the agent's turn runs, so whoever waits on it can
+// tell that pressing Esc would end the turn.
+export const midTurn = "it is mid-turn";
+
+// Returns whether the screen's lines show a turn running, by the busy mark where the harness
+// draws it. The agent's own text can quote the mark, such as a builder's grep through
+// Skelcrew's code, and an idle agent would then look busy forever, Esc or not. Claude Code and
+// Codex draw it on the first line of the block just above their input, ahead of any todo list,
+// with only blank lines and the input's border between. Below the input is their footer, never
+// the agent's text. With no input on the screen, such as at a menu, every line counts.
+function showsBusy(lines: string[], marks: Marks): boolean {
+  const mark = promptMark(marks);
+  const input = lines.findLastIndex((line) => line === mark || line.startsWith(`${mark} `));
+  if (input === -1) return lines.some((line) => line.includes(marks.busy));
+  if (lines.slice(input + 1).some((line) => line.includes(marks.busy))) return true;
+  // Up past the input's border and blank lines, which hold no letter or digit, then up to the
+  // first line of the block above them.
+  let top = input - 1;
+  while (top >= 0 && !/[\p{L}\p{N}]/u.test(lines[top] ?? "")) top--;
+  while (top > 0 && lines[top - 1] !== "") top--;
+  return (lines[top] ?? "").includes(marks.busy);
+}
+
+// Returns the mark that starts the harness's input line, without Codex's placeholder, which a
+// draft replaces.
+const promptMark = (marks: Marks) => marks.prompt.split(" ")[0] ?? marks.prompt;
+
 // Returns why one look at the screen shows the agent not ready, by its harness's marks, or
 // empty text when it shows a bare prompt. A prompt line holding text is a person's unsent
 // draft: a message pasted then would be sent along with it. A numbered menu, such as a
 // permission question, also puts the mark before text, so that isn't taken for a draft.
-function notReady(shown: string, marks: Marks, turnOver = false) {
-  if (!turnOver && shown.includes(marks.busy)) return `it is mid-turn (it shows ${marks.busy})`;
+function notReady(shown: string, marks: Marks) {
   const lines = shown.split("\n").map((line) => line.trim());
+  if (showsBusy(lines, marks)) return `${midTurn} (it shows ${marks.busy})`;
   if (lines.includes(marks.prompt)) return "";
-  // The mark alone, without Codex's placeholder, which a draft replaces.
-  const mark = marks.prompt.split(" ")[0] ?? marks.prompt;
-  const input = lines.findLast((line) => line.startsWith(`${mark} `));
+  const input = lines.findLast((line) => line.startsWith(`${promptMark(marks)} `));
   if (input !== undefined && !/^\S+ \d+\. /.test(input)) return draftReason;
   return `it shows no ${marks.prompt} prompt`;
 }
@@ -51,13 +68,13 @@ export async function whyBusy(
   waits: Waits = {},
 ): Promise<string> {
   // Look twice, a moment apart, so a screen still drawing shows as busy.
-  const turnOver = waits.turnOver?.() ?? false;
   const before = readScreen(socket, name);
   await Bun.sleep(waits.moment ?? 500);
   const after = readScreen(socket, name);
-  if (!turnOver && after.includes(marks.busy)) return `it is mid-turn (it shows ${marks.busy})`;
+  const why = notReady(after, marks);
+  if (why.startsWith(midTurn)) return why;
   if (before !== after) return "its screen kept changing";
-  return notReady(after, marks, turnOver);
+  return why;
 }
 
 // Reports whether the agent shows a quiet, ready prompt, by its harness's marks, so Skelcrew can
@@ -75,8 +92,8 @@ export async function isIdle(
 const typingQueues = new Map<string, Promise<void>>();
 
 // Queues a message for the session and returns a promise that settles after its typing
-// attempt, with whether it was typed. Messages wait their turn so two pastes cannot arrive before either message's
-// Enter. `marks` are those of the harness running in the session.
+// attempt, with whether it was typed. Messages wait their turn so two pastes cannot arrive
+// before either message's Enter. `marks` are those of the harness running in the session.
 export function typeInto(
   socket: string,
   name: string,
@@ -137,7 +154,7 @@ async function typeNow(
         // A person can start typing after the last look, and the paste would send their draft
         // along with the message. So look once more right before pasting, and wait again if
         // the prompt isn't bare. A moment remains, but only a tmux call long.
-        if (notReady(readScreen(socket, name), marks, waits.turnOver?.()) === "") break;
+        if (notReady(readScreen(socket, name), marks) === "") break;
       } else if (Date.now() > deadline) {
         const waited = `${timeout / 1000}s`;
         // A person's draft gets a plain answer, as it isn't the agent being busy.

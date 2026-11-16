@@ -58,7 +58,7 @@ for i in $(seq 3000); do
     clear
     case $now in
       busy) echo "esc to interrupt" ;;
-      quoting) echo 'marks: { busy: "esc to interrupt" }'; echo "❯" ;;
+      quoting) echo 'marks: { busy: "esc to interrupt" }'; echo; echo "● Done."; echo; echo "❯" ;;
       *) echo "❯" ;;
     esac
     shown=$now
@@ -287,13 +287,12 @@ describe.skipIf(insideSandbox)("sc tell", () => {
   }, 60_000);
 
   // Approved and ready to merge, the thread needs you, but its builder takes messages as any
-  // other does. Its screen quoting the busy mark doesn't hold them, once its hook said its turn
-  // ended.
+  // other does. Its own text quoting the busy mark doesn't hold them, as only where its harness
+  // draws the mark counts. No hook says its turn ended, as for a builder started before.
   test("a message to an approved builder, idle at its prompt, is typed in", async () => {
     await startApp12();
     changeDb("UPDATE threads SET status = 'waiting', needs_you = 1, verdict = 'approve'");
     writeFileSync(join(builder(), "quoting"), "");
-    expect((await skel(["turn", "ended"], "builder")).err).toBe("");
     const told = await skel(["tell", "app-12", "Rename it."], "lead");
     expect(told.err).toBe("");
     expect(told.out).toContain("Telling app-12's builder now");

@@ -5,7 +5,7 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import { agentRuns } from "../agents/tmux.ts";
-import { typeInto, whyBusy } from "../agents/typing.ts";
+import { midTurn, typeInto, whyBusy } from "../agents/typing.ts";
 import { markSeen } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { noteForLead } from "./lead.ts";
@@ -68,9 +68,7 @@ export async function whyWaiting(db: Database, tmux: string, thread: Thread): Pr
     return `the thread is ${thread.status}`;
   if (!agentRuns(tmux, thread.folder)) return "its builder isn't running";
   if (thread.asking) return "it is asking the human a question";
-  // Its hook can say its turn ended while the look at its screen is under way.
-  const turnOver = () => readThread(db, thread.folder).turn_ended;
-  return whyBusy(tmux, thread.folder, builderHarness(thread).marks, { turnOver });
+  return whyBusy(tmux, thread.folder, builderHarness(thread).marks);
 }
 
 // Saves a message for the thread's builder and has the daemon type it in as soon as the builder
@@ -136,9 +134,10 @@ function afterTyped(db: Database, folder: string, message: Message): void {
 }
 
 // Tells the lead, once per message, that its messages to the thread's builder have waited 10
-// minutes, naming the thread and why, so it can ask the human to press Esc in a builder that
-// should stop its turn. Every waiting message of the lead's counts, not only the next one to go
-// in, as one can wait behind a message of Skelcrew's.
+// minutes, naming the thread and why. For a builder mid-turn, it says the human can press Esc
+// to end the turn. For any other reason Esc would do nothing, or throw away a question the human
+// should answer. Every waiting message of the lead's counts, not only the next one to go in, as
+// one can wait behind a message of Skelcrew's.
 function noteLate(db: Database, tmux: string, thread: Thread, why: string) {
   const rows = db
     .query("SELECT * FROM messages WHERE folder = ? AND sender = 'lead' AND noted = 0 AND at <= ?")
@@ -149,11 +148,14 @@ function noteLate(db: Database, tmux: string, thread: Thread, why: string) {
   const name = threadName(db, thread);
   const [yours, it] =
     late.length === 1 ? ["your message", "it"] : [`${late.length} of your messages`, "them"];
+  const sooner = why.startsWith(midTurn)
+    ? ` To have ${it} sooner, ask the human to press Esc in ${name}.`
+    : "";
   noteForLead(
     db,
     tmux,
     thread,
-    `${name}'s builder hasn't got ${yours} after 10 minutes: ${why}. Skelcrew types ${it} in once it can. To have ${it} sooner, ask the human to press Esc in ${name}.`,
+    `${name}'s builder hasn't got ${yours} after 10 minutes: ${why}. Skelcrew types ${it} in once it can.${sooner}`,
   );
 }
 
@@ -173,11 +175,9 @@ async function deliver(db: Database, tmux: string, folder: string, signal: Abort
     // The builder looked ready a moment ago, so typing shouldn't wait long. If it does, the
     // message stays saved for the next attempt.
     const { marks } = builderHarness(thread);
-    const turnOver = () => readThread(db, folder).turn_ended;
     const typed = await typeInto(tmux, folder, marks, message.text, {
       timeout: 10_000,
       signal,
-      turnOver,
     });
     if (!typed) return;
     db.run("DELETE FROM messages WHERE id = ?", [message.id]);

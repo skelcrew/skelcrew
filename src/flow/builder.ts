@@ -161,7 +161,6 @@ export async function startThread(
       stalled: false,
       submitted: false,
       erred: false,
-      turn_ended: false,
       noting: null,
       title,
       body,

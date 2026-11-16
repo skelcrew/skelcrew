@@ -51,6 +51,8 @@ console.log(JSON.stringify(db.query("SELECT text FROM notes").all()));`);
   expect(texts[0]?.text).toContain(
     "app-12's builder hasn't got your message after 10 minutes: its builder isn't running",
   );
+  // Esc can't help a builder that isn't running, so the note doesn't suggest it.
+  expect(texts[0]?.text).not.toContain("Esc");
 });
 
 test("two comments with the same words both stay to be marked seen", () => {

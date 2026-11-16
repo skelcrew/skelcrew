@@ -47,10 +47,10 @@ export const entryPlace = (entry: Entry) => `:${entry}`;
 // it matters least, or in its place how many messages wait for the builder, which tells why one
 // hasn't reached it. Any other thread has one more: its word, how many messages wait, its harness
 // and its round, dim but the word, which takes its mark's colour so a green approved or a red
-// error reads at a glance. The word comes first, so it is the last to be cut. The lead's row has its name on top
-// and its word below. An agent that isn't running is dim, as it can't be picked. The one you are
-// looking at is shaded across the whole width, on all its lines. `width` leaves out the line at
-// the sidebar's edge.
+// error reads at a glance. The word comes first, so it is the last to be cut. The lead's row
+// has its name on top and its word below. An agent that isn't running is dim, as it can't be
+// picked. The one you are looking at is shaded across the whole width, on all its lines.
+// `width` leaves out the line at the sidebar's edge.
 function rowLines(row: Row, here: boolean, width: number): string[] {
   // The short title, title and step come from an agent and from outside, so they are made safe.
   // A thread from before Skelcrew kept titles has only its name to show.
