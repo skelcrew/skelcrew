@@ -3,19 +3,10 @@
 // older release than yours, or was built from another commit, and copies your setup there when
 // it changed. Your laptop can be a Mac, so this file loads nothing of the Skelcrew that runs on
 // the server.
-import {
-  chmodSync,
-  lstatSync,
-  mkdirSync,
-  mkdtempSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-  writeSync,
-} from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeSync } from "node:fs";
 import { homedir, tmpdir, userInfo } from "node:os";
-import { dirname, join } from "node:path";
-import { sshSocket } from "../paths.ts";
+import { join } from "node:path";
+import { sshFolder } from "../paths.ts";
 import { quietly } from "../run.ts";
 import {
   built,
@@ -102,58 +93,26 @@ export async function keepingTitle<T>(go: () => Promise<T>): Promise<T> {
 // connection. One setup takes five or more of them, and each new connection can ask for your
 // passphrase or a touch of your key. The shared connection ends a minute after the last
 // command, which covers one setup or connect. Options given to ssh beat your ssh config, so
-// they are given only when your config sets none of these. ssh hands none of them to the ssh
-// it starts for a ProxyJump host, so the jump host never takes the server's socket.
+// when your config already says how to share connections for the host, there are none.
 function sharedConnection(host: string): string[] {
-  // ssh -G prints what ssh would use for the host, from your config and the system's, read as
-  // ssh reads them, without connecting. Anything set about sharing, or a failed read, means
-  // Skelcrew adds nothing.
+  // ssh -G prints what ssh would use for the host, from your config and the system's, without
+  // connecting. A read that fails prints no controlmaster, and then nothing is added either.
   const said = Bun.spawnSync(["ssh", "-G", host], { stdout: "pipe", stderr: "ignore" });
   const settings = said.stdout.toString();
-  const unset = ["controlmaster false", "controlpersist no"];
-  if (!unset.every((line) => settings.split("\n").includes(line))) return [];
+  const master = settings.match(/^controlmaster (.*)$/m)?.[1];
+  if (master === undefined || !["false", "no"].includes(master)) return [];
   if (/^controlpath /m.test(settings)) return [];
-  // The host as you typed it, without the user ssh takes from before an @. A name that a Match
-  // line would read as a pattern list gets no sharing.
-  const name = host.slice(host.lastIndexOf("@") + 1);
-  if (!/^[\w.:-]+$/.test(name)) return [];
-  // A temporary folder can be too long for the socket as well, and then nothing is shared.
-  const socket = sshSocket(host);
-  if (Buffer.byteLength(socket) > 86) return [];
-  // Anyone who can reach the socket can run commands on the server as you, so its folder must
-  // be yours alone, also when it was there before. In the temporary folder, someone else could
-  // have made it first, or put a link there.
-  const folder = dirname(socket);
-  mkdirSync(folder, { recursive: true, mode: 0o700 });
+  // Anyone who can reach the sockets can run commands on your servers as you, so the folder must
+  // be yours alone. Someone else can make it first in /tmp, or put a link there, and then
+  // nothing is shared. It is made private again each time, in case its mode changed.
+  const folder = sshFolder();
+  if (!lstatSync(folder, { throwIfNoEntry: false })) mkdirSync(folder, { mode: 0o700 });
   const made = lstatSync(folder);
   if (!made.isDirectory() || made.uid !== userInfo().uid) return [];
   chmodSync(folder, 0o700);
-  // ssh -G prints ControlPath none, ControlMaster no and ControlPersist no as if nothing were
-  // set. So a second look reads your config with values of Skelcrew's after it, in ssh's last
-  // pass, which is also when settings under Match final apply. Any value of Skelcrew's that
-  // doesn't come back means your config set that one. Only your config is read there: a config
-  // file given to ssh would resolve the system config's own Includes wrongly.
-  const check = `${socket}.check`;
-  const probe = ["ControlMaster autoask", "ControlPath skelcrew", "ControlPersist 4321"];
-  const config = [
-    `Include "${homedir()}/.ssh/config"`,
-    `Match final originalhost ${name}`,
-    ...probe.map((line) => `  ${line}`),
-    "",
-  ].join("\n");
-  // Written beside it and renamed into place, so an sc starting at the same moment never reads
-  // half a file. ssh refuses a config file others can write to.
-  writeFileSync(`${check}.${process.pid}`, config, { mode: 0o600 });
-  renameSync(`${check}.${process.pid}`, check);
-  const checked = Bun.spawnSync(["ssh", "-G", "-F", check, host], {
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  const back = checked.stdout.toString().split("\n");
-  if (!probe.every((line) => back.includes(line.toLowerCase()))) return [];
-  // ssh would read a % in the path as a token, so it is doubled.
-  const path = socket.replaceAll("%", "%%");
-  return ["-o", "ControlMaster=auto", "-o", `ControlPath=${path}`, "-o", "ControlPersist=60"];
+  // %C is a hash of the connection, so each host, a ProxyJump host too, gets its own socket.
+  const path = `ControlPath=${folder}/%C`;
+  return ["-o", "ControlMaster=auto", "-o", "ControlPersist=60", "-o", path];
 }
 
 // Returns how to run sc on the host with these words, with `shared` from sharedConnection. It
