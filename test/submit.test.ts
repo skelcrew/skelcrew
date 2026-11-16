@@ -88,7 +88,7 @@ cat > "$s/prompt-$n"
 git branch -r > "$s/branches-$n"
 git rev-parse origin/main > "$s/main-$n" 2>&1
 test -e "$CODEX_HOME/slow-$n" && sleep 30
-i=0; while test -e "$CODEX_HOME/held-$n" && ! test -e "$s/go-$n" && [ $i -lt 300 ]; do sleep 0.1; i=$((i+1)); done
+i=0; while test -e "$CODEX_HOME/held-$n" && ! test -e "$s/go-$n" && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done
 test -e "$CODEX_HOME/verdict-$n" || { echo "no verdict for review $n" >&2; exit 1; }
 cp "$CODEX_HOME/verdict-$n" "$out"`,
   );
