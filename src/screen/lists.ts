@@ -10,7 +10,7 @@ import type { DaemonRequest } from "../flow/requests.ts";
 import { needsYou, Thread, threadName } from "../flow/thread.ts";
 import { forgeOf, trackerOf } from "../plugins/ask.ts";
 import { green, grey, yellow } from "./look.ts";
-import { type Open, threadMark, threadWord } from "./rows.ts";
+import { type Open, threadMark, threadWord, withReviewer } from "./rows.ts";
 
 // The three entries of the sidebar, each of which shows a list.
 export type Entry = "issues" | "threads" | "prs";
@@ -180,8 +180,8 @@ function prGroups(db: Database, open: Open, threads: Known[]): Group[] {
           commit: pr.head,
         },
       };
-    // A review under way counts as a round going on, the first one included.
-    const reviewed = on && (on.thread.review_round !== null || on.word === "reviewing");
+    // A review under way or waiting counts as a round going on, the first one included.
+    const reviewed = on && (on.thread.review_round !== null || withReviewer(on.word));
     const sign = ready ? "●" : reviewed ? "◐" : "○";
     // A working thread's green and a waiting one's dim say nothing of how far the PR is.
     const colour = on ? markOf(on)[1] : grey;
@@ -224,7 +224,7 @@ function threadGroups(threads: Known[], now: number): Group[] {
     // Only a review is on another harness, and a thread with no harness saved started before
     // Skelcrew saved it, when builders ran only on Claude Code. A thread with no issue in the
     // tracker has a task such as t1.
-    const harness = word === "reviewing" ? (thread.reviewer ?? "") : (thread.harness ?? "claude");
+    const harness = withReviewer(word) ? (thread.reviewer ?? "") : (thread.harness ?? "claude");
     const issue = /^t\d+$/.test(thread.task) ? "" : `#${thread.task}`;
     const refs = [issue, thread.pr === null ? "" : `#${thread.pr}`].filter(Boolean).join(" ");
     const changed = thread.changed ?? thread.started;

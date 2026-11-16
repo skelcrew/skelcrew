@@ -184,6 +184,7 @@ describe("sc ps", () => {
         title: "Add docs",
         status: "waiting",
         needsYou: true,
+        queued: false,
         branch: "skelcrew/7",
         pr: null,
         prUrl: null,
@@ -192,6 +193,20 @@ describe("sc ps", () => {
       },
     ]);
     expect(JSON.parse((await skel(["ps", "--json", "app"])).out)).toHaveLength(2);
+  });
+
+  // A stopped thread can keep the fields of the review its stop cancelled.
+  test("says a stopped thread is stopped, not queued for review", async () => {
+    sql(`INSERT INTO repositories (name, owner, repo) VALUES ('app', 'simon', 'app');
+INSERT INTO threads (owner, repo, task, folder, branch, status, session, title, reviewing, queued)
+  VALUES ('simon', 'app', 3, 'app-3', 'skelcrew/3', 'stopped', NULL, 'Old', 'abc', 5);`);
+    serve();
+    await untilAnswers();
+    const listed = await skel(["ps"]);
+    expect(listed.err).toBe("");
+    expect(listed.out).toBe(
+      "THREAD  TITLE  STATUS   PR  CI  REVIEW  NEEDS YOU\napp-3   Old    stopped\n",
+    );
   });
 
   test("says when there are no threads, and when the repository isn't Skelcrew's", async () => {
@@ -236,6 +251,7 @@ describe("sc ps", () => {
         title: null,
         status: "working",
         needsYou: false,
+        queued: false,
         branch: "skelcrew/12",
         pr: null,
         prUrl: null,
@@ -585,6 +601,7 @@ describe("with a forge", () => {
       title: "Add export",
       status: "waiting",
       needsYou: false,
+      queued: false,
       branch: "skelcrew/12",
       pr: 31,
       prUrl: "https://github.com/simon/app/pull/31",

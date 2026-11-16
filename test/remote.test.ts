@@ -29,13 +29,14 @@ let laptop = { folder: "", main: "", commit: "" };
 // can see that each one arrived exactly as typed. Built with a commit, it stops as a copied
 // Skelcrew does when the laptop's build differs. Without one, it is a Skelcrew from before builds
 // carried their commit. On a server whose first run hasn't finished, it runs nothing but the
-// first run, which finishes it. Until it takes the laptop's setup, it stops on a laptop that
-// has one, as a copied Skelcrew does when its setup differs.
+// first run, which finishes it, and says so before checking its build or setup, as a copied
+// Skelcrew does. Until it takes the laptop's setup, it stops on a laptop that has one, as a
+// copied Skelcrew does when its setup differs.
 const serverSkel = (built?: string) => `#!/bin/sh
+test "$1" != first-run && test "$1" != take-setup && test -f first-run-unfinished && exit 97
 ${built === undefined ? "" : `test -n "$SKELCREW_LAPTOP_BUILD" && test "$SKELCREW_LAPTOP_BUILD" != "${built}" && { echo "Skelcrew on $SKELCREW_REMOTE_NAME is from ${built}"; exit 98; }\n`}test -n "$SKELCREW_LAPTOP_SETUP" && test ! -f setup-taken && exit 96
 test "$1" = take-setup && { echo "took the laptop's setup"; cp .config/skelcrew/laptop-setup.json setup-taken; exit; }
 test "$1" = first-run && { echo "the first run on the server"; rm -f first-run-unfinished; test ! -f first-run-fails; exit; }
-test -f first-run-unfinished && exit 97
 echo "Skelcrew on the server got $# arguments"
 for word in "$@"; do echo "[$word]"; done
 exit 3
@@ -291,6 +292,37 @@ test("in a terminal, --remote finishes a first run that isn't done, then runs th
   expect(calls()).toBe(`${onServer(" ps")}\n${onServer(" first-run")}\n${onServer(" ps")}\n`);
 });
 
+// Your setup holds logins and installs plugins there, which is setting the server up, so it
+// waits for your yes.
+test("in a terminal, --remote asks before copying your setup to a server whose first run isn't done", async () => {
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\n");
+  installed(laptop.commit);
+  writeFileSync(join(home, "server", "first-run-unfinished"), "");
+  const { wrote, code } = await skelInTerminal(["--remote", "simon@workbox", "ps"], ["y"]);
+  expect(code).toBe(3);
+  const asked = wrote.indexOf("simon@workbox isn't set up. Set it up now? [Y/n]");
+  expect(asked).toBeGreaterThan(-1);
+  expect(wrote.indexOf("took the laptop's setup")).toBeGreaterThan(asked);
+  expect(wrote.indexOf("the first run on the server")).toBeGreaterThan(asked);
+});
+
+test("in a terminal, a no to setting up a server whose first run isn't done copies none of your setup", async () => {
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\n");
+  installed(laptop.commit);
+  writeFileSync(join(home, "server", "first-run-unfinished"), "");
+  const { wrote, code } = await skelInTerminal(["--remote", "simon@workbox", "ps"], ["n"]);
+  expect(wrote).toContain("sc remote add simon@workbox");
+  expect(code).toBe(1);
+  // Only the command you asked for reached the server.
+  const lines = calls().trim().split("\n");
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toMatch(/^ssh .* simon@workbox .* sc ps$/);
+  expect(existsSync(join(home, "server", ".config", "skelcrew", "laptop-setup.json"))).toBe(false);
+  expect(existsSync(join(home, "server", "setup-taken"))).toBe(false);
+});
+
 test("in a terminal, a no to setting up sets up nothing and says what to run later", async () => {
   const { wrote, code } = await skelInTerminal(["--remote", "simon@workbox", "ps"], ["n"]);
   expect(wrote).toContain("sc remote add simon@workbox");
@@ -480,9 +512,23 @@ test("the update keeps the old Skelcrew when the copy fails", async () => {
   expect(calls()).not.toContain("systemctl --user restart");
 });
 
+// Gives the test's home a finished first run, as setupDone reads it: a harness chosen, its login
+// and the daemon's service.
+function firstRunDone(): void {
+  const config = join(home, ".config", "skelcrew");
+  const codex = join(home, ".local", "share", "skelcrew", "codex");
+  const units = join(home, ".config", "systemd", "user");
+  for (const folder of [config, codex, units]) mkdirSync(folder, { recursive: true });
+  writeFileSync(join(config, "config.yaml"), "harness: codex\n");
+  writeFileSync(join(codex, "auth.json"), "login\n");
+  writeFileSync(join(units, "skelcrew.service"), "");
+}
+
 // Runs main.ts as the Skelcrew on a server would run it, built from the given commit
-// or from a checkout, asked for its help by a laptop with the given build.
+// or from a checkout, asked for its help by a laptop with the given build. The server's first
+// run is done, so the build is what decides.
 function farSkel(built: string | null, laptopBuild?: string, args = ["--help"]) {
+  firstRunDone();
   const define = built === null ? [] : ["--define", `SKELCREW_BUILD="${built}"`];
   const env: Record<string, string> = { PATH: "/usr/bin:/bin", HOME: home };
   if (laptopBuild)
@@ -524,6 +570,25 @@ test("a list runs whichever laptop's build its tmux server remembers", () => {
   ]);
   expect(run.code).toBe(1);
   expect(run.out).toBe("");
+});
+
+// Out of date, or with another setup, Skelcrew there would have the laptop copy and install
+// things, so a machine that isn't set up says so first, and the laptop asks.
+test("a copied Skelcrew whose first run isn't done says so before its build or setup is checked", () => {
+  const run = Bun.spawnSync(
+    [process.execPath, "--define", 'SKELCREW_BUILD="abc1234"', laptop.main, "ps"],
+    {
+      env: {
+        PATH: "/usr/bin:/bin",
+        HOME: home,
+        SKELCREW_REMOTE_NAME: "x",
+        SKELCREW_LAPTOP_BUILD: "def5678",
+        SKELCREW_LAPTOP_SETUP: "another",
+      },
+    },
+  );
+  expect(run.exitCode).toBe(97);
+  expect(run.stdout.toString()).toBe("");
 });
 
 test("a copied Skelcrew built with uncommitted changes is never up to date", () => {

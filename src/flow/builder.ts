@@ -150,6 +150,7 @@ export async function startThread(
       needs_you: false,
       submitting: null,
       reviewing: null,
+      queued: null,
       telling: null,
       held: null,
       // A new thread has no PR yet, so everything on the one it opens is new.

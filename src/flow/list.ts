@@ -14,7 +14,7 @@ import { reviewCheck } from "./decide.ts";
 import { ciSummary, reviewVerdict } from "./page.ts";
 import { findRepository, noRepositories, repositories, repositoryAt } from "./repo.ts";
 import { roundRunning } from "./round.ts";
-import { findThread, needsYou, Thread, threadName, threadOn } from "./thread.ts";
+import { findThread, needsYou, queuedForReview, Thread, threadName, threadOn } from "./thread.ts";
 
 // A repository as sc repo ls shows it. `missing` is a tracker its skelcrew.yaml names that
 // isn't installed, so it has none until you install that plugin.
@@ -63,16 +63,17 @@ function tabClosed(db: Database, r: { owner: string; repo: string }): boolean {
 }
 
 // A thread as sc ps shows it, with the short title the lead gave it, if any, and its whole
-// title, which an old row may lack. `pr`, `prUrl` and `checks` are null without a PR, and
-// `review` without a forge, where sc ps leaves those columns empty. `checks` is what the PR's CI
-// says, without Skelcrew's own check. `review` is where Skelcrew's reviewer stands: its round,
-// and when it was asked for or ended, as an ISO time.
+// title, which an old row may lack. `queued` says its review waits for a place. `pr`, `prUrl`
+// and `checks` are null without a PR, and `review` without a forge, where sc ps leaves those
+// columns empty. `checks` is what the PR's CI says, without Skelcrew's own check. `review` is
+// where Skelcrew's reviewer stands: its round, and when it was asked for or ended, as an ISO time.
 export const ThreadRow = z.object({
   thread: z.string(),
   short: z.string().nullable(),
   title: z.string().nullable(),
   status: Thread.shape.status,
   needsYou: z.boolean(),
+  queued: z.boolean(),
   branch: z.string(),
   pr: z.number().nullable(),
   prUrl: z.string().nullable(),
@@ -145,6 +146,7 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
       title: thread.title && removeControlCodes(thread.title),
       status: thread.status,
       needsYou: needsYou(thread),
+      queued: queuedForReview(thread),
       branch: thread.branch,
       pr,
       prUrl: copy?.link ?? null,
@@ -270,23 +272,25 @@ export function printRepositories(repositories: RepositoryRow[], json: boolean):
 // The width sc ps keeps its rows to, so they fit a terminal of the usual size.
 const psWidth = 80;
 
-// The most columns a thread's name takes in sc ps. With the other columns at their widest,
-// such as "reviewing r12", a row still fits 80 columns.
-const threadRoom = 20;
+// The most columns a thread's name takes in sc ps, and the fewest it is cut to when the other
+// columns are at their widest, such as a thread queued for review next to one reviewing r12.
+const nameRoom = { most: 20, least: 10 };
 
-// Returns a thread's name cut to fit sc ps, in its middle, as a repository's name can be long.
-// Its task stays whole, such as -t7, as it is what tells a repository's threads apart.
-function shortName(name: string): string {
-  if (Bun.stringWidth(name) <= threadRoom) return name;
+// Returns a thread's name cut to `room` columns, in its middle, as a repository's name can be
+// long. Its task stays whole, such as -t7, as it is what tells a repository's threads apart.
+function shortName(name: string, room: number): string {
+  if (Bun.stringWidth(name) <= room) return name;
   const task = name.slice(name.lastIndexOf("-"));
-  return `${fitted(name.slice(0, name.length - task.length), threadRoom - task.length)}${task}`;
+  return `${fitted(name.slice(0, name.length - task.length), room - task.length)}${task}`;
 }
 
-// Prints threads for sc ps: as JSON for tools, or else as a table. Its title column has each
-// thread's short title, or its title cut to what the other columns leave of a row, so a long
-// title doesn't push the rest out of sight. A long thread name is cut too. --json has it whole. The title comes from the tracker and the short title
-// from the lead, so their control codes are removed, which could break a row or reach your
-// terminal. A review shows its round, such as changes r3.
+// Prints threads for sc ps: as JSON for tools, or else as a table that fits 80 columns. The
+// thread's name and its title share what the other columns leave of a row: a long name is cut
+// first to 20 columns, or fewer when the others are wide, and the title, its short title or
+// its title, takes the rest, so a long one doesn't push the rest out of sight. --json has
+// both whole. The title comes from the tracker and the short title from the lead, so their
+// control codes are removed, which could break a row or reach your terminal. A review shows
+// its round, such as changes r3.
 export function printThreads(threads: ThreadRow[], json: boolean): void {
   if (json) {
     console.log(JSON.stringify(threads));
@@ -296,27 +300,35 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
     console.log("There are no threads.");
     return;
   }
-  // Every column but the title, as it will show.
+  // The columns after the title, as they will show. Waiting says little while many reviews
+  // wait their turn, so the status says which.
   const rows = threads.map((t) => {
     const review = t.review === null ? "" : t.review.state;
     const round = t.review?.round == null ? "" : ` r${t.review.round}`;
     return [
-      shortName(t.thread),
-      t.status,
+      t.queued ? "queued for review" : t.status,
       t.pr === null ? "" : `#${t.pr}`,
       t.checks ?? "",
       `${review}${round}`,
       t.needsYou ? "yes" : "",
     ];
   });
-  // The title takes what the other columns and the two spaces between each leave of a row.
-  const heading = ["THREAD", "STATUS", "PR", "CI", "REVIEW", "NEEDS YOU"];
-  const others = heading.reduce((sum, _, i) => sum + columnWidth([heading, ...rows], i) + 2, 0);
-  const room = Math.max(psWidth - others, "TITLE".length);
-  const titles = threads.map((t) => fitted(removeControlCodes(t.short ?? t.title ?? ""), room));
+  // The name and title share what those columns, and the two spaces after each column but the
+  // last, leave of a row. The title keeps at least room for its heading.
+  const heading = ["STATUS", "PR", "CI", "REVIEW", "NEEDS YOU"];
+  const others = heading.reduce((sum, _, i) => sum + columnWidth([heading, ...rows], i), 0);
+  const left = psWidth - others - 2 * (heading.length + 1);
+  const room = Math.min(nameRoom.most, Math.max(left - "TITLE".length, nameRoom.least));
+  const names = threads.map((t) => shortName(t.thread, room));
+  const nameWidth = columnWidth([["THREAD"], ...names.map((n) => [n])], 0);
+  const titleWidth = Math.max(left - nameWidth, "TITLE".length);
   table(
-    ["THREAD", "TITLE", ...heading.slice(1)],
-    rows.map(([name = "", ...rest], i) => [name, titles[i] ?? "", ...rest]),
+    ["THREAD", "TITLE", ...heading],
+    threads.map((t, i) => [
+      names[i] ?? "",
+      fitted(removeControlCodes(t.short ?? t.title ?? ""), titleWidth),
+      ...(rows[i] ?? []),
+    ]),
   );
 }
 
