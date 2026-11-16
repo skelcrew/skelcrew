@@ -75,6 +75,19 @@ test("a thread's strip has its name, title, PR, checks and latest review", () =>
   );
 });
 
+test("when the round limit stops a thread, the verdict reads round limit, in yellow", () => {
+  const changes = { round: 4, reviewer: "codex", verdict: "changes" };
+  const stopped = thread({ word: "round limit", needsYou: true, review: changes });
+  expect(read({ rows: [stopped] })).toEndWith("#34  checks passing  round 4 · codex · round limit");
+  expect(top({ rows: [stopped] })).toEndWith(
+    "round 4 · codex · #[fg=colour221]round limit#[default]",
+  );
+  // Once sc start lets the thread go on, the strip is as before, with no yellow.
+  const goesOn = thread({ word: "working", review: changes });
+  expect(read({ rows: [goesOn] })).toEndWith("round 4 · codex · changes");
+  expect(top({ rows: [goesOn] })).not.toContain("colour221");
+});
+
 test("the strip ends at the right edge of the row, above the agent's last column", () => {
   const line = seen(top());
   expect(line).toEndWith(whole);
@@ -142,10 +155,10 @@ test("the tabs come first: the strip gives way before any tab does", () => {
 const roomy = { left: 40, width: 99 };
 
 test("above the sidebar, Skelcrew in white in line with the marks, then dim a dot and where it runs", () => {
-  const line = top({ where: "sprite:demo" }, roomy);
-  expect(above({ where: "sprite:demo" }, roomy)).toStartWith("  Skelcrew v0.1.0 · sprite:demo");
+  const line = top({ where: "simon@workbox" }, roomy);
+  expect(above({ where: "simon@workbox" }, roomy)).toStartWith("  Skelcrew v0.1.0 · simon@workbox");
   expect(line).toContain("#[bold,fg=colour231]Skelcrew#[default]");
-  expect(line).toContain("#[fg=brightblack] v0.1.0 · sprite:demo#[default]");
+  expect(line).toContain("#[fg=brightblack] v0.1.0 · simon@workbox#[default]");
 });
 
 test("on this machine the header is Skelcrew and its version, with no dot and no place", () => {

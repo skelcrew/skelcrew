@@ -106,9 +106,8 @@ const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 // Shows an entry's list of the repository named by its owner/name, and the pages opened from it,
 // until the pane goes. `agents` names the agents' tmux server and `session` the screen's session,
 // whose sidebar this tells which page is open, for the strip, and which thread to show. `where`
-// names the remote Skelcrew runs on, and is empty on the machine you sit at. `start` is the
-// session of the thread whose row the list starts on, for Alt-B back from its agent, or empty to
-// start on the first row.
+// names the remote Skelcrew runs on, and is empty on the machine you sit at. A list starts on
+// its first row.
 // Up and Down move a list, and Enter, Right or a click opens a row: an issue's or PR's page here,
 // or a thread's agent, which the sidebar puts in place of this pane. Right opens as Left goes
 // back, so the arrows alone take you in and out. On a page, Up, Down and the
@@ -117,14 +116,13 @@ const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 // list or its page, after asking in the footer. All else you type goes nowhere. It tells the
 // footer what to say, with s or m only while the row you are on can be started or merged. It
 // reads the list again each second, and writes only when what shows changed, so a list left
-// open writes nothing. A page is read once.
+// open sends nothing over a slow link. A page is read once.
 export async function runPane(
   agents: string,
   session: string,
   entry: Entry,
   where: string,
   repository: string,
-  start: string,
 ): Promise<void> {
   const db = openDb();
   const [owner = "", repo = ""] = repository.split("/");
@@ -133,10 +131,7 @@ export async function runPane(
   // name, so a row that moves as the list changes keeps you on it. `top` is the first line
   // shown, as far as the list or page scrolled.
   let groups = listGroups(db, open, entry, Date.now());
-  let here = Math.max(
-    groups.flatMap((group) => group.rows).findIndex((row) => start && row.session === start),
-    0,
-  );
+  let here = 0;
   let top = 0;
   let page: { read: Page; url: string; top: number } | null = null;
   let lastFrame = "";
@@ -303,7 +298,7 @@ export async function runPane(
     draw(true);
   };
   // Opens the page's link in your browser, or copies it to your terminal's clipboard with OSC
-  // 52, which reaches you over ssh and sprite too, and says so in the hint. The browser is
+  // 52, which reaches you over ssh too, and says so in the hint. The browser is
   // detached, so it outlives the page.
   const openLink = async (url: string) => {
     if (canOpen) {

@@ -344,6 +344,31 @@ test("Shift+Enter reaches the agent as a key of its own, through both tmux serve
   expect(read("lead.keys")).toBe(`a${shiftEnter}b\r`);
 });
 
+// Mac terminals send Option-Left and Option-Right as Esc b and Esc f, and other terminals send
+// Alt-Left and Alt-Right. All four move by word in a prompt, so they must reach the agent and
+// leave the screen where it is, whether or not your terminal sends extended keys. The agent asks
+// for extended keys, as Claude Code and Codex do, so Esc b and Esc f reach it as Alt-B and Alt-F
+// in the form it asked for.
+for (const extended of [false, true])
+  test(`the keys that move by word reach the agent, from a terminal ${extended ? "with" : "without"} extended keys`, async () => {
+    extendedKeys = extended;
+    keyLoggingLead();
+    open("lead");
+    await ready("lead");
+    // Each goes alone, as from a hand.
+    for (const word of ["\x1bb", "\x1bf", "\x1b[1;3D", "\x1b[1;3C"]) {
+      type(word);
+      await Bun.sleep(100);
+    }
+    press("Enter");
+    await until(() => read("lead.keys").endsWith("\r"), "the Enter");
+    // tmux before 3.5 has only the xterm form of an extended key.
+    const alt = (code: number) => (tmuxIsAtLeast(3, 5) ? `\x1b[${code};3u` : `\x1b[27;3;${code}~`);
+    expect(read("lead.keys")).toBe(`${alt(98)}${alt(102)}\x1b[1;3D\x1b[1;3C\r`);
+    expect(selected()).toBe("◆ lead");
+    expect(seen()).toContain("I am lead");
+  });
+
 test("with a terminal that sends extended keys, the screen's own keys still work", async () => {
   extendedKeys = true;
   open("lead");
@@ -499,6 +524,141 @@ test("a tmux server started by an older Skelcrew gets scrolling when the screen 
   await until(() => !seen().includes("I am output"), "the scrollback");
 });
 
+// What your terminal's clipboard got from the screen, by OSC 52, or nothing. The test's terminal
+// keeps what a program copies as a buffer of its own, as it has no clipboard.
+const clipboard = () => {
+  const said = Bun.spawnSync(["tmux", "-L", terminal, "-f", "/dev/null", "show-buffer"], {
+    env: { ...env(), TMUX: "" },
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  return said.stdout.toString();
+};
+// The left button pressed at the first place on screen, dragged through the others and let go
+// at the last. Each step is a moment apart, as from a hand: tmux picks the binding for a mouse
+// event as it arrives, so a release in the same read as the drag would come before copy mode
+// had started.
+async function drag(from: [number, number], ...through: [number, number][]): Promise<void> {
+  const last = through.at(-1) ?? from;
+  const moves = through.map((place) => `32;${place.join(";")}M`);
+  const steps = [`0;${from.join(";")}M`, ...moves, `0;${last.join(";")}m`];
+  for (const step of steps) {
+    type(`\x1b[<${step}`);
+    await Bun.sleep(100);
+  }
+}
+// Where a word on a line of the agent is on screen, as the column and row a terminal counts
+// from 1.
+function placeOf(word: string, line: string): [number, number] {
+  const rows = seen().split("\n");
+  const row = rows.findIndex((text) => text.includes(line));
+  return [(rows[row] ?? "").indexOf(word, (rows[row] ?? "").indexOf(line)) + 1, row + 1];
+}
+// What an agent to copy from prints.
+const lines = 'echo "first word here"; echo "second line"';
+// Opens the screen on an agent that printed `lines`, with a terminal that keeps what is copied.
+async function copying(): Promise<void> {
+  agent("words", lines);
+  sql(`INSERT INTO threads (owner, repo, task, folder, branch, status) VALUES
+    ('simon', 'app', 20, 'words', 'skelcrew/20', 'working')`);
+  open("words");
+  await ready("words");
+  tmux(terminal, "set", "-s", "set-clipboard", "on");
+}
+
+test("a drag over the agent copies just its text to your terminal's clipboard", async () => {
+  await copying();
+  const [column, row] = placeOf("first", "first word here");
+  // tmux selects up to the cell before the one the button is let go on.
+  await drag([column, row], [column + 10, row]);
+  await until(() => clipboard() === "first word", "the copy");
+  // The agents' server keeps no copy, so no agent can ask tmux for it.
+  expect(tmux(agents, "list-buffers").out).toBe("");
+  // Typing reaches the agent, and the agent's live screen is back.
+  type("after\r");
+  await until(() => read("words.typed") === "after\n", "the typing");
+  expect(scrolledBack()).not.toContain("1");
+});
+
+test("a double click copies a word, and a triple click a line", async () => {
+  await copying();
+  // A click inside the word, not on its edge.
+  const [start, row] = placeOf("second", "second line");
+  const column = start + 1;
+  // Clicks a number of times in quick succession, as a hand does, each a moment apart.
+  const clicks = async (count: number) => {
+    for (let n = 0; n < count; n++) {
+      click(column, row);
+      await Bun.sleep(50);
+    }
+  };
+  await clicks(2);
+  await until(() => clipboard() === "second", "the word");
+  await until(() => !scrolledBack().includes("1"), "the live agent");
+  // Past tmux's time for a double click, so the next three start afresh.
+  await Bun.sleep(600);
+  await clicks(3);
+  await until(() => clipboard().startsWith("second line"), "the line");
+});
+
+test("a drag let go over the sidebar copies the agent's text up to its edge", async () => {
+  await copying();
+  const [column, row] = placeOf("word", "first word here");
+  await drag([column, row], [column - 3, row], [10, row]);
+  await until(() => clipboard() !== "", "the copy");
+  expect(clipboard()).toBe("first ");
+  type("after\r");
+  await until(() => read("words.typed") === "after\n", "the typing");
+});
+
+test("a drag let go over the footer copies the agent's text to the end of its last row", async () => {
+  await copying();
+  const [column, row] = placeOf("line", "second line");
+  await drag([column, row], [column + 2, row + 1], [60, 30]);
+  await until(() => clipboard() !== "", "the copy");
+  expect(clipboard()).toStartWith("line\nI am words\n");
+});
+
+test("copying while scrolled back keeps your place, and a key returns you to the agent", async () => {
+  agent("output", history);
+  open("output");
+  await until(() => seen().includes("I am output"), "the agent");
+  tmux(terminal, "set", "-s", "set-clipboard", "on");
+  wheel(64);
+  await until(() => seen().includes("line 190"), "the scrollback");
+  const [column, row] = placeOf("line 190", "line 190");
+  await drag([column, row], [column + 8, row]);
+  await until(() => clipboard() === "line 190", "the copy");
+  await Bun.sleep(300);
+  expect(scrolledBack()).toContain("1");
+  type("x\r");
+  await until(() => read("output.typed") === "x\n", "the typing");
+  expect(scrolledBack()).not.toContain("1");
+});
+
+test("an agent that asked for the mouse gets a drag itself", async () => {
+  agent("drawn", fullScreen("drawn", "\\033[?1002h\\033[?1006h"));
+  open("drawn");
+  await until(() => seen().includes("I am drawn"), "the agent");
+  await drag([60, 5], [64, 5]);
+  await until(() => read("drawn.bytes").includes("\x1b[<0;25;4m"), "the release");
+  expect(read("drawn.bytes")).toBe("\x1b[<0;21;4M\x1b[<32;25;4M\x1b[<0;25;4m");
+  expect(scrolledBack()).not.toContain("1");
+});
+
+test("an agent's own copy reaches your terminal, and other agents can't read it", async () => {
+  // An agent copies, as Claude Code's full-screen drawing does, once the test says go.
+  const copy = "printf '\\033]52;c;%s\\007' $(printf 'from agent' | base64)";
+  agent("copier", `while [ ! -e go ]; do sleep 0.1; done; ${copy}`);
+  open("copier");
+  await until(() => tmux(agents, "list-clients").out !== "", "the screen to show the agent");
+  tmux(terminal, "set", "-s", "set-clipboard", "on");
+  writeFileSync(join(home, "go"), "");
+  await until(() => clipboard() === "from agent", "the agent's copy");
+  // The agents' server keeps no copy, so a program asking tmux for the clipboard gets nothing.
+  expect(tmux(agents, "list-buffers").out).toBe("");
+});
+
 test("resizing the terminal resizes the agent and keeps the sidebar narrow", async () => {
   open("lead");
   await ready("lead");
@@ -642,16 +802,16 @@ const listKeys = "  ⌥↑↓ move  ⌥Q quit  ? keys";
 const startKeys = `${listKeys}  s start`;
 const mergeKeys = `${listKeys}  m merge`;
 
-test("the footer runs across the screen under a thin line, with move and quit, then back and Esc", async () => {
+test("the footer runs across the screen under a thin line, with move and quit, then what Esc stops", async () => {
   sql("UPDATE threads SET harness = 'codex' WHERE task = 7");
   open("lead");
   await ready("lead");
-  const lead = "  ⌥↑↓ move  ⌥Q quit  ⌥B back  Esc stops claude";
+  const lead = "  ⌥↑↓ move  ⌥Q quit  Esc stops claude";
   await until(() => footer() === lead, "the lead's footer");
   expect(aboveFooter()).toBe("─".repeat(120));
   toSecondThread();
   await until(() => seen().includes("I am app-7"), "app-7");
-  await until(() => footer() === "  ⌥↑↓ move  ⌥Q quit  ⌥B back  Esc stops codex", "app-7's footer");
+  await until(() => footer() === "  ⌥↑↓ move  ⌥Q quit  Esc stops codex", "app-7's footer");
 });
 
 test("the footer ends with the machine's load, even with no thread working", async () => {
@@ -663,7 +823,7 @@ test("the footer ends with the machine's load, even with no thread working", asy
     () => /cpu \d+% {2}mem [\d.]+\/\d+G *$/.test(seen().split("\n")[29] ?? ""),
     "the load",
   );
-  expect(footer()).toBe("  ⌥↑↓ move  ⌥Q quit  ⌥B back  Esc stops claude");
+  expect(footer()).toBe("  ⌥↑↓ move  ⌥Q quit  Esc stops claude");
 });
 
 test("under a list or page the footer adds ? keys, and s or m while the row can take it, and the agent's height stays", async () => {
@@ -683,7 +843,7 @@ test("under a list or page the footer adds ? keys, and s or m while the row can 
   await until(() => right().includes("Working"), "the threads");
   expect(footer()).toBe(listKeys);
   press("M-S-Up");
-  await until(() => footer().endsWith("⌥B back  Esc stops claude"), "the lead's footer");
+  await until(() => footer().endsWith("⌥Q quit  Esc stops claude"), "the lead's footer");
   expect(readFileSync(join(home, "lead.size"), "utf8")).toBe("26 81\n");
 });
 
@@ -715,13 +875,13 @@ test("above the sidebar it says Skelcrew, in white, and the checkout's version w
 });
 
 test("each terminal says where it came from, as they can come from different laptops", async () => {
-  open("lead", "one", "xterm-256color", "120", "sprite:demo");
+  open("lead", "one", "xterm-256color", "120", "simon@workbox");
   await ready("lead");
   open("lead", "two");
   await ready("lead", "two");
   const place = (window: string) => (seen(window).split("\n")[0] ?? "").slice(0, sidebar - 1);
   await until(
-    () => place("one").startsWith(`  Skelcrew v${checkout.version} · sprite:`),
+    () => place("one").startsWith(`  Skelcrew v${checkout.version} · simon@`),
     "the first place",
   );
   await until(
@@ -1048,43 +1208,6 @@ test("Enter on a thread in the list of threads shows its agent, and the sidebar 
   await until(() => read("app-12.typed").includes("from the list"), "what you typed");
 });
 
-test("Alt-B from an agent opened in the list of threads goes back to the list, on its row", async () => {
-  await openList("Threads");
-  await onRight("Working");
-  press("Down");
-  press("Enter");
-  await until(() => seen().includes("I am app-7"), "the agent");
-  press("M-b");
-  await onRight("↑↓ move");
-  expect(selected()).toContain("Threads");
-  press("Enter");
-  await until(() => seen().includes("I am app-7"), "the same agent again");
-});
-
-test("Alt-B from the lead, or a thread picked in the sidebar, goes to the list of threads", async () => {
-  openOnGitHub();
-  open("lead");
-  await ready("lead");
-  press("M-b");
-  await onRight("Working");
-  expect(selected()).toContain("Threads");
-  toSecondThread();
-  await until(() => seen().includes("I am app-7"), "the second thread");
-  press("M-b");
-  await onRight("Working");
-  // The list starts on its first row, as landing on it from elsewhere does.
-  press("Enter");
-  await until(() => seen().includes("I am app-12"), "the first row's agent");
-});
-
-test("Alt-B on a page goes back to its list, as Left does", async () => {
-  await openIssue();
-  press("M-b");
-  await onRight("↑↓ move");
-  await until(() => !tabRow().includes("Add CSV"), "the strip to go");
-  expect(selected()).toContain("Issues");
-});
-
 // What the footer says, as you see it: a line in place of its keys, or its keys back.
 const says = (text: string) =>
   until(
@@ -1346,7 +1469,7 @@ test("a plain click on the page's link opens it in your browser, on the machine 
 test("on a remote, a click on the page's link copies it to your terminal's clipboard", async () => {
   fakeOpener();
   openOnGitHub();
-  open("lead", "one", "xterm-256color", "120", "sprite:demo");
+  open("lead", "one", "xterm-256color", "120", "simon@workbox");
   await ready("lead");
   // Your terminal keeps what a program copies, as Ghostty does.
   tmux(terminal, "set", "-s", "set-clipboard", "on");
@@ -1410,7 +1533,7 @@ test("landing on an entry from elsewhere starts its list on the first row", asyn
 });
 
 test("keys pressed together when leaving a list all count, however slowly the client attaches", async () => {
-  // A client attaching slowly, as over a busy Sprite, can't be switched yet.
+  // A client attaching slowly, as over a slow link, can't be switched yet.
   const real = Bun.which("tmux") ?? "tmux";
   mkdirSync(join(home, "slow"));
   writeFileSync(
@@ -1775,7 +1898,7 @@ test("moving onto an agent hides the keys", async () => {
   type("?");
   await until(keysOpen, "the list of keys");
   press("M-S-Up");
-  await until(() => footer().endsWith("⌥B back  Esc stops claude"), "the lead's footer");
+  await until(() => footer().endsWith("⌥Q quit  Esc stops claude"), "the lead's footer");
   await until(() => !keysOpen(), "the list of keys to hide");
   expect(seen()).toContain("I am lead");
 });
@@ -1822,23 +1945,23 @@ test("the list of keys has the same keys as sc --help, in the same order", async
         .join(" to "),
     );
   expect(keyItems()).toEqual(keys);
-  expect(keyItems()).toContain("alt + b to go back");
+  expect(keyItems()).toContain("alt + shift + ←/→ to switch repository");
 });
 
 test("keys that need more than a third of the screen scroll with the wheel", async () => {
   await openList("Issues", "80");
-  tmux(terminal, "resize-window", "-t", "=one:", "-x", "80", "-y", "15");
-  await until(() => seen().split("\n")[14]?.trimEnd() === startKeys, "the resize");
+  tmux(terminal, "resize-window", "-t", "=one:", "-x", "80", "-y", "12");
+  await until(() => seen().split("\n")[11]?.trimEnd() === startKeys, "the resize");
   type("?");
   await until(() => keyItems().includes("alt + ↑/↓ to move in the sidebar"), "the list of keys");
-  // The screen has fifteen rows, so the keys have five of the seven they need at this width.
-  expect(keysShown()).toHaveLength(5);
+  // The screen has twelve rows, so the keys have four of the five they need at this width.
+  expect(keysShown()).toHaveLength(4);
   const lines = seen().split("\n");
   const keysAt = lines.findIndex((line) => line.startsWith("  alt + ↑/↓"));
   const scrolled = () =>
     seen()
       .split("\n")
-      .slice(keysAt, keysAt + 5)
+      .slice(keysAt, keysAt + 4)
       .join("\n");
   expect(scrolled()).not.toContain("← to go back from a page");
   for (let n = 0; n < 10; n++) type(`\x1b[<65;60;${keysAt + 2}M`);
@@ -1937,53 +2060,20 @@ test("the terminal's title says Skelcrew while the screen is open, and comes bac
 });
 
 test("the title names the machine when you came from a laptop", async () => {
-  open("lead", "one", "xterm-256color", "120", "sprite:demo");
+  open("lead", "one", "xterm-256color", "120", "simon@workbox");
   await ready("lead");
-  await until(() => title() === "Skelcrew · sprite:demo", "the title");
-});
-
-test("the title goes out in the form sprite leaves alone", async () => {
-  // sprite writes its own name in front of a title sent the other way, OSC 0.
-  const script = join(home, "open-raw.ts");
-  writeFileSync(
-    script,
-    `import { openScreen } from ${JSON.stringify(screenFile)};
-await openScreen(${JSON.stringify(agents)}, "lead");`,
-  );
-  let wrote = "";
-  const run = Bun.spawn([process.execPath, script], {
-    env: { ...env(), TMUX: "", TERM: "xterm-256color" },
-    terminal: {
-      cols: 120,
-      rows: 30,
-      data: (_, bytes) => {
-        wrote += new TextDecoder().decode(bytes);
-      },
-    },
-  });
-  try {
-    await until(
-      () => wrote.includes("Skelcrew\x07") || wrote.includes("Skelcrew\x1b\\"),
-      "the title",
-    );
-    expect(wrote).toContain("\x1b]2;Skelcrew");
-    expect(wrote).not.toContain("\x1b]0;");
-  } finally {
-    tmux(screen, "kill-server");
-    await run.exited;
-    run.terminal?.close();
-  }
+  await until(() => title() === "Skelcrew · simon@workbox", "the title");
 });
 
 test("two terminals on one machine keep a title each", async () => {
-  open("lead", "one", "xterm-256color", "120", "sprite:demo");
+  open("lead", "one", "xterm-256color", "120", "simon@workbox");
   await ready("lead");
   open("lead", "two");
   await ready("lead", "two");
   await until(() => title("two") === "Skelcrew", "the second title");
   toFirstThread();
   await until(() => seen().includes("I am app-12"), "app-12");
-  expect(title()).toBe("Skelcrew · sprite:demo");
+  expect(title()).toBe("Skelcrew · simon@workbox");
 });
 
 test("an agent's own title never reaches the terminal, even after switching", async () => {
@@ -2045,29 +2135,7 @@ test("a tab for each repository runs across the top, with a badge for what needs
   expect(seen()).not.toContain("site-8");
 });
 
-test("Alt-Right and Alt-Left switch both sides to the repository beside, and open it", async () => {
-  addSite();
-  daemon();
-  open("lead");
-  await ready("lead");
-  press("M-Right");
-  await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
-  await until(() => seen().includes("site-8") && !seen().includes("app-12"), "site's threads");
-  expect(selected()).toBe("◆ lead");
-  await until(() => asked.includes("open simon/site from a tab"), "the daemon to open site");
-  type("hello\r");
-  await until(() => existsSync(join(home, `${siteLead}.typed`)), "the typing");
-  // There is no tab after the last.
-  press("M-Right");
-  await Bun.sleep(300);
-  expect(seen()).toContain(`I am ${siteLead}`);
-  press("M-Left");
-  await until(() => seen().includes("I am lead") && seen().includes("app-12"), "app again");
-});
-
-// Ghostty on a Mac turns Alt-Left and Alt-Right into word jumps, so they never reach Skelcrew,
-// while Alt-Shift-Left and Alt-Shift-Right come through.
-test("Alt-Shift-Right and Alt-Shift-Left switch repositories too", async () => {
+test("Alt-Shift-Right and Alt-Shift-Left switch both sides to the repository beside, and open it", async () => {
   addSite();
   daemon();
   open("lead");
@@ -2075,6 +2143,14 @@ test("Alt-Shift-Right and Alt-Shift-Left switch repositories too", async () => {
   press("M-S-Right");
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
   await until(() => seen().includes("site-8") && !seen().includes("app-12"), "site's threads");
+  expect(selected()).toBe("◆ lead");
+  await until(() => asked.includes("open simon/site from a tab"), "the daemon to open site");
+  type("hello\r");
+  await until(() => existsSync(join(home, `${siteLead}.typed`)), "the typing");
+  // There is no tab after the last.
+  press("M-S-Right");
+  await Bun.sleep(300);
+  expect(seen()).toContain(`I am ${siteLead}`);
   press("M-S-Left");
   await until(() => seen().includes("I am lead") && seen().includes("app-12"), "app again");
 });
@@ -2103,13 +2179,13 @@ test("several Alt keys typed together all move, and none is typed into the agent
   expect(read("lead.typed")).toBe("");
 });
 
-test("Alt-Right then Alt-Shift-Down twice, typed together, lands on the new repository's thread", async () => {
+test("Alt-Shift-Right then Alt-Shift-Down twice, typed together, lands on the new repository's thread", async () => {
   addSite();
   agent("site-8");
   daemon();
   open("lead");
   await ready("lead");
-  type("\x1b[1;3C\x1b[1;4B\x1b[1;4B");
+  type("\x1b[1;4C\x1b[1;4B\x1b[1;4B");
   await until(() => seen().includes("I am site-8"), "site-8");
   await until(() => selected() === "● 8 site-8", "the sidebar to follow");
   expect(seen()).not.toContain("app-12");
@@ -2140,7 +2216,7 @@ test("the last tab closing moves the screen to the tab before it", async () => {
   daemon();
   open("lead");
   await ready("lead");
-  press("M-Right");
+  press("M-S-Right");
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
   closeTab("site");
   await until(() => seen().includes("I am lead") && seen().includes("app-12"), "app again");

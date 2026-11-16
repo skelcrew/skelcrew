@@ -396,8 +396,8 @@ test("Alt-Q and Ctrl-Q detach with no prefix, and there is no status bar", () =>
   expect(tmux(["list-keys", "-T", "root", "C-]"])).toBe("");
 });
 
-// Without it, tmux draws Claude Code's redraws in pieces, and over a slow link such as a
-// Sprite's the prompt visibly flickers.
+// Without it, tmux draws Claude Code's redraws in pieces, and over a slow link the prompt
+// visibly flickers.
 test("tmux passes synchronized output through to your terminal", () => {
   start("lead", ["sleep", "30"]);
   const features = Bun.spawnSync(["tmux", "-L", socket, "show-options", "-s", "terminal-features"]);

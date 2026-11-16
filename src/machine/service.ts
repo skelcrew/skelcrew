@@ -1,5 +1,5 @@
-// The daemon's service: installing it so it runs on its own, and starting it, on systemd, on a
-// Mac's launchd or on a Sprite.
+// The daemon's service: installing it so it runs on its own, and starting it, on systemd or a
+// Mac's launchd.
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -12,7 +12,6 @@ import {
   restartLaunchAgent,
   startLaunchAgent,
 } from "./launchd.ts";
-import { installSpriteService, onSprite, serviceLog, startSpriteService } from "./sprite.ts";
 
 // Returns the systemd user service path, which also marks daemon installation complete.
 const unitFile = () => join(homedir(), ".config", "systemd", "user", "skelcrew.service");
@@ -95,8 +94,7 @@ WantedBy=default.target
 }
 
 // Installs or updates the daemon service, enabling it and lingering on the first
-// installation. On a Sprite, which has no systemd, it is a Sprite service instead, and on a
-// Mac a launchd agent. Checked on every plain sc, but only by comparing files, so a moved
+// installation. On a Mac it is a launchd agent instead. Checked on every plain sc, but only by comparing files, so a moved
 // bun, harness or checkout reaches the daemon at its next start without a systemctl call each
 // time.
 export function installService(): void {
@@ -113,10 +111,6 @@ export function installService(): void {
     throw new Error(
       `this Skelcrew runs from a worktree (${skel}): run sc from the main checkout to install its daemon`,
     );
-  }
-  if (onSprite()) {
-    installSpriteService(skel);
-    return;
   }
   // The service's file as it would be written for a PATH, so it can be compared with the one
   // installed.
@@ -154,10 +148,6 @@ export function installService(): void {
 // Starts the daemon's service on this machine, and returns where its log is, for when it
 // still doesn't answer. Throws when systemd refuses, as the daemon then won't come.
 export function startDaemon(): string {
-  if (onSprite()) {
-    startSpriteService();
-    return serviceLog;
-  }
   if (process.platform === "darwin") {
     startLaunchAgent();
     return daemonLog();
@@ -178,15 +168,11 @@ export function restartDaemon(): string {
     restartLaunchAgent();
     return daemonLog();
   }
-  const sprite = onSprite();
-  const argv = sprite
-    ? ["sprite-env", "services", "restart", "skelcrew"]
-    : ["systemctl", "--user", "restart", "skelcrew"];
-  // sprite-env prints the service's log for a few seconds after starting it.
+  const argv = ["systemctl", "--user", "restart", "skelcrew"];
   const restart = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe" });
   if (!restart.success)
     throw new Error(
-      `${argv[0]} couldn't restart Skelcrew's daemon: ${restart.stderr.toString().trim()}`,
+      `systemctl couldn't restart Skelcrew's daemon: ${restart.stderr.toString().trim()}`,
     );
-  return sprite ? serviceLog : "journalctl --user -u skelcrew";
+  return "journalctl --user -u skelcrew";
 }

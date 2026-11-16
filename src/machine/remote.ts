@@ -3,9 +3,11 @@
 // older release than yours, or was built from another commit, and copies your setup there when
 // it changed. Your laptop can be a Mac, so this file loads nothing of the Skelcrew that runs on
 // the server.
-import { chmodSync, mkdtempSync, rmSync, writeSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { isIP } from "node:net";
+import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
+import { sshFolder } from "../paths.ts";
 import { quietly } from "../run.ts";
 import {
   built,
@@ -39,7 +41,7 @@ export const unfinished = 97;
 // What Skelcrew exits with when its setup differs from the laptop's, so the laptop copies its own.
 export const otherSetup = 96;
 
-// Reports whether this Skelcrew, copied to a server or Sprite, is from another build than the
+// Reports whether this Skelcrew, copied to a server, is from another build than the
 // laptop that runs it there with --remote, and says so. The laptop passes its build along
 // with the command, so the check costs no round trip of its own. A release newer than the
 // laptop's counts as up to date: it installed itself in the background, and the laptop
@@ -73,31 +75,94 @@ export const quoted = (word: string) =>
 export const runInTerminal = (argv: string[]) =>
   Bun.spawn(argv, { stdio: ["inherit", "inherit", "inherit"] }).exited;
 
-// Runs `go` and returns what it gives back, with your terminal's title saved before and put
-// back after, for sc --remote. The screen's tmux saves it too, but on a Sprite that is too
-// late: sprite has already put the raw command there, and writes nothing back. Ghostty and
-// some others keep no saved title and ignore this, so there your shell's prompt puts its own
-// back. Written straight to the terminal, as process.exit can drop what stdout still holds.
-export async function keepingTitle<T>(go: () => Promise<T>): Promise<T> {
-  const say = (code: string) => process.stdout.isTTY && writeSync(1, code);
-  say("\x1b[22;0t");
+// Says whether your ssh config, or a file it includes, sets ControlMaster or ControlPath on any
+// line, for any host. Then you manage shared connections yourself, and Skelcrew adds none. ssh -G
+// can't tell ControlPath none or ControlMaster no from nothing set, so only reading the files
+// finds them. `seen` stops a loop of Includes.
+function sharesItself(file: string, seen = new Set<string>()): boolean {
+  if (seen.has(file)) return false;
+  seen.add(file);
+  // A file that isn't there, or can't be read, sets nothing.
+  let text = "";
   try {
-    return await go();
-  } finally {
-    say("\x1b[23;0t");
+    text = readFileSync(file, "utf8");
+  } catch {
+    return false;
   }
+  for (const line of text.split("\n")) {
+    // A setting is a keyword, then its value after spaces or an =. A comment starts with #, so
+    // it never matches.
+    const [, keyword = "", value = ""] = line.trim().match(/^(\w+)(?:\s*=\s*|\s+)(.*)$/) ?? [];
+    if (/^control(master|path)$/i.test(keyword)) return true;
+    if (/^include$/i.test(keyword) && included(value).some((each) => sharesItself(each, seen)))
+      return true;
+  }
+  return false;
 }
 
-// Returns how to run sc on the host with these words. It takes the environment to add to
-// what it always passes, and gives back the exit code. With a terminal, ssh says
-// "Connection to <host> closed." each time it ends, several times in one setup, so it is
-// told to say only errors.
-const onServer = (host: string, words: string[]) => (env: string[]) =>
+// Returns the files an Include line of your ssh config names, as ssh finds them: each word, in
+// double quotes when it has spaces, under ~/.ssh unless it starts at / or ~, with its globs
+// expanded.
+function included(value: string): string[] {
+  const home = homedir();
+  return (value.match(/"[^"]*"|\S+/g) ?? []).flatMap((word) => {
+    const name = word.replace(/^"(.*)"$/, "$1");
+    const path = name.startsWith("~/")
+      ? join(home, name.slice(2))
+      : name.startsWith("/")
+        ? name
+        : join(home, ".ssh", name);
+    if (!/[*?[]/.test(path)) return [path];
+    // The glob is matched from / so the whole path counts.
+    return [...new Bun.Glob(path.slice(1)).scanSync({ cwd: "/", absolute: true, dot: true })];
+  });
+}
+
+// Returns the ssh options that make every ssh and scp Skelcrew runs for the host share one
+// connection. One setup takes five or more of them, and each new connection can ask for your
+// passphrase or a touch of your key. The shared connection ends a minute after the last
+// command, which covers one setup or connect. Options given to ssh beat your ssh config, so
+// when your config says anything about sharing connections, there are none.
+function sharedConnection(host: string): string[] {
+  // Your own config, read as text, catches ControlPath none and ControlMaster no, for any host.
+  if (sharesItself(join(homedir(), ".ssh", "config"))) return [];
+  // ssh -G prints what ssh would use for the host, from the system's config too, without
+  // connecting. A read that fails prints no controlmaster, and then nothing is added either.
+  const said = Bun.spawnSync(["ssh", "-G", host], { stdout: "pipe", stderr: "ignore" });
+  const settings = said.stdout.toString();
+  const master = settings.match(/^controlmaster (.*)$/m)?.[1];
+  if (master === undefined || !["false", "no"].includes(master)) return [];
+  if (/^controlpath /m.test(settings)) return [];
+  // Anyone who can reach the sockets can run commands on your servers as you, so the folder must
+  // be yours alone. Someone else can make it first in /tmp, or put a link there, and then
+  // nothing is shared. It is made private again each time, in case its mode changed.
+  const folder = sshFolder();
+  // Two sc commands starting at once can both find it missing, so one made by the other, or
+  // anything else already there, is left to the check below.
+  try {
+    mkdirSync(folder, { mode: 0o700 });
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+  }
+  const made = lstatSync(folder);
+  if (!made.isDirectory() || made.uid !== userInfo().uid) return [];
+  chmodSync(folder, 0o700);
+  // %C is a hash of the connection, so each host, a ProxyJump host too, gets its own socket.
+  const path = `ControlPath=${folder}/%C`;
+  return ["-o", "ControlMaster=auto", "-o", "ControlPersist=60", "-o", path];
+}
+
+// Returns how to run sc on the host with these words, with `shared` from sharedConnection. It
+// takes the environment to add to what it always passes, and gives back the exit code. With a
+// terminal, ssh says "Connection to <host> closed." each time it ends, several times in one
+// setup, so it is told to say only errors.
+const onServer = (host: string, shared: string[], words: string[]) => (env: string[]) =>
   runInTerminal([
     "ssh",
     "-o",
     "LogLevel=ERROR",
     "-t",
+    ...shared,
     host,
     [
       "env",
@@ -115,9 +180,9 @@ export const notSetUp = (where: string) =>
 
 // Offers to set up a machine that --remote found not set up, and returns the exit code. A yes
 // runs `add`, which is what sc remote add runs, then `connect`, the command you asked for. Setting
-// up means logins and can mean a Sprite you pay for, so it never happens without your yes. Without
-// a terminal nobody can answer, so it only says what to run.
-export async function setUpFirst(
+// up means logins, so it never happens without your yes. Without a terminal nobody can answer,
+// so it only says what to run.
+async function setUpFirst(
   where: string,
   add: () => Promise<number>,
   connect: () => Promise<number>,
@@ -133,13 +198,25 @@ export async function setUpFirst(
   return added === 0 ? connect() : added;
 }
 
+// Stops at a host that names a machine plugin, such as demo:box, rather than taking it for an
+// SSH host. Skelcrew has no machine plugins yet, so every such host is refused by name. The name
+// before the colon follows a plugin manifest's rule. An IPv6 address such as abcd::1 also starts
+// that way, so it is let through to SSH first. user@host never matches, as it has an @ first.
+function checkHost(host: string): void {
+  if (isIP(host) === 6) return;
+  const plugin = host.match(/^([a-z0-9][a-z0-9-]*):/)?.[1];
+  if (plugin) throw new Error(`no machine plugin named ${plugin}`);
+}
+
 // Runs a Skelcrew command on the host and returns its exit code. Plain Skelcrew passes the
 // repository you are in on the laptop, so it opens that repository's lead there. Offers to set
 // the host up when it has no Skelcrew, or its first run hasn't finished.
 export async function remote(host: string, args: string[]): Promise<number> {
+  checkHost(host);
   const from = args.length === 0 ? originHere() : null;
-  const there = onServer(host, from ? ["--from", from] : args);
-  const connect = () => runUpToDate(host, there, serverMachine(host));
+  const machine = serverMachine(host);
+  const there = machine.sc(from ? ["--from", from] : args);
+  const connect = () => runUpToDate(host, there, machine);
   const code = await connect();
   // The server's shell exits 127 when it finds no Skelcrew to run. Skelcrew itself never does: it
   // exits 1 on any error.
@@ -149,16 +226,18 @@ export async function remote(host: string, args: string[]): Promise<number> {
 
 // Sets up your server for --remote and returns the exit code, for sc remote add.
 export async function addServer(host: string): Promise<number> {
+  checkHost(host);
   console.log(`Setting up ${host}: copying Skelcrew there and setting it up.`);
-  return addMachine(host, onServer(host, ["first-run"]), serverMachine(host));
+  const machine = serverMachine(host);
+  return addMachine(host, machine.sc(["first-run"]), machine);
 }
 
-// Puts Skelcrew on a server or Sprite if it isn't there, and runs the first run through `there`,
+// Puts Skelcrew on a server if it isn't there, and runs the first run through `there`,
 // without attaching, so that logging in there stays separate from starting to work. It prints
 // no way to connect, as --remote connects right after it and only sc remote add prints one.
 // Running it again is safe, as the first run skips what is done, which is how a setup that
 // stopped partway gets finished.
-export async function addMachine(
+async function addMachine(
   where: string,
   there: (env: string[]) => Promise<number>,
   machine: Machine,
@@ -173,13 +252,13 @@ export async function addMachine(
   return code;
 }
 
-// Runs sc on a server or Sprite through `there`, and returns its exit code. `there` takes the
+// Runs sc on a server through `there`, and returns its exit code. `there` takes the
 // environment to add to what it always passes. When the Skelcrew there is from another build
 // than this laptop's, it runs nothing and you are asked whether to replace it. Either way the
 // command then runs without that check, so a build with uncommitted changes can't ask twice.
 // When the setup there differs from the laptop's, the laptop's is copied there first. `build` is
 // null for a Skelcrew just copied there, which is the laptop's own.
-export async function runUpToDate(
+async function runUpToDate(
   where: string,
   there: (env: string[]) => Promise<number>,
   machine: Machine,
@@ -202,7 +281,7 @@ export async function runUpToDate(
   return taken === 0 ? there([]) : taken;
 }
 
-// Copies the laptop's setup to a server or Sprite, and has Skelcrew there take it in your
+// Copies the laptop's setup to a server, and has Skelcrew there take it in your
 // terminal, where a plugin's setup can ask you things. Returns the exit code of taking it.
 async function sendSetup(where: string, machine: Machine, setup: Setup): Promise<number> {
   const to = ".config/skelcrew/laptop-setup.json";
@@ -215,7 +294,7 @@ async function sendSetup(where: string, machine: Machine, setup: Setup): Promise
   try {
     const file = join(folder, "setup.json");
     writeSent(file, setup, originHere());
-    // scp and sprite file push show a progress bar named after the temporary file, which
+    // scp shows a progress bar named after the temporary file, which
     // means nothing to you, so the copy runs out of your terminal and says why it failed.
     console.log(`Copying your settings, Claude sign-in and plugins to ${where}.`);
     const pushed = await quietly(machine.push(file, to));
@@ -226,19 +305,14 @@ async function sendSetup(where: string, machine: Machine, setup: Setup): Promise
   return machine.sc(["take-setup"])([]);
 }
 
-// Puts a Skelcrew built for a server or Sprite in its ~/.local/bin. `shell` makes the command
+// Puts a Skelcrew built for a server in its ~/.local/bin. `shell` makes the command
 // that runs a line there, and `push` is the command that sends the file to
 // .local/bin/sc.new there. Throws, naming `where`, at the step that failed.
-export async function copySkel(
-  where: string,
-  shell: Machine["shell"],
-  push: string[],
-): Promise<void> {
+async function copySkel(where: string, shell: Machine["shell"], push: string[]): Promise<void> {
   // The copy goes to a file beside Skelcrew and is renamed over it once complete, so a transfer
-  // that breaks off leaves the Skelcrew that works. scp and sprite file push write through a
-  // link, so whatever is at the new file's name is removed first. A rename replaces a link
-  // at Skelcrew itself, such as one to a checkout's launcher, without touching the file it
-  // points to.
+  // that breaks off leaves the Skelcrew that works. scp writes through a link, so whatever is at
+  // the new file's name is removed first. A rename replaces a link at Skelcrew itself, such as
+  // one to a checkout's launcher, without touching the file it points to.
   if ((await runInTerminal(shell("mkdir -p .local/bin && rm -f .local/bin/sc.new"))) !== 0)
     throw new Error(`couldn't make ~/.local/bin on ${where}, so Skelcrew wasn't copied`);
   if ((await runInTerminal(push)) !== 0)
@@ -247,14 +321,16 @@ export async function copySkel(
     throw new Error(`couldn't put the new Skelcrew in place on ${where}`);
 }
 
-// How update reaches a server: over ssh, with systemd running the daemon.
+// How update reaches a server: over ssh, with systemd running the daemon. Its ssh and scp
+// commands share one connection.
 function serverMachine(host: string): Machine {
-  const shell = (script: string) => ["ssh", host, script];
-  const push = (file: string, to: string) => ["scp", file, `${host}:${to}`];
+  const shared = sharedConnection(host);
+  const shell = (script: string) => ["ssh", ...shared, host, script];
+  const push = (file: string, to: string) => ["scp", ...shared, file, `${host}:${to}`];
   return {
     shell,
     push,
-    sc: (words) => onServer(host, words),
+    sc: (words) => onServer(host, shared, words),
     // The unit names the Skelcrew the daemon runs, with each % doubled for systemd.
     daemonSkel: async () => {
       const unit = ".config/systemd/user/skelcrew.service";
@@ -264,11 +340,10 @@ function serverMachine(host: string): Machine {
     },
     copy: (file) => copySkel(host, shell, push(file, ".local/bin/sc.new")),
     restart: "systemctl --user restart skelcrew",
-    updated: async () => {},
   };
 }
 
-// How update reaches a server or a Sprite.
+// How update reaches a server.
 export type Machine = {
   // Returns the command that runs a shell line there.
   shell: (script: string) => string[];
@@ -283,8 +358,6 @@ export type Machine = {
   copy: (file: string) => Promise<void>;
   // The shell line that restarts the daemon's service there.
   restart: string;
-  // Does what else the machine needs once its new daemon runs.
-  updated: () => Promise<void>;
 };
 
 // Prints what you should know about the checkout Skelcrew is built from, and returns what was
@@ -301,7 +374,7 @@ function describeCheckout(): string {
   return `the Skelcrew in ${shown} (commit ${git("rev-parse", "--short", "HEAD")})`;
 }
 
-// Replaces Skelcrew on a server or Sprite with this laptop's release, or one built from this
+// Replaces Skelcrew on a server with this laptop's release, or one built from this
 // checkout, then restarts the daemon's service there so it runs the new build. The tmux
 // server outlives the daemon, so the leads and builders keep running on their harness. A Skelcrew
 // run from a checkout there is left alone: a copy would leave the checkout behind while the
@@ -342,13 +415,12 @@ else echo "elsewhere $f"; fi`;
     throw new Error(
       `the new Skelcrew is on ${where}, but its daemon didn't restart, so it still runs the old one:\n${restarted.said}`,
     );
-  await machine.updated();
   console.log(
     `Updated ${where} to ${now} and restarted its daemon. The leads and builders keep running, and each lead picks up new instructions when it's next started.`,
   );
 }
 
-// Returns the CPU of a server or Sprite as Skelcrew's builds name it, x64 or arm64, so the
+// Returns the CPU of a server as Skelcrew's builds name it, x64 or arm64, so the
 // Skelcrew it gets runs there.
 async function machineCpu(machine: Machine): Promise<string> {
   const cpus: Record<string, string> = { x86_64: "x64", aarch64: "arm64", arm64: "arm64" };
@@ -370,7 +442,7 @@ async function downloadLinuxSkel(file: string, cpu: string): Promise<void> {
   chmodSync(file, 0o755);
 }
 
-// Builds Skelcrew from this checkout as one file for a server or Sprite, which is Linux whatever
+// Builds Skelcrew from this checkout as one file for a server, which is Linux whatever
 // the laptop runs, on the machine's CPU, stamped with its build so it can tell when yours
 // moves on.
 async function buildLinuxSkel(file: string, cpu: string): Promise<void> {
@@ -383,7 +455,7 @@ async function buildLinuxSkel(file: string, cpu: string): Promise<void> {
     throw new Error("bun build failed, so Skelcrew wasn't copied");
 }
 
-// Gets the Skelcrew you run here for a server or Sprite, copies it there, and removes it after:
+// Gets the Skelcrew you run here for a server, copies it there, and removes it after:
 // your release when you run one, or else one built from this checkout.
 async function withLinuxSkel(machine: Machine): Promise<void> {
   // A single-file Skelcrew runs its modules from a folder only it sees, with no sources to

@@ -1,5 +1,6 @@
 // What each event on a thread's PR means for the thread, decided from plain data: the
-// thread's row and what its forge returned, with no clock, files or network.
+// thread's row and what its forge returned, with no clock, files or network. Also what a
+// builder's turn ending means, from the thread's row alone.
 import { expect, test } from "bun:test";
 import {
   afterReview,
@@ -10,7 +11,7 @@ import {
   type PullRequest,
   reviewCheck,
 } from "../src/flow/decide.ts";
-import type { Thread } from "../src/flow/thread.ts";
+import { endedTurnAsks, type Thread } from "../src/flow/thread.ts";
 
 function thread(change: Partial<Thread> = {}): Thread {
   return {
@@ -34,6 +35,8 @@ function thread(change: Partial<Thread> = {}): Thread {
     last_comment: null,
     last_check: null,
     asking: false,
+    stalled: false,
+    submitted: false,
     erred: false,
     noting: null,
     title: null,
@@ -49,6 +52,7 @@ function thread(change: Partial<Thread> = {}): Thread {
     short: null,
     assigned: false,
     changed: null,
+    updates: [],
     ...change,
   };
 }
@@ -414,4 +418,29 @@ test("without a forge, an approved review needs you at once, saying where the br
   const ready = "app-t1 is ready on branch skelcrew/t1-fix-login";
   const outcome = afterReview(0, approval, 3, ready);
   expect(outcome).toMatchObject({ needsYou: true, status: "waiting", why: ready });
+});
+
+// Needs no sandbox, so the rule is checked in every test run, even inside a builder's sandbox,
+// where the tests that start builders skip.
+test("a builder's turn that ends without a submit needs you, and no other does", () => {
+  const cases: [Partial<Thread>, boolean][] = [
+    // Stopped without submitting, while working, or while waiting on a review or CI.
+    [{ status: "working" }, true],
+    [{ status: "waiting" }, true],
+    // It submitted in this turn, or asked for a review again, so the turn waits on the review.
+    [{ status: "working", submitted: true }, false],
+    [{ status: "waiting", submitted: true }, false],
+    // A question still open, an error, or an earlier stop already has the thread needing you.
+    [{ status: "working", asking: true }, false],
+    [{ status: "working", erred: true }, false],
+    [{ status: "working", stalled: true }, false],
+    // Needing you for a review's reason says nothing about the builder, so the stop still counts.
+    [{ status: "waiting", needs_you: true }, true],
+    // A thread with no builder running has no turn to end.
+    [{ status: "stopped" }, false],
+    [{ status: "failed" }, false],
+    [{ status: "done" }, false],
+  ];
+  for (const [change, asks] of cases)
+    expect([change, endedTurnAsks(thread(change))]).toEqual([change, asks]);
 });

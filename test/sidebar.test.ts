@@ -92,11 +92,18 @@ test("a working thread has three lines: its name and title, harness, time and to
   ]);
 });
 
-test("a working thread's second and third lines are dim", () => {
+test("a working thread's second line is a light grey and its third is dim, so they read apart", () => {
   const working = thread("app-12", { age: "5m", tokens: "850 tok", step: "Editing rows.ts" });
   const screen = draw([working], "lead", size);
-  expect(screen).toContain("\x1b[90mclaude · 5m · 850 tok");
+  expect(screen).toContain("\x1b[38;5;250mclaude · 5m · 850 tok");
   expect(screen).toContain("\x1b[90mEditing rows.ts");
+});
+
+test("on the grey, a working thread's second line is lighter than its third", () => {
+  const working = thread("app-12", { age: "5m", step: "Editing rows.ts" });
+  const on = selected(draw([working], "app-12", size)).join("\n");
+  expect(on).toContain("\x1b[38;5;253mclaude · 5m");
+  expect(on).toContain("\x1b[38;5;250mEditing rows.ts");
 });
 
 test("a working thread's plan follows its tokens, as a count, and a bar when there is room", () => {
@@ -240,7 +247,7 @@ test("rows sit two columns in, and the line below a mark two further", () => {
 });
 
 test("the harness is grey, so the titles stand out", () => {
-  expect(draw([thread("app-12")], "lead", size)).toContain("\x1b[90mclaude");
+  expect(draw([thread("app-12")], "lead", size)).toContain("\x1b[38;5;250mclaude");
   const waiting = thread("app-12", { status: "waiting", word: "checks" });
   expect(draw([waiting], "lead", size)).toContain("\x1b[90m · claude");
 });
@@ -366,7 +373,7 @@ test("on the grey, every colour is a fixed light one, as a theme's own can vanis
   const on = (session: string) => selected(draw(rows, session, size)).join("\n");
   expect(on("app-1")).toContain("\x1b[38;5;120m●");
   expect(on("app-1")).toContain("\x1b[1;38;5;231m1 app-1");
-  expect(on("app-1")).toContain("\x1b[38;5;250mclaude");
+  expect(on("app-1")).toContain("\x1b[38;5;253mclaude");
   expect(on("app-1")).toContain("\x1b[38;5;250mworking");
   expect(on("app-2")).toContain("\x1b[38;5;120m●");
   expect(on("app-3")).toContain("\x1b[38;5;250m○");
@@ -378,10 +385,10 @@ test("on the grey, every colour is a fixed light one, as a theme's own can vanis
   expect(selected(draw([lead], "lead", size)).join("\n")).toContain("\x1b[38;5;250m◆");
 });
 
-test("a running time follows the harness on the second line, dim like the rest of it", () => {
+test("a running time follows the harness on the second line, in the same grey as the rest of it", () => {
   const screen = draw([thread("app-12", { age: "5m" })], "lead", size);
   expect(listed(screen)).toEqual(["  ● 12 app-12", "    claude · 5m", "    working"]);
-  expect(screen).toContain("\x1b[90mclaude · 5m");
+  expect(screen).toContain("\x1b[38;5;250mclaude · 5m");
 });
 
 test("the longest time and a large count of tokens fit on the line whole", () => {
@@ -720,6 +727,8 @@ const state: Thread = {
   last_comment: 0,
   last_check: 0,
   asking: false,
+  stalled: false,
+  submitted: false,
   erred: false,
   noting: null,
   body: null,
@@ -735,6 +744,7 @@ const state: Thread = {
   short: null,
   assigned: false,
   changed: null,
+  updates: [],
 };
 const word = (more: Partial<Thread>) => threadWord({ ...state, ...more }, 3);
 const needing = { status: "waiting", needs_you: true } satisfies Partial<Thread>;
@@ -747,12 +757,24 @@ test("a thread's word says who has it right now", () => {
   expect(word({ telling: "fix it", verdict: "changes" })).toBe("changes");
 });
 
+// A builder that replied to you or the lead and stopped must not hide what you must do next.
+test("a builder that stopped without submitting doesn't hide an approval or the round limit", () => {
+  const stalled = { ...needing, stalled: true };
+  expect(word({ ...stalled, verdict: "approve", checks: "passing" })).toBe("approved");
+  expect(word({ ...stalled, verdict: "changes", rounds: 4, held: "fix" })).toBe("round limit");
+  // Any other reason it needs you says less than the builder's question.
+  expect(word({ ...stalled, verdict: "approve", checks: "failing" })).toBe("question");
+  expect(word({ ...stalled, verdict: "failed" })).toBe("question");
+});
+
 test("a builder that took up the changes is working again", () => {
   expect(word({ verdict: "changes", rounds: 1 })).toBe("working");
 });
 
 test("each reason a thread needs you has its own word", () => {
   expect(word({ asking: true })).toBe("question");
+  // A builder that stopped without submitting asked in plain text.
+  expect(word({ stalled: true })).toBe("question");
   expect(word({ erred: true })).toBe("error");
   expect(word({ ...needing, verdict: "approve", checks: "passing" })).toBe("approved");
   expect(word({ ...needing, verdict: "approve" })).toBe("approved");
@@ -982,6 +1004,7 @@ console.log(JSON.stringify(looks.map((row) => [row?.tokens, row?.step])));`;
       ["status, reviewing", "'waiting', 'abc'"],
       ["status, needs_you, verdict", "'waiting', 1, 'approve'"],
       ["status, asking", "'working', 1"],
+      ["status, stalled", "'working', 1"],
       ["status, erred", "'working', 1"],
       ["status, needs_you, rounds", "'working', 1, 4"],
       ["status", "'stopped'"],
@@ -999,14 +1022,15 @@ console.log(JSON.stringify(looks.map((row) => [row?.tokens, row?.step])));`;
 import { repositoryTabs } from ${JSON.stringify(source("screen/rows.ts"))};
 const db = openDb();
 db.run(\`INSERT INTO repositories (name, owner, repo) VALUES ('site', 'simon', 'site'), ('app', 'simon', 'app');
-INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you, asking, erred) VALUES
-  ('simon', 'site', 1, 'site-1', 'b', 'waiting', 1, 0, 0),
-  ('simon', 'site', 2, 'site-2', 'b', 'working', 0, 1, 0),
-  ('simon', 'site', 3, 'site-3', 'b', 'failed', 1, 0, 0),
-  ('simon', 'site', 4, 'site-4', 'b', 'working', 0, 0, 0),
-  ('simon', 'site', 5, 'site-5', 'b', 'done', 1, 0, 0),
-  ('simon', 'app', 6, 'app-6', 'b', 'stopped', 0, 0, 0),
-  ('simon', 'app', 7, 'app-7', 'b', 'working', 0, 0, 1)\`);
+INSERT INTO threads (owner, repo, task, folder, branch, status, needs_you, asking, erred, stalled) VALUES
+  ('simon', 'site', 1, 'site-1', 'b', 'waiting', 1, 0, 0, 0),
+  ('simon', 'site', 2, 'site-2', 'b', 'working', 0, 1, 0, 0),
+  ('simon', 'site', 3, 'site-3', 'b', 'failed', 1, 0, 0, 0),
+  ('simon', 'site', 4, 'site-4', 'b', 'working', 0, 0, 0, 0),
+  ('simon', 'site', 5, 'site-5', 'b', 'done', 1, 0, 0, 0),
+  ('simon', 'app', 6, 'app-6', 'b', 'stopped', 0, 0, 0, 0),
+  ('simon', 'app', 7, 'app-7', 'b', 'working', 0, 0, 1, 0),
+  ('simon', 'app', 8, 'app-8', 'b', 'waiting', 0, 0, 0, 1)\`);
 console.log(JSON.stringify(repositoryTabs(db)));`;
     const run = Bun.spawnSync([process.execPath, "-e", code], {
       env: { ...process.env, HOME: home },
@@ -1015,7 +1039,7 @@ console.log(JSON.stringify(repositoryTabs(db)));`;
     });
     expect(run.stderr.toString()).toBe("");
     expect(JSON.parse(run.stdout.toString())).toEqual([
-      { name: "app", fullName: "simon/app", count: 1 },
+      { name: "app", fullName: "simon/app", count: 2 },
       { name: "site", fullName: "simon/site", count: 3 },
     ]);
   });

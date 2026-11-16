@@ -50,9 +50,7 @@ const sections: [string, [string, string][]][] = [
     "ELSEWHERE",
     [
       ["remote add <host>", "Set up a server, over ssh"],
-      ["remote add sprite:<name>", "Set up a Sprite"],
       ["--remote <host> [command]", "Run sc on a server, over ssh"],
-      ["--remote sprite:<name> [command]", "Run sc on a Sprite"],
       ["serve", "Run the daemon, for systemd or launchd"],
     ],
   ],
@@ -84,8 +82,8 @@ const examples = [
   'sc issue create app "Fix the login redirect" "Sign-in lands on a 404."',
   "sc start app-12",
   "sc ps",
-  "sc remote add sprite:demo",
-  "sc --remote sprite:demo",
+  "sc remote add simon@workbox",
+  "sc --remote simon@workbox",
 ];
 
 // Returns the help page, in color only for a terminal that shows it: piped into a file or

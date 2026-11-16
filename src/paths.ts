@@ -15,9 +15,9 @@ export const claudeTokenFile = (home = homedir()) => join(configDir(home), "clau
 
 // Returns the socket folder shared by the CLI and daemon. Some terminals and multiplexers
 // start shells without XDG_RUNTIME_DIR, while the daemon, started by systemd, always has it
-// as /run/user/<uid>. A Sprite or a Mac has no systemd to make that folder, nor a /run you
-// can write to, so there the sockets go in a folder of Skelcrew's own, which the daemon makes for
-// you alone.
+// as /run/user/<uid>. A Mac, or a Linux machine without systemd, has no such folder, nor a /run
+// you can write to, so there the sockets go in a folder of Skelcrew's own, which the daemon
+// makes for you alone.
 function runtimeDir(): string {
   const systemd = join("/run/user", String(userInfo().uid));
   // Without XDG_RUNTIME_DIR, the folder systemd makes stands in for it, so your terminal and
@@ -69,6 +69,10 @@ export function leadPlaces(owner: string, repo: string, kept = false) {
 // so the folder is named by a short hash of the thread's folder.
 export const threadSocket = (folder: string) =>
   join(runtimeDir(), "skelcrew", "threads", shortHash(folder), "skelcrew.sock");
+// Returns the folder for the sockets through which the ssh and scp commands for a server share
+// one connection. A Mac refuses a socket path over 104 bytes, and its runtime and temporary
+// folders are long, so it is in /tmp, with your user number so it is yours alone.
+export const sshFolder = () => `/tmp/sc-${userInfo().uid}`;
 // Returns the parent folder of Skelcrew's repository clones.
 const reposDir = () => join(dataDir(), "repos");
 // Returns a repository's clone folder so Skelcrew works away from your checkout.

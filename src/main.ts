@@ -2,14 +2,12 @@
 import { help } from "./help.ts";
 import {
   addServer,
-  keepingTitle,
   otherSetup,
   outdated,
   outOfDate,
   remote,
   unfinished,
 } from "./machine/remote.ts";
-import { addSprite, remoteSprite } from "./machine/sprite.ts";
 import { errorText } from "./say.ts";
 import { versionLine } from "./version.ts";
 
@@ -94,9 +92,9 @@ function usage(command?: string): never {
   const first = command ?? "";
   console.error(
     first === "--remote"
-      ? "Skelcrew: --remote needs a host, such as sc --remote simon@workbox or sc --remote sprite:demo."
+      ? "Skelcrew: --remote needs a host, such as sc --remote simon@workbox."
       : first === "remote"
-        ? "Skelcrew: sc remote add needs a host, such as sc remote add simon@workbox or sc remote add sprite:demo."
+        ? "Skelcrew: sc remote add needs a host, such as sc remote add simon@workbox."
         : known.includes(first)
           ? `Skelcrew: sc ${first} was given arguments it doesn't take. Run sc --help to see how to use it.`
           : "Skelcrew: that isn't a Skelcrew command. Run sc --help to see them.",
@@ -174,7 +172,7 @@ async function screenCommand(args: string[]): Promise<void> {
     }
   }
   // `where` is the remote Skelcrew runs on, and empty on this machine, so check it against
-  // undefined, as is a list's `start`, empty when it starts on its first row.
+  // undefined.
   if (command === "sidebar" && rest.length === 4) {
     const [agents, session, where, repository] = rest;
     if (agents && session && where !== undefined && repository) {
@@ -182,17 +180,16 @@ async function screenCommand(args: string[]): Promise<void> {
       return;
     }
   }
-  if (command === "list" && rest.length === 6) {
-    const [agents, session, entry, where, repository, start] = rest;
+  if (command === "list" && rest.length === 5) {
+    const [agents, session, entry, where, repository] = rest;
     if (
       agents &&
       session &&
       (entry === "issues" || entry === "threads" || entry === "prs") &&
       where !== undefined &&
-      repository &&
-      start !== undefined
+      repository
     ) {
-      await runPane(agents, session, entry, where, repository, start);
+      await runPane(agents, session, entry, where, repository);
       return;
     }
   }
@@ -275,12 +272,14 @@ async function agentCommand(args: string[]): Promise<void> {
   }
   // Run by a builder's Claude Code hooks, not by people, so usage leaves it out. It prints
   // nothing: Claude Code adds what a UserPromptSubmit hook prints to the builder's message.
-  if (command === "question" && (sub === "asked" || sub === "answered") && rest.length === 0) {
-    await reportQuestion(sub === "asked");
-    return;
+  if (command === "question" && rest.length === 0) {
+    if (sub === "asked" || sub === "answered" || sub === "closed") {
+      await reportQuestion(sub);
+      return;
+    }
   }
-  // Run by a Codex builder's Stop hook, not by people, so usage leaves it out. It prints
-  // nothing, as Codex reads what a Stop hook prints.
+  // Run by a builder's Stop hook, on Claude Code or Codex, not by people, so usage leaves it
+  // out. It prints nothing, as both harnesses read what a Stop hook prints.
   if (command === "turn" && sub === "ended" && rest.length === 0) {
     await reportTurnEnded();
     return;
@@ -472,14 +471,7 @@ async function runCommand(args: string[]): Promise<void> {
     console.log(help());
     return;
   }
-  if (command === "--remote" && sub)
-    process.exit(
-      await keepingTitle(() =>
-        sub.startsWith("sprite:")
-          ? remoteSprite(sub.slice("sprite:".length), rest)
-          : remote(sub, rest),
-      ),
-    );
+  if (command === "--remote" && sub) process.exit(await remote(sub, rest));
   // --json can go anywhere, since tools add it last and people type it where they like. Every
   // command accepts it, and one that only acts prints the same line either way. sc --remote
   // above keeps it, so the sc it runs on the remote gets it too.
@@ -497,9 +489,7 @@ async function runCommand(args: string[]): Promise<void> {
     throw new Error(`${refusal} is only for your own terminal, not for agents`);
   const host = words[2];
   if (first === "remote" && second === "add" && host && words.length === 3) {
-    const code = await keepingTitle(() =>
-      host.startsWith("sprite:") ? addSprite(host.slice("sprite:".length)) : addServer(host),
-    );
+    const code = await addServer(host);
     // Setting up doesn't connect, so that logging in there stays separate from starting work.
     if (code === 0) console.log(`${host} is ready. Connect to it with:\n  sc --remote ${host}`);
     process.exit(code);

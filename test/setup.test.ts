@@ -220,45 +220,6 @@ test("installs the daemon as a systemd user service with lingering, once", async
   expect(calls()).not.toContain("loginctl");
 });
 
-// Skelcrew takes a machine with sprite-env, the Sprite's own tool, on its PATH for a Sprite. Like
-// the real one, it starts a service as it creates it.
-function onSprite(): void {
-  fake(
-    "sprite-env",
-    `case "$*" in
-  "services get skelcrew") test -f "$HOME/service" ;;
-  "services create skelcrew "*) : > "$HOME/service"; : > "$HOME/started" ;;
-  "services start skelcrew") : > "$HOME/started" ;;
-esac`,
-  );
-  fake("setpriv", 'while case "$1" in --*) true ;; *) false ;; esac; do shift; done; exec "$@"');
-}
-
-test("on a Sprite, installs the daemon as a Sprite service, not with systemd", async () => {
-  onSprite();
-  const run = await skel("1\nsk-ant-oat01-good\n");
-  expect(run.code).toBe(0);
-  // bwrap refuses to start on a Sprite with the capabilities its commands get.
-  expect(calls()).toContain(
-    `setpriv --inh-caps=-all --ambient-caps=-all --bounding-set=-all ${bin}/bwrap --ro-bind / / true\n`,
-  );
-  expect(calls()).toContain(
-    `sprite-env services create skelcrew --cmd ${join(checkout, "bin", "sc")} --args serve --no-stream\n`,
-  );
-  expect(calls()).not.toContain("systemctl");
-  expect(calls()).not.toContain("loginctl");
-  expect(existsSync(unit())).toBe(false);
-  expect(calls()).toEndWith("daemon lead\nscreen on lead\n");
-
-  writeFileSync(join(home, "calls"), "");
-  rmSync(join(home, "started"));
-  const again = await skel();
-  expect(again.code).toBe(0);
-  expect(again.out).not.toContain("set up");
-  expect(calls()).not.toContain("services create");
-  expect(calls()).toContain("sprite-env services start skelcrew\ndaemon lead\n");
-});
-
 test("installs the service on a machine set up before Skelcrew had one", async () => {
   mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
   writeFileSync(config(), "harness: claude\n");
@@ -424,6 +385,30 @@ test("on a Mac, starts the daemon through launchd when it doesn't answer", async
   const run = await skelOnMac();
   expect(run.err).toBe("");
   expect(calls()).toContain(`launchctl kickstart gui/${uid}/dev.skelcrew.daemon\n`);
+});
+
+// launchd can lose the agent while its file stays, so Skelcrew thinks the daemon installed.
+test("on a Mac, loads the agent from its file when launchd doesn't have it", async () => {
+  asMac();
+  // Like launchd, it knows the agent only once it is loaded.
+  fake(
+    "launchctl",
+    `case "$1" in
+  bootstrap) : > "$HOME/loaded"; : > "$HOME/started" ;;
+  bootout) rm -f "$HOME/loaded" ;;
+  kickstart|print)
+    test -e "$HOME/loaded" || { echo "Could not find service" >&2; exit 113; }
+    : > "$HOME/started" ;;
+esac`,
+  );
+  await skelOnMac("1\nsk-ant-oat01-good\n");
+  rmSync(join(home, "loaded"));
+  rmSync(join(home, "started"));
+  writeFileSync(join(home, "calls"), "");
+  const run = await skelOnMac();
+  expect(run.err).toBe("");
+  expect(run.code).toBe(0);
+  expect(calls()).toContain(`launchctl bootstrap gui/${uid} ${plist()}\n`);
 });
 
 test("on a Mac, reloads the agent when the PATH it needs moved", async () => {
