@@ -72,22 +72,30 @@ function launchctl(args: string[]): { ok: boolean; said: string } {
 export function loadLaunchAgent(): void {
   launchctl(["bootout", `${domain()}/${label}`]);
   const loaded = launchctl(["bootstrap", domain(), plistFile()]);
-  if (!loaded.ok)
-    throw new Error(
-      `launchctl couldn't load Skelcrew's daemon, so it isn't installed: ${loaded.said}`,
-    );
+  if (!loaded.ok) throw new Error(`launchctl couldn't load Skelcrew's daemon: ${loaded.said}`);
+}
+
+// Starts the daemon through launchd, ending a running one first when `restart` holds. launchd
+// can lose the agent while its file stays, so Skelcrew thinks the daemon installed, and kickstart
+// then fails with "Could not find service". The agent is then loaded from its file, which starts
+// the daemon. Whether launchd has the agent is asked with print, not read from kickstart's
+// message or exit code, which launchctl doesn't promise to keep.
+function kickstart(restart: boolean): void {
+  const service = `${domain()}/${label}`;
+  const started = launchctl(["kickstart", ...(restart ? ["-k"] : []), service]);
+  if (started.ok) return;
+  // Any other failure is launchd refusing a daemon it has, so it is reported as is.
+  if (launchctl(["print", service]).ok) {
+    const doing = restart ? "restart" : "start";
+    throw new Error(`launchctl couldn't ${doing} Skelcrew's daemon: ${started.said}`);
+  }
+  loadLaunchAgent();
 }
 
 // Restarts the daemon, for a Skelcrew newer than the one the daemon runs: a newer release, or a
 // checkout on another commit. launchd ends the running daemon first, and agents keep running in
 // tmux.
-export function restartLaunchAgent(): void {
-  const started = launchctl(["kickstart", "-k", `${domain()}/${label}`]);
-  if (!started.ok) throw new Error(`launchctl couldn't restart Skelcrew's daemon: ${started.said}`);
-}
+export const restartLaunchAgent = () => kickstart(true);
 
 // Starts the daemon, for a Skelcrew that finds no daemon answering.
-export function startLaunchAgent(): void {
-  const started = launchctl(["kickstart", `${domain()}/${label}`]);
-  if (!started.ok) throw new Error(`launchctl couldn't start Skelcrew's daemon: ${started.said}`);
-}
+export const startLaunchAgent = () => kickstart(false);
