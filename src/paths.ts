@@ -15,9 +15,9 @@ export const claudeTokenFile = (home = homedir()) => join(configDir(home), "clau
 
 // Returns the socket folder shared by the CLI and daemon. Some terminals and multiplexers
 // start shells without XDG_RUNTIME_DIR, while the daemon, started by systemd, always has it
-// as /run/user/<uid>. A Sprite or a Mac has no systemd to make that folder, nor a /run you
-// can write to, so there the sockets go in a folder of Skelcrew's own, which the daemon makes for
-// you alone.
+// as /run/user/<uid>. A Mac, or a Linux machine without systemd, has no such folder, nor a /run
+// you can write to, so there the sockets go in a folder of Skelcrew's own, which the daemon
+// makes for you alone.
 function runtimeDir(): string {
   const systemd = join("/run/user", String(userInfo().uid));
   // Without XDG_RUNTIME_DIR, the folder systemd makes stands in for it, so your terminal and

@@ -372,10 +372,9 @@ async function reviewCommand(given: {
   home: string;
   folder: string;
   model?: string | undefined;
-  sprite: boolean;
   signal: AbortSignal;
 }) {
-  const { home, folder, model, sprite, signal } = given;
+  const { home, folder, model, signal } = given;
   // Skelcrew's own CODEX_HOME, with its login shared out and a sessions folder to keep.
   const skelcrewCodexHome = codexHome(home);
   const login = shareLogin(home);
@@ -386,7 +385,6 @@ async function reviewCommand(given: {
   const { mounts, at } = await throwawayMounts({
     source: skelcrewCodexHome,
     copy,
-    sprite,
     signal,
     kept: ["sessions"],
   });
