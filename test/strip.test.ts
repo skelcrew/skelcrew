@@ -75,6 +75,19 @@ test("a thread's strip has its name, title, PR, checks and latest review", () =>
   );
 });
 
+test("when the round limit stops a thread, the verdict reads round limit, in yellow", () => {
+  const changes = { round: 4, reviewer: "codex", verdict: "changes" };
+  const stopped = thread({ word: "round limit", needsYou: true, review: changes });
+  expect(read({ rows: [stopped] })).toEndWith("#34  checks passing  round 4 · codex · round limit");
+  expect(top({ rows: [stopped] })).toEndWith(
+    "round 4 · codex · #[fg=colour221]round limit#[default]",
+  );
+  // Once sc start lets the thread go on, the strip is as before, with no yellow.
+  const goesOn = thread({ word: "working", review: changes });
+  expect(read({ rows: [goesOn] })).toEndWith("round 4 · codex · changes");
+  expect(top({ rows: [goesOn] })).not.toContain("colour221");
+});
+
 test("the strip ends at the right edge of the row, above the agent's last column", () => {
   const line = seen(top());
   expect(line).toEndWith(whole);
