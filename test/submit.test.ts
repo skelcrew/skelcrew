@@ -87,16 +87,18 @@ exec sleep 300`,
 
 // Stands in for Codex. Review n answers with the verdict in Skelcrew's Codex folder's verdict-n,
 // and fails without one. It sleeps first when slow-n is there. What it was given, and the
-// branches it saw, go in the sessions folder, the one place a review writes that lasts.
+// branches it saw, go in the sessions folder, the one place a review writes that lasts. Each
+// file is written aside and renamed in, since tests read a file as soon as it shows, and the
+// prompt comes last, so a test that sees it can read all three.
 function fakeCodex(): void {
   script(
     "codex",
     `for a; do [ "$prev" = -o ] && out=$a; prev=$a; done
 s="$CODEX_HOME/sessions"
 n=$(( $(cat "$s/count" 2>/dev/null || echo 0) + 1 )); echo $n > "$s/count"
-cat > "$s/prompt-$n"
-git branch -r > "$s/branches-$n"
-git rev-parse origin/main > "$s/main-$n" 2>&1
+git branch -r > "$s/branches-$n.new"; mv "$s/branches-$n.new" "$s/branches-$n"
+git rev-parse origin/main > "$s/main-$n.new" 2>&1; mv "$s/main-$n.new" "$s/main-$n"
+cat > "$s/prompt-$n.new"; mv "$s/prompt-$n.new" "$s/prompt-$n"
 test -e "$CODEX_HOME/slow-$n" && sleep 30
 test -e "$CODEX_HOME/verdict-$n" || { echo "no verdict for review $n" >&2; exit 1; }
 cp "$CODEX_HOME/verdict-$n" "$out"`,
