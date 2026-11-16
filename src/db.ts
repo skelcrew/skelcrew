@@ -108,7 +108,8 @@ function prepareTables(db: Database): void {
   // carries on when it starts again, and `noting` holds a note for the lead the same way.
   // `short` is the short title the lead gave the thread for the sidebar.
   // `assigned` is whether Skelcrew assigned you the thread's issue, so it takes you off only then.
-  // `changed` is when anything last went in the thread's log.
+  // `changed` is when anything last went in the thread's log. `updates` holds the lead's
+  // messages to the builder, as JSON, since they change the task its reviewer checks against.
   // `working_since` is when the builder's current stretch of work began, for the sidebar. It
   // changes with every message typed into the builder, so it is kept out of the thread's log,
   // which would otherwise fill with it.
@@ -144,6 +145,7 @@ function prepareTables(db: Database): void {
     short: "TEXT",
     assigned: "INTEGER NOT NULL DEFAULT 0",
     changed: "INTEGER",
+    updates: "TEXT",
     working_since: "INTEGER",
   };
   for (const [column, type] of Object.entries(threadColumns))

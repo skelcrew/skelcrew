@@ -746,6 +746,7 @@ const state: Thread = {
   short: null,
   assigned: false,
   changed: null,
+  updates: [],
 };
 const word = (more: Partial<Thread>) => threadWord({ ...state, ...more }, 3);
 const needing = { status: "waiting", needs_you: true } satisfies Partial<Thread>;

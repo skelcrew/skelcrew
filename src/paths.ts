@@ -69,6 +69,10 @@ export function leadPlaces(owner: string, repo: string, kept = false) {
 // so the folder is named by a short hash of the thread's folder.
 export const threadSocket = (folder: string) =>
   join(runtimeDir(), "skelcrew", "threads", shortHash(folder), "skelcrew.sock");
+// Returns the folder for the sockets through which the ssh and scp commands for a server share
+// one connection. A Mac refuses a socket path over 104 bytes, and its runtime and temporary
+// folders are long, so it is in /tmp, with your user number so it is yours alone.
+export const sshFolder = () => `/tmp/sc-${userInfo().uid}`;
 // Returns the parent folder of Skelcrew's repository clones.
 const reposDir = () => join(dataDir(), "repos");
 // Returns a repository's clone folder so Skelcrew works away from your checkout.
