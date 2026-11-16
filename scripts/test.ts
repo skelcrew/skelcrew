@@ -28,16 +28,20 @@ const run = Bun.spawn(
 );
 
 // The whole run ends within this, even if something keeps it from ever finishing, such as a
-// process a test started that never exits. A full run takes a few minutes.
-const limit = 15 * 60_000;
+// process a test started that never exits. A full run takes a few minutes. Its own test sets a
+// shorter limit, in milliseconds.
+const limit = Number(process.env.SKELCREW_TESTS_LIMIT) || 15 * 60_000;
+let stopped = false;
 const stop = setTimeout(() => {
-  console.error(`\nThe tests ran past ${limit / 60_000} minutes, so they were stopped.`);
+  stopped = true;
+  console.error(`\nThe tests ran past ${limit / 1000} seconds, so they were stopped.`);
   run.kill("SIGTERM");
   // Asked first, so the run's sweeps can end what its tests left running.
   setTimeout(() => run.kill("SIGKILL"), 10_000).unref();
 }, limit);
-// A run that was stopped fails, whatever its code.
+// A run that was stopped fails, whatever its code: a test that handles SIGTERM can leave with
+// success.
 run.exited.then((code) => {
   clearTimeout(stop);
-  process.exit(run.signalCode ? 1 : code);
+  process.exit(stopped || run.signalCode ? 1 : code);
 });
