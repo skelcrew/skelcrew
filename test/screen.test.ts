@@ -797,9 +797,9 @@ test("the strip ends the top row, and the agent's height stays as you switch", a
 });
 
 // The bottom row as you see it, across the whole screen, without the load at its right end, and
-// the row above it.
-const footer = () =>
-  (seen().split("\n")[29] ?? "").replace(/ +cpu \d+% {2}mem [\d.]+\/\d+G *$/, "").trimEnd();
+// the row above it. A screen fewer than 30 rows high names its own last row.
+const footer = (row = 29) =>
+  (seen().split("\n")[row] ?? "").replace(/ +cpu \d+% {2}mem [\d.]+\/\d+G *$/, "").trimEnd();
 const aboveFooter = () => (seen().split("\n")[28] ?? "").trimEnd();
 // What the footer says under a list or page: the keys you need most and ? keys, then s or m on a
 // row that can be started or merged.
@@ -1952,7 +1952,7 @@ test("the list of keys has the same keys as sc --help, in the same order", async
 test("keys that need more than a third of the screen scroll with the wheel", async () => {
   await openList("Issues", "80");
   tmux(terminal, "resize-window", "-t", "=one:", "-x", "80", "-y", "12");
-  await until(() => seen().split("\n")[11]?.trimEnd() === startKeys, "the resize");
+  await until(() => footer(11) === startKeys, "the resize");
   type("?");
   await until(() => keyItems().includes("alt + ↑/↓ to move in the sidebar"), "the list of keys");
   // The screen has twelve rows, so the keys have four of the five they need at this width.
