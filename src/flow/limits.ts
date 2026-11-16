@@ -246,10 +246,11 @@ export function wakeAfterLimit(db: Database, tmux: string, folder: string): void
 }
 
 // Types "continue" into a builder still idle on its harness's usage limit, whether the thread
-// works or waits, such as on CI, since you can talk to a builder in either. The flags are
-// cleared once it is typed. A builder that couldn't be told is idle on its error with nobody
-// to wake it, so the thread then needs you. Nothing happens once `signal` aborts, as the error
-// it was for has ended.
+// works or waits, such as on CI, since you can talk to a builder in either. The limit is cleared
+// before typing, so the row never shows a limit that is over, and so the builder's own hook for
+// what is typed doesn't take "continue" for you fixing the error and cancel this wake. A
+// builder that couldn't be told is idle on its error with nobody to wake it, so the thread then
+// needs you. Nothing happens once `signal` aborts, as the error it was for has ended.
 async function continueBuilder(
   db: Database,
   tmux: string,
@@ -259,24 +260,16 @@ async function continueBuilder(
   const thread = readThread(db, folder);
   const live = thread.status === "working" || thread.status === "waiting";
   if (!live || !thread.erred || !thread.limited) return;
+  const over = { erred: false, limited: false, limit_reset: null };
+  record(db, folder, over, "its harness's usage limit reset, so Skelcrew types continue");
   try {
     const { marks } = builderHarness(thread);
     await typeInto(tmux, folder, marks, "continue", { timeout: 60_000, signal });
   } catch (error) {
-    if (signal.aborted) return;
+    // A builder that met the limit again, or was typed to, since has a newer state to keep.
+    if (signal.aborted || readThread(db, folder).erred) return;
     const why = `its harness's usage limit reset, but Skelcrew couldn't type continue: ${errorText(error)}`;
-    record(db, folder, { limited: false, limit_reset: null }, why);
+    record(db, folder, { erred: true }, why);
     typeLeadNotes(db, tmux);
-    return;
   }
-  if (signal.aborted) return;
-  // Typing to it ran its UserPromptSubmit hook, which may have cleared these already, and the
-  // builder may have met the limit again since. Either changed the thread, so it is left as is.
-  if (readThread(db, folder).changed === thread.changed)
-    record(
-      db,
-      folder,
-      { erred: false, limited: false, limit_reset: null },
-      "its harness's usage limit reset, so Skelcrew typed continue",
-    );
 }
