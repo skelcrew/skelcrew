@@ -604,6 +604,11 @@ for (const { what, yours } of [
     what: "ControlMaster yes under Match final",
     yours: "Match final host workbox\n  ControlMaster yes\n",
   },
+  // ssh -G prints these two as if nothing were set, so only reading your config finds them.
+  { what: "ControlPath none", yours: "Host workbox\n  ControlPath none\n" },
+  { what: "ControlMaster no", yours: "Host workbox\n  ControlMaster no\n" },
+  // A setting for another host counts too: Skelcrew leaves sharing to you.
+  { what: "controlpath=none for another host", yours: "Host gate\n  controlpath=none\n" },
 ])
   test(`${what} in your ssh config is kept`, async () => {
     writeFileSync(join(home, ".ssh", "config"), yours);
@@ -611,6 +616,25 @@ for (const { what, yours } of [
     await skel(["--remote", "simon@workbox", "ps"]);
     expect(calls()).toStartWith("ssh -o LogLevel=ERROR -t simon@workbox env ");
   });
+
+// A setting in a file your config includes counts as if it were in your config. Include
+// finds a name without a leading / or ~ under ~/.ssh, and expands globs.
+test("ControlPath none in a file your ssh config includes is kept", async () => {
+  mkdirSync(join(home, ".ssh", "conf.d"));
+  writeFileSync(join(home, ".ssh", "conf.d", "work.conf"), "Host workbox\n  ControlPath none\n");
+  writeFileSync(join(home, ".ssh", "config"), "Include conf.d/*.conf\n");
+  installed(laptop.commit);
+  await skel(["--remote", "simon@workbox", "ps"]);
+  expect(calls()).toStartWith("ssh -o LogLevel=ERROR -t simon@workbox env ");
+});
+
+// A setting turned into a comment sets nothing, so Skelcrew shares the connection.
+test("a commented-out ControlPath in your ssh config doesn't count", async () => {
+  writeFileSync(join(home, ".ssh", "config"), "Host workbox\n  # ControlPath none\n");
+  installed(laptop.commit);
+  await skel(["--remote", "simon@workbox", "ps"]);
+  expect(calls()).toStartWith(`ssh -o LogLevel=ERROR -t ${shared} simon@workbox `);
+});
 
 // A config that ssh can't read gives nothing to go by, so nothing is added.
 test("an ssh config ssh can't read adds no options", async () => {

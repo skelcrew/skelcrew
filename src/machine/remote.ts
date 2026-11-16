@@ -3,7 +3,7 @@
 // older release than yours, or was built from another commit, and copies your setup there when
 // it changed. Your laptop can be a Mac, so this file loads nothing of the Skelcrew that runs on
 // the server.
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { isIP } from "node:net";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
@@ -75,13 +75,58 @@ export const quoted = (word: string) =>
 export const runInTerminal = (argv: string[]) =>
   Bun.spawn(argv, { stdio: ["inherit", "inherit", "inherit"] }).exited;
 
+// Says whether your ssh config, or a file it includes, sets ControlMaster or ControlPath on any
+// line, for any host. Then you manage shared connections yourself, and Skelcrew adds none. ssh -G
+// can't tell ControlPath none or ControlMaster no from nothing set, so only reading the files
+// finds them. `seen` stops a loop of Includes.
+function sharesItself(file: string, seen = new Set<string>()): boolean {
+  if (seen.has(file)) return false;
+  seen.add(file);
+  // A file that isn't there, or can't be read, sets nothing.
+  let text = "";
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return false;
+  }
+  for (const line of text.split("\n")) {
+    // A setting is a keyword, then its value after spaces or an =. A comment starts with #, so
+    // it never matches.
+    const [, keyword = "", value = ""] = line.trim().match(/^(\w+)(?:\s*=\s*|\s+)(.*)$/) ?? [];
+    if (/^control(master|path)$/i.test(keyword)) return true;
+    if (/^include$/i.test(keyword) && included(value).some((each) => sharesItself(each, seen)))
+      return true;
+  }
+  return false;
+}
+
+// Returns the files an Include line of your ssh config names, as ssh finds them: each word, in
+// double quotes when it has spaces, under ~/.ssh unless it starts at / or ~, with its globs
+// expanded.
+function included(value: string): string[] {
+  const home = homedir();
+  return (value.match(/"[^"]*"|\S+/g) ?? []).flatMap((word) => {
+    const name = word.replace(/^"(.*)"$/, "$1");
+    const path = name.startsWith("~/")
+      ? join(home, name.slice(2))
+      : name.startsWith("/")
+        ? name
+        : join(home, ".ssh", name);
+    if (!/[*?[]/.test(path)) return [path];
+    // The glob is matched from / so the whole path counts.
+    return [...new Bun.Glob(path.slice(1)).scanSync({ cwd: "/", absolute: true, dot: true })];
+  });
+}
+
 // Returns the ssh options that make every ssh and scp Skelcrew runs for the host share one
 // connection. One setup takes five or more of them, and each new connection can ask for your
 // passphrase or a touch of your key. The shared connection ends a minute after the last
 // command, which covers one setup or connect. Options given to ssh beat your ssh config, so
-// when your config already says how to share connections for the host, there are none.
+// when your config says anything about sharing connections, there are none.
 function sharedConnection(host: string): string[] {
-  // ssh -G prints what ssh would use for the host, from your config and the system's, without
+  // Your own config, read as text, catches ControlPath none and ControlMaster no, for any host.
+  if (sharesItself(join(homedir(), ".ssh", "config"))) return [];
+  // ssh -G prints what ssh would use for the host, from the system's config too, without
   // connecting. A read that fails prints no controlmaster, and then nothing is added either.
   const said = Bun.spawnSync(["ssh", "-G", host], { stdout: "pipe", stderr: "ignore" });
   const settings = said.stdout.toString();
