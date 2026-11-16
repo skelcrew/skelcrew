@@ -115,10 +115,14 @@ export const builderHarness = (thread: Thread) => harnessNamed(thread.harness ??
 export const needsYou = (thread: Thread) => thread.needs_you || thread.asking || thread.erred;
 
 // Returns whether the thread's review waits in the queue for a place, as limits.reviews already
-// runs. A newer submit still pushing doesn't, as the queued time left from its older round's
-// review isn't about it.
+// runs. Only a working or waiting thread has a review going on: one stopped, failed or done
+// can keep the fields of a review that ended with it. A newer submit still pushing doesn't
+// wait either, as the queued time left from its older round's review isn't about it.
 export const queuedForReview = (thread: Thread) =>
-  thread.submitting === null && thread.reviewing !== null && thread.queued !== null;
+  (thread.status === "working" || thread.status === "waiting") &&
+  thread.submitting === null &&
+  thread.reviewing !== null &&
+  thread.queued !== null;
 
 // Returns whether a builder that just ended its turn is waiting on you, for a harness with no
 // tool for asking, such as Codex. A builder that works and stops without sc submit has a

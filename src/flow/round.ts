@@ -88,15 +88,17 @@ const reviews = new Queue();
 // forge the review stays in Skelcrew, and an approved branch needs you at once. Stops without a
 // word once a newer round cancels it, since that round now owns the thread. The review waits its
 // turn among all reviews, in order of `since`, when it joined: now, unless it is one the
-// daemon's stop cut short, which keeps its place.
+// daemon's stop cut short, which keeps its place. Changes are typed in only once `builderBack`
+// settles, as a review the daemon brings back can end before the builder's session is there.
 async function reviewRound(
   db: Database,
   tmux: string,
   folder: string,
   sha: string,
   signal: AbortSignal,
-  since = Date.now(),
+  later: { since?: number; builderBack?: Promise<unknown> } = {},
 ): Promise<void> {
+  const { since = Date.now(), builderBack } = later;
   // Read what the round needs: the thread's PR, whether there is a forge to post on, and the
   // reviewer, round limit and limit on reviews at once your config names.
   if (signal.aborted) return;
@@ -180,7 +182,12 @@ async function reviewRound(
   };
   record(db, folder, change, outcome.why);
   typeLeadNotes(db, tmux);
-  if (tell) await typeChanges(db, tmux, folder, tell, signal);
+  if (!tell) return;
+  // The changes are saved, so a builder that never comes back, which ends the round, keeps them
+  // for when you start it again.
+  await builderBack;
+  if (signal.aborted) return;
+  await typeChanges(db, tmux, folder, tell, signal);
 }
 
 // Types a review's changes into the builder once it is idle, then forgets them. They are
@@ -367,8 +374,14 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
 // joins the queue of reviews again rather than starting at once: one that waited keeps its
 // place, and one that was running goes ahead of every review that waited. The daemon asks for
 // the reviews before anything else can start one, in that order, as the first to join a queue
-// with room starts at once.
-export function resumeRound(db: Database, tmux: string, folder: string): void {
+// with room starts at once. Such a review may end before its builder is back, so its changes
+// wait for `builderBack`, which the daemon settles once the builder is back or has failed.
+export function resumeRound(
+  db: Database,
+  tmux: string,
+  folder: string,
+  builderBack: Promise<unknown> = Promise.resolve(),
+): void {
   // A thread with a round of its own already is past this. Otherwise carry on from the
   // furthest the round got: its push, its review, or typing its changes in.
   if (latestRounds.has(folder)) return;
@@ -383,7 +396,10 @@ export function resumeRound(db: Database, tmux: string, folder: string): void {
       folder,
       cancel,
       none,
-      reviewRound(db, tmux, folder, reviewing, cancel.signal, queued ?? 0),
+      reviewRound(db, tmux, folder, reviewing, cancel.signal, {
+        since: queued ?? 0,
+        builderBack,
+      }),
     );
   else if (telling !== null)
     trackRound(

@@ -465,6 +465,29 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     await until(() => thread().reviewing === null);
   }, 60_000);
 
+  // A review the daemon brings back runs before the builders are back, so its changes wait for
+  // the builder rather than fail on a session that isn't there yet.
+  test("a review brought back that asks for changes types them in once the builder is back", async () => {
+    addApp();
+    mkdirSync(codexHome(), { recursive: true });
+    writeFileSync(join(codexHome(), "held-1"), "");
+    verdict(2, "changes", "The export has no test.");
+    const first = serve();
+    await untilCloned();
+    await skel(["start", "app-12"]);
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    first.kill();
+    await first.exited;
+    Bun.spawnSync(["tmux", "-L", socket, "kill-session", "-t", "=app-12"]);
+    // The builder started again has no round of its own to submit.
+    fakeClaude(false);
+    serve();
+    await until(() => typedMessages() === 1, 30_000);
+    expect(read(join(builder(), "typed"))).toContain("The export has no test.");
+    await until(() => thread().telling === null);
+    expect(thread().needs_you).toBe(0);
+  }, 60_000);
+
   // The first poll brings only open tasks, while the thread's task may have closed: the thread
   // saved its task as it started.
   test("runs again a review cut short by an upgrade, though the thread's task is closed", async () => {
@@ -957,6 +980,25 @@ await serve(${JSON.stringify(socket)}, 200);`;
       expect(prompt(3)).toContain("# Third");
       letGo(3);
       await until(() => ["app-t1", "app-t2", "app-t3"].every(ready), 30_000);
+    }, 60_000);
+
+    test("a thread stopped while its review waits is stopped, and its review never runs", async () => {
+      config("limits: { reviews: 1 }\n");
+      addAppOnGit();
+      holdReviews();
+      serveOutsideCheckout();
+      await untilCloned();
+      await start("First");
+      await until(() => prompt(1) !== "", 30_000);
+      await start("Second");
+      await until(() => queued("app-t2"), 30_000);
+      expect((await skel(["stop", "app-t2"])).err).toBe("");
+      expect((await skel(["ps"])).out).toMatch(/app-t2 .* stopped/);
+      letGo(1);
+      await until(() => ready("app-t1"), 30_000);
+      await Bun.sleep(1500);
+      expect(reviewsRun()).toBe(1);
+      expect((await skel(["ps"])).out).toMatch(/app-t2 .* stopped/);
     }, 60_000);
 
     test("after a restart, the review that was running goes first, and the one that waited waits again", async () => {
