@@ -105,6 +105,10 @@ export async function keepingTitle<T>(go: () => Promise<T>): Promise<T> {
 // ControlPath none or ControlMaster no, wins. The same settings given as -o would beat yours.
 function sharedConnection(host: string): string[] {
   const socket = sshSocket(host);
+  // The settings are for the host as you typed it, without the user ssh takes from before an @.
+  // A name that a Match line would read as a pattern list gets no sharing.
+  const name = host.slice(host.lastIndexOf("@") + 1);
+  if (!/^[\w.:-]+$/.test(name)) return [];
   // A Mac refuses a socket path over 103 bytes, and ssh adds 17 while it makes the socket. A
   // longer runtime folder, or a quote the config can't hold, means no sharing, and every
   // command still works on its own connection.
@@ -116,10 +120,14 @@ function sharedConnection(host: string): string[] {
   chmodSync(folder, 0o700);
   // Given a config file, ssh reads neither yours nor the system's, so both are included, in the
   // order ssh reads them. ssh would read a % in the path as a token, so it is doubled.
+  // The settings apply only to this host. ssh hands the same config file to the ssh it starts
+  // for a ProxyJump host, which would otherwise take the socket, and later commands would run
+  // on the jump host. They apply in ssh's last pass over the config, after yours, which is
+  // when settings you put under Match final apply.
   const config = [
     "Include ~/.ssh/config",
     "Include /etc/ssh/ssh_config",
-    "Host *",
+    `Match final originalhost ${name}`,
     "  ControlMaster auto",
     `  ControlPath "${socket.replaceAll("%", "%%")}"`,
     "  ControlPersist 60",

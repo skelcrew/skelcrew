@@ -591,20 +591,38 @@ test("every ssh and scp for a setup shares one connection, through a private soc
   expect(socket.length).toBeLessThanOrEqual(86);
 });
 
-// ssh keeps the first value it finds for each setting, so your config, and the system's after
-// it, come before Skelcrew's. Then ControlPath none or ControlMaster no that you set still wins.
-test("your own ssh config comes before Skelcrew's settings", async () => {
+// ssh keeps the first value it finds for each setting, so ControlPath none or ControlMaster no
+// that you set still wins, also under Match final, which ssh reads in a last pass. The real
+// ssh reads the config Skelcrew writes, with its Includes pointed at a config of the test: ssh
+// finds ~ from your account, not HOME, and this machine's own config must not count.
+test("ssh keeps your settings, even under Match final, and gives a jump host none", async () => {
   installed(laptop.commit);
   await skel(["--remote", "simon@workbox", "ps"]);
-  const config = readFileSync(join(home, "calls"), "utf8").match(/ -F (\S+) /)?.[1] ?? "";
-  const lines = readFileSync(config, "utf8").split("\n");
-  expect(lines.slice(0, 3)).toEqual([
-    "Include ~/.ssh/config",
-    "Include /etc/ssh/ssh_config",
-    "Host *",
-  ]);
-  expect(lines).toContain("  ControlMaster auto");
-  expect(lines).toContain("  ControlPersist 60");
+  const written = readFileSync(join(home, "calls"), "utf8").match(/ -F (\S+) /)?.[1] ?? "";
+  const text = readFileSync(written, "utf8");
+  const includes = "Include ~/.ssh/config\nInclude /etc/ssh/ssh_config\n";
+  expect(text).toStartWith(includes);
+  const socket = text.match(/ControlPath "(.+)"/)?.[1] ?? "";
+  // Returns the sharing settings real ssh would use for the host, with `yours` as your ssh
+  // config. A setting that isn't set reads as unset.
+  const evaluated = (yours: string, host: string) => {
+    writeFileSync(join(home, "yours.conf"), yours, { mode: 0o600 });
+    const config = join(home, "tried.conf");
+    writeFileSync(config, text.replace(includes, `Include ${home}/yours.conf\n`), { mode: 0o600 });
+    const run = Bun.spawnSync(["ssh", "-G", "-F", config, host], { stdout: "pipe" });
+    expect(run.exitCode).toBe(0);
+    const said = run.stdout.toString();
+    const setting = (name: string) => said.match(new RegExp(`^${name} (.*)$`, "m"))?.[1] ?? "unset";
+    return { master: setting("controlmaster"), path: setting("controlpath") };
+  };
+  const jump = "Host workbox\n  ProxyJump gate\n";
+  expect(evaluated(jump, "simon@workbox")).toEqual({ master: "auto", path: socket });
+  // ssh hands the same config file to the ssh it starts for the jump host.
+  expect(evaluated(jump, "gate")).toEqual({ master: "false", path: "unset" });
+  const final = "Match final host workbox\n  ControlMaster no\n  ControlPath /mine/cm\n";
+  expect(evaluated(final, "simon@workbox")).toEqual({ master: "false", path: "/mine/cm" });
+  const none = "Host workbox\n  ControlPath none\n";
+  expect(evaluated(none, "simon@workbox")).toEqual({ master: "auto", path: "unset" });
 });
 
 // A socket path too long for a Mac fails every connection, so then each command connects on
