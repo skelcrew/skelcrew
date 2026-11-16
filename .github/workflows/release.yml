@@ -28,7 +28,7 @@ jobs:
         with:
           bun-version: 1.3.14
       # The tests start real tmux servers and real sandboxes. Ubuntu 26.04, as Skelcrew's servers
-      # run. 24.04's bubblewrap has no overlays, which reviews need, and the screen
+      # and Sprites run. 24.04's bubblewrap has no overlays, which reviews need, and the screen
       # can't open on its tmux 3.4. Ubuntu stops bubblewrap from making its namespaces
       # unless that restriction is lifted.
       - run: |
