@@ -270,9 +270,21 @@ export function printRepositories(repositories: RepositoryRow[], json: boolean):
 // The width sc ps keeps its rows to, so they fit a terminal of the usual size.
 const psWidth = 80;
 
+// The most columns a thread's name takes in sc ps. With the other columns at their widest,
+// such as "reviewing r12", a row still fits 80 columns.
+const threadRoom = 20;
+
+// Returns a thread's name cut to fit sc ps, in its middle, as a repository's name can be long.
+// Its task stays whole, such as -t7, as it is what tells a repository's threads apart.
+function shortName(name: string): string {
+  if (Bun.stringWidth(name) <= threadRoom) return name;
+  const task = name.slice(name.lastIndexOf("-"));
+  return `${fitted(name.slice(0, name.length - task.length), threadRoom - task.length)}${task}`;
+}
+
 // Prints threads for sc ps: as JSON for tools, or else as a table. Its title column has each
 // thread's short title, or its title cut to what the other columns leave of a row, so a long
-// title doesn't push the rest out of sight. The title comes from the tracker and the short title
+// title doesn't push the rest out of sight. A long thread name is cut too. --json has it whole. The title comes from the tracker and the short title
 // from the lead, so their control codes are removed, which could break a row or reach your
 // terminal. A review shows its round, such as changes r3.
 export function printThreads(threads: ThreadRow[], json: boolean): void {
@@ -289,7 +301,7 @@ export function printThreads(threads: ThreadRow[], json: boolean): void {
     const review = t.review === null ? "" : t.review.state;
     const round = t.review?.round == null ? "" : ` r${t.review.round}`;
     return [
-      t.thread,
+      shortName(t.thread),
       t.status,
       t.pr === null ? "" : `#${t.pr}`,
       t.checks ?? "",
@@ -368,11 +380,16 @@ function safeText(text: string): string {
   return text.replace(colours, "").split(/\r?\n/).map(removeControlCodes).join("\n");
 }
 
+// How long sc pr show waits on the forge for a failed check's log, in milliseconds. sc gives up
+// on the daemon after a minute, so a forge that hangs must not keep the PR itself from showing.
+const logDeadline = 10_000;
+
 // Returns a PR for sc pr show, named by its number or by its thread's task, in the repository
 // `repo` names, or else in the one whose remote is `from`, the checkout sc ran in. It reads
 // Skelcrew's copy, so it asks the forge only for the logs of failed checks. A log that can't be
 // read says why in its place. Throws when the repository has no forge, and so no PRs, and when
-// the copy has no such PR, such as one closed with no thread at work on it.
+// the copy has no such PR, such as one closed with no thread at work on it. A log the forge takes
+// too long on is given up on, so the PR still shows.
 export async function showPr(
   db: Database,
   which: {
@@ -417,7 +434,7 @@ export async function showPr(
       .map(async (check) => {
         const log =
           check.state === "failed" && check.id !== null
-            ? await failedLog(db, repository, check.id).catch(
+            ? await failedLog(db, repository, check.id, logDeadline).catch(
                 (error) => `(Skelcrew couldn't read its log: ${errorText(error)})`,
               )
             : null;

@@ -228,6 +228,33 @@ test("sc ps lines up and fits rows whose titles mix wide and narrow letters", ()
   expect(at(said[1] ?? "")).toBe(at(said[2] ?? ""));
 });
 
+// A repository's name can be long, and so its threads' names. The name is cut in its middle, so
+// its task, which tells threads apart, still shows, and the row still fits.
+test("sc ps cuts a long thread name in its middle, keeping its task", () => {
+  const said: string[] = [];
+  const log = spyOn(console, "log").mockImplementation((line: string) => said.push(line));
+  try {
+    printThreads(
+      [
+        psRow({
+          thread: "a-repository-with-a-perfectly-valid-long-name-t7",
+          title: "Send people back to the page they came from",
+          status: "waiting",
+          needsYou: true,
+          pr: 1234,
+          checks: "running",
+          review: { state: "reviewing", round: 12, at: null },
+        }),
+      ],
+      false,
+    );
+  } finally {
+    log.mockRestore();
+  }
+  for (const line of said) expect(Bun.stringWidth(line)).toBeLessThanOrEqual(80);
+  expect(said[1]).toStartWith("a-repository-wit…-t7  ");
+});
+
 // A title comes from the tracker and a short title from the lead, so either could hold a line
 // break or a code your terminal would act on.
 test("sc ps prints a title or short title with control codes as one clean row", () => {

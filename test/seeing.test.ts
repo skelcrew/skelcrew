@@ -637,6 +637,23 @@ describe("with a forge", () => {
     expect(logs).toEqual([{ ask: "log", repository: "simon/app", check: "501" }]);
   });
 
+  // The forge can hang on a log, and sc gives up on the daemon after a minute, so the log has a
+  // deadline of its own, and the PR still shows with why its log is missing.
+  test("sc pr show still shows the PR when the forge hangs on a log", async () => {
+    const settings = forgeThreads();
+    writeFileSync(join(settings, "hold-log"), "");
+    serve();
+    await untilAnswers();
+    const started = Date.now();
+    const shown = await skel(["pr", "show", "app-12"]);
+    expect(Date.now() - started).toBeLessThan(20_000);
+    expect(shown.err).toBe("");
+    expect(shown.out).toStartWith("#31  Add export\n");
+    expect(shown.out).toEndWith(
+      "Log of test, from the forge\n(Skelcrew couldn't read its log: github didn't answer within 10 seconds)\n",
+    );
+  }, 40_000);
+
   test("sc pr show takes a PR's number, or #N, in a checkout of its repository", async () => {
     forgeThreads();
     const checkout = join(home, "app");
