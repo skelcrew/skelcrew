@@ -161,10 +161,10 @@ async function reviewRound(
 
 // Runs the review on the reviewer's harness and returns its verdict and the harness it ran on,
 // waiting out that harness's usage limit. While the limit holds, the review runs on the
-// `fallback` harness, if you set one that isn't limited too, and its body says so. Otherwise it is held, without a word to the
-// builder, until the limit resets, or, with no reset time, until the next try. All reviews held
-// on a harness wait for that same moment. The thread shows the limit meanwhile, and its lead
-// hears of it once. A review that runs past its time limit is ended and run once more, and the
+// `fallback` harness, if you set one that isn't limited too, and its body says so. Otherwise it
+// is held, without a word to the builder, until the limit resets, or, with no reset time, until
+// the next try. All reviews held on a harness wait for that same moment. The thread shows the
+// limit meanwhile, and its lead hears of it once. A review that runs past its time limit is ended and run once more, and the
 // lead hears of it. A second one that does gives a timed out review, which needs you. A
 // cancelled round returns as soon as it is cancelled, with a failed review its caller drops.
 async function reviewWithinLimits(
@@ -181,8 +181,12 @@ async function reviewWithinLimits(
   const { signal } = given;
   let timeouts = 0;
   while (true) {
-    if (signal.aborted)
+    // A cancelled review held on a limit no longer is: the round that cancelled it shows its own.
+    if (signal.aborted) {
+      if (readThread(db, folder).review_limited)
+        record(db, folder, notHeld, "the held review ended");
       return { verdict: { verdict: "failed", body: "the review was cancelled" }, by: role.harness };
+    }
     // Pick the harness: the reviewer's own, or the fallback while the reviewer's is limited.
     const now = Date.now();
     const limit = limitOn(role.harness, now);
@@ -192,18 +196,18 @@ async function reviewWithinLimits(
     // With no harness free, hold the review until the limit resets, and show that on the
     // thread.
     if (limit !== null && spare === null) {
-      const held = { limited: true, limit_reset: limit.reset };
+      const held = { review_limited: true, review_reset: limit.reset };
       const thread = readThread(db, folder);
-      if (!thread.limited || thread.limit_reset !== limit.reset)
+      if (!thread.review_limited || thread.review_reset !== limit.reset)
         record(db, folder, held, `${role.harness}'s usage limit holds the review`);
       await waitUntil(limit.until, signal);
       continue;
     }
     // Run it, and show which harness has the thread now.
     const harness = limit === null ? role.harness : (fallback ?? role.harness);
-    const running = { limited: false, limit_reset: null, reviewer: harness };
+    const running = { ...notHeld, reviewer: harness };
     const thread = readThread(db, folder);
-    if (thread.limited || thread.reviewer !== harness)
+    if (thread.review_limited || thread.reviewer !== harness)
       record(db, folder, running, `reviewing on ${harness}`);
     const model = harness === role.harness ? role.model : undefined;
     const result = await review({ ...given, harness, model });
@@ -240,6 +244,9 @@ async function reviewWithinLimits(
     return { verdict: { ...result, body }, by: harness };
   }
 }
+
+// What a thread's review held on a usage limit becomes once it isn't.
+const notHeld = { review_limited: false, review_reset: null };
 
 // Types a review's changes into the builder once it is idle, then forgets them. They are
 // saved until then, so a stop of the daemon while the builder is busy doesn't lose them.
@@ -290,7 +297,8 @@ function trackRound(
     if (cancel.signal.aborted) return;
     const why = errorText(error);
     // A review not yet typed in stays saved, so starting the daemon again can type it.
-    record(db, folder, { needs_you: true, status: "waiting" }, `the round failed: ${why}`);
+    const failed = { needs_you: true, status: "waiting", ...notHeld } as const;
+    record(db, folder, failed, `the round failed: ${why}`);
     typeLeadNotes(db, tmux);
   });
   const round = { cancel, pushed, done, ended: false };
@@ -343,6 +351,7 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
       submitting: summary,
       telling: null,
       held: null,
+      ...notHeld,
       // What CI said was about the commit before this one.
       checks: null,
       reviewer: reviewer.harness,
@@ -399,6 +408,7 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
     needs_you,
     telling: null,
     held: null,
+    ...notHeld,
     reviewing: sha,
   } satisfies Partial<Thread>;
   record(db, folder, change, "asked to review again");

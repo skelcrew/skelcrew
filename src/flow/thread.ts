@@ -52,12 +52,16 @@ export const Thread = z.object({
   // Whether the builder's harness stopped on an error it can't get past alone, such as a lapsed
   // login. The builder then sits idle, so the thread needs you until you type to it.
   erred: z.coerce.boolean(),
-  // Whether whoever has the thread now waits out its harness's usage limit: a review held until
-  // the limit resets, or a builder whose harness stopped on it, which also has erred. Either goes
-  // on by itself once the limit resets, so it doesn't need you. `limit_reset` is when, in
-  // milliseconds since 1970, or null when the harness didn't say.
+  // Whether the builder's harness stopped on its usage limit, which also sets erred. It is woken
+  // once the limit resets, so it doesn't need you. `limit_reset` is when, in milliseconds since
+  // 1970, or null when the harness didn't say.
   limited: z.coerce.boolean(),
   limit_reset: z.number().nullable(),
+  // The same for the thread's review, held until its harness's usage limit resets. Kept apart
+  // from the builder's, so the review starting never ends the builder's wait, and typing to the
+  // builder never ends the review's.
+  review_limited: z.coerce.boolean(),
+  review_reset: z.number().nullable(),
   // Why the thread started needing you, until a note saying so is typed into the lead.
   noting: z.string().nullable(),
   // The task's title and body when the thread started, for the strip, which looks each second

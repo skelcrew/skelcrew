@@ -127,6 +127,8 @@ function prepareTables(db: Database): void {
     erred: "INTEGER NOT NULL DEFAULT 0",
     limited: "INTEGER NOT NULL DEFAULT 0",
     limit_reset: "INTEGER",
+    review_limited: "INTEGER NOT NULL DEFAULT 0",
+    review_reset: "INTEGER",
     noting: "TEXT",
     title: "TEXT",
     started: "INTEGER",

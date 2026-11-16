@@ -89,7 +89,13 @@ const given = () => ({
   env: env(),
 });
 const start = (
-  more: { signal?: AbortSignal; limit?: number; harness?: "claude"; model?: string } = {},
+  more: {
+    signal?: AbortSignal;
+    limit?: number;
+    harness?: "claude";
+    model?: string;
+    issue?: { title: string; body: string };
+  } = {},
 ) => review({ ...given(), ...more });
 
 // What `nice` prints here, so a test can tell the reviewer's CPU priority from the test's own.
@@ -258,6 +264,19 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     });
     fakeCodex(approve, [echo, "exit 1"]);
     expect(await start()).toEqual({ verdict: "failed", body: "codex exited with 1" });
+  });
+
+  // A bug report can quote an error that looks like Codex's own, and even one about a limit.
+  test("never takes an ERROR line of the echoed task for Codex's own error", async () => {
+    const quoted = {
+      title: "Fix the sync",
+      body: "It logs:\nERROR: Too many requests, rate limit\n",
+    };
+    fakeCodex(approve, ['cat "$CODEX_HOME/sessions/prompt" >&2', "exit 1"]);
+    expect(await start({ issue: quoted })).toEqual({
+      verdict: "failed",
+      body: "codex exited with 1",
+    });
   });
 
   test("a Codex review that meets its usage limit is limited, with when it resets", async () => {

@@ -76,7 +76,8 @@ export function threadMark(row: Pick<Row, "status" | "needsYou" | "word">): Mark
 // A thread can need you for a reason with no word of its own, such as a builder that couldn't be
 // told about an event. Its word is then "needs you", rather than something untrue. A review or
 // builder waiting out its harness's usage limit says when the limit resets, as this machine's
-// clock shows it, such as "limit · 13:59", or only "limit" when the harness didn't say.
+// clock shows it, such as "limit · 13:59", or only "limit" when the harness didn't say. Anything
+// that needs you comes before a limit, which only waits.
 export function threadWord(thread: Thread, maxRounds: number, now = Date.now()): string {
   const { status, verdict, checks } = thread;
   // A thread that failed, stopped or is done says just that. Otherwise a question from its builder
@@ -85,9 +86,7 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
   if (status === "failed" || status === "stopped" || status === "done") return status;
   const underWay = thread.submitting !== null || thread.reviewing !== null;
   if (thread.asking) return "question";
-  if (thread.limited)
-    return thread.limit_reset === null ? "limit" : `limit · ${clockTime(thread.limit_reset, now)}`;
-  if (thread.erred) return "error";
+  if (thread.erred && !thread.limited) return "error";
   if (thread.needs_you) {
     if (pastRoundLimit(thread, maxRounds)) return "round limit";
     if (verdict === "timed out" && !underWay) return "review timed out";
@@ -95,7 +94,12 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
     if (verdict === "approve" && (checks === "passing" || checks === null)) return "approved";
     return "needs you";
   }
-  // Not needing you: a round under way shows as reviewing, and a review's changes still waiting
+  // Not needing you: a builder or a review waiting out a usage limit says until when.
+  const limitWord = (reset: number | null) =>
+    reset === null ? "limit" : `limit · ${clockTime(reset, now)}`;
+  if (thread.limited) return limitWord(thread.limit_reset);
+  if (thread.review_limited) return limitWord(thread.review_reset);
+  // A round under way shows as reviewing, and a review's changes still waiting
   // to be typed into the builder as changes. Otherwise it works or waits on checks.
   if (underWay) return "reviewing";
   if (thread.telling !== null) return "changes";
@@ -103,9 +107,9 @@ export function threadWord(thread: Thread, maxRounds: number, now = Date.now()):
 }
 
 // Returns whether the thread's reviewer has it now: a review running, or one held on its
-// harness's usage limit. A builder held on a limit has erred too.
+// harness's usage limit, when the builder isn't held on one of its own.
 export const onReviewer = (thread: Thread, word: string) =>
-  word === "reviewing" || (thread.limited && !thread.erred);
+  word === "reviewing" || (word.startsWith("limit") && !thread.limited);
 
 // What the sidebar reads of a thread beyond what its log keeps: when its builder's current
 // stretch of work began. Null before the builder first started.

@@ -161,6 +161,8 @@ export async function startThread(
       erred: false,
       limited: false,
       limit_reset: null,
+      review_limited: false,
+      review_reset: null,
       noting: null,
       title,
       body,

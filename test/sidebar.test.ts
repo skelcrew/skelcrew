@@ -723,6 +723,8 @@ const state: Thread = {
   erred: false,
   limited: false,
   limit_reset: null,
+  review_limited: false,
+  review_reset: null,
   noting: null,
   body: null,
   title: null,

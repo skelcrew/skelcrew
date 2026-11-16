@@ -432,11 +432,11 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
       "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Dec 31st, 2099 11:59 PM.\n",
     );
     await startApp12();
-    await until(() => thread().limited === 1, 30_000);
+    await until(() => thread().review_limited === 1, 30_000);
     expect(thread()).toMatchObject({
       status: "waiting",
       needs_you: 0,
-      limit_reset: new Date(2099, 11, 31, 23, 59).getTime(),
+      review_reset: new Date(2099, 11, 31, 23, 59).getTime(),
     });
     expect(thread().reviewing).not.toBeNull();
     // The check stays pending, nothing is posted, and the builder hears nothing.
@@ -453,7 +453,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     const again = await skel(["submit", "Newer"], { SKELCREW_SOCKET: builderSocket() });
     expect(again.err).toBe("");
     const newer = git(clone(), "rev-parse", "HEAD");
-    await until(() => thread().reviewing === newer && thread().limited === 1, 30_000);
+    await until(() => thread().reviewing === newer && thread().review_limited === 1, 30_000);
     await Bun.sleep(1000);
     expect(read(join(codexHome(), "sessions", "count")).trim()).toBe("1");
     expect(read(join(lead(), "typed")).split(told).length - 1).toBe(1);
@@ -480,7 +480,7 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
         body: "This review ran on Claude Code, as Codex reached its usage limit.\n\nReady to merge.",
       },
     ]);
-    expect(thread()).toMatchObject({ reviewed_by: "claude", limited: 0, needs_you: 0 });
+    expect(thread()).toMatchObject({ reviewed_by: "claude", review_limited: 0, needs_you: 0 });
     await until(() =>
       read(join(lead(), "typed")).includes(
         "Codex's usage limit is reached until 31 Dec 23:59; reviews run on Claude Code until then.",
@@ -498,10 +498,10 @@ openDb().run("UPDATE repositories SET author = 'skelcrew[bot] <1+skelcrew[bot]@u
     const reset = Math.ceil(Date.now() / 1000) + 8;
     writeFileSync(join(home, "bin", "claude-limit"), `${reset}\n`);
     await startApp12();
-    await until(() => thread().limited === 1, 30_000);
-    expect(thread()).toMatchObject({ needs_you: 0, limit_reset: reset * 1000 });
+    await until(() => thread().review_limited === 1, 30_000);
+    expect(thread()).toMatchObject({ needs_you: 0, review_reset: reset * 1000 });
     await until(() => finished("success").length === 1, 30_000);
-    expect(thread()).toMatchObject({ limited: 0, limit_reset: null, needs_you: 0 });
+    expect(thread()).toMatchObject({ review_limited: 0, review_reset: null, needs_you: 0 });
     expect(reviews()).toEqual([{ commit: pushed(), verdict: "approve", body: "Ready to merge." }]);
     await until(() =>
       read(join(lead(), "typed")).includes(

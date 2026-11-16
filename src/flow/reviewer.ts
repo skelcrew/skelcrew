@@ -97,21 +97,30 @@ async function spawnReviewer(given: {
 }
 
 // Returns the error a reviewer that failed ended on, never a line of the prompt it was given:
-// the error its harness reports, else the last line it printed on stderr, or else stdout, that
-// isn't one of the prompt's. A harness can echo the prompt as it starts, so the end of what it
-// printed can be the task's text rather than what went wrong.
+// the error its harness reports, else, when `guess`, the last line it printed on stderr, or
+// else stdout. A harness can echo the prompt as it starts, so the end of what it printed can be
+// the task's text rather than what went wrong. A task can hold a line that looks like the
+// harness's own error, such as "ERROR: connection refused" in a bug report, so the prompt's
+// lines are taken out before anything is read.
 function failureOf(
   name: HarnessName,
   finished: { out: string; err: string },
   prompt: string,
+  guess: boolean,
 ): string | null {
-  const reported = harnessNamed(name).failure(finished.out, finished.err);
-  if (reported !== null) return reported.slice(0, 2000);
   const echoed = new Set(prompt.split("\n").map((line) => line.trim()));
-  for (const printed of [finished.err, finished.out]) {
-    const lines = printed.split("\n").map((line) => line.trim());
-    const last = lines.findLast((line) => line !== "" && !echoed.has(line));
-    if (last !== undefined) return last.slice(0, 2000);
+  const own = (printed: string) =>
+    printed
+      .split("\n")
+      .filter((line) => line.trim() === "" || !echoed.has(line.trim()))
+      .join("\n");
+  const [out, err] = [own(finished.out), own(finished.err)];
+  const reported = harnessNamed(name).failure(out, err);
+  if (reported !== null) return reported.slice(0, 2000);
+  if (!guess) return null;
+  for (const printed of [err, out]) {
+    const last = printed.split("\n").findLast((line) => line.trim() !== "");
+    if (last !== undefined) return last.trim().slice(0, 2000);
   }
   return null;
 }
@@ -127,10 +136,9 @@ function readVerdict(
 ): Review | Limited {
   // A reviewer that exited with an error, or gave no answer, is asked what went wrong. One that
   // exited cleanly has only the error its harness reports, as any other line is its work.
-  const { out, err, code } = finished;
+  const { out, code } = finished;
   const failed = (otherwise: string): Review | Limited => {
-    const error =
-      code === 0 ? harnessNamed(name).failure(out, err) : failureOf(name, finished, prompt);
+    const error = failureOf(name, finished, prompt, code !== 0);
     const limit = error === null ? null : harnessNamed(name).usageLimit(error, Date.now());
     if (error !== null && limit !== null) return { verdict: "limited", body: error, ...limit };
     if (code === 0)

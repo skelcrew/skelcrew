@@ -94,9 +94,10 @@ export function tellOfLimit(
     limit.reset === null
       ? `${title}'s usage limit is reached, with no reset time given`
       : `${title}'s usage limit is reached until ${at}`;
+  const meanwhile = limit.reset === null ? "meanwhile" : "until then";
   const then =
     fallback !== null
-      ? `reviews run on ${harnessNamed(fallback).title} until then`
+      ? `reviews run on ${harnessNamed(fallback).title} ${meanwhile}`
       : limit.reset === null
         ? `reviews try again at ${at}`
         : "reviews resume then";
@@ -108,17 +109,33 @@ export function tellOfLimit(
 export function waitUntil(at: number, signal: AbortSignal): Promise<void> {
   return new Promise((done) => {
     if (signal.aborted) return done();
-    const timer = setTimeout(done, Math.max(0, at - Date.now()));
+    const cancel = runAt(at, done);
     signal.addEventListener("abort", () => {
-      clearTimeout(timer);
+      cancel();
       done();
     });
   });
 }
 
+// The longest a timer can wait: one set for longer fires at once instead.
+const longestTimer = 2 ** 31 - 1;
+
+// Runs `run` once `at` comes, and returns what cancels it. A weekly limit, or a reset dated a
+// year ahead, can be further off than a timer can wait, so a long wait is taken in steps.
+function runAt(at: number, run: () => void): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const step = () => {
+    const left = at - Date.now();
+    if (left <= 0) return run();
+    timer = setTimeout(step, Math.min(left, longestTimer));
+  };
+  step();
+  return () => clearTimeout(timer);
+}
+
 // The wake planned for each builder that stopped on its harness's usage limit, by its thread's
 // folder, and how many waits in a row had no reset time, so the wait grows.
-const wakes = new Map<string, ReturnType<typeof setTimeout>>();
+const wakes = new Map<string, () => void>();
 const builderTries = new Map<string, number>();
 
 // Plans to type "continue" into the thread's builder once its harness's usage limit resets, or,
@@ -136,14 +153,14 @@ export function wakeAfterLimit(db: Database, tmux: string, folder: string): void
     at = now + backoffAfter(tries);
   } else builderTries.delete(folder);
   // One wake per builder: a newer limit replaces the one planned.
-  clearTimeout(wakes.get(folder));
-  const timer = setTimeout(() => {
+  wakes.get(folder)?.();
+  const cancel = runAt(at, () => {
     wakes.delete(folder);
     continueBuilder(db, tmux, folder).catch((error) =>
       console.log(`couldn't wake ${folder}'s builder after its usage limit: ${errorText(error)}`),
     );
-  }, at - now);
-  wakes.set(folder, timer);
+  });
+  wakes.set(folder, cancel);
 }
 
 // Types "continue" into a builder still idle on its harness's usage limit. The flags are cleared
