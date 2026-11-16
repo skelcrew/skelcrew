@@ -40,7 +40,8 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 
 // Stands in for Claude Code, as the lead and as the builder alike: it waits at a ❯ prompt,
 // keeps what is typed into it, and shows esc to interrupt while the file busy is there, with
-// the file screen below it. Esc on its own ends a busy turn, as in Claude Code, and is noted
+// the file screen below it and a count above it that keeps moving. Idle, it shows the file
+// transcript above its prompt. Esc on its own ends a busy turn, as in Claude Code, and is noted
 // in the file escs.
 function fakeClaude(): void {
   // Reads one key at a time, as a lone Esc ends no line. An Esc with more right behind it,
@@ -72,10 +73,12 @@ for i in $(seq 3000); do
   now=idle; test -e "$CLAUDE_CONFIG_DIR/busy" && now=busy
   if [ "$now" != "$shown" ]; then
     clear
-    if [ $now = busy ]; then echo "esc to interrupt"; cat "$CLAUDE_CONFIG_DIR/screen" 2>/dev/null
-    else echo "❯"; fi
+    if [ $now = busy ]; then echo; echo "esc to interrupt"; cat "$CLAUDE_CONFIG_DIR/screen" 2>/dev/null
+    else cat "$CLAUDE_CONFIG_DIR/transcript" 2>/dev/null; echo "❯"; fi
     shown=$now
   fi
+  # Busy, the top line counts up, as Claude Code's spinner moves all through a turn.
+  if [ $now = busy ]; then printf '\\033[H%s\\033[K' "$i"; fi
   sleep 0.1
 done`,
   );
@@ -400,5 +403,21 @@ describe.skipIf(insideSandbox)("sc peek and sc interrupt", () => {
     );
     await until(() => read(join(builder(), "escs")) !== "");
     await until(() => typed(builder()).includes("Kill the hung ssh."));
+  }, 60_000);
+
+  test("an idle builder whose output mentions esc to interrupt isn't taken for mid-turn", async () => {
+    await startApp12();
+    writeFileSync(join(builder(), "transcript"), "The busy marker is esc to interrupt\n");
+    // Busy and back draws the screen again, with the transcript above the prompt.
+    writeFileSync(join(builder(), "busy"), "");
+    await until(() => tmuxScreen().includes("esc to interrupt\n"));
+    rmSync(join(builder(), "busy"));
+    await until(() => tmuxScreen().includes("The busy marker is esc to interrupt\n❯"));
+    const peek = await skel(["peek", "app-12"], "lead");
+    expect(peek.out).toContain("\napp-12 · working · idle\n");
+    const interrupt = await skel(["interrupt", "app-12"], "lead");
+    expect(interrupt.out).toContain("app-12's builder is idle already");
+    await Bun.sleep(1500);
+    expect(read(join(builder(), "escs"))).toBe("");
   }, 60_000);
 });

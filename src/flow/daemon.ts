@@ -332,12 +332,12 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
       }
       case "peek": {
         const thread = findThread(db, request.repo, request.task);
-        return { screen: peekAtBuilder(db, tmux, thread, request.lines) };
+        return { screen: await peekAtBuilder(db, tmux, thread, request.lines) };
       }
       case "interrupt": {
         const thread = findThread(db, request.repo, request.task);
         const who = leadOfCaller(caller) ? "the lead" : "you";
-        return { said: interruptBuilder(db, tmux, thread, who) };
+        return { said: await interruptBuilder(db, tmux, thread, who) };
       }
       case "tell lead":
         messageLead(db, tmux, callingThread(caller), request.text);

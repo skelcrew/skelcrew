@@ -101,12 +101,21 @@ export function messageLead(db: Database, tmux: string, thread: Thread, text: st
 }
 
 // Returns what the builder is doing by its screen, for sc peek and sc interrupt: asking the
-// human a question, mid-turn while its harness shows its busy mark, or else idle. Only the
-// visible screen counts, as an old busy mark can sit in the history above it.
-function builderState(tmux: string, thread: Thread): "asking" | "mid-turn" | "idle" {
+// human a question, mid-turn, or else idle. The busy mark alone isn't enough, as a command's
+// output above an idle prompt can hold the same words, and Esc there could clear a draft. A
+// harness mid-turn redraws its spinner and timer all the time, even while a command hangs, and
+// an idle one sits still. So it is mid-turn only while the mark shows and the screen moves.
+async function builderState(tmux: string, thread: Thread): Promise<"asking" | "mid-turn" | "idle"> {
   if (thread.asking) return "asking";
-  const screen = mustTmux(tmux, ["capture-pane", "-p", "-t", `=${thread.folder}:`]);
-  return screen.includes(builderHarness(thread).marks.busy) ? "mid-turn" : "idle";
+  const look = () => mustTmux(tmux, ["capture-pane", "-p", "-t", `=${thread.folder}:`]);
+  const { busy } = builderHarness(thread).marks;
+  // Only the visible screen counts, as an old busy mark can sit in the history above it.
+  const before = look();
+  if (!before.includes(busy)) return "idle";
+  // A little over a second, so a timer that counts whole seconds has moved too.
+  await Bun.sleep(1200);
+  const after = look();
+  return after.includes(busy) && after !== before ? "mid-turn" : "idle";
 }
 
 // Returns the last lines of the builder's screen, for sc peek, so the lead can see what a builder
@@ -116,7 +125,12 @@ function builderState(tmux: string, thread: Thread): "asking" | "mid-turn" | "id
 // It doesn't say how long the screen has been still: Claude Code redraws its spinner every
 // second mid-turn, so a builder stuck on a hung command would look as if it just moved. It
 // changes nothing.
-export function peekAtBuilder(db: Database, tmux: string, thread: Thread, lines: number): string {
+export async function peekAtBuilder(
+  db: Database,
+  tmux: string,
+  thread: Thread,
+  lines: number,
+): Promise<string> {
   const name = runningBuilder(db, tmux, thread);
   // -J joins lines the pane wrapped, so a long line reads as one. -S reaches into the history
   // above the screen, for more lines than the pane is tall.
@@ -134,7 +148,7 @@ export function peekAtBuilder(db: Database, tmux: string, thread: Thread, lines:
     .split("\n")
     .slice(-lines);
   const doing = { asking: "asking the human a question", "mid-turn": "mid-turn", idle: "idle" };
-  const heading = `${name} · ${thread.status} · ${doing[builderState(tmux, thread)]}`;
+  const heading = `${name} · ${thread.status} · ${doing[await builderState(tmux, thread)]}`;
   return `<skelcrew from="${name}" kind="peek">\n${untagged([heading, ...shown].join("\n"))}\n</skelcrew>`;
 }
 
@@ -144,14 +158,14 @@ export function peekAtBuilder(db: Database, tmux: string, thread: Thread, lines:
 // human a question is refused, as Esc would sweep away a question only the human can answer.
 // Each interrupt goes in the thread's log, saying who did it. A message sc tell queued for the
 // builder is typed in once it is idle, as usual.
-export function interruptBuilder(
+export async function interruptBuilder(
   db: Database,
   tmux: string,
   thread: Thread,
   who: "you" | "the lead",
-): string {
+): Promise<string> {
   const name = runningBuilder(db, tmux, thread);
-  const state = builderState(tmux, thread);
+  const state = await builderState(tmux, thread);
   if (state === "asking")
     throw new Error(
       `${name}'s builder is asking the human a question, and Esc would sweep it away. Tell the human instead.`,
