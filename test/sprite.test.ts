@@ -471,7 +471,9 @@ test("sc remote add creates the Sprite after asking, sets it up, and prints how 
   writeFileSync(join(home, "bin", "uname"), "#!/bin/sh\necho x86_64\n", { mode: 0o755 });
   const run = await skel(["remote", "add", "sprite:demo"], "y\n");
   expect(run.code).toBe(0);
-  expect(run.out).toContain("Setting up sprite:demo: installing bubblewrap,");
+  expect(run.out).toContain(
+    "Setting up sprite:demo: installing bubblewrap, making its URL public for GitHub's webhooks, copying Skelcrew there and setting it up.\n",
+  );
   expect(run.out).toContain("No Sprite named demo. Create it? [y/N]");
   expect(run.out).toContain("the first run on the Sprite\n");
   expect(run.out).toEndWith(

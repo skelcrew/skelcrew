@@ -13,9 +13,10 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { z } from "zod";
 import { claudeTokenFile, dataDir } from "../paths.ts";
+import { editing, type Progress, stepText, toolWords } from "./progress.ts";
 import { filterEnv, refuseCredentials, ro, rw, sandboxArgs } from "./sandbox.ts";
 
 const { O_NONBLOCK, O_NOFOLLOW, O_RDONLY } = constants;
@@ -78,41 +79,156 @@ function claudeToken(home: string): string {
 // but letters and digits made a dash. Names over 200 characters get a hash instead, which
 // Skelcrew's folders never come near.
 function savedConversation(name: string, folder: string, session: string): string | null {
+  return existsSync(conversationFile(name, folder, session)) ? session : null;
+}
+
+// Returns the file a session saves its conversation in, as savedConversation describes, whether
+// or not it is there yet. The sidebar reads it for the builder's progress.
+function conversationFile(name: string, folder: string, session: string): string {
   const project = folder.replace(/[^a-zA-Z0-9]/g, "-");
-  const file = join(dataDir(), "claude", name, "projects", project, `${session}.jsonl`);
-  return existsSync(file) ? session : null;
+  return join(dataDir(), "claude", name, "projects", project, `${session}.jsonl`);
+}
+
+// A line of a conversation file with a model's answer: what it cost, and its parts, such as its
+// thinking, text and tool calls. Claude Code writes one line per part, each with the answer's ID
+// and its whole usage, so an answer's tokens are counted once, by its ID.
+const AnswerLine = z.object({
+  type: z.literal("assistant"),
+  message: z.object({
+    id: z.string(),
+    usage: z
+      .object({
+        input_tokens: z.number(),
+        output_tokens: z.number(),
+        cache_creation_input_tokens: z.number().optional(),
+      })
+      .optional(),
+    content: z.array(z.unknown()).optional(),
+  }),
+});
+// A tool call within an answer, with what the tool was given.
+const ToolUse = z.object({
+  type: z.literal("tool_use"),
+  name: z.string(),
+  input: z.looseObject({}),
+});
+// What TodoWrite is given: the builder's whole plan, each item with its status.
+const Todos = z.object({ todos: z.array(z.object({ status: z.string() })) });
+
+// Adds what `lines` of a builder's conversation file say to its progress so far: its tokens, its
+// latest step and its latest plan. Cache reads are left out of the tokens: each answer reads the
+// whole conversation again, so counting them would grow the number with the square of its
+// length. Cache writes are counted. Claude Code sends nearly every token of input as a cache
+// write, and its plain input is a few tokens an answer, so without them an hour of work would
+// read as a few thousand tokens. Counted so, the number comes close to what Claude Code shows for
+// a subagent, the size of its whole conversation.
+function readProgress(lines: string[], before: Progress): Progress {
+  let { step, tokens, plan, last } = before;
+  for (const line of lines) {
+    // Most lines are something else, and parsing each would be slow on a long conversation.
+    if (!line.includes('"assistant"')) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const answer = AnswerLine.safeParse(parsed);
+    if (!answer.success) continue;
+    const { id, usage, content = [] } = answer.data.message;
+    if (usage && id !== last) {
+      tokens =
+        (tokens ?? 0) +
+        usage.input_tokens +
+        (usage.cache_creation_input_tokens ?? 0) +
+        usage.output_tokens;
+      last = id;
+    }
+    // TodoWrite sets the plan, and every other tool call is a step.
+    for (const part of content) {
+      const call = ToolUse.safeParse(part);
+      if (!call.success) continue;
+      const todos = call.data.name === "TodoWrite" ? Todos.safeParse(call.data.input) : null;
+      if (todos?.success) {
+        const items = todos.data.todos;
+        plan = {
+          done: items.filter((item) => item.status === "completed").length,
+          total: items.length,
+        };
+      } else if (call.data.name !== "TodoWrite")
+        step = toolStep(call.data.name, call.data.input) ?? step;
+    }
+  }
+  return { step, tokens, plan, last };
+}
+
+// Returns the step a tool call says the builder is on, in a few words. A command says what it
+// does in its own description, or else is the command itself. A file is named without its
+// folder, and a subagent by what it was asked to do. Any other tool is its name in words.
+function toolStep(tool: string, input: Record<string, unknown>): string | null {
+  // The tool's input as text, or empty when it has no such field or it isn't text.
+  const field = (key: string) => {
+    const value = input[key];
+    return typeof value === "string" ? value : "";
+  };
+  // Agent was called Task in earlier releases of Claude Code.
+  if (tool === "Bash") return stepText(field("description")) ?? stepText(field("command"));
+  if (tool === "Agent" || tool === "Task") return stepText(field("description")) ?? toolWords(tool);
+  if (["Edit", "Write", "MultiEdit"].includes(tool) && field("file_path"))
+    return editing(field("file_path"));
+  if (tool === "NotebookEdit" && field("notebook_path")) return editing(field("notebook_path"));
+  if (tool === "Read" && field("file_path"))
+    return stepText(`Reading ${basename(field("file_path"))}`);
+  return toolWords(tool);
+}
+
+// Returns what a JSON file in an agent's config folder holds, or {} when there is none. It
+// refuses anything but a plain file of sane size, since the agent can change what is in its
+// folder.
+function readOwnJson(file: string): unknown {
+  if (!existsSync(file)) return {};
+  // Non-blocking, since the agent could leave a pipe there, and opening one waits forever.
+  const fd = openSync(file, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > 64 * 1024 * 1024)
+      throw new Error(`${file} isn't a plain file, so Skelcrew won't use it`);
+    return JSON.parse(readFileSync(fd, "utf8"));
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// Replaces a JSON file in an agent's config folder, readable only by you. It is written
+// beside it and renamed over it, so even a link made since the check is replaced, never
+// followed. "wx" refuses a link already at the new name.
+function writeOwnJson(file: string, json: unknown): void {
+  const temporary = `${file}.${process.pid}`;
+  rmSync(temporary, { force: true });
+  writeFileSync(temporary, JSON.stringify(json), { mode: 0o600, flag: "wx" });
+  renameSync(temporary, file);
 }
 
 // Marks a folder trusted and the first launch done in a session's .claude.json, keeping all
 // else in the file. Claude Code asks whether to trust the folder even in bypass mode, and on
 // its first launch asks for a theme and more, and would wait there with nobody to answer.
 function trustFolder(config: string, cwd: string): void {
-  // Read what is there now, if anything, refusing anything but a plain file of sane size.
   const file = join(config, ".claude.json");
-  let json: z.infer<typeof ClaudeJson> = {};
-  if (existsSync(file)) {
-    // Non-blocking, since the agent could leave a pipe there, and opening one waits
-    // forever.
-    const fd = openSync(file, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
-    try {
-      const stat = fstatSync(fd);
-      if (!stat.isFile() || stat.size > 64 * 1024 * 1024)
-        throw new Error(`${file} isn't a plain file, so Skelcrew won't use it`);
-      json = ClaudeJson.parse(JSON.parse(readFileSync(fd, "utf8")));
-    } finally {
-      closeSync(fd);
-    }
-  }
+  const json = ClaudeJson.parse(readOwnJson(file));
   // Trust the agent's folder, keeping whatever else Claude Code saved for it.
   const projects = json.projects ?? {};
   projects[cwd] = { ...projects[cwd], hasTrustDialogAccepted: true };
-  // Written beside it and renamed over it, so even a link made since the check is replaced,
-  // never followed. "wx" refuses a link already at the new name.
-  const temporary = join(config, `.claude.json.${process.pid}`);
-  rmSync(temporary, { force: true });
-  const updated = { ...json, hasCompletedOnboarding: true, projects };
-  writeFileSync(temporary, JSON.stringify(updated), { mode: 0o600, flag: "wx" });
-  renameSync(temporary, file);
+  writeOwnJson(file, { ...json, hasCompletedOnboarding: true, projects });
+}
+
+// Skips the warning bypass mode shows first in the settings.json of an agent's config
+// folder, keeping all else in the file. Claude Code ignores this setting when it comes only
+// from --settings, and then runs in manual mode, stopping at prompts nobody answers. It is
+// written at every start, so a session that began before Skelcrew wrote it gets it too.
+function skipBypassWarning(config: string): void {
+  const file = join(config, "settings.json");
+  const json = z.looseObject({}).parse(readOwnJson(file));
+  writeOwnJson(file, { ...json, skipDangerousModePermissionPrompt: true });
 }
 
 // Prepares an agent's own config folder and trusted Claude Code settings, then returns its
@@ -165,7 +281,7 @@ function startCommand(given: {
   const config = join(configs, name);
   // Skelcrew writes here with your rights, and the agent can change what is in its folder. A
   // link it left would send that write to any file of yours.
-  for (const p of [configs, config, join(config, ".claude.json")])
+  for (const p of [configs, config, join(config, ".claude.json"), join(config, "settings.json")])
     if (lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink())
       throw new Error(`${p} is a link, so Skelcrew won't write through it`);
   // The agent sees its own folder and its config folder, both writable, and nothing else of
@@ -184,6 +300,7 @@ function startCommand(given: {
   }
 
   trustFolder(config, cwd);
+  skipBypassWarning(config);
 
   // Bypass mode, since nobody is there to approve each tool. Only a builder gets the hooks
   // that tell Skelcrew it asked you a question.
@@ -236,7 +353,11 @@ function reviewCommand(given: {
   const command = ["claude", "-p", "--model", model, "--output-format", "json"];
   command.push("--json-schema", schema, "--no-session-persistence");
   command.push("--permission-mode", "bypassPermissions", "--settings", settings);
-  const env = { CLAUDE_CONFIG_DIR: join(folder, "claude"), CLAUDE_CODE_OAUTH_TOKEN: token };
+  // The review's folder is new and Skelcrew's alone, so the agent can't have left a link there.
+  const config = join(folder, "claude");
+  mkdirSync(config);
+  skipBypassWarning(config);
+  const env = { CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_OAUTH_TOKEN: token };
   return { command, mounts: [], env };
 }
 
@@ -258,6 +379,8 @@ export const claude = {
   keys: ["ANTHROPIC_API_KEY"],
   start: startCommand,
   saved: savedConversation,
+  conversation: conversationFile,
+  progress: readProgress,
   review: reviewCommand,
   answer: parseAnswer,
 } as const;
