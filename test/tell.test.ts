@@ -376,4 +376,29 @@ describe.skipIf(insideSandbox)("sc peek and sc interrupt", () => {
     expect((await skel(["interrupt", "app-12"], "lead")).err).toBe("");
     await until(() => typed(builder()).includes("Kill the hung ssh."));
   }, 60_000);
+
+  test("interrupt reaches a builder someone has scrolled back in, and a queued message follows", async () => {
+    await startApp12();
+    writeFileSync(join(builder(), "busy"), "");
+    await until(() => tmuxScreen().includes("esc to interrupt"));
+    expect((await skel(["tell", "app-12", "Kill the hung ssh."], "lead")).err).toBe("");
+    // Scrolled back, tmux's copy mode takes the keys that reach the pane.
+    Bun.spawnSync(["tmux", "-L", socket, "copy-mode", "-t", "=app-12:"]);
+    const inMode = Bun.spawnSync([
+      "tmux",
+      "-L",
+      socket,
+      "display",
+      "-p",
+      "-t",
+      "=app-12:",
+      "#{pane_in_mode}",
+    ]);
+    expect(inMode.stdout.toString().trim()).toBe("1");
+    expect((await skel(["interrupt", "app-12"], "lead")).out).toContain(
+      "Interrupted app-12's builder",
+    );
+    await until(() => read(join(builder(), "escs")) !== "");
+    await until(() => typed(builder()).includes("Kill the hung ssh."));
+  }, 60_000);
 });

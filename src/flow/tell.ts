@@ -3,7 +3,7 @@
 // the thread's log. They never go to a tracker or forge. sc peek shows a builder's screen, and
 // sc interrupt stops its turn.
 import type { Database } from "bun:sqlite";
-import { agentRuns, mustTmux } from "../agents/tmux.ts";
+import { agentRuns, mustTmux, tmux as tmuxCommand } from "../agents/tmux.ts";
 import { typeInto } from "../agents/typing.ts";
 import { errorText } from "../say.ts";
 import { noteForLead } from "./lead.ts";
@@ -157,6 +157,9 @@ export function interruptBuilder(
       `${name}'s builder is asking the human a question, and Esc would sweep it away. Tell the human instead.`,
     );
   if (state === "idle") return `${name}'s builder is idle already, so Skelcrew did nothing.`;
+  // Someone scrolled back would have tmux's copy mode take the Esc, and the builder would never
+  // get it. So copy mode is left first. It fails when nobody is scrolled back, which is fine.
+  tmuxCommand(tmux, ["send-keys", "-X", "-t", `=${thread.folder}:`, "cancel"]);
   mustTmux(tmux, ["send-keys", "-t", `=${thread.folder}:`, "Escape"]);
   log(db, readThread(db, thread.folder), `${who} interrupted its builder`);
   return `Interrupted ${name}'s builder. A message told to it is typed in once it is idle.`;
