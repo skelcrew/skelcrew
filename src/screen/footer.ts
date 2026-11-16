@@ -81,7 +81,9 @@ const input = new RegExp(
 // keys while they are toggled on, taking as many rows as they need, up to a third of the screen.
 // More keys than that scroll with the wheel. A click on ? keys shows or hides them, and a click
 // on them hides them. It reads the machine's load every 5 seconds. It writes only when what shows
-// changed, so between changes of the load it sends nothing over a slow link.
+// changed, so between changes of the load it sends nothing over a slow link. Tests pin the load
+// with SKELCREW_FIXED_LOAD, which Skelcrew itself never sets: it is shown as the load, dim, and
+// nothing is measured, so a test can check that a quiet screen writes nothing at all.
 export async function runFooter(agents: string, session: string): Promise<void> {
   const socket = screenSocket(agents);
   const self = `=${session}:.2`;
@@ -95,7 +97,8 @@ export async function runFooter(agents: string, session: string): Promise<void> 
   // this, not by the pane's height, as a click can come before tmux has told of a resize.
   let drawn = 0;
   // The machine's load, which shows from the second sample on, as the CPU figure needs two.
-  let load = "";
+  const fixed = process.env.SKELCREW_FIXED_LOAD;
+  let load = fixed ? paint(grey, removeControlCodes(fixed)) : "";
   let sample = cpuSample(cpus());
   const width = () => process.stdout.columns || 80;
   // Draws what shows, after sizing the pane to it. The keys take at most a third of the screen,
@@ -146,16 +149,17 @@ export async function runFooter(agents: string, session: string): Promise<void> 
     draw();
   });
   // Reads the load every 5 seconds, and draws only when its text changed, as drawing asks tmux
-  // for the window's height.
-  setInterval(() => {
-    const now = cpuSample(cpus());
-    const memory = memoryInUse(readMemory());
-    const text = loadText(cpuBusy(sample, now), memory.used, memory.total);
-    sample = now;
-    if (text === load) return;
-    load = text;
-    draw();
-  }, 5000);
+  // for the window's height. A pinned load is never read.
+  if (!fixed)
+    setInterval(() => {
+      const now = cpuSample(cpus());
+      const memory = memoryInUse(readMemory());
+      const text = loadText(cpuBusy(sample, now), memory.used, memory.total);
+      sample = now;
+      if (text === load) return;
+      load = text;
+      draw();
+    }, 5000);
   // Draws now and on each resize, until the pane goes and its input closes.
   process.on("SIGWINCH", () => {
     lastFrame = "";

@@ -103,6 +103,8 @@ while test -d ${JSON.stringify(home)}; do read -r line && echo "$line" >> ${name
   startSession(agents, name, { folder: home, command: [script], env: { PATH: pathNow } });
 }
 
+// The load the footer shows in these tests, in place of the machine's, which changes on its own.
+const fixedLoad = "cpu 12%  mem 3.4/16G";
 // What goes ahead of Skelcrew in a terminal's command, such as a PATH that changes what it finds.
 let before = "";
 // Whether the terminals send Shift+Enter and other modified keys as keys of their own when asked,
@@ -127,7 +129,10 @@ await Bun.write(${JSON.stringify(join(home, `left-${window}`))}, "left");`,
   );
   const named = `${where ? `SKELCREW_REMOTE_NAME=${where} ` : ""}${before}`;
   const title = `printf '\\033]2;my shell\\007'`;
-  const command = `${title}; ${named}TERM=${term} ${process.execPath} ${script}; sleep 300`;
+  // The footer shows a fixed load, so a quiet screen writes nothing at all. `before` comes after
+  // it, so a test can set it empty to see the machine's own.
+  const load = `SKELCREW_FIXED_LOAD='${fixedLoad}' `;
+  const command = `${title}; ${load}${named}TERM=${term} ${process.execPath} ${script}; sleep 300`;
   const start = ["new-session", "-d", "-s", window, "-x", width, "-y", "30", command];
   // The terminal must already send extended keys when the screen asks for them, as tmux ignores
   // a request it got while they were off.
@@ -791,8 +796,8 @@ test("the strip ends the top row, and the agent's height stays as you switch", a
   expect(readFileSync(join(home, "app-12.size"), "utf8")).toBe(height);
 });
 
-// The bottom row as you see it, across the whole screen, without the machine's load at its right
-// end, which comes and changes on its own, and the row above it.
+// The bottom row as you see it, across the whole screen, without the load at its right end, and
+// the row above it.
 const footer = () =>
   (seen().split("\n")[29] ?? "").replace(/ +cpu \d+% {2}mem [\d.]+\/\d+G *$/, "").trimEnd();
 const aboveFooter = () => (seen().split("\n")[28] ?? "").trimEnd();
@@ -814,7 +819,15 @@ test("the footer runs across the screen under a thin line, with move and quit, t
   await until(() => footer() === "  ⌥↑↓ move  ⌥Q quit  Esc stops codex", "app-7's footer");
 });
 
-test("the footer ends with the machine's load, even with no thread working", async () => {
+test("a pinned load sits at the right end of the footer", async () => {
+  open("lead");
+  await ready("lead");
+  await until(() => (seen().split("\n")[29] ?? "").trimEnd().endsWith(fixedLoad), "the load");
+  expect(footer()).toBe("  ⌥↑↓ move  ⌥Q quit  Esc stops claude");
+});
+
+test("the footer ends with the machine's own load, even with no thread working", async () => {
+  before = "SKELCREW_FIXED_LOAD= ";
   sql("UPDATE threads SET status = 'waiting' WHERE status = 'working'");
   open("lead");
   await ready("lead");
@@ -823,6 +836,7 @@ test("the footer ends with the machine's load, even with no thread working", asy
     () => /cpu \d+% {2}mem [\d.]+\/\d+G *$/.test(seen().split("\n")[29] ?? ""),
     "the load",
   );
+  expect(seen()).not.toContain(fixedLoad);
   expect(footer()).toBe("  ⌥↑↓ move  ⌥Q quit  Esc stops claude");
 });
 
@@ -1633,31 +1647,14 @@ test("Ctrl-C pressed the moment a list opens can't take the right side away", as
   await until(() => read("lead.typed").includes("still here"), "what you typed");
 });
 
-// Checks that what the screen sent the terminal, logged in `written`, touched only the footer's
-// two rows, at the bottom of the 30, where the machine's load changes on its own. tmux puts the
-// cursor on a row and column before it writes there, so any text after a place above them is
-// something else changing. A line feed, or a move or scroll up or down, could reach another row
-// without naming it, so none may come at all.
-function expectOnlyTheFooter(written: string): void {
-  const sent = existsSync(written) ? readFileSync(written, "utf8") : "";
-  const esc = "\x1b";
-  expect(sent).not.toMatch(new RegExp(`\\n|${esc}\\[\\d*[ABEFdLMST]|${esc}[DEM]`));
-  const [before, ...placed] = sent.split(new RegExp(`${esc}\\[(\\d+);\\d+H`));
-  expect(Bun.stripANSI(before ?? "")).toBe("");
-  for (let at = 0; at < placed.length; at += 2) {
-    const text = Bun.stripANSI(placed[at + 1] ?? "").trim();
-    if (Number(placed[at]) < 29) expect(text).toBe("");
-  }
-}
-
-test("a list or page left open writes nothing but the machine's load", async () => {
+test("a list or page left open writes nothing", async () => {
   sql("UPDATE threads SET status = 'waiting', changed = 0 WHERE status = 'working'");
   await openList("Threads");
   await Bun.sleep(1500);
   const written = join(home, "written");
   tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
   await Bun.sleep(3000);
-  expectOnlyTheFooter(written);
+  expect(existsSync(written) ? readFileSync(written, "utf8") : "").toBe("");
   clickRow("Issues");
   await onRight("Not started");
   press("Enter");
@@ -1665,7 +1662,7 @@ test("a list or page left open writes nothing but the machine's load", async () 
   await Bun.sleep(1500);
   rmSync(written, { force: true });
   await Bun.sleep(3000);
-  expectOnlyTheFooter(written);
+  expect(existsSync(written) ? readFileSync(written, "utf8") : "").toBe("");
 });
 
 test("a list follows Skelcrew's copy as it changes", async () => {
@@ -1788,7 +1785,7 @@ test("two terminals can each be on a list of their own", async () => {
   expect(right()).toContain("line 1 of the description");
 });
 
-test("with nothing working, an open screen sends your terminal nothing but the machine's load", async () => {
+test("with nothing working, an open screen sends your terminal nothing at all", async () => {
   // Close enough to a minute that a time shown on any row would change during the wait.
   const started = Date.now() - 56_000;
   sql(`UPDATE threads SET status = 'waiting', started = ${started} WHERE status = 'working'`);
@@ -1799,9 +1796,8 @@ test("with nothing working, an open screen sends your terminal nothing but the m
   await Bun.sleep(1500);
   const written = join(home, "written");
   tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
-  // Long enough for the load to refresh at least once.
-  await Bun.sleep(6000);
-  expectOnlyTheFooter(written);
+  await Bun.sleep(4000);
+  expect(existsSync(written) ? readFileSync(written, "utf8") : "").toBe("");
 });
 
 test("a working thread's time moves on by itself, and writes when it does", async () => {
