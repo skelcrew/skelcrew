@@ -410,42 +410,16 @@ function readAnswer(folder: string): unknown {
   return JSON.parse(readFileSync(file, "utf8"));
 }
 
-// An error in Codex's JSON events: one on its own, or the error a turn failed with.
-const ErrorEvent = z.union([
-  z.looseObject({ type: z.literal("error"), message: z.string() }),
-  z.looseObject({
-    type: z.literal("turn.failed"),
-    error: z.looseObject({ message: z.string() }),
-  }),
-]);
-
 // Returns the error a reviewer's codex exec ended on, or null when it printed none. Codex also
 // prints what the commands it runs print, such as a test that logs "ERROR: rate limit", so only
-// the places Codex itself reports in count: its last line on stderr, when it starts with
-// "ERROR:", or, in its JSON events, the last error event. The echoed prompt doesn't end in a
-// newline, so that "ERROR:" can follow the prompt's last sentence: what comes before it is
+// its own last line on stderr counts, when it holds "ERROR:". The echoed prompt doesn't end in
+// a newline, so that "ERROR:" can follow the prompt's last sentence: what comes before it is
 // never part of the error.
-function reportedError(out: string, err: string): string | null {
-  // Its last line on stderr.
+function reportedError(_out: string, err: string): string | null {
   const last = err.split("\n").findLast((line) => line.trim() !== "") ?? "";
   const marker = last.lastIndexOf("ERROR:");
   const plain = marker < 0 ? "" : last.slice(marker + "ERROR:".length).trim();
-  if (plain !== "") return plain;
-  // Its JSON events, read from the end, as the error that ended the run comes last. A
-  // command's output is inside other events, so it is never taken for one.
-  for (const line of out.split("\n").reverse()) {
-    if (!line.trim().startsWith("{")) continue;
-    let event: unknown;
-    try {
-      event = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    const error = ErrorEvent.safeParse(event);
-    if (!error.success) continue;
-    return error.data.type === "error" ? error.data.message : error.data.error.message;
-  }
-  return null;
+  return plain === "" ? null : plain;
 }
 
 // Returns whether Codex's error says its usage limit is reached, and when it resets, or null

@@ -107,11 +107,18 @@ function failureOf(
   prompt: string,
   guess: boolean,
 ): string | null {
-  const echoed = new Set(prompt.split("\n").map((line) => line.trim()));
+  // The prompt's lines go, and so does its last line where it starts one: it ends with no
+  // newline, so what the harness prints next joins it.
+  const lines = prompt.split("\n").map((line) => line.trim());
+  const echoed = new Set(lines);
+  const tail = lines.findLast((line) => line !== "") ?? "";
+  const unglued = (line: string) =>
+    tail !== "" && line.trim().startsWith(tail) ? line.trim().slice(tail.length) : line;
   const own = (printed: string) =>
     printed
       .split("\n")
       .filter((line) => line.trim() === "" || !echoed.has(line.trim()))
+      .map(unglued)
       .join("\n");
   const [out, err] = [own(finished.out), own(finished.err)];
   const reported = harnessNamed(name).failure(out, err);

@@ -370,7 +370,9 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
           wakeAfterLimit(db, tmux, thread.folder);
           return { erred: true };
         }
-        record(db, thread.folder, { erred: true }, "its builder's harness stopped on an error");
+        // A limit it stopped on before is over: this error is new, and needs you.
+        const erred = { erred: true, limited: false, limit_reset: null };
+        record(db, thread.folder, erred, "its builder's harness stopped on an error");
         typeLeadNotes(db, tmux);
         return { erred: true };
       }

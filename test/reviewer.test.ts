@@ -274,6 +274,19 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     });
   });
 
+  // The prompt ends with no newline, so an error with no ERROR: marker joins its last line.
+  test("never puts the echoed task in the note, even joined to a plain error", async () => {
+    fakeCodex(approve, [
+      'cat "$CODEX_HOME/sessions/prompt" >&2',
+      "echo 'sandbox setup failed' >&2",
+      "exit 1",
+    ]);
+    expect(await start()).toEqual({
+      verdict: "failed",
+      body: "codex exited with 1: sandbox setup failed",
+    });
+  });
+
   // The code under review can log about rate limits, as this one does.
   test("never takes an ERROR line a command printed for Codex's own error, or for a limit", async () => {
     fakeCodex(approve, [
