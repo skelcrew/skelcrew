@@ -254,6 +254,30 @@ describe.skipIf(insideSandbox)("sc submit", () => {
     expect(lines.some((line) => line.reviewer === "codex" && line.submitting !== null)).toBe(true);
   });
 
+  // The lead's message changes the task after the thread started, such as a design you agreed
+  // to, so the reviewer judges the round by it rather than asking to undo it.
+  test("the reviewer gets the lead's messages to the builder after the task", async () => {
+    fakeClaude(false);
+    addApp();
+    verdict(1, "approve", "Ready to merge.");
+    await startApp12();
+    await until(() => read(join(builder(), "args")) !== "", 30_000);
+    const short = new Bun.CryptoHasher("sha256").update("simon/app").digest("hex").slice(0, 16);
+    const leadSocket = join(home, "run", "skelcrew", "leads", short, "skelcrew.sock");
+    await until(() => existsSync(leadSocket));
+    // The builder answers the message with its first round.
+    const told = await skel(["tell", "app-12", "Keep the CSV export too."], {
+      SKELCREW_SANDBOX: "1",
+      SKELCREW_SOCKET: leadSocket,
+    });
+    expect(told.err).toBe("");
+    await until(() => existsSync(join(codexHome(), "sessions", "prompt-1")), 30_000);
+    const prompt = read(join(codexHome(), "sessions", "prompt-1"));
+    expect(prompt).toMatch(
+      /# Add export\n\nAs JSON\n\n## Changes to the task from the lead, after the thread started\n\nThese override the task above where they differ\. The latest comes last\.\n\n### .* UTC\n\nKeep the CSV export too\.\n/,
+    );
+  }, 60_000);
+
   test("pushes the round, opens the PR, has it reviewed, types the changes in, and waits on CI once approved", async () => {
     addApp();
     verdict(1, "changes", "The export has no test.");
