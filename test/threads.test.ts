@@ -15,6 +15,7 @@ import {
   fakePlugin,
   git,
   homeEnv,
+  insideSandbox,
   read,
   runSkel,
   source,
@@ -362,7 +363,7 @@ test("sc issue create and sc start say when the daemon isn't running", async () 
 });
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
-describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a builder", () => {
+describe.skipIf(insideSandbox)("with a builder", () => {
   test("starts the builder in the sandbox, in a clone of its own, on a branch of its own", async () => {
     addApp({
       "skelcrew.yaml":

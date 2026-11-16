@@ -608,14 +608,16 @@ test("a host that names a machine plugin is refused, not taken as an SSH host", 
 });
 
 test("an IPv6 address is an SSH host, though it starts like a plugin name", async () => {
-  for (const args of [
-    ["remote", "add", "abcd::1"],
-    ["--remote", "abcd::1", "ps"],
-  ]) {
-    const run = await skel(args);
-    expect(run.err).not.toContain("no machine plugin");
+  for (const host of ["abcd::1", "[abcd::1]", "simon@abcd::1"]) {
+    for (const args of [
+      ["remote", "add", host],
+      ["--remote", host, "ps"],
+    ]) {
+      const run = await skel(args);
+      expect(run.err).not.toContain("no machine plugin");
+    }
+    expect(calls()).toContain(`ssh ${host}`);
   }
-  expect(calls()).toContain("ssh abcd::1");
 });
 
 test("an agent can't set up a machine", () => {

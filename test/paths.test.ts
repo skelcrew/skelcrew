@@ -1,17 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { userInfo } from "node:os";
 import { cliSocket, threadSocket } from "../src/paths";
-import { source } from "./harness.ts";
+import { insideSandbox, source } from "./harness.ts";
 
-const saved = { runtime: process.env.XDG_RUNTIME_DIR, socket: process.env.SKELCREW_SOCKET };
-// Inside an agent's sandbox, as when Skelcrew builds Skelcrew, SKELCREW_SOCKET is set already.
-beforeEach(() => {
-  delete process.env.SKELCREW_SOCKET;
-});
+const saved = process.env.XDG_RUNTIME_DIR;
 afterEach(() => {
-  process.env.XDG_RUNTIME_DIR = saved.runtime;
-  if (saved.socket === undefined) delete process.env.SKELCREW_SOCKET;
-  else process.env.SKELCREW_SOCKET = saved.socket;
+  process.env.XDG_RUNTIME_DIR = saved;
+  delete process.env.SKELCREW_SOCKET;
 });
 
 // Returns where Skelcrew looks for the daemon's socket without XDG_RUNTIME_DIR, run in a
@@ -30,7 +25,7 @@ async function socketWith(folders: string[]): Promise<string> {
 }
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there these tests can't run.
-describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("without XDG_RUNTIME_DIR", () => {
+describe.skipIf(insideSandbox)("without XDG_RUNTIME_DIR", () => {
   test("finds the daemon's socket where systemd puts it", async () => {
     const uid = userInfo().uid;
     expect(await socketWith([`/run/user/${uid}`])).toBe(`/run/user/${uid}/skelcrew.sock`);

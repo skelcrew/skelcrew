@@ -16,7 +16,7 @@ import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 import { leadPlaces } from "../src/paths.ts";
-import { read, source, until as wait } from "./harness.ts";
+import { insideSandbox, read, source, until as wait } from "./harness.ts";
 
 const main = source("main.ts");
 const daemon = source("flow/daemon.ts");
@@ -402,7 +402,7 @@ function addThread(repo: string, task: number): void {
 }
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there a lead can't start.
-describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("with a lead per repository", () => {
+describe.skipIf(insideSandbox)("with a lead per repository", () => {
   test("starts a repository's lead the first time you open it, in its own folder, with a session id it stores", async () => {
     setUp();
     addRepository("app");
@@ -1132,7 +1132,7 @@ while IFS= read -r line; do echo "$line" >> typed; done <&3 &
 echo "❯"
 exec sleep 300`;
 
-describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("the lead from before", () => {
+describe.skipIf(insideSandbox)("the lead from before", () => {
   test("a lead running through the upgrade becomes the lead of the repository you last attached from", async () => {
     setUp();
     const id = crypto.randomUUID();

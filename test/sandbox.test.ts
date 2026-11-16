@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { claude } from "../src/agents/claude.ts";
 import { codex } from "../src/agents/codex.ts";
 import { setupCommand } from "../src/agents/sandbox.ts";
-import { source } from "./harness.ts";
+import { insideSandbox, source } from "./harness.ts";
 
 let home = "";
 let socket: ReturnType<typeof Bun.listen> | undefined;
@@ -109,7 +109,7 @@ function asLead(script: string) {
 }
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there these tests can't run.
-describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("sandbox", () => {
+describe.skipIf(insideSandbox)("sandbox", () => {
   test("the lead writes in its folder and nowhere else", async () => {
     const repo = repository();
     const { folder } = lead();
