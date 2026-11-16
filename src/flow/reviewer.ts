@@ -52,7 +52,8 @@ Answer "approve" only if it is ready to merge. Otherwise answer "changes", and i
 // Ending bwrap ends everything inside: the reviewer runs as the first process of a process
 // list of its own, which the kernel empties when that process dies. A Mac has no process
 // lists of their own, so the reviewer leads a group, which is ended when it ends. A process
-// left in it would also hold its output open, and the review would wait forever.
+// left in it would also hold its output open, and the review would wait forever. A review is
+// ended with SIGKILL, as the shell around a Mac sandbox ignores SIGTERM to clean up after it.
 async function spawnReviewer(given: {
   argv: string[];
   env: Record<string, string>;
@@ -69,6 +70,7 @@ async function spawnReviewer(given: {
     stdout: "pipe",
     stderr: "pipe",
     signal,
+    killSignal: "SIGKILL",
     detached: mac,
   });
   if (mac)
