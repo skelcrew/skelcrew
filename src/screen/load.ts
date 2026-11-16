@@ -9,8 +9,8 @@ import { grey, paint, red, yellow } from "./look.ts";
 export type CpuSample = { idle: number; total: number };
 
 // Returns a sample of how long all cores have been idle, and in all, from os.cpus(). The sums are
-// copied out at once, as Bun's os.cpus() reuses the objects it gave before, so an older result
-// kept as it is would change to the newest times.
+// copied out at once, as Bun's os.cpus() reads the times only when they are first looked at: a
+// result kept and read later would hold the times from then, and the CPU figure would read 0%.
 export function cpuSample(cores: CpuInfo[]): CpuSample {
   let idle = 0;
   let total = 0;
