@@ -1633,14 +1633,31 @@ test("Ctrl-C pressed the moment a list opens can't take the right side away", as
   await until(() => read("lead.typed").includes("still here"), "what you typed");
 });
 
-test("a list or page left open writes nothing", async () => {
+// Checks that what the screen sent the terminal, logged in `written`, touched only the footer's
+// two rows, at the bottom of the 30, where the machine's load changes on its own. tmux puts the
+// cursor on a row and column before it writes there, so any text after a place above them is
+// something else changing. A line feed, or a move or scroll up or down, could reach another row
+// without naming it, so none may come at all.
+function expectOnlyTheFooter(written: string): void {
+  const sent = existsSync(written) ? readFileSync(written, "utf8") : "";
+  const esc = "\x1b";
+  expect(sent).not.toMatch(new RegExp(`\\n|${esc}\\[\\d*[ABEFdLMST]|${esc}[DEM]`));
+  const [before, ...placed] = sent.split(new RegExp(`${esc}\\[(\\d+);\\d+H`));
+  expect(Bun.stripANSI(before ?? "")).toBe("");
+  for (let at = 0; at < placed.length; at += 2) {
+    const text = Bun.stripANSI(placed[at + 1] ?? "").trim();
+    if (Number(placed[at]) < 29) expect(text).toBe("");
+  }
+}
+
+test("a list or page left open writes nothing but the machine's load", async () => {
   sql("UPDATE threads SET status = 'waiting', changed = 0 WHERE status = 'working'");
   await openList("Threads");
   await Bun.sleep(1500);
   const written = join(home, "written");
   tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
   await Bun.sleep(3000);
-  expect(existsSync(written) ? readFileSync(written, "utf8") : "").toBe("");
+  expectOnlyTheFooter(written);
   clickRow("Issues");
   await onRight("Not started");
   press("Enter");
@@ -1648,7 +1665,7 @@ test("a list or page left open writes nothing", async () => {
   await Bun.sleep(1500);
   rmSync(written, { force: true });
   await Bun.sleep(3000);
-  expect(existsSync(written) ? readFileSync(written, "utf8") : "").toBe("");
+  expectOnlyTheFooter(written);
 });
 
 test("a list follows Skelcrew's copy as it changes", async () => {
@@ -1784,19 +1801,7 @@ test("with nothing working, an open screen sends your terminal nothing but the m
   tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
   // Long enough for the load to refresh at least once.
   await Bun.sleep(6000);
-  // tmux puts the cursor on a row and column before it writes there. Any text after a place
-  // above the footer's two rows, at the bottom of the 30, is something else changing on its own.
-  // A line feed, or a move or scroll up or down, could reach another row without naming it, so
-  // none may come at all.
-  const sent = existsSync(written) ? readFileSync(written, "utf8") : "";
-  const esc = "\x1b";
-  expect(sent).not.toMatch(new RegExp(`\\n|${esc}\\[\\d*[ABEFdLMST]|${esc}[DEM]`));
-  const [before, ...placed] = sent.split(new RegExp(`${esc}\\[(\\d+);\\d+H`));
-  expect(Bun.stripANSI(before ?? "")).toBe("");
-  for (let at = 0; at < placed.length; at += 2) {
-    const text = Bun.stripANSI(placed[at + 1] ?? "").trim();
-    if (Number(placed[at]) < 29) expect(text).toBe("");
-  }
+  expectOnlyTheFooter(written);
 });
 
 test("a working thread's time moves on by itself, and writes when it does", async () => {
