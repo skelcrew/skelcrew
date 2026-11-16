@@ -2,6 +2,7 @@
 // is in use. It is the machine the screen runs on, which with sc --remote is where the agents run.
 import { readFileSync } from "node:fs";
 import { type CpuInfo, freemem, totalmem } from "node:os";
+import { z } from "zod";
 import { grey, paint, red, yellow } from "./look.ts";
 
 // The idle and the total time of all cores, in milliseconds since the machine started.
@@ -43,6 +44,17 @@ export function readMemory(): string | null {
   }
 }
 
+// What /proc/meminfo says, in kB: a total above nothing, and no more available than that.
+// Numbers too long to hold come out as Infinity, which Zod refuses.
+const LinuxMemory = z
+  .object({ total: z.coerce.number().int().positive(), available: z.coerce.number().int().min(0) })
+  .refine((memory) => memory.available <= memory.total);
+// What vm_stat says: its page size, then its free, inactive and speculative pages.
+const MacMemory = z.object({
+  pageSize: z.coerce.number().int().positive(),
+  pages: z.array(z.coerce.number().int().min(0)),
+});
+
 // Returns the memory in use and the total, in bytes, from what readMemory gave. Memory the system
 // can free counts as free: Linux's MemAvailable, which os.freemem() would count as used, and on
 // a Mac the free, inactive and speculative pages, as os.freemem() there counts only the free
@@ -50,21 +62,26 @@ export function readMemory(): string | null {
 // leave out the speculative ones. Purgeable pages are left out, as they are also active or
 // inactive, and would count twice. Without either source, it uses os.freemem().
 export function memoryInUse(text: string | null): { used: number; total: number } {
-  // Takes a number after a name at the start of a line, such as `MemTotal:   16000000 kB`.
-  const figure = (name: string) => {
-    const found = text?.match(new RegExp(`^${name}:\\s+(\\d+)`, "m"));
-    return found ? Number(found[1]) : null;
-  };
-  // Linux gives kB.
-  const total = figure("MemTotal");
-  const available = figure("MemAvailable");
-  if (total !== null && available !== null)
+  // Takes the number after a name at the start of a line, such as `MemTotal:   16000000 kB`, as
+  // text for Zod to check, or nothing where it isn't there.
+  const figure = (name: string) => text?.match(new RegExp(`^${name}:\\s+(\\d+)`, "m"))?.[1];
+  // Linux gives kB. What it says comes from outside, so a total of nothing, a number too long to
+  // be one, or more available than there is, falls through to os.freemem().
+  const linux = LinuxMemory.safeParse({
+    total: figure("MemTotal"),
+    available: figure("MemAvailable"),
+  });
+  if (linux.success) {
+    const { total, available } = linux.data;
     return { used: (total - available) * 1024, total: total * 1024 };
+  }
   // A Mac gives pages, of a size it names on its first line. Its total isn't there.
-  const pageSize = text?.match(/page size of (\d+) bytes/);
-  const pages = ["free", "inactive", "speculative"].map((kind) => figure(`Pages ${kind}`));
-  if (pageSize && pages.every((count) => count !== null)) {
-    const free = pages.reduce((sum: number, count) => sum + (count ?? 0), 0) * Number(pageSize[1]);
+  const mac = MacMemory.safeParse({
+    pageSize: text?.match(/page size of (\d+) bytes/)?.[1],
+    pages: [figure("Pages free"), figure("Pages inactive"), figure("Pages speculative")],
+  });
+  if (mac.success) {
+    const free = mac.data.pages.reduce((sum, count) => sum + count, 0) * mac.data.pageSize;
     return { used: Math.max(totalmem() - free, 0), total: totalmem() };
   }
   return { used: totalmem() - freemem(), total: totalmem() };

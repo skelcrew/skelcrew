@@ -79,3 +79,24 @@ test("a total of nothing reads as dim, never as a broken colour", () => {
     `\x1b[${grey}mcpu 0%\x1b[22;39m  \x1b[${grey}mmem 0.0/0G\x1b[22;39m`,
   );
 });
+
+test("figures that can't be right fall back to os.freemem()", () => {
+  const huge = "9".repeat(400);
+  const vmStat = (pageSize: string) =>
+    `Mach Virtual Memory Statistics: (page size of ${pageSize} bytes)\nPages free: 1.\nPages inactive: 1.\nPages speculative: 1.\n`;
+  for (const text of [
+    // More available than there is.
+    "MemTotal: 1000 kB\nMemAvailable: 2000 kB\n",
+    // No memory at all.
+    "MemTotal: 0 kB\nMemAvailable: 0 kB\n",
+    // A number too long to be one.
+    `MemTotal: ${huge} kB\nMemAvailable: 1 kB\n`,
+    vmStat("0"),
+    vmStat(huge),
+  ]) {
+    const { used, total } = memoryInUse(text);
+    expect(total).toBe(totalmem());
+    expect(used).toBeGreaterThan(0);
+    expect(used).toBeLessThanOrEqual(total);
+  }
+});
