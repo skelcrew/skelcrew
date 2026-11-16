@@ -6,7 +6,7 @@ import { z } from "zod";
 import { noProgress } from "../agents/progress.ts";
 import { pastRoundLimit } from "../flow/decide.ts";
 import { leadOf } from "../flow/lead.ts";
-import { fullNameOf, needsYou, Thread, threadName } from "../flow/thread.ts";
+import { fullNameOf, needsYou, queuedForReview, Thread, threadName } from "../flow/thread.ts";
 import { green, grey, red, yellow } from "./look.ts";
 import { builderProgress, tokenText } from "./progress.ts";
 
@@ -92,12 +92,18 @@ export function threadWord(thread: Thread, maxRounds: number): string {
   // Stopping without submitting is a question written as plain text.
   if (thread.stalled) return "question";
   if (thread.needs_you) return failed ? "review failed" : "needs you";
-  // Not needing you: a round under way shows as reviewing, and a review's changes still waiting
-  // to be typed into the builder as changes. Otherwise it works or waits on checks.
+  // Not needing you: a review waiting for a place shows as queued, any other round under way as
+  // reviewing, and a review's changes still waiting to be typed into the builder as changes.
+  // Otherwise it works or waits on checks.
+  if (queuedForReview(thread)) return "queued for review";
   if (underWay) return "reviewing";
   if (thread.telling !== null) return "changes";
   return status === "working" ? "working" : "checks";
 }
+
+// Returns whether a thread's word says its reviewer has it, waiting or running, so its harness
+// is the reviewer's and its PR is in a round.
+export const withReviewer = (word: string) => word === "reviewing" || word === "queued for review";
 
 // What the sidebar reads of a thread beyond what its log keeps: when its builder's current
 // stretch of work began. Null before the builder first started.
@@ -180,7 +186,7 @@ export function sidebarRows(
         // Only a review is on another harness. A submit saves which one, so the empty text
         // is only there for a field that stays null until the first submit. A thread with no
         // harness saved started before Skelcrew saved it, when builders ran only on Claude Code.
-        harness: word === "reviewing" ? (reviewer ?? "") : (thread.harness ?? "claude"),
+        harness: withReviewer(word) ? (reviewer ?? "") : (thread.harness ?? "claude"),
         agentHarness: thread.harness ?? "claude",
         age: working && from !== null ? threadAge(from, now) : "",
         tokens: progress.tokens === null ? "" : `${tokenText(progress.tokens)} tok`,
