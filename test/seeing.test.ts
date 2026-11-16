@@ -388,6 +388,23 @@ describe("sc issue show", () => {
     );
   });
 
+  // A done or failed thread starts over with a fresh row, so its builder and reviewer would
+  // never see its old messages, and a merged thread's issue is closed.
+  test("shows a done thread's task without its messages, and its closed issue as missing", async () => {
+    const updates = JSON.stringify([{ from: "lead", at: 0, text: "Keep the CSV export too." }]);
+    sql(`UPDATE threads SET status = 'done', updates = '${updates}' WHERE task IN ('12', '3')`);
+    serve();
+    await untilAnswers();
+    const shown = await skel(["issue", "show", "app-12"]);
+    expect(shown.err).toBe("");
+    expect(shown.out).toBe(
+      "app-12  Add export\nThread: done\n\nExport threads as JSON.\n\nKeep it small.\n",
+    );
+    const closed = await skel(["issue", "show", "app-3"]);
+    expect(closed.code).not.toBe(0);
+    expect(closed.err).toBe("Skelcrew: there is no open issue 3 in simon/app\n");
+  });
+
   test("the lead can show a task from its sandbox, and a builder can't", async () => {
     serve();
     await untilAnswers();

@@ -147,13 +147,16 @@ export type TaskView = z.infer<typeof TaskView>;
 
 // Returns one task's title and body, which is all its builder sees, with the thread on it if
 // it has one, for sc issue show. It comes from Skelcrew's copy, so the tracker isn't asked. A
-// task with a thread is shown as its reviewer gets it, with the lead's messages to the builder
-// after the body, so the lead sees the task the builder is judged by. That also shows a thread
-// with no task in the tracker, such as app-t1.
+// task with a thread still at work, or stopped, is shown as its reviewer gets it, with the
+// lead's messages to the builder after the body, so the lead sees the task the builder is
+// judged by. That also shows a thread with no task in the tracker, such as app-t1. A done or
+// failed thread's messages aren't shown: starting it over gives a fresh thread without them,
+// and a merged thread's issue is closed, which the copy alone can say.
 export function showTask(db: Database, repository: string, task: string): TaskView {
   const r = findRepository(db, repository);
   const thread = threadOn(db, repository, task);
-  const { title, body } = thread ? threadTask(db, thread) : taskOf(db, r.owner, r.repo, task);
+  const current = thread && thread.status !== "done" && thread.status !== "failed";
+  const { title, body } = current ? threadTask(db, thread) : taskOf(db, r.owner, r.repo, task);
   return {
     issue: `${r.name}-${task}`,
     title,
