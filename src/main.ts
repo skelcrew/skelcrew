@@ -172,7 +172,7 @@ async function screenCommand(args: string[]): Promise<void> {
     }
   }
   // `where` is the remote Skelcrew runs on, and empty on this machine, so check it against
-  // undefined, as is a list's `start`, empty when it starts on its first row.
+  // undefined.
   if (command === "sidebar" && rest.length === 4) {
     const [agents, session, where, repository] = rest;
     if (agents && session && where !== undefined && repository) {
@@ -180,17 +180,16 @@ async function screenCommand(args: string[]): Promise<void> {
       return;
     }
   }
-  if (command === "list" && rest.length === 6) {
-    const [agents, session, entry, where, repository, start] = rest;
+  if (command === "list" && rest.length === 5) {
+    const [agents, session, entry, where, repository] = rest;
     if (
       agents &&
       session &&
       (entry === "issues" || entry === "threads" || entry === "prs") &&
       where !== undefined &&
-      repository &&
-      start !== undefined
+      repository
     ) {
-      await runPane(agents, session, entry, where, repository, start);
+      await runPane(agents, session, entry, where, repository);
       return;
     }
   }
