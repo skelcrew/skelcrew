@@ -99,9 +99,8 @@ export function threadAge(started: number, now: number): string {
 // or failed. Each word takes the thread's round limit from `maxRounds`. A stopped thread needs
 // nothing and doesn't change, so it leaves ACTIVE, as a done one does. It runs each second,
 // so it reads only what shows. Only a thread whose word is working shows its running time. A
-// time on any other row would write to the terminal each minute, and on a Sprite a terminal that
-// stays quiet lets it sleep. A working thread keeps the Sprite awake anyway, so its time costs
-// nothing.
+// time on every row would write to the terminal each minute, and over a slow link each write
+// costs.
 export function sidebarRows(
   db: Database,
   running: string[],

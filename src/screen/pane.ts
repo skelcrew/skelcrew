@@ -117,7 +117,7 @@ const openCommand = process.platform === "darwin" ? "open" : "xdg-open";
 // list or its page, after asking in the footer. All else you type goes nowhere. It tells the
 // footer what to say, with s or m only while the row you are on can be started or merged. It
 // reads the list again each second, and writes only when what shows changed, so a list left
-// open lets a Sprite sleep. A page is read once.
+// open writes nothing. A page is read once.
 export async function runPane(
   agents: string,
   session: string,

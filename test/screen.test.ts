@@ -652,7 +652,8 @@ test("the footer runs across the screen under a thin line, with move and quit, t
   await until(() => footer() === "  ⌥↑↓ move  ⌥Q quit  ⌥B back  Esc stops codex", "app-7's footer");
 });
 
-test("while a thread works, the footer ends with the machine's load", async () => {
+test("the footer ends with the machine's load, even with no thread working", async () => {
+  sql("UPDATE threads SET status = 'waiting' WHERE status = 'working'");
   open("lead");
   await ready("lead");
   // The load shows from its second sample, 5 seconds after the footer starts.
@@ -1645,7 +1646,7 @@ test("two terminals can each be on a list of their own", async () => {
   expect(right()).toContain("line 1 of the description");
 });
 
-test("with nothing working, an open screen sends your terminal nothing at all", async () => {
+test("with nothing working, an open screen sends your terminal nothing but the machine's load", async () => {
   // Close enough to a minute that a time shown on any row would change during the wait.
   const started = Date.now() - 56_000;
   sql(`UPDATE threads SET status = 'waiting', started = ${started} WHERE status = 'working'`);
@@ -1656,10 +1657,18 @@ test("with nothing working, an open screen sends your terminal nothing at all", 
   await Bun.sleep(1500);
   const written = join(home, "written");
   tmux(terminal, "pipe-pane", "-O", "-t", "=one:", `cat >> ${written}`);
-  await Bun.sleep(4000);
-  expect(existsSync(written) ? readFileSync(written, "utf8") : "").toBe("");
-  // The machine's load shows only while work runs.
-  expect(seen()).not.toContain("cpu ");
+  // Long enough for the load to refresh at least once.
+  await Bun.sleep(6000);
+  // tmux puts the cursor on a row and column before it writes there. Any text after a place
+  // above the footer's two rows, at the bottom of the 30, is something else changing on its own.
+  const sent = existsSync(written) ? readFileSync(written, "utf8") : "";
+  const esc = "\x1b";
+  const [before, ...placed] = sent.split(new RegExp(`${esc}\\[(\\d+);\\d+H`));
+  expect(Bun.stripANSI(before ?? "")).toBe("");
+  for (let at = 0; at < placed.length; at += 2) {
+    const text = Bun.stripANSI(placed[at + 1] ?? "").trim();
+    if (Number(placed[at]) < 29) expect(text).toBe("");
+  }
 });
 
 test("a working thread's time moves on by itself, and writes when it does", async () => {

@@ -55,8 +55,7 @@ function repositoryAndLead(db: ReturnType<typeof openDb>, fullName: string): Ope
 // `where` says which remote Skelcrew runs on, if any, for the header above it, and `repository`
 // is the owner/name of the repository it opens on.
 // tmux brings it the keys that move and clicks on its input. It looks again each second, and
-// writes only when something changed: over a slow link each write costs, and on a Sprite a
-// terminal that stays quiet lets it sleep.
+// writes only when something changed, as over a slow link each write costs.
 export async function runSidebar(
   agents: string,
   session: string,
