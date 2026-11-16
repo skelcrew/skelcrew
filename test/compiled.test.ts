@@ -279,7 +279,7 @@ exit 0`,
       expect(done.code).toBe(0);
       expect(readFileSync(join(home, "copied"), "utf8")).toBe(linux);
       expect(readFileSync(join(home, "calls"), "utf8")).toContain(
-        "simon@workbox systemctl --user restart skelcrew\n",
+        "ssh simon@workbox systemctl --user restart skelcrew\n",
       );
       expect(done.out).toContain(
         "Updated simon@workbox to Skelcrew 0.4.2 and restarted its daemon",

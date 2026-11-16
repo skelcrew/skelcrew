@@ -1,6 +1,6 @@
 // Where Skelcrew keeps your settings and its state on this machine.
 import { existsSync } from "node:fs";
-import { homedir, userInfo } from "node:os";
+import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 
 // Returns the folder for your settings and saved logins, separate from repository files.
@@ -70,9 +70,15 @@ export function leadPlaces(owner: string, repo: string, kept = false) {
 export const threadSocket = (folder: string) =>
   join(runtimeDir(), "skelcrew", "threads", shortHash(folder), "skelcrew.sock");
 // Returns the socket through which the ssh and scp commands for a server share one connection,
-// with its config beside it. It is named by a short hash of the host, since a Mac refuses a
-// socket path over 104 bytes, and ssh adds a long suffix while it makes the socket.
-export const sshSocket = (host: string) => join(runtimeDir(), "skelcrew", "ssh", shortHash(host));
+// with the file that checks your ssh config beside it. A Mac refuses a socket path over 103
+// bytes, and ssh adds 17 while it makes the socket, so it is named by a short hash of the host.
+// When the runtime folder is still too long, it goes in a folder of yours in the temporary
+// folder instead, which the caller must check is yours.
+export function sshSocket(host: string): string {
+  const socket = join(runtimeDir(), "skelcrew", "ssh", shortHash(host));
+  if (Buffer.byteLength(socket) <= 86) return socket;
+  return join(tmpdir(), `skelcrew-${userInfo().uid}`, shortHash(host));
+}
 // Returns the parent folder of Skelcrew's repository clones.
 const reposDir = () => join(dataDir(), "repos");
 // Returns a repository's clone folder so Skelcrew works away from your checkout.

@@ -5,6 +5,7 @@
 // the server.
 import {
   chmodSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   renameSync,
@@ -12,7 +13,7 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { homedir, tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { sshSocket } from "../paths.ts";
 import { quietly } from "../run.ts";
@@ -100,45 +101,59 @@ export async function keepingTitle<T>(go: () => Promise<T>): Promise<T> {
 // Returns the ssh options that make every ssh and scp Skelcrew runs for the host share one
 // connection. One setup takes five or more of them, and each new connection can ask for your
 // passphrase or a touch of your key. The shared connection ends a minute after the last
-// command, which covers one setup or connect. The options name a config file of Skelcrew's that
-// reads yours first. ssh keeps the first value it finds for each setting, so what you set, even
-// ControlPath none or ControlMaster no, wins. The same settings given as -o would beat yours.
+// command, which covers one setup or connect. Options given to ssh beat your ssh config, so
+// they are given only when your config sets none of these. ssh hands none of them to the ssh
+// it starts for a ProxyJump host, so the jump host never takes the server's socket.
 function sharedConnection(host: string): string[] {
-  const socket = sshSocket(host);
-  // The settings are for the host as you typed it, without the user ssh takes from before an @.
-  // A name that a Match line would read as a pattern list gets no sharing.
+  // ssh -G prints what ssh would use for the host, from your config and the system's, read as
+  // ssh reads them, without connecting. Anything set about sharing, or a failed read, means
+  // Skelcrew adds nothing.
+  const said = Bun.spawnSync(["ssh", "-G", host], { stdout: "pipe", stderr: "ignore" });
+  const settings = said.stdout.toString();
+  const unset = ["controlmaster false", "controlpersist no"];
+  if (!unset.every((line) => settings.split("\n").includes(line))) return [];
+  if (/^controlpath /m.test(settings)) return [];
+  // The host as you typed it, without the user ssh takes from before an @. A name that a Match
+  // line would read as a pattern list gets no sharing.
   const name = host.slice(host.lastIndexOf("@") + 1);
   if (!/^[\w.:-]+$/.test(name)) return [];
-  // A Mac refuses a socket path over 103 bytes, and ssh adds 17 while it makes the socket. A
-  // longer runtime folder, or a quote the config can't hold, means no sharing, and every
-  // command still works on its own connection.
-  if (Buffer.byteLength(socket) > 86 || socket.includes('"')) return [];
-  // Anyone who can reach the socket can run commands on the server as you, so its folder is
-  // made yours alone, also when it was there before.
+  // A temporary folder can be too long for the socket as well, and then nothing is shared.
+  const socket = sshSocket(host);
+  if (Buffer.byteLength(socket) > 86) return [];
+  // Anyone who can reach the socket can run commands on the server as you, so its folder must
+  // be yours alone, also when it was there before. In the temporary folder, someone else could
+  // have made it first, or put a link there.
   const folder = dirname(socket);
   mkdirSync(folder, { recursive: true, mode: 0o700 });
+  const made = lstatSync(folder);
+  if (!made.isDirectory() || made.uid !== userInfo().uid) return [];
   chmodSync(folder, 0o700);
-  // Given a config file, ssh reads neither yours nor the system's, so both are included, in the
-  // order ssh reads them. ssh would read a % in the path as a token, so it is doubled.
-  // The settings apply only to this host. ssh hands the same config file to the ssh it starts
-  // for a ProxyJump host, which would otherwise take the socket, and later commands would run
-  // on the jump host. They apply in ssh's last pass over the config, after yours, which is
-  // when settings you put under Match final apply.
+  // ssh -G prints ControlPath none, ControlMaster no and ControlPersist no as if nothing were
+  // set. So a second look reads your config with values of Skelcrew's after it, in ssh's last
+  // pass, which is also when settings under Match final apply. Any value of Skelcrew's that
+  // doesn't come back means your config set that one. Only your config is read there: a config
+  // file given to ssh would resolve the system config's own Includes wrongly.
+  const check = `${socket}.check`;
+  const probe = ["ControlMaster autoask", "ControlPath skelcrew", "ControlPersist 4321"];
   const config = [
-    "Include ~/.ssh/config",
-    "Include /etc/ssh/ssh_config",
+    `Include "${homedir()}/.ssh/config"`,
     `Match final originalhost ${name}`,
-    "  ControlMaster auto",
-    `  ControlPath "${socket.replaceAll("%", "%%")}"`,
-    "  ControlPersist 60",
+    ...probe.map((line) => `  ${line}`),
     "",
   ].join("\n");
-  // Written beside it and renamed into place, so an sc starting at the same moment never
-  // reads half a file. ssh refuses a config file others can write to.
-  const file = `${socket}.conf`;
-  writeFileSync(`${file}.${process.pid}`, config, { mode: 0o600 });
-  renameSync(`${file}.${process.pid}`, file);
-  return ["-F", file];
+  // Written beside it and renamed into place, so an sc starting at the same moment never reads
+  // half a file. ssh refuses a config file others can write to.
+  writeFileSync(`${check}.${process.pid}`, config, { mode: 0o600 });
+  renameSync(`${check}.${process.pid}`, check);
+  const checked = Bun.spawnSync(["ssh", "-G", "-F", check, host], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const back = checked.stdout.toString().split("\n");
+  if (!probe.every((line) => back.includes(line.toLowerCase()))) return [];
+  // ssh would read a % in the path as a token, so it is doubled.
+  const path = socket.replaceAll("%", "%%");
+  return ["-o", "ControlMaster=auto", "-o", `ControlPath=${path}`, "-o", "ControlPersist=60"];
 }
 
 // Returns how to run sc on the host with these words, with `shared` from sharedConnection. It
