@@ -310,15 +310,16 @@ test("Ctrl-Q still leaves, though nothing shows it", async () => {
 
 // Replaces the lead with an agent that asks for extended keys, says its name, and logs every
 // byte it reads to lead.keys. Like Claude Code, it asks only when TERM_PROGRAM says it runs in
-// tmux, as it can't tell from a TERM of tmux-256color alone.
-function keyLoggingLead(): void {
+// tmux, as it can't tell from a TERM of tmux-256color alone. With `asks` false it never asks, so
+// the keys reach it in the form your terminal sent them.
+function keyLoggingLead(asks = true): void {
   tmux(agents, "kill-session", "-t", "=lead");
   const script = join(home, "keys.sh");
   writeFileSync(
     script,
     `#!/bin/sh
 cd ${JSON.stringify(home)}
-[ "$TERM_PROGRAM" = tmux ] && printf '\\033[>4;2m'
+${asks ? `[ "$TERM_PROGRAM" = tmux ] && printf '\\033[>4;2m'` : ""}
 echo "I am lead"
 stty raw -echo
 exec cat > lead.keys
@@ -342,6 +343,52 @@ test("Shift+Enter reaches the agent as a key of its own, through both tmux serve
   // the xterm form, which Claude Code reads too. Plain Enter stays a CR.
   const shiftEnter = tmuxIsAtLeast(3, 5) ? "\x1b[13;2u" : "\x1b[27;2;13~";
   expect(read("lead.keys")).toBe(`a${shiftEnter}b\r`);
+});
+
+test("the keys that move by word reach the agent byte for byte", async () => {
+  keyLoggingLead(false);
+  open("lead");
+  await ready("lead");
+  // Esc b and Esc f, as Mac terminals send Option-Left and Option-Right, then Alt-Left and
+  // Alt-Right as other terminals send them. Each goes alone, as from a hand.
+  const words = ["\x1bb", "\x1bf", "\x1b[1;3D", "\x1b[1;3C"];
+  for (const word of words) {
+    type(word);
+    await Bun.sleep(100);
+  }
+  press("Enter");
+  await until(() => read("lead.keys").endsWith("\r"), "the Enter");
+  expect(read("lead.keys")).toBe(`${words.join("")}\r`);
+  expect(seen()).toContain("I am lead");
+});
+
+// Ghostty on a Mac sends Option-Left as Esc b. On the lead it must move back a word, and the
+// screen must stay on the lead, whether or not the terminal sends extended keys.
+for (const extended of [false, true])
+  test(`Option-Left on the lead moves back a word and leaves the screen on the lead${extended ? ", with extended keys" : ""}`, async () => {
+    extendedKeys = extended;
+    keyLoggingLead(extended);
+    open("lead");
+    await ready("lead");
+    type("word\x1bb");
+    await Bun.sleep(500);
+    expect(selected()).toBe("◆ lead");
+    press("Enter");
+    await until(() => read("lead.keys").endsWith("\r"), "the Enter");
+    // An agent that asks for extended keys gets Alt-B in the form it asked for.
+    const back = extended ? (tmuxIsAtLeast(3, 5) ? "\x1b[98;3u" : "\x1b[27;3;98~") : "\x1bb";
+    expect(read("lead.keys")).toBe(`word${back}\r`);
+    expect(selected()).toBe("◆ lead");
+    expect(seen()).toContain("I am lead");
+  });
+
+test("Ctrl-6 goes back from a terminal that sends extended keys too", async () => {
+  extendedKeys = true;
+  open("lead");
+  await ready("lead");
+  press("C-6");
+  await onRight("Working");
+  expect(selected()).toContain("Threads");
 });
 
 test("with a terminal that sends extended keys, the screen's own keys still work", async () => {
@@ -779,12 +826,12 @@ test("the footer runs across the screen under a thin line, with move and quit, t
   sql("UPDATE threads SET harness = 'codex' WHERE task = 7");
   open("lead");
   await ready("lead");
-  const lead = "  ⌥↑↓ move  ⌥Q quit  ⌥B back  Esc stops claude";
+  const lead = "  ⌥↑↓ move  ⌥Q quit  ⌃6 back  Esc stops claude";
   await until(() => footer() === lead, "the lead's footer");
   expect(aboveFooter()).toBe("─".repeat(120));
   toSecondThread();
   await until(() => seen().includes("I am app-7"), "app-7");
-  await until(() => footer() === "  ⌥↑↓ move  ⌥Q quit  ⌥B back  Esc stops codex", "app-7's footer");
+  await until(() => footer() === "  ⌥↑↓ move  ⌥Q quit  ⌃6 back  Esc stops codex", "app-7's footer");
 });
 
 test("under a list or page the footer adds ? keys, and s or m while the row can take it, and the agent's height stays", async () => {
@@ -804,7 +851,7 @@ test("under a list or page the footer adds ? keys, and s or m while the row can 
   await until(() => right().includes("Working"), "the threads");
   expect(footer()).toBe(listKeys);
   press("M-S-Up");
-  await until(() => footer().endsWith("⌥B back  Esc stops claude"), "the lead's footer");
+  await until(() => footer().endsWith("⌃6 back  Esc stops claude"), "the lead's footer");
   expect(readFileSync(join(home, "lead.size"), "utf8")).toBe("26 81\n");
 });
 
@@ -1169,38 +1216,38 @@ test("Enter on a thread in the list of threads shows its agent, and the sidebar 
   await until(() => read("app-12.typed").includes("from the list"), "what you typed");
 });
 
-test("Alt-B from an agent opened in the list of threads goes back to the list, on its row", async () => {
+test("Ctrl-6 from an agent opened in the list of threads goes back to the list, on its row", async () => {
   await openList("Threads");
   await onRight("Working");
   press("Down");
   press("Enter");
   await until(() => seen().includes("I am app-7"), "the agent");
-  press("M-b");
+  press("C-^");
   await onRight("↑↓ move");
   expect(selected()).toContain("Threads");
   press("Enter");
   await until(() => seen().includes("I am app-7"), "the same agent again");
 });
 
-test("Alt-B from the lead, or a thread picked in the sidebar, goes to the list of threads", async () => {
+test("Ctrl-6 from the lead, or a thread picked in the sidebar, goes to the list of threads", async () => {
   openOnGitHub();
   open("lead");
   await ready("lead");
-  press("M-b");
+  press("C-^");
   await onRight("Working");
   expect(selected()).toContain("Threads");
   toSecondThread();
   await until(() => seen().includes("I am app-7"), "the second thread");
-  press("M-b");
+  press("C-^");
   await onRight("Working");
   // The list starts on its first row, as landing on it from elsewhere does.
   press("Enter");
   await until(() => seen().includes("I am app-12"), "the first row's agent");
 });
 
-test("Alt-B on a page goes back to its list, as Left does", async () => {
+test("Ctrl-6 on a page goes back to its list, as Left does", async () => {
   await openIssue();
-  press("M-b");
+  press("C-^");
   await onRight("↑↓ move");
   await until(() => !tabRow().includes("Add CSV"), "the strip to go");
   expect(selected()).toContain("Issues");
@@ -1883,7 +1930,7 @@ test("moving onto an agent hides the keys", async () => {
   type("?");
   await until(keysOpen, "the list of keys");
   press("M-S-Up");
-  await until(() => footer().endsWith("⌥B back  Esc stops claude"), "the lead's footer");
+  await until(() => footer().endsWith("⌃6 back  Esc stops claude"), "the lead's footer");
   await until(() => !keysOpen(), "the list of keys to hide");
   expect(seen()).toContain("I am lead");
 });
@@ -1930,7 +1977,7 @@ test("the list of keys has the same keys as sc --help, in the same order", async
         .join(" to "),
     );
   expect(keyItems()).toEqual(keys);
-  expect(keyItems()).toContain("alt + b to go back");
+  expect(keyItems()).toContain("ctrl + 6 to go back");
 });
 
 test("keys that need more than a third of the screen scroll with the wheel", async () => {
@@ -2120,29 +2167,7 @@ test("a tab for each repository runs across the top, with a badge for what needs
   expect(seen()).not.toContain("site-8");
 });
 
-test("Alt-Right and Alt-Left switch both sides to the repository beside, and open it", async () => {
-  addSite();
-  daemon();
-  open("lead");
-  await ready("lead");
-  press("M-Right");
-  await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
-  await until(() => seen().includes("site-8") && !seen().includes("app-12"), "site's threads");
-  expect(selected()).toBe("◆ lead");
-  await until(() => asked.includes("open simon/site from a tab"), "the daemon to open site");
-  type("hello\r");
-  await until(() => existsSync(join(home, `${siteLead}.typed`)), "the typing");
-  // There is no tab after the last.
-  press("M-Right");
-  await Bun.sleep(300);
-  expect(seen()).toContain(`I am ${siteLead}`);
-  press("M-Left");
-  await until(() => seen().includes("I am lead") && seen().includes("app-12"), "app again");
-});
-
-// Ghostty on a Mac turns Alt-Left and Alt-Right into word jumps, so they never reach Skelcrew,
-// while Alt-Shift-Left and Alt-Shift-Right come through.
-test("Alt-Shift-Right and Alt-Shift-Left switch repositories too", async () => {
+test("Alt-Shift-Right and Alt-Shift-Left switch both sides to the repository beside, and open it", async () => {
   addSite();
   daemon();
   open("lead");
@@ -2150,6 +2175,14 @@ test("Alt-Shift-Right and Alt-Shift-Left switch repositories too", async () => {
   press("M-S-Right");
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
   await until(() => seen().includes("site-8") && !seen().includes("app-12"), "site's threads");
+  expect(selected()).toBe("◆ lead");
+  await until(() => asked.includes("open simon/site from a tab"), "the daemon to open site");
+  type("hello\r");
+  await until(() => existsSync(join(home, `${siteLead}.typed`)), "the typing");
+  // There is no tab after the last.
+  press("M-S-Right");
+  await Bun.sleep(300);
+  expect(seen()).toContain(`I am ${siteLead}`);
   press("M-S-Left");
   await until(() => seen().includes("I am lead") && seen().includes("app-12"), "app again");
 });
@@ -2178,13 +2211,13 @@ test("several Alt keys typed together all move, and none is typed into the agent
   expect(read("lead.typed")).toBe("");
 });
 
-test("Alt-Right then Alt-Shift-Down twice, typed together, lands on the new repository's thread", async () => {
+test("Alt-Shift-Right then Alt-Shift-Down twice, typed together, lands on the new repository's thread", async () => {
   addSite();
   agent("site-8");
   daemon();
   open("lead");
   await ready("lead");
-  type("\x1b[1;3C\x1b[1;4B\x1b[1;4B");
+  type("\x1b[1;4C\x1b[1;4B\x1b[1;4B");
   await until(() => seen().includes("I am site-8"), "site-8");
   await until(() => selected() === "● 8 site-8", "the sidebar to follow");
   expect(seen()).not.toContain("app-12");
@@ -2215,7 +2248,7 @@ test("the last tab closing moves the screen to the tab before it", async () => {
   daemon();
   open("lead");
   await ready("lead");
-  press("M-Right");
+  press("M-S-Right");
   await until(() => seen().includes(`I am ${siteLead}`), "site's lead");
   closeTab("site");
   await until(() => seen().includes("I am lead") && seen().includes("app-12"), "app again");

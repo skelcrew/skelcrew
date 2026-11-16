@@ -7,8 +7,8 @@ import { keyLines } from "../src/screen/keys.ts";
 const plain = (lines: string[]) => lines.map((line) => Bun.stripANSI(line));
 
 test("under an agent the footer starts with move and quit, then back and what Esc stops", () => {
-  expect(agentFooter("claude")).toBe("⌥↑↓ move  ⌥Q quit  ⌥B back  Esc stops claude");
-  expect(agentFooter("codex")).toBe("⌥↑↓ move  ⌥Q quit  ⌥B back  Esc stops codex");
+  expect(agentFooter("claude")).toBe("⌥↑↓ move  ⌥Q quit  ⌃6 back  Esc stops claude");
+  expect(agentFooter("codex")).toBe("⌥↑↓ move  ⌥Q quit  ⌃6 back  Esc stops codex");
   expect(agentFooter("")).toBe("⌥↑↓ move  ⌥Q quit");
 });
 

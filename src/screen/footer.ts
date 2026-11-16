@@ -16,7 +16,7 @@ const keysHint = "? keys";
 // agent's. An agent whose harness isn't known yet, given as empty, gets only the keys you need
 // most.
 export function agentFooter(harness: string): string {
-  return harness ? `${always}  ⌥B back  Esc stops ${harness}` : always;
+  return harness ? `${always}  ⌃6 back  Esc stops ${harness}` : always;
 }
 
 // Returns the footer's text under a list or a page: the keys you need most, then the key for the

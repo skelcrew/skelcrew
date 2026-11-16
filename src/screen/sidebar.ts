@@ -30,12 +30,12 @@ import { agentClient, paneCommand, sidebarWidth } from "./screen.ts";
 import { drawTop } from "./strip.ts";
 
 // What the sidebar reads: Alt with an arrow as tmux sends it, 3 without Shift and 4 with it,
-// the left button going down, with its line on screen, Alt-B, and what the screen's tmux and the
-// right pane type into it as an OSC: a click on a tab, with the tab's place in the row, the page
-// now open on the right, or none, and a thread picked in the list of threads.
+// the left button going down, with its line on screen, Ctrl-6 to go back, and what the screen's
+// tmux and the right pane type into it as an OSC: a click on a tab, with the tab's place in the
+// row, the page now open on the right, or none, and a thread picked in the list of threads.
 const esc = "\x1b";
 const input = new RegExp(
-  `${esc}\\[1;([34])([ABCD])|${esc}\\[<0;\\d+;(\\d+)M|${esc}(b)|${esc}\\](skel-(?:tab|page|thread));([^\x07]*)\x07`,
+  `${esc}\\[1;([34])([ABCD])|${esc}\\[<0;\\d+;(\\d+)M|(\x1e)|${esc}\\](skel-(?:tab|page|thread));([^\x07]*)\x07`,
   "g",
 );
 
@@ -202,7 +202,7 @@ export async function runSidebar(
     shown = next;
     fromList = null;
   };
-  // Goes back, for Alt-B. A page goes back to its list, as Left does, and a list has nowhere to
+  // Goes back, for Ctrl-6. A page goes back to its list, as Left does, and a list has nowhere to
   // go. An agent goes to the list of threads: on its row when that list opened it, and on the
   // first row from the lead or a thread picked in the sidebar.
   const back = () => {
@@ -239,25 +239,24 @@ export async function runSidebar(
   // Acts on each key and click that came together, then redraws. A click on a row picks it by
   // its line, counted from the top, below the notice.
   process.stdin.on("data", (bytes) => {
-    for (const [, kind, arrow, y, alt, said, about = ""] of bytes.toString().matchAll(input)) {
-      if (alt === "b") back();
+    for (const [, kind, arrow, y, goBack, said, about = ""] of bytes.toString().matchAll(input)) {
+      if (goBack) back();
       else if (said === "skel-page") {
         // The list on the right opened a page, or went back from one.
         page = about ? pageRow(db, open, about) : null;
       } else if (said === "skel-thread") {
         // A thread picked in the list of threads shows as picking it in ACTIVE does, while its
         // agent runs.
-        // Alt-B then goes back to the list, on its row.
+        // Ctrl-6 then goes back to the list, on its row.
         if (rows.some((row) => row.session === about && row.running)) {
           show(about);
           fromList = about;
         }
       } else if (said === "skel-tab" || arrow === "C" || arrow === "D") {
-        // A click on a tab, or Alt-Right or Alt-Left for the tab after or before, with or
-        // without Shift. Ghostty on a Mac turns Alt-Left and Alt-Right into word jumps, so
-        // they never arrive, while the Shift ones do. Past either end there is nowhere to go.
-        const sideways = kind === "3" || kind === "4" ? tabBeside(arrow === "C" ? 1 : -1) : null;
-        const tab = said === "skel-tab" ? tabs[Number(about)]?.fullName : sideways;
+        // A click on a tab, or Alt-Shift-Right or Alt-Shift-Left for the tab after or before.
+        // tmux sends no other arrow sideways. Past either end there is nowhere to go.
+        const tab =
+          said === "skel-tab" ? tabs[Number(about)]?.fullName : tabBeside(arrow === "C" ? 1 : -1);
         if (!tab) continue;
         switchTo(tab);
         // Keys that came with the switch, such as Alt-Down, move in the new repository's rows.

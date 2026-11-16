@@ -2,7 +2,7 @@
 // lists, from this one place so the two never disagree.
 import { pad } from "./look.ts";
 
-// Each key in words and what it does, read as "alt + b to go back". The keys for anywhere come
+// Each key in words and what it does, read as "ctrl + 6 to go back". The keys for anywhere come
 // first, then those for lists, then those for pages. s and m work on a list and on a page opened
 // from it, so they sit between the two. There are no headings, so each says where it works.
 // Ctrl-Q leaves too, but isn't listed: it is there for a Mac terminal that doesn't send Option
@@ -10,9 +10,8 @@ import { pad } from "./look.ts";
 export const keys: [string, string][] = [
   ["alt + ↑/↓", "move in the sidebar"],
   ["alt + shift + ↑/↓", "jump a part"],
-  ["alt + ←/→", "switch repository"],
-  ["alt + shift + ←/→", "switch too"],
-  ["alt + b", "go back"],
+  ["alt + shift + ←/→", "switch repository"],
+  ["ctrl + 6", "go back"],
   ["alt + q", "quit, agents run on"],
   ["↑/↓", "move in a list"],
   ["enter/→", "open a row"],
