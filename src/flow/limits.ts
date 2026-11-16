@@ -1,7 +1,8 @@
 // A harness's usage limit: when the reviews held on it may run again, telling each lead once
 // when it is reached and once when it is over, and waking a builder that stopped on one.
 import type { Database } from "bun:sqlite";
-import { type HarnessName, harnessNamed } from "../agents/harness.ts";
+import { z } from "zod";
+import { HarnessName, harnessNamed } from "../agents/harness.ts";
 import { typeInto } from "../agents/typing.ts";
 import { errorText } from "../say.ts";
 import { noteForLead, typeLeadNotes } from "./lead.ts";
@@ -14,9 +15,41 @@ const backoff = [15, 30, 60].map((minutes) => minutes * 60_000);
 // A harness's limit: when its reviews may run again, the reset time it gave, if any, how many
 // tries in a row met the limit with no reset time, and the repositories whose leads were told.
 type Limit = { until: number; reset: number | null; tries: number; told: Set<string> };
-// Each harness's limit, from the first review that met it until one runs on it again. Kept in
-// the daemon alone: after a restart, the first review to meet the limit again finds it.
+// Each harness's limit, from the first review that met it until one runs on it again. Each
+// change is saved in the database too, and restoreLimits reads them back when the daemon starts,
+// so a restart neither runs a limited harness early nor tells the leads again.
 const limits = new Map<HarnessName, Limit>();
+
+// A limit as the database keeps it, checked as it is read back. `told` is a JSON list.
+const LimitRow = z.object({
+  harness: HarnessName,
+  until: z.number(),
+  reset: z.number().nullable(),
+  tries: z.number(),
+  told: z.string().transform((saved) => z.array(z.string()).parse(JSON.parse(saved))),
+});
+
+// Saves the harness's limit as it now is in the daemon, or removes it once it has none.
+function saveLimit(db: Database, harness: HarnessName): void {
+  const limit = limits.get(harness);
+  if (limit === undefined) {
+    db.run("DELETE FROM limits WHERE harness = ?", [harness]);
+    return;
+  }
+  db.run(
+    "INSERT OR REPLACE INTO limits (harness, until, reset, tries, told) VALUES (?, ?, ?, ?, ?)",
+    [harness, limit.until, limit.reset, limit.tries, JSON.stringify([...limit.told])],
+  );
+}
+
+// Reads back the limits the database saved, for the daemon's start, before any held review
+// carries on.
+export function restoreLimits(db: Database): void {
+  for (const row of db.query("SELECT * FROM limits").all()) {
+    const { harness, until, reset, tries, told } = LimitRow.parse(row);
+    limits.set(harness, { until, reset, tries, told: new Set(told) });
+  }
+}
 
 // Returns the wait after the `tries`-th try in a row that met a limit with no reset time.
 const backoffAfter = (tries: number) => backoff[Math.min(tries, backoff.length) - 1] ?? 0;
@@ -38,10 +71,16 @@ export function limitOn(harness: HarnessName, now: number): Limit | null {
 }
 
 // Saves that a review on the harness met its usage limit, so no review starts on it before
-// `reset`. A new reset time is news, so the leads are told again. A reset in the minute just gone, as a clock showing only minutes gives, is tried
-// again a minute on, so a limit that hasn't quite reset isn't tried again and again. With no
-// reset time, reviews try again after a wait that grows with each try that meets the limit.
-export function reachLimit(harness: HarnessName, reset: number | null, now: number): void {
+// `reset`. A new reset time is news, so the leads are told again. A reset in the minute just
+// gone, as a clock showing only minutes gives, is tried again a minute on, so a limit that
+// hasn't quite reset isn't tried again and again. With no reset time, reviews try again after a
+// wait that grows with each try that meets the limit.
+export function reachLimit(
+  db: Database,
+  harness: HarnessName,
+  reset: number | null,
+  now: number,
+): void {
   const before = limits.get(harness);
   const tries = reset === null ? (before?.tries ?? 0) + 1 : 0;
   const after = reset === null ? now + backoffAfter(tries) : now + 60_000;
@@ -51,6 +90,7 @@ export function reachLimit(harness: HarnessName, reset: number | null, now: numb
     tries,
     told: before !== undefined && before.reset === reset ? before.told : new Set(),
   });
+  saveLimit(db, harness);
 }
 
 // Forgets the harness's limit once a review ran on it, and tells each lead that heard of the
@@ -59,6 +99,7 @@ export function endLimit(db: Database, tmux: string, harness: HarnessName): void
   const limit = limits.get(harness);
   if (limit === undefined) return;
   limits.delete(harness);
+  saveLimit(db, harness);
   const { title } = harnessNamed(harness);
   for (const fullName of limit.told) {
     const [owner = "", repo = ""] = fullName.split("/");
@@ -86,6 +127,7 @@ export function tellOfLimit(
   const fullName = `${repository.owner}/${repository.repo}`;
   if (limit === undefined || limit.told.has(fullName)) return;
   limit.told.add(fullName);
+  saveLimit(db, harness);
   // Say until when, or when reviews try again if the harness gave no time.
   const now = Date.now();
   const { title } = harnessNamed(harness);
@@ -134,15 +176,22 @@ function runAt(at: number, run: () => void): () => void {
 }
 
 // The wake planned for each builder that stopped on its harness's usage limit, by its thread's
-// folder, and how many waits in a row had no reset time, so the wait grows, with when it was
-// last woken.
+// folder, which cancels both the wait and the typing of "continue", and how many waits in a row
+// had no reset time, so the wait grows, with when it was last woken.
 const wakes = new Map<string, () => void>();
 const builderTries = new Map<string, { tries: number; woken: number }>();
 
+// Cancels the wake planned for the thread's builder, for when the error it was planned for ends:
+// you typed to the builder, it stopped, or it met another error. Typing still waiting for the
+// builder to be idle is cancelled too, so a stale "continue" never lands.
+export function endWake(folder: string): void {
+  wakes.get(folder)?.();
+  wakes.delete(folder);
+}
+
 // Plans to type "continue" into the thread's builder once its harness's usage limit resets, or,
 // with no reset time, after a wait that grows each time the limit stops it again. The builder
-// sits idle on the error until then, and nobody needs to type to it. A builder you typed to
-// meanwhile, or that stopped, is left alone.
+// sits idle on the error until then, and nobody needs to type to it.
 export function wakeAfterLimit(db: Database, tmux: string, folder: string): void {
   // Find when: the reset time, or the next wait with none.
   const now = Date.now();
@@ -158,34 +207,51 @@ export function wakeAfterLimit(db: Database, tmux: string, folder: string): void
     at = now + backoffAfter(tries);
   } else builderTries.delete(folder);
   // One wake per builder: a newer limit replaces the one planned.
-  wakes.get(folder)?.();
-  const cancel = runAt(at, () => {
-    wakes.delete(folder);
+  endWake(folder);
+  const typing = new AbortController();
+  const cancelWait = runAt(at, () => {
     const tried = builderTries.get(folder);
     if (tried !== undefined) builderTries.set(folder, { ...tried, woken: Date.now() });
-    continueBuilder(db, tmux, folder).catch((error) =>
-      console.log(`couldn't wake ${folder}'s builder after its usage limit: ${errorText(error)}`),
-    );
+    continueBuilder(db, tmux, folder, typing.signal)
+      .catch((error) =>
+        console.log(`couldn't wake ${folder}'s builder after its usage limit: ${errorText(error)}`),
+      )
+      .finally(() => {
+        if (wakes.get(folder) === cancel) wakes.delete(folder);
+      });
   });
+  const cancel = () => {
+    cancelWait();
+    typing.abort();
+  };
   wakes.set(folder, cancel);
 }
 
 // Types "continue" into a builder still idle on its harness's usage limit, whether the thread
 // works or waits, such as on CI, since you can talk to a builder in either. The flags are
-// cleared once it is typed, unless the thread changed meanwhile, such as by a new limit. A builder that
-// couldn't be told is idle on its error with nobody to wake it, so the thread then needs you.
-async function continueBuilder(db: Database, tmux: string, folder: string): Promise<void> {
+// cleared once it is typed. A builder that couldn't be told is idle on its error with nobody
+// to wake it, so the thread then needs you. Nothing happens once `signal` aborts, as the error
+// it was for has ended.
+async function continueBuilder(
+  db: Database,
+  tmux: string,
+  folder: string,
+  signal: AbortSignal,
+): Promise<void> {
   const thread = readThread(db, folder);
   const live = thread.status === "working" || thread.status === "waiting";
   if (!live || !thread.erred || !thread.limited) return;
   try {
-    await typeInto(tmux, folder, builderHarness(thread).marks, "continue", { timeout: 60_000 });
+    const { marks } = builderHarness(thread);
+    await typeInto(tmux, folder, marks, "continue", { timeout: 60_000, signal });
   } catch (error) {
+    if (signal.aborted) return;
     const why = `its harness's usage limit reset, but Skelcrew couldn't type continue: ${errorText(error)}`;
     record(db, folder, { limited: false, limit_reset: null }, why);
     typeLeadNotes(db, tmux);
     return;
   }
+  if (signal.aborted) return;
   // Typing to it ran its UserPromptSubmit hook, which may have cleared these already, and the
   // builder may have met the limit again since. Either changed the thread, so it is left as is.
   if (readThread(db, folder).changed === thread.changed)

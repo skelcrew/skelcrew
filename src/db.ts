@@ -180,6 +180,15 @@ function prepareTables(db: Database): void {
   db.run("DROP TABLE IF EXISTS posted");
   // The plugins you installed: the folder each runs from, and the GitHub repository it came
   // from, or null for a folder of yours, used where it is.
+  // Each harness's usage limit holding reviews: until when, the reset time it gave, the tries
+  // in a row that met it with none, and the repositories whose leads were told, as JSON.
+  db.run(`CREATE TABLE IF NOT EXISTS limits (
+    harness TEXT PRIMARY KEY,
+    until INTEGER NOT NULL,
+    reset INTEGER,
+    tries INTEGER NOT NULL,
+    told TEXT NOT NULL
+  )`);
   db.run(`CREATE TABLE IF NOT EXISTS plugins (
     name TEXT PRIMARY KEY,
     folder TEXT NOT NULL,

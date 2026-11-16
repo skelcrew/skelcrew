@@ -32,7 +32,7 @@ import {
   startLead,
   typeLeadNotes,
 } from "./lead.ts";
-import { wakeAfterLimit } from "./limits.ts";
+import { endWake, restoreLimits, wakeAfterLimit } from "./limits.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import { pollRepositories } from "./poll.ts";
 import { findRepository, fullNameIs, noRepositories, refreshClones, repositoryAt } from "./repo.ts";
@@ -373,7 +373,9 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
           wakeAfterLimit(db, tmux, thread.folder);
           return { erred: true };
         }
-        // A limit it stopped on before is over: this error is new, and needs you.
+        // A limit it stopped on before is over: this error is new, and needs you, so the wake
+        // planned for the old one never types "continue" over it.
+        endWake(thread.folder);
         const erred = { erred: true, limited: false, limit_reset: null };
         record(db, thread.folder, erred, "its builder's harness stopped on an error");
         typeLeadNotes(db, tmux);
@@ -391,6 +393,8 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         // such as with /login, so it ends the error as it ends a question. A usage limit it
         // stopped on ends too, as the builder now works again or meets it again.
         const over = { erred: false, limited: false, limit_reset: null };
+        // Its error is over, so a "continue" still waiting to be typed for it must not land.
+        if (thread.erred) endWake(folder);
         if (thread.asking)
           record(db, folder, { asking: false, ...over }, "its builder's question is over");
         else if (thread.erred) record(db, folder, over, "its builder was typed to after its error");
@@ -511,6 +515,8 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
   refreshClones(db).catch((error) => console.log(errorText(error)));
   // Notes the daemon's stop kept from the leads.
   typeLeadNotes(db, tmux);
+  // The usage limits saved before the stop, so the held reviews carried on below still wait.
+  restoreLimits(db);
   // Bring back each thread's builder, without waiting on it, and carry on the round it was in.
   for (const thread of before) {
     await listenFor(thread);

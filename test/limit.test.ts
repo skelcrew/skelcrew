@@ -2,12 +2,16 @@
 // that is a usage limit and when it resets, how long reviews wait on it, and what a thread
 // waiting out a limit shows.
 import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { claude } from "../src/agents/claude.ts";
 import { codex } from "../src/agents/codex.ts";
 import { resetTime } from "../src/agents/reset.ts";
-import { limitOn, reachLimit, waitUntil } from "../src/flow/limits.ts";
+import { waitUntil } from "../src/flow/limits.ts";
 import { needsYou, type Thread } from "../src/flow/thread.ts";
 import { threadMark, threadWord } from "../src/screen/rows.ts";
+import { source } from "./harness.ts";
 
 // 16 November 2026 at 10:30 in this machine's time zone, as the harnesses read their times in it.
 const now = new Date(2026, 10, 16, 10, 30).getTime();
@@ -91,22 +95,85 @@ test("Claude Code's error is the result it printed, and a usage limit gives its 
   expect(claude.failure("not json", "")).toBeNull();
 });
 
+// Runs code against the limits, with Skelcrew's database in a home of the test's own, and returns
+// what it printed as JSON. Each run is a process of its own, as a daemon is, so a second run
+// stands in for the daemon after a restart.
+function daemonRun(home: string, code: string): unknown {
+  const script = `import { openDb } from ${JSON.stringify(source("db.ts"))};
+import { limitOn, reachLimit, restoreLimits, tellOfLimit } from ${JSON.stringify(source("flow/limits.ts"))};
+const db = openDb();
+const now = ${now};
+${code}`;
+  const ran = Bun.spawnSync([process.execPath, "-e", script], {
+    env: { HOME: home, PATH: process.env.PATH ?? "" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (!ran.success) throw new Error(ran.stderr.toString());
+  return JSON.parse(ran.stdout.toString());
+}
+
 test("reviews on a limited harness wait for its reset, or for a growing wait with none", () => {
-  reachLimit("codex", at(16, 13, 59), now);
-  expect(limitOn("codex", now)?.until).toBe(at(16, 13, 59));
-  expect(limitOn("codex", at(16, 13, 59))).toBeNull();
-  // With no reset time, 15 minutes, then 30, then an hour each time.
-  const minutes = (m: number) => m * 60_000;
-  reachLimit("claude", null, now);
-  expect(limitOn("claude", now)?.until).toBe(now + minutes(15));
-  reachLimit("claude", null, now);
-  expect(limitOn("claude", now)?.until).toBe(now + minutes(30));
-  reachLimit("claude", null, now);
-  reachLimit("claude", null, now);
-  expect(limitOn("claude", now)?.until).toBe(now + minutes(60));
-  // A reset in the minute just gone is tried a minute on, not at once.
-  reachLimit("claude", now - 30_000, now);
-  expect(limitOn("claude", now)?.until).toBe(now + minutes(1));
+  const home = mkdtempSync(join(tmpdir(), "skel-limit-test-"));
+  try {
+    const waits = daemonRun(
+      home,
+      `const until = (h) => limitOn(h, now)?.until ?? null;
+const seen = [];
+reachLimit(db, "codex", ${at(16, 13, 59)}, now);
+seen.push(until("codex"), limitOn("codex", ${at(16, 13, 59)}));
+// With no reset time, 15 minutes, then 30, then an hour each time.
+for (let i = 0; i < 4; i++) { reachLimit(db, "claude", null, now); seen.push(until("claude")); }
+// A reset in the minute just gone is tried a minute on, not at once.
+reachLimit(db, "claude", now - 30_000, now);
+seen.push(until("claude"));
+console.log(JSON.stringify(seen));`,
+    );
+    const minutes = (m: number) => now + m * 60_000;
+    expect(waits).toEqual([
+      at(16, 13, 59),
+      null,
+      minutes(15),
+      minutes(30),
+      minutes(60),
+      minutes(60),
+      minutes(1),
+    ]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a daemon started again keeps each limit, its backoff and who was told", () => {
+  const home = mkdtempSync(join(tmpdir(), "skel-limit-test-"));
+  try {
+    daemonRun(
+      home,
+      `reachLimit(db, "codex", null, now);
+reachLimit(db, "codex", null, now);
+tellOfLimit(db, "no-tmux", "codex", { owner: "simon", repo: "app" }, null);
+console.log("{}");`,
+    );
+    const after = daemonRun(
+      home,
+      `restoreLimits(db);
+const limit = limitOn("codex", now);
+const notes = db.query("SELECT COUNT(*) AS n FROM notes").get().n;
+tellOfLimit(db, "no-tmux", "codex", { owner: "simon", repo: "app" }, null);
+const again = db.query("SELECT COUNT(*) AS n FROM notes").get().n;
+console.log(JSON.stringify({ until: limit?.until, tries: limit?.tries, told: [...(limit?.told ?? [])], notes, again }));`,
+    );
+    // Still held for the second wait, and the lead isn't told a second time.
+    expect(after).toEqual({
+      until: now + 30 * 60_000,
+      tries: 2,
+      told: ["simon/app"],
+      notes: 1,
+      again: 1,
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 const thread = (change: Partial<Thread>): Thread => ({

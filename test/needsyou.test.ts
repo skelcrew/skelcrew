@@ -48,7 +48,8 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // ask for AskUserQuestion's PreToolUse, answer for its PostToolUse, talk for UserPromptSubmit,
 // and fail for StopFailure, which Claude Code runs when a turn ends on an error such as a lapsed
 // login. limit runs StopFailure too, for a usage limit, given what the file limit holds. Each
-// hook gets a line in the file ran once it has finished. It keeps what is typed into it.
+// hook gets a line in the file ran once it has finished. It keeps what is typed into it, and
+// looks busy while the file busy is in its config folder.
 function fakeClaude(): void {
   script(
     "claude",
@@ -88,6 +89,9 @@ for i in $(seq 3000); do
   test -e "$CLAUDE_CONFIG_DIR/answer" && { rm "$CLAUDE_CONFIG_DIR/answer"; hook PostToolUse AskUserQuestion; }
   test -e "$CLAUDE_CONFIG_DIR/talk" && { rm "$CLAUDE_CONFIG_DIR/talk"; hook UserPromptSubmit; }
   test -e "$CLAUDE_CONFIG_DIR/fail" && { rm "$CLAUDE_CONFIG_DIR/fail"; hook StopFailure authentication_failed; }
+  if [ -e "$CLAUDE_CONFIG_DIR/busy" ]; then
+    [ "$look" = busy ] || { clear; echo "esc to interrupt"; look=busy; }
+  elif [ "$look" = busy ]; then clear; echo "❯"; look=idle; fi
   test -e "$CLAUDE_CONFIG_DIR/limit" && { given=$(cat "$CLAUDE_CONFIG_DIR/limit"); rm "$CLAUDE_CONFIG_DIR/limit"; hook StopFailure rate_limit "$given"; }
   sleep 0.1
 done`,
@@ -307,6 +311,26 @@ describe.skipIf(insideSandbox)("needs you", () => {
     await untilNeedsYou(true);
     expect(thread()).toMatchObject({ erred: 1, limited: 0 });
   }, 60_000);
+
+  // The wake waits for the builder to be idle, so it can still be waiting when the error ends.
+  for (const [ends, step] of [
+    ["you type to it", "talk"],
+    ["it meets another error", "fail"],
+  ] as const)
+    test(`a wake planned for a usage limit never types once ${ends}`, async () => {
+      addApp();
+      await startApp12();
+      const said = `Claude AI usage limit reached|${Math.ceil(Date.now() / 1000) + 2}`;
+      await hook("limit", JSON.stringify({ error: "rate_limit", last_assistant_message: said }));
+      await until(() => thread().limited === 1);
+      // Busy past the reset, so the wake waits to type, and the error ends meanwhile.
+      writeFileSync(join(builder(), "busy"), "");
+      await Bun.sleep(3000);
+      await hook(step);
+      rmSync(join(builder(), "busy"));
+      await Bun.sleep(3000);
+      expect(read(join(builder(), "typed"))).not.toContain("continue");
+    }, 60_000);
 
   test("stopping a builder that waits out a usage limit forgets the limit", async () => {
     addApp();

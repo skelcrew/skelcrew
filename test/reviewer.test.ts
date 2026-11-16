@@ -274,6 +274,22 @@ describe.skipIf(insideSandbox)("reviewer", () => {
     });
   });
 
+  // A task about a limit can quote Codex's own error word for word.
+  test("a Codex error the task quotes word for word still counts when Codex prints it", async () => {
+    const error = "You've hit your usage limit. Try again at Dec 31st, 2099 11:59 PM.";
+    const quoted = { title: "Handle limits", body: `Codex said:\nERROR: ${error}\n` };
+    fakeCodex(approve, [
+      'cat "$CODEX_HOME/sessions/prompt" >&2',
+      `echo "ERROR: ${error}" >&2`,
+      "exit 1",
+    ]);
+    expect(await start({ issue: quoted })).toEqual({
+      verdict: "limited",
+      body: error,
+      reset: new Date(2099, 11, 31, 23, 59).getTime(),
+    });
+  });
+
   // The prompt ends with no newline, so an error with no ERROR: marker joins its last line.
   test("never puts the echoed task in the note, even joined to a plain error", async () => {
     fakeCodex(approve, [

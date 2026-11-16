@@ -99,27 +99,28 @@ async function spawnReviewer(given: {
 // the error its harness reports, else, when `guess`, the last line it printed on stderr, or
 // else stdout. A harness can echo the prompt as it starts, so the end of what it printed can be
 // the task's text rather than what went wrong. A task can hold a line that looks like the
-// harness's own error, such as "ERROR: connection refused" in a bug report, so the prompt's
-// lines are taken out before anything is read.
+// harness's own error, such as "ERROR: connection refused" in a bug report, so the echoed
+// prompt is taken out before anything is read.
 function failureOf(
   name: HarnessName,
   finished: { out: string; err: string },
   prompt: string,
   guess: boolean,
 ): string | null {
-  // The prompt's lines go, and so does its last line where it starts one: it ends with no
-  // newline, so what the harness prints next joins it.
-  const lines = prompt.split("\n").map((line) => line.trim());
-  const echoed = new Set(lines);
-  const tail = lines.findLast((line) => line !== "") ?? "";
-  const unglued = (line: string) =>
-    tail !== "" && line.trim().startsWith(tail) ? line.trim().slice(tail.length) : line;
-  const own = (printed: string) =>
-    printed
+  // The echoed prompt goes as one block, so an error printed after it stays, even one the
+  // task quotes word for word. It ends with no newline, so what the harness prints next would
+  // join its last line: a newline takes its place. Echoed some other way, only its lines can
+  // be told apart, and each line of it goes.
+  const block = prompt.trimEnd();
+  const echoed = new Set(prompt.split("\n").map((line) => line.trim()));
+  const own = (printed: string) => {
+    const at = printed.indexOf(block);
+    if (at >= 0) return `${printed.slice(0, at)}\n${printed.slice(at + block.length)}`;
+    return printed
       .split("\n")
       .filter((line) => line.trim() === "" || !echoed.has(line.trim()))
-      .map(unglued)
       .join("\n");
+  };
   const [out, err] = [own(finished.out), own(finished.err)];
   const reported = harnessNamed(name).failure(out, err);
   if (reported !== null) return reported.slice(0, 2000);

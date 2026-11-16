@@ -230,7 +230,7 @@ async function reviewWithinLimits(
     // means the harness works again, and the leads that heard of its limit hear that too. Done
     // before any other await, so the next review in the queue already sees it.
     if (result.verdict === "limited") {
-      if (limitOn(harness, Date.now()) === null) reachLimit(harness, result.reset, Date.now());
+      if (limitOn(harness, Date.now()) === null) reachLimit(db, harness, result.reset, Date.now());
       continue;
     }
     if (signal.aborted) return { verdict: result, by: harness };
