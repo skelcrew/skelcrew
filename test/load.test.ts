@@ -49,7 +49,7 @@ test("memory the system can free counts as free", () => {
   expect(memoryInUse(meminfo)).toEqual({ used: 7000000 * 1024, total: 16000000 * 1024 });
 });
 
-test("on a Mac, inactive, speculative and purgeable memory count as free", () => {
+test("on a Mac, inactive and speculative memory count as free, and purgeable only once", () => {
   const vmStat = `Mach Virtual Memory Statistics: (page size of 16384 bytes)
 Pages free:                               10000.
 Pages active:                            300000.
@@ -60,7 +60,8 @@ Pages wired down:                         90000.
 Pages purgeable:                          15000.
 `;
   const total = totalmem();
-  const free = (10000 + 200000 + 5000 + 15000) * 16384;
+  // Purgeable pages are also among the active or inactive ones, so they add nothing.
+  const free = (10000 + 200000 + 5000) * 16384;
   expect(memoryInUse(vmStat)).toEqual({ used: Math.max(total - free, 0), total });
 });
 

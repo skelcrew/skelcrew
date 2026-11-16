@@ -45,8 +45,10 @@ export function readMemory(): string | null {
 
 // Returns the memory in use and the total, in bytes, from what readMemory gave. Memory the system
 // can free counts as free: Linux's MemAvailable, which os.freemem() would count as used, and on
-// a Mac the free, inactive, speculative and purgeable pages, as os.freemem() there counts only
-// the free ones and would show nearly all memory used. Without either, it uses os.freemem().
+// a Mac the free, inactive and speculative pages, as os.freemem() there counts only the free
+// ones and would show nearly all memory used. These three never overlap: vm_stat's free pages
+// leave out the speculative ones. Purgeable pages are left out, as they are also active or
+// inactive, and would count twice. Without either source, it uses os.freemem().
 export function memoryInUse(text: string | null): { used: number; total: number } {
   // Takes a number after a name at the start of a line, such as `MemTotal:   16000000 kB`.
   const figure = (name: string) => {
@@ -60,9 +62,7 @@ export function memoryInUse(text: string | null): { used: number; total: number 
     return { used: (total - available) * 1024, total: total * 1024 };
   // A Mac gives pages, of a size it names on its first line. Its total isn't there.
   const pageSize = text?.match(/page size of (\d+) bytes/);
-  const pages = ["free", "inactive", "speculative", "purgeable"].map((kind) =>
-    figure(`Pages ${kind}`),
-  );
+  const pages = ["free", "inactive", "speculative"].map((kind) => figure(`Pages ${kind}`));
   if (pageSize && pages.every((count) => count !== null)) {
     const free = pages.reduce((sum: number, count) => sum + (count ?? 0), 0) * Number(pageSize[1]);
     return { used: Math.max(totalmem() - free, 0), total: totalmem() };
