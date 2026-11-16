@@ -362,6 +362,9 @@ that covers the code you are about to write.
   inside the box. A click elsewhere on the screen does nothing, with or without `-k`.
 - **`capture-pane -e` shows a terminal link with an id tmux made up**, as `ESC]8;id=...;url`.
   A test that looks for `ESC]8;;url` finds nothing.
+- **Bun's `os.cpus()` reuses the objects it returned before.** A sample kept as it is changes
+  to the newest times on the next call, so the CPU figure from two samples always read 0%.
+  Copy the numbers out when you sample.
 
 ## Tests
 
