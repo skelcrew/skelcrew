@@ -26,9 +26,11 @@ let laptop = { main: "", commit: "" };
 // The Skelcrew the fake bun builds: it says what reached it, one argument per line, so a test
 // can see that each one arrived exactly as typed. Built with a commit, it stops as a copied
 // Skelcrew does when the laptop's build differs. Without one, it is a Skelcrew from before builds
-// carried their commit.
+// carried their commit. On a Sprite whose first run hasn't finished, it runs nothing but the
+// first run, which finishes it.
 const spriteSkel = (built?: string) => `#!/bin/sh
-${built === undefined ? "" : `test -n "$SKELCREW_LAPTOP_BUILD" && test "$SKELCREW_LAPTOP_BUILD" != "${built}" && { echo "Skelcrew on $SKELCREW_REMOTE_NAME is from ${built}"; exit 98; }\n`}test "$1" = first-run && { echo "the first run on the Sprite"; test ! -f first-run-fails; exit; }
+${built === undefined ? "" : `test -n "$SKELCREW_LAPTOP_BUILD" && test "$SKELCREW_LAPTOP_BUILD" != "${built}" && { echo "Skelcrew on $SKELCREW_REMOTE_NAME is from ${built}"; exit 98; }\n`}test "$1" = first-run && { echo "the first run on the Sprite"; rm -f first-run-unfinished; test ! -f first-run-fails; exit; }
+test -f first-run-unfinished && exit 97
 echo "Skelcrew on the Sprite got $# arguments"
 for word in "$@"; do echo "[$word]"; done
 exit 3
@@ -168,21 +170,26 @@ const calls = () =>
 const exec = (name: string, build: string | null = laptop.commit) =>
   `sprite exec -s ${name} --tty -- env SKELCREW_REMOTE_NAME=sprite:${name} ${build ? `SKELCREW_LAPTOP_BUILD=${build} ` : ""}sh -c exec sc "$@" sc`;
 
-// Runs sc in a terminal, and returns all it wrote there, escape codes included.
-async function skelInTerminal(args: string[]): Promise<string> {
+// Runs sc in a terminal and types the next of `answers` at each [Y/n] or [y/N] question it asks.
+// Returns all it wrote there, escape codes included, and its exit code.
+async function skelInTerminal(args: string[], answers: string[] = []) {
   let wrote = "";
+  let answered = 0;
   const run = Bun.spawn([process.execPath, laptop.main, ...args], {
     cwd: home,
     env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
     terminal: {
-      data: (_, bytes) => {
+      data: (terminal, bytes) => {
         wrote += new TextDecoder().decode(bytes);
+        const asked = wrote.match(/\[(Y\/n|y\/N)\]/g)?.length ?? 0;
+        while (answered < asked && answered < answers.length)
+          terminal.write(`${answers[answered++]}\r`);
       },
     },
   });
-  await run.exited;
+  const code = await run.exited;
   run.terminal?.close();
-  return wrote;
+  return { wrote, code };
 }
 
 test("the raw command sprite puts in the title is replaced, and yours comes back", async () => {
@@ -194,7 +201,7 @@ test("the raw command sprite puts in the title is replaced, and yours comes back
     "  exec)\n    printf '\\033]0;demo: raw command\\033\\\\'\n",
   );
   writeFileSync(sprite, said);
-  const wrote = await skelInTerminal(["--remote", "sprite:demo", "ps"]);
+  const { wrote } = await skelInTerminal(["--remote", "sprite:demo", "ps"]);
   const saved = wrote.indexOf("\x1b[22;0t");
   const raw = wrote.indexOf("\x1b]0;demo: raw command");
   const short = wrote.indexOf("\x1b]2;Skelcrew · sprite:demo\x07");
@@ -206,7 +213,7 @@ test("the raw command sprite puts in the title is replaced, and yours comes back
 
 test("says it is connecting before anything reaches the Sprite, which can take a while to wake", async () => {
   existing("demo");
-  const wrote = await skelInTerminal(["--remote", "sprite:demo", "ps"]);
+  const { wrote } = await skelInTerminal(["--remote", "sprite:demo", "ps"]);
   const connecting = wrote.indexOf("Connecting to sprite:demo…");
   expect(connecting).toBeGreaterThan(-1);
   expect(connecting).toBeLessThan(wrote.indexOf("Skelcrew on the Sprite got 1 arguments"));
@@ -260,7 +267,7 @@ test("says to log in when sprite isn't logged in", async () => {
   expect(calls()).toBe("sprite list --json\n");
 });
 
-test("--remote only connects: it creates no Sprite and says how to set one up", async () => {
+test("without a terminal, --remote creates no Sprite and only says how to set one up", async () => {
   const run = await skel(["--remote", "sprite:demo"]);
   expect(run.err).toBe(
     "Skelcrew: sprite:demo isn't set up. Run this on your laptop:\n  sc remote add sprite:demo\n",
@@ -270,13 +277,70 @@ test("--remote only connects: it creates no Sprite and says how to set one up", 
   expect(readdirSync(join(home, "sprites"))).toEqual([]);
 });
 
-test("--remote only connects: it sets up nothing on a Sprite without Skelcrew", async () => {
+test("without a terminal, --remote sets up nothing on a Sprite without Skelcrew", async () => {
   mkdirSync(join(home, "sprites", "demo"));
   const run = await skel(["--remote", "sprite:demo", "ps"]);
   expect(run.err).toContain("sc remote add sprite:demo");
   expect(run.code).toBe(1);
   expect(calls()).not.toContain("apt-get");
   expect(calls()).not.toContain("sprite file push");
+});
+
+test("without a terminal, --remote on a Sprite whose first run isn't done only says how to set it up", async () => {
+  existing("demo", laptop.commit);
+  writeFileSync(join(home, "sprites", "demo", "first-run-unfinished"), "");
+  const run = await skel(["--remote", "sprite:demo", "ps"]);
+  expect(run.err).toBe(
+    "Skelcrew: sprite:demo isn't set up. Run this on your laptop:\n  sc remote add sprite:demo\n",
+  );
+  expect(run.code).toBe(1);
+  expect(calls()).not.toContain("first-run");
+});
+
+// A new Sprite costs money, so a yes to setting up still meets sc remote add's own question.
+test("in a terminal, --remote offers to set up a Sprite, creates it after asking, then runs the command", async () => {
+  writeFileSync(join(home, "bin", "uname"), "#!/bin/sh\necho x86_64\n", { mode: 0o755 });
+  const { wrote, code } = await skelInTerminal(["--remote", "sprite:demo", "ps"], ["", "y"]);
+  expect(wrote).toContain("sprite:demo isn't set up. Set it up now? [Y/n]");
+  expect(wrote).toContain("No Sprite named demo. Create it? [y/N]");
+  expect(wrote).toContain("the first run on the Sprite");
+  expect(wrote).toContain("Skelcrew on the Sprite got 1 arguments\r\n[ps]\r\n");
+  expect(code).toBe(3);
+  const lines = calls().trim().split("\n");
+  expect(lines).toContain("sprite create --skip-console demo");
+  // In a terminal the line also sets the title, so only its start and end are compared.
+  expect(lines.at(-1)).toStartWith(
+    `sprite exec -s demo --tty -- env SKELCREW_REMOTE_NAME=sprite:demo SKELCREW_LAPTOP_BUILD=${laptop.commit} `,
+  );
+  expect(lines.at(-1)).toEndWith(' exec sc "$@" sc ps');
+});
+
+test("in a terminal, a no to creating the Sprite creates nothing", async () => {
+  const { wrote, code } = await skelInTerminal(["--remote", "sprite:demo", "ps"], ["", "n"]);
+  expect(wrote).toContain("No Sprite was created");
+  expect(code).toBe(1);
+  expect(readdirSync(join(home, "sprites"))).toEqual([]);
+});
+
+test("in a terminal, a no to setting up a Sprite sets up nothing and says what to run later", async () => {
+  mkdirSync(join(home, "sprites", "demo"));
+  const { wrote, code } = await skelInTerminal(["--remote", "sprite:demo", "ps"], ["n"]);
+  expect(wrote).toContain("sc remote add sprite:demo");
+  expect(code).toBe(1);
+  expect(calls()).not.toContain("apt-get");
+  expect(calls()).not.toContain("sprite file push");
+});
+
+test("in a terminal, --remote finishes a Sprite's first run that isn't done, then runs the command", async () => {
+  existing("demo", laptop.commit);
+  writeFileSync(join(home, "sprites", "demo", "first-run-unfinished"), "");
+  const { wrote, code } = await skelInTerminal(["--remote", "sprite:demo", "ps"], ["y"]);
+  expect(wrote).toContain("sprite:demo isn't set up. Set it up now? [Y/n]");
+  expect(code).toBe(3);
+  const lines = calls().trim().split("\n");
+  // In a terminal the line also sets the title, so only its end is compared.
+  expect(lines.at(-2)).toEndWith(' exec sc "$@" sc first-run');
+  expect(lines.at(-1)).toEndWith(' exec sc "$@" sc ps');
 });
 
 test("shows apt's output only when installing bubblewrap fails", async () => {

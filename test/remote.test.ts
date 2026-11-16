@@ -25,9 +25,14 @@ let laptop = { folder: "", main: "", commit: "" };
 // The Skelcrew the fake bun builds: it says what reached it, one argument per line, so a test
 // can see that each one arrived exactly as typed. Built with a commit, it stops as a copied
 // Skelcrew does when the laptop's build differs. Without one, it is a Skelcrew from before builds
-// carried their commit.
+// carried their commit. On a server whose first run hasn't finished, it runs nothing but the
+// first run, which finishes it. Until it takes the laptop's setup, it stops on a laptop that
+// has one, as a copied Skelcrew does when its setup differs.
 const serverSkel = (built?: string) => `#!/bin/sh
-${built === undefined ? "" : `test -n "$SKELCREW_LAPTOP_BUILD" && test "$SKELCREW_LAPTOP_BUILD" != "${built}" && { echo "Skelcrew on $SKELCREW_REMOTE_NAME is from ${built}"; exit 98; }\n`}test "$1" = first-run && { echo "the first run on the server"; test ! -f first-run-fails; exit; }
+${built === undefined ? "" : `test -n "$SKELCREW_LAPTOP_BUILD" && test "$SKELCREW_LAPTOP_BUILD" != "${built}" && { echo "Skelcrew on $SKELCREW_REMOTE_NAME is from ${built}"; exit 98; }\n`}test -n "$SKELCREW_LAPTOP_SETUP" && test ! -f setup-taken && exit 96
+test "$1" = take-setup && { echo "took the laptop's setup"; cp .config/skelcrew/laptop-setup.json setup-taken; exit; }
+test "$1" = first-run && { echo "the first run on the server"; rm -f first-run-unfinished; test ! -f first-run-fails; exit; }
+test -f first-run-unfinished && exit 97
 echo "Skelcrew on the server got $# arguments"
 for word in "$@"; do echo "[$word]"; done
 exit 3
@@ -147,26 +152,31 @@ const calls = () =>
 const onServer = (words: string, build: string | null = laptop.commit) =>
   `ssh -t simon@workbox env PATH="$HOME/.local/bin:$PATH" SKELCREW_REMOTE_NAME=simon@workbox ${build ? `SKELCREW_LAPTOP_BUILD=${build} ` : ""}sc${words}`;
 
-// Runs sc in a terminal, and returns all it wrote there, escape codes included.
-async function skelInTerminal(args: string[]): Promise<string> {
+// Runs sc in a terminal and types the next of `answers` at each [Y/n] or [y/N] question it asks.
+// Returns all it wrote there, escape codes included, and its exit code.
+async function skelInTerminal(args: string[], answers: string[] = []) {
   let wrote = "";
+  let answered = 0;
   const run = Bun.spawn([process.execPath, laptop.main, ...args], {
     cwd: home,
     env: { PATH: `${join(home, "bin")}:/usr/bin:/bin`, HOME: home, TMPDIR: join(home, "tmp") },
     terminal: {
-      data: (_, bytes) => {
+      data: (terminal, bytes) => {
         wrote += new TextDecoder().decode(bytes);
+        const asked = wrote.match(/\[(Y\/n|y\/N)\]/g)?.length ?? 0;
+        while (answered < asked && answered < answers.length)
+          terminal.write(`${answers[answered++]}\r`);
       },
     },
   });
-  await run.exited;
+  const code = await run.exited;
   run.terminal?.close();
-  return wrote;
+  return { wrote, code };
 }
 
 test("the terminal's title is saved before the server is reached and put back after", async () => {
   installed();
-  const wrote = await skelInTerminal(["--remote", "simon@workbox", "ps"]);
+  const { wrote } = await skelInTerminal(["--remote", "simon@workbox", "ps"]);
   expect(wrote.startsWith("\x1b[22;0t")).toBe(true);
   expect(wrote.endsWith("\x1b[23;0t")).toBe(true);
   expect(wrote).toContain("Skelcrew on the server got 1 arguments");
@@ -203,7 +213,7 @@ test("a command reaches the server exactly as typed", async () => {
   );
 });
 
-test("--remote only connects: on a server without Skelcrew it says how to set it up", async () => {
+test("without a terminal, --remote on a server without Skelcrew only says how to set it up", async () => {
   const run = await skel(["--remote", "simon@workbox", "ps"]);
   // The server's shell says first that it found no Skelcrew.
   expect(run.err).toEndWith(
@@ -211,6 +221,49 @@ test("--remote only connects: on a server without Skelcrew it says how to set it
   );
   expect(run.code).toBe(1);
   expect(calls()).toBe(`${onServer(" ps")}\n`);
+});
+
+test("without a terminal, --remote on a server whose first run isn't done only says how to set it up", async () => {
+  installed(laptop.commit);
+  writeFileSync(join(home, "server", "first-run-unfinished"), "");
+  const run = await skel(["--remote", "simon@workbox", "ps"]);
+  expect(run.err).toBe(
+    "Skelcrew: simon@workbox isn't set up. Run this on your laptop:\n  sc remote add simon@workbox\n",
+  );
+  expect(run.code).toBe(1);
+  expect(calls()).toBe(`${onServer(" ps")}\n`);
+});
+
+test("in a terminal, --remote offers to set up a server without Skelcrew, then runs the command", async () => {
+  const { wrote, code } = await skelInTerminal(["--remote", "simon@workbox", "ps"], [""]);
+  expect(wrote).toContain("simon@workbox isn't set up. Set it up now? [Y/n]");
+  expect(wrote).toContain("the first run on the server");
+  expect(wrote).toContain("Skelcrew on the server got 1 arguments\r\n[ps]\r\n");
+  expect(code).toBe(3);
+  const lines = calls().trim().split("\n");
+  expect(lines[0]).toBe(onServer(" ps"));
+  // What sc remote add runs, then the command you asked for.
+  expect(lines[1]).toBe(onServer(" first-run"));
+  expect(lines).toContain("ssh simon@workbox mv -f .local/bin/sc.new .local/bin/sc");
+  expect(lines.at(-2)).toBe(onServer(" first-run", null));
+  expect(lines.at(-1)).toBe(onServer(" ps"));
+});
+
+test("in a terminal, --remote finishes a first run that isn't done, then runs the command", async () => {
+  installed(laptop.commit);
+  writeFileSync(join(home, "server", "first-run-unfinished"), "");
+  const { wrote, code } = await skelInTerminal(["--remote", "simon@workbox", "ps"], ["y"]);
+  expect(wrote).toContain("simon@workbox isn't set up. Set it up now? [Y/n]");
+  expect(code).toBe(3);
+  expect(calls()).toBe(`${onServer(" ps")}\n${onServer(" first-run")}\n${onServer(" ps")}\n`);
+});
+
+test("in a terminal, a no to setting up sets up nothing and says what to run later", async () => {
+  const { wrote, code } = await skelInTerminal(["--remote", "simon@workbox", "ps"], ["n"]);
+  expect(wrote).toContain("sc remote add simon@workbox");
+  expect(code).toBe(1);
+  expect(calls()).toBe(`${onServer(" ps")}\n`);
+  expect(existsSync(join(home, "server", ".local", "bin", "sc"))).toBe(false);
 });
 
 // A link left at ~/.local/bin/sc, such as one to a checkout's launcher that can't find bun
@@ -487,6 +540,29 @@ test("sc remote add copies Skelcrew to a server, runs the first run, and prints 
   expect(readFileSync(join(home, "server", ".local", "bin", "sc"), "utf8")).toBe(
     serverSkel(laptop.commit),
   );
+});
+
+test("sc remote add copies your setup there before the first run", async () => {
+  mkdirSync(join(home, ".config", "skelcrew"), { recursive: true });
+  writeFileSync(join(home, ".config", "skelcrew", "config.yaml"), "harness: codex\n");
+  const run = await skel(["remote", "add", "simon@workbox"]);
+  expect(run.code).toBe(0);
+  expect(run.out).toContain("took the laptop's setup\nthe first run on the server\n");
+  const lines = calls().trim().split("\n");
+  const send = ".config/skelcrew/laptop-setup.json";
+  expect(lines).toContain(
+    `ssh simon@workbox umask 077 && mkdir -p .config/skelcrew && rm -f ${send} && : > ${send}`,
+  );
+  expect(lines.at(-1)).toMatch(/ sc first-run$/);
+  expect(lines.at(-2)).toMatch(/ sc take-setup$/);
+  // The file sent holds the token, so it is readable only by you there.
+  const taken = join(home, "server", "setup-taken");
+  expect(JSON.parse(readFileSync(taken, "utf8"))).toMatchObject({
+    config: "harness: codex\n",
+    token: null,
+    plugins: [],
+  });
+  expect(lstatSync(join(home, "server", send)).mode & 0o777).toBe(0o600);
 });
 
 test("sc remote add builds Skelcrew for the server's CPU", async () => {

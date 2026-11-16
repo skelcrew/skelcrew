@@ -3,10 +3,11 @@ import { help } from "./help.ts";
 import {
   addServer,
   keepingTitle,
-  notSetUp,
+  otherSetup,
   outdated,
   outOfDate,
   remote,
+  unfinished,
 } from "./machine/remote.ts";
 import { addSprite, remoteSprite } from "./machine/sprite.ts";
 import { errorText } from "./say.ts";
@@ -26,6 +27,7 @@ const agentRefusals: Record<string, string> = {
   sidebar: "showing the sidebar",
   list: "showing a list",
   "first-run": "setting up this machine",
+  "take-setup": "taking your laptop's setup",
   "remote add": "setting up a machine",
   "plugin install": "installing a plugin",
   "plugin update": "updating a plugin",
@@ -133,9 +135,16 @@ async function leadCommand(from?: string): Promise<void> {
   process.exit(1);
 }
 
-// Runs sc first-run, which sets up this machine, or sc serve, which runs the daemon.
+// Runs sc first-run, which sets up this machine, sc take-setup, which takes the setup your laptop
+// sent, or sc serve, which runs the daemon.
 async function machineCommand(args: string[]): Promise<void> {
   const [command] = args;
+  // Run by sc --remote and sc remote add from your laptop, not by people, so usage leaves it out.
+  if (command === "take-setup" && args.length === 1) {
+    const { takeSetup } = await import("./machine/copy-setup.ts");
+    await takeSetup();
+    return;
+  }
   const { serve } = await import("./flow/daemon.ts");
   const { firstRun } = await import("./machine/setup.ts");
   // Run by sc remote add on the machine it sets up, not by people, so usage leaves it out.
@@ -453,6 +462,12 @@ async function runCommand(args: string[]): Promise<void> {
   // refuse.
   const onScreen = command === "sidebar" || command === "list" || command === "footer";
   if (!onScreen && outOfDate()) process.exit(outdated);
+  // A machine whose setup differs from the laptop's runs nothing, so the laptop copies its own
+  // there first. An agent's sandbox hides what this reads.
+  if (!onScreen && process.env.SKELCREW_LAPTOP_SETUP && process.env.SKELCREW_SANDBOX !== "1") {
+    const { setupDiffers } = await import("./machine/copy-setup.ts");
+    if (setupDiffers()) process.exit(otherSetup);
+  }
   if (args.length === 1 && ["--help", "-h", "help"].includes(command ?? "")) {
     console.log(help());
     return;
@@ -491,23 +506,25 @@ async function runCommand(args: string[]): Promise<void> {
   // Commands that run here load what they need only from this point on, so sc --remote
   // starts quickly and loads no part of the daemon on your laptop.
   const { setupDone } = await import("./machine/setup.ts");
-  // On a remote, refuse to run until the machine is set up. Sidebars, lists and agents skip
-  // this: they can inherit the remote's name from whoever started tmux, and an agent's sandbox
-  // hides what setupDone reads.
+  // On a remote, refuse to run until the machine is set up, with the exit code that lets the
+  // laptop offer to finish it. Sidebars, lists and agents skip this: they can inherit the
+  // remote's name from whoever started tmux, and an agent's sandbox hides what setupDone reads.
   const remoteName = process.env.SKELCREW_REMOTE_NAME;
   if (
     remoteName &&
     first !== "first-run" &&
+    first !== "take-setup" &&
     !onScreen &&
     process.env.SKELCREW_SANDBOX !== "1" &&
     !setupDone()
   )
-    throw new Error(notSetUp(remoteName));
+    process.exit(unfinished);
   // Plain sc, or sc --from <remote> as sc --remote sends it.
   if (words.length === 0 || (first === "--from" && second && words.length === 2))
     return leadCommand(second);
   switch (first) {
     case "first-run":
+    case "take-setup":
     case "serve":
       return machineCommand(words);
     case "sidebar":
