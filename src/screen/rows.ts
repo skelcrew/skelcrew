@@ -75,18 +75,23 @@ export function threadMark(row: Pick<Row, "status" | "needsYou" | "word">): Mark
 export function threadWord(thread: Thread, maxRounds: number): string {
   const { status, verdict, checks } = thread;
   // A thread that failed, stopped or is done says just that. Otherwise a question from its builder
-  // comes first, as does its stopping without submitting, which is a question written as plain
-  // text, then its harness stopping on an error, then why it needs you, then what it is doing.
+  // comes first, then its harness stopping on an error, then why it needs you, then what it is
+  // doing.
   if (status === "failed" || status === "stopped" || status === "done") return status;
   const underWay = thread.submitting !== null || thread.reviewing !== null;
-  if (thread.asking || thread.stalled) return "question";
+  if (thread.asking) return "question";
   if (thread.erred) return "error";
-  if (thread.needs_you) {
-    if (pastRoundLimit(thread, maxRounds)) return "round limit";
-    if (underWay || verdict === "failed") return "review failed";
-    if (verdict === "approve" && (checks === "passing" || checks === null)) return "approved";
-    return "needs you";
-  }
+  // The round limit and an approval say what you must do next, so they stay ahead of a builder
+  // that stopped without submitting. Otherwise any reply it gave you, or the lead, would hide
+  // that the thread is ready to merge.
+  const past = thread.needs_you && pastRoundLimit(thread, maxRounds);
+  const failed = underWay || verdict === "failed";
+  const green = verdict === "approve" && (checks === "passing" || checks === null);
+  if (past) return "round limit";
+  if (thread.needs_you && !failed && green) return "approved";
+  // Stopping without submitting is a question written as plain text.
+  if (thread.stalled) return "question";
+  if (thread.needs_you) return failed ? "review failed" : "needs you";
   // Not needing you: a round under way shows as reviewing, and a review's changes still waiting
   // to be typed into the builder as changes. Otherwise it works or waits on checks.
   if (underWay) return "reviewing";

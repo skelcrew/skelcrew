@@ -345,11 +345,13 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
       case "turn ended": {
         // The note quotes what the builder last said, so you see what it waits on. In quotes,
         // and with no tags of Skelcrew's, it can't pass for Skelcrew's own words or another's.
-        // It is cut short first, as a note is cut at 200 characters, which would lose the
-        // closing quote.
+        // The quote, escapes included, is kept to 100 characters, as a note is cut at 200,
+        // which would lose the closing quote. Each " or \ doubles in length once escaped, so
+        // the words are cut until the quote fits.
         const { folder } = callingThread(caller);
         if (!endedTurnAsks(readThread(db, folder))) return { asking: false };
-        const words = untagged(request.said ?? "").slice(0, 100);
+        let words = untagged(request.said ?? "").slice(0, 100);
+        while (JSON.stringify(words).length > 100) words = words.slice(0, -1);
         const said = words ? `, saying ${JSON.stringify(words)}` : "";
         record(db, folder, { stalled: true }, `its builder stopped without submitting${said}`);
         typeLeadNotes(db, tmux);
@@ -365,9 +367,11 @@ export async function serve(tmux: string, every = 30_000): Promise<void> {
         typeLeadNotes(db, tmux);
         return { erred: true };
       case "question closed": {
-        // AskUserQuestion returned its answer, and the builder goes on in the same turn, so a
-        // submit earlier in it still counts.
+        // AskUserQuestion returned your answer, and the builder goes on in the same turn, so a
+        // submit earlier in it still counts. Your answer starts a new stretch of work all the
+        // same, which the sidebar times, as anything typed into the builder does.
         const { folder } = callingThread(caller);
+        db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), folder]);
         if (readThread(db, folder).asking)
           record(db, folder, { asking: false }, "its builder's question is over");
         return { asking: false };

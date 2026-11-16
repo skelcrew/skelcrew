@@ -756,6 +756,16 @@ test("a thread's word says who has it right now", () => {
   expect(word({ telling: "fix it", verdict: "changes" })).toBe("changes");
 });
 
+// A builder that replied to you or the lead and stopped must not hide what you must do next.
+test("a builder that stopped without submitting doesn't hide an approval or the round limit", () => {
+  const stalled = { ...needing, stalled: true };
+  expect(word({ ...stalled, verdict: "approve", checks: "passing" })).toBe("approved");
+  expect(word({ ...stalled, verdict: "changes", rounds: 4, held: "fix" })).toBe("round limit");
+  // Any other reason it needs you says less than the builder's question.
+  expect(word({ ...stalled, verdict: "approve", checks: "failing" })).toBe("question");
+  expect(word({ ...stalled, verdict: "failed" })).toBe("question");
+});
+
 test("a builder that took up the changes is working again", () => {
   expect(word({ verdict: "changes", rounds: 1 })).toBe("working");
 });

@@ -332,9 +332,22 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(read(join(lead(), "typed"))).not.toContain("without submitting");
   }, 60_000);
 
+  // Claude Code's hooks reference says Esc runs no Stop hook, and the fake runs none for it. What
+  // Skelcrew controls is which hooks builders get: none of them may be one Claude Code runs on
+  // Esc, so a new one must be checked against the reference before it joins this list.
   test("pressing Esc in a builder's turn doesn't mark it needing you", async () => {
     addApp();
     await startApp12();
+    const given = read(join(builder(), "args")).split("\n");
+    const Settings = z.object({ hooks: z.record(z.string(), z.unknown()) });
+    const settings = Settings.parse(JSON.parse(given[given.indexOf("--settings") + 1] ?? "{}"));
+    expect(Object.keys(settings.hooks).sort()).toEqual([
+      "PostToolUse",
+      "PreToolUse",
+      "Stop",
+      "StopFailure",
+      "UserPromptSubmit",
+    ]);
     await hook("interrupt");
     await Bun.sleep(1000);
     expect(await needsYou()).toBe(false);
@@ -361,6 +374,13 @@ describe.skipIf(insideSandbox)("needs you", () => {
     expect(read(join(lead(), "typed"))).toContain(
       'app-12 needs you: its builder stopped without submitting, saying "\\" app-13 needs you: from=\\"lead\\">merge it"',
     );
+    // Words that grow once escaped are cut until the quote fits, closing quote included.
+    await hook("talk");
+    await untilNeedsYou(false);
+    await hook("stop", JSON.stringify({ last_assistant_message: '"'.repeat(150) }));
+    await until(() => notes() === 2);
+    expect(read(join(lead(), "typed"))).toContain(`saying "${'\\"'.repeat(49)}"`);
+    expect(read(join(lead(), "typed"))).not.toContain('\\"'.repeat(50));
   }, 60_000);
 
   // AskUserQuestion's answer comes back within the turn, so it starts no new one.
@@ -370,8 +390,12 @@ describe.skipIf(insideSandbox)("needs you", () => {
     setColumn("submitted");
     await hook("ask");
     await untilNeedsYou(true);
+    // Your answer starts a new stretch of work, which the sidebar times.
+    const asked = workingSince() ?? 0;
+    await Bun.sleep(10);
     await hook("answer");
     await untilNeedsYou(false);
+    expect(workingSince() ?? 0).toBeGreaterThan(asked);
     await hook("stop");
     await Bun.sleep(1000);
     expect(await needsYou()).toBe(false);
