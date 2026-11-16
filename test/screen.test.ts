@@ -360,6 +360,26 @@ test("the keys that move by word reach the agent byte for byte", async () => {
   expect(seen()).toContain("I am lead");
 });
 
+// Ghostty on a Mac sends Option-Left as Esc b. On the lead it must move back a word, and the
+// screen must stay on the lead, whether or not the terminal sends extended keys.
+for (const extended of [false, true])
+  test(`Option-Left on the lead moves back a word and leaves the screen on the lead${extended ? ", with extended keys" : ""}`, async () => {
+    extendedKeys = extended;
+    keyLoggingLead(extended);
+    open("lead");
+    await ready("lead");
+    type("word\x1bb");
+    await Bun.sleep(500);
+    expect(selected()).toBe("◆ lead");
+    press("Enter");
+    await until(() => read("lead.keys").endsWith("\r"), "the Enter");
+    // An agent that asks for extended keys gets Alt-B in the form it asked for.
+    const back = extended ? (tmuxIsAtLeast(3, 5) ? "\x1b[98;3u" : "\x1b[27;3;98~") : "\x1bb";
+    expect(read("lead.keys")).toBe(`word${back}\r`);
+    expect(selected()).toBe("◆ lead");
+    expect(seen()).toContain("I am lead");
+  });
+
 test("Ctrl-6 goes back from a terminal that sends extended keys too", async () => {
   extendedKeys = true;
   open("lead");
