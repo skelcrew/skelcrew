@@ -58,7 +58,9 @@ export function pageOf(item: Item): Page {
 // Returns what a PR's CI says, and its colour, for its page and sc pr show. Skelcrew's own check
 // isn't CI, and one failure is enough to say so while the rest still run. A repository with no CI
 // says none, dim.
-export function ciSummary(pr: Extract<Item, { kind: "pr" }>): [string, Colour] {
+export function ciSummary(
+  pr: Extract<Item, { kind: "pr" }>,
+): ["none" | "passed" | "failed" | "running", Colour] {
   const ci = pr.checks.filter((check) => check.name !== reviewCheck);
   if (ci.length === 0) return ["none", "dim"];
   if (ci.every((check) => check.state === "passed")) return ["passed", "green"];

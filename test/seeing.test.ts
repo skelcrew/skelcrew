@@ -499,6 +499,26 @@ INSERT INTO threads (owner, repo, task, folder, branch, status, session, title, 
   return settings;
 }
 
+// More of app's threads, beside forgeThreads': app-16's review is under way while its builder
+// asks a question, and app-17's while it is past the round limit of 3. app-18's round fails on
+// its push, as its clone was never set up. app-19 failed while CI still ran on its PR, and CI
+// passed after, which only the copy of its PR has heard.
+function moreThreads(): void {
+  sql(`INSERT INTO threads (owner, repo, task, folder, branch, status, session, title, pr, checks,
+    rounds, needs_you, asking, verdict, review_round, reviewing, submitting) VALUES
+  ('simon', 'app', 16, 'app-16', 'skelcrew/16', 'waiting', 's16', 'Asks', 35, NULL, 2, 0, 1, 'changes', 2, 'def', NULL),
+  ('simon', 'app', 17, 'app-17', 'skelcrew/17', 'waiting', 's17', 'Past', 36, NULL, 4, 1, 0, 'changes', 4, 'ghi', NULL),
+  ('simon', 'app', 18, 'app-18', 'skelcrew/18', 'waiting', 's18', 'Push', 37, NULL, 0, 0, 0, NULL, NULL, NULL, 'Go'),
+  ('simon', 'app', 19, 'app-19', 'skelcrew/19', 'failed', NULL, 'Late CI', 38, 'pending', 0, 0, 0, NULL, NULL, NULL, NULL);`);
+  sql(
+    itemSql("app", "pr", 38, "Late CI", "2026-11-08T10:00:00Z", {
+      checks: [{ name: "test", id: "601", state: "passed" }],
+    }),
+  );
+  for (const live of ["app-16", "app-17", "app-18"])
+    tmux("new-session", "-d", "-s", live, "sleep 300");
+}
+
 // Runs sc in a folder, as you would in a checkout.
 async function skelIn(cwd: string, args: string[]) {
   const run = Bun.spawn([process.execPath, source("main.ts"), ...args], {
@@ -577,6 +597,32 @@ describe("with a forge", () => {
       at: "2025-11-16T12:00:00.000Z",
     });
     expect(json[2]).toMatchObject({ pr: null, checks: null, review: { state: "none" } });
+  });
+
+  // A question or the round limit comes on top of a review under way without changing it. A
+  // round that failed says so. A thread polls pass over takes its CI from the copy of its PR.
+  test("sc ps shows a review under way whatever else the thread needs, and CI from the copy", async () => {
+    forgeThreads();
+    moreThreads();
+    serve();
+    await untilAnswers();
+    type Row = { thread: string; checks: string | null; review: { state: string; round: number } };
+    const rows = async () => {
+      const listed: Row[] = JSON.parse((await skel(["ps", "app", "--json"])).out);
+      return Object.fromEntries(listed.map((row) => [row.thread, row]));
+    };
+    // app-18's push fails a moment after the daemon starts.
+    let shown = await rows();
+    for (let tries = 0; shown["app-18"]?.review.state !== "failed" && tries < 100; tries++) {
+      await Bun.sleep(100);
+      shown = await rows();
+    }
+    expect(shown["app-16"]?.review).toMatchObject({ state: "reviewing", round: 3 });
+    expect(shown["app-17"]?.review).toMatchObject({ state: "reviewing", round: 5 });
+    expect(shown["app-18"]?.review).toMatchObject({ state: "failed", round: 1 });
+    expect(shown["app-19"]?.checks).toBe("passed");
+    // A live thread keeps the word its polls keep.
+    expect(shown["app-14"]?.checks).toBe("running");
   });
 
   test("sc pr show shows a thread's PR from Skelcrew's copy, with the log of a failed check", async () => {

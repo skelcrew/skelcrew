@@ -8,13 +8,12 @@ import { colorful } from "../help.ts";
 import { cloneDir } from "../paths.ts";
 import { failedLog, forgeOf, trackerOf } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
-import { roundLimit } from "../screen/lists.ts";
 import { fitted, removeControlCodes } from "../screen/look.ts";
-import { threadWord } from "../screen/rows.ts";
-import { openTasks, prOf, taskOf, threadTask } from "./copy.ts";
+import { type Item, openTasks, prOf, taskOf, threadTask } from "./copy.ts";
 import { reviewCheck } from "./decide.ts";
 import { ciSummary, reviewVerdict } from "./page.ts";
 import { findRepository, noRepositories, repositories, repositoryAt } from "./repo.ts";
+import { roundRunning } from "./round.ts";
 import { findThread, needsYou, Thread, threadName, threadOn } from "./thread.ts";
 
 // A repository as sc repo ls shows it. `missing` is a tracker its skelcrew.yaml names that
@@ -91,17 +90,32 @@ export type ThreadRow = z.infer<typeof ThreadRow>;
 // What CI says in sc ps, from the word Skelcrew saved as it last polled the PR.
 const ciWords = { passing: "passed", failing: "failed", pending: "running" } as const;
 
-// Returns where a thread's review stands, for sc ps. A round under way counts as the next
-// one. A round that failed before its review ended, such as on a push, counts too, as it is
-// what the thread needs you for. Otherwise it is the latest review's verdict and round.
+// Returns what a thread's CI says, for sc ps. A working or waiting thread has the word its
+// polls keep, which a submit clears until CI starts on the new commit. Polls pass over any
+// other thread, such as one that failed, while its PR in Skelcrew's copy still changes, so its
+// CI comes from the copy, as on the PR's page, when the copy has it.
+function ciOf(
+  thread: Thread,
+  copy: Extract<Item, { kind: "pr" }> | null,
+): NonNullable<ThreadRow["checks"]> {
+  const live = thread.status === "working" || thread.status === "waiting";
+  if (!live && copy) return ciSummary(copy)[0];
+  return thread.checks === null ? "none" : ciWords[thread.checks];
+}
+
+// Returns where a thread's review stands, for sc ps. It reads only the thread's own review, as
+// a question, an error or the round limit can come on top of a review under way without
+// changing it. A saved submit or commit under review is the next round: running while its
+// round runs, and failed once the round ended without clearing it, such as on a failed push.
+// Otherwise it is the latest review's verdict and round. A stopped or ended thread has no round
+// running, so it shows its latest verdict.
 function reviewOf(thread: Thread): NonNullable<ThreadRow["review"]> {
   const at = thread.review_at === null ? null : new Date(thread.review_at).toISOString();
-  // The sidebar's word already knows when a round is under way and when one failed.
-  const word = threadWord(thread, roundLimit(thread));
-  const underWay = thread.submitting !== null || thread.reviewing !== null;
-  if (word === "reviewing") return { state: "reviewing", round: thread.rounds + 1, at };
-  if (word === "review failed" && underWay)
-    return { state: "failed", round: thread.rounds + 1, at };
+  const live = thread.status === "working" || thread.status === "waiting";
+  if (live && (thread.submitting !== null || thread.reviewing !== null)) {
+    const state = roundRunning(thread.folder) ? "reviewing" : "failed";
+    return { state, round: thread.rounds + 1, at };
+  }
   if (thread.verdict === null) return { state: "none", round: null, at: null };
   const states = { approve: "approved", changes: "changes", failed: "failed" } as const;
   return { state: states[thread.verdict], round: thread.review_round, at };
@@ -124,6 +138,7 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
     const thread = Thread.parse(row);
     const forge = withForge.some((r) => r.owner === thread.owner && r.repo === thread.repo);
     const pr = forge ? thread.pr : null;
+    const copy = pr === null ? null : prOf(db, thread.owner, thread.repo, pr);
     return {
       thread: threadName(db, thread),
       short: thread.short && removeControlCodes(thread.short),
@@ -132,8 +147,8 @@ export function listThreads(db: Database, repository?: string): ThreadRow[] {
       needsYou: needsYou(thread),
       branch: thread.branch,
       pr,
-      prUrl: pr === null ? null : (prOf(db, thread.owner, thread.repo, pr)?.link ?? null),
-      checks: pr === null ? null : thread.checks === null ? "none" : ciWords[thread.checks],
+      prUrl: copy?.link ?? null,
+      checks: pr === null ? null : ciOf(thread, copy),
       review: forge ? reviewOf(thread) : null,
     };
   });

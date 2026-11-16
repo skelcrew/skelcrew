@@ -186,6 +186,14 @@ type Round = {
 // Each thread's latest round, by its folder.
 const latestRounds = new Map<string, Round>();
 
+// Returns whether the thread's latest round is still pushing or reviewing, for sc ps. A round
+// that failed has ended, while its submit or commit stays saved for sc review to try again, so
+// the saved columns alone can't tell a running review from a failed one.
+export function roundRunning(folder: string): boolean {
+  const round = latestRounds.get(folder);
+  return round !== undefined && !round.ended;
+}
+
 // Saves the round as the thread's latest. When `rest`, the rest of the round, fails, it marks
 // the thread needs you with the reason, unless the round was cancelled, such as by a newer
 // round. `pushed`
