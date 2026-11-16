@@ -118,18 +118,6 @@ export const endedTurnAsks = (thread: Thread) =>
   !thread.idle &&
   !thread.erred;
 
-// Returns whether any thread has work under way that the machine must stay awake for: a
-// builder working, a review waiting or running, or a PR waiting on CI. A thread that only
-// waits on you is no work, and a builder working on your comment past the round limit is.
-// A round that failed keeps its submit or review saved, to carry on after a restart, so those
-// don't count as work on a thread that needs you.
-export const hasWork = (threads: Thread[]) =>
-  threads.some(
-    (t) =>
-      (t.status === "working" && !t.asking && !t.idle && !t.erred) ||
-      (t.status === "waiting" && !needsYou(t)),
-  );
-
 // Returns the thread's repository as owner/name.
 export const fullNameOf = (thread: Thread) => `${thread.owner}/${thread.repo}`;
 // Returns the thread's repository, or throws once Skelcrew no longer has it.

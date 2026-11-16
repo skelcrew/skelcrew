@@ -1,17 +1,15 @@
 // The daemon, run by sc serve: keeps each repository's lead and the threads' builders
 // running, and answers the CLI and the agents on their sockets.
 import { dlopen, FFIType } from "bun:ffi";
-import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, openSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import { processTree, stillRunning } from "../agents/tmux.ts";
 import { openDb, type Repository } from "../db.ts";
 import { setupDone } from "../machine/setup.ts";
-import { holdAwhile, keepAwake, onSprite, urlPort } from "../machine/sprite.ts";
 import { keepUpToDate } from "../machine/update.ts";
 import { cloneDir, daemonSocket, threadSocket } from "../paths.ts";
-import { createTask, mergePr, repositoryPlugins } from "../plugins/ask.ts";
+import { createTask, mergePr } from "../plugins/ask.ts";
 import { errorText } from "../say.ts";
 import { checkoutFolder, git, release, singleFile } from "../version.ts";
 import { assignIssue } from "./assign.ts";
@@ -36,21 +34,13 @@ import {
 } from "./lead.ts";
 import { listRepositories, listTasks, listThreads, showTask } from "./list.ts";
 import { pollRepositories } from "./poll.ts";
-import {
-  findRepository,
-  fullNameIs,
-  noRepositories,
-  refreshClones,
-  repositories,
-  repositoryAt,
-} from "./repo.ts";
+import { findRepository, fullNameIs, noRepositories, refreshClones, repositoryAt } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
 import { messageBuilder, messageLead } from "./tell.ts";
 import {
   endedTurnAsks,
   findThread,
-  hasWork,
   liveThreads,
   readThread,
   record,
@@ -58,7 +48,6 @@ import {
   threadName,
   threadOn,
 } from "./thread.ts";
-import { listenForWakeUps, wakeRepository } from "./wake.ts";
 
 // Tries to hold the daemon lock and returns whether this process owns it, preventing
 // duplicate daemons. The kernel lets go of it when the process ends, however it ends, so a
@@ -132,53 +121,12 @@ function endWhatItStarted(sockets: string[]): void {
   process.exit(0);
 }
 
-// Listens on `port` for wake-ups, and asks each repository's tracker and forge to send them.
-// A delivery for a plugin wakes a sleeping Sprite, and polls at once every repository that
-// uses the plugin. Without the listener, events wait until something else wakes the Sprite,
-// and polling still sees them then.
-function wakeOnDeliveries(
-  db: Database,
-  port: number,
-  poll: (fullName: string) => Promise<void>,
-): void {
-  // Handles a delivery for the named plugin. Returns false when no repository uses the plugin,
-  // so the delivery is refused. Otherwise polls each repository that uses it.
-  const wakePlugin = async (name: string) => {
-    const usingIt = repositories(db).filter((r) =>
-      repositoryPlugins(db, r).some(({ plugin }) => plugin === name),
-    );
-    if (usingIt.length === 0) return false;
-    // The Sprite sleeps again as soon as the delivery is answered, so it is held for a minute
-    // first: long enough for the polls, and for keepAwake to hold it for any work they start.
-    await holdAwhile(60).catch((error) =>
-      console.log(`couldn't hold the Sprite awake: ${errorText(error)}`),
-    );
-    // Not waited on, so the plugin hears back at once. A poll that fails is logged, and the
-    // next one tries again, but left uncaught it would end the daemon.
-    for (const { owner, repo } of usingIt) poll(`${owner}/${repo}`).catch(() => {});
-    return true;
-  };
-  // When the port can't be opened, only the wake-ups are lost, so the daemon goes on without them.
-  try {
-    listenForWakeUps(port, wakePlugin);
-  } catch (error) {
-    console.log(`couldn't listen for wake-ups on port ${port}: ${errorText(error)}`);
-  }
-  // Asked again at each start, so an address the service lost is put right.
-  for (const repository of repositories(db))
-    wakeRepository(db, repository).catch((error) =>
-      console.log(`couldn't ask for wake-ups for ${repository.name}: ${errorText(error)}`),
-    );
-}
-
 // Opens the daemon's sockets, brings back the lead of each repository you have opened and
 // the builders of threads that were running, so commands and agents can reach it. Leaves the
 // sockets listening after returning, and removes them when stopped, leaving every tmux
 // session running. It never asks questions: systemd has nobody to answer. Polls each
-// repository's tracker and forge every `every` milliseconds while a thread is active. On a
-// Sprite, keeps the Sprite awake while there is work, and listens on `port` for wake-ups,
-// which wake it while it sleeps.
-export async function serve(tmux: string, every = 30_000, port = urlPort): Promise<void> {
+// repository's tracker and forge every `every` milliseconds while a thread is active.
+export async function serve(tmux: string, every = 30_000): Promise<void> {
   if (!setupDone()) throw new Error("the first run isn't done on this machine: run sc first");
   const db = openDb();
   // The checkout and commit this daemon's code came from, for sc status. Read once at start,
@@ -556,11 +504,7 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
     );
   }
   // Start polling, which also lets any sc start waiting on it go ahead, and keep Skelcrew itself
-  // up to date. On a Sprite, also stay awake while there is work, and wake on deliveries.
-  const poll = pollRepositories(db, tmux, every, setUpAndStart, startingTasks);
-  polling.resolve(poll);
+  // up to date.
+  polling.resolve(pollRepositories(db, tmux, every, setUpAndStart, startingTasks));
   keepUpToDate();
-  if (!onSprite()) return;
-  keepAwake(() => hasWork(liveThreads(db)));
-  wakeOnDeliveries(db, port, poll);
 }

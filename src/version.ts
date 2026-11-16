@@ -6,8 +6,8 @@ import { join, resolve } from "node:path";
 import { z } from "zod";
 
 // What Skelcrew was built from. The release build stamps its release, such as 0.4.2, and
-// withLinuxSkel the commit of the copy it builds for a server or Sprite. A Skelcrew run from a
-// checkout has none, and updates with git pull.
+// withLinuxSkel the commit of the copy it builds for a server. A Skelcrew run from a checkout
+// has none, and updates with git pull.
 declare const SKELCREW_BUILD: string;
 export const built = typeof SKELCREW_BUILD === "string" ? SKELCREW_BUILD : undefined;
 

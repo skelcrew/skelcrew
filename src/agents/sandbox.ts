@@ -3,20 +3,11 @@
 // credentials hidden.
 import { existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { controlSocket, dropCapabilities, onSprite } from "../machine/sprite.ts";
 import { checkoutFolder, singleFile } from "../version.ts";
 import { seatbeltArgs } from "./seatbelt.ts";
 
 // Where the folder of the agent's socket appears inside, whatever its path outside.
 const socketFolderInside = "/run/skelcrew";
-
-// On a Sprite, unshare gives the agent a process list of its own, with a /proc to match,
-// before capabilities are dropped. bwrap can't: it runs without capabilities, and the
-// Sprite's container masks parts of /proc, so the kernel refuses a new /proc to anyone
-// without them. A /proc borrowed from outside would show the agent every process, under
-// numbers it doesn't have inside, so setpriv, ps or kill there would find the wrong
-// process or none. --kill-child ends the sandbox when unshare is stopped.
-const ownProcesses = ["unshare", "--pid", "--fork", "--kill-child", "--mount", "--mount-proc"];
 
 // Returns a read-only mount so agents can read a folder without changing its files.
 export const ro = (p: string) => ["--ro-bind", p, p];
@@ -87,9 +78,8 @@ export function sandboxArgs(given: {
   } = given;
   // Builders and reviewers running test suites at once can load a shared machine past its
   // CPUs. Started under nice, all they run yields to the screen, the leads and the daemon.
-  // nice comes first, ahead of the setpriv that drops capabilities on a Sprite: lowering a
-  // priority needs none, and every process started inside keeps it. nice replaces itself with
-  // the command, so the process tmux or the reviewer ends is still the sandbox's own.
+  // Every process started inside keeps nice's priority. nice replaces itself with the
+  // command, so the process tmux or the reviewer ends is still the sandbox's own.
   const niced = given.normalPriority ? [] : ["nice", "-n", "10"];
   // Programs often live under the home folder: Claude Code under nvm keeps node beside it,
   // and its package where its link points. So the program's folder and the package its link
@@ -135,28 +125,9 @@ export function sandboxArgs(given: {
   // --new-session: it moves Claude Code out of the terminal's process group, so it misses
   // resize signals and draws at the wrong width. The network stays shared for the model's
   // API.
-  const sprite = onSprite(path);
-  const args = sprite
-    ? [...niced, ...ownProcesses, ...dropCapabilities, "bwrap", "--die-with-parent"]
-    : [...niced, "bwrap", "--die-with-parent", "--unshare-pid"];
+  const args = [...niced, "bwrap", "--die-with-parent", "--unshare-pid"];
   // The whole system read-only, with a /dev, /tmp and /proc of the sandbox's own.
-  args.push("--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp");
-  args.push(...(sprite ? ro("/proc") : ["--proc", "/proc"]));
-  if (sprite) {
-    // The /proc unshare mounted shows what the Sprite's container masks, so it is masked
-    // again.
-    for (const masked of ["kcore", "keys", "timer_list"])
-      if (existsSync(join("/proc", masked))) args.push("--ro-bind", "/dev/null", `/proc/${masked}`);
-    if (existsSync("/proc/scsi")) args.push(...hide("/proc/scsi"));
-    // Kept as a file the agent can't use rather than hidden with /.sprite, where gh, bun and
-    // node live.
-    args.push("--ro-bind", "/dev/null", controlSocket);
-    // sprite-env only fails without the control socket. Hidden too, the sandbox looks like
-    // any Linux machine to what runs in it, Skelcrew's own tests included, rather than a Sprite
-    // whose services can't be reached.
-    const spriteEnv = Bun.which("sprite-env", { PATH: path });
-    if (spriteEnv) args.push("--ro-bind", "/dev/null", spriteEnv);
-  }
+  args.push("--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp", "--proc", "/proc");
   // The ssh agent, keyring, D-Bus, systemd and docker listen under /run, and some run
   // commands for whoever connects. Only the DNS resolver comes back.
   args.push(...hide("/run"));
@@ -194,34 +165,29 @@ export function sandboxArgs(given: {
 // Returns the mounts that show the reviewer a folder whose changes are thrown away after the
 // review, and where it sees that folder. A copy leaves out the entries named in `kept`, which
 // the caller mounts writable over it, and bwrap makes their places in the copy.
-// bwrap's throwaway overlay does it, but on a Sprite an overlay can't be made on the
-// Sprite's own disk, which is an overlay already: bwrap fails with "Invalid argument". There
-// the reviewer gets a copy instead, made in the review's own folder so it goes with it. A Mac
-// has no overlay either, and can't show a folder at another path, so there the reviewer
-// works in the copy where it lies, which the review's folder already opens to it.
+// On Linux bwrap's throwaway overlay does it. A Mac has no overlay, and can't show a folder
+// at another path, so there the reviewer gets a copy, made in the review's own folder so it
+// goes with it, and works in it where it lies, which the review's folder already opens to it.
 export async function throwawayMounts(given: {
   source: string;
   copy: string;
-  sprite: boolean;
   signal: AbortSignal;
   kept?: string[];
 }): Promise<{ mounts: string[]; at: string }> {
-  const { source, copy, sprite, signal, kept = [] } = given;
-  // Plain Linux: an overlay shows the folder in place, and drops every change at the end.
-  const mac = process.platform === "darwin";
-  if (!sprite && !mac)
+  const { source, copy, signal, kept = [] } = given;
+  // Linux: an overlay shows the folder in place, and drops every change at the end.
+  if (process.platform !== "darwin")
     return { mounts: ["--overlay-src", source, "--tmp-overlay", source], at: source };
-  // Elsewhere: copy every entry the caller doesn't mount itself.
+  // A Mac: copy every entry the caller doesn't mount itself.
   mkdirSync(copy);
   const entries = readdirSync(source).filter((entry) => !kept.includes(entry));
   if (entries.length > 0) {
     let copied = false;
     let err = "";
-    // A copy of a clone with its installed packages is large, and cp shares the blocks
-    // where the disk allows it. A Mac's cp has its own word for that, and can fail on it
-    // across two disks, so it goes on to a plain copy.
+    // A copy of a clone with its installed packages is large, and cp -c shares the blocks
+    // where the disk allows it. It can fail across two disks, so it goes on to a plain copy.
     const paths = entries.map((entry) => join(source, entry));
-    for (const share of mac ? [["-c"], []] : [["--reflink=auto"]]) {
+    for (const share of [["-c"], []]) {
       const cp = ["cp", "-a", ...share, ...paths, copy];
       const copying = Bun.spawn(cp, { stdout: "ignore", stderr: "pipe", signal });
       const [said, code] = await Promise.all([new Response(copying.stderr).text(), copying.exited]);
@@ -233,8 +199,7 @@ export async function throwawayMounts(given: {
     if (!copied && !signal.aborted)
       throw new Error(`couldn't copy ${source} for the reviewer: ${err.trim()}`);
   }
-  // On a Sprite the copy is shown at the folder's own path; on a Mac it stays where it is.
-  return mac ? { mounts: [], at: copy } : { mounts: ["--bind", copy, source], at: source };
+  return { mounts: [], at: copy };
 }
 
 // Rejects clone settings containing credentials or unreadable settings, so agents cannot

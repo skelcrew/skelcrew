@@ -307,20 +307,3 @@ export async function failedLog(
   );
   return read.log;
 }
-
-// Asks a plugin to start passing wake-ups for the repository to the address, or with `stop`
-// to stop. A plugin with no wake-ups does nothing.
-export async function askForWakeUps(
-  db: Database,
-  plugin: string,
-  repository: Repository,
-  url: string,
-  stop = false,
-): Promise<void> {
-  await callPlugin(
-    db,
-    plugin,
-    { ask: stop ? "unwake" : "wake", repository: repositoryKey(repository), url },
-    z.null(),
-  );
-}

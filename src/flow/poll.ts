@@ -31,7 +31,7 @@ const startLabel = "skelcrew";
 // Starts a thread, as sc start does, on each open task in Skelcrew's copy that is labeled to
 // start and has no thread, once Skelcrew has claimed it in the tracker, and tells the
 // repository's lead. The claim comes first so that when two machines run Skelcrew on one
-// repository, such as a laptop and a Sprite, only one starts the task. Thread rows are read
+// repository, such as a laptop and a server, only one starts the task. Thread rows are read
 // after the tracker says what changed, so a thread sc start made meanwhile counts. A task in
 // `starting`, named as owner/repo#task, is left to the sc start starting it, which has options
 // of its own, such as the branch to start from. A task in `passed`, named the same way, is one
@@ -243,8 +243,8 @@ async function pollRepository(
 // run in the background, so they never hold up the daemon. `setUpAndStart` sets up a thread
 // started from a label and starts its builder, as the daemon does for sc start. `starting`
 // holds the tasks sc start is starting right now, which no poll starts by their label.
-// Returns a function that polls one repository at once, named by its owner/name, for a
-// wake-up or for sc start. It settles once that poll is done, and fails if the poll fails.
+// Returns a function that polls one repository at once, named by its owner/name, for sc
+// start. It settles once that poll is done, and fails if the poll fails.
 export function pollRepositories(
   db: Database,
   tmux: string,
