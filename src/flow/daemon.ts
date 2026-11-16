@@ -46,7 +46,7 @@ import {
 } from "./repo.ts";
 import { allowed, type Caller, DaemonRequest, parseJson } from "./requests.ts";
 import { goOn, rerunReview, resumeRound, submitRound } from "./round.ts";
-import { messageBuilder, messageLead } from "./tell.ts";
+import { interruptBuilder, messageBuilder, messageLead, peekAtBuilder } from "./tell.ts";
 import {
   endedTurnAsks,
   findThread,
@@ -381,6 +381,15 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
       case "tell": {
         const thread = findThread(db, request.repo, request.task);
         return { told: messageBuilder(db, tmux, thread, request.text) };
+      }
+      case "peek": {
+        const thread = findThread(db, request.repo, request.task);
+        return { screen: peekAtBuilder(db, tmux, thread, request.lines) };
+      }
+      case "interrupt": {
+        const thread = findThread(db, request.repo, request.task);
+        const who = leadOfCaller(caller) ? "the lead" : "you";
+        return { said: interruptBuilder(db, tmux, thread, who) };
       }
       case "tell lead":
         messageLead(db, tmux, callingThread(caller), request.text);

@@ -16,6 +16,8 @@ const sections: [string, [string, string][]][] = [
       ['rm <thread> ["<reason>"]', "Close its PR, delete its branch and clone"],
       ["attach <thread>", "Open that builder, with the sidebar"],
       ["review <thread>", "Run the thread's last review again"],
+      ["peek <thread> [--lines <n>]", "The last lines of its builder's screen"],
+      ["interrupt <thread>", "Press Esc in its builder, to stop a turn that hangs"],
     ],
   ],
   [

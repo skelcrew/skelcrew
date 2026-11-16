@@ -176,6 +176,20 @@ export async function tellOn(repository: string, task: string, text: string): Pr
   return checkReply(z.object({ told: z.string() }), reply).told;
 }
 
+// Has the daemon show the last lines of a thread's builder's screen, for sc peek, and returns
+// them wrapped as a report from the thread, with a line on what the builder is doing above them.
+export async function peekAt(repository: string, task: string, lines: number): Promise<string> {
+  const reply = await request({ command: "peek", repo: repository, task, lines });
+  return checkReply(z.object({ screen: z.string() }), reply).screen;
+}
+
+// Has the daemon press Esc in a thread's builder to stop its turn, for sc interrupt, and returns
+// what it did: an idle builder is left alone.
+export async function interruptOn(repository: string, task: string): Promise<string> {
+  const reply = await request({ command: "interrupt", repo: repository, task });
+  return checkReply(z.object({ said: z.string() }), reply).said;
+}
+
 // Has the daemon type a builder's message into the lead, for sc tell lead. The builder's
 // own socket tells the daemon which thread it comes from. The daemon answers at once.
 export async function tellTheLead(text: string): Promise<void> {

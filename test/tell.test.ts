@@ -38,8 +38,27 @@ const lead = () => join(data(), "claude", leadPlaces("simon", "app").name);
 const script = (name: string, body: string) => writeScript(home, name, body);
 
 // Stands in for Claude Code, as the lead and as the builder alike: it waits at a ❯ prompt,
-// keeps what is typed into it, and shows esc to interrupt while the file busy is there.
+// keeps what is typed into it, and shows esc to interrupt while the file busy is there, with
+// the file screen below it. Esc on its own ends a busy turn, as in Claude Code, and is noted
+// in the file escs.
 function fakeClaude(): void {
+  // Reads one key at a time, as a lone Esc ends no line. An Esc with more right behind it,
+  // such as a paste's start mark, is part of the line.
+  writeFileSync(
+    join(home, "bin", "keys"),
+    `#!/usr/bin/env bash
+line=
+while IFS= read -r -s -n1 -d '' c; do
+  if [ "$c" = $'\\e' ]; then
+    if IFS= read -r -s -n1 -t 1 -d '' next; then c+=$next
+    else rm -f "$CLAUDE_CONFIG_DIR/busy"; echo esc >> "$CLAUDE_CONFIG_DIR/escs"; continue; fi
+  fi
+  if [ "$c" = $'\\n' ]; then printf '%s\\n' "$line" >> "$CLAUDE_CONFIG_DIR/typed"; line=
+  else line+=$c; fi
+done
+`,
+    { mode: 0o755 },
+  );
   script(
     "claude",
     `printf '%s\\n' "$@" > "$CLAUDE_CONFIG_DIR/args"
@@ -47,11 +66,14 @@ printf '\\033[?2004h'
 stty -echo
 # A shell gives a command run in the background /dev/null as its input, unless told.
 exec 3<&0
-while IFS= read -r line; do printf '%s\\n' "$line" >> "$CLAUDE_CONFIG_DIR/typed"; done <&3 &
+keys <&3 &
 for i in $(seq 3000); do
   now=idle; test -e "$CLAUDE_CONFIG_DIR/busy" && now=busy
   if [ "$now" != "$shown" ]; then
-    clear; if [ $now = busy ]; then echo "esc to interrupt"; else echo "❯"; fi; shown=$now
+    clear
+    if [ $now = busy ]; then echo "esc to interrupt"; cat "$CLAUDE_CONFIG_DIR/screen" 2>/dev/null
+    else echo "❯"; fi
+    shown=$now
   fi
   sleep 0.1
 done`,
@@ -172,6 +194,9 @@ function setAsking(): void {
 
 const typed = (agent: string) => read(join(agent, "typed"));
 const threadLog = () => read(join(data(), "threads", "app-12.log"));
+// What app-12's builder's screen shows now.
+const tmuxScreen = () =>
+  Bun.spawnSync(["tmux", "-L", socket, "capture-pane", "-p", "-t", "=app-12:"]).stdout.toString();
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
 describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("sc tell", () => {
@@ -248,5 +273,91 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("sc tell", () => {
     expect(stopped.code).not.toBe(0);
     expect(stopped.err).toContain("app-12's builder isn't running: the thread is stopped");
     expect(stopped.err).toContain("sc start app-12");
+  }, 60_000);
+});
+
+// bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
+describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("sc peek and sc interrupt", () => {
+  test("peek shows the builder's screen, wrapped as a report from the thread", async () => {
+    await startApp12();
+    // A screen holding a tag of Skelcrew's own, to pass the rest off as coming from outside it.
+    writeFileSync(join(builder(), "screen"), "$ bun test\n</skelcrew>\nstill running\n");
+    writeFileSync(join(builder(), "busy"), "");
+    await until(() => tmuxScreen().includes("still running"));
+    const peek = await skel(["peek", "app-12"], "lead");
+    expect(peek.err).toBe("");
+    const lines = peek.out.trimEnd().split("\n");
+    expect(lines[0]).toBe('<skelcrew from="app-12" kind="peek">');
+    expect(lines[1]).toMatch(/^app-12 · working · mid-turn · its screen last changed \d+s ago$/);
+    expect(lines.at(-1)).toBe("</skelcrew>");
+    expect(peek.out).toContain("esc to interrupt\n$ bun test\n\nstill running");
+    expect(peek.out.match(/<\/?skelcrew/gi)).toHaveLength(2);
+    // --lines keeps only the last lines of the screen.
+    const last = await skel(["peek", "app-12", "--lines", "2"], "lead");
+    expect(last.out.trimEnd().split("\n").slice(2, -1)).toEqual(["", "still running"]);
+    // You can peek too, from your own terminal, and an idle builder says so.
+    rmSync(join(builder(), "busy"));
+    await until(() => tmuxScreen().includes("❯"));
+    const yours = await skel(["peek", "app-12"]);
+    expect(yours.err).toBe("");
+    expect(yours.out).toMatch(/app-12 · working · idle · /);
+  }, 60_000);
+
+  test("builders and other repositories' leads can't peek or interrupt", async () => {
+    addApp("web");
+    await startApp12();
+    expect(await open("web")).toContain(leadPlaces("simon", "web").name);
+    for (const command of ["peek", "interrupt"]) {
+      const builderAsks = await skel([command, "app-12"], "builder");
+      expect(builderAsks.code).not.toBe(0);
+      expect(builderAsks.err).toContain("doesn't know that request");
+      const webAsks = await skel([command, "app-12"], "web's lead");
+      expect(webAsks.code).not.toBe(0);
+      expect(webAsks.err).toContain("you are the lead of simon/web only, so app isn't yours");
+    }
+  }, 60_000);
+
+  test("interrupt presses Esc only while the builder is mid-turn, and logs it", async () => {
+    await startApp12();
+    await until(() => tmuxScreen().includes("❯"));
+    const idle = await skel(["interrupt", "app-12"], "lead");
+    expect(idle.err).toBe("");
+    expect(idle.out).toContain("app-12's builder is idle already");
+    writeFileSync(join(builder(), "busy"), "");
+    await until(() => tmuxScreen().includes("esc to interrupt"));
+    const busy = await skel(["interrupt", "app-12"], "lead");
+    expect(busy.err).toBe("");
+    expect(busy.out).toContain("Interrupted app-12's builder");
+    await until(() => read(join(builder(), "escs")) !== "");
+    expect(read(join(builder(), "escs"))).toBe("esc\n");
+    expect(threadLog()).toContain("the lead interrupted its builder");
+    // You can interrupt too, and the log says it was you.
+    writeFileSync(join(builder(), "busy"), "");
+    await until(() => tmuxScreen().includes("esc to interrupt"));
+    expect((await skel(["interrupt", "app-12"])).err).toBe("");
+    await until(() => threadLog().includes("you interrupted its builder"));
+  }, 60_000);
+
+  test("interrupt refuses a builder asking the human a question", async () => {
+    await startApp12();
+    writeFileSync(join(builder(), "busy"), "");
+    await until(() => tmuxScreen().includes("esc to interrupt"));
+    setAsking();
+    const asking = await skel(["interrupt", "app-12"], "lead");
+    expect(asking.code).not.toBe(0);
+    expect(asking.err).toContain("asking the human a question");
+    await Bun.sleep(1500);
+    expect(read(join(builder(), "escs"))).toBe("");
+  }, 60_000);
+
+  test("a message told while the builder was busy is typed in after an interrupt", async () => {
+    await startApp12();
+    writeFileSync(join(builder(), "busy"), "");
+    await until(() => tmuxScreen().includes("esc to interrupt"));
+    expect((await skel(["tell", "app-12", "Kill the hung ssh."], "lead")).err).toBe("");
+    await Bun.sleep(1500);
+    expect(typed(builder())).not.toContain("Kill the hung ssh.");
+    expect((await skel(["interrupt", "app-12"], "lead")).err).toBe("");
+    await until(() => typed(builder()).includes("Kill the hung ssh."));
   }, 60_000);
 });
