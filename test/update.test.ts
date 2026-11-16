@@ -269,12 +269,27 @@ test("says where to look when the daemon doesn't come back on the new release", 
   expect(done.err).toContain(daemonLog());
 }, 60_000);
 
-// Runs sc stamped with `build` on a server, as --remote from a laptop on `laptop` runs it.
+// Runs sc stamped with `build` on a server, as --remote from a laptop on `laptop` runs it. The
+// server has a home of its own with a finished first run, since Skelcrew there says it isn't set
+// up before it looks at its build.
 async function onServer(build: string, laptop: string) {
+  const server = join(home, "server");
+  const config = join(server, ".config", "skelcrew");
+  const codex = join(server, ".local", "share", "skelcrew", "codex");
+  const units = join(server, ".config", "systemd", "user");
+  for (const folder of [config, codex, units]) mkdirSync(folder, { recursive: true });
+  writeFileSync(join(config, "config.yaml"), "harness: codex\n");
+  writeFileSync(join(codex, "auth.json"), "login\n");
+  writeFileSync(join(units, "skelcrew.service"), "");
   const run = Bun.spawn(
     [process.execPath, "--define", `SKELCREW_BUILD="${build}"`, source("main.ts"), "--help"],
     {
-      env: { ...env(), SKELCREW_LAPTOP_BUILD: laptop, SKELCREW_REMOTE_NAME: "simon@workbox" },
+      env: {
+        ...env(),
+        HOME: server,
+        SKELCREW_LAPTOP_BUILD: laptop,
+        SKELCREW_REMOTE_NAME: "simon@workbox",
+      },
       stdout: "pipe",
       stderr: "pipe",
     },
