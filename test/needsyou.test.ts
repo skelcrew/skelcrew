@@ -18,6 +18,7 @@ import {
   fakePlugin,
   git,
   homeEnv,
+  insideSandbox,
   read,
   runSkel,
   source,
@@ -219,7 +220,7 @@ async function startApp12(open = true) {
 }
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there builders can't start.
-describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("needs you", () => {
+describe.skipIf(insideSandbox)("needs you", () => {
   test("a builder's question marks the thread needs you, tells the lead once, and clears when answered", async () => {
     addApp();
     await startApp12();

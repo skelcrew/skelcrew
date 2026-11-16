@@ -14,6 +14,7 @@ import {
   fakePlugin,
   git,
   homeEnv,
+  insideSandbox,
   read,
   runSkel,
   source,
@@ -230,7 +231,7 @@ function setThread(sql: string): void {
 }
 
 // bubblewrap can't start inside Skelcrew's own sandbox, so only there agents can't start.
-describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("codex", () => {
+describe.skipIf(insideSandbox)("codex", () => {
   test("a builder starts on Codex in a folder of its own, with the task after -- and Skelcrew's settings", async () => {
     await startApp12();
     const given = args();
