@@ -11,6 +11,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  rmdirSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -580,6 +581,21 @@ test("every ssh and scp for a setup shares one connection, through a private fol
   expect(folder.isDirectory()).toBe(true);
   expect(folder.uid).toBe(userInfo().uid);
   expect(folder.mode & 0o777).toBe(0o700);
+});
+
+// Two sc commands starting at once can both find the folder missing, and both must still
+// connect, sharing. The folder is the real one, so it is removed first only when empty: then no
+// connection of yours is using it.
+test("two sc commands starting at once both share connections", async () => {
+  installed(laptop.commit);
+  try {
+    rmdirSync(`/tmp/sc-${userInfo().uid}`);
+  } catch {
+    // Not empty, or not there: either way the two runs below still meet a folder they share.
+  }
+  const runs = await Promise.all([1, 2].map(() => skel(["--remote", "simon@workbox", "ps"])));
+  expect(runs.map((run) => run.code)).toEqual([3, 3]);
+  expect(calls()).toBe(`${onServer(" ps")}\n${onServer(" ps")}\n`);
 });
 
 // Options given to ssh beat your ssh config, so when your config already says how to share

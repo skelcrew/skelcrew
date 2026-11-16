@@ -106,7 +106,13 @@ function sharedConnection(host: string): string[] {
   // be yours alone. Someone else can make it first in /tmp, or put a link there, and then
   // nothing is shared. It is made private again each time, in case its mode changed.
   const folder = sshFolder();
-  if (!lstatSync(folder, { throwIfNoEntry: false })) mkdirSync(folder, { mode: 0o700 });
+  // Two sc commands starting at once can both find it missing, so one made by the other, or
+  // anything else already there, is left to the check below.
+  try {
+    mkdirSync(folder, { mode: 0o700 });
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+  }
   const made = lstatSync(folder);
   if (!made.isDirectory() || made.uid !== userInfo().uid) return [];
   chmodSync(folder, 0o700);
