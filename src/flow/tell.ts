@@ -8,24 +8,31 @@ import { errorText } from "../say.ts";
 import { noteForLead } from "./lead.ts";
 import { builderHarness, log, readThread, record, type Thread, threadName } from "./thread.ts";
 
-// Returns the message wrapped in Skelcrew's tag, saying who it is from and the command to answer
-// with, so the receiving agent never takes it for the human. The tag marks where it starts and
-// ends, and the text inside stays plain. Any <skelcrew or </skelcrew> in the text is removed, so a
-// message can't close its tag early and pass the rest off as coming from outside it.
-function wrapMessage(from: string, reply: string, text: string): string {
+// Returns an agent's text with any <skelcrew or </skelcrew> removed, so it can't open or close
+// Skelcrew's tag and pass what follows off as coming from someone else.
+export function untagged(text: string): string {
   let inside = text;
   // One pass isn't enough: removing the inner tag of </skel</skelcrew>crew> leaves a whole
   // </skelcrew>.
   while (/<\/skelcrew>|<skelcrew/i.test(inside))
     inside = inside.replace(/<\/skelcrew>|<skelcrew/gi, "");
-  return `<skelcrew from="${from}" reply="${reply}">\n${inside}\n</skelcrew>`;
+  return inside;
+}
+
+// Returns the message wrapped in Skelcrew's tag, saying who it is from and the command to answer
+// with, so the receiving agent never takes it for the human. The tag marks where it starts and
+// ends, and the text inside stays plain, without tags of its own.
+function wrapMessage(from: string, reply: string, text: string): string {
+  return `<skelcrew from="${from}" reply="${reply}">\n${untagged(text)}\n</skelcrew>`;
 }
 
 // Types the lead's message into the thread's builder once it is idle, and keeps it with the
 // thread as a change to its task. Returns the thread's name at once, as an agent's command
 // must answer quickly. Refuses a builder that isn't running rather than keeping the message,
-// which could reach it long after it mattered. Refuses one asking you a question too: typing
-// then would answer it for you.
+// which could reach it long after it mattered. Refuses one asking you a question with its
+// harness's question tool too: typing then would answer it for you. One that stopped without
+// submitting may be told, as the lead can often answer what it waits on, and the message typed
+// in ends its needing you.
 // A message that can't be typed in, such as to a builder busy for half an hour, is logged,
 // and the lead hears that it didn't arrive.
 export function messageBuilder(db: Database, tmux: string, thread: Thread, text: string): string {

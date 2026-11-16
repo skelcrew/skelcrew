@@ -81,12 +81,17 @@ export function threadWord(thread: Thread, maxRounds: number): string {
   const underWay = thread.submitting !== null || thread.reviewing !== null;
   if (thread.asking) return "question";
   if (thread.erred) return "error";
-  if (thread.needs_you) {
-    if (pastRoundLimit(thread, maxRounds)) return "round limit";
-    if (underWay || verdict === "failed") return "review failed";
-    if (verdict === "approve" && (checks === "passing" || checks === null)) return "approved";
-    return "needs you";
-  }
+  // The round limit and an approval say what you must do next, so they stay ahead of a builder
+  // that stopped without submitting. Otherwise any reply it gave you, or the lead, would hide
+  // that the thread is ready to merge.
+  const past = thread.needs_you && pastRoundLimit(thread, maxRounds);
+  const failed = underWay || verdict === "failed";
+  const green = verdict === "approve" && (checks === "passing" || checks === null);
+  if (past) return "round limit";
+  if (thread.needs_you && !failed && green) return "approved";
+  // Stopping without submitting is a question written as plain text.
+  if (thread.stalled) return "question";
+  if (thread.needs_you) return failed ? "review failed" : "needs you";
   // Not needing you: a review waiting for a place shows as queued, any other round under way as
   // reviewing, and a review's changes still waiting to be typed into the builder as changes.
   // Otherwise it works or waits on checks.
@@ -216,7 +221,7 @@ export function repositoryTabs(db: Database): Tab[] {
     .query(
       `SELECT r.name, r.owner, r.repo, (SELECT COUNT(*) FROM threads t
         WHERE t.owner = r.owner AND t.repo = r.repo AND t.status != 'done'
-          AND (t.status = 'failed' OR t.needs_you = 1 OR t.asking = 1 OR t.erred = 1)) AS count
+          AND (t.status = 'failed' OR t.needs_you = 1 OR t.asking = 1 OR t.stalled = 1 OR t.erred = 1)) AS count
       FROM repositories r WHERE r.tab_closed = 0 ORDER BY r.name`,
     )
     .all()

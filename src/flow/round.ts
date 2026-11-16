@@ -291,6 +291,8 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
     {
       status: "waiting",
       needs_you,
+      // A turn that ends after this waits on the review, not on you.
+      submitted: true,
       submitting: summary,
       // A review of the older commit that waited for a place no longer does.
       queued: null,
@@ -326,8 +328,8 @@ function lastPushed(thread: Thread): string | null {
 // so changes count toward the round limit and a newer sc submit cancels it. A submit whose
 // push failed is pushed first. Refuses a thread that is done or stopped, one with nothing
 // submitted, and one whose review is still waiting or running, since that review answers
-// already.
-export function rerunReview(db: Database, tmux: string, folder: string): void {
+// already. `byBuilder` says the thread's own builder asked, which counts as a submit in its turn.
+export function rerunReview(db: Database, tmux: string, folder: string, byBuilder: boolean): void {
   // Refuse what there is nothing to do for: a thread that ended, a review already under way,
   // or no commit yet. A submit that was saved but never pushed counts as a commit.
   const thread = readThread(db, folder);
@@ -347,9 +349,13 @@ export function rerunReview(db: Database, tmux: string, folder: string): void {
   const needs_you = pastRoundLimit(thread, maxRounds);
   // The commit is saved as under review at once, so a second sc review asked before the
   // check is pending again is refused rather than cancelling this one.
+  // A builder that asked for it ends its turn waiting on the review, as after sc submit, not on
+  // you. A review the lead or you asked for leaves the builder's turn as it was: a builder that
+  // then stops without submitting still needs you.
   const change = {
     status: "waiting",
     needs_you,
+    ...(byBuilder ? { submitted: true } : {}),
     telling: null,
     held: null,
     reviewing: sha,
