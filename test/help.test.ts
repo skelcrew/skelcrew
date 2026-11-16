@@ -121,7 +121,7 @@ test("sc --version answers on a server whose Skelcrew differs from the laptop's"
 test("the help lists the screen's keys, anywhere first, then lists, then pages", () => {
   const out = skel(["--help"]).out;
   const keys = out.slice(out.indexOf("\nKEYS\n"), out.indexOf("\nEXAMPLES\n"));
-  const order = ["alt + ↑/↓ ", "ctrl + 6 ", "alt + q ", "enter/→ ", "← "].map((key) =>
+  const order = ["alt + ↑/↓ ", "alt + shift + ←/→ ", "alt + q ", "enter/→ ", "← "].map((key) =>
     keys.indexOf(`  ${key}`),
   );
   expect(order.every((at) => at > 0)).toBe(true);

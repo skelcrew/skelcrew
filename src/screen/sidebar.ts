@@ -30,12 +30,12 @@ import { agentClient, paneCommand, sidebarWidth } from "./screen.ts";
 import { drawTop } from "./strip.ts";
 
 // What the sidebar reads: Alt with an arrow as tmux sends it, 3 without Shift and 4 with it,
-// the left button going down, with its line on screen, Ctrl-6 to go back, and what the screen's
-// tmux and the right pane type into it as an OSC: a click on a tab, with the tab's place in the
-// row, the page now open on the right, or none, and a thread picked in the list of threads.
+// the left button going down, with its line on screen, and what the screen's tmux and the right
+// pane type into it as an OSC: a click on a tab, with the tab's place in the row, the page now
+// open on the right, or none, and a thread picked in the list of threads.
 const esc = "\x1b";
 const input = new RegExp(
-  `${esc}\\[1;([34])([ABCD])|${esc}\\[<0;\\d+;(\\d+)M|(\x1e)|${esc}\\](skel-(?:tab|page|thread));([^\x07]*)\x07`,
+  `${esc}\\[1;([34])([ABCD])|${esc}\\[<0;\\d+;(\\d+)M|${esc}\\](skel-(?:tab|page|thread));([^\x07]*)\x07`,
   "g",
 );
 
@@ -75,8 +75,6 @@ export async function runSidebar(
   // `page` is the issue or PR whose page is open there, for the strip.
   let shown: string | null = null;
   let page: { name: string; title: string } | null = null;
-  // The thread whose agent shows because you opened it in the list of threads, if it does.
-  let fromList: string | null = null;
   let lastFrame = "";
   let lastStrip = "";
   let lastFooter = "";
@@ -177,8 +175,7 @@ export async function runSidebar(
   // can't switch yet: keys pressed together when leaving a list would be lost. Landing on the
   // entry whose page shows goes back to its list, on the row you opened. Landing anywhere else
   // you are does nothing, so a list isn't started again.
-  // `start` is the thread whose row a list starts on, for going back to the list of threads.
-  const show = (next: string | null, start = "") => {
+  const show = (next: string | null) => {
     if (next === null) return;
     if (next === shown) {
       if (page && isEntry(next)) tmux(screenSocket(agents), ["send-keys", "-t", rightPane, "Left"]);
@@ -192,7 +189,7 @@ export async function runSidebar(
       respawnPane(
         screenSocket(agents),
         rightPane,
-        paneCommand(agents, session, entry.entry, where, fullName, start),
+        paneCommand(agents, session, entry.entry, where, fullName),
       );
     else if (isEntry(shown) || shownSession(agents, tty) === null) {
       respawnPane(screenSocket(agents), rightPane, agentClient(agents, next, open.lead));
@@ -200,17 +197,6 @@ export async function runSidebar(
     } else showSession(agents, tty, next);
     page = null;
     shown = next;
-    fromList = null;
-  };
-  // Goes back, for Ctrl-6. A page goes back to its list, as Left does, and a list has nowhere to
-  // go. An agent goes to the list of threads: on its row when that list opened it, and on the
-  // first row from the lead or a thread picked in the sidebar.
-  const back = () => {
-    if (isEntry(shown)) {
-      if (page) tmux(screenSocket(agents), ["send-keys", "-t", rightPane, "Left"]);
-      return;
-    }
-    show(entryPlace("threads"), fromList !== null && fromList === shown ? fromList : "");
   };
   // Opens another repository: its sidebar on the left at once, and its lead on the right, which
   // the daemon starts then if it never has. The client on the right tries again each second
@@ -239,19 +225,14 @@ export async function runSidebar(
   // Acts on each key and click that came together, then redraws. A click on a row picks it by
   // its line, counted from the top, below the notice.
   process.stdin.on("data", (bytes) => {
-    for (const [, kind, arrow, y, goBack, said, about = ""] of bytes.toString().matchAll(input)) {
-      if (goBack) back();
-      else if (said === "skel-page") {
+    for (const [, kind, arrow, y, said, about = ""] of bytes.toString().matchAll(input)) {
+      if (said === "skel-page") {
         // The list on the right opened a page, or went back from one.
         page = about ? pageRow(db, open, about) : null;
       } else if (said === "skel-thread") {
         // A thread picked in the list of threads shows as picking it in ACTIVE does, while its
         // agent runs.
-        // Ctrl-6 then goes back to the list, on its row.
-        if (rows.some((row) => row.session === about && row.running)) {
-          show(about);
-          fromList = about;
-        }
+        if (rows.some((row) => row.session === about && row.running)) show(about);
       } else if (said === "skel-tab" || arrow === "C" || arrow === "D") {
         // A click on a tab, or Alt-Shift-Right or Alt-Shift-Left for the tab after or before.
         // tmux sends no other arrow sideways. Past either end there is nowhere to go.

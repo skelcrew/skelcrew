@@ -310,16 +310,15 @@ test("Ctrl-Q still leaves, though nothing shows it", async () => {
 
 // Replaces the lead with an agent that asks for extended keys, says its name, and logs every
 // byte it reads to lead.keys. Like Claude Code, it asks only when TERM_PROGRAM says it runs in
-// tmux, as it can't tell from a TERM of tmux-256color alone. With `asks` false it never asks, so
-// the keys reach it in the form your terminal sent them.
-function keyLoggingLead(asks = true): void {
+// tmux, as it can't tell from a TERM of tmux-256color alone.
+function keyLoggingLead(): void {
   tmux(agents, "kill-session", "-t", "=lead");
   const script = join(home, "keys.sh");
   writeFileSync(
     script,
     `#!/bin/sh
 cd ${JSON.stringify(home)}
-${asks ? `[ "$TERM_PROGRAM" = tmux ] && printf '\\033[>4;2m'` : ""}
+[ "$TERM_PROGRAM" = tmux ] && printf '\\033[>4;2m'
 echo "I am lead"
 stty raw -echo
 exec cat > lead.keys
@@ -345,51 +344,30 @@ test("Shift+Enter reaches the agent as a key of its own, through both tmux serve
   expect(read("lead.keys")).toBe(`a${shiftEnter}b\r`);
 });
 
-test("the keys that move by word reach the agent byte for byte", async () => {
-  keyLoggingLead(false);
-  open("lead");
-  await ready("lead");
-  // Esc b and Esc f, as Mac terminals send Option-Left and Option-Right, then Alt-Left and
-  // Alt-Right as other terminals send them. Each goes alone, as from a hand.
-  const words = ["\x1bb", "\x1bf", "\x1b[1;3D", "\x1b[1;3C"];
-  for (const word of words) {
-    type(word);
-    await Bun.sleep(100);
-  }
-  press("Enter");
-  await until(() => read("lead.keys").endsWith("\r"), "the Enter");
-  expect(read("lead.keys")).toBe(`${words.join("")}\r`);
-  expect(seen()).toContain("I am lead");
-});
-
-// Ghostty on a Mac sends Option-Left as Esc b. On the lead it must move back a word, and the
-// screen must stay on the lead, whether or not the terminal sends extended keys.
+// Mac terminals send Option-Left and Option-Right as Esc b and Esc f, and other terminals send
+// Alt-Left and Alt-Right. All four move by word in a prompt, so they must reach the agent and
+// leave the screen where it is, whether or not your terminal sends extended keys. The agent asks
+// for extended keys, as Claude Code and Codex do, so Esc b and Esc f reach it as Alt-B and Alt-F
+// in the form it asked for.
 for (const extended of [false, true])
-  test(`Option-Left on the lead moves back a word and leaves the screen on the lead${extended ? ", with extended keys" : ""}`, async () => {
+  test(`the keys that move by word reach the agent, from a terminal ${extended ? "with" : "without"} extended keys`, async () => {
     extendedKeys = extended;
-    keyLoggingLead(extended);
+    keyLoggingLead();
     open("lead");
     await ready("lead");
-    type("word\x1bb");
-    await Bun.sleep(500);
-    expect(selected()).toBe("◆ lead");
+    // Each goes alone, as from a hand.
+    for (const word of ["\x1bb", "\x1bf", "\x1b[1;3D", "\x1b[1;3C"]) {
+      type(word);
+      await Bun.sleep(100);
+    }
     press("Enter");
     await until(() => read("lead.keys").endsWith("\r"), "the Enter");
-    // An agent that asks for extended keys gets Alt-B in the form it asked for.
-    const back = extended ? (tmuxIsAtLeast(3, 5) ? "\x1b[98;3u" : "\x1b[27;3;98~") : "\x1bb";
-    expect(read("lead.keys")).toBe(`word${back}\r`);
+    // tmux before 3.5 has only the xterm form of an extended key.
+    const alt = (code: number) => (tmuxIsAtLeast(3, 5) ? `\x1b[${code};3u` : `\x1b[27;3;${code}~`);
+    expect(read("lead.keys")).toBe(`${alt(98)}${alt(102)}\x1b[1;3D\x1b[1;3C\r`);
     expect(selected()).toBe("◆ lead");
     expect(seen()).toContain("I am lead");
   });
-
-test("Ctrl-6 goes back from a terminal that sends extended keys too", async () => {
-  extendedKeys = true;
-  open("lead");
-  await ready("lead");
-  press("C-6");
-  await onRight("Working");
-  expect(selected()).toContain("Threads");
-});
 
 test("with a terminal that sends extended keys, the screen's own keys still work", async () => {
   extendedKeys = true;
@@ -822,16 +800,16 @@ const listKeys = "  ⌥↑↓ move  ⌥Q quit  ? keys";
 const startKeys = `${listKeys}  s start`;
 const mergeKeys = `${listKeys}  m merge`;
 
-test("the footer runs across the screen under a thin line, with move and quit, then back and Esc", async () => {
+test("the footer runs across the screen under a thin line, with move and quit, then what Esc stops", async () => {
   sql("UPDATE threads SET harness = 'codex' WHERE task = 7");
   open("lead");
   await ready("lead");
-  const lead = "  ⌥↑↓ move  ⌥Q quit  ⌃6 back  Esc stops claude";
+  const lead = "  ⌥↑↓ move  ⌥Q quit  Esc stops claude";
   await until(() => footer() === lead, "the lead's footer");
   expect(aboveFooter()).toBe("─".repeat(120));
   toSecondThread();
   await until(() => seen().includes("I am app-7"), "app-7");
-  await until(() => footer() === "  ⌥↑↓ move  ⌥Q quit  ⌃6 back  Esc stops codex", "app-7's footer");
+  await until(() => footer() === "  ⌥↑↓ move  ⌥Q quit  Esc stops codex", "app-7's footer");
 });
 
 test("under a list or page the footer adds ? keys, and s or m while the row can take it, and the agent's height stays", async () => {
@@ -851,7 +829,7 @@ test("under a list or page the footer adds ? keys, and s or m while the row can 
   await until(() => right().includes("Working"), "the threads");
   expect(footer()).toBe(listKeys);
   press("M-S-Up");
-  await until(() => footer().endsWith("⌃6 back  Esc stops claude"), "the lead's footer");
+  await until(() => footer().endsWith("⌥Q quit  Esc stops claude"), "the lead's footer");
   expect(readFileSync(join(home, "lead.size"), "utf8")).toBe("26 81\n");
 });
 
@@ -1214,43 +1192,6 @@ test("Enter on a thread in the list of threads shows its agent, and the sidebar 
   await until(() => selected() === "● 12 app-12", "the sidebar to follow");
   type("from the list\r");
   await until(() => read("app-12.typed").includes("from the list"), "what you typed");
-});
-
-test("Ctrl-6 from an agent opened in the list of threads goes back to the list, on its row", async () => {
-  await openList("Threads");
-  await onRight("Working");
-  press("Down");
-  press("Enter");
-  await until(() => seen().includes("I am app-7"), "the agent");
-  press("C-^");
-  await onRight("↑↓ move");
-  expect(selected()).toContain("Threads");
-  press("Enter");
-  await until(() => seen().includes("I am app-7"), "the same agent again");
-});
-
-test("Ctrl-6 from the lead, or a thread picked in the sidebar, goes to the list of threads", async () => {
-  openOnGitHub();
-  open("lead");
-  await ready("lead");
-  press("C-^");
-  await onRight("Working");
-  expect(selected()).toContain("Threads");
-  toSecondThread();
-  await until(() => seen().includes("I am app-7"), "the second thread");
-  press("C-^");
-  await onRight("Working");
-  // The list starts on its first row, as landing on it from elsewhere does.
-  press("Enter");
-  await until(() => seen().includes("I am app-12"), "the first row's agent");
-});
-
-test("Ctrl-6 on a page goes back to its list, as Left does", async () => {
-  await openIssue();
-  press("C-^");
-  await onRight("↑↓ move");
-  await until(() => !tabRow().includes("Add CSV"), "the strip to go");
-  expect(selected()).toContain("Issues");
 });
 
 // What the footer says, as you see it: a line in place of its keys, or its keys back.
@@ -1930,7 +1871,7 @@ test("moving onto an agent hides the keys", async () => {
   type("?");
   await until(keysOpen, "the list of keys");
   press("M-S-Up");
-  await until(() => footer().endsWith("⌃6 back  Esc stops claude"), "the lead's footer");
+  await until(() => footer().endsWith("⌥Q quit  Esc stops claude"), "the lead's footer");
   await until(() => !keysOpen(), "the list of keys to hide");
   expect(seen()).toContain("I am lead");
 });
@@ -1977,23 +1918,23 @@ test("the list of keys has the same keys as sc --help, in the same order", async
         .join(" to "),
     );
   expect(keyItems()).toEqual(keys);
-  expect(keyItems()).toContain("ctrl + 6 to go back");
+  expect(keyItems()).toContain("alt + shift + ←/→ to switch repository");
 });
 
 test("keys that need more than a third of the screen scroll with the wheel", async () => {
   await openList("Issues", "80");
-  tmux(terminal, "resize-window", "-t", "=one:", "-x", "80", "-y", "15");
-  await until(() => seen().split("\n")[14]?.trimEnd() === startKeys, "the resize");
+  tmux(terminal, "resize-window", "-t", "=one:", "-x", "80", "-y", "12");
+  await until(() => seen().split("\n")[11]?.trimEnd() === startKeys, "the resize");
   type("?");
   await until(() => keyItems().includes("alt + ↑/↓ to move in the sidebar"), "the list of keys");
-  // The screen has fifteen rows, so the keys have five of the seven they need at this width.
-  expect(keysShown()).toHaveLength(5);
+  // The screen has twelve rows, so the keys have four of the five they need at this width.
+  expect(keysShown()).toHaveLength(4);
   const lines = seen().split("\n");
   const keysAt = lines.findIndex((line) => line.startsWith("  alt + ↑/↓"));
   const scrolled = () =>
     seen()
       .split("\n")
-      .slice(keysAt, keysAt + 5)
+      .slice(keysAt, keysAt + 4)
       .join("\n");
   expect(scrolled()).not.toContain("← to go back from a page");
   for (let n = 0; n < 10; n++) type(`\x1b[<65;60;${keysAt + 2}M`);

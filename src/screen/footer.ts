@@ -11,12 +11,11 @@ const always = "⌥↑↓ move  ⌥Q quit";
 // The footer's hint that a click shows or hides the list of keys from.
 const keysHint = "? keys";
 
-// Returns the footer's text under an agent: the keys you need most, then how to leave the agent
-// and what Esc stops there, with its harness's name, so you never have to guess that Esc is the
-// agent's. An agent whose harness isn't known yet, given as empty, gets only the keys you need
-// most.
+// Returns the footer's text under an agent: the keys you need most, then what Esc stops there,
+// with its harness's name, so you never have to guess that Esc is the agent's. An agent whose
+// harness isn't known yet, given as empty, gets only the keys you need most.
 export function agentFooter(harness: string): string {
-  return harness ? `${always}  ⌃6 back  Esc stops ${harness}` : always;
+  return harness ? `${always}  Esc stops ${harness}` : always;
 }
 
 // Returns the footer's text under a list or a page: the keys you need most, then the key for the

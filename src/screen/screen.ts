@@ -52,12 +52,6 @@ const config = [
   ["bind", "-n", "M-S-Down", "send-keys", "-t", ":.0", "M-S-Down"],
   ["bind", "-n", "M-S-Left", "send-keys", "-t", ":.0", "M-S-Left"],
   ["bind", "-n", "M-S-Right", "send-keys", "-t", ":.0", "M-S-Right"],
-  // Ctrl-6 goes to the sidebar too, which goes back. It is not Alt-B, since Mac terminals send
-  // Option-Left as Esc b, readline's word back, which tmux reads as Alt-B. No shell, Claude Code
-  // or Codex uses Ctrl-6, and it is sent with or without Option as Alt. Terminals send it as
-  // C-^, or as C-6 once tmux asks for extended keys.
-  ["bind", "-n", "C-^", "send-keys", "-t", ":.0", "C-^"],
-  ["bind", "-n", "C-6", "send-keys", "-t", ":.0", "C-^"],
   // A click on the tabs, in a status line, reaches no pane, so tmux types which tab it was
   // into the sidebar, as an OSC naming the tab's range. send-keys -F expands no format in what
   // it types, so run-shell -C expands it first. A second click soon after the first is a
@@ -179,16 +173,14 @@ const sidebarCommand = (agents: string, session: string, where: string, reposito
 // Returns the command for the right pane while it shows an entry's list of the repository named
 // by its owner/name. It gets the agents' server and the screen's session, to tell the sidebar
 // what it opens, and the remote Skelcrew runs on, which decides whether a click on a page's link
-// opens your browser or copies the link. `start` is the session of the thread whose row the list
-// starts on, or empty for its first row.
+// opens your browser or copies the link.
 export const paneCommand = (
   agents: string,
   session: string,
   entry: Entry,
   where: string,
   repository: string,
-  start: string,
-) => skelcrewCommand("list", agents, session, entry, where, repository, start);
+) => skelcrewCommand("list", agents, session, entry, where, repository);
 
 // Opens the screen in your terminal on the named agent session. `lead` is the open repository's
 // lead's session and `repository` its owner/name. It returns when you leave with Alt-Q, and
