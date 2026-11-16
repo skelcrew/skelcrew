@@ -158,6 +158,8 @@ export async function startThread(
       last_comment: null,
       last_check: null,
       asking: false,
+      idle: false,
+      submitted: false,
       erred: false,
       noting: null,
       title,

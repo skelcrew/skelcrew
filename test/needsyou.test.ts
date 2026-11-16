@@ -1,9 +1,9 @@
-// Needs you, against a running daemon: a builder's question, or its harness stopping on an
-// error, marks its thread needs you, and
+// Needs you, against a running daemon: a builder's question, its stopping without submitting,
+// or its harness stopping on an error, marks its thread needs you, and
 // Skelcrew types a note into the lead's session when a thread starts needing you. A shell script
 // stands in for Claude Code: as the builder it runs the hook commands in its settings, as
-// Claude Code would around AskUserQuestion or a turn that ends on an error, and as the lead it
-// waits at a ❯ prompt.
+// Claude Code would around AskUserQuestion or at the end of a turn, and as the lead it waits at
+// a ❯ prompt.
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -45,8 +45,9 @@ const script = (name: string, body: string) => writeScript(home, name, body);
 // it, looking busy while the file busy is in its config folder. As the builder, it runs the
 // hook commands its settings give for an event when the test leaves a file named for it:
 // ask for AskUserQuestion's PreToolUse, answer for its PostToolUse, talk for UserPromptSubmit,
-// and fail for StopFailure, which Claude Code runs when a turn ends on an error such as a lapsed
-// login. Each hook gets a line in the file ran once it has finished.
+// stop for Stop, which Claude Code runs when a turn ends, and fail for StopFailure, which it runs
+// in Stop's place when a turn ends on an error such as a lapsed login. A hook's input is what
+// the test left in its file, or {}. Each hook gets a line in the file ran once it has finished.
 function fakeClaude(): void {
   script(
     "claude",
@@ -67,11 +68,12 @@ case "$CLAUDE_CONFIG_DIR" in */lead-*)
 esac
 for a; do [ "$prev" = --settings ] && settings=$a; prev=$a; done
 hook() {
+  input=$3; [ -n "$input" ] || input='{}'
   bun -e 'const [settings, event, tool] = process.argv.slice(1);
 for (const group of JSON.parse(settings).hooks?.[event] ?? [])
   if (!group.matcher || group.matcher === tool)
     for (const hook of group.hooks) console.log(hook.command);' "$settings" "$1" "$2" |
-  while IFS= read -r command; do echo '{}' | sh -c "$command" >> "$CLAUDE_CONFIG_DIR/hooks" 2>&1; done
+  while IFS= read -r command; do printf '%s' "$input" | sh -c "$command" >> "$CLAUDE_CONFIG_DIR/hooks" 2>&1; done
   echo "$1" >> "$CLAUDE_CONFIG_DIR/ran"
 }
 echo "❯"
@@ -80,6 +82,7 @@ for i in $(seq 3000); do
   test -e "$CLAUDE_CONFIG_DIR/answer" && { rm "$CLAUDE_CONFIG_DIR/answer"; hook PostToolUse AskUserQuestion; }
   test -e "$CLAUDE_CONFIG_DIR/talk" && { rm "$CLAUDE_CONFIG_DIR/talk"; hook UserPromptSubmit; }
   test -e "$CLAUDE_CONFIG_DIR/fail" && { rm "$CLAUDE_CONFIG_DIR/fail"; hook StopFailure authentication_failed; }
+  test -e "$CLAUDE_CONFIG_DIR/stop" && { said=$(cat "$CLAUDE_CONFIG_DIR/stop"); rm "$CLAUDE_CONFIG_DIR/stop"; hook Stop "" "$said"; }
   sleep 0.1
 done`,
   );
@@ -164,10 +167,11 @@ async function untilNeedsYou(wanted: boolean) {
   }
 }
 
-// Has the fake builder run the hooks for an event, as Claude Code would, and waits for them.
-async function hook(step: "ask" | "answer" | "talk" | "fail") {
+// Has the fake builder run the hooks for an event, as Claude Code would, with `input` as what
+// the hook reads, and waits for them.
+async function hook(step: "ask" | "answer" | "talk" | "fail" | "stop", input = "") {
   const before = read(join(builder(), "ran")).split("\n").length;
-  writeFileSync(join(builder(), step), "");
+  writeFileSync(join(builder(), step), input);
   await until(() => read(join(builder(), "ran")).split("\n").length > before);
 }
 
@@ -257,6 +261,80 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("needs you", () => {
     await hook("talk");
     await untilNeedsYou(false);
   }, 60_000);
+
+  test("a builder that stops without submitting needs you, tells the lead what it said, and clears when typed to", async () => {
+    addApp();
+    await startApp12();
+    const said = "Which format should the export use?\n1. JSON\n2. CSV";
+    await hook("stop", JSON.stringify({ hook_event_name: "Stop", last_assistant_message: said }));
+    expect(read(join(builder(), "hooks"))).toBe("");
+    await untilNeedsYou(true);
+    await until(() => notes() === 1);
+    expect(read(join(lead(), "typed"))).toContain(
+      "app-12 needs you: its builder stopped without submitting: Which format should the export use?",
+    );
+    expect(read(join(lead(), "typed"))).not.toContain("2. CSV");
+    // Another turn ending while it still waits is no news.
+    await hook("stop");
+    await Bun.sleep(1000);
+    expect(notes()).toBe(1);
+    // You answer it in the sidebar.
+    await hook("talk");
+    await untilNeedsYou(false);
+    // The turn your answer started ends without a submit too, so it waits on you again. A
+    // harness that gives no last message still gets a note.
+    await hook("stop");
+    await untilNeedsYou(true);
+    await until(() => notes() === 2);
+    expect(read(join(lead(), "typed"))).toContain(
+      "app-12 needs you: its builder stopped without submitting",
+    );
+  }, 60_000);
+
+  test("a turn that ends while a question is open adds no second note, and the answer ends both", async () => {
+    addApp();
+    await startApp12();
+    await hook("ask");
+    await untilNeedsYou(true);
+    await until(() => notes() === 1);
+    await hook("stop");
+    await Bun.sleep(1000);
+    expect(notes()).toBe(1);
+    await hook("answer");
+    await untilNeedsYou(false);
+  }, 60_000);
+
+  test("a builder brought back by sc start or a new daemon isn't taken for one that stopped", async () => {
+    addApp();
+    await startApp12();
+    expect((await skel(["stop", "app-12"])).err).toBe("");
+    rmSync(join(builder(), "args"));
+    expect((await skel(["start", "app-12"])).err).toBe("");
+    await until(() => read(join(builder(), "args")) !== "", 30_000);
+    // The daemon starts again, as after an upgrade, and finds its builder still running.
+    for (const daemon of running.splice(0)) {
+      daemon.kill();
+      await daemon.exited;
+    }
+    serve();
+    await until(() => existsSync(join(home, "run", "skelcrew.sock")));
+    await Bun.sleep(1500);
+    expect(await needsYou()).toBe(false);
+    expect(notes()).toBe(0);
+    // A builder that was waiting on you before the daemon started again still is, with no
+    // second note.
+    await hook("stop");
+    await untilNeedsYou(true);
+    await until(() => notes() === 1);
+    for (const daemon of running.splice(0)) {
+      daemon.kill();
+      await daemon.exited;
+    }
+    serve();
+    await Bun.sleep(1500);
+    expect(await needsYou()).toBe(true);
+    expect(notes()).toBe(1);
+  }, 90_000);
 
   test("starting the builder starts a stretch of work, and typing to it starts another", async () => {
     addApp();
@@ -348,7 +426,7 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("needs you", () => {
   }, 60_000);
 });
 
-test("only a builder can say it is asking you a question or stopped on an error", async () => {
+test("only a builder can say it is asking you a question, stopped, or stopped on an error", async () => {
   serve();
   await until(() => existsSync(join(home, "run", "skelcrew.sock")));
   await Bun.sleep(100);
@@ -356,6 +434,7 @@ test("only a builder can say it is asking you a question or stopped on an error"
     ["question", "asked"],
     ["question", "answered"],
     ["turn", "failed"],
+    ["turn", "ended"],
   ]) {
     const run = await skel(args);
     expect(run.code).not.toBe(0);

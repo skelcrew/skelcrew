@@ -32,6 +32,8 @@ function thread(change: Partial<Thread> = {}): Thread {
     last_comment: 0,
     last_check: 0,
     asking: false,
+    idle: false,
+    submitted: false,
     erred: false,
     noting: null,
     title: null,
@@ -77,6 +79,7 @@ test("threads that wait on you, failed, were stopped or are done are no work", (
   expect(hasWork([])).toBe(false);
   expect(hasWork([thread({ status: "waiting", needs_you: true })])).toBe(false);
   expect(hasWork([thread({ asking: true })])).toBe(false);
+  expect(hasWork([thread({ idle: true })])).toBe(false);
   expect(hasWork([thread({ erred: true })])).toBe(false);
   expect(hasWork([thread({ status: "failed" })])).toBe(false);
   expect(hasWork([thread({ status: "done" })])).toBe(false);

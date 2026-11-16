@@ -395,9 +395,11 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         typeLeadNotes(db, tmux);
         return { asking: true };
       case "turn ended": {
+        // The note names what the builder last said, so you see what it waits on.
         const { folder } = callingThread(caller);
         if (!endedTurnAsks(readThread(db, folder))) return { asking: false };
-        record(db, folder, { asking: true }, "its builder stopped without submitting");
+        const said = request.said ? `: ${request.said}` : "";
+        record(db, folder, { idle: true }, `its builder stopped without submitting${said}`);
         typeLeadNotes(db, tmux);
         return { asking: true };
       }
@@ -419,11 +421,14 @@ export async function serve(tmux: string, every = 30_000, port = urlPort): Promi
         db.run("UPDATE threads SET working_since = ? WHERE folder = ?", [Date.now(), folder]);
         // Run before every message typed into the builder, so only a question or an error that
         // was open is logged. Typing to a builder that stopped on an error means you fixed it,
-        // such as with /login, so it ends the error as it ends a question.
-        if (thread.asking)
-          record(db, folder, { asking: false, erred: false }, "its builder's question is over");
-        else if (thread.erred)
-          record(db, folder, { erred: false }, "its builder was typed to after its error");
+        // such as with /login, so it ends the error as it ends a question. Typing to one that
+        // stopped without submitting answers it, whether you typed or the lead told it. Each
+        // message starts a new turn, with no submit in it yet.
+        const over = { asking: false, idle: false, erred: false, submitted: false };
+        if (thread.asking || thread.idle)
+          record(db, folder, over, "its builder's question is over");
+        else if (thread.erred) record(db, folder, over, "its builder was typed to after its error");
+        else if (thread.submitted) record(db, folder, { submitted: false });
         return { asking: false };
       }
       case "start": {

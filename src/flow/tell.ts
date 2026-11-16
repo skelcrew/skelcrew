@@ -24,7 +24,9 @@ function wrapMessage(from: string, reply: string, text: string): string {
 // Types the lead's message into the thread's builder once it is idle, and returns the
 // thread's name at once, as an agent's command must answer quickly. Refuses a builder that
 // isn't running rather than keeping the message, which could reach it long after it
-// mattered. Refuses one asking you a question too: typing then would answer it for you.
+// mattered. Refuses one asking you a question with its harness's question tool too: typing then
+// would answer it for you. One that stopped without submitting may be told, as the lead can often
+// answer what it waits on, and the message typed in ends its needing you.
 // A message that can't be typed in, such as to a builder busy for half an hour, is logged,
 // and the lead hears that it didn't arrive.
 export function messageBuilder(db: Database, tmux: string, thread: Thread, text: string): string {

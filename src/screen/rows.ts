@@ -75,11 +75,11 @@ export function threadMark(row: Pick<Row, "status" | "needsYou" | "word">): Mark
 export function threadWord(thread: Thread, maxRounds: number): string {
   const { status, verdict, checks } = thread;
   // A thread that failed, stopped or is done says just that. Otherwise a question from its builder
-  // comes first, then its harness stopping on an error, then why it needs you, then what it is
-  // doing.
+  // comes first, as does its stopping without submitting, which is a question written as plain
+  // text, then its harness stopping on an error, then why it needs you, then what it is doing.
   if (status === "failed" || status === "stopped" || status === "done") return status;
   const underWay = thread.submitting !== null || thread.reviewing !== null;
-  if (thread.asking) return "question";
+  if (thread.asking || thread.idle) return "question";
   if (thread.erred) return "error";
   if (thread.needs_you) {
     if (pastRoundLimit(thread, maxRounds)) return "round limit";
@@ -211,7 +211,7 @@ export function repositoryTabs(db: Database): Tab[] {
     .query(
       `SELECT r.name, r.owner, r.repo, (SELECT COUNT(*) FROM threads t
         WHERE t.owner = r.owner AND t.repo = r.repo AND t.status != 'done'
-          AND (t.status = 'failed' OR t.needs_you = 1 OR t.asking = 1 OR t.erred = 1)) AS count
+          AND (t.status = 'failed' OR t.needs_you = 1 OR t.asking = 1 OR t.idle = 1 OR t.erred = 1)) AS count
       FROM repositories r WHERE r.tab_closed = 0 ORDER BY r.name`,
     )
     .all()

@@ -279,8 +279,8 @@ async function agentCommand(args: string[]): Promise<void> {
     await reportQuestion(sub === "asked");
     return;
   }
-  // Run by a Codex builder's Stop hook, not by people, so usage leaves it out. It prints
-  // nothing, as Codex reads what a Stop hook prints.
+  // Run by a builder's Stop hook, on Claude Code or Codex, not by people, so usage leaves it
+  // out. It prints nothing, as both harnesses read what a Stop hook prints.
   if (command === "turn" && sub === "ended" && rest.length === 0) {
     await reportTurnEnded();
     return;

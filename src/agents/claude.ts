@@ -39,11 +39,14 @@ const settings = JSON.stringify(base);
 // print nothing, since UserPromptSubmit adds what a hook prints to the message. A turn that
 // ends on an error, such as a lapsed login or a usage limit, runs StopFailure in place of Stop,
 // and leaves the builder idle with its row still saying working, so that needs you too, until
-// you fix it and type to the builder. Leads get none of these: you see a lead whenever you
-// open its repository.
+// you fix it and type to the builder. A turn that ends any other way runs Stop, and a builder
+// that stops without sc submit is waiting on you too, such as with a question written as plain
+// text. Pressing Esc runs neither, and then you are looking at the builder anyway. Leads get none
+// of these: you see a lead whenever you open its repository.
 const askedHook = { type: "command", command: "sc question asked", timeout: 10 };
 const answeredHook = { ...askedHook, command: "sc question answered" };
 const failedHook = { ...askedHook, command: "sc turn failed" };
+const endedHook = { ...askedHook, command: "sc turn ended" };
 const builderSettings = JSON.stringify({
   ...base,
   hooks: {
@@ -51,6 +54,7 @@ const builderSettings = JSON.stringify({
     PostToolUse: [{ matcher: "AskUserQuestion", hooks: [answeredHook] }],
     UserPromptSubmit: [{ hooks: [answeredHook] }],
     StopFailure: [{ hooks: [failedHook] }],
+    Stop: [{ hooks: [endedHook] }],
   },
 });
 

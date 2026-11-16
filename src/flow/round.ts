@@ -253,6 +253,8 @@ export function submitRound(db: Database, tmux: string, folder: string, summary:
     {
       status: "waiting",
       needs_you,
+      // A turn that ends after this waits on the review, not on you.
+      submitted: true,
       submitting: summary,
       telling: null,
       held: null,

@@ -125,6 +125,8 @@ function prepareTables(db: Database): void {
     last_check: "INTEGER",
     asking: "INTEGER NOT NULL DEFAULT 0",
     erred: "INTEGER NOT NULL DEFAULT 0",
+    idle: "INTEGER NOT NULL DEFAULT 0",
+    submitted: "INTEGER NOT NULL DEFAULT 0",
     noting: "TEXT",
     title: "TEXT",
     started: "INTEGER",

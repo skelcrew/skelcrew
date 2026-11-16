@@ -162,11 +162,12 @@ async function startApp12() {
   await until(() => read(join(builder(), "args")) !== "", 30_000);
 }
 
-// Marks the builder as asking you a question, as its hook would.
-function setAsking(): void {
+// Marks the builder as asking you a question, or with `idle` as having stopped without
+// submitting, as its hooks would.
+function setAsking(column: "asking" | "idle" = "asking"): void {
   const db = new Database(join(data(), "skelcrew.db"));
   db.run("PRAGMA busy_timeout = 5000");
-  db.run("UPDATE threads SET asking = 1");
+  db.run(`UPDATE threads SET ${column} = 1`);
   db.close();
 }
 
@@ -235,6 +236,16 @@ describe.skipIf(process.env.SKELCREW_SANDBOX === "1")("sc tell", () => {
     expect(told.err).toContain("you are the lead of simon/web only, so app isn't yours");
     await Bun.sleep(1000);
     expect(typed(builder())).not.toContain("Hello.");
+  }, 60_000);
+
+  // No question is open, so typing answers nothing by mistake, and the lead can often answer
+  // what the builder waits on.
+  test("a message to a builder that stopped without submitting is typed in", async () => {
+    await startApp12();
+    setAsking("idle");
+    const told = await skel(["tell", "app-12", "Use JSON."], "lead");
+    expect(told.err).toBe("");
+    await until(() => typed(builder()).includes("Use JSON."));
   }, 60_000);
 
   test("a message to a stopped builder, or one asking you a question, is refused", async () => {
