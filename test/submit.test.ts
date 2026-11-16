@@ -830,8 +830,10 @@ await serve(${JSON.stringify(socket)}, 200);`;
     git(work, "merge", "--squash", "-q", "FETCH_HEAD");
     git(work, "commit", "-q", "-m", "Add export");
     git(work, "push", "-q", bare, "main");
-    await until(() => JSON.stringify(row()).includes('"done"'), 30_000);
-    expect(log()).toContain("is merged into main");
+    // The thread's row changes a moment before its log has the line, so the test waits on the
+    // log, which comes last.
+    await until(() => log().includes("is merged into main"), 30_000);
+    expect(row()).toMatchObject({ status: "done" });
   }, 60_000);
 
   // Runs the daemon from a folder that isn't a git checkout, as the service does, polling every
